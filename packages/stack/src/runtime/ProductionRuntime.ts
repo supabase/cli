@@ -187,6 +187,7 @@ const readinessFor = (
     host: "127.0.0.1",
     port: endpoint.port,
     ...(spec.readiness.path === undefined ? {} : { path: spec.readiness.path }),
+    ...(spec.readiness.headers === undefined ? {} : { headers: spec.readiness.headers }),
   });
 };
 

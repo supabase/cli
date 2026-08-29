@@ -11,6 +11,7 @@ export interface ReadinessTarget {
   readonly host: string;
   readonly port: number;
   readonly path?: string;
+  readonly headers?: Readonly<Record<string, string>>;
 }
 
 export interface ReadinessProbeOptions {
@@ -39,6 +40,9 @@ const containsControl = (value: string): boolean =>
     return code <= 0x1f || code === 0x7f;
   });
 
+const validHeaderName = (value: string): boolean =>
+  value.length > 0 && /^[!#$%&'*+\-.^_`|~0-9A-Za-z]+$/u.test(value);
+
 const validateTarget = (target: ReadinessTarget): Effect.Effect<void, StackPreparationError> => {
   if (target.host.length === 0 || containsControl(target.host))
     return Effect.fail(preparationError("Readiness host is invalid"));
@@ -49,6 +53,14 @@ const validateTarget = (target: ReadinessTarget): Effect.Effect<void, StackPrepa
       return Effect.fail(preparationError("Readiness HTTP path must begin with '/'"));
     if (containsControl(target.path))
       return Effect.fail(preparationError("Readiness HTTP path contains control characters"));
+  }
+  if (target.headers !== undefined) {
+    for (const [name, value] of Object.entries(target.headers)) {
+      if (!validHeaderName(name))
+        return Effect.fail(preparationError("Readiness HTTP header name is invalid"));
+      if (containsControl(value))
+        return Effect.fail(preparationError("Readiness HTTP header value is invalid"));
+    }
   }
   return Effect.void;
 };
@@ -88,6 +100,7 @@ const httpAttempt = (target: ReadinessTarget): Effect.Effect<void, RuntimeDriver
         port: target.port,
         path: target.path ?? "/",
         method: "GET",
+        headers: target.headers,
       },
       (incoming) => {
         response = incoming;

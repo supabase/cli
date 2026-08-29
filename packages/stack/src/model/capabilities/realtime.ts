@@ -13,11 +13,11 @@ export const RealtimeModule: CapabilityModule<RealtimeSettings> = {
   defaultSettings: { ip_version: "IPv4", max_header_length: 4096 },
   defaultEnabled: true,
   defaultActivation: "eager",
-  defaultVersion: "v2.129.9",
+  defaultVersion: "v2.130.0",
   dependencies: ["database"],
   releases: {
-    "v2.129.9": release("v2.129.9", [
-      workload("realtime", "realtime", "v2.129.9", "supabase/realtime:v2.129.9", {
+    "v2.130.0": release("v2.130.0", [
+      workload("realtime", "realtime", "v2.130.0", "ghcr.io/supabase/cli/realtime:v2.130.0", {
         dependencies: ["database:database"],
         readiness: { mode: "http", portField: "api" },
       }),

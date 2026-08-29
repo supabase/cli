@@ -88,47 +88,17 @@ export const DatabaseModule: CapabilityModule<DatabaseSettings> = {
   defaultSettings: defaults,
   defaultEnabled: true,
   defaultActivation: "eager",
-  defaultVersion: "17.6.1.165",
+  defaultVersion: "17.6.1.166",
   dependencies: [],
   releases: {
-    "13": release("15.8.1.085", [
-      workload("database", "database", "15.8.1.085", "supabase/postgres:15.8.1.085", {
+    "17": release("17.6.1.166", [
+      workload("database", "database", "17.6.1.166", "ghcr.io/supabase/cli/postgres:17.6.1.166", {
         bootstrap: "database",
         readiness: { mode: "tcp", portField: "database" },
       }),
     ]),
-    "14": release("14.1.0.89", [
-      workload("database", "database", "14.1.0.89", "supabase/postgres:14.1.0.89", {
-        bootstrap: "database",
-        readiness: { mode: "tcp", portField: "database" },
-      }),
-    ]),
-    "15": release("15.8.1.085", [
-      workload("database", "database", "15.8.1.085", "supabase/postgres:15.8.1.085", {
-        bootstrap: "database",
-        readiness: { mode: "tcp", portField: "database" },
-      }),
-    ]),
-    "17": release("17.6.1.165", [
-      workload("database", "database", "17.6.1.165", "supabase/postgres:17.6.1.165", {
-        bootstrap: "database",
-        readiness: { mode: "tcp", portField: "database" },
-      }),
-    ]),
-    "14.1.0.89": release("14.1.0.89", [
-      workload("database", "database", "14.1.0.89", "supabase/postgres:14.1.0.89", {
-        bootstrap: "database",
-        readiness: { mode: "tcp", portField: "database" },
-      }),
-    ]),
-    "15.8.1.085": release("15.8.1.085", [
-      workload("database", "database", "15.8.1.085", "supabase/postgres:15.8.1.085", {
-        bootstrap: "database",
-        readiness: { mode: "tcp", portField: "database" },
-      }),
-    ]),
-    "17.6.1.165": release("17.6.1.165", [
-      workload("database", "database", "17.6.1.165", "supabase/postgres:17.6.1.165", {
+    "17.6.1.166": release("17.6.1.166", [
+      workload("database", "database", "17.6.1.166", "ghcr.io/supabase/cli/postgres:17.6.1.166", {
         bootstrap: "database",
         readiness: { mode: "tcp", portField: "database" },
       }),

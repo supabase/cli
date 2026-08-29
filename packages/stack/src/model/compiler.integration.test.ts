@@ -4,6 +4,7 @@ import { Cause, Effect, Exit, Option, Redacted } from "effect";
 import { InvalidStackConfigError, StackVersionUnsupportedError } from "../public/Errors.ts";
 import { canonicalize, compileStack } from "./Compiler.ts";
 import { resolveThirdPartyIssuer } from "./capabilities/auth-third-party.ts";
+import { parseFileSize } from "./capabilities/storage.ts";
 
 const layer = NodeServices.layer;
 const compile = (
@@ -19,6 +20,22 @@ const failureOf = <E>(exit: Exit.Exit<unknown, E>): E | undefined =>
   Exit.isFailure(exit) ? Option.getOrUndefined(Cause.findErrorOption(exit.cause)) : undefined;
 
 describe("closed capability compiler", () => {
+  it.live("normalizes storage byte limits and rejects invalid sizes", () =>
+    Effect.gen(function* () {
+      expect(parseFileSize("50MiB")).toBe("52428800");
+      expect(parseFileSize("1.5KB")).toBe("1500");
+      expect(parseFileSize("2 GiB")).toBe("2147483648");
+      expect(parseFileSize(-1)).toBeUndefined();
+      expect(parseFileSize("not-a-size")).toBeUndefined();
+      expect(parseFileSize("999999999999999999TiB")).toBeUndefined();
+      for (const value of ["not-a-size", "-1", "1.1B"]) {
+        const result = yield* compile({
+          capabilities: { storage: { settings: { file_size_limit: value } } },
+        }).pipe(Effect.exit);
+        expect(failureOf(result)).toBeInstanceOf(InvalidStackConfigError);
+      }
+    }),
+  );
   it.live("materializes a non-default database setting", () =>
     Effect.gen(function* () {
       const result = yield* compile({
@@ -89,7 +106,6 @@ describe("closed capability compiler", () => {
         expect.objectContaining({
           slot: "secret:storage.settings.s3_protocol.secret_access_key",
           policy: "managed",
-          value: Redacted.make("850181e4652dd023b7a98c58ae0d2d34bd487ee0cc3254aed6eda37307425907"),
         }),
       );
       expect(
@@ -472,13 +488,10 @@ describe("closed capability compiler", () => {
     }),
   );
 
-  it.live("resolves each supported database major to its supported release", () =>
+  it.live("resolves the supported database major to its supported release", () =>
     Effect.gen(function* () {
       const expected = {
-        13: "15.8.1.085",
-        14: "14.1.0.89",
-        15: "15.8.1.085",
-        17: "17.6.1.165",
+        17: "17.6.1.166",
       } as const;
       for (const [major, release] of Object.entries(expected)) {
         const result = yield* compile({ capabilities: { database: { version: major } } });
@@ -490,7 +503,7 @@ describe("closed capability compiler", () => {
           container: {
             kind: "container",
             service: "database",
-            image: `supabase/postgres:${release}`,
+            image: `ghcr.io/supabase/cli/postgres:${release}`,
           },
         });
       }
@@ -503,6 +516,17 @@ describe("closed capability compiler", () => {
         Effect.exit,
       );
       expect(failureOf(result)).toBeInstanceOf(StackVersionUnsupportedError);
+    }),
+  );
+
+  it.live("rejects unsupported historical database releases", () =>
+    Effect.gen(function* () {
+      for (const version of ["13", "13.3.0", "14", "15"]) {
+        const result = yield* compile({ capabilities: { database: { version } } }).pipe(
+          Effect.exit,
+        );
+        expect(failureOf(result)).toBeInstanceOf(StackVersionUnsupportedError);
+      }
     }),
   );
 

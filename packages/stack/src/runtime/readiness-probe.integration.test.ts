@@ -49,6 +49,47 @@ const listenTcp = (server: TcpServer): Effect.Effect<number, ListenerError> =>
   });
 
 describe("private endpoint readiness probe", () => {
+  it.live("passes validated request headers to HTTP readiness endpoints", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const received = yield* Deferred.make<string>();
+        const server = createHttpServer((request, response) => {
+          // oxlint-disable-next-line effecttsgo/run-effect-inside-effect -- bridge event callback to test signal.
+          Effect.runSync(Deferred.succeed(received, request.headers.host ?? ""));
+          response.statusCode = request.headers.host === "realtime-dev" ? 200 : 400;
+          response.end();
+        });
+        const port = yield* listenHttp(server, () => undefined);
+        yield* probeReadiness({
+          mode: "http",
+          host: "127.0.0.1",
+          port,
+          path: "/api/ping",
+          headers: { Host: "realtime-dev" },
+        });
+        expect(yield* Deferred.await(received)).toBe("realtime-dev");
+      }),
+    ),
+  );
+
+  it.live("rejects invalid readiness header names and values", () =>
+    Effect.gen(function* () {
+      for (const headers of [{ "bad name": "ok" }, { Host: "bad\nvalue" }]) {
+        const result = yield* probeReadiness({
+          mode: "http",
+          host: "127.0.0.1",
+          port: 1,
+          headers,
+        }).pipe(Effect.exit);
+        expect(Exit.isFailure(result)).toBe(true);
+        if (Exit.isFailure(result)) {
+          const cause = Option.getOrUndefined(Cause.findErrorOption(result.cause));
+          expect(cause).toBeInstanceOf(StackPreparationError);
+        }
+      }
+    }),
+  );
+
   it.live("rejects control characters in HTTP paths as typed preparation failures", () =>
     Effect.gen(function* () {
       for (const path of ["/ready\nX", "/ready\rX", "/ready\u0000X"]) {

@@ -396,7 +396,7 @@ export const AuthModule: CapabilityModule<AuthSettings> = {
   dependencies: ["database"],
   releases: {
     "v2.196.0": release("v2.196.0", [
-      workload("auth", "auth", "v2.196.0", "supabase/auth:v2.196.0", {
+      workload("auth", "auth", "v2.196.0", "ghcr.io/supabase/cli/auth:v2.196.0", {
         dependencies: ["database:database"],
         readiness: { mode: "http", portField: "api" },
       }),

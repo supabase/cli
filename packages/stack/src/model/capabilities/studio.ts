@@ -21,13 +21,13 @@ export const StudioModule: CapabilityModule<StudioSettings> = {
         "studio",
         "studio",
         "2026.08.24-sha-8ec45b2",
-        "supabase/studio:2026.08.24-sha-8ec45b2",
+        "ghcr.io/supabase/cli/studio:2026.08.24-sha-8ec45b2",
         {
           dependencies: ["studio:pgmeta", "analytics:analytics"],
           readiness: { mode: "http", portField: "studio" },
         },
       ),
-      workload("pgmeta", "studio", "0.98.0", "supabase/pg-meta:v0.98.0", {
+      workload("pgmeta", "studio", "0.98.0", "ghcr.io/supabase/cli/pgmeta:v0.98.0", {
         dependencies: ["database:database"],
         readiness: { mode: "http" },
       }),

@@ -1,6 +1,6 @@
 import { NodeServices } from "@effect/platform-node";
 import { describe, expect, it } from "@effect/vitest";
-import { Effect, Exit } from "effect";
+import { Effect, Exit, Redacted } from "effect";
 import { WORKLOAD_CATALOG } from "../model/WorkloadCatalog.ts";
 import type { PlannedWorkload } from "../model/ExecutionPlan.ts";
 import type { PersistedStackState } from "../state/StackState.ts";
@@ -39,6 +39,7 @@ const state: PersistedStackState = {
   privatePorts: [
     { workloadId: "database:database", binding: "primary", port: 30_001 },
     { workloadId: "rest:rest", binding: "primary", port: 30_002 },
+    { workloadId: "rest:rest", binding: "admin", port: 30_015 },
     { workloadId: "auth:auth", binding: "primary", port: 30_003 },
     { workloadId: "realtime:realtime", binding: "primary", port: 30_004 },
     { workloadId: "storage:storage", binding: "primary", port: 30_005 },
@@ -51,7 +52,7 @@ const state: PersistedStackState = {
     { workloadId: "mail:mail", binding: "pop3", port: 30_012 },
     { workloadId: "analytics:analytics", binding: "primary", port: 30_013 },
     { workloadId: "analytics:vector", binding: "primary", port: 30_014 },
-    { workloadId: "pooler:pooler", binding: "primary", port: 30_015 },
+    { workloadId: "pooler:pooler", binding: "primary", port: 30_016 },
   ],
   secrets: {
     "secret:database.internal.password": { policy: "managed", value: "postgres" },
@@ -98,9 +99,12 @@ describe("workload runtime catalog", () => {
       expect(intents).toContainEqual({ workloadId: "mail:mail", binding: "ui" });
       expect(intents).toContainEqual({ workloadId: "mail:mail", binding: "smtp" });
       expect(intents).toContainEqual({ workloadId: "mail:mail", binding: "pop3" });
+      expect(intents).toContainEqual({ workloadId: "rest:rest", binding: "admin" });
       expect(intents.filter(({ workloadId }) => workloadId === "mail:mail")).toHaveLength(3);
       expect(
-        intents.every(({ binding }) => ["primary", "ui", "smtp", "pop3"].includes(binding)),
+        intents.every(({ binding }) =>
+          ["primary", "admin", "ui", "smtp", "pop3"].includes(binding),
+        ),
       ).toBe(true);
     }).pipe(Effect.provide(NodeServices.layer)),
   );
@@ -193,7 +197,18 @@ describe("workload runtime catalog", () => {
         storageSpec?.env(state, storage, 5000, "container", {
           storage: { dataPath: "/ignored/native/path" },
         }).FILE_STORAGE_BACKEND_PATH,
-      ).toBe("/var/lib/storage");
+      ).toBe("/mnt");
+      expect(
+        runtimeSpecFor(planned("storage:imgproxy"))?.env(
+          state,
+          planned("storage:imgproxy"),
+          5001,
+          "native",
+          {
+            storage: { dataPath: "/state/stack/data/storage" },
+          },
+        ).IMGPROXY_LOCAL_FILESYSTEM_ROOT,
+      ).toBe("/state/stack/data/storage");
     }).pipe(Effect.provide(NodeServices.layer)),
   );
 
@@ -206,7 +221,13 @@ describe("workload runtime catalog", () => {
           runtime: { kind: "native" },
           config: {
             capabilities: {
-              rest: { settings: { schemas: ["private"], extra_search_path: ["extensions"] } },
+              rest: {
+                settings: {
+                  schemas: ["private"],
+                  extra_search_path: ["extensions"],
+                  external_url: "https://api.example",
+                },
+              },
               storage: {
                 settings: {
                   image_transformation: { enabled: true },
@@ -275,9 +296,12 @@ describe("workload runtime catalog", () => {
           PGRST_DB_SCHEMAS: "private",
           PGRST_DB_EXTRA_SEARCH_PATH: "extensions",
           PGRST_DB_URI: expect.stringContaining("@127.0.0.1:30001"),
+          PGRST_ADMIN_SERVER_PORT: "30015",
+          PGRST_OPENAPI_SERVER_PROXY_URI: "https://api.example",
         });
         expect(rest?.env(configured, planned("rest:rest"), 3000, "container")).toMatchObject({
           PGRST_DB_URI: expect.stringContaining("@supabase-database:5432"),
+          PGRST_ADMIN_SERVER_PORT: "3001",
         });
         const dependentHosts: ReadonlyArray<{
           readonly id: string;
@@ -296,6 +320,11 @@ describe("workload runtime catalog", () => {
         expect(storage?.env(configured, planned("storage:storage"), 5000)).toMatchObject({
           ENABLE_IMAGE_TRANSFORMATION: "true",
           S3_PROTOCOL_ENABLED: "false",
+          FILE_SIZE_LIMIT: "52428800",
+          VECTOR_ENABLED: "true",
+          VECTOR_BUCKET_PROVIDER: "pgvector",
+          VECTOR_STORE_MIGRATIONS_ENABLED: "true",
+          VECTOR_DATABASE_URL: expect.stringContaining("postgres:postgres@127.0.0.1"),
         });
         const auth = runtimeSpecFor(planned("auth:auth"));
         expect(auth?.env(configured, planned("auth:auth"), 9999)).toMatchObject({
@@ -305,7 +334,6 @@ describe("workload runtime catalog", () => {
           GOTRUE_PASSWORD_MIN_LENGTH: "12",
           GOTRUE_PASSWORD_REQUIRED_CHARACTERS:
             "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ:0123456789",
-          GOTRUE_MFA_PHONE_OTP_LENGTH: "8",
           GOTRUE_SMS_PROVIDER: "twilio",
           GOTRUE_SMS_TEST_OTP: "+33123456789:123456",
           GOTRUE_SMS_OTP_LENGTH: "6",
@@ -337,10 +365,12 @@ describe("workload runtime catalog", () => {
         expect(Exit.isFailure(missingTemplateBase)).toBe(true);
         expect(auth?.env(configured, planned("auth:auth"), 9999)).toMatchObject({
           GOTRUE_JWT_ISSUER: "https://issuer.example",
-          GOTRUE_EXTERNAL_GOOGLE_REDIRECT_URI: "https://issuer.example/callback",
           GOTRUE_SMS_TWILIO_ACCOUNT_SID: "AC123",
           GOTRUE_SMS_TWILIO_VERIFY_ACCOUNT_SID: "VA123",
         });
+        expect(
+          auth?.env(configured, planned("auth:auth"), 9999).GOTRUE_EXTERNAL_GOOGLE_REDIRECT_URI,
+        ).toBeUndefined();
         expect(
           auth?.env(configured, planned("auth:auth"), 9999, "container", {
             auth: { jwtKeys: '[{"kty":"EC"}]' },
@@ -352,6 +382,7 @@ describe("workload runtime catalog", () => {
             auth: { jwks: '{"keys":[]}' },
           }),
         ).toMatchObject({ ERL_AFLAGS: "-proto_dist inet6_tcp", API_JWT_JWKS: '{"keys":[]}' });
+        expect(realtime?.readiness.headers).toEqual({ Host: "realtime-dev" });
         const analytics = runtimeSpecFor(planned("analytics:analytics"));
         const analyticsInputs = { analytics: { gcpJwtPath: "/tmp/gcp.json" } };
         expect(
@@ -376,11 +407,30 @@ describe("workload runtime catalog", () => {
             readOnly: true,
           },
         ]);
+        expect(analytics?.args(configured, planned("analytics:analytics"), 4000)).toEqual([
+          "start",
+        ]);
+        expect(containerResolutionFor(configured, planned("analytics:analytics"))?.command).toEqual(
+          [],
+        );
         const pooler = runtimeSpecFor(planned("pooler:pooler"));
         expect(pooler?.env(configured, planned("pooler:pooler"), 6543)).toMatchObject({
           POOL_MODE: "session",
           MAX_CLIENT_CONN: "250",
+          TENANT_ID: "pooler-dev",
+          PORT: "4000",
+          PROXY_PORT_SESSION: "30016",
+          PROXY_PORT_TRANSACTION: "6543",
         });
+        expect(pooler?.env(configured, planned("pooler:pooler"), 30016, "container")).toMatchObject(
+          {
+            PROXY_PORT_SESSION: "5432",
+            PROXY_PORT_TRANSACTION: "6543",
+          },
+        );
+        expect(containerResolutionFor(configured, planned("pooler:pooler"))?.publications).toEqual([
+          { address: "127.0.0.1", hostPort: 30016, containerPort: 5432 },
+        ]);
         const resolution = containerResolutionFor(configured, functions, {
           hostRoute: { host: "host.docker.internal", gateway: "host-gateway" },
         });
@@ -431,7 +481,15 @@ describe("workload runtime catalog", () => {
           SUPABASE_URL: "http://host.docker.internal:54321",
           STUDIO_PG_META_URL: "http://supabase-pgmeta:8080",
           LOGFLARE_URL: "http://supabase-analytics:4000",
+          EDGE_FUNCTIONS_MANAGEMENT_FOLDER: FUNCTIONS_CONTAINER_ROOT,
         });
+        expect(studio?.containerMounts?.(configured, planned("studio:studio"))).toEqual([
+          {
+            source: `${state.identity.projectRoot}/supabase/functions`,
+            target: FUNCTIONS_CONTAINER_ROOT,
+            readOnly: true,
+          },
+        ]);
         expect(
           runtimeSpecFor(planned("storage:storage"))?.env(
             configured,
@@ -439,7 +497,7 @@ describe("workload runtime catalog", () => {
             5000,
             "container",
           ).IMGPROXY_URL,
-        ).toBe("http://supabase-imgproxy:8080");
+        ).toBe("http://supabase-imgproxy:5001");
         const nodeArtifactRoot = "/tmp/native-artifact";
         expect(
           studio?.nativeProcess(nodeArtifactRoot, configured, planned("studio:studio"), 3000),
@@ -509,6 +567,127 @@ describe("workload runtime catalog", () => {
       ).pipe(Effect.exit);
       expect(Exit.isFailure(unresolved)).toBe(true);
     }).pipe(Effect.provide(NodeServices.layer)),
+  );
+
+  it.live("emits only enabled Auth provider fields and gates phone MFA options", () =>
+    Effect.gen(function* () {
+      const disabledCompiled = yield* compileStack({
+        projectRoot: state.identity.projectRoot,
+        runtime: { kind: "native" },
+      }).pipe(Effect.provide(NodeServices.layer));
+      const disabledState: PersistedStackState = {
+        ...state,
+        definition: disabledCompiled.definition,
+      };
+      const disabled = runtimeSpecFor(planned("auth:auth"))?.env(
+        disabledState,
+        planned("auth:auth"),
+        9999,
+      );
+      expect(disabled?.GOTRUE_EXTERNAL_GOOGLE_ENABLED).toBe("false");
+      expect(disabled?.GOTRUE_EXTERNAL_GOOGLE_REDIRECT_URI).toBeUndefined();
+      expect(disabled?.GOTRUE_EXTERNAL_GOOGLE_CLIENT_ID).toBeUndefined();
+      expect(disabled?.GOTRUE_MFA_PHONE_ENROLL_ENABLED).toBe("false");
+      expect(disabled?.GOTRUE_MFA_PHONE_VERIFY_ENABLED).toBe("false");
+      expect(disabled?.GOTRUE_MFA_PHONE_OTP_LENGTH).toBeUndefined();
+
+      const enabledCompiled = yield* compileStack({
+        projectRoot: state.identity.projectRoot,
+        runtime: { kind: "native" },
+        config: {
+          capabilities: {
+            auth: {
+              settings: {
+                external: {
+                  google: {
+                    enabled: true,
+                    client_id: "google-client",
+                    url: "https://accounts.google.test",
+                  },
+                },
+                mfa: { phone: { enroll_enabled: true, otp_length: 8 } },
+              },
+            },
+          },
+        },
+      }).pipe(Effect.provide(NodeServices.layer));
+      const enabledState: PersistedStackState = {
+        ...state,
+        definition: enabledCompiled.definition,
+      };
+      const enabled = runtimeSpecFor(planned("auth:auth"))?.env(
+        enabledState,
+        planned("auth:auth"),
+        9999,
+      );
+      expect(enabled).toMatchObject({
+        GOTRUE_EXTERNAL_GOOGLE_ENABLED: "true",
+        GOTRUE_EXTERNAL_GOOGLE_CLIENT_ID: "google-client",
+        GOTRUE_EXTERNAL_GOOGLE_URL: "https://accounts.google.test",
+        GOTRUE_EXTERNAL_GOOGLE_REDIRECT_URI: expect.stringContaining("/callback"),
+        GOTRUE_MFA_PHONE_ENROLL_ENABLED: "true",
+        GOTRUE_MFA_PHONE_OTP_LENGTH: "8",
+        GOTRUE_MFA_PHONE_TEMPLATE: "Your code is {{ .Code }}",
+        GOTRUE_MFA_PHONE_MAX_FREQUENCY: "5s",
+      });
+    }).pipe(Effect.provide(NodeServices.layer)),
+  );
+
+  it.live("maps persisted Storage S3 credentials and omits vector settings when disabled", () =>
+    Effect.gen(function* () {
+      const compiled = yield* compileStack({
+        projectRoot: state.identity.projectRoot,
+        runtime: { kind: "native" },
+        config: {
+          capabilities: {
+            storage: {
+              settings: {
+                s3_protocol: {
+                  enabled: true,
+                  region: "eu-west-1",
+                  access_key_id: "access-42",
+                  secret_access_key: Redacted.make("secret-42"),
+                },
+                vector: { enabled: false },
+              },
+            },
+          },
+        },
+      }).pipe(Effect.provide(NodeServices.layer));
+      const configured: PersistedStackState = {
+        ...state,
+        definition: compiled.definition,
+        secrets: {
+          ...state.secrets,
+          "secret:storage.settings.s3_protocol.secret_access_key": {
+            policy: "managed",
+            value: "secret-42",
+          },
+        },
+      };
+      const env = runtimeSpecFor(planned("storage:storage"))?.env(
+        configured,
+        planned("storage:storage"),
+        5000,
+      );
+      expect(env).toMatchObject({
+        S3_PROTOCOL_ENABLED: "true",
+        S3_PROTOCOL_ACCESS_KEY_ID: "access-42",
+        S3_PROTOCOL_ACCESS_KEY_SECRET: "secret-42",
+        STORAGE_S3_REGION: "eu-west-1",
+      });
+      expect(env).not.toHaveProperty("VECTOR_ENABLED");
+      expect(env).not.toHaveProperty("VECTOR_DATABASE_URL");
+    }).pipe(Effect.provide(NodeServices.layer)),
+  );
+
+  it.live("validates owner-resolved Pooler tenant paths before runtime creation", () =>
+    Effect.gen(function* () {
+      const failed = yield* validateWorkloadRuntimeInputs(state, planned("pooler:pooler"), {
+        pooler: { tenantPath: "/tmp/tenant\n.exs" },
+      }).pipe(Effect.exit);
+      expect(Exit.isFailure(failed)).toBe(true);
+    }),
   );
 
   it("uses Auth's local JWT secret for every internal JWT consumer", () => {

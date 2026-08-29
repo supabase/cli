@@ -29,11 +29,11 @@ export const AnalyticsModule: CapabilityModule<AnalyticsSettings> = {
   dependencies: ["database"],
   releases: {
     "v1.50.6": release("v1.50.6", [
-      workload("analytics", "analytics", "v1.50.6", "supabase/logflare:v1.50.6", {
+      workload("analytics", "analytics", "v1.50.6", "ghcr.io/supabase/cli/analytics:v1.50.6", {
         dependencies: ["database:database", "analytics:vector"],
         readiness: { mode: "http", portField: "api" },
       }),
-      workload("vector", "analytics", "0.53.0-alpine", "ghcr.io/supabase/vector:0.53.0-alpine", {
+      workload("vector", "analytics", "0.53.0-alpine", "timberio/vector:0.53.0-alpine", {
         dependencies: [],
         readiness: { mode: "tcp" },
       }),

@@ -1,4 +1,4 @@
-import { Redacted, Schema } from "effect";
+import { Schema } from "effect";
 import { release, workload, type CapabilityModule } from "../CapabilityModule.ts";
 
 const Bucket = Schema.Struct({
@@ -40,6 +40,40 @@ export const StorageSettingsSchema = Schema.Struct({
 });
 export type StorageSettings = Schema.Schema.Type<typeof StorageSettingsSchema>;
 
+const FILE_SIZE_UNITS: Readonly<Record<string, bigint>> = {
+  B: 1n,
+  KB: 1_000n,
+  MB: 1_000_000n,
+  GB: 1_000_000_000n,
+  TB: 1_000_000_000_000n,
+  KiB: 1_024n,
+  MiB: 1_048_576n,
+  GiB: 1_073_741_824n,
+  TiB: 1_099_511_627_776n,
+};
+const MAX_FILE_SIZE = BigInt(Number.MAX_SAFE_INTEGER);
+
+/** Convert one non-negative byte size into its exact decimal representation. */
+export const parseFileSize = (value: string | number): string | undefined => {
+  if (typeof value === "number" && (!Number.isFinite(value) || value < 0)) return undefined;
+  const match = /^([0-9]+(?:\.[0-9]+)?)[ \t]*(B|KB|MB|GB|TB|KiB|MiB|GiB|TiB)?$/u.exec(
+    String(value).trim(),
+  );
+  if (match === null) return undefined;
+  const amount = match[1];
+  const unit = match[2] ?? "B";
+  if (amount === undefined) return undefined;
+  const factor = FILE_SIZE_UNITS[unit];
+  if (factor === undefined) return undefined;
+  const [whole, fraction = ""] = amount.split(".");
+  if (whole === undefined) return undefined;
+  const scale = 10n ** BigInt(fraction.length);
+  const scaled = (BigInt(whole) * scale + BigInt(fraction || "0")) * factor;
+  if (scaled % scale !== 0n) return undefined;
+  const bytes = scaled / scale;
+  return bytes > MAX_FILE_SIZE ? undefined : bytes.toString();
+};
+
 const bucketDefaults = {
   public: false,
   file_size_limit: "50MiB",
@@ -58,9 +92,8 @@ export const StorageModule: CapabilityModule<StorageSettings> = {
       enabled: true,
       region: "local",
       access_key_id: "625729a08b95bf1b7ff351a663f3a23c",
-      secret_access_key: Redacted.make(
-        "850181e4652dd023b7a98c58ae0d2d34bd487ee0cc3254aed6eda37307425907",
-      ),
+      // Managed by the compiler so every stack receives a fresh credential.
+      secret_access_key: undefined,
     },
     analytics: { enabled: false, max_namespaces: 5, max_tables: 10, max_catalogs: 2, buckets: {} },
     vector: { enabled: true, max_buckets: 10, max_indexes: 5, buckets: {} },
@@ -71,7 +104,7 @@ export const StorageModule: CapabilityModule<StorageSettings> = {
   dependencies: ["database"],
   releases: {
     "v1.71.0": release("v1.71.0", [
-      workload("storage", "storage", "v1.71.0", "supabase/storage-api:v1.71.0", {
+      workload("storage", "storage", "v1.71.0", "ghcr.io/supabase/cli/storage:v1.71.0", {
         dependencies: ["database:database", "storage:imgproxy"],
         readiness: { mode: "http", portField: "api" },
       }),

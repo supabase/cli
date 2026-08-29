@@ -16,7 +16,7 @@ export const PoolerModule: CapabilityModule<PoolerSettings> = {
   settings: PoolerSettingsSchema,
   defaultSettings: {
     pool_mode: "transaction",
-    tenant_id: undefined,
+    tenant_id: "pooler-dev",
     encryption_key: undefined,
     secret_key_base: undefined,
     default_pool_size: 20,
@@ -28,7 +28,7 @@ export const PoolerModule: CapabilityModule<PoolerSettings> = {
   dependencies: ["database"],
   releases: {
     "v2.9.12": release("v2.9.12", [
-      workload("pooler", "pooler", "v2.9.12", "ghcr.io/supabase/supavisor:v2.9.12", {
+      workload("pooler", "pooler", "v2.9.12", "ghcr.io/supabase/cli/pooler:v2.9.12", {
         dependencies: ["database:database"],
         readiness: { mode: "tcp", portField: "pooler" },
       }),

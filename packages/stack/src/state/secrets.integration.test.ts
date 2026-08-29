@@ -53,6 +53,7 @@ describe("managed and pass-through secrets", () => {
         "secret:auth.settings.jwt_secret",
         "secret:auth.settings.anon_key",
         "secret:auth.settings.service_role_key",
+        "secret:storage.settings.s3_protocol.secret_access_key",
       ]) {
         expect(first.persisted[slot]?.policy).toBe("managed");
         expect(first.persisted[slot]?.value).toBe(second.persisted[slot]?.value);
@@ -81,6 +82,11 @@ describe("managed and pass-through secrets", () => {
         expect(["anon", "service_role"]).toContain(payload.role);
         expect(payload.exp).toBeGreaterThan(1_900_000_000);
       }
+
+      const other = yield* resolveSecrets(candidate, undefined, "stopped");
+      expect(
+        other.persisted["secret:storage.settings.s3_protocol.secret_access_key"]?.value,
+      ).not.toBe(first.persisted["secret:storage.settings.s3_protocol.secret_access_key"]?.value);
     }).pipe(Effect.provide(layer)),
   );
 

@@ -26,6 +26,7 @@ import {
   RealtimeModule,
   RestModule,
   StorageModule,
+  parseFileSize,
   StudioModule,
   AnalyticsModule,
 } from "./capabilities/index.ts";
@@ -359,6 +360,23 @@ const decodeConfig = (config: unknown): Effect.Effect<StackConfig, InvalidStackC
     ),
   );
 
+const validateStorageFileSizes = (
+  config: StackConfig,
+): Effect.Effect<void, InvalidStackConfigError> => {
+  const storage = config.capabilities?.storage;
+  if (storage === undefined || !("settings" in storage) || storage.settings === undefined)
+    return Effect.void;
+  const values = [
+    storage.settings.file_size_limit,
+    ...Object.values(storage.settings.buckets ?? {}).map((bucket) => bucket.file_size_limit),
+  ];
+  for (const value of values) {
+    if (value !== undefined && parseFileSize(value) === undefined)
+      return Effect.fail(new InvalidStackConfigError({ message: "Invalid storage file size" }));
+  }
+  return Effect.void;
+};
+
 const validateFunctionKeys = (config: unknown): Effect.Effect<void, InvalidStackConfigError> => {
   const capabilities = isRecord(config) ? config.capabilities : undefined;
   const capability = isRecord(capabilities) ? capabilities.functions : undefined;
@@ -673,6 +691,7 @@ export const compileStack = (
     const crypto = yield* Crypto.Crypto;
     yield* validateFunctionKeys(input.config ?? {});
     const config = yield* decodeConfig(input.config ?? {});
+    yield* validateStorageFileSizes(config);
     const jwtSecret = yield* canonicalJwtSecret(config);
     const rawCapabilities = isRecord(config.capabilities) ? config.capabilities : {};
     const normalizedFunctions = yield* materializeFunctionsRoot(

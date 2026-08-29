@@ -3,6 +3,7 @@ import type { ExecutionPlan, PlannedWorkload } from "../model/ExecutionPlan.ts";
 import type { CapabilityName } from "../public/Capability.ts";
 import type { ContainerHostRoute, ContainerMount } from "./ContainerEngine.ts";
 import { WORKLOAD_CATALOG, type NativeWorkloadProcess } from "../model/WorkloadCatalog.ts";
+import { parseFileSize } from "../model/capabilities/storage.ts";
 import { resolveThirdPartyIssuer } from "../model/capabilities/auth-third-party.ts";
 import { Effect } from "effect";
 import { StackPreparationError } from "../public/Errors.ts";
@@ -10,7 +11,7 @@ import { StackPreparationError } from "../public/Errors.ts";
 export type WorkloadRuntimeKind = "native" | "container";
 
 /** Closed set of private ports a workload may expose to the host gateway. */
-export type WorkloadBindingName = "primary" | "ui" | "smtp" | "pop3";
+export type WorkloadBindingName = "primary" | "admin" | "ui" | "smtp" | "pop3";
 
 export interface WorkloadBinding {
   readonly containerPort: number;
@@ -18,6 +19,7 @@ export interface WorkloadBinding {
 
 export interface WorkloadBindings {
   readonly primary?: WorkloadBinding;
+  readonly admin?: WorkloadBinding;
   readonly ui?: WorkloadBinding;
   readonly smtp?: WorkloadBinding;
   readonly pop3?: WorkloadBinding;
@@ -50,6 +52,8 @@ export interface WorkloadRuntimeInputs {
   /** Stack-owned native persistent data paths. Containers use their named volumes instead. */
   readonly database?: Readonly<{ readonly dataPath?: string }>;
   readonly storage?: Readonly<{ readonly dataPath?: string }>;
+  /** Owner-resolved tenant provisioning file for the Pooler container. */
+  readonly pooler?: Readonly<{ readonly tenantPath?: string }>;
   /** Host route used by containers to reach StackGateway. */
   readonly hostRoute?: ContainerHostRoute;
 }
@@ -99,6 +103,7 @@ export interface WorkloadRuntimeSpec {
     readonly protocol: "http" | "tcp";
     readonly path?: string;
     readonly binding: WorkloadBindingName;
+    readonly headers?: Readonly<Record<string, string>>;
   }>;
   readonly nativeProcess: (
     artifactRoot: string,
@@ -197,6 +202,17 @@ export const validateWorkloadRuntimeInputs = (
       )
         return yield* new StackPreparationError({
           message: "Resolved Analytics service-account path is required",
+          workload: workload.id,
+        });
+    }
+    if (workload.id === "pooler:pooler" && inputs.pooler?.tenantPath !== undefined) {
+      const tenantPath = inputs.pooler.tenantPath;
+      if (
+        tenantPath.length === 0 ||
+        [...tenantPath].some((character) => character.charCodeAt(0) < 0x20)
+      )
+        return yield* new StackPreparationError({
+          message: "Resolved Pooler tenant path is invalid",
           workload: workload.id,
         });
     }
@@ -342,6 +358,17 @@ const workloadPort = (
     ? containerPort
     : (privatePortFor(state, workloadId, binding) ?? containerPort);
 
+const containerPortFor = (
+  state: PersistedStackState,
+  workloadId: string,
+  binding: WorkloadBindingName,
+  fallback: number,
+): number => {
+  if (workloadId === "pooler:pooler" && binding === "primary")
+    return valueAt(state, "pooler", "pool_mode") === "session" ? 5432 : 6543;
+  return fallback;
+};
+
 const dbHost = (runtime: WorkloadRuntimeKind): string =>
   runtime === "container" ? DATABASE_NETWORK_ALIAS : "127.0.0.1";
 
@@ -415,7 +442,9 @@ const privateEndpointFor = (
   const declared = bindingFor(bindings, binding);
   if (declared === undefined) return undefined;
   const port =
-    runtime === "container" ? declared.containerPort : privatePortFor(state, workloadId, binding);
+    runtime === "container"
+      ? containerPortFor(state, workloadId, binding, declared.containerPort)
+      : privatePortFor(state, workloadId, binding);
   return port === undefined
     ? undefined
     : {
@@ -493,6 +522,8 @@ const withRestSettings = (
       : secret(state, "secret:auth.settings.jwt_secret"),
     PGRST_SERVER_PORT: String(port),
     PGRST_DB_MAX_ROWS: valueAt(state, "rest", "max_rows") || "1000",
+    PGRST_ADMIN_SERVER_PORT: String(workloadPort(state, "rest:rest", "admin", runtime, 3001)),
+    PGRST_OPENAPI_SERVER_PROXY_URI: valueAt(state, "rest", "external_url"),
   });
 
 const authNestedEnvironment = (
@@ -508,11 +539,14 @@ const authNestedEnvironment = (
     for (const [provider, value] of Object.entries(external)) {
       if (!isRecord(value)) continue;
       const prefix = `GOTRUE_EXTERNAL_${provider.replace(/[^A-Za-z0-9]+/gu, "_").toUpperCase()}`;
-      for (const [key, entry] of Object.entries(value))
-        out[`${prefix}_${key.replace(/[^A-Za-z0-9]+/gu, "_").toUpperCase()}`] = settingValue(
-          state,
-          entry,
-        );
+      const enabled = value.enabled === true;
+      out[`${prefix}_ENABLED`] = enabled ? "true" : "false";
+      if (!enabled) continue;
+      for (const key of ["client_id", "secret", "url", "skip_nonce_check", "email_optional"]) {
+        if (!(key in value)) continue;
+        const rendered = settingValue(state, value[key]);
+        if (rendered.length > 0) out[`${prefix}_${key.toUpperCase()}`] = rendered;
+      }
       const configuredRedirect = settingValue(state, value.redirect_uri);
       out[`${prefix}_REDIRECT_URI`] = configuredRedirect || `${jwtIssuer}/callback`;
     }
@@ -640,7 +674,11 @@ const withAuthSettings = (
       state,
       "auth",
       "GOTRUE",
-      (key) => key === "GOTRUE_SIGNING_KEYS_PATH" || key.startsWith("GOTRUE_THIRD_PARTY_"),
+      (key) =>
+        key === "GOTRUE_SIGNING_KEYS_PATH" ||
+        key.startsWith("GOTRUE_THIRD_PARTY_") ||
+        key.startsWith("GOTRUE_EXTERNAL_") ||
+        key.startsWith("GOTRUE_MFA_PHONE_"),
     ),
     ...authNestedEnvironment(
       state,
@@ -699,9 +737,14 @@ const withAuthSettings = (
     GOTRUE_MFA_TOTP_VERIFY_ENABLED: valueAt(state, "auth", "mfa.totp.verify_enabled"),
     GOTRUE_MFA_PHONE_ENROLL_ENABLED: valueAt(state, "auth", "mfa.phone.enroll_enabled"),
     GOTRUE_MFA_PHONE_VERIFY_ENABLED: valueAt(state, "auth", "mfa.phone.verify_enabled"),
-    GOTRUE_MFA_PHONE_OTP_LENGTH: valueAt(state, "auth", "mfa.phone.otp_length"),
-    GOTRUE_MFA_PHONE_TEMPLATE: valueAt(state, "auth", "mfa.phone.template"),
-    GOTRUE_MFA_PHONE_MAX_FREQUENCY: valueAt(state, "auth", "mfa.phone.max_frequency"),
+    ...(valueAt(state, "auth", "mfa.phone.enroll_enabled") === "true" ||
+    valueAt(state, "auth", "mfa.phone.verify_enabled") === "true"
+      ? {
+          GOTRUE_MFA_PHONE_OTP_LENGTH: valueAt(state, "auth", "mfa.phone.otp_length"),
+          GOTRUE_MFA_PHONE_TEMPLATE: valueAt(state, "auth", "mfa.phone.template"),
+          GOTRUE_MFA_PHONE_MAX_FREQUENCY: valueAt(state, "auth", "mfa.phone.max_frequency"),
+        }
+      : {}),
     GOTRUE_MFA_WEB_AUTHN_ENROLL_ENABLED: valueAt(state, "auth", "mfa.web_authn.enroll_enabled"),
     GOTRUE_MFA_WEB_AUTHN_VERIFY_ENABLED: valueAt(state, "auth", "mfa.web_authn.verify_enabled"),
     GOTRUE_MFA_MAX_ENROLLED_FACTORS: valueAt(state, "auth", "mfa.max_enrolled_factors"),
@@ -775,28 +818,38 @@ const withStorageSettings = (
 ): Record<string, string> =>
   compactEnvironment({
     ...common(workload, port),
-    ...capabilityEnv(state, "storage", "STORAGE"),
+    ...capabilityEnv(
+      state,
+      "storage",
+      "STORAGE",
+      (key) =>
+        key === "STORAGE_FILE_SIZE_LIMIT" ||
+        key.startsWith("STORAGE_S3_PROTOCOL_") ||
+        key.startsWith("STORAGE_VECTOR_") ||
+        key.startsWith("STORAGE_IMAGE_TRANSFORMATION_"),
+    ),
     PORT: String(port),
     ANON_KEY: secret(state, "secret:auth.settings.anon_key"),
     SERVICE_KEY: secret(state, "secret:auth.settings.service_role_key"),
     AUTH_JWT_SECRET: secret(state, "secret:auth.settings.jwt_secret"),
     DATABASE_URL: dbUrl(state, "supabase_storage_admin", runtime),
-    FILE_SIZE_LIMIT: valueAt(state, "storage", "file_size_limit") || "50MiB",
+    FILE_SIZE_LIMIT:
+      parseFileSize(valueAt(state, "storage", "file_size_limit") || "50MiB") ?? "52428800",
     STORAGE_BACKEND: "file",
     FILE_STORAGE_BACKEND_PATH:
       runtime === "container"
-        ? "/var/lib/storage"
+        ? "/mnt"
         : (inputs.storage?.dataPath ?? `${state.identity.projectRoot}/.supabase/storage`),
     STORAGE_FILE_BACKEND_PATH:
       runtime === "container"
-        ? "/var/lib/storage"
+        ? "/mnt"
         : (inputs.storage?.dataPath ?? `${state.identity.projectRoot}/.supabase/storage`),
     ENABLE_IMAGE_TRANSFORMATION:
       valueAt(state, "storage", "image_transformation.enabled") || "false",
     S3_PROTOCOL_ENABLED: valueAt(state, "storage", "s3_protocol.enabled") || "true",
-    S3_PROTOCOL_ACCESS_KEY_ID: "local",
-    S3_PROTOCOL_ACCESS_KEY_SECRET: "local-secret",
-    STORAGE_S3_REGION: "local",
+    S3_PROTOCOL_ACCESS_KEY_ID: valueAt(state, "storage", "s3_protocol.access_key_id") || "local",
+    S3_PROTOCOL_ACCESS_KEY_SECRET: valueAt(state, "storage", "s3_protocol.secret_access_key"),
+    STORAGE_S3_REGION: valueAt(state, "storage", "s3_protocol.region") || "local",
     GLOBAL_S3_BUCKET: "stub",
     TENANT_ID: "stub",
     S3_PROTOCOL_PREFIX: "/storage/v1",
@@ -808,8 +861,16 @@ const withStorageSettings = (
     TUS_URL_PATH: "/storage/v1/upload/resumable",
     IMGPROXY_URL:
       runtime === "container"
-        ? "http://supabase-imgproxy:8080"
-        : `http://127.0.0.1:${workloadPort(state, "storage:imgproxy", "primary", runtime, 8080)}`,
+        ? "http://supabase-imgproxy:5001"
+        : `http://127.0.0.1:${workloadPort(state, "storage:imgproxy", "primary", runtime, 5001)}`,
+    ...(valueAt(state, "storage", "vector.enabled") === "true"
+      ? {
+          VECTOR_ENABLED: "true",
+          VECTOR_BUCKET_PROVIDER: "pgvector",
+          VECTOR_STORE_MIGRATIONS_ENABLED: "true",
+          VECTOR_DATABASE_URL: dbUrl(state, "postgres", runtime),
+        }
+      : {}),
   });
 
 const databaseArgs = (
@@ -898,7 +959,7 @@ const specs: Readonly<Record<string, WorkloadRuntimeSpecDefinition>> = {
     networkAliases: [DATABASE_NETWORK_ALIAS],
   },
   "rest:rest": {
-    bindings: { primary: { containerPort: 3000 } },
+    bindings: { primary: { containerPort: 3000 }, admin: { containerPort: 3001 } },
     args: () => [],
     env: (state, workload, port, runtime = "native", inputs = {}) =>
       withRestSettings(state, runtime, port, workload, inputs),
@@ -925,7 +986,7 @@ const specs: Readonly<Record<string, WorkloadRuntimeSpecDefinition>> = {
         PORT: String(port),
         DB_HOST: dbHost(runtime),
         DB_PORT: String(runtime === "container" ? 5432 : dbPort(state)),
-        DB_USER: "postgres",
+        DB_USER: "supabase_admin",
         DB_PASSWORD: secret(state, "secret:database.internal.password"),
         DB_NAME: "postgres",
         DB_AFTER_CONNECT_QUERY: "SET search_path TO _realtime",
@@ -946,7 +1007,7 @@ const specs: Readonly<Record<string, WorkloadRuntimeSpecDefinition>> = {
       }),
     containerArgs: () => [],
     networkAliases: ["supabase-realtime"],
-    readiness: { protocol: "http", path: "/api/ping" },
+    readiness: { protocol: "http", path: "/api/ping", headers: { Host: "realtime-dev" } },
   },
   "storage:storage": {
     bindings: { primary: { containerPort: 5000 } },
@@ -958,12 +1019,15 @@ const specs: Readonly<Record<string, WorkloadRuntimeSpecDefinition>> = {
     readiness: { protocol: "http", path: "/status" },
   },
   "storage:imgproxy": {
-    bindings: { primary: { containerPort: 8080 } },
+    bindings: { primary: { containerPort: 5001 } },
     args: () => [],
-    env: (state, workload, port, runtime = "native") => ({
+    env: (state, workload, port, runtime = "native", inputs = {}) => ({
       ...common(workload, port),
       IMGPROXY_BIND: `${runtime === "container" ? "0.0.0.0" : "127.0.0.1"}:${port}`,
-      IMGPROXY_LOCAL_FILESYSTEM_ROOT: "/",
+      IMGPROXY_LOCAL_FILESYSTEM_ROOT:
+        runtime === "container"
+          ? "/"
+          : (inputs.storage?.dataPath ?? `${state.identity.projectRoot}/.supabase/storage`),
     }),
     containerArgs: () => [],
     networkAliases: ["supabase-imgproxy"],
@@ -1031,8 +1095,10 @@ const specs: Readonly<Record<string, WorkloadRuntimeSpecDefinition>> = {
         SUPABASE_PUBLIC_URL: apiGatewayUrl(state, runtime === "container" ? inputs : undefined),
         SUPABASE_ANON_KEY: secret(state, "secret:auth.settings.anon_key"),
         SUPABASE_SERVICE_KEY: secret(state, "secret:auth.settings.service_role_key"),
-        SUPABASE_PUBLISHABLE_KEY: secret(state, "secret:auth.settings.anon_key"),
-        SUPABASE_SECRET_KEY: secret(state, "secret:auth.settings.service_role_key"),
+        SUPABASE_PUBLISHABLE_KEY: secret(state, "secret:auth.settings.publishable_key"),
+        SUPABASE_SECRET_KEY: secret(state, "secret:auth.settings.secret_key"),
+        EDGE_FUNCTIONS_MANAGEMENT_FOLDER:
+          runtime === "container" ? FUNCTIONS_CONTAINER_ROOT : functionsRoot(state),
         OPENAI_API_KEY: secret(state, "secret:studio.settings.openai_api_key"),
         CURRENT_CLI_VERSION: "local",
         POSTGRES_PASSWORD: secret(state, "secret:database.internal.password"),
@@ -1042,6 +1108,9 @@ const specs: Readonly<Record<string, WorkloadRuntimeSpecDefinition>> = {
         PGRST_DB_MAX_ROWS: "1000",
       }),
     containerArgs: () => [],
+    containerMounts: (state) => [
+      { source: functionsRoot(state), target: FUNCTIONS_CONTAINER_ROOT, readOnly: true },
+    ],
     networkAliases: ["supabase-studio"],
     readiness: { protocol: "http", path: "/api/platform/profile" },
   },
@@ -1086,9 +1155,10 @@ const specs: Readonly<Record<string, WorkloadRuntimeSpecDefinition>> = {
   },
   "analytics:analytics": {
     bindings: { primary: { containerPort: 4000 } },
-    args: () => [],
+    args: () => ["start"],
     env: (state, workload, port, runtime = "native", inputs = {}) =>
       analyticsEnv(state, runtime, port, workload, inputs),
+    // The slim container entrypoint performs Logflare migrations before start.
     containerArgs: () => [],
     containerMounts: (state, _workload, inputs = {}) => {
       const backend = valueAt(state, "analytics", "backend") || "postgres";
@@ -1142,11 +1212,19 @@ const specs: Readonly<Record<string, WorkloadRuntimeSpecDefinition>> = {
     env: (state, workload, port, runtime = "native") => ({
       ...common(workload, port),
       ...capabilityEnv(state, "pooler", "POOLER"),
-      PORT: String(port),
-      PROXY_PORT_TRANSACTION: String(port),
+      PORT: "4000",
+      PROXY_PORT_SESSION:
+        runtime === "native" && valueAt(state, "pooler", "pool_mode") === "session"
+          ? String(port)
+          : "5432",
+      PROXY_PORT_TRANSACTION:
+        runtime === "native" && valueAt(state, "pooler", "pool_mode") !== "session"
+          ? String(port)
+          : "6543",
       DATABASE_URL: `ecto://postgres:${secret(state, "secret:database.internal.password")}@${dbHost(runtime)}:${runtime === "container" ? 5432 : dbPort(state)}/_supabase`,
       API_JWT_SECRET: secret(state, "secret:auth.settings.jwt_secret"),
       REGION: "local",
+      TENANT_ID: valueAt(state, "pooler", "tenant_id") || "pooler-dev",
       CLUSTER_POSTGRES: "true",
       SECRET_KEY_BASE: valueAt(state, "pooler", "secret_key_base"),
       VAULT_ENC_KEY: valueAt(state, "pooler", "encryption_key"),
@@ -1155,7 +1233,9 @@ const specs: Readonly<Record<string, WorkloadRuntimeSpecDefinition>> = {
       MAX_CLIENT_CONN: valueAt(state, "pooler", "max_client_conn") || "100",
       POOL_MODE: valueAt(state, "pooler", "pool_mode") || "transaction",
     }),
-    containerArgs: () => ["/bin/sh", "-c", "/app/bin/migrate && /app/bin/server"],
+    // The slim container entrypoint performs Supavisor migrations. Tenant
+    // provisioning is a separate owner/bootstrap phase.
+    containerArgs: () => [],
     networkAliases: ["supabase-pooler"],
     readiness: { protocol: "tcp" },
   },
@@ -1163,6 +1243,7 @@ const specs: Readonly<Record<string, WorkloadRuntimeSpecDefinition>> = {
 
 const WORKLOAD_BINDING_NAMES: ReadonlyArray<WorkloadBindingName> = [
   "primary",
+  "admin",
   "ui",
   "smtp",
   "pop3",
@@ -1216,7 +1297,11 @@ export const runtimeSpecFor = (workload: PlannedWorkload): WorkloadRuntimeSpec |
   const spec = specs[workload.id];
   if (spec === undefined) return undefined;
   const primary =
-    spec.bindings.primary ?? spec.bindings.ui ?? spec.bindings.smtp ?? spec.bindings.pop3;
+    spec.bindings.primary ??
+    spec.bindings.admin ??
+    spec.bindings.ui ??
+    spec.bindings.smtp ??
+    spec.bindings.pop3;
   if (primary === undefined) return undefined;
   return {
     ...spec,
@@ -1228,7 +1313,7 @@ export const runtimeSpecFor = (workload: PlannedWorkload): WorkloadRuntimeSpec |
         state,
         currentWorkload,
         runtime === "container"
-          ? primary.containerPort
+          ? containerPortFor(state, currentWorkload.id, "primary", primary.containerPort)
           : (privatePortFor(state, currentWorkload.id, "primary") ?? port),
         runtime,
       ),
@@ -1237,7 +1322,7 @@ export const runtimeSpecFor = (workload: PlannedWorkload): WorkloadRuntimeSpec |
         state,
         currentWorkload,
         runtime === "container"
-          ? primary.containerPort
+          ? containerPortFor(state, currentWorkload.id, "primary", primary.containerPort)
           : (privatePortFor(state, currentWorkload.id, spec.readiness.binding ?? "primary") ??
               port),
         runtime,
@@ -1269,8 +1354,19 @@ export const containerResolutionFor = (
   const spec = runtimeSpecFor(workload);
   if (spec === undefined) return undefined;
   return {
-    command: spec.containerArgs(state, workload, spec.containerPort, inputs),
-    env: spec.env(state, workload, spec.containerPort, "container", inputs),
+    command: spec.containerArgs(
+      state,
+      workload,
+      containerPortFor(state, workload.id, "primary", spec.containerPort),
+      inputs,
+    ),
+    env: spec.env(
+      state,
+      workload,
+      containerPortFor(state, workload.id, "primary", spec.containerPort),
+      "container",
+      inputs,
+    ),
     mounts: spec.containerMounts?.(state, workload, inputs) ?? [],
     networkAliases: [aliasFor(workload)],
     publications: declaredBindings(spec.bindings).flatMap(([binding, definition]) => {
@@ -1283,7 +1379,12 @@ export const containerResolutionFor = (
             {
               address: "127.0.0.1" as const,
               hostPort: assignment.port,
-              containerPort: definition.containerPort,
+              containerPort: containerPortFor(
+                state,
+                workload.id,
+                binding,
+                definition.containerPort,
+              ),
             },
           ];
     }),

@@ -15,6 +15,33 @@ const compile = (config: Parameters<typeof compileStack>[0]["config"]) =>
   );
 
 describe("complete workload catalog", () => {
+  it("keeps native releases paired with their canonical container images", () => {
+    expect(WORKLOAD_CATALOG["database:database"]).toMatchObject({
+      nativeVersion: "17.6.1.166",
+      containerImage: "ghcr.io/supabase/cli/postgres:17.6.1.166",
+      supportedNativeVersions: ["17.6.1.166"],
+    });
+    expect(WORKLOAD_CATALOG["auth:auth"]?.containerImage).toBe(
+      "ghcr.io/supabase/cli/auth:v2.196.0",
+    );
+    expect(WORKLOAD_CATALOG["realtime:realtime"]?.nativeVersion).toBe("v2.130.0");
+    expect(WORKLOAD_CATALOG["realtime:realtime"]?.containerImage).toBe(
+      "ghcr.io/supabase/cli/realtime:v2.130.0",
+    );
+    expect(WORKLOAD_CATALOG["storage:storage"]?.containerImage).toBe(
+      "ghcr.io/supabase/cli/storage:v1.71.0",
+    );
+    expect(WORKLOAD_CATALOG["studio:pgmeta"]?.containerImage).toBe(
+      "ghcr.io/supabase/cli/pgmeta:v0.98.0",
+    );
+    expect(WORKLOAD_CATALOG["analytics:analytics"]?.containerImage).toBe(
+      "ghcr.io/supabase/cli/analytics:v1.50.6",
+    );
+    expect(WORKLOAD_CATALOG["pooler:pooler"]?.containerImage).toBe(
+      "ghcr.io/supabase/cli/pooler:v2.9.12",
+    );
+  });
+
   it("matches the executable paths shipped by slim-services archives", () => {
     const expected = {
       "database:database": "share/supabase-cli/bin/supabase-postgres-init.sh",
@@ -135,7 +162,7 @@ describe("complete workload catalog", () => {
 
   it.live("derives native database artifacts from the planned release", () =>
     Effect.gen(function* () {
-      const compiled = yield* compile({ capabilities: { database: { version: "14" } } });
+      const compiled = yield* compile({ capabilities: { database: { version: "17" } } });
       const database = compiled.executionPlan.workloads.find(
         ({ id }) => id === "database:database",
       );
@@ -145,8 +172,8 @@ describe("complete workload catalog", () => {
         os: "linux",
         arch: "x64",
       });
-      expect(artifact.version).toBe("14.1.0.89");
-      expect(artifact.downloadUrl).toContain("postgres-14.1.0.89-linux-amd64.tar.zst");
+      expect(artifact.version).toBe("17.6.1.166");
+      expect(artifact.downloadUrl).toContain("postgres-17.6.1.166-linux-amd64.tar.zst");
     }),
   );
 
