@@ -1209,6 +1209,193 @@ describe("container runtime", () => {
       }),
   );
 
+  it.live("shares one owner volume across read-only and read-write workloads", () =>
+    Effect.gen(function* () {
+      const state: FakeContainerState = {
+        resources: [],
+        imagePresent: true,
+        calls: [],
+        createdSpecs: [],
+        nextId: 1,
+      };
+      const ownerKey: RuntimeWorkloadKey = {
+        ...key,
+        workloadId: "storage:storage",
+        specHash: "storage-hash",
+      };
+      const secondaryKey: RuntimeWorkloadKey = {
+        ...key,
+        workloadId: "storage:imgproxy",
+        specHash: "imgproxy-hash",
+      };
+      const ownerWorkload = {
+        ...workload(),
+        id: ownerKey.workloadId,
+        capability: "storage" as const,
+      };
+      const secondaryWorkload = {
+        ...workload(),
+        id: secondaryKey.workloadId,
+        capability: "storage" as const,
+      };
+      const ownerWorkloadId = ownerKey.workloadId;
+      const runtime = yield* makeContainerRuntime({
+        engine: fakeContainerEngine(state),
+        ownerSessionId: "owner-session",
+        resolveWorkload: (requestKey) =>
+          Effect.succeed({
+            volume:
+              requestKey.workloadId === ownerWorkloadId
+                ? { target: "/var/lib/storage", readOnly: false, ownerWorkloadId }
+                : { target: "/mnt", readOnly: true, ownerWorkloadId },
+          }),
+      });
+
+      // A read-only dependent can materialize and own the shared volume first.
+      yield* runtime.start(secondaryKey, secondaryWorkload);
+      yield* runtime.start(ownerKey, ownerWorkload);
+
+      const expectedVolume = `supabase-${stackId}-${ownerWorkloadId.replace(/[^A-Za-z0-9_.-]/g, "-")}-volume`;
+      expect(state.resources.filter((resource) => resource.kind === "volume")).toHaveLength(1);
+      expect(state.resources.find((resource) => resource.kind === "volume")?.name).toBe(
+        expectedVolume,
+      );
+      expect(state.calls.filter((call) => call.startsWith("create-volume:"))).toEqual([
+        `create-volume:${expectedVolume}`,
+      ]);
+      expect(state.createdSpecs.map((spec) => spec.volumeMounts[0])).toEqual([
+        { volume: expectedVolume, target: "/mnt", readOnly: true },
+        { volume: expectedVolume, target: "/var/lib/storage", readOnly: false },
+      ]);
+
+      yield* runtime.stop(secondaryKey);
+      yield* runtime.stop(ownerKey);
+      expect(state.resources.filter((resource) => resource.kind === "volume")).toHaveLength(1);
+      const sharedVolume = state.resources.find((resource) => resource.kind === "volume");
+      expect(sharedVolume).toBeDefined();
+      if (sharedVolume === undefined) return;
+      yield* runtime.cleanup({ stackId, destroy: true });
+      expect(state.calls.filter((call) => call.startsWith("remove-volume:"))).toEqual([
+        `remove-volume:${sharedVolume.id}`,
+      ]);
+    }),
+  );
+
+  it.live("recovers an exact shared owner volume and destroys it once", () =>
+    Effect.gen(function* () {
+      const ownerWorkloadId = "storage:storage";
+      const secondaryWorkloadId = "storage:imgproxy";
+      const ownerSpecHash = "storage-hash";
+      const secondarySpecHash = "imgproxy-hash";
+      const ownerWorkload = {
+        ...workload(),
+        id: ownerWorkloadId,
+        capability: "storage" as const,
+        specHash: ownerSpecHash,
+      };
+      const secondaryWorkload = {
+        ...workload(),
+        id: secondaryWorkloadId,
+        capability: "storage" as const,
+        specHash: secondarySpecHash,
+      };
+      const sharedVolumeName = `supabase-${stackId}-${ownerWorkloadId.replace(/[^A-Za-z0-9_.-]/g, "-")}-volume`;
+      const state: FakeContainerState = {
+        resources: [
+          {
+            id: "shared-network",
+            name: "shared-network",
+            kind: "network",
+            labels: {
+              stackId,
+              ownerSessionId: "previous-owner",
+              desiredGeneration: key.desiredGeneration,
+              role: "network",
+            },
+          },
+          {
+            id: "shared-volume",
+            name: sharedVolumeName,
+            kind: "volume",
+            labels: { stackId, workloadId: ownerWorkloadId, role: "volume" },
+          },
+          {
+            id: "storage-container",
+            name: "storage-container",
+            kind: "workload",
+            state: "running",
+            labels: {
+              stackId,
+              ownerSessionId: "previous-owner",
+              desiredGeneration: key.desiredGeneration,
+              workloadId: ownerWorkloadId,
+              specHash: ownerSpecHash,
+              role: "workload",
+            },
+          },
+          {
+            id: "imgproxy-container",
+            name: "imgproxy-container",
+            kind: "workload",
+            state: "running",
+            labels: {
+              stackId,
+              ownerSessionId: "previous-owner",
+              desiredGeneration: key.desiredGeneration,
+              workloadId: secondaryWorkloadId,
+              specHash: secondarySpecHash,
+              role: "workload",
+            },
+          },
+        ],
+        imagePresent: true,
+        calls: [],
+        createdSpecs: [],
+        nextId: 1,
+      };
+      const runtime = yield* makeContainerRuntime({
+        engine: fakeContainerEngine(state),
+        ownerSessionId: "new-owner",
+        resolveWorkload: (requestKey) =>
+          Effect.succeed({
+            volume:
+              requestKey.workloadId === ownerWorkloadId
+                ? { target: "/var/lib/storage", readOnly: false, ownerWorkloadId }
+                : { target: "/mnt", readOnly: true, ownerWorkloadId },
+          }),
+      });
+      const plan = recoveryPlan([ownerWorkload, secondaryWorkload]);
+      const observed = yield* runtime.recover({
+        stackId,
+        desiredGeneration: key.desiredGeneration,
+        desiredLifecycle: "running",
+        plan,
+      });
+      expect(observed).toHaveLength(2);
+      expect(observed.map(({ workloadId }) => workloadId)).toEqual(
+        expect.arrayContaining([ownerWorkloadId, secondaryWorkloadId]),
+      );
+      expect(state.calls.some((call) => call.startsWith("create-volume:"))).toBe(false);
+      yield* runtime.start(
+        { ...key, workloadId: ownerWorkloadId, specHash: ownerSpecHash },
+        ownerWorkload,
+      );
+      yield* runtime.start(
+        { ...key, workloadId: secondaryWorkloadId, specHash: secondarySpecHash },
+        secondaryWorkload,
+      );
+      expect(state.calls.some((call) => call.startsWith("create-volume:"))).toBe(false);
+      yield* runtime.cleanup({ stackId, destroy: false });
+      expect(state.resources.some((resource) => resource.id === "shared-volume")).toBe(true);
+      const volumeId = state.resources.find((resource) => resource.id === "shared-volume")?.id;
+      yield* runtime.cleanup({ stackId, destroy: true });
+      expect(state.calls.filter((call) => call.startsWith("remove-volume:"))).toEqual([
+        `remove-volume:${volumeId}`,
+      ]);
+      expect(state.resources.some((resource) => resource.id === "shared-volume")).toBe(false);
+    }),
+  );
+
   it.live(
     "cleans up a newly created container when readiness fails and keeps the original cause",
     () =>

@@ -80,6 +80,8 @@ export interface ContainerPortPublicationInput {
 export interface ContainerVolumeRequest {
   readonly target: string;
   readonly readOnly: boolean;
+  /** Stable logical workload that owns the persistent volume. Defaults to the mounting workload. */
+  readonly ownerWorkloadId?: string;
 }
 
 export interface ContainerRuntimeResourceIds {
@@ -125,22 +127,30 @@ const workloadLabelsFor = (
   specHash: key.specHash,
   role: "workload",
 });
-const volumeLabelsFor = (key: RuntimeWorkloadKey): ContainerVolumeLabels => ({
+const volumeOwnerFor = (key: RuntimeWorkloadKey, request: ContainerVolumeRequest): string =>
+  request.ownerWorkloadId ?? key.workloadId;
+const volumeLabelsFor = (
+  key: RuntimeWorkloadKey,
+  request: ContainerVolumeRequest,
+): ContainerVolumeLabels => ({
   stackId: key.stackId,
-  workloadId: key.workloadId,
+  workloadId: volumeOwnerFor(key, request),
   role: "volume",
 });
-const volumeNameFor = (key: RuntimeWorkloadKey): string =>
-  `supabase-${key.stackId}-${key.workloadId.replace(/[^A-Za-z0-9_.-]/g, "-")}-volume`;
-const volumeSpecFor = (key: RuntimeWorkloadKey): ContainerVolumeSpec => ({
-  name: volumeNameFor(key),
-  labels: volumeLabelsFor(key),
+const volumeNameFor = (key: RuntimeWorkloadKey, ownerWorkloadId: string): string =>
+  `supabase-${key.stackId}-${ownerWorkloadId.replace(/[^A-Za-z0-9_.-]/g, "-")}-volume`;
+const volumeSpecFor = (
+  key: RuntimeWorkloadKey,
+  request: ContainerVolumeRequest,
+): ContainerVolumeSpec => ({
+  name: volumeNameFor(key, volumeOwnerFor(key, request)),
+  labels: volumeLabelsFor(key, request),
 });
 const volumeMountFor = (
   key: RuntimeWorkloadKey,
   request: ContainerVolumeRequest,
 ): ContainerVolumeMount => ({
-  volume: volumeNameFor(key),
+  volume: volumeNameFor(key, volumeOwnerFor(key, request)),
   target: request.target,
   readOnly: request.readOnly,
 });
@@ -360,7 +370,8 @@ export const makeContainerRuntime = (
         if (volumeRequest !== undefined && volumeRequest.target.length === 0)
           return yield* toDriverError(key, new Error("Container volume mapping is invalid"));
         const entries = yield* withEngine(key, options.engine.listResources(key.stackId));
-        const volumeSpec = volumeRequest === undefined ? undefined : volumeSpecFor(key);
+        const volumeSpec =
+          volumeRequest === undefined ? undefined : volumeSpecFor(key, volumeRequest);
         if (volumeSpec !== undefined) {
           const volume = volumeSpec;
           const exact = entries.find(

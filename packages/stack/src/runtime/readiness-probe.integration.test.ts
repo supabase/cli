@@ -74,7 +74,11 @@ describe("private endpoint readiness probe", () => {
 
   it.live("rejects invalid readiness header names and values", () =>
     Effect.gen(function* () {
-      for (const headers of [{ "bad name": "ok" }, { Host: "bad\nvalue" }]) {
+      const cases: ReadonlyArray<Readonly<Record<string, string>>> = [
+        { "bad name": "ok" },
+        { Host: "bad\nvalue" },
+      ];
+      for (const headers of cases) {
         const result = yield* probeReadiness({
           mode: "http",
           host: "127.0.0.1",
