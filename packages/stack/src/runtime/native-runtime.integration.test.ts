@@ -55,6 +55,31 @@ const withPlatform = <A, E, R>(effect: Effect.Effect<A, E, R>) =>
   Effect.scoped(effect).pipe(Effect.provide(NodeServices.layer));
 
 describe("native runtime", () => {
+  it.live("rejects container artifacts before invoking native process resolution", () =>
+    withPlatform(
+      Effect.gen(function* () {
+        let resolved = false;
+        const runtime = yield* makeNativeRuntime({
+          resolveProcess: () =>
+            Effect.sync(() => {
+              resolved = true;
+              return fixtureProcess("unexpected");
+            }),
+          waitForReadiness: () => Effect.void,
+        });
+        const containerSelected = workload("container");
+        const result = yield* runtime
+          .start(keyFor("container"), {
+            ...containerSelected,
+            selected: containerSelected.artifacts.container,
+          })
+          .pipe(Effect.exit);
+        expect(Exit.isFailure(result)).toBe(true);
+        expect(resolved).toBe(false);
+      }),
+    ),
+  );
+
   it.live("starts, captures redacted output, and terminates exact workloads", () =>
     withPlatform(
       Effect.gen(function* () {

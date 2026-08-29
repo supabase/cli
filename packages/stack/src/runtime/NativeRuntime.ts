@@ -1,5 +1,6 @@
 import { Cause, Deferred, Effect, Exit, Fiber, Ref, Scope, Semaphore, Stream } from "effect";
 import { ChildProcessSpawner } from "effect/unstable/process";
+import type { ExitCode } from "effect/unstable/process/ChildProcessSpawner";
 import type * as ChildProcessSpawnerService from "effect/unstable/process/ChildProcessSpawner";
 import type { DatabaseBootstrapOptions, DatabaseSession } from "../model/DatabaseBootstrap.ts";
 import { runDatabaseBootstrap } from "../model/DatabaseBootstrap.ts";
@@ -178,9 +179,13 @@ export const makeNativeRuntime = (
         ),
       );
 
-    const watchProcess = (resource: Resource, process: NativeProcess) =>
+    const watchProcess = (
+      resource: Resource,
+      process: NativeProcess,
+      exitCode: Effect.Effect<ExitCode, NativeProcessError>,
+    ) =>
       Effect.gen(function* () {
-        const result = yield* process.exitCode.pipe(Effect.exit);
+        const result = yield* exitCode.pipe(Effect.exit);
         const next: ObservedWorkload = Exit.isSuccess(result)
           ? {
               ...resource.key,
@@ -197,6 +202,12 @@ export const makeNativeRuntime = (
         yield* Ref.update(resource.state, (current): ObservedWorkload =>
           current.state === "failed" ? current : next,
         );
+        if (Exit.isFailure(result) && !resource.stopRequested) {
+          yield* Deferred.fail(
+            resource.failure,
+            driverError(resource.key, `Native workload exited before readiness`, result.cause),
+          );
+        }
       }).pipe(Effect.ignore);
 
     const reportLogFailure = (
@@ -243,10 +254,11 @@ export const makeNativeRuntime = (
             Effect.mapError((error) => processError(error, key, "spawn")),
           );
           resource.process = process;
-          yield* Effect.forkIn(watchProcess(resource, process), resource.scope);
+          const exitCode = yield* Effect.cached(process.exitCode);
+          yield* Effect.forkIn(watchProcess(resource, process, exitCode), resource.scope);
           yield* attachLogs(resource, process);
           const readiness = options.waitForReadiness;
-          const exitedBeforeReady = process.exitCode.pipe(
+          const exitedBeforeReady = exitCode.pipe(
             Effect.flatMap((code) =>
               Effect.fail(
                 driverError(
@@ -322,8 +334,16 @@ export const makeNativeRuntime = (
     const start = (
       key: RuntimeWorkloadKey,
       workload: NativeWorkload,
-    ): Effect.Effect<ObservedWorkload, RuntimeDriverError> =>
-      Effect.flatMap(
+    ): Effect.Effect<ObservedWorkload, RuntimeDriverError> => {
+      if (workload.selected.kind === "container")
+        return Effect.fail(
+          new RuntimeDriverError({
+            message: "Native runtime cannot start a container artifact",
+            stackId: key.stackId,
+            workloadId: key.workloadId,
+          }),
+        );
+      return Effect.flatMap(
         lifecycle.withPermit(
           Effect.gen(function* () {
             const id = resourceKey(key);
@@ -357,6 +377,7 @@ export const makeNativeRuntime = (
         ),
         (resource) => Deferred.await(resource.result),
       );
+    };
 
     const observe = (
       stackId: StackId,

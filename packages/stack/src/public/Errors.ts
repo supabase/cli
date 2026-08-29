@@ -141,6 +141,7 @@ export type CreateStackError =
   | InvalidProjectRootError
   | StackOwnershipConflictError
   | StackRuntimeMismatchError
+  | ContainerEngineError
   | StackStateInvalidError
   | StackStateFormatUnsupportedError
   | StackUpgradeRequiredError;

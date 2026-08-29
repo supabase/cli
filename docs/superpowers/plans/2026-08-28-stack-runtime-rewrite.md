@@ -418,7 +418,7 @@ artifact keys, state schemas, drivers, or control protocols.
   ports, network, secrets, or workload mutation.
 - `NativeRuntime` implements `RuntimeDriver` with exact process-tree ownership. Database bootstrap is
   a post-probe readiness phase on the real database workload, not a synthetic workload. Task 7 defines
-  the release-plan resolver and PostgreSQL runner; Task 14 supplies each supported release's concrete
+  the release-plan resolver and PostgreSQL runner; Task 13 supplies each supported release's concrete
   ordered revision catalog. Applied revisions live inside PostgreSQL only and gate every database
   dependent on completion. Gateway listener ownership and native transfer belong to Task 8, where the
   gateway contract is implemented; Task 7 does not add a speculative listener interface.
@@ -529,20 +529,20 @@ artifact keys, state schemas, drivers, or control protocols.
   persistent volumes, gateway publication, read-only activation/config files, and exact cleanup.
 - No native process is started for a container identity and no container is created for native.
 
-- [ ] **Step 1: Write controlled engine integration scenarios and verify RED**
+- [x] **Step 1: Write controlled engine integration scenarios and verify RED**
 
   Cover platform alias selection (`host.docker.internal`, Linux host-gateway,
   `host.containers.internal`), unsupported routing preflight, gateway-only host publication, private
   backend endpoints, engine bind races, semantic-hash adoption, stale removal, persistent volumes,
   strict runtime split, and lazy Functions edits through the mounted root.
 
-- [ ] **Step 2: Implement the smallest engine contract**
+- [x] **Step 2: Implement the smallest engine contract**
 
   Model only inspect/pull/create/start/stop/remove/network/volume operations actually used by the
   execution plan. Parse exact structured engine output and map failures at the leaf boundary. Do not
   build a general container SDK.
 
-- [ ] **Step 3: Verify and commit**
+- [x] **Step 3: Verify and commit**
 
   Run `container-runtime.integration.test.ts` against controlled Docker and Podman adapters, stack
   type-check, and commit:
@@ -636,7 +636,40 @@ artifact keys, state schemas, drivers, or control protocols.
   git commit -m "feat(stack): expose facades and migrate the CLI"
   ```
 
-### Task 13: Deferred final database reset session
+### Task 13: Complete catalog and platform coverage
+
+**Files:**
+
+- Modify: every capability Module and catalog mapping
+- Create: only the integration fixtures needed to exercise missing native/container mappings
+
+**Interfaces:**
+
+- Completes all ten capabilities with exhaustive settings and real native/container artifacts.
+- Does not add new public lifecycle concepts or a second Functions-serving path.
+
+- [ ] **Step 1: Audit capability and platform coverage**
+
+  Build the requirement-to-source/test table in the tracked progress document. For every capability,
+  identify exhaustive settings coverage, exact native and container artifacts, dependency edges,
+  ports, secrets, routes, probes, and activation behavior.
+
+- [ ] **Step 2: Fill only demonstrated gaps test-first**
+
+  Exercise at least one native and one container preparation/execution mapping per capability. Keep
+  Functions exclusively on the managed Edge Runtime and reject unsupported exact artifacts before
+  durable or runtime mutation.
+
+- [ ] **Step 3: Verify and commit**
+
+  Run only the affected catalog/compiler/runtime integration files and stack type-check. Commit:
+
+  ```bash
+  git add packages/stack docs/superpowers/plans/2026-08-28-stack-runtime-rewrite-progress.md
+  git commit -m "feat(stack): complete the workload catalog"
+  ```
+
+### Task 14: Deferred final database reset session
 
 **Files:**
 
@@ -677,30 +710,33 @@ artifact keys, state schemas, drivers, or control protocols.
   git commit -m "feat(stack): add caller-driven database reset sessions"
   ```
 
-### Task 14: Final catalog, documentation, and completion audit
+This is the last behavioral implementation task. Do not begin it until the runtime, complete
+catalog, managed Functions path, Promise facade, and CLI migration are stable.
+
+### Final documentation and completion audit
 
 **Files:**
 
-- Modify: every capability Module/catalog mapping, package README and architecture docs, tracked
-  progress, CLI docs/help affected by the new lifecycle
+- Modify: package README and architecture docs, tracked progress, public export metadata, and CLI
+  docs/help affected by the new lifecycle
 - Create: a small set of stack/CLI e2e smoke files only where real compiled subprocess/container
   boundaries are not covered by integration tests
 
 **Interfaces:**
 
-- Delivers all ten capabilities with full settings and real native/container artifacts, public exports
-  limited to `.`, `./effect`, and `./testing`, and no process-compose or legacy stack surface.
+- Confirms all ten capabilities and the final reset session, limits public exports to `.`,
+  `./effect`, and `./testing`, and leaves no process-compose or legacy stack surface.
 
 - [ ] **Step 1: Audit every spec requirement against authoritative evidence**
 
   Build a requirement-to-test/source table in the tracked progress document. Missing or indirect
   evidence is incomplete work, not a pass.
 
-- [ ] **Step 2: Fill catalog/platform gaps test-first**
+- [ ] **Step 2: Fill audit gaps test-first**
 
-  For every capability, exercise at least one native and one container preparation/execution mapping;
-  run only the newly relevant platform files. Add the smallest compiled CLI smoke for start/status/
-  stop and managed Functions serving.
+  Treat any missing catalog/platform evidence as incomplete Task 13 work and any missing reset-flow
+  evidence as incomplete Task 14 work. Add the smallest compiled CLI smoke for start/status/stop and
+  managed Functions serving.
 
 - [ ] **Step 3: Run final targeted verification**
 

@@ -29,6 +29,39 @@ The package must let callers:
 The package does not parse `config.toml`, run project migrations or seeds, expose Compose, or act as
 a general process orchestrator. The CLI resolves its configuration and calls the package API.
 
+## Settled design decisions
+
+These decisions are closed for this rewrite:
+
+- `createStack` returns an ordinary managed handle. A separate testing helper creates, starts, and
+  destroys an isolated stack and is the only API designed for `await using`.
+- Only managed stacks are supported. There is no foreground/unmanaged ownership mode.
+- A materialized definition persists every resolved value, including defaults and explicit
+  absences. Reopening a stack therefore never reinterprets old state through newer defaults.
+- Calling `start` on an already-running stack is idempotent only for the same materialized input.
+  Incompatible input fails with guidance to use explicit `restart`; it is never applied on top of a
+  running stack.
+- Lazy activation is mandatory. Once activated, a capability remains active for that generation;
+  there is no idle eviction.
+- Native and container stacks are strictly separate, and every catalog workload has both a native
+  and a container artifact. One stack identity can never mix them.
+- Functions have exactly one serving path: the stack-owned Edge Runtime. This applies to normal
+  stack traffic and `supabase functions serve`; there is no separate Docker or standalone serving
+  workflow. `functionsRoot` is the only host root and the only read-only container mount, and every
+  resolved path must remain beneath it.
+- The Promise facade exposes secret-bearing values as plain strings. Redacted values remain an
+  Effect-side concern.
+- Each capability accepts the complete set of supported per-service settings; the compiler rejects
+  unknown fields and persists the complete resolved result.
+- Database version selection resolves only to an exact database artifact supported by the catalog.
+  An unknown selector fails before mutation. Internal bootstrap revisions are implementation-owned,
+  ordered steps selected by that exact artifact; they are not a second public version input.
+- Corrupt durable state fails closed. Logs redact every exact known secret and never persist or emit
+  full secret environments, files, or arguments.
+- There is no all-in-one `resetDatabase` operation. Stack owns lifecycle fencing, data recreation,
+  and internal bootstrap; the caller owns migrations, declarative schemas, and seeds through the
+  narrow reset-session API designed in the final behavioral slice of the rewrite.
+
 The design follows the object-level separation used by Docker without copying its CLI:
 
 ```text
@@ -112,14 +145,7 @@ type CapabilityName =
   | "pooler";
 
 type CapabilityState =
-  | "disabled"
-  | "dormant"
-  | "preparing"
-  | "starting"
-  | "ready"
-  | "stopping"
-  | "stopped"
-  | "failed";
+  "disabled" | "dormant" | "preparing" | "starting" | "ready" | "stopping" | "stopped" | "failed";
 
 type StackLifecycle =
   | "unconfigured"
@@ -298,7 +324,10 @@ type ListenerConfig =
 
 ```ts
 interface EffectStackCredentials {
-  readonly database: { readonly url: Redacted.Redacted<string>; readonly password: Redacted.Redacted<string> };
+  readonly database: {
+    readonly url: Redacted.Redacted<string>;
+    readonly password: Redacted.Redacted<string>;
+  };
   readonly api: {
     readonly publishableKey: string;
     readonly secretKey: Redacted.Redacted<string>;
@@ -329,11 +358,25 @@ interface PromiseStackCredentials {
   };
 }
 
-interface StartStackOptions { readonly config?: StackConfig }
-interface PrepareStackOptions { readonly config?: StackConfig; readonly capabilities?: ReadonlyArray<CapabilityName> }
-interface CreateStackOptions { readonly projectRoot: string; readonly name?: string; readonly runtime?: StackRuntimePreference }
-interface FindStackOptions { readonly projectRoot: string; readonly name?: string }
-interface ListStacksOptions { readonly projectRoot?: string }
+interface StartStackOptions {
+  readonly config?: StackConfig;
+}
+interface PrepareStackOptions {
+  readonly config?: StackConfig;
+  readonly capabilities?: ReadonlyArray<CapabilityName>;
+}
+interface CreateStackOptions {
+  readonly projectRoot: string;
+  readonly name?: string;
+  readonly runtime?: StackRuntimePreference;
+}
+interface FindStackOptions {
+  readonly projectRoot: string;
+  readonly name?: string;
+}
+interface ListStacksOptions {
+  readonly projectRoot?: string;
+}
 
 /** Generated Promise counterpart: every Redacted<string> leaf is a plain string. */
 type PromiseStackConfig = GeneratedPromiseStackConfig;
@@ -343,14 +386,22 @@ type PromisePrepareStackOptions = {
   readonly capabilities?: ReadonlyArray<CapabilityName>;
 };
 
-interface PreparedCapability { readonly capability: CapabilityName; readonly version: string; readonly outcome: "cached" | "downloaded" | "pulled" }
-interface PrepareStackResult { readonly capabilities: ReadonlyArray<PreparedCapability> }
+interface PreparedCapability {
+  readonly capability: CapabilityName;
+  readonly version: string;
+  readonly outcome: "cached" | "downloaded" | "pulled";
+}
+interface PrepareStackResult {
+  readonly capabilities: ReadonlyArray<PreparedCapability>;
+}
 
 interface EffectStack {
   readonly id: StackId;
   readonly status: () => Effect.Effect<StackStatus, StackStatusError>;
   readonly credentials: () => Effect.Effect<EffectStackCredentials, StackCredentialsError>;
-  readonly prepare: (options?: PrepareStackOptions) => Effect.Effect<PrepareStackResult, StackPreparationError>;
+  readonly prepare: (
+    options?: PrepareStackOptions,
+  ) => Effect.Effect<PrepareStackResult, StackPreparationError>;
   readonly start: (options?: StartStackOptions) => Effect.Effect<StackStatus, StackStartError>;
   readonly restart: (options?: StartStackOptions) => Effect.Effect<StackStatus, StackRestartError>;
   readonly stop: () => Effect.Effect<void, StackStopError>;
@@ -360,11 +411,19 @@ interface EffectStack {
   readonly logs: (options?: LogOptions) => Stream.Stream<StackLogEntry, StackLogsError>;
 }
 
-function createStack(options: CreateStackOptions): Effect.Effect<EffectStack, CreateStackError, Scope.Scope>;
+function createStack(
+  options: CreateStackOptions,
+): Effect.Effect<EffectStack, CreateStackError, Scope.Scope>;
 function openStack(id: StackId): Effect.Effect<EffectStack, OpenStackError, Scope.Scope>;
-function findStack(options: FindStackOptions): Effect.Effect<Option.Option<StackDescriptor>, StackDiscoveryError>;
-function listStacks(options?: ListStacksOptions): Effect.Effect<ReadonlyArray<StackDescriptor>, StackDiscoveryError>;
-function inspectStack(id: StackId): Effect.Effect<StackInspection, StackNotFoundError | StackDiscoveryError>;
+function findStack(
+  options: FindStackOptions,
+): Effect.Effect<Option.Option<StackDescriptor>, StackDiscoveryError>;
+function listStacks(
+  options?: ListStacksOptions,
+): Effect.Effect<ReadonlyArray<StackDescriptor>, StackDiscoveryError>;
+function inspectStack(
+  id: StackId,
+): Effect.Effect<StackInspection, StackNotFoundError | StackDiscoveryError>;
 
 declare namespace PromiseApi {
   interface Stack {
@@ -478,8 +537,7 @@ interface MaterializedCapability<Settings> {
 }
 
 /** Generated closed settings with every default applied and each secret leaf replaced by a slot. */
-type MaterializedSettings<Name extends CapabilityName> =
-  GeneratedMaterializedSettingsSchema<Name>;
+type MaterializedSettings<Name extends CapabilityName> = GeneratedMaterializedSettingsSchema<Name>;
 type MaterializedListenersConfig = GeneratedMaterializedListenersSchema;
 type MaterializedSecurityConfig = GeneratedMaterializedSecuritySchema;
 
@@ -709,8 +767,7 @@ ports, creates networks, starts workloads, or changes durable state.
 
 ```ts
 type PortIntent =
-  | { readonly kind: "automatic" }
-  | { readonly kind: "exact"; readonly port: number };
+  { readonly kind: "automatic" } | { readonly kind: "exact"; readonly port: number };
 
 interface HostPortAssignment {
   readonly field: PortField;

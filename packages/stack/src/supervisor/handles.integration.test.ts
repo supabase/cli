@@ -27,7 +27,13 @@ import { readOwnerMetadata, StackRuntimeEnvironment } from "../state/Ownership.t
 import { makeControlClient } from "../control/ControlServer.ts";
 import { resolveStackPaths } from "../state/Paths.ts";
 import { STACK_RPC_RELEASE } from "../control/StackRpc.ts";
-import { StackUpgradeRequiredError } from "../public/Errors.ts";
+import {
+  ContainerEngineError,
+  StackRuntimeMismatchError,
+  StackUpgradeRequiredError,
+} from "../public/Errors.ts";
+import { ContainerEngineProtocolError } from "../runtime/ContainerEngine.ts";
+import { ContainerEngineResolver } from "../runtime/ContainerEngineResolver.ts";
 
 const withRuntimeRoot = <A, E, R>(effect: (project: string) => Effect.Effect<A, E, R>) =>
   Effect.scoped(
@@ -98,6 +104,204 @@ const quoteModuleSpecifier = (value: string): string =>
   `'${value.replaceAll("\\", "\\\\").replaceAll("'", "\\'")}'`;
 
 describe("managed stack handles", () => {
+  it.live("resolves a new automatic container identity and persists Docker", () =>
+    withRuntimeRoot((project) =>
+      Effect.gen(function* () {
+        const calls: string[] = [];
+        const resolver = {
+          resolve: (preference: "auto" | "docker" | "podman") =>
+            Effect.sync(() => {
+              calls.push(preference);
+              return "docker" as const;
+            }),
+        };
+        const stack = yield* createStack({
+          projectRoot: project,
+          runtime: { kind: "container", engine: "auto" },
+        }).pipe(Effect.provideService(ContainerEngineResolver, resolver));
+        expect(calls).toEqual(["auto"]);
+        expect(
+          (yield* findStack({ projectRoot: project })).pipe(Option.getOrUndefined)?.runtime,
+        ).toEqual({ kind: "container", engine: "docker" });
+        yield* stack.close();
+      }),
+    ),
+  );
+
+  it.live("selects and persists Podman when the automatic resolver falls back", () =>
+    withRuntimeRoot((project) =>
+      Effect.gen(function* () {
+        const calls: string[] = [];
+        const resolver = {
+          resolve: (preference: "auto" | "docker" | "podman") =>
+            Effect.sync(() => {
+              calls.push(preference);
+              return "podman" as const;
+            }),
+        };
+        const stack = yield* createStack({
+          projectRoot: project,
+          runtime: { kind: "container", engine: "auto" },
+        }).pipe(Effect.provideService(ContainerEngineResolver, resolver));
+        expect(calls).toEqual(["auto"]);
+        expect(
+          (yield* findStack({ projectRoot: project })).pipe(Option.getOrUndefined)?.runtime,
+        ).toEqual({ kind: "container", engine: "podman" });
+        yield* stack.close();
+      }),
+    ),
+  );
+
+  it.live("maps an automatic engine daemon failure and does not fall through in createStack", () =>
+    withRuntimeRoot((project) =>
+      Effect.gen(function* () {
+        const calls: string[] = [];
+        const resolver = {
+          resolve: (preference: "auto" | "docker" | "podman") =>
+            Effect.sync(() => {
+              calls.push(preference);
+            }).pipe(
+              Effect.andThen(
+                Effect.fail(
+                  new ContainerEngineProtocolError({
+                    operation: "probe",
+                    message: "Docker daemon unavailable",
+                  }),
+                ),
+              ),
+            ),
+        };
+        const result = yield* createStack({
+          projectRoot: project,
+          runtime: { kind: "container", engine: "auto" },
+        }).pipe(Effect.provideService(ContainerEngineResolver, resolver), Effect.exit);
+        expect(Exit.isFailure(result)).toBe(true);
+        if (Exit.isFailure(result)) {
+          const error = Option.getOrUndefined(Cause.findErrorOption(result.cause));
+          expect(error).toBeInstanceOf(ContainerEngineError);
+        }
+        expect(calls).toEqual(["auto"]);
+      }),
+    ),
+  );
+
+  it.live("probes only explicitly requested Podman", () =>
+    withRuntimeRoot((project) =>
+      Effect.gen(function* () {
+        const calls: string[] = [];
+        const resolver = {
+          resolve: (preference: "auto" | "docker" | "podman") =>
+            Effect.sync(() => {
+              calls.push(preference);
+              return "podman" as const;
+            }),
+        };
+        const stack = yield* createStack({
+          projectRoot: project,
+          runtime: { kind: "container", engine: "podman" },
+        }).pipe(Effect.provideService(ContainerEngineResolver, resolver));
+        expect(calls).toEqual(["podman"]);
+        yield* stack.close();
+      }),
+    ),
+  );
+
+  it.live("reuses a persisted engine for automatic create without probing again", () =>
+    withRuntimeRoot((project) =>
+      Effect.gen(function* () {
+        const firstCalls: string[] = [];
+        const firstResolver = {
+          resolve: (preference: "auto" | "docker" | "podman") =>
+            Effect.sync(() => {
+              firstCalls.push(preference);
+              return "podman" as const;
+            }),
+        };
+        const first = yield* createStack({
+          projectRoot: project,
+          runtime: { kind: "container", engine: "podman" },
+        }).pipe(Effect.provideService(ContainerEngineResolver, firstResolver));
+        yield* first.close();
+        const secondCalls: string[] = [];
+        const secondResolver = {
+          resolve: (preference: "auto" | "docker" | "podman") =>
+            Effect.sync(() => {
+              secondCalls.push(preference);
+              return "docker" as const;
+            }),
+        };
+        const second = yield* createStack({
+          projectRoot: project,
+          runtime: { kind: "container", engine: "auto" },
+        }).pipe(Effect.provideService(ContainerEngineResolver, secondResolver));
+        expect(firstCalls).toEqual(["podman"]);
+        expect(secondCalls).toEqual([]);
+        expect(
+          (yield* findStack({ projectRoot: project })).pipe(Option.getOrUndefined)?.runtime,
+        ).toEqual({ kind: "container", engine: "podman" });
+        yield* second.close();
+      }),
+    ),
+  );
+
+  it.live("rejects a conflicting explicit engine before probing", () =>
+    withRuntimeRoot((project) =>
+      Effect.gen(function* () {
+        const first = yield* createStack({
+          projectRoot: project,
+          runtime: { kind: "container", engine: "docker" },
+        }).pipe(
+          Effect.provideService(ContainerEngineResolver, {
+            resolve: () => Effect.succeed("docker" as const),
+          }),
+        );
+        yield* first.close();
+        const calls: string[] = [];
+        const result = yield* createStack({
+          projectRoot: project,
+          runtime: { kind: "container", engine: "podman" },
+        }).pipe(
+          Effect.provideService(ContainerEngineResolver, {
+            resolve: (preference: "auto" | "docker" | "podman") =>
+              Effect.sync(() => {
+                calls.push(preference);
+                return "podman" as const;
+              }),
+          }),
+          Effect.exit,
+        );
+        expect(Exit.isFailure(result)).toBe(true);
+        if (Exit.isFailure(result)) {
+          const error = Option.getOrUndefined(Cause.findErrorOption(result.cause));
+          expect(error).toBeInstanceOf(StackRuntimeMismatchError);
+        }
+        expect(calls).toEqual([]);
+      }),
+    ),
+  );
+
+  it.live("does not probe an explicitly native identity", () =>
+    withRuntimeRoot((project) =>
+      Effect.gen(function* () {
+        const calls: string[] = [];
+        const stack = yield* createStack({
+          projectRoot: project,
+          runtime: { kind: "native" },
+        }).pipe(
+          Effect.provideService(ContainerEngineResolver, {
+            resolve: (preference: "auto" | "docker" | "podman") =>
+              Effect.sync(() => {
+                calls.push(preference);
+                return "docker" as const;
+              }),
+          }),
+        );
+        expect(calls).toEqual([]);
+        yield* stack.close();
+      }),
+    ),
+  );
+
   it.live("creates an unconfigured stack without reading config or starting workloads", () =>
     withRuntimeRoot((project) =>
       Effect.gen(function* () {

@@ -84,6 +84,13 @@ updated in the same commit as each completed slice. Scratch review packages live
 > separator escaping — cost if wrong: fields larger than 4 GiB are unrepresentable, which is outside
 > any valid filesystem/ref/name input.
 
+> **Ruling:** Functions have one serving path through the managed stack Edge Runtime in both native
+> and container modes; `supabase functions serve` is a managed-stack client, not a separate Docker
+> workflow. The caller owns migrations, schemas, and seeds, while the narrow database reset session
+> is deliberately the last behavioral implementation slice after the complete catalog and facade/CLI
+> migration — cost if wrong: changing either ownership boundary would require reshaping the public
+> lifecycle contract rather than adding another adapter.
+
 When the design does not determine another choice, record it here as:
 
 > **Ruling:** decision — reason — cost if wrong.
@@ -96,8 +103,8 @@ Implementation continues after recording a ruling; this file is not a question q
 
 - Mapped all design sections to 15 implementation tasks: cleanup, public model, identity, compiler,
   durable state/secrets/ports, ownership, reconciliation/observability, native preparation/runtime,
-  gateway/activation, Functions, container runtime, lifecycle/recovery, facades/CLI, reset session,
-  and final catalog/audit.
+  gateway/activation, Functions, container runtime, lifecycle/recovery, facades/CLI, complete
+  catalog/platform coverage, the final reset session, and completion audit.
 - Removed an ordering conflict: public `StackConfig` is defined with capability Modules before the
   durable state schema consumes `StackDefinition`.
 - Verified 55 executable steps, 42 balanced Markdown fences, and no placeholder patterns.
@@ -378,7 +385,7 @@ Implementation continues after recording a ruling; this file is not a question q
   companion workload. The generic runner validates an ordered release plan, creates its tracking
   schema under a transaction-scoped advisory lock, applies and records one revision atomically, and
   reconciles `Redacted` role credentials outside SQL text. Concrete per-release revision catalogs
-  remain Task 14 work; gateway listener ownership/transfer remains Task 8 work with the gateway
+  remain Task 13 work; gateway listener ownership/transfer remains Task 8 work with the gateway
   contract.
 - Added integration coverage for verified cache/download behavior, corruption and containment,
   concurrent publisher convergence, caller/store-scope cancellation, native readiness/logging/
@@ -426,7 +433,7 @@ Implementation continues after recording a ruling; this file is not a question q
 - Focused gateway, activation, port, and reconciler suite — passed (45 tests across 5 files).
 - `pnpm --dir packages/stack test` — passed (4 unit and 156 integration tests).
 - Effect/generic lint over all Task 8 sources and tests, formatting, and `git diff --check` — passed.
-- Concrete capability route catalogs remain Task 14; Functions discovery, container engine routing,
+- Concrete capability route catalogs remain Task 13; Functions discovery, container engine routing,
   and full Supervisor lifecycle composition remain Tasks 9, 10, and 11 respectively.
 
 ### Task 9 — 2026-08-29
@@ -449,3 +456,45 @@ Implementation continues after recording a ruling; this file is not a question q
   passed after the fix.
 - `pnpm --dir packages/stack types:check`, focused Functions/gateway integration, full package
   integration (163 tests), Effect lint, formatting, and `git diff --check` passed.
+
+### Task 10 — 2026-08-29
+
+- Added independent, closed Docker and Podman CLI codecs plus one narrow container-engine contract
+  for only the probe, image, resource-list, network, volume, and container lifecycle operations the
+  runtime consumes. Commands use exact argv and bounded stdout/stderr, decoders admit only the
+  required scalar label fields, nonzero/malformed responses remain typed failures, and automatic
+  selection falls back from Docker to Podman only when the Docker executable is genuinely missing.
+- Added production engine resolution for new container identities. The selected adapter must pass
+  its routing preflight before state mutation, and the concrete `docker`/`podman` result is persisted.
+  Existing identities reuse that engine without probing; conflicting explicit preferences fail
+  before probing. Native identities never consult a container resolver.
+- Added the strict `ContainerRuntime`: native artifacts fail before engine access; workload
+  containers remain private; exact StackId/owner/generation/workload/spec-hash resources are adopted;
+  same-owner stale containers are stopped and removed before recreation; foreign and sanitized-name
+  collisions fail before image pulls or mutation; concurrent starts serialize; readiness cleanup
+  preserves and combines the original and cleanup Causes.
+- Persistent container storage is deliberately one volume per workload. The runtime accepts only a
+  target/read-only request and derives the physical name from the full StackId and workload id,
+  excluding generation so it survives restart. Volumes are identity-scoped, reused after container
+  removal, and retained until destroy. This is the smallest unambiguous model supported by the
+  current catalog labels.
+- The real process runner now fails on the first output chunk beyond its bound, interrupts sibling
+  reads/exit waiting, and performs an interruptible SIGTERM wait followed by exact SIGKILL fallback.
+  A hostile child that remains alive and ignores SIGTERM proves both fail-fast overflow and reaping.
+- Fixed the native launcher/readiness race uncovered by the combined runtime suite. Inherited owner
+  and payload descriptors now use `node:net` sockets rather than filesystem streams, avoiding a
+  blocked libuv threadpool shutdown; one cached exit-code Effect is shared by readiness and the
+  watcher, and native runtime rejects container artifacts before process resolution. The exact
+  diagnostic parent/launcher processes created while minimizing this failure were terminated and
+  verified absent.
+- Gateway-container lifecycle composition and stopped-stack ephemeral network cleanup remain Task 11. During running intent, a single workload readiness failure intentionally retains the shared
+  private network and persistent volume for retries and other workloads; the failed newly-created
+  workload container itself is stopped and removed.
+- RED/GREEN review closed two Important findings: global caller-supplied volume names and output
+  overflow waiting for EOF. Independent closure review found no remaining Critical or Important
+  finding.
+- `pnpm --dir packages/stack types:check` — passed.
+- Focused container runtime, native runtime, and managed-handle integration suite — passed (43 tests
+  across 3 files).
+- Generic and Effect lint over all Task 10 sources/tests, formatting over sources/tests/docs, and
+  `git diff --check` — passed.

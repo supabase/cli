@@ -69,6 +69,19 @@ import {
   defaultRuntimeEnvironment,
   StackRuntimeEnvironment,
 } from "../supervisor/Launcher.ts";
+import {
+  ContainerEngineResolver,
+  type ContainerEngineResolverShape,
+} from "../runtime/ContainerEngineResolver.ts";
+import {
+  ContainerEngineProtocolError,
+  makeProcessCommandRunner,
+  selectContainerEngine,
+  type ContainerEngineKind,
+  type ContainerPlatform,
+} from "../runtime/ContainerEngine.ts";
+import { makeDockerEngine } from "../runtime/DockerEngine.ts";
+import { makePodmanEngine } from "../runtime/PodmanEngine.ts";
 
 export interface StartStackOptions {
   readonly config?: StackConfig;
@@ -125,10 +138,64 @@ export interface EffectStack {
   readonly logs: (options?: LogOptions) => Stream.Stream<StackLogEntry, StackLogsError>;
 }
 
-const runtimeFor = (preference?: StackRuntimePreference): StackRuntime =>
+const runtimeFor = (
+  preference: StackRuntimePreference | undefined,
+  engine?: ContainerEngineKind,
+): StackRuntime =>
   preference?.kind === "container"
-    ? { kind: "container", engine: preference.engine === "podman" ? "podman" : "docker" }
+    ? {
+        kind: "container",
+        engine: engine ?? (preference.engine === "podman" ? "podman" : "docker"),
+      }
     : { kind: "native" };
+
+const defaultContainerPlatform = (): ContainerPlatform => {
+  // Host details are read only at this composition boundary. The real
+  // container adapters reject unsupported Podman routing during preflight.
+  if (process.platform === "darwin") return { os: "darwin", desktop: true };
+  if (process.platform === "win32") return { os: "windows", desktop: true };
+  return { os: "linux", desktop: false };
+};
+
+const defaultContainerEngineResolver = (): ContainerEngineResolverShape => ({
+  resolve: (preference) =>
+    Effect.gen(function* () {
+      const platform = defaultContainerPlatform();
+      const dockerRunner = yield* makeProcessCommandRunner({ executable: "docker" });
+      const podmanRunner = yield* makeProcessCommandRunner({ executable: "podman" });
+      const docker = makeDockerEngine({ runner: dockerRunner, platform });
+      const podman = makePodmanEngine({ runner: podmanRunner, platform });
+      const selected = yield* selectContainerEngine({ preference, docker, podman });
+      yield* selected.preflight;
+      return selected.kind;
+    }),
+});
+
+const resolveRuntime = (
+  preference: StackRuntimePreference | undefined,
+): Effect.Effect<
+  StackRuntime,
+  ContainerEngineError,
+  import("effect/unstable/process/ChildProcessSpawner").ChildProcessSpawner
+> =>
+  preference?.kind !== "container"
+    ? Effect.succeed({ kind: "native" })
+    : Effect.serviceOption(ContainerEngineResolver).pipe(
+        Effect.map((service) =>
+          Option.isSome(service) ? service.value : defaultContainerEngineResolver(),
+        ),
+        Effect.flatMap((resolver) => resolver.resolve(preference.engine ?? "auto")),
+        Effect.map((engine) => runtimeFor(preference, engine)),
+        Effect.mapError(
+          (error) =>
+            new ContainerEngineError({
+              message:
+                error instanceof ContainerEngineProtocolError
+                  ? `${error.operation}: ${error.message}`
+                  : error.message,
+            }),
+        ),
+      );
 
 const descriptor = (state: PersistedStackState): StackDescriptor => ({
   id: StackIdSchema.make(state.identity.stackId),
@@ -384,8 +451,18 @@ export const createStack = (
     });
     const stackId = yield* deriveStackId(identity);
     const store = yield* makeStackStateStore({ stateRoot: env.stateRoot });
-    const runtime = runtimeFor(options.runtime);
-    const current = yield* store.initialize(stackId, stateInitial(identity, stackId, runtime));
+    const current =
+      options.runtime?.kind === "container"
+        ? yield* Effect.gen(function* () {
+            const existing = yield* store.read(stackId);
+            const runtime =
+              existing === undefined ? yield* resolveRuntime(options.runtime) : existing.runtime;
+            return (
+              existing ??
+              (yield* store.initialize(stackId, stateInitial(identity, stackId, runtime)))
+            );
+          })
+        : yield* store.initialize(stackId, stateInitial(identity, stackId, { kind: "native" }));
     const runtimeMismatch =
       options.runtime !== undefined &&
       (current.runtime.kind !== options.runtime.kind ||

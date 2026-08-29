@@ -1,7 +1,7 @@
 // Standalone launcher boundary: this process must remain usable before the
 // Effect runtime exists and therefore talks to the host directly.
 // oxlint-disable-next-line effecttsgo/node-builtin-import
-import { createReadStream } from "node:fs";
+import { Socket } from "node:net";
 // oxlint-disable-next-line effecttsgo/node-builtin-import
 import { spawn } from "node:child_process";
 
@@ -69,7 +69,7 @@ const terminateGroup = (signal: NodeJS.Signals): void => {
 
 // Register the owner pipe before waiting for the launch payload. EOF means
 // the owner process disappeared without running a normal scope finalizer.
-const ownerPipe = createReadStream("", { fd: 3, autoClose: false });
+const ownerPipe = new Socket({ fd: 3, readable: true, writable: false });
 // Owner-loss is an abrupt supervisor crash, not an explicit graceful stop.
 // Use guaranteed tree termination so descendants that trap SIGTERM cannot be
 // orphaned after the owner pipe closes.
@@ -77,7 +77,7 @@ ownerPipe.on("end", () => terminateGroup("SIGKILL"));
 ownerPipe.on("error", () => terminateGroup("SIGKILL"));
 ownerPipe.resume();
 
-const payloadPipe = createReadStream("", { fd: 4, autoClose: true });
+const payloadPipe = new Socket({ fd: 4, readable: true, writable: false });
 const payload: Buffer[] = [];
 payloadPipe.on("data", (chunk: Buffer) => payload.push(chunk));
 payloadPipe.on("error", () => process.exit(127));
