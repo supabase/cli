@@ -109,6 +109,12 @@ function needsRoleStepDown(user: string): boolean {
 const LEGACY_TERMINAL_SQLSTATES = new Set(["28P01", "3D000", "42501"]);
 const LEGACY_TLS_GATED_SQLSTATE = "28000";
 
+// Class 08 (connection exception) plus the operator-intervention terminations that
+// close the session; 57014 (query_canceled) stays a statement failure.
+const LEGACY_SESSION_ENDING_SQLSTATES = new Set(["57P01", "57P02", "57P03", "57P05"]);
+const legacyIsConnectionEndingSqlState = (code: string): boolean =>
+  code.startsWith("08") || LEGACY_SESSION_ENDING_SQLSTATES.has(code);
+
 /**
  * Whether a failed connection attempt should terminate the multi-host fallback
  * chain instead of falling through to the next host. Mirrors pgconn's
@@ -242,11 +248,15 @@ export function legacyBatchFailureError(
     });
   }
   const mapped = legacyToExecError(error);
-  // A lost connection (including a FATAL termination) is not a BEGIN failure.
+  // A lost connection (including a server-initiated termination) is not a BEGIN
+  // failure. Gated on SQLSTATE class, never the severity string, which arrives
+  // localized (e.g. "FEHLER").
+  const server = legacyExtractPgServerError(error);
   const beganFailed =
     batch.outcome === "submitted" &&
     batch.began === false &&
-    legacyExtractPgServerError(error)?.severity === "ERROR";
+    server !== undefined &&
+    !legacyIsConnectionEndingSqlState(server.code);
   return new LegacyDbExecError({
     message: beganFailed
       ? `failed to begin the batch transaction: ${mapped.message}`
@@ -264,8 +274,8 @@ export function legacyBatchFailureError(
  * socket is already gone, so the next checkout would write into the same dead connection.
  *
  * A batch that WAS written keeps its client: a statement failure should not cost a redial and
- * a fresh step-down on a single-connection pool. The keep is conditional on the release
- * path's rollback — one that fails or times out discards the client after all. Recovering
+ * a fresh step-down on a single-connection pool. The keep is conditional on `rolledBack` —
+ * a failed submitted batch whose rollback failed or timed out is discarded. Recovering
  * from a socket that died after the write is additionally backstopped by pg-pool, which
  * drops a released client whose private `_queryable` flag is false — so that is the behavior
  * to re-check if a pg-pool bump ever breaks the recovery this layer's integration tests
@@ -274,10 +284,14 @@ export function legacyBatchFailureError(
 export function legacyShouldDiscardBatchClient(
   batch: { readonly outcome: LegacyBatchOutcome } | undefined,
   exit: Exit.Exit<unknown, unknown>,
+  rolledBack: boolean,
 ): boolean {
   return (
     (batch !== undefined && batch.outcome !== "submitted") ||
-    (Exit.isFailure(exit) && (Cause.hasInterrupts(exit.cause) || Cause.hasDies(exit.cause)))
+    (Exit.isFailure(exit) &&
+      (Cause.hasInterrupts(exit.cause) ||
+        Cause.hasDies(exit.cause) ||
+        (batch?.outcome === "submitted" && !rolledBack)))
   );
 }
 
@@ -1173,11 +1187,12 @@ const connect = (
             ),
           (activeClient, exit) =>
             Effect.sync(() => {
-              const discard =
-                legacyShouldDiscardBatchClient(batchQuery, exit) ||
-                (Exit.isFailure(exit) && batchQuery?.outcome === "submitted" && !rolledBack);
-              activeClient.release(discard ? new Error("batch connection discarded") : undefined);
-              activeClient.removeListener("error", onConnectionError);
+              const discard = legacyShouldDiscardBatchClient(batchQuery, exit, rolledBack);
+              try {
+                activeClient.release(discard ? new Error("batch connection discarded") : undefined);
+              } finally {
+                activeClient.removeListener("error", onConnectionError);
+              }
             }),
         );
       });

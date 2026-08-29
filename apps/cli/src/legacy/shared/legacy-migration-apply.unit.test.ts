@@ -877,6 +877,26 @@ describe("legacyApplyMigrationFile", () => {
     );
   });
 
+  it.effect("sends no trailing restore when the file ends on a restored standalone", () => {
+    const dir = mkdtempSync(join(tmpdir(), "legacy-apply-"));
+    const file = join(dir, "20240101120000_discard_last.sql");
+    writeFileSync(file, "select 1;\nDISCARD ALL;");
+    const { session, calls } = fakeSession({ restoreRoleSql: "SET SESSION ROLE postgres" });
+    return run(session, file).pipe(
+      Effect.tap(() =>
+        Effect.sync(() => {
+          const execs = calls.filter((call) => call.kind === "exec").map((call) => call.sql);
+          expect(execs.slice(-2)).toEqual(["DISCARD ALL", "SET SESSION ROLE postgres"]);
+          const batches = calls.filter((call) => call.kind === "batch");
+          expect(batches.at(-1)?.statements?.map(({ sql }) => sql)).toEqual([
+            expect.stringContaining("supabase_migrations.schema_migrations"),
+          ]);
+          rmSync(dir, { recursive: true, force: true });
+        }),
+      ),
+    );
+  });
+
   it.effect("reports a mid-file restore's own failure at its host statement", () => {
     const dir = mkdtempSync(join(tmpdir(), "legacy-apply-"));
     const file = join(dir, "20240101120000_fail.sql");
@@ -1149,11 +1169,21 @@ describe("legacyIsPipelineIncompatible", () => {
     ["reindex table non-concurrent", "REINDEX TABLE public.widgets", false],
     ["alter database", "ALTER DATABASE demo SET search_path = public", false],
     ["alter database set tablespace", "ALTER DATABASE demo SET TABLESPACE fast", true],
+    ["alter database set tablespace multiline", "ALTER DATABASE demo\n SET TABLESPACE fast", true],
+    [
+      "alter database with tablespace inside a literal",
+      "ALTER DATABASE demo SET application_name TO 'foo SET TABLESPACE bar'",
+      false,
+    ],
+    ["detach partition concurrently", "ALTER TABLE m DETACH PARTITION p CONCURRENTLY", true],
+    ["detach partition finalize", "ALTER TABLE m DETACH PARTITION p FINALIZE", true],
+    ["detach partition plain", "ALTER TABLE m DETACH PARTITION p", false],
     ["create subscription", "CREATE SUBSCRIPTION sub CONNECTION 'host=h' PUBLICATION pub", true],
     ["drop subscription", "DROP SUBSCRIPTION IF EXISTS sub", true],
     ["alter subscription", "ALTER SUBSCRIPTION sub DISABLE", false],
     ["alter subscription refresh", "ALTER SUBSCRIPTION sub REFRESH PUBLICATION", true],
     ["alter subscription set publication", "ALTER SUBSCRIPTION sub SET PUBLICATION p", true],
+    ["alter subscription refresh multiline", "ALTER SUBSCRIPTION sub\n REFRESH PUBLICATION", true],
     ["alter subscription set options", "ALTER SUBSCRIPTION sub SET (slot_name = 's')", false],
     ["discard all", "DISCARD ALL", true],
     ["discard temp", "DISCARD TEMP", false],

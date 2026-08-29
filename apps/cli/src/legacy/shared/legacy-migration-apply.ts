@@ -69,9 +69,12 @@ const TABLESPACE_DDL_PATTERN = /^(?:CREATE|DROP)\s+TABLESPACE(?:\s|$)/u;
 const REINDEX_DATABASE_PATTERN = /^REINDEX(?:\s+\([^)]*\))?\s+(?:DATABASE|SYSTEM|SCHEMA)(?:\s|$)/u;
 const SUBSCRIPTION_DDL_PATTERN = /^(?:CREATE|DROP)\s+SUBSCRIPTION(?:\s|$)/u;
 const DISCARD_ALL_PATTERN = /^DISCARD\s+ALL(?:\s|$)/u;
-const ALTER_DATABASE_TABLESPACE_PATTERN = /^ALTER\s+DATABASE\s+.*\sSET\s+TABLESPACE(?:\s|$)/u;
+const ALTER_DATABASE_TABLESPACE_PATTERN =
+  /^ALTER\s+DATABASE\s+(?:"[^"]*"|\S+)\s+SET\s+TABLESPACE(?:\s|$)/u;
 const ALTER_SUBSCRIPTION_REFRESH_PATTERN =
-  /^ALTER\s+SUBSCRIPTION\s+.*\s(?:REFRESH\s+PUBLICATION|(?:SET|ADD|DROP)\s+PUBLICATION)(?:\s|$)/u;
+  /^ALTER\s+SUBSCRIPTION\s+(?:"[^"]*"|\S+)\s+(?:REFRESH\s+PUBLICATION|(?:SET|ADD|DROP)\s+PUBLICATION)(?:\s|$)/u;
+const DETACH_PARTITION_PATTERN =
+  /^ALTER\s+TABLE\s+[\s\S]*\sDETACH\s+PARTITION\s+[\s\S]*\s(?:CONCURRENTLY|FINALIZE)(?:\s|$)/u;
 const TRANSACTION_CONTROL_PATTERN =
   /^(?:BEGIN|START\s+TRANSACTION|COMMIT|END|ABORT|PREPARE\s+TRANSACTION)(?:\s|$)/u;
 
@@ -109,7 +112,8 @@ const legacyTrimLeadingSqlComments = (sql: string): string => {
  * `CREATE`/`DROP TABLESPACE`, `REINDEX DATABASE`/`SYSTEM`/`SCHEMA`,
  * `CREATE`/`DROP SUBSCRIPTION`, `DISCARD ALL`,
  * `ALTER DATABASE … SET TABLESPACE`,
- * `ALTER SUBSCRIPTION … REFRESH`/`SET`/`ADD`/`DROP PUBLICATION`. Such statements fail with
+ * `ALTER SUBSCRIPTION … REFRESH`/`SET`/`ADD`/`DROP PUBLICATION`,
+ * `ALTER TABLE … DETACH PARTITION … CONCURRENTLY`/`FINALIZE`. Such statements fail with
  * SQLSTATE 25001 inside the transaction
  * created by a migration batch, so `execMigrationBatch` runs them standalone.
  * Port of `isPipelineIncompatible` (`pkg/migration/file.go`, supabase/cli#5156),
@@ -131,7 +135,8 @@ export const legacyIsPipelineIncompatible = (sql: string): boolean => {
     SUBSCRIPTION_DDL_PATTERN.test(upper) ||
     DISCARD_ALL_PATTERN.test(upper) ||
     ALTER_DATABASE_TABLESPACE_PATTERN.test(upper) ||
-    ALTER_SUBSCRIPTION_REFRESH_PATTERN.test(upper)
+    ALTER_SUBSCRIPTION_REFRESH_PATTERN.test(upper) ||
+    DETACH_PARTITION_PATTERN.test(upper)
   );
 };
 
@@ -727,11 +732,14 @@ const execMigrationBatch = <E>(
       // (Go threads the same counter through `ExecBatch`).
       let pending: Array<string> = [];
       let executed = 0;
+      let standaloneRestored = false;
 
       const flushBatch = (final: boolean) =>
         Effect.gen(function* () {
           const recordVersion = final && version.length > 0;
-          const trailingRestore = final ? restoreRole : undefined;
+          // A standalone statement that just restored the role needs no trailing repeat.
+          const trailingRestore =
+            final && !(pending.length === 0 && standaloneRestored) ? restoreRole : undefined;
           if (pending.length === 0 && !recordVersion && trailingRestore === undefined) return;
           const batchStatements = pending;
           const operations: Array<LegacyDbBatchStatement> = [];
@@ -796,16 +804,19 @@ const execMigrationBatch = <E>(
           yield* session
             .exec(statement)
             .pipe(Effect.mapError((cause) => legacyFormatExecBatchError(cause, index, statement)));
+          standaloneRestored = false;
           if (restoreRole !== undefined && legacyRevertsToLoginRole(statement)) {
             yield* session
               .exec(restoreRole)
               .pipe(
                 Effect.mapError((cause) => legacyFormatExecBatchError(cause, index, restoreRole)),
               );
+            standaloneRestored = true;
           }
           executed += 1;
         } else {
           pending.push(statement);
+          standaloneRestored = false;
         }
       }
       yield* flushBatch(true);

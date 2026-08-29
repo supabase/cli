@@ -121,12 +121,14 @@ stdout is payload-only. A single `result` object is emitted:
   `DROP INDEX CONCURRENTLY`, `REINDEX … CONCURRENTLY`, `VACUUM`, `ALTER SYSTEM`, `CLUSTER`,
   `CREATE`/`DROP DATABASE`, `CREATE`/`DROP TABLESPACE`, `REINDEX DATABASE`/`SYSTEM`/`SCHEMA`,
   `CREATE`/`DROP SUBSCRIPTION`, `DISCARD ALL`, `ALTER DATABASE … SET TABLESPACE`, and
-  `ALTER SUBSCRIPTION … REFRESH`/`SET`/`ADD`/`DROP PUBLICATION`
+  `ALTER SUBSCRIPTION … REFRESH`/`SET`/`ADD`/`DROP PUBLICATION`,
+  `ALTER TABLE … DETACH PARTITION … CONCURRENTLY`/`FINALIZE`
   cannot run inside a
   transaction block (SQLSTATE 25001). The apply flushes (commits) the open batch, runs
   the statement standalone outside any transaction, then resumes batching; the history
   insert stays in the final batch so the migration is recorded only after every
-  statement succeeds. Atomicity is therefore lost at each flush boundary: statements
+  statement succeeds. A failed batch's transaction is rolled back (bounded) before its
+  connection is reused; a rollback that fails or times out discards the connection. Atomicity is therefore lost at each flush boundary: statements
   committed in an earlier batch are **not** rolled back if a later statement fails,
   leaving the database partially migrated with **no history row** — a re-run replays
   the whole file from the top (which may then fail on already-applied statements).

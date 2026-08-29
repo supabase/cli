@@ -870,27 +870,42 @@ describe("legacyBatchFailureError", () => {
 
 describe("legacyShouldDiscardBatchClient", () => {
   it("discards a client whose batch never reached the wire", () => {
-    expect(legacyShouldDiscardBatchClient({ outcome: "unsent" }, Exit.succeed(undefined))).toBe(
-      true,
-    );
+    expect(
+      legacyShouldDiscardBatchClient({ outcome: "unsent" }, Exit.succeed(undefined), false),
+    ).toBe(true);
   });
 
-  it("returns a client to the pool once its batch was written, error or not", () => {
-    expect(legacyShouldDiscardBatchClient({ outcome: "submitted" }, Exit.succeed(undefined))).toBe(
-      false,
-    );
+  it("keeps a written batch's client on success or once its failure rolled back", () => {
+    expect(
+      legacyShouldDiscardBatchClient({ outcome: "submitted" }, Exit.succeed(undefined), false),
+    ).toBe(false);
     expect(
       legacyShouldDiscardBatchClient(
         { outcome: "submitted" },
         Exit.fail(new Error("server said no")),
+        true,
       ),
     ).toBe(false);
   });
 
+  it("discards a written batch's client when its failure was not rolled back", () => {
+    expect(
+      legacyShouldDiscardBatchClient(
+        { outcome: "submitted" },
+        Exit.fail(new Error("server said no")),
+        false,
+      ),
+    ).toBe(true);
+  });
+
   it("discards a client whose batch was interrupted or died mid-flight", () => {
-    expect(legacyShouldDiscardBatchClient({ outcome: "submitted" }, Exit.interrupt(1))).toBe(true);
-    expect(legacyShouldDiscardBatchClient({ outcome: "submitted" }, Exit.die("boom"))).toBe(true);
+    expect(legacyShouldDiscardBatchClient({ outcome: "submitted" }, Exit.interrupt(1), true)).toBe(
+      true,
+    );
+    expect(legacyShouldDiscardBatchClient({ outcome: "submitted" }, Exit.die("boom"), true)).toBe(
+      true,
+    );
     // Interrupted before the batch was even constructed: no batch, still discard.
-    expect(legacyShouldDiscardBatchClient(undefined, Exit.interrupt(1))).toBe(true);
+    expect(legacyShouldDiscardBatchClient(undefined, Exit.interrupt(1), false)).toBe(true);
   });
 });
