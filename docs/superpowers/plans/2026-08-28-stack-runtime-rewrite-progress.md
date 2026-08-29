@@ -813,3 +813,17 @@ private-port reservation plus gateway ownership atomic with accepted lifecycle g
 - Running listener/private intent fences use marker equality rather than assignment-array length, including
   generations with no listeners or private bindings. Focused state/ports tests cover null/number round trips,
   empty-set fencing, sticky retry after bind failure, deterministic final-fence cleanup, and stopped markers.
+
+#### Task 13B2b3 — initial database bootstrap runtime (2026-08-29)
+
+- The slim Postgres artifact remains the owner of bundled init scripts and migrations. Stack runtime
+  bootstrap does not enumerate or reapply artifact SQL; after database readiness it reconciles the
+  `_realtime` schema owner, all seven managed login-role passwords, and `app.settings.jwt_secret` /
+  `app.settings.jwt_exp` under the bootstrap advisory lock.
+- Both native and container database workloads run the same one-shot bootstrap through the persisted
+  loopback private database port. PostgreSQL access uses the scoped Effect SQL client; role and setting
+  statements are built by parameterized `format()` calls so generated secret SQL is never exposed in
+  mapped errors. A bootstrap failure cleans up new resources and stops an adopted database container
+  without removing it, allowing an idempotent retry on the next reconciliation.
+- Initial runtime settings are intentionally distinct from caller-driven database migrations, seeds, and
+  reset. The reset/session flow remains deferred to the final rewrite slice.
