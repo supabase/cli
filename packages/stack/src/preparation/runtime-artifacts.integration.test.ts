@@ -21,8 +21,12 @@ const nativeWorkload = (selected: PlannedWorkload["selected"]): PlannedWorkload 
   readiness: { mode: "tcp" },
   restart: { maxAttempts: 1, backoffMs: 0 },
   artifacts: {
-    native: { kind: "native", service: "postgres", release: "17.6.1.165" },
-    container: { kind: "container", service: "postgres", image: "supabase/postgres:17.6.1.165" },
+    native: { kind: "native", service: "postgres", release: "17.6.1.166" },
+    container: {
+      kind: "container",
+      service: "postgres",
+      image: "ghcr.io/supabase/cli/postgres:17.6.1.166",
+    },
   },
   selected,
   specHash: "hash",
@@ -106,13 +110,13 @@ describe("runtime artifact preparation", () => {
     const result = Effect.runSync(
       runtime.prepare(
         { kind: "native" },
-        nativeWorkload({ kind: "native", service: "postgres", release: "17.6.1.165" }),
+        nativeWorkload({ kind: "native", service: "postgres", release: "17.6.1.166" }),
       ),
     );
     expect(result.outcome).toBe("downloaded");
-    expect(result.version).toBe("17.6.1.165");
+    expect(result.version).toBe("17.6.1.166");
     expect(requests).toHaveLength(1);
-    expect(requests[0]?.key).toContain("slim-services/postgres/17.6.1.165/darwin-arm64");
+    expect(requests[0]?.key).toContain("slim-services/postgres/17.6.1.166/darwin-arm64");
     expect(requests[0]?.sha256).toBe("a".repeat(64));
   });
 
@@ -129,15 +133,15 @@ describe("runtime artifact preparation", () => {
         nativeWorkload({
           kind: "container",
           service: "postgres",
-          image: "supabase/postgres:17.6.1.165",
+          image: "ghcr.io/supabase/cli/postgres:17.6.1.166",
         }),
       ),
     );
     expect(result.outcome).toBe("pulled");
     expect(calls).toEqual([
       "probe",
-      "inspect:supabase/postgres:17.6.1.165",
-      "pull:supabase/postgres:17.6.1.165",
+      "inspect:ghcr.io/supabase/cli/postgres:17.6.1.166",
+      "pull:ghcr.io/supabase/cli/postgres:17.6.1.166",
     ]);
   });
 
@@ -157,7 +161,7 @@ describe("runtime artifact preparation", () => {
         nativeWorkload({
           kind: "container",
           service: "postgres",
-          image: "supabase/postgres:17.6.1.165",
+          image: "ghcr.io/supabase/cli/postgres:17.6.1.166",
         }),
       ),
     );
@@ -185,7 +189,7 @@ describe("runtime artifact preparation", () => {
         nativeWorkload({
           kind: "container",
           service: "postgres",
-          image: "supabase/postgres:17.6.1.165",
+          image: "ghcr.io/supabase/cli/postgres:17.6.1.166",
         }),
       ),
     );
