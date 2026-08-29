@@ -61,6 +61,7 @@ const BOM_CODE_POINT = 0xfeff;
 const CREATE_INDEX_CONCURRENTLY_PATTERN = /^CREATE\s+(?:UNIQUE\s+)?INDEX\s+CONCURRENTLY(?:\s|$)/u;
 const DROP_INDEX_CONCURRENTLY_PATTERN = /^DROP\s+INDEX\s+CONCURRENTLY(?:\s|$)/u;
 const REINDEX_CONCURRENTLY_PATTERN = /^REINDEX(?:\s|\().*\sCONCURRENTLY(?:\s|$)/u;
+const REINDEX_OPTION_CONCURRENTLY_PATTERN = /^REINDEX\s*\([^)]*\bCONCURRENTLY\b[^)]*\)/u;
 const VACUUM_PATTERN = /^VACUUM(?:\s|\(|$)/u;
 const ALTER_SYSTEM_PATTERN = /^ALTER\s+SYSTEM(?:\s|$)/u;
 const CLUSTER_PATTERN = /^CLUSTER(?:\s|$)/u;
@@ -135,6 +136,7 @@ export const legacyIsPipelineIncompatible = (sql: string): boolean => {
     CREATE_INDEX_CONCURRENTLY_PATTERN.test(upper) ||
     DROP_INDEX_CONCURRENTLY_PATTERN.test(upper) ||
     REINDEX_CONCURRENTLY_PATTERN.test(upper) ||
+    REINDEX_OPTION_CONCURRENTLY_PATTERN.test(upper) ||
     VACUUM_PATTERN.test(upper) ||
     ALTER_SYSTEM_PATTERN.test(upper) ||
     CLUSTER_PATTERN.test(upper) ||
