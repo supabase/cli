@@ -256,6 +256,11 @@ export function legacyBatchFailureError(
   const statementFailure = server !== undefined && !legacyIsConnectionEndingSqlState(server.code);
   const beganFailed = batch.outcome === "submitted" && batch.began === false && statementFailure;
   const commitFailed = batch.outcome === "submitted" && batch.atCommit === true && statementFailure;
+  const transactionPhase: "begin" | "commit" | undefined = beganFailed
+    ? "begin"
+    : commitFailed
+      ? "commit"
+      : undefined;
   return new LegacyDbExecError({
     message: beganFailed
       ? `failed to begin the batch transaction: ${mapped.message}`
@@ -266,8 +271,7 @@ export function legacyBatchFailureError(
     detail: mapped.detail,
     position: mapped.position,
     statementIndex: batch.completed,
-    ...(beganFailed ? { transactionPhase: "begin" as const } : {}),
-    ...(commitFailed ? { transactionPhase: "commit" as const } : {}),
+    ...(transactionPhase !== undefined ? { transactionPhase } : {}),
   });
 }
 
