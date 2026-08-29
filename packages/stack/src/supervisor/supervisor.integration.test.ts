@@ -216,11 +216,12 @@ describe("Supervisor composition", () => {
     ),
   );
 
-  it.live("recovers a running durable intent without auto-starting it", () =>
+  it.live("recovers a running durable intent and starts missing eager workloads", () =>
     run(
       Effect.gen(function* () {
         const fixture = yield* makeFixture();
         yield* fixture.supervisor.start({ config: { capabilities: { rest: {} } } });
+        const recoveredResources = yield* Ref.make<ReadonlyArray<ObservedWorkload>>([]);
         const recovered = yield* makeSupervisor({
           identity,
           stackId: fixture.id,
@@ -230,11 +231,25 @@ describe("Supervisor composition", () => {
           context: fixture.context,
           runtime: {
             driver: {
-              observe: () => Effect.succeed([]),
-              start: () => Effect.die("recovery test must not start resources"),
-              stop: () => Effect.void,
-              remove: () => Effect.void,
-              cleanup: () => Effect.void,
+              observe: () => Ref.get(recoveredResources),
+              start: (key) =>
+                Effect.gen(function* () {
+                  const ready = { ...key, state: "ready" as const };
+                  yield* Ref.update(recoveredResources, (current) => [
+                    ...current.filter((entry) => entry.workloadId !== key.workloadId),
+                    ready,
+                  ]);
+                  return ready;
+                }),
+              stop: (key) =>
+                Ref.update(recoveredResources, (current) =>
+                  current.filter((entry) => entry.workloadId !== key.workloadId),
+                ),
+              remove: (key) =>
+                Ref.update(recoveredResources, (current) =>
+                  current.filter((entry) => entry.workloadId !== key.workloadId),
+                ),
+              cleanup: () => Ref.set(recoveredResources, []),
               recover: () =>
                 Ref.update(fixture.calls, (current) => [...current, "recover"]).pipe(Effect.as([])),
             },
@@ -242,7 +257,7 @@ describe("Supervisor composition", () => {
         });
         const status = yield* recovered.status;
         expect(status.desiredLifecycle).toBe("running");
-        expect(status.lifecycle).toBe("stopped");
+        expect(status.lifecycle).toBe("running");
         expect(yield* Ref.get(fixture.calls)).toContain("recover");
       }),
     ),
