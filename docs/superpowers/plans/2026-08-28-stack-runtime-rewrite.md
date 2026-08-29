@@ -494,18 +494,18 @@ artifact keys, state schemas, drivers, or control protocols.
 - Produces request-time slug discovery under one `functionsRoot` with closed persisted overrides.
 - Native and container execution use the stack Edge Runtime; no separate functions-serving workflow.
 
-- [ ] **Step 1: Write safe live-edit scenarios and verify RED**
+- [x] **Step 1: Write safe live-edit scenarios and verify RED**
 
   Cover create/edit/delete visible on next request, shared modules, import maps/static files, disabled
   override not-found behavior, and rejection of traversal, absolute paths, and symlink escapes.
 
-- [ ] **Step 2: Implement safe resolution**
+- [x] **Step 2: Implement safe resolution**
 
   Canonicalize and realpath every resolved entry/import/static/symlink target before opening it; prove
   membership beneath `functionsRoot`. Container mode mounts only the whole root read-only at one stable
   path. Do not add a watcher or desired-state mutation for code edits.
 
-- [ ] **Step 3: Verify and commit**
+- [x] **Step 3: Verify and commit**
 
   Run `functions.integration.test.ts` in native fixtures, stack type-check, and commit:
 

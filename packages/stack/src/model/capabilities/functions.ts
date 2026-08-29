@@ -1,10 +1,11 @@
-import { Schema } from "effect";
+import { Redacted, Schema } from "effect";
 import { release, workload, type CapabilityModule } from "../CapabilityModule.ts";
 
 const Secret = Schema.Redacted(Schema.String);
+export type FunctionSecret = Redacted.Redacted<string>;
 const FunctionSlug = Schema.String.check(Schema.isPattern(/^[a-zA-Z0-9_-]+$/));
 const EnvName = Schema.String.check(Schema.isPattern(/^[A-Z_][A-Z0-9_]*$/));
-const FunctionOverride = Schema.Struct({
+export const FunctionOverrideSchema = Schema.Struct({
   enabled: Schema.optionalKey(Schema.Boolean),
   verify_jwt: Schema.optionalKey(Schema.Boolean),
   import_map: Schema.optionalKey(Schema.String),
@@ -12,21 +13,20 @@ const FunctionOverride = Schema.Struct({
   static_files: Schema.optionalKey(Schema.Array(Schema.String)),
   env: Schema.optionalKey(Schema.Record(EnvName, Secret)),
 });
-export const FunctionsSettingsSchema = Schema.Struct({
-  functions_root: Schema.optionalKey(Schema.String),
-  /** Edge Runtime behavior; capability enabled and functionsInspector port are public fields. */
-  edge_runtime: Schema.optionalKey(
-    Schema.Struct({
-      policy: Schema.optionalKey(Schema.Literals(["oneshot", "per_worker"] as const)),
-      deno_version: Schema.optionalKey(Schema.Finite),
-      secrets: Schema.optionalKey(Schema.Record(Schema.String, Secret)),
-    }),
-  ),
-  functions: Schema.optionalKey(Schema.Record(FunctionSlug, FunctionOverride)),
-});
-export type FunctionsSettings = Schema.Schema.Type<typeof FunctionsSettingsSchema>;
+export type FunctionOverride = Schema.Schema.Type<typeof FunctionOverrideSchema>;
 
-const functionDefaults = {
+/** Fully materialized per-function settings consumed by request-time discovery. */
+export interface FunctionSettings {
+  readonly enabled: boolean;
+  readonly verify_jwt: boolean;
+  readonly import_map: string;
+  readonly entrypoint: string;
+  readonly static_files: ReadonlyArray<string>;
+  readonly env: Readonly<Record<string, FunctionSecret>>;
+}
+export type MaterializedFunctionSettings = Readonly<Record<string, FunctionSettings>>;
+
+export const FunctionSettingsDefaults: FunctionSettings = {
   enabled: true,
   verify_jwt: true,
   import_map: "",
@@ -34,6 +34,21 @@ const functionDefaults = {
   static_files: [],
   env: {},
 };
+
+export const EdgeRuntimeSettingsSchema = Schema.Struct({
+  policy: Schema.optionalKey(Schema.Literals(["oneshot", "per_worker"] as const)),
+  deno_version: Schema.optionalKey(Schema.Finite),
+  secrets: Schema.optionalKey(Schema.Record(Schema.String, Secret)),
+});
+export type EdgeRuntimeSettings = Schema.Schema.Type<typeof EdgeRuntimeSettingsSchema>;
+
+export const FunctionsSettingsSchema = Schema.Struct({
+  functions_root: Schema.optionalKey(Schema.String),
+  /** Edge Runtime behavior; capability enabled and functionsInspector port are public fields. */
+  edge_runtime: Schema.optionalKey(EdgeRuntimeSettingsSchema),
+  functions: Schema.optionalKey(Schema.Record(FunctionSlug, FunctionOverrideSchema)),
+});
+export type FunctionsSettings = Schema.Schema.Type<typeof FunctionsSettingsSchema>;
 
 export const FunctionsModule: CapabilityModule<FunctionsSettings> = {
   name: "functions",
@@ -70,7 +85,7 @@ export const FunctionsModule: CapabilityModule<FunctionsSettings> = {
     functions: Object.fromEntries(
       Object.entries(settings.functions ?? {}).map(([name, fn]) => [
         name,
-        { ...functionDefaults, ...fn, env: fn.env ?? {} },
+        { ...FunctionSettingsDefaults, ...fn, env: fn.env ?? {} },
       ]),
     ),
   }),

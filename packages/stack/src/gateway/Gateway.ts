@@ -1,4 +1,4 @@
-import { Deferred, Effect, Exit, FiberSet, Semaphore } from "effect";
+import { Data, Deferred, Effect, Exit, FiberSet, Semaphore } from "effect";
 import { GatewayActivationError } from "../public/Errors.ts";
 import { CAPABILITY_NAMES, type CapabilityName } from "../public/Capability.ts";
 import { makeHttpGateway, type HttpGateway, type HttpGatewayOptions } from "./HttpGateway.ts";
@@ -17,6 +17,17 @@ export interface ActivationResult {
 
 export interface ActivationTarget {
   readonly dependencies: ReadonlyArray<CapabilityName>;
+}
+
+/** Internal route preflight failure used for request-time discovery. */
+export class GatewayRouteNotFoundError extends Data.TaggedError("GatewayRouteNotFoundError")<{
+  readonly message: string;
+}> {}
+
+export interface PreparedGatewayRoute {
+  readonly resolveBackend: (
+    activation: ActivationResult,
+  ) => Effect.Effect<BackendEndpoint, GatewayActivationError>;
 }
 
 export interface LazyActivator {
@@ -140,6 +151,10 @@ export interface GatewayRouteRequest {
 export interface GatewayRoute {
   readonly capability: CapabilityName;
   readonly match: (request: GatewayRouteRequest) => boolean;
+  /** Request-time validation and preparation performed before activation. */
+  readonly prepare?: (
+    request: GatewayRouteRequest,
+  ) => Effect.Effect<PreparedGatewayRoute, GatewayRouteNotFoundError | GatewayActivationError>;
 }
 
 export interface StackGateway {

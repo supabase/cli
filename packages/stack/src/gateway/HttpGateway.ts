@@ -22,7 +22,9 @@ import type {
   GatewayRoute,
   GatewayRouteRequest,
   LazyActivator,
+  PreparedGatewayRoute,
 } from "./Gateway.ts";
+import { GatewayRouteNotFoundError } from "./Gateway.ts";
 import type { NativeListener } from "../state/PortCoordinator.ts";
 
 class GatewayBackendError extends Data.TaggedError("GatewayBackendError")<{
@@ -191,6 +193,7 @@ const proxy = (
 
 const mapFailure = (cause: Cause.Cause<unknown>): number => {
   const error = Cause.findErrorOption(cause);
+  if (Option.isSome(error) && error.value instanceof GatewayRouteNotFoundError) return 404;
   if (Option.isSome(error) && error.value instanceof GatewayBackendError) return 502;
   if (
     Option.isSome(error) &&
@@ -227,13 +230,23 @@ const handleRequest = (
     respond(response, 404, JSON.stringify({ error: "Not found" }), options);
     return;
   }
-  const activation = options.activate(route.capability).pipe(
-    Effect.flatMap((result) =>
-      options.resolveBackend === undefined
-        ? Effect.succeed(result.endpoint)
-        : options
-            .resolveBackend(route, view, result)
-            .pipe(Effect.mapError((cause) => new GatewayBackendError({ cause }))),
+  const preparation: Effect.Effect<
+    PreparedGatewayRoute | undefined,
+    GatewayRouteNotFoundError | GatewayActivationError
+  > = route.prepare === undefined ? Effect.as(Effect.void, undefined) : route.prepare(view);
+  const activation = preparation.pipe(
+    Effect.flatMap((prepared) =>
+      Effect.suspend(() => options.activate(route.capability)).pipe(
+        Effect.flatMap((result) => {
+          const resolved =
+            prepared === undefined
+              ? options.resolveBackend === undefined
+                ? Effect.succeed(result.endpoint)
+                : options.resolveBackend(route, view, result)
+              : prepared.resolveBackend(result);
+          return resolved.pipe(Effect.mapError((cause) => new GatewayBackendError({ cause })));
+        }),
+      ),
     ),
     Effect.flatMap((backend) => proxy(request, response, backend, options)),
   );
@@ -250,7 +263,10 @@ const handleRequest = (
     respond(
       response,
       status,
-      JSON.stringify({ error: status === 503 ? "Service unavailable" : "Bad gateway" }),
+      JSON.stringify({
+        error:
+          status === 404 ? "Not found" : status === 503 ? "Service unavailable" : "Bad gateway",
+      }),
       options,
     );
   });
@@ -282,13 +298,23 @@ const handleUpgrade = (
     socket.destroy();
     return;
   }
-  const activation = options.activate(route.capability).pipe(
-    Effect.flatMap((result) =>
-      options.resolveBackend === undefined
-        ? Effect.succeed(result.endpoint)
-        : options
-            .resolveBackend(route, view, result)
-            .pipe(Effect.mapError((cause) => new GatewayBackendError({ cause }))),
+  const preparation: Effect.Effect<
+    PreparedGatewayRoute | undefined,
+    GatewayRouteNotFoundError | GatewayActivationError
+  > = route.prepare === undefined ? Effect.as(Effect.void, undefined) : route.prepare(view);
+  const activation = preparation.pipe(
+    Effect.flatMap((prepared) =>
+      Effect.suspend(() => options.activate(route.capability)).pipe(
+        Effect.flatMap((result) => {
+          const resolved =
+            prepared === undefined
+              ? options.resolveBackend === undefined
+                ? Effect.succeed(result.endpoint)
+                : options.resolveBackend(route, view, result)
+              : prepared.resolveBackend(result);
+          return resolved.pipe(Effect.mapError((cause) => new GatewayBackendError({ cause })));
+        }),
+      ),
     ),
     Effect.flatMap((backend) =>
       Effect.callback<void, GatewayBackendError>((resume) => {

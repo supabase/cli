@@ -1,6 +1,16 @@
 export { AuthModule, AuthSettingsSchema, type AuthSettings } from "./auth.ts";
 export { DatabaseModule, DatabaseSettingsSchema, type DatabaseSettings } from "./database.ts";
-export { FunctionsModule, FunctionsSettingsSchema, type FunctionsSettings } from "./functions.ts";
+export {
+  FunctionOverrideSchema,
+  FunctionSettingsDefaults,
+  FunctionsModule,
+  FunctionsSettingsSchema,
+  type FunctionOverride,
+  type FunctionSecret,
+  type FunctionSettings,
+  type MaterializedFunctionSettings,
+  type FunctionsSettings,
+} from "./functions.ts";
 export { MailModule, MailSettingsSchema, type MailSettings } from "./mail.ts";
 export { PoolerModule, PoolerSettingsSchema, type PoolerSettings } from "./pooler.ts";
 export { RealtimeModule, RealtimeSettingsSchema, type RealtimeSettings } from "./realtime.ts";

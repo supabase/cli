@@ -428,3 +428,20 @@ Implementation continues after recording a ruling; this file is not a question q
 - Effect/generic lint over all Task 8 sources and tests, formatting, and `git diff --check` — passed.
 - Concrete capability route catalogs remain Task 14; Functions discovery, container engine routing,
   and full Supervisor lifecycle composition remain Tasks 9, 10, and 11 respectively.
+
+### Task 9 — 2026-08-29
+
+- Added request-time FunctionsRoot containment and canonical one-mount descriptors. Every function,
+  entrypoint, import-map, static pattern, shared path, and symlink target is checked against the
+  live root; filesystem edits become visible on the next discovery without a watcher or state write.
+- Added closed FunctionDiscovery settings/defaults, custom entrypoint/static/import-map descriptors,
+  Redacted environment values, disabled/not-found and typed path failures, generic module resolution,
+  and Functions gateway preparation (`/functions/v1/:slug`) that captures the exact invocation in a
+  typed backend-dispatch closure and avoids activation on 404/503.
+- Added integration coverage for live create/edit/delete, config-only overrides, root and category
+  symlink escapes, path traversal/absolute values, shared modules, canonical mounts, gateway
+  preflight activation fencing, and HTTP/WebSocket dispatch descriptor handoff.
+- RED evidence: the first functions integration run failed because the new discovery modules were
+  absent; subsequent gateway preflight coverage initially exposed eager activation construction.
+- `pnpm --dir packages/stack types:check`, focused Functions/gateway integration, full package
+  integration (163 tests), Effect lint, formatting, and `git diff --check` passed.

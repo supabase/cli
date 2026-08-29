@@ -1,6 +1,6 @@
 import { NodeServices } from "@effect/platform-node";
 import { describe, expect, it } from "@effect/vitest";
-import { Effect, Exit } from "effect";
+import { Effect, Exit, FileSystem, Redacted } from "effect";
 import { GatewayActivationError } from "../public/Errors.ts";
 import { connect as connectNet, createServer, type Server } from "node:net";
 // oxlint-disable-next-line effecttsgo/node-builtin-import
@@ -16,6 +16,12 @@ import { createLazyActivator, makeGateway, type BackendEndpoint } from "./Gatewa
 import { makeHttpGateway } from "./HttpGateway.ts";
 import { makeTcpGateway } from "./TcpGateway.ts";
 import type { NativeListener } from "../state/PortCoordinator.ts";
+import { FunctionSettingsDefaults } from "../model/capabilities/functions.ts";
+import { makeFunctionsRoot } from "../functions/FunctionsRoot.ts";
+import {
+  makeFunctionDiscovery,
+  makeFunctionsGatewayRoute,
+} from "../functions/FunctionDiscovery.ts";
 
 const withPlatform = <A, E, R>(effect: Effect.Effect<A, E, R>) =>
   Effect.scoped(effect).pipe(Effect.provide(NodeServices.layer));
@@ -478,6 +484,168 @@ describe("stack gateway", () => {
         });
         expect(bytesOnActivationFailure).toBe(0);
         yield* tcpFailure.close;
+      }),
+    ),
+  );
+
+  it.live("preflights Functions routes before activation and maps discovery failures", () =>
+    withPlatform(
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const root = yield* fs.makeTempDirectoryScoped({ prefix: "stack-functions-gateway-" });
+        const functionRoot = `${root}/functions`;
+        yield* fs.makeDirectory(`${functionRoot}/rest`, { recursive: true });
+        yield* fs.writeFileString(`${functionRoot}/rest/index.ts`, "export default 1");
+        const functionsRoot = yield* makeFunctionsRoot({ root: functionRoot });
+        let activations = 0;
+        const disabledDiscovery = yield* makeFunctionDiscovery({
+          root: functionsRoot,
+          settings: { rest: { ...FunctionSettingsDefaults, enabled: false } },
+        });
+        const disabled = yield* makeHttpGateway({
+          address: "127.0.0.1",
+          port: 0,
+          routes: [
+            makeFunctionsGatewayRoute(disabledDiscovery, {
+              dispatch: (_invocation, activation) => Effect.succeed(activation.endpoint),
+            }),
+          ],
+          activate: () => {
+            activations += 1;
+            return Effect.succeed({
+              capability: "functions",
+              endpoint: { host: "127.0.0.1", port: 1 },
+            });
+          },
+        });
+        expect(yield* getStatus(disabled.port, "/functions/v1/rest")).toBe(404);
+        expect(yield* getStatus(disabled.port, "/functions/v1/missing")).toBe(404);
+        expect(activations).toBe(0);
+        yield* disabled.close;
+
+        const pathDiscovery = yield* makeFunctionDiscovery({
+          root: functionsRoot,
+          settings: { rest: { ...FunctionSettingsDefaults, entrypoint: "../outside.ts" } },
+        });
+        const invalid = yield* makeHttpGateway({
+          address: "127.0.0.1",
+          port: 0,
+          routes: [
+            makeFunctionsGatewayRoute(pathDiscovery, {
+              dispatch: (_invocation, activation) => Effect.succeed(activation.endpoint),
+            }),
+          ],
+          activate: () => {
+            activations += 1;
+            return Effect.succeed({
+              capability: "functions",
+              endpoint: { host: "127.0.0.1", port: 1 },
+            });
+          },
+        });
+        expect(yield* getStatus(invalid.port, "/functions/v1/rest")).toBe(503);
+        expect(activations).toBe(0);
+        yield* invalid.close;
+
+        const backend = createHttpServer((_request, response) => response.end("function-response"));
+        backend.on("upgrade", (_request, socket) => {
+          socket.end("HTTP/1.1 101 Switching Protocols\r\nUpgrade: websocket\r\n\r\nws-response");
+        });
+        yield* Effect.callback<void, Error>((resume) => {
+          backend.once("error", (error) => resume(Effect.fail(error)));
+          backend.listen(0, "127.0.0.1", () => resume(Effect.void));
+        });
+        const backendAddress = backend.address();
+        if (typeof backendAddress !== "object" || backendAddress === null) return;
+        const endpoint: BackendEndpoint = { host: "127.0.0.1", port: backendAddress.port };
+        yield* fs.makeDirectory(`${functionRoot}/rest/public`, { recursive: true });
+        yield* fs.writeFileString(`${functionRoot}/rest/custom.ts`, "export default 1");
+        yield* fs.writeFileString(`${functionRoot}/rest/deno.json`, "{}");
+        yield* fs.writeFileString(`${functionRoot}/rest/public/file.txt`, "file");
+        const dispatched: Array<{
+          readonly slug: string;
+          readonly entrypoint: string;
+          readonly verifyJwt: boolean;
+          readonly importMap?: string;
+          readonly staticPattern?: string;
+          readonly redacted: boolean;
+        }> = [];
+        const runtimeDiscovery = yield* makeFunctionDiscovery({
+          root: functionsRoot,
+          settings: {
+            rest: {
+              ...FunctionSettingsDefaults,
+              verify_jwt: false,
+              entrypoint: "custom.ts",
+              import_map: "deno.json",
+              static_files: ["public/*.txt"],
+              env: { TOKEN: Redacted.make("opaque-secret") },
+            },
+          },
+        });
+        const runtimeGateway = yield* makeHttpGateway({
+          address: "127.0.0.1",
+          port: 0,
+          routes: [
+            makeFunctionsGatewayRoute(runtimeDiscovery, {
+              dispatch: (invocation) =>
+                Effect.sync(() => {
+                  dispatched.push({
+                    slug: invocation.slug,
+                    entrypoint: invocation.entrypoint.native,
+                    verifyJwt: invocation.verifyJwt,
+                    ...(invocation.importMap === undefined
+                      ? {}
+                      : { importMap: invocation.importMap.native }),
+                    ...(invocation.staticPatterns[0] === undefined
+                      ? {}
+                      : { staticPattern: invocation.staticPatterns[0].native }),
+                    redacted: Redacted.isRedacted(invocation.env.TOKEN),
+                  });
+                  return endpoint;
+                }),
+            }),
+          ],
+          activate: () => Effect.succeed({ capability: "functions", endpoint }),
+        });
+        const body = yield* Effect.callback<string, Error>((resume) => {
+          const request = requestHttp(
+            { host: "127.0.0.1", port: runtimeGateway.port, path: "/functions/v1/rest" },
+            (response) => {
+              const chunks: Buffer[] = [];
+              response.on("data", (chunk: Buffer) => chunks.push(chunk));
+              response.once("end", () => resume(Effect.succeed(Buffer.concat(chunks).toString())));
+            },
+          );
+          request.once("error", (error) => resume(Effect.fail(error)));
+          request.end();
+          return Effect.sync(() => request.destroy());
+        });
+        expect(body).toBe("function-response");
+        const websocket = yield* Effect.callback<string, Error>((resume) => {
+          const socket = connectNet(runtimeGateway.port, "127.0.0.1");
+          const chunks: Buffer[] = [];
+          socket.once("connect", () =>
+            socket.write(
+              "GET /functions/v1/rest HTTP/1.1\r\nHost: localhost\r\nConnection: Upgrade\r\nUpgrade: websocket\r\n\r\n",
+            ),
+          );
+          socket.on("data", (chunk: Buffer) => chunks.push(chunk));
+          socket.once("end", () => resume(Effect.succeed(Buffer.concat(chunks).toString())));
+          socket.once("error", (error) => resume(Effect.fail(error)));
+          return Effect.sync(() => socket.destroy());
+        });
+        expect(websocket).toContain("101 Switching Protocols");
+        expect(websocket).toContain("ws-response");
+        expect(dispatched).toHaveLength(2);
+        expect(dispatched[0]?.slug).toBe("rest");
+        expect(dispatched[0]?.entrypoint).toContain("/rest/custom.ts");
+        expect(dispatched[0]?.verifyJwt).toBe(false);
+        expect(dispatched[0]?.importMap).toContain("/rest/deno.json");
+        expect(dispatched[0]?.staticPattern).toContain("/rest/public/*.txt");
+        expect(dispatched[0]?.redacted).toBe(true);
+        yield* runtimeGateway.close;
+        yield* closeServer(backend);
       }),
     ),
   );
