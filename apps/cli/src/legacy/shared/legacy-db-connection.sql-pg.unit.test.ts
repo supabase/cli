@@ -799,6 +799,7 @@ describe("legacyBatchFailureError", () => {
         "failed to begin the batch transaction: " +
         "ERROR: canceling statement due to statement timeout (SQLSTATE 57014)",
       statementIndex: 0,
+      transactionPhase: "begin",
     });
 
     const lost = legacyBatchFailureError(
@@ -860,6 +861,7 @@ describe("legacyBatchFailureError", () => {
       message:
         "failed to commit the batch transaction: ERROR: deferred constraint failed (SQLSTATE 23514)",
       statementIndex: 2,
+      transactionPhase: "commit",
     });
 
     const dropped = legacyBatchFailureError(

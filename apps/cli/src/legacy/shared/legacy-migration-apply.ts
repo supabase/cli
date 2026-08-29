@@ -793,10 +793,10 @@ const execMigrationBatch = <E>(
               // `statementIndex` is set by every batch failure the driver raises; a
               // session that omits it can only have failed before the first statement.
               const raw = cause.statementIndex ?? 0;
-              // A failure past every operation is the wrapper's COMMIT (e.g. a
-              // deferred constraint): there is no statement to blame, so keep the
-              // driver's commit-labeled message without an `At statement` tail.
-              if (raw >= operations.length) {
+              // A wrapper (BEGIN/COMMIT) failure, or one past every operation
+              // (e.g. a deferred constraint), blames no statement: keep the
+              // driver's phase-labeled message without an `At statement` tail.
+              if (cause.transactionPhase !== undefined || raw >= operations.length) {
                 const msg = [legacyErrorMessage(cause)];
                 if (cause.detail !== undefined && cause.detail.length > 0) {
                   msg.push(cause.detail);

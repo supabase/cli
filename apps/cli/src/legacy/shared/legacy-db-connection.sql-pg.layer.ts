@@ -266,6 +266,8 @@ export function legacyBatchFailureError(
     detail: mapped.detail,
     position: mapped.position,
     statementIndex: batch.completed,
+    ...(beganFailed ? { transactionPhase: "begin" as const } : {}),
+    ...(commitFailed ? { transactionPhase: "commit" as const } : {}),
   });
 }
 

@@ -31,6 +31,7 @@ class FakeExecError extends Data.TaggedError("LegacyDbExecError")<{
   readonly detail?: string;
   readonly position?: number;
   readonly statementIndex?: number;
+  readonly transactionPhase?: "begin" | "commit";
 }> {
   get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
     return actionability.dbFinding;
@@ -41,7 +42,13 @@ function fakeSession(
   opts: {
     failOn?: string;
     failAfterBatch?: boolean;
-    failWith?: { message: string; code?: string; detail?: string; position?: number };
+    failWith?: {
+      message: string;
+      code?: string;
+      detail?: string;
+      position?: number;
+      transactionPhase?: "begin" | "commit";
+    };
     restoreRoleSql?: string;
     batchConnectionLost?: string;
   } = {},
@@ -278,6 +285,30 @@ describe("legacyApplyMigrationFile", () => {
         Effect.sync(() => {
           expect(error.message).toContain("At statement: 2");
           expect(error.message).toContain("SELECT missing_column");
+        }),
+      ),
+      Effect.ensuring(Effect.sync(() => rmSync(dir, { recursive: true, force: true }))),
+    );
+  });
+
+  it.effect("reports a begin failure without blaming the first statement", () => {
+    const dir = mkdtempSync(join(tmpdir(), "legacy-apply-"));
+    const file = join(dir, "20240101120000_begin.sql");
+    writeFileSync(file, "SELECT 1;");
+    const { session } = fakeSession({
+      failOn: "SELECT 1",
+      failWith: {
+        message: "failed to begin the batch transaction: ERROR: canceling statement",
+        transactionPhase: "begin",
+      },
+    });
+    return run(session, file).pipe(
+      Effect.flip,
+      Effect.tap((error) =>
+        Effect.sync(() => {
+          expect(error.message).toContain("failed to begin the batch transaction");
+          expect(error.message).not.toContain("At statement");
+          expect(error.message).not.toContain("SELECT 1");
         }),
       ),
       Effect.ensuring(Effect.sync(() => rmSync(dir, { recursive: true, force: true }))),
