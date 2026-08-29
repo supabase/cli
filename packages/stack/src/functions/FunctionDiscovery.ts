@@ -240,6 +240,17 @@ const functionSlugFromRequest = (request: GatewayRouteRequest): string | undefin
   return match?.[1];
 };
 
+/** Remove the public Functions prefix before forwarding to Edge Runtime. */
+export const rewriteFunctionRequestPath = (requestPath: string): string => {
+  const queryIndex = requestPath.indexOf("?");
+  const pathname = queryIndex < 0 ? requestPath : requestPath.slice(0, queryIndex);
+  const query = queryIndex < 0 ? "" : requestPath.slice(queryIndex);
+  const prefix = "/functions/v1";
+  if (!pathname.startsWith(`${prefix}/`) && pathname !== prefix) return requestPath;
+  const rewritten = pathname.slice(prefix.length) || "/";
+  return `${rewritten}${query}`;
+};
+
 export interface FunctionsGatewayRouteOptions {
   readonly dispatch: (
     invocation: FunctionInvocation,
@@ -260,6 +271,7 @@ export const makeFunctionsGatewayRoute = (
     return discovery.discover(slug).pipe(
       Effect.map((invocation) => ({
         resolveBackend: (activation: ActivationResult) => options.dispatch(invocation, activation),
+        upstreamPath: (request: GatewayRouteRequest) => rewriteFunctionRequestPath(request.path),
       })),
       Effect.catchTags({
         FunctionNotFoundError: () =>

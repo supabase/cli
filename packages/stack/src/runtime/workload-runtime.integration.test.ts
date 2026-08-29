@@ -9,6 +9,7 @@ import { compileStack } from "../model/Compiler.ts";
 import {
   containerResolutionFor,
   FUNCTIONS_CONTAINER_ROOT,
+  privateBindingIntentsFor,
   resolveContainerResolutionFor,
   runtimeSpecFor,
   validateWorkloadRuntimeInputs,
@@ -33,7 +34,23 @@ const state: PersistedStackState = {
     { field: "database", port: 55432, intent: "exact" },
     { field: "api", port: 54321, intent: "exact" },
   ],
-  privatePorts: [],
+  privatePorts: [
+    { workloadId: "database:database", binding: "primary", port: 30_001 },
+    { workloadId: "rest:rest", binding: "primary", port: 30_002 },
+    { workloadId: "auth:auth", binding: "primary", port: 30_003 },
+    { workloadId: "realtime:realtime", binding: "primary", port: 30_004 },
+    { workloadId: "storage:storage", binding: "primary", port: 30_005 },
+    { workloadId: "storage:imgproxy", binding: "primary", port: 30_006 },
+    { workloadId: "functions:edge-runtime", binding: "primary", port: 30_007 },
+    { workloadId: "studio:studio", binding: "primary", port: 30_008 },
+    { workloadId: "studio:pgmeta", binding: "primary", port: 30_009 },
+    { workloadId: "mail:mail", binding: "ui", port: 30_010 },
+    { workloadId: "mail:mail", binding: "smtp", port: 30_011 },
+    { workloadId: "mail:mail", binding: "pop3", port: 30_012 },
+    { workloadId: "analytics:analytics", binding: "primary", port: 30_013 },
+    { workloadId: "analytics:vector", binding: "primary", port: 30_014 },
+    { workloadId: "pooler:pooler", binding: "primary", port: 30_015 },
+  ],
   secrets: {
     "secret:database.internal.password": { policy: "managed", value: "postgres" },
     "secret:security.jwt.signing.secret": { policy: "managed", value: "symmetric-secret" },
@@ -64,6 +81,24 @@ const planned = (id: string): PlannedWorkload => {
 };
 
 describe("workload runtime catalog", () => {
+  it.live("derives one closed private binding intent for every planned workload binding", () =>
+    Effect.gen(function* () {
+      const compiled = yield* compileStack({
+        projectRoot: state.identity.projectRoot,
+        runtime: { kind: "native" },
+      }).pipe(Effect.provide(NodeServices.layer));
+      const intents = privateBindingIntentsFor(compiled.executionPlan);
+      expect(intents).toContainEqual({ workloadId: "database:database", binding: "primary" });
+      expect(intents).toContainEqual({ workloadId: "mail:mail", binding: "ui" });
+      expect(intents).toContainEqual({ workloadId: "mail:mail", binding: "smtp" });
+      expect(intents).toContainEqual({ workloadId: "mail:mail", binding: "pop3" });
+      expect(intents.filter(({ workloadId }) => workloadId === "mail:mail")).toHaveLength(3);
+      expect(
+        intents.every(({ binding }) => ["primary", "ui", "smtp", "pop3"].includes(binding)),
+      ).toBe(true);
+    }).pipe(Effect.provide(NodeServices.layer)),
+  );
+
   it("provides private command, environment and readiness metadata for every workload", () => {
     for (const [index, id] of Object.keys(WORKLOAD_CATALOG).entries()) {
       const workload = planned(id);
@@ -76,15 +111,61 @@ describe("workload runtime catalog", () => {
       expect(spec.readiness.protocol).toMatch(/http|tcp/u);
       expect(spec.args(state, workload, port)).toBeInstanceOf(Array);
       expect(spec.cwd(state, workload)).toBeTruthy();
-      expect(spec.privateEndpoint(port)).toEqual({ host: "127.0.0.1", port });
-      expect(spec.privateEndpoint(spec.containerPort, "container")).toEqual({
-        host: WORKLOAD_CATALOG[id]?.containerAlias,
-        port: spec.containerPort,
+      expect(spec.privateEndpoint(state, spec.readiness.binding)).toEqual({
+        host: "127.0.0.1",
+        port: expect.any(Number),
       });
-      expect(spec.privateEndpoint(49_999, "container").port).toBe(spec.containerPort);
+      expect(spec.privateEndpoint(state, spec.readiness.binding, "container")).toEqual({
+        host: WORKLOAD_CATALOG[id]?.containerAlias,
+        port: spec.bindings[spec.readiness.binding]?.containerPort,
+      });
       expect(spec.networkAliases).toEqual([WORKLOAD_CATALOG[id]?.containerAlias]);
     }
   });
+
+  it.live("uses durable binding assignments for native endpoints and container publications", () =>
+    Effect.gen(function* () {
+      const mail = planned("mail:mail");
+      const mailResolution = containerResolutionFor(state, mail);
+      expect(mailResolution?.publications).toEqual([
+        { address: "127.0.0.1", hostPort: 30010, containerPort: 8025 },
+        { address: "127.0.0.1", hostPort: 30011, containerPort: 1025 },
+        { address: "127.0.0.1", hostPort: 30012, containerPort: 1110 },
+      ]);
+      expect(runtimeSpecFor(mail)?.env(state, mail, 8025)).toMatchObject({
+        MP_UI_BIND_ADDR: "127.0.0.1:30010",
+        MP_SMTP_BIND_ADDR: "127.0.0.1:30011",
+        MP_POP3_BIND_ADDR: "127.0.0.1:30012",
+      });
+      const secondState: PersistedStackState = {
+        ...state,
+        privatePorts: state.privatePorts.map((assignment) => ({
+          ...assignment,
+          port: assignment.port + 1000,
+        })),
+      };
+      expect(
+        runtimeSpecFor(planned("rest:rest"))?.env(secondState, planned("rest:rest"), 3000),
+      ).toMatchObject({
+        PGRST_DB_URI: expect.stringContaining("@127.0.0.1:31001"),
+      });
+      expect(
+        runtimeSpecFor(planned("storage:storage"))?.env(
+          secondState,
+          planned("storage:storage"),
+          5000,
+        ).IMGPROXY_URL,
+      ).toBe("http://127.0.0.1:31006");
+      const missing = {
+        ...state,
+        privatePorts: state.privatePorts.filter(
+          ({ workloadId, binding }) => !(workloadId === mail.id && binding === "smtp"),
+        ),
+      };
+      const failed = yield* resolveContainerResolutionFor(missing, mail).pipe(Effect.exit);
+      expect(Exit.isFailure(failed)).toBe(true);
+    }).pipe(Effect.provide(NodeServices.layer)),
+  );
 
   it.live(
     "consumes nested capability settings and separates native/container database endpoints",
@@ -163,7 +244,7 @@ describe("workload runtime catalog", () => {
         expect(rest?.env(configured, planned("rest:rest"), 3000, "native")).toMatchObject({
           PGRST_DB_SCHEMAS: "private",
           PGRST_DB_EXTRA_SEARCH_PATH: "extensions",
-          PGRST_DB_URI: expect.stringContaining("@127.0.0.1:55432"),
+          PGRST_DB_URI: expect.stringContaining("@127.0.0.1:30001"),
         });
         expect(rest?.env(configured, planned("rest:rest"), 3000, "container")).toMatchObject({
           PGRST_DB_URI: expect.stringContaining("@supabase-database:5432"),
@@ -201,7 +282,7 @@ describe("workload runtime catalog", () => {
           GOTRUE_MAILER_SECURE_EMAIL_CHANGE_ENABLED: "true",
           GOTRUE_SECURITY_UPDATE_PASSWORD_REQUIRE_REAUTHENTICATION: "false",
           GOTRUE_SMTP_HOST: "127.0.0.1",
-          GOTRUE_SMTP_PORT: "1025",
+          GOTRUE_SMTP_PORT: "30011",
         });
         expect(
           auth?.env(configured, planned("auth:auth"), 9999, "native", {

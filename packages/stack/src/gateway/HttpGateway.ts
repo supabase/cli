@@ -103,11 +103,18 @@ const routeFor = (
   routes: ReadonlyArray<GatewayRoute>,
 ): GatewayRoute | undefined => routes.find((route) => route.match(request));
 
+const preparedPath = (
+  route: GatewayRoute,
+  prepared: PreparedGatewayRoute | undefined,
+  request: GatewayRouteRequest,
+): string => prepared?.upstreamPath?.(request) ?? route.upstreamPath?.(request) ?? request.path;
+
 const proxy = (
   request: IncomingMessage,
   response: ServerResponse,
   backend: BackendEndpoint,
   options: HttpGatewayOptions,
+  upstreamPath: string,
 ): Effect.Effect<void, GatewayBackendError> =>
   Effect.callback<void, GatewayBackendError>((resume) => {
     let settled = false;
@@ -175,7 +182,7 @@ const proxy = (
         host: backend.host,
         port: backend.port,
         method: request.method,
-        path: request.url ?? "/",
+        path: upstreamPath,
         headers,
       },
       onIncoming,
@@ -244,11 +251,14 @@ const handleRequest = (
                 ? Effect.succeed(result.endpoint)
                 : options.resolveBackend(route, view, result)
               : prepared.resolveBackend(result);
-          return resolved.pipe(Effect.mapError((cause) => new GatewayBackendError({ cause })));
+          return resolved.pipe(
+            Effect.map((backend) => ({ backend, path: preparedPath(route, prepared, view) })),
+            Effect.mapError((cause) => new GatewayBackendError({ cause })),
+          );
         }),
       ),
     ),
-    Effect.flatMap((backend) => proxy(request, response, backend, options)),
+    Effect.flatMap(({ backend, path }) => proxy(request, response, backend, options, path)),
   );
   // Node invokes this handler outside Effect; use the owner-scoped FiberSet
   // runtime so cancellation of the gateway interrupts in-flight activation.
@@ -272,8 +282,8 @@ const handleRequest = (
   });
 };
 
-const writeUpgrade = (request: IncomingMessage): string => {
-  const lines = [`${request.method ?? "GET"} ${request.url ?? "/"} HTTP/${request.httpVersion}`];
+const writeUpgrade = (request: IncomingMessage, path: string): string => {
+  const lines = [`${request.method ?? "GET"} ${path} HTTP/${request.httpVersion}`];
   for (let index = 0; index < request.rawHeaders.length; index += 2) {
     const name = request.rawHeaders[index];
     const value = request.rawHeaders[index + 1];
@@ -312,11 +322,14 @@ const handleUpgrade = (
                 ? Effect.succeed(result.endpoint)
                 : options.resolveBackend(route, view, result)
               : prepared.resolveBackend(result);
-          return resolved.pipe(Effect.mapError((cause) => new GatewayBackendError({ cause })));
+          return resolved.pipe(
+            Effect.map((backend) => ({ backend, path: preparedPath(route, prepared, view) })),
+            Effect.mapError((cause) => new GatewayBackendError({ cause })),
+          );
         }),
       ),
     ),
-    Effect.flatMap((backend) =>
+    Effect.flatMap(({ backend, path }) =>
       Effect.callback<void, GatewayBackendError>((resume) => {
         const target = new Socket();
         let settled = false;
@@ -348,7 +361,7 @@ const handleUpgrade = (
         const onSocketEnd = () => target.end();
         const onTargetEnd = () => socket.end();
         const onConnect = () => {
-          target.write(writeUpgrade(request));
+          target.write(writeUpgrade(request, path));
           if (head.byteLength > 0) target.write(head);
           socket.pipe(target, { end: false });
           target.pipe(socket, { end: false });

@@ -1,6 +1,7 @@
 import { Data, Deferred, Effect, Exit, FiberSet, Semaphore } from "effect";
 import { GatewayActivationError } from "../public/Errors.ts";
 import { CAPABILITY_NAMES, type CapabilityName } from "../public/Capability.ts";
+import type { PortField } from "../public/Status.ts";
 import { makeHttpGateway, type HttpGateway, type HttpGatewayOptions } from "./HttpGateway.ts";
 import { makeTcpGateway, type TcpGateway, type TcpGatewayOptions } from "./TcpGateway.ts";
 
@@ -28,6 +29,8 @@ export interface PreparedGatewayRoute {
   readonly resolveBackend: (
     activation: ActivationResult,
   ) => Effect.Effect<BackendEndpoint, GatewayActivationError>;
+  /** Optional request path sent to the activated backend. */
+  readonly upstreamPath?: (request: GatewayRouteRequest) => string;
 }
 
 export interface LazyActivator {
@@ -150,7 +153,11 @@ export interface GatewayRouteRequest {
 
 export interface GatewayRoute {
   readonly capability: CapabilityName;
+  /** Workload binding selected when a capability exposes multiple endpoints. */
+  readonly binding?: string;
   readonly match: (request: GatewayRouteRequest) => boolean;
+  /** Optional path transform applied before proxying when no prepared route overrides it. */
+  readonly upstreamPath?: (request: GatewayRouteRequest) => string;
   /** Request-time validation and preparation performed before activation. */
   readonly prepare?: (
     request: GatewayRouteRequest,
@@ -158,14 +165,24 @@ export interface GatewayRoute {
 }
 
 export interface StackGateway {
-  readonly http?: HttpGateway;
-  readonly tcp?: TcpGateway;
+  readonly http: ReadonlyMap<PortField, HttpGateway>;
+  readonly tcp: ReadonlyMap<PortField, TcpGateway>;
   readonly close: Effect.Effect<void>;
 }
 
+export interface HttpGatewayListenerOptions {
+  readonly field: PortField;
+  readonly options: Omit<HttpGatewayOptions, "activate">;
+}
+
+export interface TcpGatewayListenerOptions {
+  readonly field: PortField;
+  readonly options: Omit<TcpGatewayOptions, "activate">;
+}
+
 export interface StackGatewayOptions {
-  readonly http?: Omit<HttpGatewayOptions, "activate">;
-  readonly tcp?: Omit<TcpGatewayOptions, "activate">;
+  readonly http?: ReadonlyArray<HttpGatewayListenerOptions>;
+  readonly tcp?: ReadonlyArray<TcpGatewayListenerOptions>;
   readonly activate: LazyActivator["activate"];
 }
 
@@ -174,29 +191,46 @@ export const makeGateway = (
   options: StackGatewayOptions,
 ): Effect.Effect<StackGateway, GatewayActivationError, import("effect/Scope").Scope> =>
   Effect.gen(function* () {
-    const http =
-      options.http === undefined
-        ? undefined
-        : yield* makeHttpGateway({ ...options.http, activate: options.activate });
-    let tcp: TcpGateway | undefined;
-    if (options.tcp !== undefined) {
+    const http = new Map<PortField, HttpGateway>();
+    const tcp = new Map<PortField, TcpGateway>();
+    const closeValues = (values: Iterable<{ readonly close: Effect.Effect<void> }>) =>
+      Effect.forEach(values, (gateway) => gateway.close.pipe(Effect.exit), {
+        concurrency: "unbounded",
+        discard: true,
+      });
+    for (const entry of options.http ?? []) {
+      if (http.has(entry.field)) {
+        yield* closeValues(http.values());
+        return yield* new GatewayActivationError({
+          message: `Duplicate HTTP gateway listener ${entry.field}`,
+        });
+      }
       const acquired = yield* Effect.exit(
-        makeTcpGateway({ ...options.tcp, activate: options.activate }),
+        makeHttpGateway({ ...entry.options, activate: options.activate }),
       );
       if (Exit.isFailure(acquired)) {
-        if (http !== undefined) yield* http.close;
+        yield* closeValues(http.values());
         return yield* Effect.failCause(acquired.cause);
       }
-      tcp = acquired.value;
+      http.set(entry.field, acquired.value);
     }
-    const closeOperation = Effect.gen(function* () {
-      if (tcp !== undefined) yield* tcp.close;
-      if (http !== undefined) yield* http.close;
-    });
+    for (const entry of options.tcp ?? []) {
+      if (tcp.has(entry.field) || http.has(entry.field)) {
+        yield* closeValues([...http.values(), ...tcp.values()]);
+        return yield* new GatewayActivationError({
+          message: `Duplicate gateway listener ${entry.field}`,
+        });
+      }
+      const acquired = yield* Effect.exit(
+        makeTcpGateway({ ...entry.options, activate: options.activate }),
+      );
+      if (Exit.isFailure(acquired)) {
+        yield* closeValues([...http.values(), ...tcp.values()]);
+        return yield* Effect.failCause(acquired.cause);
+      }
+      tcp.set(entry.field, acquired.value);
+    }
+    const closeOperation = closeValues([...http.values(), ...tcp.values()]);
     const close = yield* Effect.cached(closeOperation);
-    return {
-      ...(http === undefined ? {} : { http }),
-      ...(tcp === undefined ? {} : { tcp }),
-      close,
-    } satisfies StackGateway;
+    return { http, tcp, close } satisfies StackGateway;
   });

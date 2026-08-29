@@ -687,3 +687,21 @@ private-port reservation plus gateway ownership atomic with accepted lifecycle g
   lazy activation remains a direct in-process Supervisor call in both runtime modes.
 - Focused ports/state, container-runtime/recovery, and gateway integration coverage passes. Production
   Supervisor/RuntimeFactory lifecycle wiring and credentials/log integration remain Task 13B's next slice.
+
+#### Task 13B2a — complete private routing contracts (2026-08-29)
+
+- Workloads expose a closed binding catalog: ordinary services use `primary`, while Mailpit declares
+  `ui`/`smtp`/`pop3`. `privateBindingIntentsFor` derives every reservation from the execution plan;
+  runtime resolution validates durable assignments and returns loopback container publications with
+  fixed internal ports.
+- `StackGateway` now owns maps of HTTP/TCP listeners keyed by `PortField`, rolling back all acquired
+  listeners on failure and closing them once. `RouteCatalog` covers enabled API prefixes plus direct
+  Studio/Mail/Functions inspector and database/pooler/SMTP/POP3 routes.
+- Gateway forwarding supports route and prepared-route upstream path transforms. Legacy service roots
+  are represented explicitly (GraphQL `/rpc/graphql`, Realtime `/socket/websocket` and `/api`, Storage
+  S3 `/s3`), with query strings preserved. Functions requests rewrite `/functions/v1/<slug>` to the
+  Edge Runtime `/<slug>` path for both HTTP and WebSocket forwarding.
+- Evidence: workload-runtime (7), gateway (10), route-catalog (1), and the broader catalog/compiler,
+  preparation/artifact, container, bootstrap, runtime, and gateway integration set (100 tests) pass;
+  stack types, Effect/generic lint, formatting, and diff checks pass. Task 13B2b still owns production
+  listener allocation/reconciliation and Edge Runtime bootstrap composition.

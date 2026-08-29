@@ -1,5 +1,5 @@
 import type { PersistedStackState } from "../state/StackState.ts";
-import type { PlannedWorkload } from "../model/ExecutionPlan.ts";
+import type { ExecutionPlan, PlannedWorkload } from "../model/ExecutionPlan.ts";
 import type { CapabilityName } from "../public/Capability.ts";
 import type { ContainerHostRoute, ContainerMount } from "./ContainerEngine.ts";
 import { WORKLOAD_CATALOG, type NativeWorkloadProcess } from "../model/WorkloadCatalog.ts";
@@ -8,6 +8,25 @@ import { Effect } from "effect";
 import { StackPreparationError } from "../public/Errors.ts";
 
 export type WorkloadRuntimeKind = "native" | "container";
+
+/** Closed set of private ports a workload may expose to the host gateway. */
+export type WorkloadBindingName = "primary" | "ui" | "smtp" | "pop3";
+
+export interface WorkloadBinding {
+  readonly containerPort: number;
+}
+
+export interface WorkloadBindings {
+  readonly primary?: WorkloadBinding;
+  readonly ui?: WorkloadBinding;
+  readonly smtp?: WorkloadBinding;
+  readonly pop3?: WorkloadBinding;
+}
+
+export interface WorkloadBindingIntent {
+  readonly workloadId: string;
+  readonly binding: WorkloadBindingName;
+}
 
 /** Inputs resolved by the owner before a process/container is created. */
 export interface WorkloadRuntimeInputs {
@@ -35,12 +54,14 @@ export interface NativeProcessResolution {
 
 /** Complete process-side contract for one catalog workload. */
 export interface WorkloadRuntimeSpec {
+  readonly bindings: WorkloadBindings;
   readonly containerPort: number;
   readonly cwd: (state: PersistedStackState, workload: PlannedWorkload) => string;
   readonly privateEndpoint: (
-    port: number,
+    state: PersistedStackState,
+    binding?: WorkloadBindingName,
     runtime?: WorkloadRuntimeKind,
-  ) => Readonly<{ readonly host: string; readonly port: number }>;
+  ) => Readonly<{ readonly host: string; readonly port: number }> | undefined;
   readonly args: (
     state: PersistedStackState,
     workload: PlannedWorkload,
@@ -66,7 +87,11 @@ export interface WorkloadRuntimeSpec {
     inputs?: WorkloadRuntimeInputs,
   ) => ReadonlyArray<ContainerMount>;
   readonly networkAliases?: ReadonlyArray<string>;
-  readonly readiness: Readonly<{ readonly protocol: "http" | "tcp"; readonly path?: string }>;
+  readonly readiness: Readonly<{
+    readonly protocol: "http" | "tcp";
+    readonly path?: string;
+    readonly binding: WorkloadBindingName;
+  }>;
   readonly nativeProcess: (
     artifactRoot: string,
     state: PersistedStackState,
@@ -77,8 +102,13 @@ export interface WorkloadRuntimeSpec {
 
 type WorkloadRuntimeSpecDefinition = Omit<
   WorkloadRuntimeSpec,
-  "cwd" | "privateEndpoint" | "nativeProcess"
+  "containerPort" | "cwd" | "privateEndpoint" | "nativeProcess" | "readiness"
 > &
+  Readonly<{
+    readonly readiness: Omit<WorkloadRuntimeSpec["readiness"], "binding"> & {
+      readonly binding?: WorkloadBindingName;
+    };
+  }> &
   Partial<Pick<WorkloadRuntimeSpec, "cwd" | "privateEndpoint" | "nativeProcess">>;
 
 export interface ContainerWorkloadResolution {
@@ -86,6 +116,11 @@ export interface ContainerWorkloadResolution {
   readonly env: Readonly<Record<string, string>>;
   readonly mounts: ReadonlyArray<ContainerMount>;
   readonly networkAliases: ReadonlyArray<string>;
+  readonly publications: ReadonlyArray<{
+    readonly address: "127.0.0.1";
+    readonly hostPort: number;
+    readonly containerPort: number;
+  }>;
   readonly hostRoute?: ContainerHostRoute;
 }
 
@@ -266,7 +301,35 @@ const valueAt = (state: PersistedStackState, capability: CapabilityName, path: s
 };
 
 const dbPort = (state: PersistedStackState): number =>
-  state.ports.find((assignment) => assignment.field === "database")?.port ?? 5432;
+  state.privatePorts.find(
+    (assignment) =>
+      assignment.workloadId === "database:database" && assignment.binding === "primary",
+  )?.port ?? 5432;
+
+const privatePortFor = (
+  state: PersistedStackState,
+  workloadId: string,
+  binding: WorkloadBindingName,
+): number | undefined =>
+  state.privatePorts.find(
+    (assignment) => assignment.workloadId === workloadId && assignment.binding === binding,
+  )?.port;
+
+const bindingFor = (
+  bindings: WorkloadBindings,
+  binding: WorkloadBindingName,
+): WorkloadBinding | undefined => bindings[binding];
+
+const workloadPort = (
+  state: PersistedStackState,
+  workloadId: string,
+  binding: WorkloadBindingName,
+  runtime: WorkloadRuntimeKind,
+  containerPort: number,
+): number =>
+  runtime === "container"
+    ? containerPort
+    : (privatePortFor(state, workloadId, binding) ?? containerPort);
 
 const dbHost = (runtime: WorkloadRuntimeKind): string =>
   runtime === "container" ? DATABASE_NETWORK_ALIAS : "127.0.0.1";
@@ -301,13 +364,24 @@ const functionsRoot = (state: PersistedStackState): string =>
   `${state.identity.projectRoot}/supabase/functions`;
 
 const privateEndpointFor = (
-  port: number,
+  state: PersistedStackState,
+  workloadId: string,
+  bindings: WorkloadBindings,
+  binding: WorkloadBindingName,
   runtime: WorkloadRuntimeKind = "native",
   alias = "supabase-workload",
-): Readonly<{ readonly host: string; readonly port: number }> => ({
-  host: runtime === "container" ? alias : "127.0.0.1",
-  port,
-});
+): Readonly<{ readonly host: string; readonly port: number }> | undefined => {
+  const declared = bindingFor(bindings, binding);
+  if (declared === undefined) return undefined;
+  const port =
+    runtime === "container" ? declared.containerPort : privatePortFor(state, workloadId, binding);
+  return port === undefined
+    ? undefined
+    : {
+        host: runtime === "container" ? alias : "127.0.0.1",
+        port,
+      };
+};
 
 const aliasFor = (workload: PlannedWorkload): string =>
   WORKLOAD_CATALOG[workload.id]?.containerAlias ?? `supabase-${workload.id.replace(/:/gu, "-")}`;
@@ -332,11 +406,12 @@ const nativeProcessFor = (
       cwd: artifactPath(artifactRoot, metadata.cwd),
     };
   const executablePath = WORKLOAD_CATALOG[workload.id]?.executablePath;
+  const resolvedPort = privatePortFor(state, workload.id, "primary") ?? port;
   return {
     executable:
       executablePath === undefined ? artifactRoot : artifactPath(artifactRoot, executablePath),
     args: spec
-      .args(state, workload, port, "native")
+      .args(state, workload, resolvedPort, "native")
       .map((arg) =>
         arg.startsWith("app/") || arg.startsWith("share/") ? artifactPath(artifactRoot, arg) : arg,
       ),
@@ -606,7 +681,7 @@ const withAuthSettings = (
       : capabilityEnabled(state, "mail")
         ? {
             GOTRUE_SMTP_HOST: runtime === "container" ? MAIL_NETWORK_ALIAS : "127.0.0.1",
-            GOTRUE_SMTP_PORT: "1025",
+            GOTRUE_SMTP_PORT: String(workloadPort(state, "mail:mail", "smtp", runtime, 1025)),
             GOTRUE_SMTP_ADMIN_EMAIL: valueAt(state, "mail", "admin_email") || "admin@email.com",
             GOTRUE_SMTP_SENDER_NAME: valueAt(state, "mail", "sender_name") || "Admin",
           }
@@ -671,7 +746,9 @@ const withStorageSettings = (
     ...(inputs.auth?.jwks === undefined ? {} : { JWT_JWKS: inputs.auth.jwks }),
     TUS_URL_PATH: "/storage/v1/upload/resumable",
     IMGPROXY_URL:
-      runtime === "container" ? "http://supabase-imgproxy:8080" : "http://127.0.0.1:8080",
+      runtime === "container"
+        ? "http://supabase-imgproxy:8080"
+        : `http://127.0.0.1:${workloadPort(state, "storage:imgproxy", "primary", runtime, 8080)}`,
   });
 
 const databaseArgs = (
@@ -742,7 +819,7 @@ const analyticsEnv = (
 
 const specs: Readonly<Record<string, WorkloadRuntimeSpecDefinition>> = {
   "database:database": {
-    containerPort: 5432,
+    bindings: { primary: { containerPort: 5432 } },
     args: (state, _workload, port) => databaseArgs(state, port, "native"),
     env: (state, workload, port, runtime = "native", _inputs = {}) =>
       compactEnvironment({
@@ -760,7 +837,7 @@ const specs: Readonly<Record<string, WorkloadRuntimeSpecDefinition>> = {
     networkAliases: [DATABASE_NETWORK_ALIAS],
   },
   "rest:rest": {
-    containerPort: 3000,
+    bindings: { primary: { containerPort: 3000 } },
     args: () => [],
     env: (state, workload, port, runtime = "native", inputs = {}) =>
       withRestSettings(state, runtime, port, workload, inputs),
@@ -769,7 +846,7 @@ const specs: Readonly<Record<string, WorkloadRuntimeSpecDefinition>> = {
     readiness: { protocol: "http", path: "/" },
   },
   "auth:auth": {
-    containerPort: 9999,
+    bindings: { primary: { containerPort: 9999 } },
     args: () => [],
     env: (state, workload, port, runtime = "native", inputs = {}) =>
       withAuthSettings(state, runtime, port, workload, inputs),
@@ -778,7 +855,7 @@ const specs: Readonly<Record<string, WorkloadRuntimeSpecDefinition>> = {
     readiness: { protocol: "http", path: "/health" },
   },
   "realtime:realtime": {
-    containerPort: 4000,
+    bindings: { primary: { containerPort: 4000 } },
     args: () => [],
     env: (state, workload, port, runtime = "native", inputs = {}) =>
       compactEnvironment({
@@ -811,7 +888,7 @@ const specs: Readonly<Record<string, WorkloadRuntimeSpecDefinition>> = {
     readiness: { protocol: "http", path: "/api/ping" },
   },
   "storage:storage": {
-    containerPort: 5000,
+    bindings: { primary: { containerPort: 5000 } },
     args: () => [],
     env: (state, workload, port, runtime = "native", inputs = {}) =>
       withStorageSettings(state, runtime, port, workload, inputs),
@@ -820,7 +897,7 @@ const specs: Readonly<Record<string, WorkloadRuntimeSpecDefinition>> = {
     readiness: { protocol: "http", path: "/status" },
   },
   "storage:imgproxy": {
-    containerPort: 8080,
+    bindings: { primary: { containerPort: 8080 } },
     args: () => [],
     env: (state, workload, port, runtime = "native") => ({
       ...common(workload, port),
@@ -832,7 +909,7 @@ const specs: Readonly<Record<string, WorkloadRuntimeSpecDefinition>> = {
     readiness: { protocol: "http", path: "/health" },
   },
   "functions:edge-runtime": {
-    containerPort: 9000,
+    bindings: { primary: { containerPort: 9000 } },
     cwd: functionsRoot,
     args: (state, _workload, port) => [
       "start",
@@ -865,7 +942,7 @@ const specs: Readonly<Record<string, WorkloadRuntimeSpecDefinition>> = {
     readiness: { protocol: "http", path: "/_internal/health" },
   },
   "studio:studio": {
-    containerPort: 3000,
+    bindings: { primary: { containerPort: 3000 } },
     args: () => [],
     env: (state, workload, port, runtime = "native", inputs = {}) =>
       compactEnvironment({
@@ -874,9 +951,13 @@ const specs: Readonly<Record<string, WorkloadRuntimeSpecDefinition>> = {
         PORT: String(port),
         HOSTNAME: "0.0.0.0",
         STUDIO_PG_META_URL:
-          runtime === "container" ? "http://supabase-pgmeta:8080" : "http://127.0.0.1:8080",
+          runtime === "container"
+            ? "http://supabase-pgmeta:8080"
+            : `http://127.0.0.1:${workloadPort(state, "studio:pgmeta", "primary", runtime, 8080)}`,
         LOGFLARE_URL:
-          runtime === "container" ? "http://supabase-analytics:4000" : "http://127.0.0.1:4000",
+          runtime === "container"
+            ? "http://supabase-analytics:4000"
+            : `http://127.0.0.1:${workloadPort(state, "analytics:analytics", "primary", runtime, 4000)}`,
         LOGFLARE_PRIVATE_ACCESS_TOKEN: valueAt(state, "analytics", "api_key"),
         NEXT_PUBLIC_ENABLE_LOGS:
           valueAt(state, "analytics", "backend").length > 0 ? "true" : "false",
@@ -900,7 +981,7 @@ const specs: Readonly<Record<string, WorkloadRuntimeSpecDefinition>> = {
     readiness: { protocol: "http", path: "/api/platform/profile" },
   },
   "studio:pgmeta": {
-    containerPort: 8080,
+    bindings: { primary: { containerPort: 8080 } },
     args: () => [],
     env: (state, workload, port, runtime = "native") => ({
       ...common(workload, port),
@@ -917,22 +998,29 @@ const specs: Readonly<Record<string, WorkloadRuntimeSpecDefinition>> = {
     readiness: { protocol: "http", path: "/health" },
   },
   "mail:mail": {
-    containerPort: 8025,
-    args: (_state, _workload, port) => ["--ui", `127.0.0.1:${port}`],
+    bindings: {
+      ui: { containerPort: 8025 },
+      smtp: { containerPort: 1025 },
+      pop3: { containerPort: 1110 },
+    },
+    args: (state, _workload, port) => [
+      "--ui",
+      `127.0.0.1:${privatePortFor(state, "mail:mail", "ui") ?? port}`,
+    ],
     env: (state, workload, port, runtime = "native") => ({
       ...common(workload, port),
       ...capabilityEnv(state, "mail", "MAIL"),
-      MP_UI_BIND_ADDR: `${runtime === "container" ? "0.0.0.0" : "127.0.0.1"}:${port}`,
-      MP_SMTP_BIND_ADDR: `${runtime === "container" ? "0.0.0.0" : "127.0.0.1"}:1025`,
-      MP_POP3_BIND_ADDR: `${runtime === "container" ? "0.0.0.0" : "127.0.0.1"}:1110`,
+      MP_UI_BIND_ADDR: `${runtime === "container" ? "0.0.0.0" : "127.0.0.1"}:${workloadPort(state, "mail:mail", "ui", runtime, 8025)}`,
+      MP_SMTP_BIND_ADDR: `${runtime === "container" ? "0.0.0.0" : "127.0.0.1"}:${workloadPort(state, "mail:mail", "smtp", runtime, 1025)}`,
+      MP_POP3_BIND_ADDR: `${runtime === "container" ? "0.0.0.0" : "127.0.0.1"}:${workloadPort(state, "mail:mail", "pop3", runtime, 1110)}`,
       MP_SMTP_DISABLE_RDNS: "true",
     }),
-    containerArgs: (_state, _workload, port) => ["--ui", `0.0.0.0:${port}`],
+    containerArgs: () => ["--ui", "0.0.0.0:8025"],
     networkAliases: [MAIL_NETWORK_ALIAS],
-    readiness: { protocol: "http", path: "/readyz" },
+    readiness: { protocol: "http", path: "/readyz", binding: "ui" },
   },
   "analytics:analytics": {
-    containerPort: 4000,
+    bindings: { primary: { containerPort: 4000 } },
     args: () => [],
     env: (state, workload, port, runtime = "native", inputs = {}) =>
       analyticsEnv(state, runtime, port, workload, inputs),
@@ -954,7 +1042,7 @@ const specs: Readonly<Record<string, WorkloadRuntimeSpecDefinition>> = {
     readiness: { protocol: "http", path: "/health" },
   },
   "analytics:vector": {
-    containerPort: 9001,
+    bindings: { primary: { containerPort: 9001 } },
     args: (_state, _workload, _port) => [
       "--config",
       "share/doc/vector/config/vector.yaml",
@@ -984,7 +1072,7 @@ const specs: Readonly<Record<string, WorkloadRuntimeSpecDefinition>> = {
     readiness: { protocol: "http", path: "/health" },
   },
   "pooler:pooler": {
-    containerPort: 6543,
+    bindings: { primary: { containerPort: 6543 } },
     args: () => ["start"],
     env: (state, workload, port, runtime = "native") => ({
       ...common(workload, port),
@@ -1008,18 +1096,97 @@ const specs: Readonly<Record<string, WorkloadRuntimeSpecDefinition>> = {
   },
 };
 
+const WORKLOAD_BINDING_NAMES: ReadonlyArray<WorkloadBindingName> = [
+  "primary",
+  "ui",
+  "smtp",
+  "pop3",
+];
+
+const declaredBindings = (
+  bindings: WorkloadBindings,
+): ReadonlyArray<readonly [WorkloadBindingName, WorkloadBinding]> =>
+  WORKLOAD_BINDING_NAMES.flatMap((name) => {
+    const binding = bindings[name];
+    return binding === undefined ? [] : [[name, binding] as const];
+  });
+
+/** Derive the exact private endpoint reservations required by a compiled plan. */
+export const privateBindingIntentsFor = (
+  plan: ExecutionPlan,
+): ReadonlyArray<WorkloadBindingIntent> =>
+  plan.workloads.flatMap((workload) => {
+    const spec = specs[workload.id];
+    return spec === undefined
+      ? []
+      : declaredBindings(spec.bindings).map(([binding]) => ({
+          workloadId: workload.id,
+          binding,
+        }));
+  });
+
+export const validatePrivateAssignments = (
+  state: PersistedStackState,
+  workload: PlannedWorkload,
+): Effect.Effect<void, StackPreparationError> => {
+  const spec = specs[workload.id];
+  if (spec === undefined) return Effect.void;
+  for (const [binding] of declaredBindings(spec.bindings)) {
+    if (
+      !state.privatePorts.some(
+        (assignment) => assignment.workloadId === workload.id && assignment.binding === binding,
+      )
+    )
+      return Effect.fail(
+        new StackPreparationError({
+          message: `Missing private port assignment for ${workload.id} (${binding})`,
+          workload: workload.id,
+        }),
+      );
+  }
+  return Effect.void;
+};
+
 export const runtimeSpecFor = (workload: PlannedWorkload): WorkloadRuntimeSpec | undefined => {
   const spec = specs[workload.id];
   if (spec === undefined) return undefined;
+  const primary =
+    spec.bindings.primary ?? spec.bindings.ui ?? spec.bindings.smtp ?? spec.bindings.pop3;
+  if (primary === undefined) return undefined;
   return {
     ...spec,
+    containerPort: primary.containerPort,
     networkAliases: [aliasFor(workload)],
     cwd: spec.cwd ?? ((state) => state.identity.projectRoot),
+    args: (state, currentWorkload, port, runtime = "native") =>
+      spec.args(
+        state,
+        currentWorkload,
+        runtime === "container"
+          ? primary.containerPort
+          : (privatePortFor(state, currentWorkload.id, "primary") ?? port),
+        runtime,
+      ),
+    env: (state, currentWorkload, port, runtime = "native", inputs = {}) =>
+      spec.env(
+        state,
+        currentWorkload,
+        runtime === "container"
+          ? primary.containerPort
+          : (privatePortFor(state, currentWorkload.id, spec.readiness.binding ?? "primary") ??
+              port),
+        runtime,
+        inputs,
+      ),
+    readiness: { ...spec.readiness, binding: spec.readiness.binding ?? "primary" },
     privateEndpoint:
       spec.privateEndpoint ??
-      ((port, runtime = "native") =>
+      ((state, binding = "primary", runtime = "native") =>
         privateEndpointFor(
-          runtime === "container" ? spec.containerPort : port,
+          state,
+          workload.id,
+          spec.bindings,
+          binding,
           runtime,
           aliasFor(workload),
         )),
@@ -1041,6 +1208,20 @@ export const containerResolutionFor = (
     env: spec.env(state, workload, spec.containerPort, "container", inputs),
     mounts: spec.containerMounts?.(state, workload, inputs) ?? [],
     networkAliases: [aliasFor(workload)],
+    publications: declaredBindings(spec.bindings).flatMap(([binding, definition]) => {
+      const assignment = state.privatePorts.find(
+        (entry) => entry.workloadId === workload.id && entry.binding === binding,
+      );
+      return assignment === undefined
+        ? []
+        : [
+            {
+              address: "127.0.0.1" as const,
+              hostPort: assignment.port,
+              containerPort: definition.containerPort,
+            },
+          ];
+    }),
     ...(inputs.hostRoute === undefined ? {} : { hostRoute: inputs.hostRoute }),
   };
 };
@@ -1051,6 +1232,7 @@ export const resolveContainerResolutionFor = (
   workload: PlannedWorkload,
   inputs: WorkloadRuntimeInputs = {},
 ): Effect.Effect<ContainerWorkloadResolution | undefined, StackPreparationError> =>
-  validateWorkloadRuntimeInputs(state, workload, inputs).pipe(
-    Effect.map(() => containerResolutionFor(state, workload, inputs)),
-  );
+  Effect.all([
+    validateWorkloadRuntimeInputs(state, workload, inputs),
+    validatePrivateAssignments(state, workload),
+  ]).pipe(Effect.map(() => containerResolutionFor(state, workload, inputs)));

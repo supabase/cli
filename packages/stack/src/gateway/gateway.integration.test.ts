@@ -21,6 +21,7 @@ import { makeFunctionsRoot } from "../functions/FunctionsRoot.ts";
 import {
   makeFunctionDiscovery,
   makeFunctionsGatewayRoute,
+  rewriteFunctionRequestPath,
 } from "../functions/FunctionDiscovery.ts";
 
 const withPlatform = <A, E, R>(effect: Effect.Effect<A, E, R>) =>
@@ -78,7 +79,11 @@ describe("stack gateway", () => {
           address: "127.0.0.1",
           port: 0,
           routes: [
-            { capability: "rest", match: (request) => request.path.startsWith("/rest") },
+            {
+              capability: "rest",
+              match: (request) => request.path.startsWith("/rest"),
+              upstreamPath: (request) => `/internal${request.path}`,
+            },
             { capability: "database", match: (request) => request.path.startsWith("/db") },
           ],
           activate: activator.activate,
@@ -93,7 +98,7 @@ describe("stack gateway", () => {
             {
               host: "127.0.0.1",
               port: gateway.port,
-              path: "/rest/hello",
+              path: "/rest/hello?limit=1",
               headers: { host: "api.example.test" },
             },
             (res) => {
@@ -115,7 +120,7 @@ describe("stack gateway", () => {
           return Effect.sync(() => req.destroy());
         });
         expect(response.status).toBe(200);
-        expect(response.body).toBe("GET:/rest/hello");
+        expect(response.body).toBe("GET:/internal/rest/hello?limit=1");
         expect(response.headers["access-control-allow-origin"]).toBe("https://example.test");
         expect(response.headers["x-seen-forwarded-host"]).toBe("api.example.test");
         expect(response.headers["x-seen-forwarded-proto"]).toBe("http");
@@ -292,20 +297,65 @@ describe("stack gateway", () => {
           close: closeNative(badTcpServer),
         };
         const result = yield* makeGateway({
-          http: {
-            listener: httpListener,
-            routes: [],
-          },
-          tcp: {
-            listener: badTcpListener,
-            routes: [],
-          },
+          http: [{ field: "api", options: { listener: httpListener, routes: [] } }],
+          tcp: [{ field: "database", options: { listener: badTcpListener, routes: [] } }],
           activate: () => Effect.fail(new GatewayActivationError({ message: "not reached" })),
         }).pipe(Effect.exit);
         expect(Exit.isFailure(result)).toBe(true);
         expect(httpServer.listening).toBe(false);
         expect(badTcpServer.listening).toBe(true);
         yield* closeServer(badTcpServer);
+      }),
+    ),
+  );
+
+  it.live("owns multiple HTTP and TCP listeners keyed by public port field", () =>
+    withPlatform(
+      Effect.gen(function* () {
+        const gateway = yield* makeGateway({
+          http: [
+            {
+              field: "api",
+              options: {
+                address: "127.0.0.1",
+                port: 0,
+                routes: [],
+              },
+            },
+            {
+              field: "studio",
+              options: {
+                address: "127.0.0.1",
+                port: 0,
+                routes: [],
+              },
+            },
+          ],
+          tcp: [
+            {
+              field: "database",
+              options: {
+                address: "127.0.0.1",
+                port: 0,
+                routes: [],
+              },
+            },
+            {
+              field: "smtp",
+              options: {
+                address: "127.0.0.1",
+                port: 0,
+                routes: [],
+              },
+            },
+          ],
+          activate: () => Effect.fail(new GatewayActivationError({ message: "not reached" })),
+        });
+        expect(gateway.http.get("api")?.port).toBeGreaterThan(0);
+        expect(gateway.http.get("studio")?.port).toBeGreaterThan(0);
+        expect(gateway.tcp.get("database")?.port).toBeGreaterThan(0);
+        expect(gateway.tcp.get("smtp")?.port).toBeGreaterThan(0);
+        yield* gateway.close;
       }),
     ),
   );
@@ -547,8 +597,13 @@ describe("stack gateway", () => {
         expect(activations).toBe(0);
         yield* invalid.close;
 
-        const backend = createHttpServer((_request, response) => response.end("function-response"));
-        backend.on("upgrade", (_request, socket) => {
+        const backendPaths: string[] = [];
+        const backend = createHttpServer((request, response) => {
+          backendPaths.push(request.url ?? "");
+          response.end("function-response");
+        });
+        backend.on("upgrade", (request, socket) => {
+          backendPaths.push(request.url ?? "");
           socket.end("HTTP/1.1 101 Switching Protocols\r\nUpgrade: websocket\r\n\r\nws-response");
         });
         yield* Effect.callback<void, Error>((resume) => {
@@ -644,6 +699,10 @@ describe("stack gateway", () => {
         expect(dispatched[0]?.importMap).toContain("/rest/deno.json");
         expect(dispatched[0]?.staticPattern).toContain("/rest/public/*.txt");
         expect(dispatched[0]?.redacted).toBe(true);
+        expect(backendPaths).toEqual(["/rest", "/rest"]);
+        expect(rewriteFunctionRequestPath("/functions/v1/rest/items?limit=1")).toBe(
+          "/rest/items?limit=1",
+        );
         yield* runtimeGateway.close;
         yield* closeServer(backend);
       }),
