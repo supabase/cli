@@ -775,6 +775,10 @@ private-port reservation plus gateway ownership atomic with accepted lifecycle g
   workload env contract without duplicating CLI helpers.
 - Focused stack bundler/bootstrap/workload/container and CLI function tests pass; stack package
   type-checking now passes after the lifecycle/secret-store Clock follow-up.
+- The published package metadata contains only the stack-owned bootstrap entrypoint and template;
+  resolved function environments include the exact `SUPABASE_INTERNAL_PUBLISHABLE_KEY`,
+  `SUPABASE_INTERNAL_SECRET_KEY`, `SUPABASE_INTERNAL_JWT_SECRET`, and
+  `SUPABASE_INTERNAL_HOST_PORT` values consumed by Edge Runtime.
 
 #### Task 13B2b1 correction — harden managed credential generation (2026-08-29)
 
@@ -799,3 +803,13 @@ private-port reservation plus gateway ownership atomic with accepted lifecycle g
   binder uses `node:http` for HTTP fields and half-open `node:net` for TCP fields, with interruption-
   safe, scope-owned close and typed occupied-port failures. Focused host-listener integration tests
   cover HTTP/TCP binding, adoption metadata, and occupied exact ports.
+
+#### Task 13B2b2a correction — generation-fenced port materialization (2026-08-29)
+
+- Persisted state now records `portsGeneration` explicitly (`null` until public/private assignments are
+  materialized). Running acquisition keeps the prior marker through assignment writes and advances it only
+  after every listener binds and the final generation fence succeeds; failed binds leave the old marker so
+  recovery can retry the same accepted generation. Stopped plans mark assignments materialized immediately.
+- Running listener/private intent fences use marker equality rather than assignment-array length, including
+  generations with no listeners or private bindings. Focused state/ports tests cover null/number round trips,
+  empty-set fencing, sticky retry after bind failure, deterministic final-fence cleanup, and stopped markers.
