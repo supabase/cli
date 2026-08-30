@@ -11,10 +11,7 @@ import { describe, expect, it } from "@effect/vitest";
 import { Duration, Effect } from "effect";
 
 import { LEGACY_SUGGEST_ENV_VAR, LEGACY_SUGGEST_LOCAL_STACK } from "./legacy-connect-errors.ts";
-import {
-  type LegacyDbConnectError,
-  LegacyDbExecError,
-} from "./legacy-db-connection.errors.ts";
+import { type LegacyDbConnectError, LegacyDbExecError } from "./legacy-db-connection.errors.ts";
 import {
   type LegacyDbSession,
   type LegacyPgConnInput,
