@@ -205,7 +205,7 @@ export const SERVICE_CATALOG = {
   realtime: {
     name: "realtime",
     configKey: "realtime",
-    defaultVersion: "v2.129.9",
+    defaultVersion: "v2.130.0",
     runtimeSupport: "docker-only",
     artifact: {
       docker: { repository: "realtime" },
@@ -217,7 +217,7 @@ export const SERVICE_CATALOG = {
   storage: {
     name: "storage",
     configKey: "storage",
-    defaultVersion: "v1.71.0",
+    defaultVersion: "v1.72.1",
     runtimeSupport: "docker-only",
     artifact: {
       docker: { repository: "storage" },
@@ -277,7 +277,7 @@ export const SERVICE_CATALOG = {
   analytics: {
     name: "analytics",
     configKey: "analytics",
-    defaultVersion: "v1.50.6",
+    defaultVersion: "v1.50.7",
     runtimeSupport: "docker-only",
     artifact: {
       docker: { repository: "analytics" },
@@ -301,7 +301,7 @@ export const SERVICE_CATALOG = {
   pooler: {
     name: "pooler",
     configKey: "pooler",
-    defaultVersion: "2.9.7",
+    defaultVersion: "2.9.12",
     runtimeSupport: "docker-only",
     artifact: {
       docker: { registry: SUPABASE_GHCR_REGISTRY, repository: "supavisor" },
