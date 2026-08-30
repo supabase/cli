@@ -41,12 +41,14 @@ const SCHEMA_LISTING_SOURCES: ReadonlyArray<[label: string, relPath: string]> = 
 const readSchemaListingSource = (relPath: string) =>
   readFileSync(fileURLToPath(new URL(relPath, import.meta.url)), "utf8");
 
+// Both copies in each compared pair use identical template-literal escaping,
+// so the raw captured source is compared without decoding.
 function extractSqlLiteral(source: string, name: string): string {
   const match = new RegExp(`${name} = \`([\\s\\S]*?)\`;`).exec(source);
   if (match?.[1] === undefined) {
     throw new Error(`missing template literal '${name}'`);
   }
-  return match[1].replaceAll("\\\\", "\\").trimEnd();
+  return match[1].trimEnd();
 }
 
 describe("embedded user-schema listing queries", () => {
@@ -55,10 +57,16 @@ describe("embedded user-schema listing queries", () => {
     (_label, relPath) => {
       const source = readSchemaListingSource(relPath);
       expect(source).toContain(CLASSID_CONSTRAINT);
-      // an unconstrained copy of the join must never reappear
-      expect(source).not.toMatch(
-        /left join pg_(catalog\.pg_)?depend pd on pd\.objid = pn\.oid\s*$/m,
-      );
+      // every join occurrence must carry the classid constraint, regardless of
+      // line wrapping or trailing same-line text
+      const normalized = source.replaceAll(/\s+/gu, " ");
+      const joins = normalized.match(/pd\.objid = pn\.oid/gu) ?? [];
+      const constrained =
+        normalized.match(
+          /pd\.objid = pn\.oid and pd\.classid = 'pg_catalog\.pg_namespace'::regclass/gu,
+        ) ?? [];
+      expect(joins.length).toBeGreaterThan(0);
+      expect(constrained.length).toBe(joins.length);
     },
   );
 
