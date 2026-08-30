@@ -16,8 +16,10 @@ import {
   legacyIpv6Suggestion,
   legacyIsIPv6ConnectivityError,
 } from "../../../shared/legacy-connect-errors.ts";
-import { legacyBold } from "../../../shared/legacy-colors.ts";
+import { legacyBold, legacyYellow } from "../../../shared/legacy-colors.ts";
 import { LegacyDnsResolverFlag } from "../../../../shared/legacy/global-flags.ts";
+import { RuntimeInfo } from "../../../../shared/runtime/runtime-info.service.ts";
+import { Tty } from "../../../../shared/runtime/tty.service.ts";
 import { cobraMutuallyExclusiveErrorMessage } from "../../../../shared/cli/cobra-flag-groups.ts";
 import { Output } from "../../../../shared/output/output.service.ts";
 import type { LegacyDbDumpFlags } from "./dump.command.ts";
@@ -69,6 +71,8 @@ export const legacyDbDump = Effect.fn("legacy.db.dump")(function* (flags: Legacy
   const fs = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
   const dnsResolver = yield* LegacyDnsResolverFlag;
+  const tty = yield* Tty;
+  const runtimeInfo = yield* RuntimeInfo;
 
   // Resolved linked ref, captured so the post-run finalizer can cache the project
   // (GET /v1/projects/{ref}) AFTER the command's own API calls.
@@ -266,6 +270,16 @@ export const legacyDbDump = Effect.fn("legacy.db.dump")(function* (flags: Legacy
     // paths unchanged.
     const resolvedFile = Option.map(fileFlag, (file) => path.resolve(cliSettings.workdir, file));
 
+    // PowerShell interposes a pipe for `>`/`|` and re-encodes what it reads with
+    // the legacy console code page, mangling multi-byte UTF-8 (#6397); TTYs,
+    // disk-file handles, and MSYS/mintty pipes are byte-faithful and never warn.
+    const trackNonAscii =
+      runtimeInfo.platform === "win32" &&
+      tty.stdoutIsPipe &&
+      process.env["MSYSTEM"] === undefined &&
+      process.env["TERM_PROGRAM"] !== "mintty";
+    let sawNonAscii = false;
+
     // Open (create + truncate) the output file up front so an unwritable
     // `--file` path fails before the dump runs.
     if (Option.isSome(resolvedFile)) {
@@ -318,7 +332,15 @@ export const legacyDbDump = Effect.fn("legacy.db.dump")(function* (flags: Legacy
             image,
             script: mode.script,
             env,
-            onStdout: (chunk) => output.rawBytes(chunk),
+            onStdout: trackNonAscii
+              ? (chunk) =>
+                  Effect.suspend(() => {
+                    for (let i = 0; !sawNonAscii && i < chunk.length; i += 1) {
+                      sawNonAscii = chunk[i]! > 0x7f;
+                    }
+                    return output.rawBytes(chunk);
+                  })
+              : (chunk) => output.rawBytes(chunk),
             projectEnvValues: projectEnv,
           });
 
@@ -377,6 +399,16 @@ export const legacyDbDump = Effect.fn("legacy.db.dump")(function* (flags: Legacy
     // Report the absolute output path on stderr.
     if (Option.isSome(resolvedFile)) {
       yield* output.raw(`Dumped schema to ${legacyBold(resolvedFile.value)}.\n`, "stderr");
+    }
+
+    if (sawNonAscii) {
+      yield* output.raw(
+        `${legacyYellow("WARNING:")} The dump contains non-ASCII characters. ` +
+          "Some Windows shells (notably Windows PowerShell 5.1) corrupt them when redirecting " +
+          "or piping output. If the result looks garbled, re-run with --file (e.g. -f dump.sql) " +
+          "to write the dump directly to disk.\n",
+        "stderr",
+      );
     }
   }).pipe(
     // Cache the linked project (telemetry groups) in post-run, after the

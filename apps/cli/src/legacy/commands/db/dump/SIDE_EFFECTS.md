@@ -39,6 +39,7 @@ script run inside the local Postgres image to stdout or `--file`.
 | `SUPABASE_INTERNAL_IMAGE_REGISTRY`                                            | rewrite the pg image registry                                                                                                                                                                                                      |
 | `SUPABASE_USE_SLIM_IMAGES`                                                    | resolve the current Postgres pin from the slim `ghcr.io/supabase/cli` builds (`true`/`1` enable); majors 13/15 use `15.14.1.167` when the flag is on; historical pins, PG14, OrioleDB, and flag-off `15.8.1.085` stay on docker.io |
 | `DOCKER_HOST`                                                                 | docker daemon endpoint                                                                                                                                                                                                             |
+| `MSYSTEM`, `TERM_PROGRAM`                                                     | suppress the piped-stdout non-ASCII warning in MSYS/mintty sessions                                                                                                                                                                |
 
 ## Exit Codes
 
@@ -61,6 +62,13 @@ confirmation on a successful dry-run but does **not** create or truncate the fil
 On a linked dump whose container fails with an IPv6 connectivity error (no IPv4
 pooler retry available, or the retry also fails), the error is followed on stderr by
 the IPv4 transaction-pooler suggestion.
+
+On Windows only, a **successful** stdout dump (no `--file`) whose stdout is a
+**pipe** (PowerShell interposes one for `>`/`|`; MSYS/mintty sessions excluded
+via `MSYSTEM`/`TERM_PROGRAM`) and whose bytes contain non-ASCII is followed by a
+stderr warning pointing at `--file` — PowerShell 5.1 re-encodes piped native
+stdout with the legacy console code page (issue #6397), which the CLI cannot
+prevent.
 
 > **Credential warning:** `--dry-run` expands the pg_dump script with live env
 > values, so the resolved `PGPASSWORD` (for a remote/linked project, the database

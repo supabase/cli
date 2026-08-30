@@ -4,7 +4,7 @@ import { BunServices } from "@effect/platform-bun";
 import { describe, expect, it } from "@effect/vitest";
 import { Cause, Effect, Exit, Layer, Option } from "effect";
 
-import { mockOutput } from "../../../../../tests/helpers/mocks.ts";
+import { mockOutput, mockTty, processEnvLayer } from "../../../../../tests/helpers/mocks.ts";
 import {
   LEGACY_VALID_REF,
   mockLegacyCliSettings,
@@ -222,14 +222,15 @@ function mockDockerRun(opts: {
   };
 }
 
-const runtimeInfoLayer = Layer.succeed(RuntimeInfo, {
-  cwd: "/work/project",
-  platform: "linux",
-  arch: "x64",
-  homeDir: "/home/user",
-  execPath: "/usr/bin/supabase",
-  pid: 1234,
-});
+const runtimeInfoLayer = (platform: NodeJS.Platform) =>
+  Layer.succeed(RuntimeInfo, {
+    cwd: "/work/project",
+    platform,
+    arch: "x64",
+    homeDir: "/home/user",
+    execPath: "/usr/bin/supabase",
+    pid: 1234,
+  });
 
 interface SetupOpts {
   format?: "text" | "json" | "stream-json";
@@ -248,6 +249,9 @@ interface SetupOpts {
   resolveFails?: boolean;
   ref?: string;
   linkedFails?: boolean;
+  platform?: NodeJS.Platform;
+  stdoutIsPipe?: boolean;
+  env?: Readonly<Record<string, string>>;
 }
 
 function setup(opts: SetupOpts = {}) {
@@ -279,7 +283,9 @@ function setup(opts: SetupOpts = {}) {
     }),
     telemetry.layer,
     cache.layer,
-    runtimeInfoLayer,
+    runtimeInfoLayer(opts.platform ?? "linux"),
+    mockTty({ stdoutIsPipe: opts.stdoutIsPipe }),
+    processEnvLayer(opts.env ?? {}),
     Layer.succeed(
       LegacyNetworkIdFlag,
       opts.networkId === undefined ? Option.none() : Option.some(opts.networkId),
@@ -941,4 +947,43 @@ describe("legacy db dump integration", () => {
       expect(out.stdoutText).toBe("CREATE SCHEMA x;\n");
     }).pipe(Effect.provide(layer));
   });
+
+  const UNICODE_SQL = "insert into t values ('Oranges \u{1F34A}', 'd\u00f6Terra');\n";
+  const NON_ASCII_WARNING = "The dump contains non-ASCII characters";
+  const PIPED_WIN32 = { platform: "win32", stdoutIsPipe: true } as const;
+
+  it.live("windows: warns when a piped stdout dump contains non-ASCII text", () => {
+    const { layer, out } = setup({ isLocal: true, stdout: UNICODE_SQL, ...PIPED_WIN32 });
+    return Effect.gen(function* () {
+      yield* legacyDbDump(flags({ local: Option.some(true) }));
+      expect(out.stdoutText).toBe(UNICODE_SQL);
+      expect(out.stderrText).toContain("WARNING:");
+      expect(out.stderrText).toContain(NON_ASCII_WARNING);
+      expect(out.stderrText).toContain("re-run with --file");
+    }).pipe(Effect.provide(layer));
+  });
+
+  const SILENT: ReadonlyArray<[string, Partial<SetupOpts>]> = [
+    ["on non-Windows platforms", { stdoutIsPipe: true }],
+    [
+      "when stdout is not a pipe (TTY, or cmd.exe / Git Bash `>` file handle)",
+      { platform: "win32" },
+    ],
+    [
+      "in a Git Bash / MSYS session (byte-faithful mintty pipe)",
+      { ...PIPED_WIN32, env: { MSYSTEM: "MINGW64" } },
+    ],
+    ["under a mintty terminal outside MSYS", { ...PIPED_WIN32, env: { TERM_PROGRAM: "mintty" } }],
+    ["when the dump is ASCII-only", { ...PIPED_WIN32, stdout: "select 'plain \x7f';\n" }],
+  ];
+  for (const [scenario, over] of SILENT) {
+    it.live(`stays silent ${scenario}`, () => {
+      const { layer, out } = setup({ isLocal: true, stdout: UNICODE_SQL, ...over });
+      return Effect.gen(function* () {
+        yield* legacyDbDump(flags({ local: Option.some(true) }));
+        expect(out.stdoutText).toBe(over.stdout ?? UNICODE_SQL);
+        expect(out.stderrText).not.toContain(NON_ASCII_WARNING);
+      }).pipe(Effect.provide(layer));
+    });
+  }
 });
