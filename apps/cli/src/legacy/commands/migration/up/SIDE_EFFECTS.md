@@ -70,8 +70,9 @@ Same structured `applied` result delivered as an NDJSON `result` event.
   `REINDEX DATABASE`/`SYSTEM`/`SCHEMA`, `CREATE`/`DROP SUBSCRIPTION`, `DISCARD ALL`,
   `ALTER DATABASE … SET TABLESPACE`,
   `ALTER SUBSCRIPTION … REFRESH`/`SET`/`ADD`/`DROP PUBLICATION`,
-  `ALTER TABLE … DETACH PARTITION … CONCURRENTLY`, and
-  `ALTER TABLE`/`INDEX`/`MATERIALIZED VIEW ALL IN TABLESPACE`) run standalone outside
+  `ALTER TABLE … DETACH PARTITION … CONCURRENTLY`,
+  `ALTER TABLE`/`INDEX`/`MATERIALIZED VIEW ALL IN TABLESPACE`, and
+  `REFRESH MATERIALIZED VIEW CONCURRENTLY`) run standalone outside
   the migration's transaction batch — they fail with SQLSTATE 25001 inside one. The
   history insert stays in the final batch, so a mid-file failure leaves earlier,
   already-committed batches applied with **no history row**; a re-run replays the file
