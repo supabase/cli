@@ -6,9 +6,12 @@
  *   - `LEGACY_CHECK_SCHEMA_SCRIPT` — the per-schema `plpgsql_check_function`
  *     mass-check.
  *   - `LEGACY_LIST_SCHEMAS_SQL` + `LEGACY_MANAGED_SCHEMAS` — lists user
- *     schemas, used when `--schema` is omitted. The `\_` / `pg\_%` escapes
- *     are preserved exactly — they are `LIKE` patterns.
+ *     schemas, used when `--schema` is omitted. The query is shared with the
+ *     migra bash fallback and defined once in `db/shared/legacy-migra.ts`. The
+ *     `\_` / `pg\_%` escapes are preserved exactly — they are `LIKE` patterns.
  */
+
+export { LEGACY_LIST_SCHEMAS_SQL } from "../shared/legacy-migra.ts";
 
 export const LEGACY_ENABLE_PGSQL_CHECK = "CREATE EXTENSION IF NOT EXISTS plpgsql_check";
 
@@ -19,17 +22,6 @@ JOIN pg_catalog.pg_proc p ON pronamespace = n.oid
 JOIN pg_catalog.pg_language l ON p.prolang = l.oid
 WHERE l.lanname = 'plpgsql' AND p.prorettype <> 2279 AND n.nspname = $1::text;
 `;
-
-export const LEGACY_LIST_SCHEMAS_SQL = `-- List user defined schemas, excluding
---  Extension created schemas
---  Supabase managed schemas
-select pn.nspname
-from pg_catalog.pg_namespace pn
-left join pg_catalog.pg_depend pd on pd.objid = pn.oid and pd.classid = 'pg_catalog.pg_namespace'::regclass
-where pd.deptype is null
-  and not pn.nspname like any($1)
-  and pn.nspowner::regrole::text != 'supabase_admin'
-order by pn.nspname`;
 
 /**
  * Postgres-managed schemas excluded from the user-schema listing. These are

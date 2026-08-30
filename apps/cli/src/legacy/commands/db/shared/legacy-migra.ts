@@ -84,8 +84,15 @@ const LEGACY_LIST_SCHEMAS_EXCLUDE: ReadonlyArray<string> = [
   "vault",
 ];
 
-/** Verbatim from Go's `migration.ListSchemas` (`pkg/migration/queries/list.sql`). */
-const LEGACY_LIST_SCHEMAS_SQL = `-- List user defined schemas, excluding
+/**
+ * Lists user-defined schemas, excluding extension-created ones via a
+ * `pg_depend` anti-join scoped by `classid` to `pg_namespace` rows (an oid
+ * collision with another catalog must not hide a schema — supabase/cli#6375),
+ * Supabase-managed names via the `$1` LIKE patterns, and schemas owned by
+ * `supabase_admin`. Shared by the migra bash fallback and `db lint`
+ * (`lint.lint-sql.ts`).
+ */
+export const LEGACY_LIST_SCHEMAS_SQL = `-- List user defined schemas, excluding
 --  Extension created schemas
 --  Supabase managed schemas
 select pn.nspname
