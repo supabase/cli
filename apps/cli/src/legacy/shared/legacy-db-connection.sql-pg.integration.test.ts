@@ -11,7 +11,10 @@ import { describe, expect, it } from "@effect/vitest";
 import { Duration, Effect } from "effect";
 
 import { LEGACY_SUGGEST_ENV_VAR, LEGACY_SUGGEST_LOCAL_STACK } from "./legacy-connect-errors.ts";
-import type { LegacyDbConnectError, LegacyDbExecError } from "./legacy-db-connection.errors.ts";
+import {
+  type LegacyDbConnectError,
+  LegacyDbExecError,
+} from "./legacy-db-connection.errors.ts";
 import {
   type LegacyDbSession,
   type LegacyPgConnInput,
@@ -799,7 +802,7 @@ describe("legacyDbConnectionSqlPgLayer extended batches", () => {
               orElse: () => Effect.die("execBatch never settled after the connection died"),
             }),
           );
-          expect(error._tag).toBe("LegacyDbExecError");
+          expect(error).toBeInstanceOf(LegacyDbExecError);
           expect(asBatchExecError(error).message).toContain("Connection terminated unexpectedly");
           expect(asBatchExecError(error)).toMatchObject({
             statementIndex: 0,
