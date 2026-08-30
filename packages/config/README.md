@@ -261,8 +261,11 @@ specific, narrower validation contract — what it does and does not promise:
 
 `./io` re-exports this package's entire pure surface (`export * from "."`, the same way `./effect`
 does) alongside its seven Promise-returning functions, so one import from `@supabase/config/io` is
-enough — no separate import from `.` needed to also name an error class, `CliConfigSchema`, or the
-two synchronous resolvers (the only non-Promise members `./io` exports).
+enough — no separate import from `.` needed to also name an error class, `CliConfigSchema`, or any
+other pure export (those are all synchronous, exactly as on `.`). What `./io` adds on top — the
+seven facade functions — is Promise-returning; among same-named `./effect` counterparts, only
+`resolveCliConfigValue`/`resolveCliConfigSubtree` stay synchronous here, since they come from the
+pure surface rather than the facade.
 
 `loadCliConfig`, `findCliProjectRoot`, `findCliProjectPaths`, and `loadCliProjectEnvironment`
 resolve to `null` — they never reject — when there is simply no project or config file to find.
@@ -281,14 +284,21 @@ with any of:
 - `PlatformError` (from `effect/PlatformError`) — a host/OS failure surfaced by the underlying
   `FileSystem` service
 
-Every one of these is a plain class (an Effect `Data.TaggedError`), so a catch block can
-distinguish them with `instanceof`. Each carries structured fields instead of a prose message —
-`error.message` is empty on every one of them except `ProjectConfigParseError` (the only class that
-always sets it). Build user-facing text from the typed fields instead: `CliConfigParseError.path`/
-`.format`/`.cause`, `CliProjectEnvParseError.path`/`.line`, `DuplicateRemoteProjectIdError.message`/
-`InvalidRemoteProjectIdError.message` (these two DO set `message`, verbatim from Go), and
-`ProjectConfigParseError.message`/`.reason`/`.apiPath`/`.detail`. A `CliConfigParseError`'s `.cause`
-is typically a schema issue that itself carries line/column location info worth surfacing.
+The four package-owned classes are plain Effect `Data.TaggedError` classes; `PlatformError` is
+Effect's own error class rather than one of this package's — but all five are classes, so a catch
+block can distinguish any of them with `instanceof`. What each carries:
+
+- `DuplicateRemoteProjectIdError` and `InvalidRemoteProjectIdError` set a real `error.message`
+  (verbatim the Go CLI's wording for the same failures).
+- `PlatformError` sets `error.message` too, describing the failing filesystem operation, alongside
+  `.module`/`.method`/`.description`.
+- `CliConfigParseError` and `CliProjectEnvParseError` carry structured fields instead of prose —
+  their `error.message` is empty. Build user-facing text from `CliConfigParseError.path`/`.format`/
+  `.cause` (the `.cause` is typically a TOML or schema issue that itself carries line/column
+  location info worth surfacing) and `CliProjectEnvParseError.path`/`.line`.
+
+(`ProjectConfigParseError` is not part of this contract — it's thrown synchronously by the
+`ProjectConfig` converters on the pure surface, and is documented in that section.)
 
 ```ts
 import {
