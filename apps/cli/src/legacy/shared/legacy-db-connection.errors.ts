@@ -37,8 +37,9 @@ export class LegacyDbExecError extends Data.TaggedError("LegacyDbExecError")<{
    */
   readonly statementIndex?: number;
   /**
-   * Which CLI-injected transaction wrapper failed, when the failure was BEGIN's
-   * or COMMIT's rather than a caller statement's. Absent otherwise.
+   * Which CLI-injected transaction wrapper was in flight when the batch failed —
+   * whether the server rejected BEGIN/COMMIT or the connection was lost while one
+   * was pending — rather than a caller statement. Absent otherwise.
    */
   readonly transactionPhase?: "begin" | "commit";
   /**

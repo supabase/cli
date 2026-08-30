@@ -808,7 +808,13 @@ describe("legacyBatchFailureError", () => {
       true,
     );
     expect(lost).toBeInstanceOf(LegacyDbExecError);
-    expect(lost.message).toBe("Error: Connection terminated unexpectedly");
+    // A connection lost at BEGIN keeps its own reason, but still marks the phase:
+    // no caller statement ran, so nothing downstream may render `At statement: 0`.
+    expect(lost).toMatchObject({
+      message: "Error: Connection terminated unexpectedly",
+      statementIndex: 0,
+      transactionPhase: "begin",
+    });
 
     const terminated = legacyBatchFailureError(
       new SqlError({
@@ -825,9 +831,10 @@ describe("legacyBatchFailureError", () => {
       true,
     );
     expect(terminated).toBeInstanceOf(LegacyDbExecError);
-    expect(terminated.message).toBe(
-      "FATAL: terminating connection due to idle-session timeout (SQLSTATE 57P05)",
-    );
+    expect(terminated).toMatchObject({
+      message: "FATAL: terminating connection due to idle-session timeout (SQLSTATE 57P05)",
+      transactionPhase: "begin",
+    });
 
     const poisoned = legacyBatchFailureError(
       beginRejected,
@@ -838,6 +845,8 @@ describe("legacyBatchFailureError", () => {
     expect(poisoned.message).toBe(
       "ERROR: canceling statement due to statement timeout (SQLSTATE 57014)",
     );
+    // A poisoned batch never reached the server, so it stays on the statement path.
+    expect(poisoned).not.toHaveProperty("transactionPhase");
   });
 
   it("names the transaction commit when a deferred failure lands on COMMIT", () => {
@@ -879,9 +888,10 @@ describe("legacyBatchFailureError", () => {
       true,
     );
     expect(dropped).toBeInstanceOf(LegacyDbExecError);
-    expect(dropped.message).toBe(
-      "FATAL: terminating connection: database dropped (SQLSTATE 57P04)",
-    );
+    expect(dropped).toMatchObject({
+      message: "FATAL: terminating connection: database dropped (SQLSTATE 57P04)",
+      transactionPhase: "commit",
+    });
   });
 
   it("keeps server-error mapping and the completed count for a statement failure", () => {

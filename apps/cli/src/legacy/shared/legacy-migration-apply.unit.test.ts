@@ -315,6 +315,33 @@ describe("legacyApplyMigrationFile", () => {
     );
   });
 
+  it.effect("reports a connection lost at BEGIN without blaming the first statement", () => {
+    // The driver marks the begin phase without relabeling the message when the
+    // connection died before BEGIN completed; the caller's statement never ran,
+    // so the formatter must surface the loss verbatim with no statement echo.
+    const dir = mkdtempSync(join(tmpdir(), "legacy-apply-"));
+    const file = join(dir, "20240101120000_begin_lost.sql");
+    writeFileSync(file, "SELECT 1;");
+    const { session } = fakeSession({
+      failOn: "SELECT 1",
+      failWith: {
+        message: "Error: Connection terminated unexpectedly",
+        transactionPhase: "begin",
+      },
+    });
+    return run(session, file).pipe(
+      Effect.flip,
+      Effect.tap((error) =>
+        Effect.sync(() => {
+          expect(error.message).toContain("Connection terminated unexpectedly");
+          expect(error.message).not.toContain("At statement");
+          expect(error.message).not.toContain("SELECT 1");
+        }),
+      ),
+      Effect.ensuring(Effect.sync(() => rmSync(dir, { recursive: true, force: true }))),
+    );
+  });
+
   it.effect("reports a deferred commit failure without blaming a statement", () => {
     const dir = mkdtempSync(join(tmpdir(), "legacy-apply-"));
     const file = join(dir, "20240101120000_deferred.sql");

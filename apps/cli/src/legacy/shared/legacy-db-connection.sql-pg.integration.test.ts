@@ -182,6 +182,8 @@ const fakeBatchServer = (
     readonly destroyOnRollback?: boolean;
     /** Drop the connection on the first Sync, so a batch dies mid-flight. */
     readonly destroyOnFirstSync?: boolean;
+    /** Drop the connection at the first Execute (BEGIN's), before anything completes. */
+    readonly destroyOnFirstExecute?: boolean;
   } = {},
 ): Promise<{
   readonly port: number;
@@ -198,6 +200,7 @@ const fakeBatchServer = (
       syncs: 0,
     };
     const sockets: Array<net.Socket> = [];
+    let destroyedOnExecute = false;
     const server = net.createServer((socket) => {
       sockets.push(socket);
       let sawStartup = false;
@@ -265,6 +268,11 @@ const fakeBatchServer = (
           } else if (type === "D") {
             if (!failed) socket.write(NO_DATA);
           } else if (type === "E") {
+            if (options.destroyOnFirstExecute === true && !destroyedOnExecute) {
+              destroyedOnExecute = true;
+              socket.destroy();
+              return;
+            }
             if (!failed) {
               if (activeIndex === options.failExecuteAt) {
                 failed = true;
@@ -768,6 +776,35 @@ describe("legacyDbConnectionSqlPgLayer extended batches", () => {
           );
           expect(error._tag).toBe("LegacyDbExecError");
           expect(asBatchExecError(error).message).toContain("Connection terminated unexpectedly");
+          // This server acks every statement and dies at Sync, so the loss lands
+          // on COMMIT — marked so the formatter never blames a caller statement.
+          expect(asBatchExecError(error).transactionPhase).toBe("commit");
+          yield* session.execBatch([{ sql: "SELECT 3" }]);
+        }),
+      );
+    }),
+  );
+
+  it.live("marks the begin phase when the connection drops before BEGIN completes", () =>
+    // The loss arrives while BEGIN is still in flight, so no caller statement ran:
+    // the phase marker keeps formatters from rendering `At statement: 0` for it.
+    Effect.gen(function* () {
+      const server = yield* Effect.promise(() => fakeBatchServer({ destroyOnFirstExecute: true }));
+      yield* runWithBatchServer(server, (session) =>
+        Effect.gen(function* () {
+          const error = yield* session.execBatch([{ sql: "SELECT 1" }, { sql: "SELECT 2" }]).pipe(
+            Effect.flip,
+            Effect.timeoutOrElse({
+              duration: Duration.seconds(10),
+              orElse: () => Effect.die("execBatch never settled after the connection died"),
+            }),
+          );
+          expect(error._tag).toBe("LegacyDbExecError");
+          expect(asBatchExecError(error).message).toContain("Connection terminated unexpectedly");
+          expect(asBatchExecError(error)).toMatchObject({
+            statementIndex: 0,
+            transactionPhase: "begin",
+          });
           yield* session.execBatch([{ sql: "SELECT 3" }]);
         }),
       );

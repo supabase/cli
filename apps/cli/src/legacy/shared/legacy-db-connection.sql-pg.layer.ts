@@ -249,24 +249,29 @@ export function legacyBatchFailureError(
     });
   }
   const mapped = legacyToExecError(error);
-  // A lost connection (including a server-initiated termination) is not a BEGIN
-  // failure. Gated on SQLSTATE class, never the severity string, which arrives
-  // localized (e.g. "FEHLER").
+  // The phase marker and the relabel are separate: whenever BEGIN or COMMIT was
+  // the statement in flight, none of the caller's statements failed at
+  // `statementIndex`, so the phase is always recorded and formatters must not
+  // blame one. The message is only relabeled when the server rejected the
+  // wrapper itself — a lost connection (including a server-initiated
+  // termination) keeps its own reason. Gated on SQLSTATE class, never the
+  // severity string, which arrives localized (e.g. "FEHLER").
   const server = legacyExtractPgServerError(error);
   const statementFailure = server !== undefined && !legacyIsConnectionEndingSqlState(server.code);
-  const beganFailed = batch.outcome === "submitted" && batch.began === false && statementFailure;
-  const commitFailed = batch.outcome === "submitted" && batch.atCommit === true && statementFailure;
-  const transactionPhase: "begin" | "commit" | undefined = beganFailed
+  const atBegin = batch.outcome === "submitted" && batch.began === false;
+  const atCommit = batch.outcome === "submitted" && batch.atCommit === true;
+  const transactionPhase: "begin" | "commit" | undefined = atBegin
     ? "begin"
-    : commitFailed
+    : atCommit
       ? "commit"
       : undefined;
   return new LegacyDbExecError({
-    message: beganFailed
-      ? `failed to begin the batch transaction: ${mapped.message}`
-      : commitFailed
-        ? `failed to commit the batch transaction: ${mapped.message}`
-        : mapped.message,
+    message:
+      atBegin && statementFailure
+        ? `failed to begin the batch transaction: ${mapped.message}`
+        : atCommit && statementFailure
+          ? `failed to commit the batch transaction: ${mapped.message}`
+          : mapped.message,
     code: mapped.code,
     detail: mapped.detail,
     position: mapped.position,
