@@ -2,13 +2,13 @@ import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
 
-import { LEGACY_DROP_OBJECTS_SQL } from "../../../shared/legacy-drop-objects.ts";
+import { legacyDropObjectsSql } from "../../../shared/legacy-drop-objects.ts";
 import { LEGACY_EDGE_RUNTIME_SCRIPT_ERROR_SENTINEL } from "../../../shared/legacy-edge-runtime-script.service.ts";
 import {
   legacyMigraDiffScript,
   legacyMigraDiffShellScript,
 } from "./legacy-migra.deno-templates.ts";
-import { LEGACY_LIST_SCHEMAS_SQL } from "./legacy-migra.ts";
+import { legacyListSchemasSql } from "./legacy-migra.ts";
 
 // Resolve the Go template sources relative to this file so the byte-equality
 // assertion fails loudly if the embedded copies drift from upstream.
@@ -32,8 +32,8 @@ describe("embedded user-schema queries", () => {
   // An unscoped pg_depend anti-join hid user schemas whose oid collided with a
   // row in another catalog (supabase/cli#6375).
   it.each([
-    ["LEGACY_LIST_SCHEMAS_SQL", LEGACY_LIST_SCHEMAS_SQL],
-    ["LEGACY_DROP_OBJECTS_SQL", LEGACY_DROP_OBJECTS_SQL],
+    ["legacyListSchemasSql", legacyListSchemasSql],
+    ["legacyDropObjectsSql", legacyDropObjectsSql],
   ])(
     "%s constrains the pg_depend anti-join to pg_namespace rows (supabase/cli#6375)",
     (_name, sql) => {

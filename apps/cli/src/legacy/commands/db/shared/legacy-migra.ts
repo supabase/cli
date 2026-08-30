@@ -92,7 +92,7 @@ const LEGACY_LIST_SCHEMAS_EXCLUDE: ReadonlyArray<string> = [
  * `supabase_admin`. Shared by the migra bash fallback and `db lint`
  * (`lint.lint-sql.ts`).
  */
-export const LEGACY_LIST_SCHEMAS_SQL = `-- List user defined schemas, excluding
+export const legacyListSchemasSql = `-- List user defined schemas, excluding
 --  Extension created schemas
 --  Supabase managed schemas
 select pn.nspname
@@ -170,7 +170,7 @@ const loadTargetUserSchemas = Effect.fnUntraced(function* (
         ),
       );
       const rows = yield* session
-        .query(LEGACY_LIST_SCHEMAS_SQL, [LEGACY_LIST_SCHEMAS_EXCLUDE])
+        .query(legacyListSchemasSql, [LEGACY_LIST_SCHEMAS_EXCLUDE])
         .pipe(
           Effect.mapError(
             (cause) =>

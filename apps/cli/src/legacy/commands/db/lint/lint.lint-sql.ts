@@ -7,11 +7,13 @@
  *     mass-check.
  *   - `LEGACY_LIST_SCHEMAS_SQL` + `LEGACY_MANAGED_SCHEMAS` — lists user
  *     schemas, used when `--schema` is omitted. The query is shared with the
- *     migra bash fallback and defined once in `db/shared/legacy-migra.ts`. The
- *     `\_` / `pg\_%` escapes are preserved exactly — they are `LIKE` patterns.
+ *     migra bash fallback and defined once in `db/shared/legacy-migra.ts`
+ *     (`legacyListSchemasSql`), re-exported here under this module's
+ *     established constant name. The `\_` / `pg\_%` escapes are preserved
+ *     exactly — they are `LIKE` patterns.
  */
 
-export { LEGACY_LIST_SCHEMAS_SQL } from "../shared/legacy-migra.ts";
+export { legacyListSchemasSql as LEGACY_LIST_SCHEMAS_SQL } from "../shared/legacy-migra.ts";
 
 export const LEGACY_ENABLE_PGSQL_CHECK = "CREATE EXTENSION IF NOT EXISTS plpgsql_check";
 

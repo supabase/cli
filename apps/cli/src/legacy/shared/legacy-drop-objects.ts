@@ -26,7 +26,7 @@ export class LegacyMigrationDropError extends Data.TaggedError("LegacyMigrationD
  * user schema (supabase/cli#6375). Shared by `migration down` and `db reset`
  * (`legacy-drop-schemas.ts`).
  */
-export const LEGACY_DROP_OBJECTS_SQL = `do $$ declare
+export const legacyDropObjectsSql = `do $$ declare
   rec record;
 begin
   -- schemas
@@ -170,5 +170,5 @@ end $$;
  */
 export const legacyDropUserSchemas = (session: LegacyDbSession) =>
   session
-    .exec(LEGACY_DROP_OBJECTS_SQL)
+    .exec(legacyDropObjectsSql)
     .pipe(Effect.mapError((cause) => new LegacyMigrationDropError({ message: cause.message })));
