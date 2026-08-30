@@ -1290,6 +1290,12 @@ describe("legacyIsPipelineIncompatible", () => {
     ["discard all", "DISCARD ALL", true],
     ["discard temp", "DISCARD TEMP", false],
     [
+      "refresh materialized view concurrently",
+      "REFRESH MATERIALIZED VIEW CONCURRENTLY public.mv",
+      true,
+    ],
+    ["plain refresh materialized view", "REFRESH MATERIALIZED VIEW public.mv", false],
+    [
       "lower-case create index concurrently",
       "create index concurrently widgets_id_idx on public.widgets(id)",
       true,

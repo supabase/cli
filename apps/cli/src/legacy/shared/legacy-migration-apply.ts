@@ -77,6 +77,8 @@ const ALL_IN_TABLESPACE_PATTERN =
   /^ALTER\s+(?:TABLE|INDEX|MATERIALIZED\s+VIEW)\s+ALL\s+IN\s+TABLESPACE(?:\s|$)/u;
 const DETACH_PARTITION_PATTERN =
   /^ALTER\s+TABLE\s[\s\S]*\sDETACH\s+PARTITION\s[\s\S]*\sCONCURRENTLY(?:\s|$)/u;
+const REFRESH_MATERIALIZED_VIEW_CONCURRENTLY_PATTERN =
+  /^REFRESH\s+MATERIALIZED\s+VIEW\s+CONCURRENTLY(?:\s|$)/u;
 const TRANSACTION_CONTROL_PATTERN =
   /^(?:BEGIN|START\s+TRANSACTION|COMMIT|END|ABORT|PREPARE\s+TRANSACTION)(?:\s|$)/u;
 
@@ -116,7 +118,8 @@ const legacyTrimLeadingSqlComments = (sql: string): string => {
  * `ALTER DATABASE … SET TABLESPACE`,
  * `ALTER SUBSCRIPTION … REFRESH`/`SET`/`ADD`/`DROP PUBLICATION`,
  * `ALTER TABLE … DETACH PARTITION … CONCURRENTLY`,
- * `ALTER TABLE`/`INDEX`/`MATERIALIZED VIEW ALL IN TABLESPACE`. Such statements (in
+ * `ALTER TABLE`/`INDEX`/`MATERIALIZED VIEW ALL IN TABLESPACE`,
+ * `REFRESH MATERIALIZED VIEW CONCURRENTLY`. Such statements (in
  * their default forms) fail with
  * SQLSTATE 25001 inside the transaction
  * created by a migration batch, so `execMigrationBatch` runs them standalone.
@@ -148,7 +151,8 @@ export const legacyIsPipelineIncompatible = (sql: string): boolean => {
     ALTER_DATABASE_TABLESPACE_PATTERN.test(upper) ||
     ALTER_SUBSCRIPTION_REFRESH_PATTERN.test(upper) ||
     DETACH_PARTITION_PATTERN.test(upper) ||
-    ALL_IN_TABLESPACE_PATTERN.test(upper)
+    ALL_IN_TABLESPACE_PATTERN.test(upper) ||
+    REFRESH_MATERIALIZED_VIEW_CONCURRENTLY_PATTERN.test(upper)
   );
 };
 
