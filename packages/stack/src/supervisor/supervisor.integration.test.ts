@@ -5,6 +5,7 @@ import {
   Deferred,
   Effect,
   Exit,
+  Fiber,
   FileSystem,
   Option,
   Path,
@@ -22,6 +23,7 @@ import type { StackRuntime } from "../public/Runtime.ts";
 import {
   GatewayActivationError,
   StackNotRunningError,
+  StackReconciliationError,
   StackStateInvalidError,
   StackUpgradeRequiredError,
 } from "../public/Errors.ts";
@@ -168,6 +170,15 @@ const makeFixture = (
     readonly timeline?: Ref.Ref<ReadonlyArray<string>>;
     readonly runtime?: StackRuntime;
     readonly prepareOutcome?: "cached" | "downloaded" | "present" | "pulled";
+    readonly startGate?: Deferred.Deferred<void>;
+    readonly startStarted?: Deferred.Deferred<void>;
+    readonly activationGate?: Deferred.Deferred<void>;
+    readonly activationStarted?: Deferred.Deferred<void>;
+    readonly activationCalls?: Ref.Ref<number>;
+    readonly activationFailFirst?: Ref.Ref<boolean>;
+    readonly preflightFailFirst?: Ref.Ref<boolean>;
+    readonly preflightGate?: Deferred.Deferred<void>;
+    readonly preflightStarted?: Deferred.Deferred<void>;
   } = {},
 ) =>
   Effect.gen(function* () {
@@ -200,6 +211,10 @@ const makeFixture = (
               `start:${workload.id}`,
             ]);
           yield* Ref.update(calls, (current) => [...current, `start:${workload.id}`]);
+          if (fixtureOptions.startStarted !== undefined)
+            yield* Deferred.succeed(fixtureOptions.startStarted, undefined);
+          if (fixtureOptions.startGate !== undefined)
+            yield* Deferred.await(fixtureOptions.startGate);
           const ready = { ...key, state: "ready" as const };
           yield* Ref.update(resources, (current) => [
             ...current.filter((entry) => entry.workloadId !== key.workloadId),
@@ -259,8 +274,38 @@ const makeFixture = (
             }),
           ),
         ),
-      preflight: () => Effect.succeed({}),
-      activate: () => Effect.succeed({ host: "127.0.0.1", port: 9999 }),
+      preflight: () =>
+        Effect.gen(function* () {
+          if (fixtureOptions.preflightStarted !== undefined)
+            yield* Deferred.succeed(fixtureOptions.preflightStarted, undefined);
+          if (fixtureOptions.preflightGate !== undefined)
+            yield* Deferred.await(fixtureOptions.preflightGate);
+          if (fixtureOptions.preflightFailFirst !== undefined) {
+            const fail = yield* Ref.get(fixtureOptions.preflightFailFirst);
+            if (fail) {
+              yield* Ref.set(fixtureOptions.preflightFailFirst, false);
+              return yield* new StackReconciliationError({ message: "injected preflight failure" });
+            }
+          }
+          return {};
+        }),
+      activate: () =>
+        Effect.gen(function* () {
+          if (fixtureOptions.activationCalls !== undefined)
+            yield* Ref.update(fixtureOptions.activationCalls, (count) => count + 1);
+          if (fixtureOptions.activationStarted !== undefined)
+            yield* Deferred.succeed(fixtureOptions.activationStarted, undefined);
+          if (fixtureOptions.activationGate !== undefined)
+            yield* Deferred.await(fixtureOptions.activationGate);
+          if (fixtureOptions.activationFailFirst !== undefined) {
+            const fail = yield* Ref.get(fixtureOptions.activationFailFirst);
+            if (fail) {
+              yield* Ref.set(fixtureOptions.activationFailFirst, false);
+              return yield* new GatewayActivationError({ message: "injected activation failure" });
+            }
+          }
+          return { host: "127.0.0.1", port: 9999 };
+        }),
       ...(fixtureOptions.ingress === undefined ? {} : { ingress: fixtureOptions.ingress }),
       logStore: {
         path: "memory://logs",
@@ -828,6 +873,156 @@ describe("Supervisor composition", () => {
     ),
   );
 
+  it.live("keeps accepted start work alive when its waiter is interrupted", () =>
+    run(
+      Effect.gen(function* () {
+        const gate = yield* Deferred.make<void>();
+        const started = yield* Deferred.make<void>();
+        const fixture = yield* makeFixture({ startGate: gate, startStarted: started });
+        const config = { capabilities: { rest: {} } };
+        const waiter = yield* Effect.forkChild(fixture.supervisor.start({ config }));
+        yield* Deferred.await(started);
+        yield* Fiber.interrupt(waiter);
+        yield* Deferred.succeed(gate, undefined);
+        const status = yield* fixture.supervisor.start({ config });
+        expect(status.lifecycle).toBe("running");
+        const starts = (yield* Ref.get(fixture.calls)).filter((call) => call.startsWith("start:"));
+        expect(starts).toContain("start:database:database");
+        expect(starts).toContain("start:rest:rest");
+      }),
+    ),
+  );
+
+  it.live("joins concurrent equivalent starts despite property order", () =>
+    run(
+      Effect.gen(function* () {
+        const preflightFailFirst = yield* Ref.make(true);
+        const preflightGate = yield* Deferred.make<void>();
+        const preflightStarted = yield* Deferred.make<void>();
+        const fixture = yield* makeFixture({
+          preflightFailFirst,
+          preflightGate,
+          preflightStarted,
+        });
+        const firstConfig = {
+          capabilities: { rest: {}, auth: { enabled: false } },
+          security: { jwt: { issuer: "issuer" } },
+        };
+        const equivalentConfig = {
+          security: { jwt: { issuer: "issuer" } },
+          capabilities: { auth: { enabled: false }, rest: {} },
+        };
+        const first = yield* Effect.forkChild(fixture.supervisor.start({ config: firstConfig }));
+        yield* Deferred.await(preflightStarted);
+        const second = yield* Effect.forkChild(
+          fixture.supervisor.start({ config: equivalentConfig }),
+        );
+        yield* Deferred.succeed(preflightGate, undefined);
+        const [firstExit, secondExit] = yield* Effect.all([
+          Fiber.join(first).pipe(Effect.exit),
+          Fiber.join(second).pipe(Effect.exit),
+        ]);
+        expect(Exit.isFailure(firstExit)).toBe(true);
+        expect(Exit.isFailure(secondExit)).toBe(true);
+        expect(yield* Ref.get(preflightFailFirst)).toBe(false);
+      }),
+    ),
+  );
+
+  it.live("does not join concurrent starts with distinct secret values", () =>
+    run(
+      Effect.gen(function* () {
+        const preflightFailFirst = yield* Ref.make(true);
+        const preflightGate = yield* Deferred.make<void>();
+        const preflightStarted = yield* Deferred.make<void>();
+        const fixture = yield* makeFixture({
+          preflightFailFirst,
+          preflightGate,
+          preflightStarted,
+        });
+        const firstConfig = {
+          security: {
+            jwt: { signing: { kind: "symmetric" as const, secret: Redacted.make("a") } },
+          },
+        };
+        const distinctConfig = {
+          security: {
+            jwt: { signing: { kind: "symmetric" as const, secret: Redacted.make("b") } },
+          },
+        };
+        const first = yield* Effect.forkChild(fixture.supervisor.start({ config: firstConfig }));
+        yield* Deferred.await(preflightStarted);
+        const second = yield* Effect.forkChild(
+          fixture.supervisor.start({ config: distinctConfig }),
+        );
+        yield* Deferred.succeed(preflightGate, undefined);
+        const [firstExit, secondExit] = yield* Effect.all([
+          Fiber.join(first).pipe(Effect.exit),
+          Fiber.join(second).pipe(Effect.exit),
+        ]);
+        expect(Exit.isFailure(firstExit)).toBe(true);
+        expect(Exit.isSuccess(secondExit)).toBe(true);
+      }),
+    ),
+  );
+
+  it.live("single-flights lazy activation and retains its endpoint for the generation", () =>
+    run(
+      Effect.gen(function* () {
+        const gate = yield* Deferred.make<void>();
+        const started = yield* Deferred.make<void>();
+        const activationCalls = yield* Ref.make(0);
+        const fixture = yield* makeFixture({
+          activationGate: gate,
+          activationStarted: started,
+          activationCalls,
+        });
+        yield* fixture.supervisor.start({
+          config: {
+            capabilities: {
+              rest: { enabled: false },
+              auth: { enabled: false },
+              realtime: { enabled: false },
+              storage: { enabled: false },
+              functions: { activation: "lazy" },
+              studio: { enabled: false },
+              mail: { enabled: false },
+              analytics: { enabled: false },
+              pooler: { enabled: false },
+            },
+          },
+        });
+        const first = yield* Effect.forkChild(fixture.supervisor.activate("functions"));
+        yield* Deferred.await(started);
+        const second = yield* Effect.forkChild(fixture.supervisor.activate("functions"));
+        yield* Deferred.succeed(gate, undefined);
+        const [left, right] = yield* Effect.all([Fiber.join(first), Fiber.join(second)]);
+        expect(left).toEqual(right);
+        expect(yield* Ref.get(activationCalls)).toBe(1);
+        expect(yield* fixture.supervisor.activate("functions")).toEqual(left);
+        expect(yield* Ref.get(activationCalls)).toBe(1);
+      }),
+    ),
+  );
+
+  it.live("allows a failed activation to retry", () =>
+    run(
+      Effect.gen(function* () {
+        const activationFailFirst = yield* Ref.make(true);
+        const activationCalls = yield* Ref.make(0);
+        const fixture = yield* makeFixture({ activationFailFirst, activationCalls });
+        yield* fixture.supervisor.start({
+          config: { capabilities: { functions: { activation: "lazy" } } },
+        });
+        const failed = yield* fixture.supervisor.activate("functions").pipe(Effect.exit);
+        expect(Exit.isFailure(failed)).toBe(true);
+        const retry = yield* fixture.supervisor.activate("functions");
+        expect(retry.endpoint).toEqual({ host: "127.0.0.1", port: 9999 });
+        expect(yield* Ref.get(activationCalls)).toBe(2);
+      }),
+    ),
+  );
+
   it.live("recovers a running durable intent and starts missing eager workloads", () =>
     run(
       Effect.gen(function* () {
@@ -867,6 +1062,7 @@ describe("Supervisor composition", () => {
             },
           },
         });
+        yield* recovered.recover;
         const status = yield* recovered.status;
         expect(status.desiredLifecycle).toBe("running");
         expect(status.lifecycle).toBe("running");

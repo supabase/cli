@@ -24,6 +24,8 @@ export interface OwnerSessionOptions {
   readonly maintenanceHandlers: MaintenanceHandlers;
   /** Called after a stop/quiesce response is written and the connection closes. */
   readonly onMaintenanceComplete?: (op: MaintenanceRequest["op"]) => Effect.Effect<void>;
+  /** Called after a successful destroy response is written. */
+  readonly onDestroyResponse?: () => Effect.Effect<void>;
   readonly rpcHandlers: StackRpcHandlers;
 }
 

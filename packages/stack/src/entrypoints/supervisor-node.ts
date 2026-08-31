@@ -1,5 +1,5 @@
 import { NodeServices } from "@effect/platform-node";
-import { Crypto, Data, Deferred, Effect, FileSystem, Path, Schema } from "effect";
+import { Crypto, Data, Effect, FileSystem, Path, Schema } from "effect";
 // Node's fd3 readiness channel has no FileSystem abstraction; this is the
 // process-entrypoint boundary where the descriptor is intentionally used.
 // oxlint-disable-next-line effecttsgo/node-builtin-import
@@ -102,7 +102,6 @@ export const runSupervisor = (args: SupervisorArgs) =>
         rpcRelease: args.rpcRelease || STACK_RPC_RELEASE,
         environment,
       });
-      const released = yield* Deferred.make<void, never>();
       const context = yield* Effect.context<FileSystem.FileSystem | Path.Path | Crypto.Crypto>();
       const runtimeFactory = yield* makeProductionRuntimeFactory({
         stateRoot: args.stateRoot,
@@ -127,13 +126,14 @@ export const runSupervisor = (args: SupervisorArgs) =>
         rpcRelease: args.rpcRelease || STACK_RPC_RELEASE,
         maintenanceHandlers: supervisor.maintenanceHandlers,
         rpcHandlers: supervisor.rpcHandlers,
-        onMaintenanceComplete: (op) =>
-          op === "quiesce" ? Deferred.succeed(released, undefined) : Effect.void,
+        onMaintenanceComplete: (op) => (op === "quiesce" ? supervisor.signalShutdown : Effect.void),
+        onDestroyResponse: () => supervisor.signalShutdown,
       });
       yield* session.ready;
       yield* publishOwnership(lease);
       yield* writeReadiness({ ok: true, stackId: args.stackId, ownerSessionId });
-      yield* Deferred.await(released);
+      yield* supervisor.recover;
+      yield* supervisor.shutdown;
     }),
   ).pipe(Effect.provide(NodeServices.layer));
 

@@ -1,4 +1,15 @@
-import { Deferred, Effect, Exit, Fiber, FileSystem, Layer, Schema, Scope, Semaphore } from "effect";
+import {
+  Deferred,
+  Effect,
+  Exit,
+  Fiber,
+  FiberSet,
+  FileSystem,
+  Predicate,
+  Schema,
+  Scope,
+  Semaphore,
+} from "effect";
 import { NodeSocket, NodeSocketServer } from "@effect/platform-node";
 import * as RpcClient from "effect/unstable/rpc/RpcClient";
 import { RpcClientError } from "effect/unstable/rpc/RpcClientError";
@@ -50,6 +61,8 @@ export interface ControlServerOptions extends ControlIdentity {
   readonly maintenanceHandlers: MaintenanceHandlers;
   /** Invoked only after the maintenance response has been written and the connection closed. */
   readonly onMaintenanceComplete?: (op: MaintenanceRequest["op"]) => Effect.Effect<void>;
+  /** Invoked only after a successful destroy RPC response has been written. */
+  readonly onDestroyResponse?: () => Effect.Effect<void>;
   readonly rpcHandlers: StackRpcHandlers;
 }
 
@@ -82,6 +95,7 @@ const demuxSocket = (
   socket: Socket.Socket,
   options: ControlServerOptions,
   maintenanceSemaphore: Semaphore.Semaphore,
+  completionFibers: FiberSet.FiberSet,
 ): Socket.Socket => {
   const expectedRelease = options.rpcRelease ?? STACK_RPC_RELEASE;
   type Writer = (
@@ -173,7 +187,11 @@ const demuxSocket = (
             if (response.ok && options.onMaintenanceComplete !== undefined) {
               // The connection scope closes as soon as the close frame is sent;
               // completion belongs to the owner session and must outlive it.
-              yield* Effect.forkDetach(options.onMaintenanceComplete(request.value.op));
+              yield* FiberSet.run(
+                completionFibers,
+                options.onMaintenanceComplete(request.value.op),
+                { startImmediately: true },
+              );
             }
           });
 
@@ -319,12 +337,13 @@ const wrappedServer = (
   base: SocketServer.SocketServer["Service"],
   options: ControlServerOptions,
   maintenanceSemaphore: Semaphore.Semaphore,
+  completionFibers: FiberSet.FiberSet,
 ): SocketServer.SocketServer["Service"] =>
   SocketServer.SocketServer.of({
     address: base.address,
     run: (handler) => {
       return base.run((socket) => {
-        return handler(demuxSocket(socket, options, maintenanceSemaphore));
+        return handler(demuxSocket(socket, options, maintenanceSemaphore, completionFibers));
       });
     },
   });
@@ -357,26 +376,47 @@ export const startControlServer = (
       );
     }
     const maintenanceSemaphore = yield* Semaphore.make(MAINTENANCE_MAX_CONCURRENT_REQUESTS);
-    const server = wrappedServer(base, options, maintenanceSemaphore);
-    const transportLayer = Layer.mergeAll(
-      Layer.succeed(SocketServer.SocketServer, server),
-      Layer.succeed(RpcSerialization.RpcSerialization, RpcSerialization.json),
+    const completionFibers = yield* FiberSet.make();
+    const server = wrappedServer(base, options, maintenanceSemaphore, completionFibers);
+    const protocol = yield* RpcServer.makeProtocolSocketServer.pipe(
+      Effect.provideService(SocketServer.SocketServer, server),
+      Effect.provideService(RpcSerialization.RpcSerialization, RpcSerialization.json),
     );
-    // Effect v4's RPC type derivation exposes an implementation-level `any`
-    // requirement after these concrete transport layers are provided.
-    // oxlint-disable-next-line effecttsgo/any-unknown-in-error-context
-    const rpcLayer = RpcServer.layerProtocolSocketServer.pipe(
-      Layer.provideMerge(transportLayer),
-      // oxlint-disable-next-line effecttsgo/any-unknown-in-error-context
-      Layer.provideMerge(StackRpcGroup.toLayer(options.rpcHandlers)),
-    );
-    // oxlint-disable-next-line effecttsgo/any-unknown-in-error-context
+    const destroyRequests = new Set<string>();
+    const patchedProtocol = RpcServer.Protocol.of({
+      ...protocol,
+      run: (handler) =>
+        protocol.run((clientId, request) => {
+          if (Predicate.isTagged(request, "Request") && request.tag === "destroy")
+            destroyRequests.add(`${clientId}:${String(request.id)}`);
+          return handler(clientId, request);
+        }),
+      send: (clientId, response, transferables) =>
+        protocol.send(clientId, response, transferables).pipe(
+          Effect.andThen(
+            Predicate.isTagged(response, "Exit")
+              ? Effect.suspend(() => {
+                  const key = `${clientId}:${String(response.requestId)}`;
+                  const isDestroy = destroyRequests.delete(key);
+                  if (
+                    !isDestroy ||
+                    !Predicate.isTagged(response.exit, "Success") ||
+                    options.onDestroyResponse === undefined
+                  )
+                    return Effect.void;
+                  return options.onDestroyResponse();
+                })
+              : Effect.void,
+          ),
+        ),
+    });
     const rpcProgram = RpcServer.make(StackRpcGroup, {
       disableTracing: true,
       concurrency: MAINTENANCE_MAX_CONCURRENT_REQUESTS,
     }).pipe(
+      Effect.provideService(RpcServer.Protocol, patchedProtocol),
       // oxlint-disable-next-line effecttsgo/any-unknown-in-error-context
-      Effect.provide(rpcLayer),
+      Effect.provide(StackRpcGroup.toLayer(options.rpcHandlers)),
     );
     // oxlint-disable-next-line effecttsgo/any-unknown-in-error-context
     yield* Effect.forkScoped(rpcProgram);

@@ -901,3 +901,17 @@ private-port reservation plus gateway ownership atomic with accepted lifecycle g
   findings. Independent re-review was clean; focused input/secret integration verification passed 27 tests
   with stack type-check, lint, formatting, and diff checks green. Production and gateway wiring remain the
   next slice.
+
+#### Task 13B2b7 — lifecycle/Fable correction (2026-08-31)
+
+- Supervisor lifecycle, activation, and recovery work now runs in one owner-scoped FiberSet behind a serialized
+  execution lane. Equivalent starts use an Effect-encoded, canonical SHA-256 request digest (including transient
+  redacted values only for identity); distinct secret values cannot join. Lazy activation commits success once per
+  generation, retries failures, and invalidates on a generation change.
+- Supervisor construction no longer observes the runtime engine before owner control/readiness publication. The
+  entrypoint publishes the endpoint and fd3 readiness first, then runs deferred recovery; blocked or failed recovery
+  leaves the owner attachable and retains a supervisor error log. Control maintenance waiters may time out without
+  cancelling accepted stop work.
+- Destroy shutdown is transport-owned: the exact owner session is signalled only after a successful destroy response
+  write. Focused supervisor/control/handle/lifecycle verification passed 69 integration tests with stack type-check,
+  Effect lint, formatting, and diff checks green.

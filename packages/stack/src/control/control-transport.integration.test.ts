@@ -43,6 +43,7 @@ interface ServerOverrides {
   readonly rpcHandlers?: Partial<StackRpcHandlers>;
   readonly maintenanceHandlers?: Partial<MaintenanceHandlers>;
   readonly onMaintenanceComplete?: (op: MaintenanceRequest["op"]) => Effect.Effect<void>;
+  readonly onDestroyResponse?: () => Effect.Effect<void>;
 }
 
 const withPlatform = <A, E, R>(effect: Effect.Effect<A, E, R>) =>
@@ -160,6 +161,7 @@ const withServer = <A, E, R>(
         maintenanceHandlers: { ...defaultMaintenanceHandlers, ...custom.maintenanceHandlers },
         rpcHandlers: { ...defaultRpcHandlers, ...custom.rpcHandlers },
         onMaintenanceComplete: custom.onMaintenanceComplete,
+        onDestroyResponse: custom.onDestroyResponse,
       };
       yield* startControlServer(options);
       const info = yield* fs.stat(endpoint.path);
@@ -253,6 +255,29 @@ const makePrepareRequestFrame = (
   });
 
 describe("control transport", () => {
+  it.live("signals destroy shutdown only after writing the typed response", () =>
+    withServer(
+      ({ endpoint, stackId, ownerSessionId, completion }) =>
+        Effect.gen(function* () {
+          const client = makeControlClient(endpoint, { stackId, ownerSessionId });
+          const rpc = yield* client.rpc;
+          yield* rpc.destroy(undefined);
+          yield* Deferred.await(completion).pipe(
+            Effect.timeoutOrElse({
+              duration: 5_500,
+              orElse: () =>
+                Effect.fail(
+                  new MaintenanceProtocolError({ message: "destroy completion was not signaled" }),
+                ),
+            }),
+          );
+        }),
+      ({ completion }) => ({
+        onDestroyResponse: () => Deferred.succeed(completion, undefined).pipe(Effect.asVoid),
+      }),
+    ),
+  );
+
   it.live("round-trips typed RPC and stable maintenance on one endpoint", () =>
     withServer(({ endpoint, stackId, ownerSessionId }) =>
       Effect.gen(function* () {

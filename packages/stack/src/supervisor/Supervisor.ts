@@ -1,25 +1,29 @@
 import {
   Context,
+  Cause,
   Crypto,
   Deferred,
   Effect,
   Exit,
   FileSystem,
+  FiberSet,
   Path,
   Redacted,
   Ref,
   Schema,
+  Semaphore,
+  Scope,
   Stream,
 } from "effect";
 import type { StackIdentity } from "../identity/Identity.ts";
-import { compileStack, rebuildExecutionPlan } from "../model/Compiler.ts";
+import { canonicalize, compileStack, rebuildExecutionPlan } from "../model/Compiler.ts";
 import type { ExecutionPlan, PlannedWorkload } from "../model/ExecutionPlan.ts";
 import {
   CAPABILITY_NAMES,
   type CapabilityName,
   type CapabilityStatus,
 } from "../public/Capability.ts";
-import type { StackConfig } from "../public/Config.ts";
+import { StackConfigSchema, type StackConfig } from "../public/Config.ts";
 import type { StackRuntime } from "../public/Runtime.ts";
 import {
   GatewayActivationError,
@@ -120,6 +124,12 @@ export interface Supervisor {
     readonly config?: StackConfig;
   }) => Effect.Effect<StackStatus, StackError>;
   readonly destroy: Effect.Effect<void, StackError>;
+  /** Completes persisted-running recovery for a deferred owner session. */
+  readonly recover: Effect.Effect<void>;
+  /** Completes after a successful destroy or quiesce shutdown signal. */
+  readonly shutdown: Effect.Effect<void>;
+  /** Signals owner shutdown after a successful maintenance response. */
+  readonly signalShutdown: Effect.Effect<void>;
   readonly watchStatus: Stream.Stream<StackStatus, StackError>;
   readonly logs: (options?: LogOptions) => Stream.Stream<StackLogEntry, StackError>;
   readonly activate: (
@@ -153,6 +163,18 @@ const stateErrorMessage = (error: StackError | { readonly message?: string }): s
 
 const credentialHost = (address: string): string =>
   address.includes(":") && !address.startsWith("[") ? `[${address}]` : address;
+
+const revealRedacted = (value: unknown): unknown => {
+  if (Redacted.isRedacted(value)) return Redacted.value(value);
+  if (Array.isArray(value)) return value.map(revealRedacted);
+  if (typeof value !== "object" || value === null) return value;
+  return Object.fromEntries(
+    Object.entries(value).map(([key, entry]) => [key, revealRedacted(entry)]),
+  );
+};
+
+const digestHex = (bytes: Uint8Array): string =>
+  [...bytes].map((byte) => byte.toString(16).padStart(2, "0")).join("");
 
 const runtimeUnavailable = (): SupervisorRuntime => {
   const unavailable = (operation: string): Effect.Effect<never, RuntimeDriverError> =>
@@ -357,7 +379,9 @@ const rpcTag = (error: StackError, fallback: StackRpcError["tag"]): StackRpcErro
 };
 
 /** Compose one owner process around the durable lifecycle controller and a runtime driver. */
-export const makeSupervisor = (options: SupervisorOptions): Effect.Effect<Supervisor, StackError> =>
+export const makeSupervisor = (
+  options: SupervisorOptions,
+): Effect.Effect<Supervisor, StackError, Scope.Scope> =>
   Effect.gen(function* () {
     const read = () =>
       options.stateStore.read(options.stackId).pipe(Effect.provideContext(options.context));
@@ -388,7 +412,9 @@ export const makeSupervisor = (options: SupervisorOptions): Effect.Effect<Superv
     });
     const active = yield* Ref.make<ReadonlySet<CapabilityName>>(new Set());
     const generation = yield* Ref.make(initial.desiredGeneration);
-    const phase = yield* Ref.make<ActualPhase>("stopped");
+    const phase = yield* Ref.make<ActualPhase>(
+      initial.desiredLifecycle === "running" ? "starting" : "stopped",
+    );
     type ActivationHandler = (
       capability: CapabilityName,
     ) => Effect.Effect<ActivationResult, GatewayActivationError | StackError>;
@@ -416,91 +442,28 @@ export const makeSupervisor = (options: SupervisorOptions): Effect.Effect<Superv
         const current = yield* Ref.get(generation);
         if (current === input.generation && input.desiredLifecycle === "running") return;
         yield* Ref.set(generation, input.generation);
+        activationOwned.clear();
         yield* initializeActivation(input.plan);
       });
     const observe = () =>
       runtime.driver.observe(options.stackId).pipe(Effect.mapError(mapReconcileError));
-
-    if (initial.definition !== undefined) {
-      const plan = yield* rebuildExecutionPlan(initial.runtime, initial.definition).pipe(
-        Effect.provideContext(options.context),
-        Effect.mapError(
-          (error) => new StackStateInvalidError({ message: error.message, cause: error }),
-        ),
+    const observedForStatus = () =>
+      Ref.get(phase).pipe(
+        Effect.flatMap((current) => (current === "running" ? observe() : Effect.succeed([]))),
       );
-      if (initial.desiredLifecycle === "running") {
-        const request: RuntimeRecoveryRequest = {
-          stackId: options.stackId,
-          desiredGeneration: initial.desiredGeneration,
-          desiredLifecycle: "running",
-          plan,
-        };
-        const recovered = yield* runtime.driver
-          .recover(request)
-          .pipe(Effect.mapError(mapReconcileError));
-        yield* initializeActivation(plan, recovered);
-        const recoveryInput: LifecycleInput = {
-          stackId: options.stackId,
-          generation: initial.desiredGeneration,
-          desiredLifecycle: "running",
-          state: initial,
-          previous: initial,
-          definition: initial.definition,
-          inputFingerprint: initial.inputFingerprint ?? "",
-          secrets: initial.secrets,
-          plan,
-        };
-        const reservation =
-          runtime.ingress === undefined ? undefined : yield* runtime.ingress.acquire(recoveryInput);
-        const selected = yield* Ref.get(active);
-        const reconciliation = yield* reconciler
-          .reconcile({
-            stackId: options.stackId,
-            desiredGeneration: initial.desiredGeneration,
-            desiredLifecycle: "running",
-            plan: activePlan(plan, selected),
-          })
-          .pipe(Effect.mapError(mapReconcileError), Effect.exit);
-        if (Exit.isFailure(reconciliation)) {
-          if (reservation?.fresh === true && runtime.ingress !== undefined)
-            yield* runtime.ingress.close.pipe(Effect.ignore);
-          return yield* Effect.failCause(reconciliation.cause);
-        }
-        if (reconciliation.value.failed.length > 0) {
-          if (reservation?.fresh === true && runtime.ingress !== undefined)
-            yield* runtime.ingress.close.pipe(Effect.ignore);
-          return yield* new StackReconciliationError({
-            message: reconciliation.value.failed
-              .map(({ workloadId, error }) => `${workloadId}: ${error.message}`)
-              .join("; "),
-          });
-        }
-        if (runtime.ingress !== undefined && reservation !== undefined) {
-          const opened = yield* runtime.ingress
-            .open(recoveryInput, reservation, ingressActivate)
-            .pipe(Effect.exit);
-          if (Exit.isFailure(opened)) {
-            if (reservation.fresh) yield* runtime.ingress.close.pipe(Effect.ignore);
-            return yield* Effect.failCause(opened.cause);
-          }
-        }
-        yield* Ref.set(phase, "running");
-      } else {
-        yield* runtime.driver
-          .cleanup({ stackId: options.stackId, destroy: false })
-          .pipe(Effect.mapError(mapReconcileError));
-        yield* Ref.set(active, new Set());
-      }
-    } else if (options.runtime !== undefined || options.runtimeFactory !== undefined) {
-      yield* runtime.driver
-        .cleanup({ stackId: options.stackId, destroy: false })
-        .pipe(Effect.mapError(mapReconcileError));
-    }
 
-    const initialObserved = yield* observe();
+    const initialPlan =
+      initial.definition === undefined
+        ? undefined
+        : yield* rebuildExecutionPlan(initial.runtime, initial.definition).pipe(
+            Effect.provideContext(options.context),
+            Effect.mapError(
+              (error) => new StackStateInvalidError({ message: error.message, cause: error }),
+            ),
+          );
     const initialStatus = yield* statusFor(
       initial,
-      initialObserved,
+      [],
       yield* Ref.get(active),
       yield* Ref.get(phase),
     );
@@ -512,7 +475,7 @@ export const makeSupervisor = (options: SupervisorOptions): Effect.Effect<Superv
           return yield* new StackStateInvalidError({ message: "Stack state is missing" });
         const status = yield* statusFor(
           state,
-          yield* observe(),
+          yield* observedForStatus(),
           yield* Ref.get(active),
           yield* Ref.get(phase),
         );
@@ -529,56 +492,110 @@ export const makeSupervisor = (options: SupervisorOptions): Effect.Effect<Superv
         yield* publish().pipe(Effect.ignore);
       });
 
+    // Admission and execution are separate: callers join the same owned fiber while the
+    // execution semaphore serializes lifecycle/activation transitions.
+    const admission = yield* Semaphore.make(1);
+    const execution = yield* Semaphore.make(1);
+    const supervisorScope = yield* Effect.scope;
+    const ownedFibers = yield* FiberSet.make().pipe(
+      Effect.provideService(Scope.Scope, supervisorScope),
+    );
+    const joinExit = <A, E>(result: Exit.Exit<A, E>): Effect.Effect<A, E> =>
+      Exit.isSuccess(result) ? Effect.succeed(result.value) : Effect.failCause(result.cause);
+    type OwnedResult<A, E> = Deferred.Deferred<Exit.Exit<A, E>, never>;
+    const startOwned = new Map<string, OwnedResult<StackStatus, StackError>>();
+    const restartOwned = new Map<string, OwnedResult<StackStatus, StackError>>();
+    const stopOwned = new Map<string, OwnedResult<PersistedStackState, StackError>>();
+    const destroyOwned = new Map<string, OwnedResult<void, StackError>>();
+    const recoveryOwned = new Map<string, OwnedResult<void, StackError>>();
+
+    const submitOwned = <A, E>(
+      slots: Map<string, OwnedResult<A, E>>,
+      key: string,
+      effect: Effect.Effect<A, E>,
+    ): Effect.Effect<A, E> =>
+      Effect.gen(function* () {
+        const owned = yield* admission.withPermit(
+          Effect.gen(function* () {
+            const current = slots.get(key);
+            if (current !== undefined) return current;
+            const deferred = yield* Deferred.make<Exit.Exit<A, E>, never>();
+            slots.set(key, deferred);
+            const owner = Effect.gen(function* () {
+              const result = yield* execution.withPermit(effect).pipe(Effect.exit);
+              yield* Deferred.succeed(deferred, result);
+            }).pipe(
+              Effect.ensuring(
+                admission.withPermit(
+                  Effect.sync(() => {
+                    if (slots.get(key) === deferred) slots.delete(key);
+                  }),
+                ),
+              ),
+            );
+            yield* FiberSet.run(ownedFibers, owner, { startImmediately: true });
+            return deferred;
+          }),
+        );
+        const result = yield* Deferred.await(owned);
+        return yield* joinExit(result);
+      });
+
+    const reconcileBackend = (
+      input: LifecycleInput,
+      selectedOverride?: ReadonlySet<CapabilityName>,
+    ): Effect.Effect<void, StackError> =>
+      Effect.gen(function* () {
+        const reservation =
+          input.desiredLifecycle === "running" && runtime.ingress !== undefined
+            ? yield* runtime.ingress.acquire(input)
+            : undefined;
+        if (input.desiredLifecycle !== "running" && runtime.ingress !== undefined)
+          yield* runtime.ingress.close;
+        yield* resetForGeneration(input);
+        const selected = selectedOverride ?? (yield* Ref.get(active));
+        const plan =
+          input.desiredLifecycle === "running" ? activePlan(input.plan, selected) : input.plan;
+        const reconciled = yield* reconciler
+          .reconcile({
+            stackId: options.stackId,
+            desiredGeneration: input.generation,
+            desiredLifecycle: input.desiredLifecycle,
+            plan,
+          })
+          .pipe(Effect.mapError(mapReconcileError), Effect.exit);
+        if (Exit.isFailure(reconciled)) {
+          if (reservation?.fresh === true && runtime.ingress !== undefined)
+            yield* runtime.ingress.close.pipe(Effect.ignore);
+          return yield* Effect.failCause(reconciled.cause);
+        }
+        const result = reconciled.value;
+        if (result.failed.length > 0)
+          return yield* Effect.gen(function* () {
+            if (reservation?.fresh === true && runtime.ingress !== undefined)
+              yield* runtime.ingress.close.pipe(Effect.ignore);
+            return yield* new StackReconciliationError({
+              message: result.failed
+                .map(({ workloadId, error }) => `${workloadId}: ${error.message}`)
+                .join("; "),
+            });
+          });
+        if (runtime.ingress !== undefined && reservation !== undefined) {
+          const opened = yield* runtime.ingress
+            .open(input, reservation, ingressActivate)
+            .pipe(Effect.exit);
+          if (Exit.isFailure(opened)) {
+            if (reservation.fresh) yield* runtime.ingress.close.pipe(Effect.ignore);
+            return yield* Effect.failCause(opened.cause);
+          }
+        }
+        yield* publish();
+      });
+
     const backend: LifecycleBackend = {
       preflight: (input) =>
         runtime.preflight === undefined ? Effect.succeed({}) : runtime.preflight(input),
-      reconcile: (input) =>
-        Effect.gen(function* () {
-          const reservation =
-            input.desiredLifecycle === "running" && runtime.ingress !== undefined
-              ? yield* runtime.ingress.acquire(input)
-              : undefined;
-          if (input.desiredLifecycle !== "running" && runtime.ingress !== undefined)
-            yield* runtime.ingress.close;
-          yield* resetForGeneration(input);
-          const selected = yield* Ref.get(active);
-          const plan =
-            input.desiredLifecycle === "running" ? activePlan(input.plan, selected) : input.plan;
-          const reconciled = yield* reconciler
-            .reconcile({
-              stackId: options.stackId,
-              desiredGeneration: input.generation,
-              desiredLifecycle: input.desiredLifecycle,
-              plan,
-            })
-            .pipe(Effect.mapError(mapReconcileError), Effect.exit);
-          if (Exit.isFailure(reconciled)) {
-            if (reservation?.fresh === true && runtime.ingress !== undefined)
-              yield* runtime.ingress.close.pipe(Effect.ignore);
-            return yield* Effect.failCause(reconciled.cause);
-          }
-          const result = reconciled.value;
-          if (result.failed.length > 0)
-            return yield* Effect.gen(function* () {
-              if (reservation?.fresh === true && runtime.ingress !== undefined)
-                yield* runtime.ingress.close.pipe(Effect.ignore);
-              return yield* new StackReconciliationError({
-                message: result.failed
-                  .map(({ workloadId, error }) => `${workloadId}: ${error.message}`)
-                  .join("; "),
-              });
-            });
-          if (runtime.ingress !== undefined && reservation !== undefined) {
-            const opened = yield* runtime.ingress
-              .open(input, reservation, ingressActivate)
-              .pipe(Effect.exit);
-            if (Exit.isFailure(opened)) {
-              if (reservation.fresh) yield* runtime.ingress.close.pipe(Effect.ignore);
-              return yield* Effect.failCause(opened.cause);
-            }
-          }
-          yield* publish();
-        }),
+      reconcile: reconcileBackend,
       cleanup: () =>
         Effect.gen(function* () {
           if (runtime.ingress !== undefined) yield* runtime.ingress.close;
@@ -605,7 +622,74 @@ export const makeSupervisor = (options: SupervisorOptions): Effect.Effect<Superv
     }).pipe(Effect.provideContext(options.context));
     const status = snapshot();
 
-    const activate = (
+    const recoveryOperation: Effect.Effect<void, StackError> = Effect.gen(function* () {
+      const definition = initial.definition;
+      if (
+        initialPlan === undefined ||
+        definition === undefined ||
+        initial.desiredLifecycle !== "running"
+      ) {
+        if (options.runtime !== undefined || options.runtimeFactory !== undefined)
+          yield* runtime.driver
+            .cleanup({ stackId: options.stackId, destroy: false })
+            .pipe(Effect.mapError(mapReconcileError));
+        yield* Ref.set(active, new Set());
+        yield* Ref.set(phase, "stopped");
+        yield* publish().pipe(Effect.ignore);
+        return;
+      }
+
+      yield* Ref.set(phase, "starting");
+      yield* publish().pipe(Effect.ignore);
+      const plan = initialPlan;
+      const request: RuntimeRecoveryRequest = {
+        stackId: options.stackId,
+        desiredGeneration: initial.desiredGeneration,
+        desiredLifecycle: "running",
+        plan,
+      };
+      const recoveryInput: LifecycleInput = {
+        stackId: options.stackId,
+        generation: initial.desiredGeneration,
+        desiredLifecycle: "running",
+        state: initial,
+        previous: initial,
+        definition,
+        inputFingerprint: initial.inputFingerprint ?? "",
+        secrets: initial.secrets,
+        plan,
+      };
+      const attempt = yield* Effect.exit(
+        Effect.gen(function* () {
+          const recovered = yield* runtime.driver
+            .recover(request)
+            .pipe(Effect.mapError(mapReconcileError));
+          yield* initializeActivation(plan, recovered);
+          yield* reconcileBackend(recoveryInput);
+        }),
+      );
+      if (Exit.isFailure(attempt)) {
+        // Recovery must not tear down the owner session. Keep the phase observable as starting
+        // and retain the cause in the owner-only log for the next inspection/retry.
+        if (runtime.logStore !== undefined)
+          yield* runtime.logStore
+            .append({
+              source: "supervisor",
+              stream: "stderr",
+              message: `Stack recovery failed: ${Cause.pretty(attempt.cause)}`,
+            })
+            .pipe(Effect.ignore);
+        yield* Ref.set(phase, "starting");
+        yield* publish().pipe(Effect.ignore);
+        return;
+      }
+      yield* Ref.set(phase, "running");
+      yield* publish().pipe(Effect.ignore);
+    }).pipe(Effect.provideContext(options.context));
+
+    const recover = submitOwned(recoveryOwned, "recovery", recoveryOperation).pipe(Effect.ignore);
+
+    const activateOperation = (
       capability: CapabilityName,
     ): Effect.Effect<ActivationResult, GatewayActivationError | StackError> =>
       Effect.gen(function* () {
@@ -634,7 +718,6 @@ export const makeSupervisor = (options: SupervisorOptions): Effect.Effect<Superv
           for (const dependency of plan.dependencies[name]) visit(dependency);
         };
         visit(capability);
-        yield* Ref.set(active, next);
         const input: LifecycleInput = {
           stackId: options.stackId,
           generation: state.desiredGeneration,
@@ -646,15 +729,87 @@ export const makeSupervisor = (options: SupervisorOptions): Effect.Effect<Superv
           secrets: state.secrets,
           plan,
         };
-        yield* backend.reconcile(input);
+        yield* reconcileBackend(input, next);
         if (runtime.activate === undefined)
           return yield* new GatewayActivationError({
             message: `Capability ${capability} has no route endpoint`,
           });
         const endpoint = yield* runtime.activate(capability, input);
+        yield* Ref.set(active, next);
         yield* Ref.set(phase, "running");
         yield* publish();
         return { capability, endpoint };
+      });
+
+    const activationOwned = new Map<
+      CapabilityName,
+      | {
+          readonly _tag: "pending";
+          readonly result: Deferred.Deferred<
+            Exit.Exit<ActivationResult, GatewayActivationError | StackError>,
+            never
+          >;
+        }
+      | { readonly _tag: "ready"; readonly result: ActivationResult }
+    >();
+    type ActivationExit = Exit.Exit<ActivationResult, GatewayActivationError | StackError>;
+    type ActivationToken =
+      | { readonly _tag: "exit"; readonly result: ActivationExit }
+      | {
+          readonly _tag: "deferred";
+          readonly result: Deferred.Deferred<ActivationExit, never>;
+        };
+    const activate = (
+      capability: CapabilityName,
+    ): Effect.Effect<ActivationResult, GatewayActivationError | StackError> =>
+      Effect.gen(function* () {
+        const token = yield* admission.withPermit(
+          Effect.gen(function* () {
+            const current = activationOwned.get(capability);
+            if (current?._tag === "ready")
+              return {
+                _tag: "exit",
+                result: Exit.succeed(current.result),
+              } satisfies ActivationToken;
+            if (current?._tag === "pending")
+              return { _tag: "deferred", result: current.result } satisfies ActivationToken;
+            const deferred = yield* Deferred.make<
+              Exit.Exit<ActivationResult, GatewayActivationError | StackError>,
+              never
+            >();
+            activationOwned.set(capability, { _tag: "pending", result: deferred });
+            const owner = Effect.gen(function* () {
+              const result = yield* execution
+                .withPermit(activateOperation(capability))
+                .pipe(Effect.exit);
+              yield* admission.withPermit(
+                Effect.sync(() => {
+                  const current = activationOwned.get(capability);
+                  if (current?._tag !== "pending" || current.result !== deferred) return;
+                  if (Exit.isSuccess(result))
+                    activationOwned.set(capability, { _tag: "ready", result: result.value });
+                  else activationOwned.delete(capability);
+                }),
+              );
+              yield* Deferred.succeed(deferred, result);
+            }).pipe(
+              Effect.ensuring(
+                admission.withPermit(
+                  Effect.sync(() => {
+                    const current = activationOwned.get(capability);
+                    if (current?._tag === "pending" && current.result === deferred)
+                      activationOwned.delete(capability);
+                  }),
+                ),
+              ),
+            );
+            yield* FiberSet.run(ownedFibers, owner, { startImmediately: true });
+            return { _tag: "deferred", result: deferred } satisfies ActivationToken;
+          }),
+        );
+        if (token._tag === "deferred")
+          return yield* Deferred.await(token.result).pipe(Effect.flatMap(joinExit));
+        return yield* joinExit(token.result);
       });
     yield* Deferred.succeed(activationHandler, activate);
 
@@ -670,6 +825,37 @@ export const makeSupervisor = (options: SupervisorOptions): Effect.Effect<Superv
         yield* Ref.set(phase, "running");
         return yield* publish();
       });
+    const operationKey = (config: StackConfig | undefined): Effect.Effect<string, StackError> =>
+      Effect.gen(function* () {
+        const input = config ?? {};
+        const encoded = yield* Schema.encodeEffect(StackConfigSchema)(input).pipe(
+          Effect.mapError(
+            (error) =>
+              new InvalidStackConfigError({
+                stackId: options.stackId,
+                message: `Invalid stack configuration: ${String(error)}`,
+              }),
+          ),
+        );
+        const crypto = yield* Crypto.Crypto;
+        const canonical = canonicalize({ encoded, secretValues: revealRedacted(input) });
+        const digest = yield* crypto.digest("SHA-256", new TextEncoder().encode(canonical)).pipe(
+          Effect.mapError(
+            (error) =>
+              new InvalidStackConfigError({
+                stackId: options.stackId,
+                message: `Unable to digest stack configuration: ${error.message}`,
+                cause: error,
+              }),
+          ),
+        );
+        return digestHex(digest);
+      }).pipe(Effect.provideContext(options.context));
+    const start = (startOptions?: { readonly config?: StackConfig }) =>
+      Effect.gen(function* () {
+        const key = yield* operationKey(startOptions?.config);
+        return yield* submitOwned(startOwned, key, startOperation(startOptions));
+      });
     const restartOperation = (startOptions?: { readonly config?: StackConfig }) =>
       Effect.gen(function* () {
         const previous = yield* Ref.get(phase);
@@ -682,13 +868,23 @@ export const makeSupervisor = (options: SupervisorOptions): Effect.Effect<Superv
         yield* Ref.set(phase, "running");
         return yield* publish();
       });
+    const restart = (startOptions?: { readonly config?: StackConfig }) =>
+      Effect.gen(function* () {
+        const key = yield* operationKey(startOptions?.config);
+        return yield* submitOwned(restartOwned, key, restartOperation(startOptions));
+      });
+    const stopOperation = () => controller.stop().pipe(Effect.provideContext(options.context));
+    const stop = submitOwned(stopOwned, "stop", stopOperation());
     const operation = <A>(effect: Effect.Effect<A, StackError>, fallback: StackRpcError["tag"]) =>
       effect.pipe(
         Effect.mapError((error) => rpcError(rpcTag(error, fallback), stateErrorMessage(error))),
       );
-    const destroy = controller
+    const shutdownSignal = yield* Deferred.make<void, never>();
+    const signalShutdown = Deferred.succeed(shutdownSignal, undefined).pipe(Effect.asVoid);
+    const destroyOperation = controller
       .destroy()
       .pipe(Effect.provideContext(options.context), Effect.andThen(Ref.set(phase, "stopped")));
+    const destroy = submitOwned(destroyOwned, "destroy", destroyOperation).pipe(Effect.asVoid);
     const logs = (logOptions?: LogOptions): Stream.Stream<StackLogEntry, StackError> =>
       runtime.logStore === undefined
         ? Stream.fail(new StackNotRunningError({ message: "Stack logs are unavailable" }))
@@ -708,7 +904,7 @@ export const makeSupervisor = (options: SupervisorOptions): Effect.Effect<Superv
         stackId: options.stackId,
         rpcRelease: options.rpcRelease,
       } satisfies MaintenanceResponse),
-      stop: controller.stop().pipe(
+      stop: stop.pipe(
         Effect.provideContext(options.context),
         Effect.as({ ok: true, op: "stop" } satisfies MaintenanceResponse),
         Effect.orElseSucceed(
@@ -719,7 +915,7 @@ export const makeSupervisor = (options: SupervisorOptions): Effect.Effect<Superv
             }) satisfies MaintenanceResponse,
         ),
       ),
-      quiesce: controller.stop().pipe(
+      quiesce: stop.pipe(
         Effect.provideContext(options.context),
         Effect.as({ ok: true, op: "quiesce" } satisfies MaintenanceResponse),
         Effect.orElseSucceed(
@@ -949,9 +1145,9 @@ export const makeSupervisor = (options: SupervisorOptions): Effect.Effect<Superv
           ),
         ),
       start: ({ config }: { readonly config?: StackConfig }) =>
-        operation(startOperation({ config }), "StackReconciliationError"),
+        operation(start({ config }), "StackReconciliationError"),
       restart: ({ config }: { readonly config?: StackConfig }) =>
-        operation(restartOperation({ config }), "StackReconciliationError"),
+        operation(restart({ config }), "StackReconciliationError"),
       destroy: () => operation(destroy, "StackDestructionError"),
       logs: (logOptions: LogOptions) =>
         logs(logOptions).pipe(
@@ -969,9 +1165,12 @@ export const makeSupervisor = (options: SupervisorOptions): Effect.Effect<Superv
       stackId: options.stackId,
       ownerSessionId: options.ownerSessionId,
       status,
-      start: startOperation,
-      restart: restartOperation,
+      start,
+      restart,
       destroy,
+      recover,
+      shutdown: Deferred.await(shutdownSignal),
+      signalShutdown,
       watchStatus,
       logs,
       activate,
