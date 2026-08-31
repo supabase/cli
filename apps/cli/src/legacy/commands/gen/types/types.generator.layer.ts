@@ -6,7 +6,7 @@ import {
   sortGeneratorMetadata,
 } from "@supabase/postgrest-typegen/generation";
 import { introspect } from "@supabase/postgrest-typegen/introspection";
-import { Duration, Effect, FileSystem, Layer, Path } from "effect";
+import { Duration, Effect, FileSystem, Layer, Path, Result } from "effect";
 
 import { legacyAcquirePgPool } from "../../../shared/legacy-db-connection.sql-pg.layer.ts";
 import { LEGACY_PG_DELTA_CA_BUNDLE } from "../../../shared/legacy-pgdelta-ssl.ts";
@@ -54,14 +54,17 @@ const generate = (
       // keeps the driver's TLS default so the real connect error (and its
       // IPv6 pooler classification) surfaces from the connection attempt.
       if (!input.isLocal && conn.sslmode === undefined) {
-        const useTls = yield* sslProbe
-          .requireSslForHost(conn.host, conn.port)
-          .pipe(Effect.orElseSucceed(() => true));
-        if (!useTls) {
-          conn = applyProbedSslMode(conn, false);
-        } else {
-          const sslrootcert = yield* pinProbedCaBundle(fs, path);
-          conn = applyProbedSslMode(conn, true, sslrootcert);
+        // A probe error keeps the driver's TLS default so the real connect
+        // error (and its IPv6 pooler classification) surfaces from the
+        // connection attempt itself.
+        const probed = yield* sslProbe.requireSslForHost(conn.host, conn.port).pipe(Effect.result);
+        if (Result.isSuccess(probed)) {
+          if (!probed.success) {
+            conn = applyProbedSslMode(conn, false);
+          } else {
+            const sslrootcert = yield* pinProbedCaBundle(fs, path);
+            conn = applyProbedSslMode(conn, true, sslrootcert);
+          }
         }
       }
 
