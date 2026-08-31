@@ -410,7 +410,7 @@ describe("prefetch", () => {
 
     expect(result.pgmeta).toEqual({
       type: "docker",
-      image: "ghcr.io/supabase/cli/pgmeta:v0.98.0",
+      image: "ghcr.io/supabase/cli/pgmeta:v0.99.0",
     });
   });
 
