@@ -51,6 +51,30 @@ const WORKER_LOG_STREAM_ATTRIBUTE = "source";
 export const WORKER_LOG_WINDOW_MINUTES = 23 * 60 + 59;
 
 /**
+ * How often `--follow` re-queries.
+ *
+ * **Set by the rate limit, not by responsiveness.** The v1 analytics endpoints
+ * allow 10 requests per 60 seconds, so the two-second poll a live tail suggests
+ * would 429 within the first ten seconds. Six seconds is the arithmetic floor;
+ * ten leaves room for the initial history query, the deployed-worker check, and a
+ * retry inside the same window.
+ */
+export const WORKER_LOG_POLL_SECONDS = 10;
+
+/**
+ * How far behind the newest line seen the next window starts.
+ *
+ * Guest lines are relayed CloudWatch -> subscription filter -> Lambda -> Logflare
+ * and arrive **late and out of order**, so a cursor sitting exactly on the newest
+ * timestamp drops every straggler permanently. The window is deliberately
+ * re-asked for ground it has already covered; `id` dedupe absorbs the overlap.
+ *
+ * Wider than one poll interval, so a line delayed by a full cycle is still
+ * inside the next window.
+ */
+export const WORKER_LOG_CURSOR_GRACE_SECONDS = 60;
+
+/**
  * Timestamps for the endpoint's `iso_timestamp_start`/`iso_timestamp_end`.
  *
  * The v1 DTO validates these with `z.string().datetime()`, which requires a
@@ -75,6 +99,33 @@ export function logWindow(
 ): { readonly start: string; readonly end: string } {
   return {
     start: isoLogTimestamp(new Date(now.getTime() - spanMinutes * 60_000)),
+    end: isoLogTimestamp(now),
+  };
+}
+
+/**
+ * The window for one `--follow` poll: from just before the newest line seen, up
+ * to now.
+ *
+ * Clamped to the same sub-24h span as {@link logWindow}. That matters when a tail
+ * is left running past a laptop suspend: without the clamp the resumed poll would
+ * ask for a wider span, and the server answers an over-wide request by rewriting
+ * `end` to `start + 24h` — returning an *older* slice rather than a truncated one,
+ * so a resumed tail would silently start replaying yesterday.
+ */
+export function followWindow(
+  now: Date,
+  newestSeenMs: number,
+  options: {
+    readonly graceSeconds?: number;
+    readonly spanMinutes?: number;
+  } = {},
+): { readonly start: string; readonly end: string } {
+  const grace = (options.graceSeconds ?? WORKER_LOG_CURSOR_GRACE_SECONDS) * 1000;
+  const spanMs = (options.spanMinutes ?? WORKER_LOG_WINDOW_MINUTES) * 60_000;
+  const earliest = now.getTime() - spanMs;
+  return {
+    start: isoLogTimestamp(new Date(Math.max(newestSeenMs - grace, earliest))),
     end: isoLogTimestamp(now),
   };
 }

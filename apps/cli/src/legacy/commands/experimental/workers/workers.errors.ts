@@ -23,3 +23,25 @@ export class LegacyWorkersEnvNotSupportedError extends Data.TaggedError(
     return actionability.invalidInput;
   }
 }
+
+/**
+ * `--follow` was asked for alongside an output format that cannot express a
+ * stream.
+ *
+ * `-o json|yaml|toml` and `--output-format json` each promise exactly one
+ * terminal payload, and an unbounded tail has no last element to put in it.
+ * Refused up front rather than at the first emission, for the same reason
+ * {@link LegacyWorkersEnvNotSupportedError} is: discovering it later means
+ * failing after the first query has been paid for.
+ *
+ * `--output-format stream-json` is the streaming machine format and is allowed.
+ */
+export class LegacyWorkersFollowNotSupportedError extends Data.TaggedError(
+  "LegacyWorkersFollowNotSupportedError",
+)<{
+  readonly message: string;
+}> {
+  get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
+    return actionability.provideFlags;
+  }
+}
