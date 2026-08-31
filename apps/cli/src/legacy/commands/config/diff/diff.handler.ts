@@ -32,12 +32,17 @@ import {
   type LegacyConfigDiffContext,
 } from "./diff.format.ts";
 import {
+  encodeEnv,
+  encodeGoJson,
+  encodeToml,
+  encodeYaml,
+} from "../../../shared/legacy-go-output.encoders.ts";
+import {
   LegacyConfigDiffBranchNotFoundError,
   LegacyConfigDiffBranchResolveNetworkError,
   LegacyConfigDiffBranchResolveStatusError,
   LegacyConfigDiffFlagConflictError,
   LegacyConfigDiffLoadConfigError,
-  LegacyConfigDiffOutputFlagUnsupportedError,
   LegacyConfigDiffReadNetworkError,
   LegacyConfigDiffReadStatusError,
 } from "./diff.errors.ts";
@@ -63,17 +68,6 @@ export const legacyConfigDiff = Effect.fn("legacy.config.diff")(function* (
   const runtimeInfo = yield* RuntimeInfo;
   const processControl = yield* ProcessControl;
   const goOutputFlag = yield* LegacyOutputFlag;
-
-  // Net-new TS command with no Go parity contract: the Go-compat `-o/--output`
-  // flag is rejected outright (every value, `pretty` included) rather than
-  // honored — machine output goes through `--output-format` only (CLI-2156,
-  // per Colum). Checked first so no target resolution or network call runs.
-  if (Option.isSome(goOutputFlag)) {
-    return yield* new LegacyConfigDiffOutputFlagUnsupportedError({
-      message:
-        "the -o/--output flag is not supported by config diff; use --output-format json|stream-json instead.",
-    });
-  }
 
   if (Option.isSome(flags.target) && Option.isSome(flags.projectRef)) {
     return yield* new LegacyConfigDiffFlagConflictError({
@@ -203,7 +197,25 @@ export const legacyConfigDiff = Effect.fn("legacy.config.diff")(function* (
     yield* output.raw(legacyConfigDiffScopeLine(scope), "stderr");
 
     // 5. Emit: `--output-format json|stream-json` structured payload, or text.
-    if (output.format !== "text") {
+    // Both output mechanisms are honored, `--output` first (Legacy Shell
+    // Invariant #6): the machine formats encode the same structured payload
+    // the `--output-format json` envelope carries; `pretty` (and unset) falls
+    // through to `--output-format` handling. stdout stays payload-pure in
+    // every machine mode — diagnostics above went to stderr, and root.ts
+    // swaps in the quiet-progress layer for `-o` machine formats (CLI-1546).
+    const goFmt = Option.getOrUndefined(goOutputFlag);
+    if (goFmt !== undefined && goFmt !== "pretty") {
+      const payload = legacyConfigDiffPayload(changeSet, scope, context);
+      if (goFmt === "json") {
+        yield* output.raw(encodeGoJson(payload));
+      } else if (goFmt === "yaml") {
+        yield* output.raw(encodeYaml(payload));
+      } else if (goFmt === "toml") {
+        yield* output.raw(encodeToml(payload));
+      } else {
+        yield* output.raw(encodeEnv(payload) + "\n");
+      }
+    } else if (output.format !== "text") {
       const total = changeSet.counts.total;
       const message =
         total === 0 ? "No config differences found." : `${total} config difference(s) found.`;

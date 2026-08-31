@@ -6,8 +6,6 @@ Classifies every remotely-managed property as `update` / `remote_only` /
 `local_only` (unmanaged local-only properties are never reported). **Never
 writes `config.toml` or any remote configuration.**
 
-TS-only command — no Go CLI equivalent (see `docs/go-cli-divergences.md`).
-
 ## Files Read
 
 | Path                                           | Format                    | When                                                                                       |
@@ -54,7 +52,6 @@ All Bearer-authenticated, all read-only.
 | ---- | ------------------------------------------------------------------------------ |
 | `0`  | success — including when differences are found, unless `--exit-code` is passed |
 | `1`  | `--exit-code` passed and at least one difference found                         |
-| `1`  | the Go-compat `-o/--output` global flag passed (any value — unsupported here)  |
 | `1`  | missing or malformed `supabase/config.toml`                                    |
 | `1`  | `--target` and `--project-ref` passed together                                 |
 | `1`  | unknown branch (`--target` 404)                                                |
@@ -85,13 +82,15 @@ the file sets masked secrets.
 `env_variable`; unset sides are `null`), `masked[]`, and `counts`
 (per class + `total`).
 
-### `-o/--output` (Go-compat global flag)
+### `-o/--output` (legacy machine formats)
 
-**Not supported.** Any `-o` value — the machine formats and `pretty` alike —
-fails fast (before target resolution or any network call) with
-`the -o/--output flag is not supported by config diff; use --output-format
-json|stream-json instead.` This is a net-new TS command with no Go parity
-contract (CLI-2156 ticket discussion).
+Honored, and takes priority over `--output-format` (Legacy Shell Invariant
+#6): `-o json|yaml|toml|env` encodes the same structured payload the
+`--output-format json` envelope carries (TOML omits `null`-valued entries —
+TOML has no null; env flattens to SCREAMING_SNAKE keys with arrays collapsing
+to empty strings, the established `godotenv` shape). stdout is payload-pure in
+every machine mode; diagnostics stay on stderr. `-o pretty` (and no `-o`)
+falls through to `--output-format` handling.
 
 ## Notes
 

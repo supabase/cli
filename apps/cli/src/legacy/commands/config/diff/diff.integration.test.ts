@@ -561,26 +561,58 @@ describe("legacy config diff integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("the Go-compat -o flag is rejected outright before any work happens", () => {
-    // Net-new TS command, no Go parity: every `-o` value is rejected — the
-    // machine formats and `pretty` alike (CLI-2156, per Colum).
-    const run = (goOutput: "json" | "pretty") => {
-      const { layer, api } = setup({
+  it.live("-o json emits the raw payload on a payload-pure stdout", () => {
+    // Legacy Shell Invariant #6: `--output` is honored and takes priority.
+    // No envelope — the payload object itself, parseable from stdout.
+    const { layer, out } = setup({
+      toml: 'project_id = "test"\n[api]\nmax_rows = 500\n',
+      goOutput: "json",
+    });
+    return Effect.gen(function* () {
+      yield* legacyConfigDiff(noFlags);
+      const payload = JSON.parse(out.stdoutText) as Record<string, unknown>;
+      expect(payload["changes"]).toEqual([
+        { path: ["api", "max_rows"], class: "update", declared: true, local: 500, remote: 1000 },
+      ]);
+      expect(payload["counts"]).toMatchObject({ total: 1 });
+      // The envelope fields of --output-format json must not leak in.
+      expect(payload["message"]).toBeUndefined();
+    }).pipe(Effect.provide(layer));
+  });
+
+  it.live("-o pretty falls through to the text renderer", () => {
+    const { layer, out } = setup({
+      toml: 'project_id = "test"\n[api]\nmax_rows = 500\n',
+      goOutput: "pretty",
+    });
+    return Effect.gen(function* () {
+      yield* legacyConfigDiff(noFlags);
+      expect(out.stdoutText).toContain("api.max_rows [update]");
+      expect(out.stdoutText).toContain("1 difference(s) found");
+    }).pipe(Effect.provide(layer));
+  });
+
+  it.live("-o yaml/toml/env encode the payload through the shared encoders", () => {
+    const run = (goOutput: "yaml" | "toml" | "env", assert: (stdout: string) => void) => {
+      const { layer, out } = setup({
         toml: 'project_id = "test"\n[api]\nmax_rows = 500\n',
         goOutput,
       });
       return Effect.gen(function* () {
-        const exit = yield* legacyConfigDiff(noFlags).pipe(Effect.exit);
-        expect(Exit.isFailure(exit)).toBe(true);
-        const rendered = JSON.stringify(exit);
-        expect(rendered).toContain("LegacyConfigDiffOutputFlagUnsupportedError");
-        expect(rendered).toContain("use --output-format json|stream-json instead");
-        expect(api.requests).toHaveLength(0);
+        yield* legacyConfigDiff(noFlags);
+        assert(out.stdoutText);
       }).pipe(Effect.provide(layer));
     };
     return Effect.gen(function* () {
-      yield* run("json");
-      yield* run("pretty");
+      yield* run("yaml", (stdout) => {
+        expect(stdout).toContain("class: update");
+      });
+      yield* run("toml", (stdout) => {
+        expect(stdout).toContain('class = "update"');
+      });
+      yield* run("env", (stdout) => {
+        expect(stdout).toContain("COUNTS_TOTAL=1");
+      });
     });
   });
 

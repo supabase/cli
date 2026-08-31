@@ -26,19 +26,6 @@ export class LegacyConfigDiffLoadConfigError extends Data.TaggedError(
   }
 }
 
-/**
- * The Go-compat global `-o/--output` flag was passed. `config diff` is a
- * net-new TS command with no Go parity contract, so machine output goes
- * through `--output-format` only (per Colum on CLI-2156).
- */
-export class LegacyConfigDiffOutputFlagUnsupportedError extends Data.TaggedError(
-  "LegacyConfigDiffOutputFlagUnsupportedError",
-)<{ readonly message: string }> {
-  get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
-    return actionability.invalidInput;
-  }
-}
-
 /** `--target` and `--project-ref` passed together. */
 export class LegacyConfigDiffFlagConflictError extends Data.TaggedError(
   "LegacyConfigDiffFlagConflictError",

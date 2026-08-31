@@ -19,6 +19,11 @@ const config = {
   ),
   exitCode: Flag.boolean("exit-code").pipe(
     Flag.withDescription("Exit with status 1 when any difference is found."),
+    // Without an explicit default a boolean flag is REQUIRED by the parser,
+    // making plain `supabase config diff` fail with `required flag(s)
+    // "exit-code" not set` — pinned by diff.e2e.test.ts, since integration
+    // tests hand the handler a pre-built flags object and never parse.
+    Flag.withDefault(false),
   ),
 } as const;
 
