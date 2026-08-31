@@ -473,6 +473,8 @@ describe("container runtime", () => {
         ownerSessionId: "owner-session",
         resolveWorkload: () =>
           Effect.succeed({
+            envFile: "/tmp/auth.env",
+            networkAliases: ["auth"],
             startup: [{ entrypoint: "/usr/local/bin/auth", command: ["migrate"] }],
           }),
       });
@@ -482,15 +484,105 @@ describe("container runtime", () => {
       const [startup, main] = state.createdSpecs;
       expect(startup?.entrypoint).toBe("/usr/local/bin/auth");
       expect(startup?.command).toEqual(["migrate"]);
+      expect(startup?.envFile).toBe("/tmp/auth.env");
+      expect(startup?.networkAliases).toBeUndefined();
       expect(startup?.publications).toEqual([]);
       expect(main?.entrypoint).toBeUndefined();
       expect(main?.command).toBeUndefined();
+      expect(main?.envFile).toBe("/tmp/auth.env");
+      expect(main?.networkAliases).toEqual(["auth"]);
       const startupStart = state.calls.findIndex((call) => call.startsWith("start:"));
       const startupWait = state.calls.findIndex((call) => call.startsWith("wait:"));
       const startupRemove = state.calls.findIndex((call) => call.startsWith("remove:"));
       expect(startupStart).toBeGreaterThanOrEqual(0);
       expect(startupWait).toBeGreaterThan(startupStart);
       expect(startupRemove).toBeGreaterThan(startupWait);
+      yield* runtime.stop(key);
+    }),
+  );
+
+  it.live("hides in-flight startup containers from observation", () =>
+    Effect.gen(function* () {
+      const state: FakeContainerState = {
+        resources: [],
+        imagePresent: true,
+        calls: [],
+        createdSpecs: [],
+        nextId: 1,
+      };
+      const waitEntered = yield* Deferred.make<void>();
+      const gate = yield* Deferred.make<number, never>();
+      const base = fakeContainerEngine(state);
+      const runtime = yield* makeContainerRuntime({
+        engine: {
+          ...base,
+          waitContainer: () =>
+            Effect.gen(function* () {
+              yield* Deferred.succeed(waitEntered, undefined);
+              return yield* Deferred.await(gate);
+            }),
+        },
+        ownerSessionId: "owner-session",
+        resolveWorkload: () =>
+          Effect.succeed({
+            envFile: "/tmp/auth.env",
+            networkAliases: ["auth"],
+            startup: [{ entrypoint: "/usr/local/bin/auth", command: ["migrate"] }],
+          }),
+      });
+      const running = yield* runtime
+        .start(key, workload())
+        .pipe(Effect.forkChild({ startImmediately: true }));
+      yield* Deferred.await(waitEntered);
+      expect(yield* runtime.observe(key.stackId)).toEqual([]);
+      yield* Deferred.succeed(gate, 0);
+      expect(yield* Fiber.join(running)).toEqual({ ...key, state: "ready" });
+      expect(yield* runtime.observe(key.stackId)).toEqual([{ ...key, state: "ready" }]);
+      const [startup, main] = state.createdSpecs;
+      expect(startup?.envFile).toBe("/tmp/auth.env");
+      expect(startup?.networkAliases).toBeUndefined();
+      expect(startup?.publications).toEqual([]);
+      expect(main?.networkAliases).toEqual(["auth"]);
+      yield* runtime.stop(key);
+    }),
+  );
+
+  it.live("runs multiple startup processes sequentially before the main workload", () =>
+    Effect.gen(function* () {
+      const state: FakeContainerState = {
+        resources: [],
+        imagePresent: true,
+        calls: [],
+        createdSpecs: [],
+        nextId: 1,
+      };
+      const runtime = yield* makeContainerRuntime({
+        engine: fakeContainerEngine(state),
+        ownerSessionId: "owner-session",
+        resolveWorkload: () =>
+          Effect.succeed({
+            startup: [
+              { entrypoint: "/usr/local/bin/auth", command: ["first"] },
+              { entrypoint: "/usr/local/bin/auth", command: ["second"] },
+            ],
+          }),
+      });
+      expect(yield* runtime.start(key, workload())).toEqual({ ...key, state: "ready" });
+      expect(state.createdSpecs.map((spec) => spec.command)).toEqual([
+        ["first"],
+        ["second"],
+        undefined,
+      ]);
+      const waits = state.calls.filter((call) => call.startsWith("wait:"));
+      const removes = state.calls.filter((call) => call.startsWith("remove:"));
+      expect(waits).toHaveLength(2);
+      expect(removes).toHaveLength(2);
+      const firstRemove = removes[0];
+      const secondWait = waits[1];
+      expect(firstRemove).toBeDefined();
+      expect(secondWait).toBeDefined();
+      if (firstRemove !== undefined && secondWait !== undefined)
+        expect(state.calls.indexOf(secondWait)).toBeGreaterThan(state.calls.indexOf(firstRemove));
       yield* runtime.stop(key);
     }),
   );
@@ -518,6 +610,53 @@ describe("container runtime", () => {
       expect(state.createdSpecs).toHaveLength(1);
       expect(state.calls.some((call) => call.startsWith("remove:"))).toBe(true);
       expect(state.calls.filter((call) => call.startsWith("start:"))).toHaveLength(1);
+      expect(state.resources.some((resource) => resource.kind === "workload")).toBe(false);
+    }),
+  );
+
+  it.live("keeps a nonzero migration exit authoritative when log persistence also fails", () =>
+    Effect.gen(function* () {
+      const state: FakeContainerState = {
+        resources: [],
+        imagePresent: true,
+        calls: [],
+        createdSpecs: [],
+        nextId: 1,
+        waitExitCode: 17,
+      };
+      const logError = new LogStoreError({
+        path: "memory://container-logs-failure",
+        message: "disk full",
+      });
+      const runtime = yield* makeContainerRuntime({
+        engine: {
+          ...fakeContainerEngine(state),
+          streamLogs: () =>
+            Stream.fromIterable([
+              { stream: "stdout", message: "migration-output" } satisfies ContainerLogLine,
+            ]),
+        },
+        ownerSessionId: "owner-session",
+        logStore: {
+          path: logError.path,
+          append: () => Effect.fail(logError),
+          read: () => Effect.succeed([]),
+          retained: () => Effect.succeed([]),
+          stream: () => Stream.empty,
+        },
+        resolveWorkload: () =>
+          Effect.succeed({
+            startup: [{ entrypoint: "/usr/local/bin/auth", command: ["migrate"] }],
+          }),
+      });
+      const result = yield* runtime.start(key, workload()).pipe(Effect.exit);
+      expect(Exit.isFailure(result)).toBe(true);
+      if (Exit.isFailure(result)) {
+        const message = Cause.pretty(result.cause);
+        expect(message).toContain("code 17");
+        expect(message).toContain("disk full");
+      }
+      expect(state.createdSpecs).toHaveLength(1);
       expect(state.resources.some((resource) => resource.kind === "workload")).toBe(false);
     }),
   );
@@ -675,6 +814,59 @@ describe("container runtime", () => {
       expect(ready.state).toBe("ready");
       expect(state.calls).toContain("remove:stale-startup");
       expect(state.createdSpecs).toHaveLength(2);
+    }),
+  );
+
+  it.live("removes crash-orphaned startup containers during recovery", () =>
+    Effect.gen(function* () {
+      const startup: ContainerResource = {
+        id: "orphaned-startup",
+        name: `supabase-${stackId.slice(0, 16)}-${key.desiredGeneration}-${key.workloadId.replace(/[^A-Za-z0-9_.-]/g, "-")}-workload`,
+        kind: "workload",
+        state: "stopped",
+        labels: {
+          stackId,
+          ownerSessionId: "previous-owner",
+          desiredGeneration: key.desiredGeneration,
+          workloadId: key.workloadId,
+          specHash: `${key.specHash}:startup:0`,
+          role: "workload",
+        },
+      };
+      const main: ContainerResource = {
+        id: "main-workload",
+        name: startup.name,
+        kind: "workload",
+        state: "running",
+        labels: {
+          stackId,
+          ownerSessionId: "previous-owner",
+          desiredGeneration: key.desiredGeneration,
+          workloadId: key.workloadId,
+          specHash: key.specHash,
+          role: "workload",
+        },
+      };
+      const state: FakeContainerState = {
+        resources: [startup, main],
+        imagePresent: true,
+        calls: [],
+        createdSpecs: [],
+        nextId: 1,
+      };
+      const runtime = yield* makeContainerRuntime({
+        engine: fakeContainerEngine(state),
+        ownerSessionId: "new-owner",
+      });
+      const recovered = yield* runtime.recover({
+        stackId,
+        desiredGeneration: key.desiredGeneration,
+        desiredLifecycle: "running",
+        plan: recoveryPlan([workload()]),
+      });
+      expect(recovered).toEqual([{ ...key, state: "ready" }]);
+      expect(state.calls).toContain("remove:orphaned-startup");
+      expect(state.resources.map((resource) => resource.id)).toEqual(["main-workload"]);
     }),
   );
 

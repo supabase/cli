@@ -221,6 +221,10 @@ const isManagedContainer = (
 ): entry is ContainerResource & { readonly labels: ContainerWorkloadLabels } =>
   entry.kind === "workload" && entry.labels.role === "workload";
 
+/** Startup containers use the deterministic suffix emitted by startupLabelsFor. */
+const isStartupContainer = (entry: ContainerResource): boolean =>
+  isManagedContainer(entry) && /^.+:startup:(?:0|[1-9]\d*)$/.test(entry.labels.specHash);
+
 const isNetworkResource = (
   entry: ContainerResource,
 ): entry is ContainerResource & { readonly labels: ContainerNetworkLabels } =>
@@ -314,6 +318,7 @@ export const makeContainerRuntime = (
           entries
             .filter(isWorkloadResource)
             .filter((entry) => entry.labels.stackId === stackId)
+            .filter((entry) => !isStartupContainer(entry))
             .map((entry) => {
               const key: RuntimeWorkloadKey = {
                 stackId: entry.labels.stackId,
@@ -366,9 +371,6 @@ export const makeContainerRuntime = (
         ...(context.resolution.envFile === undefined
           ? {}
           : { envFile: context.resolution.envFile }),
-        ...(context.resolution.networkAliases === undefined
-          ? {}
-          : { networkAliases: context.resolution.networkAliases }),
         ...(context.resolution.hostRoute === undefined
           ? {}
           : { hostRoute: context.resolution.hostRoute }),
@@ -395,14 +397,26 @@ export const makeContainerRuntime = (
             logFiber = yield* Effect.forkIn(consume, runtimeScope);
           }
           const exitCode = yield* withEngine(key, options.engine.waitContainer(container.id));
-          if (logFiber !== undefined) yield* Fiber.join(logFiber);
-          if (exitCode !== 0)
-            return yield* toDriverError(
-              key,
-              new Error(
-                `Container startup process exited with code ${String(exitCode)} for ${key.workloadId}`,
-              ),
-            );
+          const logs =
+            logFiber === undefined
+              ? Exit.succeed(undefined)
+              : yield* Effect.exit(Fiber.join(logFiber));
+          const exitFailure =
+            exitCode === 0
+              ? undefined
+              : toDriverError(
+                  key,
+                  new Error(
+                    `Container startup process exited with code ${String(exitCode)} for ${key.workloadId}`,
+                  ),
+                );
+          if (exitFailure !== undefined) {
+            const exitCause = Cause.fail(exitFailure);
+            return yield* Exit.isFailure(logs)
+              ? Effect.failCause(Cause.combine(exitCause, logs.cause))
+              : Effect.failCause(exitCause);
+          }
+          if (Exit.isFailure(logs)) return yield* Effect.failCause(logs.cause);
         });
       const release = (
         container: ContainerResource,

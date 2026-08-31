@@ -1083,3 +1083,18 @@ private-port reservation plus gateway ownership atomic with accepted lifecycle g
   removes the exact init container on success, failure, or interruption, and starts the main container only after exit 0. Adopted exact main containers do not rerun migration; stale init names are removed as collisions before retry.
 - TDD coverage first reproduced ignored entrypoints, absent wait decoding, and missing startup ordering, then passed
   serializer, wait, Auth/Storage resolution, ordering, nonzero, interruption, adoption, and stale-collision scenarios.
+
+#### Task 17 Fable correction — migration observability and failure authority (2026-08-31)
+
+- Accepted the independently reproduced findings that synthetic startup identities leaked through runtime observation,
+  init containers inherited the main service's inbound network aliases, and a log-persistence failure could mask a
+  simultaneous nonzero migration exit. Observation now excludes only the deterministic startup hash suffix, init
+  containers retain their env file but no inbound aliases or publications, and combined failures keep the process exit
+  as the first cause without weakening fatal log persistence.
+- Added public-runtime regressions for in-flight observation, env/alias/publication separation, sequential startup
+  entries, crash-orphan recovery, and combined log/exit failures. A proposed bounded log-follower timeout was rejected:
+  the concrete engine follower is an owned subprocess, interruption already closes it, and no hang was reproduced; a
+  timeout or polling loop would add policy without evidence.
+- Deferred no correctness work: the pinned Auth/Storage image-default and migration-entrypoint contract is owned by the
+  shared Docker whole-stack E2E. Suggested resolution-type, init-name, and engine-codec refactors were rejected as
+  cleanup that would not simplify the two distinct boundaries or improve the demonstrated lifecycle.
