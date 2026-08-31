@@ -207,6 +207,7 @@ const ownerInputContainerEngine = (createdSpecs: ContainerContainerSpec[]): Cont
       Effect.sync(() => {
         updateState(id, "running");
       }),
+    waitContainer: () => Effect.succeed(0),
     stopContainer: (id) => Effect.sync(() => updateState(id, "stopped")),
     removeContainer: (id) =>
       Effect.sync(() => {

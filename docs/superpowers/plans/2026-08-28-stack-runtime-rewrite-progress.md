@@ -878,9 +878,9 @@ private-port reservation plus gateway ownership atomic with accepted lifecycle g
   the long-lived process and readiness. Fast process exit does not cancel stdout/stderr draining, failures
   prevent the main process, and interruption kills only the exact owned child.
 - Auth, Storage, Realtime, Analytics, and Pooler use their audited slim-services migration/startup commands.
-  Auth and Storage container command chains compensate for their intentionally empty image entrypoints;
-  Realtime, Analytics, and Pooler retain their derived-image entrypoints. Mailpit uses only `MP_*` environment
-  configuration.
+  Auth and Storage run explicit container init processes through their pinned image entrypoints before the main
+  container; Realtime, Analytics, and Pooler retain their derived-image entrypoints. Mailpit uses only `MP_*`
+  environment configuration.
 - Storage owns one `/mnt` volume and imgproxy mounts the same volume read-only with `/mnt` as its filesystem
   root. Native and container persistence contracts now match.
 - Initial commit `a0c127637`; fix commit `81edf9969` removed the obsolete direct-process resolver fallback.
@@ -1046,6 +1046,22 @@ private-port reservation plus gateway ownership atomic with accepted lifecycle g
 - Bridge identity tests assert both CLI modules expose the stack-owned implementations and that no private Functions
   subpaths remain in the package export map.
 
+#### Task 16 — managed Functions request-time discovery inputs (2026-08-31)
+
+- Translated manifest entrypoint, import-map, and static-file paths from the Supabase directory to the selected
+  function directory by stripping only the exact `./functions/<slug>/` prefix; undefined values remain unchanged and
+  Stack retains path-safety validation.
+- The authoritative managed-stack Functions E2E belongs in `packages/stack`; the existing CLI Functions E2E remains
+  unchanged and is not used as the rewrite's end-to-end contract.
+- TDD evidence: the focused translation integration test first failed with `./functions/hello/custom-deno.json`
+  instead of `custom-deno.json`, then passed after the narrow normalization.
+- A separate compiled-CLI Supervisor launcher defect was found while exercising the boundary: the standalone binary
+  resolved the embedded `supervisor-node.ts` to a `/$bunfs` path and invoked its CLI parser instead of a bundled
+  Supervisor entrypoint, so it exited before fd3 readiness. Direct source-Bun Supervisor startup published readiness.
+- Added a private compiled-CLI sentinel dispatch: source Bun continues to execute the Supervisor entrypoint directly,
+  while the standalone binary re-enters itself with the sentinel and dispatches to the same Supervisor decoder/runner
+  before normal CLI parsing. The source-level launch-target test and compiled fd3 smoke check pass.
+
 #### Task 16B — CLI-to-Stack config boundary (2026-08-31)
 
 - Added a real `CliConfigSchema` → `toStartStackConfig` → `StackConfigSchema` boundary regression covering database
@@ -1053,3 +1069,17 @@ private-port reservation plus gateway ownership atomic with accepted lifecycle g
   failure at `capabilities.database.settings.vault` when the translation emitted an explicit `undefined` leaf.
 - The CLI translation now recursively omits only undefined object properties before a synchronous, service-free
   `StackConfigSchema` decode. Arrays, nulls, primitives, and Effect `Redacted` values remain unchanged.
+- Focused and full stack-config unit tests, CLI type-checking, lint, formatting, and diff checks pass.
+
+#### Task 17 — container service startup migrations (2026-08-31)
+
+- Added private Docker/Podman `--entrypoint` serialization and a cancellation-safe `wait-container` operation that
+  decodes exactly one safe numeric exit code. Auth and Storage now resolve their concrete slim-image init processes
+  (`/usr/local/bin/auth migrate` and `/node/bin/node dist/scripts/migrate-call.js`) while their main containers use
+  image defaults; Realtime, Analytics, and Pooler continue to use their image-owned entrypoints.
+- ContainerRuntime creates a deterministic init container only for newly-created/replaced workloads, reusing the
+  workload network, env file, mounts, volume, and host route without public publications. It waits for the exact exit,
+  attaches log streaming after init start so fast exits are replayed, persists init logs when streaming is available,
+  removes the exact init container on success, failure, or interruption, and starts the main container only after exit 0. Adopted exact main containers do not rerun migration; stale init names are removed as collisions before retry.
+- TDD coverage first reproduced ignored entrypoints, absent wait decoding, and missing startup ordering, then passed
+  serializer, wait, Auth/Storage resolution, ordering, nonzero, interruption, adoption, and stale-collision scenarios.

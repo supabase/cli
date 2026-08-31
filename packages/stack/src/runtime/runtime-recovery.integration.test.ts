@@ -152,6 +152,7 @@ const makeEngine = (state: EngineState): ContainerEngine => {
             entry.id === id ? { ...entry, state: "running" } : entry,
           );
       }),
+    waitContainer: () => Effect.succeed(0),
     stopContainer: (id) =>
       Effect.sync(() => {
         state.calls.push(`stop:${id}`);

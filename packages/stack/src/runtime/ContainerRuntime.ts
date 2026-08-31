@@ -10,6 +10,7 @@ import {
   type ContainerEngineFailure,
   type ContainerLabels,
   type ContainerMount,
+  type ContainerStartupProcess,
   type ContainerVolumeMount,
   type ContainerVolumeLabels,
   type ContainerVolumeSpec,
@@ -60,6 +61,8 @@ export interface ContainerWorkloadResolution {
   readonly hostRoute?: ContainerHostRoute;
   /** Private host-loopback publications used by the in-process gateway. */
   readonly publications?: ReadonlyArray<ContainerPortPublicationInput>;
+  /** Service-owned one-shot processes run before a newly-created main container. */
+  readonly startup?: ReadonlyArray<ContainerStartupProcess>;
   readonly command?: ReadonlyArray<string>;
   /** Owner-created bootstrap copied into a newly-created container before start. */
   readonly bootstrap?: Readonly<{ readonly source: string; readonly destination: string }>;
@@ -126,6 +129,14 @@ const workloadLabelsFor = (
   workloadId: key.workloadId,
   specHash: key.specHash,
   role: "workload",
+});
+const startupLabelsFor = (
+  key: RuntimeWorkloadKey,
+  ownerSessionId: string,
+  index: number,
+): ContainerWorkloadLabels => ({
+  ...workloadLabelsFor(key, ownerSessionId),
+  specHash: `${key.specHash}:startup:${index}`,
 });
 const volumeOwnerFor = (key: RuntimeWorkloadKey, request: ContainerVolumeRequest): string =>
   request.ownerWorkloadId ?? key.workloadId;
@@ -327,6 +338,89 @@ export const makeContainerRuntime = (
         ),
       );
 
+    const runStartupProcess = (
+      key: RuntimeWorkloadKey,
+      workload: PlannedWorkload,
+      process: ContainerStartupProcess,
+      index: number,
+      context: Readonly<{
+        readonly artifact: ContainerArtifact;
+        readonly network: ContainerResource;
+        readonly resolution: ContainerWorkloadResolution;
+        readonly volumeRequest?: ContainerVolumeRequest;
+      }>,
+    ): Effect.Effect<void, RuntimeDriverError> => {
+      const labels = startupLabelsFor(key, options.ownerSessionId, index);
+      const specification: ContainerContainerSpec = {
+        name: nameFor(key, "workload"),
+        image: context.artifact.image,
+        labels,
+        network: context.network.id,
+        mounts: context.resolution.mounts ?? [],
+        volumeMounts:
+          context.volumeRequest === undefined ? [] : [volumeMountFor(key, context.volumeRequest)],
+        publications: [],
+        role: "workload",
+        entrypoint: process.entrypoint,
+        command: process.command,
+        ...(context.resolution.envFile === undefined
+          ? {}
+          : { envFile: context.resolution.envFile }),
+        ...(context.resolution.networkAliases === undefined
+          ? {}
+          : { networkAliases: context.resolution.networkAliases }),
+        ...(context.resolution.hostRoute === undefined
+          ? {}
+          : { hostRoute: context.resolution.hostRoute }),
+      };
+      let logFiber: Fiber.Fiber<void, RuntimeDriverError> | undefined;
+      const acquire = withEngine(key, options.engine.createContainer(specification));
+      const logStore = options.logStore;
+      const use = (container: ContainerResource): Effect.Effect<void, RuntimeDriverError> =>
+        Effect.gen(function* () {
+          yield* withEngine(key, options.engine.startContainer(container.id));
+          if (logStore !== undefined && options.engine.streamLogs !== undefined) {
+            const consume = options.engine.streamLogs(container.id, { tail: "all" }).pipe(
+              Stream.runForEach((line) =>
+                logStore
+                  .append({
+                    source: workload.capability,
+                    stream: line.stream,
+                    message: line.message,
+                  })
+                  .pipe(Effect.asVoid),
+              ),
+              Effect.mapError((error) => toDriverError(key, error)),
+            );
+            logFiber = yield* Effect.forkIn(consume, runtimeScope);
+          }
+          const exitCode = yield* withEngine(key, options.engine.waitContainer(container.id));
+          if (logFiber !== undefined) yield* Fiber.join(logFiber);
+          if (exitCode !== 0)
+            return yield* toDriverError(
+              key,
+              new Error(
+                `Container startup process exited with code ${String(exitCode)} for ${key.workloadId}`,
+              ),
+            );
+        });
+      const release = (
+        container: ContainerResource,
+        useExit: Exit.Exit<void, RuntimeDriverError>,
+      ): Effect.Effect<void, RuntimeDriverError> =>
+        Effect.gen(function* () {
+          if (logFiber !== undefined) yield* Fiber.interrupt(logFiber);
+          const removed = yield* Effect.exit(
+            withEngine(key, options.engine.removeContainer(container.id)),
+          );
+          if (Exit.isFailure(removed))
+            return yield* Effect.failCause(
+              Exit.isFailure(useExit) ? Cause.combine(useExit.cause, removed.cause) : removed.cause,
+            );
+        });
+      return Effect.acquireUseRelease(acquire, use, release);
+    };
+
     const start = (
       key: RuntimeWorkloadKey,
       workload: PlannedWorkload,
@@ -464,6 +558,21 @@ export const makeContainerRuntime = (
             yield* withEngine(key, options.engine.createVolume(volume));
         }
 
+        if (exact === undefined && collision !== undefined) {
+          if (collision.state === "running")
+            yield* withEngine(key, options.engine.stopContainer(collision.id));
+          yield* withEngine(key, options.engine.removeContainer(collision.id));
+        }
+
+        if (exact === undefined)
+          for (const [index, startup] of (resolution.startup ?? []).entries())
+            yield* runStartupProcess(key, workload, startup, index, {
+              artifact,
+              network: networkResource,
+              resolution,
+              ...(volumeRequest === undefined ? {} : { volumeRequest }),
+            });
+
         let container: ContainerResource;
         let created = false;
         let startedByUs = false;
@@ -474,11 +583,6 @@ export const makeContainerRuntime = (
             startedByUs = true;
           }
         } else {
-          if (collision !== undefined) {
-            if (collision.state === "running")
-              yield* withEngine(key, options.engine.stopContainer(collision.id));
-            yield* withEngine(key, options.engine.removeContainer(collision.id));
-          }
           container = yield* withEngine(
             key,
             options.engine.createContainer({

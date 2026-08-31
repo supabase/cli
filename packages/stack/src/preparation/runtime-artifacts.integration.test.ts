@@ -65,6 +65,7 @@ const containerEngine = (present: boolean, calls: string[]): ContainerEngine => 
   createContainer: (_spec: ContainerContainerSpec) => Effect.die("unused"),
   copyToContainer: () => Effect.die("unused"),
   startContainer: () => Effect.void,
+  waitContainer: () => Effect.succeed(0),
   stopContainer: () => Effect.void,
   removeContainer: () => Effect.void,
 });

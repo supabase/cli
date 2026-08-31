@@ -77,6 +77,10 @@ export interface ContainerVolumeMount {
   readonly target: string;
   readonly readOnly: boolean;
 }
+export interface ContainerStartupProcess {
+  readonly entrypoint: string;
+  readonly command: ReadonlyArray<string>;
+}
 interface ContainerPortPublication {
   readonly address: "127.0.0.1";
   readonly hostPort: number;
@@ -100,6 +104,8 @@ export interface ContainerContainerSpec {
   readonly publications: ReadonlyArray<ContainerPortPublication>;
   readonly hostRoute?: ContainerHostRoute;
   readonly role: "workload";
+  /** Optional image entrypoint override used by service-owned init processes. */
+  readonly entrypoint?: string;
   readonly command?: ReadonlyArray<string>;
   /** Path to an owned 0600 env file. Secret values must never be argv. */
   readonly envFile?: string;
@@ -125,6 +131,7 @@ export type ContainerCommand =
       readonly destination: string;
     }
   | { readonly operation: "start-container"; readonly id: string }
+  | { readonly operation: "wait-container"; readonly id: string }
   | { readonly operation: "stop-container"; readonly id: string }
   | { readonly operation: "remove-container"; readonly id: string };
 export interface ContainerCommandResult {
@@ -374,6 +381,9 @@ interface ContainerEngineCodecs {
     spec: { readonly name: string; readonly labels: ContainerLabels },
     kind: R,
   ) => Effect.Effect<ContainerResource, ContainerEngineFailure>;
+  readonly decodeWait: (
+    result: ContainerCommandResult,
+  ) => Effect.Effect<number, ContainerEngineFailure>;
   readonly serializeLogs: (
     id: string,
     options: ContainerLogOptions | undefined,
@@ -415,6 +425,8 @@ export interface ContainerEngine {
     destination: string,
   ) => Effect.Effect<void, ContainerEngineFailure>;
   readonly startContainer: (id: string) => Effect.Effect<void, ContainerEngineFailure>;
+  /** Waits for one exact container and returns its process exit code. */
+  readonly waitContainer: (id: string) => Effect.Effect<number, ContainerEngineFailure>;
   readonly stopContainer: (id: string) => Effect.Effect<void, ContainerEngineFailure>;
   readonly removeContainer: (id: string) => Effect.Effect<void, ContainerEngineFailure>;
   /** Follows one exact container and emits complete stdout/stderr lines. */
@@ -568,6 +580,10 @@ export const makeContainerEngineCore = (options: ContainerEngineOptions): Contai
     copyToContainer: (id, source, destination) =>
       noResult("copy-container", { operation: "copy-container", id, source, destination }),
     startContainer: (id) => noResult("start-container", { operation: "start-container", id }),
+    waitContainer: (id) =>
+      check("wait-container", { operation: "wait-container", id }).pipe(
+        Effect.flatMap(options.codecs.decodeWait),
+      ),
     stopContainer: (id) => noResult("stop-container", { operation: "stop-container", id }),
     removeContainer: (id) => noResult("remove-container", { operation: "remove-container", id }),
     streamLogs,

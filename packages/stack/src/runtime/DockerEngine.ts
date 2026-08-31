@@ -157,6 +157,8 @@ export const serializeDockerCommand = (command: ContainerCommand): ContainerProc
         command.spec.networkAliases === undefined
           ? []
           : command.spec.networkAliases.flatMap((alias) => ["--network-alias", alias]);
+      const entrypoint =
+        command.spec.entrypoint === undefined ? [] : ["--entrypoint", command.spec.entrypoint];
       return {
         args: [
           "create",
@@ -171,6 +173,7 @@ export const serializeDockerCommand = (command: ContainerCommand): ContainerProc
           ...publications,
           ...hostRoute,
           ...environment,
+          ...entrypoint,
           command.spec.image,
           ...(command.spec.command ?? []),
         ],
@@ -180,6 +183,8 @@ export const serializeDockerCommand = (command: ContainerCommand): ContainerProc
       return { args: ["cp", command.source, `${command.id}:${command.destination}`] };
     case "start-container":
       return { args: ["start", command.id] };
+    case "wait-container":
+      return { args: ["wait", command.id] };
     case "stop-container":
       return { args: ["stop", command.id] };
     case "remove-container":
@@ -398,6 +403,19 @@ const decodeCreate = <R extends ContainerResourceRole>(
     : Effect.fail(protocol(operation));
 };
 
+const decodeWait = (
+  result: ContainerCommandResult,
+): Effect.Effect<number, ContainerEngineFailure> => {
+  const values = lines(result.stdout);
+  const value = values[0];
+  if (values.length !== 1 || value === undefined || !/^\d+$/.test(value))
+    return Effect.fail(protocol("wait-container"));
+  const exitCode = Number(value);
+  return Number.isSafeInteger(exitCode)
+    ? Effect.succeed(exitCode)
+    : Effect.fail(protocol("wait-container"));
+};
+
 const makeDockerCodecs = () => ({
   serialize: serializeDockerCommand,
   serializeLogs: serializeDockerLogs,
@@ -411,6 +429,7 @@ const makeDockerCodecs = () => ({
   decodeNetworks,
   decodeVolumes,
   decodeCreate,
+  decodeWait,
 });
 
 export const makeDockerEngine = (

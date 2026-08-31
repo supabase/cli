@@ -100,6 +100,7 @@ interface FakeContainerState {
   nextId: number;
   inspectImageFailure?: ContainerCommandError;
   copyFailure?: ContainerCommandError;
+  waitExitCode?: number;
 }
 
 const fakeContainerEngine = (state: FakeContainerState): ContainerEngine => {
@@ -190,6 +191,11 @@ const fakeContainerEngine = (state: FakeContainerState): ContainerEngine => {
           state.resources = state.resources.map((entry) =>
             entry.id === resourceId ? { ...entry, state: "running" } : entry,
           );
+      }),
+    waitContainer: (resourceId: string) =>
+      Effect.sync(() => {
+        state.calls.push(`wait:${resourceId}`);
+        return state.waitExitCode ?? 0;
       }),
     stopContainer: (resourceId: string) =>
       Effect.sync(() => {
@@ -299,6 +305,67 @@ describe("container runtime", () => {
     }),
   );
 
+  it.live("serializes an entrypoint override before the image", () =>
+    Effect.sync(() => {
+      const spec: ContainerContainerSpec = {
+        name: "auth-init",
+        image: "ghcr.io/supabase/cli/auth:v2.196.0",
+        labels: {
+          stackId,
+          ownerSessionId: "owner",
+          desiredGeneration: 7,
+          workloadId: "auth:auth",
+          specHash: key.specHash,
+          role: "workload",
+        },
+        network: "private",
+        mounts: [],
+        volumeMounts: [],
+        publications: [],
+        role: "workload",
+        entrypoint: "/usr/local/bin/auth",
+        command: ["migrate"],
+      };
+      const docker = serializeDockerCommand({ operation: "create-container", spec });
+      expect(docker.args.slice(docker.args.indexOf("--entrypoint"), -2)).toEqual([
+        "--entrypoint",
+        "/usr/local/bin/auth",
+      ]);
+      expect(docker.args.indexOf("--entrypoint")).toBeLessThan(docker.args.indexOf(spec.image));
+      expect(docker.args.slice(-2)).toEqual([spec.image, "migrate"]);
+      const podman = serializePodmanCommand({ operation: "create-container", spec });
+      expect(podman.args.indexOf("--entrypoint")).toBeLessThan(podman.args.indexOf(spec.image));
+      expect(podman.args.slice(-2)).toEqual([spec.image, "migrate"]);
+    }),
+  );
+
+  it.live("waits for one container and rejects malformed exit output", () =>
+    Effect.gen(function* () {
+      const runner = makeControlledCommandRunner({
+        run: (request) =>
+          Effect.succeed(commandResult(request.args[0] === "wait" ? "17\n" : "27.0.0\n")),
+      });
+      const docker = makeDockerEngine({
+        runner,
+        platform: { os: "linux", desktop: false },
+      });
+      expect(yield* docker.waitContainer("container-id")).toBe(17);
+      const malformed = makeDockerEngine({
+        runner: makeControlledCommandRunner({
+          run: () => Effect.succeed(commandResult("17\n18\n")),
+        }),
+        platform: { os: "linux", desktop: false },
+      });
+      const result = yield* malformed.waitContainer("container-id").pipe(Effect.exit);
+      expect(Exit.isFailure(result)).toBe(true);
+      if (Exit.isFailure(result)) {
+        const error = Cause.findErrorOption(result.cause);
+        expect(Option.isSome(error)).toBe(true);
+        if (Option.isSome(error)) expect(error.value).toBeInstanceOf(ContainerEngineProtocolError);
+      }
+    }),
+  );
+
   it.live("derives host routes before mutation and rejects unsupported hosts", () =>
     Effect.gen(function* () {
       const calls: ContainerProcessRequest[] = [];
@@ -389,6 +456,225 @@ describe("container runtime", () => {
       }
       yield* runtime.stop(functionsKey);
       yield* runtime.remove(functionsKey);
+    }),
+  );
+
+  it.live("runs container startup migrations before the main workload", () =>
+    Effect.gen(function* () {
+      const state: FakeContainerState = {
+        resources: [],
+        imagePresent: true,
+        calls: [],
+        createdSpecs: [],
+        nextId: 1,
+      };
+      const runtime = yield* makeContainerRuntime({
+        engine: fakeContainerEngine(state),
+        ownerSessionId: "owner-session",
+        resolveWorkload: () =>
+          Effect.succeed({
+            startup: [{ entrypoint: "/usr/local/bin/auth", command: ["migrate"] }],
+          }),
+      });
+      const ready = yield* runtime.start(key, workload());
+      expect(ready.state).toBe("ready");
+      expect(state.createdSpecs).toHaveLength(2);
+      const [startup, main] = state.createdSpecs;
+      expect(startup?.entrypoint).toBe("/usr/local/bin/auth");
+      expect(startup?.command).toEqual(["migrate"]);
+      expect(startup?.publications).toEqual([]);
+      expect(main?.entrypoint).toBeUndefined();
+      expect(main?.command).toBeUndefined();
+      const startupStart = state.calls.findIndex((call) => call.startsWith("start:"));
+      const startupWait = state.calls.findIndex((call) => call.startsWith("wait:"));
+      const startupRemove = state.calls.findIndex((call) => call.startsWith("remove:"));
+      expect(startupStart).toBeGreaterThanOrEqual(0);
+      expect(startupWait).toBeGreaterThan(startupStart);
+      expect(startupRemove).toBeGreaterThan(startupWait);
+      yield* runtime.stop(key);
+    }),
+  );
+
+  it.live("blocks the main workload and removes the init container on migration failure", () =>
+    Effect.gen(function* () {
+      const state: FakeContainerState = {
+        resources: [],
+        imagePresent: true,
+        calls: [],
+        createdSpecs: [],
+        nextId: 1,
+        waitExitCode: 17,
+      };
+      const runtime = yield* makeContainerRuntime({
+        engine: fakeContainerEngine(state),
+        ownerSessionId: "owner-session",
+        resolveWorkload: () =>
+          Effect.succeed({
+            startup: [{ entrypoint: "/usr/local/bin/auth", command: ["migrate"] }],
+          }),
+      });
+      const result = yield* runtime.start(key, workload()).pipe(Effect.exit);
+      expect(Exit.isFailure(result)).toBe(true);
+      expect(state.createdSpecs).toHaveLength(1);
+      expect(state.calls.some((call) => call.startsWith("remove:"))).toBe(true);
+      expect(state.calls.filter((call) => call.startsWith("start:"))).toHaveLength(1);
+      expect(state.resources.some((resource) => resource.kind === "workload")).toBe(false);
+    }),
+  );
+
+  it.live("persists startup stdout and stderr before removing the init container", () =>
+    Effect.gen(function* () {
+      const state: FakeContainerState = {
+        resources: [],
+        imagePresent: true,
+        calls: [],
+        createdSpecs: [],
+        nextId: 1,
+      };
+      const records: LogRecord[] = [];
+      const streamStates: Array<string | undefined> = [];
+      const runtime = yield* makeContainerRuntime({
+        engine: {
+          ...fakeContainerEngine(state),
+          streamLogs: (id) => {
+            const resource = state.resources.find((entry) => entry.id === id);
+            streamStates.push(resource?.state);
+            return resource?.state === "running" &&
+              resource.labels.role === "workload" &&
+              resource.labels.specHash.includes(":startup:")
+              ? Stream.fromIterable([
+                  { stream: "stdout", message: "migrated" } satisfies ContainerLogLine,
+                  { stream: "stderr", message: "notice" } satisfies ContainerLogLine,
+                ])
+              : Stream.empty;
+          },
+        },
+        ownerSessionId: "owner-session",
+        logStore: memoryLogStore(records),
+        resolveWorkload: () =>
+          Effect.succeed({
+            startup: [{ entrypoint: "/usr/local/bin/auth", command: ["migrate"] }],
+          }),
+      });
+      yield* runtime.start(key, workload());
+      expect(streamStates).toEqual(["running", "running"]);
+      expect(records.map((record) => [record.stream, record.message])).toEqual([
+        ["stdout", "migrated"],
+        ["stderr", "notice"],
+      ]);
+    }),
+  );
+
+  it.live("cleans an interrupted init container", () =>
+    Effect.gen(function* () {
+      const state: FakeContainerState = {
+        resources: [],
+        imagePresent: true,
+        calls: [],
+        createdSpecs: [],
+        nextId: 1,
+      };
+      const waitEntered = yield* Deferred.make<void>();
+      const gate = yield* Deferred.make<number, never>();
+      const base = fakeContainerEngine(state);
+      const runtime = yield* makeContainerRuntime({
+        engine: {
+          ...base,
+          waitContainer: () =>
+            Effect.gen(function* () {
+              yield* Deferred.succeed(waitEntered, undefined);
+              return yield* Deferred.await(gate).pipe(Effect.as(0));
+            }),
+        },
+        ownerSessionId: "owner-session",
+        resolveWorkload: () =>
+          Effect.succeed({
+            startup: [{ entrypoint: "/usr/local/bin/auth", command: ["migrate"] }],
+          }),
+      });
+      const running = yield* runtime
+        .start(key, workload())
+        .pipe(Effect.forkChild({ startImmediately: true }));
+      yield* Deferred.await(waitEntered);
+      yield* Fiber.interrupt(running);
+      expect(state.calls.some((call) => call.startsWith("remove:"))).toBe(true);
+      expect(state.createdSpecs).toHaveLength(1);
+    }),
+  );
+
+  it.live("does not rerun migration for an adopted exact main container", () =>
+    Effect.gen(function* () {
+      const existing: ContainerResource = {
+        id: "existing-main",
+        name: "supabase-aaaaaaaaaaaaaaaa-7-database_database-workload",
+        kind: "workload",
+        state: "running",
+        labels: {
+          stackId,
+          ownerSessionId: "owner-session",
+          desiredGeneration: key.desiredGeneration,
+          workloadId: key.workloadId,
+          specHash: key.specHash,
+          role: "workload",
+        },
+      };
+      const state: FakeContainerState = {
+        resources: [existing],
+        imagePresent: true,
+        calls: [],
+        createdSpecs: [],
+        nextId: 1,
+      };
+      const runtime = yield* makeContainerRuntime({
+        engine: fakeContainerEngine(state),
+        ownerSessionId: "owner-session",
+        resolveWorkload: () =>
+          Effect.succeed({
+            startup: [{ entrypoint: "/usr/local/bin/auth", command: ["migrate"] }],
+          }),
+      });
+      const ready = yield* runtime.start(key, workload());
+      expect(ready.state).toBe("ready");
+      expect(state.createdSpecs).toEqual([]);
+      expect(state.calls.some((call) => call.startsWith("wait:"))).toBe(false);
+    }),
+  );
+
+  it.live("removes an interrupted startup container before retrying the workload", () =>
+    Effect.gen(function* () {
+      const stale: ContainerResource = {
+        id: "stale-startup",
+        name: `supabase-${stackId.slice(0, 16)}-${key.desiredGeneration}-${key.workloadId.replace(/[^A-Za-z0-9_.-]/g, "-")}-workload`,
+        kind: "workload",
+        state: "stopped",
+        labels: {
+          stackId,
+          ownerSessionId: "owner-session",
+          desiredGeneration: key.desiredGeneration,
+          workloadId: key.workloadId,
+          specHash: `${key.specHash}:startup:0`,
+          role: "workload",
+        },
+      };
+      const state: FakeContainerState = {
+        resources: [stale],
+        imagePresent: true,
+        calls: [],
+        createdSpecs: [],
+        nextId: 1,
+      };
+      const runtime = yield* makeContainerRuntime({
+        engine: fakeContainerEngine(state),
+        ownerSessionId: "owner-session",
+        resolveWorkload: () =>
+          Effect.succeed({
+            startup: [{ entrypoint: "/usr/local/bin/auth", command: ["migrate"] }],
+          }),
+      });
+      const ready = yield* runtime.start(key, workload());
+      expect(ready.state).toBe("ready");
+      expect(state.calls).toContain("remove:stale-startup");
+      expect(state.createdSpecs).toHaveLength(2);
     }),
   );
 

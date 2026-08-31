@@ -1,7 +1,11 @@
 import type { PersistedStackState } from "../state/StackState.ts";
 import type { ExecutionPlan, PlannedWorkload } from "../model/ExecutionPlan.ts";
 import type { CapabilityName } from "../public/Capability.ts";
-import type { ContainerHostRoute, ContainerMount } from "./ContainerEngine.ts";
+import type {
+  ContainerHostRoute,
+  ContainerMount,
+  ContainerStartupProcess,
+} from "./ContainerEngine.ts";
 import { WORKLOAD_CATALOG, type NativeWorkloadProcess } from "../model/WorkloadCatalog.ts";
 import { parseFileSize } from "../model/capabilities/storage.ts";
 import { resolveThirdPartyIssuer } from "../model/capabilities/auth-third-party.ts";
@@ -94,6 +98,8 @@ export interface WorkloadRuntimeSpec {
     port: number,
     inputs?: WorkloadRuntimeInputs,
   ) => ReadonlyArray<string>;
+  /** Closed set of service-owned one-shot container processes. */
+  readonly containerStartupProcesses: ReadonlyArray<ContainerStartupProcess>;
   readonly containerMounts?: (
     state: PersistedStackState,
     workload: PlannedWorkload,
@@ -130,6 +136,7 @@ type WorkloadRuntimeSpecDefinition = Omit<
   | "privateEndpoint"
   | "nativeProcess"
   | "nativeStartupProcesses"
+  | "containerStartupProcesses"
   | "readiness"
 > &
   Readonly<{
@@ -140,12 +147,17 @@ type WorkloadRuntimeSpecDefinition = Omit<
   Partial<
     Pick<
       WorkloadRuntimeSpec,
-      "cwd" | "privateEndpoint" | "nativeProcess" | "nativeStartupProcesses"
+      | "cwd"
+      | "privateEndpoint"
+      | "nativeProcess"
+      | "nativeStartupProcesses"
+      | "containerStartupProcesses"
     >
   >;
 
 export interface ContainerWorkloadResolution {
   readonly command: ReadonlyArray<string>;
+  readonly startup?: ReadonlyArray<ContainerStartupProcess>;
   readonly env: Readonly<Record<string, string>>;
   readonly mounts: ReadonlyArray<ContainerMount>;
   readonly networkAliases: ReadonlyArray<string>;
@@ -1048,9 +1060,8 @@ const specs: Readonly<Record<string, WorkloadRuntimeSpecDefinition>> = {
     args: () => [],
     env: (state, workload, port, runtime = "native", inputs = {}) =>
       withAuthSettings(state, runtime, port, workload, inputs),
-    // The slim Auth image has an empty ENTRYPOINT. Run its idempotent
-    // migration before handing control back to the image's gotrue command.
-    containerArgs: () => ["/bin/sh", "-c", "gotrue migrate && exec gotrue"],
+    containerArgs: () => [],
+    containerStartupProcesses: [{ entrypoint: "/usr/local/bin/auth", command: ["migrate"] }],
     networkAliases: ["supabase-auth"],
     readiness: { protocol: "http", path: "/health" },
   },
@@ -1092,13 +1103,9 @@ const specs: Readonly<Record<string, WorkloadRuntimeSpecDefinition>> = {
     args: () => [],
     env: (state, workload, port, runtime = "native", inputs = {}) =>
       withStorageSettings(state, runtime, port, workload, inputs),
-    // The slim Storage image has an empty ENTRYPOINT and ships the bundled
-    // Node runtime on PATH. Keep migration and the long-lived server in one
-    // command so both modes share the same startup contract.
-    containerArgs: () => [
-      "/usr/bin/sh",
-      "-c",
-      "node dist/scripts/migrate-call.js && exec node dist/start/server.js",
+    containerArgs: () => [],
+    containerStartupProcesses: [
+      { entrypoint: "/node/bin/node", command: ["dist/scripts/migrate-call.js"] },
     ],
     networkAliases: ["supabase-storage"],
     readiness: { protocol: "http", path: "/status" },
@@ -1414,6 +1421,7 @@ export const runtimeSpecFor = (workload: PlannedWorkload): WorkloadRuntimeSpec |
         runtime,
         inputs,
       ),
+    containerStartupProcesses: spec.containerStartupProcesses ?? [],
     readiness: { ...spec.readiness, binding: spec.readiness.binding ?? "primary" },
     privateEndpoint:
       spec.privateEndpoint ??
@@ -1449,6 +1457,7 @@ export const containerResolutionFor = (
       containerPortFor(state, workload.id, "primary", spec.containerPort),
       inputs,
     ),
+    startup: spec.containerStartupProcesses,
     env: spec.env(
       state,
       workload,

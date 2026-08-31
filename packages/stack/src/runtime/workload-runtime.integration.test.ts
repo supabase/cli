@@ -220,7 +220,7 @@ describe("workload runtime catalog", () => {
     }).pipe(Effect.provide(NodeServices.layer)),
   );
 
-  it("resolves service-owned startup processes and slim container command contracts", () => {
+  it("resolves service-owned startup processes and container init contracts", () => {
     const root = "/tmp/slim artifact";
     const auth = planned("auth:auth");
     expect(runtimeSpecFor(auth)?.nativeStartupProcesses(root, state, auth, 9999)).toEqual([
@@ -285,15 +285,13 @@ describe("workload runtime catalog", () => {
     );
     expect(containerTenantEnv?.SUPABASE_POOLER_TENANT_PATH).toBe("/app/pooler_tenant.exs");
 
-    expect(containerResolutionFor(state, auth)?.command).toEqual([
-      "/bin/sh",
-      "-c",
-      "gotrue migrate && exec gotrue",
+    expect(containerResolutionFor(state, auth)?.command).toEqual([]);
+    expect(containerResolutionFor(state, auth)?.startup).toEqual([
+      { entrypoint: "/usr/local/bin/auth", command: ["migrate"] },
     ]);
-    expect(containerResolutionFor(state, storage)?.command).toEqual([
-      "/usr/bin/sh",
-      "-c",
-      "node dist/scripts/migrate-call.js && exec node dist/start/server.js",
+    expect(containerResolutionFor(state, storage)?.command).toEqual([]);
+    expect(containerResolutionFor(state, storage)?.startup).toEqual([
+      { entrypoint: "/node/bin/node", command: ["dist/scripts/migrate-call.js"] },
     ]);
     expect(containerResolutionFor(state, realtime)?.command).toEqual([]);
     expect(containerResolutionFor(state, analytics)?.command).toEqual([]);
