@@ -8,8 +8,6 @@ import {
   localServiceImagesFromDockerfile,
   parseDockerfileServiceImages,
   postgresImageForDbMajorVersion,
-  POSTGRES_FALLBACK_IMAGE_PG15,
-  POSTGRES_FALLBACK_IMAGE_PG15_SLIM,
   renderServicesTable,
   renderServicesWarning,
 } from "./services.shared.ts";
@@ -80,11 +78,11 @@ describe("services shared", () => {
   });
 
   test("keeps the established PG13/15 fallback unless the slim flag is on", () => {
-    expect(postgresImageForDbMajorVersion(13)).toBe(POSTGRES_FALLBACK_IMAGE_PG15);
-    expect(postgresImageForDbMajorVersion(15)).toBe(POSTGRES_FALLBACK_IMAGE_PG15);
+    expect(postgresImageForDbMajorVersion(13)).toBe("supabase/postgres:15.8.1.085");
+    expect(postgresImageForDbMajorVersion(15)).toBe("supabase/postgres:15.8.1.085");
     vi.stubEnv("SUPABASE_USE_SLIM_IMAGES", "true");
-    expect(postgresImageForDbMajorVersion(13)).toBe(POSTGRES_FALLBACK_IMAGE_PG15_SLIM);
-    expect(postgresImageForDbMajorVersion(15)).toBe(POSTGRES_FALLBACK_IMAGE_PG15_SLIM);
+    expect(postgresImageForDbMajorVersion(13)).toBe("supabase/postgres:15.14.1.167");
+    expect(postgresImageForDbMajorVersion(15)).toBe("supabase/postgres:15.14.1.167");
   });
 
   test("lists slim images when SUPABASE_USE_SLIM_IMAGES is set", () => {
