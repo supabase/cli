@@ -1,4 +1,6 @@
 import { Effect } from "effect";
+
+import type { LegacyPgConnInput } from "../../../shared/legacy-db-connection.service.ts";
 import { LegacyInvalidGenTypesDurationError } from "./types.errors.ts";
 
 // The local Docker container id is hoisted to `legacy/shared` so the declarative
@@ -78,4 +80,44 @@ export function parseQueryTimeoutSeconds(
 
 export function localDbPassword() {
   return process.env["SUPABASE_DB_PASSWORD"] ?? "postgres";
+}
+
+/**
+ * `--query-timeout` parity with the retired pg-meta envs: the flag becomes
+ * session `statement_timeout` (milliseconds; `0` disables) and, when the DSN
+ * has no `connect_timeout` and the flag is positive, the connect timeout.
+ * Zero must not become `connectTimeoutSeconds: 0` — the driver treats that as
+ * an immediate `Effect.timeout` rather than "disabled".
+ */
+export function applyQueryTimeouts(
+  conn: LegacyPgConnInput,
+  queryTimeoutSeconds: number,
+): LegacyPgConnInput {
+  const runtimeParams = {
+    ...conn.runtimeParams,
+    statement_timeout: `${queryTimeoutSeconds * 1000}`,
+  };
+  if (queryTimeoutSeconds > 0 && conn.connectTimeoutSeconds === undefined) {
+    return { ...conn, connectTimeoutSeconds: queryTimeoutSeconds, runtimeParams };
+  }
+  return { ...conn, runtimeParams };
+}
+
+/**
+ * When the DSN omitted `sslmode`, the SSLRequest probe decides: no TLS →
+ * `disable`; TLS → `require` plus the embedded CA path so the driver promotes
+ * to `verify-ca` (the retired `PG_META_DB_SSL_ROOT_CERT` injection).
+ */
+export function applyProbedSslMode(
+  conn: LegacyPgConnInput,
+  useTls: boolean,
+  sslrootcert?: string,
+): LegacyPgConnInput {
+  if (conn.sslmode !== undefined) return conn;
+  if (!useTls) return { ...conn, sslmode: "disable" };
+  return {
+    ...conn,
+    sslmode: "require",
+    ...(sslrootcert !== undefined && sslrootcert.length > 0 ? { sslrootcert } : {}),
+  };
 }

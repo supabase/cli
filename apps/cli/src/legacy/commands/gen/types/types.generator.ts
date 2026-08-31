@@ -2,7 +2,7 @@ import { Context, type Effect } from "effect";
 
 import type { LegacyDbConnectError } from "../../../shared/legacy-db-connection.errors.ts";
 import type { LegacyPgConnInput } from "../../../shared/legacy-db-connection.service.ts";
-import type { LegacyGenTypesMetadataError } from "./types.errors.ts";
+import type { LegacyGenTypesGenerateError, LegacyGenTypesMetadataError } from "./types.errors.ts";
 
 export type LegacyGenTypesLang = "typescript" | "go" | "swift" | "python";
 
@@ -26,10 +26,10 @@ export interface LegacyGenTypesGenerateInput {
   /** `--swift-access-control` (Swift generator only). */
   readonly swiftAccessControl: "internal" | "public";
   /**
-   * `--query-timeout` in whole seconds. Applied as the connection's
-   * `statement_timeout` and, when the connection carries no explicit connect
-   * timeout, as the connect timeout — mirroring the `PG_QUERY_TIMEOUT_SECS` /
-   * `PG_CONN_TIMEOUT_SECS` envs the pg-meta container received.
+   * `--query-timeout` in whole seconds. Applied as session `statement_timeout`,
+   * a client-side bound around `introspect()`, and — when the DSN has no
+   * `connect_timeout` and this value is positive — the connect timeout.
+   * `0` disables the query bounds and leaves the driver's connect default.
    */
   readonly queryTimeoutSeconds: number;
 }
@@ -42,7 +42,10 @@ interface LegacyGenTypesGeneratorShape {
    */
   readonly generate: (
     input: LegacyGenTypesGenerateInput,
-  ) => Effect.Effect<string, LegacyDbConnectError | LegacyGenTypesMetadataError>;
+  ) => Effect.Effect<
+    string,
+    LegacyDbConnectError | LegacyGenTypesGenerateError | LegacyGenTypesMetadataError
+  >;
 }
 
 /**

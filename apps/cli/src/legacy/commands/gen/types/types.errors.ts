@@ -40,15 +40,25 @@ export class LegacyInvalidGenTypesDurationError extends Data.TaggedError(
 }
 
 /**
- * A `postgrest-typegen` introspection query or language generator failed
- * against a live database the CLI successfully connected to. Both stages
- * derive entirely from the user's schema contents, so they classify as a
- * database finding rather than a CLI defect.
+ * A `postgrest-typegen` introspection query failed against a live database
+ * the CLI successfully connected to. Schema-derived, so a database finding.
  */
 export class LegacyGenTypesMetadataError extends Data.TaggedError("LegacyGenTypesMetadataError")<{
   readonly message: string;
 }> {
   get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
     return actionability.dbFinding;
+  }
+}
+
+/**
+ * Language generation or formatting failed after introspection succeeded —
+ * a CLI packaging / formatter / template defect, not a user schema finding.
+ */
+export class LegacyGenTypesGenerateError extends Data.TaggedError("LegacyGenTypesGenerateError")<{
+  readonly message: string;
+}> {
+  get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
+    return actionability.internalPanic;
   }
 }

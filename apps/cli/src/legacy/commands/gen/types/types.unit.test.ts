@@ -4,11 +4,21 @@ import { localNetworkId } from "../../../shared/legacy-docker-ids.ts";
 import { legacyGetHostname } from "../../../shared/legacy-hostname.ts";
 import { legacyParseSchemaFlags } from "../../../shared/legacy-schema-flags.ts";
 import {
+  applyProbedSslMode,
+  applyQueryTimeouts,
   defaultSchemas,
   localDbContainerId,
   localDbPassword,
   parseQueryTimeoutSeconds,
 } from "./types.shared.ts";
+
+const BASE_CONN = {
+  host: "db.example.com",
+  port: 5432,
+  user: "postgres",
+  password: "secret",
+  database: "postgres",
+};
 
 function withEnv<T>(key: string, value: string | undefined, run: () => T): T {
   const previous = process.env[key];
@@ -79,6 +89,49 @@ describe("parseQueryTimeoutSeconds", () => {
       expect(Exit.isFailure(exit)).toBe(true);
     }),
   );
+});
+
+describe("applyQueryTimeouts", () => {
+  it("writes statement_timeout last so the flag overrides a DSN value", () => {
+    const conn = applyQueryTimeouts(
+      { ...BASE_CONN, runtimeParams: { statement_timeout: "0", search_path: "public" } },
+      15,
+    );
+    expect(conn.runtimeParams).toEqual({
+      statement_timeout: "15000",
+      search_path: "public",
+    });
+    expect(conn.connectTimeoutSeconds).toBe(15);
+  });
+
+  it("leaves connect timeout unset when the query timeout is zero", () => {
+    const conn = applyQueryTimeouts(BASE_CONN, 0);
+    expect(conn.connectTimeoutSeconds).toBeUndefined();
+    expect(conn.runtimeParams).toEqual({ statement_timeout: "0" });
+  });
+
+  it("keeps an explicit DSN connect_timeout", () => {
+    const conn = applyQueryTimeouts({ ...BASE_CONN, connectTimeoutSeconds: 30 }, 15);
+    expect(conn.connectTimeoutSeconds).toBe(30);
+  });
+});
+
+describe("applyProbedSslMode", () => {
+  it("disables TLS when the probe reports a plain-TCP server", () => {
+    expect(applyProbedSslMode(BASE_CONN, false).sslmode).toBe("disable");
+  });
+
+  it("pins require plus the CA path when the probe reports TLS", () => {
+    expect(applyProbedSslMode(BASE_CONN, true, "/tmp/root.crt")).toMatchObject({
+      sslmode: "require",
+      sslrootcert: "/tmp/root.crt",
+    });
+  });
+
+  it("leaves an explicit sslmode unchanged", () => {
+    const conn = { ...BASE_CONN, sslmode: "verify-full" };
+    expect(applyProbedSslMode(conn, true, "/tmp/root.crt")).toBe(conn);
+  });
 });
 
 describe("schema and id helpers", () => {
