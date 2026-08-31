@@ -12,13 +12,10 @@ import {
   parseDiffAnchors,
   partitionFindings,
   postConsolidatedReview,
-  postTooLargeNotice,
-  type PrStats,
   redactSecrets,
   redactSecretsDeep,
   renderInlineComment,
   renderReviewBody,
-  renderTooLargeNotice,
   type ReviewFooterInfo,
   type ReviewIo,
   type ReviewPayload,
@@ -679,14 +676,6 @@ describe("renderReviewBody", () => {
   });
 });
 
-describe("renderTooLargeNotice", () => {
-  test("includes the diff stats and the dedup marker", () => {
-    const notice = renderTooLargeNotice({ additions: 9000, deletions: 200, changedFiles: 130 });
-    expect(notice).toContain("+9000/-200 lines across 130 files");
-    expect(notice).toContain(AI_REVIEW_MARKER);
-  });
-});
-
 describe("buildReviewPayload", () => {
   const anchors = parseDiffAnchors(SINGLE_HUNK_DIFF); // file.ts: {10,11,12,13,14}
   const footer: ReviewFooterInfo = {
@@ -1013,7 +1002,6 @@ describe("post flow via injected ReviewIo", () => {
   function makeReviewIo(
     opts: {
       diff?: string;
-      stats?: PrStats;
       reviews?: MarkedEntry[];
       comments?: MarkedEntry[];
       postReviewStatuses?: number[];
@@ -1037,8 +1025,6 @@ describe("post flow via injected ReviewIo", () => {
 
     const io: ReviewIo = {
       fetchPrDiff: () => Promise.resolve(opts.diff ?? ""),
-      fetchPrStats: () =>
-        Promise.resolve(opts.stats ?? { additions: 0, deletions: 0, changedFiles: 0 }),
       listReviews: () => {
         calls.push("listReviews");
         if (opts.failSupersede) {
@@ -1068,50 +1054,9 @@ describe("post flow via injected ReviewIo", () => {
         postReviewCalls++;
         return Promise.resolve({ status, body });
       },
-      postIssueComment: (_prNumber, body) => {
-        calls.push("postIssueComment");
-        postedComments.push(body);
-        return Promise.resolve();
-      },
     };
     return { io, updatedReviews, updatedComments, postedReviews, postedComments, calls };
   }
-
-  test("too-large mode posts exactly one issue comment carrying the marker", async () => {
-    const { io, postedComments } = makeReviewIo({
-      stats: { additions: 9000, deletions: 100, changedFiles: 50 },
-    });
-    await postTooLargeNotice(io, 42);
-    expect(postedComments).toHaveLength(1);
-    expect(postedComments[0]).toContain(AI_REVIEW_MARKER);
-    expect(postedComments[0]).toContain("too large for a full AI review");
-  });
-
-  test("too-large mode also supersedes a prior AI notice, after posting the new one", async () => {
-    const priorMarkerComment = {
-      id: 10,
-      body: `Notice\n${AI_REVIEW_MARKER}`,
-      authorLogin: "github-actions[bot]",
-    };
-    const { io, updatedComments, calls } = makeReviewIo({
-      stats: { additions: 9000, deletions: 100, changedFiles: 50 },
-      comments: [priorMarkerComment],
-    });
-    await postTooLargeNotice(io, 42);
-    expect(updatedComments).toEqual([
-      { commentId: 10, body: supersededBody(priorMarkerComment.body) },
-    ]);
-    expect(calls.indexOf("postIssueComment")).toBeLessThan(calls.indexOf("updateIssueCommentBody"));
-  });
-
-  test("a too-large notice still posts even when the best-effort supersede fails", async () => {
-    const { io, postedComments } = makeReviewIo({
-      stats: { additions: 9000, deletions: 100, changedFiles: 50 },
-      failSupersede: true,
-    });
-    await expect(postTooLargeNotice(io, 42)).resolves.toBeUndefined();
-    expect(postedComments).toHaveLength(1);
-  });
 
   test("review mode supersedes only the workflow bot's marker-bearing reviews/comments, after posting", async () => {
     const priorMarkerReview = {

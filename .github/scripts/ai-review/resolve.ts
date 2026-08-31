@@ -1,14 +1,13 @@
 /**
  * AI review resolver: decides whether the one-shot AI review pipeline should
- * run for a PR, and in which mode.
+ * run for a PR.
  *
  * The pipeline runs EXACTLY ONCE per PR, so this is the only gate standing
  * between "new commit lands" and "Claude + Codex burn API budget again". Two
  * triggers feed it:
  *   - manual (`workflow_dispatch` or an internal maintainer's `/ai-review`
  *     issue comment): a human explicitly asked for a review, so the
- *     marker/dedup guard and the draft/fork/bot skips are bypassed. The size
- *     guard still applies — nobody can force a review of an 8000-line diff.
+ *     marker/dedup guard and the draft/fork/bot skips are bypassed.
  *   - auto (`pull_request` `opened`/`ready_for_review`, currently commented
  *     out in the workflow while prompts are tuned): skips drafts, bots, fork
  *     PRs (v1 is internal-PRs-only; forks go through the manual maintainer
@@ -18,8 +17,8 @@
  * `resolveDecision` is the pure orchestration function (I/O injected, like
  * `evaluateAllOpenPrs` in `contribution-gate.ts`) that a test can drive
  * without the network; `main()` wires up the real GitHub I/O, writes the
- * step outputs `should_run`, `pr_number`, `head_ref`, `mode`, and `trigger`
- * to `$GITHUB_OUTPUT`, and surfaces the skip reason (if any) in
+ * step outputs `should_run`, `pr_number`, `head_ref`, and `trigger` to
+ * `$GITHUB_OUTPUT`, and surfaces the skip reason (if any) in
  * `$GITHUB_STEP_SUMMARY`.
  *
  * Run in CI as: `bun .github/scripts/ai-review/resolve.ts`.
@@ -28,7 +27,7 @@
 import { appendFileSync } from "node:fs";
 
 import { fetchAuthorPermission, WRITE_PERMISSIONS } from "../contribution-gate.ts";
-import { AI_REVIEW_MARKER, formatDiffStats } from "./post-review.ts";
+import { AI_REVIEW_MARKER } from "./post-review.ts";
 
 // Re-export so existing consumers (tests, this file's own dedup check) can
 // keep importing the marker from `resolve.ts`; `post-review.ts` — which owns
@@ -40,13 +39,7 @@ export { AI_REVIEW_MARKER };
  * literals in sync. */
 const WORKFLOW_BOT_LOGIN = "github-actions[bot]";
 
-/** Diff size above which a review is deferred to a "too large" notice instead
- * of burning a Claude + Codex pass on a diff nobody will read end to end. */
-const MAX_CHANGED_LINES = 8000;
-const MAX_CHANGED_FILES = 120;
-
 export type EventName = "workflow_dispatch" | "issue_comment" | "pull_request";
-export type Mode = "review" | "too-large";
 export type Trigger = "auto" | "manual";
 
 export interface TriggeringComment {
@@ -75,9 +68,6 @@ export interface PrDetails {
   headRepoFullName: string;
   /** `owner/name` of the repository the PR targets. */
   baseRepoFullName: string;
-  additions: number;
-  deletions: number;
-  changedFiles: number;
 }
 
 /** A prior review or issue comment, checked for the dedup marker. */
@@ -99,36 +89,23 @@ export interface ResolveIo {
 
 export interface ResolveResult {
   shouldRun: boolean;
-  /** Human-readable explanation, present whenever `shouldRun` is false or `mode` is `too-large`. */
+  /** Human-readable explanation, present whenever `shouldRun` is false. */
   skipReason?: string;
-  mode: Mode;
   trigger: Trigger;
 }
 
-function sizeGuardMode(pr: PrDetails): Mode {
-  return pr.additions + pr.deletions > MAX_CHANGED_LINES || pr.changedFiles > MAX_CHANGED_FILES
-    ? "too-large"
-    : "review";
-}
-
-function tooLargeResult(pr: PrDetails, trigger: Trigger): ResolveResult {
-  return {
-    shouldRun: true,
-    skipReason: `PR is too large for a full AI review (${formatDiffStats(pr)}).`,
-    mode: "too-large",
-    trigger,
-  };
-}
-
-function decideForPr(pr: PrDetails, trigger: Trigger): ResolveResult {
-  const mode = sizeGuardMode(pr);
-  return mode === "too-large" ? tooLargeResult(pr, trigger) : { shouldRun: true, mode, trigger };
+/** No size gate: Claude and Codex review agentically — reading the diff and the
+ * changed files via their own tools over many turns, like the local CLI — so a
+ * PR that clears the draft/bot/fork/dedup checks is reviewed regardless of its
+ * size. Very large diffs are handled best-effort within the model's
+ * context/turn budget. */
+function decideForPr(trigger: Trigger): ResolveResult {
+  return { shouldRun: true, trigger };
 }
 
 /**
  * Pure decision orchestration for the AI review pipeline. Given the event
- * context and injected GitHub I/O, decides whether the pipeline should run
- * and in which mode.
+ * context and injected GitHub I/O, decides whether the pipeline should run.
  */
 export async function resolveDecision(input: ResolveInput, io: ResolveIo): Promise<ResolveResult> {
   const trigger: Trigger = input.eventName === "pull_request" ? "auto" : "manual";
@@ -138,7 +115,6 @@ export async function resolveDecision(input: ResolveInput, io: ResolveIo): Promi
     return {
       shouldRun: false,
       skipReason: `PR #${pr.number} is closed.`,
-      mode: "review",
       trigger,
     };
   }
@@ -158,7 +134,6 @@ export async function resolveDecision(input: ResolveInput, io: ResolveIo): Promi
         return {
           shouldRun: false,
           skipReason: `Comment is not the exact /ai-review command (first line: ${JSON.stringify(firstLine)}).`,
-          mode: "review",
           trigger,
         };
       }
@@ -181,7 +156,6 @@ export async function resolveDecision(input: ResolveInput, io: ResolveIo): Promi
             `Commenter @${comment.authorLogin} is not authorized to run /ai-review ` +
             `(author_association=${comment.authorAssociation}, permission=${permission ?? "n/a"}); ` +
             `requires repository write access (or being the repository owner).`,
-          mode: "review",
           trigger,
         };
       }
@@ -195,23 +169,22 @@ export async function resolveDecision(input: ResolveInput, io: ResolveIo): Promi
       }
     }
     // A maintainer explicitly asked, so the marker/dedup guard and the
-    // draft/fork/bot skips below don't apply — only the size guard does.
-    return decideForPr(pr, trigger);
+    // draft/fork/bot skips below don't apply.
+    return decideForPr(trigger);
   }
 
   // Auto trigger (future `pull_request` events): v1 is internal-PRs-only and
   // fires at most once per PR.
   if (pr.draft) {
-    return { shouldRun: false, skipReason: "PR is a draft.", mode: "review", trigger };
+    return { shouldRun: false, skipReason: "PR is a draft.", trigger };
   }
   if (pr.authorIsBot) {
-    return { shouldRun: false, skipReason: "PR author is a bot.", mode: "review", trigger };
+    return { shouldRun: false, skipReason: "PR author is a bot.", trigger };
   }
   if (pr.headRepoFullName !== pr.baseRepoFullName) {
     return {
       shouldRun: false,
       skipReason: "PR is from a fork; ask a maintainer to comment /ai-review instead.",
-      mode: "review",
       trigger,
     };
   }
@@ -230,12 +203,11 @@ export async function resolveDecision(input: ResolveInput, io: ResolveIo): Promi
     return {
       shouldRun: false,
       skipReason: "PR already received an AI review; comment /ai-review to request another.",
-      mode: "review",
       trigger,
     };
   }
 
-  return decideForPr(pr, trigger);
+  return decideForPr(trigger);
 }
 
 // --- GitHub I/O (only runs when executed directly) ---
@@ -276,9 +248,6 @@ interface RestPullRequest {
   user: { type: string } | null;
   head: { repo: { full_name: string } | null };
   base: { repo: { full_name: string } };
-  additions: number;
-  deletions: number;
-  changed_files: number;
 }
 
 function isRecordEntry(value: unknown): value is Record<string, unknown> {
@@ -313,10 +282,7 @@ function assertRestPullRequest(value: unknown): asserts value is RestPullRequest
     ) ||
     !isRecordEntry(value.base) ||
     !isRecordEntry(value.base.repo) ||
-    typeof value.base.repo.full_name !== "string" ||
-    typeof value.additions !== "number" ||
-    typeof value.deletions !== "number" ||
-    typeof value.changed_files !== "number"
+    typeof value.base.repo.full_name !== "string"
   ) {
     throw new Error("Malformed GitHub pull request response: missing or mistyped required fields.");
   }
@@ -346,9 +312,6 @@ async function fetchPullRequest(token: string, base: string, prNumber: number): 
     authorIsBot: pr.user?.type === "Bot",
     headRepoFullName: pr.head.repo?.full_name ?? "",
     baseRepoFullName: pr.base.repo.full_name,
-    additions: pr.additions,
-    deletions: pr.deletions,
-    changedFiles: pr.changed_files,
   };
 }
 
@@ -406,7 +369,6 @@ function writeOutputs(result: ResolveResult, prNumber: number): void {
     should_run: String(result.shouldRun),
     pr_number: String(prNumber),
     head_ref: `refs/pull/${prNumber}/head`,
-    mode: result.mode,
     trigger: result.trigger,
   };
   const lines = Object.entries(entries).map(([name, value]) => {
@@ -471,7 +433,7 @@ async function main(): Promise<void> {
   const result = await resolveDecision({ eventName, prNumber, comment }, io);
 
   console.log(
-    `AI review resolve for PR #${prNumber}: should_run=${result.shouldRun} mode=${result.mode} ` +
+    `AI review resolve for PR #${prNumber}: should_run=${result.shouldRun} ` +
       `trigger=${result.trigger}${result.skipReason ? ` (${result.skipReason})` : ""}`,
   );
 
