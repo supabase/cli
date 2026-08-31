@@ -41,7 +41,7 @@
 | `0`  | success — secrets unset from the linked project                                            |
 | `0`  | empty-args path resolved to zero non-`SUPABASE_` secrets (stderr no-op, no DELETE call)    |
 | `1`  | `LegacyPlatformAuthRequiredError` — no token in env/keyring/file                           |
-| `1`  | `LegacyInvalidAccessTokenError` — token violates `^sbp_(oauth_)?[a-f0-9]{40}$`             |
+| `1`  | `LegacyInvalidAccessTokenError` — token violates `^sbp_(oauth_\|v0_)?[a-f0-9]{40}$`        |
 | `1`  | `LegacyProjectNotLinkedError` — `--project-ref` unset, env/file empty, and stdin not a TTY |
 | `1`  | `LegacyInvalidProjectRefError` — resolved ref violates `^[a-z]{20}$`                       |
 | `1`  | `LegacySecretsListUnexpectedStatusError` — non-2xx response from GET (empty-args path)     |

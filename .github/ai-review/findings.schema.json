@@ -1,8 +1,8 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://github.com/supabase/cli/.github/ai-review/findings.schema.json",
-  "title": "AI review findings (Claude)",
-  "description": "Structured output contract for the one-shot Claude review pass. Kept in sync by hand with the `assertFindings` validator in .github/scripts/ai-review/post-review.ts.",
+  "title": "AI review findings (independent pass)",
+  "description": "Structured output contract for an independent review pass (Claude or Codex). Follows OpenAI structured-output strict-mode rules — every property is listed in `required` and optional fields are nullable — so it can be used as Codex's `output-schema-file`. Kept in sync by hand with the `assertFindings` validator in .github/scripts/ai-review/post-review.ts.",
   "type": "object",
   "additionalProperties": false,
   "required": ["summary", "findings"],
@@ -16,7 +16,17 @@
       "items": {
         "type": "object",
         "additionalProperties": false,
-        "required": ["id", "file", "line", "severity", "category", "claim", "evidence"],
+        "required": [
+          "id",
+          "file",
+          "line",
+          "end_line",
+          "severity",
+          "category",
+          "claim",
+          "evidence",
+          "suggested_fix"
+        ],
         "properties": {
           "id": {
             "type": "string",
@@ -31,8 +41,8 @@
             "description": "1-based line number on the new (RIGHT) side of the diff."
           },
           "end_line": {
-            "type": "integer",
-            "description": "Optional 1-based end line, for findings spanning a range."
+            "type": ["integer", "null"],
+            "description": "1-based end line for findings spanning a range, or null."
           },
           "severity": {
             "type": "string",
@@ -50,11 +60,11 @@
           },
           "evidence": {
             "type": "string",
-            "description": "Concrete file:line evidence backing the claim, verified against the surrounding code, not just the diff."
+            "description": "Concrete file:line evidence backing the claim."
           },
           "suggested_fix": {
-            "type": "string",
-            "description": "Optional concrete suggestion for how to address the finding."
+            "type": ["string", "null"],
+            "description": "Concrete suggestion for how to address the finding, or null."
           }
         }
       }

@@ -41,7 +41,7 @@
 ### `--output-format text`
 
 Prints `Resetting database to version: <version>` to stderr, then drops every
-user schema/object (the bundled `drop.sql` DO-block), upserts `[db.vault]`
+user schema/object (the embedded `legacyDropObjectsSql` DO-block), upserts `[db.vault]`
 secrets, and re-applies local migrations `<= version` plus seed files (each gated
 on `db.migrations.enabled` / `db.seed.enabled`). Nothing is written to stdout.
 
