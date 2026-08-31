@@ -898,8 +898,9 @@ const legacyWarmShadow = <E>(
  *
  * The `E` in the error channel is {@link legacyResolveShadowCacheKeyInputs}'s own JWKS
  * resolution alone (see that function's doc comment): every OTHER failure this function's own
- * body can produce while computing the key or restoring the snapshot is caught and degraded to a
- * cold provision — a genuine JWKS failure is the one case that must reach the caller instead,
+ * body can produce while computing the key or restoring the snapshot is caught and degraded — an
+ * unusable cache root to the plain uncached shadow (with a warning), anything on the warm path to
+ * a cold provision — a genuine JWKS failure is the one case that must reach the caller instead,
  * since a real cold provision at this input would have failed the same way.
  */
 export const legacyAcquireShadowDatabase = <E>(
@@ -926,11 +927,28 @@ export const legacyAcquireShadowDatabase = <E>(
     // Interruptible: nothing acquired yet; JWKS discovery must not pin Ctrl-C.
     const keyInputs = yield* Effect.interruptible(legacyResolveShadowCacheKeyInputs(input, opts));
     if (Option.isNone(keyInputs)) return yield* legacyUncachedShadow(spawner, input);
-    const key = legacyShadowCacheKey(keyInputs.value);
-    const tarPath = input.path.join(
-      legacyShadowBaselineCacheDir(input.path),
-      legacyShadowBaselineTarFileName(key),
+
+    // The cache root must be usable BEFORE committing to the cached lifecycle: the cold path
+    // drops `--rm` and pays a stop → export → restart cycle whose write is already doomed when
+    // this directory cannot be created (an unwritable or root-squashed `SUPABASE_HOME`) — and
+    // with the cache on by default, every affected invocation would pay that cycle just to warn.
+    // The probe is the exact mkdir the export performs; the export keeps its own as a safety net
+    // for a root that vanishes mid-run.
+    const cacheDir = legacyShadowBaselineCacheDir(input.path);
+    const cacheRoot = yield* Effect.result(
+      input.fs.makeDirectory(cacheDir, { recursive: true, mode: 0o700 }),
     );
+    if (Result.isFailure(cacheRoot)) {
+      const output = yield* Output;
+      yield* output.raw(
+        `Warning: shadow baseline cache unavailable (cannot create ${cacheDir}: ${cacheRoot.failure.message}); continuing uncached.\n`,
+        "stderr",
+      );
+      return yield* legacyUncachedShadow(spawner, input);
+    }
+
+    const key = legacyShadowCacheKey(keyInputs.value);
+    const tarPath = input.path.join(cacheDir, legacyShadowBaselineTarFileName(key));
 
     const cached = yield* input.fs.exists(tarPath).pipe(Effect.orElseSucceed(() => false));
     if (!cached)

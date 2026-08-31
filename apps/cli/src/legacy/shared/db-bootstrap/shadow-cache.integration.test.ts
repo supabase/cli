@@ -341,6 +341,37 @@ describe("legacyAcquireShadowDatabase", () => {
     ).pipe(Effect.provide(Layer.mergeAll(BunServices.layer, out.layer, cluster.layer)));
   });
 
+  it.live(
+    "an unusable cache root degrades to the uncached shadow, not a doomed cold export",
+    () => {
+      const docker = mockLegacyDockerDaemonCliSpawner();
+      const cluster = fakeCluster();
+      const out = mockOutput();
+      return withShadowCacheHome(
+        "1",
+        Effect.gen(function* () {
+          const fs = yield* FileSystem.FileSystem;
+          const path = yield* Path.Path;
+          // A regular FILE occupies the cache root's path, so its mkdir can never succeed — the
+          // same terminal shape as an unwritable or root-squashed `SUPABASE_HOME`. Committing to
+          // the cached lifecycle anyway would drop `--rm` and pay a stop → failed export → restart
+          // cycle on every invocation, so the acquire must degrade to the plain uncached shadow.
+          const cacheDir = shadowCacheDir(path);
+          yield* fs.makeDirectory(path.dirname(cacheDir), { recursive: true });
+          yield* fs.writeFileString(cacheDir, "not a directory");
+
+          const handle = yield* legacyAcquireShadowDatabase(docker.spawner, shadowInput(fs, path));
+          expect(handle.baselinePresent).toBe(false);
+          expect(handle.snapshotRequired).toBe(false);
+          expect(docker.calls("create")[0] ?? []).toContain("--rm");
+          yield* handle.snapshotBaseline;
+          expect(docker.calls("stop")).toEqual([]);
+          expect(out.stderrText).toContain("shadow baseline cache unavailable");
+        }),
+      ).pipe(Effect.provide(Layer.mergeAll(BunServices.layer, out.layer, cluster.layer)));
+    },
+  );
+
   it.live("a project dotenv opt-out (SUPABASE_SHADOW_CACHE=0) disables the default", () => {
     const docker = mockLegacyDockerDaemonCliSpawner();
     const cluster = fakeCluster();
