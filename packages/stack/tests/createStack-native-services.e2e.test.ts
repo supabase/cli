@@ -44,9 +44,9 @@ const NATIVE_SERVICES = [
 const JWT_SECRET = "native-services-e2e-jwt-secret-with-at-least-32-characters";
 const EDGE_LOG_MARKER = "native-services-vector-marker";
 const LAZY_REALTIME_CLIENT_MARGIN_MS = 15_000;
-const LAZY_REALTIME_SUBSCRIPTION_DEADLINE_MS =
+const LAZY_REALTIME_CLIENT_WINDOW_MS =
   activationTimeoutSecondsForService("realtime") * 1000 + LAZY_REALTIME_CLIENT_MARGIN_MS;
-const LAZY_REALTIME_CHANGE_GUARD_MS = LAZY_REALTIME_SUBSCRIPTION_DEADLINE_MS + 30_000;
+const LAZY_REALTIME_CHANGE_GUARD_MS = LAZY_REALTIME_CLIENT_WINDOW_MS + 30_000;
 
 const tinyPng = new Uint8Array([
   0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0x00, 0x00, 0x00, 0x0d, 0x49, 0x48, 0x44, 0x52,
@@ -549,7 +549,8 @@ describe("native remaining service graph", () => {
         realtimeClientDiagnostics = collectRealtimeClientDiagnostics();
         const realtime = createClient(stack.url, stack.publishableKey, {
           realtime: {
-            timeout: LAZY_REALTIME_SUBSCRIPTION_DEADLINE_MS,
+            timeout: LAZY_REALTIME_CLIENT_WINDOW_MS,
+            heartbeatIntervalMs: LAZY_REALTIME_CLIENT_WINDOW_MS,
             logger: realtimeClientDiagnostics.log,
           },
         });
