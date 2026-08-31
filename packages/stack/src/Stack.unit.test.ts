@@ -130,6 +130,23 @@ const edgeRuntimeConfig: ResolvedStackConfig = {
   },
 };
 
+const poolerConfig: ResolvedStackConfig = {
+  ...defaultConfig,
+  servicePolicies: { ...defaultConfig.servicePolicies, pooler: "eager" },
+  pooler: {
+    sessionPort: defaultPorts.poolerSessionPort,
+    transactionPort: defaultPorts.poolerTransactionPort,
+    apiPort: defaultPorts.poolerApiPort,
+    mode: "transaction",
+    version: DEFAULT_VERSIONS.pooler,
+    tenantId: "pooler tenant/@42",
+    encryptionKey: "12345678901234567890123456789012",
+    secretKeyBase: "1234567890123456789012345678901234567890123456789012345678901234",
+    defaultPoolSize: 20,
+    maxClientConn: 100,
+  },
+};
+
 const functionsBundle = (root: string, value: string): ResolvedFunctionsBundle => ({
   env: { SHARED: value },
   functions: [
@@ -201,7 +218,7 @@ describe("Stack", () => {
   );
 
   it.effect("getInfo returns correct URLs based on config", () => {
-    const { layer } = setupLayer();
+    const { layer } = setupLayer(poolerConfig);
 
     return Effect.gen(function* () {
       const stack = yield* Stack;
@@ -211,6 +228,9 @@ describe("Stack", () => {
       expect(info.dbUrl).toBe("postgresql://postgres:postgres@127.0.0.1:54322/postgres");
       expect(info.serviceEndpoints.auth).toBe("http://127.0.0.1:54321/auth/v1");
       expect(info.serviceEndpoints.postgrest).toBe("http://127.0.0.1:54321/rest/v1");
+      expect(info.serviceEndpoints.pooler).toBe(
+        "postgresql://postgres.pooler%20tenant%2F%4042:postgres@127.0.0.1:54340/postgres",
+      );
     }).pipe(Effect.provide(layer));
   });
 

@@ -193,7 +193,9 @@ const createStackAttempt = (
         let disposalStarted = false;
         const awaitDisposal = Deferred.await(disposalCompletion).pipe(
           Effect.flatMap((exit) =>
-            Exit.isSuccess(exit) ? Effect.void : Effect.failCause(exit.cause),
+            Exit.isSuccess(exit) || Cause.hasInterruptsOnly(exit.cause)
+              ? Effect.void
+              : Effect.failCause(exit.cause),
           ),
         );
         const dispose = Effect.uninterruptibleMask((restore) =>

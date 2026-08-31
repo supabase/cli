@@ -110,14 +110,20 @@ ${include.map((path) => `      - ${yamlString(path)}`).join("\n")}
     exclude:
 ${exclude.map((path) => `      - ${yamlString(path)}`).join("\n")}
     read_from: beginning
-    decoding:
-      codec: json
+
+transforms:
+  parse_native_logs:
+    type: remap
+    inputs:
+      - native_logs
+    source: |
+      . = parse_json!(.message)
 
 sinks:
   logflare:
     type: http
     inputs:
-      - native_logs
+      - parse_native_logs
     encoding:
       codec: json
     method: post

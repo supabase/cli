@@ -28,7 +28,9 @@ interface DockerPgmetaOptions extends PgmetaServiceOptions, ContainerRuntimeOpti
 
 const pgmetaEnv = (
   opts: Omit<PgmetaServiceOptions, "dbHost"> & { readonly dbHost?: string },
+  host?: string,
 ): Record<string, string> => ({
+  ...(host === undefined ? {} : { PG_META_HOST: host }),
   PG_META_PORT: String(opts.port),
   PG_META_DB_HOST: opts.dbHost ?? "127.0.0.1",
   PG_META_DB_NAME: "postgres",
@@ -64,7 +66,7 @@ export const makePgmetaServiceNative = (opts: NativePgmetaOptions): ServiceDef =
   nativeRunService({
     name: "pgmeta",
     command: `${opts.binPath}/bin/pgmeta`,
-    env: pgmetaEnv(opts),
+    env: pgmetaEnv(opts, "127.0.0.1"),
     dependencies: opts.dependencies,
     healthCheck: pgmetaHealthCheck(opts.port),
   });

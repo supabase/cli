@@ -4,6 +4,7 @@ import type { StackIdentity } from "../StackIdentity.ts";
 import {
   dockerRunService,
   hostHttpHealthCheck,
+  nativeBeamLoopbackEnv,
   nativeRunService,
   type ContainerRuntimeOptions,
   type ServiceDependency,
@@ -48,6 +49,7 @@ interface DockerRealtimeOptions extends RealtimeServiceOptions, ContainerRuntime
 const realtimeEnv = (
   opts: Omit<RealtimeServiceOptions, "dbHost"> & {
     readonly dbHost?: string;
+    readonly dbUser?: string;
     readonly nodeName?: string;
     readonly releaseCookie?: string;
   },
@@ -55,7 +57,7 @@ const realtimeEnv = (
   PORT: String(opts.port),
   DB_HOST: opts.dbHost ?? "127.0.0.1",
   DB_PORT: String(opts.dbPort),
-  DB_USER: "postgres",
+  DB_USER: opts.dbUser ?? "postgres",
   DB_PASSWORD: "postgres",
   DB_NAME: "postgres",
   DB_AFTER_CONNECT_QUERY: "SET search_path TO _realtime",
@@ -74,6 +76,7 @@ const realtimeEnv = (
   ...(opts.nodeName === undefined || opts.releaseCookie === undefined
     ? {}
     : {
+        ...nativeBeamLoopbackEnv,
         NODE_NAME: opts.nodeName,
         NODE_IP: "127.0.0.1",
         RELEASE_NODE: `${opts.nodeName}@127.0.0.1`,
@@ -119,7 +122,7 @@ export const makeRealtimeServiceDocker = (opts: DockerRealtimeOptions): ServiceD
 export const makeRealtimeServicesNative = (
   opts: NativeRealtimeOptions,
 ): NativeRealtimeServiceBundle => {
-  const env = realtimeEnv(opts);
+  const env = realtimeEnv({ ...opts, dbUser: "supabase_admin" });
   const migrate = nativeRunService({
     name: "realtime-migrate",
     command: `${opts.binPath}/bin/migrate`,

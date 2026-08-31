@@ -57,11 +57,25 @@ const postgresGetKeyScript = (binPath: string): string =>
 const postgresHealthCheck = (binPath: string, port: number) => ({
   probe: {
     _tag: "Exec" as const,
-    command: `${binPath}/bin/pg_isready`,
-    args: ["-h", "127.0.0.1", "-p", String(port), "-U", "postgres"],
+    command: `${binPath}/bin/psql`,
+    args: [
+      "-h",
+      "127.0.0.1",
+      "-p",
+      String(port),
+      "-U",
+      "supabase_admin",
+      "-d",
+      "postgres",
+      "--no-psqlrc",
+      "--no-password",
+      "-c",
+      "SELECT 1",
+    ],
     env: {
       DYLD_LIBRARY_PATH: `${binPath}/lib`,
       LD_LIBRARY_PATH: `${binPath}/lib`,
+      PGPASSWORD: "postgres",
     },
   },
   ...stackHealthBudgets.postgresNative,

@@ -88,7 +88,7 @@ describe("StackBuilder native graph", () => {
             const prepared = yield* preparation.prepare(input);
             const scope = yield* Effect.scope;
             return yield* builder
-              .build(config, prepared)
+              .build(config, prepared, { beamReleaseCookie: "stack-release-cookie" })
               .pipe(Effect.provideService(Scope.Scope, scope));
           }).pipe(Effect.provide(layer)),
         ),
@@ -102,11 +102,12 @@ describe("StackBuilder native graph", () => {
           "realtime-migrate",
           "realtime-seed",
           "analytics-migrate",
+          "analytics-seed",
           "pooler-migrate",
           "pooler-bootstrap",
         ]),
       );
-      expect(names).toHaveLength(19);
+      expect(names).toHaveLength(20);
       expect(result.cleanupTargets.dockerContainerNames).toEqual([]);
 
       for (const service of SERVICE_NAMES) {
@@ -131,6 +132,15 @@ describe("StackBuilder native graph", () => {
       expect(result.graph.startOrder.find((service) => service.name === "analytics")?.args).toEqual(
         ["start", "--sname", "logflare_41000"],
       );
+      for (const service of ["realtime", "analytics", "pooler"] as const) {
+        expect(
+          result.graph.startOrder.find((candidate) => candidate.name === service)?.env,
+        ).toMatchObject({
+          ERL_EPMD_ADDRESS: "127.0.0.1",
+          ERL_AFLAGS: "-proto_dist inet_tcp -kernel inet_dist_use_interface '{127,0,0,1}'",
+          RELEASE_COOKIE: "stack-release-cookie",
+        });
+      }
       expect(
         result.graph.startOrder.find((service) => service.name === "studio")?.env,
       ).toMatchObject({
@@ -162,6 +172,11 @@ describe("StackBuilder native graph", () => {
         ownerStatusWhileActive: "Initializing",
       });
       expect(result.serviceProjection.get("analytics-migrate")).toEqual({
+        visibility: "internal",
+        owner: "analytics",
+        ownerStatusWhileActive: "Initializing",
+      });
+      expect(result.serviceProjection.get("analytics-seed")).toEqual({
         visibility: "internal",
         owner: "analytics",
         ownerStatusWhileActive: "Initializing",

@@ -137,8 +137,8 @@ export const makeEdgeRuntimeServiceNative = (opts: NativeEdgeRuntimeOptions): Se
   nativeRunService({
     name: "edge-runtime",
     command: `${opts.binPath}/bin/.edge-runtime-wrapped`,
-    args: [...edgeRuntimeArgs(opts, opts.bootstrapDir)],
-    cwd: opts.projectDir,
+    args: [...edgeRuntimeArgs(opts, ".")],
+    cwd: opts.bootstrapDir,
     env: edgeRuntimeEnv(opts),
     posixResourceLimits: { nofileSoft: edgeRuntimeNofileSoftLimit },
     dependencies: opts.dependencies,

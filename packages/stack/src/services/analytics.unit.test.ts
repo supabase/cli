@@ -8,6 +8,7 @@ describe("makeAnalyticsServicesNative", () => {
       binPath: "/cache/analytics/v1.50.3/darwin-arm64",
       runtimeRoot: "/tmp/stacks/project-a/runtime",
       nodeName: "logflare_stack_a",
+      releaseCookie: "stack-release-cookie",
       hostPort: 54327,
       dbPort: 54322,
       apiKey: "analytics-key",
@@ -22,12 +23,63 @@ describe("makeAnalyticsServicesNative", () => {
       restart: "no",
       dependencies,
     });
+    expect(bundle.seed).toMatchObject({
+      name: "analytics-seed",
+      command: "/cache/analytics/v1.50.3/darwin-arm64/bin/logflare",
+      args: [
+        "eval",
+        `{:ok, _} = Application.ensure_all_started(:logflare)
+startup_task =
+  Supervisor.which_children(Logflare.Supervisor)
+  |> Enum.find(fn
+    {Task, pid, :worker, _modules} when is_pid(pid) -> true
+    _ -> false
+  end)
+
+case startup_task do
+  {Task, pid, :worker, _modules} ->
+    ref = Process.monitor(pid)
+
+    receive do
+      {:DOWN, ^ref, :process, ^pid, :normal} -> :ok
+      {:DOWN, ^ref, :process, ^pid, reason} ->
+        raise "Logflare startup task failed: #{inspect(reason)}"
+    after
+      120_000 ->
+        Process.demonitor(ref, [:flush])
+        raise "Timed out waiting for Logflare startup task"
+    end
+
+  nil ->
+    :ok
+end
+
+status = Logflare.SingleTenant.supabase_mode_status()
+
+if status |> Map.values() |> Enum.all?(&(&1 == :ok)) do
+  :ok
+else
+  raise "Logflare single-tenant bootstrap incomplete: #{inspect(status)}"
+end`,
+      ],
+      restart: "no",
+      dependencies: [{ service: "analytics-migrate", condition: "completed" }],
+    });
+    expect(bundle.seed.env).toMatchObject({
+      PORT: "0",
+      PHX_HTTP_PORT: "0",
+      PHX_HTTP_IP: "127.0.0.1",
+      LOGFLARE_SINGLE_TENANT: "true",
+      LOGFLARE_SUPABASE_MODE: "true",
+      LOGFLARE_PUBLIC_ACCESS_TOKEN: "analytics-key-public",
+      LOGFLARE_PRIVATE_ACCESS_TOKEN: "analytics-key",
+    });
     expect(bundle.server).toMatchObject({
       name: "analytics",
       command: "/cache/analytics/v1.50.3/darwin-arm64/bin/logflare",
       args: ["start", "--sname", "logflare_stack_a"],
       restart: "unless-stopped",
-      dependencies: [{ service: "analytics-migrate", condition: "completed" }],
+      dependencies: [{ service: "analytics-seed", condition: "completed" }],
     });
     expect(bundle.server.env).toMatchObject({
       PORT: "54327",
@@ -38,7 +90,11 @@ describe("makeAnalyticsServicesNative", () => {
       DB_POOL_SIZE: "2",
       LOGFLARE_PUBSUB_POOL_SIZE: "2",
       ELIXIR_ERL_OPTIONS: "+S 1:1 +SDio 1 +sbwt none +sbwtdcpu none +sbwtdio none",
+      ERL_AFLAGS: "-proto_dist inet_tcp -kernel inet_dist_use_interface '{127,0,0,1}'",
+      ERL_EPMD_ADDRESS: "127.0.0.1",
       ERL_CRASH_DUMP: "/tmp/stacks/project-a/runtime/analytics/erl_crash.dump",
+      RELEASE_COOKIE: "stack-release-cookie",
+      LOGFLARE_PUBLIC_ACCESS_TOKEN: "analytics-key-public",
       LOGFLARE_PRIVATE_ACCESS_TOKEN: "analytics-key",
     });
     expect(bundle.server.healthCheck?.probe).toEqual({

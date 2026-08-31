@@ -169,8 +169,14 @@ function dirname(path: string) {
   return index === -1 ? "." : path.slice(0, index);
 }
 
-function fileUrl(path: string) {
-  return new URL(`file://${path}`).href;
+/** Resolve a generated function path against the native Edge Runtime cwd. */
+export function fileUrl(path: string, cwd?: string) {
+  const absolutePath = path.startsWith("/")
+    ? path
+    : `${(cwd ?? (typeof Deno === "undefined" ? "" : Deno.cwd())).replace(/\/+$/, "")}/${path}`;
+  const url = new URL("file:///");
+  url.pathname = absolutePath.replace(/%/g, "%25").replace(/\\/g, "%5C");
+  return url.href;
 }
 
 async function serveFunction(req: Request, config: any, functionName: string, functionConfig: any) {

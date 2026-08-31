@@ -3,7 +3,7 @@ import { makePoolerServicesNative } from "./pooler.ts";
 
 const dependencies = [{ service: "postgres-init", condition: "completed" }] as const;
 
-const makePooler = (mode: "transaction" | "session") =>
+const makePooler = (mode: "transaction" | "session", tenantId = "pooler-dev") =>
   makePoolerServicesNative({
     binPath: "/cache/pooler/v2.9.10/darwin-arm64",
     runtimeRoot: "/tmp/stacks/project-a/runtime",
@@ -17,7 +17,7 @@ const makePooler = (mode: "transaction" | "session") =>
     defaultPoolSize: 20,
     maxClientConn: 100,
     jwtSecret: "super-secret-jwt-token-with-at-least-32-characters-long",
-    tenantId: "pooler-dev",
+    tenantId,
     encryptionKey: "12345678901234567890123456789012",
     secretKeyBase: "1234567890123456789012345678901234567890123456789012345678901234",
     dependencies,
@@ -38,6 +38,16 @@ describe("makePoolerServicesNative", () => {
       command: "/cache/pooler/v2.9.10/darwin-arm64/bin/supavisor",
       restart: "no",
       dependencies: [{ service: "pooler-migrate", condition: "completed" }],
+    });
+    expect(bundle.bootstrap.env).toMatchObject({
+      PORT: "0",
+      PROXY_PORT: "0",
+      PROXY_PORT_SESSION: "0",
+      PROXY_PORT_TRANSACTION: "0",
+      DATABASE_URL: "ecto://postgres:postgres@127.0.0.1:54322/_supabase",
+      API_JWT_SECRET: "super-secret-jwt-token-with-at-least-32-characters-long",
+      NODE_NAME: "supavisor_id_stack_a",
+      RELEASE_COOKIE: "supabase_stack_a_cookie",
     });
     expect(bundle.bootstrap.args?.[0]).toBe("eval");
     expect(bundle.bootstrap.args?.[1]).toContain('"external_id" => "pooler-dev"');
@@ -75,5 +85,22 @@ describe("makePoolerServicesNative", () => {
       PROXY_PORT_TRANSACTION: "54331",
       PROXY_PORT_SESSION: "54330",
     });
+  });
+
+  it("encodes tenant IDs as safe Elixir string literals", () => {
+    const tenantId = 'tenant"\\\\\n\r\t\u0000';
+    const bundle = makePooler("transaction", tenantId);
+
+    const script = bundle.bootstrap.args?.[1];
+    expect(script).toContain('"external_id" => "tenant\\\"\\\\\\\\\\n\\r\\t\\u0000"');
+  });
+
+  it("escapes Elixir interpolation in tenant IDs", () => {
+    const tenantId = 'tenant#{System.cmd("echo", ["unsafe"])}';
+    const script = makePooler("transaction", tenantId).bootstrap.args?.[1];
+
+    expect(script).toContain(
+      '"external_id" => "tenant\\#{System.cmd(\\"echo\\", [\\"unsafe\\"])}"',
+    );
   });
 });

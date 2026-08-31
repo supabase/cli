@@ -186,6 +186,53 @@ describe("reservePortSet", () => {
     }
   });
 
+  it("keeps the PgMeta admin port out of other automatic allocations", async () => {
+    const lease = await run(reservePortSet([automatic("pgmetaPort"), automatic("apiPort")]));
+    try {
+      const pgmetaPort = lease.ports.pgmetaPort;
+      const apiPort = lease.ports.apiPort;
+      if (pgmetaPort === undefined || apiPort === undefined) {
+        throw new Error("Expected PgMeta and API ports");
+      }
+      expect(apiPort).not.toBe(pgmetaPort + 1);
+    } finally {
+      await run(lease.releaseAll);
+    }
+  });
+
+  it("rejects an exact PgMeta base when its admin port is already owned", async () => {
+    await run(
+      Effect.scoped(
+        Effect.gen(function* () {
+          const occupied = yield* occupyFreePort();
+          expect(occupied.port).toBeGreaterThan(1);
+          const exit = yield* reservePortSet([
+            { field: "pgmetaPort", selection: { kind: "exact", port: occupied.port - 1 } },
+          ]).pipe(Effect.exit);
+          expect(Exit.isFailure(exit)).toBe(true);
+          if (Exit.isFailure(exit)) {
+            expect(Cause.squash(exit.cause)).toMatchObject({
+              field: "pgmetaPort",
+              port: occupied.port,
+            });
+          }
+        }),
+      ),
+    );
+  });
+
+  it("releases every PgMeta listener when releasing its field", async () => {
+    const lease = await run(reservePortSet([automatic("pgmetaPort")]));
+    try {
+      await run(lease.release(["pgmetaPort"]));
+      // Reusing the same lease retains both ownership claims. Successful
+      // re-reservation therefore proves both TCP listeners were released.
+      await run(lease.reserve(["pgmetaPort"]));
+    } finally {
+      await run(lease.releaseAll);
+    }
+  });
+
   it("retains claims after TCP release until releaseAll", async () => {
     const lease = await run(reservePortSet([automatic("apiPort")]));
     const port = lease.ports.apiPort;

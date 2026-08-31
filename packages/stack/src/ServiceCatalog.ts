@@ -207,7 +207,7 @@ export const SERVICE_CATALOG: {
       native: nativeSource("realtime", ["bin/migrate", "bin/realtime", "bin/server"]),
     },
     activation: { activates: [], owns: [] },
-    preparation: preparation(["eager"], "eager", ["postgres"]),
+    preparation: preparation(["lazy", "eager"], "eager", ["postgres"]),
     portFields: ["realtimePort"],
   },
   storage: {

@@ -83,6 +83,7 @@ const runtimeBootLayer = (
     postgrestAdminPort: config.postgrest !== false ? config.postgrest.adminPort : 0,
     edgeRuntimePort: config.edgeRuntime !== false ? config.edgeRuntime.port : 0,
     realtimePort: config.realtime !== false ? config.realtime.port : 0,
+    realtimeTenantId: config.realtime !== false ? config.realtime.tenantId : "realtime-dev",
     storagePort: config.storage !== false ? config.storage.port : 0,
     pgmetaPort: config.pgmeta !== false ? config.pgmeta.port : 0,
     analyticsPort: config.analytics !== false ? config.analytics.port : 0,

@@ -58,6 +58,11 @@ export interface BuildResult {
   readonly serviceProjection: StackServiceProjectionCatalog;
 }
 
+/** Secrets owned by one in-process stack runtime while its native graph is built. */
+export interface StackBuilderBuildOptions {
+  readonly beamReleaseCookie?: string;
+}
+
 // Serial health-check paths used by dependency waits; keep each path aligned
 // with the corresponding service's transitive dependencies.
 const postgresStartupPath: ReadonlyArray<ServiceName> = ["postgres"];
@@ -69,8 +74,6 @@ const analyticsNodeName = (identityKey: string): string =>
   `logflare_${identityKey.replaceAll("-", "_")}`;
 const beamNodeName = (service: "realtime" | "pooler", identityKey: string): string =>
   `${service}_${identityKey.replaceAll("-", "_")}`;
-const beamReleaseCookie = (identityKey: string): string =>
-  `supabase_${identityKey.replaceAll("-", "_")}_cookie`;
 
 const postgresDependencyTimeoutSeconds = dependencyTimeoutSecondsForServices(postgresStartupPath);
 
@@ -251,11 +254,16 @@ export class StackBuilder extends Context.Service<
     readonly build: (
       config: ResolvedStackConfig,
       prepared: PreparedStackArtifacts,
+      options?: StackBuilderBuildOptions,
     ) => Effect.Effect<BuildResult, StackBuildError, FileSystem.FileSystem | Scope.Scope>;
   }
 >()("local/StackBuilder") {
   static layer: Layer.Layer<StackBuilder> = Layer.succeed(this, {
-    build: (config: ResolvedStackConfig, prepared: PreparedStackArtifacts) =>
+    build: (
+      config: ResolvedStackConfig,
+      prepared: PreparedStackArtifacts,
+      options?: StackBuilderBuildOptions,
+    ) =>
       Effect.gen(function* () {
         yield* validateResolvedConfig(config);
 
@@ -314,6 +322,10 @@ export class StackBuilder extends Context.Service<
           postgresInitCompletionBudgetSeconds;
         const jwtJwks = generateJwks(config.jwtSecret);
         const identity = stackIdentity(config);
+        // The owning LocalStack supplies one secret for its entire runtime. Direct builder
+        // consumers get an ephemeral fallback so native definitions remain self-contained.
+        const releaseCookie =
+          options?.beamReleaseCookie ?? `supabase_${identity.key.replaceAll("-", "")}_cookie`;
 
         const postgresService =
           postgresResolution.type === "binary"
@@ -519,7 +531,7 @@ export class StackBuilder extends Context.Service<
             const bundle = makeRealtimeServicesNative({
               binPath: realtimeResolution.path,
               nodeName: beamNodeName("realtime", identity.key),
-              releaseCookie: beamReleaseCookie(identity.key),
+              releaseCookie,
               port: config.realtime.port,
               dbPort: config.dbPort,
               jwtSecret: config.jwtSecret,
@@ -686,6 +698,7 @@ export class StackBuilder extends Context.Service<
               binPath: analyticsResolution.path,
               runtimeRoot: config.runtimeRoot,
               nodeName: analyticsNodeName(identity.key),
+              releaseCookie,
               hostPort: config.analytics.port,
               dbPort: config.dbPort,
               apiKey: config.analytics.apiKey,
@@ -693,9 +706,15 @@ export class StackBuilder extends Context.Service<
               dependencies: postgresDependencies,
             });
             privateOwners.set(bundle.migrate.name, "analytics");
+            privateOwners.set(bundle.seed.name, "analytics");
             defs.push(
               {
                 ...bundle.migrate,
+                dependencyTimeoutSeconds: postgresConsumerDependencyTimeoutSeconds,
+                enabled: true,
+              },
+              {
+                ...bundle.seed,
                 dependencyTimeoutSeconds: postgresConsumerDependencyTimeoutSeconds,
                 enabled: true,
               },
@@ -792,7 +811,7 @@ export class StackBuilder extends Context.Service<
               sessionPort: config.pooler.sessionPort,
               transactionPort: config.pooler.transactionPort,
               nodeName: beamNodeName("pooler", identity.key),
-              releaseCookie: beamReleaseCookie(identity.key),
+              releaseCookie,
               dbPort: config.dbPort,
               poolMode: config.pooler.mode,
               defaultPoolSize: config.pooler.defaultPoolSize,

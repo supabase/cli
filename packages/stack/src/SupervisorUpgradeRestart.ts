@@ -245,12 +245,11 @@ const preflight = (
       existing.launch,
       context.input.launch,
     );
-    const effectiveConfigInput = withExclusions;
-    const portRequests = yield* portRequestsForConfig(effectiveConfigInput, {
+    const portRequests = yield* portRequestsForConfig(withExclusions, {
       runtime: persistedRuntime,
     }).pipe(Effect.mapError((cause) => preflightError(context, causeMessage(cause))));
     const activeFields = portFieldsForConfigInput({
-      ...effectiveConfigInput,
+      ...withExclusions,
       mode: persistedRuntime.mode,
     });
     const activeFieldSet = new Set(activeFields);
@@ -303,8 +302,8 @@ const preflight = (
     }
     const resolvedConfig = yield* resolveConfig(
       {
-        ...effectiveConfigInput,
-        projectDir: effectiveConfigInput.projectDir ?? context.input.workspacePath,
+        ...withExclusions,
+        projectDir: withExclusions.projectDir ?? context.input.workspacePath,
         mode: persistedRuntime.mode,
       },
       {
@@ -315,7 +314,7 @@ const preflight = (
       },
     ).pipe(Effect.mapError((cause) => preflightError(context, causeMessage(cause))));
     return {
-      effectiveConfigInput,
+      effectiveConfigInput: withExclusions,
       launch: {
         ...existing.launch,
         versions: {

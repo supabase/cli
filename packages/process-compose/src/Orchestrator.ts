@@ -375,22 +375,6 @@ export class Orchestrator extends Context.Service<
                   // explicit supervisor/child handshake.
                   yield* options?.beforeSpawn?.(def.name) ?? Effect.void;
 
-                  // Spawn the process
-                  const handle = yield* spawner
-                    .spawn(cmd)
-                    .pipe(
-                      Effect.mapError((cause) => new SpawnError({ service: def.command, cause })),
-                    );
-
-                  const waitForHandleExit = handle.exitCode.pipe(Effect.asVoid, Effect.ignore);
-
-                  const sendSignal = (signal: ChildProcess.Signal): Effect.Effect<void> =>
-                    handle
-                      .kill({ killSignal: signal })
-                      .pipe(Effect.asVoid, Effect.ignore, Effect.andThen(waitForHandleExit));
-
-                  forceStops.set(def.name, sendSignal("SIGKILL"));
-
                   const runCleanup = () =>
                     def.cleanup == null
                       ? Effect.void
@@ -404,17 +388,27 @@ export class Orchestrator extends Context.Service<
                           ),
                         );
 
-                  // Register finalizer: graceful shutdown then SIGKILL fallback.
-                  // Tree teardown for supervised services is owned by the supervisor.
-                  yield* Effect.addFinalizer(() =>
-                    sendSignal(def.shutdown?.signal ?? defaults.shutdown.signal).pipe(
+                  const sendSignal = (
+                    handle: ChildProcessSpawner.ChildProcessHandle,
+                    signal: ChildProcess.Signal,
+                  ): Effect.Effect<void> =>
+                    handle
+                      .kill({ killSignal: signal })
+                      .pipe(
+                        Effect.asVoid,
+                        Effect.ignore,
+                        Effect.andThen(handle.exitCode.pipe(Effect.asVoid, Effect.ignore)),
+                      );
+
+                  const releaseHandle = (handle: ChildProcessSpawner.ChildProcessHandle) =>
+                    sendSignal(handle, def.shutdown?.signal ?? defaults.shutdown.signal).pipe(
                       Effect.timeout(
                         Duration.seconds(
                           def.shutdown?.timeoutSeconds ?? defaults.shutdown.timeoutSeconds,
                         ),
                       ),
                       Effect.catch(() =>
-                        sendSignal("SIGKILL").pipe(
+                        sendSignal(handle, "SIGKILL").pipe(
                           Effect.andThen(
                             logBuffer.append(
                               def.name,
@@ -427,7 +421,28 @@ export class Orchestrator extends Context.Service<
                       Effect.ignore,
                       Effect.andThen(runCleanup()),
                       Effect.ensuring(Effect.sync(() => forceStops.delete(def.name))),
-                    ),
+                    );
+
+                  // Acquire the process and register its complete cleanup before allowing
+                  // interruption. The acquisition stays interruptible while the successful
+                  // acquisition-to-registration handoff is atomic.
+                  const handle = yield* Effect.uninterruptibleMask((restore) =>
+                    Effect.gen(function* () {
+                      const spawnedHandle = yield* restore(
+                        spawner
+                          .spawn(cmd)
+                          .pipe(
+                            Effect.mapError(
+                              (cause) => new SpawnError({ service: def.command, cause }),
+                            ),
+                          ),
+                      );
+                      yield* Effect.addFinalizer(() => releaseHandle(spawnedHandle));
+                      yield* Effect.sync(() =>
+                        forceStops.set(def.name, sendSignal(spawnedHandle, "SIGKILL")),
+                      );
+                      return spawnedHandle;
+                    }),
                   );
 
                   // Keep the service in Starting until its started hooks pass,

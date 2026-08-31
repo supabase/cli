@@ -16,6 +16,7 @@ import {
   FileSystem,
   Layer,
   Match,
+  Random,
   Path,
   Ref,
   Schema,
@@ -185,7 +186,7 @@ const stackInfoFor = (config: ResolvedStackConfig): StackInfo => {
       ...(config.pooler === false
         ? {}
         : {
-            pooler: `postgresql://postgres:postgres@127.0.0.1:${
+            pooler: `postgresql://postgres.${encodeURIComponent(config.pooler.tenantId)}:postgres@127.0.0.1:${
               config.pooler.mode === "session"
                 ? config.pooler.sessionPort
                 : config.pooler.transactionPort
@@ -249,6 +250,13 @@ export const localStackLayer = (
       const disposedSignal = yield* Deferred.make<void>();
       const lifecycleLock = Semaphore.makeUnsafe(1);
       const projectionLock = Semaphore.makeUnsafe(1);
+      // One stack-owned cookie is shared by all native BEAM services and remains stable across
+      // JIT preparation, restarts, and definition rebuilds for this LocalStack instance.
+      const beamReleaseCookie = yield* Effect.gen(function* () {
+        const first = yield* Random.nextInt;
+        const second = yield* Random.nextInt;
+        return `supabase_${Math.abs(first).toString(36)}${Math.abs(second).toString(36)}_cookie`;
+      });
 
       const logBufferServices = yield* Layer.buildWithScope(LogBuffer.layer, scope);
       const logBuffer = Context.get(logBufferServices, LogBuffer);
@@ -500,7 +508,7 @@ export const localStackLayer = (
           const effect = Effect.gen(function* () {
             const prepared = yield* ensurePlanned;
             const { graph, serviceProjection, cleanupTargets } = yield* builder
-              .build(config, prepared)
+              .build(config, prepared, { beamReleaseCookie })
               .pipe(
                 Effect.provideService(FileSystem.FileSystem, fs),
                 Effect.provideService(Scope.Scope, scope),
@@ -1135,7 +1143,7 @@ export const localStackLayer = (
               const prepared = yield* ensurePlanned;
               const runtime = yield* ensureRuntime;
               const buildResult = yield* builder
-                .build(nextConfig, prepared)
+                .build(nextConfig, prepared, { beamReleaseCookie })
                 .pipe(
                   Effect.provideService(FileSystem.FileSystem, fs),
                   Effect.provideService(Scope.Scope, scope),

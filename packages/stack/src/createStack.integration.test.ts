@@ -263,4 +263,79 @@ describe("direct createStack port ownership", () => {
     expect(Exit.isSuccess(firstExit)).toBe(true);
     expect(Exit.isSuccess(secondExit)).toBe(true);
   });
+
+  it("resolves public disposal when runtime cleanup is interrupted", async () => {
+    const interruptedPlatformFactory: PlatformFactory = (options) =>
+      Layer.mergeAll(
+        platformFactory(options),
+        Layer.effectDiscard(Effect.addFinalizer(() => Effect.failCause(Cause.interrupt(1)))),
+      );
+    const stack = await Effect.runPromise(
+      createStack(
+        {
+          mode: "native",
+          postgrest: false,
+          auth: false,
+          edgeRuntime: false,
+          realtime: false,
+          storage: false,
+          imgproxy: false,
+          mailpit: false,
+          pgmeta: false,
+          studio: false,
+          analytics: false,
+          vector: false,
+          pooler: false,
+        },
+        interruptedPlatformFactory,
+        { mode: "native", containerRuntime: null },
+        resolveConfig,
+      ).pipe(Effect.provide(NodeServices.layer)),
+    );
+    handles.push(stack);
+
+    await expect(toStackHandle(stack).dispose()).resolves.toBeUndefined();
+  });
+
+  it("preserves non-interrupt disposal failures on the public surface", async () => {
+    const failedPlatformFactory: PlatformFactory = (options) =>
+      Layer.mergeAll(
+        platformFactory(options),
+        Layer.effectDiscard(
+          Effect.addFinalizer(() =>
+            Effect.failCause(Cause.die(new Error("runtime cleanup failed"))),
+          ),
+        ),
+      );
+    const stack = await Effect.runPromise(
+      createStack(
+        {
+          mode: "native",
+          postgrest: false,
+          auth: false,
+          edgeRuntime: false,
+          realtime: false,
+          storage: false,
+          imgproxy: false,
+          mailpit: false,
+          pgmeta: false,
+          studio: false,
+          analytics: false,
+          vector: false,
+          pooler: false,
+        },
+        failedPlatformFactory,
+        { mode: "native", containerRuntime: null },
+        resolveConfig,
+      ).pipe(Effect.provide(NodeServices.layer)),
+    );
+
+    const disposalExit = await Effect.runPromiseExit(
+      Effect.promise(() => toStackHandle(stack).dispose()),
+    );
+    expect(Exit.isFailure(disposalExit)).toBe(true);
+    if (Exit.isFailure(disposalExit)) {
+      expect(Cause.pretty(disposalExit.cause)).toContain("runtime cleanup failed");
+    }
+  });
 });

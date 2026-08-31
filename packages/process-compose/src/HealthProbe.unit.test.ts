@@ -140,50 +140,15 @@ describe("HealthProbe", () => {
         return Effect.sync(() => server.close());
       });
 
-      const fetchWithHostHeader = Object.assign(
+      const fetch = globalThis.fetch;
+      const fetchWithoutHost = Object.assign(
         (input: RequestInfo | URL, init?: RequestInit) => {
-          const url = typeof input === "string" ? input : input instanceof URL ? input : input.url;
-          const requestHeaders =
-            init?.headers === undefined
-              ? undefined
-              : Array.isArray(init.headers)
-                ? Object.fromEntries(init.headers)
-                : init.headers instanceof Headers
-                  ? Object.fromEntries(init.headers.entries())
-                  : init.headers;
-          // oxlint-disable-next-line effecttsgo/new-promise -- The fetch replacement adapts node:http callbacks to the Fetch contract.
-          return new Promise<Response>((resolve, reject) => {
-            const request = Http.request(
-              url,
-              {
-                method: init?.method,
-                headers: requestHeaders,
-              },
-              (response) => {
-                const chunks: Array<Uint8Array> = [];
-                response.on("data", (chunk: Uint8Array) => chunks.push(chunk));
-                response.on("end", () => {
-                  const responseHeaders = Object.fromEntries(
-                    Object.entries(response.headers).flatMap(([key, value]) =>
-                      value === undefined
-                        ? []
-                        : [[key, Array.isArray(value) ? value.join(", ") : value]],
-                    ),
-                  );
-                  resolve(
-                    new Response(Buffer.concat(chunks), {
-                      status: response.statusCode,
-                      headers: responseHeaders,
-                    }),
-                  );
-                });
-              },
-            );
-            request.on("error", reject);
-            request.end(init?.body as string | Uint8Array | undefined);
-          });
+          const headers = new Headers(init?.headers);
+          headers.delete("host");
+          // oxlint-disable-next-line effecttsgo/global-fetch -- This test double models Node's fetch transport, which ignores explicit Host headers.
+          return fetch(input, { ...init, headers });
         },
-        { preconnect: globalThis.fetch.preconnect },
+        { preconnect: fetch.preconnect },
       );
 
       const { healthySignal, config, isHealthy } = yield* setupProbe({
@@ -196,7 +161,7 @@ describe("HealthProbe", () => {
       });
       const fiber = yield* Effect.forkChild(
         runHealthProbe(config).pipe(
-          Effect.provide(Layer.succeed(FetchHttpClient.Fetch, fetchWithHostHeader)),
+          Effect.provide(Layer.succeed(FetchHttpClient.Fetch, fetchWithoutHost)),
         ),
       );
       yield* Deferred.await(healthySignal).pipe(Effect.timeout(Duration.seconds(5)));

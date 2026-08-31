@@ -21,7 +21,7 @@ import {
   resolveFunctionsRuntimeConfig,
   type ResolvedFunctionsBundle,
 } from "./functions.ts";
-import { verifyRequest } from "./services/edge-runtime-main.ts";
+import { fileUrl, verifyRequest } from "./services/edge-runtime-main.ts";
 
 const testPorts: PortSet = {
   apiPort: 40_000,
@@ -146,6 +146,39 @@ describe("stack Functions runtime config", () => {
     });
 
     await rm(root, { recursive: true, force: true });
+  });
+
+  it("projects native function paths relative to the Edge Runtime workspace", async () => {
+    const root = makeTempProject();
+    const runtimeRoot = join(root, "runtime");
+    const stackConfig = await resolveConfig(
+      { projectDir: root, runtimeRoot, functions: makeBundle(root) },
+      { runtime: { mode: "native", containerRuntime: null } },
+    );
+    const config = resolveFunctionsRuntimeConfig(
+      stackConfig,
+      { hostname: "127.0.0.1" },
+      makeBundle(root),
+    );
+
+    expect(config?.functions["hello-world"]).toEqual({
+      verifyJWT: true,
+      entrypointPath: "../../functions/hello-world/index.ts",
+      importMapPath: null,
+      staticFiles: ["../../functions/hello-world/assets/*"],
+      env: { SHARED: "function-value", FUNCTION_ONLY: "function-value" },
+    });
+
+    await rm(root, { recursive: true, force: true });
+  });
+
+  it("resolves relative native entrypoints against the runtime cwd", () => {
+    expect(fileUrl("../../functions/hello-world/index.ts", "/tmp/runtime/edge-runtime")).toBe(
+      "file:///tmp/functions/hello-world/index.ts",
+    );
+    expect(fileUrl("/tmp/functions/hello-world/index.ts")).toBe(
+      "file:///tmp/functions/hello-world/index.ts",
+    );
   });
 
   it("rejects a function bundle when Edge Runtime is disabled", async () => {

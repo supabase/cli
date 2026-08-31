@@ -162,6 +162,15 @@ function edgeRuntimeWorkspaceDir(runtimeRoot: string): string {
   return join(runtimeRoot, "edge-runtime");
 }
 
+const runtimePathFor = (
+  runtimeRoot: string,
+  value: string,
+  mode: ResolvedStackConfig["runtime"]["mode"],
+): string =>
+  mode === "native"
+    ? relative(edgeRuntimeWorkspaceDir(runtimeRoot), value).replaceAll(sep, "/")
+    : value;
+
 export function functionsRuntimeConfigPath(runtimeRoot: string): string {
   return join(edgeRuntimeWorkspaceDir(runtimeRoot), functionsRuntimeConfigFileName);
 }
@@ -174,6 +183,9 @@ export function resolveFunctionsRuntimeConfig(
   if (bundle === undefined || bundle.functions.length === 0 || stackConfig.edgeRuntime === false) {
     return undefined;
   }
+
+  const runtimePath = (value: string) =>
+    runtimePathFor(stackConfig.runtimeRoot, value, stackConfig.runtime.mode);
 
   return {
     functionsUrl: `http://127.0.0.1:${stackConfig.apiPort}/functions/v1`,
@@ -188,9 +200,9 @@ export function resolveFunctionsRuntimeConfig(
         fn.name,
         {
           verifyJWT: fn.verifyJWT,
-          entrypointPath: fn.entrypointPath,
-          importMapPath: fn.importMapPath,
-          staticFiles: fn.staticFiles,
+          entrypointPath: runtimePath(fn.entrypointPath),
+          importMapPath: fn.importMapPath === null ? null : runtimePath(fn.importMapPath),
+          staticFiles: fn.staticFiles.map(runtimePath),
           env: fn.env,
         },
       ]),

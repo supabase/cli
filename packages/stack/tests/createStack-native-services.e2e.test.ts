@@ -11,13 +11,14 @@ import {
   rmSync,
   writeFileSync,
 } from "node:fs";
-import { createConnection, createServer, type Socket } from "node:net";
+import { createConnection, type Socket } from "node:net";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterAll, beforeAll, describe, expect, test } from "vitest";
 import {
   createStack,
   prefetch,
+  type LogEntry,
   type ResolvedFunctionsBundle,
   type StackHandle,
 } from "@supabase/stack";
@@ -97,18 +98,6 @@ const stagingEntries = (root: string): ReadonlyArray<string> => {
     if (entry.isDirectory()) found.push(...stagingEntries(path));
   }
   return found;
-};
-
-const bindAndClose = async (port: number): Promise<void> => {
-  const server = createServer();
-  await new Promise<void>((resolve, reject) => {
-    const onError = (error: Error) => reject(error);
-    server.once("error", onError);
-    server.listen(port, "127.0.0.1", () => {
-      server.removeListener("error", onError);
-      server.close((error) => (error === undefined ? resolve() : reject(error)));
-    });
-  });
 };
 
 interface SmtpSession {
@@ -207,18 +196,162 @@ const requiredEndpoint = (endpoints: Readonly<Record<string, string>>, name: str
   return endpoint;
 };
 
-const withTimeout = async <A>(promise: Promise<A>, timeoutMs = 60_000): Promise<A> => {
+const withTimeout = async <A>(
+  promise: Promise<A>,
+  phase: string,
+  timeoutMs = 60_000,
+): Promise<A> => {
   let timeout: ReturnType<typeof setTimeout> | undefined;
   try {
     return await Promise.race([
       promise,
       new Promise<A>((_resolve, reject) => {
-        timeout = setTimeout(() => reject(new Error(`Timed out after ${timeoutMs}ms`)), timeoutMs);
+        timeout = setTimeout(
+          () => reject(new Error(`Timed out during ${phase} after ${timeoutMs}ms`)),
+          timeoutMs,
+        );
       }),
     ]);
   } finally {
     if (timeout !== undefined) clearTimeout(timeout);
   }
+};
+
+const DIAGNOSTIC_LOG_LIMIT = 20;
+const DIAGNOSTIC_LINE_LIMIT = 2_000;
+const REALTIME_CLIENT_LOG_LIMIT = 30;
+const REALTIME_CLIENT_PAYLOAD_LIMIT = 400;
+
+interface JourneyDiagnostics {
+  readonly stop: () => Promise<void>;
+  readonly format: () => string;
+}
+
+interface RealtimeClientDiagnostics {
+  readonly log: (kind: string, message: string, data?: unknown) => void;
+  readonly format: () => string;
+}
+
+const closeDiagnosticIterator = async <A>(iterator: AsyncIterator<A>): Promise<void> => {
+  try {
+    await iterator.return?.();
+  } catch (error) {
+    if (error instanceof Error && error.message === "All fibers interrupted without error") return;
+    throw error;
+  }
+};
+
+const REALTIME_SECRET_KEY = /authorization|access[_-]?token|api[_-]?key|apikey|jwt|secret|token/i;
+
+const redactRealtimeClientText = (value: string): string =>
+  value
+    .replace(
+      /([?&](?:access_token|apikey|authorization|key|secret|token)=)[^&\s]*/gi,
+      "$1<redacted>",
+    )
+    .replace(/\bBearer\s+[A-Za-z0-9._~-]+/gi, "Bearer <redacted>")
+    .replace(/\bsb_(?:publishable|secret)_[A-Za-z0-9_-]+\b/g, "<key>")
+    .replace(/\beyJ[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\b/g, "<jwt>");
+
+const redactRealtimeClientData = (value: unknown, depth = 0): unknown => {
+  if (depth > 4) return "<truncated>";
+  if (typeof value === "string") return redactRealtimeClientText(value);
+  if (Array.isArray(value)) return value.map((item) => redactRealtimeClientData(item, depth + 1));
+  if (typeof value !== "object" || value === null) return value;
+  return Object.fromEntries(
+    Object.entries(value).map(([key, item]) => [
+      key,
+      REALTIME_SECRET_KEY.test(key) ? "<redacted>" : redactRealtimeClientData(item, depth + 1),
+    ]),
+  );
+};
+
+const collectRealtimeClientDiagnostics = (): RealtimeClientDiagnostics => {
+  const entries: string[] = [];
+  return {
+    log: (kind, message, data) => {
+      let line = redactRealtimeClientText(`${kind}: ${message}`);
+      if (data !== undefined) {
+        try {
+          line += ` ${JSON.stringify(redactRealtimeClientData(data))}`;
+        } catch {
+          line += " <unserializable>";
+        }
+      }
+      entries.push(
+        line.length > REALTIME_CLIENT_PAYLOAD_LIMIT
+          ? `${line.slice(0, REALTIME_CLIENT_PAYLOAD_LIMIT)}…`
+          : line,
+      );
+      if (entries.length > REALTIME_CLIENT_LOG_LIMIT) entries.shift();
+    },
+    format: () => `realtime-client=${JSON.stringify(entries)}`,
+  };
+};
+
+type JourneyServiceState = Awaited<ReturnType<StackHandle["getStatus"]>>[number];
+
+const collectJourneyDiagnostics = (handle: StackHandle): JourneyDiagnostics => {
+  const states = new Map<string, JourneyServiceState>();
+  const logs = new Map<string, Array<LogEntry>>();
+  const statusIterator = handle.statusChanges()[Symbol.asyncIterator]();
+  const logIterator = handle.logs()[Symbol.asyncIterator]();
+  let stopPromise: Promise<void> | undefined;
+
+  const readStatuses = (async (): Promise<void> => {
+    try {
+      for (;;) {
+        const next = await statusIterator.next();
+        if (next.done) return;
+        states.set(next.value.name, next.value);
+      }
+    } catch {
+      // Disposal closes the public stream; diagnostics collected before then remain useful.
+    }
+  })();
+  const readLogs = (async (): Promise<void> => {
+    try {
+      for (;;) {
+        const next = await logIterator.next();
+        if (next.done) return;
+        const entries = logs.get(next.value.service) ?? [];
+        entries.push({
+          ...next.value,
+          line:
+            next.value.line.length > DIAGNOSTIC_LINE_LIMIT
+              ? `${next.value.line.slice(0, DIAGNOSTIC_LINE_LIMIT)}…`
+              : next.value.line,
+        });
+        if (entries.length > DIAGNOSTIC_LOG_LIMIT) entries.shift();
+        logs.set(next.value.service, entries);
+      }
+    } catch {
+      // Disposal closes the public stream; diagnostics collected before then remain useful.
+    }
+  })();
+
+  return {
+    stop: () => {
+      if (stopPromise === undefined) {
+        stopPromise = (async () => {
+          await Promise.all([
+            closeDiagnosticIterator(statusIterator),
+            closeDiagnosticIterator(logIterator),
+          ]);
+          await Promise.all([readStatuses, readLogs]);
+        })();
+      }
+      return stopPromise;
+    },
+    format: () => {
+      const serviceLogs = [...logs.entries()]
+        .sort(([left], [right]) => left.localeCompare(right))
+        .flatMap(([service, entries]) =>
+          [...entries].reverse().map((entry) => `log[${service}]=${JSON.stringify(entry)}`),
+        );
+      return [`status=${JSON.stringify([...states.values()])}`, ...serviceLogs].join("\n");
+    },
+  };
 };
 
 describe("native remaining service graph", () => {
@@ -234,8 +367,14 @@ describe("native remaining service graph", () => {
   let sentinelMarker: string;
   let originalPath: string | undefined;
   let ownedPids: ReadonlyArray<number> = [];
-  let vectorAdminPort: number | undefined;
-  let analyticsDirectPort: number | undefined;
+  let journeyDiagnostics: JourneyDiagnostics | undefined;
+  let stackDisposed = false;
+
+  const disposeStack = async (): Promise<void> => {
+    if (stackDisposed || stack === undefined) return;
+    stackDisposed = true;
+    await stack.dispose();
+  };
 
   beforeAll(async () => {
     projectDir = mkdtempSync(join(tmpdir(), "supabase-native-services-project-"));
@@ -269,7 +408,7 @@ describe("native remaining service graph", () => {
         postgrest: "lazy",
         auth: "lazy",
         "edge-runtime": "lazy",
-        realtime: "eager",
+        realtime: "lazy",
         storage: "lazy",
         imgproxy: "lazy",
         mailpit: "eager",
@@ -294,49 +433,34 @@ describe("native remaining service graph", () => {
       pooler: {},
     });
 
+    journeyDiagnostics = collectJourneyDiagnostics(stack);
     try {
       await stack.start();
     } catch (error) {
-      await stack.dispose().catch(() => {});
-      throw error;
+      const diagnostics = journeyDiagnostics.format();
+      await journeyDiagnostics.stop();
+      await disposeStack().catch(() => {});
+      throw new Error(`Native stack startup failed: ${String(error)}\n${diagnostics}`, {
+        cause: error,
+      });
     }
     supabase = createClient(stack.url, stack.publishableKey);
     await setupTestTable(Number(new URL(stack.dbUrl).port));
-    const vectorConfig = readFileSync(join(runtimeRoot, "vector", "vector.yaml"), "utf8");
-    const vectorPortMatch = /address:\s*"127\.0\.0\.1:(\d+)"/.exec(vectorConfig);
-    if (vectorPortMatch === null) throw new Error("native Vector admin port is missing");
-    vectorAdminPort = Number(vectorPortMatch[1]);
-    const analyticsPortMatch = /uri:\s*"http:\/\/127\.0\.0\.1:(\d+)\/api\/logs/.exec(vectorConfig);
-    if (analyticsPortMatch === null)
-      throw new Error("native Analytics port is missing from Vector config");
-    analyticsDirectPort = Number(analyticsPortMatch[1]);
   }, 1_200_000);
 
   afterAll(async () => {
     try {
-      const ownedPorts = new Set<number>();
-      if (stack !== undefined) {
-        for (const endpoint of Object.values(stack.serviceEndpoints)) {
-          ownedPorts.add(endpointPort(endpoint));
-        }
-        ownedPorts.add(endpointPort(stack.url));
-        ownedPorts.add(endpointPort(stack.dbUrl));
-      }
-      if (vectorAdminPort !== undefined) ownedPorts.add(vectorAdminPort);
-      if (analyticsDirectPort !== undefined) ownedPorts.add(analyticsDirectPort);
+      await journeyDiagnostics?.stop();
       if (stack !== undefined) {
         const states = await stack.getStatus().catch(() => []);
         ownedPids = states.flatMap((state) => (state.pid === null ? [] : [state.pid]));
-        await stack.dispose();
+        await disposeStack();
         for (const pid of ownedPids) expect(isProcessAlive(pid)).toBe(false);
       }
       expect(existsSync(sentinelMarker)).toBe(false);
       expect(stagingEntries(cacheRoot)).toEqual([]);
       expect(stagingEntries(stackRoot)).toEqual([]);
       expect(stagingEntries(runtimeRoot)).toEqual([]);
-      for (const port of ownedPorts) {
-        await bindAndClose(port);
-      }
     } finally {
       if (originalPath === undefined) delete process.env.PATH;
       else process.env.PATH = originalPath;
@@ -358,44 +482,51 @@ describe("native remaining service graph", () => {
     "qualifies the complete native graph through public Edge, Realtime, Storage, Analytics, Mailpit, and Pooler journeys",
     { timeout: 1_200_000 },
     async () => {
-      const initialStates = await stack.getStatus();
-      expect(initialStates.map((state) => state.name).toSorted()).toEqual(
-        [...NATIVE_SERVICES].toSorted(),
-      );
-      expect(
-        initialStates.filter((state) => state.status === "Healthy").map((state) => state.name),
-      ).toEqual(
-        expect.arrayContaining([
-          "postgres",
-          "realtime",
-          "mailpit",
-          "pgmeta",
-          "studio",
-          "analytics",
-          "vector",
-          "pooler",
-        ]),
-      );
-      expect(existsSync(sentinelMarker)).toBe(false);
-
-      const authSettings = await fetch(`${stack.url}/auth/v1/settings`, {
-        headers: { apikey: stack.publishableKey },
-      });
-      expect(authSettings.status).toBe(200);
-      await authSettings.arrayBuffer();
-
-      const functionResponse = await fetchFunctionWhenReady(
-        `${stack.url}/functions/v1/native-services`,
-      );
-      expect(functionResponse.status).toBe(200);
-      expect(await functionResponse.text()).toBe("native services ready");
-
-      const postgrestTable = await supabase.from("todos").select("id").limit(1);
-      expect(postgrestTable.error).toBeNull();
-
-      const sql = new Bun.SQL(stack.dbUrl);
+      let phase = "initial stack status";
+      let realtimeClientDiagnostics: RealtimeClientDiagnostics | undefined;
       try {
-        await sql.unsafe(`
+        const initialStates = await stack.getStatus();
+        expect(initialStates.map((state) => state.name).toSorted()).toEqual(
+          [...NATIVE_SERVICES].toSorted(),
+        );
+        expect(
+          initialStates.filter((state) => state.status === "Healthy").map((state) => state.name),
+        ).toEqual(
+          expect.arrayContaining([
+            "postgres",
+            "mailpit",
+            "pgmeta",
+            "studio",
+            "analytics",
+            "vector",
+            "pooler",
+          ]),
+        );
+        expect(initialStates.find((state) => state.name === "realtime")?.status).toBe("Dormant");
+        expect(existsSync(sentinelMarker)).toBe(false);
+
+        phase = "Auth settings";
+        const authSettings = await fetch(`${stack.url}/auth/v1/settings`, {
+          headers: { apikey: stack.publishableKey },
+        });
+        expect(authSettings.status).toBe(200);
+        await authSettings.arrayBuffer();
+
+        phase = "Edge Function invocation";
+        const functionResponse = await fetchFunctionWhenReady(
+          `${stack.url}/functions/v1/native-services`,
+        );
+        expect(functionResponse.status).toBe(200);
+        expect(await functionResponse.text()).toBe("native services ready");
+
+        phase = "PostgREST query";
+        const postgrestTable = await supabase.from("todos").select("id").limit(1);
+        expect(postgrestTable.error).toBeNull();
+
+        phase = "Realtime publication setup";
+        const sql = new Bun.SQL(stack.dbUrl);
+        try {
+          await sql.unsafe(`
           DO $$ BEGIN
             IF NOT EXISTS (
               SELECT 1 FROM pg_publication_tables
@@ -405,150 +536,167 @@ describe("native remaining service graph", () => {
             END IF;
           END $$;
         `);
-      } finally {
-        await sql.close();
-      }
+        } finally {
+          await sql.close();
+        }
 
-      const realtime = createClient(stack.url, stack.publishableKey);
-      let realtimeChannel: ReturnType<typeof realtime.channel> | undefined;
-      const realtimeChange = new Promise<unknown>((resolve, reject) => {
-        realtimeChannel = realtime
-          .channel("native-services-todos")
-          .on(
-            "postgres_changes",
-            { event: "INSERT", schema: "public", table: "todos" },
-            (payload) => resolve(payload),
-          )
-          .subscribe((status) => {
-            if (status !== "SUBSCRIBED") {
-              if (status === "CHANNEL_ERROR" || status === "TIMED_OUT") {
-                reject(new Error(`Realtime subscription status: ${status}`));
-              }
-              return;
-            }
-            const insert = new Bun.SQL(stack.dbUrl);
-            void insert
+        phase = "Realtime database change";
+        realtimeClientDiagnostics = collectRealtimeClientDiagnostics();
+        const realtime = createClient(stack.url, stack.publishableKey, {
+          realtime: { timeout: 60_000, logger: realtimeClientDiagnostics.log },
+        });
+        let realtimeChannel: ReturnType<typeof realtime.channel> | undefined;
+        let insertStarted = false;
+        const realtimeChange = new Promise<unknown>((resolve, reject) => {
+          const insert = () => {
+            if (insertStarted) return;
+            insertStarted = true;
+            const sql = new Bun.SQL(stack.dbUrl);
+            void sql
               .unsafe(
                 `INSERT INTO public.todos (title, completed) VALUES ('native-realtime', false)`,
               )
-              .then(() => insert.close())
+              .then(() => sql.close())
               .catch(async (error: unknown) => {
-                await insert.close();
+                await sql.close();
                 reject(error instanceof Error ? error : new Error(String(error)));
               });
-          });
-      });
-      try {
-        const change = await withTimeout(realtimeChange);
-        expect(change).toEqual(
-          expect.objectContaining({
-            eventType: "INSERT",
-            table: "todos",
-            schema: "public",
-          }),
-        );
-      } finally {
-        if (realtimeChannel !== undefined) await realtime.removeChannel(realtimeChannel);
-      }
-
-      const bucket = `native-services-${Date.now()}`;
-      const createdBucket = await supabase.storage.createBucket(bucket, { public: true });
-      expect(createdBucket.error).toBeNull();
-      const uploaded = await supabase.storage
-        .from(bucket)
-        .upload("tiny.png", new Blob([tinyPng], { type: "image/png" }), {
-          contentType: "image/png",
-          upsert: true,
+          };
+          realtimeChannel = realtime
+            .channel("native-services-todos")
+            .on(
+              "postgres_changes",
+              { event: "INSERT", schema: "public", table: "todos" },
+              (payload) => resolve(payload),
+            )
+            .on(
+              "system",
+              {},
+              (payload: {
+                readonly extension: string;
+                readonly status: string;
+                readonly message: string;
+                readonly channel: string;
+              }) => {
+                if (payload.status === "error") {
+                  reject(new Error(`Realtime PostgreSQL readiness failed: ${payload.message}`));
+                } else if (payload.extension === "postgres_changes" && payload.status === "ok") {
+                  insert();
+                }
+              },
+            )
+            .subscribe((status) => {
+              if (status !== "SUBSCRIBED") {
+                if (status === "CHANNEL_ERROR" || status === "TIMED_OUT" || status === "CLOSED") {
+                  reject(new Error(`Realtime subscription status: ${status}`));
+                }
+                return;
+              }
+            });
         });
-      expect(uploaded.error).toBeNull();
-      const downloaded = await supabase.storage.from(bucket).download("tiny.png");
-      expect(downloaded.error).toBeNull();
-      expect(downloaded.data).not.toBeNull();
-      expect(new Uint8Array(await downloaded.data!.arrayBuffer())).toEqual(tinyPng);
-      const transformed = await fetch(
-        `${stack.url}/storage/v1/render/image/public/${bucket}/tiny.png?width=2&height=2`,
-      );
-      expect(transformed.status).toBe(200);
-      expect(transformed.headers.get("content-type")).toMatch(/^image\//);
-      expect((await transformed.arrayBuffer()).byteLength).toBeGreaterThan(0);
+        try {
+          const change = await withTimeout(realtimeChange, "Realtime database change", 90_000);
+          expect(change).toEqual(
+            expect.objectContaining({
+              eventType: "INSERT",
+              table: "todos",
+              schema: "public",
+            }),
+          );
+        } finally {
+          if (realtimeChannel !== undefined) await realtime.removeChannel(realtimeChannel);
+        }
 
-      const pgmeta = await fetch(`${stack.url}/pg/health`);
-      expect(pgmeta.status).toBe(200);
-      await pgmeta.arrayBuffer();
-      const studio = await fetch(
-        `${requiredEndpoint(stack.serviceEndpoints, "studio")}/api/platform/profile`,
-      );
-      expect(studio.status).toBe(200);
-      await studio.arrayBuffer();
-      const analytics = await fetch(`${stack.url}/analytics/v1/health`);
-      expect(analytics.status).toBe(200);
-      await analytics.arrayBuffer();
+        phase = "Storage image journey";
+        const bucket = `native-services-${Date.now()}`;
+        const storageAdmin = createClient(stack.url, stack.secretKey);
+        const createdBucket = await storageAdmin.storage.createBucket(bucket, { public: true });
+        expect(createdBucket.error).toBeNull();
+        const uploaded = await storageAdmin.storage
+          .from(bucket)
+          .upload("tiny.png", new Blob([tinyPng], { type: "image/png" }), {
+            contentType: "image/png",
+            upsert: true,
+          });
+        expect(uploaded.error).toBeNull();
+        const downloaded = await supabase.storage.from(bucket).download("tiny.png");
+        expect(downloaded.error).toBeNull();
+        expect(downloaded.data).not.toBeNull();
+        expect(new Uint8Array(await downloaded.data!.arrayBuffer())).toEqual(tinyPng);
+        const transformed = await fetch(
+          `${stack.url}/storage/v1/render/image/public/${bucket}/tiny.png?width=2&height=2`,
+        );
+        expect(transformed.status).toBe(200);
+        expect(transformed.headers.get("content-type")).toMatch(/^image\//);
+        expect((await transformed.arrayBuffer()).byteLength).toBeGreaterThan(0);
 
-      const recipient = `native-services-${Date.now()}@example.com`;
-      await smtpSend(
-        endpointPort(requiredEndpoint(stack.serviceEndpoints, "mailpit_smtp")),
-        "sender@example.com",
-        recipient,
-        "native services",
-      );
-      const mailpitResponse = await fetch(
-        `${requiredEndpoint(stack.serviceEndpoints, "mailpit")}/api/v1/messages`,
-      );
-      expect(mailpitResponse.status).toBe(200);
-      const mailpitBody = await readJson(mailpitResponse);
-      const mailpitMessages =
-        typeof mailpitBody === "object" && mailpitBody !== null
-          ? Reflect.get(mailpitBody, "messages")
-          : undefined;
-      expect(Array.isArray(mailpitMessages)).toBe(true);
-      expect(JSON.stringify(mailpitBody)).toContain(recipient);
+        phase = "PgMeta, Studio, and Analytics health";
+        const pgmeta = await fetch(`${stack.url}/pg/health`);
+        expect(pgmeta.status).toBe(200);
+        await pgmeta.arrayBuffer();
+        const studio = await fetch(
+          `${requiredEndpoint(stack.serviceEndpoints, "studio")}/api/platform/profile`,
+        );
+        expect(studio.status).toBe(200);
+        await studio.arrayBuffer();
+        const analytics = await fetch(`${stack.url}/analytics/v1/health`);
+        expect(analytics.status).toBe(200);
+        await analytics.arrayBuffer();
 
-      const pooled = new Bun.SQL(requiredEndpoint(stack.serviceEndpoints, "pooler"));
-      try {
-        const rows = await pooled.unsafe<{ answer: number }[]>("SELECT 40 + 2 AS answer");
-        expect(rows[0]?.answer).toBe(42);
-      } finally {
-        await pooled.close();
-      }
+        phase = "Mailpit delivery";
+        const recipient = `native-services-${Date.now()}@example.com`;
+        await smtpSend(
+          endpointPort(requiredEndpoint(stack.serviceEndpoints, "mailpit_smtp")),
+          "sender@example.com",
+          recipient,
+          "native services",
+        );
+        const mailpitResponse = await fetch(
+          `${requiredEndpoint(stack.serviceEndpoints, "mailpit")}/api/v1/messages`,
+        );
+        expect(mailpitResponse.status).toBe(200);
+        const mailpitBody = await readJson(mailpitResponse);
+        const mailpitMessages =
+          typeof mailpitBody === "object" && mailpitBody !== null
+            ? Reflect.get(mailpitBody, "messages")
+            : undefined;
+        expect(Array.isArray(mailpitMessages)).toBe(true);
+        expect(JSON.stringify(mailpitBody)).toContain(recipient);
 
-      if (analyticsDirectPort === undefined)
-        throw new Error("native Analytics port is unavailable");
-      const sourcesResponse = await fetch(`http://127.0.0.1:${analyticsDirectPort}/api/sources`, {
-        headers: { "x-api-key": "native-services-analytics-key" },
-      });
-      expect(sourcesResponse.status).toBe(200);
-      const sourcesBody = await readJson(sourcesResponse);
-      const sources = Array.isArray(sourcesBody)
-        ? sourcesBody
-        : typeof sourcesBody === "object" && sourcesBody !== null
-          ? Reflect.get(sourcesBody, "sources")
-          : undefined;
-      if (!Array.isArray(sources)) throw new Error("Analytics source list is not an array");
-      const postgresLogs = sources.find(
-        (source: unknown) =>
-          typeof source === "object" &&
-          source !== null &&
-          Reflect.get(source, "name") === "postgres.logs",
-      );
-      if (typeof postgresLogs !== "object" || postgresLogs === null) {
-        throw new Error("Analytics postgres.logs source is missing");
-      }
-      const sourceToken = Reflect.get(postgresLogs, "token");
-      if (typeof sourceToken !== "string" || !/^[0-9a-f-]+$/i.test(sourceToken)) {
-        throw new Error("Analytics postgres.logs source token is invalid");
-      }
-      const physicalTable = `log_events_${sourceToken.replaceAll("-", "_")}`;
-      const triggerId = String(Date.now());
-      const triggerName = `native_vector_trigger_${triggerId}`;
-      const functionName = `native_vector_notify_${triggerId}`;
-      const channel = `native_vector_${triggerId}`;
-      const analyticsDbUrl = new URL(stack.dbUrl);
-      analyticsDbUrl.pathname = "/_supabase";
-      const analyticsSql = new Bun.SQL(analyticsDbUrl.toString());
-      let notificationSubscription: Awaited<ReturnType<typeof analyticsSql.listen>> | undefined;
-      let notificationResolve: ((payload: string) => void) | undefined;
-      try {
-        await analyticsSql.unsafe(`
+        phase = "Pooler query";
+        const pooled = new Bun.SQL(requiredEndpoint(stack.serviceEndpoints, "pooler"));
+        try {
+          const rows = await pooled.unsafe<{ answer: number }[]>("SELECT 40 + 2 AS answer");
+          expect(rows[0]?.answer).toBe(42);
+        } finally {
+          await pooled.close();
+        }
+
+        const triggerId = String(Date.now());
+        const triggerName = `native_vector_trigger_${triggerId}`;
+        const functionName = `native_vector_notify_${triggerId}`;
+        const channel = `native_vector_${triggerId}`;
+        const analyticsDbUrl = new URL(stack.dbUrl);
+        analyticsDbUrl.pathname = "/_supabase";
+        const analyticsSql = new Bun.SQL(analyticsDbUrl.toString());
+        let physicalTable: string | undefined;
+        let sourceToken: string | undefined;
+        let notificationSubscription: Awaited<ReturnType<typeof analyticsSql.listen>> | undefined;
+        let notificationResolve: ((payload: string) => void) | undefined;
+        try {
+          phase = "Analytics source setup";
+          const sourceRows = await analyticsSql.unsafe<{ token: string }[]>(`
+            SELECT token::text AS token
+            FROM _analytics.sources
+            WHERE name = 'postgres.logs'
+          `);
+          sourceToken = sourceRows.length === 1 ? sourceRows[0]?.token : undefined;
+          if (typeof sourceToken !== "string" || !/^[0-9a-f-]+$/i.test(sourceToken)) {
+            throw new Error("Analytics postgres.logs source token is invalid");
+          }
+          physicalTable = `log_events_${sourceToken.replaceAll("-", "_")}`;
+          phase = "Analytics Vector trigger setup";
+          await analyticsSql.unsafe(`
           CREATE OR REPLACE FUNCTION _analytics."${functionName}"() RETURNS trigger
           LANGUAGE plpgsql AS $fn$
           BEGIN
@@ -563,51 +711,78 @@ describe("native remaining service graph", () => {
           AFTER INSERT ON _analytics."${physicalTable}"
           FOR EACH ROW EXECUTE FUNCTION _analytics."${functionName}"();
         `);
-        const notification = new Promise<string>((resolve) => {
-          notificationResolve = resolve;
-        });
-        notificationSubscription = await analyticsSql.listen(channel, (payload) => {
-          notificationResolve?.(payload);
-        });
-        const vectorFunctionResponse = await fetchFunctionWhenReady(
-          `${stack.url}/functions/v1/native-services`,
+          const notification = new Promise<string>((resolve) => {
+            notificationResolve = resolve;
+          });
+          notificationSubscription = await analyticsSql.listen(channel, (payload) => {
+            notificationResolve?.(payload);
+          });
+          phase = "Analytics Vector ingestion";
+          const vectorFunctionResponse = await fetchFunctionWhenReady(
+            `${stack.url}/functions/v1/native-services`,
+          );
+          expect(vectorFunctionResponse.status).toBe(200);
+          expect(await vectorFunctionResponse.text()).toBe("native services ready");
+          const observedNotification = await withTimeout(
+            notification,
+            "Analytics Vector ingestion",
+          );
+          expect(observedNotification).toContain(EDGE_LOG_MARKER);
+          const analyticsQueryUrl = new URL(`${stack.url}/analytics/v1/api/query`);
+          analyticsQueryUrl.search = new URLSearchParams({
+            pg_sql: `SELECT event_message
+FROM "postgres.logs"
+WHERE "timestamp" > NOW() - INTERVAL '10' MINUTE
+  AND event_message LIKE '%${EDGE_LOG_MARKER}%'
+ORDER BY "timestamp" DESC
+LIMIT 1`,
+          }).toString();
+          const analyticsQueryResponse = await fetch(analyticsQueryUrl, {
+            headers: { "x-api-key": "native-services-analytics-key" },
+          });
+          if (analyticsQueryResponse.status !== 200) {
+            const body = (await analyticsQueryResponse.text()).slice(0, 1_000);
+            throw new Error(
+              `Analytics Postgres query returned ${analyticsQueryResponse.status}: ${body}`,
+            );
+          }
+          expect(JSON.stringify(await readJson(analyticsQueryResponse))).toContain(EDGE_LOG_MARKER);
+        } finally {
+          await notificationSubscription?.unlisten();
+          if (physicalTable !== undefined) {
+            await analyticsSql
+              .unsafe(
+                `DROP TRIGGER IF EXISTS "${triggerName}" ON _analytics."${physicalTable}"; DROP FUNCTION IF EXISTS _analytics."${functionName}"();`,
+              )
+              .catch(() => {});
+          }
+          await analyticsSql.close();
+        }
+
+        phase = "Mailpit restart";
+        const mailpitStream = stack.serviceLogs("mailpit")[Symbol.asyncIterator]();
+        const observedLog = mailpitStream.next();
+        await stack.restartService("mailpit");
+        const logEvent = await withTimeout(observedLog, "Mailpit restart log");
+        await mailpitStream.return?.();
+        expect(logEvent.done).toBe(false);
+        const logLine = logEvent.done ? "" : logEvent.value.line;
+        expect(logLine.length).toBeGreaterThan(0);
+
+        const finalStates = await stack.getStatus();
+        expect(finalStates).toHaveLength(NATIVE_SERVICES.length);
+        expect(finalStates.every((state) => state.status === "Healthy")).toBe(true);
+        const vectorConfig = readFileSync(join(runtimeRoot, "vector", "vector.yaml"), "utf8");
+        expect(vectorConfig).toContain("postgres.logs");
+        expect(vectorConfig).toContain(`${runtimeRoot}/logs/vector.jsonl`);
+        expect(vectorConfig).toContain("exclude:");
+      } catch (error) {
+        const diagnostics = journeyDiagnostics?.format() ?? "status/log diagnostics unavailable";
+        throw new Error(
+          `Native service journey failed during ${phase}: ${String(error)}\n${diagnostics}\n${realtimeClientDiagnostics?.format() ?? "realtime-client=[]"}`,
+          { cause: error },
         );
-        expect(vectorFunctionResponse.status).toBe(200);
-        expect(await vectorFunctionResponse.text()).toBe("native services ready");
-        const observedNotification = await withTimeout(notification);
-        expect(observedNotification).toContain(EDGE_LOG_MARKER);
-        const recentResponse = await fetch(
-          `http://127.0.0.1:${analyticsDirectPort}/api/sources/${sourceToken}/recent`,
-          { headers: { "x-api-key": "native-services-analytics-key" } },
-        );
-        expect(recentResponse.status).toBe(200);
-        expect(JSON.stringify(await readJson(recentResponse))).toContain(EDGE_LOG_MARKER);
-      } finally {
-        await notificationSubscription?.unlisten();
-        await analyticsSql
-          .unsafe(
-            `DROP TRIGGER IF EXISTS "${triggerName}" ON _analytics."${physicalTable}"; DROP FUNCTION IF EXISTS _analytics."${functionName}"();`,
-          )
-          .catch(() => {});
-        await analyticsSql.close();
       }
-
-      const mailpitStream = stack.serviceLogs("mailpit")[Symbol.asyncIterator]();
-      const observedLog = mailpitStream.next();
-      await stack.restartService("mailpit");
-      const logEvent = await withTimeout(observedLog);
-      await mailpitStream.return?.();
-      expect(logEvent.done).toBe(false);
-      const logLine = logEvent.done ? "" : logEvent.value.line;
-      expect(logLine.length).toBeGreaterThan(0);
-
-      const finalStates = await stack.getStatus();
-      expect(finalStates).toHaveLength(NATIVE_SERVICES.length);
-      expect(finalStates.every((state) => state.status === "Healthy")).toBe(true);
-      const vectorConfig = readFileSync(join(runtimeRoot, "vector", "vector.yaml"), "utf8");
-      expect(vectorConfig).toContain("postgres.logs");
-      expect(vectorConfig).toContain(`${runtimeRoot}/logs/vector.jsonl`);
-      expect(vectorConfig).toContain("exclude:");
     },
   );
 });

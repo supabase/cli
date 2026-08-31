@@ -673,9 +673,8 @@ const makeRunManagedExecution = (
           ownedPersistedRuntime === undefined
             ? yield* selectStackRuntime(requestedMode)
             : yield* validateStackRuntime(ownedPersistedRuntime);
-        const runtimeConfigInput = configInput;
         const activeFields = portFieldsForConfigInput({
-          ...runtimeConfigInput,
+          ...configInput,
           mode: runtime.mode,
         });
         const activeFieldSet = new Set(activeFields);
@@ -686,7 +685,7 @@ const makeRunManagedExecution = (
             (field) => PORT_CATALOG[field].persistence === "sticky" && !activeFieldSet.has(field),
           ),
         };
-        yield* portRequestsForConfig(runtimeConfigInput, { runtime });
+        yield* portRequestsForConfig(configInput, { runtime });
         const launchInput = input.launch ?? { versions: {} };
         const launch: ManagedStackLaunch =
           runtime.mode === "native"
@@ -719,8 +718,8 @@ const makeRunManagedExecution = (
         const managedPaths = yield* managedStackPathsEffect(input.stateRoot, started.stack.id);
         const resolved = yield* resolveConfig(
           {
-            ...runtimeConfigInput,
-            projectDir: runtimeConfigInput.projectDir ?? input.workspacePath,
+            ...configInput,
+            projectDir: configInput.projectDir ?? input.workspacePath,
             stackRoot: managedPaths.root,
             runtimeRoot: managedPaths.runtime,
             instanceId: started.stack.id,
@@ -730,7 +729,7 @@ const makeRunManagedExecution = (
         const config: ResolvedDaemonConfig = {
           ...resolved,
           name: input.stackName,
-          projectDir: runtimeConfigInput.projectDir ?? input.workspacePath,
+          projectDir: configInput.projectDir ?? input.workspacePath,
         };
         yield* manager.recordLifecycle(ownership, {
           stackId: started.stack.id,

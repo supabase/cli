@@ -97,6 +97,7 @@ interface SpawnOpts {
   stdout?: string[];
   exitDelay?: Duration.Input;
   getExitDelay?: () => Duration.Input;
+  onHandleCreated?: (handle: ChildProcessSpawner.ChildProcessHandle) => void;
 }
 
 function createWaitList() {
@@ -203,7 +204,7 @@ function mockChildProcessSpawner(
 
           const stdoutBytes = (svcOpts.stdout ?? []).map((line) => encoder.encode(`${line}\n`));
 
-          return ChildProcessSpawner.makeHandle({
+          const handle = ChildProcessSpawner.makeHandle({
             pid: ChildProcessSpawner.ProcessId(1000 + spawned.length),
             stdout: Stream.fromIterable(stdoutBytes),
             stderr: Stream.empty,
@@ -221,6 +222,8 @@ function mockChildProcessSpawner(
             getInputFd: () => Sink.drain,
             getOutputFd: () => Stream.empty,
           });
+          svcOpts.onHandleCreated?.(handle);
+          return handle;
         }),
       ),
     ),
@@ -534,6 +537,34 @@ describe("Orchestrator", () => {
       yield* proc.waitForKillCount(1);
 
       expect(proc.killed[0]?.command).toBe(process.execPath);
+    }).pipe(Effect.provide(layer), Effect.scoped);
+  });
+
+  it.live("interrupting immediately after process acquisition cleans up the handle", () => {
+    let triggered = false;
+    const { layer, proc } = setupOrchestrator([svc("target")], {
+      exitDelay: "5 seconds",
+      onHandleCreated: (handle) => {
+        const exitCode = handle.exitCode;
+        const fiber = Fiber.getCurrent();
+        Object.defineProperty(handle, "exitCode", {
+          configurable: true,
+          get: () => {
+            if (!triggered) {
+              triggered = true;
+              fiber?.interruptUnsafe();
+            }
+            return exitCode;
+          },
+        });
+      },
+    });
+
+    return Effect.gen(function* () {
+      const orchestrator = yield* Orchestrator;
+      yield* orchestrator.startService("target");
+      yield* proc.waitForKillCount(1);
+      expect(proc.killed.some((record) => record.command === "target")).toBe(true);
     }).pipe(Effect.provide(layer), Effect.scoped);
   });
 

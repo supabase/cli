@@ -53,6 +53,8 @@ export interface PortCatalogEntry {
   readonly service?: ServiceName;
   /** The field is leased only by native runtime processes. */
   readonly nativeOnly?: boolean;
+  /** Number of contiguous TCP ports owned by this field, including its base port. */
+  readonly span?: number;
   readonly persistence: "runtime" | "sticky";
 }
 
@@ -111,7 +113,8 @@ const PORT_CATALOG_ENTRIES: {
     service: "mailpit",
     persistence: "sticky",
   },
-  pgmetaPort: { field: "pgmetaPort", service: "pgmeta", persistence: "runtime" },
+  // postgres-meta binds its administrative listener at PG_META_PORT + 1.
+  pgmetaPort: { field: "pgmetaPort", service: "pgmeta", span: 2, persistence: "runtime" },
   studioPort: {
     field: "studioPort",
     configKey: "studio.port",

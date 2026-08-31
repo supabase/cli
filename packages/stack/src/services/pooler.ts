@@ -5,6 +5,7 @@ import { dockerPortMapArgs } from "../Platform.ts";
 import type { StackIdentity } from "../StackIdentity.ts";
 import {
   dockerRunService,
+  nativeBeamLoopbackEnv,
   nativeRunService,
   type ContainerRuntimeOptions,
   type ServiceDependency,
@@ -66,6 +67,51 @@ const poolerHealthCheck = (port: number): ServiceDef["healthCheck"] => ({
   ...stackHealthBudgets.pooler,
 });
 
+/** Encode an untrusted StackConfig value as an Elixir double-quoted string. */
+const elixirStringLiteral = (value: string): string => {
+  let escaped = "";
+  const characters = Array.from(value);
+  for (const [index, character] of characters.entries()) {
+    const codePoint = character.codePointAt(0);
+    if (codePoint === undefined) continue;
+    switch (codePoint) {
+      case 0x08:
+        escaped += "\\b";
+        break;
+      case 0x09:
+        escaped += "\\t";
+        break;
+      case 0x0a:
+        escaped += "\\n";
+        break;
+      case 0x0c:
+        escaped += "\\f";
+        break;
+      case 0x0d:
+        escaped += "\\r";
+        break;
+      case 0x22:
+        escaped += '\\"';
+        break;
+      case 0x5c:
+        escaped += "\\\\";
+        break;
+      case 0x23:
+        escaped += characters[index + 1] === "{" ? "\\#" : character;
+        break;
+      default:
+        escaped +=
+          codePoint < 0x20 || codePoint === 0x7f || (codePoint >= 0xd800 && codePoint <= 0xdfff)
+            ? `\\u${codePoint.toString(16).padStart(4, "0")}`
+            : character;
+    }
+  }
+  return `"${escaped}"`;
+};
+
+/** Keep the generated eval source a single shell argument for Docker. */
+const shellSingleQuoted = (value: string): string => `'${value.replaceAll("'", `'"'"'`)}'`;
+
 const tenantScript = (
   opts: Pick<
     PoolerServiceOptions,
@@ -79,8 +125,8 @@ const tenantScript = (
   end
 
 params = %{
-  "external_id" => "${opts.tenantId}",
-  "db_host" => "${opts.dbHost}",
+  "external_id" => ${elixirStringLiteral(opts.tenantId)},
+  "db_host" => ${elixirStringLiteral(opts.dbHost)},
   "db_port" => ${opts.dbPort},
   "db_database" => "postgres",
   "require_user" => false,
@@ -91,7 +137,7 @@ params = %{
   "users" => [%{
     "db_user" => "pgbouncer",
     "db_password" => "postgres",
-    "mode_type" => "${opts.poolMode}",
+    "mode_type" => ${elixirStringLiteral(opts.poolMode)},
     "pool_size" => ${opts.defaultPoolSize},
     "is_manager" => true
   }]
@@ -131,14 +177,16 @@ export const makePoolerServiceDocker = (opts: DockerPoolerOptions): ServiceDef =
       cmd: [
         "/bin/sh",
         "-c",
-        `/app/bin/migrate && /app/bin/supavisor eval '${tenantScript({
-          tenantId: opts.tenantId,
-          dbHost: opts.dbHost,
-          dbPort: opts.dbPort,
-          poolMode: opts.poolMode,
-          defaultPoolSize: opts.defaultPoolSize,
-          maxClientConn: opts.maxClientConn,
-        })}' && /app/bin/server`,
+        `/app/bin/migrate && /app/bin/supavisor eval ${shellSingleQuoted(
+          tenantScript({
+            tenantId: opts.tenantId,
+            dbHost: opts.dbHost,
+            dbPort: opts.dbPort,
+            poolMode: opts.poolMode,
+            defaultPoolSize: opts.defaultPoolSize,
+            maxClientConn: opts.maxClientConn,
+          }),
+        )} && /app/bin/server`,
       ],
       dependencies: opts.dependencies,
       healthCheck: poolerHealthCheck(opts.hostAdminPort),
@@ -157,7 +205,7 @@ const poolerNativeEnv = (opts: NativePoolerOptions): Record<string, string> => (
   METRICS_JWT_SECRET: opts.jwtSecret,
   REGION: "local",
   RUN_JANITOR: "true",
-  ERL_AFLAGS: "-proto_dist inet_tcp",
+  ...nativeBeamLoopbackEnv,
   RLIMIT_NOFILE: "",
   ELIXIR_ERL_OPTIONS: "+fnu +S 1:1 +SDio 1 +sbwt none +sbwtdcpu none +sbwtdio none",
   ERL_CRASH_DUMP: join(opts.runtimeRoot, "pooler", "erl_crash.dump"),
@@ -169,6 +217,13 @@ const poolerNativeEnv = (opts: NativePoolerOptions): Record<string, string> => (
 
 export const makePoolerServicesNative = (opts: NativePoolerOptions): NativePoolerServiceBundle => {
   const env = poolerNativeEnv(opts);
+  const bootstrapEnv = {
+    ...env,
+    PORT: "0",
+    PROXY_PORT: "0",
+    PROXY_PORT_SESSION: "0",
+    PROXY_PORT_TRANSACTION: "0",
+  };
   const migrate = nativeRunService({
     name: "pooler-migrate",
     command: `${opts.binPath}/bin/migrate`,
@@ -180,7 +235,7 @@ export const makePoolerServicesNative = (opts: NativePoolerOptions): NativePoole
     name: "pooler-bootstrap",
     command: `${opts.binPath}/bin/supavisor`,
     args: ["eval", tenantScript({ ...opts, dbHost: "127.0.0.1" })],
-    env,
+    env: bootstrapEnv,
     dependencies: [{ service: migrate.name, condition: "completed" }],
     restart: "no",
   });

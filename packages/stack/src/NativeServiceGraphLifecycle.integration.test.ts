@@ -72,7 +72,11 @@ const serviceNameForSupervisor = (command: string, args: ReadonlyArray<string>):
   if (service !== undefined) {
     if (service === "realtime" && command.endsWith("/migrate")) return "realtime-migrate";
     if (service === "realtime" && args[0] === "eval") return "realtime-seed";
-    if (service === "analytics" && args[0] === "eval") return "analytics-migrate";
+    if (service === "analytics" && args[0] === "eval") {
+      return args[1]?.includes("Logflare.SingleTenant.create_default_plan")
+        ? "analytics-seed"
+        : "analytics-migrate";
+    }
     if (service === "pooler" && command.endsWith("/migrate")) return "pooler-migrate";
     if (service === "pooler" && command.endsWith("/supavisor")) return "pooler-bootstrap";
     return service;
@@ -85,6 +89,7 @@ const oneShotServices = new Set([
   "realtime-migrate",
   "realtime-seed",
   "analytics-migrate",
+  "analytics-seed",
   "pooler-migrate",
   "pooler-bootstrap",
 ]);

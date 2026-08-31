@@ -5,6 +5,7 @@ import { dockerPortMapArgs } from "../Platform.ts";
 import type { StackIdentity } from "../StackIdentity.ts";
 import {
   dockerRunService,
+  nativeBeamLoopbackEnv,
   nativeRunService,
   type ContainerRuntimeOptions,
   type ServiceDependency,
@@ -24,11 +25,15 @@ export interface NativeAnalyticsOptions extends AnalyticsServiceOptions {
   readonly runtimeRoot: string;
   /** A stack-unique, valid BEAM short node name for Logflare distribution. */
   readonly nodeName: string;
+  /** A stack-owned secret shared by the native BEAM services. */
+  readonly releaseCookie: string;
 }
 
 export interface NativeAnalyticsServiceBundle {
   /** Runs the bundled Logflare migration once before the server starts. */
   readonly migrate: ServiceDef;
+  /** Creates the local single-tenant Logflare records after migrations complete. */
+  readonly seed: ServiceDef;
   /** The public, long-running Logflare server. */
   readonly server: ServiceDef;
 }
@@ -41,6 +46,41 @@ interface DockerAnalyticsOptions extends AnalyticsServiceOptions, ContainerRunti
 }
 
 const ANALYTICS_CONTAINER_PORT = 4000;
+
+/** Starts Logflare and waits for its single-tenant startup task to finish. */
+const ANALYTICS_SEED_SCRIPT = `{:ok, _} = Application.ensure_all_started(:logflare)
+startup_task =
+  Supervisor.which_children(Logflare.Supervisor)
+  |> Enum.find(fn
+    {Task, pid, :worker, _modules} when is_pid(pid) -> true
+    _ -> false
+  end)
+
+case startup_task do
+  {Task, pid, :worker, _modules} ->
+    ref = Process.monitor(pid)
+
+    receive do
+      {:DOWN, ^ref, :process, ^pid, :normal} -> :ok
+      {:DOWN, ^ref, :process, ^pid, reason} ->
+        raise "Logflare startup task failed: #{inspect(reason)}"
+    after
+      120_000 ->
+        Process.demonitor(ref, [:flush])
+        raise "Timed out waiting for Logflare startup task"
+    end
+
+  nil ->
+    :ok
+end
+
+status = Logflare.SingleTenant.supabase_mode_status()
+
+if status |> Map.values() |> Enum.all?(&(&1 == :ok)) do
+  :ok
+else
+  raise "Logflare single-tenant bootstrap incomplete: #{inspect(status)}"
+end`;
 
 export const analyticsDockerRuntimeNetwork = (
   _os: string,
@@ -68,6 +108,7 @@ const analyticsEnv = (
     readonly listenPort: number;
     readonly nodeHost: "127.0.0.1" | "0.0.0.0";
     readonly runtimeRoot?: string;
+    readonly releaseCookie?: string;
   },
 ): Record<string, string> => ({
   PORT: String(opts.listenPort),
@@ -82,11 +123,12 @@ const analyticsEnv = (
   LOGFLARE_MIN_CLUSTER_SIZE: "1",
   LOGFLARE_SINGLE_TENANT: "true",
   LOGFLARE_SUPABASE_MODE: "true",
+  LOGFLARE_PUBLIC_ACCESS_TOKEN: `${opts.apiKey}-public`,
   LOGFLARE_PRIVATE_ACCESS_TOKEN: opts.apiKey,
   LOGFLARE_LOG_LEVEL: "warn",
   LOGFLARE_NODE_HOST: opts.nodeHost,
   LOGFLARE_FEATURE_FLAG_OVERRIDE: "'multibackend=true'",
-  RELEASE_COOKIE: "cookie",
+  RELEASE_COOKIE: opts.releaseCookie ?? "cookie",
   ...(opts.backend === "postgres"
     ? {
         POSTGRES_BACKEND_URL: `postgresql://postgres:postgres@${opts.dbHost}:${opts.dbPort}/_supabase`,
@@ -100,6 +142,7 @@ const analyticsEnv = (
   ...(opts.runtimeRoot === undefined
     ? {}
     : {
+        ...nativeBeamLoopbackEnv,
         ELIXIR_ERL_OPTIONS: "+S 1:1 +SDio 1 +sbwt none +sbwtdcpu none +sbwtdio none",
         DB_POOL_SIZE: "2",
         LOGFLARE_PUBSUB_POOL_SIZE: "2",
@@ -148,13 +191,29 @@ export const makeAnalyticsServicesNative = (
     dependencies: opts.dependencies,
     restart: "no",
   });
+  const seed = nativeRunService({
+    name: "analytics-seed",
+    command: `${opts.binPath}/bin/logflare`,
+    args: ["eval", ANALYTICS_SEED_SCRIPT],
+    // The bootstrap starts Logflare to run its startup task but must not claim
+    // the public server port before the long-running process starts.
+    env: {
+      ...env,
+      PORT: "0",
+      PHX_HTTP_PORT: "0",
+      LOGFLARE_SINGLE_TENANT: "true",
+      LOGFLARE_SUPABASE_MODE: "true",
+    },
+    dependencies: [{ service: migrate.name, condition: "completed" }],
+    restart: "no",
+  });
   const server = nativeRunService({
     name: "analytics",
     command: `${opts.binPath}/bin/logflare`,
     args: ["start", "--sname", opts.nodeName],
     env,
-    dependencies: [{ service: migrate.name, condition: "completed" }],
+    dependencies: [{ service: seed.name, condition: "completed" }],
     healthCheck: analyticsHealthCheck(opts.hostPort),
   });
-  return { migrate, server };
+  return { migrate, seed, server };
 };

@@ -1,4 +1,19 @@
-import { Deferred, Effect, Layer, Option, Context, Predicate, Schedule, Result } from "effect";
+import {
+  Context,
+  Data,
+  Deferred,
+  Effect,
+  Fiber,
+  FiberSet,
+  Layer,
+  Latch,
+  Option,
+  Predicate,
+  Result,
+  Schedule,
+  Scope,
+} from "effect";
+import * as NodeSocket from "@effect/platform-node/NodeSocket";
 import {
   Headers,
   HttpBody,
@@ -9,6 +24,7 @@ import {
   HttpServerRequest,
   HttpServerResponse,
 } from "effect/unstable/http";
+import * as Socket from "effect/unstable/socket/Socket";
 import { StackServiceActivator } from "./ServiceActivation.ts";
 import type { ServiceName } from "./ServiceName.ts";
 
@@ -19,6 +35,7 @@ export interface ProxyConfig {
   readonly postgrestAdminPort: number;
   readonly edgeRuntimePort: number;
   readonly realtimePort: number;
+  readonly realtimeTenantId: string;
   readonly storagePort: number;
   readonly pgmetaPort: number;
   readonly analyticsPort: number;
@@ -28,6 +45,392 @@ export interface ProxyConfig {
   readonly secretKey: string;
   readonly anonJwt: string;
   readonly serviceRoleJwt: string;
+}
+
+class RealtimeWebSocketProxyError extends Data.TaggedError("RealtimeWebSocketProxyError")<{
+  readonly message: string;
+  readonly cause?: unknown;
+}> {}
+
+function transformRealtimeWebSocketUrl(requestUrl: string, config: ProxyConfig): string {
+  const stripped = requestUrl.startsWith("/realtime/v1")
+    ? requestUrl.slice("/realtime/v1".length)
+    : requestUrl;
+  const relative = stripped === "" ? "/" : stripped;
+  const url = new URL(relative, `ws://127.0.0.1:${config.realtimePort}`);
+  url.pathname = `/socket${url.pathname}`;
+
+  const apikey = url.searchParams.get("apikey");
+  if (apikey === config.publishableKey) {
+    url.searchParams.set("apikey", config.anonJwt);
+  } else if (apikey === config.secretKey) {
+    url.searchParams.set("apikey", config.serviceRoleJwt);
+  }
+
+  return url.toString();
+}
+
+function expectedSocketClose(error: Socket.SocketError): boolean {
+  return (
+    Predicate.isTagged(error.reason, "SocketCloseError") &&
+    (error.reason.code === 1000 || error.reason.code === 1001)
+  );
+}
+
+function websocketMessageChunk(
+  data: NodeSocket.NodeWS.RawData,
+  isBinary: boolean,
+): string | Uint8Array {
+  if (!isBinary) {
+    if (typeof data === "string") return data;
+    if (data instanceof ArrayBuffer) return new TextDecoder().decode(new Uint8Array(data));
+    if (Array.isArray(data)) return Buffer.concat(data).toString("utf8");
+    return data.toString("utf8");
+  }
+  if (data instanceof ArrayBuffer) return new Uint8Array(data);
+  if (Array.isArray(data)) return new Uint8Array(Buffer.concat(data));
+  return data;
+}
+
+function realtimeClientFrame(chunk: string | Uint8Array): string | Uint8Array {
+  if (typeof chunk === "string") return chunk;
+
+  let offset = 0;
+  while (
+    offset < chunk.length &&
+    (chunk[offset] === 0x09 ||
+      chunk[offset] === 0x0a ||
+      chunk[offset] === 0x0d ||
+      chunk[offset] === 0x20)
+  ) {
+    offset += 1;
+  }
+
+  return chunk[offset] === 0x5b ? new TextDecoder().decode(chunk) : chunk;
+}
+
+function makeNodeWebSocketSocket(
+  websocket: NodeSocket.NodeWS.WebSocket,
+): Effect.Effect<Socket.Socket> {
+  return Effect.withFiber(() => {
+    const latch = Latch.makeUnsafe(false);
+    let currentWebSocket: NodeSocket.NodeWS.WebSocket | undefined;
+
+    const runRaw = <_, E, R>(
+      handler: (_: string | Uint8Array) => Effect.Effect<_, E, R> | void,
+      options?: { readonly onOpen?: Effect.Effect<void> | undefined },
+    ) =>
+      Effect.scopedWith(
+        Effect.fnUntraced(function* (scope) {
+          const fiberSet = yield* FiberSet.make<any, E | Socket.SocketError>().pipe(
+            Scope.provide(scope),
+          );
+          const run = yield* FiberSet.runtime(fiberSet)<R>();
+          let open = websocket.readyState === NodeSocket.NodeWS.WebSocket.OPEN;
+
+          const onMessage = (data: NodeSocket.NodeWS.RawData, isBinary: boolean) => {
+            const chunk = websocketMessageChunk(data, isBinary);
+            const result = handler(chunk);
+            if (Effect.isEffect(result)) {
+              run(result);
+            }
+          };
+          const onError = (cause: Error) => {
+            websocket.off("message", onMessage);
+            websocket.off("close", onClose);
+            Deferred.doneUnsafe(
+              fiberSet.deferred,
+              Effect.fail(
+                new Socket.SocketError({
+                  reason: open
+                    ? new Socket.SocketReadError({ cause })
+                    : new Socket.SocketOpenError({ kind: "Unknown", cause }),
+                }),
+              ),
+            );
+          };
+          const onClose = (code: number, reason: Buffer) => {
+            websocket.off("message", onMessage);
+            websocket.off("error", onError);
+            Deferred.doneUnsafe(
+              fiberSet.deferred,
+              Effect.fail(
+                new Socket.SocketError({
+                  reason: new Socket.SocketCloseError({
+                    code,
+                    closeReason: reason.toString(),
+                  }),
+                }),
+              ),
+            );
+          };
+
+          yield* Scope.addFinalizer(
+            scope,
+            Effect.sync(() => {
+              websocket.off("message", onMessage);
+              websocket.off("error", onError);
+              websocket.off("close", onClose);
+              if (currentWebSocket === websocket) {
+                currentWebSocket = undefined;
+                latch.closeUnsafe();
+              }
+            }),
+          );
+
+          websocket.on("message", onMessage);
+          websocket.once("error", onError);
+          websocket.once("close", onClose);
+
+          if (!open) {
+            const opened = Deferred.makeUnsafe<void>();
+            const onSocketOpen = () => {
+              open = true;
+              Deferred.doneUnsafe(opened, Effect.void);
+            };
+            websocket.once("open", onSocketOpen);
+            yield* Deferred.await(opened).pipe(
+              Effect.timeoutOrElse({
+                duration: "10 seconds",
+                orElse: () =>
+                  Effect.fail(
+                    new Socket.SocketError({
+                      reason: new Socket.SocketOpenError({
+                        kind: "Timeout",
+                        cause: new Error("timeout waiting for realtime websocket"),
+                      }),
+                    }),
+                  ),
+              }),
+              Effect.raceFirst(FiberSet.join(fiberSet)),
+            );
+          }
+
+          currentWebSocket = websocket;
+          latch.openUnsafe();
+          if (options?.onOpen) {
+            yield* options.onOpen;
+          }
+          return yield* FiberSet.join(fiberSet);
+        }),
+      ).pipe(
+        Effect.ensuring(
+          Effect.sync(() => {
+            latch.closeUnsafe();
+            currentWebSocket = undefined;
+          }),
+        ),
+      );
+
+    const writer = Effect.acquireRelease(
+      Effect.succeed((chunk: Uint8Array | string | Socket.CloseEvent) =>
+        latch.whenOpen(
+          Effect.suspend(() => {
+            try {
+              const active = currentWebSocket;
+              if (active === undefined) {
+                return Effect.fail(
+                  new Socket.SocketError({
+                    reason: new Socket.SocketWriteError({
+                      cause: new Error("realtime websocket is not open"),
+                    }),
+                  }),
+                );
+              }
+              if (Socket.isCloseEvent(chunk)) {
+                active.close(chunk.code, chunk.reason);
+              } else {
+                active.send(chunk);
+              }
+              return Effect.void;
+            } catch (cause) {
+              return Effect.fail(
+                new Socket.SocketError({ reason: new Socket.SocketWriteError({ cause }) }),
+              );
+            }
+          }),
+        ),
+      ),
+      () => Effect.sync(() => currentWebSocket?.close(1000)),
+    );
+
+    return Effect.succeed(Socket.make({ runRaw, writer }));
+  });
+}
+
+function openRealtimeWebSocket(
+  requestUrl: string,
+  config: ProxyConfig,
+  protocols: Array<string>,
+): Effect.Effect<NodeSocket.NodeWS.WebSocket, Socket.SocketError> {
+  return Effect.callback((resume, signal) => {
+    const backendUrl = transformRealtimeWebSocketUrl(requestUrl, config);
+    const websocket = new NodeSocket.NodeWS.WebSocket(backendUrl, protocols, {
+      headers: { host: config.realtimeTenantId },
+    });
+    const onOpen = () => {
+      websocket.off("error", onError);
+      signal.removeEventListener("abort", onAbort);
+      resume(Effect.succeed(websocket));
+    };
+    const onError = (cause: Error) => {
+      resume(
+        Effect.fail(
+          new Socket.SocketError({
+            reason: new Socket.SocketOpenError({ kind: "Unknown", cause }),
+          }),
+        ),
+      );
+    };
+    const onAbort = () => websocket.terminate();
+
+    websocket.once("open", onOpen);
+    websocket.once("error", onError);
+    signal.addEventListener("abort", onAbort, { once: true });
+
+    return Effect.sync(() => {
+      signal.removeEventListener("abort", onAbort);
+      websocket.off("open", onOpen);
+      websocket.off("error", onError);
+      if (
+        websocket.readyState === NodeSocket.NodeWS.WebSocket.OPEN ||
+        websocket.readyState === NodeSocket.NodeWS.WebSocket.CONNECTING
+      ) {
+        websocket.terminate();
+      }
+    });
+  });
+}
+
+function makeRealtimeWebSocket(
+  requestUrl: string,
+  config: ProxyConfig,
+  protocols: Array<string>,
+): Effect.Effect<Socket.Socket, Socket.SocketError, Scope.Scope> {
+  return Effect.acquireRelease(openRealtimeWebSocket(requestUrl, config, protocols), (websocket) =>
+    Effect.sync(() => {
+      if (
+        websocket.readyState === NodeSocket.NodeWS.WebSocket.OPEN ||
+        websocket.readyState === NodeSocket.NodeWS.WebSocket.CONNECTING
+      ) {
+        websocket.terminate();
+      }
+    }),
+  ).pipe(Effect.flatMap(makeNodeWebSocketSocket));
+}
+
+function makeRealtimeWebSocketHandler(
+  config: ProxyConfig,
+  activator: StackServiceActivator["Service"],
+  signalTerminalFailure: Effect.Effect<void>,
+  runBridge: (effect: Effect.Effect<void, never, never>) => Fiber.Fiber<void, never>,
+) {
+  return (req: HttpServerRequest.HttpServerRequest) =>
+    Effect.gen(function* () {
+      const protocolHeader = req.headers["sec-websocket-protocol"];
+      const protocols =
+        protocolHeader === undefined
+          ? []
+          : protocolHeader
+              .split(",")
+              .map((protocol) => protocol.trim())
+              .filter((protocol) => protocol !== "");
+      const clientSocket = yield* req.upgrade.pipe(
+        Effect.mapError(
+          (error) =>
+            new RealtimeWebSocketProxyError({
+              message: error.message,
+              cause: error,
+            }),
+        ),
+      );
+      // Return as soon as the upgrade is accepted. The bridge is kept in the
+      // layer-owned FiberSet so it outlives request completion and can cleanly
+      // close both sockets when the stack shuts down.
+      const bridge = Effect.scoped(
+        Effect.gen(function* () {
+          const clientWriter =
+            yield* Deferred.make<
+              (
+                chunk: Uint8Array | string | Socket.CloseEvent,
+              ) => Effect.Effect<void, Socket.SocketError>
+            >();
+          const backendWriter =
+            yield* Deferred.make<
+              (
+                chunk: Uint8Array | string | Socket.CloseEvent,
+              ) => Effect.Effect<void, Socket.SocketError>
+            >();
+
+          const clientToBackend = clientSocket.runRaw((chunk) =>
+            Effect.flatMap(Deferred.await(backendWriter), (write) =>
+              write(realtimeClientFrame(chunk)),
+            ),
+          );
+          const clientFiber = yield* clientToBackend.pipe(
+            Effect.forkChild({ startImmediately: true }),
+          );
+          yield* Deferred.succeed(clientWriter, yield* clientSocket.writer);
+
+          const closeClient = (event: Socket.CloseEvent) =>
+            Deferred.await(clientWriter).pipe(
+              Effect.flatMap((write) => write(event)),
+              Effect.catchTag("SocketError", () => Effect.void),
+            );
+          const activation = yield* activator.activate("realtime").pipe(
+            Effect.tapErrorTag("StackReadinessError", () => signalTerminalFailure),
+            Effect.result,
+          );
+          if (Result.isFailure(activation)) {
+            yield* closeClient(new Socket.CloseEvent(1013, "realtime unavailable"));
+            return;
+          }
+
+          const backendResult = yield* makeRealtimeWebSocket(req.url, config, protocols).pipe(
+            Effect.mapError(
+              (error) =>
+                new RealtimeWebSocketProxyError({
+                  message: error.message,
+                  cause: error,
+                }),
+            ),
+            Effect.result,
+          );
+          if (Result.isFailure(backendResult)) {
+            yield* closeClient(new Socket.CloseEvent(1011, "realtime proxy error"));
+            return;
+          }
+          const backendSocket = backendResult.success;
+          const backendToClient = backendSocket.runRaw((chunk) =>
+            Effect.flatMap(Deferred.await(clientWriter), (write) => write(chunk)),
+          );
+          const bridge = Effect.race(Fiber.join(clientFiber), backendToClient).pipe(
+            Effect.catchTag("SocketError", (error) =>
+              expectedSocketClose(error) ? Effect.void : Effect.fail(error),
+            ),
+            Effect.mapError((error) =>
+              error instanceof RealtimeWebSocketProxyError
+                ? error
+                : new RealtimeWebSocketProxyError({
+                    message: error.message,
+                    cause: error,
+                  }),
+            ),
+          );
+          yield* Deferred.succeed(backendWriter, yield* backendSocket.writer);
+          const bridgeResult = yield* bridge.pipe(Effect.result);
+          if (Result.isFailure(bridgeResult)) {
+            yield* closeClient(new Socket.CloseEvent(1011, "realtime proxy error"));
+          }
+        }),
+      );
+      runBridge(bridge);
+      return HttpServerResponse.empty();
+    }).pipe(
+      Effect.catchTag("RealtimeWebSocketProxyError", (error) =>
+        Effect.succeed(HttpServerResponse.text(`Bad gateway: ${error.message}`, { status: 502 })),
+      ),
+    );
 }
 
 function transformAuthorization(
@@ -238,6 +641,24 @@ export class ApiProxy extends Context.Service<
         const activator = yield* StackServiceActivator;
         const terminalFailure = yield* Deferred.make<void>();
         const signalTerminalFailure = Deferred.succeed(terminalFailure, void 0).pipe(Effect.asVoid);
+        const realtimeBridges = yield* FiberSet.makeRuntime<never, void, never>();
+        const realtimeHttpHandler = makeProxyHandler(
+          client,
+          config,
+          activator,
+          signalTerminalFailure,
+          {
+            service: "realtime",
+            backendPort: config.realtimePort,
+            stripPrefix: "/realtime/v1",
+          },
+        );
+        const realtimeWebSocketHandler = makeRealtimeWebSocketHandler(
+          config,
+          activator,
+          signalTerminalFailure,
+          realtimeBridges,
+        );
 
         const routes = [
           HttpRouter.route("*", "/health", HttpServerResponse.text("OK", { status: 200 })),
@@ -339,15 +760,12 @@ export class ApiProxy extends Context.Service<
               transformAuth: true,
             }),
           ),
-          HttpRouter.route(
-            "*",
-            "/realtime/v1/*",
-            makeProxyHandler(client, config, activator, signalTerminalFailure, {
-              service: "realtime",
-              backendPort: config.realtimePort,
-              stripPrefix: "/realtime/v1",
-            }),
+          HttpRouter.route("GET", "/realtime/v1/websocket", (req) =>
+            req.headers.upgrade?.toLowerCase() === "websocket"
+              ? realtimeWebSocketHandler(req)
+              : realtimeHttpHandler(req),
           ),
+          HttpRouter.route("*", "/realtime/v1/*", realtimeHttpHandler),
           HttpRouter.route(
             "*",
             "/storage/v1/s3/*",

@@ -16,11 +16,7 @@ import { makePostgresInitService, makePostgresInitServiceDocker } from "./postgr
 import { makePostgresService, makePostgresServiceDocker } from "./postgres.ts";
 import { makePostgrestService, makePostgrestServiceDocker } from "./postgrest.ts";
 import { makeRealtimeServiceDocker, makeRealtimeServicesNative } from "./realtime.ts";
-import {
-  makePoolerServiceDocker,
-  makePoolerServicesNative,
-  poolerContainerPorts,
-} from "./pooler.ts";
+import { makePoolerServiceDocker, poolerContainerPorts } from "./pooler.ts";
 import { dockerRunService } from "./service-utils.ts";
 import {
   LOCAL_S3_PROTOCOL_ACCESS_KEY_ID,
@@ -91,11 +87,25 @@ describe("makePostgresService", () => {
     expect(def.env?.DYLD_LIBRARY_PATH).toBe(`${POSTGRES_BIN_PATH}/lib`);
     expect(def.healthCheck?.probe).toEqual({
       _tag: "Exec",
-      command: `${POSTGRES_BIN_PATH}/bin/pg_isready`,
-      args: ["-h", "127.0.0.1", "-p", "54322", "-U", "postgres"],
+      command: `${POSTGRES_BIN_PATH}/bin/psql`,
+      args: [
+        "-h",
+        "127.0.0.1",
+        "-p",
+        "54322",
+        "-U",
+        "supabase_admin",
+        "-d",
+        "postgres",
+        "--no-psqlrc",
+        "--no-password",
+        "-c",
+        "SELECT 1",
+      ],
       env: {
         DYLD_LIBRARY_PATH: `${POSTGRES_BIN_PATH}/lib`,
         LD_LIBRARY_PATH: `${POSTGRES_BIN_PATH}/lib`,
+        PGPASSWORD: "postgres",
       },
     });
     expect(def.dependencies).toEqual([]);
@@ -397,7 +407,7 @@ describe("makeEdgeRuntimeServiceDocker", () => {
 });
 
 describe("native auxiliary service definitions", () => {
-  it("starts Edge Runtime from the prepared wrapper and generated host paths", () => {
+  it("starts Edge Runtime from the prepared wrapper and bootstrap directory", () => {
     const artifactRoot = "/cache/edge-runtime/v1.74.3/darwin-arm64";
     const runtimeRoot = "/tmp/stacks/project-a/runtime";
     const projectDir = "/tmp/stacks/project-a/project";
@@ -416,13 +426,8 @@ describe("native auxiliary service definitions", () => {
 
     expect(def.command).toBe(`${artifactRoot}/bin/.edge-runtime-wrapped`);
     expect(def.posixResourceLimits).toEqual({ nofileSoft: 65536 });
-    expect(def.args).toEqual([
-      "start",
-      `--main-service=${bootstrapDir}`,
-      "--port=54340",
-      "--policy=per_worker",
-    ]);
-    expect(def.cwd).toBe(projectDir);
+    expect(def.args).toEqual(["start", "--main-service=.", "--port=54340", "--policy=per_worker"]);
+    expect(def.cwd).toBe(bootstrapDir);
     expect(def.env).toMatchObject({
       SUPABASE_INTERNAL_DEBUG: "true",
       FUNCTIONS_RUNTIME_CONFIG_PATH: `${runtimeRoot}/edge-runtime/functions-runtime-config.json`,
@@ -477,6 +482,8 @@ describe("native auxiliary service definitions", () => {
       PORT: "54330",
       DB_HOST: "127.0.0.1",
       DB_PORT: String(DB_PORT),
+      DB_USER: "supabase_admin",
+      DB_AFTER_CONNECT_QUERY: "SET search_path TO _realtime",
       API_JWT_SECRET: JWT_SECRET,
       API_JWT_JWKS: "native-jwks",
       SECRET_KEY_BASE: "native-secret-key-base",
@@ -496,44 +503,6 @@ describe("native auxiliary service definitions", () => {
     });
   });
 
-  it("binds both native Pooler protocol ports with stack-unique distribution identity", () => {
-    const artifactRoot = "/cache/pooler/v2.9.10/linux-amd64";
-    const dependencies = [{ service: "postgres", condition: "healthy" }] as const;
-    const bundle = makePoolerServicesNative({
-      binPath: artifactRoot,
-      runtimeRoot: "/tmp/stacks/project-a/runtime",
-      adminPort: 54329,
-      sessionPort: 54330,
-      transactionPort: 54331,
-      nodeName: "supavisor_id_stack_a",
-      releaseCookie: "supabase_stack_a_cookie",
-      dbPort: DB_PORT,
-      poolMode: "transaction",
-      defaultPoolSize: 20,
-      maxClientConn: 100,
-      jwtSecret: JWT_SECRET,
-      tenantId: "native-pooler",
-      encryptionKey: "native-encryption-key",
-      secretKeyBase: "native-secret-key-base",
-      dependencies,
-    });
-
-    expect(bundle.server.env).toMatchObject({
-      PORT: "54329",
-      PROXY_PORT_SESSION: "54330",
-      PROXY_PORT_TRANSACTION: "54331",
-      NODE_NAME: "supavisor_id_stack_a",
-      NODE_IP: "127.0.0.1",
-      RELEASE_NODE: "supavisor_id_stack_a@127.0.0.1",
-      RELEASE_COOKIE: "supabase_stack_a_cookie",
-    });
-    expect(bundle.migrate.env).toMatchObject({
-      NODE_NAME: "supavisor_id_stack_a",
-      NODE_IP: "127.0.0.1",
-      RELEASE_COOKIE: "supabase_stack_a_cookie",
-    });
-  });
-
   it("starts PgMeta from its published host launcher against loopback PostgreSQL", () => {
     const artifactRoot = "/cache/pgmeta/v0.98.0/linux-amd64";
     const dependencies = [{ service: "postgres", condition: "healthy" }] as const;
@@ -547,6 +516,7 @@ describe("native auxiliary service definitions", () => {
     expect(def.command).toBe(`${artifactRoot}/bin/pgmeta`);
     expect(def.args).toBeUndefined();
     expect(def.env).toMatchObject({
+      PG_META_HOST: "127.0.0.1",
       PG_META_PORT: "54336",
       PG_META_DB_HOST: "127.0.0.1",
       PG_META_DB_PORT: String(DB_PORT),
@@ -813,6 +783,7 @@ describe("docker-backed auxiliary services", () => {
     expect(def.args).toContain(`supabase-realtime-${API_PORT}`);
     expect(def.args).toContain("54330:54330");
     expect(def.env?.DB_HOST).toBe("host.docker.internal");
+    expect(def.env?.DB_USER).toBe("postgres");
     expect(def.dependencies).toEqual(dependencies);
     expect(def.healthCheck?.probe).toEqual(
       expect.objectContaining({ _tag: "Exec", command: "curl" }),

@@ -33,7 +33,7 @@ export { detectPlatform, nativeTargetForPlatform } from "./Platform.ts";
 
 export { expandExcludedServices } from "./ServiceExclusions.ts";
 
-export { nativeLogRoot, nativeServiceLogPath, startNativeLogWriter } from "./NativeLogWriter.ts";
+export { nativeLogRoot, nativeServiceLogPath } from "./NativeLogWriter.ts";
 
 export type { ContainerRuntime, StackRuntimeSelection } from "./ContainerRuntime.ts";
 export { selectStackRuntime, validateStackRuntime } from "./ContainerRuntime.ts";

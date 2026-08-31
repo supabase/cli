@@ -32,7 +32,9 @@ describe("prepareVectorConfig", () => {
       for (const path of nativeServiceLogSegmentPaths(runtimeRoot, "vector")) {
         expect(config).toContain(`- "${path}"`);
       }
-      expect(config).toContain("codec: json");
+      expect(config).toContain("      . = parse_json!(.message)");
+      expect(config).not.toContain("    decoding:");
+      expect(config).toContain("      - parse_native_logs\n    encoding:\n      codec: json");
       expect(config).toContain('uri: "http://127.0.0.1:54327/api/logs?source_name=postgres.logs"');
       expect(config).toContain('x-api-key: "analytics-key"');
       expect(config).toContain(`data_dir: "${runtimeRoot}/vector/data_dir"`);
