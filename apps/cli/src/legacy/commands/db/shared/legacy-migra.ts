@@ -169,16 +169,14 @@ const loadTargetUserSchemas = Effect.fnUntraced(function* (
             }),
         ),
       );
-      const rows = yield* session
-        .query(legacyListSchemasSql, [LEGACY_LIST_SCHEMAS_EXCLUDE])
-        .pipe(
-          Effect.mapError(
-            (cause) =>
-              new LegacyMigraSchemaLoadError({
-                message: `failed to list schemas: ${cause.message}`,
-              }),
-          ),
-        );
+      const rows = yield* session.query(legacyListSchemasSql, [LEGACY_LIST_SCHEMAS_EXCLUDE]).pipe(
+        Effect.mapError(
+          (cause) =>
+            new LegacyMigraSchemaLoadError({
+              message: `failed to list schemas: ${cause.message}`,
+            }),
+        ),
+      );
       return rows.map((row) => String(row["nspname"]));
     }),
   );
