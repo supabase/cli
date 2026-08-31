@@ -163,7 +163,9 @@ go`/`--lang swift`/`--lang python` — the defaults-only claim above holds only 
   any other positional language requires an explicit `--lang` flag.
 - Go and Python output now lists entities in the canonical sorted order
   (`sortGeneratorMetadata`) instead of pg-meta's environment-dependent SQL row
-  order; the rendered content is otherwise identical (verified byte-identical
-  for TypeScript and Swift, whose templates sort internally).
+  order; the rendered content is otherwise identical (Swift verified
+  byte-identical — its template sorts internally). TypeScript is formatted by
+  oxfmt (postgrest-typegen ≥ 0.2.0) instead of pg-meta's prettier: content is
+  identical, with minor whitespace differences in how long union types wrap.
 - The linked-project telemetry cache is written only when a project ref is resolved
   (`--linked`/`--project-id`/fallback) — it's skipped when no ref is available.

@@ -13,6 +13,7 @@ import type { LegacyPgConnInput } from "../../../shared/legacy-db-connection.ser
 import { LegacyPgDeltaSslProbe } from "../../../shared/legacy-pgdelta-ssl-probe.service.ts";
 import { LegacyGenTypesMetadataError } from "./types.errors.ts";
 import { type LegacyGenTypesGenerateInput, LegacyGenTypesGenerator } from "./types.generator.ts";
+import { legacyOxfmtTypegenFormat } from "./types.oxfmt.ts";
 
 function describeCause(cause: unknown): string {
   return cause instanceof Error ? cause.message : String(cause);
@@ -93,6 +94,10 @@ const generate = (sslProbe: LegacyPgDeltaSslProbe["Service"], input: LegacyGenTy
             try: () =>
               generateTypescript(sorted, {
                 detectOneToOneRelationships: !input.postgrestV9Compat,
+                // The statically-embedded oxfmt binding (see types.oxfmt.ts);
+                // the package's own default formatter cannot load its native
+                // addon inside the compiled binary.
+                format: legacyOxfmtTypegenFormat,
               }),
             catch: metadataError,
           });

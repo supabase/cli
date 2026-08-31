@@ -36,12 +36,6 @@ blockExoticSubdeps: true
 overrides:
   # pg-topo's parser chain otherwise resolves bleeding-edge Node globals that conflict with Bun's web types.
   "@launchql/protobufjs>@types/node": "24.10.4"
-  # postgrest-typegen pins prettier 3.5.3, whose dist trips a Bun bundler
-  # renaming bug under `bun build --compile` ("Cannot access 'a4' before
-  # initialization" inside the TypeScript parser). 3.9.6 — the version this
-  # repo already uses — bundles cleanly, and pg-meta itself floated ^3.3.3,
-  # so aligning versions carries no output-parity risk.
-  "@supabase/postgrest-typegen>prettier": "3.9.6"
 
 minimumReleaseAge: 10200
 minimumReleaseAgeExclude:
@@ -59,7 +53,27 @@ minimumReleaseAgeExclude:
   - "@effect/vitest@4.0.0-rc.111"
   - "@supabase/pg-delta@1.0.0-alpha.46"
   - "@supabase/pg-topo@1.0.0-alpha.5"
-  - "@supabase/postgrest-typegen@0.1.0"
+  - "@supabase/postgrest-typegen@0.2.0"
+  - "oxfmt@0.65.0"
+  - "@oxfmt/binding-android-arm-eabi@0.65.0"
+  - "@oxfmt/binding-android-arm64@0.65.0"
+  - "@oxfmt/binding-darwin-arm64@0.65.0"
+  - "@oxfmt/binding-darwin-x64@0.65.0"
+  - "@oxfmt/binding-freebsd-x64@0.65.0"
+  - "@oxfmt/binding-linux-arm-gnueabihf@0.65.0"
+  - "@oxfmt/binding-linux-arm-musleabihf@0.65.0"
+  - "@oxfmt/binding-linux-arm64-gnu@0.65.0"
+  - "@oxfmt/binding-linux-arm64-musl@0.65.0"
+  - "@oxfmt/binding-linux-ppc64-gnu@0.65.0"
+  - "@oxfmt/binding-linux-riscv64-gnu@0.65.0"
+  - "@oxfmt/binding-linux-riscv64-musl@0.65.0"
+  - "@oxfmt/binding-linux-s390x-gnu@0.65.0"
+  - "@oxfmt/binding-linux-x64-gnu@0.65.0"
+  - "@oxfmt/binding-linux-x64-musl@0.65.0"
+  - "@oxfmt/binding-openharmony-arm64@0.65.0"
+  - "@oxfmt/binding-win32-arm64-msvc@0.65.0"
+  - "@oxfmt/binding-win32-ia32-msvc@0.65.0"
+  - "@oxfmt/binding-win32-x64-msvc@0.65.0"
   - "@types/bun@1.4.0"
   - "bun-types@1.4.0"
   - "effect@4.0.0-rc.111"
