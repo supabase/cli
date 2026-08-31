@@ -48,17 +48,18 @@ formatting without disabling safe compaction.
 
 ## Environment Variables
 
-| Variable                     | Purpose                                                                                                   | Required? |
-| ---------------------------- | --------------------------------------------------------------------------------------------------------- | --------- |
-| `SUPABASE_ACCESS_TOKEN`      | auth token for `--linked`                                                                                 | no        |
-| `DB_PASSWORD`                | password for `--linked` / `--db-url`                                                                      | no        |
-| `SUPABASE_HOME`              | overrides the `~/.supabase` root used for the legacy opt-out's shadow baseline cache                      | no        |
-| `SUPABASE_SHADOW_CACHE`      | shadow baseline cache for the legacy opt-out's catalog-miss shadows; on by default, opt-out (`0`/`false`) | no        |
-| `SUPABASE_USE_PG_DELTA_NEXT` | set to `false` for legacy edge-runtime pg-delta                                                           | no        |
-| `PGDELTA_NPM_REGISTRY`       | legacy opt-out's private npm registry                                                                     | no        |
-| `PGDELTA_DEBUG`              | bundled-engine debug artifacts                                                                            | no        |
-| `SUPABASE_SERVICES_HOSTNAME` | local DB host for `--local`                                                                               | no        |
-| `DOCKER_HOST`                | tcp daemon host used as the local DB host fallback                                                        | no        |
+| Variable                     | Purpose                                                                                                                                                                                                                                                                                                                                                                                                              | Required? |
+| ---------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | --------- |
+| `SUPABASE_ACCESS_TOKEN`      | auth token for `--linked`                                                                                                                                                                                                                                                                                                                                                                                            | no        |
+| `DB_PASSWORD`                | password for `--linked` / `--db-url`                                                                                                                                                                                                                                                                                                                                                                                 | no        |
+| `SUPABASE_HOME`              | overrides the `~/.supabase` root used for the legacy opt-out's shadow baseline cache                                                                                                                                                                                                                                                                                                                                 | no        |
+| `SUPABASE_SHADOW_CACHE`      | shadow baseline cache for the legacy opt-out's catalog-miss shadows; on by default, opt-out (`0`/`false`)                                                                                                                                                                                                                                                                                                            | no        |
+| `SUPABASE_USE_PG_DELTA_NEXT` | set to `false` for legacy edge-runtime pg-delta                                                                                                                                                                                                                                                                                                                                                                      | no        |
+| `PGDELTA_NPM_REGISTRY`       | legacy opt-out's private npm registry                                                                                                                                                                                                                                                                                                                                                                                | no        |
+| `PGDELTA_DEBUG`              | bundled-engine debug artifacts                                                                                                                                                                                                                                                                                                                                                                                       | no        |
+| `SUPABASE_SERVICES_HOSTNAME` | local DB host for `--local`                                                                                                                                                                                                                                                                                                                                                                                          | no        |
+| `DOCKER_HOST`                | tcp daemon host used as the local DB host fallback                                                                                                                                                                                                                                                                                                                                                                   | no        |
+| `SUPABASE_USE_SLIM_IMAGES`   | resolves current-pin shadow Postgres, PG15+ realtime/storage/auth migrate-job images, and (legacy opt-out) the edge-runtime catalog/export image from the slim `ghcr.io/supabase/cli` builds (`true`/`1` enable); majors 13/15 use `15.14.1.167` when the flag is on; historical pins, PG14, OrioleDB, flag-off `15.8.1.085`, `deno_version = 1`, and historical `.temp/edge-runtime-version` pins stay on docker.io | no        |
 
 ## Exit Codes
 
@@ -109,3 +110,10 @@ always go to stderr, in every `--output-format`. On success:
   in-process (create the shadow container, wait for health, run the
   auth/storage/realtime one-shot migrate jobs, export the catalog, remove the
   container) using the same primitives as `db diff` and `db pull`.
+- **Stale local-container guard.** `--local`/smart-mode's Local target inspects
+  the running local `db` container's actual image and compares it against the
+  currently-configured/resolved one before reading from it. A same-tag family
+  mismatch (slim vs docker.io, e.g. after toggling `SUPABASE_USE_SLIM_IMAGES`
+  without restarting) fails with a suggestion to `supabase stop` then
+  `supabase start` with the same flag. A real version/tag mismatch still
+  suggests `supabase stop --all --no-backup` then `supabase start`.

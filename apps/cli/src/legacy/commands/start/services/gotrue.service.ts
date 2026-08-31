@@ -58,6 +58,10 @@ import {
   legacyStartInternalDbPassword,
   legacyStartInternalDbUrl,
 } from "../../../shared/db-bootstrap/internal-db-connection.ts";
+import {
+  legacySlimWgetHealthcheck,
+  legacyUsesSlimRuntime,
+} from "../../../shared/db-bootstrap/slim-runtime.ts";
 
 /** The GoTrue network alias — also this service's `containerSuffix` in `LEGACY_SERVICE_CATALOG`. */
 const LEGACY_GOTRUE_CONTAINER_SUFFIX = "auth";
@@ -652,19 +656,21 @@ export function legacyBuildGotrueContainerSpec(
     env,
     binds: [],
     exposedPorts: [{ containerPort: LEGACY_GOTRUE_PORT }],
-    healthcheck: {
-      test: [
-        "CMD",
-        "wget",
-        "--no-verbose",
-        "--tries=1",
-        "--spider",
-        `http://127.0.0.1:${LEGACY_GOTRUE_PORT}/health`,
-      ],
-      intervalSeconds: 10,
-      timeoutSeconds: 2,
-      retries: 3,
-    },
+    healthcheck: legacyUsesSlimRuntime(input.image)
+      ? legacySlimWgetHealthcheck(`http://127.0.0.1:${LEGACY_GOTRUE_PORT}/health`)
+      : {
+          test: [
+            "CMD",
+            "wget",
+            "--no-verbose",
+            "--tries=1",
+            "--spider",
+            `http://127.0.0.1:${LEGACY_GOTRUE_PORT}/health`,
+          ],
+          intervalSeconds: 10,
+          timeoutSeconds: 2,
+          retries: 3,
+        },
     restartPolicy: "unless-stopped",
     networkId: input.networkId,
     networkAliases: [LEGACY_GOTRUE_CONTAINER_SUFFIX],
