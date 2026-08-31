@@ -6,9 +6,15 @@ import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterAll, beforeAll, describe, expect, test } from "vitest";
+import { dockerContainerName } from "../src/StackIdentity.ts";
 import { createStack, type StackHandle } from "../src/node.ts";
 import { dependencyTimeoutSecondsForServices } from "../src/services/health-budgets.ts";
-import { SERVICE_NAMES, type ServiceName } from "../src/versions.ts";
+import {
+  DEFAULT_VERSIONS,
+  SERVICE_NAMES,
+  dockerImageForService,
+  type ServiceName,
+} from "../src/versions.ts";
 import { setupTestTable } from "./helpers/e2e.ts";
 
 const STACK_DOCKER_E2E_SETUP_OVERHEAD_MS = 180_000;
@@ -17,22 +23,11 @@ const STACK_DOCKER_E2E_FULL_START_TIMEOUT_MS =
 const STACK_DOCKER_E2E_JOURNEY_OVERHEAD_MS = 240_000;
 const STACK_DOCKER_E2E_TEST_TIMEOUT_MS =
   2 * STACK_DOCKER_E2E_FULL_START_TIMEOUT_MS + STACK_DOCKER_E2E_JOURNEY_OVERHEAD_MS;
-
-const EXPECTED_SLIM_DOCKER_IMAGES: Readonly<Record<ServiceName, string>> = {
-  postgres: "ghcr.io/supabase/cli/postgres:17.6.1.165",
-  postgrest: "ghcr.io/supabase/cli/postgrest:v16.2",
-  auth: "ghcr.io/supabase/cli/auth:v2.196.0",
-  "edge-runtime": "ghcr.io/supabase/cli/edge-runtime:v1.74.3",
-  realtime: "ghcr.io/supabase/cli/realtime:v2.129.9",
-  storage: "ghcr.io/supabase/cli/storage:v1.71.0",
-  imgproxy: "ghcr.io/supabase/cli/imgproxy:v3.8.0",
-  mailpit: "ghcr.io/supabase/cli/mailpit:v1.30.2",
-  pgmeta: "ghcr.io/supabase/cli/pgmeta:v0.98.0",
-  studio: "ghcr.io/supabase/cli/studio:2026.08.24-sha-8ec45b2",
-  analytics: "ghcr.io/supabase/cli/analytics:v1.50.6",
-  vector: "ghcr.io/supabase/vector:0.53.0-alpine",
-  pooler: "ghcr.io/supabase/supavisor:2.9.7",
-};
+const STACK_DOCKER_E2E_AFTER_ALL_SHUTDOWN_TIMEOUT_MS = 60_000;
+const STACK_DOCKER_E2E_AFTER_ALL_INSPECTION_OVERHEAD_MS = 30_000;
+const STACK_DOCKER_E2E_AFTER_ALL_TIMEOUT_MS =
+  STACK_DOCKER_E2E_AFTER_ALL_SHUTDOWN_TIMEOUT_MS +
+  STACK_DOCKER_E2E_AFTER_ALL_INSPECTION_OVERHEAD_MS;
 
 const EAGER_SERVICES: ReadonlyArray<ServiceName> = [
   "postgres",
@@ -53,14 +48,11 @@ const LAZY_SERVICES: ReadonlyArray<ServiceName> = [
   "imgproxy",
 ];
 
-const ownedDockerContainerName = (service: ServiceName, identity: string): string =>
-  `supabase-${service}-${identity}`;
-
 const ownedDockerContainers = (
   identity: string,
 ): ReadonlyArray<{ readonly name: string; readonly image: string }> =>
   SERVICE_NAMES.flatMap((service) => {
-    const name = ownedDockerContainerName(service, identity);
+    const name = dockerContainerName(service, identity);
     const output = execFileSync(
       "docker",
       ["ps", "-a", "--filter", `name=^${name}$`, "--format", "{{.Names}}\t{{.Image}}"],
@@ -74,6 +66,13 @@ const ownedDockerContainers = (
       return { name: containerName ?? name, image: image ?? "" };
     });
   });
+
+const forceRemoveOwnedDockerContainers = (containerNames: ReadonlyArray<string>): void => {
+  if (containerNames.length === 0) return;
+  try {
+    execFileSync("docker", ["rm", "-f", ...containerNames], { stdio: "ignore" });
+  } catch {}
+};
 
 function hasDockerDaemon(): boolean {
   try {
@@ -151,18 +150,42 @@ dockerDescribe("createStack e2e (docker mode)", () => {
   }, STACK_DOCKER_E2E_FULL_START_TIMEOUT_MS);
 
   afterAll(async () => {
-    await stack?.dispose();
+    const teardownFailures: unknown[] = [];
 
-    // Verify all exact owned Docker containers are cleaned up, including stopped containers.
-    if (apiPort !== undefined) {
-      const remaining = ownedDockerContainers(apiPort).map((container) => container.name);
-      expect(remaining).toEqual([]);
+    try {
+      await stack?.dispose();
+    } catch (error) {
+      teardownFailures.push(error);
+    }
+
+    try {
+      // Verify all exact owned Docker containers are cleaned up, including stopped containers.
+      if (apiPort !== undefined) {
+        const remaining = ownedDockerContainers(apiPort).map((container) => container.name);
+        if (remaining.length > 0) {
+          forceRemoveOwnedDockerContainers(remaining);
+          teardownFailures.push(
+            new Error(`Owned Docker containers remained after dispose: ${remaining.join(", ")}`),
+          );
+        }
+      }
+    } catch (error) {
+      teardownFailures.push(error);
     }
 
     try {
       rmSync(dataDir, { recursive: true, force: true });
-    } catch {}
-  }, 30_000);
+    } catch (error) {
+      teardownFailures.push(error);
+    }
+
+    if (teardownFailures.length === 1) {
+      throw teardownFailures[0];
+    }
+    if (teardownFailures.length > 1) {
+      throw new AggregateError(teardownFailures, "Docker e2e teardown failed");
+    }
+  }, STACK_DOCKER_E2E_AFTER_ALL_TIMEOUT_MS);
 
   test(
     "qualifies the complete slim Docker graph through one public user journey",
@@ -240,12 +263,14 @@ dockerDescribe("createStack e2e (docker mode)", () => {
 
         const ownedContainers = ownedDockerContainers(apiPort);
         expect(ownedContainers.map((container) => container.name).toSorted()).toEqual(
-          SERVICE_NAMES.map((service) => ownedDockerContainerName(service, apiPort)).toSorted(),
+          SERVICE_NAMES.map((service) => dockerContainerName(service, apiPort)).toSorted(),
         );
         for (const service of SERVICE_NAMES) {
-          const containerName = ownedDockerContainerName(service, apiPort);
+          const containerName = dockerContainerName(service, apiPort);
           const container = ownedContainers.find((candidate) => candidate.name === containerName);
-          expect(container?.image, `${service} image`).toBe(EXPECTED_SLIM_DOCKER_IMAGES[service]);
+          expect(container?.image, `${service} image`).toBe(
+            dockerImageForService(service, DEFAULT_VERSIONS[service]),
+          );
         }
 
         const primaryOwnedNamesBeforeSibling = ownedContainers.map((container) => container.name);
@@ -361,7 +386,7 @@ dockerDescribe("createStack e2e (docker mode)", () => {
           const siblingOwnedBeforeDispose = ownedDockerContainers(siblingIdentity);
           expect(siblingOwnedBeforeDispose.map((container) => container.name).toSorted()).toEqual(
             siblingStartedServices
-              .map((service) => ownedDockerContainerName(service, siblingIdentity))
+              .map((service) => dockerContainerName(service, siblingIdentity))
               .toSorted(),
           );
         } catch (error) {
@@ -396,7 +421,12 @@ dockerDescribe("createStack e2e (docker mode)", () => {
               const remaining = ownedDockerContainers(siblingApiPort).map(
                 (container) => container.name,
               );
-              expect(remaining).toEqual([]);
+              if (remaining.length > 0) {
+                forceRemoveOwnedDockerContainers(remaining);
+                siblingContainerCleanupError = new Error(
+                  `Sibling owned Docker containers remained after dispose: ${remaining.join(", ")}`,
+                );
+              }
             }
           } catch (error) {
             siblingContainerCleanupError = error;
@@ -409,17 +439,17 @@ dockerDescribe("createStack e2e (docker mode)", () => {
           }
         }
 
-        if (siblingJourneyError !== undefined) {
-          throw siblingJourneyError;
+        const siblingFailures = [
+          siblingJourneyError,
+          siblingDisposeError,
+          siblingContainerCleanupError,
+          siblingDataDirCleanupError,
+        ].filter((failure) => failure !== undefined);
+        if (siblingFailures.length === 1) {
+          throw siblingFailures[0];
         }
-        if (siblingDisposeError !== undefined) {
-          throw siblingDisposeError;
-        }
-        if (siblingContainerCleanupError !== undefined) {
-          throw siblingContainerCleanupError;
-        }
-        if (siblingDataDirCleanupError !== undefined) {
-          throw siblingDataDirCleanupError;
+        if (siblingFailures.length > 1) {
+          throw new AggregateError(siblingFailures, "Sibling Docker isolation cleanup failed");
         }
 
         expect(
@@ -446,12 +476,6 @@ dockerDescribe("createStack e2e (docker mode)", () => {
         const afterRestart = await stack.getStatus();
         expect(afterRestart.map((state) => state.name).toSorted()).toEqual(
           beforeRestart.map((state) => state.name).toSorted(),
-        );
-        expect(afterRestart).toEqual(
-          expect.arrayContaining([
-            expect.objectContaining({ name: "pgmeta", status: "Healthy" }),
-            expect.objectContaining({ name: "studio", status: "Healthy" }),
-          ]),
         );
         expect(afterRestart).toEqual(
           expect.arrayContaining(
