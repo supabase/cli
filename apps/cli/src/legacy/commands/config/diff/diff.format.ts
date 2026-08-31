@@ -1,4 +1,4 @@
-import type { ConfigChange, ConfigChangeSet, CliConfigValueOrigin } from "@supabase/config";
+import type { ConfigChange, ConfigChangeSet } from "@supabase/config";
 
 /**
  * Pure formatters, payload builders, and input adapters for `config diff` —
@@ -23,22 +23,6 @@ export function legacyConfigDiffScope(
   attributes: Readonly<Record<string, unknown>>,
 ): LegacyConfigDiffScope {
   return REMOTE_CONFIG_BLOCKS.filter((block) => isRemoteBlockRecord(attributes[block]));
-}
-
-/**
- * Extracts `dotted path → env var name` for every `env()`-resolved leaf, so a
- * change on such a property can name the variable involved.
- */
-export function legacyConfigDiffEnvReferences(
-  valueOrigins: ReadonlyArray<CliConfigValueOrigin> | undefined,
-): ReadonlyMap<string, string> {
-  const references = new Map<string, string>();
-  for (const origin of valueOrigins ?? []) {
-    if (origin.source === "environment" && origin.envVariable !== undefined) {
-      references.set(origin.path.join("."), origin.envVariable);
-    }
-  }
-  return references;
 }
 
 export interface LegacyConfigDiffContext {
@@ -68,6 +52,11 @@ function renderValue(value: unknown, absent: string): string {
   return JSON.stringify(value);
 }
 
+/** Display-only join — `ConfigChange.path` is segment-array everywhere else. */
+function renderPath(path: ReadonlyArray<string>): string {
+  return path.join(".");
+}
+
 function localScope(context: LegacyConfigDiffContext): string {
   return context.appliedRemote === undefined ? "base config" : `[remotes.${context.appliedRemote}]`;
 }
@@ -89,24 +78,43 @@ export function legacyConfigDiffScopeLine(scope: LegacyConfigDiffScope): string 
   return `Comparison scope: ${present}${suffix}\n`;
 }
 
-function maskedNote(masked: ReadonlyArray<string>): string {
-  return `Note: ${masked.length} credential value(s) not compared (masked by the API): ${masked.join(", ")}\n`;
+function maskedNote(masked: ReadonlyArray<ReadonlyArray<string>>): string {
+  return `Note: ${masked.length} credential value(s) not compared (masked by the API): ${masked.map(renderPath).join(", ")}\n`;
+}
+
+function unmanagedNote(unmanaged: ReadonlyArray<ReadonlyArray<string>>): string {
+  const phrase =
+    unmanaged.length === 1
+      ? "1 declared property cannot be pushed and was not compared"
+      : `${unmanaged.length} declared properties cannot be pushed and were not compared`;
+  return `Note: ${phrase}: ${unmanaged.map(renderPath).join(", ")}\n`;
+}
+
+function renderLocal(change: ConfigChange): string {
+  const value = renderValue(change.local, "(unset)");
+  // A populated local value on an undeclared path is the schema default the
+  // projection materialized — the value a `config push` would write. Say so,
+  // or "[remote only]" reads as "this key exists only remotely", which is
+  // false for anything with a schema default (and the user will grep their
+  // file for a value that isn't there).
+  return change.local !== undefined && !change.declared
+    ? `${value} (schema default — not declared in config.toml)`
+    : value;
 }
 
 /** Human-readable diff body for text mode (stdout). */
 export function legacyRenderConfigDiffText(changeSet: ConfigChangeSet): string {
   const lines: Array<string> = [];
   for (const change of changeSet.changes) {
-    lines.push(`${change.path} [${CLASS_LABELS[change.class]}]`);
-    const local = renderValue(change.local, "(unset)");
-    const env = change.envVariable === undefined ? "" : ` (from env ${change.envVariable})`;
-    lines.push(`  local:  ${local}${env}`);
+    lines.push(`${renderPath(change.path)} [${CLASS_LABELS[change.class]}]`);
+    const env =
+      change.envVariables === undefined ? "" : ` (from env ${change.envVariables.join(", ")})`;
+    lines.push(`  local:  ${renderLocal(change)}${env}`);
     lines.push(`  remote: ${renderValue(change.remote, "(not returned)")}`);
     lines.push("");
   }
 
-  const { update, remote_only, local_only } = changeSet.counts;
-  const total = update + remote_only + local_only;
+  const { update, remote_only, local_only, total } = changeSet.counts;
   if (total === 0) {
     lines.push("No config differences found.");
   } else {
@@ -117,12 +125,18 @@ export function legacyRenderConfigDiffText(changeSet: ConfigChangeSet): string {
   if (changeSet.masked.length > 0) {
     lines.push(maskedNote(changeSet.masked).trimEnd());
   }
+  if (changeSet.unmanaged.length > 0) {
+    lines.push(unmanagedNote(changeSet.unmanaged).trimEnd());
+  }
   return `${lines.join("\n")}\n`;
 }
 
 /**
  * The structured result for `--output-format json|stream-json`. Unset sides
- * are explicit `null`s, distinguishable from empty values.
+ * are explicit `null`s, distinguishable from empty values. Paths are segment
+ * arrays — a record key (an `sms.test_otp` phone number, a `[remotes.*]`
+ * name) may itself contain a `.`, so consumers must never split a joined
+ * string.
  */
 export function legacyConfigDiffPayload(
   changeSet: ConfigChangeSet,
@@ -133,7 +147,6 @@ export function legacyConfigDiffPayload(
     [key]: value === undefined ? null : value,
   });
 
-  const { update, remote_only, local_only } = changeSet.counts;
   return {
     schema_version: context.schemaVersion,
     target: {
@@ -146,11 +159,13 @@ export function legacyConfigDiffPayload(
     changes: changeSet.changes.map((change) => ({
       path: change.path,
       class: change.class,
+      declared: change.declared,
       ...valueEntry("local", change.local),
       ...valueEntry("remote", change.remote),
-      ...(change.envVariable === undefined ? {} : { env_variable: change.envVariable }),
+      ...(change.envVariables === undefined ? {} : { env_variables: change.envVariables }),
     })),
     masked: changeSet.masked,
-    counts: { update, remote_only, local_only, total: update + remote_only + local_only },
+    unmanaged: changeSet.unmanaged,
+    counts: changeSet.counts,
   };
 }

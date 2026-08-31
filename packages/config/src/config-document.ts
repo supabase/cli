@@ -14,10 +14,11 @@ export interface CliConfigValueOrigin {
   readonly path: ReadonlyArray<string>;
   readonly source: CliConfigValueSource;
   /**
-   * For `"environment"` origins: the env var name(s) the `env()` reference
-   * resolved from (comma-joined when one array literal drew on several).
+   * For `"environment"` origins: the env var names the `env()` reference
+   * resolved from (one array literal may draw on several, so this is always
+   * a list — consumers must never have to split a joined string).
    */
-  readonly envVariable?: string;
+  readonly envVariables?: ReadonlyArray<string>;
 }
 
 export interface LoadedCliConfig {

@@ -481,9 +481,12 @@ describe("legacy config diff integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("an out-of-domain mapped value in the response maps to a decode error", () => {
+  it.live("an out-of-domain mapped value in the response keeps its typed parse error", () => {
     // Wire-valid but semantically impossible: the registry's typed throw
-    // (ADR 0021 API-arm family) surfaces as a decode-flagged read error.
+    // (ADR 0021 API-arm family) stays in the typed channel as
+    // ProjectConfigParseError, keeping its upstream suggestion and its
+    // purpose-built actionability adapter instead of masquerading as a
+    // network failure.
     const { layer } = setup({
       toml: 'project_id = "test"\n',
       v2: {
@@ -503,8 +506,11 @@ describe("legacy config diff integration", () => {
       const exit = yield* legacyConfigDiff(noFlags).pipe(Effect.exit);
       expect(Exit.isFailure(exit)).toBe(true);
       const rendered = JSON.stringify(exit);
-      expect(rendered).toContain("LegacyConfigDiffReadNetworkError");
-      expect(rendered).toContain("failed to read project config");
+      expect(rendered).toContain("ProjectConfigParseError");
+      expect(rendered).toContain("Could not read the project config");
+      // The upstream remedy survives to the renderer instead of being
+      // stringified away.
+      expect(rendered).toContain("suggestion");
     }).pipe(Effect.provide(layer));
   });
 
@@ -537,10 +543,11 @@ describe("legacy config diff integration", () => {
       });
       expect(data["scope"]).toEqual(["api", "auth", "database", "pooler", "realtime", "storage"]);
       expect(data["changes"]).toEqual([
-        { path: "api.max_rows", class: "update", local: 500, remote: 1000 },
+        { path: ["api", "max_rows"], class: "update", declared: true, local: 500, remote: 1000 },
       ]);
       expect(data["counts"]).toEqual({ update: 1, remote_only: 0, local_only: 0, total: 1 });
       expect(data["masked"]).toEqual([]);
+      expect(data["unmanaged"]).toEqual([]);
       expect(typeof data["schema_version"]).toBe("string");
     }).pipe(Effect.provide(layer));
   });
@@ -606,11 +613,12 @@ describe("legacy config diff integration", () => {
       expect(data["target"]).toMatchObject({ local_scope: "remotes.staging" });
       expect(data["changes"]).toEqual([
         {
-          path: "api.max_rows",
+          path: ["api", "max_rows"],
           class: "update",
+          declared: true,
           local: 500,
           remote: 1000,
-          env_variable: "PGRST_MAX_ROWS",
+          env_variables: ["PGRST_MAX_ROWS"],
         },
       ]);
     }).pipe(Effect.provide(layer));
@@ -637,6 +645,59 @@ describe("legacy config diff integration", () => {
       expect(out.stdoutText).toContain("db.settings.work_mem [remote only]");
       expect(out.stdoutText).toContain("local:  (unset)");
       expect(out.stdoutText).toContain('remote: "64MB"');
+    }).pipe(Effect.provide(layer));
+  });
+
+  it.live("remote-only drift on a defaulted path shows the local schema default", () => {
+    // The someone-changed-it-in-the-dashboard case: the file never declares
+    // api.max_rows, the remote reports 250, and a `config push` would write
+    // the schema default 1000 over it — the output must say so instead of
+    // implying the key exists only remotely.
+    const { layer, out } = setup({
+      toml: 'project_id = "test"\n',
+      v2: {
+        status: 200,
+        body: v2Response({
+          attributes: (attributes) => ({
+            ...attributes,
+            api: { ...(attributes["api"] as Record<string, unknown>), max_rows: 250 },
+          }),
+        }),
+      },
+    });
+    return Effect.gen(function* () {
+      yield* legacyConfigDiff(noFlags);
+      expect(out.stdoutText).toContain("api.max_rows [remote only]");
+      expect(out.stdoutText).toContain(
+        "local:  1000 (schema default — not declared in config.toml)",
+      );
+      expect(out.stdoutText).toContain("remote: 250");
+    }).pipe(Effect.provide(layer));
+  });
+
+  it.live("a declared path push cannot communicate surfaces in the unmanaged note", () => {
+    // auth.oauth_server is dropped from the local projection entirely (push
+    // has no oauth_server handling), so a declared `enabled = true`
+    // disagreeing with the remote's default `false` cannot be a change entry
+    // — but it must not vanish silently either.
+    const { layer, out } = setup({
+      toml: 'project_id = "test"\n[auth.oauth_server]\nenabled = true\n',
+      v2: {
+        status: 200,
+        body: v2Response({
+          attributes: (attributes) => ({
+            ...attributes,
+            auth: { oauth_server_enabled: false },
+          }),
+        }),
+      },
+    });
+    return Effect.gen(function* () {
+      yield* legacyConfigDiff(noFlags);
+      expect(out.stdoutText).toContain("No config differences found.");
+      expect(out.stdoutText).toContain(
+        "Note: 1 declared property cannot be pushed and was not compared: auth.oauth_server.enabled",
+      );
     }).pipe(Effect.provide(layer));
   });
 });

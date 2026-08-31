@@ -2,7 +2,7 @@ import {
   CLI_CONFIG_SCHEMA_URL,
   diffProjectConfig,
   fromApiProjectConfig,
-  fromConfigDocument,
+  ProjectConfigParseError,
 } from "@supabase/config";
 import { loadCliConfig } from "@supabase/config/effect";
 import { Effect, Option } from "effect";
@@ -25,7 +25,6 @@ import {
 } from "../../../shared/legacy-http-errors.ts";
 import {
   legacyConfigDiffComparisonLine,
-  legacyConfigDiffEnvReferences,
   legacyConfigDiffPayload,
   legacyConfigDiffScope,
   legacyConfigDiffScopeLine,
@@ -170,36 +169,42 @@ export const legacyConfigDiff = Effect.fn("legacy.config.diff")(function* (
     );
     yield* fetching?.clear() ?? Effect.void;
 
-    // 3. Project both sides through CLI-2230's convergence normalizers (ADR
-    // 0021): `fromConfigDocument` gets the loaded config WITH its raw
-    // document so raw-presence masking applies, and `fromApiProjectConfig`
-    // canonicalizes the response into the same post-push shape. A response
-    // the registry cannot narrow (out-of-domain mapped values) is an API
-    // problem, not a transport one.
+    // 3. Project the response through CLI-2230's convergence normalizer (ADR
+    // 0021). A response the registry cannot narrow (out-of-domain mapped
+    // values) is a response problem, not a transport one:
+    // `ProjectConfigParseError` stays in the typed channel with its own
+    // `suggestion` and its purpose-built actionability adapter
+    // (`externalActionabilityByTag` splits caller misuse from genuine
+    // response problems). Anything else escaping the normalizer would be a
+    // bug in this package pairing, so it stays a defect.
     const remote = yield* Effect.try({
       try: () => fromApiProjectConfig(response),
-      catch: (cause) =>
-        new LegacyConfigDiffReadNetworkError({
-          message: `failed to read project config: ${String(cause)}`,
-          decode: true,
-        }),
-    });
+      catch: (cause) => cause,
+    }).pipe(
+      Effect.catch((cause) =>
+        cause instanceof ProjectConfigParseError ? Effect.fail(cause) : Effect.die(cause),
+      ),
+    );
 
-    // 4. Classify. `declared` is the raw merged document (key presence);
-    // env-resolved leaves carry the resolving variable's name for the output.
-    const changeSet = diffProjectConfig({
-      local: fromConfigDocument(loaded),
-      remote,
-      declared: loaded.document,
-      envReferences: legacyConfigDiffEnvReferences(loaded.valueOrigins),
-    });
+    // 4. Classify. The loaded pair carries the raw merged document (declared
+    // keys) and the env-var origins; `diffProjectConfig` derives the local
+    // convergence projection from it, so the same `ProjectConfigParseError`
+    // boundary applies here.
+    const changeSet = yield* Effect.try({
+      try: () => diffProjectConfig({ local: loaded, remote }),
+      catch: (cause) => cause,
+    }).pipe(
+      Effect.catch((cause) =>
+        cause instanceof ProjectConfigParseError ? Effect.fail(cause) : Effect.die(cause),
+      ),
+    );
 
     const scope = legacyConfigDiffScope(response.data.attributes);
     yield* output.raw(legacyConfigDiffScopeLine(scope), "stderr");
 
     // 5. Emit: `--output-format json|stream-json` structured payload, or text.
     if (output.format !== "text") {
-      const total = changeSet.changes.length;
+      const total = changeSet.counts.total;
       const message =
         total === 0 ? "No config differences found." : `${total} config difference(s) found.`;
       yield* output.success(message, legacyConfigDiffPayload(changeSet, scope, context));
@@ -209,7 +214,7 @@ export const legacyConfigDiff = Effect.fn("legacy.config.diff")(function* (
 
     // 6. `--exit-code`: differences flip the exit status after the payload is
     // out, without an error envelope corrupting machine output.
-    if (flags.exitCode && changeSet.changes.length > 0) {
+    if (flags.exitCode && changeSet.counts.total > 0) {
       yield* processControl.setExitCode(1);
     }
   }).pipe(Effect.ensuring(linkedProjectCache.cache(ref)), Effect.ensuring(telemetryState.flush));

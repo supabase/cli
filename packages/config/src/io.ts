@@ -526,7 +526,7 @@ export const loadCliConfigFile = Effect.fnUntraced(function* (
   const goViperCompat = options?.goViperCompat ?? false;
   const interpolateDocument = (
     document: unknown,
-    onResolvedEnv?: (path: ReadonlyArray<string>, envName: string) => void,
+    onResolvedEnv?: (path: ReadonlyArray<string>, envNames: ReadonlyArray<string>) => void,
   ): unknown =>
     interpolateEnvReferencesAgainstSchema(document, cliProjectEnv?.values ?? {}, CliConfigSchema, {
       goViperCompat,
@@ -574,11 +574,11 @@ export const loadCliConfigFile = Effect.fnUntraced(function* (
   // that path, but correctness on the match+`env()` path matters more than
   // avoiding it.
   const resolvedEnvironmentPaths: Array<string[]> = [];
-  const resolvedEnvironmentNames = new Map<string, string>();
+  const resolvedEnvironmentNames = new Map<string, ReadonlyArray<string>>();
   documentForDecode = isObject(documentForDecode)
-    ? interpolateDocument(documentForDecode, (path, envName) => {
+    ? interpolateDocument(documentForDecode, (path, envNames) => {
         resolvedEnvironmentPaths.push(Array.from(path));
-        resolvedEnvironmentNames.set(pathKey(Array.from(path)), envName);
+        resolvedEnvironmentNames.set(pathKey(Array.from(path)), envNames);
       })
     : documentForDecode;
 
@@ -626,9 +626,9 @@ export const loadCliConfigFile = Effect.fnUntraced(function* (
         if (source === undefined) {
           return [];
         }
-        const envVariable =
+        const envVariables =
           source === "environment" ? resolvedEnvironmentNames.get(key) : undefined;
-        return [{ path, source, ...(envVariable === undefined ? {} : { envVariable }) }];
+        return [{ path, source, ...(envVariables === undefined ? {} : { envVariables }) }];
       })
     : [];
 

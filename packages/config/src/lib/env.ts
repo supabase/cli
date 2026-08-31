@@ -258,7 +258,9 @@ function walk(
   ast: SchemaAST.AST | null,
   goViperCompat: boolean,
   path: ReadonlyArray<string>,
-  onResolvedEnv: ((path: ReadonlyArray<string>, envName: string) => void) | undefined,
+  onResolvedEnv:
+    | ((path: ReadonlyArray<string>, envNames: ReadonlyArray<string>) => void)
+    | undefined,
 ): unknown {
   if (Array.isArray(document)) {
     // Element-level resolutions are reported once, at the array's own path —
@@ -267,9 +269,11 @@ function walk(
     const onResolvedArrayEnv =
       onResolvedEnv === undefined
         ? undefined
-        : (_: ReadonlyArray<string>, envName: string) => {
-            if (!envNames.includes(envName)) {
-              envNames.push(envName);
+        : (_: ReadonlyArray<string>, resolvedNames: ReadonlyArray<string>) => {
+            for (const envName of resolvedNames) {
+              if (!envNames.includes(envName)) {
+                envNames.push(envName);
+              }
             }
           };
     const result = document.map((item, index) => {
@@ -277,7 +281,7 @@ function walk(
       return walk(item, env, child, goViperCompat, [...path, String(index)], onResolvedArrayEnv);
     });
     if (envNames.length > 0) {
-      onResolvedEnv?.(path, envNames.join(", "));
+      onResolvedEnv?.(path, envNames);
     }
     return result;
   }
@@ -302,7 +306,7 @@ function walk(
     const interpolation = substituteEnvLeaf(document, env, goViperCompat);
     const substituted = interpolation.value;
     if (interpolation.resolved && interpolation.envName !== undefined) {
-      onResolvedEnv?.(path, interpolation.envName);
+      onResolvedEnv?.(path, [interpolation.envName]);
     }
     const expected = ast === null ? "unknown" : leafExpectedType(ast);
 
@@ -361,9 +365,10 @@ export function interpolateEnvReferencesAgainstSchema(
   schema: { readonly ast: SchemaAST.AST },
   options?: {
     readonly goViperCompat?: boolean;
-    /** Fires per resolved leaf with the substituting env var's name (array
-     * leaves report once at the array path, names comma-joined). */
-    readonly onResolvedEnv?: (path: ReadonlyArray<string>, envName: string) => void;
+    /** Fires per resolved leaf with the substituting env vars' names (array
+     * leaves report once at the array path, collecting every element's
+     * variable — one array literal may draw on several). */
+    readonly onResolvedEnv?: (path: ReadonlyArray<string>, envNames: ReadonlyArray<string>) => void;
   },
 ): unknown {
   return walk(

@@ -735,6 +735,10 @@ const coreRows: ReadonlyArray<ProjectConfigMappingRow> = [
         ? undefined
         : splitCommaSeparated(expectString(value, ["auth", "uri_allow_list"])),
     normalizeDocument: canonicalizeCommaJoinedArray,
+    // GoTrue treats the allow list as membership only — reordering the URLs
+    // changes nothing at runtime, unlike the sequence-semantics CSV arrays
+    // (`api.schemas`, `api.extra_search_path`).
+    arrayEquality: "set",
     unit: "csv → string[]",
   },
   uintRow(["auth", "jwt_expiry"], "jwt_exp"),
@@ -787,8 +791,18 @@ const rateLimitRows: ReadonlyArray<ProjectConfigMappingRow> = [
 // SESSIONS (auth.sync.ts:1400-1408)
 
 const sessionsRows: ReadonlyArray<ProjectConfigMappingRow> = [
-  hoursDurationRow(["auth", "sessions", "timebox"], "sessions_timebox"),
-  hoursDurationRow(["auth", "sessions", "inactivity_timeout"], "sessions_inactivity_timeout"),
+  // GoTrue reports 0 hours for a session bound that was never configured, and
+  // the transform canonicalizes that to the string "0s" — declare it here so
+  // the diff baseline recognizes the canonicalized form (a type-level zero
+  // check would miss it and flag every untouched project).
+  {
+    ...hoursDurationRow(["auth", "sessions", "timebox"], "sessions_timebox"),
+    unconfiguredValue: "0s",
+  },
+  {
+    ...hoursDurationRow(["auth", "sessions", "inactivity_timeout"], "sessions_inactivity_timeout"),
+    unconfiguredValue: "0s",
+  },
 ];
 
 // EMAIL (auth.sync.ts:1548-1562)
@@ -904,6 +918,24 @@ function smtpSiblingStringRow(
 
 // Email templates ×6 (auth.sync.ts:1439-1461; content_path has no API key)
 
+/**
+ * The subject lines the platform provisions for a project that never touched
+ * its email templates — what `mailer_subjects_*` reports on a fresh project.
+ * The default config declares no subjects (there is no meaningful local
+ * default for a platform-rendered string), so without these the diff would
+ * flag every untouched project's subjects as `remote_only` drift. Pinned by
+ * the recorded real responses in `apps/cli-e2e/fixtures/recorded/
+ * GET_v1_projects___PROJECT_REF___config_auth/`.
+ */
+const PLATFORM_DEFAULT_TEMPLATE_SUBJECTS = {
+  invite: "You have been invited",
+  confirmation: "Confirm Your Signup",
+  recovery: "Reset Your Password",
+  magic_link: "Your Magic Link",
+  email_change: "Confirm Email Change",
+  reauthentication: "Confirm Reauthentication",
+} as const;
+
 const EMAIL_TEMPLATE_NAMES = [
   "invite",
   "confirmation",
@@ -913,11 +945,23 @@ const EMAIL_TEMPLATE_NAMES = [
   "reauthentication",
 ] as const;
 
-const templateRows: ReadonlyArray<ProjectConfigMappingRow> = EMAIL_TEMPLATE_NAMES.map((name) =>
-  stringRow(["auth", "email", "template", name, "subject"], `mailer_subjects_${name}`),
-);
+const templateRows: ReadonlyArray<ProjectConfigMappingRow> = EMAIL_TEMPLATE_NAMES.map((name) => ({
+  ...stringRow(["auth", "email", "template", name, "subject"], `mailer_subjects_${name}`),
+  unconfiguredValue: PLATFORM_DEFAULT_TEMPLATE_SUBJECTS[name],
+}));
 
 // Email notifications ×7 (auth.sync.ts:1491-1525)
+
+/** Same provenance as {@link PLATFORM_DEFAULT_TEMPLATE_SUBJECTS}. */
+const PLATFORM_DEFAULT_NOTIFICATION_SUBJECTS = {
+  password_changed: "Your password has been changed",
+  email_changed: "Your email address has been changed",
+  phone_changed: "Your phone number has been changed",
+  identity_linked: "A new identity has been linked",
+  identity_unlinked: "An identity has been unlinked",
+  mfa_factor_enrolled: "A new MFA factor has been enrolled",
+  mfa_factor_unenrolled: "An MFA factor has been unenrolled",
+} as const;
 
 const EMAIL_NOTIFICATION_NAMES = [
   "password_changed",
@@ -931,14 +975,24 @@ const EMAIL_NOTIFICATION_NAMES = [
 
 const notificationRows: ReadonlyArray<ProjectConfigMappingRow> = EMAIL_NOTIFICATION_NAMES.flatMap(
   (name) => [
-    boolRow(
-      ["auth", "email", "notification", name, "enabled"],
-      `mailer_notifications_${name}_enabled`,
-    ),
-    stringRow(
-      ["auth", "email", "notification", name, "subject"],
-      `mailer_subjects_${name}_notification`,
-    ),
+    {
+      ...boolRow(
+        ["auth", "email", "notification", name, "enabled"],
+        `mailer_notifications_${name}_enabled`,
+      ),
+      // Every account-change notification defaults to disabled (supabase/auth
+      // `NotificationsConfiguration`, `default:"false"` on each field) — the
+      // config schema declares no default, so the diff baseline needs the
+      // platform's own unconfigured reading here.
+      unconfiguredValue: false,
+    },
+    {
+      ...stringRow(
+        ["auth", "email", "notification", name, "subject"],
+        `mailer_subjects_${name}_notification`,
+      ),
+      unconfiguredValue: PLATFORM_DEFAULT_NOTIFICATION_SUBJECTS[name],
+    },
   ],
 );
 
