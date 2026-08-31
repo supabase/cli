@@ -559,7 +559,12 @@ const nativeStartupProcessesFor = (
         migrate,
         {
           executable: "/bin/sh",
-          args: ["-c", `${artifact("bin/supavisor")} eval "$(cat "$SUPABASE_POOLER_TENANT_PATH")"`],
+          args: [
+            "-c",
+            'exec "$1" eval "$(cat "$SUPABASE_POOLER_TENANT_PATH")"',
+            "supavisor",
+            artifact("bin/supavisor"),
+          ],
           cwd,
           env: { SUPABASE_POOLER_TENANT_PATH: tenantPath },
         },
@@ -1097,13 +1102,10 @@ const specs: Readonly<Record<string, WorkloadRuntimeSpecDefinition>> = {
   "storage:imgproxy": {
     bindings: { primary: { containerPort: 5001 } },
     args: () => [],
-    env: (state, workload, port, runtime = "native", inputs = {}) => ({
+    env: (state, workload, port, runtime = "native", _inputs = {}) => ({
       ...common(workload, port),
       IMGPROXY_BIND: `${runtime === "container" ? "0.0.0.0" : "127.0.0.1"}:${port}`,
-      IMGPROXY_LOCAL_FILESYSTEM_ROOT:
-        runtime === "container"
-          ? "/mnt"
-          : (inputs.storage?.dataPath ?? `${state.identity.projectRoot}/.supabase/storage`),
+      IMGPROXY_LOCAL_FILESYSTEM_ROOT: "/",
     }),
     containerArgs: () => [],
     networkAliases: ["supabase-imgproxy"],
@@ -1297,17 +1299,17 @@ const specs: Readonly<Record<string, WorkloadRuntimeSpecDefinition>> = {
       DATABASE_URL: `ecto://postgres:${secret(state, "secret:database.internal.password")}@${dbHost(runtime)}:${runtime === "container" ? 5432 : dbPort(state)}/_supabase`,
       API_JWT_SECRET: secret(state, "secret:auth.settings.jwt_secret"),
       REGION: "local",
-      TENANT_ID: valueAt(state, "pooler", "tenant_id") || "pooler-dev",
+      TENANT_ID: valueAt(state, "pooler", "tenant_id"),
       CLUSTER_POSTGRES: "true",
       SECRET_KEY_BASE: valueAt(state, "pooler", "secret_key_base"),
       VAULT_ENC_KEY: valueAt(state, "pooler", "encryption_key"),
       METRICS_JWT_SECRET: secret(state, "secret:auth.settings.jwt_secret"),
-      DEFAULT_POOL_SIZE: valueAt(state, "pooler", "default_pool_size") || "20",
-      MAX_CLIENT_CONN: valueAt(state, "pooler", "max_client_conn") || "100",
-      POOL_MODE: valueAt(state, "pooler", "pool_mode") || "transaction",
-      ...(inputs.pooler?.tenantPath === undefined
-        ? {}
-        : { SUPABASE_POOLER_TENANT_PATH: "/app/pooler_tenant.exs" }),
+      DEFAULT_POOL_SIZE: valueAt(state, "pooler", "default_pool_size"),
+      MAX_CLIENT_CONN: valueAt(state, "pooler", "max_client_conn"),
+      POOL_MODE: valueAt(state, "pooler", "pool_mode"),
+      ...(runtime === "container" && inputs.pooler?.tenantPath !== undefined
+        ? { SUPABASE_POOLER_TENANT_PATH: "/app/pooler_tenant.exs" }
+        : {}),
     }),
     // The slim container entrypoint performs Supavisor migrations. Tenant
     // provisioning is a separate owner/bootstrap phase.

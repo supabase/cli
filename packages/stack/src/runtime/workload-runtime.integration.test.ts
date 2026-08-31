@@ -208,7 +208,15 @@ describe("workload runtime catalog", () => {
             storage: { dataPath: "/state/stack/data/storage" },
           },
         ).IMGPROXY_LOCAL_FILESYSTEM_ROOT,
-      ).toBe("/state/stack/data/storage");
+      ).toBe("/");
+      expect(
+        runtimeSpecFor(planned("storage:imgproxy"))?.env(
+          state,
+          planned("storage:imgproxy"),
+          5001,
+          "container",
+        ).IMGPROXY_LOCAL_FILESYSTEM_ROOT,
+      ).toBe("/");
     }).pipe(Effect.provide(NodeServices.layer)),
   );
 
@@ -255,11 +263,25 @@ describe("workload runtime catalog", () => {
     expect(tenantStartup).toHaveLength(2);
     expect(tenantStartup?.[1]).toEqual({
       executable: "/bin/sh",
-      args: ["-c", `${root}/bin/supavisor eval "$(cat "$SUPABASE_POOLER_TENANT_PATH")"`],
+      args: [
+        "-c",
+        'exec "$1" eval "$(cat "$SUPABASE_POOLER_TENANT_PATH")"',
+        "supavisor",
+        `${root}/bin/supavisor`,
+      ],
       cwd: root,
       env: { SUPABASE_POOLER_TENANT_PATH: "/tmp/pooler-tenant.exs" },
     });
     expect(tenantStartup?.[1]?.args.join(" ")).not.toContain("secret");
+
+    const containerTenantEnv = runtimeSpecFor(pooler)?.env(
+      state,
+      pooler,
+      6543,
+      "native",
+      tenantInput,
+    );
+    expect(containerTenantEnv).not.toHaveProperty("SUPABASE_POOLER_TENANT_PATH");
 
     expect(containerResolutionFor(state, auth)?.command).toEqual([
       "/bin/sh",

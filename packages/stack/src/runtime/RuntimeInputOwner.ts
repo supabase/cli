@@ -1,5 +1,16 @@
-import { Crypto, Effect, FileSystem, Path, PlatformError, Schema } from "effect";
-import type { WorkloadRuntimeKind } from "./WorkloadRuntimeSpec.ts";
+import {
+  Crypto,
+  Deferred,
+  Effect,
+  Exit,
+  FileSystem,
+  FiberSet,
+  Path,
+  PlatformError,
+  Scope,
+  Schema,
+  Semaphore,
+} from "effect";
 import type { PersistedStackState } from "../state/StackState.ts";
 import type { StackId } from "../public/StackId.ts";
 import { StackPreparationError } from "../public/Errors.ts";
@@ -27,7 +38,7 @@ export interface RuntimeAuthTemplate {
 export interface RuntimeInputMaterial {
   readonly auth?: Readonly<{
     readonly jwtKeys?: string;
-    readonly jwks?: string;
+    readonly jwks: string;
     readonly templates?: ReadonlyArray<RuntimeAuthTemplate>;
   }>;
   readonly analytics?: Readonly<{ readonly gcpJwtPath?: string }>;
@@ -40,7 +51,6 @@ export interface RuntimeInputOwner {
   readonly resolve: (
     state: PersistedStackState,
     generation: number,
-    runtime: WorkloadRuntimeKind,
   ) => Effect.Effect<RuntimeInputMaterial, StackPreparationError>;
   /** Resolves one configured project-relative regular file without copying it. */
   readonly resolveProjectFile: (
@@ -69,7 +79,9 @@ const mapFile = <A, R>(
   operation: string,
   effect: Effect.Effect<A, PlatformError.PlatformError, R>,
 ): Effect.Effect<A, StackPreparationError, R> =>
-  effect.pipe(Effect.mapError(() => failure(`Unable to ${operation}`, { path: target })));
+  effect.pipe(
+    Effect.mapError((error) => failure(`Unable to ${operation}`, { path: target, cause: error })),
+  );
 
 const isRecord = (value: unknown): value is Readonly<Record<string, unknown>> =>
   typeof value === "object" && value !== null && !Array.isArray(value);
@@ -92,9 +104,9 @@ const settingsFor = (state: PersistedStackState, capability: CapabilitySettingNa
 const invalidGeneration = (generation: number): boolean =>
   !Number.isSafeInteger(generation) || generation < 0;
 
-const finiteSetting = (value: string, fallback: number): number => {
+const finiteSetting = (value: string): number | undefined => {
   const parsed = Number(value);
-  return Number.isFinite(parsed) ? parsed : fallback;
+  return Number.isFinite(parsed) ? parsed : undefined;
 };
 
 const relativeEscape = (path: Path.Path, root: string, candidate: string): boolean => {
@@ -148,15 +160,21 @@ const base64UrlEncode = (bytes: Uint8Array): string => {
 
 const symmetricJwk = (secret: string): Readonly<Record<string, unknown>> => ({
   kty: "oct",
+  alg: "HS256",
+  use: "sig",
+  key_ops: ["verify"],
   k: base64UrlEncode(new TextEncoder().encode(secret)),
 });
 
 const elixirString = (value: string): string => {
   let output = '"';
-  for (const character of value) {
+  const characters = [...value];
+  for (let index = 0; index < characters.length; index += 1) {
+    const character = characters[index] ?? "";
     const code = character.codePointAt(0) ?? 0;
     if (character === "\\") output += "\\\\";
     else if (character === '"') output += '\\"';
+    else if (character === "#" && characters[index + 1] === "{") output += "\\#";
     else if (character === "\n") output += "\\n";
     else if (character === "\r") output += "\\r";
     else if (character === "\t") output += "\\t";
@@ -167,7 +185,9 @@ const elixirString = (value: string): string => {
 };
 
 const poolerTenantScript = (input: {
+  readonly externalId: string;
   readonly dbHost: string;
+  readonly dbPort: number;
   readonly dbPassword: string;
   readonly poolMode: "transaction" | "session";
   readonly defaultPoolSize: number;
@@ -181,9 +201,9 @@ const poolerTenantScript = (input: {
   end
 
 params = %{
-  "external_id" => "pooler-dev",
+  "external_id" => ${elixirString(input.externalId)},
   "db_host" => ${elixirString(input.dbHost)},
-  "db_port" => 5432,
+  "db_port" => ${String(input.dbPort)},
   "db_database" => "postgres",
   "require_user" => false,
   "auth_query" => "SELECT * FROM pgbouncer.get_auth($1)",
@@ -199,8 +219,12 @@ params = %{
   }]
 }
 
-if !Supavisor.Tenants.get_tenant_by_external_id(params["external_id"]) do
+case Supavisor.Tenants.get_tenant_by_external_id(params["external_id"]) do
+  nil ->
   {:ok, _} = Supavisor.Tenants.create_tenant(params)
+  existing ->
+    existing = Supavisor.Repo.preload(existing, :users)
+    {:ok, _} = Supavisor.Tenants.update_tenant(existing, params)
 end
 `;
 
@@ -216,7 +240,7 @@ export const resolveFunctionsEdgeRuntimeSecrets = (
   for (const [name, raw] of Object.entries(configured)) {
     if (!/^[A-Za-z_][A-Za-z0-9_]*$/u.test(name))
       return Effect.fail(failure("Functions Edge Runtime secret name is invalid", { name }));
-    if (name.startsWith("SUPABASE_") || name.startsWith("SUPABASE_INTERNAL_"))
+    if (name.startsWith("SUPABASE_"))
       return Effect.fail(failure("Functions Edge Runtime secret name is reserved", { name }));
     const value = settingValue(state, raw);
     // oxlint-disable-next-line no-control-regex
@@ -232,12 +256,16 @@ export const makeRuntimeInputOwner = (
 ): Effect.Effect<
   RuntimeInputOwner,
   StackPreparationError,
-  FileSystem.FileSystem | Path.Path | Crypto.Crypto
+  FileSystem.FileSystem | Path.Path | Crypto.Crypto | Scope.Scope
 > =>
   Effect.gen(function* () {
     const fs = yield* FileSystem.FileSystem;
     const path = yield* Path.Path;
     const crypto = yield* Crypto.Crypto;
+    const admission = yield* Semaphore.make(1);
+    const execution = yield* Semaphore.make(1);
+    const ownerScope = yield* Effect.scope;
+    const ownedFibers = yield* FiberSet.make().pipe(Effect.provideService(Scope.Scope, ownerScope));
     const stackPaths = yield* resolveStackPaths(options).pipe(
       Effect.mapError((cause) => failure("Unable to resolve runtime input paths", { cause })),
     );
@@ -317,8 +345,21 @@ export const makeRuntimeInputOwner = (
       if (fetchJson === undefined)
         return Effect.fail(failure("OIDC discovery requires an injected JSON fetcher"));
       const discoveryUrl = `${issuer.replace(/\/+$/u, "")}/.well-known/openid-configuration`;
-      return fetchJson(discoveryUrl).pipe(
-        Effect.flatMap(decodeJson),
+      const fetchAt = (
+        url: string,
+        operation: string,
+      ): Effect.Effect<unknown, StackPreparationError> =>
+        fetchJson(url).pipe(
+          Effect.mapError(() => failure(`${operation} request failed`, { url: safeUrlLabel(url) })),
+        );
+      return fetchAt(discoveryUrl, "OIDC discovery").pipe(
+        Effect.flatMap((value) =>
+          decodeJson(value).pipe(
+            Effect.mapError(() =>
+              failure("OIDC discovery response is invalid", { url: safeUrlLabel(discoveryUrl) }),
+            ),
+          ),
+        ),
         Effect.flatMap((value) =>
           Schema.decodeUnknownEffect(oidcDiscovery)(value).pipe(
             Effect.mapError(() =>
@@ -334,8 +375,14 @@ export const makeRuntimeInputOwner = (
                 url: safeUrlLabel(discoveryUrl),
               }),
             );
-          return fetchJson(jwksUrl).pipe(
-            Effect.flatMap(decodeJson),
+          return fetchAt(jwksUrl, "OIDC JWKS").pipe(
+            Effect.flatMap((value) =>
+              decodeJson(value).pipe(
+                Effect.mapError(() =>
+                  failure("OIDC JWKS response is invalid", { url: safeUrlLabel(jwksUrl) }),
+                ),
+              ),
+            ),
             Effect.flatMap((value) =>
               Schema.decodeUnknownEffect(publicRemoteJwks)(value).pipe(
                 Effect.mapError(() =>
@@ -352,11 +399,6 @@ export const makeRuntimeInputOwner = (
             ),
           );
         }),
-        Effect.mapError((error) =>
-          error instanceof StackPreparationError
-            ? error
-            : failure("OIDC discovery request failed", { url: safeUrlLabel(discoveryUrl) }),
-        ),
       );
     };
 
@@ -411,7 +453,7 @@ export const makeRuntimeInputOwner = (
     const writePoolerTenant = (
       state: PersistedStackState,
       generation: number,
-      runtime: WorkloadRuntimeKind,
+      runtime: "native" | "container",
     ): Effect.Effect<string, StackPreparationError> => {
       if (invalidGeneration(generation)) return Effect.fail(failure("Invalid pooler generation"));
       const password = state.secrets["secret:database.internal.password"]?.value ?? "";
@@ -419,19 +461,34 @@ export const makeRuntimeInputOwner = (
         return Effect.fail(failure("Persisted database secret is missing"));
       const settings = settingsFor(state, "pooler");
       const poolMode = settingValue(state, isRecord(settings) ? settings.pool_mode : undefined);
-      const mode: "transaction" | "session" = poolMode === "session" ? "session" : "transaction";
+      if (poolMode !== "transaction" && poolMode !== "session")
+        return Effect.fail(failure("Persisted Pooler mode is invalid"));
+      const tenantId = settingValue(state, isRecord(settings) ? settings.tenant_id : undefined);
+      if (tenantId.length === 0)
+        return Effect.fail(failure("Persisted Pooler tenant id is missing"));
       const defaultPoolSize = finiteSetting(
         settingValue(state, isRecord(settings) ? settings.default_pool_size : undefined),
-        20,
       );
       const maxClientConn = finiteSetting(
         settingValue(state, isRecord(settings) ? settings.max_client_conn : undefined),
-        100,
       );
+      if (defaultPoolSize === undefined || maxClientConn === undefined)
+        return Effect.fail(failure("Persisted Pooler sizing settings are invalid"));
+      const nativeAssignment = state.privatePorts.find(
+        (entry) => entry.workloadId === "database:database" && entry.binding === "primary",
+      );
+      if (runtime === "native" && nativeAssignment === undefined)
+        return Effect.fail(failure("Persisted native database assignment is missing"));
+      const dbHost = runtime === "container" ? "supabase-database" : "127.0.0.1";
+      const dbPort = runtime === "container" ? 5432 : nativeAssignment?.port;
+      if (dbPort === undefined)
+        return Effect.fail(failure("Persisted native database assignment is missing"));
       const content = poolerTenantScript({
-        dbHost: runtime === "container" ? "supabase-database" : "127.0.0.1",
+        externalId: tenantId,
+        dbHost,
+        dbPort,
         dbPassword: password,
-        poolMode: mode,
+        poolMode,
         defaultPoolSize,
         maxClientConn,
       });
@@ -482,26 +539,23 @@ export const makeRuntimeInputOwner = (
       });
     };
 
-    const cleanupGeneration = (generation: number): Effect.Effect<void, StackPreparationError> =>
-      invalidGeneration(generation)
-        ? Effect.fail(failure("Invalid pooler generation"))
-        : mapFile(
-            path.join(poolerRoot, String(generation)),
-            "clean pooler tenant generation",
-            fs.remove(path.join(poolerRoot, String(generation)), { recursive: true, force: true }),
-          );
-    const cleanupAll = mapFile(
-      poolerRoot,
-      "clean pooler tenant files",
-      fs.remove(poolerRoot, { recursive: true, force: true }),
-    );
+    const joinExit = <A, E>(result: Exit.Exit<A, E>): Effect.Effect<A, E> =>
+      Exit.isSuccess(result) ? Effect.succeed(result.value) : Effect.failCause(result.cause);
+    type OwnedResult = Deferred.Deferred<
+      Exit.Exit<RuntimeInputMaterial, StackPreparationError>,
+      never
+    >;
+    const pending = new Map<string, OwnedResult>();
+    const completed = new Map<string, RuntimeInputMaterial>();
+    const keyFor = (state: PersistedStackState, generation: number): string =>
+      `${state.identity.projectRoot}\u0000${state.inputFingerprint ?? ""}\u0000${state.runtime.kind}\u0000${generation}`;
 
-    const resolve = (
+    const materialize = (
       state: PersistedStackState,
       generation: number,
-      runtime: WorkloadRuntimeKind,
     ): Effect.Effect<RuntimeInputMaterial, StackPreparationError> =>
       Effect.gen(function* () {
+        const runtime = state.runtime.kind;
         const jwtConsumers = ["rest", "auth", "realtime", "storage", "functions"] as const;
         const resolvesAuthMaterial = jwtConsumers.some(
           (capability) => state.definition?.capabilities[capability].enabled !== false,
@@ -515,13 +569,13 @@ export const makeRuntimeInputOwner = (
           state.definition?.capabilities.analytics.enabled === false || gcpPath.length === 0
             ? undefined
             : { gcpJwtPath: yield* resolveProjectFile(state, gcpPath) };
-        const pooler = state.definition?.capabilities.pooler.enabled
-          ? { tenantPath: yield* writePoolerTenant(state, generation, runtime) }
-          : undefined;
         const functions =
           state.definition?.capabilities.functions.enabled === false
             ? undefined
             : { secrets: yield* resolveFunctionsEdgeRuntimeSecrets(state) };
+        const pooler = state.definition?.capabilities.pooler.enabled
+          ? { tenantPath: yield* writePoolerTenant(state, generation, runtime) }
+          : undefined;
         return {
           ...(auth === undefined ? {} : { auth }),
           ...(analytics === undefined ? {} : { analytics }),
@@ -529,6 +583,110 @@ export const makeRuntimeInputOwner = (
           ...(functions === undefined ? {} : { functions }),
         };
       });
+
+    const resolve = (
+      state: PersistedStackState,
+      generation: number,
+    ): Effect.Effect<RuntimeInputMaterial, StackPreparationError> =>
+      Effect.gen(function* () {
+        const key = keyFor(state, generation);
+        const result = yield* Effect.uninterruptibleMask((restore) =>
+          Effect.gen(function* () {
+            type Admission =
+              | { readonly kind: "ready"; readonly value: RuntimeInputMaterial }
+              | { readonly kind: "waiting"; readonly deferred: OwnedResult };
+            const readyAdmission = (value: RuntimeInputMaterial): Admission => ({
+              kind: "ready",
+              value,
+            });
+            const waitingAdmission = (deferred: OwnedResult): Admission => ({
+              kind: "waiting",
+              deferred,
+            });
+            const owned = yield* admission.withPermit(
+              Effect.gen(function* () {
+                const ready = completed.get(key);
+                if (ready !== undefined) return readyAdmission(ready);
+                const current = pending.get(key);
+                if (current !== undefined) return waitingAdmission(current);
+                const deferred = yield* Deferred.make<
+                  Exit.Exit<RuntimeInputMaterial, StackPreparationError>,
+                  never
+                >();
+                pending.set(key, deferred);
+                const owner = execution.withPermit(
+                  Effect.gen(function* () {
+                    const stillCurrent = yield* admission.withPermit(
+                      Effect.sync(() => pending.get(key) === deferred),
+                    );
+                    if (!stillCurrent) {
+                      yield* Deferred.succeed(
+                        deferred,
+                        Exit.fail(failure("Runtime input generation was invalidated")),
+                      );
+                      return;
+                    }
+                    const exit = yield* materialize(state, generation).pipe(Effect.exit);
+                    yield* Effect.uninterruptible(
+                      Effect.gen(function* () {
+                        yield* Effect.sync(() => {
+                          if (pending.get(key) === deferred) pending.delete(key);
+                          if (Exit.isSuccess(exit)) completed.set(key, exit.value);
+                        });
+                        yield* Deferred.succeed(deferred, exit);
+                      }),
+                    );
+                  }),
+                );
+                yield* FiberSet.run(ownedFibers, owner, { startImmediately: true });
+                return waitingAdmission(deferred);
+              }),
+            );
+            if (owned.kind === "ready") return Exit.succeed(owned.value);
+            return yield* restore(Deferred.await(owned.deferred));
+          }),
+        );
+        return yield* joinExit(result);
+      });
+
+    const cleanupGeneration = (generation: number): Effect.Effect<void, StackPreparationError> =>
+      invalidGeneration(generation)
+        ? Effect.fail(failure("Invalid pooler generation"))
+        : execution.withPermit(
+            Effect.gen(function* () {
+              yield* admission.withPermit(
+                Effect.sync(() => {
+                  for (const key of pending.keys())
+                    if (key.endsWith(`\u0000${generation}`)) pending.delete(key);
+                  for (const key of completed.keys())
+                    if (key.endsWith(`\u0000${generation}`)) completed.delete(key);
+                }),
+              );
+              yield* mapFile(
+                path.join(poolerRoot, String(generation)),
+                "clean pooler tenant generation",
+                fs.remove(path.join(poolerRoot, String(generation)), {
+                  recursive: true,
+                  force: true,
+                }),
+              );
+            }),
+          );
+    const cleanupAll = execution.withPermit(
+      Effect.gen(function* () {
+        yield* admission.withPermit(
+          Effect.sync(() => {
+            pending.clear();
+            completed.clear();
+          }),
+        );
+        yield* mapFile(
+          poolerRoot,
+          "clean pooler tenant files",
+          fs.remove(poolerRoot, { recursive: true, force: true }),
+        );
+      }),
+    );
 
     return {
       resolve,

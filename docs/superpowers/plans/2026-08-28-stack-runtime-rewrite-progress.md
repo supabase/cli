@@ -978,3 +978,19 @@ private-port reservation plus gateway ownership atomic with accepted lifecycle g
   unused recovery gate from the shared fixture.
 - Focused lifecycle/control/handle verification passed 81 integration tests with stack type-check, Effect lint,
   formatting, and diff checks green.
+
+#### Task 14 — runtime-input and startup-contract corrections (2026-08-31)
+
+- Tightened persisted runtime inputs: PostgreSQL remains pinned to `17.6.1.166`; native/container Pooler
+  endpoints derive from persisted runtime state and private database assignments, tenant settings are persisted,
+  and tenant bootstrap updates existing Supavisor tenants idempotently with Elixir interpolation escaped.
+- The owner now performs generation/state single-flight with owner-scoped Fibers, retries failed resolutions,
+  invalidates exact generations, and publishes atomic `0600` Pooler files only after Functions-secret validation.
+  Project files remain live canonical paths; OIDC diagnostics redact userinfo/query/fragment data while requests
+  retain configured URLs. Signing JWKS rejects mixed invalid files, preserves all private keys, and publishes
+  symmetric verification metadata. Auth material is resolved only when a JWT consumer is enabled.
+- Startup contracts set imgproxy's filesystem root to `/`, require Storage's migration artifact, and pass native
+  Supavisor artifact paths as quoted positional arguments. Focused owner/secret/workload/catalog integration tests
+  pass 55 cases with stack type-check, Effect lint, formatting, and diff checks green. Production wiring remains
+  the next slice; `RuntimeInputOwner.resolve(state, generation)` now derives runtime from persisted state and the
+  owner requires an ambient `Scope` for its FiberSet.

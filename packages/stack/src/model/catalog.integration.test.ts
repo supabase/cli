@@ -86,6 +86,11 @@ describe("complete workload catalog", () => {
     expect(WORKLOAD_CATALOG["database:database"]?.requiredRuntimePaths).toContain(
       "share/supabase-cli/init-scripts",
     );
+    expect(WORKLOAD_CATALOG["storage:storage"]?.requiredRuntimePaths).toEqual([
+      "node/bin/node",
+      "app/dist/start/server.js",
+      "app/dist/scripts/migrate-call.js",
+    ]);
     expect(WORKLOAD_CATALOG["analytics:analytics"]?.requiredRuntimePaths).toEqual(["bin/logflare"]);
     expect(WORKLOAD_CATALOG["analytics:vector"]?.requiredRuntimePaths).toEqual([
       "bin/vector",

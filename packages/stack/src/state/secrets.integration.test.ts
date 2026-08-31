@@ -9,7 +9,12 @@ import {
   StackSecretMismatchError,
 } from "../public/Errors.ts";
 import { compileStack } from "../model/Compiler.ts";
-import { redactKnownSecrets, resolveSecrets, type SecretCandidate } from "./SecretStore.ts";
+import {
+  redactKnownSecrets,
+  resolveSecrets,
+  resolveSigningKeyMaterial,
+  type SecretCandidate,
+} from "./SecretStore.ts";
 
 const layer = NodeServices.layer;
 const managed = (value?: string): SecretCandidate => ({
@@ -103,6 +108,30 @@ describe("managed and pass-through secrets", () => {
         "stopped",
       ).pipe(Effect.exit);
       expect(errorOf(exit)).toBeInstanceOf(InvalidJwtSigningMaterialError);
+    }).pipe(Effect.provide(layer)),
+  );
+
+  it.live("rejects mixed valid and invalid private JWK entries as one file", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const root = yield* fs.makeTempDirectoryScoped({ prefix: "supabase-stack-jwks-mixed-" });
+      const privateJwk = {
+        ...generateKeyPairSync("ec", { namedCurve: "prime256v1" }).privateKey.export({
+          format: "jwk",
+        }),
+        alg: "ES256",
+      };
+      yield* fs.writeFileString(
+        path.join(root, "keys.json"),
+        JSON.stringify([privateJwk, { kty: "EC", alg: "ES256", d: "invalid" }]),
+      );
+      const failed = yield* resolveSigningKeyMaterial({
+        kind: "jwks-file",
+        projectRoot: root,
+        path: "keys.json",
+      }).pipe(Effect.exit);
+      expect(errorOf(failed)).toBeInstanceOf(InvalidJwtSigningMaterialError);
     }).pipe(Effect.provide(layer)),
   );
 

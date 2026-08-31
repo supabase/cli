@@ -201,6 +201,8 @@ const privateSigningJwk = (value: unknown): SigningJwk | undefined => {
   const use = stringField(value, "use");
   const keyOps = stringArrayField(value, "key_ops");
   const ext = booleanField(value, "ext");
+  if (use !== undefined && use !== "sig") return undefined;
+  if (keyOps !== undefined && !keyOps.includes("sign")) return undefined;
   if (kty === "EC" && alg === "ES256") {
     const crv = stringField(value, "crv");
     const x = stringField(value, "x");
@@ -286,11 +288,20 @@ const readSigningJwks = (
       Effect.mapError(() => invalidSigningMaterial()),
     );
     const entries = Array.isArray(parsed) ? parsed : [parsed];
-    const keys = entries.flatMap((entry) => {
-      const jwk = privateSigningJwk(entry);
-      return jwk === undefined ? [] : [jwk];
-    });
-    return keys.length === 0 ? yield* invalidSigningMaterial() : keys;
+    const keys: Array<SigningJwk> = [];
+    for (const entry of entries) {
+      const key = privateSigningJwk(entry);
+      if (key === undefined) return yield* invalidSigningMaterial();
+      yield* Effect.try({
+        try: () => {
+          createPrivateKey({ key, format: "jwk" });
+        },
+        catch: () => invalidSigningMaterial(),
+      });
+      keys.push(key);
+    }
+    if (keys.length === 0) return yield* invalidSigningMaterial();
+    return keys;
   });
 
 const readSigningJwk = (
@@ -310,11 +321,8 @@ export interface ResolvedSigningKeyMaterial {
 const publicSigningJwk = (key: SigningJwk): Readonly<Record<string, unknown>> => ({
   kty: key.kty,
   ...(key.kid === undefined ? {} : { kid: key.kid }),
-  ...(key.use === undefined ? {} : { use: key.use }),
-  ...(() => {
-    const operations = key.key_ops?.filter((operation) => operation === "verify");
-    return operations === undefined || operations.length === 0 ? {} : { key_ops: operations };
-  })(),
+  use: "sig",
+  key_ops: ["verify"],
   alg: key.alg,
   ...(key.ext === undefined ? {} : { ext: key.ext }),
   ...(key.kty === "RSA" ? { n: key.n, e: key.e } : { crv: key.crv, x: key.x, y: key.y }),

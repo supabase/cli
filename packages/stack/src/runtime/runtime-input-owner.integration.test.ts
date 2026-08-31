@@ -109,17 +109,67 @@ describe("runtime input owner", () => {
             { ...second, alg: "RS256", kid: "rsa-key" },
           ]),
         );
-        const state = yield* compiledState(root, {
-          security: { jwt: { signing: { kind: "jwks-file", path: "keys.json" } } },
-        });
+        const base = yield* compiledState(root);
+        if (base.definition === undefined) return yield* Effect.die("compiled definition missing");
+        const state: PersistedStackState = {
+          ...base,
+          definition: {
+            ...base.definition,
+            security: {
+              ...base.definition.security,
+              jwt: {
+                ...base.definition.security.jwt,
+                signing: { kind: "jwks-file", path: "keys.json" },
+              },
+            },
+          },
+        };
         const owner = yield* makeRuntimeInputOwner({ stateRoot: root, stackId });
-        const material = yield* owner.resolve(state, 1, "native");
+        const material = yield* owner.resolve(state, 1);
         expect(JSON.parse(material.auth?.jwtKeys ?? "[]")).toHaveLength(2);
         const jwks = JSON.parse(material.auth?.jwks ?? "{}");
         expect(jwks.keys).toHaveLength(2);
         expect(jwks.keys.every((key: Record<string, unknown>) => !Object.hasOwn(key, "d"))).toBe(
           true,
         );
+      }),
+    ),
+  );
+
+  it.live("rejects a JWKS file when any configured key is invalid", () =>
+    withPlatform(
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const root = yield* fs.makeTempDirectoryScoped({ prefix: "runtime-input-jwks-invalid-" });
+        const valid = generateKeyPairSync("ec", { namedCurve: "prime256v1" }).privateKey.export({
+          format: "jwk",
+        });
+        yield* fs.writeFileString(
+          path.join(root, "keys.json"),
+          JSON.stringify([
+            { ...valid, alg: "ES256" },
+            { kty: "EC", alg: "ES256", d: "bad" },
+          ]),
+        );
+        const base = yield* compiledState(root);
+        if (base.definition === undefined) return yield* Effect.die("compiled definition missing");
+        const state: PersistedStackState = {
+          ...base,
+          definition: {
+            ...base.definition,
+            security: {
+              ...base.definition.security,
+              jwt: {
+                ...base.definition.security.jwt,
+                signing: { kind: "jwks-file", path: "keys.json" },
+              },
+            },
+          },
+        };
+        const owner = yield* makeRuntimeInputOwner({ stateRoot: root, stackId });
+        const failed = yield* owner.resolve(state, 1).pipe(Effect.exit);
+        expect(Exit.isFailure(failed)).toBe(true);
       }),
     ),
   );
@@ -150,7 +200,7 @@ describe("runtime input owner", () => {
                 : { keys: [{ kty: "RSA", n: "n", e: "AQAB" }] };
             }),
         });
-        const material = yield* owner.resolve(state, 2, "native");
+        const material = yield* owner.resolve(state, 2);
         expect(requested).toEqual([
           "https://securetoken.google.com/demo/.well-known/openid-configuration",
           "https://issuer.example/keys",
@@ -172,8 +222,16 @@ describe("runtime input owner", () => {
           },
         });
         const owner = yield* makeRuntimeInputOwner({ stateRoot: root, stackId });
-        const jwks = JSON.parse((yield* owner.resolve(state, 1, "native")).auth?.jwks ?? "{}");
-        expect(jwks.keys).toEqual([{ kty: "oct", k: "c3ltbWV0cmljLXNlY3JldA" }]);
+        const jwks = JSON.parse((yield* owner.resolve(state, 1)).auth?.jwks ?? "{}");
+        expect(jwks.keys).toEqual([
+          {
+            kty: "oct",
+            alg: "HS256",
+            use: "sig",
+            key_ops: ["verify"],
+            k: "c3ltbWV0cmljLXNlY3JldA",
+          },
+        ]);
       }),
     ),
   );
@@ -212,7 +270,7 @@ describe("runtime input owner", () => {
           stackId,
           fetchJson: () => Effect.die("OIDC fetch should not run"),
         });
-        const material = yield* owner.resolve(state, 1, "native");
+        const material = yield* owner.resolve(state, 1);
         expect(material.auth).toBeUndefined();
       }),
     ),
@@ -237,7 +295,7 @@ describe("runtime input owner", () => {
           },
         };
         const owner = yield* makeRuntimeInputOwner({ stateRoot: root, stackId });
-        const material = yield* owner.resolve(state, 1, "native");
+        const material = yield* owner.resolve(state, 1);
         expect(material.auth?.jwks).toContain('"kty":"oct"');
       }),
     ),
@@ -268,7 +326,7 @@ describe("runtime input owner", () => {
           stackId,
           fetchJson: () => Effect.fail(new Error("transport failure")),
         });
-        const failed = yield* owner.resolve(state, 1, "native").pipe(Effect.exit);
+        const failed = yield* owner.resolve(state, 1).pipe(Effect.exit);
         const error = errorOf(failed);
         expect(error?.message).toContain("OIDC discovery request failed");
         expect(JSON.stringify(error)).not.toContain("secret-token");
@@ -301,7 +359,7 @@ describe("runtime input owner", () => {
                 : { keys: [] },
             ),
         });
-        const failed = yield* owner.resolve(state, 1, "native").pipe(Effect.exit);
+        const failed = yield* owner.resolve(state, 1).pipe(Effect.exit);
         expect(errorOf(failed)?.message).toContain("contains no keys");
       }),
     ),
@@ -317,8 +375,12 @@ describe("runtime input owner", () => {
           capabilities: { pooler: { enabled: true, settings: { pool_mode: "session" } } },
         });
         const owner = yield* makeRuntimeInputOwner({ stateRoot: root, stackId });
-        const first = yield* owner.resolve(state, 3, "native");
-        const second = yield* owner.resolve(state, 3, "native");
+        const nativeState: PersistedStackState = {
+          ...state,
+          privatePorts: [{ workloadId: "database:database", binding: "primary", port: 30_001 }],
+        };
+        const first = yield* owner.resolve(nativeState, 3);
+        const second = yield* owner.resolve(nativeState, 3);
         expect(second.pooler?.tenantPath).toBe(first.pooler?.tenantPath);
         const tenant = first.pooler?.tenantPath;
         expect(tenant).toBeDefined();
@@ -326,9 +388,148 @@ describe("runtime input owner", () => {
         const content = yield* fs.readFileString(tenant!);
         expect(content).toContain('"db_host" => "127.0.0.1"');
         expect(content).toContain('"external_id" => "pooler-dev"');
+        expect(content).toContain('"db_port" => 30001');
         expect(content).not.toContain('"db_password" => ""');
         yield* owner.cleanupGeneration(3);
         expect(yield* fs.exists(path.dirname(tenant!))).toBe(false);
+      }),
+    ),
+  );
+
+  it.live("renders literal Elixir interpolation and container database endpoint", () =>
+    withPlatform(
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const root = yield* fs.makeTempDirectoryScoped({
+          prefix: "runtime-input-pooler-container-",
+        });
+        const base = yield* compiledState(root, {
+          capabilities: {
+            pooler: {
+              enabled: true,
+              settings: {
+                tenant_id: "tenant-custom",
+                pool_mode: "transaction",
+              },
+            },
+          },
+        });
+        const state = {
+          ...base,
+          runtime: { kind: "container", engine: "docker" } as const,
+          secrets: {
+            ...base.secrets,
+            "secret:database.internal.password": {
+              policy: "managed" as const,
+              value: "#{System.halt()}",
+            },
+          },
+        };
+        const containerState = state;
+        const owner = yield* makeRuntimeInputOwner({ stateRoot: root, stackId });
+        const material = yield* owner.resolve(containerState, 4);
+        const tenant = material.pooler?.tenantPath;
+        expect(tenant).toBeDefined();
+        const content = yield* fs.readFileString(tenant!);
+        expect(content).toContain('"external_id" => "tenant-custom"');
+        expect(content).toContain('"db_host" => "supabase-database"');
+        expect(content).toContain('"db_port" => 5432');
+        expect(content).toContain("\\#{System.halt()}");
+        expect(content).toContain("Supavisor.Repo.preload(existing, :users)");
+        expect(content).toContain("Supavisor.Tenants.update_tenant(existing, params)");
+      }),
+    ),
+  );
+
+  it.live("fails native Pooler resolution without the persisted database assignment", () =>
+    withPlatform(
+      Effect.gen(function* () {
+        const root = yield* (yield* FileSystem.FileSystem).makeTempDirectoryScoped({
+          prefix: "runtime-input-pooler-no-port-",
+        });
+        const state = yield* compiledState(root, {
+          capabilities: { pooler: { enabled: true, settings: { pool_mode: "session" } } },
+        });
+        const owner = yield* makeRuntimeInputOwner({ stateRoot: root, stackId });
+        const failed = yield* owner.resolve(state, 9).pipe(Effect.exit);
+        expect(Exit.isFailure(failed)).toBe(true);
+      }),
+    ),
+  );
+
+  it.live("does not publish a Pooler file when Functions validation fails", () =>
+    withPlatform(
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const root = yield* fs.makeTempDirectoryScoped({ prefix: "runtime-input-pooler-invalid-" });
+        const state = yield* compiledState(root, {
+          capabilities: {
+            pooler: { enabled: true },
+            functions: {
+              settings: {
+                edge_runtime: { secrets: { SUPABASE_BAD: Redacted.make("x") } },
+              },
+            },
+          },
+        });
+        const nativeState = {
+          ...state,
+          privatePorts: [{ workloadId: "database:database", binding: "primary", port: 30_001 }],
+        };
+        const owner = yield* makeRuntimeInputOwner({ stateRoot: root, stackId });
+        const failed = yield* owner.resolve(nativeState, 7).pipe(Effect.exit);
+        expect(Exit.isFailure(failed)).toBe(true);
+        expect(yield* fs.exists(path.join(root, stackId, "runtime", "inputs", "pooler", "7"))).toBe(
+          false,
+        );
+      }),
+    ),
+  );
+
+  it.live("single-flights equivalent resolution and retries failed generations", () =>
+    withPlatform(
+      Effect.gen(function* () {
+        const root = yield* (yield* FileSystem.FileSystem).makeTempDirectoryScoped({
+          prefix: "runtime-input-single-flight-",
+        });
+        let fetches = 0;
+        const state = yield* compiledState(root, {
+          capabilities: {
+            auth: {
+              settings: {
+                third_party: { workos: { enabled: true, issuer_url: "https://issuer.example" } },
+              },
+            },
+          },
+        });
+        const owner = yield* makeRuntimeInputOwner({
+          stateRoot: root,
+          stackId,
+          fetchJson: (url) => {
+            fetches += 1;
+            return fetches === 1
+              ? Effect.fail(new Error("transient"))
+              : Effect.succeed(
+                  url.endsWith("openid-configuration")
+                    ? { jwks_uri: "https://issuer.example/keys" }
+                    : { keys: [{ kty: "RSA", n: "n", e: "AQAB" }] },
+                );
+          },
+        });
+        const failed = yield* owner.resolve(state, 5).pipe(Effect.exit);
+        expect(Exit.isFailure(failed)).toBe(true);
+        const recovered = yield* owner.resolve(state, 5);
+        expect(recovered.auth?.jwks).toContain('"keys"');
+        const results = yield* Effect.all([owner.resolve(state, 5), owner.resolve(state, 5)], {
+          concurrency: "unbounded",
+        });
+        expect(results).toHaveLength(2);
+        expect(fetches).toBe(3);
+        yield* owner.cleanupGeneration(5);
+        const retried = yield* owner.resolve(state, 5);
+        expect(retried.auth?.jwks).toContain('"keys"');
+        expect(fetches).toBe(5);
       }),
     ),
   );
@@ -344,7 +545,7 @@ describe("runtime input owner", () => {
           capabilities: { analytics: { settings: { gcp_jwt_path: "gcp.json" } } },
         });
         const owner = yield* makeRuntimeInputOwner({ stateRoot: root, stackId });
-        const material = yield* owner.resolve(state, 1, "native");
+        const material = yield* owner.resolve(state, 1);
         expect(material.analytics?.gcpJwtPath).toBe(
           path.join(yield* fs.realPath(root), "gcp.json"),
         );
@@ -391,7 +592,7 @@ describe("runtime input owner", () => {
           },
         };
         const owner = yield* makeRuntimeInputOwner({ stateRoot: root, stackId });
-        const material = yield* owner.resolve(state, 1, "native");
+        const material = yield* owner.resolve(state, 1);
         expect(material.analytics).toBeUndefined();
         expect(material.functions).toBeUndefined();
       }),
@@ -461,7 +662,7 @@ describe("runtime input owner", () => {
           },
         });
         const owner = yield* makeRuntimeInputOwner({ stateRoot: root, stackId });
-        const material = yield* owner.resolve(state, 1, "native");
+        const material = yield* owner.resolve(state, 1);
         expect(material.functions?.secrets).toEqual({ API_TOKEN: "actual-value" });
         const invalid = yield* compiledState(root, {
           capabilities: {
@@ -472,7 +673,7 @@ describe("runtime input owner", () => {
             },
           },
         });
-        const failed = yield* owner.resolve(invalid, 1, "native").pipe(Effect.exit);
+        const failed = yield* owner.resolve(invalid, 1).pipe(Effect.exit);
         expect(errorOf(failed)?.message).toContain("secret name is reserved");
 
         const control = yield* compiledState(root, {
@@ -484,7 +685,7 @@ describe("runtime input owner", () => {
             },
           },
         });
-        const controlFailure = yield* owner.resolve(control, 1, "native").pipe(Effect.exit);
+        const controlFailure = yield* owner.resolve(control, 2).pipe(Effect.exit);
         expect(errorOf(controlFailure)?.message).toContain("secret value is invalid");
       }),
     ),

@@ -121,7 +121,7 @@ export const WORKLOAD_CATALOG: Readonly<Record<string, WorkloadCatalogEntry>> = 
     "v1.71.0",
     "ghcr.io/supabase/cli/storage:v1.71.0",
     "app/dist/start/server.js",
-    ["node/bin/node", "app/dist/start/server.js"],
+    ["node/bin/node", "app/dist/start/server.js", "app/dist/scripts/migrate-call.js"],
     ["v1.71.0"],
     {
       nativeProcess: {
