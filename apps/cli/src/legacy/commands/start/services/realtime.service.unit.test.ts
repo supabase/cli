@@ -79,8 +79,7 @@ describe("legacyBuildRealtimeContainerSpec", () => {
     expect(spec.healthcheck?.test).toEqual([
       "CMD",
       "wget",
-      "--no-verbose",
-      "--tries=1",
+      "-q",
       "--spider",
       "--header",
       "Host:realtime-dev",

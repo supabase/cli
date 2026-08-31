@@ -301,7 +301,7 @@ describe("legacyBuildVectorContainerSpec", () => {
     expect(script).toContain('.appname == "supabase_kong_proj"');
   });
 
-  test("slim image still waits on Logflare before exec, with the docker.io wget healthcheck", () => {
+  test("slim image waits on Logflare with BusyBox wget flags", () => {
     vi.stubEnv("SUPABASE_USE_SLIM_IMAGES", "1");
     const spec = legacyBuildVectorContainerSpec({
       ...base,
@@ -310,13 +310,12 @@ describe("legacyBuildVectorContainerSpec", () => {
     expect(spec.entrypoint).toBe("sh");
     expect(spec.secretFiles).toBeUndefined();
     expect(String(spec.cmd?.[1])).toContain(
-      "until wget --no-verbose --tries=1 -T 2 --spider http://supabase_analytics_proj:4000/health",
+      "until wget -q -T 2 --spider http://supabase_analytics_proj:4000/health",
     );
     expect(spec.healthcheck?.test).toEqual([
       "CMD",
       "wget",
-      "--no-verbose",
-      "--tries=1",
+      "-q",
       "--spider",
       "http://127.0.0.1:9001/health",
     ]);

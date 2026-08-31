@@ -44,6 +44,10 @@ import {
   legacyStartInternalDbUrl,
   legacyStartInternalDbPassword,
 } from "../../../shared/db-bootstrap/internal-db-connection.ts";
+import {
+  legacySlimWgetHealthcheck,
+  legacyUsesSlimRuntime,
+} from "../../../shared/db-bootstrap/slim-runtime.ts";
 
 /** Both the container's `FILE_STORAGE_BACKEND_PATH` and its named-volume mount target. */
 const LEGACY_STORAGE_DOCKER_PATH = "/mnt";
@@ -229,21 +233,22 @@ export function legacyBuildStorageContainerSpec(
     containerName,
     env,
     binds: [`${containerName}:${LEGACY_STORAGE_DOCKER_PATH}`],
-    healthcheck: {
-      // "For some reason, localhost resolves to IPv6 address on GitPod which breaks
-      // healthcheck." — IPv4 loopback pinned.
-      test: [
-        "CMD",
-        "wget",
-        "--no-verbose",
-        "--tries=1",
-        "--spider",
-        "http://127.0.0.1:5000/status",
-      ],
-      intervalSeconds: 10,
-      timeoutSeconds: 2,
-      retries: 3,
-    },
+    // IPv4 loopback: localhost can resolve to IPv6 on GitPod and miss the listener.
+    healthcheck: legacyUsesSlimRuntime(input.image)
+      ? legacySlimWgetHealthcheck("http://127.0.0.1:5000/status")
+      : {
+          test: [
+            "CMD",
+            "wget",
+            "--no-verbose",
+            "--tries=1",
+            "--spider",
+            "http://127.0.0.1:5000/status",
+          ],
+          intervalSeconds: 10,
+          timeoutSeconds: 2,
+          retries: 3,
+        },
     restartPolicy: "unless-stopped",
     networkId: input.networkId,
     // The Storage network alias.

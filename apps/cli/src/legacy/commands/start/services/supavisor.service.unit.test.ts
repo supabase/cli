@@ -141,8 +141,7 @@ describe("legacyBuildSupavisorContainerSpec", () => {
     expect(spec.healthcheck?.test).toEqual([
       "CMD",
       "wget",
-      "--no-verbose",
-      "--tries=1",
+      "-q",
       "--spider",
       "http://127.0.0.1:4000/api/health",
     ]);

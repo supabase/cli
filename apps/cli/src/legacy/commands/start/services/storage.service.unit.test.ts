@@ -1,4 +1,4 @@
-import { describe, expect, test } from "vitest";
+import { afterEach, describe, expect, test, vi } from "vitest";
 
 import {
   legacyAppendStorageVectorEnv,
@@ -7,6 +7,10 @@ import {
   type LegacyStorageContainerSpecInput,
   type LegacyStorageEnvInput,
 } from "./storage.service.ts";
+
+afterEach(() => {
+  vi.unstubAllEnvs();
+});
 
 const baseEnvInput: LegacyStorageEnvInput = {
   targetMigration: "",
@@ -223,6 +227,21 @@ describe("legacyBuildStorageContainerSpec", () => {
       timeoutSeconds: 2,
       retries: 3,
     });
+  });
+
+  test("uses BusyBox wget flags on a slim storage image", () => {
+    vi.stubEnv("SUPABASE_USE_SLIM_IMAGES", "1");
+    const spec = legacyBuildStorageContainerSpec({
+      ...input,
+      image: "ghcr.io/supabase/cli/storage:v1.72.1",
+    });
+    expect(spec.healthcheck?.test).toEqual([
+      "CMD",
+      "wget",
+      "-q",
+      "--spider",
+      "http://127.0.0.1:5000/status",
+    ]);
   });
 
   test("network alias is 'storage'", () => {

@@ -3,10 +3,11 @@
  * switch on {@link usesSlimImageRuntime} so flag-off stays byte-identical even
  * if a caller passes a ghcr-shaped override.
  *
- * Auth, studio, pg-meta, Vector, Postgres, storage, and edge-runtime share the
- * docker.io specs (`sh`/`wget`/`node`). Elixir images (realtime, analytics,
- * pooler) ship busybox `wget` on PATH but not `curl`, so they keep a wget
- * probe instead of docker.io's `curl --head`.
+ * Slim auth, storage, Vector, and the Elixir images (realtime, analytics,
+ * pooler) ship BusyBox wget — not GNU wget and not curl. BusyBox documents
+ * `-q`/`--quiet`, `--spider`, `--header`, and `-T`; it does not document
+ * GNU `--no-verbose` or `--tries`. Studio, pg-meta, Postgres, and
+ * edge-runtime share the docker.io probes (`node` / `pg_isready`).
  */
 
 import { usesSlimImageRuntime } from "../../../shared/services/slim-images.ts";
@@ -16,6 +17,10 @@ export function legacyUsesSlimRuntime(image: string): boolean {
   return usesSlimImageRuntime(image);
 }
 
+/**
+ * In-container HTTP probe for slim images. `-q --spider` is the intersection
+ * of BusyBox wget (what slim actually ships) and GNU wget (docker.io leftovers).
+ */
 export function legacySlimWgetHealthcheck(
   url: string,
   opts: { readonly header?: string; readonly startPeriodSeconds?: number } = {},
@@ -26,7 +31,7 @@ export function legacySlimWgetHealthcheck(
   readonly retries: number;
   readonly startPeriodSeconds?: number;
 } {
-  const test = ["CMD", "wget", "--no-verbose", "--tries=1", "--spider"];
+  const test = ["CMD", "wget", "-q", "--spider"];
   if (opts.header !== undefined) {
     test.push("--header", opts.header);
   }
@@ -40,4 +45,9 @@ export function legacySlimWgetHealthcheck(
       ? {}
       : { startPeriodSeconds: opts.startPeriodSeconds }),
   };
+}
+
+/** BusyBox-safe wait used by Vector's entrypoint until Logflare answers. */
+export function legacySlimWgetWaitCommand(url: string): string {
+  return `wget -q -T 2 --spider ${url}`;
 }
