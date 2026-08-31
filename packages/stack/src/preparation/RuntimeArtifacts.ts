@@ -9,7 +9,6 @@ import type { StackRuntime } from "../public/Runtime.ts";
 import { StackPreparationError } from "../public/Errors.ts";
 import {
   makeArtifactStore,
-  type ArtifactSource,
   type ArtifactStore,
   type ArtifactStoreError,
   type PreparedArtifact,
