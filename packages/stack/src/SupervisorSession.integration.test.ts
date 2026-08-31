@@ -1,9 +1,12 @@
-import { Cause, Deferred, Effect, Exit, Fiber, Predicate, Scope, Stream } from "effect";
+// oxlint-disable effecttsgo/async-function -- Session integration tests use Vitest's Promise callback boundary.
+import { Cause, Data, Deferred, Effect, Exit, Fiber, Predicate, Scope, Stream } from "effect";
 import { describe, expect, it } from "vitest";
 import type { Stack } from "./Stack.ts";
 import { StackServiceState } from "./StackServiceState.ts";
 import { SupervisorSession } from "./SupervisorSession.ts";
 import { makeTestStack } from "./testing.ts";
+
+class PublishFailedError extends Data.TaggedError("PublishFailedError")<{}> {}
 
 const state = new StackServiceState({
   name: "auth",
@@ -17,11 +20,11 @@ const state = new StackServiceState({
 
 const makeStack = (events: Array<string>): Stack["Service"] =>
   makeTestStack({
-    getInfo: () => Effect.die("unused"),
-    stop: () => Effect.sync(() => events.push("stop")),
-    dispose: () => Effect.sync(() => events.push("dispose")),
+    getInfo: Effect.die("unused"),
+    stop: Effect.sync(() => events.push("stop")),
+    dispose: Effect.sync(() => events.push("dispose")),
     getState: () => Effect.succeed(state),
-    getAllStates: () => Effect.succeed([state]),
+    getAllStates: Effect.succeed([state]),
   });
 
 const withSession = <A>(
@@ -156,7 +159,7 @@ describe("SupervisorSession", () => {
               ),
             stack: (runtime) => runtime,
             awaitDisposed: () => Effect.never,
-            onRunning: () => Effect.fail(new Error("publish failed")),
+            onRunning: () => Effect.fail(new PublishFailedError()),
             onStopped: () => Effect.void,
             onFailure: () => Effect.sync(() => events.push("persist-failed")),
             closeOwner: Effect.sync(() => events.push("close-owner")),
@@ -238,7 +241,7 @@ describe("SupervisorSession", () => {
           startup: () => Effect.succeed(makeStack([])),
           stack: (runtime) => runtime,
           awaitDisposed: () => Effect.never,
-          onRunning: () => Effect.fail(new Error("publish failed")),
+          onRunning: () => Effect.fail(new PublishFailedError()),
           onStopped: () => Effect.void,
           onFailure: () =>
             Deferred.succeed(terminalEntered, undefined).pipe(

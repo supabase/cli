@@ -1,3 +1,5 @@
+// oxlint-disable effecttsgo/multiple-effect-provide -- Managed daemon layers are staged to satisfy transport and filesystem dependencies without changing lifecycle ownership.
+
 import { NodeFileSystem, NodePath } from "@effect/platform-node";
 import { Effect, Layer } from "effect";
 import {

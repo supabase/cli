@@ -1,5 +1,4 @@
 import { randomUUID } from "node:crypto";
-import { join } from "node:path";
 import { Effect, FileSystem, Path, PlatformError, Predicate } from "effect";
 import {
   decodeManagedStackDocument,
@@ -37,7 +36,7 @@ export interface StackStore {
     ManagedStackDocument | undefined,
     InvalidManagedStackDocumentError | InvalidManagedIdentityError | PlatformError.PlatformError
   >;
-  readonly list: () => Effect.Effect<
+  readonly list: Effect.Effect<
     ReadonlyArray<ManagedStackListing>,
     PlatformError.PlatformError | InvalidManagedIdentityError
   >;
@@ -87,7 +86,7 @@ const decodeAtPath = (
     const content = yield* fs.readFileString(documentPath);
     const document = yield* decodeManagedStackDocument(documentPath, content);
     if (document.id !== stackId) {
-      return yield* Effect.fail(new InvalidManagedStackDocumentError({ path: documentPath }));
+      return yield* new InvalidManagedStackDocumentError({ path: documentPath });
     }
     return document;
   });
@@ -107,24 +106,24 @@ const makeListEntry = (
     const documentPath = yield* managedStackDocumentPathEffect(stateRoot, stackId);
     return yield* decodeAtPath(fs, documentPath, stackId).pipe(
       Effect.map((document): ManagedStackListing => ({ id: stackId, status: "healthy", document })),
-      Effect.catchTag("InvalidManagedStackDocumentError", (cause) =>
-        Effect.succeed<ManagedStackListing>({
-          id: stackId,
-          status: "corrupt",
-          path: documentPath,
-          cause,
-        }),
-      ),
-      Effect.catchTag("PlatformError", (error) =>
-        isNotFound(error)
-          ? Effect.succeed(undefined)
-          : Effect.succeed<ManagedStackListing>({
-              id: stackId,
-              status: "corrupt",
-              path: documentPath,
-              cause: error,
-            }),
-      ),
+      Effect.catchTags({
+        InvalidManagedStackDocumentError: (cause) =>
+          Effect.succeed<ManagedStackListing>({
+            id: stackId,
+            status: "corrupt",
+            path: documentPath,
+            cause,
+          }),
+        PlatformError: (error) =>
+          isNotFound(error)
+            ? Effect.void.pipe(Effect.as(undefined))
+            : Effect.succeed<ManagedStackListing>({
+                id: stackId,
+                status: "corrupt",
+                path: documentPath,
+                cause: error,
+              }),
+      }),
     );
   });
 
@@ -150,44 +149,45 @@ export const makeStackStore = (
         const documentPath = yield* managedStackDocumentPathEffect(resolvedStateRoot, stackId);
         return yield* decodeAtPath(fs, documentPath, stackId).pipe(
           Effect.catchTag("PlatformError", (error) =>
-            isNotFound(error) ? Effect.succeed(undefined) : Effect.fail(error),
+            isNotFound(error) ? Effect.void.pipe(Effect.as(undefined)) : Effect.fail(error),
           ),
         );
       });
     };
 
-    const list = (): Effect.Effect<
+    const list: Effect.Effect<
       ReadonlyArray<ManagedStackListing>,
       PlatformError.PlatformError | InvalidManagedIdentityError
-    > =>
-      Effect.gen(function* () {
-        const stacksRoot = managedStacksRoot(resolvedStateRoot);
-        if (!(yield* fs.exists(stacksRoot))) {
-          return [];
-        }
-        const names = yield* fs
-          .readDirectory(stacksRoot)
-          .pipe(
-            Effect.catchTag("PlatformError", (error) =>
-              isNotFound(error) ? Effect.succeed<ReadonlyArray<string>>([]) : Effect.fail(error),
-            ),
-          );
-        const validNames = yield* Effect.all(
-          names.map((name) =>
-            managedStackPathsEffect(resolvedStateRoot, name).pipe(
-              Effect.map(() => name),
-              Effect.catchTag("InvalidManagedIdentityError", () => Effect.succeed(undefined)),
-            ),
+    > = Effect.gen(function* () {
+      const stacksRoot = managedStacksRoot(resolvedStateRoot);
+      if (!(yield* fs.exists(stacksRoot))) {
+        return [];
+      }
+      const names = yield* fs
+        .readDirectory(stacksRoot)
+        .pipe(
+          Effect.catchTag("PlatformError", (error) =>
+            isNotFound(error) ? Effect.succeed<ReadonlyArray<string>>([]) : Effect.fail(error),
           ),
         );
-        const sortedNames = validNames
-          .filter((name): name is string => name !== undefined)
-          .sort((left, right) => left.localeCompare(right));
-        const entries = yield* Effect.all(
-          sortedNames.map((stackId) => makeListEntry(fs, resolvedStateRoot, stackId)),
-        );
-        return entries.filter((entry): entry is ManagedStackListing => entry !== undefined);
-      });
+      const validNames = yield* Effect.all(
+        names.map((name) =>
+          managedStackPathsEffect(resolvedStateRoot, name).pipe(
+            Effect.map(() => name),
+            Effect.catchTag("InvalidManagedIdentityError", () =>
+              Effect.void.pipe(Effect.as(undefined)),
+            ),
+          ),
+        ),
+      );
+      const sortedNames = validNames
+        .filter((name): name is string => name !== undefined)
+        .sort((left, right) => left.localeCompare(right));
+      const entries = yield* Effect.all(
+        sortedNames.map((stackId) => makeListEntry(fs, resolvedStateRoot, stackId)),
+      );
+      return entries.filter((entry): entry is ManagedStackListing => entry !== undefined);
+    });
 
     const write = (
       document: ManagedStackDocument,
@@ -200,7 +200,7 @@ export const makeStackStore = (
         yield* writeDocumentAtomically(
           fs,
           path,
-          join(paths.root, "stack.json"),
+          path.join(paths.root, "stack.json"),
           paths.root,
           document,
         );
@@ -225,7 +225,7 @@ export const makeStackStore = (
           if (entry === "stack.json") continue;
           yield* fs.remove(path.join(safeRoot, entry), { recursive: true, force: true });
         }
-        yield* fs.remove(join(safeRoot, "stack.json"), {
+        yield* fs.remove(path.join(safeRoot, "stack.json"), {
           recursive: true,
           force: true,
         });

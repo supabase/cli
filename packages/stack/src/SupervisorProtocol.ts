@@ -37,7 +37,7 @@ export const SupervisorStartedEventSchema = Schema.Struct({
   type: Schema.Literal("started"),
   endpoint: Schema.Struct({
     hostname: Schema.String,
-    port: Schema.Number,
+    port: Schema.Finite,
     url: Schema.String,
   }),
   owner: SupervisorOwnerDescriptorSchema,

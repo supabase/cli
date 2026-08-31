@@ -47,7 +47,7 @@ export const StackInfoSchema = Schema.Struct({
 
 const EdgeRuntimeConfigSchema = Schema.Struct({
   enabled: Schema.optionalKey(Schema.Boolean),
-  inspectorPort: Schema.optionalKey(Schema.Number),
+  inspectorPort: Schema.optionalKey(Schema.Finite),
   policy: Schema.optionalKey(Schema.Literals(["oneshot", "per_worker"])),
   env: Schema.optionalKey(Schema.Record(Schema.String, Schema.String)),
 });
@@ -65,11 +65,11 @@ export interface EdgeRuntimeReloadConfig {
 export class Stack extends Context.Service<
   Stack,
   {
-    readonly getInfo: () => Effect.Effect<
+    readonly getInfo: Effect.Effect<
       StackInfo,
       StackUnavailableError | StackRpcTransportError | StackRpcProtocolError
     >;
-    readonly start: () => Effect.Effect<
+    readonly start: Effect.Effect<
       void,
       | ServiceReadyError
       | StackBuildError
@@ -78,7 +78,7 @@ export class Stack extends Context.Service<
       | StackRpcTransportError
       | StackRpcProtocolError
     >;
-    readonly stop: () => Effect.Effect<
+    readonly stop: Effect.Effect<
       void,
       | ControlTransportError
       | ControlProtocolError
@@ -87,7 +87,7 @@ export class Stack extends Context.Service<
       | ControlMaintenanceBusyError
       | StopTimeout
     >;
-    readonly dispose: () => Effect.Effect<
+    readonly dispose: Effect.Effect<
       void,
       | ControlTransportError
       | ControlProtocolError
@@ -165,7 +165,7 @@ export class Stack extends Context.Service<
       StackServiceState,
       ServiceNotFoundError | StackUnavailableError | StackRpcTransportError | StackRpcProtocolError
     >;
-    readonly getAllStates: () => Effect.Effect<
+    readonly getAllStates: Effect.Effect<
       ReadonlyArray<StackServiceState>,
       StackUnavailableError | StackRpcTransportError | StackRpcProtocolError
     >;
@@ -181,7 +181,7 @@ export class Stack extends Context.Service<
       >,
       ServiceNotFoundError | StackUnavailableError | StackRpcTransportError | StackRpcProtocolError
     >;
-    readonly allStateChanges: () => Stream.Stream<
+    readonly allStateChanges: Stream.Stream<
       StackServiceState,
       StackUnavailableError | StackRpcTransportError | StackRpcProtocolError
     >;
