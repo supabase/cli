@@ -31,13 +31,14 @@ script run inside the local Postgres image to stdout or `--file`.
 
 ## Environment Variables
 
-| Variable                                                                      | Purpose                                       |
-| ----------------------------------------------------------------------------- | --------------------------------------------- |
-| `SUPABASE_DB_PASSWORD` (`DB_PASSWORD` viper key; `--password`/`-p` overrides) | remote DB password                            |
-| `SUPABASE_ACCESS_TOKEN`                                                       | `--linked` auth                               |
-| `BITBUCKET_CLONE_DIR`                                                         | (no-op for dump — no `--security-opt` is set) |
-| `SUPABASE_INTERNAL_IMAGE_REGISTRY`                                            | rewrite the pg image registry                 |
-| `DOCKER_HOST`                                                                 | docker daemon endpoint                        |
+| Variable                                                                      | Purpose                                                                                                                                                                                                                            |
+| ----------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `SUPABASE_DB_PASSWORD` (`DB_PASSWORD` viper key; `--password`/`-p` overrides) | remote DB password                                                                                                                                                                                                                 |
+| `SUPABASE_ACCESS_TOKEN`                                                       | `--linked` auth                                                                                                                                                                                                                    |
+| `BITBUCKET_CLONE_DIR`                                                         | (no-op for dump — no `--security-opt` is set)                                                                                                                                                                                      |
+| `SUPABASE_INTERNAL_IMAGE_REGISTRY`                                            | rewrite the pg image registry                                                                                                                                                                                                      |
+| `SUPABASE_USE_SLIM_IMAGES`                                                    | resolve the current Postgres pin from the slim `ghcr.io/supabase/cli` builds (`true`/`1` enable); majors 13/15 use `15.14.1.167` when the flag is on; historical pins, PG14, OrioleDB, and flag-off `15.8.1.085` stay on docker.io |
+| `DOCKER_HOST`                                                                 | docker daemon endpoint                                                                                                                                                                                                             |
 
 ## Exit Codes
 
