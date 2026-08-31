@@ -17,7 +17,6 @@ import { Deferred, Effect, Exit, Layer, Option, PlatformError, Sink, Stdio, Stre
 import {
   LegacyDebugFlag,
   LegacyDnsResolverFlag,
-  LegacyNetworkIdFlag,
   LegacyOutputFlag,
 } from "../../../../shared/legacy/global-flags.ts";
 import { LegacyPlatformApiFactory } from "../../../auth/legacy-platform-api-factory.service.ts";
@@ -333,7 +332,6 @@ function setup(
     Layer.succeed(LegacyOutputFlag, opts.goOutput ?? Option.none()),
     Layer.succeed(LegacyDebugFlag, opts.debug ?? false),
     Layer.succeed(LegacyDnsResolverFlag, "native" as const),
-    Layer.succeed(LegacyNetworkIdFlag, Option.none()),
     Layer.succeed(LegacyPlatformApiFactory, {
       make: LegacyPlatformApi.pipe(Effect.provide(api.layer)),
     }),

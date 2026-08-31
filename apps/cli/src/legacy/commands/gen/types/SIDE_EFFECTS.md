@@ -69,7 +69,9 @@ with `sslmode=require` plus the embedded Supabase CA bundle (the driver
 promotes `require` + a root cert to `verify-ca`), matching the retired
 `PG_META_DB_SSL_ROOT_CERT` injection. A probe failure keeps the driver's TLS
 default and lets the connection attempt surface the real error. An explicit
-`sslmode` / `sslrootcert` on the DSN is left unchanged.
+`sslmode` on the DSN skips the probe entirely. If `sslmode` is omitted, a
+successful TLS probe replaces any DSN/`PGSSLROOTCERT` `sslrootcert` with the
+embedded bundle.
 
 `--network-id` / `SUPABASE_NETWORK_ID` are unused: generation no longer runs
 inside a container, so a hostname reachable only on a Docker network will not

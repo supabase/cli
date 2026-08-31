@@ -1,6 +1,5 @@
 import { describe, expect, it } from "@effect/vitest";
 import { Effect, Exit } from "effect";
-import { localNetworkId } from "../../../shared/legacy-docker-ids.ts";
 import { legacyGetHostname } from "../../../shared/legacy-hostname.ts";
 import { legacyParseSchemaFlags } from "../../../shared/legacy-schema-flags.ts";
 import {
@@ -153,7 +152,6 @@ describe("schema and id helpers", () => {
 
   it("derives sanitized docker ids from the project id", () => {
     expect(localDbContainerId("..my project")).toBe("supabase_db_my_project");
-    expect(localNetworkId("..my project")).toBe("supabase_network_my_project");
   });
 
   it("truncates an over-long project id to 40 characters", () => {

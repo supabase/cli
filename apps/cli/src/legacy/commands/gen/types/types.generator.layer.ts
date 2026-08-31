@@ -54,9 +54,6 @@ const generate = (
       // keeps the driver's TLS default so the real connect error (and its
       // IPv6 pooler classification) surfaces from the connection attempt.
       if (!input.isLocal && conn.sslmode === undefined) {
-        // A probe error keeps the driver's TLS default so the real connect
-        // error (and its IPv6 pooler classification) surfaces from the
-        // connection attempt itself.
         const probed = yield* sslProbe.requireSslForHost(conn.host, conn.port).pipe(Effect.result);
         if (Result.isSuccess(probed)) {
           if (!probed.success) {
