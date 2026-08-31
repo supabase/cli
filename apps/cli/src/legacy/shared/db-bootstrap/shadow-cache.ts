@@ -1,7 +1,8 @@
 /**
  * Shadow baseline cache for `db diff`/`db pull`/catalog resolution. Snapshots the platform
  * baseline as a PGDATA tar under `${SUPABASE_HOME}/cache/shadow-baseline/` (keep 3, 2-day TTL).
- * Off unless `SUPABASE_SHADOW_CACHE` is set (viper bool + project dotenv). A cache miss or
+ * On by default; an explicitly set `SUPABASE_SHADOW_CACHE` that is not viper-true (`0`/`false`/
+ * empty/garbage, from the shell env or the project dotenv) turns it off. A cache miss or
  * anomaly never fails the run except when the shadow does not come back after a cold export.
  */
 
@@ -68,7 +69,7 @@ import {
 
 type Spawner = ChildProcessSpawner["Service"];
 
-/** `SUPABASE_SHADOW_CACHE` — opt-in gate (viper bool; unset is off). */
+/** `SUPABASE_SHADOW_CACHE` — opt-out gate (viper bool when set; unset is ON). */
 export const LEGACY_SHADOW_CACHE_ENV = "SUPABASE_SHADOW_CACHE";
 
 /**
@@ -885,7 +886,8 @@ const legacyWarmShadow = <E>(
  * `legacy-pgdelta-next-shadow.layer.ts` for the scoped `acquireRelease` form next uses so the
  * container outlives provision (the engine keeps using the URL after this returns).
  *
- * Unset or falsey {@link LEGACY_SHADOW_CACHE_ENV} is the uncached create. Otherwise it
+ * An explicitly falsey {@link LEGACY_SHADOW_CACHE_ENV} (set, but not viper-true) is the
+ * uncached create. Otherwise — including when the variable is unset, the default — it
  * restores this key's snapshot (warm) or creates one and exports the baseline (cold).
  *
  * Runs inside `acquireUseRelease`'s uninterruptible `acquire`, same as
@@ -915,6 +917,7 @@ export const legacyAcquireShadowDatabase = <E>(
       !legacyViperEnvBoolWithProjectFallback(
         LEGACY_SHADOW_CACHE_ENV,
         input.setup.projectEnvValues ?? {},
+        { whenUnset: true },
       )
     ) {
       return yield* legacyUncachedShadow(spawner, input);

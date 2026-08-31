@@ -77,10 +77,11 @@ disables formatting without disabling safe compaction.
 - `pg_dump` container — the initial-migra pull's native remote-schema dump
   (`legacyStreamPgDump`, shared with `db dump`).
 
-### Shadow baseline cache (`SUPABASE_SHADOW_CACHE`, default OFF)
+### Shadow baseline cache (`SUPABASE_SHADOW_CACHE`, default ON)
 
-Off unless `SUPABASE_SHADOW_CACHE` is set; `false`/`0` keep it off (honored from the ambient env AND the
-project's dotenv, e.g. `supabase/.env`), restoring the documented uncached lifecycle. A warm hit
+On by default; setting `SUPABASE_SHADOW_CACHE` to anything not viper-true (`false`/`0`/empty/garbage,
+honored from the ambient env AND the project's dotenv, e.g. `supabase/.env`) turns it off,
+restoring the documented uncached lifecycle. A warm hit
 skips the platform baseline, so the `Initialising schema...` progress line does not print —
 progress text reflects the work actually performed.
 Artifact: `~/.supabase/cache/shadow-baseline/shadow-baseline-<key>.tar` (~90MB; `SUPABASE_HOME`
@@ -121,7 +122,7 @@ baseline, so it is never cached.
 | `SUPABASE_PROJECT_ID`                                                                 | overrides the shadow container's project id/labels, same as `db start`/`db reset` (`utils.DbId`); ALSO the linked-ref resolution fallback `--project-ref` supersedes — see Notes for the narrower scope of the flag | no        |
 | `SUPABASE_NETWORK_ID` (`--network-id`)                                                | forces the shadow container/network onto an existing Docker network                                                                                                                                                 | no        |
 | `SUPABASE_HOME`                                                                       | overrides the `~/.supabase` root used for the shadow baseline cache (and other CLI state)                                                                                                                           | no        |
-| `SUPABASE_SHADOW_CACHE`                                                               | shadow baseline cache; opt-in (`1`/`true`); the shadow's post-baseline PGDATA is snapshotted to a tar and restored into the next run's fresh container (see Notes)                                                  | no        |
+| `SUPABASE_SHADOW_CACHE`                                                               | shadow baseline cache; on by default, opt-out (`0`/`false`); the shadow's post-baseline PGDATA is snapshotted to a tar and restored into the next run's fresh container (see Notes)                                 | no        |
 | `SUPABASE_EXPERIMENTAL_PG_DELTA`                                                      | force pg-delta diff engine                                                                                                                                                                                          | no        |
 | `SUPABASE_EXPERIMENTAL`                                                               | selects the deprecated structured-dump branch (still delegates to Go, see below)                                                                                                                                    | no        |
 | `SUPABASE_USE_PG_DELTA_NEXT`                                                          | set to `false` for legacy edge-runtime pg-delta                                                                                                                                                                     | no        |

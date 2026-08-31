@@ -53,7 +53,7 @@ formatting without disabling safe compaction.
 | `SUPABASE_ACCESS_TOKEN`      | auth token for `--linked`                                                                | no        |
 | `DB_PASSWORD`                | password for `--linked` / `--db-url`                                                     | no        |
 | `SUPABASE_HOME`              | overrides the `~/.supabase` root used for the legacy opt-out's shadow baseline cache     | no        |
-| `SUPABASE_SHADOW_CACHE`      | shadow baseline cache for the legacy opt-out's catalog-miss shadows; opt-in (`1`/`true`) | no        |
+| `SUPABASE_SHADOW_CACHE`      | shadow baseline cache for the legacy opt-out's catalog-miss shadows; on by default, opt-out (`0`/`false`) | no        |
 | `SUPABASE_USE_PG_DELTA_NEXT` | set to `false` for legacy edge-runtime pg-delta                                          | no        |
 | `PGDELTA_NPM_REGISTRY`       | legacy opt-out's private npm registry                                                    | no        |
 | `PGDELTA_DEBUG`              | bundled-engine debug artifacts                                                           | no        |

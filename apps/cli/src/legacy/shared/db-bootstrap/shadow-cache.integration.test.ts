@@ -315,7 +315,7 @@ describe("legacyAcquireShadowDatabase", () => {
     ).pipe(Effect.provide(Layer.mergeAll(BunServices.layer, out.layer, cluster.layer)));
   });
 
-  it.live("stays uncached when the env var is unset (default OFF)", () => {
+  it.live("caches by default when the env var is unset (default ON)", () => {
     const docker = mockLegacyDockerDaemonCliSpawner();
     const cluster = fakeCluster();
     const out = mockOutput();
@@ -324,7 +324,38 @@ describe("legacyAcquireShadowDatabase", () => {
       Effect.gen(function* () {
         const fs = yield* FileSystem.FileSystem;
         const path = yield* Path.Path;
-        const handle = yield* legacyAcquireShadowDatabase(docker.spawner, shadowInput(fs, path));
+        const input = shadowInput(fs, path);
+        // First acquire is a cold cache-enabled provision (no `--rm`: the export must be able
+        // to stop and restart the container), and its snapshot step publishes the tar.
+        const cold = yield* coldRun(docker, input);
+        expect(cold.baselinePresent).toBe(false);
+        expect(cold.snapshotRequired).toBe(true);
+        expect(docker.calls("create")[0] ?? []).not.toContain("--rm");
+        expect(yield* soleTarName(fs, path)).toHaveLength(1);
+
+        // The next acquire — still with the env var unset — is a warm restore.
+        const warm = yield* legacyAcquireShadowDatabase(docker.spawner, input);
+        expect(warm.baselinePresent).toBe(true);
+        yield* legacyRemoveShadowDatabase(docker.spawner, warm.containerId);
+      }),
+    ).pipe(Effect.provide(Layer.mergeAll(BunServices.layer, out.layer, cluster.layer)));
+  });
+
+  it.live("a project dotenv opt-out (SUPABASE_SHADOW_CACHE=0) disables the default", () => {
+    const docker = mockLegacyDockerDaemonCliSpawner();
+    const cluster = fakeCluster();
+    const out = mockOutput();
+    return withShadowCacheHome(
+      undefined,
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const base = shadowInput(fs, path);
+        const input = {
+          ...base,
+          setup: { ...base.setup, projectEnvValues: { SUPABASE_SHADOW_CACHE: "0" } },
+        };
+        const handle = yield* legacyAcquireShadowDatabase(docker.spawner, input);
         expect(handle.baselinePresent).toBe(false);
         expect(docker.calls("create")[0] ?? []).toContain("--rm");
         yield* handle.snapshotBaseline;
