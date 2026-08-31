@@ -18,7 +18,9 @@ const config = {
     Flag.optional,
   ),
   exitCode: Flag.boolean("exit-code").pipe(
-    Flag.withDescription("Exit with status 1 when any difference is found."),
+    Flag.withDescription(
+      "Exit with status 2 when any difference is found (errors keep exiting 1).",
+    ),
     // Without an explicit default a boolean flag is REQUIRED by the parser,
     // making plain `supabase config diff` fail with `required flag(s)
     // "exit-code" not set` — pinned by diff.e2e.test.ts, since integration
@@ -41,7 +43,7 @@ export const legacyConfigDiffCommand = Command.make("diff", config).pipe(
     },
     {
       command: "supabase config diff --project-ref staging --exit-code",
-      description: "Diff against the 'staging' branch, exiting 1 on drift",
+      description: "Diff against the 'staging' branch, exiting 2 on drift",
     },
   ]),
   Command.withHandler((flags) =>

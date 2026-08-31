@@ -77,7 +77,10 @@ export {
   toProjectConfig,
   unmappedApiFields,
 } from "./project-config/project-config.ts";
-export { type ProjectConfigApiAttributes } from "./project-config/api-attributes.ts";
+export {
+  type ProjectConfigApiAttributes,
+  projectConfigApiBlockKeys,
+} from "./project-config/api-attributes.ts";
 export { type ProjectConfigMappingRow } from "./project-config/registry-row.ts";
 export { projectConfigMappingRows } from "./project-config/registry.ts";
 export { AUTH_HOOK_NAMES, unmappedSecretApiPaths } from "./project-config/registry-auth.ts";

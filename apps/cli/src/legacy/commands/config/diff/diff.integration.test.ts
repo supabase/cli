@@ -155,6 +155,8 @@ interface SetupOpts {
   readonly branchByUuid?: { status: number; body: unknown };
   /** `false` simulates a directory with no linked project. */
   readonly linked?: boolean;
+  /** Overrides the process cwd (defaults to the temp workdir). */
+  readonly cwd?: string;
 }
 
 function setup(opts: SetupOpts = {}) {
@@ -197,7 +199,7 @@ function setup(opts: SetupOpts = {}) {
         workdir: tempRoot.current,
         ...(opts.linked === false ? { projectId: Option.none<string>() } : {}),
       }),
-      runtimeInfo: mockRuntimeInfo({ cwd: tempRoot.current }),
+      runtimeInfo: mockRuntimeInfo({ cwd: opts.cwd ?? tempRoot.current }),
       telemetry: telemetry.layer,
       linkedProjectCache: linkedProjectCache.layer,
       processControl,
@@ -232,14 +234,16 @@ describe("legacy config diff integration", () => {
       expect(out.stderrText).toContain(
         `Comparing against project ${LEGACY_VALID_REF} using base config`,
       );
+      // The fixture's `auth: {}` is an EMPTY block — reported not-returned
+      // rather than falsely claimed compared.
       expect(out.stderrText).toContain(
-        "Comparison scope: api, auth, database, pooler, realtime, storage",
+        "Comparison scope: api, database, pooler, realtime, storage (not returned: auth)",
       );
       expect(out.stdoutText).toContain("api.max_rows [update]");
       expect(out.stdoutText).toContain("local:  500");
       expect(out.stdoutText).toContain("remote: 1000");
       expect(out.stdoutText).toContain(
-        "1 difference(s) found (1 update, 0 remote-only, 0 local-only).",
+        "1 difference found (1 update, 0 remote-only, 0 local-only).",
       );
       // Differences without --exit-code leave the exit status alone.
       expect(processControl.exitCode).toBeUndefined();
@@ -257,13 +261,16 @@ describe("legacy config diff integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("--exit-code sets exit 1 when differences are found", () => {
+  it.live("--exit-code sets exit 2 when differences are found", () => {
+    // Drift gets its own exit code (2) so scripts can tell it from failure
+    // (1) — `config diff --exit-code || alert` must not fire on an expired
+    // token.
     const { layer, processControl } = setup({
       toml: 'project_id = "test"\n[api]\nmax_rows = 500\n',
     });
     return Effect.gen(function* () {
       yield* legacyConfigDiff({ ...noFlags, exitCode: true });
-      expect(processControl.exitCode).toBe(1);
+      expect(processControl.exitCode).toBe(2);
     }).pipe(Effect.provide(layer));
   });
 
@@ -273,7 +280,7 @@ describe("legacy config diff integration", () => {
     });
     return Effect.gen(function* () {
       yield* legacyConfigDiff(noFlags);
-      expect(out.stdoutText).toContain("auth.site_url [local only]");
+      expect(out.stdoutText).toContain("auth.site_url [local-only]");
       expect(out.stdoutText).toContain('local:  "https://local.example.com"');
       expect(out.stdoutText).toContain("remote: (not returned)");
     }).pipe(Effect.provide(layer));
@@ -316,7 +323,7 @@ describe("legacy config diff integration", () => {
       yield* legacyConfigDiff({ ...noFlags, exitCode: true });
       expect(out.stdoutText).toContain("No config differences found.");
       expect(out.stdoutText).toContain(
-        "Note: 1 credential value(s) not compared (masked by the API): auth.external.github.secret",
+        "Note: 1 credential value not compared (masked by the API): auth.external.github.secret",
       );
       expect(processControl.exitCode).toBeUndefined();
     }).pipe(Effect.provide(layer));
@@ -533,20 +540,26 @@ describe("legacy config diff integration", () => {
       yield* legacyConfigDiff(noFlags);
       const success = out.messages.find((message) => message.type === "success");
       expect(success).toBeDefined();
-      expect(success?.message).toContain("1 config difference(s) found.");
+      expect(success?.message).toContain("1 config difference found.");
       const data = success?.data as Record<string, unknown>;
       expect(data["target"]).toMatchObject({
         project_ref: LEGACY_VALID_REF,
         local_scope: "base",
       });
-      expect(data["scope"]).toEqual(["api", "auth", "database", "pooler", "realtime", "storage"]);
+      // `schema_version` is the PAYLOAD contract's version; the user's
+      // `$schema` document reference travels separately as `config_schema`.
+      expect(data["schema_version"]).toBe(1);
+      expect(typeof data["config_schema"]).toBe("string");
+      expect(data["scope"]).toEqual({
+        present: ["api", "database", "pooler", "realtime", "storage"],
+        missing: ["auth"],
+      });
       expect(data["changes"]).toEqual([
         { path: ["api", "max_rows"], class: "update", declared: true, local: 500, remote: 1000 },
       ]);
       expect(data["counts"]).toEqual({ update: 1, remote_only: 0, local_only: 0, total: 1 });
       expect(data["masked"]).toEqual([]);
       expect(data["unmanaged"]).toEqual([]);
-      expect(typeof data["schema_version"]).toBe("string");
     }).pipe(Effect.provide(layer));
   });
 
@@ -586,7 +599,7 @@ describe("legacy config diff integration", () => {
     return Effect.gen(function* () {
       yield* legacyConfigDiff(noFlags);
       expect(out.stdoutText).toContain("api.max_rows [update]");
-      expect(out.stdoutText).toContain("1 difference(s) found");
+      expect(out.stdoutText).toContain("1 difference found");
     }).pipe(Effect.provide(layer));
   });
 
@@ -672,7 +685,7 @@ describe("legacy config diff integration", () => {
     });
     return Effect.gen(function* () {
       yield* legacyConfigDiff(noFlags);
-      expect(out.stdoutText).toContain("db.settings.work_mem [remote only]");
+      expect(out.stdoutText).toContain("db.settings.work_mem [remote-only]");
       expect(out.stdoutText).toContain("local:  (unset)");
       expect(out.stdoutText).toContain('remote: "64MB"');
     }).pipe(Effect.provide(layer));
@@ -697,11 +710,53 @@ describe("legacy config diff integration", () => {
     });
     return Effect.gen(function* () {
       yield* legacyConfigDiff(noFlags);
-      expect(out.stdoutText).toContain("api.max_rows [remote only]");
+      expect(out.stdoutText).toContain("api.max_rows [remote-only]");
       expect(out.stdoutText).toContain(
         "local:  1000 (schema default — not declared in config.toml)",
       );
       expect(out.stdoutText).toContain("remote: 250");
+    }).pipe(Effect.provide(layer));
+  });
+
+  it.live("the config file is read relative to --workdir, not the invoking directory", () => {
+    // `--workdir ../other` must compare `../other`'s config.toml against
+    // `../other`'s linked project — reading the invoking directory's file
+    // would silently diff the WRONG config (the resolver and linked-project
+    // cache already use the workdir). The ambient cwd here points somewhere
+    // with no supabase/ directory at all; only cliSettings.workdir knows
+    // where the project lives.
+    const elsewhere = join(tempRoot.current, "unrelated-cwd");
+    mkdirSync(elsewhere, { recursive: true });
+    const { layer, out } = setup({
+      toml: 'project_id = "test"\n[api]\nmax_rows = 500\n',
+      cwd: elsewhere,
+    });
+    return Effect.gen(function* () {
+      yield* legacyConfigDiff(noFlags);
+      expect(out.stdoutText).toContain("api.max_rows [update]");
+    }).pipe(Effect.provide(layer));
+  });
+
+  it.live("hostile names cannot inject ANSI or forge output lines in text mode", () => {
+    // Path segments are attacker-influenced ([remotes.*] names and
+    // sms.test_otp keys are unconstrained TOML keys) — a name carrying an
+    // escape byte or newline must not reach the terminal raw, where it could
+    // recolor output or append a fake "No config differences found." line.
+    const { layer, out } = setup({
+      toml: [
+        'project_id = "test"',
+        '[remotes."evil\\u001B[31mred"]',
+        `project_id = "${LEGACY_VALID_REF}"`,
+        '[remotes."evil\\u001B[31mred".api]',
+        "max_rows = 500",
+        "",
+      ].join("\n"),
+    });
+    return Effect.gen(function* () {
+      yield* legacyConfigDiff(noFlags);
+      expect(out.stderrText).toContain("[remotes.evil[31mred]");
+      expect(out.stderrText).not.toContain("\u001b");
+      expect(out.stdoutText).not.toContain("\u001b");
     }).pipe(Effect.provide(layer));
   });
 

@@ -8,13 +8,13 @@ import { loadCliConfig } from "@supabase/config/effect";
 import { Effect, Option } from "effect";
 
 import { LegacyPlatformApi } from "../../../auth/legacy-platform-api.service.ts";
+import { LegacyCliSettings } from "../../../config/legacy-cli-settings.service.ts";
 import { LegacyProjectRefResolver } from "../../../config/legacy-project-ref.service.ts";
 import { LegacyLinkedProjectCache } from "../../../telemetry/legacy-linked-project-cache.service.ts";
 import { LegacyTelemetryState } from "../../../telemetry/legacy-telemetry-state.service.ts";
 import { LegacyOutputFlag } from "../../../../shared/legacy/global-flags.ts";
 import { Output } from "../../../../shared/output/output.service.ts";
 import { ProcessControl } from "../../../../shared/runtime/process-control.service.ts";
-import { RuntimeInfo } from "../../../../shared/runtime/runtime-info.service.ts";
 import {
   LEGACY_BRANCH_PROJECT_REF_PATTERN,
   legacyResolveBranchProjectRef,
@@ -28,6 +28,7 @@ import {
   legacyConfigDiffPayload,
   legacyConfigDiffScope,
   legacyConfigDiffScopeLine,
+  legacyConfigDiffSummaryMessage,
   legacyRenderConfigDiffText,
   type LegacyConfigDiffContext,
 } from "./diff.format.ts";
@@ -68,15 +69,19 @@ export const legacyConfigDiff = Effect.fn("legacy.config.diff")(function* (
   const resolver = yield* LegacyProjectRefResolver;
   const linkedProjectCache = yield* LegacyLinkedProjectCache;
   const telemetryState = yield* LegacyTelemetryState;
-  const runtimeInfo = yield* RuntimeInfo;
+  const cliSettings = yield* LegacyCliSettings;
   const processControl = yield* ProcessControl;
   const goOutputFlag = yield* LegacyOutputFlag;
 
   // An empty `--project-ref` value is absent, mirroring the resolver's own rule.
   const requested = Option.filter(flags.projectRef, (value) => value.length > 0);
 
+  // Resolved against `cliSettings.workdir` — the same root the project-ref
+  // resolver and the linked-project cache use — so `--workdir ../other`
+  // compares `../other`'s config.toml against `../other`'s linked project,
+  // never the invoking directory's file against another root's project.
   const loadLocalConfig = (projectRef: string | undefined) =>
-    loadCliConfig(runtimeInfo.cwd, { projectRef, goViperCompat: true }).pipe(
+    loadCliConfig(cliSettings.workdir, { projectRef, goViperCompat: true }).pipe(
       Effect.catchTag(
         "CliConfigParseError",
         (cause) =>
@@ -171,7 +176,7 @@ export const legacyConfigDiff = Effect.fn("legacy.config.diff")(function* (
       projectRef: ref,
       branch,
       appliedRemote: loaded.appliedRemote,
-      schemaVersion: loaded.schemaRef ?? CLI_CONFIG_SCHEMA_URL,
+      configSchema: loaded.schemaRef ?? CLI_CONFIG_SCHEMA_URL,
     };
     yield* output.raw(legacyConfigDiffComparisonLine(context), "stderr");
 
@@ -244,18 +249,22 @@ export const legacyConfigDiff = Effect.fn("legacy.config.diff")(function* (
         yield* output.raw(encodeEnv(payload) + "\n");
       }
     } else if (output.format !== "text") {
-      const total = changeSet.counts.total;
-      const message =
-        total === 0 ? "No config differences found." : `${total} config difference(s) found.`;
-      yield* output.success(message, legacyConfigDiffPayload(changeSet, scope, context));
+      yield* output.success(
+        legacyConfigDiffSummaryMessage(changeSet),
+        legacyConfigDiffPayload(changeSet, scope, context),
+      );
     } else {
       yield* output.raw(legacyRenderConfigDiffText(changeSet));
     }
 
-    // 8. `--exit-code`: differences flip the exit status after the payload is
-    // out, without an error envelope corrupting machine output.
+    // 8. `--exit-code`: differences flip the exit status to 2 after the
+    // payload is out, without an error envelope corrupting machine output.
+    // Drift gets its OWN code — every failure exits 1, and a script's
+    // `config diff --exit-code || alert` must not fire on an expired token
+    // (`terraform plan -detailed-exitcode`'s 0/1/2 convention, with 1 kept
+    // for errors to match the rest of the CLI).
     if (flags.exitCode && changeSet.counts.total > 0) {
-      yield* processControl.setExitCode(1);
+      yield* processControl.setExitCode(2);
     }
   }).pipe(
     // Legacy Shell Invariant #1: telemetry flushes on EVERY invocation —

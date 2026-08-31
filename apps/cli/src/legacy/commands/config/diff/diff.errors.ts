@@ -67,6 +67,10 @@ export class LegacyConfigDiffReadStatusError extends Data.TaggedError(
   "LegacyConfigDiffReadStatusError",
 )<StatusErrorArgs> {
   get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
-    return statusCodeActionability(this.status);
+    // `/v2/projects/{ref}/config` names a user-selected resource, so a 404
+    // means "wrong project ref" — user-actionable, not an external-service
+    // problem (same rule as the branch-resolve error above and the
+    // ref-addressed push.errors.ts status errors).
+    return statusCodeActionability(this.status, { notFoundIsInvalidInput: true });
   }
 }

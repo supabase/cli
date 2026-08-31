@@ -48,10 +48,15 @@ All Bearer-authenticated, all read-only.
 
 ## Exit Codes
 
+Drift has its own exit code (`2`), distinct from every failure (`1`), so
+`config diff --exit-code` scripts can tell "config drifted" from "token
+expired" without parsing output (`terraform plan -detailed-exitcode`'s
+convention; `1` stays the CLI-wide failure code).
+
 | Code | Condition                                                                      |
 | ---- | ------------------------------------------------------------------------------ |
 | `0`  | success — including when differences are found, unless `--exit-code` is passed |
-| `1`  | `--exit-code` passed and at least one difference found                         |
+| `2`  | `--exit-code` passed and at least one difference found                         |
 | `1`  | missing or malformed `supabase/config.toml`                                    |
 | `1`  | unknown branch (branch-name `--project-ref` 404)                               |
 | `1`  | two `[remotes.*]` blocks declare the same `project_id` as the target ref       |
@@ -66,20 +71,29 @@ blocks are called out). The payload is on **stdout**.
 
 ### `--output-format text`
 
-One block per difference (`<path> [update|remote only|local only]` with
-`local:`/`remote:` lines; unset renders `(unset)` / `(not returned)`,
-env-resolved values append `(from env VAR)`), then a summary count line —
-`No config differences found.` when clean — and a
-`Note: N credential value(s) not compared (masked by the API): …` line when
-the file sets masked secrets.
+One block per difference (`<path> [update|remote-only|local-only]` with
+`local:`/`remote:` lines; unset renders `(unset)` / `(not returned)`, an
+undeclared path with a schema default renders `<value> (schema default — not
+declared in config.toml)`, env-resolved values append `(from env VAR, …)`),
+then a summary count line — `No config differences found.` when clean —
+followed by a `Note: … (masked by the API): …` line when the file sets masked
+secrets and a `Note: … cannot be pushed and … not compared: …` line for
+declared properties push cannot communicate. Every non-constant string
+(path segments, env-var names, remotes/branch names) is sanitized against
+control characters before rendering.
 
 ### `--output-format json` / `stream-json`
 
-`output.success(message, payload)` with the payload containing
-`schema_version`, `target` (`project_ref`, optional `branch`, `local_scope`),
-`scope`, `changes[]` (`path`, `class`, `local`, `remote`, optional
-`env_variable`; unset sides are `null`), `masked[]`, and `counts`
-(per class + `total`).
+`output.success(message, payload)` — the message carries the masked/unmanaged
+caveats too, so echoing it never claims "in sync" while masked values may have
+drifted. The payload contains `schema_version` (integer version of THIS
+payload contract, currently `1`), `config_schema` (the file's `$schema` URL),
+`target` (`project_ref`, optional `branch`, `local_scope`), `scope`
+(`{present, missing}` block lists — the block set is owned by
+`@supabase/config`), `changes[]` (`path` as a SEGMENT ARRAY — a record key may
+contain a `.` — plus `class`, `declared`, `local`, `remote`, optional
+`env_variables[]`; unset sides are `null`), `masked[]` and `unmanaged[]`
+(segment-array paths), and `counts` (per class + `total`).
 
 ### `-o/--output` (legacy machine formats)
 
