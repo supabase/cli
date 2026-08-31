@@ -104,7 +104,7 @@ describe("resolved service preparation policies", () => {
     );
 
     expect(config.vector).toMatchObject({ version: "0.53.0-alpine" });
-    expect(config.pooler).toMatchObject({ version: "2.9.7" });
+    expect(config.pooler).toMatchObject({ version: "2.9.12" });
   });
 
   it("resolves independent Pooler protocol ports and Mailpit data ownership", async () => {
