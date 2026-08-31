@@ -1,5 +1,6 @@
 import { Effect, type FileSystem, type Path } from "effect";
 import { dockerfileServiceImageRaw } from "../../shared/services/dockerfile-images.ts";
+import { postgresImageForDbMajorVersion } from "../../shared/services/services.shared.ts";
 import { slimImageForCurrentPin } from "../../shared/services/slim-images.ts";
 
 /**
@@ -15,9 +16,6 @@ import { slimImageForCurrentPin } from "../../shared/services/slim-images.ts";
 // Read per call, not captured at import time, so `SUPABASE_USE_SLIM_IMAGES` is
 // observed by the resolver (and by tests that stub the env).
 const legacyPgImageRaw = () => dockerfileServiceImageRaw("pg");
-// Major-version fallbacks and the OrioleDB tags below have no slim build.
-const LEGACY_PG14 = "supabase/postgres:14.1.0.89";
-const LEGACY_PG15 = "supabase/postgres:15.8.1.085";
 
 /** Replace everything after the first `:` with `tag`. */
 function replaceImageTag(image: string, tag: string): string {
@@ -93,8 +91,7 @@ export const legacyResolveDbImage = Effect.fnUntraced(function* (
         : `supabase/postgres:orioledb-${orioledbVersion}`;
     return { image, configImage: image };
   }
-  const usedFallback = majorVersion === 13 || majorVersion === 14 || majorVersion === 15;
-  let image = usedFallback ? (majorVersion === 14 ? LEGACY_PG14 : LEGACY_PG15) : legacyPgImageRaw();
+  const currentRaw = postgresImageForDbMajorVersion(majorVersion) ?? legacyPgImageRaw();
   let appliedPin: string | undefined;
   if (majorVersion > 14) {
     const versionPath = path.join(workdir, "supabase", ".temp", "postgres-version");
@@ -103,22 +100,21 @@ export const legacyResolveDbImage = Effect.fnUntraced(function* (
       Effect.orElseSucceed(() => ""),
     );
     if (pinned.length > 0) {
-      const colon = image.indexOf(":");
-      const currentTag = colon >= 0 ? image.slice(colon + 1) : image;
+      const colon = currentRaw.indexOf(":");
+      const currentTag = colon >= 0 ? currentRaw.slice(colon + 1) : currentRaw;
       if (versionCompare(currentTag, "15.1.0.55") >= 0) {
-        image = replaceImageTag(image, pinned);
         appliedPin = pinned;
       }
     }
   }
-  // 13/14/15 fallbacks have no slim build. Historical PG17 pins stay docker.io.
-  if (usedFallback) {
-    return { image, configImage: image };
+  // PG14 has no slim build.
+  if (majorVersion === 14) {
+    return { image: currentRaw, configImage: currentRaw };
   }
   const configImage =
-    appliedPin !== undefined ? replaceImageTag(legacyPgImageRaw(), appliedPin) : legacyPgImageRaw();
+    appliedPin !== undefined ? replaceImageTag(currentRaw, appliedPin) : currentRaw;
   return {
-    image: slimImageForCurrentPin("pg", legacyPgImageRaw(), appliedPin),
+    image: slimImageForCurrentPin("pg", currentRaw, appliedPin),
     configImage,
   };
 });

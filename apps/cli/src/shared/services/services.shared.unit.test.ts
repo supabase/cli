@@ -126,8 +126,7 @@ describe("services shared", () => {
     });
   });
 
-  // The Postgres major-version fallback and a configured edge-runtime image are
-  // caller-chosen refs with no slim counterpart, so the flag must not touch them.
+  // Explicit overrides are used verbatim — including historical PG15 pins.
   test("leaves explicit image overrides on docker.io when SUPABASE_USE_SLIM_IMAGES is set", () => {
     vi.stubEnv("SUPABASE_USE_SLIM_IMAGES", "true");
     const rows = listLocalServiceVersions({

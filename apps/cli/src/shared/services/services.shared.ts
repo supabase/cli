@@ -115,15 +115,17 @@ export function localServiceImagesFromDockerfile(
 
 const LOCAL_SERVICE_IMAGES = localServiceImagesFromSpecs(dockerfileServiceImages);
 
-// Mirrors Go's config image rewrite in `apps/cli-go/pkg/config/config.go`.
-// Major version 13 intentionally falls through to the pg15 image there.
+export const POSTGRES_FALLBACK_IMAGE_PG14 = "supabase/postgres:14.1.0.89";
+/** PG13/15 fallback. Only this current pin slim-translates; older 15.x stays docker.io. */
+export const POSTGRES_FALLBACK_IMAGE_PG15 = "supabase/postgres:15.14.1.167";
+
 export function postgresImageForDbMajorVersion(majorVersion: number): string | undefined {
   switch (majorVersion) {
     case 13:
     case 15:
-      return "supabase/postgres:15.8.1.085";
+      return POSTGRES_FALLBACK_IMAGE_PG15;
     case 14:
-      return "supabase/postgres:14.1.0.89";
+      return POSTGRES_FALLBACK_IMAGE_PG14;
     default:
       return undefined;
   }
