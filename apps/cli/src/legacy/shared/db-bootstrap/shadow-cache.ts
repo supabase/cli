@@ -930,18 +930,23 @@ export const legacyAcquireShadowDatabase = <E>(
 
     // The cache root must be usable BEFORE committing to the cached lifecycle: the cold path
     // drops `--rm` and pays a stop → export → restart cycle whose write is already doomed when
-    // this directory cannot be created (an unwritable or root-squashed `SUPABASE_HOME`) — and
+    // this directory cannot be written (an unwritable or root-squashed `SUPABASE_HOME`) — and
     // with the cache on by default, every affected invocation would pay that cycle just to warn.
-    // The probe is the exact mkdir the export performs; the export keeps its own as a safety net
-    // for a root that vanishes mid-run.
+    // The mkdir is the exact one the export performs (which keeps its own as a safety net for a
+    // root that vanishes mid-run), but alone it is not a sufficient probe: recursive mkdir on an
+    // ALREADY-EXISTING directory creates nothing and succeeds regardless of permission, so the
+    // `access(W_OK)` check is what catches a pre-existing read-only root (EACCES for the current
+    // user, EROFS on a read-only mount, a root-squashing NFS server's denial).
     const cacheDir = legacyShadowBaselineCacheDir(input.path);
     const cacheRoot = yield* Effect.result(
-      input.fs.makeDirectory(cacheDir, { recursive: true, mode: 0o700 }),
+      input.fs
+        .makeDirectory(cacheDir, { recursive: true, mode: 0o700 })
+        .pipe(Effect.andThen(input.fs.access(cacheDir, { writable: true }))),
     );
     if (Result.isFailure(cacheRoot)) {
       const output = yield* Output;
       yield* output.raw(
-        `Warning: shadow baseline cache unavailable (cannot create ${cacheDir}: ${cacheRoot.failure.message}); continuing uncached.\n`,
+        `Warning: shadow baseline cache unavailable (cannot write ${cacheDir}: ${cacheRoot.failure.message}); continuing uncached.\n`,
         "stderr",
       );
       return yield* legacyUncachedShadow(spawner, input);

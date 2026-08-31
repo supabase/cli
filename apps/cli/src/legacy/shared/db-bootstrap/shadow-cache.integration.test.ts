@@ -10,6 +10,7 @@
  * (the export must stop the container before copying and start it again afterwards).
  */
 
+import { accessSync, chmodSync, constants } from "node:fs";
 import { join } from "node:path";
 
 import type { CliConfig } from "@supabase/config";
@@ -371,6 +372,47 @@ describe("legacyAcquireShadowDatabase", () => {
       ).pipe(Effect.provide(Layer.mergeAll(BunServices.layer, out.layer, cluster.layer)));
     },
   );
+
+  it.live("a pre-existing read-only cache root also degrades to the uncached shadow", () => {
+    const docker = mockLegacyDockerDaemonCliSpawner();
+    const cluster = fakeCluster();
+    const out = mockOutput();
+    return withShadowCacheHome(
+      "1",
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        // Recursive mkdir on an EXISTING directory creates nothing and succeeds regardless of
+        // permission, so the acquire's probe must check write access explicitly — otherwise a
+        // read-only root selects the doomed cold cycle on every default-ON invocation.
+        const cacheDir = shadowCacheDir(path);
+        yield* fs.makeDirectory(cacheDir, { recursive: true });
+        chmodSync(cacheDir, 0o500);
+        // chmod cannot revoke write access from a privileged user (root ignores permission
+        // bits), so mirror the workers-push suite's guard: assert the degrade only when the
+        // denial is real for the CURRENT user; otherwise the cached path proceeding is correct.
+        const writable = (() => {
+          try {
+            accessSync(cacheDir, constants.W_OK);
+            return true;
+          } catch {
+            return false;
+          }
+        })();
+
+        const handle = yield* legacyAcquireShadowDatabase(docker.spawner, shadowInput(fs, path));
+        if (writable) {
+          expect(handle.snapshotRequired).toBe(true);
+        } else {
+          expect(handle.baselinePresent).toBe(false);
+          expect(handle.snapshotRequired).toBe(false);
+          expect(docker.calls("create")[0] ?? []).toContain("--rm");
+          expect(out.stderrText).toContain("shadow baseline cache unavailable");
+        }
+        chmodSync(cacheDir, 0o700);
+      }),
+    ).pipe(Effect.provide(Layer.mergeAll(BunServices.layer, out.layer, cluster.layer)));
+  });
 
   it.live("a project dotenv opt-out (SUPABASE_SHADOW_CACHE=0) disables the default", () => {
     const docker = mockLegacyDockerDaemonCliSpawner();
