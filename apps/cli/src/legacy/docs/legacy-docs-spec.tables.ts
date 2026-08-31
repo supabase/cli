@@ -145,7 +145,6 @@ export const LEGACY_DOCS_DEFAULT_OVERRIDES: Readonly<Record<string, string>> = {
   "supabase-db-advisors local": "true",
   "supabase-db-advisors type": "all",
   "supabase-db-diff local": "true",
-  "supabase-db-diff use-migra": "true",
   "supabase-db-dump linked": "true",
   "supabase-db-lint fail-on": "none",
   "supabase-db-lint level": "warning",

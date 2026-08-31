@@ -432,8 +432,6 @@ function setup(
     replicationSlotCounts?: ReadonlyArray<number>;
     replicationSlotQueryFails?: boolean;
     failStatement?: { readonly sql: string; readonly code?: string; readonly message: string };
-    // pg-delta migrations-catalog cache, wired into the remote-reset path
-    // after a successful migrate/schema-files + seed.
     // Simulates a genuinely unlinked workdir: `loadProjectRef` fails with
     // `LegacyProjectNotLinkedError` absent an explicit `--project-ref` flag,
     // instead of silently falling back to `opts.ref ?? LEGACY_VALID_REF`.
