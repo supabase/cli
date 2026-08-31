@@ -13,13 +13,14 @@ import {
 import {
   POSTGRES_FALLBACK_IMAGE_PG14,
   POSTGRES_FALLBACK_IMAGE_PG15,
+  POSTGRES_FALLBACK_IMAGE_PG15_SLIM,
 } from "../../shared/services/services.shared.ts";
 import { imageTag, toSlimImage } from "../../shared/services/slim-images.ts";
 import { legacyResolveDbImage } from "./legacy-db-image.ts";
 
 const currentPostgres = dockerfileServiceImageRaw("pg");
 const currentPostgresTag = imageTag(currentPostgres) ?? "";
-const pg15Tag = imageTag(POSTGRES_FALLBACK_IMAGE_PG15) ?? "";
+const pg15SlimTag = imageTag(POSTGRES_FALLBACK_IMAGE_PG15_SLIM) ?? "";
 
 const withTemp = () => mkdtempSync(join(tmpdir(), "legacy-db-image-"));
 
@@ -117,12 +118,12 @@ describe("legacyResolveDbImage", () => {
       const dir = withTemp();
       return Effect.gen(function* () {
         expect(yield* resolve(dir, 15)).toEqual({
-          image: toSlimImage("pg", POSTGRES_FALLBACK_IMAGE_PG15),
-          configImage: POSTGRES_FALLBACK_IMAGE_PG15,
+          image: toSlimImage("pg", POSTGRES_FALLBACK_IMAGE_PG15_SLIM),
+          configImage: POSTGRES_FALLBACK_IMAGE_PG15_SLIM,
         });
         expect(yield* resolve(dir, 13)).toEqual({
-          image: toSlimImage("pg", POSTGRES_FALLBACK_IMAGE_PG15),
-          configImage: POSTGRES_FALLBACK_IMAGE_PG15,
+          image: toSlimImage("pg", POSTGRES_FALLBACK_IMAGE_PG15_SLIM),
+          configImage: POSTGRES_FALLBACK_IMAGE_PG15_SLIM,
         });
         rmSync(dir, { recursive: true, force: true });
       });
@@ -144,11 +145,11 @@ describe("legacyResolveDbImage", () => {
     it.effect("rewrites a current PG15 pin to the slim registry", () => {
       vi.stubEnv("SUPABASE_USE_SLIM_IMAGES", "true");
       const dir = withTemp();
-      writePin(dir, pg15Tag);
+      writePin(dir, pg15SlimTag);
       return Effect.gen(function* () {
         expect(yield* resolve(dir, 15)).toEqual({
-          image: toSlimImage("pg", POSTGRES_FALLBACK_IMAGE_PG15),
-          configImage: POSTGRES_FALLBACK_IMAGE_PG15,
+          image: toSlimImage("pg", POSTGRES_FALLBACK_IMAGE_PG15_SLIM),
+          configImage: POSTGRES_FALLBACK_IMAGE_PG15_SLIM,
         });
         rmSync(dir, { recursive: true, force: true });
       });

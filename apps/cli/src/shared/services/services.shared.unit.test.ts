@@ -7,6 +7,9 @@ import {
   listLocalServiceVersions,
   localServiceImagesFromDockerfile,
   parseDockerfileServiceImages,
+  postgresImageForDbMajorVersion,
+  POSTGRES_FALLBACK_IMAGE_PG15,
+  POSTGRES_FALLBACK_IMAGE_PG15_SLIM,
   renderServicesTable,
   renderServicesWarning,
 } from "./services.shared.ts";
@@ -74,6 +77,14 @@ describe("services shared", () => {
       "supabase/logflare",
       "supabase/supavisor",
     ]);
+  });
+
+  test("keeps the established PG13/15 fallback unless the slim flag is on", () => {
+    expect(postgresImageForDbMajorVersion(13)).toBe(POSTGRES_FALLBACK_IMAGE_PG15);
+    expect(postgresImageForDbMajorVersion(15)).toBe(POSTGRES_FALLBACK_IMAGE_PG15);
+    vi.stubEnv("SUPABASE_USE_SLIM_IMAGES", "true");
+    expect(postgresImageForDbMajorVersion(13)).toBe(POSTGRES_FALLBACK_IMAGE_PG15_SLIM);
+    expect(postgresImageForDbMajorVersion(15)).toBe(POSTGRES_FALLBACK_IMAGE_PG15_SLIM);
   });
 
   test("lists slim images when SUPABASE_USE_SLIM_IMAGES is set", () => {

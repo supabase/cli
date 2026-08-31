@@ -116,14 +116,18 @@ export function localServiceImagesFromDockerfile(
 const LOCAL_SERVICE_IMAGES = localServiceImagesFromSpecs(dockerfileServiceImages);
 
 export const POSTGRES_FALLBACK_IMAGE_PG14 = "supabase/postgres:14.1.0.89";
-/** PG13/15 fallback. Only this current pin slim-translates; older 15.x stays docker.io. */
-export const POSTGRES_FALLBACK_IMAGE_PG15 = "supabase/postgres:15.14.1.167";
+/** Flag-off PG13/15 docker.io pin. */
+export const POSTGRES_FALLBACK_IMAGE_PG15 = "supabase/postgres:15.8.1.085";
+/** Published slim PG15 pin; flag-on majors 13/15 slim-translate this, not 15.8. */
+export const POSTGRES_FALLBACK_IMAGE_PG15_SLIM = "supabase/postgres:15.14.1.167";
 
 export function postgresImageForDbMajorVersion(majorVersion: number): string | undefined {
   switch (majorVersion) {
     case 13:
     case 15:
-      return POSTGRES_FALLBACK_IMAGE_PG15;
+      return slimImagesEnabled()
+        ? POSTGRES_FALLBACK_IMAGE_PG15_SLIM
+        : POSTGRES_FALLBACK_IMAGE_PG15;
     case 14:
       return POSTGRES_FALLBACK_IMAGE_PG14;
     default:
