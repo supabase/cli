@@ -1140,9 +1140,69 @@ describe("makeSupabaseApiClient", () => {
       ),
     );
 
-    expect(result.data.attributes.database.network_restrictions.entitlement).toBe("disallowed");
-    expect(result.data.attributes.database.major_version).toBe(17);
-    expect(result.data.attributes.storage.upstream_target).toBe("main");
-    expect(result.data.attributes.api.db_pool).toBeNull();
+    expect(result.data.attributes.database?.network_restrictions?.entitlement).toBe("disallowed");
+    expect(result.data.attributes.database?.major_version).toBe(17);
+    expect(result.data.attributes.storage?.upstream_target).toBe("main");
+    expect(result.data.attributes.api?.db_pool).toBeNull();
+  });
+
+  test("decodes a partial v2GetProjectConfig payload missing blocks and block keys", async () => {
+    // The platform can report a subset of the config surface — staging
+    // predates `storage.database_pool_mode`, and a permission-truncated
+    // response can omit whole blocks. The contract keeps every block and
+    // block key optional (see the V2ProjectConfigResponse entries in
+    // scripts/openapi-overrides.json) so a partial response degrades at the
+    // consumer instead of failing the typed decode.
+    const result = await Effect.runPromise(
+      makeSupabaseApiClient(config).pipe(
+        Effect.flatMap((client) =>
+          client.execute<"v2GetProjectConfig">(operationDefinitions.v2GetProjectConfig, {
+            ref: "abcdefghijklmnopqrst",
+          }),
+        ),
+        Effect.provide(
+          httpClientLayer((request) =>
+            Effect.succeed(
+              jsonResponse(request, 200, {
+                data: {
+                  type: "project_config",
+                  id: "abcdefghijklmnopqrst",
+                  attributes: {
+                    auth: {},
+                    api: { db_schema: "public" },
+                    storage: {
+                      file_size_limit: 0,
+                      features: {
+                        image_transformation: { enabled: true },
+                        s3_protocol: { enabled: true },
+                        purge_cache: { enabled: true },
+                        iceberg_catalog: {
+                          enabled: false,
+                          max_namespaces: 0,
+                          max_tables: 0,
+                          max_catalogs: 0,
+                        },
+                        vector_buckets: { enabled: false, max_buckets: 0, max_indexes: 0 },
+                      },
+                      capabilities: { list_v2: true, iceberg_catalog: true },
+                      upstream_target: "main",
+                      migration_version: "1",
+                      // no database_pool_mode — the exact staging shape
+                    },
+                    // no database, pooler, realtime blocks at all
+                  },
+                },
+              }),
+            ),
+          ),
+        ),
+      ),
+    );
+
+    expect(result.data.attributes.api?.db_schema).toBe("public");
+    expect(result.data.attributes.storage?.database_pool_mode).toBeUndefined();
+    expect(result.data.attributes.database).toBeUndefined();
+    expect(result.data.attributes.pooler).toBeUndefined();
+    expect(result.data.attributes.realtime).toBeUndefined();
   });
 });

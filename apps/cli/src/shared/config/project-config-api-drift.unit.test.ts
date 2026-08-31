@@ -54,13 +54,13 @@ type _RemovedTopLevelKeys = AssertNever<
   Exclude<keyof ProjectConfigApiAttributes, keyof GeneratedAttrs>
 >;
 
-type GeneratedDatabase = GeneratedAttrs["database"];
+type GeneratedDatabase = NonNullable<GeneratedAttrs["database"]>;
 type MirrorDatabase = NonNullable<ProjectConfigApiAttributes["database"]>;
 
 type _AddedDatabaseKeys = AssertNever<Exclude<keyof GeneratedDatabase, keyof MirrorDatabase>>;
 type _RemovedDatabaseKeys = AssertNever<Exclude<keyof MirrorDatabase, keyof GeneratedDatabase>>;
 
-type GeneratedPostgresSettings = GeneratedDatabase["postgres_settings"];
+type GeneratedPostgresSettings = NonNullable<GeneratedDatabase["postgres_settings"]>;
 type MirrorPostgresSettings = NonNullable<MirrorDatabase["postgres_settings"]>;
 
 type _AddedPostgresSettingsKeys = AssertNever<
@@ -70,7 +70,7 @@ type _RemovedPostgresSettingsKeys = AssertNever<
   Exclude<keyof MirrorPostgresSettings, keyof GeneratedPostgresSettings>
 >;
 
-type GeneratedNetworkRestrictions = GeneratedDatabase["network_restrictions"];
+type GeneratedNetworkRestrictions = NonNullable<GeneratedDatabase["network_restrictions"]>;
 type MirrorNetworkRestrictions = NonNullable<MirrorDatabase["network_restrictions"]>;
 
 type _AddedNetworkRestrictionsKeys = AssertNever<
@@ -97,31 +97,31 @@ type _RemovedAllowedCidrsElementKeys = AssertNever<
   Exclude<keyof MirrorAllowedCidrsElement, keyof GeneratedAllowedCidrsElement>
 >;
 
-type GeneratedPooler = GeneratedAttrs["pooler"];
+type GeneratedPooler = NonNullable<GeneratedAttrs["pooler"]>;
 type MirrorPooler = NonNullable<ProjectConfigApiAttributes["pooler"]>;
 
 type _AddedPoolerKeys = AssertNever<Exclude<keyof GeneratedPooler, keyof MirrorPooler>>;
 type _RemovedPoolerKeys = AssertNever<Exclude<keyof MirrorPooler, keyof GeneratedPooler>>;
 
-type GeneratedApi = GeneratedAttrs["api"];
+type GeneratedApi = NonNullable<GeneratedAttrs["api"]>;
 type MirrorApi = NonNullable<ProjectConfigApiAttributes["api"]>;
 
 type _AddedApiKeys = AssertNever<Exclude<keyof GeneratedApi, keyof MirrorApi>>;
 type _RemovedApiKeys = AssertNever<Exclude<keyof MirrorApi, keyof GeneratedApi>>;
 
-type GeneratedRealtime = GeneratedAttrs["realtime"];
+type GeneratedRealtime = NonNullable<GeneratedAttrs["realtime"]>;
 type MirrorRealtime = NonNullable<ProjectConfigApiAttributes["realtime"]>;
 
 type _AddedRealtimeKeys = AssertNever<Exclude<keyof GeneratedRealtime, keyof MirrorRealtime>>;
 type _RemovedRealtimeKeys = AssertNever<Exclude<keyof MirrorRealtime, keyof GeneratedRealtime>>;
 
-type GeneratedStorage = GeneratedAttrs["storage"];
+type GeneratedStorage = NonNullable<GeneratedAttrs["storage"]>;
 type MirrorStorage = NonNullable<ProjectConfigApiAttributes["storage"]>;
 
 type _AddedStorageKeys = AssertNever<Exclude<keyof GeneratedStorage, keyof MirrorStorage>>;
 type _RemovedStorageKeys = AssertNever<Exclude<keyof MirrorStorage, keyof GeneratedStorage>>;
 
-type GeneratedStorageFeatures = GeneratedStorage["features"];
+type GeneratedStorageFeatures = NonNullable<GeneratedStorage["features"]>;
 type MirrorStorageFeatures = NonNullable<MirrorStorage["features"]>;
 
 type _AddedStorageFeaturesKeys = AssertNever<
@@ -135,7 +135,7 @@ type _RemovedStorageFeaturesKeys = AssertNever<
 // `registry.ts`), so — unlike sibling `purge_cache`, which the mirror widens
 // to `Schema.Unknown` since no row maps it — they stay concretely typed
 // `{enabled}` structs on the mirror side, each worth its own key-set pair.
-type GeneratedImageTransformation = GeneratedStorageFeatures["image_transformation"];
+type GeneratedImageTransformation = NonNullable<GeneratedStorageFeatures["image_transformation"]>;
 type MirrorImageTransformation = NonNullable<MirrorStorageFeatures["image_transformation"]>;
 
 type _AddedImageTransformationKeys = AssertNever<
@@ -145,7 +145,7 @@ type _RemovedImageTransformationKeys = AssertNever<
   Exclude<keyof MirrorImageTransformation, keyof GeneratedImageTransformation>
 >;
 
-type GeneratedS3Protocol = GeneratedStorageFeatures["s3_protocol"];
+type GeneratedS3Protocol = NonNullable<GeneratedStorageFeatures["s3_protocol"]>;
 type MirrorS3Protocol = NonNullable<MirrorStorageFeatures["s3_protocol"]>;
 
 type _AddedS3ProtocolKeys = AssertNever<Exclude<keyof GeneratedS3Protocol, keyof MirrorS3Protocol>>;
@@ -153,7 +153,7 @@ type _RemovedS3ProtocolKeys = AssertNever<
   Exclude<keyof MirrorS3Protocol, keyof GeneratedS3Protocol>
 >;
 
-type GeneratedIcebergCatalog = GeneratedStorageFeatures["iceberg_catalog"];
+type GeneratedIcebergCatalog = NonNullable<GeneratedStorageFeatures["iceberg_catalog"]>;
 type MirrorIcebergCatalog = NonNullable<MirrorStorageFeatures["iceberg_catalog"]>;
 
 type _AddedIcebergCatalogKeys = AssertNever<
@@ -163,7 +163,7 @@ type _RemovedIcebergCatalogKeys = AssertNever<
   Exclude<keyof MirrorIcebergCatalog, keyof GeneratedIcebergCatalog>
 >;
 
-type GeneratedVectorBuckets = GeneratedStorageFeatures["vector_buckets"];
+type GeneratedVectorBuckets = NonNullable<GeneratedStorageFeatures["vector_buckets"]>;
 type MirrorVectorBuckets = NonNullable<MirrorStorageFeatures["vector_buckets"]>;
 
 type _AddedVectorBucketsKeys = AssertNever<

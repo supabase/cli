@@ -24426,7 +24426,7 @@
                             "type": "string"
                           }
                         },
-                        "required": ["entitlement", "status", "allowed_cidrs"]
+                        "required": []
                       },
                       "postgres_settings": {
                         "type": "object",
@@ -24580,12 +24580,7 @@
                         "description": "Postgres parameter overrides. Empty when the project runs entirely on defaults."
                       }
                     },
-                    "required": [
-                      "major_version",
-                      "ssl_enforced",
-                      "network_restrictions",
-                      "postgres_settings"
-                    ]
+                    "required": []
                   },
                   "pooler": {
                     "type": "object",
@@ -24630,16 +24625,7 @@
                         "description": "Defaults to the pooler's size for the project's compute when not overridden."
                       }
                     },
-                    "required": [
-                      "pool_mode",
-                      "ignore_startup_parameters",
-                      "server_idle_timeout",
-                      "server_lifetime",
-                      "query_wait_timeout",
-                      "reserve_pool_size",
-                      "default_pool_size",
-                      "max_client_conn"
-                    ]
+                    "required": []
                   },
                   "auth": {
                     "type": "object",
@@ -24674,13 +24660,7 @@
                         "nullable": true
                       }
                     },
-                    "required": [
-                      "db_schema",
-                      "db_extra_search_path",
-                      "max_rows",
-                      "db_pool_acquisition_timeout",
-                      "db_pool"
-                    ]
+                    "required": []
                   },
                   "realtime": {
                     "type": "object",
@@ -24743,20 +24723,7 @@
                         "nullable": true
                       }
                     },
-                    "required": [
-                      "private_only",
-                      "max_concurrent_users",
-                      "max_events_per_second",
-                      "max_bytes_per_second",
-                      "max_channels_per_client",
-                      "max_joins_per_second",
-                      "max_presence_events_per_second",
-                      "max_payload_size_in_kb",
-                      "presence_enabled",
-                      "suspend",
-                      "connection_pool",
-                      "postgres_changes_pool"
-                    ]
+                    "required": []
                   },
                   "storage": {
                     "type": "object",
@@ -24777,7 +24744,7 @@
                                 "type": "boolean"
                               }
                             },
-                            "required": ["enabled"]
+                            "required": []
                           },
                           "s3_protocol": {
                             "type": "object",
@@ -24786,7 +24753,7 @@
                                 "type": "boolean"
                               }
                             },
-                            "required": ["enabled"]
+                            "required": []
                           },
                           "purge_cache": {
                             "type": "object",
@@ -24795,7 +24762,7 @@
                                 "type": "boolean"
                               }
                             },
-                            "required": ["enabled"]
+                            "required": []
                           },
                           "iceberg_catalog": {
                             "type": "object",
@@ -24819,7 +24786,7 @@
                                 "maximum": 9007199254740991
                               }
                             },
-                            "required": ["enabled", "max_namespaces", "max_tables", "max_catalogs"]
+                            "required": []
                           },
                           "vector_buckets": {
                             "type": "object",
@@ -24838,16 +24805,10 @@
                                 "maximum": 9007199254740991
                               }
                             },
-                            "required": ["enabled", "max_buckets", "max_indexes"]
+                            "required": []
                           }
                         },
-                        "required": [
-                          "image_transformation",
-                          "s3_protocol",
-                          "purge_cache",
-                          "iceberg_catalog",
-                          "vector_buckets"
-                        ]
+                        "required": []
                       },
                       "capabilities": {
                         "type": "object",
@@ -24872,18 +24833,11 @@
                         "type": "string"
                       }
                     },
-                    "required": [
-                      "file_size_limit",
-                      "features",
-                      "capabilities",
-                      "upstream_target",
-                      "migration_version",
-                      "database_pool_mode"
-                    ],
+                    "required": [],
                     "description": "Read from the storage service's admin API rather than the middleware DB, so unlike the rest of this resource it reflects the tenant's live config."
                   }
                 },
-                "required": ["database", "pooler", "auth", "api", "realtime", "storage"]
+                "required": []
               }
             },
             "required": ["type", "id", "attributes"]
