@@ -74,7 +74,79 @@ function v2Response(
       default_pool_size: 20,
       max_client_conn: 100,
     },
-    auth: {},
+    // A realistic fresh-project GoTrue record at platform defaults — the
+    // largest, most transform-heavy mapping surface (durations, inversions,
+    // unconfigured sentinels, provisioning-default subjects) must run end to
+    // end and classify CLEANLY against an empty config.toml. An `auth: {}`
+    // here previously let two classifier blockers through untested.
+    auth: {
+      site_url: "http://127.0.0.1:3000",
+      uri_allow_list: "https://127.0.0.1:3000",
+      jwt_exp: 3600,
+      refresh_token_rotation_enabled: true,
+      security_refresh_token_reuse_interval: 10,
+      security_manual_linking_enabled: false,
+      disable_signup: false,
+      external_anonymous_users_enabled: false,
+      password_min_length: 6,
+      password_required_characters: "",
+      rate_limit_anonymous_users: 30,
+      rate_limit_token_refresh: 150,
+      rate_limit_otp: 30,
+      rate_limit_verify: 30,
+      rate_limit_sms_sent: 30,
+      rate_limit_web3: 30,
+      // GoTrue reports 0 hours for unconfigured session bounds; the mapping
+      // canonicalizes them to the STRING "0s" (registry unconfiguredValue).
+      sessions_timebox: 0,
+      sessions_inactivity_timeout: 0,
+      external_email_enabled: true,
+      mailer_secure_email_change_enabled: true,
+      mailer_autoconfirm: true,
+      security_update_password_require_reauthentication: false,
+      mailer_otp_length: 6,
+      mailer_otp_exp: 3600,
+      smtp_max_frequency: 1,
+      smtp_host: null,
+      // Provisioning-default subject lines (recorded config_auth fixtures).
+      mailer_subjects_invite: "You have been invited",
+      mailer_subjects_confirmation: "Confirm Your Signup",
+      mailer_subjects_recovery: "Reset Your Password",
+      mailer_subjects_magic_link: "Your Magic Link",
+      mailer_subjects_email_change: "Confirm Email Change",
+      mailer_subjects_reauthentication: "Confirm Reauthentication",
+      mailer_subjects_password_changed_notification: "Your password has been changed",
+      mailer_subjects_email_changed_notification: "Your email address has been changed",
+      mailer_subjects_phone_changed_notification: "Your phone number has been changed",
+      mailer_subjects_identity_linked_notification: "A new identity has been linked",
+      mailer_subjects_identity_unlinked_notification: "An identity has been unlinked",
+      mailer_subjects_mfa_factor_enrolled_notification: "A new MFA factor has been enrolled",
+      mailer_subjects_mfa_factor_unenrolled_notification: "An MFA factor has been unenrolled",
+      mailer_notifications_password_changed_enabled: false,
+      mailer_notifications_email_changed_enabled: false,
+      mailer_notifications_phone_changed_enabled: false,
+      mailer_notifications_identity_linked_enabled: false,
+      mailer_notifications_identity_unlinked_enabled: false,
+      mailer_notifications_mfa_factor_enrolled_enabled: false,
+      mailer_notifications_mfa_factor_unenrolled_enabled: false,
+      external_phone_enabled: false,
+      sms_autoconfirm: false,
+      sms_max_frequency: 5,
+      sms_otp_exp: 600,
+      sms_otp_length: 6,
+      external_github_enabled: false,
+      external_github_client_id: "",
+      mfa_totp_enroll_enabled: false,
+      mfa_totp_verify_enabled: false,
+      mfa_phone_enroll_enabled: false,
+      mfa_phone_verify_enabled: false,
+      mfa_phone_otp_length: 6,
+      mfa_phone_template: "Your code is {{ .Code }}",
+      mfa_phone_max_frequency: 5,
+      mfa_web_authn_enroll_enabled: false,
+      mfa_web_authn_verify_enabled: false,
+      mfa_max_enrolled_factors: 10,
+    },
     api: {
       db_schema: "public,graphql_public",
       db_extra_search_path: "public,extensions",
@@ -234,10 +306,8 @@ describe("legacy config diff integration", () => {
       expect(out.stderrText).toContain(
         `Comparing against project ${LEGACY_VALID_REF} using base config`,
       );
-      // The fixture's `auth: {}` is an EMPTY block — reported not-returned
-      // rather than falsely claimed compared.
       expect(out.stderrText).toContain(
-        "Comparison scope: api, database, pooler, realtime, storage (not returned: auth)",
+        "Comparison scope: api, auth, database, pooler, realtime, storage",
       );
       expect(out.stdoutText).toContain("api.max_rows [update]");
       expect(out.stdoutText).toContain("local:  500");
@@ -277,6 +347,17 @@ describe("legacy config diff integration", () => {
   it.live("declared properties the response does not carry are local_only", () => {
     const { layer, out } = setup({
       toml: 'project_id = "test"\n[auth]\nsite_url = "https://local.example.com"\n',
+      v2: {
+        status: 200,
+        body: v2Response({
+          attributes: (attributes) => {
+            // Drop site_url from the otherwise-complete auth record so the
+            // response genuinely does not carry the declared property.
+            const { site_url: _siteUrl, ...auth } = attributes["auth"] as Record<string, unknown>;
+            return { ...attributes, auth };
+          },
+        }),
+      },
     });
     return Effect.gen(function* () {
       yield* legacyConfigDiff(noFlags);
@@ -314,7 +395,13 @@ describe("legacy config diff integration", () => {
         body: v2Response({
           attributes: (attributes) => ({
             ...attributes,
-            auth: { external_github_enabled: true, external_github_client_id: "id" },
+            auth: {
+              external_github_enabled: true,
+              external_github_client_id: "id",
+              // The platform reports secret fields as HMAC digests, never
+              // plaintext — the digest must not surface either.
+              external_github_secret: "v1,whmac-sha256-digest-of-the-secret",
+            },
           }),
         }),
       },
@@ -325,7 +412,51 @@ describe("legacy config diff integration", () => {
       expect(out.stdoutText).toContain(
         "Note: 1 credential value not compared (masked by the API): auth.external.github.secret",
       );
+      // The secret STRING never leaks — neither the local plaintext resolved
+      // from the env var nor the API-reported HMAC digest, on either stream.
+      // Pins the "secrets never leak" claim against formatter changes.
+      const everything = out.stdoutText + out.stderrText;
+      expect(everything).not.toContain("shh");
+      expect(everything).not.toContain("whmac-sha256");
       expect(processControl.exitCode).toBeUndefined();
+    }).pipe(Effect.provide(layer));
+  });
+
+  it.live("secret strings never reach the machine payload either", () => {
+    const { layer, out } = setup({
+      toml: [
+        'project_id = "test"',
+        "[auth.external.github]",
+        "enabled = true",
+        'client_id = "id"',
+        'secret = "env(GITHUB_SECRET)"',
+        "",
+      ].join("\n"),
+      dotenv: "GITHUB_SECRET=shh\n",
+      format: "json",
+      v2: {
+        status: 200,
+        body: v2Response({
+          attributes: (attributes) => ({
+            ...attributes,
+            auth: {
+              external_github_enabled: true,
+              external_github_client_id: "id",
+              external_github_secret: "v1,whmac-sha256-digest-of-the-secret",
+            },
+          }),
+        }),
+      },
+    });
+    return Effect.gen(function* () {
+      yield* legacyConfigDiff(noFlags);
+      const success = out.messages.find((message) => message.type === "success");
+      const serialized = JSON.stringify(success);
+      expect(serialized).not.toContain("shh");
+      expect(serialized).not.toContain("whmac-sha256");
+      // The message itself carries the masked caveat, so `.message` echoers
+      // never claim full sync.
+      expect(success?.message).toContain("masked by the API");
     }).pipe(Effect.provide(layer));
   });
 
@@ -406,7 +537,7 @@ describe("legacy config diff integration", () => {
   });
 
   it.live("an unknown branch fails with a branches-list suggestion", () => {
-    const { layer } = setup({
+    const { layer, telemetry, linkedProjectCache } = setup({
       toml: 'project_id = "test"\n',
       branchByName: { status: 404, body: { message: "not found" } },
     });
@@ -419,6 +550,10 @@ describe("legacy config diff integration", () => {
       expect(rendered).toContain("LegacyConfigDiffBranchNotFoundError");
       expect(rendered).toContain('Branch \\"ghost\\" not found');
       expect(rendered).toContain("supabase branches list");
+      // Legacy Shell Invariant #1: telemetry flushes on failure too; the
+      // linked-project cache stays untouched because no target ref resolved.
+      expect(telemetry.flushed).toBe(true);
+      expect(linkedProjectCache.cachedRef).toBeUndefined();
     }).pipe(Effect.provide(layer));
   });
 
@@ -436,8 +571,8 @@ describe("legacy config diff integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("a missing config file points at supabase init", () => {
-    const { layer } = setup();
+  it.live("a missing config file points at supabase init before any resolution", () => {
+    const { layer, telemetry, api } = setup();
     return Effect.gen(function* () {
       const exit = yield* legacyConfigDiff(noFlags).pipe(Effect.exit);
       expect(Exit.isFailure(exit)).toBe(true);
@@ -445,6 +580,24 @@ describe("legacy config diff integration", () => {
       expect(rendered).toContain("LegacyConfigDiffLoadConfigError");
       expect(rendered).toContain("supabase/config.toml: file not found");
       expect(rendered).toContain("supabase init");
+      // The load runs before any network call, and telemetry still flushes.
+      expect(api.requests).toHaveLength(0);
+      expect(telemetry.flushed).toBe(true);
+    }).pipe(Effect.provide(layer));
+  });
+
+  it.live("a malformed config aborts before any network call, even with a branch target", () => {
+    // A broken TOML must not burn a branch-resolution round trip — the local
+    // document is parsed and validated first.
+    const { layer, api, telemetry } = setup({ toml: "not [valid toml\n" });
+    return Effect.gen(function* () {
+      const exit = yield* legacyConfigDiff({ ...noFlags, projectRef: Option.some("staging") }).pipe(
+        Effect.exit,
+      );
+      expect(Exit.isFailure(exit)).toBe(true);
+      expect(JSON.stringify(exit)).toContain("failed to parse supabase/config.toml");
+      expect(api.requests).toHaveLength(0);
+      expect(telemetry.flushed).toBe(true);
     }).pipe(Effect.provide(layer));
   });
 
@@ -551,8 +704,8 @@ describe("legacy config diff integration", () => {
       expect(data["schema_version"]).toBe(1);
       expect(typeof data["config_schema"]).toBe("string");
       expect(data["scope"]).toEqual({
-        present: ["api", "database", "pooler", "realtime", "storage"],
-        missing: ["auth"],
+        present: ["api", "auth", "database", "pooler", "realtime", "storage"],
+        missing: [],
       });
       expect(data["changes"]).toEqual([
         { path: ["api", "max_rows"], class: "update", declared: true, local: 500, remote: 1000 },
@@ -757,6 +910,25 @@ describe("legacy config diff integration", () => {
       expect(out.stderrText).toContain("[remotes.evil[31mred]");
       expect(out.stderrText).not.toContain("\u001b");
       expect(out.stdoutText).not.toContain("\u001b");
+    }).pipe(Effect.provide(layer));
+  });
+
+  it.live("an empty block record is reported not-returned, not silently compared", () => {
+    // A permission-truncated `auth: {}` is schema-valid; claiming it was
+    // compared while every auth key silently vanishes would make a red CI
+    // unfixable by any file edit.
+    const { layer, out } = setup({
+      toml: 'project_id = "test"\n',
+      v2: {
+        status: 200,
+        body: v2Response({ attributes: (attributes) => ({ ...attributes, auth: {} }) }),
+      },
+    });
+    return Effect.gen(function* () {
+      yield* legacyConfigDiff(noFlags);
+      expect(out.stderrText).toContain(
+        "Comparison scope: api, database, pooler, realtime, storage (not returned: auth)",
+      );
     }).pipe(Effect.provide(layer));
   });
 
