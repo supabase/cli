@@ -17,7 +17,7 @@ import { randomLayer } from "../../src/shared/runtime/random.layer.ts";
 import { LegacyProjectNotLinkedError } from "../../src/legacy/config/legacy-project-ref.errors.ts";
 import { mockLegacyLinkedProjectCacheLayer } from "./legacy-mocks.ts";
 import { LegacyTelemetryState } from "../../src/legacy/telemetry/legacy-telemetry-state.service.ts";
-import { mockOutput, mockRuntimeInfo, mockTty } from "./mocks.ts";
+import { mockOutput, mockProcessControl, mockRuntimeInfo, mockTty } from "./mocks.ts";
 
 /**
  * Shared scaffolding for the `supabase workers` command integration tests.
@@ -372,6 +372,12 @@ export interface WorkersSetupOptions {
   readonly yes?: boolean;
   /** Raw argv, which `legacyResolveYes` scans for an explicit `--yes=false`. */
   readonly cliArgs?: ReadonlyArray<string>;
+  /**
+   * The signal `awaitSignal` resolves with. `logs --follow` races its poll loop
+   * against this, so a test that wants the tail to end supplies one; the default
+   * never fires, modelling a terminal nobody has interrupted.
+   */
+  readonly signal?: "SIGINT" | "SIGTERM" | "SIGHUP";
 }
 
 /**
@@ -412,11 +418,15 @@ export function setupLegacyWorkers(options: WorkersSetupOptions) {
   });
   const http = mockWorkersHttp(options.routes ?? {});
   const telemetry = mockWorkersTelemetryState();
+  const processControl = mockProcessControl(
+    options.signal === undefined ? {} : { signal: options.signal },
+  );
 
   return {
     out,
     http,
     telemetry,
+    processControl,
     layer: Layer.mergeAll(
       out.layer,
       http.layer,
@@ -433,6 +443,7 @@ export function setupLegacyWorkers(options: WorkersSetupOptions) {
       ),
       Layer.succeed(LegacyYesFlag, options.yes ?? false),
       Layer.succeed(CliArgs, { args: options.cliArgs ?? [] }),
+      processControl.layer,
       BunServices.layer,
     ),
   };

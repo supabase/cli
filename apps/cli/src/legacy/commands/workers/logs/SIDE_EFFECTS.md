@@ -58,8 +58,18 @@ under 24 hours. This is not optional:
 ### Rate limits
 
 The v1 analytics endpoints allow **10 requests per 60 seconds**, and the server
-applies a 30-second query timeout. One invocation spends one request, or two when
-the result is empty.
+applies a 30-second query timeout. One bounded invocation spends one request, or
+two when the result is empty.
+
+`--follow` polls every **10 seconds** — 6 requests a minute, leaving room for the
+history query, the deployed-worker check, and a retry inside the same window. The
+interval is set by that limit, not by responsiveness: a 2-second poll would spend
+the allowance in ten seconds. A 429 mid-tail is retried on a spaced schedule
+rather than ending the tail.
+
+Each poll re-asks for a window starting 60 seconds behind the newest line already
+printed, because guest lines arrive late and out of order. Overlap is therefore
+guaranteed and is deduplicated on the Logflare-minted `id`.
 
 ## Exit Codes
 
@@ -102,6 +112,13 @@ redacted. No custom events.
 | `-o json` / `yaml` / `toml`   | the same payload in that encoding, and nothing else                                                 | as above                                                  |
 | `-o pretty` / `table` / `csv` | the text rendering — these fall through rather than encoding                                        | as above                                                  |
 | `-o env`                      | refused before any request; the payload nests a `logs` array a flat `KEY=value` list cannot express | the error                                                 |
+
+With `--follow`, `stream-json` emits a `log-entry` event per line rather than one
+terminal `result` — a tail has no last element. Its `stream` field is `stderr` when
+the derived level is error or warn and `stdout` otherwise, and `source` separates
+the initial backlog (`history`) from lines that arrived afterwards (`live`).
+`--tail 0 --follow` skips the backlog entirely and makes no history request, since
+the endpoint rejects `limit 0`.
 
 Text output prints the time in the reader's own timezone, matching the `--debug`
 HTTP logger. Machine payloads carry the unambiguous forms instead — each entry's

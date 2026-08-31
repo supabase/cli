@@ -2,6 +2,7 @@ import { Argument, Command, Flag } from "effect/unstable/cli";
 import type * as CliCommand from "effect/unstable/cli/Command";
 import { withJsonErrorHandling } from "../../../../shared/output/json-error-handling.ts";
 import { legacyManagementApiRuntimeLayer } from "../../../shared/legacy-management-api-runtime.layer.ts";
+import { WORKER_LOG_POLL_SECONDS } from "../../../../shared/workers/worker-logs.sql.ts";
 import { withLegacyCommandInstrumentation } from "../../../telemetry/legacy-command-instrumentation.ts";
 import { legacyWorkersLogs } from "./logs.handler.ts";
 
@@ -31,12 +32,24 @@ const config = {
     ),
     Flag.optional,
   ),
+  follow: Flag.boolean("follow").pipe(
+    Flag.withAlias("f"),
+    Flag.withDescription(
+      `Keep printing new lines until interrupted, polling every ${WORKER_LOG_POLL_SECONDS} seconds.`,
+    ),
+    // Required: `legacy-boolean-flag-defaults.unit.test.ts` walks the whole
+    // command tree and fails any bare boolean. `workers push --wait` shipped
+    // without one and broke plain `push` parsing.
+    Flag.withDefault(false),
+  ),
   tail: Flag.integer("tail").pipe(
     Flag.filter(
       (tail) => tail >= 0 && tail <= MAX_TAIL,
       (tail) => `Expected --tail between 0 and ${MAX_TAIL}, got ${tail}`,
     ),
-    Flag.withDescription("Number of log lines to print."),
+    Flag.withDescription(
+      "Number of log lines to print. Use 0 with --follow to skip history and print only new lines.",
+    ),
     Flag.withDefault(100),
   ),
 } as const;
@@ -48,7 +61,10 @@ export const legacyWorkersLogsCommand = Command.make("logs", config).pipe(
     "Print a worker's recent logs: its own output, the HTTP requests it served, and its " +
       "deploy lifecycle events.\n\n" +
       "Covers the last 24 hours, which is the longest window the logs API will answer in one " +
-      "query. Lines are printed oldest first.",
+      "query. Lines are printed oldest first.\n\n" +
+      `Use --follow to keep printing new lines as they arrive. The logs API is rate limited, so ` +
+      `following polls every ${WORKER_LOG_POLL_SECONDS} seconds rather than continuously; new ` +
+      "lines can take that long to appear.",
   ),
   Command.withShortDescription("Show a worker's logs"),
   Command.withExamples([
@@ -59,6 +75,14 @@ export const legacyWorkersLogsCommand = Command.make("logs", config).pipe(
     {
       command: "supabase workers logs api --source requests --tail 20",
       description: "Print the 20 most recent HTTP requests the worker served",
+    },
+    {
+      command: "supabase workers logs api --follow",
+      description: "Print recent logs, then keep printing new lines until interrupted",
+    },
+    {
+      command: "supabase workers logs api --tail 0 --follow",
+      description: "Skip the backlog and print only lines that arrive from now on",
     },
   ]),
   Command.withHandler((flags) =>
