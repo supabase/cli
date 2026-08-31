@@ -127,7 +127,10 @@ export const runSupervisor = (args: SupervisorArgs) =>
         maintenanceHandlers: supervisor.maintenanceHandlers,
         rpcHandlers: supervisor.rpcHandlers,
         onMaintenanceComplete: (op) => (op === "quiesce" ? supervisor.signalShutdown : Effect.void),
+        onMaintenanceAbandoned: (op) =>
+          op === "quiesce" ? supervisor.signalShutdown : Effect.void,
         onDestroyResponse: () => supervisor.signalShutdown,
+        onDestroyAbandoned: () => supervisor.signalShutdown,
       });
       yield* session.ready;
       yield* publishOwnership(lease);

@@ -1,10 +1,12 @@
 import {
+  Cause,
   Deferred,
   Effect,
   Exit,
   Fiber,
   FiberSet,
   FileSystem,
+  Option,
   Predicate,
   Queue,
   Schema,
@@ -62,8 +64,12 @@ export interface ControlServerOptions extends ControlIdentity {
   readonly maintenanceHandlers: MaintenanceHandlers;
   /** Invoked only after the maintenance response has been written and the connection closed. */
   readonly onMaintenanceComplete?: (op: MaintenanceRequest["op"]) => Effect.Effect<void>;
+  /** Invoked when a successful quiesce has no writable response connection. */
+  readonly onMaintenanceAbandoned?: (op: MaintenanceRequest["op"]) => Effect.Effect<void>;
   /** Invoked only after a successful destroy RPC response has been written. */
   readonly onDestroyResponse?: () => Effect.Effect<void>;
+  /** Invoked when a successful destroy has no writable response connection. */
+  readonly onDestroyAbandoned?: () => Effect.Effect<void>;
   readonly rpcHandlers: StackRpcHandlers;
 }
 
@@ -90,6 +96,14 @@ const protocolFailure = (
   ok: false,
   error: { tag, message: "Control request rejected" },
 });
+
+const isResponseConnectionFailure = (cause: Cause.Cause<Socket.SocketError>): boolean =>
+  Option.match(Cause.findErrorOption(cause), {
+    onNone: () => false,
+    onSome: (error) =>
+      Predicate.isTagged(error.reason, "SocketWriteError") ||
+      Predicate.isTagged(error.reason, "SocketCloseError"),
+  });
 
 /** Wrap one accepted socket. This is the only reader for the connection. */
 const demuxSocket = (
@@ -182,18 +196,48 @@ const demuxSocket = (
             const response = Exit.isSuccess(result)
               ? result.value
               : protocolFailure("operation-failed");
-            yield* sendJson(response);
-            yield* close;
-            yield* markPrefaceReady;
-            if (response.ok && options.onMaintenanceComplete !== undefined) {
-              // The connection scope closes as soon as the close frame is sent;
-              // completion belongs to the owner session and must outlive it.
-              yield* FiberSet.run(
-                completionFibers,
-                options.onMaintenanceComplete(request.value.op),
-                { startImmediately: true },
+            let responseWritten = false;
+            const completion = Effect.gen(function* () {
+              yield* sendJson(response).pipe(
+                Effect.tap(() =>
+                  Effect.sync(() => {
+                    responseWritten = true;
+                  }),
+                ),
               );
-            }
+              yield* close;
+              yield* markPrefaceReady;
+              if (response.ok && options.onMaintenanceComplete !== undefined) {
+                // The connection scope closes as soon as the close frame is sent;
+                // completion belongs to the owner session and must outlive it.
+                yield* FiberSet.run(
+                  completionFibers,
+                  options.onMaintenanceComplete(request.value.op),
+                  { startImmediately: true },
+                );
+              }
+            });
+            yield* completion.pipe(
+              Effect.onExit((exit) => {
+                if (!response.ok || request.value.op !== "quiesce" || Exit.isSuccess(exit))
+                  return Effect.void;
+                const connectionFailure =
+                  Cause.hasInterruptsOnly(exit.cause) || isResponseConnectionFailure(exit.cause);
+                if (!connectionFailure) return Effect.void;
+                const callback = responseWritten
+                  ? options.onMaintenanceComplete
+                  : options.onMaintenanceAbandoned;
+                return callback === undefined
+                  ? Effect.void
+                  : FiberSet.run(completionFibers, callback(request.value.op), {
+                      startImmediately: true,
+                    }).pipe(Effect.asVoid);
+              }),
+              Effect.catchReasons("SocketError", {
+                SocketWriteError: () => Effect.void,
+                SocketCloseError: () => Effect.void,
+              }),
+            );
           });
 
         const processFrames = (input: Uint8Array): Effect.Effect<void, Socket.SocketError | E, R> =>
@@ -389,19 +433,25 @@ export const startControlServer = (
       Effect.provideService(RpcSerialization.RpcSerialization, RpcSerialization.json),
     );
     const destroyRequests = new Set<string>();
+    const destroyDisconnects = new Set<number>();
     const disconnects = yield* Queue.unbounded<number>();
     yield* FiberSet.run(
       completionFibers,
       Effect.forever(
         Queue.take(protocol.disconnects).pipe(
-          Effect.tap((clientId) =>
-            Effect.sync(() => {
+          Effect.flatMap((clientId) =>
+            Effect.gen(function* () {
               const prefix = `${clientId}:`;
-              for (const request of destroyRequests)
-                if (request.startsWith(prefix)) destroyRequests.delete(request);
+              const hasPendingDestroy = [...destroyRequests].some((request) =>
+                request.startsWith(prefix),
+              );
+              if (hasPendingDestroy) {
+                destroyDisconnects.add(clientId);
+                return;
+              }
+              yield* Queue.offer(disconnects, clientId);
             }),
           ),
-          Effect.flatMap((clientId) => Queue.offer(disconnects, clientId)),
           Effect.asVoid,
         ),
       ),
@@ -421,22 +471,23 @@ export const startControlServer = (
         destroyRequests.has(`${clientId}:${String(response.requestId)}`)
           ? Effect.gen(function* () {
               const key = `${clientId}:${String(response.requestId)}`;
-              const connectedBefore = yield* protocol.clientIds;
-              if (!connectedBefore.has(clientId)) {
-                destroyRequests.delete(key);
-                return;
+              const connected =
+                !destroyDisconnects.has(clientId) && (yield* protocol.clientIds).has(clientId);
+              const sent = connected
+                ? yield* Effect.exit(protocol.send(clientId, response, transferables))
+                : Exit.succeed(undefined);
+              const wroteResponse = connected && Exit.isSuccess(sent);
+              const successful = Predicate.isTagged(response.exit, "Success");
+              destroyRequests.delete(key);
+              if (successful) {
+                if (wroteResponse && options.onDestroyResponse !== undefined)
+                  yield* options.onDestroyResponse();
+                if (!wroteResponse && options.onDestroyAbandoned !== undefined)
+                  yield* options.onDestroyAbandoned();
               }
-              yield* protocol.send(clientId, response, transferables);
-              const connectedAfter = yield* protocol.clientIds;
-              const isDestroy = destroyRequests.delete(key);
-              if (
-                !connectedAfter.has(clientId) ||
-                !isDestroy ||
-                !Predicate.isTagged(response.exit, "Success") ||
-                options.onDestroyResponse === undefined
-              )
-                return;
-              yield* options.onDestroyResponse();
+              if (![...destroyRequests].some((request) => request.startsWith(`${clientId}:`))) {
+                if (destroyDisconnects.delete(clientId)) yield* Queue.offer(disconnects, clientId);
+              }
             })
           : protocol.send(clientId, response, transferables),
     });

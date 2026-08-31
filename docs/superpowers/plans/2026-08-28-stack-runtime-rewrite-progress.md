@@ -940,3 +940,14 @@ private-port reservation plus gateway ownership atomic with accepted lifecycle g
 - Supervisor readiness uses a bounded thirty-second local deadline to accommodate real subprocess startup; the
   subprocess-backed handles suite carries the same test guard. Focused lifecycle/control/handles verification is
   green with stack type-check, Effect lint, formatting, and diff checks.
+
+#### Task 13B2b7 correction round 3 — terminal transport handoffs (2026-08-31)
+
+- Destroy request disconnects are held until the accepted RPC exit is processed. A successful response write is the
+  post-response handoff even if the client closes immediately afterward; a disconnected or failed write uses the
+  explicit abandoned-destroy path, and failed destroy exits never signal owner shutdown.
+- Quiesce retains its Supervisor-owned exact-operation continuation for interrupted waiters and adds a transport
+  abandoned path for successful responses interrupted before normal completion. Maintenance stop/probe remain
+  non-terminal, and raw client reset read/close errors complete only that connection.
+- Focused supervisor/control/handle/lifecycle verification passed 79 integration tests with stack type-check,
+  Effect lint, formatting, and diff checks green.

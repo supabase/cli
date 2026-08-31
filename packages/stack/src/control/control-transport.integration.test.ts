@@ -44,7 +44,9 @@ interface ServerOverrides {
   readonly rpcHandlers?: Partial<StackRpcHandlers>;
   readonly maintenanceHandlers?: Partial<MaintenanceHandlers>;
   readonly onMaintenanceComplete?: (op: MaintenanceRequest["op"]) => Effect.Effect<void>;
+  readonly onMaintenanceAbandoned?: (op: MaintenanceRequest["op"]) => Effect.Effect<void>;
   readonly onDestroyResponse?: () => Effect.Effect<void>;
+  readonly onDestroyAbandoned?: () => Effect.Effect<void>;
 }
 
 const withPlatform = <A, E, R>(effect: Effect.Effect<A, E, R>) =>
@@ -66,6 +68,7 @@ const withServer = <A, E, R>(
     readonly stackId: string;
     readonly ownerSessionId: string;
     readonly completion: Deferred.Deferred<void>;
+    readonly abandoned: Deferred.Deferred<void>;
     readonly completionStarted: Deferred.Deferred<void>;
     readonly completionRelease: Deferred.Deferred<void>;
     readonly stopCalls: Ref.Ref<number>;
@@ -76,6 +79,7 @@ const withServer = <A, E, R>(
     readonly ownerSessionId: string;
     readonly status: StackStatus;
     readonly completion: Deferred.Deferred<void>;
+    readonly abandoned: Deferred.Deferred<void>;
     readonly completionStarted: Deferred.Deferred<void>;
     readonly completionRelease: Deferred.Deferred<void>;
     readonly stopCalls: Ref.Ref<number>;
@@ -91,6 +95,7 @@ const withServer = <A, E, R>(
       const stackId = yield* deriveStackId(testIdentity);
       const ownerSessionId = yield* crypto.randomUUIDv4;
       const completion = yield* Deferred.make<void>();
+      const abandoned = yield* Deferred.make<void>();
       const completionStarted = yield* Deferred.make<void>();
       const completionRelease = yield* Deferred.make<void>();
       const stopCalls = yield* Ref.make(0);
@@ -150,6 +155,7 @@ const withServer = <A, E, R>(
           ownerSessionId,
           status,
           completion,
+          abandoned,
           completionStarted,
           completionRelease,
           stopCalls,
@@ -162,7 +168,9 @@ const withServer = <A, E, R>(
         maintenanceHandlers: { ...defaultMaintenanceHandlers, ...custom.maintenanceHandlers },
         rpcHandlers: { ...defaultRpcHandlers, ...custom.rpcHandlers },
         onMaintenanceComplete: custom.onMaintenanceComplete,
+        onMaintenanceAbandoned: custom.onMaintenanceAbandoned,
         onDestroyResponse: custom.onDestroyResponse,
+        onDestroyAbandoned: custom.onDestroyAbandoned,
       };
       yield* startControlServer(options);
       const info = yield* fs.stat(endpoint.path);
@@ -172,6 +180,7 @@ const withServer = <A, E, R>(
         stackId,
         ownerSessionId,
         completion,
+        abandoned,
         completionStarted,
         completionRelease,
         stopCalls,
@@ -295,9 +304,54 @@ describe("control transport", () => {
     ),
   );
 
-  it.live("does not signal destroy shutdown after the RPC client disconnects", () =>
+  it.live("counts a successful destroy send before an immediate disconnect", () =>
     withServer(
-      ({ endpoint, stackId, ownerSessionId, completionStarted, completionRelease, completion }) =>
+      ({ endpoint, stackId, ownerSessionId, completion, abandoned }) =>
+        Effect.gen(function* () {
+          const preface = encodePreface({
+            kind: "rpc",
+            release: "stack-rpc-v1@0.1.0",
+            stackId,
+            ownerSessionId,
+          });
+          const frame = yield* makeDestroyRequestFrame();
+          const response = yield* sendRawSequenceAndReadFrame(endpoint, [
+            concatBytes(preface, frame),
+          ]);
+          expect(response).toMatchObject({ _tag: "Exit", requestId: "1" });
+          yield* Deferred.await(completion).pipe(
+            Effect.timeoutOrElse({
+              duration: 1_000,
+              orElse: () =>
+                Effect.fail(
+                  new MaintenanceProtocolError({ message: "destroy completion was not signaled" }),
+                ),
+            }),
+          );
+          const abandonedExit = yield* Deferred.await(abandoned).pipe(
+            Effect.timeout("100 millis"),
+            Effect.exit,
+          );
+          expect(Exit.isFailure(abandonedExit)).toBe(true);
+        }),
+      ({ completion, abandoned }) => ({
+        onDestroyResponse: () => Deferred.succeed(completion, undefined).pipe(Effect.asVoid),
+        onDestroyAbandoned: () => Deferred.succeed(abandoned, undefined).pipe(Effect.asVoid),
+      }),
+    ),
+  );
+
+  it.live("signals abandoned destroy shutdown after the RPC client disconnects", () =>
+    withServer(
+      ({
+        endpoint,
+        stackId,
+        ownerSessionId,
+        completionStarted,
+        completionRelease,
+        completion,
+        abandoned,
+      }) =>
         Effect.gen(function* () {
           const socket = yield* NodeSocket.makeNet({
             path: endpoint.kind === "unix" ? endpoint.path : endpoint.name,
@@ -328,14 +382,23 @@ describe("control transport", () => {
           );
           yield* write(new Socket.CloseEvent(1000));
           yield* Deferred.succeed(completionRelease, undefined);
-          const result = yield* Deferred.await(completion).pipe(
+          yield* Deferred.await(abandoned).pipe(
+            Effect.timeoutOrElse({
+              duration: 1_000,
+              orElse: () =>
+                Effect.fail(
+                  new MaintenanceProtocolError({ message: "abandoned destroy was not signaled" }),
+                ),
+            }),
+          );
+          const postResponse = yield* Deferred.await(completion).pipe(
             Effect.timeout("100 millis"),
             Effect.exit,
           );
-          expect(Exit.isFailure(result)).toBe(true);
+          expect(Exit.isFailure(postResponse)).toBe(true);
           yield* Fiber.interrupt(reader);
         }),
-      ({ completionStarted, completionRelease, completion }) => ({
+      ({ completionStarted, completionRelease, completion, abandoned }) => ({
         rpcHandlers: {
           destroy: () =>
             Deferred.succeed(completionStarted, undefined).pipe(
@@ -344,6 +407,133 @@ describe("control transport", () => {
             ),
         },
         onDestroyResponse: () => Deferred.succeed(completion, undefined).pipe(Effect.asVoid),
+        onDestroyAbandoned: () => Deferred.succeed(abandoned, undefined).pipe(Effect.asVoid),
+      }),
+    ),
+  );
+
+  it.live("does not signal abandoned destroy shutdown after a failed operation", () =>
+    withServer(
+      ({ endpoint, stackId, ownerSessionId, completionStarted, completionRelease, abandoned }) =>
+        Effect.gen(function* () {
+          const socket = yield* NodeSocket.makeNet({
+            path: endpoint.kind === "unix" ? endpoint.path : endpoint.name,
+          });
+          const write = yield* socket.writer;
+          const reader = yield* Effect.forkChild(
+            socket.runRaw(() => Effect.void),
+            {
+              startImmediately: true,
+            },
+          );
+          const preface = encodePreface({
+            kind: "rpc",
+            release: "stack-rpc-v1@0.1.0",
+            stackId,
+            ownerSessionId,
+          });
+          const frame = yield* makeDestroyRequestFrame();
+          yield* write(concatBytes(preface, frame));
+          yield* Deferred.await(completionStarted).pipe(
+            Effect.timeoutOrElse({
+              duration: 1_000,
+              orElse: () =>
+                Effect.fail(
+                  new MaintenanceProtocolError({ message: "destroy handler did not start" }),
+                ),
+            }),
+          );
+          yield* write(new Socket.CloseEvent(1000));
+          yield* Deferred.succeed(completionRelease, undefined);
+          const result = yield* Deferred.await(abandoned).pipe(
+            Effect.timeout("100 millis"),
+            Effect.exit,
+          );
+          expect(Exit.isFailure(result)).toBe(true);
+          yield* Fiber.interrupt(reader);
+        }),
+      ({ completionStarted, completionRelease }) => ({
+        rpcHandlers: {
+          destroy: () =>
+            Effect.gen(function* () {
+              yield* Deferred.succeed(completionStarted, undefined);
+              yield* Deferred.await(completionRelease);
+              return yield* Effect.fail({
+                tag: "StackDestructionError" as const,
+                message: "injected destroy failure",
+              });
+            }),
+        },
+      }),
+    ),
+  );
+
+  it.live("signals abandoned quiesce shutdown when the response connection is lost", () =>
+    withServer(
+      ({
+        endpoint,
+        stackId,
+        ownerSessionId,
+        completionStarted,
+        completionRelease,
+        completion,
+        abandoned,
+      }) =>
+        Effect.gen(function* () {
+          const socket = yield* NodeSocket.makeNet({
+            path: endpoint.kind === "unix" ? endpoint.path : endpoint.name,
+          });
+          const write = yield* socket.writer;
+          const reader = yield* Effect.forkChild(
+            socket.runRaw(() => Effect.void),
+            {
+              startImmediately: true,
+            },
+          );
+          const preface = encodePreface({
+            kind: "maintenance",
+            release: "maintenance-v1",
+            stackId,
+            ownerSessionId,
+          });
+          const frame = yield* encodeFrame({ op: "quiesce", stackId, ownerSessionId });
+          yield* write(concatBytes(preface, frame));
+          yield* Deferred.await(completionStarted).pipe(
+            Effect.timeoutOrElse({
+              duration: 1_000,
+              orElse: () =>
+                Effect.fail(
+                  new MaintenanceProtocolError({ message: "quiesce handler did not start" }),
+                ),
+            }),
+          );
+          yield* write(new Socket.CloseEvent(1000));
+          yield* Deferred.succeed(completionRelease, undefined);
+          yield* Deferred.await(abandoned).pipe(
+            Effect.timeoutOrElse({
+              duration: 1_000,
+              orElse: () =>
+                Effect.fail(
+                  new MaintenanceProtocolError({ message: "abandoned quiesce was not signaled" }),
+                ),
+            }),
+          );
+          const postResponse = yield* Deferred.await(completion).pipe(
+            Effect.timeout("100 millis"),
+            Effect.exit,
+          );
+          expect(Exit.isFailure(postResponse)).toBe(true);
+          yield* Fiber.interrupt(reader);
+        }),
+      ({ completionStarted, completionRelease, completion, abandoned }) => ({
+        maintenanceHandlers: {
+          quiesce: Deferred.succeed(completionStarted, undefined).pipe(
+            Effect.andThen(Deferred.await(completionRelease)),
+            Effect.as({ ok: true, op: "quiesce" }),
+          ),
+        },
+        onMaintenanceComplete: () => Deferred.succeed(completion, undefined).pipe(Effect.asVoid),
+        onMaintenanceAbandoned: () => Deferred.succeed(abandoned, undefined).pipe(Effect.asVoid),
       }),
     ),
   );
