@@ -108,16 +108,27 @@ function colourise(
   return level === "warn" ? legacyYellow(text, stream) : text;
 }
 
+const pad2 = (value: number): string => String(value).padStart(2, "0");
+
 /**
- * `HH:MM:SS` in UTC.
+ * `HH:MM:SS` in the reader's own timezone.
+ *
+ * Local rather than UTC, matching the only other log-line format this shell
+ * prints - the `--debug` HTTP logger, which uses Go's `log.LstdFlags`
+ * (`legacy-debug-logger.layer.ts`). Someone reading a tail is asking "what just
+ * happened", and the answer is compared against their own clock.
+ *
+ * Machine output keeps the unambiguous forms, so nothing that gets parsed,
+ * sorted, or pasted into an issue depends on the reader's zone: the payload
+ * carries an ISO-8601 UTC `timestamp` alongside the raw epoch `timestamp_ms`.
  *
  * Time only, not a full timestamp: every line in one invocation falls inside a
  * window of at most a day, so repeating the date on all hundred of them costs
- * width the message needs. The machine payload carries the full ISO string and
- * the raw epoch value.
+ * width the message needs.
  */
 function formatLogTime(timestampMs: number): string {
-  return new Date(timestampMs).toISOString().slice(11, 19);
+  const at = new Date(timestampMs);
+  return `${pad2(at.getHours())}:${pad2(at.getMinutes())}:${pad2(at.getSeconds())}`;
 }
 
 /**

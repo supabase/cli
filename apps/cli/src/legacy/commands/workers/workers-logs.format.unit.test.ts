@@ -13,6 +13,22 @@ const PLAIN = { hasColors: () => false };
 const COLOURED = { hasColors: () => true };
 const AT = Date.parse("2026-08-31T14:45:32.576Z");
 
+/**
+ * The expected `HH:MM:SS` prefix for an instant, in this machine's zone.
+ *
+ * Derived rather than hardcoded: the renderer prints local time, so a literal
+ * `"14:45:32"` would pass only on a UTC machine and fail everywhere else. Written
+ * with the same field accessors the renderer uses, so what it pins is the format
+ * and the zone choice, not an arithmetic that could drift with the clock.
+ */
+function localTime(timestampMs: number): string {
+  const at = new Date(timestampMs);
+  const pad = (value: number) => String(value).padStart(2, "0");
+  return `${pad(at.getHours())}:${pad(at.getMinutes())}:${pad(at.getSeconds())}`;
+}
+
+const T = localTime(AT);
+
 function entry(overrides: Partial<WorkerLogEntry> = {}): WorkerLogEntry {
   return {
     id: "row-1",
@@ -73,7 +89,7 @@ describe("legacyWorkerLogLevel", () => {
 describe("legacyRenderWorkerLogLine", () => {
   it("prints the time and message for guest output", () => {
     expect(legacyRenderWorkerLogLine(entry(), PLAIN)).toBe(
-      "14:45:32  workers shim: listening on :8080 (serving)",
+      `${T}  workers shim: listening on :8080 (serving)`,
     );
   });
 
@@ -89,7 +105,7 @@ describe("legacyRenderWorkerLogLine", () => {
       PLAIN,
     );
 
-    expect(line).toBe("14:45:32  200 GET / 23ms");
+    expect(line).toBe(`${T}  200 GET / 23ms`);
   });
 
   it("prints the event and reason for a build line", () => {
@@ -102,7 +118,7 @@ describe("legacyRenderWorkerLogLine", () => {
       PLAIN,
     );
 
-    expect(line).toBe("14:45:32  build_failed exit status 1");
+    expect(line).toBe(`${T}  build_failed exit status 1`);
   });
 
   it("falls back to the message for an unknown stream", () => {
@@ -112,11 +128,24 @@ describe("legacyRenderWorkerLogLine", () => {
       PLAIN,
     );
 
-    expect(line).toBe("14:45:32  something new");
+    expect(line).toBe(`${T}  something new`);
+  });
+
+  it("renders local time, not UTC", () => {
+    // Pinned against a fixed offset rather than the ambient zone, so the choice is
+    // asserted on a UTC machine too, where local and UTC would otherwise coincide.
+    const utc = new Date(AT).toISOString().slice(11, 19);
+    const offsetMinutes = new Date(AT).getTimezoneOffset();
+    const line = legacyRenderWorkerLogLine(entry(), PLAIN);
+
+    expect(line.startsWith(`${T}  `)).toBe(true);
+    if (offsetMinutes !== 0) {
+      expect(line.startsWith(`${utc}  `)).toBe(false);
+    }
   });
 
   it("renders a blank guest line as a blank line, not a dropped entry", () => {
-    expect(legacyRenderWorkerLogLine(entry({ message: "" }), PLAIN)).toBe("14:45:32  ");
+    expect(legacyRenderWorkerLogLine(entry({ message: "" }), PLAIN)).toBe(`${T}  `);
   });
 
   it("strips ANSI escapes a worker printed, so it cannot forge output", () => {
@@ -125,7 +154,7 @@ describe("legacyRenderWorkerLogLine", () => {
       PLAIN,
     );
 
-    expect(line).toBe("14:45:32  fake error");
+    expect(line).toBe(`${T}  fake error`);
     expect(line).not.toContain(ESCAPE);
   });
 
@@ -135,7 +164,7 @@ describe("legacyRenderWorkerLogLine", () => {
       PLAIN,
     );
 
-    expect(line).toBe("14:45:32  overwritten");
+    expect(line).toBe(`${T}  overwritten`);
   });
 
   it("strips an OSC window-title sequence", () => {
@@ -144,13 +173,13 @@ describe("legacyRenderWorkerLogLine", () => {
       PLAIN,
     );
 
-    expect(line).toBe("14:45:32  kept");
+    expect(line).toBe(`${T}  kept`);
   });
 
   it("keeps a stack trace's newlines and indentation intact", () => {
     const trace = "TypeError: boom\n    at handler (index.js:3:11)\n\tat run (index.js:9:2)";
 
-    expect(legacyRenderWorkerLogLine(entry({ message: trace }), PLAIN)).toBe(`14:45:32  ${trace}`);
+    expect(legacyRenderWorkerLogLine(entry({ message: trace }), PLAIN)).toBe(`${T}  ${trace}`);
   });
 
   it("tints an error line red and a warning yellow, on the message only", () => {
@@ -167,8 +196,8 @@ describe("legacyRenderWorkerLogLine", () => {
     const warnLine = legacyRenderWorkerLogLine(client, COLOURED);
 
     // The timestamp stays plain so nothing a script greps on changes colour.
-    expect(errorLine.startsWith("14:45:32  ")).toBe(true);
-    expect(warnLine.startsWith("14:45:32  ")).toBe(true);
+    expect(errorLine.startsWith(`${T}  `)).toBe(true);
+    expect(warnLine.startsWith(`${T}  `)).toBe(true);
     expect(errorLine).toContain(`${ESCAPE}[31m`);
     expect(warnLine).toContain(`${ESCAPE}[33m`);
   });

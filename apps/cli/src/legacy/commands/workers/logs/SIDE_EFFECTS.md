@@ -96,16 +96,17 @@ redacted. No custom events.
 
 | Mode                          | stdout                                                                                              | stderr                                                    |
 | ----------------------------- | --------------------------------------------------------------------------------------------------- | --------------------------------------------------------- |
-| text (default)                | one line per entry, oldest first, per-stream layout; severity as colour                             | the spinner, and the `status` hint when there are no logs |
+| text (default)                | one line per entry, oldest first, per-stream layout; `HH:MM:SS` local time; severity as colour      | the spinner, and the `status` hint when there are no logs |
 | `--output-format json`        | one structured result carrying every entry                                                          | as above                                                  |
 | `--output-format stream-json` | the same result as a single terminal event                                                          | as above                                                  |
 | `-o json` / `yaml` / `toml`   | the same payload in that encoding, and nothing else                                                 | as above                                                  |
 | `-o pretty` / `table` / `csv` | the text rendering — these fall through rather than encoding                                        | as above                                                  |
 | `-o env`                      | refused before any request; the payload nests a `logs` array a flat `KEY=value` list cannot express | the error                                                 |
 
-Machine payloads carry each entry's `id`, both `timestamp` (ISO) and
-`timestamp_ms`, `stream`, `message`, the derived `level` when one exists, and the
-raw `attributes` map — whose values are all strings, since the column is a
+Text output prints the time in the reader's own timezone, matching the `--debug`
+HTTP logger. Machine payloads carry the unambiguous forms instead — each entry's
+`id`, both `timestamp` (ISO-8601 UTC) and `timestamp_ms` (raw epoch), `stream`,
+`message`, the derived `level` when one exists, and the raw `attributes` map — whose values are all strings, since the column is a
 `Map(String, String)`.
 
 A `worker_guest_logs` message is bytes the tenant's own code printed. Control and
