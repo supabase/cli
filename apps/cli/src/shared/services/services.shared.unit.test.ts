@@ -107,6 +107,16 @@ describe("services shared", () => {
     );
   });
 
+  test("normalizes historical pins before slimCurrentPinOnly", () => {
+    vi.stubEnv("SUPABASE_USE_SLIM_IMAGES", "true");
+    expect(
+      listLocalServiceVersions({
+        slimCurrentPinOnly: true,
+        serviceVersions: { auth: "2.151.0" },
+      }),
+    ).toContainEqual({ name: "supabase/gotrue", local: "v2.151.0", remote: "" });
+  });
+
   test("slim-translates catalog version overrides that are not the Dockerfile pin", () => {
     vi.stubEnv("SUPABASE_USE_SLIM_IMAGES", "true");
     expect(listLocalServiceVersions({ serviceVersions: { storage: "v1.70.3" } })).toContainEqual({

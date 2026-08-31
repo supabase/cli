@@ -122,6 +122,20 @@ describe("legacyBuildLogflareContainerSpec", () => {
     expect(spec.binds).toEqual([`${join("/workdir", "")}:/opt/app/rel/logflare/bin/gcloud.json`]);
   });
 
+  test("bigquery on a slim analytics image mounts gcloud.json at /app", () => {
+    vi.stubEnv("SUPABASE_USE_SLIM_IMAGES", "1");
+    const spec = legacyBuildLogflareContainerSpec({
+      ...base,
+      image: "ghcr.io/supabase/cli/analytics:v1.50.6",
+      backend: "bigquery",
+      gcpProjectId: "my-project",
+      gcpProjectNumber: "123456",
+      gcpJwtPath: "gcloud.json",
+    });
+    expect(spec.binds).toEqual([`${join("/workdir", "gcloud.json")}:/app/gcloud.json`]);
+    expect(spec.env.GOOGLE_APPLICATION_CREDENTIALS).toBe("/app/gcloud.json");
+  });
+
   test("keeps the image entrypoint and uses wget on a slim analytics image", () => {
     vi.stubEnv("SUPABASE_USE_SLIM_IMAGES", "1");
     const spec = legacyBuildLogflareContainerSpec({

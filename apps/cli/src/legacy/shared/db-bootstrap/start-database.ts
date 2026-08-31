@@ -214,8 +214,8 @@ export const legacyStartDatabase = <E>(
       );
     }
 
-    // Go prints this before DockerStart (image resolve). Keep that order so a
-    // flag-off cold/failed pull still follows the established progress line.
+    // Print this before image resolve so a flag-off cold/failed pull still
+    // follows the established progress order.
     yield* output.raw(
       isFreshVolume
         ? LEGACY_START_STARTING_DATABASE_MESSAGE

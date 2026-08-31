@@ -141,10 +141,16 @@ export function legacyBuildLogflareContainerSpec(
   };
 
   const binds: Array<string> = [];
+  const slim = legacyUsesSlimRuntime(input.image);
 
   if (input.backend === "bigquery") {
     const hostJwtPath = join(input.workdir, input.gcpJwtPath);
-    binds.push(`${hostJwtPath}:/opt/app/rel/logflare/bin/gcloud.json`);
+    // Slim analytics is WORKDIR /app and resolves gcloud.json from cwd.
+    const credsPath = slim ? "/app/gcloud.json" : "/opt/app/rel/logflare/bin/gcloud.json";
+    binds.push(`${hostJwtPath}:${credsPath}`);
+    if (slim) {
+      env.GOOGLE_APPLICATION_CREDENTIALS = credsPath;
+    }
     env.GOOGLE_DATASET_ID_APPEND = "_prod";
     env.GOOGLE_PROJECT_ID = input.gcpProjectId;
     env.GOOGLE_PROJECT_NUMBER = input.gcpProjectNumber;
@@ -152,8 +158,6 @@ export function legacyBuildLogflareContainerSpec(
     env.POSTGRES_BACKEND_URL = `postgresql://${input.dbUser}:${input.dbPassword}@${input.dbHost}:${input.dbPort}/_supabase`;
     env.POSTGRES_BACKEND_SCHEMA = "_analytics";
   }
-
-  const slim = legacyUsesSlimRuntime(input.image);
 
   return {
     image: input.image,

@@ -152,37 +152,27 @@ function localServiceImagesForOptions(
   const normalizeVersionTags = options.normalizeVersionTags ?? true;
   const slim = slimImagesEnabled();
   return LOCAL_SERVICE_IMAGES.map((service) => {
-    // An explicit `imageOverrides` entry is a caller-chosen ref (the Postgres
-    // major-version fallback, a configured edge-runtime image) with no slim
-    // counterpart, so it keeps the docker.io path even with the flag on.
+    // Explicit overrides are used verbatim; the caller decides slim vs docker.io.
     const override = options.imageOverrides?.[service.localService];
     const baseImage = override ?? slimImageForAlias(service.alias, service.image);
     const version = options.serviceVersions?.[service.localService];
     if (version === undefined || version.trim().length === 0) {
       return baseImage === service.image ? service : { ...service, image: baseImage };
     }
+    const pin = normalizeVersionTags
+      ? tagForServiceVersion(service.localService, version)
+      : version;
     if (override === undefined && slim) {
       return {
         ...service,
         image: options.slimCurrentPinOnly
-          ? slimImageForCurrentPin(service.alias, service.image, version)
-          : slimImageForAlias(
-              service.alias,
-              replaceImageTag(
-                service.image,
-                normalizeVersionTags
-                  ? tagForServiceVersion(service.localService, version)
-                  : version,
-              ),
-            ),
+          ? slimImageForCurrentPin(service.alias, service.image, pin)
+          : slimImageForAlias(service.alias, replaceImageTag(service.image, pin)),
       };
     }
     return {
       ...service,
-      image: replaceImageTag(
-        baseImage,
-        normalizeVersionTags ? tagForServiceVersion(service.localService, version) : version,
-      ),
+      image: replaceImageTag(baseImage, pin),
     };
   });
 }

@@ -26,7 +26,14 @@ export const legacyEdgeRuntimeImage = () => dockerfileServiceImage("edgeruntime"
 // applies for the functions Docker paths reading the SAME pin file.
 const LEGACY_EDGE_RUNTIME_DENO1_IMAGE = `supabase/edge-runtime:${DENO1_EDGE_RUNTIME_VERSION}`;
 
-const resolveEdgeRuntimeImage = Effect.fnUntraced(function* (
+/**
+ * Resolve the edge-runtime image, honoring the pinned tag in
+ * `supabase/.temp/edge-runtime-version` and the `deno_version` selector
+ * (default 2 → Dockerfile image; 1 → `deno1`). The version pin is applied first,
+ * then `deno_version = 1` overrides to `deno1`. Historical pins stay on
+ * docker.io — those slim tags are not published.
+ */
+export const legacyResolveEdgeRuntimeImage = Effect.fnUntraced(function* (
   fs: FileSystem.FileSystem,
   path: Path.Path,
   workdir: string,
@@ -46,17 +53,3 @@ const resolveEdgeRuntimeImage = Effect.fnUntraced(function* (
   }
   return slimImageForCurrentPin("edgeruntime", raw, pinned.length > 0 ? pinned : undefined);
 });
-
-/**
- * Resolve the edge-runtime image, honoring the pinned tag in
- * `supabase/.temp/edge-runtime-version` and the `deno_version` selector
- * (default 2 → Dockerfile image; 1 → `deno1`). The version pin is applied first
- * (Go's `Load`), then `deno_version = 1` overrides to `deno1` (Go's validate
- * pass). Historical pins stay on docker.io — those slim tags are not published.
- */
-export const legacyResolveEdgeRuntimeImage = (
-  fs: FileSystem.FileSystem,
-  path: Path.Path,
-  workdir: string,
-  denoVersion: number,
-) => resolveEdgeRuntimeImage(fs, path, workdir, denoVersion);

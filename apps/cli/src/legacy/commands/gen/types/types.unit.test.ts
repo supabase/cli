@@ -132,8 +132,8 @@ describe("parseDatabaseUrl", () => {
 
 describe("resolvePgmetaImage", () => {
   it("uses the default pgmeta version when no override is given", () => {
-    const image = withEnv("SUPABASE_INTERNAL_IMAGE_REGISTRY", undefined, () =>
-      resolvePgmetaImage(),
+    const image = withEnv("SUPABASE_USE_SLIM_IMAGES", undefined, () =>
+      withEnv("SUPABASE_INTERNAL_IMAGE_REGISTRY", undefined, () => resolvePgmetaImage()),
     );
     expect(image).toContain("postgres-meta");
   });
