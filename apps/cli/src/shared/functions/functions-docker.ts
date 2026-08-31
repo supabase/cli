@@ -9,13 +9,10 @@ import { Effect, Stream } from "effect";
 import { ChildProcessSpawner } from "effect/unstable/process";
 import { spawnContainerCli } from "../../legacy/shared/legacy-container-cli.ts";
 import { legacyMakeDockerImageResolver } from "../../legacy/shared/legacy-docker-image-resolve.ts";
+import { DENO1_EDGE_RUNTIME_VERSION } from "./functions.shared.ts";
 
 const INVALID_PROJECT_ID = /[^a-zA-Z0-9_.-]+/g;
 const MAX_PROJECT_ID_LENGTH = 40;
-// Go's `deno1` image tag (`pkg/config/constants.go:15`,
-// `supabase/edge-runtime:v1.68.4`) — a full tag, since tags flow verbatim
-// into `edgeRuntimeImage` (`functions.shared.ts`) with no `v` synthesis.
-const DENO1_EDGE_RUNTIME_VERSION = "v1.68.4";
 
 export function toSlash(pathname: string) {
   return pathname.replaceAll("\\", "/");
@@ -30,6 +27,21 @@ export function normalizeProjectId(source: string) {
 
 export function localDockerId(name: string, projectId: string) {
   return `supabase_${name}_${normalizeProjectId(projectId)}`;
+}
+
+/**
+ * The Deno-cache volume bind for an edge-runtime container. Both image
+ * families now run as root, so the shared `supabase_edge_runtime_<projectId>`
+ * volume mounts at `/root/.cache/deno`.
+ */
+export function edgeRuntimeCacheVolume(projectId: string) {
+  const name = localDockerId("edge_runtime", projectId);
+  const containerPath = "/root/.cache/deno";
+  return {
+    name,
+    containerPath,
+    bind: `${name}:${containerPath}:rw`,
+  };
 }
 
 /**

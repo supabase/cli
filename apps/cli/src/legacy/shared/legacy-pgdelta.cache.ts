@@ -176,7 +176,7 @@ export const legacyResolveSetupInputs = Effect.fnUntraced(function* (
   orioledbVersion: string | undefined,
   baseline: LegacyBaselineTomlConfig,
 ) {
-  const image = yield* legacyResolveDbImage(fs, path, workdir, majorVersion, orioledbVersion);
+  const { image } = yield* legacyResolveDbImage(fs, path, workdir, majorVersion, orioledbVersion);
   const rolesPath = path.join(workdir, "supabase", "roles.sql");
   const rolesSql = yield* fs
     .readFileString(rolesPath)
