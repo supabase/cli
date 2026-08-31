@@ -1184,23 +1184,17 @@ const connect = (
             }).pipe(
               // Roll a written batch's aborted transaction back while still
               // interruptible; a rollback that fails or times out leaves the client
-              // to the discard below instead of returning it aborted (25P02).
+              // to the discard below instead of returning it aborted (25P02). The
+              // rollback's own failure is consumed as that discard policy — it must
+              // never supplant the batch error this tap is observing.
               Effect.tapError(() =>
                 Effect.suspend(() => {
                   if (batchQuery?.outcome !== "submitted") return Effect.void;
-                  return Effect.promise(() => {
-                    try {
-                      return activeClient.query("ROLLBACK").then(
-                        () => true,
-                        () => false,
-                      );
-                    } catch {
-                      return Promise.resolve(false);
-                    }
-                  }).pipe(
+                  return Effect.tryPromise(() => activeClient.query("ROLLBACK")).pipe(
+                    Effect.match({ onFailure: () => false, onSuccess: () => true }),
                     Effect.timeoutOption(1000),
-                    Effect.map((result) => {
-                      rolledBack = Option.getOrElse(result, () => false);
+                    Effect.map((completed) => {
+                      rolledBack = Option.getOrElse(completed, () => false);
                     }),
                   );
                 }),
