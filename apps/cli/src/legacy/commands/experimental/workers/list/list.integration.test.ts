@@ -8,13 +8,13 @@ import {
   workerResource,
   workersRoute,
   WORKERS_PROJECT_REF,
-} from "../../../../../tests/helpers/legacy-workers.ts";
-import { LegacyProjectNotLinkedError } from "../../../config/legacy-project-ref.errors.ts";
+} from "../../../../../../tests/helpers/legacy-workers.ts";
+import { LegacyProjectNotLinkedError } from "../../../../config/legacy-project-ref.errors.ts";
 import { LegacyWorkersEnvNotSupportedError } from "../workers.errors.ts";
 import {
   WorkersApiUnexpectedStatusError,
   WorkersUnavailableError,
-} from "../../../../shared/workers/workers.errors.ts";
+} from "../../../../../shared/workers/workers.errors.ts";
 import { legacyWorkersList } from "./list.handler.ts";
 
 const CONFIG = `project_id = "demo"
@@ -156,7 +156,7 @@ describe("legacy workers list", () => {
       yield* legacyWorkersList({ projectRef: Option.none() });
 
       expect(out.stdoutText).toContain(
-        "No workers found. Scaffold one with supabase workers new <name>.",
+        "No workers found. Scaffold one with supabase experimental workers new <name>.",
       );
     }).pipe(Effect.provide(layer), Effect.ensuring(Effect.sync(repo.cleanup)));
   });

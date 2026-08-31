@@ -1,8 +1,8 @@
 import { Argument, Command, Flag } from "effect/unstable/cli";
 import type * as CliCommand from "effect/unstable/cli/Command";
-import { withJsonErrorHandling } from "../../../../shared/output/json-error-handling.ts";
-import { legacyManagementApiRuntimeLayer } from "../../../shared/legacy-management-api-runtime.layer.ts";
-import { withLegacyCommandInstrumentation } from "../../../telemetry/legacy-command-instrumentation.ts";
+import { withJsonErrorHandling } from "../../../../../shared/output/json-error-handling.ts";
+import { legacyManagementApiRuntimeLayer } from "../../../../shared/legacy-management-api-runtime.layer.ts";
+import { withLegacyCommandInstrumentation } from "../../../../telemetry/legacy-command-instrumentation.ts";
 import { legacyWorkersPush } from "./push.handler.ts";
 
 const config = {
@@ -40,15 +40,15 @@ export const legacyWorkersPushCommand = Command.make("push", config).pipe(
   Command.withShortDescription("Build and deploy workers"),
   Command.withExamples([
     {
-      command: "supabase workers push",
+      command: "supabase experimental workers push",
       description: "Deploy every worker in the project",
     },
     {
-      command: "supabase workers push api",
+      command: "supabase experimental workers push api",
       description: "Deploy a single worker",
     },
     {
-      command: "supabase workers push api web",
+      command: "supabase experimental workers push api web",
       description: "Deploy several workers by name",
     },
   ]),
@@ -58,5 +58,5 @@ export const legacyWorkersPushCommand = Command.make("push", config).pipe(
       withJsonErrorHandling,
     ),
   ),
-  Command.provide(legacyManagementApiRuntimeLayer(["workers", "push"])),
+  Command.provide(legacyManagementApiRuntimeLayer(["experimental", "workers", "push"])),
 );

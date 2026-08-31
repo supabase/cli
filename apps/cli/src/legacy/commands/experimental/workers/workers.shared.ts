@@ -1,24 +1,24 @@
 import { join } from "node:path";
 import { loadCliConfig } from "@supabase/config/effect";
 import { Effect, FileSystem, Option, Predicate } from "effect";
-import { LegacyCliSettings } from "../../config/legacy-cli-settings.service.ts";
+import { LegacyCliSettings } from "../../../config/legacy-cli-settings.service.ts";
 import {
   readWorkersSection,
   type WorkerEntry,
   type WorkersSection,
-} from "../../../shared/workers/worker-config.ts";
-import { workerDir, workersDir, workerSourceDir } from "../../../shared/workers/worker-paths.ts";
-import { validateWorkerNameMessage } from "../../../shared/workers/worker-runtimes.ts";
-import { InvalidWorkerNameError } from "../../../shared/workers/workers.errors.ts";
+} from "../../../../shared/workers/worker-config.ts";
+import { workerDir, workersDir, workerSourceDir } from "../../../../shared/workers/worker-paths.ts";
+import { validateWorkerNameMessage } from "../../../../shared/workers/worker-runtimes.ts";
+import { InvalidWorkerNameError } from "../../../../shared/workers/workers.errors.ts";
 
 /**
- * What every `supabase workers` command needs before it does anything: where
+ * What every `supabase experimental workers` command needs before it does anything: where
  * the project is, what `[workers]` says, and which worker is being acted on.
  *
  * The project directory is `LegacyCliSettings.workdir` rather than an ancestor
  * walk from the current directory. That is the resolved workdir every other
  * legacy command acts on — `--workdir`/`SUPABASE_WORKDIR` when given, else the
- * ancestor walk Go's own `getProjectRoot` performs — so `supabase workers`
+ * ancestor walk Go's own `getProjectRoot` performs — so `supabase experimental workers`
  * answers to the same flag as its siblings instead of inventing a second notion
  * of "which project".
  */
