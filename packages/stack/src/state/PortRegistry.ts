@@ -11,7 +11,7 @@ import type {
 } from "./StackState.ts";
 import { withRegistryLock, type StackStateStore } from "./StackStateStore.ts";
 
-export type PortRegistryError =
+type PortRegistryError =
   | InvalidProjectRootError
   | StackStateInvalidError
   | StackStateFormatUnsupportedError;

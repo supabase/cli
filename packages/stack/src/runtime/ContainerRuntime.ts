@@ -71,20 +71,20 @@ export interface ContainerWorkloadResolution {
 }
 
 /** Untrusted host-publication input validated before any engine operation. */
-export interface ContainerPortPublicationInput {
+interface ContainerPortPublicationInput {
   readonly address: string;
   readonly hostPort: number;
   readonly containerPort: number;
 }
 
-export interface ContainerVolumeRequest {
+interface ContainerVolumeRequest {
   readonly target: string;
   readonly readOnly: boolean;
   /** Stable logical workload that owns the persistent volume. Defaults to the mounting workload. */
   readonly ownerWorkloadId?: string;
 }
 
-export interface ContainerRuntimeResourceIds {
+interface ContainerRuntimeResourceIds {
   readonly container: string;
   readonly network: string;
   readonly state: "running" | "stopped" | "failed";

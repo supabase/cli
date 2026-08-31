@@ -6,14 +6,14 @@
  * deterministic and testable during compilation.
  */
 
-export type ThirdPartyProviderName = "firebase" | "auth0" | "aws_cognito" | "clerk" | "workos";
+type ThirdPartyProviderName = "firebase" | "auth0" | "aws_cognito" | "clerk" | "workos";
 
-export interface ThirdPartyIssuer {
+interface ThirdPartyIssuer {
   readonly provider: ThirdPartyProviderName;
   readonly issuer: string;
 }
 
-export interface ThirdPartyIssuerError {
+interface ThirdPartyIssuerError {
   readonly provider?: ThirdPartyProviderName;
   readonly message: string;
 }

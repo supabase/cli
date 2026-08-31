@@ -418,5 +418,3 @@ export const makeLogStore = (
       stream,
     };
   });
-
-export { LOG_FORMAT as LogStoreFormat };

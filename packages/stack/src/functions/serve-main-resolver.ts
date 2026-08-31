@@ -1,6 +1,7 @@
+// oxlint-disable effecttsgo/async-function -- resolver preserves the Edge Runtime Promise callback contract.
 import { dirname, join } from "./serve-main-deps.ts";
 
-export interface FunctionOverride {
+interface FunctionOverride {
   readonly enabled?: boolean;
   readonly verifyJWT?: boolean;
   readonly verify_jwt?: boolean;
@@ -23,7 +24,7 @@ export interface FunctionConfig {
   readonly env?: Readonly<Record<string, string>>;
 }
 
-export interface FunctionFileInfo {
+interface FunctionFileInfo {
   readonly isDirectory: boolean;
   readonly isFile: boolean;
   readonly isSymbolicLink: boolean;
@@ -171,7 +172,7 @@ export const resolveFunctionConfig = async (options: {
   };
 };
 
-export const packageJsonPathFor = (config: FunctionConfig): string =>
+const packageJsonPathFor = (config: FunctionConfig): string =>
   join(dirname(config.entrypointPath), "package.json");
 
 /** Checks package discovery without allowing a package.json symlink to leave the root. */

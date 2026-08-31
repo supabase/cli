@@ -19,7 +19,7 @@ export interface ContainerHostRoute {
 export class ContainerExecutableNotFoundError extends Data.TaggedError(
   "ContainerExecutableNotFoundError",
 )<{ readonly executable: string; readonly message: string }> {}
-export class ContainerRoutingUnsupportedError extends Data.TaggedError(
+class ContainerRoutingUnsupportedError extends Data.TaggedError(
   "ContainerRoutingUnsupportedError",
 )<{ readonly engine: ContainerEngineKind; readonly message: string }> {}
 export class ContainerEngineProtocolError extends Data.TaggedError("ContainerEngineProtocolError")<{
@@ -77,7 +77,7 @@ export interface ContainerVolumeMount {
   readonly target: string;
   readonly readOnly: boolean;
 }
-export interface ContainerPortPublication {
+interface ContainerPortPublication {
   readonly address: "127.0.0.1";
   readonly hostPort: number;
   readonly containerPort: number;
@@ -137,7 +137,7 @@ export interface ContainerProcessRequest {
   readonly stdin?: string;
   readonly env?: Readonly<Record<string, string>>;
 }
-export interface ContainerProcessOutputChunk {
+interface ContainerProcessOutputChunk {
   readonly stream: "stdout" | "stderr";
   readonly bytes: Uint8Array;
 }
@@ -351,7 +351,7 @@ export const makeProcessCommandRunner = (
     return { executable: options.executable, run, stream };
   });
 
-export interface ContainerEngineCodecs {
+interface ContainerEngineCodecs {
   readonly serialize: (command: ContainerCommand) => ContainerProcessRequest;
   readonly decodeProbe: (
     result: ContainerCommandResult,

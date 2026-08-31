@@ -85,7 +85,7 @@ import { StackRpcGroup, type StackRpcError, type StackRpcHandlers } from "../con
 import type { MaintenanceResponse } from "../control/MaintenanceProtocol.ts";
 import type { PreparedWorkloadArtifact } from "../preparation/RuntimeArtifacts.ts";
 
-export interface ActivationResult {
+interface ActivationResult {
   readonly capability: CapabilityName;
   readonly endpoint: { readonly host: string; readonly port: number };
 }

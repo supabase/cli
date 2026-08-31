@@ -83,7 +83,7 @@ const fetchBytes = (
   });
 
 /** Owned streaming zstd boundary. Cancellation destroys the exact transform. */
-export const nodeZstdDecompressor: ZstdDecompressor = {
+const nodeZstdDecompressor: ZstdDecompressor = {
   decompress: (bytes) =>
     Effect.callback<Uint8Array, StackPreparationError>((resume) => {
       const transform: Transform = createZstdDecompress();

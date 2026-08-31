@@ -187,7 +187,7 @@ export const serializeDockerCommand = (command: ContainerCommand): ContainerProc
   }
 };
 
-export const serializeDockerLogs = (
+const serializeDockerLogs = (
   id: string,
   options: ContainerLogOptions | undefined,
 ): ContainerProcessRequest => ({
@@ -398,7 +398,7 @@ const decodeCreate = <R extends ContainerResourceRole>(
     : Effect.fail(protocol(operation));
 };
 
-export const makeDockerCodecs = () => ({
+const makeDockerCodecs = () => ({
   serialize: serializeDockerCommand,
   serializeLogs: serializeDockerLogs,
   decodeProbe: (result: ContainerCommandResult) =>
@@ -413,8 +413,7 @@ export const makeDockerCodecs = () => ({
   decodeCreate,
 });
 
-export const createDockerEngine = (
+export const makeDockerEngine = (
   options: Omit<ContainerEngineOptions, "kind" | "codecs">,
 ): ContainerEngine =>
   makeContainerEngineCore({ ...options, kind: "docker", codecs: makeDockerCodecs() });
-export const makeDockerEngine = createDockerEngine;

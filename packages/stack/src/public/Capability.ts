@@ -13,8 +13,6 @@ export const CAPABILITY_NAMES = [
   "pooler",
 ] as const;
 
-export const CapabilityNames = CAPABILITY_NAMES;
-
 export const CapabilityNameSchema = Schema.Literals(CAPABILITY_NAMES);
 export type CapabilityName = Schema.Schema.Type<typeof CapabilityNameSchema>;
 

@@ -7,7 +7,6 @@ import { StackConfigSchema } from "../public/Config.ts";
 import { CapabilityNameSchema } from "../public/Capability.ts";
 import { LogOptionsSchema, StackLogEntrySchema } from "../public/Logs.ts";
 import { StackStatusSchema } from "../public/Status.ts";
-import type { ControlProtocol } from "./MaintenanceProtocol.ts";
 
 /** Pinned release identifier. A changed release must go through explicit restart. */
 export const STACK_RPC_RELEASE = "stack-rpc-v1@0.1.0" as const;
@@ -16,10 +15,6 @@ export class StackRpcProtocolError extends Data.TaggedError("StackRpcProtocolErr
   readonly message: string;
   readonly expectedRelease?: string;
   readonly actualRelease?: string;
-}> {}
-
-export class StackRpcTransportError extends Data.TaggedError("StackRpcTransportError")<{
-  readonly message: string;
 }> {}
 
 const StackRpcErrorTagSchema = Schema.Literals([
@@ -57,7 +52,7 @@ const StackRpcErrorTagSchema = Schema.Literals([
   "StackRpcProtocolError",
 ] as const);
 
-export const StackRpcErrorSchema = Schema.Struct({
+const StackRpcErrorSchema = Schema.Struct({
   tag: StackRpcErrorTagSchema,
   message: Schema.String,
 });
@@ -73,7 +68,7 @@ const PrepareStackResultSchema = Schema.Struct({
   ),
 });
 
-export const StackRpc = {
+const StackRpc = {
   status: Rpc.make("status", { success: StackStatusSchema, error: StackRpcErrorSchema }),
   credentials: Rpc.make("credentials", {
     success: EffectStackCredentialsSchema,
@@ -121,18 +116,11 @@ export const StackRpcGroup = RpcGroup.make(
   StackRpc.logs,
   StackRpc.watchStatus,
 );
-export type StackRpcHandlers = RpcGroup.HandlersFrom<RpcGroup.Rpcs<typeof StackRpcGroup>>;
+type StackRpcDefinitions = RpcGroup.Rpcs<typeof StackRpcGroup>;
+export type StackRpcHandlers = {
+  readonly [Current in StackRpcDefinitions as Current["_tag"]]: Rpc.ToHandlerFn<Current, never>;
+};
 export type StackRpcClient = RpcClient.FromGroup<typeof StackRpcGroup, RpcClientError>;
-
-export const rpcProtocol = (
-  identity: { readonly stackId: string; readonly ownerSessionId: string },
-  release = STACK_RPC_RELEASE,
-): ControlProtocol => ({
-  kind: "rpc",
-  release,
-  stackId: identity.stackId,
-  ownerSessionId: identity.ownerSessionId,
-});
 
 export const releaseMismatch = (actualRelease: string): StackRpcProtocolError =>
   new StackRpcProtocolError({

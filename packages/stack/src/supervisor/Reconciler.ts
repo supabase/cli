@@ -15,7 +15,7 @@ import {
   type RuntimeDriver,
 } from "../runtime/RuntimeDriver.ts";
 
-export interface ReconcilerRequest {
+interface ReconcilerRequest {
   readonly stackId: StackId;
   readonly desiredGeneration: number;
   readonly desiredLifecycle: DesiredLifecycle;
@@ -29,7 +29,7 @@ export interface ReconcilerOptions {
   readonly readinessTimeout?: Duration.Input;
 }
 
-export interface ReconciliationResult {
+interface ReconciliationResult {
   readonly generation: number;
   readonly observed: ReadonlyArray<ObservedWorkload>;
   readonly started: ReadonlyArray<string>;
@@ -51,7 +51,7 @@ export interface Reconciler {
   ) => Effect.Effect<ReconciliationResult, ReconcilerError>;
 }
 
-export type ReconcilerError =
+type ReconcilerError =
   | RuntimeDriverError
   | RuntimeGenerationMismatchError
   | RuntimeReadinessTimeoutError
@@ -289,5 +289,3 @@ export const makeReconciler = (options: ReconcilerOptions): Effect.Effect<Reconc
 
     return { reconcile };
   });
-
-export { planDesiredState };

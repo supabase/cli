@@ -64,13 +64,13 @@ export const release = (
   workloads: ReadonlyArray<WorkloadSpec>,
 ): CapabilityRelease => ({ version, workloads });
 
-export const nativeArtifact = (service: string, release: string): NativeArtifact => ({
+const nativeArtifact = (service: string, release: string): NativeArtifact => ({
   kind: "native",
   service,
   release,
 });
 
-export const containerArtifact = (service: string, image: string): ContainerArtifact => ({
+const containerArtifact = (service: string, image: string): ContainerArtifact => ({
   kind: "container",
   service,
   image,

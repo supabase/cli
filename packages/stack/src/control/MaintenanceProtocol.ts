@@ -2,7 +2,7 @@ import { Data, Effect, Schema } from "effect";
 import { isStackId, StackIdSchema } from "../public/StackId.ts";
 
 /** The stable protocol is intentionally frozen independently of Stack RPC releases. */
-export const MAINTENANCE_PROTOCOL = "maintenance-v1" as const;
+const MAINTENANCE_PROTOCOL = "maintenance-v1" as const;
 export const MAINTENANCE_MAX_FRAME_BYTES = 64 * 1024;
 export const MAINTENANCE_MAX_CONCURRENT_REQUESTS = 16;
 export const MAINTENANCE_REQUEST_DEADLINE_MS = 5_000;
@@ -52,14 +52,13 @@ export const MaintenanceRequestSchema = Schema.Union([
 ]);
 export type MaintenanceRequest = Schema.Schema.Type<typeof MaintenanceRequestSchema>;
 
-export const MaintenanceErrorCodeSchema = Schema.Literals([
+const MaintenanceErrorCodeSchema = Schema.Literals([
   "invalid-request",
   "stale-session",
   "timeout",
   "operation-failed",
   "unsupported-release",
 ] as const);
-export type MaintenanceErrorCode = Schema.Schema.Type<typeof MaintenanceErrorCodeSchema>;
 
 export const MaintenanceResponseSchema = Schema.Union([
   Schema.Struct({

@@ -183,7 +183,7 @@ export const serializePodmanCommand = (command: ContainerCommand): ContainerProc
   }
 };
 
-export const serializePodmanLogs = (
+const serializePodmanLogs = (
   id: string,
   options: ContainerLogOptions | undefined,
 ): ContainerProcessRequest => ({
@@ -376,7 +376,7 @@ const decodeCreate = <R extends ContainerResourceRole>(
     : Effect.fail(protocol(operation));
 };
 
-export const makePodmanCodecs = () => ({
+const makePodmanCodecs = () => ({
   serialize: serializePodmanCommand,
   serializeLogs: serializePodmanLogs,
   decodeProbe: (result: ContainerCommandResult) =>
@@ -391,8 +391,7 @@ export const makePodmanCodecs = () => ({
   decodeCreate,
 });
 
-export const createPodmanEngine = (
+export const makePodmanEngine = (
   options: Omit<ContainerEngineOptions, "kind" | "codecs">,
 ): ContainerEngine =>
   makeContainerEngineCore({ ...options, kind: "podman", codecs: makePodmanCodecs() });
-export const makePodmanEngine = createPodmanEngine;

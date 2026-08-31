@@ -22,7 +22,7 @@ import {
   type NativeProcessSpec,
 } from "./NativeProcess.ts";
 
-export type NativeWorkload = PlannedWorkload;
+type NativeWorkload = PlannedWorkload;
 
 export interface NativeRuntimeOptions {
   /**
@@ -55,7 +55,7 @@ export interface NativeRuntimeOptions {
 }
 
 /** One-shot startup processes followed by the long-lived workload process. */
-export interface NativeProcessPlan {
+interface NativeProcessPlan {
   readonly startup: ReadonlyArray<NativeProcessSpec>;
   readonly main: NativeProcessSpec;
 }
@@ -614,5 +614,3 @@ export const makeNativeRuntime = (
       recover,
     } satisfies RuntimeDriver;
   });
-
-export const makeNativeRuntimeDriver = makeNativeRuntime;

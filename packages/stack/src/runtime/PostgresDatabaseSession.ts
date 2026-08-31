@@ -13,7 +13,7 @@ import type { PersistedStackState } from "../state/StackState.ts";
 import { StackPreparationError } from "../public/Errors.ts";
 import { databaseBootstrapPlan } from "./DatabaseBootstrapCatalog.ts";
 
-export interface PostgresDatabaseSessionOptions {
+interface PostgresDatabaseSessionOptions {
   readonly host: string;
   readonly port: number;
   readonly password: Redacted.Redacted<string>;
@@ -108,7 +108,7 @@ export const makeDatabaseSessionFromAcquisition = (
   );
 
 /** Creates a scoped production session backed by the Effect PostgreSQL pool. */
-export const makePostgresDatabaseSession = (
+const makePostgresDatabaseSession = (
   options: PostgresDatabaseSessionOptions,
 ): Effect.Effect<DatabaseSession, DatabaseBootstrapError, Scope.Scope> =>
   makeDatabaseSessionFromAcquisition(

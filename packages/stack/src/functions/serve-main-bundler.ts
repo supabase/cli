@@ -1,3 +1,4 @@
+// oxlint-disable effecttsgo/async-function -- esbuild's public API is Promise-based.
 import { fileURLToPath } from "node:url";
 import { build } from "esbuild";
 

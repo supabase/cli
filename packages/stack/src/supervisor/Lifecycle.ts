@@ -57,7 +57,7 @@ export interface LifecycleBackend {
   readonly destroyData: (input: LifecycleInput) => Effect.Effect<void, StackError>;
 }
 
-export interface LifecycleStartOptions {
+interface LifecycleStartOptions {
   readonly config?: StackConfig;
 }
 
@@ -75,7 +75,7 @@ export interface LifecycleController {
   readonly destroy: () => Effect.Effect<void, StackError, LifecycleRequirements>;
 }
 
-export type LifecycleRequirements = Crypto.Crypto | FileSystem.FileSystem | Path.Path;
+type LifecycleRequirements = Crypto.Crypto | FileSystem.FileSystem | Path.Path;
 
 export interface LifecycleControllerOptions {
   readonly stackId: StackId;

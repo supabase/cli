@@ -3,12 +3,12 @@ import { Data, Effect, Redacted, Schema } from "effect";
 /** A small runtime-neutral SQL boundary used by the internal database bootstrap. */
 export type DatabaseSqlValue = string | number | boolean | null;
 
-export interface DatabaseRow {
+interface DatabaseRow {
   readonly [column: string]: unknown;
 }
 
 /** Login roles provisioned by the managed database template. */
-export type DatabaseBootstrapRole =
+type DatabaseBootstrapRole =
   | "postgres"
   | "authenticator"
   | "pgbouncer"
@@ -26,9 +26,6 @@ const DATABASE_BOOTSTRAP_ROLES: ReadonlyArray<DatabaseBootstrapRole> = [
   "supabase_read_only_user",
 ];
 
-/** Database-level settings written by the initial managed bootstrap. */
-export type DatabaseBootstrapSettingName = "app.settings.jwt_secret" | "app.settings.jwt_exp";
-
 export type DatabaseBootstrapSetting =
   | {
       readonly name: "app.settings.jwt_secret";
@@ -44,7 +41,7 @@ export interface DatabaseBootstrapCredentials {
   readonly roles?: Readonly<Partial<Record<DatabaseBootstrapRole, Redacted.Redacted<string>>>>;
 }
 
-export interface DatabaseBootstrapSettings {
+interface DatabaseBootstrapSettings {
   readonly jwtSecret: Redacted.Redacted<string>;
   readonly jwtExpiry: number;
 }
@@ -98,7 +95,7 @@ export interface DatabaseSession {
   ) => Effect.Effect<void, DatabaseBootstrapError>;
 }
 
-export interface DatabaseBootstrapRevision {
+interface DatabaseBootstrapRevision {
   readonly id: string;
   readonly statement: string;
 }
@@ -262,5 +259,3 @@ export const runDatabaseBootstrap = (
       );
     }
   });
-
-export const databaseBootstrapTrackingTable = TRACKING_TABLE;

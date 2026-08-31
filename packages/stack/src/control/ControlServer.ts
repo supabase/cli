@@ -47,7 +47,7 @@ import {
   type StackRpcHandlers,
 } from "./StackRpc.ts";
 
-export interface ControlIdentity {
+interface ControlIdentity {
   readonly stackId: string;
   readonly ownerSessionId: string;
 }
@@ -511,7 +511,7 @@ export const startControlServer = (
     // Keep handler defects as keyed Exit responses so destroy request state can be cleaned by
     // the same send path as typed failures. Without this option RpcServer emits a client-level
     // Defect frame that has no requestId for the terminal handoff.
-    const rpcProgram = RpcServer.make(StackRpcGroup, {
+    const rpcProgram: Effect.Effect<never, never> = RpcServer.make(StackRpcGroup, {
       disableTracing: true,
       disableFatalDefects: true,
       concurrency: MAINTENANCE_MAX_CONCURRENT_REQUESTS,
@@ -530,7 +530,7 @@ export const startControlServer = (
   });
 
 /** Client-side framed socket; writer emits the RPC preface exactly once. */
-export const makeControlRpcSocket = (
+const makeControlRpcSocket = (
   socket: Socket.Socket,
   options: {
     readonly rpcRelease?: string;

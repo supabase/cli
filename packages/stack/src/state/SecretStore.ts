@@ -9,7 +9,7 @@ import {
 import type { DesiredStackLifecycle } from "../public/Status.ts";
 import type { PersistedSecretValues } from "./StackState.ts";
 
-export type SecretPolicy = "managed" | "passthrough";
+type SecretPolicy = "managed" | "passthrough";
 
 export type SecretJwtSigning =
   | { readonly kind: "symmetric" }

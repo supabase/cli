@@ -16,7 +16,7 @@ export interface ActivationResult {
   readonly endpoint: BackendEndpoint;
 }
 
-export interface ActivationTarget {
+interface ActivationTarget {
   readonly dependencies: ReadonlyArray<CapabilityName>;
 }
 
@@ -160,7 +160,7 @@ export interface GatewayLocalResponse {
   readonly contentType?: string;
 }
 
-export type GatewayHeaderValue = string | string[];
+type GatewayHeaderValue = string | string[];
 export type GatewayHeaders = Readonly<Record<string, GatewayHeaderValue>>;
 export type GatewayHeaderTransform = (
   request: GatewayRouteRequest,
@@ -185,7 +185,7 @@ export interface GatewayProxyRoute {
 }
 
 /** HTTP-only route that produces a response without activating a capability. */
-export interface GatewayLocalRoute {
+interface GatewayLocalRoute {
   readonly capability?: never;
   readonly binding?: never;
   readonly match: (request: GatewayRouteRequest) => boolean;
@@ -208,12 +208,12 @@ export interface StackGateway {
   readonly close: Effect.Effect<void>;
 }
 
-export interface HttpGatewayListenerOptions {
+interface HttpGatewayListenerOptions {
   readonly field: PortField;
   readonly options: Omit<HttpGatewayOptions, "activate">;
 }
 
-export interface TcpGatewayListenerOptions {
+interface TcpGatewayListenerOptions {
   readonly field: PortField;
   readonly options: Omit<TcpGatewayOptions, "activate">;
 }

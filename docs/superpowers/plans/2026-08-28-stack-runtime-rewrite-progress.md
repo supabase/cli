@@ -1024,3 +1024,15 @@ private-port reservation plus gateway ownership atomic with accepted lifecycle g
   comments for their direct parse/stringify assertions. The exact changed-file Effect lint now exits cleanly.
 - Focused owner/secret/workload/catalog integration verification remains green at 58 cases with stack type-check,
   formatting, and diff checks passing.
+
+#### Knip phase 1–2 cleanup (2026-08-31)
+
+- Added the `packages/stack` Knip workspace with its `mkfifo` binary exception, removed obsolete ControlClient and
+  supervisor-bun entrypoints, and deleted confirmed-unused duplicate aliases.
+- Knip's scoped exports/types fix made 120 internal declarations non-exported and removed only declarations proven
+  unused by generic lint; package entry exports and function build subpaths remain intact. Narrow Effect lint rationale
+  comments preserve the standalone Edge Runtime Promise/Node boundaries, and RPC handler requirements are typed with
+  `never` to avoid an `any` service requirement.
+- Knip, stack type-check, package unit tests, focused control/supervisor/functions integration tests, generic and Effect
+  lint, formatting, and `git diff --check` pass. Full integration was also verified with two workers (384/384); the
+  default parallel run remains subject to concurrent native-process load as documented in the runtime test fix.

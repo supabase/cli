@@ -1,3 +1,5 @@
+// oxlint-disable effecttsgo/async-function -- test exercises the Promise-based resolver boundary.
+// oxlint-disable effecttsgo/node-builtin-import -- Node filesystem fixtures own their temporary test root.
 import {
   mkdtemp,
   mkdir,

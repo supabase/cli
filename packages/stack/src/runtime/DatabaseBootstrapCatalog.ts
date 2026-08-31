@@ -76,5 +76,3 @@ export const databaseBootstrapPlan = (
       },
     } satisfies DatabaseBootstrapOptions;
   });
-
-export const makeDatabaseBootstrapPlan = databaseBootstrapPlan;

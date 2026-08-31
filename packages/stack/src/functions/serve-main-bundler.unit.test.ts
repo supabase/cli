@@ -1,3 +1,4 @@
+// oxlint-disable effecttsgo/async-function -- test exercises the Promise-based bundler boundary.
 import { describe, expect, it } from "vitest";
 import { bundleServeMainTemplate } from "./serve-main-bundler.ts";
 

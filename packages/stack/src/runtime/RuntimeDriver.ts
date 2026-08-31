@@ -27,14 +27,14 @@ export interface RuntimeRecoveryRequest {
 }
 
 /** A driver only reports states that can be acted on by the reconciler. */
-export type ObservedWorkloadState = "absent" | "starting" | "ready" | "stopped" | "failed";
+type ObservedWorkloadState = "absent" | "starting" | "ready" | "stopped" | "failed";
 
 export interface ObservedWorkload extends RuntimeWorkloadKey {
   readonly state: ObservedWorkloadState;
   readonly error?: string;
 }
 
-export type RuntimeWorkload = PlannedWorkload;
+type RuntimeWorkload = PlannedWorkload;
 
 export interface RuntimeDriver {
   /** Enumerates only private resources owned by this exact stack identity. */

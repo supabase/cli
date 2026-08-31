@@ -35,10 +35,10 @@ import { CAPABILITY_MODULES, createExecutionPlan, type ExecutionPlan } from "./E
 import type { CapabilityModule, CapabilityRelease } from "./CapabilityModule.ts";
 import type { SecretGenerator, SecretJwtSigning } from "../state/SecretStore.ts";
 
-export type InputFingerprint = Schema.Schema.Type<typeof InputFingerprintSchema>;
+type InputFingerprint = Schema.Schema.Type<typeof InputFingerprintSchema>;
 const InputFingerprintSchema = Schema.String.pipe(Schema.brand("InputFingerprint"));
 
-export interface SecretSlot {
+interface SecretSlot {
   readonly slot: string;
 }
 
@@ -54,9 +54,9 @@ type MaterializedValue<T> = [T] extends [Redacted.Redacted<unknown>]
         }
       : T;
 
-export type MaterializedSettings<T> = MaterializedValue<T>;
+type MaterializedSettings<T> = MaterializedValue<T>;
 
-export interface MaterializedCapability<T> {
+interface MaterializedCapability<T> {
   readonly enabled: boolean;
   readonly activation: "eager" | "lazy";
   readonly version: string;
@@ -85,12 +85,12 @@ export interface StackDefinition {
   }>;
 }
 
-export type MaterializedJwtSigning =
+type MaterializedJwtSigning =
   | { readonly kind: "symmetric"; readonly secret: SecretSlot }
   | { readonly kind: "jwks-file"; readonly path: string }
   | null;
 
-export interface MaterializedListener {
+interface MaterializedListener {
   readonly enabled: boolean;
   readonly address: string;
   readonly port: "automatic" | number;
@@ -108,7 +108,7 @@ const AUTH_JWT_SECRET_SLOT = "secret:auth.settings.jwt_secret";
 const SECURITY_JWT_SIGNING_SECRET_SLOT = "secret:security.jwt.signing.secret";
 
 /** Internal credentials are not user settings but still need durable managed slots. */
-export const INTERNAL_MANAGED_SECRET_SLOTS = ["secret:database.internal.password"] as const;
+const INTERNAL_MANAGED_SECRET_SLOTS = ["secret:database.internal.password"] as const;
 
 export interface CompiledStack {
   readonly definition: StackDefinition;

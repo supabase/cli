@@ -5,7 +5,7 @@ const Secret = Schema.Redacted(Schema.String);
 export type FunctionSecret = Redacted.Redacted<string>;
 const FunctionSlug = Schema.String.check(Schema.isPattern(/^[a-zA-Z0-9_-]+$/));
 const EnvName = Schema.String.check(Schema.isPattern(/^[A-Z_][A-Z0-9_]*$/));
-export const FunctionOverrideSchema = Schema.Struct({
+const FunctionOverrideSchema = Schema.Struct({
   enabled: Schema.optionalKey(Schema.Boolean),
   verify_jwt: Schema.optionalKey(Schema.Boolean),
   import_map: Schema.optionalKey(Schema.String),
@@ -13,7 +13,6 @@ export const FunctionOverrideSchema = Schema.Struct({
   static_files: Schema.optionalKey(Schema.Array(Schema.String)),
   env: Schema.optionalKey(Schema.Record(EnvName, Secret)),
 });
-export type FunctionOverride = Schema.Schema.Type<typeof FunctionOverrideSchema>;
 
 /** Fully materialized per-function settings consumed by request-time discovery. */
 export interface FunctionSettings {
@@ -35,12 +34,11 @@ export const FunctionSettingsDefaults: FunctionSettings = {
   env: {},
 };
 
-export const EdgeRuntimeSettingsSchema = Schema.Struct({
+const EdgeRuntimeSettingsSchema = Schema.Struct({
   policy: Schema.optionalKey(Schema.Literals(["oneshot", "per_worker"] as const)),
   deno_version: Schema.optionalKey(Schema.Finite),
   secrets: Schema.optionalKey(Schema.Record(Schema.String, Secret)),
 });
-export type EdgeRuntimeSettings = Schema.Schema.Type<typeof EdgeRuntimeSettingsSchema>;
 
 export const FunctionsInspectorSettingsSchema = Schema.Struct({
   mode: Schema.optionalKey(Schema.Literals(["run", "brk", "wait"] as const)),

@@ -12,23 +12,23 @@ export interface ReconciliationInput {
   readonly observed: ReadonlyArray<ObservedWorkload>;
 }
 
-export interface DesiredStart {
+interface DesiredStart {
   readonly kind: "start";
   readonly key: RuntimeWorkloadKey;
   readonly workload: PlannedWorkload;
 }
 
-export interface DesiredStop {
+interface DesiredStop {
   readonly kind: "stop";
   readonly key: RuntimeWorkloadKey;
 }
 
-export interface DesiredRemove {
+interface DesiredRemove {
   readonly kind: "remove";
   readonly key: RuntimeWorkloadKey;
 }
 
-export interface BlockedWorkload {
+interface BlockedWorkload {
   readonly workloadId: string;
   readonly dependencyId: string;
 }

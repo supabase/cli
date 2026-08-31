@@ -5,14 +5,14 @@ import { StackOwnershipConflictError, StackStateInvalidError } from "../public/E
 import { OwnerSessionIdSchema } from "../control/MaintenanceProtocol.ts";
 
 /** The owner metadata format is deliberately fail-closed. */
-export const OWNERSHIP_FORMAT = "supabase-stack-owner-v1" as const;
+const OWNERSHIP_FORMAT = "supabase-stack-owner-v1" as const;
 
-export interface UnixControlEndpoint {
+interface UnixControlEndpoint {
   readonly kind: "unix";
   readonly path: string;
 }
 
-export interface WindowsControlEndpoint {
+interface WindowsControlEndpoint {
   readonly kind: "pipe";
   readonly name: string;
 }
@@ -34,12 +34,12 @@ export class StackRuntimeEnvironment extends Context.Service<
   StackRuntimeEnvironmentValue
 >()("@supabase/stack/StackRuntimeEnvironment") {}
 
-export const ControlEndpointSchema = Schema.Union([
+const ControlEndpointSchema = Schema.Union([
   Schema.Struct({ kind: Schema.Literal("unix"), path: Schema.String }),
   Schema.Struct({ kind: Schema.Literal("pipe"), name: Schema.String }),
 ]);
 
-export const OwnerMetadataSchema = Schema.Struct({
+const OwnerMetadataSchema = Schema.Struct({
   format: Schema.Literal(OWNERSHIP_FORMAT),
   stackId: StackIdSchema,
   ownerSessionId: OwnerSessionIdSchema,
@@ -68,9 +68,6 @@ const metadataFrom = (value: unknown): Effect.Effect<OwnerMetadata, StackStateIn
     Effect.mapError((error) => stateError(`Invalid owner metadata: ${String(error)}`)),
   );
 
-const endpointPath = (endpoint: ControlEndpoint): string =>
-  endpoint.kind === "unix" ? endpoint.path : endpoint.name;
-
 /**
  * Computes the one local endpoint for an identity. The complete digest is used
  * so two identities can never alias. The caller supplies a deliberately short
@@ -86,9 +83,6 @@ export const controlEndpointFor = (
     return { kind: "pipe", name: `\\\\.\\pipe\\supabase-stack-${token}` };
   return { kind: "unix", path: `${root}/supabase-stack-${token}.sock` };
 };
-
-export const ownerMetadataPath = (paths: { readonly controlMetadata: string }): string =>
-  paths.controlMetadata;
 
 /** Reads and validates complete owner metadata without probing or mutating. */
 export const readOwnerMetadata = (
@@ -337,5 +331,3 @@ export const acquireOwnership = (options: {
       }),
     );
   });
-
-export { endpointPath };

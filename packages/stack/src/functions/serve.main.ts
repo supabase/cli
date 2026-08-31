@@ -1,4 +1,6 @@
 // @ts-nocheck
+// oxlint-disable effecttsgo/async-function -- standalone Edge Runtime artifact uses Deno async APIs.
+// oxlint-disable effecttsgo/global-console -- standalone artifact emits its user-facing bootstrap logs.
 declare const Deno: any;
 declare const EdgeRuntime: any;
 

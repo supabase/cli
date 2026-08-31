@@ -21,7 +21,7 @@ import type {
 import type { StackStateStore } from "./StackStateStore.ts";
 import type { PortRegistry } from "./PortRegistry.ts";
 
-export interface ListenerIntent {
+interface ListenerIntent {
   readonly enabled: boolean;
   readonly address: string;
   readonly port: "automatic" | number;
@@ -30,7 +30,7 @@ export interface ListenerIntent {
 export type ListenerIntents = Readonly<Record<PortField, ListenerIntent>>;
 
 /** A workload endpoint reachable by the host gateway on a durable loopback port. */
-export interface PrivatePortIntent {
+interface PrivatePortIntent {
   readonly workloadId: string;
   readonly binding: string;
 }
@@ -44,11 +44,11 @@ export interface HostListener {
   readonly binding: HostListenerBinding;
 }
 
-export type HostListenerBinding =
+type HostListenerBinding =
   | { readonly kind: "http"; readonly server: HttpServer }
   | { readonly kind: "tcp"; readonly server: NetServer; readonly allowHalfOpen: true };
 
-export interface PortPlanOptions {
+interface PortPlanOptions {
   readonly lifecycle?: "stopped" | "running";
   readonly expectedGeneration?: number;
   /** Generation to persist after this transaction; unchanged unless explicitly supplied. */

@@ -12,14 +12,14 @@ export class FunctionPathError extends Data.TaggedError("FunctionPathError")<{
   readonly cause?: unknown;
 }> {}
 
-export const FUNCTIONS_CONTAINER_ROOT = "/__supabase_functions";
+const FUNCTIONS_CONTAINER_ROOT = "/__supabase_functions";
 
 export interface FunctionsRootOptions {
   /** The configured functionsRoot; Compiler supplies an absolute path. */
   readonly root: string;
 }
 
-export interface ContainerMount {
+interface ContainerMount {
   readonly source: string;
   readonly target: string;
   readonly readOnly: true;

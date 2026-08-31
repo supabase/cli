@@ -8,16 +8,16 @@ import { resolveThirdPartyIssuer } from "../model/capabilities/auth-third-party.
 import { Effect } from "effect";
 import { StackPreparationError } from "../public/Errors.ts";
 
-export type WorkloadRuntimeKind = "native" | "container";
+type WorkloadRuntimeKind = "native" | "container";
 
 /** Closed set of private ports a workload may expose to the host gateway. */
-export type WorkloadBindingName = "primary" | "admin" | "ui" | "smtp" | "pop3";
+type WorkloadBindingName = "primary" | "admin" | "ui" | "smtp" | "pop3";
 
-export interface WorkloadBinding {
+interface WorkloadBinding {
   readonly containerPort: number;
 }
 
-export interface WorkloadBindings {
+interface WorkloadBindings {
   readonly primary?: WorkloadBinding;
   readonly admin?: WorkloadBinding;
   readonly ui?: WorkloadBinding;
@@ -58,7 +58,7 @@ export interface WorkloadRuntimeInputs {
   readonly hostRoute?: ContainerHostRoute;
 }
 
-export interface NativeProcessResolution {
+interface NativeProcessResolution {
   readonly executable: string;
   readonly args: ReadonlyArray<string>;
   readonly cwd: string;

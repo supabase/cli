@@ -23,12 +23,12 @@ import {
 
 export { FunctionNotFoundError, FunctionPathError } from "./FunctionsRoot.ts";
 
-export interface FunctionInvocationPath {
+interface FunctionInvocationPath {
   readonly native: string;
   readonly container: string;
 }
 
-export interface FunctionInvocationRoot {
+interface FunctionInvocationRoot {
   readonly native: string;
   readonly container: string;
   readonly mount: FunctionsContainerMapping["mount"];

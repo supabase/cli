@@ -31,7 +31,7 @@ import { DesiredStackLifecycleSchema, NetworkPortSchema, PORT_FIELDS } from "../
 
 export const STACK_STATE_FORMAT = "supabase-stack-state-v1" as const;
 
-export const PersistedStackIdentitySchema = Schema.Struct({
+const PersistedStackIdentitySchema = Schema.Struct({
   stackId: Schema.String.check(Schema.isPattern(/^[0-9a-f]{64}$/)),
   projectRoot: Schema.String,
   checkoutRoot: Schema.String,
@@ -43,7 +43,7 @@ export const PersistedStackIdentitySchema = Schema.Struct({
 });
 export type PersistedStackIdentity = Schema.Schema.Type<typeof PersistedStackIdentitySchema>;
 
-export const HostPortAssignmentSchema = Schema.Struct({
+const HostPortAssignmentSchema = Schema.Struct({
   field: Schema.Literals(PORT_FIELDS),
   port: NetworkPortSchema,
   intent: Schema.Literals(["automatic", "exact"] as const),
@@ -51,21 +51,19 @@ export const HostPortAssignmentSchema = Schema.Struct({
 export type HostPortAssignment = Schema.Schema.Type<typeof HostPortAssignmentSchema>;
 
 /** A durable loopback endpoint used by the host gateway to reach one workload. */
-export const PrivatePortAssignmentSchema = Schema.Struct({
+const PrivatePortAssignmentSchema = Schema.Struct({
   workloadId: Schema.String.check(Schema.isNonEmpty()),
   binding: Schema.String.check(Schema.isNonEmpty()),
   port: NetworkPortSchema,
 });
 export type PrivatePortAssignment = Schema.Schema.Type<typeof PrivatePortAssignmentSchema>;
 
-export const PersistedSecretEntrySchema = Schema.Struct({
+const PersistedSecretEntrySchema = Schema.Struct({
   policy: Schema.Literals(["managed", "passthrough"] as const),
   value: Schema.String,
 });
-export type PersistedSecretEntry = Schema.Schema.Type<typeof PersistedSecretEntrySchema>;
-
 /** Secret slots are dynamic because function environment names are user-defined. */
-export const PersistedSecretValuesSchema = Schema.Record(
+const PersistedSecretValuesSchema = Schema.Record(
   Schema.String.check(Schema.isPattern(/^[A-Za-z0-9_.:/-]+$/)),
   PersistedSecretEntrySchema,
 );
@@ -260,7 +258,7 @@ const isDefinitionShape = (input: unknown): input is StackDefinition => {
 };
 
 /** One closed, exhaustive schema for the compiler's fully materialized definition. */
-export const StackDefinitionSchema = Schema.declareConstructor<StackDefinition>()(
+const StackDefinitionSchema = Schema.declareConstructor<StackDefinition>()(
   [],
   () => (input, ast, options) =>
     Effect.gen(function* () {
@@ -338,9 +336,6 @@ export const PersistedStackStateSchema = stateShape.pipe(
   }),
 );
 export type PersistedStackState = Schema.Schema.Type<typeof PersistedStackStateSchema>;
-
-export const isPersistedStackIdentity = (value: unknown): value is PersistedStackIdentity =>
-  Schema.is(PersistedStackIdentitySchema)(value);
 
 export const toPersistedIdentity = (
   identity: StackIdentity,

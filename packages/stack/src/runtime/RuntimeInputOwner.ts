@@ -24,7 +24,7 @@ import { resolveThirdPartyIssuer } from "../model/capabilities/auth-third-party.
 /** A parsed JSON document fetched by the owner for OIDC discovery. */
 export type RuntimeJsonFetcher = (url: string) => Effect.Effect<unknown, StackPreparationError>;
 
-export interface RuntimeAuthTemplate {
+interface RuntimeAuthTemplate {
   /** Stable URL id used by GoTrue's mailer template setting. */
   readonly id: string;
   /** User-configured project-relative path. */
@@ -35,7 +35,7 @@ export interface RuntimeAuthTemplate {
   readonly extension: string;
 }
 
-export interface RuntimeInputMaterial {
+interface RuntimeInputMaterial {
   readonly auth?: Readonly<{
     readonly jwtKeys?: string;
     readonly jwks: string;
@@ -233,7 +233,7 @@ end
 `;
 
 /** Resolves materialized Edge Runtime secrets to their caller-visible names. */
-export const resolveFunctionsEdgeRuntimeSecrets = (
+const resolveFunctionsEdgeRuntimeSecrets = (
   state: PersistedStackState,
 ): Effect.Effect<Readonly<Record<string, string>>, StackPreparationError> => {
   const settings = settingsFor(state, "functions");
