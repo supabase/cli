@@ -1131,11 +1131,7 @@ const downloadWithDockerUnbundle = Effect.fnUntraced(function* (
       onStderr: (chunk) => output.raw(chunk, "stderr"),
     }).pipe(
       Effect.mapError(
-        withDockerStepFailure(
-          "failed to run the edge-runtime unbundle container",
-          slug,
-          styleAqua,
-        ),
+        withDockerStepFailure("failed to run the edge-runtime unbundle container", slug, styleAqua),
       ),
     );
 
@@ -1155,8 +1151,7 @@ const downloadWithDockerUnbundle = Effect.fnUntraced(function* (
           .split(/\r?\n/)
           .some((line) => line.trim().toLowerCase() === "invalid eszip v2");
       const suggestion =
-        (invalidEszipV2 ? suggestDenoV2(styleEmphasis) : "") +
-        suggestLegacyBundle(slug, styleAqua);
+        (invalidEszipV2 ? suggestDenoV2(styleEmphasis) : "") + suggestLegacyBundle(slug, styleAqua);
       return yield* Effect.fail(
         Object.assign(new Error(`error running container: exit ${result.exitCode}`), {
           suggestion,
