@@ -1,7 +1,7 @@
 import { Effect, Option } from "effect";
-import { LegacyOutputFlag } from "../../../shared/legacy/global-flags.ts";
-import { Output } from "../../../shared/output/output.service.ts";
-import { encodeGoJson, encodeToml, encodeYaml } from "../../shared/legacy-go-output.encoders.ts";
+import { LegacyOutputFlag } from "../../../../shared/legacy/global-flags.ts";
+import { Output } from "../../../../shared/output/output.service.ts";
+import { encodeGoJson, encodeToml, encodeYaml } from "../../../shared/legacy-go-output.encoders.ts";
 import { LegacyWorkersEnvNotSupportedError } from "./workers.errors.ts";
 
 /**

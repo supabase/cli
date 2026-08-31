@@ -1,21 +1,21 @@
 import { Effect, Option } from "effect";
-import { Output } from "../../../../shared/output/output.service.ts";
+import { Output } from "../../../../../shared/output/output.service.ts";
 import { legacyRenderWorkerDetails } from "../workers.format.ts";
 import {
   legacyEmitWorkersMachineOutput,
   legacyRejectWorkersEnvOutput,
   legacyWorkersProjectRefSuffix,
 } from "../workers.output.ts";
-import { LegacyPlatformApi } from "../../../auth/legacy-platform-api.service.ts";
-import { LegacyCliSettings } from "../../../config/legacy-cli-settings.service.ts";
-import { displayPath } from "../../../../shared/workers/worker-paths.ts";
-import { formatApiSize } from "../../../../shared/workers/worker-runtimes.ts";
-import { workerUrl } from "../../../../shared/workers/worker-url.ts";
-import { getWorker } from "../../../../shared/workers/workers-api.ts";
-import { WorkerNotDeployedError } from "../../../../shared/workers/workers.errors.ts";
-import { LegacyProjectRefResolver } from "../../../config/legacy-project-ref.service.ts";
-import { LegacyLinkedProjectCache } from "../../../telemetry/legacy-linked-project-cache.service.ts";
-import { LegacyTelemetryState } from "../../../telemetry/legacy-telemetry-state.service.ts";
+import { LegacyPlatformApi } from "../../../../auth/legacy-platform-api.service.ts";
+import { LegacyCliSettings } from "../../../../config/legacy-cli-settings.service.ts";
+import { displayPath } from "../../../../../shared/workers/worker-paths.ts";
+import { formatApiSize } from "../../../../../shared/workers/worker-runtimes.ts";
+import { workerUrl } from "../../../../../shared/workers/worker-url.ts";
+import { getWorker } from "../../../../../shared/workers/workers-api.ts";
+import { WorkerNotDeployedError } from "../../../../../shared/workers/workers.errors.ts";
+import { LegacyProjectRefResolver } from "../../../../config/legacy-project-ref.service.ts";
+import { LegacyLinkedProjectCache } from "../../../../telemetry/legacy-linked-project-cache.service.ts";
+import { LegacyTelemetryState } from "../../../../telemetry/legacy-telemetry-state.service.ts";
 import {
   legacyDescribeWorkerForReporting,
   legacyLoadWorkersProjectForReporting,
@@ -24,7 +24,7 @@ import {
 import type { LegacyWorkersStatusFlags } from "./status.command.ts";
 
 /**
- * `supabase workers status [name]` — everything known about one worker.
+ * `supabase experimental workers status [name]` — everything known about one worker.
  *
  * `list`'s companion: the size, image and URL a `push` printed once and then
  * scrolled away, plus the live instance tally, which is the only place it is
@@ -66,7 +66,7 @@ export const legacyWorkersStatus = Effect.fn("legacy.workers.status")(function* 
       return yield* Effect.fail(
         new WorkerNotDeployedError({
           detail: `Nothing is deployed for "${name}" in project ${projectRef}.`,
-          suggestion: `Deploy it with \`supabase workers push ${name}${refSuffix}\`.`,
+          suggestion: `Deploy it with \`supabase experimental workers push ${name}${refSuffix}\`.`,
         }),
       );
     }
@@ -151,7 +151,9 @@ export const legacyWorkersStatus = Effect.fn("legacy.workers.status")(function* 
     // Not while it is being torn down: deletion is asynchronous, so a push here
     // races the tombstone or resurrects the very worker the user is removing.
     if (record.buildState === "failed" && record.deleting !== true) {
-      yield* output.raw(`Fix the issue, then re-run supabase workers push ${name}${refSuffix}.\n`);
+      yield* output.raw(
+        `Fix the issue, then re-run supabase experimental workers push ${name}${refSuffix}.\n`,
+      );
     }
   }).pipe(
     Effect.ensuring(linkedProjectCache.cache(projectRef)),

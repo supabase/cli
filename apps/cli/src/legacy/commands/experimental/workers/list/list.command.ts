@@ -1,8 +1,8 @@
 import { Command, Flag } from "effect/unstable/cli";
 import type * as CliCommand from "effect/unstable/cli/Command";
-import { withJsonErrorHandling } from "../../../../shared/output/json-error-handling.ts";
-import { legacyManagementApiRuntimeLayer } from "../../../shared/legacy-management-api-runtime.layer.ts";
-import { withLegacyCommandInstrumentation } from "../../../telemetry/legacy-command-instrumentation.ts";
+import { withJsonErrorHandling } from "../../../../../shared/output/json-error-handling.ts";
+import { legacyManagementApiRuntimeLayer } from "../../../../shared/legacy-management-api-runtime.layer.ts";
+import { withLegacyCommandInstrumentation } from "../../../../telemetry/legacy-command-instrumentation.ts";
 import { legacyWorkersList } from "./list.handler.ts";
 
 const config = {
@@ -21,7 +21,7 @@ export const legacyWorkersListCommand = Command.make("list", config).pipe(
   Command.withShortDescription("List this project's workers"),
   Command.withExamples([
     {
-      command: "supabase workers list",
+      command: "supabase experimental workers list",
       description: "See every worker in the linked project",
     },
   ]),

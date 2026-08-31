@@ -1,13 +1,13 @@
 import { Layer } from "effect";
 import { Argument, Command, Flag } from "effect/unstable/cli";
 import type * as CliCommand from "effect/unstable/cli/Command";
-import { withJsonErrorHandling } from "../../../../shared/output/json-error-handling.ts";
-import { commandRuntimeLayer } from "../../../../shared/runtime/command-runtime.layer.ts";
-import { WORKER_RUNTIMES, WORKER_SIZES } from "../../../../shared/workers/worker-runtimes.ts";
-import { legacyCliSettingsLayer } from "../../../config/legacy-cli-settings.layer.ts";
-import { legacyDebugLoggerLayer } from "../../../shared/legacy-debug-logger.layer.ts";
-import { legacyTelemetryStateLayer } from "../../../telemetry/legacy-telemetry-state.layer.ts";
-import { withLegacyCommandInstrumentation } from "../../../telemetry/legacy-command-instrumentation.ts";
+import { withJsonErrorHandling } from "../../../../../shared/output/json-error-handling.ts";
+import { commandRuntimeLayer } from "../../../../../shared/runtime/command-runtime.layer.ts";
+import { WORKER_RUNTIMES, WORKER_SIZES } from "../../../../../shared/workers/worker-runtimes.ts";
+import { legacyCliSettingsLayer } from "../../../../config/legacy-cli-settings.layer.ts";
+import { legacyDebugLoggerLayer } from "../../../../shared/legacy-debug-logger.layer.ts";
+import { legacyTelemetryStateLayer } from "../../../../telemetry/legacy-telemetry-state.layer.ts";
+import { withLegacyCommandInstrumentation } from "../../../../telemetry/legacy-command-instrumentation.ts";
 import { legacyWorkersNew } from "./new.handler.ts";
 
 const config = {
@@ -52,15 +52,15 @@ export const legacyWorkersNewCommand = Command.make("new", config).pipe(
   Command.withShortDescription("Scaffold a worker locally"),
   Command.withExamples([
     {
-      command: "supabase workers new api",
+      command: "supabase experimental workers new api",
       description: "Scaffold supabase/workers/api, prompting for runtime and size",
     },
     {
-      command: "supabase workers new api --runtime node",
+      command: "supabase experimental workers new api --runtime node",
       description: "Scaffold supabase/workers/api on the node runtime",
     },
     {
-      command: "supabase workers new api --source packages/api",
+      command: "supabase experimental workers new api --source packages/api",
       description: "Scaffold the worker outside the workers directory",
     },
   ]),

@@ -9,8 +9,8 @@ import {
   workersRoute,
   WORKERS_PROJECT_REF,
   type WorkersHttpRoutes,
-} from "../../../../../tests/helpers/legacy-workers.ts";
-import { LegacyProjectNotLinkedError } from "../../../config/legacy-project-ref.errors.ts";
+} from "../../../../../../tests/helpers/legacy-workers.ts";
+import { LegacyProjectNotLinkedError } from "../../../../config/legacy-project-ref.errors.ts";
 import { LegacyWorkersEnvNotSupportedError } from "../workers.errors.ts";
 import {
   NoWorkersToDeployError,
@@ -20,7 +20,7 @@ import {
   WorkersUnavailableError,
   WorkerSourceMissingError,
   WorkerUploadFailedError,
-} from "../../../../shared/workers/workers.errors.ts";
+} from "../../../../../shared/workers/workers.errors.ts";
 import { legacyWorkersPush } from "./push.handler.ts";
 import type { LegacyWorkersPushFlags } from "./push.command.ts";
 
@@ -295,7 +295,9 @@ describe("legacy workers push", () => {
 
       expect(error).toBeInstanceOf(WorkerBuildFailedError);
       expect((error as WorkerBuildFailedError).detail).toContain("error building image");
-      expect((error as WorkerBuildFailedError).suggestion).toContain("supabase workers push api");
+      expect((error as WorkerBuildFailedError).suggestion).toContain(
+        "supabase experimental workers push api",
+      );
     }).pipe(Effect.provide(layer), Effect.ensuring(Effect.sync(repo.cleanup)));
   });
 
@@ -317,7 +319,9 @@ describe("legacy workers push", () => {
       );
 
       expect(error).toBeInstanceOf(WorkerBuildTimeoutError);
-      expect((error as { suggestion: string }).suggestion).toContain("supabase workers status api");
+      expect((error as { suggestion: string }).suggestion).toContain(
+        "supabase experimental workers status api",
+      );
     }).pipe(Effect.provide(layer), Effect.ensuring(Effect.sync(repo.cleanup)));
   });
 
@@ -510,7 +514,9 @@ describe("legacy workers push", () => {
       const error = yield* push().pipe(Effect.flip);
 
       expect(error).toBeInstanceOf(WorkerSourceMissingError);
-      expect((error as WorkerSourceMissingError).suggestion).toContain("supabase workers new api");
+      expect((error as WorkerSourceMissingError).suggestion).toContain(
+        "supabase experimental workers new api",
+      );
       expect(http.requests).toHaveLength(0);
     }).pipe(Effect.provide(layer), Effect.ensuring(Effect.sync(repo.cleanup)));
   });

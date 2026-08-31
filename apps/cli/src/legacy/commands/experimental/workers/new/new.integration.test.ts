@@ -5,16 +5,16 @@ import { Effect, Option } from "effect";
 import {
   makeWorkersProject,
   setupLegacyWorkers,
-} from "../../../../../tests/helpers/legacy-workers.ts";
+} from "../../../../../../tests/helpers/legacy-workers.ts";
 import {
   WorkerAlreadyConfiguredError,
   WorkerConfigWriteUnsafeError,
-} from "../../../../shared/workers/worker-config.ts";
+} from "../../../../../shared/workers/worker-config.ts";
 import {
   InvalidWorkerNameError,
   InvalidWorkerSourceError,
   WorkerDirectoryExistsError,
-} from "../../../../shared/workers/workers.errors.ts";
+} from "../../../../../shared/workers/workers.errors.ts";
 import { legacyWorkersNew } from "./new.handler.ts";
 import type { LegacyWorkersNewFlags } from "./new.command.ts";
 
@@ -66,7 +66,7 @@ describe("legacy workers new", () => {
       // the shape `functions new` established.
       expect(out.stdoutText).toContain("Created new Worker at supabase/workers/api");
       expect(out.stdoutText).toContain("Runtime");
-      expect(out.stdoutText).toContain("supabase workers push api");
+      expect(out.stdoutText).toContain("supabase experimental workers push api");
     }).pipe(Effect.provide(layer), Effect.ensuring(Effect.sync(repo.cleanup)));
   });
   it.live("prompts for runtime and size when neither is given", () => {

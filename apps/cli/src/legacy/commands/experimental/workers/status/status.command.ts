@@ -1,8 +1,8 @@
 import { Argument, Command, Flag } from "effect/unstable/cli";
 import type * as CliCommand from "effect/unstable/cli/Command";
-import { withJsonErrorHandling } from "../../../../shared/output/json-error-handling.ts";
-import { legacyManagementApiRuntimeLayer } from "../../../shared/legacy-management-api-runtime.layer.ts";
-import { withLegacyCommandInstrumentation } from "../../../telemetry/legacy-command-instrumentation.ts";
+import { withJsonErrorHandling } from "../../../../../shared/output/json-error-handling.ts";
+import { legacyManagementApiRuntimeLayer } from "../../../../shared/legacy-management-api-runtime.layer.ts";
+import { withLegacyCommandInstrumentation } from "../../../../telemetry/legacy-command-instrumentation.ts";
 import { legacyWorkersStatus } from "./status.handler.ts";
 
 const config = {
@@ -22,7 +22,7 @@ export const legacyWorkersStatusCommand = Command.make("status", config).pipe(
   Command.withShortDescription("Show a worker in detail"),
   Command.withExamples([
     {
-      command: "supabase workers status api",
+      command: "supabase experimental workers status api",
       description: "Inspect a specific worker",
     },
   ]),

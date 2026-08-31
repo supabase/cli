@@ -1,4 +1,4 @@
-# `supabase workers new <name>`
+# `supabase experimental workers new <name>`
 
 > **Local-disk only.** Nothing is deployed and no Management API route is
 > called; `workers push` is what talks to the platform.
