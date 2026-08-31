@@ -1098,3 +1098,7 @@ private-port reservation plus gateway ownership atomic with accepted lifecycle g
 - Deferred no correctness work: the pinned Auth/Storage image-default and migration-entrypoint contract is owned by the
   shared Docker whole-stack E2E. Suggested resolution-type, init-name, and engine-codec refactors were rejected as
   cleanup that would not simplify the two distinct boundaries or improve the demonstrated lifecycle.
+- The second Fable pass confirmed the three corrections and production wiring, then closed the remaining cheap
+  evidence gaps: exit-zero plus failed log persistence still blocks main creation, both Docker and Podman execute the
+  strict wait decoder, and the deliberate init/main name reuse is documented beside the invariant. The milestone is
+  converged conditional only on the shared Docker E2E exercising the pinned images.

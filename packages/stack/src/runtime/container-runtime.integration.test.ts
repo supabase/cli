@@ -350,6 +350,14 @@ describe("container runtime", () => {
         platform: { os: "linux", desktop: false },
       });
       expect(yield* docker.waitContainer("container-id")).toBe(17);
+      const podman = makePodmanEngine({
+        runner: makeControlledCommandRunner({
+          run: (request) =>
+            Effect.succeed(commandResult(request.args[0] === "wait" ? "17\n" : "27.0.0\n")),
+        }),
+        platform: { os: "linux", rootless: true },
+      });
+      expect(yield* podman.waitContainer("container-id")).toBe(17);
       const malformed = makeDockerEngine({
         runner: makeControlledCommandRunner({
           run: () => Effect.succeed(commandResult("17\n18\n")),
@@ -360,6 +368,19 @@ describe("container runtime", () => {
       expect(Exit.isFailure(result)).toBe(true);
       if (Exit.isFailure(result)) {
         const error = Cause.findErrorOption(result.cause);
+        expect(Option.isSome(error)).toBe(true);
+        if (Option.isSome(error)) expect(error.value).toBeInstanceOf(ContainerEngineProtocolError);
+      }
+      const malformedPodman = makePodmanEngine({
+        runner: makeControlledCommandRunner({
+          run: () => Effect.succeed(commandResult("17\n18\n")),
+        }),
+        platform: { os: "linux", rootless: true },
+      });
+      const podmanResult = yield* malformedPodman.waitContainer("container-id").pipe(Effect.exit);
+      expect(Exit.isFailure(podmanResult)).toBe(true);
+      if (Exit.isFailure(podmanResult)) {
+        const error = Cause.findErrorOption(podmanResult.cause);
         expect(Option.isSome(error)).toBe(true);
         if (Option.isSome(error)) expect(error.value).toBeInstanceOf(ContainerEngineProtocolError);
       }
@@ -658,6 +679,49 @@ describe("container runtime", () => {
       }
       expect(state.createdSpecs).toHaveLength(1);
       expect(state.resources.some((resource) => resource.kind === "workload")).toBe(false);
+    }),
+  );
+
+  it.live("blocks the main workload when startup log persistence fails after exit zero", () =>
+    Effect.gen(function* () {
+      const state: FakeContainerState = {
+        resources: [],
+        imagePresent: true,
+        calls: [],
+        createdSpecs: [],
+        nextId: 1,
+      };
+      const logError = new LogStoreError({
+        path: "memory://container-logs-failure",
+        message: "disk full",
+      });
+      const runtime = yield* makeContainerRuntime({
+        engine: {
+          ...fakeContainerEngine(state),
+          streamLogs: () =>
+            Stream.fromIterable([
+              { stream: "stdout", message: "migration-output" } satisfies ContainerLogLine,
+            ]),
+        },
+        ownerSessionId: "owner-session",
+        logStore: {
+          path: logError.path,
+          append: () => Effect.fail(logError),
+          read: () => Effect.succeed([]),
+          retained: () => Effect.succeed([]),
+          stream: () => Stream.empty,
+        },
+        resolveWorkload: () =>
+          Effect.succeed({
+            startup: [{ entrypoint: "/usr/local/bin/auth", command: ["migrate"] }],
+          }),
+      });
+      const result = yield* runtime.start(key, workload()).pipe(Effect.exit);
+      expect(Exit.isFailure(result)).toBe(true);
+      expect(state.createdSpecs).toHaveLength(1);
+      expect(state.calls.filter((call) => call.startsWith("start:"))).toHaveLength(1);
+      expect(state.resources.some((resource) => resource.kind === "workload")).toBe(false);
+      if (Exit.isFailure(result)) expect(Cause.pretty(result.cause)).toContain("disk full");
     }),
   );
 

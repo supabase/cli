@@ -357,6 +357,7 @@ export const makeContainerRuntime = (
     ): Effect.Effect<void, RuntimeDriverError> => {
       const labels = startupLabelsFor(key, options.ownerSessionId, index);
       const specification: ContainerContainerSpec = {
+        // Reuse the main name so crash-orphaned init containers are exact collisions to clean up.
         name: nameFor(key, "workload"),
         image: context.artifact.image,
         labels,
