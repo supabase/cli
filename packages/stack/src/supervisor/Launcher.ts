@@ -34,6 +34,14 @@ import {
 export { StackRuntimeEnvironment } from "../state/Ownership.ts";
 export type { StackRuntimeEnvironmentValue } from "../state/Ownership.ts";
 
+/** Private argv marker used when a compiled CLI dispatches its embedded Supervisor. */
+export const SUPERVISOR_DISPATCH_SENTINEL = "__supabase_stack_supervisor__" as const;
+
+export const supervisorEntrypointFor = (moduleUrl: string): string => {
+  const sourceEntrypoint = fileURLToPath(new URL("../entrypoints/supervisor-node.ts", moduleUrl));
+  return sourceEntrypoint.includes("/$bunfs/") ? SUPERVISOR_DISPATCH_SENTINEL : sourceEntrypoint;
+};
+
 /** Default host values are resolved only at the process composition boundary. */
 export const defaultRuntimeEnvironment = (): StackRuntimeEnvironmentValue => {
   // This synchronous helper is the composition boundary where host environment
@@ -47,9 +55,7 @@ export const defaultRuntimeEnvironment = (): StackRuntimeEnvironmentValue => {
     tempRoot: process.platform === "win32" ? (process.env.TEMP ?? "C:\\Windows\\Temp") : "/tmp",
     platform: process.platform === "win32" ? "windows" : "posix",
     supervisorCommand: process.execPath,
-    supervisorEntrypoint: fileURLToPath(
-      new URL("../entrypoints/supervisor-node.ts", import.meta.url),
-    ),
+    supervisorEntrypoint: supervisorEntrypointFor(import.meta.url),
   };
 };
 

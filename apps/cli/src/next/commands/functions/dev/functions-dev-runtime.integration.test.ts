@@ -68,9 +68,9 @@ describe("managed Functions serving", () => {
       hello: {
         enabled: true,
         verify_jwt: true,
-        import_map: "",
+        import_map: "./functions/hello/manifest-deno.json",
         entrypoint: "./functions/hello/index.ts",
-        static_files: [],
+        static_files: ["./functions/hello/public/*.html"],
         env: { CONFIG_TOKEN: "config-secret" },
       },
     };
@@ -93,7 +93,7 @@ describe("managed Functions serving", () => {
         stackName: "default",
         envFile: "flags.env",
         noVerifyJwt: true,
-        importMap: "supabase/functions/custom-deno.json",
+        importMap: "./functions/hello/custom-deno.json",
         inspectMode: "wait",
         inspectMain: true,
       },
@@ -109,7 +109,9 @@ describe("managed Functions serving", () => {
           expect(functionSettings?.functions_root).toBe("supabase/functions");
           expect(functionSettings?.inspector).toEqual({ mode: "wait", main: true });
           expect(hello?.verify_jwt).toBe(false);
-          expect(hello?.import_map).toBe("supabase/functions/custom-deno.json");
+          expect(hello?.import_map).toBe("custom-deno.json");
+          expect(hello?.entrypoint).toBe("index.ts");
+          expect(hello?.static_files).toEqual(["public/*.html"]);
           const configToken = hello?.env?.CONFIG_TOKEN;
           const envToken = hello?.env?.ENV_TOKEN;
           expect(configToken).toBeDefined();

@@ -59,6 +59,22 @@ class SupervisorReadinessError extends Data.TaggedError("SupervisorReadinessErro
   readonly cause?: unknown;
 }> {}
 
+const reportSupervisorFailure = (error: unknown): void => {
+  try {
+    const conflict = error instanceof StackOwnershipConflictError;
+    // The descriptor is owned by the parent launcher and intentionally
+    // written directly at this standalone process boundary.
+    NodeFs.writeSync(
+      3,
+      `${Schema.encodeSync(Schema.fromJsonString(ReadySchema))({ ok: false, code: conflict ? "ownership-conflict" : "failed", message: error instanceof Error ? error.message : "Supervisor failed" })}\n`,
+    );
+    NodeFs.closeSync(3);
+  } catch {
+    // The parent may have already closed the readiness descriptor.
+  }
+  process.exitCode = 1;
+};
+
 const writeReadiness = (
   value: Schema.Schema.Type<typeof ReadySchema>,
 ): Effect.Effect<void, SupervisorReadinessError> =>
@@ -143,24 +159,13 @@ export const runSupervisor = (args: SupervisorArgs) =>
 export const parseSupervisorArgs = (argv: ReadonlyArray<string>) =>
   Schema.decodeEffect(Schema.fromJsonString(SupervisorArgsSchema))(argv[0] ?? "{}");
 
+export const runSupervisorProcess = (argv: ReadonlyArray<string>): Promise<void> =>
+  Effect.runPromise(parseSupervisorArgs(argv).pipe(Effect.flatMap(runSupervisor))).catch(
+    reportSupervisorFailure,
+  );
+
 if (import.meta.main) {
-  Effect.runPromise(
-    parseSupervisorArgs(process.argv.slice(2)).pipe(Effect.flatMap(runSupervisor)),
-  ).catch((error: unknown) => {
-    try {
-      const conflict = error instanceof StackOwnershipConflictError;
-      // The descriptor is owned by the parent launcher and intentionally
-      // written directly at this standalone process boundary.
-      NodeFs.writeSync(
-        3,
-        `${Schema.encodeSync(Schema.fromJsonString(ReadySchema))({ ok: false, code: conflict ? "ownership-conflict" : "failed", message: error instanceof Error ? error.message : "Supervisor failed" })}\n`,
-      );
-      NodeFs.closeSync(3);
-    } catch {
-      // The parent may have already closed the readiness descriptor.
-    }
-    process.exitCode = 1;
-  });
+  await runSupervisorProcess(process.argv.slice(2));
 }
 
 export { StackRuntimeEnvironment };

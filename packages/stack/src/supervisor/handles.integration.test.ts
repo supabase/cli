@@ -22,7 +22,12 @@ import {
   listStacks,
 } from "../public/EffectStack.ts";
 import { deriveStackId, resolveStackIdentity } from "../identity/Identity.ts";
-import { defaultRuntimeEnvironment, type StackRuntimeEnvironmentValue } from "./Launcher.ts";
+import {
+  defaultRuntimeEnvironment,
+  SUPERVISOR_DISPATCH_SENTINEL,
+  supervisorEntrypointFor,
+  type StackRuntimeEnvironmentValue,
+} from "./Launcher.ts";
 import { StackIdSchema } from "../public/StackId.ts";
 import type { StackId } from "../public/StackId.ts";
 import { readOwnerMetadata, StackRuntimeEnvironment } from "../state/Ownership.ts";
@@ -107,6 +112,13 @@ const quoteModuleSpecifier = (value: string): string =>
   `'${value.replaceAll("\\", "\\\\").replaceAll("'", "\\'")}'`;
 
 describe("managed stack handles", { timeout: 30_000 }, () => {
+  it("selects the private dispatch marker only for compiled Bun paths", () => {
+    expect(
+      supervisorEntrypointFor("file:///$bunfs/root/packages/stack/src/supervisor/Launcher.ts"),
+    ).toBe(SUPERVISOR_DISPATCH_SENTINEL);
+    expect(supervisorEntrypointFor(import.meta.url)).not.toBe(SUPERVISOR_DISPATCH_SENTINEL);
+  });
+
   it.live("resolves a new automatic container identity and persists Docker", () =>
     withRuntimeRoot((project) =>
       Effect.gen(function* () {

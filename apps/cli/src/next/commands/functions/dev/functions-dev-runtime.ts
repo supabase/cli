@@ -104,6 +104,15 @@ const statusAfterReadiness = Effect.fnUntraced(function* (
   return next.value;
 });
 
+/** Converts a manifest path (relative to `supabase`) to the function directory's path. */
+function relativeFunctionPath(slug: string, pathname: string): string;
+function relativeFunctionPath(slug: string, pathname: undefined): undefined;
+function relativeFunctionPath(slug: string, pathname: string | undefined): string | undefined {
+  if (pathname === undefined) return undefined;
+  const prefix = `./functions/${slug}/`;
+  return pathname.startsWith(prefix) ? pathname.slice(prefix.length) : pathname;
+}
+
 const toFunctionOverrides = (
   manifest: FunctionsManifest,
   options: ServeManagedFunctionsOptions,
@@ -115,9 +124,9 @@ const toFunctionOverrides = (
       {
         enabled: config.enabled,
         verify_jwt: options.noVerifyJwt === true ? false : config.verify_jwt,
-        import_map: options.importMap ?? config.import_map,
-        entrypoint: config.entrypoint,
-        static_files: config.static_files,
+        import_map: relativeFunctionPath(slug, options.importMap ?? config.import_map),
+        entrypoint: relativeFunctionPath(slug, config.entrypoint),
+        static_files: config.static_files.map((pathname) => relativeFunctionPath(slug, pathname)),
         env: Object.fromEntries(
           Object.entries({ ...config.env, ...envFile }).map(([name, value]) => [
             name,
