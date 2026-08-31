@@ -1,3 +1,4 @@
+// oxlint-disable effecttsgo/global-date, effecttsgo/global-date-in-effect, effecttsgo/new-promise, effecttsgo/node-builtin-import -- The manager fixture bridges native filesystem/process APIs and intentionally dynamic timing values used by integration scenarios.
 import { NodeFileSystem } from "@effect/platform-node";
 import { Effect, Predicate, Stream } from "effect";
 import { mkdirSync, mkdtempSync, rmSync } from "node:fs";
@@ -13,7 +14,7 @@ import { managedStackManagerLayer } from "../../src/managed/manager.ts";
 import type { ManagedPortIntentDocument } from "../../src/managed/model.ts";
 import { acquireControl, isControlOwnership } from "../../src/managed/control.ts";
 import { deriveStackId, ensureEnvironment } from "../../src/managed/environment.ts";
-import { reservePortSet } from "../../src/PortAllocator.ts";
+import { PortAllocationError, reservePortSet } from "../../src/PortAllocator.ts";
 import type { Stack } from "../../src/Stack.ts";
 
 export const cleanupRoots = (roots: Array<string>) => {
@@ -36,28 +37,27 @@ export const setupManagedManager = (roots: Array<string>) => {
 };
 
 export const controlStack = (): Stack["Service"] => ({
-  getInfo: () =>
-    Effect.succeed({
-      url: "http://127.0.0.1",
-      dbUrl: "postgres://127.0.0.1",
-      publishableKey: "publishable",
-      secretKey: "secret",
-      anonJwt: "anon",
-      serviceRoleJwt: "service",
-      serviceEndpoints: {},
-    }),
-  start: () => Effect.void,
-  stop: () => Effect.void,
-  dispose: () => Effect.void,
+  getInfo: Effect.succeed({
+    url: "http://127.0.0.1",
+    dbUrl: "postgres://127.0.0.1",
+    publishableKey: "publishable",
+    secretKey: "secret",
+    anonJwt: "anon",
+    serviceRoleJwt: "service",
+    serviceEndpoints: {},
+  }),
+  start: Effect.void,
+  stop: Effect.void,
+  dispose: Effect.void,
   startService: () => Effect.void,
   stopService: () => Effect.void,
   restartService: () => Effect.void,
   reloadFunctions: () => Effect.void,
   reloadEdgeRuntime: () => Effect.void,
-  getState: () => Effect.die("unused"),
-  getAllStates: () => Effect.succeed([]),
+  getState: () => Effect.die(new Error("unused")),
+  getAllStates: Effect.succeed([]),
   stateChanges: () => Effect.succeed(Stream.empty),
-  allStateChanges: () => Stream.empty,
+  allStateChanges: Stream.empty,
   waitReady: () => Effect.void,
   waitAllReady: () => Effect.void,
   subscribeLogs: () => Stream.empty,
@@ -100,7 +100,7 @@ const FREE_PORT_FIELDS = [
 
 export const freePorts = (
   count: number,
-): Effect.Effect<ReadonlyArray<number>, unknown, import("effect/Scope").Scope> =>
+): Effect.Effect<ReadonlyArray<number>, PortAllocationError, import("effect/Scope").Scope> =>
   Effect.gen(function* () {
     const lease = yield* reservePortSet(
       FREE_PORT_FIELDS.slice(0, count).map((field) => ({
@@ -113,14 +113,14 @@ export const freePorts = (
       return port === undefined ? [] : [port];
     });
     yield* lease.releaseAll;
-    if (ports.length !== count) return yield* Effect.fail(new Error("missing free ports"));
+    if (ports.length !== count) return yield* Effect.die(new Error("missing free ports"));
     return ports;
   });
 
-export const freePort = (): Effect.Effect<number, unknown, import("effect/Scope").Scope> =>
+export const freePort: Effect.Effect<number, PortAllocationError, import("effect/Scope").Scope> =
   Effect.gen(function* () {
     const [port] = yield* freePorts(1);
-    if (port === undefined) return yield* Effect.fail(new Error("missing free port"));
+    if (port === undefined) return yield* Effect.die(new Error("missing free port"));
     return port;
   });
 
@@ -139,9 +139,10 @@ export const closeExternal = (server: Server): Promise<void> =>
 /**
  * Control endpoints project two identity-hash bytes into `CONTROL_PORT_RANGE`,
  * so parallel test files can land on a port already owned by another live
- * stack's control server. Acquires control for a fresh directory under `base`,
- * retrying with a new directory (a new path-seeded identity, so a new port) on
- * a conflict until a wall-clock deadline, rethrowing the last conflict.
+ * stack's control server or by a non-control listener. Acquires control for a
+ * fresh directory under `base`, retrying `ControlAddressConflictError` and
+ * `ControlTransportError` with a new path-seeded identity until the deadline,
+ * then rethrowing the last failure.
  */
 export const acquireWorkspaceControl = (base: string, prefix = "workspace") =>
   Effect.gen(function* () {
@@ -150,11 +151,13 @@ export const acquireWorkspaceControl = (base: string, prefix = "workspace") =>
       const workspace = mkdtempSync(join(base, `${prefix}-`));
       const environment = yield* ensureEnvironment(workspace);
       const stackId = deriveStackId(environment.identity, "default");
-      const acquired = yield* acquireControl({ stackId }).pipe(
+      const acquired = yield* acquireControl({ stackId, maintenanceOperation: "update" }).pipe(
         Effect.map((ownership) => ({ ownership })),
         Effect.catch((error) =>
-          Predicate.isTagged(error, "ControlAddressConflictError") && Date.now() < deadline
-            ? Effect.succeed(undefined)
+          (Predicate.isTagged(error, "ControlAddressConflictError") ||
+            Predicate.isTagged(error, "ControlTransportError")) &&
+          Date.now() < deadline
+            ? Effect.void.pipe(Effect.as(undefined))
             : Effect.fail(error),
         ),
       );
@@ -174,7 +177,7 @@ export const startWithOwner = (
   Effect.gen(function* () {
     const environment = yield* ensureEnvironment(workspacePath);
     const stackId = deriveStackId(environment.identity, stackName);
-    const ownership = yield* acquireControl({ stackId });
+    const ownership = yield* acquireControl({ stackId, maintenanceOperation: "update" });
     if (!isControlOwnership(ownership)) throw new Error("expected stack control ownership");
     return yield* manager.startStack({
       workspacePath,

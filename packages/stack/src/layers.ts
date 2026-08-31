@@ -1,3 +1,4 @@
+// oxlint-disable-next-line effecttsgo/node-builtin-import -- Docker bootstrap paths use native path semantics at a synchronous layer-construction boundary.
 import { join } from "node:path";
 import { Data, Effect, Layer } from "effect";
 import { FileSystem, Path } from "effect";
@@ -17,8 +18,20 @@ import { HttpTransportClient } from "./HttpTransportClient.ts";
 import { DEFAULT_MANAGED_STACK_NAME, defaultCacheRoot } from "./paths.ts";
 import type { ManagedStackLaunchInput } from "./managed/document.ts";
 import type { ManagedPortIntentDocument } from "./managed/model.ts";
+import { ManagedStackManager } from "./managed/manager.ts";
+import { ControlTransport } from "./managed/control.ts";
+import { isControlSupervisorStatus } from "./DaemonProtocol.ts";
 import { deriveStackId, ensureEnvironment } from "./managed/environment.ts";
 import { gitConfigStoreLayer } from "./managed/git.ts";
+import { prepareUpgradeReplacement } from "./SupervisorUpgradeRestart.ts";
+import {
+  DaemonUpgradeRequired,
+  StackRpcProtocolError,
+  StackRpcTransportError,
+  StopTimeout,
+  UpgradePreflightError,
+  UpgradeRestartError,
+} from "./errors.ts";
 
 /**
  * Inputs owned by the process that will boot the runtime. The lease is passed
@@ -106,6 +119,7 @@ export class DaemonStartError extends Data.TaggedError("DaemonStartError")<{
 
 /** Managed-only additions kept outside the generic daemon config resolver. */
 export type ManagedDaemonConfigInput = DaemonConfigInput & {
+  readonly cliVersion: string;
   readonly portIntents: ManagedPortIntentDocument;
   readonly launch?: ManagedStackLaunchInput;
 };
@@ -114,15 +128,14 @@ export type ManagedDaemonConfigInput = DaemonConfigInput & {
 // Daemon-backed mode
 // ---------------------------------------------------------------------------
 
-/** Fork the unified supervisor and return a RemoteStack layer connected to it. */
-export const daemonLayer = (
+interface ManagedSupervisorStart {
+  readonly message: SupervisorStartMessage;
+  readonly configInput: DaemonConfigInput;
+}
+
+const managedSupervisorStartMessage = (
   input: ManagedDaemonConfigInput,
-  daemonEntryPoint: string,
-): Effect.Effect<
-  Layer.Layer<Stack>,
-  DaemonStartError,
-  FileSystem.FileSystem | Path.Path | HttpTransportClient
-> =>
+): Effect.Effect<ManagedSupervisorStart, DaemonStartError, FileSystem.FileSystem | Path.Path> =>
   Effect.gen(function* () {
     // Keep managed coordination metadata out of the generic daemon config.
     const { portIntents, launch, ...daemonConfigInput } = input;
@@ -142,23 +155,133 @@ export const daemonLayer = (
       projectDir,
       name,
     };
-    const httpTransportClient = yield* HttpTransportClient;
     const discovery = yield* ensureEnvironment(projectDir).pipe(
       Effect.provide(gitConfigStoreLayer),
       Effect.mapError((error) => new DaemonStartError({ message: error.message })),
     );
-    const startMsg: SupervisorStartMessage = {
-      type: "start",
-      stackId: deriveStackId(discovery.identity, name),
-      workspacePath: projectDir,
-      stackName: name,
-      stateRoot,
-      config,
-      portIntents,
-      ...(launch === undefined ? {} : { launch }),
+    return {
+      configInput: config,
+      message: {
+        type: "start",
+        cliVersion: input.cliVersion,
+        stackId: deriveStackId(discovery.identity, name),
+        workspacePath: projectDir,
+        stackName: name,
+        stateRoot,
+        config,
+        portIntents,
+        ...(launch === undefined ? {} : { launch }),
+      },
     };
+  });
+
+const launchManagedSupervisor = (
+  startMsg: SupervisorStartMessage,
+  daemonEntryPoint: string,
+): Effect.Effect<
+  Layer.Layer<Stack, DaemonUpgradeRequired | StackRpcProtocolError | StackRpcTransportError>,
+  | DaemonStartError
+  | DaemonUpgradeRequired
+  | UpgradePreflightError
+  | UpgradeRestartError
+  | StopTimeout,
+  HttpTransportClient
+> =>
+  Effect.gen(function* () {
+    const httpTransportClient = yield* HttpTransportClient;
     return yield* supervisorLayer(startMsg, daemonEntryPoint).pipe(
       Effect.provideService(HttpTransportClient, httpTransportClient),
-      Effect.mapError((error) => new DaemonStartError({ message: error.message })),
+      Effect.mapError((error) =>
+        error instanceof DaemonUpgradeRequired ||
+        error instanceof UpgradePreflightError ||
+        error instanceof UpgradeRestartError ||
+        error instanceof StopTimeout
+          ? error
+          : new DaemonStartError({ message: error.message }),
+      ),
+    );
+  });
+
+/** Fork the unified supervisor and return a RemoteStack layer connected to it. */
+export const daemonLayer = (input: ManagedDaemonConfigInput, daemonEntryPoint: string) =>
+  managedSupervisorStartMessage(input).pipe(
+    Effect.flatMap(({ message }) => launchManagedSupervisor(message, daemonEntryPoint)),
+  );
+
+/** Explicitly authorize a full stop/start when the current owner is incompatible. */
+export const restartManagedStackForUpgrade = (
+  input: ManagedDaemonConfigInput,
+  mismatch: DaemonUpgradeRequired,
+  daemonEntryPoint: string,
+): Effect.Effect<
+  Layer.Layer<Stack, DaemonUpgradeRequired | StackRpcProtocolError | StackRpcTransportError>,
+  | DaemonStartError
+  | DaemonUpgradeRequired
+  | UpgradePreflightError
+  | UpgradeRestartError
+  | StopTimeout,
+  | FileSystem.FileSystem
+  | Path.Path
+  | HttpTransportClient
+  | ManagedStackManager
+  | ControlTransport
+  | import("effect/unstable/process").ChildProcessSpawner.ChildProcessSpawner
+> =>
+  Effect.gen(function* () {
+    const { message: startMsg, configInput } = yield* managedSupervisorStartMessage(input);
+    const manager = yield* ManagedStackManager;
+    const controlTransport = yield* ControlTransport;
+    const probe = yield* manager.probeControl(startMsg.stackId).pipe(
+      Effect.mapError(
+        (error) =>
+          new UpgradeRestartError({
+            stackId: startMsg.stackId,
+            newCliVersion: startMsg.cliVersion,
+            detail: error.message,
+          }),
+      ),
+    );
+    const owner = probe?.status;
+    if (owner !== undefined && !isControlSupervisorStatus(owner)) {
+      return yield* new UpgradeRestartError({
+        stackId: startMsg.stackId,
+        newCliVersion: startMsg.cliVersion,
+        detail: `Managed stack is busy with ${owner.operation} maintenance`,
+      });
+    }
+    if (owner?.daemonCliVersion === startMsg.cliVersion) {
+      return yield* launchManagedSupervisor(startMsg, daemonEntryPoint);
+    }
+    const oldCliVersion = owner?.daemonCliVersion ?? mismatch.oldCliVersion;
+    const prepared = yield* prepareUpgradeReplacement({
+      stackId: startMsg.stackId,
+      oldCliVersion,
+      ...(probe === undefined ? {} : { oldOwner: probe }),
+      input: startMsg,
+      configInput,
+      manager,
+      controlTransport,
+    });
+    return yield* launchManagedSupervisor(
+      {
+        ...startMsg,
+        replacement: true,
+        config: prepared.effectiveConfigInput,
+        launch: prepared.launch,
+      },
+      daemonEntryPoint,
+    ).pipe(
+      Effect.mapError((error) =>
+        error instanceof DaemonUpgradeRequired ||
+        error instanceof UpgradePreflightError ||
+        error instanceof UpgradeRestartError ||
+        error instanceof StopTimeout
+          ? error
+          : new UpgradeRestartError({
+              stackId: startMsg.stackId,
+              newCliVersion: startMsg.cliVersion,
+              detail: error.message,
+            }),
+      ),
     );
   });

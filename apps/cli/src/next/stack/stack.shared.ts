@@ -6,7 +6,7 @@ export const startStackWithProgress = Effect.fnUntraced(function* () {
   const output = yield* Output;
   const stack = yield* Stack;
 
-  const initialStates = yield* stack.getAllStates();
+  const initialStates = yield* stack.getAllStates;
   const stateNames = new Set(initialStates.map((state) => state.name));
   const statesByName = new Map(initialStates.map((state) => [state.name, state] as const));
   const completedNames = new Set(
@@ -55,13 +55,13 @@ export const startStackWithProgress = Effect.fnUntraced(function* () {
       Effect.uninterruptible,
     );
 
-  const fiber = yield* Stream.runForEach(stack.allStateChanges(), updateProgress).pipe(
+  const fiber = yield* Stream.runForEach(stack.allStateChanges, updateProgress).pipe(
     Effect.catch(() => Effect.void),
     Effect.forkChild({ startImmediately: true }),
   );
 
-  yield* stack.start().pipe(Effect.ensuring(Fiber.interrupt(fiber)));
-  const finalStates = yield* stack.getAllStates();
+  yield* stack.start.pipe(Effect.ensuring(Fiber.interrupt(fiber)));
+  const finalStates = yield* stack.getAllStates;
   yield* Effect.forEach(finalStates, updateProgress, { discard: true });
   yield* prog.stop("All services started");
 });
@@ -69,7 +69,7 @@ export const startStackWithProgress = Effect.fnUntraced(function* () {
 export const printStackConnectionInfo = Effect.fnUntraced(function* () {
   const output = yield* Output;
   const stack = yield* Stack;
-  const info = yield* stack.getInfo();
+  const info = yield* stack.getInfo;
   const serviceEndpoints = Object.entries(info.serviceEndpoints).sort(([a], [b]) =>
     a.localeCompare(b),
   );

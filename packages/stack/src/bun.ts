@@ -1,3 +1,5 @@
+// oxlint-disable effecttsgo/async-function, effecttsgo/multiple-effect-provide -- Public Bun Promise facades intentionally bridge host async calls; platform and transport layers are staged to preserve dependency and scope ordering.
+
 import { BunServices } from "@effect/platform-bun";
 import { Effect, Layer } from "effect";
 import { FetchHttpClient } from "effect/unstable/http";

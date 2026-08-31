@@ -5,6 +5,7 @@ import {
   V2CreateWorkerUploadOutput,
   V2DeployAWorkerOutput,
   V2GetAWorkerOutput,
+  V2ListAllWorkersOutput,
   type ApiClient,
 } from "@supabase/api/effect";
 import { Effect, Option, Schedule, Schema } from "effect";
@@ -26,11 +27,11 @@ import {
  *
  * The routes are deliberately few — list, get, mint an upload slot, deploy,
  * delete — so this module is thin, and what it mostly adds is status handling.
- * The alpha's allow-list answers 404 for a project that is not enrolled, which
- * at the transport level is indistinguishable from "no such worker"; so a 404
- * on a collection endpoint (where no worker name could have been wrong) becomes
- * {@link WorkersUnavailableError}, and a 404 on a named worker is reported by
- * the caller as "not deployed".
+ * A 404 is overloaded on these routes: it is the answer for a project outside
+ * the alpha's allow-list, for a project ref that names nothing, and for a
+ * worker that is not deployed. A 404 on a named worker is reported by the
+ * caller as "not deployed"; one on a collection endpoint, where no worker name
+ * could have been wrong, is split by its body — see {@link projectScoped404}.
  */
 
 /** The worker shape the API returns, flattened out of its JSON:API envelope. */
@@ -197,12 +198,43 @@ const decodeBody = <A, I>(
     ),
   );
 
+export const listWorkers = Effect.fnUntraced(function* (api: ApiClient, projectRef: string) {
+  const operation = "list workers";
+  const response = yield* api
+    .executeRaw(operationDefinitions.v2ListAllWorkers, { ref: projectRef })
+    .pipe(Effect.mapError(mapRequestError(operation)));
+
+  if (response.status === 404) {
+    return yield* Effect.fail(
+      yield* projectScoped404({
+        projectRef,
+        body: yield* response.text.pipe(Effect.orElseSucceed(() => "")),
+      }),
+    );
+  }
+  if (response.status !== 200) {
+    return yield* unexpectedStatus({
+      operation,
+      status: response.status,
+      body: yield* response.text.pipe(Effect.orElseSucceed(() => "")),
+    });
+  }
+
+  const body = yield* response.json.pipe(Effect.mapError(mapRequestError(operation)));
+  const decoded = yield* decodeBody(V2ListAllWorkersOutput, operation, body, response.status);
+  return decoded.data.map(toWorkerRecord);
+});
+
 /**
  * One worker, or `None` when the API has no record of it — which is also what a
  * project outside the alpha's allow-list answers, so callers report it as "not
  * deployed" and point at `push` rather than guessing which of the two it was.
  */
-const getWorker = Effect.fnUntraced(function* (api: ApiClient, projectRef: string, name: string) {
+export const getWorker = Effect.fnUntraced(function* (
+  api: ApiClient,
+  projectRef: string,
+  name: string,
+) {
   const operation = `read worker "${name}"`;
   const response = yield* api
     .executeRaw(operationDefinitions.v2GetAWorker, { ref: projectRef, name })
@@ -357,6 +389,29 @@ export const deployWorker = Effect.fnUntraced(function* (
   const body = yield* response.json.pipe(Effect.mapError(mapRequestError(operation)));
   const decoded = yield* decodeBody(V2DeployAWorkerOutput, operation, body, response.status);
   return toWorkerRecord(decoded.data);
+});
+
+export const deleteWorker = Effect.fnUntraced(function* (
+  api: ApiClient,
+  projectRef: string,
+  name: string,
+) {
+  const operation = `delete worker "${name}"`;
+  const response = yield* api
+    .executeRaw(operationDefinitions.v2DeleteAWorker, { ref: projectRef, name })
+    .pipe(Effect.mapError(mapRequestError(operation)));
+
+  // 404 is the caller's own "not deployed" verdict to report; a delete that
+  // races another one is still a delete that happened.
+  if (response.status === 204 || response.status === 200 || response.status === 404) {
+    return;
+  }
+
+  return yield* unexpectedStatus({
+    operation,
+    status: response.status,
+    body: yield* response.text.pipe(Effect.orElseSucceed(() => "")),
+  });
 });
 
 /**

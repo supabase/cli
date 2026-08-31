@@ -653,31 +653,28 @@ export function mockStack(
 
   return {
     layer: Layer.succeed(Stack, {
-      getInfo: () => Effect.succeed(info),
-      start: () =>
-        Effect.gen(function* () {
-          started = true;
-          if (opts.startError !== undefined) {
-            return yield* Effect.fail(opts.startError as never);
-          }
-          if (opts.startPending) {
-            yield* Deferred.await(startDeferred);
-          }
-        }),
-      stop: () =>
-        Effect.gen(function* () {
-          stopped = true;
-          if (opts.stopPending) {
-            yield* Deferred.await(stopDeferred);
-          }
-        }),
-      dispose: () =>
-        Effect.gen(function* () {
-          stopped = true;
-          if (opts.stopPending) {
-            yield* Deferred.await(stopDeferred);
-          }
-        }),
+      getInfo: Effect.succeed(info),
+      start: Effect.gen(function* () {
+        started = true;
+        if (opts.startError !== undefined) {
+          return yield* Effect.fail(opts.startError as never);
+        }
+        if (opts.startPending) {
+          yield* Deferred.await(startDeferred);
+        }
+      }),
+      stop: Effect.gen(function* () {
+        stopped = true;
+        if (opts.stopPending) {
+          yield* Deferred.await(stopDeferred);
+        }
+      }),
+      dispose: Effect.gen(function* () {
+        stopped = true;
+        if (opts.stopPending) {
+          yield* Deferred.await(stopDeferred);
+        }
+      }),
       startService: () => Effect.void,
       stopService: () => Effect.void,
       restartService: () => Effect.void,
@@ -695,48 +692,45 @@ export function mockStack(
             error: null,
           }),
         ),
-      getAllStates: () => {
+      getAllStates: Effect.sync(() => {
         const latestStates = new Map(
           (stateHistory.length > 0
             ? stateHistory
             : [{ name: "postgres", status: "Pending" as const }]
           ).map((state) => [state.name, state] as const),
         );
-        return Effect.succeed(
-          [...latestStates.values()].map(
-            (state) =>
-              new StackServiceState({
-                name: state.name,
-                status: state.status,
-                pid: null,
-                exitCode: null,
-                restartCount: 0,
-                startedAt: null,
-                error: null,
-              }),
-          ),
+        return [...latestStates.values()].map(
+          (state) =>
+            new StackServiceState({
+              name: state.name,
+              status: state.status,
+              pid: null,
+              exitCode: null,
+              restartCount: 0,
+              startedAt: null,
+              error: null,
+            }),
         );
-      },
+      }),
       stateChanges: () => Effect.succeed(Stream.empty),
-      allStateChanges: () =>
-        opts.liveStateChanges
-          ? Stream.fromPubSub(statePubSub)
-          : opts.stateChanges
-            ? Stream.fromIterable(
-                opts.stateChanges.map(
-                  (change) =>
-                    new StackServiceState({
-                      name: change.name,
-                      status: change.status,
-                      pid: null,
-                      exitCode: null,
-                      restartCount: 0,
-                      startedAt: null,
-                      error: null,
-                    }),
-                ),
-              )
-            : Stream.empty,
+      allStateChanges: opts.liveStateChanges
+        ? Stream.fromPubSub(statePubSub)
+        : opts.stateChanges
+          ? Stream.fromIterable(
+              opts.stateChanges.map(
+                (change) =>
+                  new StackServiceState({
+                    name: change.name,
+                    status: change.status,
+                    pid: null,
+                    exitCode: null,
+                    restartCount: 0,
+                    startedAt: null,
+                    error: null,
+                  }),
+              ),
+            )
+          : Stream.empty,
       waitReady: () => Effect.void,
       waitAllReady: () => Effect.void,
       subscribeLogs: () => Stream.empty,

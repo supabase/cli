@@ -1,3 +1,4 @@
+// oxlint-disable-next-line effecttsgo/node-builtin-import -- Cleanup invokes the native child-process CLI as a best-effort leaf boundary.
 import { execFile } from "node:child_process";
 import { Data, Duration, Effect, FileSystem, Schedule } from "effect";
 import type { ContainerRuntime } from "./ContainerRuntime.ts";
@@ -59,7 +60,7 @@ const cleanupAutoManagedPathsWithRetry = (
           fs.exists(path).pipe(Effect.catchTag("PlatformError", () => Effect.succeed(true))),
         { concurrency: 4 },
       );
-      if (remaining.some(Boolean)) yield* Effect.fail(new CleanupPending());
+      if (remaining.some(Boolean)) return yield* new CleanupPending();
     }).pipe(Effect.uninterruptible);
     const retries = Effect.sleep(Duration.millis(250)).pipe(
       Effect.andThen(
@@ -89,11 +90,10 @@ export const cleanupLocalStackResources = (opts: {
   readonly config: ResolvedStackConfig;
 }): Effect.Effect<void, never, FileSystem.FileSystem> =>
   Effect.gen(function* () {
-    // Best-effort graceful shutdown — stop() may fail if services already
-    // exited or the scope is partially closed. Make the stop path
-    // uninterruptible so SIGTERM-driven scope closure does not abandon it
-    // mid-shutdown and leak child processes.
-    yield* Effect.uninterruptible(opts.stop()).pipe(Effect.catch(() => Effect.void));
+    // The Stack stop contract is infallible and owns graceful service
+    // shutdown. Keep it uninterruptible so SIGTERM-driven scope closure does
+    // not abandon the transaction mid-shutdown and leak child processes.
+    yield* Effect.uninterruptible(opts.stop());
 
     // Safety net: force-remove any Docker containers that survived
     // signal-based shutdown. On macOS, killing the `docker run` client

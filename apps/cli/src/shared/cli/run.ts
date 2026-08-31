@@ -1,10 +1,27 @@
 import { BunServices } from "@effect/platform-bun";
 import { CliConfigStore } from "@supabase/config/effect";
 import { httpTransportClientLayer } from "@supabase/stack/effect";
-import { Cause, Console, Effect, Exit, Fiber, Layer, Runtime, Stdio } from "effect";
+import {
+  Cause,
+  Console,
+  Effect,
+  Exit,
+  FileSystem,
+  Fiber,
+  Layer,
+  Path,
+  Runtime,
+  Scope,
+  Stdio,
+} from "effect";
 import { CliError, CliOutput, Command } from "effect/unstable/cli";
+import { ChildProcessSpawner } from "effect/unstable/process";
 import { CLI_VERSION } from "./version.ts";
 import { Credentials } from "../../next/auth/credentials.service.ts";
+import type { CliProjectHome } from "../../next/config/cli-project-home.service.ts";
+import type { CliSettings } from "../../next/config/cli-settings.service.ts";
+import type { ProjectLinkState } from "../../next/config/project-link-state.service.ts";
+import type { LegacyPlatformApiFactory } from "../../legacy/auth/legacy-platform-api-factory.service.ts";
 import { jsonCliOutputFormatter } from "../output/json-formatter.ts";
 import { textCliOutputFormatter } from "../output/text-formatter.ts";
 import { outputLayerFor } from "../output/output.layer.ts";
@@ -23,10 +40,14 @@ import { runtimeInfoLayer } from "../runtime/runtime-info.layer.ts";
 import { ttyLayer } from "../runtime/tty.layer.ts";
 import { CommandRuntime } from "../runtime/command-runtime.service.ts";
 import { ProcessControl } from "../runtime/process-control.service.ts";
+import type { RuntimeInfo } from "../runtime/runtime-info.service.ts";
+import type { Stdin } from "../runtime/stdin.service.ts";
+import type { Tty } from "../runtime/tty.service.ts";
 import type { Analytics } from "../telemetry/analytics.service.ts";
 import { aiToolLayer } from "../telemetry/ai-tool.layer.ts";
 import { AiTool } from "../telemetry/ai-tool.service.ts";
 import { telemetryRuntimeLayer } from "../telemetry/runtime.layer.ts";
+import type { TelemetryRuntime } from "../telemetry/runtime.service.ts";
 import { tracingLayer } from "../telemetry/tracing.layer.ts";
 import { CliArgs } from "./cli-args.service.ts";
 import { resolveAgentOutputFormatFromArgs } from "./agent-output.ts";
@@ -37,6 +58,34 @@ import {
   isValueTakingFlagTokenFor,
   resolvedCommandPathForArgv,
 } from "./subcommand-flag-suggestions.ts";
+
+/**
+ * Services the two CLI shells provide before evaluating a root command. Keep
+ * this list explicit: preserving the root command's requirement channel here
+ * makes an accidentally unprovided service fail at the shell boundary instead
+ * of becoming a runtime missing-service defect.
+ */
+type AllowedRunCliServices =
+  | Analytics
+  | ChildProcessSpawner.ChildProcessSpawner
+  | CliArgs
+  | CliProjectHome
+  | CliSettings
+  | CommandRuntime
+  | FileSystem.FileSystem
+  | Layer.Success<typeof httpTransportClientLayer>
+  | Path.Path
+  | ProcessControl
+  | ProjectLinkState
+  | RuntimeInfo
+  | Scope.Scope
+  | Stdio.Stdio
+  | TelemetryRuntime
+  | Tty
+  | LegacyPlatformApiFactory
+  | Stdin
+  | "effect/unstable/cli/GlobalFlag/linked"
+  | "effect/unstable/cli/GlobalFlag/local";
 
 // Global flags that consume the following argv token as their value. Keep this in
 // sync with the value-taking global flags defined in `shared/cli/global-flags.ts`
@@ -691,8 +740,14 @@ export interface RunCliOptions {
   ) => Effect.Effect<void>;
 }
 
-function cliProgramFor(
-  rootCommand: Command.Command.Any,
+function cliProgramFor<
+  Name extends string,
+  Input,
+  ContextInput,
+  E,
+  R extends AllowedRunCliServices,
+>(
+  rootCommand: Command.Command<Name, Input, ContextInput, E, R>,
   args: ReadonlyArray<string>,
   options: RunCliOptions,
   outputFormat: OutputFormat,
@@ -741,7 +796,13 @@ function cliProgramFor(
   );
 }
 
-export async function runCli(rootCommand: Command.Command.Any, options: RunCliOptions) {
+export async function runCli<
+  Name extends string,
+  Input,
+  ContextInput,
+  E,
+  R extends AllowedRunCliServices,
+>(rootCommand: Command.Command<Name, Input, ContextInput, E, R>, options: RunCliOptions) {
   const args = await Effect.runPromise(
     Effect.gen(function* () {
       const stdio = yield* Stdio.Stdio;

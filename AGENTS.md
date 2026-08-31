@@ -29,7 +29,7 @@ These workspaces should generally follow this structure:
 - Standard scripts: `test`, `types:check`
 - Standard devDependencies: `@tsconfig/bun`, `@types/bun`, `typescript`
 
-Linting (`oxlint`), formatting (`oxfmt`), and unused-code analysis (`knip`) are repo-wide, not per-package: the tools are root devDependencies configured by `.oxlintrc.json`, `.oxfmtrc.json`, and `knip.json` at the repo root (knip's config maps each workspace under its `workspaces` key). The root `check:all`/`fix:all` scripts are the sole repo-wide quality entrypoints and use Turbo to orchestrate the root-owned `lint:*`/`fmt:*`/`knip:*` scripts and package `types:check` targets. Package-local work can run `pnpm types:check` and the package's test scripts; `pnpm exec oxlint`, `pnpm exec oxfmt`, and `pnpm exec knip-bun` from the repo root also work directly.
+Generic linting (`oxlint`), formatting (`oxfmt`), and unused-code analysis (`knip`) are repo-wide, not per-package: the tools are root devDependencies configured by `.oxlintrc.json`, `.oxfmtrc.json`, and `knip.json` at the repo root (knip's config maps each workspace under its `workspaces` key). Effect-specific linting is incrementally scoped to `packages/stack` and `packages/process-compose` through `.oxlintrc.effect.json`; run it with the root `lint:effect:check` or `lint:effect:fix` scripts. The root `check:all`/`fix:all` scripts are the sole repo-wide quality entrypoints and use Turbo to orchestrate the root-owned generic `lint:*`/`fmt:*`/`knip:*` scripts and package `types:check` targets; `fix:all` runs the Effect lint fix after those generic fixes complete. Package-local work can run `pnpm types:check` and the package's test scripts; `pnpm exec oxlint`, `pnpm exec oxfmt`, and `pnpm exec knip-bun` from the repo root also work directly.
 
 Expected exceptions:
 
@@ -235,26 +235,16 @@ pnpm test
 
 If a workspace exposes a different script set, use that workspace's `package.json` as the source of truth.
 
-## Nx
+## Workspace graph and task execution
 
-This repo uses pnpm and Turbo for root-owned quality checks and ordinary unit,
-integration, and e2e tests. Package scripts are the source of truth for those
-workflows; package-local quality work is limited to `types:check` and the
-declared test scripts.
-Nx remains scoped to dependency inspection. Turbo owns repository build,
-generation, quality, live, and auxiliary workflows.
-
-### Exploring the workspace
+This repo uses pnpm workspaces and Turbo for task execution and dependency
+graph orchestration. Package scripts are the source of truth for leaf
+implementations; root-owned Turbo tasks coordinate build, generation, quality,
+live, and auxiliary workflows. Inspect a task's dependency graph with Turbo's
+JSON dry-run output:
 
 ```sh
-# List all projects
-nx show projects
-
-# Show targets and metadata for a specific project
-nx show project <name> --json
-
-# Visualize the project dependency graph
-nx graph
+pnpm exec turbo run <task> --dry=json
 ```
 
 ### Running repository workflows
@@ -273,12 +263,10 @@ pnpm exec turbo run supabase#build
 pnpm run test:live
 ```
 
-Use `nx show project <name> --json` to inspect remaining Nx targets,
-dependencies, and outputs — do not guess target names. Run live and auxiliary
-workflows through their root Turbo entrypoints, and run ordinary tests with the
-relevant package's declared `pnpm test` scripts. Repo-wide quality checks use
-the repository-root `pnpm check:all` and `pnpm fix:all` scripts, which delegate
-orchestration to Turbo.
+Run live and auxiliary workflows through their root Turbo entrypoints, and run
+ordinary tests with the relevant package's declared `pnpm test` scripts. Repo-
+wide quality checks use the repository-root `pnpm check:all` and `pnpm fix:all`
+scripts, which delegate orchestration to Turbo.
 
 ## Pull Requests
 

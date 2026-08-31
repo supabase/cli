@@ -17,8 +17,17 @@ if (shell !== "next" && shell !== "legacy") {
 
 const entrypoint = `src/${shell}/main.ts`;
 const outfile = `dist/supabase-${shell}`;
+const packageJson = JSON.parse(
+  await Bun.file(new URL("../package.json", import.meta.url)).text(),
+) as {
+  version?: string;
+};
+if (packageJson.version === undefined || packageJson.version.length === 0) {
+  throw new Error("CLI package version is required for a compiled build");
+}
+const versionDefine = `--define=SUPABASE_CLI_VERSION=${JSON.stringify(packageJson.version)}`;
 const defineArg = `--define=SUPABASE_FUNCTIONS_SERVE_MAIN_TEMPLATE=${JSON.stringify(
   await bundleServeMainTemplate(),
 )}`;
 
-await $`bun build ${entrypoint} --compile ${defineArg} --outfile ${outfile}`;
+await $`bun build ${entrypoint} --compile ${versionDefine} ${defineArg} --outfile ${outfile}`;

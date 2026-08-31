@@ -4,8 +4,8 @@ import { nativeReleaseForService } from "./ServiceCatalog.ts";
 import { DEFAULT_VERSIONS } from "./versions.ts";
 
 describe("slim native release descriptors", () => {
-  it("uses the frozen slim-services archive, manifest, and checksum names", () => {
-    const release = nativeReleaseForService("postgrest", DEFAULT_VERSIONS.postgrest, {
+  it("formats the slim-services archive, manifest, and checksum names", () => {
+    const release = nativeReleaseForService("postgrest", "v16.1", {
       os: "darwin",
       arch: "arm64",
     });

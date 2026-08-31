@@ -1,17 +1,7 @@
+// oxlint-disable effecttsgo/multiple-effect-provide, effecttsgo/node-builtin-import -- Recovery tests inject native process/filesystem failures and compose scenario-specific platform layers; dependencies are staged to preserve the gated layer ordering.
 import { it } from "@effect/vitest";
 import { NodeFileSystem, NodePath } from "@effect/platform-node";
-import {
-  Cause,
-  Deferred,
-  Effect,
-  Exit,
-  Fiber,
-  FileSystem,
-  Layer,
-  ManagedRuntime,
-  PlatformError,
-} from "effect";
-import { HttpServer } from "effect/unstable/http";
+import { Cause, Deferred, Effect, Exit, Fiber, FileSystem, Layer, PlatformError } from "effect";
 import { randomBytes } from "node:crypto";
 import { cpSync, mkdirSync, mkdtempSync, realpathSync, renameSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -28,15 +18,12 @@ import { acquireControl, ControlTransport, isControlOwnership } from "./managed/
 import { deriveStackId, ensureEnvironment } from "./managed/environment.ts";
 import { controlTransportLayer } from "./platform-node.ts";
 import { managedStackDocumentPathEffect, managedStackPathsEffect } from "./managed/paths.ts";
-import { Stack } from "./Stack.ts";
-import { DaemonServer } from "./DaemonServer.ts";
 import { makeRepository } from "../tests/helpers/git-workspace.ts";
 import { deleteManagedStack } from "./managed/lifecycle.ts";
 import { listStacks as listStackSummaries } from "./discovery.ts";
 import {
   automaticDocument,
   cleanupRoots,
-  controlStack,
   releaseLease,
   setupManagedManager,
   startManagedStack,
@@ -52,7 +39,7 @@ const acquireIsolatedCollisionOwner = () =>
     for (let attempt = 0; attempt < 32; attempt += 1) {
       const stackId = randomBytes(32).toString("hex");
       const collidingStackId = `${stackId.slice(0, 10)}${randomBytes(27).toString("hex")}`;
-      const acquisition = yield* acquireControl({ stackId }).pipe(
+      const acquisition = yield* acquireControl({ stackId, maintenanceOperation: "update" }).pipe(
         Effect.timeout("5 seconds"),
         Effect.exit,
       );
@@ -60,7 +47,7 @@ const acquireIsolatedCollisionOwner = () =>
         return { collidingStackId, ownership: acquisition.value };
       }
     }
-    return yield* Effect.fail(new Error("failed to acquire an isolated collision endpoint"));
+    return yield* Effect.die(new Error("failed to acquire an isolated collision endpoint"));
   });
 
 const acquireIsolatedStackOwner = (workspacePath: string) =>
@@ -69,7 +56,7 @@ const acquireIsolatedStackOwner = (workspacePath: string) =>
     for (let attempt = 0; attempt < 32; attempt += 1) {
       const stackName = `test-${randomBytes(8).toString("hex")}`;
       const stackId = deriveStackId(environment.identity, stackName);
-      const acquisition = yield* acquireControl({ stackId }).pipe(
+      const acquisition = yield* acquireControl({ stackId, maintenanceOperation: "update" }).pipe(
         Effect.timeout("5 seconds"),
         Effect.exit,
       );
@@ -77,7 +64,7 @@ const acquireIsolatedStackOwner = (workspacePath: string) =>
         return { stackName, ownership: acquisition.value };
       }
     }
-    return yield* Effect.fail(new Error("failed to acquire an isolated stack endpoint"));
+    return yield* Effect.die(new Error("failed to acquire an isolated stack endpoint"));
   });
 
 const startWithIsolatedOwner = (
@@ -145,7 +132,7 @@ describe("managed stack recovery journeys", () => {
         const environment = yield* ensureEnvironment(workspace);
         cpSync(workspace, copied, { recursive: true });
         const stackId = deriveStackId(environment.identity, "default");
-        const ownership = yield* acquireControl({ stackId });
+        const ownership = yield* acquireControl({ stackId, maintenanceOperation: "update" });
         if (!isControlOwnership(ownership)) throw new Error("expected stack control ownership");
 
         const readFiber = yield* Effect.forkScoped(
@@ -200,10 +187,14 @@ describe("managed stack recovery journeys", () => {
           return Deferred.succeed(repairRead, void 0).pipe(
             Effect.andThen(
               Effect.succeed({
-                protocolVersion: 1,
+                controlProtocol: "supabase-stack-control" as const,
+                controlProtocolVersion: 1 as const,
                 ownershipId: ownerId,
+                ownerSessionId: "repair-session",
+                kind: "supervisor" as const,
                 state: "running" as const,
                 ready: true,
+                daemonCliVersion: "test",
               }),
             ),
           );
@@ -215,16 +206,12 @@ describe("managed stack recovery journeys", () => {
           const manager = yield* ManagedStackManager;
           const environment = yield* ensureEnvironment(workspace);
           repairId = deriveRepairOwnershipId(environment.identity);
-          const repairOwner = yield* acquireControl({ stackId: repairId });
+          const repairOwner = yield* acquireControl({
+            stackId: repairId,
+            maintenanceOperation: "repair",
+          });
           if (!isControlOwnership(repairOwner)) throw new Error("expected repair ownership");
           repairEndpointUrl = repairOwner.endpoint.url;
-          const repairDaemon = ManagedRuntime.make(
-            DaemonServer.layerWithShutdown(Effect.void, repairOwner.ownerStatus).pipe(
-              Layer.provide(Layer.succeed(Stack, controlStack())),
-              Layer.provide(Layer.succeed(HttpServer.HttpServer, repairOwner.server)),
-            ),
-          );
-          yield* Effect.promise(() => repairDaemon.runPromise(DaemonServer));
           const stackOwner = yield* acquireIsolatedStackOwner(workspace);
           const stackId = deriveStackId(environment.identity, stackOwner.stackName);
           const startFiber = yield* startManagedStack(manager, {
@@ -237,7 +224,6 @@ describe("managed stack recovery journeys", () => {
           expect(yield* manager.inspectStack(stackId)).toBeUndefined();
           yield* repairOwner.close;
           repairEndpointUrl = undefined;
-          yield* Effect.promise(() => repairDaemon.dispose());
           const started = yield* Fiber.join(startFiber).pipe(Effect.timeout("60 seconds"));
           expect(started.stack.id).toBe(stackId);
           yield* releaseLease(started);
@@ -409,7 +395,7 @@ describe("managed stack recovery journeys", () => {
           mkdirSync(corruptPaths.root, { recursive: true });
           writeFileSync(corruptDocumentPath, "not-json");
         });
-        const listings = yield* manager.listStacks();
+        const listings = yield* manager.listStacks;
         expect(listings).toEqual(
           expect.arrayContaining([
             expect.objectContaining({ id: stack.stack.id, status: "healthy" }),

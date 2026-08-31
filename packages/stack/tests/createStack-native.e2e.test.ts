@@ -1,3 +1,5 @@
+// oxlint-disable effecttsgo/async-function, effecttsgo/node-builtin-import -- Native e2e tests await subprocess-backed stack operations and use filesystem/path fixtures.
+
 import { createClient } from "@supabase/supabase-js";
 import { mkdtempSync, rmSync, symlinkSync } from "node:fs";
 import { tmpdir } from "node:os";

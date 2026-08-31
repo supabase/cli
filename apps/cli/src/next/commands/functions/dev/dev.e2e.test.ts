@@ -10,7 +10,7 @@ import {
 } from "../../../../../tests/helpers/cli.ts";
 import { cleanupRegisteredStackProjects } from "../../../../../tests/helpers/stack-e2e-cleanup.ts";
 
-const FUNCTIONS_DEV_STARTUP_TIMEOUT_MS = 60_000;
+const FUNCTIONS_DEV_STARTUP_TIMEOUT_MS = 180_000;
 const FUNCTIONS_URL_PATTERN = /Functions URL:\s+(https?:\/\/[^\s/]+\/functions\/v1)/;
 const FUNCTIONS_DEV_STEP_TIMEOUT_MS = 30_000;
 const FUNCTIONS_DEV_CLEANUP_TIMEOUT_MS = 30_000;

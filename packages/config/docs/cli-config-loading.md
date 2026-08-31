@@ -8,8 +8,17 @@ This document explains how the CLI's on-disk config document loading works, acro
 - `CliConfig`: the persisted config-file document (`supabase/config.toml` / `supabase/config.json`)
   — the full local superset, including local-only sections (`studio`, ports, `edge_runtime`,
   `analytics`, …) plus `[remotes.*]` overrides. Owned by `@supabase/config`.
-- `ProjectConfig`: reserved. Not implemented in this package yet — it will be the hosted-project
-  subset produced by mapping a Management API project-config response, once CLI-2230/CLI-2156 land.
+- `ProjectConfig`: the hosted-project subset — the sections a hosted project manages (`api`,
+  `auth`, `db`, `realtime`, `storage`, `workers`, `experimental`), produced by `toProjectConfig`
+  from either a `CliConfig` document or a Management API v2 project-config response (CLI-2230).
+  Sparse by design: it carries only what its source actually said, so it composes with the
+  subtraction core (`subtractCliConfig`/`omitDefaultValues`, operand type `EffectiveConfig`)
+  without fabricating drift from schema defaults. An API-sourced value may speak for fewer
+  fields than the section list implies — `realtime` maps no fields today, and `workers`/
+  `experimental` have no v2 project-config API counterpart at all — so a comparison consumer
+  should restrict itself to `comparableProjectConfigPaths`/`isComparableProjectConfigPath`
+  rather than treating a section's presence in that list as a per-field guarantee. Owned by
+  `@supabase/config` (`packages/config/src/project-config/`).
 - `CliSettings`: the CLI's effective runtime settings bundle (platform `apiUrl`, `dashboardUrl`,
   access token, telemetry flags, `supabaseHome`, `noKeyring`, `debug`). Lives in `apps/cli`, not
   this package.
@@ -370,10 +379,11 @@ For example:
 
 Those are different meanings and should remain separate.
 
-The reserved `ProjectConfig` — the not-yet-implemented hosted-project subset — will sit alongside
-these two: it converges the same committed-intent fields from a Management API response, without
-the local-only sections (`studio`, ports, `edge_runtime`, `analytics`, `[remotes.*]`, …) that only
-make sense for a local checkout.
+`ProjectConfig` — the hosted-project subset (CLI-2230) — sits alongside these two: it converges
+the same committed-intent fields from either a `CliConfig` document or a Management API response,
+without the local-only sections (`studio`, ports, `edge_runtime`, `analytics`, `[remotes.*]`, …)
+that only make sense for a local checkout. See the Vocabulary entry above for its sparse
+semantics and comparison contract.
 
 ## Process Env as Input
 
@@ -393,4 +403,4 @@ So the public architecture intentionally stays at:
 - `CliProjectPaths`
 - `CliProjectContext`
 - `CliSettings`
-- `ProjectConfig` (reserved, not yet implemented)
+- `ProjectConfig`

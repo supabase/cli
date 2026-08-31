@@ -2632,6 +2632,20 @@ export const versionedEffectOperations = {
           input,
         );
       }),
+    runProjectAdvisors: (
+      input: typeof operationDefinitions.v2RunProjectAdvisors.inputSchema.Type,
+    ): Effect.Effect<
+      typeof operationDefinitions.v2RunProjectAdvisors.outputSchema.Type,
+      SupabaseApiError,
+      SupabaseApiClient
+    > =>
+      Effect.gen(function* () {
+        const client = yield* SupabaseApiClient;
+        return yield* client.execute<"v2RunProjectAdvisors">(
+          operationDefinitions.v2RunProjectAdvisors,
+          input,
+        );
+      }),
     transferAProject: (
       input: typeof operationDefinitions.v2TransferAProject.inputSchema.Type,
     ): Effect.Effect<
@@ -3438,6 +3452,10 @@ export function executeApiClientOperation(
       return Schema.decodeUnknownEffect(operationDefinitions.v2PreviewAProjectTransfer.inputSchema)(
         input,
       ).pipe(Effect.flatMap((decoded) => api.v2.previewAProjectTransfer(decoded)));
+    case "v2RunProjectAdvisors":
+      return Schema.decodeUnknownEffect(operationDefinitions.v2RunProjectAdvisors.inputSchema)(
+        input,
+      ).pipe(Effect.flatMap((decoded) => api.v2.runProjectAdvisors(decoded)));
     case "v2TransferAProject":
       return Schema.decodeUnknownEffect(operationDefinitions.v2TransferAProject.inputSchema)(
         input,
