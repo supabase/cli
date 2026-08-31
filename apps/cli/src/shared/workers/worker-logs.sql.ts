@@ -1,13 +1,10 @@
 /**
- * The ClickHouse query `supabase experimental workers logs` sends, and the two literals it
- * turns on.
+ * The ClickHouse query `supabase experimental workers logs` sends, and the two
+ * literals it turns on.
  *
  * Pure — no Effect, no services — so the query text and the window arithmetic are
  * unit-testable without a stubbed API, and so the literals have exactly one home
  * if the log pipeline ever renames a stream.
- *
- * Everything here was verified against a real project; see
- * `scratch/FINDINGS-worker-logs.md` for the captured rows.
  */
 
 /**

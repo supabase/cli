@@ -37,9 +37,9 @@ const config = {
     Flag.withDescription(
       `Keep printing new lines until interrupted, polling every ${WORKER_LOG_POLL_SECONDS} seconds.`,
     ),
-    // Required: `legacy-boolean-flag-defaults.unit.test.ts` walks the whole
-    // command tree and fails any bare boolean. `workers push --wait` shipped
-    // without one and broke plain `push` parsing.
+    // Required: `Flag.boolean` alone builds a *required* param, which breaks
+    // invocations that omit the flag. `legacy-boolean-flag-defaults.unit.test.ts`
+    // walks the command tree and fails any bare boolean.
     Flag.withDefault(false),
   ),
   tail: Flag.integer("tail").pipe(

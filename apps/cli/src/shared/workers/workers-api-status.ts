@@ -6,14 +6,13 @@ import { WorkersApiNetworkError, WorkersApiUnexpectedStatusError } from "./worke
 /**
  * Status handling shared by every Workers API seam.
  *
- * Hoisted out of `workers-api.ts` when `worker-logs-api.ts` needed the same
- * three helpers verbatim: the worker routes and the analytics logs endpoint sit
- * on different API families but fail the same three ways — the request never
- * left, the server answered something unexpected, or the body could not be read.
+ * The worker routes and the analytics logs endpoint sit on different API
+ * families but fail the same three ways — the request never left, the server
+ * answered something unexpected, or the body could not be read.
  *
- * Route-specific status meaning stays with its route. `projectScoped404` is the
- * example: it disambiguates a `/v2/workers` 404 by response body and means
- * nothing anywhere else, so it did not come along.
+ * Route-specific status meaning stays with its route rather than here.
+ * `projectScoped404` is the example: it disambiguates a `/v2/workers` 404 by
+ * response body and means nothing anywhere else.
  */
 
 /**
