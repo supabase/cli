@@ -48,13 +48,13 @@ formatting without disabling safe compaction.
 
 ## Exit Codes
 
-| Code | Condition                                                             |
-| ---- | --------------------------------------------------------------------- |
-| `0`  | success (files written, or skipped after a declined prompt)           |
+| Code | Condition                                                                            |
+| ---- | ------------------------------------------------------------------------------------ |
+| `0`  | success (files written, or skipped after a declined prompt)                          |
 | `1`  | pg-delta disabled (`[experimental.pgdelta] enabled = false` and no `--experimental`) |
-| `1`  | conflicting `--db-url`/`--linked`/`--local` (mutually exclusive)      |
-| `1`  | non-interactive mode with no explicit target                          |
-| `1`  | local-database bring-up / pg-delta engine / export failure            |
+| `1`  | conflicting `--db-url`/`--linked`/`--local` (mutually exclusive)                     |
+| `1`  | non-interactive mode with no explicit target                                         |
+| `1`  | local-database bring-up / pg-delta engine / export failure                           |
 
 The pg-delta gate and the mutex check are both raised before any side effects run,
 but the gate wins when both conditions apply simultaneously: the gate check runs

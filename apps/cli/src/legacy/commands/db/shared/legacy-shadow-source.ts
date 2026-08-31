@@ -117,11 +117,7 @@ export const legacyPrepareShadowSource = <E>(
 ): Effect.Effect<
   LegacyShadowSourceResult,
   LegacyPrepareShadowSourceError | E,
-  | Output
-  | LegacyDockerRun
-  | RuntimeInfo
-  | HttpClient.HttpClient
-  | LegacyDbConnection
+  Output | LegacyDockerRun | RuntimeInfo | HttpClient.HttpClient | LegacyDbConnection
 > =>
   Effect.gen(function* () {
     const { containerId } = handle;
