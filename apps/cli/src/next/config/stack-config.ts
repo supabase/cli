@@ -1,12 +1,13 @@
-import { Redacted } from "effect";
+import { Redacted, Schema } from "effect";
 import type { CliConfig } from "@supabase/config";
-import type {
-  AuthSettings,
-  DatabaseSettings,
-  FunctionsSettings,
-  RestSettings,
-  StackConfig,
-  StackRuntimePreference,
+import {
+  StackConfigSchema,
+  type AuthSettings,
+  type DatabaseSettings,
+  type FunctionsSettings,
+  type RestSettings,
+  type StackConfig,
+  type StackRuntimePreference,
 } from "@supabase/stack/effect";
 
 export const excludedStackServices = [
@@ -52,6 +53,17 @@ const secretRecord = (value: Readonly<Record<string, string>> | undefined) =>
     : Object.fromEntries(
         Object.entries(value).map(([name, secret]) => [name, Redacted.make(secret)]),
       );
+
+/** Omit absent object properties while preserving arrays and redacted values. */
+const omitUndefined = (value: unknown): unknown => {
+  if (value === null || typeof value !== "object" || Redacted.isRedacted(value)) return value;
+  if (Array.isArray(value)) return value.map(omitUndefined);
+  return Object.fromEntries(
+    Object.entries(value)
+      .filter(([, child]) => child !== undefined)
+      .map(([key, child]) => [key, omitUndefined(child)]),
+  );
+};
 
 const passwordRequirements = (value: string | undefined): AuthSettings["password_requirements"] =>
   value === "" ||
@@ -275,7 +287,7 @@ export function toStartStackConfig(
           default_pool_size: pooler.default_pool_size,
           max_client_conn: pooler.max_client_conn,
         };
-  return {
+  const configOutput = {
     capabilities: {
       database: { version: db?.major_version?.toString(), settings: databaseSettings },
       rest: capability("rest", native, excluded, api?.enabled, toRestSettings(api)),
@@ -329,6 +341,10 @@ export function toStartStackConfig(
             },
           },
   };
+
+  // This synchronous, service-free CLI boundary validates the normalized overlay against the
+  // closed stack schema before handing it to the Effect-native runtime.
+  return Schema.decodeUnknownSync(StackConfigSchema)(omitUndefined(configOutput));
 }
 
 export function runtimePreference(mode?: StartMode): StackRuntimePreference | undefined {

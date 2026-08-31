@@ -1045,3 +1045,11 @@ private-port reservation plus gateway ownership atomic with accepted lifecycle g
   paths, preserving source execution and compiled CLI bundling without a new public alias or duplicate runtime.
 - Bridge identity tests assert both CLI modules expose the stack-owned implementations and that no private Functions
   subpaths remain in the package export map.
+
+#### Task 16B — CLI-to-Stack config boundary (2026-08-31)
+
+- Added a real `CliConfigSchema` → `toStartStackConfig` → `StackConfigSchema` boundary regression covering database
+  settings, Auth JWT material, Functions secrets, and API listener defaults. The test first reproduced the closed-schema
+  failure at `capabilities.database.settings.vault` when the translation emitted an explicit `undefined` leaf.
+- The CLI translation now recursively omits only undefined object properties before a synchronous, service-free
+  `StackConfigSchema` decode. Arrays, nulls, primitives, and Effect `Redacted` values remain unchanged.
