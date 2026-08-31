@@ -6,6 +6,7 @@ import {
   FiberSet,
   FileSystem,
   Predicate,
+  Queue,
   Schema,
   Scope,
   Semaphore,
@@ -383,8 +384,27 @@ export const startControlServer = (
       Effect.provideService(RpcSerialization.RpcSerialization, RpcSerialization.json),
     );
     const destroyRequests = new Set<string>();
+    const disconnects = yield* Queue.unbounded<number>();
+    yield* FiberSet.run(
+      completionFibers,
+      Effect.forever(
+        Queue.take(protocol.disconnects).pipe(
+          Effect.tap((clientId) =>
+            Effect.sync(() => {
+              const prefix = `${clientId}:`;
+              for (const request of destroyRequests)
+                if (request.startsWith(prefix)) destroyRequests.delete(request);
+            }),
+          ),
+          Effect.flatMap((clientId) => Queue.offer(disconnects, clientId)),
+          Effect.asVoid,
+        ),
+      ),
+      { startImmediately: true },
+    );
     const patchedProtocol = RpcServer.Protocol.of({
       ...protocol,
+      disconnects,
       run: (handler) =>
         protocol.run((clientId, request) => {
           if (Predicate.isTagged(request, "Request") && request.tag === "destroy")
@@ -392,23 +412,28 @@ export const startControlServer = (
           return handler(clientId, request);
         }),
       send: (clientId, response, transferables) =>
-        protocol.send(clientId, response, transferables).pipe(
-          Effect.andThen(
-            Predicate.isTagged(response, "Exit")
-              ? Effect.suspend(() => {
-                  const key = `${clientId}:${String(response.requestId)}`;
-                  const isDestroy = destroyRequests.delete(key);
-                  if (
-                    !isDestroy ||
-                    !Predicate.isTagged(response.exit, "Success") ||
-                    options.onDestroyResponse === undefined
-                  )
-                    return Effect.void;
-                  return options.onDestroyResponse();
-                })
-              : Effect.void,
-          ),
-        ),
+        Predicate.isTagged(response, "Exit") &&
+        destroyRequests.has(`${clientId}:${String(response.requestId)}`)
+          ? Effect.gen(function* () {
+              const key = `${clientId}:${String(response.requestId)}`;
+              const connectedBefore = yield* protocol.clientIds;
+              if (!connectedBefore.has(clientId)) {
+                destroyRequests.delete(key);
+                return;
+              }
+              yield* protocol.send(clientId, response, transferables);
+              const connectedAfter = yield* protocol.clientIds;
+              const isDestroy = destroyRequests.delete(key);
+              if (
+                !connectedAfter.has(clientId) ||
+                !isDestroy ||
+                !Predicate.isTagged(response.exit, "Success") ||
+                options.onDestroyResponse === undefined
+              )
+                return;
+              yield* options.onDestroyResponse();
+            })
+          : protocol.send(clientId, response, transferables),
     });
     const rpcProgram = RpcServer.make(StackRpcGroup, {
       disableTracing: true,

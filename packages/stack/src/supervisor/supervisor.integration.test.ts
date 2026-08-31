@@ -179,6 +179,10 @@ const makeFixture = (
     readonly preflightFailFirst?: Ref.Ref<boolean>;
     readonly preflightGate?: Deferred.Deferred<void>;
     readonly preflightStarted?: Deferred.Deferred<void>;
+    readonly stopGate?: Deferred.Deferred<void>;
+    readonly stopStarted?: Deferred.Deferred<void>;
+    readonly recoveryFailFirst?: Ref.Ref<boolean>;
+    readonly recoveryStarted?: Deferred.Deferred<void>;
   } = {},
 ) =>
   Effect.gen(function* () {
@@ -250,9 +254,25 @@ const makeFixture = (
             ...current,
             `cleanup:${destroy ? "destroy" : "stop"}`,
           ]);
+          if (!destroy && fixtureOptions.stopStarted !== undefined)
+            yield* Deferred.succeed(fixtureOptions.stopStarted, undefined);
+          if (!destroy && fixtureOptions.stopGate !== undefined)
+            yield* Deferred.await(fixtureOptions.stopGate);
           yield* Ref.set(resources, []);
         }),
-      recover: () => Ref.get(resources),
+      recover: () =>
+        Effect.gen(function* () {
+          if (fixtureOptions.recoveryStarted !== undefined)
+            yield* Deferred.succeed(fixtureOptions.recoveryStarted, undefined);
+          if (fixtureOptions.recoveryFailFirst !== undefined) {
+            const fail = yield* Ref.get(fixtureOptions.recoveryFailFirst);
+            if (fail) {
+              yield* Ref.set(fixtureOptions.recoveryFailFirst, false);
+              return yield* new RuntimeDriverError({ message: "injected recovery failure" });
+            }
+          }
+          return yield* Ref.get(resources);
+        }),
     };
     const entry: StackLogEntry = {
       cursor: { opaque: "v1_1" },
@@ -893,7 +913,7 @@ describe("Supervisor composition", () => {
     ),
   );
 
-  it.live("joins concurrent equivalent starts despite property order", () =>
+  it.live("joins concurrent compiler-equivalent starts", () =>
     run(
       Effect.gen(function* () {
         const preflightFailFirst = yield* Ref.make(true);
@@ -904,14 +924,8 @@ describe("Supervisor composition", () => {
           preflightGate,
           preflightStarted,
         });
-        const firstConfig = {
-          capabilities: { rest: {}, auth: { enabled: false } },
-          security: { jwt: { issuer: "issuer" } },
-        };
-        const equivalentConfig = {
-          security: { jwt: { issuer: "issuer" } },
-          capabilities: { auth: { enabled: false }, rest: {} },
-        };
+        const firstConfig = {};
+        const equivalentConfig = { capabilities: {} };
         const first = yield* Effect.forkChild(fixture.supervisor.start({ config: firstConfig }));
         yield* Deferred.await(preflightStarted);
         const second = yield* Effect.forkChild(
@@ -1023,6 +1037,45 @@ describe("Supervisor composition", () => {
     ),
   );
 
+  it.live("fences activation against a concurrent stop generation", () =>
+    run(
+      Effect.gen(function* () {
+        const activationGate = yield* Deferred.make<void>();
+        const activationStarted = yield* Deferred.make<void>();
+        const fixture = yield* makeFixture({ activationGate, activationStarted });
+        yield* fixture.supervisor.start({
+          config: { capabilities: { functions: { activation: "lazy" } } },
+        });
+        const activation = yield* Effect.forkChild(fixture.supervisor.activate("functions"));
+        yield* Deferred.await(activationStarted);
+        const stop = yield* Effect.forkChild(fixture.supervisor.maintenanceHandlers.stop);
+        yield* Deferred.succeed(activationGate, undefined);
+        yield* Fiber.join(activation);
+        yield* Fiber.join(stop);
+        const status = yield* fixture.supervisor.status;
+        expect(status.lifecycle).toBe("stopped");
+        expect(status.capabilities.find(({ name }) => name === "functions")?.state).toBe("stopped");
+      }),
+    ),
+  );
+
+  it.live("completes accepted quiesce after its waiter is interrupted", () =>
+    run(
+      Effect.gen(function* () {
+        const stopGate = yield* Deferred.make<void>();
+        const stopStarted = yield* Deferred.make<void>();
+        const fixture = yield* makeFixture({ stopGate, stopStarted });
+        yield* fixture.supervisor.start({ config: { capabilities: { rest: {} } } });
+        const waiter = yield* Effect.forkChild(fixture.supervisor.maintenanceHandlers.quiesce);
+        yield* Deferred.await(stopStarted);
+        yield* Fiber.interrupt(waiter);
+        yield* Deferred.succeed(stopGate, undefined);
+        yield* fixture.supervisor.shutdown;
+        expect((yield* fixture.store.read(fixture.id))?.desiredLifecycle).toBe("stopped");
+      }),
+    ),
+  );
+
   it.live("recovers a running durable intent and starts missing eager workloads", () =>
     run(
       Effect.gen(function* () {
@@ -1067,6 +1120,114 @@ describe("Supervisor composition", () => {
         expect(status.desiredLifecycle).toBe("running");
         expect(status.lifecycle).toBe("running");
         expect(yield* Ref.get(fixture.calls)).toContain("recover");
+      }),
+    ),
+  );
+
+  it.live("keeps an owner attachable until persisted plan recovery validates", () =>
+    run(
+      Effect.gen(function* () {
+        const fixture = yield* makeFixture();
+        yield* fixture.supervisor.start({ config: { capabilities: { rest: {} } } });
+        const running = yield* fixture.store
+          .read(fixture.id)
+          .pipe(Effect.provideContext(fixture.context));
+        if (running === undefined || running.definition === undefined)
+          return yield* new StackStateInvalidError({ message: "running fixture state is missing" });
+        const invalid = {
+          ...running,
+          definition: {
+            ...running.definition,
+            capabilities: {
+              ...running.definition.capabilities,
+              rest: { ...running.definition.capabilities.rest, version: "unsupported" },
+            },
+          },
+        };
+        yield* fixture.store
+          .replace(fixture.id, invalid, running.desiredGeneration)
+          .pipe(Effect.provideContext(fixture.context));
+        const recovered = yield* makeSupervisor({
+          identity,
+          stackId: fixture.id,
+          ownerSessionId: "replacement-owner",
+          rpcRelease: "test-release",
+          stateStore: fixture.store,
+          context: fixture.context,
+          runtime: {
+            driver: {
+              observe: () => Effect.succeed([]),
+              start: (key) => Effect.succeed({ ...key, state: "ready" as const }),
+              stop: () => Effect.void,
+              remove: () => Effect.void,
+              cleanup: () => Effect.void,
+              recover: () => Effect.succeed([]),
+            },
+          },
+        });
+        expect((yield* recovered.status).lifecycle).toBe("starting");
+        yield* recovered.recover;
+        const status = yield* recovered.status;
+        expect(status.lifecycle).toBe("stopped");
+        expect(status.capabilities.find(({ name }) => name === "rest")?.state).toBe("failed");
+      }),
+    ),
+  );
+
+  it.live("exposes recovery failure in status and permits a retry", () =>
+    run(
+      Effect.gen(function* () {
+        const fixture = yield* makeFixture();
+        yield* fixture.supervisor.start({ config: { capabilities: { rest: {} } } });
+        const failFirst = yield* Ref.make(true);
+        const recoveredResources = yield* Ref.make<ReadonlyArray<ObservedWorkload>>([]);
+        const recovered = yield* makeSupervisor({
+          identity,
+          stackId: fixture.id,
+          ownerSessionId: "recovery-owner",
+          rpcRelease: "test-release",
+          stateStore: fixture.store,
+          context: fixture.context,
+          runtime: {
+            driver: {
+              observe: () => Ref.get(recoveredResources),
+              start: (key) =>
+                Effect.gen(function* () {
+                  const ready = { ...key, state: "ready" as const };
+                  yield* Ref.update(recoveredResources, (current) => [
+                    ...current.filter((entry) => entry.workloadId !== key.workloadId),
+                    ready,
+                  ]);
+                  return ready;
+                }),
+              stop: (key) =>
+                Ref.update(recoveredResources, (current) =>
+                  current.filter((entry) => entry.workloadId !== key.workloadId),
+                ),
+              remove: (key) =>
+                Ref.update(recoveredResources, (current) =>
+                  current.filter((entry) => entry.workloadId !== key.workloadId),
+                ),
+              cleanup: () => Ref.set(recoveredResources, []),
+              recover: () =>
+                Effect.gen(function* () {
+                  if (yield* Ref.get(failFirst)) {
+                    yield* Ref.set(failFirst, false);
+                    return yield* new RuntimeDriverError({ message: "injected recovery failure" });
+                  }
+                  return [];
+                }),
+            },
+          },
+        });
+        yield* recovered.recover;
+        const failedStatus = yield* recovered.status;
+        expect(failedStatus.lifecycle).toBe("stopped");
+        expect(failedStatus.capabilities.find(({ name }) => name === "rest")?.state).toBe("failed");
+        yield* recovered.start({ config: { capabilities: { rest: {} } } });
+        expect((yield* recovered.status).lifecycle).toBe("running");
+        yield* recovered.recover;
+        expect((yield* recovered.status).lifecycle).toBe("running");
       }),
     ),
   );

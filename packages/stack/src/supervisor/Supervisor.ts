@@ -128,7 +128,7 @@ export interface Supervisor {
   readonly recover: Effect.Effect<void>;
   /** Completes after a successful destroy or quiesce shutdown signal. */
   readonly shutdown: Effect.Effect<void>;
-  /** Signals owner shutdown after a successful maintenance response. */
+  /** Signals owner shutdown after accepted quiesce or a successful destroy response. */
   readonly signalShutdown: Effect.Effect<void>;
   readonly watchStatus: Stream.Stream<StackStatus, StackError>;
   readonly logs: (options?: LogOptions) => Stream.Stream<StackLogEntry, StackError>;
@@ -218,6 +218,7 @@ const capabilityState = (
   observed: ReadonlyArray<ObservedWorkload>,
   active: ReadonlySet<CapabilityName>,
   phase: ActualPhase,
+  recoveryFailed: boolean,
 ): CapabilityStatus["state"] => {
   const configured = state.definition?.capabilities[name];
   if (configured === undefined || !configured.enabled) return "disabled";
@@ -228,6 +229,7 @@ const capabilityState = (
     phase === "destroying"
   )
     return "stopped";
+  if (recoveryFailed) return "failed";
   if (configured.activation === "lazy" && !active.has(name)) return "dormant";
   if (phase === "starting") return "starting";
   const resources = observed.filter((entry) => entry.workloadId.startsWith(`${name}:`));
@@ -242,6 +244,7 @@ const statusFor = (
   observed: ReadonlyArray<ObservedWorkload>,
   active: ReadonlySet<CapabilityName>,
   phase: ActualPhase,
+  recoveryFailed: boolean,
 ): Effect.Effect<StackStatus, StackStateInvalidError> =>
   Schema.decodeEffect(StackIdSchema)(state.identity.stackId).pipe(
     Effect.mapError(
@@ -253,7 +256,7 @@ const statusFor = (
       const capabilities = CAPABILITY_NAMES.map((name) => ({
         name,
         activation: definition?.capabilities[name].activation ?? "eager",
-        state: capabilityState(name, state, observed, active, phase),
+        state: capabilityState(name, state, observed, active, phase, recoveryFailed),
       }));
       const versions: Partial<Record<CapabilityName, string>> = {};
       if (definition !== undefined)
@@ -306,19 +309,21 @@ const statusFor = (
             ? "destroying"
             : state.desiredLifecycle === "stopped"
               ? "stopped"
-              : phase === "starting"
-                ? "starting"
-                : phase === "stopping"
-                  ? "stopping"
-                  : phase === "destroying"
-                    ? "destroying"
-                    : anyFailed
-                      ? "stopped"
-                      : anyStarting
-                        ? "starting"
-                        : allReady
-                          ? "running"
-                          : "stopped";
+              : recoveryFailed
+                ? "stopped"
+                : anyFailed
+                  ? "stopped"
+                  : phase === "starting"
+                    ? "starting"
+                    : phase === "stopping"
+                      ? "stopping"
+                      : phase === "destroying"
+                        ? "destroying"
+                        : anyStarting
+                          ? "starting"
+                          : allReady
+                            ? "running"
+                            : "stopped";
       return {
         id,
         lifecycle,
@@ -415,6 +420,7 @@ export const makeSupervisor = (
     const phase = yield* Ref.make<ActualPhase>(
       initial.desiredLifecycle === "running" ? "starting" : "stopped",
     );
+    const recoveryFailure = yield* Ref.make(false);
     type ActivationHandler = (
       capability: CapabilityName,
     ) => Effect.Effect<ActivationResult, GatewayActivationError | StackError>;
@@ -448,24 +454,18 @@ export const makeSupervisor = (
     const observe = () =>
       runtime.driver.observe(options.stackId).pipe(Effect.mapError(mapReconcileError));
     const observedForStatus = () =>
-      Ref.get(phase).pipe(
-        Effect.flatMap((current) => (current === "running" ? observe() : Effect.succeed([]))),
+      Effect.all({ phase: Ref.get(phase), recoveryFailed: Ref.get(recoveryFailure) }).pipe(
+        Effect.flatMap(({ phase: current, recoveryFailed }) =>
+          current === "running" && !recoveryFailed ? observe() : Effect.succeed([]),
+        ),
       );
 
-    const initialPlan =
-      initial.definition === undefined
-        ? undefined
-        : yield* rebuildExecutionPlan(initial.runtime, initial.definition).pipe(
-            Effect.provideContext(options.context),
-            Effect.mapError(
-              (error) => new StackStateInvalidError({ message: error.message, cause: error }),
-            ),
-          );
     const initialStatus = yield* statusFor(
       initial,
       [],
       yield* Ref.get(active),
       yield* Ref.get(phase),
+      false,
     );
     const hub = yield* makeStatusHub(initialStatus);
     const snapshot = (): Effect.Effect<StackStatus, StackError> =>
@@ -478,6 +478,7 @@ export const makeSupervisor = (
           yield* observedForStatus(),
           yield* Ref.get(active),
           yield* Ref.get(phase),
+          yield* Ref.get(recoveryFailure),
         );
         return status;
       });
@@ -624,11 +625,8 @@ export const makeSupervisor = (
 
     const recoveryOperation: Effect.Effect<void, StackError> = Effect.gen(function* () {
       const definition = initial.definition;
-      if (
-        initialPlan === undefined ||
-        definition === undefined ||
-        initial.desiredLifecycle !== "running"
-      ) {
+      if (definition === undefined || initial.desiredLifecycle !== "running") {
+        yield* Ref.set(recoveryFailure, false);
         if (options.runtime !== undefined || options.runtimeFactory !== undefined)
           yield* runtime.driver
             .cleanup({ stackId: options.stackId, destroy: false })
@@ -640,27 +638,34 @@ export const makeSupervisor = (
       }
 
       yield* Ref.set(phase, "starting");
+      yield* Ref.set(recoveryFailure, false);
       yield* publish().pipe(Effect.ignore);
-      const plan = initialPlan;
-      const request: RuntimeRecoveryRequest = {
-        stackId: options.stackId,
-        desiredGeneration: initial.desiredGeneration,
-        desiredLifecycle: "running",
-        plan,
-      };
-      const recoveryInput: LifecycleInput = {
-        stackId: options.stackId,
-        generation: initial.desiredGeneration,
-        desiredLifecycle: "running",
-        state: initial,
-        previous: initial,
-        definition,
-        inputFingerprint: initial.inputFingerprint ?? "",
-        secrets: initial.secrets,
-        plan,
-      };
       const attempt = yield* Effect.exit(
         Effect.gen(function* () {
+          const plan = yield* rebuildExecutionPlan(initial.runtime, definition).pipe(
+            Effect.provideContext(options.context),
+            Effect.mapError(
+              (error) => new StackStateInvalidError({ message: error.message, cause: error }),
+            ),
+          );
+          const request: RuntimeRecoveryRequest = {
+            stackId: options.stackId,
+            desiredGeneration: initial.desiredGeneration,
+            desiredLifecycle: "running",
+            plan,
+          };
+          const recoveryInput: LifecycleInput = {
+            stackId: options.stackId,
+            generation: initial.desiredGeneration,
+            desiredLifecycle: "running",
+            state: initial,
+            previous: initial,
+            definition,
+            inputFingerprint: initial.inputFingerprint ?? "",
+            secrets: initial.secrets,
+            plan,
+          };
+          yield* initializeActivation(plan);
           const recovered = yield* runtime.driver
             .recover(request)
             .pipe(Effect.mapError(mapReconcileError));
@@ -679,6 +684,7 @@ export const makeSupervisor = (
               message: `Stack recovery failed: ${Cause.pretty(attempt.cause)}`,
             })
             .pipe(Effect.ignore);
+        yield* Ref.set(recoveryFailure, true);
         yield* Ref.set(phase, "starting");
         yield* publish().pipe(Effect.ignore);
         return;
@@ -823,32 +829,78 @@ export const makeSupervisor = (
           Effect.tapError(() => restorePhase(previous)),
         );
         yield* Ref.set(phase, "running");
+        yield* Ref.set(recoveryFailure, false);
         return yield* publish();
       });
     const operationKey = (config: StackConfig | undefined): Effect.Effect<string, StackError> =>
       Effect.gen(function* () {
-        const input = config ?? {};
-        const encoded = yield* Schema.encodeEffect(StackConfigSchema)(input).pipe(
+        const state = yield* read();
+        if (state === undefined)
+          return yield* new StackStateInvalidError({ message: "Stack state is missing" });
+        yield* Schema.encodeEffect(StackConfigSchema)(config ?? {}).pipe(
           Effect.mapError(
             (error) =>
               new InvalidStackConfigError({
                 stackId: options.stackId,
                 message: `Invalid stack configuration: ${String(error)}`,
-              }),
-          ),
-        );
-        const crypto = yield* Crypto.Crypto;
-        const canonical = canonicalize({ encoded, secretValues: revealRedacted(input) });
-        const digest = yield* crypto.digest("SHA-256", new TextEncoder().encode(canonical)).pipe(
-          Effect.mapError(
-            (error) =>
-              new InvalidStackConfigError({
-                stackId: options.stackId,
-                message: `Unable to digest stack configuration: ${error.message}`,
                 cause: error,
               }),
           ),
         );
+        const compiled =
+          config === undefined &&
+          state.definition !== undefined &&
+          state.inputFingerprint !== undefined
+            ? undefined
+            : yield* compileStack({
+                projectRoot: state.identity.projectRoot,
+                runtime: state.runtime,
+                config,
+              }).pipe(Effect.provideContext(options.context));
+        const fingerprint = compiled?.inputFingerprint ?? state.inputFingerprint;
+        if (fingerprint === undefined)
+          return yield* new StackStateInvalidError({
+            stackId: options.stackId,
+            message: "Persisted stack definition fingerprint is missing",
+          });
+        const secretIdentity: Record<
+          string,
+          { readonly policy: "managed" | "passthrough"; readonly value?: string }
+        > = {};
+        if (compiled === undefined) {
+          for (const [slot, entry] of Object.entries(state.secrets))
+            secretIdentity[slot] = { policy: entry.policy, value: entry.value };
+        } else {
+          for (const declaration of compiled.secrets) {
+            const persisted = state.secrets[declaration.slot];
+            const value =
+              declaration.value === undefined
+                ? persisted?.value
+                : String(Redacted.value(declaration.value));
+            secretIdentity[declaration.slot] = {
+              policy: declaration.policy,
+              ...(value === undefined ? {} : { value }),
+            };
+          }
+        }
+        const semantics = {
+          fingerprint,
+          definition: compiled?.definition ?? state.definition,
+          secrets: secretIdentity,
+        };
+        const crypto = yield* Crypto.Crypto;
+        const digest = yield* crypto
+          .digest("SHA-256", new TextEncoder().encode(canonicalize(revealRedacted(semantics))))
+          .pipe(
+            Effect.mapError(
+              (error) =>
+                new InvalidStackConfigError({
+                  stackId: options.stackId,
+                  message: `Unable to digest stack configuration: ${error.message}`,
+                  cause: error,
+                }),
+            ),
+          );
         return digestHex(digest);
       }).pipe(Effect.provideContext(options.context));
     const start = (startOptions?: { readonly config?: StackConfig }) =>
@@ -866,6 +918,7 @@ export const makeSupervisor = (
           Effect.tapError(() => restorePhase(previous)),
         );
         yield* Ref.set(phase, "running");
+        yield* Ref.set(recoveryFailure, false);
         return yield* publish();
       });
     const restart = (startOptions?: { readonly config?: StackConfig }) =>
@@ -874,13 +927,29 @@ export const makeSupervisor = (
         return yield* submitOwned(restartOwned, key, restartOperation(startOptions));
       });
     const stopOperation = () => controller.stop().pipe(Effect.provideContext(options.context));
+    const shutdownSignal = yield* Deferred.make<void, never>();
+    const signalShutdown = Deferred.succeed(shutdownSignal, undefined).pipe(Effect.asVoid);
     const stop = submitOwned(stopOwned, "stop", stopOperation());
+    const quiesceOwned = new Map<string, OwnedResult<PersistedStackState, StackError>>();
+    const quiesceOwnedEffect = submitOwned(quiesceOwned, "quiesce", stopOperation());
+    const quiesce = quiesceOwnedEffect.pipe(
+      Effect.onInterrupt(() =>
+        FiberSet.run(
+          ownedFibers,
+          quiesceOwnedEffect.pipe(
+            Effect.matchEffect({
+              onFailure: () => Effect.void,
+              onSuccess: () => signalShutdown,
+            }),
+          ),
+          { startImmediately: true },
+        ),
+      ),
+    );
     const operation = <A>(effect: Effect.Effect<A, StackError>, fallback: StackRpcError["tag"]) =>
       effect.pipe(
         Effect.mapError((error) => rpcError(rpcTag(error, fallback), stateErrorMessage(error))),
       );
-    const shutdownSignal = yield* Deferred.make<void, never>();
-    const signalShutdown = Deferred.succeed(shutdownSignal, undefined).pipe(Effect.asVoid);
     const destroyOperation = controller
       .destroy()
       .pipe(Effect.provideContext(options.context), Effect.andThen(Ref.set(phase, "stopped")));
@@ -915,7 +984,7 @@ export const makeSupervisor = (
             }) satisfies MaintenanceResponse,
         ),
       ),
-      quiesce: stop.pipe(
+      quiesce: quiesce.pipe(
         Effect.provideContext(options.context),
         Effect.as({ ok: true, op: "quiesce" } satisfies MaintenanceResponse),
         Effect.orElseSucceed(

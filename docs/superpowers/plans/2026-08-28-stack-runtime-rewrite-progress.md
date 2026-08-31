@@ -915,3 +915,16 @@ private-port reservation plus gateway ownership atomic with accepted lifecycle g
 - Destroy shutdown is transport-owned: the exact owner session is signalled only after a successful destroy response
   write. Focused supervisor/control/handle/lifecycle verification passed 69 integration tests with stack type-check,
   Effect lint, formatting, and diff checks green.
+
+#### Task 13B2b7 correction — lifecycle/Fable follow-up (2026-08-31)
+
+- Persisted plan rebuilding is deferred until owner-scoped recovery, after control endpoint and fd3 readiness;
+  malformed persisted material leaves an attachable owner and recovery failures are visible as stopped/failed status.
+  Explicit start/restart clears the failure marker and remains retryable.
+- Quiesce keeps accepted stop work in the Supervisor FiberSet. Normal maintenance signals shutdown after the response
+  is written, while an interrupted waiter starts an owner-scoped join that signals only after successful quiesce.
+  Ordinary stop does not shut down the owner. Destroy callbacks require a connected client; stale request IDs are
+  removed through a single-consumer disconnect proxy queue.
+- Start/restart identity uses compiler-normalized definitions and effective secret values in a canonical SHA-256 digest;
+  equivalent defaults join, distinct transient secrets remain isolated. Focused supervisor/control/handle/lifecycle
+  verification passed 74 integration tests with stack type-check, Effect lint, formatting, and diff checks green.

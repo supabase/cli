@@ -14,6 +14,7 @@ import {
   Stream,
 } from "effect";
 import * as RpcSerialization from "effect/unstable/rpc/RpcSerialization";
+import * as Socket from "effect/unstable/socket/Socket";
 import { deriveStackId, type StackIdentity } from "../identity/Identity.ts";
 import { CAPABILITY_NAMES } from "../public/Capability.ts";
 import type { StackStatus } from "../public/Status.ts";
@@ -254,6 +255,22 @@ const makePrepareRequestFrame = (
     return yield* encodeRawFrame(encoded);
   });
 
+const makeDestroyRequestFrame = (): Effect.Effect<Uint8Array, MaintenanceProtocolError> =>
+  Effect.gen(function* () {
+    const parser = RpcSerialization.json.makeUnsafe();
+    const encoded = parser.encode({
+      _tag: "Request",
+      id: "1",
+      tag: "destroy",
+      payload: null,
+      headers: [],
+    });
+    if (encoded === undefined) {
+      return yield* new MaintenanceProtocolError({ message: "RPC request could not be encoded" });
+    }
+    return yield* encodeRawFrame(encoded);
+  });
+
 describe("control transport", () => {
   it.live("signals destroy shutdown only after writing the typed response", () =>
     withServer(
@@ -273,6 +290,59 @@ describe("control transport", () => {
           );
         }),
       ({ completion }) => ({
+        onDestroyResponse: () => Deferred.succeed(completion, undefined).pipe(Effect.asVoid),
+      }),
+    ),
+  );
+
+  it.live("does not signal destroy shutdown after the RPC client disconnects", () =>
+    withServer(
+      ({ endpoint, stackId, ownerSessionId, completionStarted, completionRelease, completion }) =>
+        Effect.gen(function* () {
+          const socket = yield* NodeSocket.makeNet({
+            path: endpoint.kind === "unix" ? endpoint.path : endpoint.name,
+          });
+          const write = yield* socket.writer;
+          const reader = yield* Effect.forkChild(
+            socket.runRaw(() => Effect.void),
+            {
+              startImmediately: true,
+            },
+          );
+          const preface = encodePreface({
+            kind: "rpc",
+            release: "stack-rpc-v1@0.1.0",
+            stackId,
+            ownerSessionId,
+          });
+          const frame = yield* makeDestroyRequestFrame();
+          yield* write(concatBytes(preface, frame));
+          yield* Deferred.await(completionStarted).pipe(
+            Effect.timeoutOrElse({
+              duration: 1_000,
+              orElse: () =>
+                Effect.fail(
+                  new MaintenanceProtocolError({ message: "destroy handler did not start" }),
+                ),
+            }),
+          );
+          yield* write(new Socket.CloseEvent(1000));
+          yield* Deferred.succeed(completionRelease, undefined);
+          const result = yield* Deferred.await(completion).pipe(
+            Effect.timeout("100 millis"),
+            Effect.exit,
+          );
+          expect(Exit.isFailure(result)).toBe(true);
+          yield* Fiber.interrupt(reader);
+        }),
+      ({ completionStarted, completionRelease, completion }) => ({
+        rpcHandlers: {
+          destroy: () =>
+            Deferred.succeed(completionStarted, undefined).pipe(
+              Effect.andThen(Deferred.await(completionRelease)),
+              Effect.asVoid,
+            ),
+        },
         onDestroyResponse: () => Deferred.succeed(completion, undefined).pipe(Effect.asVoid),
       }),
     ),
