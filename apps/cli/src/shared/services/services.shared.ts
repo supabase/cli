@@ -125,9 +125,7 @@ export function postgresImageForDbMajorVersion(majorVersion: number): string | u
   switch (majorVersion) {
     case 13:
     case 15:
-      return slimImagesEnabled()
-        ? POSTGRES_FALLBACK_IMAGE_PG15_SLIM
-        : POSTGRES_FALLBACK_IMAGE_PG15;
+      return slimImagesEnabled() ? POSTGRES_FALLBACK_IMAGE_PG15_SLIM : POSTGRES_FALLBACK_IMAGE_PG15;
     case 14:
       return POSTGRES_FALLBACK_IMAGE_PG14;
     default:
