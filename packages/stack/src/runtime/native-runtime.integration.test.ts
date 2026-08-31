@@ -61,7 +61,10 @@ const processPlan = <A>(main: A) => ({ startup: [], main });
 const withPlatform = <A, E, R>(effect: Effect.Effect<A, E, R>) =>
   Effect.scoped(effect).pipe(Effect.provide(NodeServices.layer));
 
-describe("native runtime", () => {
+// Native launcher tests create real process trees. Keep their timeout local to
+// this suite so file-level parallelism does not turn the default 5s guard into
+// a false failure while leaving the rest of the integration suite unchanged.
+describe("native runtime", { timeout: 15_000 }, () => {
   it.live("rejects container artifacts before invoking native process resolution", () =>
     withPlatform(
       Effect.gen(function* () {
@@ -573,6 +576,7 @@ describe("native runtime", () => {
         const targetCode = `
           const net = require("node:net");
           const { spawn } = require("node:child_process");
+          process.stdout.on("error", () => {});
           const server = net.createServer();
           server.listen({ host: "127.0.0.1", port: 0 }, () => {
             const address = server.address();
@@ -582,7 +586,9 @@ describe("native runtime", () => {
             const child = spawn(process.execPath, ["-e", ${JSON.stringify(descendantCode)}], {
               stdio: ["ignore", "pipe", "inherit"]
             });
-            child.stdout.on("data", (chunk) => process.stdout.write(chunk));
+            child.stdout.on("data", (chunk) => {
+              if (!process.stdout.destroyed) process.stdout.write(chunk);
+            });
           });
         `;
         const ownerCode = `
