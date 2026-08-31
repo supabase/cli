@@ -63,7 +63,7 @@ export const legacyBootstrapRuntimeLayer = Layer.mergeAll(
   ),
   legacyTelemetryStateLayer,
   legacyDbConnectionLayer,
-  // Exposed bare (not just used to feed sibling sub-layers, as elsewhere in this)
+  // Exposed bare (not just used to feed sibling sub-layers, as elsewhere in this
   // file) because `bootstrap.handler.ts` now calls `legacyResolveLinkedConn`
   // (CLI-1953's IPv4-pooler-fallback push connection) directly, which reads it.
   debugLogger,
