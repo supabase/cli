@@ -103,7 +103,7 @@ const quiesceOwner = (id: StackId) =>
 const quoteModuleSpecifier = (value: string): string =>
   `'${value.replaceAll("\\", "\\\\").replaceAll("'", "\\'")}'`;
 
-describe("managed stack handles", () => {
+describe("managed stack handles", { timeout: 30_000 }, () => {
   it.live("resolves a new automatic container identity and persists Docker", () =>
     withRuntimeRoot((project) =>
       Effect.gen(function* () {

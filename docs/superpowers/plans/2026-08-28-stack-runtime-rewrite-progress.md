@@ -328,7 +328,7 @@ Implementation continues after recording a ruling; this file is not a question q
 - Added detached Supervisor launching through Effect's `ChildProcessSpawner` and fd3 readiness
   handoff. Concurrent losers join winner metadata through a pre-started filesystem watcher plus a
   bounded Schedule reread that closes the platform watch-acquisition gap. Every returned owner is
-  release/session/probe validated. Readiness has a five-second deadline and terminates the exact child
+  release/session/probe validated. Readiness has a thirty-second deadline and terminates the exact child
   and observer on timeout, failure, or caller interruption. Owner processes outlive caller handles.
 - Added managed Effect handles and observational discovery (`openStack`, `findStack`, `listStacks`,
   `inspectStack`), truthful unconfigured/stopped status, operation-specific public errors, and exact

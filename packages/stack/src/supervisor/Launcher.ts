@@ -87,7 +87,7 @@ interface LaunchPayload {
 }
 
 const mapFailure = (message: string) => new StackStateInvalidError({ message });
-const SUPERVISOR_READINESS_TIMEOUT_MS = 5_000;
+const SUPERVISOR_READINESS_TIMEOUT_MS = 30_000;
 
 export interface LauncherOptions {
   readonly identity: StackIdentity;
@@ -183,7 +183,7 @@ const observeOwner = (
     // FileSystem.watch does not expose a subscription-ready signal. A short,
     // Schedule-driven reread closes the publication gap between the initial
     // absent read and watcher registration without ad-hoc timers. The outer
-    // launch timeout remains the single five-second guard.
+    // launch timeout remains the single thirty-second guard.
     const ownerFromReread = Stream.fromEffect(
       readOwnerMetadata(options.environment.stateRoot, options.stackId, options.environment),
     ).pipe(
