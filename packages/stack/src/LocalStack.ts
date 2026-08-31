@@ -644,7 +644,10 @@ export const localStackLayer = (
             const service = SERVICE_NAMES.find((candidate) => candidate === state.name);
             return service !== undefined && enabledServices.includes(service) ? [service] : [];
           });
-          yield* Ref.set(wholeStackStoppedServicesRef, new Set(running));
+          yield* Ref.update(
+            wholeStackStoppedServicesRef,
+            (current) => new Set([...current, ...running]),
+          );
         });
       const serviceStartOptions = {
         // Reservation may yield while disposal flips the lifecycle state.

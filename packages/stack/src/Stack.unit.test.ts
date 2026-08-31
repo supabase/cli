@@ -886,7 +886,7 @@ describe("Stack", () => {
     }).pipe(Effect.provide(layer), Effect.timeout("5 seconds"));
   });
 
-  it.live("restarts activated analytics companions after stopping and restarting the stack", () => {
+  it.live("restarts activated analytics companions across repeated stack cycles", () => {
     const graph = Effect.runSync(
       buildGraph([
         {
@@ -989,11 +989,119 @@ describe("Stack", () => {
       yield* stack.start;
       yield* stack.restartService("analytics");
       yield* activator.activate("analytics");
+      expect((yield* stack.getState("analytics")).status).toBe("Healthy");
+      expect((yield* stack.getState("vector")).status).toBe("Healthy");
+      yield* stack.stop;
+      yield* stack.start;
+      yield* stack.stop;
+      yield* stack.start;
+      yield* activator.activate("analytics");
 
       expect((yield* stack.getState("analytics")).status).toBe("Healthy");
       expect((yield* stack.getState("vector")).status).toBe("Healthy");
     }).pipe(Effect.provide(layer), Effect.timeout("10 seconds"));
   });
+
+  it.live("retains lazy companion allowances when an interrupted stack stop is retried", () =>
+    Effect.gen(function* () {
+      const cleanupStarted = yield* Deferred.make<void>();
+      const releaseCleanup = yield* Deferred.make<void>();
+      const graph = Effect.runSync(
+        buildGraph([
+          {
+            name: "postgres",
+            command: process.execPath,
+            restart: "no",
+            healthCheck: { probe: { _tag: "Exec", command: "true", args: [] } },
+          },
+          {
+            name: "analytics",
+            command: process.execPath,
+            restart: "no",
+            healthCheck: { probe: { _tag: "Exec", command: "true", args: [] } },
+            cleanup: Deferred.succeed(cleanupStarted, undefined).pipe(
+              Effect.andThen(Deferred.await(releaseCleanup)),
+            ),
+          },
+          {
+            name: "vector",
+            command: process.execPath,
+            restart: "no",
+            healthCheck: { probe: { _tag: "Exec", command: "true", args: [] } },
+          },
+        ]),
+      );
+      const config = {
+        ...defaultConfig,
+        runtime: { mode: "docker", containerRuntime: "docker" },
+        postgrest: false,
+        auth: false,
+        analytics: {
+          port: defaultPorts.analyticsPort,
+          version: DEFAULT_VERSIONS.analytics,
+          backend: "postgres",
+          apiKey: "test-api-key",
+        },
+        vector: { version: DEFAULT_VERSIONS.vector },
+        servicePolicies: {
+          ...defaultConfig.servicePolicies,
+          auth: "off",
+          postgrest: "off",
+          analytics: "lazy",
+          vector: "lazy",
+        },
+      } satisfies ResolvedStackConfig;
+      const builderLayer = Layer.succeed(StackBuilder, {
+        build: () =>
+          Effect.succeed({
+            graph,
+            cleanupTargets: { dockerContainerNames: [] },
+            serviceProjection: new Map([
+              ["postgres", { visibility: "public" as const }],
+              ["analytics", { visibility: "public" as const }],
+              ["vector", { visibility: "public" as const }],
+            ]),
+          }),
+      });
+      const { resolver, spawner } = setupLayer(config, noopPortLease(config.ports));
+      const layer = localStackLayer(config, noopPortLease(config.ports)).pipe(
+        Layer.provide(builderLayer),
+        Layer.provide(StackPreparation.layer.pipe(Layer.provide(resolver.layer))),
+        Layer.provide(spawner.layer),
+        Layer.provide(NodeServices.layer),
+      );
+
+      yield* Effect.gen(function* () {
+        const stack = yield* Stack;
+        const activator = yield* StackServiceActivator;
+        yield* stack.start;
+        yield* activator.activate("analytics");
+
+        const stopping = yield* (yield* stack.stateChanges("analytics")).pipe(
+          Stream.filter((state) => state.status === "Stopping"),
+          Stream.runHead,
+          Effect.forkChild({ startImmediately: true }),
+        );
+        const stoppingStack = yield* stack.stop.pipe(Effect.forkChild({ startImmediately: true }));
+        expect(Option.isSome(yield* Fiber.join(stopping))).toBe(true);
+        yield* Deferred.await(cleanupStarted);
+
+        const interrupting = yield* Fiber.interrupt(stoppingStack).pipe(
+          Effect.forkChild({ startImmediately: true }),
+        );
+        // Immediate evaluation delivers the interruption before returning while
+        // the interrupt effect waits for the gated cleanup to finish.
+        yield* Deferred.succeed(releaseCleanup, undefined);
+        yield* Fiber.join(interrupting);
+
+        yield* stack.stop;
+        yield* stack.start;
+        yield* activator.activate("analytics");
+        expect((yield* stack.getState("analytics")).status).toBe("Healthy");
+        expect((yield* stack.getState("vector")).status).toBe("Healthy");
+      }).pipe(Effect.provide(layer));
+    }).pipe(Effect.scoped, Effect.timeout("10 seconds")),
+  );
 
   it.live("rejects a cached start when disposal begins during startup", () =>
     Effect.gen(function* () {

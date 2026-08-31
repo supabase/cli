@@ -371,6 +371,8 @@ describe("native PostgREST tracer bullet", () => {
     await stack.stop();
     await stack.stop();
     await stack.start();
+    await stack.stop();
+    await stack.start();
 
     expect(stack.url).toBe(before.url);
     expect(stack.dbUrl).toBe(before.dbUrl);
