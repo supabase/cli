@@ -9021,6 +9021,9 @@ type VanitySubdomainConfigResponseStatus string
 // bearerContextKey is the context key for bearer security scheme
 type bearerContextKey string
 
+// oauth2ContextKey is the context key for oauth2 security scheme
+type oauth2ContextKey string
+
 // V1DeleteABranchParams defines parameters for V1DeleteABranch.
 type V1DeleteABranchParams struct {
 	// Force If set to false, schedule deletion with 1-hour grace period (only when soft deletion is enabled).
