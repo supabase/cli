@@ -59,9 +59,6 @@ const LEGACY_LOGFLARE_API_KEY = "api-key";
  * Docker's 10s SIGTERM grace (upstream hang). Forward TERM, wait 3s, then
  * KILL. Interrupted `wait` is >128; a second `wait` recovers the BEAM's
  * status unless it was already reaped (127).
- *
- * Slim analytics ships `/app/bin/logflare` (WORKDIR `/app`), so this
- * `./logflare` wrapper is docker.io-only. Flag-on keeps the image entrypoint.
  */
 const LEGACY_LOGFLARE_ENTRYPOINT_SCRIPT =
   "cat <<'EOF' > run.sh && exec sh run.sh\n" +
@@ -145,12 +142,7 @@ export function legacyBuildLogflareContainerSpec(
 
   if (input.backend === "bigquery") {
     const hostJwtPath = join(input.workdir, input.gcpJwtPath);
-    // Slim analytics is WORKDIR /app and resolves gcloud.json from cwd.
-    const credsPath = slim ? "/app/gcloud.json" : "/opt/app/rel/logflare/bin/gcloud.json";
-    binds.push(`${hostJwtPath}:${credsPath}`);
-    if (slim) {
-      env.GOOGLE_APPLICATION_CREDENTIALS = credsPath;
-    }
+    binds.push(`${hostJwtPath}:/opt/app/rel/logflare/bin/gcloud.json`);
     env.GOOGLE_DATASET_ID_APPEND = "_prod";
     env.GOOGLE_PROJECT_ID = input.gcpProjectId;
     env.GOOGLE_PROJECT_NUMBER = input.gcpProjectNumber;
@@ -164,12 +156,8 @@ export function legacyBuildLogflareContainerSpec(
     containerName: legacyServiceContainerName(LEGACY_LOGFLARE_CONTAINER_SUFFIX, input.projectId),
     hostname: "127.0.0.1",
     env,
-    ...(slim
-      ? {}
-      : {
-          entrypoint: "sh",
-          cmd: ["-c", LEGACY_LOGFLARE_ENTRYPOINT_SCRIPT],
-        }),
+    entrypoint: "sh",
+    cmd: ["-c", LEGACY_LOGFLARE_ENTRYPOINT_SCRIPT],
     binds,
     exposedPorts: [{ containerPort: "4000" }],
     ports: [{ hostPort: String(input.port), containerPort: "4000" }],

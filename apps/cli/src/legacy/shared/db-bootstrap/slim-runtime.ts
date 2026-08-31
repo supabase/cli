@@ -6,8 +6,7 @@
  * Auth, studio, pg-meta, Vector, Postgres, storage, and edge-runtime share the
  * docker.io specs (`sh`/`wget`/`node`). Elixir images (realtime, analytics,
  * pooler) ship busybox `wget` on PATH but not `curl`, so they keep a wget
- * probe instead of docker.io's `curl --head`. Slim analytics also keeps the
- * image entrypoint (`/app/bin/logflare`, not docker.io's `./logflare`).
+ * probe instead of docker.io's `curl --head`.
  */
 
 import { usesSlimImageRuntime } from "../../../shared/services/slim-images.ts";
