@@ -72,8 +72,10 @@ export interface LegacyDbBootstrapConfig {
   readonly realtimeIpVersion: "IPv4" | "IPv6";
   readonly realtimeMaxHeaderLength: number;
   readonly storageFileSizeLimit: CliConfig["storage"]["file_size_limit"];
-  /** Pre-registry-resolution image reference (`utils.Config.Db.Image`) — the caller still resolves the registry candidate itself, see this module's header. */
+  /** Pull/create image (`utils.Config.Db.Image` after slim rewrite). The caller still resolves the registry candidate itself. */
   readonly postgresImage: string;
+  /** Unprefixed docker.io identity for INITDB version-compare. Never a slim ghcr ref. */
+  readonly postgresConfigImage: string;
   readonly serviceVersionOverrides: LocalServiceVersionOverrides;
   readonly dbHealthTimeoutSeconds: number;
   readonly storageTargetMigration: string;
@@ -285,7 +287,7 @@ export const legacyResolveDbBootstrapConfig = <E>(
     // linked-project pin written by `supabase link`) BEFORE either caller reads it
     // (`pkg/config/config.go:827-863`) — never fails (a missing/unreadable pin file resolves to
     // the embedded default), so no wrap needed.
-    const postgresImage = yield* legacyResolveDbImage(
+    const { image: postgresImage, configImage: postgresConfigImage } = yield* legacyResolveDbImage(
       fs,
       path,
       workdir,
@@ -342,6 +344,7 @@ export const legacyResolveDbBootstrapConfig = <E>(
       realtimeMaxHeaderLength,
       storageFileSizeLimit,
       postgresImage,
+      postgresConfigImage,
       serviceVersionOverrides,
       dbHealthTimeoutSeconds,
       storageTargetMigration,

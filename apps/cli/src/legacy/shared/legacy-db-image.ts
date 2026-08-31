@@ -1,5 +1,7 @@
 import { Effect, type FileSystem, type Path } from "effect";
-import { dockerfileServiceImage } from "../../shared/services/dockerfile-images.ts";
+import { dockerfileServiceImageRaw } from "../../shared/services/dockerfile-images.ts";
+import { postgresImageForDbMajorVersion } from "../../shared/services/services.shared.ts";
+import { slimImageForCurrentPin } from "../../shared/services/slim-images.ts";
 
 /**
  * Resolves the local Postgres Docker image the way `config.Load` does,
@@ -11,9 +13,9 @@ import { dockerfileServiceImage } from "../../shared/services/dockerfile-images.
  * into `config.Images`, so the TS port tracks Dependabot bumps in that source.
  */
 
-const LEGACY_PG_IMAGE = dockerfileServiceImage("pg");
-const LEGACY_PG14 = "supabase/postgres:14.1.0.89";
-const LEGACY_PG15 = "supabase/postgres:15.8.1.085";
+// Read per call, not captured at import time, so `SUPABASE_USE_SLIM_IMAGES` is
+// observed by the resolver (and by tests that stub the env).
+const legacyPgImageRaw = () => dockerfileServiceImageRaw("pg");
 
 /** Replace everything after the first `:` with `tag`. */
 function replaceImageTag(image: string, tag: string): string {
@@ -52,6 +54,16 @@ function compareSemver(a: string, b: string): number {
   return 0;
 }
 
+export interface LegacyResolvedDbImage {
+  /** Pull/create reference — slim-translated when the flag is on and the pin is current. */
+  readonly image: string;
+  /**
+   * Unprefixed docker.io / OrioleDB / 13–15 identity for version-compare.
+   * Never `ghcr.io/...` — {@link legacyPostgresImageVersionTag} splits on the first `:`.
+   */
+  readonly configImage: string;
+}
+
 /**
  * Resolve the Postgres image for `majorVersion`, honoring the pinned version
  * written by `supabase start` to `supabase/.temp/postgres-version` (Go reads
@@ -73,24 +85,14 @@ export const legacyResolveDbImage = Effect.fnUntraced(function* (
     orioledbVersion.length > 0 &&
     (majorVersion === 15 || majorVersion === 17)
   ) {
-    return versionCompare(orioledbVersion, "15.1.1.13") > 0
-      ? `supabase/postgres:${orioledbVersion}-orioledb`
-      : `supabase/postgres:orioledb-${orioledbVersion}`;
+    const image =
+      versionCompare(orioledbVersion, "15.1.1.13") > 0
+        ? `supabase/postgres:${orioledbVersion}-orioledb`
+        : `supabase/postgres:orioledb-${orioledbVersion}`;
+    return { image, configImage: image };
   }
-  let image = LEGACY_PG_IMAGE;
-  switch (majorVersion) {
-    case 13:
-      image = LEGACY_PG15;
-      break;
-    case 14:
-      image = LEGACY_PG14;
-      break;
-    case 15:
-      image = LEGACY_PG15;
-      break;
-    default:
-      break;
-  }
+  const currentRaw = postgresImageForDbMajorVersion(majorVersion) ?? legacyPgImageRaw();
+  let appliedPin: string | undefined;
   if (majorVersion > 14) {
     const versionPath = path.join(workdir, "supabase", ".temp", "postgres-version");
     const pinned = yield* fs.readFileString(versionPath).pipe(
@@ -98,12 +100,21 @@ export const legacyResolveDbImage = Effect.fnUntraced(function* (
       Effect.orElseSucceed(() => ""),
     );
     if (pinned.length > 0) {
-      const colon = image.indexOf(":");
-      const currentTag = colon >= 0 ? image.slice(colon + 1) : image;
+      const colon = currentRaw.indexOf(":");
+      const currentTag = colon >= 0 ? currentRaw.slice(colon + 1) : currentRaw;
       if (versionCompare(currentTag, "15.1.0.55") >= 0) {
-        image = replaceImageTag(LEGACY_PG_IMAGE, pinned);
+        appliedPin = pinned;
       }
     }
   }
-  return image;
+  // PG14 has no slim build.
+  if (majorVersion === 14) {
+    return { image: currentRaw, configImage: currentRaw };
+  }
+  const configImage =
+    appliedPin !== undefined ? replaceImageTag(currentRaw, appliedPin) : currentRaw;
+  return {
+    image: slimImageForCurrentPin("pg", currentRaw, appliedPin),
+    configImage,
+  };
 });
