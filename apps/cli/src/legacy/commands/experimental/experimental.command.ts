@@ -3,10 +3,9 @@ import { legacyWorkersCommand } from "./workers/workers.command.ts";
 
 /**
  * `supabase experimental` — the parent for command families that are not yet
- * covered by the CLI's compatibility promise. Registered with
- * `Command.unlisted` in `legacy/cli/root.ts`, so the family and everything
- * under it stays out of `--help`, shell completions, the wizard, and the
- * generated docs reference while remaining fully invocable.
+ * covered by the CLI's compatibility promise. `Command.unlisted` below keeps the
+ * family and everything under it out of `--help`, shell completions, the wizard,
+ * and the generated docs reference while remaining fully invocable.
  *
  * Graduating a family out of here is a breaking rename of its invocation path,
  * so keep the "experimental" wording in every user-facing string a subtree
@@ -19,4 +18,5 @@ export const legacyExperimentalCommand = Command.make("experimental").pipe(
   ),
   Command.withShortDescription("Experimental, unstable commands"),
   Command.withSubcommands([legacyWorkersCommand]),
+  Command.unlisted,
 );

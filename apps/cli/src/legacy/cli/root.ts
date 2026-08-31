@@ -70,7 +70,7 @@ export const legacyRoot = Command.make("supabase").pipe(
     legacyDbCommand,
     legacyDomainsCommand,
     legacyEncryptionCommand,
-    legacyExperimentalCommand.pipe(Command.unlisted),
+    legacyExperimentalCommand,
     legacyFunctionsCommand,
     legacyGenCommand,
     legacyInitCommand,
