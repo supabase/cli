@@ -39,13 +39,15 @@ export interface LegacyBranchRefResolveMappers<EGet, EFind> {
  *    `V1GetABranch` (`GET /v1/projects/{ref}/branches/{name}`) and return
  *    `JSON200.project_ref`.
  *
- * The persistent `--project-ref` is required for path 3 and is passed in by
- * the caller (which has already run `LegacyProjectRefResolver` so the linked
- * project cache write does not re-fire here).
+ * The parent project ref is required only for path 3, so it may be passed
+ * lazily as an Effect — it is evaluated exactly then, never for a ref-shaped
+ * or UUID input. That keeps `--project-ref <uuid>` working in an unlinked
+ * directory: the UUID endpoint does not use a parent ref, so requiring one
+ * up front would fail invocations the API itself can serve.
  */
-export function legacyResolveBranchProjectRef<EGet, EFind>(
+export function legacyResolveBranchProjectRef<EGet, EFind, EParent = never, RParent = never>(
   input: string,
-  projectRef: string,
+  projectRef: string | Effect.Effect<string, EParent, RParent>,
   mappers: LegacyBranchRefResolveMappers<EGet, EFind>,
 ) {
   return Effect.gen(function* () {
@@ -62,8 +64,9 @@ export function legacyResolveBranchProjectRef<EGet, EFind>(
       return detail.ref;
     }
 
+    const parentRef = typeof projectRef === "string" ? projectRef : yield* projectRef;
     const branch = yield* api.v1
-      .getABranch({ ref: projectRef, name: input })
+      .getABranch({ ref: parentRef, name: input })
       .pipe(Effect.catch(mappers.mapFindError));
     return branch.project_ref;
   });

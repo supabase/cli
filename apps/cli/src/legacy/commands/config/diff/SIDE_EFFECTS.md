@@ -8,13 +8,13 @@ writes `config.toml` or any remote configuration.**
 
 ## Files Read
 
-| Path                                           | Format                    | When                                                                                       |
-| ---------------------------------------------- | ------------------------- | ------------------------------------------------------------------------------------------ |
-| `<workdir>/supabase/config.toml`               | TOML                      | always, before any network call (missing file or parse error aborts, exit 1)               |
-| `<workdir>/supabase/.env`, `.env.local`        | dotenv                    | always, to resolve `env(VAR)` references inside `config.toml`                              |
-| `<workdir>/supabase/.temp/project-ref`         | plain text                | project-ref fallback (flag → `SUPABASE_PROJECT_ID` → this file); parent-ref for `--target` |
-| `<workdir>/supabase/.temp/linked-project.json` | JSON                      | existence check only, for the telemetry cache write below                                  |
-| `~/.supabase/access-token`                     | plain text (token string) | when `SUPABASE_ACCESS_TOKEN` unset and keyring unavailable                                 |
+| Path                                           | Format                    | When                                                                                                                                                                              |
+| ---------------------------------------------- | ------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `<workdir>/supabase/config.toml`               | TOML                      | always, before any network call (missing file or parse error aborts, exit 1); re-read after target resolution when the file declares `[remotes.*]`, to apply the matching overlay |
+| `<workdir>/supabase/.env`, `.env.local`        | dotenv                    | always, to resolve `env(VAR)` references inside `config.toml`                                                                                                                     |
+| `<workdir>/supabase/.temp/project-ref`         | plain text                | project-ref fallback (flag → `SUPABASE_PROJECT_ID` → this file); parent-ref for a branch-name `--project-ref`                                                                     |
+| `<workdir>/supabase/.temp/linked-project.json` | JSON                      | existence check only, for the telemetry cache write below                                                                                                                         |
+| `~/.supabase/access-token`                     | plain text (token string) | when `SUPABASE_ACCESS_TOKEN` unset and keyring unavailable                                                                                                                        |
 
 ## Files Written
 
@@ -31,11 +31,11 @@ that finds differences.
 
 All Bearer-authenticated, all read-only.
 
-| #   | Purpose                            | Method | Path                                 | Success | Notes                                                                  |
-| --- | ---------------------------------- | ------ | ------------------------------------ | ------- | ---------------------------------------------------------------------- |
-| 0a  | branch by UUID (`--target <uuid>`) | GET    | `/v1/branches/{branch_id}`           | 200     | only when `--target` is a UUID                                         |
-| 0b  | branch by name (`--target <name>`) | GET    | `/v1/projects/{ref}/branches/{name}` | 200     | only when `--target` is not a ref/UUID; 404 → "branch not found" error |
-| 1   | effective remote config            | GET    | `/v2/projects/{ref}/config`          | 200     | always (after target resolution)                                       |
+| #   | Purpose                 | Method | Path                                 | Success | Notes                                                                 |
+| --- | ----------------------- | ------ | ------------------------------------ | ------- | --------------------------------------------------------------------- |
+| 0a  | branch by UUID          | GET    | `/v1/branches/{branch_id}`           | 200     | only when `--project-ref` is a UUID; needs no linked project          |
+| 0b  | branch by name          | GET    | `/v1/projects/{ref}/branches/{name}` | 200     | only when `--project-ref` is not a ref/UUID; 404 → "branch not found" |
+| 1   | effective remote config | GET    | `/v2/projects/{ref}/config`          | 200     | always (after target resolution)                                      |
 
 ## Environment Variables
 
@@ -53,8 +53,7 @@ All Bearer-authenticated, all read-only.
 | `0`  | success — including when differences are found, unless `--exit-code` is passed |
 | `1`  | `--exit-code` passed and at least one difference found                         |
 | `1`  | missing or malformed `supabase/config.toml`                                    |
-| `1`  | `--target` and `--project-ref` passed together                                 |
-| `1`  | unknown branch (`--target` 404)                                                |
+| `1`  | unknown branch (branch-name `--project-ref` 404)                               |
 | `1`  | two `[remotes.*]` blocks declare the same `project_id` as the target ref       |
 | `1`  | remote config read failure (network or unexpected status)                      |
 

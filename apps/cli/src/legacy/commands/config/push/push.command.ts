@@ -32,7 +32,11 @@ export const legacyConfigPushCommand = Command.make("push", config).pipe(
   ]),
   Command.withHandler((flags) =>
     legacyConfigPush(flags).pipe(
-      withLegacyCommandInstrumentation({ flags }),
+      // Unlike `config diff`'s branch-accepting flag, push's `--project-ref`
+      // is ref-only, so its value is always safe to log verbatim — keeping
+      // the config family's telemetry consistent (documented safe list in
+      // apps/cli/CLAUDE.md).
+      withLegacyCommandInstrumentation({ flags, safeFlags: ["project-ref"] }),
       withJsonErrorHandling,
     ),
   ),

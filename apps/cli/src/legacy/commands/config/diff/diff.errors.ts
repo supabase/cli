@@ -26,16 +26,7 @@ export class LegacyConfigDiffLoadConfigError extends Data.TaggedError(
   }
 }
 
-/** `--target` and `--project-ref` passed together. */
-export class LegacyConfigDiffFlagConflictError extends Data.TaggedError(
-  "LegacyConfigDiffFlagConflictError",
-)<{ readonly message: string }> {
-  get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
-    return actionability.invalidInput;
-  }
-}
-
-/** `--target` named a branch the parent project does not have. */
+/** `--project-ref` named a branch the parent project does not have. */
 export class LegacyConfigDiffBranchNotFoundError extends Data.TaggedError(
   "LegacyConfigDiffBranchNotFoundError",
 )<{ readonly message: string }> {

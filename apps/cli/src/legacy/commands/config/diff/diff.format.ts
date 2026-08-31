@@ -1,5 +1,7 @@
 import type { ConfigChange, ConfigChangeSet } from "@supabase/config";
 
+import { LEGACY_BRANCH_UUID_PATTERN } from "../../../shared/legacy-branch-ref.resolver.ts";
+
 /**
  * Pure formatters, payload builders, and input adapters for `config diff` —
  * no Effect, no services, unit-testable in isolation.
@@ -63,10 +65,14 @@ function localScope(context: LegacyConfigDiffContext): string {
 
 /** The target-echo line, printed to stderr before any comparison output. */
 export function legacyConfigDiffComparisonLine(context: LegacyConfigDiffContext): string {
+  // A UUID target is an identifier, not a display name — quoting it as
+  // `'1111…'` would imply the branch is literally named that.
   const target =
     context.branch === undefined
       ? `project ${context.projectRef}`
-      : `'${context.branch}' (branch ${context.projectRef})`;
+      : LEGACY_BRANCH_UUID_PATTERN.test(context.branch)
+        ? `branch ${context.branch} (project ref ${context.projectRef})`
+        : `'${context.branch}' (branch ${context.projectRef})`;
   return `Comparing against ${target} using ${localScope(context)}\n`;
 }
 

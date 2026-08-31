@@ -41,7 +41,6 @@ import {
   LegacyConfigDiffBranchNotFoundError,
   LegacyConfigDiffBranchResolveNetworkError,
   LegacyConfigDiffBranchResolveStatusError,
-  LegacyConfigDiffFlagConflictError,
   LegacyConfigDiffLoadConfigError,
   LegacyConfigDiffReadNetworkError,
   LegacyConfigDiffReadStatusError,
@@ -57,6 +56,10 @@ const mapBranchResolveError = mapLegacyHttpError({
   statusMessage: readStatusMessage,
 });
 
+function isRecord(value: unknown): value is Readonly<Record<string, unknown>> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
 export const legacyConfigDiff = Effect.fn("legacy.config.diff")(function* (
   flags: LegacyConfigDiffFlags,
 ) {
@@ -69,57 +72,11 @@ export const legacyConfigDiff = Effect.fn("legacy.config.diff")(function* (
   const processControl = yield* ProcessControl;
   const goOutputFlag = yield* LegacyOutputFlag;
 
-  if (Option.isSome(flags.target) && Option.isSome(flags.projectRef)) {
-    return yield* new LegacyConfigDiffFlagConflictError({
-      message: "--target and --project-ref are mutually exclusive; pass at most one.",
-    });
-  }
+  // An empty `--project-ref` value is absent, mirroring the resolver's own rule.
+  const requested = Option.filter(flags.projectRef, (value) => value.length > 0);
 
-  // Resolve the comparison target to a project ref. `--target` accepts a
-  // branch name, a branch UUID, or a raw project ref (same acceptance as
-  // `link`); a ref-shaped value skips the parent-project resolution entirely
-  // so it works in an unlinked directory.
-  let ref: string;
-  let branch: string | undefined;
-  if (Option.isSome(flags.target) && !LEGACY_BRANCH_PROJECT_REF_PATTERN.test(flags.target.value)) {
-    const target = flags.target.value;
-    branch = target;
-    const parentRef = yield* resolver.resolve(Option.none());
-    ref = yield* legacyResolveBranchProjectRef(target, parentRef, {
-      mapGetError: mapBranchResolveError,
-      mapFindError: mapBranchResolveError,
-    }).pipe(
-      Effect.catchTag(
-        "LegacyConfigDiffBranchResolveStatusError",
-        (
-          cause,
-        ): Effect.Effect<
-          never,
-          LegacyConfigDiffBranchNotFoundError | LegacyConfigDiffBranchResolveStatusError
-        > =>
-          cause.status === 404
-            ? Effect.fail(
-                new LegacyConfigDiffBranchNotFoundError({
-                  message: `Branch "${legacySanitizeInlineName(target)}" not found. Run \`supabase branches list\` to see available branches.`,
-                }),
-              )
-            : Effect.fail(cause),
-      ),
-    );
-  } else if (Option.isSome(flags.target)) {
-    ref = flags.target.value;
-  } else {
-    ref = yield* resolver.resolve(flags.projectRef);
-  }
-
-  yield* Effect.gen(function* () {
-    // 1. Load the local config, merging a matching `[remotes.*]` block over
-    // the base document when the target ref names a declared branch (ADR
-    // 0018). Never writes — this command is read-only by contract.
-    const loaded = yield* loadCliConfig(runtimeInfo.cwd, {
-      projectRef: ref,
-      goViperCompat: true,
-    }).pipe(
+  const loadLocalConfig = (projectRef: string | undefined) =>
+    loadCliConfig(runtimeInfo.cwd, { projectRef, goViperCompat: true }).pipe(
       Effect.catchTag(
         "CliConfigParseError",
         (cause) =>
@@ -131,12 +88,83 @@ export const legacyConfigDiff = Effect.fn("legacy.config.diff")(function* (
         "DuplicateRemoteProjectIdError",
         (cause) => new LegacyConfigDiffLoadConfigError({ message: cause.message }),
       ),
+      Effect.flatMap((loaded) =>
+        loaded === null
+          ? Effect.fail(
+              new LegacyConfigDiffLoadConfigError({
+                message:
+                  "failed to read supabase/config.toml: file not found. Run `supabase init` to create one.",
+              }),
+            )
+          : Effect.succeed(loaded),
+      ),
     );
-    if (loaded === null) {
-      return yield* new LegacyConfigDiffLoadConfigError({
-        message:
-          "failed to read supabase/config.toml: file not found. Run `supabase init` to create one.",
-      });
+
+  // Written once the comparison target is known, so the linked-project cache
+  // finalizer below only fires for invocations that got that far — matching
+  // the family pattern of caching exactly the resolved ref.
+  let resolvedRef: string | undefined;
+
+  yield* Effect.gen(function* () {
+    // 1. Load and validate the local config BEFORE any network call or
+    // target resolution (never writes — this command is read-only by
+    // contract): a missing file must point at `supabase init` rather than
+    // the resolver's not-linked error, and a malformed document must not
+    // burn a branch-resolution round trip. This first load applies no
+    // `[remotes.*]` overlay — the overlay is keyed by the RESOLVED target
+    // ref, so a config that declares remotes is reloaded in step 3.
+    let loaded = yield* loadLocalConfig(undefined);
+
+    // 2. Resolve the comparison target. `--project-ref` accepts a project
+    // ref, or the name (or UUID) of a branch of the linked project —
+    // `link`'s settled vocabulary (CLI-2167). A ref-shaped value (exactly 20
+    // lowercase letters) is always treated as a project ref; a UUID resolves
+    // through `GET /v1/branches/{id}` directly, so it works in an unlinked
+    // directory (the parent ref is passed lazily and only evaluated for a
+    // branch-NAME lookup).
+    let ref: string;
+    let branch: string | undefined;
+    if (Option.isSome(requested) && !LEGACY_BRANCH_PROJECT_REF_PATTERN.test(requested.value)) {
+      const target = requested.value;
+      branch = target;
+      const resolving =
+        output.format === "text" ? yield* output.task("Resolving branch...") : undefined;
+      ref = yield* legacyResolveBranchProjectRef(target, resolver.resolve(Option.none()), {
+        mapGetError: mapBranchResolveError,
+        mapFindError: mapBranchResolveError,
+      }).pipe(
+        Effect.tapError(() => resolving?.fail() ?? Effect.void),
+        Effect.catchTag(
+          "LegacyConfigDiffBranchResolveStatusError",
+          (
+            cause,
+          ): Effect.Effect<
+            never,
+            LegacyConfigDiffBranchNotFoundError | LegacyConfigDiffBranchResolveStatusError
+          > =>
+            cause.status === 404
+              ? Effect.fail(
+                  new LegacyConfigDiffBranchNotFoundError({
+                    message: `Branch "${legacySanitizeInlineName(target)}" not found. Run \`supabase branches list\` to see available branches.`,
+                  }),
+                )
+              : Effect.fail(cause),
+        ),
+      );
+      yield* resolving?.clear() ?? Effect.void;
+    } else {
+      ref = yield* resolver.resolve(requested);
+    }
+    resolvedRef = ref;
+
+    // 3. Apply the matching `[remotes.*]` overlay (ADR 0018) now that the
+    // target ref is known. Only configs that declare remotes reload — the
+    // common remotes-free config keeps the step-1 load. A config that both
+    // declares remotes and triggers a deprecation warning prints that
+    // warning twice (once per load); the alternative is validating after the
+    // network call, which is worse.
+    if (isRecord(loaded.document?.["remotes"])) {
+      loaded = yield* loadLocalConfig(ref);
     }
 
     const context: LegacyConfigDiffContext = {
@@ -147,7 +175,7 @@ export const legacyConfigDiff = Effect.fn("legacy.config.diff")(function* (
     };
     yield* output.raw(legacyConfigDiffComparisonLine(context), "stderr");
 
-    // 2. Fetch the effective remote config (single read-only call).
+    // 4. Fetch the effective remote config (single read-only call).
     const fetching =
       output.format === "text" ? yield* output.task("Fetching remote config...") : undefined;
     const response = yield* api.v2.getProjectConfig({ ref }).pipe(
@@ -163,7 +191,7 @@ export const legacyConfigDiff = Effect.fn("legacy.config.diff")(function* (
     );
     yield* fetching?.clear() ?? Effect.void;
 
-    // 3. Project the response through CLI-2230's convergence normalizer (ADR
+    // 5. Project the response through CLI-2230's convergence normalizer (ADR
     // 0021). A response the registry cannot narrow (out-of-domain mapped
     // values) is a response problem, not a transport one:
     // `ProjectConfigParseError` stays in the typed channel with its own
@@ -180,7 +208,7 @@ export const legacyConfigDiff = Effect.fn("legacy.config.diff")(function* (
       ),
     );
 
-    // 4. Classify. The loaded pair carries the raw merged document (declared
+    // 6. Classify. The loaded pair carries the raw merged document (declared
     // keys) and the env-var origins; `diffProjectConfig` derives the local
     // convergence projection from it, so the same `ProjectConfigParseError`
     // boundary applies here.
@@ -196,13 +224,13 @@ export const legacyConfigDiff = Effect.fn("legacy.config.diff")(function* (
     const scope = legacyConfigDiffScope(response.data.attributes);
     yield* output.raw(legacyConfigDiffScopeLine(scope), "stderr");
 
-    // 5. Emit: `--output-format json|stream-json` structured payload, or text.
-    // Both output mechanisms are honored, `--output` first (Legacy Shell
-    // Invariant #6): the machine formats encode the same structured payload
-    // the `--output-format json` envelope carries; `pretty` (and unset) falls
-    // through to `--output-format` handling. stdout stays payload-pure in
-    // every machine mode — diagnostics above went to stderr, and root.ts
-    // swaps in the quiet-progress layer for `-o` machine formats (CLI-1546).
+    // 7. Emit. Both output mechanisms are honored, `--output` first (Legacy
+    // Shell Invariant #6): the machine formats encode the same structured
+    // payload the `--output-format json` envelope carries; `pretty` (and
+    // unset) falls through to `--output-format` handling. stdout stays
+    // payload-pure in every machine mode — diagnostics above went to stderr,
+    // and root.ts swaps in the quiet-progress layer for `-o` machine formats
+    // (CLI-1546).
     const goFmt = Option.getOrUndefined(goOutputFlag);
     if (goFmt !== undefined && goFmt !== "pretty") {
       const payload = legacyConfigDiffPayload(changeSet, scope, context);
@@ -224,10 +252,21 @@ export const legacyConfigDiff = Effect.fn("legacy.config.diff")(function* (
       yield* output.raw(legacyRenderConfigDiffText(changeSet));
     }
 
-    // 6. `--exit-code`: differences flip the exit status after the payload is
+    // 8. `--exit-code`: differences flip the exit status after the payload is
     // out, without an error envelope corrupting machine output.
     if (flags.exitCode && changeSet.counts.total > 0) {
       yield* processControl.setExitCode(1);
     }
-  }).pipe(Effect.ensuring(linkedProjectCache.cache(ref)), Effect.ensuring(telemetryState.flush));
+  }).pipe(
+    // Legacy Shell Invariant #1: telemetry flushes on EVERY invocation —
+    // including load/parse failures and branch-resolution failures — while
+    // the linked-project cache write needs a resolved ref, so it fires
+    // exactly when one exists.
+    Effect.ensuring(
+      Effect.suspend(() =>
+        resolvedRef === undefined ? Effect.void : linkedProjectCache.cache(resolvedRef),
+      ),
+    ),
+    Effect.ensuring(telemetryState.flush),
+  );
 });

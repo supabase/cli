@@ -1,19 +1,19 @@
+import { Option } from "effect";
 import type * as CliCommand from "effect/unstable/cli/Command";
 import { Command, Flag } from "effect/unstable/cli";
 
+import { PROJECT_REF_PATTERN } from "../../../config/legacy-project-ref.service.ts";
 import { withJsonErrorHandling } from "../../../../shared/output/json-error-handling.ts";
 import { legacyManagementApiRuntimeLayer } from "../../../shared/legacy-management-api-runtime.layer.ts";
 import { withLegacyCommandInstrumentation } from "../../../telemetry/legacy-command-instrumentation.ts";
 import { legacyConfigDiff } from "./diff.handler.ts";
 
 const config = {
+  // `link`'s settled vocabulary (CLI-2167): one flag that accepts either a
+  // project ref or a branch of the linked project — no separate `--target`.
   projectRef: Flag.string("project-ref").pipe(
-    Flag.withDescription("Project ref of the Supabase project."),
-    Flag.optional,
-  ),
-  target: Flag.string("target").pipe(
     Flag.withDescription(
-      "Branch name, branch ID, or project ref to compare against. Mutually exclusive with --project-ref.",
+      "Project ref of the Supabase project, or the name (or UUID) of one of its branches. Values that are exactly 20 lowercase letters are always treated as project refs.",
     ),
     Flag.optional,
   ),
@@ -40,13 +40,23 @@ export const legacyConfigDiffCommand = Command.make("diff", config).pipe(
       description: "Diff against the linked project",
     },
     {
-      command: "supabase config diff --target staging --exit-code",
+      command: "supabase config diff --project-ref staging --exit-code",
       description: "Diff against the 'staging' branch, exiting 1 on drift",
     },
   ]),
   Command.withHandler((flags) =>
     legacyConfigDiff(flags).pipe(
-      withLegacyCommandInstrumentation({ flags, safeFlags: ["project-ref"] }),
+      // `--project-ref` accepts branch names here (CLI-2167 vocabulary), so
+      // its value is only safe to log verbatim when it is actually ref-shaped
+      // — a user-created branch name must never reach PostHog. Same guard as
+      // `link`.
+      withLegacyCommandInstrumentation({
+        flags,
+        safeFlags:
+          Option.isSome(flags.projectRef) && PROJECT_REF_PATTERN.test(flags.projectRef.value)
+            ? ["project-ref"]
+            : [],
+      }),
       withJsonErrorHandling,
     ),
   ),

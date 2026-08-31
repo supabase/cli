@@ -120,7 +120,7 @@ function v2Response(
   };
 }
 
-/** V1GetABranch body for the `--target <name>` lookup. */
+/** V1GetABranch body for the branch-name `--project-ref` lookup. */
 const BRANCH_BY_NAME = {
   id: BRANCH_UUID,
   name: "staging",
@@ -134,7 +134,7 @@ const BRANCH_BY_NAME = {
   with_data: false,
 };
 
-/** V1GetABranchConfig body for the `--target <uuid>` lookup. */
+/** V1GetABranchConfig body for the UUID `--project-ref` lookup. */
 const BRANCH_CONFIG = {
   ref: BRANCH_REF,
   postgres_version: "15",
@@ -153,6 +153,8 @@ interface SetupOpts {
   readonly v2?: { status: number; body: unknown } | "fail";
   readonly branchByName?: { status: number; body: unknown };
   readonly branchByUuid?: { status: number; body: unknown };
+  /** `false` simulates a directory with no linked project. */
+  readonly linked?: boolean;
 }
 
 function setup(opts: SetupOpts = {}) {
@@ -191,7 +193,10 @@ function setup(opts: SetupOpts = {}) {
     buildLegacyTestRuntime({
       out,
       api,
-      cliSettings: mockLegacyCliSettings({ workdir: tempRoot.current }),
+      cliSettings: mockLegacyCliSettings({
+        workdir: tempRoot.current,
+        ...(opts.linked === false ? { projectId: Option.none<string>() } : {}),
+      }),
       runtimeInfo: mockRuntimeInfo({ cwd: tempRoot.current }),
       telemetry: telemetry.layer,
       linkedProjectCache: linkedProjectCache.layer,
@@ -204,7 +209,6 @@ function setup(opts: SetupOpts = {}) {
 
 const noFlags = {
   projectRef: Option.none<string>(),
-  target: Option.none<string>(),
   exitCode: false,
 };
 
@@ -342,13 +346,13 @@ describe("legacy config diff integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("--target resolves a branch name via the parent project", () => {
+  it.live("a branch-named --project-ref resolves via the parent project", () => {
     const { layer, out, api } = setup({
       toml: 'project_id = "test"\n',
       v2: { status: 200, body: v2Response({ ref: BRANCH_REF }) },
     });
     return Effect.gen(function* () {
-      yield* legacyConfigDiff({ ...noFlags, target: Option.some("staging") });
+      yield* legacyConfigDiff({ ...noFlags, projectRef: Option.some("staging") });
       expect(out.stderrText).toContain(
         `Comparing against 'staging' (branch ${BRANCH_REF}) using base config`,
       );
@@ -360,26 +364,34 @@ describe("legacy config diff integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("--target resolves a branch UUID directly", () => {
-    const { layer, api } = setup({
+  it.live("a UUID --project-ref resolves directly, even in an unlinked directory", () => {
+    // The UUID endpoint (`GET /v1/branches/{id}`) does not use a parent
+    // project ref, so the lookup must not demand a linked directory — the
+    // parent is only resolved (lazily) for branch-NAME lookups.
+    const { layer, api, out } = setup({
       toml: 'project_id = "test"\n',
       v2: { status: 200, body: v2Response({ ref: BRANCH_REF }) },
+      linked: false,
     });
     return Effect.gen(function* () {
-      yield* legacyConfigDiff({ ...noFlags, target: Option.some(BRANCH_UUID) });
+      yield* legacyConfigDiff({ ...noFlags, projectRef: Option.some(BRANCH_UUID) });
       const urls = api.requests.map((request) => request.url);
       expect(urls.some((url) => url.includes(`/v1/branches/${BRANCH_UUID}`))).toBe(true);
       expect(urls.some((url) => url.includes(`/v2/projects/${BRANCH_REF}/config`))).toBe(true);
+      // A UUID is an identifier, not a display name — never quoted as one.
+      expect(out.stderrText).toContain(
+        `Comparing against branch ${BRANCH_UUID} (project ref ${BRANCH_REF})`,
+      );
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("--target accepts a raw project ref without touching the branches API", () => {
+  it.live("a ref-shaped --project-ref never touches the branches API", () => {
     const { layer, api } = setup({
       toml: 'project_id = "test"\n',
       v2: { status: 200, body: v2Response({ ref: BRANCH_REF }) },
     });
     return Effect.gen(function* () {
-      yield* legacyConfigDiff({ ...noFlags, target: Option.some(BRANCH_REF) });
+      yield* legacyConfigDiff({ ...noFlags, projectRef: Option.some(BRANCH_REF) });
       const urls = api.requests.map((request) => request.url);
       expect(urls.some((url) => url.includes("/branches/"))).toBe(false);
       expect(urls.some((url) => url.includes(`/v2/projects/${BRANCH_REF}/config`))).toBe(true);
@@ -392,7 +404,7 @@ describe("legacy config diff integration", () => {
       branchByName: { status: 404, body: { message: "not found" } },
     });
     return Effect.gen(function* () {
-      const exit = yield* legacyConfigDiff({ ...noFlags, target: Option.some("ghost") }).pipe(
+      const exit = yield* legacyConfigDiff({ ...noFlags, projectRef: Option.some("ghost") }).pipe(
         Effect.exit,
       );
       expect(Exit.isFailure(exit)).toBe(true);
@@ -409,25 +421,11 @@ describe("legacy config diff integration", () => {
       branchByName: { status: 500, body: { message: "boom" } },
     });
     return Effect.gen(function* () {
-      const exit = yield* legacyConfigDiff({ ...noFlags, target: Option.some("staging") }).pipe(
+      const exit = yield* legacyConfigDiff({ ...noFlags, projectRef: Option.some("staging") }).pipe(
         Effect.exit,
       );
       expect(Exit.isFailure(exit)).toBe(true);
       expect(JSON.stringify(exit)).toContain("LegacyConfigDiffBranchResolveStatusError");
-    }).pipe(Effect.provide(layer));
-  });
-
-  it.live("--target and --project-ref together are rejected", () => {
-    const { layer, api } = setup({ toml: 'project_id = "test"\n' });
-    return Effect.gen(function* () {
-      const exit = yield* legacyConfigDiff({
-        exitCode: false,
-        target: Option.some("staging"),
-        projectRef: Option.some(LEGACY_VALID_REF),
-      }).pipe(Effect.exit);
-      expect(Exit.isFailure(exit)).toBe(true);
-      expect(JSON.stringify(exit)).toContain("LegacyConfigDiffFlagConflictError");
-      expect(api.requests).toHaveLength(0);
     }).pipe(Effect.provide(layer));
   });
 
