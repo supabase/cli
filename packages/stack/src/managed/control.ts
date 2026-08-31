@@ -309,25 +309,22 @@ const waitForControlSessionEnd = (
           Effect.andThen(Effect.fail(new ControlStopPending({ state: current.state }))),
         );
       }),
-      Effect.catchTag("ControlTransportError", (error) =>
-        error.reason === "unreachable"
-          ? Effect.succeed({ _tag: "ended" } as const)
-          : Ref.get(lastState).pipe(
-              Effect.flatMap((state) =>
-                Effect.fail(new ControlStopPending({ state: state ?? "stopping" })),
-              ),
-            ),
-      ),
-      // A valid owner for another identity can claim this candidate after the
-      // captured session releases it. That proves the captured session ended.
-      Effect.catchTag("ControlAddressConflictError", () =>
-        Effect.succeed({ _tag: "replaced" } as const),
-      ),
-      // Once the captured listener has closed, an unrelated listener may bind
-      // the same endpoint before this observer runs. A malformed response or
-      // a different control protocol therefore proves that the old session is
-      // gone just like a foreign owner response does.
       Effect.catchTags({
+        ControlTransportError: (error) =>
+          error.reason === "unreachable"
+            ? Effect.succeed({ _tag: "ended" } as const)
+            : Ref.get(lastState).pipe(
+                Effect.flatMap((state) =>
+                  Effect.fail(new ControlStopPending({ state: state ?? "stopping" })),
+                ),
+              ),
+        // A valid owner for another identity can claim this candidate after the
+        // captured session releases it. That proves the captured session ended.
+        ControlAddressConflictError: () => Effect.succeed({ _tag: "replaced" } as const),
+        // Once the captured listener has closed, an unrelated listener may bind
+        // the same endpoint before this observer runs. A malformed response or
+        // a different control protocol therefore proves that the old session is
+        // gone just like a foreign owner response does.
         ControlProtocolError: () => Effect.succeed({ _tag: "replaced" } as const),
         ControlProtocolMismatchError: () => Effect.succeed({ _tag: "replaced" } as const),
       }),
@@ -482,6 +479,9 @@ const maintenanceStatus = (
   controlProtocol: CONTROL_PROTOCOL,
   controlProtocolVersion: CONTROL_PROTOCOL_VERSION,
   ownershipId,
+  // Maintenance status is a native protocol descriptor; its session ID is
+  // generated before the owning Effect is constructed.
+  // oxlint-disable-next-line effecttsgo/crypto-random-uuid
   ownerSessionId: crypto.randomUUID(),
   kind: "maintenance",
   operation,
@@ -572,7 +572,7 @@ export const probeControl = (
     const transport = yield* ControlTransport;
     for (const endpoint of candidates) {
       const status = yield* readControlOwnerStatus(endpoint, ownershipId, transport.read).pipe(
-        Effect.catch(() => Effect.succeed(undefined)),
+        Effect.orElseSucceed(() => undefined),
       );
       if (status !== undefined) return { status, endpoint };
     }
@@ -649,11 +649,12 @@ const scanForOwner = (
     for (const endpoint of candidates) {
       const status = yield* readControlOwnerStatus(endpoint, ownershipId, transport.read).pipe(
         Effect.map((status) => status),
-        Effect.catchTag("ControlTransportError", (cause) =>
-          cause.reason === "unreachable" ? Effect.succeed(undefined) : Effect.fail(cause),
-        ),
-        Effect.catchTag("ControlProtocolError", () => Effect.succeed(undefined)),
-        Effect.catchTag("ControlAddressConflictError", () => Effect.succeed(undefined)),
+        Effect.catchTags({
+          ControlTransportError: (cause) =>
+            cause.reason === "unreachable" ? Effect.void : Effect.fail(cause),
+          ControlProtocolError: () => Effect.void,
+          ControlAddressConflictError: () => Effect.void,
+        }),
       );
       if (status !== undefined) return { endpoint, status };
     }
@@ -717,7 +718,7 @@ const acquireAtCandidates = (
         return owned;
       }
       const error = bound.failure;
-      if (error.reason !== "in-use") return yield* Effect.fail(error);
+      if (error.reason !== "in-use") return yield* error;
       // The address was taken between the scan and the bind: attach if the
       // occupant is our owner, retry the walk if it is not serving yet, and
       // move to the next candidate if it belongs to someone else.
@@ -727,37 +728,36 @@ const acquireAtCandidates = (
         transport,
       ).pipe(
         Effect.map((acquisition): ControlAcquisition | undefined => acquisition),
-        Effect.catchTag("ControlAddressConflictError", (cause) =>
-          Effect.sync(() => {
-            conflict = cause;
-            return undefined;
-          }),
-        ),
-        Effect.catchTag("ControlProtocolError", (cause) =>
-          Effect.sync(() => {
-            conflict = new ControlAddressConflictError({ endpoint, cause });
-            return undefined;
-          }),
-        ),
-        Effect.catchTag("ControlTransportError", (cause) =>
-          cause.reason === "unreachable"
-            ? Effect.sync(() => {
-                pending = unavailable(endpoint, cause);
-                return undefined;
-              })
-            : Effect.fail(cause),
-        ),
+        Effect.catchTags({
+          ControlAddressConflictError: (cause) =>
+            Effect.sync(() => {
+              conflict = cause;
+              return undefined;
+            }),
+          ControlProtocolError: (cause) =>
+            Effect.sync(() => {
+              conflict = new ControlAddressConflictError({ endpoint, cause });
+              return undefined;
+            }),
+          ControlTransportError: (cause) =>
+            cause.reason === "unreachable"
+              ? Effect.sync(() => {
+                  pending = unavailable(endpoint, cause);
+                  return undefined;
+                })
+              : Effect.fail(cause),
+        }),
       );
       if (attached !== undefined) return attached;
       if (pending !== undefined) break;
     }
-    if (pending !== undefined) return yield* Effect.fail(pending);
-    return yield* Effect.fail(
+    if (pending !== undefined) return yield* pending;
+    return yield* (
       conflict ??
         new ControlAddressConflictError({
           endpoint: candidates[0]!,
           cause: new Error("Every control endpoint candidate is occupied"),
-        }),
+        })
     );
   });
 

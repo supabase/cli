@@ -120,10 +120,5 @@
       "@semantic-release/commit-analyzer",
       "@semantic-release/release-notes-generator"
     ]
-  },
-  "nx": {
-    "implicitDependencies": [
-      "cli-go"
-    ]
   }
 }

@@ -2,6 +2,7 @@ import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 
+import pg from "pg";
 import { inject, test as vitestTest } from "vitest";
 
 import { makeTempHome, runSupabase } from "./cli.ts";
@@ -119,6 +120,63 @@ export function requireLiveSuccess(
     throw new Error(
       `${command} failed (exit ${result.exitCode})\nstdout:\n${result.stdout}\nstderr:\n${result.stderr}`,
     );
+  }
+}
+
+/** Flags every storage live test passes: the suite links the shared project
+ * and the storage command family is experimental-gated. */
+export const storageLiveFlags: ReadonlyArray<string> = ["--linked", "--experimental"];
+
+/**
+ * Best-effort exact-object cleanup for storage live tests: removes one owned
+ * remote object, tolerating an already-removed target so teardown stays
+ * idempotent across the moved/renamed paths a test may leave behind.
+ */
+export async function removeStorageLiveObject(
+  cli: (args: string[]) => Promise<{ exitCode: number; stdout: string; stderr: string }>,
+  remote: string,
+): Promise<void> {
+  const removed = await cli(["storage", "rm", remote, "--yes", ...storageLiveFlags]);
+  if (
+    removed.exitCode !== 0 &&
+    !/not found|does not exist/i.test(`${removed.stdout}\n${removed.stderr}`)
+  ) {
+    throw new Error(`storage rm cleanup failed:\n${removed.stdout}\n${removed.stderr}`);
+  }
+}
+
+/**
+ * Unique migration version for a live test: a sortable `YYYYMMDDHHMMSS` UTC
+ * stamp plus four random digits, so it always orders after any conventional
+ * timestamp version already in the shared project's migration history.
+ */
+export function liveMigrationVersion(): string {
+  const stamp = new Date()
+    .toISOString()
+    .replaceAll(/[-:TZ.]/gu, "")
+    .slice(0, 14);
+  return `${stamp}${Math.floor(Math.random() * 10_000)
+    .toString()
+    .padStart(4, "0")}`;
+}
+
+/**
+ * Runs one query against the live project over a direct pg connection, so
+ * live assertions can verify database state without invoking another CLI
+ * command.
+ */
+export async function queryLiveDb<T extends Record<string, unknown>>(
+  dbUrl: string,
+  query: string,
+  values?: ReadonlyArray<unknown>,
+): Promise<T[]> {
+  const client = new pg.Client({ connectionString: dbUrl });
+  await client.connect();
+  try {
+    const result = await client.query(query, values === undefined ? undefined : [...values]);
+    return result.rows as T[];
+  } finally {
+    await client.end();
   }
 }
 

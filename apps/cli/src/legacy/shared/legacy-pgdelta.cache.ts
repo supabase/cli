@@ -176,7 +176,7 @@ export const legacyResolveSetupInputs = Effect.fnUntraced(function* (
   orioledbVersion: string | undefined,
   baseline: LegacyBaselineTomlConfig,
 ) {
-  const image = yield* legacyResolveDbImage(fs, path, workdir, majorVersion, orioledbVersion);
+  const { image } = yield* legacyResolveDbImage(fs, path, workdir, majorVersion, orioledbVersion);
   const rolesPath = path.join(workdir, "supabase", "roles.sql");
   const rolesSql = yield* fs
     .readFileString(rolesPath)
@@ -788,11 +788,12 @@ const exportViaShadowCatalog = <E, R, EP = never, RP = never>(
     );
     // `legacyWithShadowDatabase` (`db-bootstrap/shadow-cache.ts`) rather than a bare
     // `legacyCreateShadowDatabase`/`legacyRemoveShadowDatabase` pair — see its doc comment: with
-    // `SUPABASE_SHADOW_CACHE` unset it IS that pair (identical Docker argv, identical labels), and
-    // with it set a catalog cache miss restores a key-matching PGDATA snapshot into the fresh
-    // shadow instead of paying the full cold provision — the same swap `db diff`/`db pull`'s own
-    // call sites make. `shadowCacheOpts` carries `sync --no-cache`'s bypass and the
-    // caller's effective Webhooks policy — see `LegacyShadowCacheOpts`.
+    // `SUPABASE_SHADOW_CACHE` explicitly disabled it IS that pair (identical Docker argv,
+    // identical labels), and by default (cache on) a catalog cache miss restores a key-matching
+    // PGDATA snapshot into the fresh shadow instead of paying the full cold provision — the same
+    // swap `db diff`/`db pull`'s own call sites make. `shadowCacheOpts` carries `sync
+    // --no-cache`'s bypass and the caller's effective Webhooks policy — see
+    // `LegacyShadowCacheOpts`.
     const written = yield* legacyWithShadowDatabase(
       spawner,
       shadowInput,

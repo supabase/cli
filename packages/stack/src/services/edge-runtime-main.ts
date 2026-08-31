@@ -1,3 +1,5 @@
+// oxlint-disable effecttsgo/async-function, effecttsgo/global-console -- Standalone Deno/EdgeRuntime bootstrap must expose native async handlers and host logging APIs.
+
 declare const Deno: any;
 declare const EdgeRuntime: any;
 

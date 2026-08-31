@@ -4670,8 +4670,11 @@ const (
 	InstanceDbDown                V1ProjectAdvisorsResponseLintsName = "instance_db_down"
 	InstanceTelemetryLost         V1ProjectAdvisorsResponseLintsName = "instance_telemetry_lost"
 	LeakedServiceKey              V1ProjectAdvisorsResponseLintsName = "leaked_service_key"
+	LogAuthErrorRateHigh          V1ProjectAdvisorsResponseLintsName = "log_auth_error_rate_high"
 	LogConnectionsNotEnabled      V1ProjectAdvisorsResponseLintsName = "log_connections_not_enabled"
-	LogServiceErrorRateHigh       V1ProjectAdvisorsResponseLintsName = "log_service_error_rate_high"
+	LogDataApiErrorRateHigh       V1ProjectAdvisorsResponseLintsName = "log_data_api_error_rate_high"
+	LogEdgeFunctionErrorRateHigh  V1ProjectAdvisorsResponseLintsName = "log_edge_function_error_rate_high"
+	LogStorageErrorRateHigh       V1ProjectAdvisorsResponseLintsName = "log_storage_error_rate_high"
 	MaterializedViewInApi         V1ProjectAdvisorsResponseLintsName = "materialized_view_in_api"
 	MultiplePermissivePolicies    V1ProjectAdvisorsResponseLintsName = "multiple_permissive_policies"
 	NetworkRestrictionsNotSet     V1ProjectAdvisorsResponseLintsName = "network_restrictions_not_set"
@@ -4733,9 +4736,15 @@ func (e V1ProjectAdvisorsResponseLintsName) Valid() bool {
 		return true
 	case LeakedServiceKey:
 		return true
+	case LogAuthErrorRateHigh:
+		return true
 	case LogConnectionsNotEnabled:
 		return true
-	case LogServiceErrorRateHigh:
+	case LogDataApiErrorRateHigh:
+		return true
+	case LogEdgeFunctionErrorRateHigh:
+		return true
+	case LogStorageErrorRateHigh:
 		return true
 	case MaterializedViewInApi:
 		return true
@@ -7714,8 +7723,7 @@ type StorageConfigResponse struct {
 		IcebergCatalog bool `json:"iceberg_catalog"`
 		ListV2         bool `json:"list_v2"`
 	} `json:"capabilities"`
-	DatabasePoolMode string `json:"databasePoolMode"`
-	External         struct {
+	External struct {
 		UpstreamTarget StorageConfigResponseExternalUpstreamTarget `json:"upstreamTarget"`
 	} `json:"external"`
 	Features struct {
@@ -8740,30 +8748,34 @@ type V1ProjectAdvisorsResponseLintsLevel string
 // V1ProjectAdvisorsResponseLintsMetadataType defines model for V1ProjectAdvisorsResponse.Lints.Metadata.Type.
 type V1ProjectAdvisorsResponseLintsMetadataType string
 
+// V1ProjectAdvisorsResponse_Lints_Metadata defines model for V1ProjectAdvisorsResponse.Lints.Metadata.
+type V1ProjectAdvisorsResponse_Lints_Metadata struct {
+	Entity               *string                                     `json:"entity,omitempty"`
+	FkeyColumns          *[]float32                                  `json:"fkey_columns,omitempty"`
+	FkeyName             *string                                     `json:"fkey_name,omitempty"`
+	Name                 *string                                     `json:"name,omitempty"`
+	Schema               *string                                     `json:"schema,omitempty"`
+	Type                 *V1ProjectAdvisorsResponseLintsMetadataType `json:"type,omitempty"`
+	AdditionalProperties map[string]interface{}                      `json:"-"`
+}
+
 // V1ProjectAdvisorsResponseLintsName defines model for V1ProjectAdvisorsResponse.Lints.Name.
 type V1ProjectAdvisorsResponseLintsName string
 
 // V1ProjectAdvisorsResponse_Lints_Item defines model for V1ProjectAdvisorsResponse.lints.Item.
 type V1ProjectAdvisorsResponse_Lints_Item struct {
-	CacheKey    string                                     `json:"cache_key"`
-	Categories  []V1ProjectAdvisorsResponseLintsCategories `json:"categories"`
-	Description string                                     `json:"description"`
-	Detail      string                                     `json:"detail"`
-	Facing      V1ProjectAdvisorsResponseLintsFacing       `json:"facing"`
-	Level       V1ProjectAdvisorsResponseLintsLevel        `json:"level"`
-	Metadata    *struct {
-		Entity      *string                                     `json:"entity,omitempty"`
-		FkeyColumns *[]float32                                  `json:"fkey_columns,omitempty"`
-		FkeyName    *string                                     `json:"fkey_name,omitempty"`
-		Name        *string                                     `json:"name,omitempty"`
-		Schema      *string                                     `json:"schema,omitempty"`
-		Type        *V1ProjectAdvisorsResponseLintsMetadataType `json:"type,omitempty"`
-	} `json:"metadata,omitempty"`
-	Name                 V1ProjectAdvisorsResponseLintsName `json:"name"`
-	ObservedAt           *time.Time                         `json:"observed_at,omitempty"`
-	Remediation          string                             `json:"remediation"`
-	Title                string                             `json:"title"`
-	AdditionalProperties map[string]interface{}             `json:"-"`
+	CacheKey             string                                     `json:"cache_key"`
+	Categories           []V1ProjectAdvisorsResponseLintsCategories `json:"categories"`
+	Description          string                                     `json:"description"`
+	Detail               string                                     `json:"detail"`
+	Facing               V1ProjectAdvisorsResponseLintsFacing       `json:"facing"`
+	Level                V1ProjectAdvisorsResponseLintsLevel        `json:"level"`
+	Metadata             *V1ProjectAdvisorsResponse_Lints_Metadata  `json:"metadata,omitempty"`
+	Name                 V1ProjectAdvisorsResponseLintsName         `json:"name"`
+	ObservedAt           *time.Time                                 `json:"observed_at,omitempty"`
+	Remediation          string                                     `json:"remediation"`
+	Title                string                                     `json:"title"`
+	AdditionalProperties map[string]interface{}                     `json:"-"`
 }
 
 // V1ProjectRefResponse defines model for V1ProjectRefResponse.
@@ -9008,6 +9020,9 @@ type VanitySubdomainConfigResponseStatus string
 
 // bearerContextKey is the context key for bearer security scheme
 type bearerContextKey string
+
+// oauth2ContextKey is the context key for oauth2 security scheme
+type oauth2ContextKey string
 
 // V1DeleteABranchParams defines parameters for V1DeleteABranch.
 type V1DeleteABranchParams struct {
@@ -9692,6 +9707,149 @@ func (a GetProjectDbMetadataResponse_Databases_Item) MarshalJSON() ([]byte, erro
 		object["schemas"], err = json.Marshal(a.Schemas)
 		if err != nil {
 			return nil, fmt.Errorf("error marshaling 'schemas': %w", err)
+		}
+	}
+
+	for fieldName, field := range a.AdditionalProperties {
+		object[fieldName], err = json.Marshal(field)
+		if err != nil {
+			return nil, fmt.Errorf("error marshaling '%s': %w", fieldName, err)
+		}
+	}
+	return json.Marshal(object)
+}
+
+// Getter for additional properties for V1ProjectAdvisorsResponse_Lints_Metadata. Returns the specified
+// element and whether it was found
+func (a V1ProjectAdvisorsResponse_Lints_Metadata) Get(fieldName string) (value interface{}, found bool) {
+	if a.AdditionalProperties != nil {
+		value, found = a.AdditionalProperties[fieldName]
+	}
+	return
+}
+
+// Setter for additional properties for V1ProjectAdvisorsResponse_Lints_Metadata
+func (a *V1ProjectAdvisorsResponse_Lints_Metadata) Set(fieldName string, value interface{}) {
+	if a.AdditionalProperties == nil {
+		a.AdditionalProperties = make(map[string]interface{})
+	}
+	a.AdditionalProperties[fieldName] = value
+}
+
+// Override default JSON handling for V1ProjectAdvisorsResponse_Lints_Metadata to handle AdditionalProperties
+func (a *V1ProjectAdvisorsResponse_Lints_Metadata) UnmarshalJSON(b []byte) error {
+	object := make(map[string]json.RawMessage)
+	err := json.Unmarshal(b, &object)
+	if err != nil {
+		return err
+	}
+
+	if raw, found := object["entity"]; found {
+		err = json.Unmarshal(raw, &a.Entity)
+		if err != nil {
+			return fmt.Errorf("error reading 'entity': %w", err)
+		}
+		delete(object, "entity")
+	}
+
+	if raw, found := object["fkey_columns"]; found {
+		err = json.Unmarshal(raw, &a.FkeyColumns)
+		if err != nil {
+			return fmt.Errorf("error reading 'fkey_columns': %w", err)
+		}
+		delete(object, "fkey_columns")
+	}
+
+	if raw, found := object["fkey_name"]; found {
+		err = json.Unmarshal(raw, &a.FkeyName)
+		if err != nil {
+			return fmt.Errorf("error reading 'fkey_name': %w", err)
+		}
+		delete(object, "fkey_name")
+	}
+
+	if raw, found := object["name"]; found {
+		err = json.Unmarshal(raw, &a.Name)
+		if err != nil {
+			return fmt.Errorf("error reading 'name': %w", err)
+		}
+		delete(object, "name")
+	}
+
+	if raw, found := object["schema"]; found {
+		err = json.Unmarshal(raw, &a.Schema)
+		if err != nil {
+			return fmt.Errorf("error reading 'schema': %w", err)
+		}
+		delete(object, "schema")
+	}
+
+	if raw, found := object["type"]; found {
+		err = json.Unmarshal(raw, &a.Type)
+		if err != nil {
+			return fmt.Errorf("error reading 'type': %w", err)
+		}
+		delete(object, "type")
+	}
+
+	if len(object) != 0 {
+		a.AdditionalProperties = make(map[string]interface{})
+		for fieldName, fieldBuf := range object {
+			var fieldVal interface{}
+			err := json.Unmarshal(fieldBuf, &fieldVal)
+			if err != nil {
+				return fmt.Errorf("error unmarshaling field %s: %w", fieldName, err)
+			}
+			a.AdditionalProperties[fieldName] = fieldVal
+		}
+	}
+	return nil
+}
+
+// Override default JSON handling for V1ProjectAdvisorsResponse_Lints_Metadata to handle AdditionalProperties
+func (a V1ProjectAdvisorsResponse_Lints_Metadata) MarshalJSON() ([]byte, error) {
+	var err error
+	object := make(map[string]json.RawMessage)
+
+	if a.Entity != nil {
+		object["entity"], err = json.Marshal(a.Entity)
+		if err != nil {
+			return nil, fmt.Errorf("error marshaling 'entity': %w", err)
+		}
+	}
+
+	if a.FkeyColumns != nil {
+		object["fkey_columns"], err = json.Marshal(a.FkeyColumns)
+		if err != nil {
+			return nil, fmt.Errorf("error marshaling 'fkey_columns': %w", err)
+		}
+	}
+
+	if a.FkeyName != nil {
+		object["fkey_name"], err = json.Marshal(a.FkeyName)
+		if err != nil {
+			return nil, fmt.Errorf("error marshaling 'fkey_name': %w", err)
+		}
+	}
+
+	if a.Name != nil {
+		object["name"], err = json.Marshal(a.Name)
+		if err != nil {
+			return nil, fmt.Errorf("error marshaling 'name': %w", err)
+		}
+	}
+
+	if a.Schema != nil {
+		object["schema"], err = json.Marshal(a.Schema)
+		if err != nil {
+			return nil, fmt.Errorf("error marshaling 'schema': %w", err)
+		}
+	}
+
+	if a.Type != nil {
+		object["type"], err = json.Marshal(a.Type)
+		if err != nil {
+			return nil, fmt.Errorf("error marshaling 'type': %w", err)
 		}
 	}
 

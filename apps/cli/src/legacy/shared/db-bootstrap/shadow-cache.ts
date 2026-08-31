@@ -1,14 +1,24 @@
 /**
  * Shadow baseline cache for `db diff`/`db pull`/catalog resolution. Snapshots the platform
  * baseline as a PGDATA tar under `${SUPABASE_HOME}/cache/shadow-baseline/` (keep 3, 2-day TTL).
- * Off unless `SUPABASE_SHADOW_CACHE` is set (viper bool + project dotenv). A cache miss or
+ * On by default; an explicitly set `SUPABASE_SHADOW_CACHE` that is not viper-true (`0`/`false`/
+ * empty/garbage, from the shell env or the project dotenv) turns it off. A cache miss or
  * anomaly never fails the run except when the shadow does not come back after a cold export.
  */
 
 import { createHash, scryptSync } from "node:crypto";
 
 import type { CliConfig } from "@supabase/config";
-import { Clock, Effect, Match, Option, Predicate, Result, type FileSystem } from "effect";
+import {
+  Clock,
+  Effect,
+  Match,
+  Option,
+  Predicate,
+  Result,
+  Semaphore,
+  type FileSystem,
+} from "effect";
 import type { ChildProcessSpawner } from "effect/unstable/process/ChildProcessSpawner";
 
 import { legacyViperEnvBoolWithProjectFallback } from "../../../shared/legacy/legacy-viper-env.ts";
@@ -68,7 +78,7 @@ import {
 
 type Spawner = ChildProcessSpawner["Service"];
 
-/** `SUPABASE_SHADOW_CACHE` — opt-in gate (viper bool; unset is off). */
+/** `SUPABASE_SHADOW_CACHE` — opt-out gate (viper bool when set; unset is ON). */
 export const LEGACY_SHADOW_CACHE_ENV = "SUPABASE_SHADOW_CACHE";
 
 /**
@@ -607,33 +617,56 @@ const legacyAwaitShadowReady = <E>(
 // ---------------------------------------------------------------------------
 
 /**
+ * Serializes same-process cold exports. Two shadows provisioned concurrently in one process
+ * (pg-delta next's plan shadows) can both reach the export step, and with an equal key they
+ * would race on the same `<tar>.<pid>.partial` temp path — `legacyExportPgDataTar` scopes its
+ * temp name by pid alone. One permit makes that interleaving impossible; cross-process writers
+ * were never affected (distinct pids).
+ */
+const legacyShadowExportMutex = Semaphore.makeUnsafe(1);
+
+/**
  * Ensures the tar's global cache directory exists, delegates the actual export to
  * {@link legacyExportPgDataTar} (`pgdata-snapshot.ts` — see that function's own doc comment for
- * the atomic-publish mechanics), then applies the LRU + TTL retention rule.
+ * the atomic-publish mechanics), then applies the LRU + TTL retention rule. Runs under
+ * {@link legacyShadowExportMutex}.
+ *
+ * `skipIfPublished` dedupes same-key sibling exports: when the tar was absent at acquire time,
+ * one published while this fiber waited on the permit is a sibling's snapshot of this same
+ * baseline. It must be `false` on the warm-fallback cold path, where a tar deliberately
+ * retained despite an unusable restore is sitting at this path waiting to be atomically
+ * replaced.
  */
 const legacyWriteShadowBaselineTar = <E>(
   spawner: Spawner,
   input: LegacyShadowSetupInput<E>,
   tarPath: string,
   containerId: string,
+  skipIfPublished: boolean,
 ): Effect.Effect<void, LegacyShadowCacheUnavailable> =>
-  Effect.gen(function* () {
-    const cacheDir = legacyShadowBaselineCacheDir(input.path);
-    yield* input.fs
-      .makeDirectory(cacheDir, { recursive: true, mode: 0o700 })
-      .pipe(
-        Effect.mapError((cause) =>
-          legacyShadowCacheUnavailable(`failed to create ${cacheDir}: ${cause.message}`),
+  legacyShadowExportMutex.withPermit(
+    Effect.gen(function* () {
+      if (skipIfPublished) {
+        const published = yield* input.fs.exists(tarPath).pipe(Effect.orElseSucceed(() => false));
+        if (published) return;
+      }
+      const cacheDir = legacyShadowBaselineCacheDir(input.path);
+      yield* input.fs
+        .makeDirectory(cacheDir, { recursive: true, mode: 0o700 })
+        .pipe(
+          Effect.mapError((cause) =>
+            legacyShadowCacheUnavailable(`failed to create ${cacheDir}: ${cause.message}`),
+          ),
+        );
+      yield* legacySweepAbandonedShadowBaselinePartials(input);
+      yield* legacyExportPgDataTar(spawner, containerId, input.fs, tarPath).pipe(
+        Effect.mapError((cause: LegacyPgDataSnapshotUnavailable) =>
+          legacyShadowCacheUnavailable(cause.reason),
         ),
       );
-    yield* legacySweepAbandonedShadowBaselinePartials(input);
-    yield* legacyExportPgDataTar(spawner, containerId, input.fs, tarPath).pipe(
-      Effect.mapError((cause: LegacyPgDataSnapshotUnavailable) =>
-        legacyShadowCacheUnavailable(cause.reason),
-      ),
-    );
-    yield* legacySweepShadowBaselineRetention(input, input.path.basename(tarPath));
-  });
+      yield* legacySweepShadowBaselineRetention(input, input.path.basename(tarPath));
+    }),
+  );
 
 /**
  * Cold snapshot: stop → stamp → export → start → ready. Stop/export failures only
@@ -647,6 +680,7 @@ const legacyExportShadowBaseline = <E>(
   tarPath: string,
   containerId: string,
   keyedRolesSql: string,
+  skipIfPublished: boolean,
 ): Effect.Effect<void, LegacyShadowDbError, Output | LegacyDbConnection> =>
   Effect.gen(function* () {
     const exported = yield* Effect.result(
@@ -674,7 +708,7 @@ const legacyExportShadowBaseline = <E>(
             legacyShadowCacheUnavailable(cause.reason),
           ),
         );
-        yield* legacyWriteShadowBaselineTar(spawner, input, tarPath, containerId);
+        yield* legacyWriteShadowBaselineTar(spawner, input, tarPath, containerId, skipIfPublished);
       }),
     );
     const revive = Effect.gen(function* () {
@@ -708,7 +742,64 @@ export interface LegacyShadowCacheOpts {
   readonly bypassCache?: boolean;
   /** Effective webhooks/`pg_net` policy — hashed so migrate/declarative snapshots cannot mix. */
   readonly webhooks?: LegacySetupDatabaseOptions["webhooks"];
+  /**
+   * Key inputs a caller already resolved via {@link legacyPeekShadowBaseline}, so
+   * {@link legacyAcquireShadowDatabase} does not resolve them a second time. Resolution can
+   * include a live JWKS discovery request (realtime on PG15+). Must have been computed from the
+   * same `input`/`opts` pair, or the acquire keys against the wrong snapshot.
+   */
+  readonly precomputedKeyInputs?: LegacyShadowCacheKeyInputs;
 }
+
+/** What {@link legacyPeekShadowBaseline} learned about a would-be acquire, without provisioning. */
+export type LegacyShadowBaselinePeek =
+  /** Bypassed, env-disabled, or key-ineligible (PG<=14, OrioleDB, unreadable roles.sql). */
+  | { readonly state: "uncachable" }
+  | {
+      readonly state: "cold" | "warm";
+      readonly key: string;
+      /** Pass back via {@link LegacyShadowCacheOpts.precomputedKeyInputs} to skip re-resolution. */
+      readonly keyInputs: LegacyShadowCacheKeyInputs;
+    };
+
+/**
+ * Answers "what would {@link legacyAcquireShadowDatabase} do for this input right now?" without
+ * creating a container. Callers use it to choose an orchestration (pg-delta next's plan
+ * provisioning picks parallel / baseline-handoff / sequential), never to skip the acquire's own
+ * re-checks: the answer can go stale between peek and acquire, and the acquire re-deciding on
+ * current disk state keeps that race merely suboptimal rather than incorrect.
+ *
+ * The error channel is the key resolution's own `E` (a JWKS resolution failure) — same rationale
+ * as {@link legacyAcquireShadowDatabase}.
+ */
+export const legacyPeekShadowBaseline = <E>(
+  input: LegacyShadowSetupInput<E>,
+  opts: LegacyShadowCacheOpts = {},
+): Effect.Effect<LegacyShadowBaselinePeek, E> =>
+  Effect.gen(function* () {
+    if (
+      opts.bypassCache === true ||
+      !legacyViperEnvBoolWithProjectFallback(
+        LEGACY_SHADOW_CACHE_ENV,
+        input.setup.projectEnvValues ?? {},
+      )
+    ) {
+      return { state: "uncachable" } as const;
+    }
+    const keyInputs = yield* legacyResolveShadowCacheKeyInputs(input, opts);
+    if (Option.isNone(keyInputs)) return { state: "uncachable" } as const;
+    const key = legacyShadowCacheKey(keyInputs.value);
+    const tarPath = input.path.join(
+      legacyShadowBaselineCacheDir(input.path),
+      legacyShadowBaselineTarFileName(key),
+    );
+    const cached = yield* input.fs.exists(tarPath).pipe(Effect.orElseSucceed(() => false));
+    return {
+      state: cached ? ("warm" as const) : ("cold" as const),
+      key,
+      keyInputs: keyInputs.value,
+    };
+  });
 
 /**
  * What `Effect.acquireUseRelease`'s `acquire` hands the `use` phase: the container, whether its
@@ -751,6 +842,9 @@ const legacyUncachedShadow = <E>(
  * destroys an `--rm` container the moment it exits. Release still removes it with `docker rm -f
  * -v`, so the container's lifetime is unchanged — see
  * {@link LegacyCreateShadowDatabaseInput.autoRemove}.
+ *
+ * `skipIfPublished` must reflect whether the tar was absent when this cold acquisition began —
+ * see {@link legacyWriteShadowBaselineTar}.
  */
 const legacyColdCachedShadow = <E>(
   spawner: Spawner,
@@ -758,6 +852,7 @@ const legacyColdCachedShadow = <E>(
   key: string,
   tarPath: string,
   keyedRolesSql: string,
+  skipIfPublished: boolean,
 ): Effect.Effect<LegacyShadowAcquiredHandle, LegacyShadowDbError> =>
   legacyCreateShadowDatabase(spawner, { ...input, autoRemove: false }).pipe(
     Effect.map(({ containerId }) => ({
@@ -772,6 +867,7 @@ const legacyColdCachedShadow = <E>(
         tarPath,
         containerId,
         keyedRolesSql,
+        skipIfPublished,
       ),
     })),
   );
@@ -885,7 +981,8 @@ const legacyWarmShadow = <E>(
  * `legacy-pgdelta-next-shadow.layer.ts` for the scoped `acquireRelease` form next uses so the
  * container outlives provision (the engine keeps using the URL after this returns).
  *
- * Unset or falsey {@link LEGACY_SHADOW_CACHE_ENV} is the uncached create. Otherwise it
+ * An explicitly falsey {@link LEGACY_SHADOW_CACHE_ENV} (set, but not viper-true) is the
+ * uncached create. Otherwise — including when the variable is unset, the default — it
  * restores this key's snapshot (warm) or creates one and exports the baseline (cold).
  *
  * Runs inside `acquireUseRelease`'s uninterruptible `acquire`, same as
@@ -896,8 +993,9 @@ const legacyWarmShadow = <E>(
  *
  * The `E` in the error channel is {@link legacyResolveShadowCacheKeyInputs}'s own JWKS
  * resolution alone (see that function's doc comment): every OTHER failure this function's own
- * body can produce while computing the key or restoring the snapshot is caught and degraded to a
- * cold provision — a genuine JWKS failure is the one case that must reach the caller instead,
+ * body can produce while computing the key or restoring the snapshot is caught and degraded — an
+ * unusable cache root to the plain uncached shadow (with a warning), anything on the warm path to
+ * a cold provision — a genuine JWKS failure is the one case that must reach the caller instead,
  * since a real cold provision at this input would have failed the same way.
  */
 export const legacyAcquireShadowDatabase = <E>(
@@ -915,23 +1013,57 @@ export const legacyAcquireShadowDatabase = <E>(
       !legacyViperEnvBoolWithProjectFallback(
         LEGACY_SHADOW_CACHE_ENV,
         input.setup.projectEnvValues ?? {},
+        { whenUnset: true },
       )
     ) {
       return yield* legacyUncachedShadow(spawner, input);
     }
 
     // Interruptible: nothing acquired yet; JWKS discovery must not pin Ctrl-C.
-    const keyInputs = yield* Effect.interruptible(legacyResolveShadowCacheKeyInputs(input, opts));
-    if (Option.isNone(keyInputs)) return yield* legacyUncachedShadow(spawner, input);
-    const key = legacyShadowCacheKey(keyInputs.value);
-    const tarPath = input.path.join(
-      legacyShadowBaselineCacheDir(input.path),
-      legacyShadowBaselineTarFileName(key),
+    const keyInputs = yield* Effect.interruptible(
+      opts.precomputedKeyInputs !== undefined
+        ? Effect.succeed(Option.some(opts.precomputedKeyInputs))
+        : legacyResolveShadowCacheKeyInputs(input, opts),
     );
+    if (Option.isNone(keyInputs)) return yield* legacyUncachedShadow(spawner, input);
+
+    // The cache root must be usable BEFORE committing to the cached lifecycle: the cold path
+    // drops `--rm` and pays a stop → export → restart cycle whose write is already doomed when
+    // this directory cannot be written (an unwritable or root-squashed `SUPABASE_HOME`) — and
+    // with the cache on by default, every affected invocation would pay that cycle just to warn.
+    // The mkdir is the exact one the export performs (which keeps its own as a safety net for a
+    // root that vanishes mid-run), but alone it is not a sufficient probe: recursive mkdir on an
+    // ALREADY-EXISTING directory creates nothing and succeeds regardless of permission, so the
+    // `access(W_OK)` check is what catches a pre-existing read-only root (EACCES for the current
+    // user, EROFS on a read-only mount, a root-squashing NFS server's denial).
+    const cacheDir = legacyShadowBaselineCacheDir(input.path);
+    const cacheRoot = yield* Effect.result(
+      input.fs
+        .makeDirectory(cacheDir, { recursive: true, mode: 0o700 })
+        .pipe(Effect.andThen(input.fs.access(cacheDir, { writable: true }))),
+    );
+    if (Result.isFailure(cacheRoot)) {
+      const output = yield* Output;
+      yield* output.raw(
+        `Warning: shadow baseline cache unavailable (cannot write ${cacheDir}: ${cacheRoot.failure.message}); continuing uncached.\n`,
+        "stderr",
+      );
+      return yield* legacyUncachedShadow(spawner, input);
+    }
+
+    const key = legacyShadowCacheKey(keyInputs.value);
+    const tarPath = input.path.join(cacheDir, legacyShadowBaselineTarFileName(key));
 
     const cached = yield* input.fs.exists(tarPath).pipe(Effect.orElseSucceed(() => false));
     if (!cached)
-      return yield* legacyColdCachedShadow(spawner, input, key, tarPath, keyInputs.value.rolesSql);
+      return yield* legacyColdCachedShadow(
+        spawner,
+        input,
+        key,
+        tarPath,
+        keyInputs.value.rolesSql,
+        true,
+      );
 
     // Warm hits refresh mtime and sweep leftovers the cold path would otherwise never see again.
     yield* legacyTouchShadowBaselineTar(input.fs, tarPath);
@@ -959,6 +1091,7 @@ export const legacyAcquireShadowDatabase = <E>(
             key,
             tarPath,
             keyInputs.value.rolesSql,
+            false,
           );
         }),
       ),

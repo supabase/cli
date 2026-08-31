@@ -1,5 +1,6 @@
+// oxlint-disable-next-line effecttsgo/node-builtin-import -- The owner probe uses the native Node HTTP stream boundary to support both platform transports.
 import * as Http from "node:http";
-import { Effect } from "effect";
+import { Data, Effect } from "effect";
 import {
   CONTROL_STATUS_PATH,
   ControlProtocolError,
@@ -11,6 +12,12 @@ import { errorCode } from "./error-code.ts";
 
 const MAX_CONTROL_RESPONSE_BYTES = 64 * 1024;
 
+class ControlReaderError extends Data.TaggedError("ControlReaderError")<{
+  readonly message: string;
+  readonly reason: "protocol" | "transport";
+  readonly cause?: unknown;
+}> {}
+
 const readError = (
   endpoint: ControlEndpoint,
   cause: unknown,
@@ -19,9 +26,7 @@ const readError = (
   if (
     cause instanceof SyntaxError ||
     code?.startsWith("HPE_") === true ||
-    (cause instanceof Error &&
-      cause.message === `Control status response exceeded ${MAX_CONTROL_RESPONSE_BYTES} bytes`) ||
-    (cause instanceof Error && cause.message.startsWith("Control status request returned"))
+    (cause instanceof ControlReaderError && cause.reason === "protocol")
   ) {
     return new ControlProtocolError({ endpoint, cause });
   }
@@ -34,7 +39,7 @@ const readError = (
 
 /** Protocol-aware owner reader shared by the Node and Bun control transports. */
 export const readControlOwner: ControlOwnerReader = (endpoint) =>
-  Effect.callback<unknown, unknown>((resume) => {
+  Effect.callback<unknown, ControlReaderError>((resume) => {
     let response: Http.IncomingMessage | undefined;
     let onData: ((chunk: string) => void) | undefined;
     let onEnd: (() => void) | undefined;
@@ -44,14 +49,18 @@ export const readControlOwner: ControlOwnerReader = (endpoint) =>
     let settled = false;
     let cleanup = () => {};
     let dispose = () => {};
-    const finish = (effect: Effect.Effect<unknown, unknown>, shouldDispose = false) => {
+    const finish = (effect: Effect.Effect<unknown, ControlReaderError>, shouldDispose = false) => {
       if (settled) return;
       settled = true;
       cleanup();
       if (shouldDispose) dispose();
       resume(effect);
     };
-    const onRequestError = (cause: Error) => finish(Effect.fail(cause), true);
+    const onRequestError = (cause: Error) =>
+      finish(
+        Effect.fail(new ControlReaderError({ message: cause.message, reason: "transport", cause })),
+        true,
+      );
     const request = Http.request(
       {
         host: endpoint.hostname,
@@ -74,7 +83,10 @@ export const readControlOwner: ControlOwnerReader = (endpoint) =>
           if (bodyBytes > MAX_CONTROL_RESPONSE_BYTES) {
             finish(
               Effect.fail(
-                new Error(`Control status response exceeded ${MAX_CONTROL_RESPONSE_BYTES} bytes`),
+                new ControlReaderError({
+                  message: `Control status response exceeded ${MAX_CONTROL_RESPONSE_BYTES} bytes`,
+                  reason: "protocol",
+                }),
               ),
               true,
             );
@@ -87,7 +99,10 @@ export const readControlOwner: ControlOwnerReader = (endpoint) =>
           if ((incoming.statusCode ?? 500) < 200 || (incoming.statusCode ?? 500) >= 300) {
             finish(
               Effect.fail(
-                new Error(`Control status request returned ${incoming.statusCode ?? 500}`),
+                new ControlReaderError({
+                  message: `Control status request returned ${incoming.statusCode ?? 500}`,
+                  reason: "protocol",
+                }),
               ),
               true,
             );
@@ -96,16 +111,39 @@ export const readControlOwner: ControlOwnerReader = (endpoint) =>
           try {
             finish(Effect.succeed(JSON.parse(body)));
           } catch (cause) {
-            finish(Effect.fail(cause), true);
+            finish(
+              Effect.fail(
+                new ControlReaderError({
+                  message: cause instanceof Error ? cause.message : String(cause),
+                  reason: "protocol",
+                  cause,
+                }),
+              ),
+              true,
+            );
           }
         };
-        onResponseError = (cause) => finish(Effect.fail(cause), true);
+        onResponseError = (cause) =>
+          finish(
+            Effect.fail(
+              new ControlReaderError({ message: cause.message, reason: "transport", cause }),
+            ),
+            true,
+          );
         onResponseAborted = () => {
           responseAborted = true;
         };
         onResponseClose = () => {
           if (responseAborted || !ended) {
-            finish(Effect.fail(new Error("Control status response closed before end")), true);
+            finish(
+              Effect.fail(
+                new ControlReaderError({
+                  message: "Control status response closed before end",
+                  reason: "transport",
+                }),
+              ),
+              true,
+            );
           }
         };
         incoming.setEncoding("utf8");
@@ -148,7 +186,13 @@ export const readControlOwner: ControlOwnerReader = (endpoint) =>
   }).pipe(
     Effect.timeoutOrElse({
       duration: 500,
-      orElse: () => Effect.fail(new Error("Control status request timed out")),
+      orElse: () =>
+        Effect.fail(
+          new ControlReaderError({
+            message: "Control status request timed out",
+            reason: "transport",
+          }),
+        ),
     }),
     Effect.mapError((cause) => readError(endpoint, cause)),
   );

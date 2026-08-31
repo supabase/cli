@@ -6,7 +6,7 @@ import { join } from "node:path";
 import { describe, expect, test } from "vitest";
 
 import { LEGACY_START_KONG_YML_TEMPLATE } from "../../legacy/commands/start/templates/kong.yml.ts";
-import { LEGACY_EDGE_RUNTIME_IMAGE } from "../../legacy/shared/legacy-edge-runtime-image.ts";
+import { legacyEdgeRuntimeImage } from "../../legacy/shared/legacy-edge-runtime-image.ts";
 import { ensureImage, resolveDeadline } from "../../../tests/helpers/docker-image.ts";
 import { dockerfileServiceImage } from "../services/dockerfile-images.ts";
 import { bundleServeMainTemplate } from "./serve-main-bundler.ts";
@@ -184,7 +184,7 @@ describe("functions serve runtime template (offline)", () => {
     "boots under edge-runtime with networking disabled and fetches nothing remote",
     { timeout: SERVE_OFFLINE_TEST_TIMEOUT_MS },
     async () => {
-      const runtimeImage = await ensureImage(LEGACY_EDGE_RUNTIME_IMAGE);
+      const runtimeImage = await ensureImage(legacyEdgeRuntimeImage());
       const dir = await mkdtemp(join(tmpdir(), "supabase-serve-offline-e2e-"));
       const container = `supabase-serve-offline-e2e-${process.pid.toString()}`;
       try {
@@ -248,7 +248,7 @@ describe("functions serve runtime template (offline)", () => {
     "returns canonical JWT auth failures",
     { timeout: SERVE_OFFLINE_TEST_TIMEOUT_MS },
     async () => {
-      const runtimeImage = await ensureImage(LEGACY_EDGE_RUNTIME_IMAGE);
+      const runtimeImage = await ensureImage(legacyEdgeRuntimeImage());
       const dir = await mkdtemp(join(tmpdir(), "supabase-serve-auth-e2e-"));
       const container = `supabase-serve-auth-e2e-${process.pid.toString()}`;
       try {
@@ -332,7 +332,7 @@ describe("functions serve runtime template (offline)", () => {
     async () => {
       const imageDeadline = resolveDeadline();
       const [runtimeImage, kongImage] = await Promise.all([
-        ensureImage(LEGACY_EDGE_RUNTIME_IMAGE, imageDeadline),
+        ensureImage(legacyEdgeRuntimeImage(), imageDeadline),
         ensureImage(dockerfileServiceImage("kong"), imageDeadline),
       ]);
       const dir = await mkdtemp(join(tmpdir(), "supabase-serve-kong-e2e-"));

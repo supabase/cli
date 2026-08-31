@@ -1,5 +1,7 @@
 import { describe, expect, it } from "@effect/vitest";
 import { Effect, Exit } from "effect";
+import { dockerfileServiceImageRaw } from "../../../../shared/services/dockerfile-images.ts";
+import { toSlimImage } from "../../../../shared/services/slim-images.ts";
 import { legacyGetHostname } from "../../../shared/legacy-hostname.ts";
 import { legacyParseSchemaFlags } from "../../../shared/legacy-schema-flags.ts";
 import {
@@ -13,6 +15,9 @@ import {
   parseQueryTimeoutSeconds,
   resolvePgmetaImage,
 } from "./types.shared.ts";
+
+const currentPgmeta = dockerfileServiceImageRaw("pgmeta");
+const currentPgmetaTag = currentPgmeta.split(":")[1] ?? "";
 
 function withEnv<T>(key: string, value: string | undefined, run: () => T): T {
   const previous = process.env[key];
@@ -127,8 +132,8 @@ describe("parseDatabaseUrl", () => {
 
 describe("resolvePgmetaImage", () => {
   it("uses the default pgmeta version when no override is given", () => {
-    const image = withEnv("SUPABASE_INTERNAL_IMAGE_REGISTRY", undefined, () =>
-      resolvePgmetaImage(),
+    const image = withEnv("SUPABASE_USE_SLIM_IMAGES", undefined, () =>
+      withEnv("SUPABASE_INTERNAL_IMAGE_REGISTRY", undefined, () => resolvePgmetaImage()),
     );
     expect(image).toContain("postgres-meta");
   });
@@ -179,6 +184,22 @@ describe("resolvePgmetaImage", () => {
       resolvePgmetaImage("1.2.3"),
     );
     expect(image).toBe("my.registry.example/supabase/postgres-meta:v1.2.3");
+  });
+
+  it("slim-translates the current pin and skips registry rewrite", () => {
+    const image = withEnv("SUPABASE_USE_SLIM_IMAGES", "1", () =>
+      withEnv("SUPABASE_INTERNAL_IMAGE_REGISTRY", undefined, () =>
+        resolvePgmetaImage(currentPgmetaTag),
+      ),
+    );
+    expect(image).toBe(toSlimImage("pgmeta", currentPgmeta));
+  });
+
+  it("keeps a historical pg-meta pin on docker.io under the slim flag", () => {
+    const image = withEnv("SUPABASE_USE_SLIM_IMAGES", "1", () =>
+      withEnv("SUPABASE_INTERNAL_IMAGE_REGISTRY", "docker.io", () => resolvePgmetaImage("1.2.3")),
+    );
+    expect(image).toBe("supabase/postgres-meta:v1.2.3");
   });
 });
 

@@ -19,6 +19,10 @@ import { join } from "node:path";
 
 import { legacyServiceContainerName } from "../../../shared/legacy-docker-ids.ts";
 import type { LegacyStartContainerSpec } from "../../../shared/db-bootstrap/docker-create-args.ts";
+import {
+  legacySlimWgetHealthcheck,
+  legacyUsesSlimRuntime,
+} from "../../../shared/db-bootstrap/slim-runtime.ts";
 
 /** The Logflare network alias — also this service's `containerSuffix` in `LEGACY_SERVICE_CATALOG`. */
 const LEGACY_LOGFLARE_CONTAINER_SUFFIX = "analytics";
@@ -134,6 +138,7 @@ export function legacyBuildLogflareContainerSpec(
   };
 
   const binds: Array<string> = [];
+  const slim = legacyUsesSlimRuntime(input.image);
 
   if (input.backend === "bigquery") {
     const hostJwtPath = join(input.workdir, input.gcpJwtPath);
@@ -156,13 +161,25 @@ export function legacyBuildLogflareContainerSpec(
     binds,
     exposedPorts: [{ containerPort: "4000" }],
     ports: [{ hostPort: String(input.port), containerPort: "4000" }],
-    healthcheck: {
-      test: ["CMD", "curl", "-sSfL", "--head", "-o", "/dev/null", "http://127.0.0.1:4000/health"],
-      intervalSeconds: 10,
-      timeoutSeconds: 2,
-      retries: 3,
-      startPeriodSeconds: 10,
-    },
+    healthcheck: slim
+      ? legacySlimWgetHealthcheck("http://127.0.0.1:4000/health", {
+          startPeriodSeconds: 10,
+        })
+      : {
+          test: [
+            "CMD",
+            "curl",
+            "-sSfL",
+            "--head",
+            "-o",
+            "/dev/null",
+            "http://127.0.0.1:4000/health",
+          ],
+          intervalSeconds: 10,
+          timeoutSeconds: 2,
+          retries: 3,
+          startPeriodSeconds: 10,
+        },
     restartPolicy: "unless-stopped",
     networkId: input.networkId,
     networkAliases: [LEGACY_LOGFLARE_CONTAINER_SUFFIX],

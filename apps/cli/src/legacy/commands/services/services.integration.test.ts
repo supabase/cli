@@ -20,10 +20,8 @@ import {
   processEnvLayer,
 } from "../../../../tests/helpers/mocks.ts";
 import { mockLegacyTelemetryStateTracked } from "../../../../tests/helpers/legacy-mocks.ts";
-import {
-  listLocalServiceVersions,
-  postgresImageForDbMajorVersion,
-} from "../../../shared/services/services.shared.ts";
+import { dockerfileServiceImageRaw } from "../../../shared/services/dockerfile-images.ts";
+import { postgresImageForDbMajorVersion } from "../../../shared/services/services.shared.ts";
 import { textCliOutputFormatter } from "../../../shared/output/text-formatter.ts";
 import { processControlLayer } from "../../../shared/runtime/process-control.layer.ts";
 import { TelemetryRuntime } from "../../../shared/telemetry/runtime.service.ts";
@@ -31,15 +29,7 @@ import { makeTelemetryIdentity } from "../../../shared/telemetry/identity.ts";
 import { legacyServicesCommand } from "./services.command.ts";
 import { legacyServices } from "./services.handler.ts";
 
-const LOCAL_POSTGRES_SERVICE = listLocalServiceVersions().find(
-  (service) => service.name === "supabase/postgres",
-);
-
-if (LOCAL_POSTGRES_SERVICE === undefined) {
-  throw new Error("Missing supabase/postgres in local service versions.");
-}
-
-const LOCAL_POSTGRES_VERSION = LOCAL_POSTGRES_SERVICE.local;
+const LOCAL_POSTGRES_VERSION = dockerfileServiceImageRaw("pg").split(":")[1] ?? "";
 
 function setup(
   opts: {

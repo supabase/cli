@@ -18,10 +18,10 @@ That third thing is a hosted-project subset. `config diff` (CLI-2156), `config p
 Studio's own drift detection all need a shape that describes what a Supabase project looks like on
 the platform — a sparse overlay of the hosted sections (`api`, `auth`, `db`, `realtime`, `storage`,
 `workers`, `experimental`), never the full document with local-only sections stripped out and
-defaults applied. CLI-2230 is introducing that mapping now, in a parallel branch (`toProjectConfig`,
-exported from `@supabase/config`'s root entrypoint). Studio is already an external consumer waiting
-on it: supabase/supabase#48906 builds Studio's config-drift page against the shapes this package
-will publish.
+defaults applied. CLI-2230 introduced that mapping (`toProjectConfig`, exported from
+`@supabase/config`'s root entrypoint; PR supabase/cli#6339). Studio is already an external
+consumer: supabase/supabase#48906 builds Studio's config-drift page against the shapes this
+package publishes.
 
 The renames CLI-2235 made were free only because `packages/config` is still `private: true`; nothing
 outside this monorepo could have imported the old names. CLI-2169 will flip the package to `public`,
@@ -35,11 +35,11 @@ vocabulary now, while it is still free to fix, is the point of this ADR.
 This decision fixes three names and one prefix rule as the settled vocabulary for `@supabase/config`
 and its CLI consumer:
 
-| Name            | Meaning                                                                                                                                                                                                                                             | Owner              |
-| --------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------ |
-| `CliConfig`     | The full config-file document (`supabase/config.toml`/`.json`) — the local superset, including local-only sections (`studio`, ports, `edge_runtime`, `analytics`, `[remotes.*]`, …).                                                                | `@supabase/config` |
-| `ProjectConfig` | The hosted-project subset: a sparse overlay of the hosted sections (`api`, `auth`, `db`, `realtime`, `storage`, `workers`, `experimental`) describing what a Supabase project looks like on the platform. Being introduced by CLI-2230 (in flight). | `@supabase/config` |
-| `CliSettings`   | The CLI's own runtime settings — platform `apiUrl`, access token, telemetry flags, `supabaseHome`, ….                                                                                                                                               | `apps/cli`         |
+| Name            | Meaning                                                                                                                                                                                                                                                  | Owner              |
+| --------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------ |
+| `CliConfig`     | The full config-file document (`supabase/config.toml`/`.json`) — the local superset, including local-only sections (`studio`, ports, `edge_runtime`, `analytics`, `[remotes.*]`, …).                                                                     | `@supabase/config` |
+| `ProjectConfig` | The hosted-project subset: a sparse overlay of the hosted sections (`api`, `auth`, `db`, `realtime`, `storage`, `workers`, `experimental`) describing what a Supabase project looks like on the platform. Introduced by CLI-2230 (PR supabase/cli#6339). | `@supabase/config` |
+| `CliSettings`   | The CLI's own runtime settings — platform `apiUrl`, access token, telemetry flags, `supabaseHome`, ….                                                                                                                                                    | `apps/cli`         |
 
 Prefix rule: `Cli*` names the local checkout side — what the CLI reads, writes, or resolves about
 itself on disk. A bare `Project*` name is reserved for the hosted Supabase project. Helpers that
@@ -128,7 +128,7 @@ text itself being rewritten in place.
 - [`packages/config/docs/cli-config-loading.md`](../../packages/config/docs/cli-config-loading.md)
 - [`packages/config/README.md`](../../packages/config/README.md)
 - CLI-2235 (PR supabase/cli#6328) — the rename that surfaced the collision this ADR records
-- CLI-2230 — introduces `ProjectConfig`/`toProjectConfig` (in flight)
+- CLI-2230 (PR supabase/cli#6339) — introduces `ProjectConfig`/`toProjectConfig`
 - CLI-2238 — this ticket
 - supabase/supabase#48906 — Studio's drift-detection work, waiting on the published package
 
@@ -137,9 +137,9 @@ text itself being rewritten in place.
 CLI-2230's implementation surfaced the prefix rule's one deliberate exception. The operand type of
 the sparse comparison core (`subtractCliConfig`/`omitDefaultValues`) accepts both families — the
 `CliConfig` document and the sparse `ProjectConfig` overlay — so either prefix would misdescribe
-it. CLI-2230 (in flight) names it `EffectiveConfig` (`DeepPartial<Omit<CliConfig, "remotes">>`,
-exported from the pure entrypoint) and deletes today's `BaseCliConfig` export, whose `Cli*` name
-wrongly claims the local-checkout side for a type that `ProjectConfig` values must also satisfy;
-until that lands, `BaseCliConfig` remains the export on `develop`. The general rule: a symbol that
-genuinely spans both families takes a family-neutral name rather than a misleading prefix. Ruled
-on CLI-2230 (2026-08-26); ADR 0018 gains a sibling addendum in that work.
+it. CLI-2230 names it `EffectiveConfig` (`DeepPartial<Omit<CliConfig, "remotes">>`, exported from
+the pure entrypoint) and deleted the former `BaseCliConfig` export, whose `Cli*` name wrongly
+claimed the local-checkout side for a type that `ProjectConfig` values must also satisfy. The
+general rule: a symbol that genuinely spans both families takes a family-neutral name rather than
+a misleading prefix. Ruled on CLI-2230 (2026-08-26); ADR 0018 carries a sibling addendum from
+that work.

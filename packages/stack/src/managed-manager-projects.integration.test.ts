@@ -1,3 +1,4 @@
+// oxlint-disable effecttsgo/multiple-effect-provide, effecttsgo/node-builtin-import -- Project-manager tests use native temporary paths for filesystem-backed integration fixtures; manager dependencies are staged to satisfy dependent transport layers.
 import { it } from "@effect/vitest";
 import { NodeFileSystem, NodePath } from "@effect/platform-node";
 import { Cause, Deferred, Effect, Exit, Fiber, Layer } from "effect";

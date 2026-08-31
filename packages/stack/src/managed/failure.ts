@@ -26,7 +26,7 @@ export const causeMessage = (cause: unknown): string => {
  */
 export const failsOnlyWith =
   <E>(failure: abstract new (...args: never[]) => E) =>
-  <A, R>(effect: Effect.Effect<A, unknown, R>): Effect.Effect<A, E, R> =>
+  <A, E2, R>(effect: Effect.Effect<A, E2, R>): Effect.Effect<A, E, R> =>
     Effect.catch(effect, (error) =>
       error instanceof failure ? Effect.fail(error) : Effect.die(error),
     );

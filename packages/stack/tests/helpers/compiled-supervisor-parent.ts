@@ -1,3 +1,4 @@
+// oxlint-disable effecttsgo/new-promise, effecttsgo/process-env -- The parent helper launches a native child process and forwards environment variables through its Promise boundary.
 import { Context, Effect, Layer, Schema } from "effect";
 import { runTestSupervisor } from "./supervisor-child.ts";
 import { Stack } from "../../src/Stack.ts";

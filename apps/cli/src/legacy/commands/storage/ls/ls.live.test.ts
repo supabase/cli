@@ -3,22 +3,13 @@ import { writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { expect } from "vitest";
 
-import { requireLiveSuccess, test, throwWithCleanup } from "../../../../../tests/helpers/live.ts";
-
-const STORAGE_FLAGS = ["--linked", "--experimental"];
-
-async function removeObject(
-  cli: (args: string[]) => Promise<{ exitCode: number; stdout: string; stderr: string }>,
-  remote: string,
-): Promise<void> {
-  const removed = await cli(["storage", "rm", remote, "--yes", ...STORAGE_FLAGS]);
-  if (
-    removed.exitCode !== 0 &&
-    !/not found|does not exist/i.test(`${removed.stdout}\n${removed.stderr}`)
-  ) {
-    throw new Error(`storage rm cleanup failed:\n${removed.stdout}\n${removed.stderr}`);
-  }
-}
+import {
+  removeStorageLiveObject,
+  requireLiveSuccess,
+  storageLiveFlags,
+  test,
+  throwWithCleanup,
+} from "../../../../../tests/helpers/live.ts";
 
 test("lists an uploaded object", async ({ cli, project, workspace }) => {
   const suffix = randomUUID().slice(0, 8);
@@ -33,14 +24,14 @@ test("lists an uploaded object", async ({ cli, project, workspace }) => {
       env: { SUPABASE_DB_PASSWORD: project.dbPassword },
     });
     requireLiveSuccess(linked, "link setup for storage ls");
-    const uploaded = await cli(["storage", "cp", local, remote, ...STORAGE_FLAGS]);
+    const uploaded = await cli(["storage", "cp", local, remote, ...storageLiveFlags]);
     requireLiveSuccess(uploaded, "storage cp setup for storage ls");
 
     const result = await cli([
       "storage",
       "ls",
       `ss:///${project.storageBucket}/`,
-      ...STORAGE_FLAGS,
+      ...storageLiveFlags,
     ]);
     expect(result.exitCode, result.stderr).toBe(0);
     expect(result.stdout).toContain(`upload-${suffix}.txt`);
@@ -48,7 +39,7 @@ test("lists an uploaded object", async ({ cli, project, workspace }) => {
     targetError = error;
   } finally {
     try {
-      await removeObject(cli, remote);
+      await removeStorageLiveObject(cli, remote);
     } catch (error) {
       cleanupError = error;
     }

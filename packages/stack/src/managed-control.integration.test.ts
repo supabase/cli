@@ -1,6 +1,8 @@
+// oxlint-disable effecttsgo/global-fetch-in-effect, effecttsgo/new-promise, effecttsgo/node-builtin-import, effecttsgo/prefer-schema-over-json -- Managed-control tests use native HTTP/JSON protocol payloads at the integration boundary.
 import { it } from "@effect/vitest";
 import { Cause, Deferred, Effect, Exit, Fiber, Layer, Predicate, Result, Stream } from "effect";
 import * as TestClock from "effect/testing/TestClock";
+import { randomUUID } from "node:crypto";
 import { spawn } from "node:child_process";
 import { createServer, type Server } from "node:http";
 import { createServer as createTcpServer, type Server as TcpServer, type Socket } from "node:net";
@@ -33,28 +35,27 @@ const live = <A, E, R>(effect: Effect.Effect<A, E, R>) =>
   effect.pipe(Effect.provide(controlTransportLayer));
 
 const makeStack = (started: { value: boolean }): Stack["Service"] => ({
-  getInfo: () =>
-    Effect.succeed({
-      url: "http://127.0.0.1",
-      dbUrl: "postgres://127.0.0.1",
-      publishableKey: "publishable",
-      secretKey: "secret",
-      anonJwt: "anon",
-      serviceRoleJwt: "service",
-      serviceEndpoints: {},
-    }),
-  start: () => Effect.sync(() => void (started.value = true)),
-  stop: () => Effect.void,
-  dispose: () => Effect.void,
+  getInfo: Effect.succeed({
+    url: "http://127.0.0.1",
+    dbUrl: "postgres://127.0.0.1",
+    publishableKey: "publishable",
+    secretKey: "secret",
+    anonJwt: "anon",
+    serviceRoleJwt: "service",
+    serviceEndpoints: {},
+  }),
+  start: Effect.sync(() => void (started.value = true)),
+  stop: Effect.void,
+  dispose: Effect.void,
   startService: () => Effect.void,
   stopService: () => Effect.void,
   restartService: () => Effect.void,
   reloadFunctions: () => Effect.void,
   reloadEdgeRuntime: () => Effect.void,
   getState: () => Effect.die("unused"),
-  getAllStates: () => Effect.succeed([]),
+  getAllStates: Effect.succeed([]),
   stateChanges: () => Effect.succeed(Stream.empty),
-  allStateChanges: () => Stream.empty,
+  allStateChanges: Stream.empty,
   waitReady: () => Effect.void,
   waitAllReady: () => Effect.void,
   subscribeLogs: () => Stream.empty,
@@ -65,7 +66,7 @@ const makeStack = (started: { value: boolean }): Stack["Service"] => ({
 
 const makeStaticOwner = (stackId: string, stack: Stack["Service"]) =>
   Effect.gen(function* () {
-    const ownerSessionId = crypto.randomUUID();
+    const ownerSessionId = `static-owner-${randomUUID()}`;
     const lifecycle = yield* makeSupervisorSessionFixture({
       ownershipId: stackId,
       ownerSessionId,
@@ -250,7 +251,7 @@ describe("managed control endpoint", () => {
           Effect.gen(function* () {
             const lifecycle = yield* makeSupervisorSessionFixture({
               ownershipId: STACK_ID,
-              ownerSessionId: crypto.randomUUID(),
+              ownerSessionId: `static-listener-${randomUUID()}`,
               daemonCliVersion: "test",
               close: Effect.void,
             });
@@ -286,10 +287,9 @@ describe("managed control endpoint", () => {
           const stopCalls = { value: 0 };
           const stack = {
             ...makeStack({ value: false }),
-            stop: () =>
-              Effect.sync(() => {
-                stopCalls.value += 1;
-              }),
+            stop: Effect.sync(() => {
+              stopCalls.value += 1;
+            }),
           } satisfies Stack["Service"];
           const { owner, lifecycle } = yield* makeStaticOwner(STACK_ID, stack);
           const ownerStatus = yield* lifecycle.currentStatus;
@@ -384,9 +384,7 @@ describe("managed control endpoint", () => {
           }),
         );
         const next = yield* Effect.scoped(
-          Effect.gen(function* () {
-            return yield* acquireControl({ stackId: STACK_ID, maintenanceOperation: "update" });
-          }),
+          acquireControl({ stackId: STACK_ID, maintenanceOperation: "update" }),
         );
         expect(isControlOwnership(next)).toBe(true);
       }),

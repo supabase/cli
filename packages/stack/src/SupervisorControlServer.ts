@@ -30,8 +30,12 @@ export const makeSupervisorControlApplication = (
         ? StackRpcHandlers
         : StackRpcHandlers.pipe(Layer.provide(Layer.succeed(StackLaunchUpdater, launchUpdater)));
     const rpc = yield* RpcServer.toHttpEffect(StackRpc).pipe(
-      Effect.provide(handlers.pipe(Layer.provide(Layer.succeed(SupervisorSession, session)))),
-      Effect.provide(RpcSerialization.layerNdjson),
+      Effect.provide(
+        Layer.mergeAll(
+          handlers.pipe(Layer.provide(Layer.succeed(SupervisorSession, session))),
+          RpcSerialization.layerNdjson,
+        ),
+      ),
     );
     const fencedRpc = Effect.gen(function* () {
       const request = yield* HttpServerRequest.HttpServerRequest;
@@ -79,5 +83,8 @@ export const makeSupervisorControlApplication = (
       HttpRouter.route("POST", "/rpc", fencedRpc),
     ];
     const application = yield* HttpRouter.toHttpEffect(HttpRouter.addAll(routes));
+    // The router returns a request-scoped Effect that the platform listener
+    // evaluates later, after it provides HttpServerRequest and Scope.
+    // oxlint-disable-next-line effecttsgo/return-effect-in-gen
     return application.pipe(Effect.orDie);
   });
