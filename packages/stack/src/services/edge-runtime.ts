@@ -19,7 +19,6 @@ import { stackHealthBudgets } from "./health-budgets.ts";
 import { edgeRuntimeNofileSoftLimit, edgeRuntimeNofileUlimit } from "./nofile-limit.ts";
 
 interface EdgeRuntimeOptions {
-  readonly runtimeRoot: string;
   readonly projectDir?: string;
   readonly port: number;
   readonly inspectorPort: number;
@@ -72,7 +71,12 @@ export const prepareEdgeRuntimeBootstrap = (
             ),
           )
         : bootstrapSource;
-    yield* fs.writeFileString(join(bootstrapDir, bootstrapFileName), source).pipe(
+    const generatedSource = [
+      'import functionsRuntimeConfig from "./functions-runtime-config.json" with { type: "json" };',
+      source,
+      "start(functionsRuntimeConfig);",
+    ].join("\n");
+    yield* fs.writeFileString(join(bootstrapDir, bootstrapFileName), generatedSource).pipe(
       Effect.mapError(
         (cause) =>
           new StackBuildError({
@@ -88,11 +92,6 @@ const edgeRuntimeEnv = (opts: EdgeRuntimeOptions): Record<string, string> => ({
   ...opts.env,
   EDGE_RUNTIME_PORT: String(opts.port),
   EDGE_RUNTIME_INSPECTOR_PORT: String(opts.inspectorPort),
-  FUNCTIONS_RUNTIME_CONFIG_PATH: join(
-    opts.runtimeRoot,
-    "edge-runtime",
-    "functions-runtime-config.json",
-  ),
 });
 
 const edgeRuntimeArgs = (
@@ -122,10 +121,7 @@ export const makeEdgeRuntimeServiceDocker = (opts: DockerEdgeRuntimeOptions): Se
       ...(opts.projectDir === undefined ? [] : [`${opts.projectDir}:${opts.projectDir}:ro`]),
     ],
     args: ["--ulimit", edgeRuntimeNofileUlimit(opts.platformOs).arg],
-    env: {
-      ...edgeRuntimeEnv(opts),
-      FUNCTIONS_RUNTIME_CONFIG_PATH: `${bootstrapMountDir}/functions-runtime-config.json`,
-    },
+    env: edgeRuntimeEnv(opts),
     user: hostUserForLinuxDocker(opts.runtime, opts.platformOs),
     cmd: [...edgeRuntimeArgs(opts, bootstrapMountDir)],
     dependencies: opts.dependencies,

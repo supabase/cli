@@ -1,13 +1,18 @@
 // oxlint-disable effecttsgo/node-builtin-import -- Service tests use native filesystem/path fixtures to validate service wiring.
 
-import { mkdtempSync, rmSync } from "node:fs";
+import { mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
-import { describe, expect, it } from "vitest";
-import { Predicate } from "effect";
+import { NodeServices } from "@effect/platform-node";
+import { describe, expect, it } from "@effect/vitest";
+import { Effect, Predicate } from "effect";
 import { analyticsDockerRuntimeNetwork, makeAnalyticsServiceDocker } from "./analytics.ts";
 import { makeAuthServiceNative, makeAuthServiceDocker } from "./auth.ts";
-import { makeEdgeRuntimeServiceDocker, makeEdgeRuntimeServiceNative } from "./edge-runtime.ts";
+import {
+  makeEdgeRuntimeServiceDocker,
+  makeEdgeRuntimeServiceNative,
+  prepareEdgeRuntimeBootstrap,
+} from "./edge-runtime.ts";
 import { edgeRuntimeNofileUlimit } from "./nofile-limit.ts";
 import { makeImgproxyServiceDocker, makeImgproxyServiceNative } from "./imgproxy.ts";
 import { makeMailpitServiceDocker, makeMailpitServiceNative } from "./mailpit.ts";
@@ -371,7 +376,6 @@ describe("makeEdgeRuntimeServiceDocker", () => {
         runtime: "docker",
         image: dockerImageForService("edge-runtime", DEFAULT_VERSIONS["edge-runtime"]),
         identity: EPHEMERAL_IDENTITY,
-        runtimeRoot: tempDir,
         bootstrapDir: path.join(tempDir, "edge-runtime"),
         port: 54340,
         inspectorPort: 54341,
@@ -390,6 +394,9 @@ describe("makeEdgeRuntimeServiceDocker", () => {
       expect(def.args).toContain(`--port=54340`);
       expect(def.args).toContain(`--policy=per_worker`);
       expect(def.args).toContain(`${bootstrapDir}:/workspace:ro`);
+      expect(def.args).not.toContain("--static");
+      expect(def.args).not.toContain("/workspace/functions-runtime-config.json");
+      expect(def.env?.FUNCTIONS_RUNTIME_CONFIG_PATH).toBeUndefined();
       expect(def.args).toContain("--ulimit");
       expect(def.args).toContain(edgeRuntimeNofileUlimit("linux").arg);
       expect(def.dependencies).toEqual([{ service: "postgres", condition: "healthy" }]);
@@ -404,6 +411,25 @@ describe("makeEdgeRuntimeServiceDocker", () => {
       rmSync(tempDir, { recursive: true, force: true });
     }
   });
+
+  it.effect("embeds the generated runtime config in the bootstrap module graph", () => {
+    const tempDir = mkdtempSync(path.join(tmpdir(), "stack-edge-runtime-bootstrap-"));
+
+    return Effect.gen(function* () {
+      const bootstrapDir = yield* prepareEdgeRuntimeBootstrap(tempDir);
+      const source = yield* Effect.sync(() =>
+        readFileSync(path.join(bootstrapDir, "index.ts"), "utf8"),
+      );
+
+      expect(source).toContain(
+        'import functionsRuntimeConfig from "./functions-runtime-config.json" with { type: "json" };',
+      );
+      expect(source).toMatch(/start\(functionsRuntimeConfig\);\s*$/);
+    }).pipe(
+      Effect.provide(NodeServices.layer),
+      Effect.ensuring(Effect.sync(() => rmSync(tempDir, { recursive: true, force: true }))),
+    );
+  });
 });
 
 describe("native auxiliary service definitions", () => {
@@ -414,7 +440,6 @@ describe("native auxiliary service definitions", () => {
     const bootstrapDir = `${runtimeRoot}/edge-runtime`;
     const def = makeEdgeRuntimeServiceNative({
       binPath: artifactRoot,
-      runtimeRoot,
       projectDir,
       bootstrapDir,
       port: 54340,
@@ -430,8 +455,8 @@ describe("native auxiliary service definitions", () => {
     expect(def.cwd).toBe(bootstrapDir);
     expect(def.env).toMatchObject({
       SUPABASE_INTERNAL_DEBUG: "true",
-      FUNCTIONS_RUNTIME_CONFIG_PATH: `${runtimeRoot}/edge-runtime/functions-runtime-config.json`,
     });
+    expect(def.env?.FUNCTIONS_RUNTIME_CONFIG_PATH).toBeUndefined();
     expect(def.healthCheck?.probe).toEqual({
       _tag: "Http",
       host: "127.0.0.1",

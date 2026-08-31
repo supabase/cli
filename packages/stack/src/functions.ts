@@ -212,7 +212,7 @@ export function resolveFunctionsRuntimeConfig(
 
 const writeFunctionsRuntimeConfig = Effect.fnUntraced(function* (
   runtimeRoot: string,
-  config: FunctionsRuntimeConfig,
+  config: FunctionsRuntimeConfig | null,
 ) {
   const fs = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
@@ -257,7 +257,7 @@ export const configureFunctionsRuntime = Effect.fnUntraced(function* (
 ) {
   const runtimeConfig = resolveFunctionsRuntimeConfig(stackConfig, runtimeHost, bundle);
   if (runtimeConfig === undefined) {
-    yield* clearFunctionsRuntimeConfig(stackConfig.runtimeRoot);
+    yield* writeFunctionsRuntimeConfig(stackConfig.runtimeRoot, null);
   } else {
     yield* writeFunctionsRuntimeConfig(stackConfig.runtimeRoot, runtimeConfig);
   }

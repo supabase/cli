@@ -319,8 +319,12 @@ describe("stack Functions runtime config", () => {
           { runtime: { mode: "docker", containerRuntime: "docker" } },
         ),
       );
-      yield* configureFunctionsRuntime(stackConfig, { hostname: "127.0.0.1" }, bundle);
+      yield* configureFunctionsRuntime(stackConfig, { hostname: "127.0.0.1" }, undefined);
       const filePath = functionsRuntimeConfigPath(stackConfig.runtimeRoot);
+      expect(yield* Effect.promise(() => readFile(filePath, "utf8"))).toBe("null\n");
+      expect((yield* Effect.promise(() => stat(filePath))).mode & 0o777).toBe(0o600);
+
+      yield* configureFunctionsRuntime(stackConfig, { hostname: "127.0.0.1" }, bundle);
       const written = JSON.parse(yield* Effect.promise(() => readFile(filePath, "utf8"))) as {
         functions: Record<string, unknown>;
       };

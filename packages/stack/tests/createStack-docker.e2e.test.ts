@@ -10,7 +10,7 @@ import { dockerContainerName } from "../src/StackIdentity.ts";
 import { createStack, type StackHandle } from "../src/node.ts";
 import { dependencyTimeoutSecondsForServices } from "../src/services/health-budgets.ts";
 import {
-  DEFAULT_VERSIONS,
+  DOCKER_DEFAULT_VERSIONS,
   SERVICE_NAMES,
   dockerImageForService,
   type ServiceName,
@@ -269,7 +269,7 @@ dockerDescribe("createStack e2e (docker mode)", () => {
           const containerName = dockerContainerName(service, apiPort);
           const container = ownedContainers.find((candidate) => candidate.name === containerName);
           expect(container?.image, `${service} image`).toBe(
-            dockerImageForService(service, DEFAULT_VERSIONS[service]),
+            dockerImageForService(service, DOCKER_DEFAULT_VERSIONS[service]),
           );
         }
 

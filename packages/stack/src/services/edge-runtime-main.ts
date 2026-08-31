@@ -21,21 +21,6 @@ interface AuthFailure {
   message?: string;
 }
 
-const configPath =
-  typeof Deno === "undefined"
-    ? new URL("./functions-runtime-config.json", import.meta.url)
-    : (Deno.env.get("FUNCTIONS_RUNTIME_CONFIG_PATH") ??
-      new URL("./functions-runtime-config.json", import.meta.url));
-
-async function loadConfig() {
-  try {
-    return JSON.parse(await Deno.readTextFile(configPath));
-  } catch (error) {
-    console.error(`Failed to load Edge Functions runtime config from ${configPath}`, error);
-    return null;
-  }
-}
-
 function base64UrlToBytes(value: string) {
   const base64 = value.replace(/-/g, "+").replace(/_/g, "/");
   const padded = base64.padEnd(Math.ceil(base64.length / 4) * 4, "=");
@@ -225,7 +210,7 @@ async function serveFunction(req: Request, config: any, functionName: string, fu
   }
 }
 
-if (typeof Deno !== "undefined") {
+export function start(config: any) {
   Deno.serve({
     handler: async (req: Request) => {
       const url = new URL(req.url);
@@ -234,7 +219,6 @@ if (typeof Deno !== "undefined") {
         return Response.json({ message: "ok" });
       }
 
-      const config = await loadConfig();
       if (!config) return Response.json(placeholder, { status: 501 });
 
       const functionName = url.pathname.split("/").filter(Boolean)[0];
@@ -246,7 +230,6 @@ if (typeof Deno !== "undefined") {
       return serveFunction(req, config, functionName, functionConfig);
     },
     onListen: async () => {
-      const config = await loadConfig();
       if (!config) return;
       const names = Object.keys(config.functions);
       const examples = names

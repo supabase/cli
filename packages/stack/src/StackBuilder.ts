@@ -461,7 +461,6 @@ export class StackBuilder extends Context.Service<
             ...(edgeRuntimeResolution.type === "binary"
               ? makeEdgeRuntimeServiceNative({
                   binPath: edgeRuntimeResolution.path,
-                  runtimeRoot: config.runtimeRoot,
                   bootstrapDir: edgeRuntimeBootstrapDir,
                   projectDir,
                   port: config.edgeRuntime.port,
@@ -474,7 +473,6 @@ export class StackBuilder extends Context.Service<
                   runtime: yield* requireContainerRuntime,
                   image: edgeRuntimeResolution.image,
                   identity,
-                  runtimeRoot: config.runtimeRoot,
                   bootstrapDir: edgeRuntimeBootstrapDir,
                   projectDir,
                   port: config.edgeRuntime.port,
