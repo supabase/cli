@@ -1,18 +1,23 @@
 // @supabase/stack/effect — Node-bound Effect interfaces and consumer layers.
+// oxlint-disable effecttsgo/multiple-effect-provide -- Consumer layers are staged in dependency order; merging them would alter managed scope ownership.
 
 export * from "./effect.ts";
 
 import { Effect, type Layer } from "effect";
+// oxlint-disable-next-line effecttsgo/node-builtin-import -- Node effect entrypoint uses native path semantics for managed state roots.
 import { join } from "node:path";
 import type { PortLease } from "./PortAllocator.ts";
 import type { Stack } from "./Stack.ts";
 import type { ResolvedStackConfig } from "./StackConfig.ts";
 import type { ManagedDaemonConfigInput } from "./layers.ts";
+import type { DaemonUpgradeRequired } from "./errors.ts";
+import { defaultCacheRoot } from "./paths.ts";
 import {
   daemonLayer as daemonLayerForPlatform,
+  restartManagedStackForUpgrade as restartManagedStackForUpgradeForPlatform,
   foregroundLayer as foregroundLayerForPlatform,
 } from "./layers.ts";
-import { daemonEntryPoint, platformFactory } from "./platform-node.ts";
+import { controlTransportLayer, daemonEntryPoint, platformFactory } from "./platform-node.ts";
 import { httpTransportClientLayer } from "./HttpTransportClient.ts";
 import {
   connectManagedLayer,
@@ -38,6 +43,15 @@ export const foregroundLayer = (
 export const daemonLayer = (input: ManagedDaemonConfigInput) =>
   daemonLayerForPlatform(input, daemonEntryPoint);
 
+export const restartManagedStackForUpgrade = (
+  input: ManagedDaemonConfigInput,
+  mismatch: DaemonUpgradeRequired,
+) =>
+  restartManagedStackForUpgradeForPlatform(input, mismatch, daemonEntryPoint).pipe(
+    Effect.provide(managedLayer(input.cacheRoot ?? defaultCacheRoot())),
+    Effect.provide(controlTransportLayer),
+  );
+
 const managedLayer = (cacheRoot: string) =>
   managedStackManagerLayer({ stateRoot: join(cacheRoot, "managed") });
 
@@ -53,7 +67,11 @@ export const stopDaemon = (opts: Parameters<typeof stopDaemonCore>[0]) =>
   stopDaemonCore(opts).pipe(Effect.provide(managedLayer(opts.cacheRoot)));
 export const deleteManagedStackPersistence = (
   opts: Parameters<typeof deleteManagedStackPersistenceCore>[0],
-) => deleteManagedStackPersistenceCore(opts).pipe(Effect.provide(managedLayer(opts.cacheRoot)));
+) =>
+  deleteManagedStackPersistenceCore(opts).pipe(
+    Effect.provide(managedLayer(opts.cacheRoot)),
+    Effect.provide(controlTransportLayer),
+  );
 
 export const resolveManagedDocument = (opts: {
   readonly workspacePath: string;
@@ -66,6 +84,7 @@ export const updateManagedLaunch = (opts: {
   readonly stackName?: string;
   readonly cwd?: string;
   readonly cacheRoot: string;
+  readonly cliVersion: string;
   readonly launch: import("./managed/document.ts").ManagedStackLaunchUpdate;
 }) =>
   updateManagedLaunchCore(opts).pipe(

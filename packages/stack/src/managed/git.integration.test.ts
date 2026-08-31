@@ -1,3 +1,5 @@
+// oxlint-disable effecttsgo/node-builtin-import -- Git integration tests invoke native repository commands.
+
 import { BunFileSystem } from "@effect/platform-bun";
 import { describe, expect, it } from "@effect/vitest";
 import { Effect, Exit, FileSystem, Layer, PlatformError } from "effect";
@@ -177,9 +179,7 @@ describe("managed Git workspace identity", () => {
       );
       expect(Exit.isFailure(interrupted)).toBe(true);
 
-      const fs = yield* Effect.gen(function* () {
-        return yield* FileSystem.FileSystem;
-      }).pipe(Effect.provide(layer));
+      const fs = yield* FileSystem.FileSystem.pipe(Effect.provide(layer));
       expect(yield* fs.exists(markerPath)).toBe(false);
       expect(yield* fs.readDirectory(join(workspace, ".supabase"))).toEqual([]);
 
@@ -218,9 +218,7 @@ describe("managed Git workspace identity", () => {
         ensureGitCheckoutIdentity(checkout).pipe(Effect.provide(providedLayer)),
       );
       expect(failure).toBeInstanceOf(UnsupportedGitWorkspaceError);
-      const fs = yield* Effect.gen(function* () {
-        return yield* FileSystem.FileSystem;
-      }).pipe(Effect.provide(providedLayer));
+      const fs = yield* FileSystem.FileSystem.pipe(Effect.provide(providedLayer));
       expect(yield* fs.exists(markerPath)).toBe(false);
       expect(
         (yield* fs.readDirectory(checkout.gitDirectory)).filter((entry) =>

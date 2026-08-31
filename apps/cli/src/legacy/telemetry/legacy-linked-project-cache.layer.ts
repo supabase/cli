@@ -3,7 +3,7 @@ import * as HttpClient from "effect/unstable/http/HttpClient";
 import * as HttpClientRequest from "effect/unstable/http/HttpClientRequest";
 
 import { LegacyCredentials } from "../auth/legacy-credentials.service.ts";
-import { LegacyCliConfig } from "../config/legacy-cli-config.service.ts";
+import { LegacyCliSettings } from "../config/legacy-cli-settings.service.ts";
 import { LegacyIdentityStitch } from "../shared/legacy-identity-stitch.ts";
 import { Analytics } from "../../shared/telemetry/analytics.service.ts";
 import { GroupOrganization, GroupProject } from "../../shared/telemetry/event-catalog.ts";
@@ -49,7 +49,7 @@ export const legacyLinkedProjectCacheLayer = Layer.effect(
   LegacyLinkedProjectCache,
   Effect.gen(function* () {
     const httpClient = yield* HttpClient.HttpClient;
-    const cliConfig = yield* LegacyCliConfig;
+    const cliSettings = yield* LegacyCliSettings;
     const credentials = yield* LegacyCredentials;
     const fs = yield* FileSystem.FileSystem;
     const path = yield* Path.Path;
@@ -72,7 +72,7 @@ export const legacyLinkedProjectCacheLayer = Layer.effect(
         accessToken?: Option.Option<Redacted.Redacted<string>>,
       ) =>
         Effect.gen(function* () {
-          const resolvedWorkdir = workdir ?? cliConfig.workdir;
+          const resolvedWorkdir = workdir ?? cliSettings.workdir;
           const cachePath = legacyTempPaths(path, resolvedWorkdir).linkedProjectCache;
           const exists = yield* fs.exists(cachePath).pipe(Effect.orElseSucceed(() => false));
           if (exists) return;
@@ -109,17 +109,17 @@ export const legacyLinkedProjectCacheLayer = Layer.effect(
           // lookup (Go-parity).
           const tokenOpt =
             accessToken ??
-            (Option.isSome(cliConfig.accessToken)
-              ? cliConfig.accessToken
+            (Option.isSome(cliSettings.accessToken)
+              ? cliSettings.accessToken
               : yield* credentials.getAccessToken);
           if (Option.isNone(tokenOpt)) return;
           const token = Redacted.value(tokenOpt.value);
 
           const request = HttpClientRequest.get(
-            `${apiUrl ?? cliConfig.apiUrl}/v1/projects/${ref}`,
+            `${apiUrl ?? cliSettings.apiUrl}/v1/projects/${ref}`,
           ).pipe(
             HttpClientRequest.setHeader("Authorization", `Bearer ${token}`),
-            HttpClientRequest.setHeader("User-Agent", cliConfig.userAgent),
+            HttpClientRequest.setHeader("User-Agent", cliSettings.userAgent),
           );
           const response = yield* httpClient.execute(request);
           // Stitch identity from the response (Go's identityTransport fires on

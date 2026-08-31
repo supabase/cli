@@ -6,8 +6,8 @@ import {
   updateManagedLaunch,
 } from "@supabase/stack/effect";
 import { ensureProjectStateIgnored } from "../../config/project-gitignore.ts";
-import { CliConfig } from "../../config/cli-config.service.ts";
-import { ProjectHome } from "../../config/project-home.service.ts";
+import { CliSettings } from "../../config/cli-settings.service.ts";
+import { CliProjectHome } from "../../config/cli-project-home.service.ts";
 import { refreshLinkedProjectSnapshot } from "../../config/project-link-refresh.ts";
 import {
   formatLinkedProjectLabel,
@@ -17,6 +17,7 @@ import { ProjectLinkState } from "../../config/project-link-state.service.ts";
 import { resolveServiceVersionContext } from "../../config/service-version-resolution.ts";
 import { Output } from "../../../shared/output/output.service.ts";
 import { RuntimeInfo } from "../../../shared/runtime/runtime-info.service.ts";
+import { CLI_VERSION } from "../../../shared/cli/version.ts";
 import type { UpdateFlags } from "./update.command.ts";
 
 function diffCachedLinkedVersions(
@@ -41,21 +42,21 @@ function diffCachedLinkedVersions(
 
 export const update = Effect.fnUntraced(function* (flags: UpdateFlags) {
   const output = yield* Output;
-  const cliConfig = yield* CliConfig;
-  const projectHome = yield* ProjectHome;
+  const cliSettings = yield* CliSettings;
+  const cliProjectHome = yield* CliProjectHome;
   const projectLinkState = yield* ProjectLinkState;
   const runtimeInfo = yield* RuntimeInfo;
 
   yield* output.intro("Update local Supabase stack versions");
-  yield* ensureProjectStateIgnored(projectHome.projectRoot);
+  yield* ensureProjectStateIgnored(cliProjectHome.projectRoot);
 
   const linkedState = yield* projectLinkState.load;
   if (Option.isSome(linkedState)) {
     const refreshed = yield* refreshLinkedProjectSnapshot(
       linkedState.value.project.ref,
       (yield* listStacks({
-        cacheRoot: cliConfig.supabaseHome,
-        projectDir: projectHome.projectRoot,
+        cacheRoot: cliSettings.supabaseHome,
+        projectDir: cliProjectHome.projectRoot,
       })).map((stack) => ({
         stackName: stack.name,
         services: fillServiceVersionManifest(stack.versions),
@@ -86,8 +87,8 @@ export const update = Effect.fnUntraced(function* (flags: UpdateFlags) {
   }
 
   const existingSummary = yield* resolveStackSummary({
-    cacheRoot: cliConfig.supabaseHome,
-    projectDir: projectHome.projectRoot,
+    cacheRoot: cliSettings.supabaseHome,
+    projectDir: cliProjectHome.projectRoot,
     cwd: runtimeInfo.cwd,
     name: flags.stack,
   }).pipe(
@@ -104,10 +105,11 @@ export const update = Effect.fnUntraced(function* (flags: UpdateFlags) {
 
   if (Option.isSome(existingSummary)) {
     yield* updateManagedLaunch({
-      cacheRoot: cliConfig.supabaseHome,
+      cacheRoot: cliSettings.supabaseHome,
       cwd: runtimeInfo.cwd,
-      workspacePath: projectHome.projectRoot,
+      workspacePath: cliProjectHome.projectRoot,
       stackName: flags.stack,
+      cliVersion: CLI_VERSION,
       launch: {
         versions: serviceVersionContext.candidateBaseline,
         excludedServices: existingSummary.value.launch.excludedServices ?? [],

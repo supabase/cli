@@ -2,7 +2,7 @@ import * as nodePath from "node:path";
 
 import { Effect, Option } from "effect";
 
-import { LegacyCliConfig } from "../../../config/legacy-cli-config.service.ts";
+import { LegacyCliSettings } from "../../../config/legacy-cli-settings.service.ts";
 import { LegacyProjectRefResolver } from "../../../config/legacy-project-ref.service.ts";
 import { LegacyLinkedProjectCache } from "../../../telemetry/legacy-linked-project-cache.service.ts";
 import { LegacyTelemetryState } from "../../../telemetry/legacy-telemetry-state.service.ts";
@@ -34,7 +34,7 @@ export const legacyStorageMv = Effect.fn("legacy.storage.mv")(function* (
   flags: LegacyStorageMvFlags,
 ) {
   const output = yield* Output;
-  const cliConfig = yield* LegacyCliConfig;
+  const cliSettings = yield* LegacyCliSettings;
   const telemetryState = yield* LegacyTelemetryState;
   const linkedProjectCache = yield* LegacyLinkedProjectCache;
   const resolver = yield* LegacyProjectRefResolver;
@@ -56,7 +56,7 @@ export const legacyStorageMv = Effect.fn("legacy.storage.mv")(function* (
 
     const projectRef = flags.local ? "" : yield* resolver.loadProjectRef(flags.projectRef);
     linkedRef = projectRef;
-    const loaded = yield* legacyLoadStorageConfig(cliConfig.workdir, projectRef);
+    const loaded = yield* legacyLoadStorageConfig(cliSettings.workdir, projectRef);
     if (loaded.appliedRemote !== undefined) {
       yield* output.raw(`Loading config override: [remotes.${loaded.appliedRemote}]\n`, "stderr");
     }
@@ -75,7 +75,7 @@ export const legacyStorageMv = Effect.fn("legacy.storage.mv")(function* (
     }
 
     yield* legacyConnectStorageGateway(
-      { projectRef, config: loaded.config, userAgent: cliConfig.userAgent },
+      { projectRef, config: loaded.config, userAgent: cliSettings.userAgent },
       (gateway) =>
         Effect.gen(function* () {
           yield* output.raw(`Moving object: ${srcParsed} => ${dstParsed}\n`, "stderr");

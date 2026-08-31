@@ -179,8 +179,8 @@ export interface LegacyBaselineTomlConfig {
   readonly realtimeEnabled: boolean;
   /**
    * `[api] auto_expose_new_tables` (tri-state `*bool`). `None` when unset. Drives
-   * `ApplyApiPrivileges`; the cache key folds in the *effective* bool (unset and
-   * `false` both mean revoke-by-default since the 2026-05-30 flip).
+   * `legacyApplyApiPrivileges`; the cache key folds in the *effective* bool (unset and
+   * `true` both mean grants-kept).
    */
   readonly apiAutoExposeNewTables: Option.Option<boolean>;
   /** `[db.vault]` secret names (sorted), created during setup by `UpsertVaultSecrets`. */
@@ -1303,7 +1303,7 @@ const legacyAssertSecretValue = (
  * The "check every `[remotes.<name>]` block too" part of that contract only holds when `doc`
  * still has an intact `remotes` key. The db-config reader's own remote-merge keeps it (so this
  * function really does check every declared remote there), but `@supabase/config`'s
- * `loadProjectConfig` strips `remotes` from the document once a block matches the target ref —
+ * `loadCliConfig` strips `remotes` from the document once a block matches the target ref —
  * so for `config push`, an undecryptable secret hiding in a *different, non-matching* remote
  * block goes unchecked (see that command's SIDE_EFFECTS.md KNOWN GAPS).
  */

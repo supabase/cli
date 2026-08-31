@@ -21,7 +21,7 @@ import {
   mockTty,
 } from "../../../../../../../tests/helpers/mocks.ts";
 import {
-  mockLegacyCliConfig,
+  mockLegacyCliSettings,
   mockLegacyLinkedProjectCacheTracked,
   mockLegacyPlatformApiService,
   mockLegacyTelemetryStateTracked,
@@ -254,7 +254,7 @@ function setup(workdir: string, opts: SetupOpts = {}) {
     resolver,
     proxy,
     dbConn,
-    mockLegacyCliConfig({ workdir, projectId: opts.projectId ?? Option.some("test") }),
+    mockLegacyCliSettings({ workdir, projectId: opts.projectId ?? Option.some("test") }),
     mockTty({ stdinIsTty: opts.stdinIsTty ?? false, stdoutIsTty: false }),
     mockStdin(opts.stdinIsTty ?? false),
     experimentalFlag,
@@ -1123,7 +1123,7 @@ describe("legacy db schema declarative generate integration", () => {
     writeFileSync(join(tmp.current, "supabase", "migrations", "0001_init.sql"), "select 1;");
     // `legacyResetLocalDatabase`'s container-recreate resolves its own project id from
     // `@supabase/config` (config.toml / real env), independently of the mocked
-    // `LegacyCliConfig.projectId` — pin it to "test" so the recreated container name
+    // `LegacyCliSettings.projectId` — pin it to "test" so the recreated container name
     // matches the spawner route's assumption.
     writeFileSync(join(tmp.current, "supabase", "config.toml"), 'project_id = "test"\n');
     const s = setup(tmp.current, {

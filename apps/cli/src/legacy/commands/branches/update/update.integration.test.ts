@@ -6,7 +6,7 @@ import { mockAnalytics, mockOutput } from "../../../../../tests/helpers/mocks.ts
 import {
   buildLegacyTestRuntime,
   legacyJsonResponse,
-  mockLegacyCliConfig,
+  mockLegacyCliSettings,
   mockLegacyLinkedProjectCacheTracked,
   mockLegacyPlatformApi,
   mockLegacyTelemetryStateTracked,
@@ -107,11 +107,11 @@ function setup(opts: SetupOpts = {}) {
   const out = mockOutput({ format: opts.format ?? "text" });
   const analytics = mockAnalytics();
   const api = buildApi(opts);
-  const cliConfig = mockLegacyCliConfig({ workdir: tempRoot.current });
+  const cliSettings = mockLegacyCliSettings({ workdir: tempRoot.current });
   const layer = buildLegacyTestRuntime({
     out,
     api,
-    cliConfig,
+    cliSettings,
     analytics,
     goOutput: opts.goOutput === undefined ? Option.none() : Option.some(opts.goOutput),
   });
@@ -122,13 +122,13 @@ function setupTracked(opts: SetupOpts = {}) {
   const out = mockOutput({ format: opts.format ?? "text" });
   const analytics = mockAnalytics();
   const api = buildApi(opts);
-  const cliConfig = mockLegacyCliConfig({ workdir: tempRoot.current });
+  const cliSettings = mockLegacyCliSettings({ workdir: tempRoot.current });
   const telemetry = mockLegacyTelemetryStateTracked();
   const cache = mockLegacyLinkedProjectCacheTracked();
   const layer = buildLegacyTestRuntime({
     out,
     api,
-    cliConfig,
+    cliSettings,
     analytics,
     telemetry: telemetry.layer,
     linkedProjectCache: cache.layer,
@@ -271,7 +271,7 @@ describe("legacy branches update integration", () => {
     () => {
       const out = mockOutput({ format: "text" });
       const analytics = mockAnalytics();
-      const cliConfig = mockLegacyCliConfig({ workdir: tempRoot.current });
+      const cliSettings = mockLegacyCliSettings({ workdir: tempRoot.current });
 
       // `legacySuggestUpgrade` bypasses the typed Management API client to GET
       // the project + entitlements (see its file-level comment — required so
@@ -308,7 +308,7 @@ describe("legacy branches update integration", () => {
       const layer = buildLegacyTestRuntime({
         out,
         api: apiMock,
-        cliConfig,
+        cliSettings,
         analytics,
       });
 

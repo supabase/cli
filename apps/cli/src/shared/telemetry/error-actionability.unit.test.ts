@@ -2,6 +2,7 @@ import { Cause, Data } from "effect";
 import { CliError } from "effect/unstable/cli";
 import { describe, expect, it } from "vitest";
 import { markSupabaseApiInputErrorAsUserInput, SupabaseApiInputError } from "@supabase/api/effect";
+import { DockerPullError, StackError } from "@supabase/stack/effect";
 import { LegacyBootstrapHealthError } from "../../legacy/commands/bootstrap/bootstrap.errors.ts";
 import {
   actionability,
@@ -489,6 +490,56 @@ describe("classifyCliErrorActionability", () => {
     expect(readiness.suggested_command).toBe("supabase start");
   });
 
+  it("classifies control stop conflicts as a sanitized internal invariant failure", () => {
+    const result = classifyCliErrorActionability({
+      _tag: "ControlStopConflictError",
+      endpoint: "http://127.0.0.1:54321",
+    });
+
+    expect(result).toEqual({
+      error_kind: "internal_bug",
+      error_category: "impossible_state",
+      error_fingerprint: "tag:ControlStopConflictError:managed_control_stop_conflict",
+      has_suggestion: true,
+      suggestion_type: "rerun_debug",
+    });
+    expect(JSON.stringify(result)).not.toContain("127.0.0.1");
+  });
+
+  it("classifies maintenance contention as a retryable user action", () => {
+    const result = classifyCliErrorActionability({
+      _tag: "ControlMaintenanceBusyError",
+      endpoint: "http://127.0.0.1:54321",
+    });
+
+    expect(result).toEqual({
+      error_kind: "user_actionable",
+      error_category: "invalid_config",
+      error_fingerprint: "tag:ControlMaintenanceBusyError:managed_control_maintenance_busy",
+      has_suggestion: true,
+      suggestion_type: "run_command",
+    });
+    expect(JSON.stringify(result)).not.toContain("127.0.0.1");
+  });
+
+  it("classifies loopback control transport failures as local stack failures", () => {
+    const result = classifyCliErrorActionability({
+      _tag: "ControlTransportError",
+      endpoint: "http://127.0.0.1:54321",
+      reason: "unreachable",
+    });
+
+    expect(result).toEqual({
+      error_kind: "user_actionable",
+      error_category: "invalid_config",
+      error_fingerprint: "tag:ControlTransportError:managed_control_transport",
+      has_suggestion: true,
+      suggestion_type: "run_command",
+      suggested_command: "supabase start",
+    });
+    expect(JSON.stringify(result)).not.toContain("127.0.0.1");
+  });
+
   it("splits docker pull failures from a stopped docker daemon", () => {
     const daemonDown = classifyCliErrorActionability({
       _tag: "DockerPullError",
@@ -568,16 +619,45 @@ describe("classifyCliErrorActionability", () => {
   });
 
   it("classifies StackError port allocation failures", () => {
-    const error = new Error("no free port");
-    error.name = "StackError";
-    Object.defineProperty(error, "code", { value: "PORT_ALLOCATION" });
+    const error = new StackError({ code: "PORT_ALLOCATION", message: "no free port" });
     const result = classifyCliErrorActionability(error);
     expect(result.error_category).toBe("invalid_config");
-    expect(result.error_fingerprint).toBe("error:StackError:port_allocation");
+    expect(result.error_fingerprint).toBe("tag:StackError:port_allocation");
 
-    const other = new Error("other");
-    other.name = "StackError";
+    const other = new StackError({ code: "UNKNOWN", message: "other" });
     expect(classifyCliErrorActionability(other).error_kind).toBe("unknown");
+  });
+
+  it("classifies real tagged StackError causes before its wrapper adapter", () => {
+    const dockerPull = new DockerPullError({
+      image: "supabase/postgres",
+      detail: "docker daemon unavailable",
+      cause: new Error("connection refused"),
+      daemonDown: true,
+    });
+    const wrapped = new StackError({
+      code: "BUILD_ERROR",
+      message: "stack preparation failed",
+      cause: dockerPull,
+    });
+
+    const result = classifyCliErrorActionability(wrapped);
+    expect(result.error_kind).toBe("user_actionable");
+    expect(result.error_category).toBe("docker_not_running");
+    expect(result.error_fingerprint).toBe("tag:DockerPullError:docker_not_running");
+  });
+
+  it("classifies a native exception preserved by a real tagged StackError", () => {
+    const wrapped = new StackError({
+      code: "UNKNOWN",
+      message: "stack failed",
+      cause: new TypeError("native failure"),
+    });
+
+    const result = classifyCliErrorActionability(wrapped);
+    expect(result.error_kind).toBe("internal_bug");
+    expect(result.error_category).toBe("panic");
+    expect(result.error_fingerprint).toBe("error:TypeError");
   });
 
   // Managed errors are tagged errors that also declare a stable `code`: the
@@ -710,29 +790,6 @@ describe("classifyCliErrorActionability", () => {
     expect(result.error_fingerprint).toBe("tag:ManagedExactPortOccupiedError:port_conflict");
   });
 
-  it("classifies the preserved tagged cause of a StackError wrapper", () => {
-    const wrapped = new Error("stack failure");
-    wrapped.name = "StackError";
-    Object.defineProperty(wrapped, "code", { value: "BUILD_ERROR" });
-    Object.defineProperty(wrapped, "cause", {
-      value: { _tag: "StackBuildError", detail: "x", reason: "invalid_config" },
-    });
-    const result = classifyCliErrorActionability(wrapped);
-    expect(result.error_category).toBe("invalid_config");
-    expect(result.error_fingerprint).toBe("tag:StackBuildError:invalid_config");
-  });
-
-  it("classifies a native exception wrapped by StackError as an internal bug", () => {
-    const wrapped = new Error("boom");
-    wrapped.name = "StackError";
-    Object.defineProperty(wrapped, "code", { value: "UNKNOWN" });
-    Object.defineProperty(wrapped, "cause", { value: new TypeError("x is not a function") });
-    const result = classifyCliErrorActionability(wrapped);
-    expect(result.error_kind).toBe("internal_bug");
-    expect(result.error_category).toBe("panic");
-    expect(result.error_fingerprint).toBe("error:TypeError");
-  });
-
   it("treats forbidden API statuses as account permission failures", () => {
     const forbidden = classifyCliErrorActionability(new DeclaredStatusError({ status: 403 }));
     expect(forbidden.error_kind).toBe("user_actionable");
@@ -819,6 +876,15 @@ describe("classifyCliErrorActionability", () => {
     expect(status.error_fingerprint).toBe("tag:HttpTransportClientError:daemon_transport");
   });
 
+  it("classifies loopback stack RPC transport failures as a recoverable local stack failure", () => {
+    const result = classifyCliErrorActionability({ _tag: "StackRpcTransportError" });
+
+    expect(result.error_kind).toBe("user_actionable");
+    expect(result.error_category).toBe("invalid_config");
+    expect(result.suggested_command).toBe("supabase start");
+    expect(result.error_fingerprint).toBe("tag:StackRpcTransportError:daemon_transport");
+  });
+
   it("keeps daemon status and protocol failures in the internal-bug bucket", () => {
     for (const [reason, suffix] of [
       ["status", "daemon_status"],
@@ -893,10 +959,10 @@ describe("classifyCliErrorActionability", () => {
     const result = classifyCliErrorActionability({
       _tag: "StackBuildError",
       detail: "Failed to configure Edge Functions",
-      cause: { _tag: "ProjectConfigParseError", path: "supabase/config.toml" },
+      cause: { _tag: "CliConfigParseError", path: "supabase/config.toml" },
     });
     expect(result.error_category).toBe("invalid_config");
-    expect(result.error_fingerprint).toBe("tag:ProjectConfigParseError");
+    expect(result.error_fingerprint).toBe("tag:CliConfigParseError");
   });
 
   it("keeps a local stack schema failure in the invalid-config bucket", () => {

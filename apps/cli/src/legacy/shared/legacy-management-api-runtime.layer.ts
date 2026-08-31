@@ -11,8 +11,8 @@ import {
 } from "../auth/legacy-platform-api-factory.layer.ts";
 import { LegacyPlatformApi } from "../auth/legacy-platform-api.service.ts";
 import { legacyPlatformApiLayer } from "../auth/legacy-platform-api.layer.ts";
-import { LegacyCliConfig } from "../config/legacy-cli-config.service.ts";
-import { legacyCliConfigLayer } from "../config/legacy-cli-config.layer.ts";
+import { LegacyCliSettings } from "../config/legacy-cli-settings.service.ts";
+import { legacyCliSettingsLayer } from "../config/legacy-cli-settings.layer.ts";
 import { LegacyProjectRefResolver } from "../config/legacy-project-ref.service.ts";
 import { legacyProjectRefLayer } from "../config/legacy-project-ref.layer.ts";
 import { LegacyDebugLogger } from "./legacy-debug-logger.service.ts";
@@ -30,14 +30,14 @@ import { commandRuntimeLayer } from "../../shared/runtime/command-runtime.layer.
  * Composes the runtime layer for a Management-API-style `supabase <command> <subcommand>`
  * invocation.
  *
- * `legacyCliConfigLayer` must be piped to both the platform API stack and
+ * `legacyCliSettingsLayer` must be piped to both the platform API stack and
  * `legacyProjectRefLayer`. `Layer.provide` satisfies a requirement on the target layer;
  * it does not expose the provided service to siblings of a `Layer.mergeAll(...)`. The
- * project-ref layer reads `LegacyCliConfig` directly for workdir/projectId resolution,
+ * project-ref layer reads `LegacyCliSettings` directly for workdir/projectId resolution,
  * so without an explicit provide here the bundled runtime panics with
- * `Service not found: supabase/legacy/CliConfig`. Handlers that yield `LegacyCliConfig`
+ * `Service not found: supabase/legacy/CliSettings`. Handlers that yield `LegacyCliSettings`
  * directly (e.g. `branches get`, `legacySuggestUpgrade`) also need the service exposed
- * at the top level of the merged layer, hence the top-level `cliConfig` entry below.
+ * at the top level of the merged layer, hence the top-level `cliSettings` entry below.
  *
  * `legacyHttpClientLayer` and `LegacyCredentials` are exposed at the top level so
  * handlers / helpers that bypass the typed Management API client can read them
@@ -58,10 +58,10 @@ export function legacyManagementApiRuntimeLayer(subcommand: ReadonlyArray<string
   // Memoise the shared layers so the platform API, top-level service surface,
   // project resolver, and linked-project cache all reuse the same config /
   // credentials / HTTP instances.
-  const cliConfig = legacyCliConfigLayer.pipe(Layer.provide(legacyDebugLoggerLayer));
+  const cliSettings = legacyCliSettingsLayer.pipe(Layer.provide(legacyDebugLoggerLayer));
   const httpClient = legacyHttpClientLayer.pipe(Layer.provide(legacyDebugLoggerLayer));
   const credentials = legacyCredentialsLayer.pipe(
-    Layer.provide(cliConfig),
+    Layer.provide(cliSettings),
     Layer.provide(legacyDebugLoggerLayer),
   );
   // `legacyPlatformApiLayer` applies typed API debug logging after generated
@@ -75,7 +75,7 @@ export function legacyManagementApiRuntimeLayer(subcommand: ReadonlyArray<string
   // `withFallbackDNS` hook.
   const platformApiStack = legacyPlatformApiLayer.pipe(
     Layer.provide(credentials),
-    Layer.provide(cliConfig),
+    Layer.provide(cliSettings),
     Layer.provide(FetchHttpClient.layer),
     Layer.provide(legacyDohFetchLayer),
     Layer.provide(legacyDebugLoggerLayer),
@@ -89,11 +89,11 @@ export function legacyManagementApiRuntimeLayer(subcommand: ReadonlyArray<string
     platformApiFactory,
     httpClient,
     credentials,
-    cliConfig,
-    legacyProjectRefLayer.pipe(Layer.provide(platformApiFactory), Layer.provide(cliConfig)),
+    cliSettings,
+    legacyProjectRefLayer.pipe(Layer.provide(platformApiFactory), Layer.provide(cliSettings)),
     legacyLinkedProjectCacheLayer.pipe(
       Layer.provide(credentials),
-      Layer.provide(cliConfig),
+      Layer.provide(cliSettings),
       Layer.provide(httpClient),
       Layer.provide(legacyIdentityStitchLayer),
     ),
@@ -105,7 +105,7 @@ export function legacyManagementApiRuntimeLayer(subcommand: ReadonlyArray<string
     // layer memoisation all three share one stitchAttempted guard — Go's one
     // root-context sync.Once.
     legacyIdentityStitchLayer,
-    // Expose the same memoised instance already provided into cliConfig/httpClient/etc.
+    // Expose the same memoised instance already provided into cliSettings/httpClient/etc.
     // at the top level so handlers can log a swallowed, non-fatal error directly
     // (`fmt.Fprintln(utils.GetDebugLogger(), err)` pattern, e.g. `secrets set`).
     legacyDebugLoggerLayer,
@@ -148,7 +148,7 @@ type LegacyManagementApiServices =
   | LegacyPlatformApi
   | HttpClient.HttpClient
   | LegacyCredentials
-  | LegacyCliConfig
+  | LegacyCliSettings
   | LegacyProjectRefResolver
   | LegacyLinkedProjectCache
   | LegacyTelemetryState
@@ -172,10 +172,10 @@ type LegacyManagementApiServices =
  * keep using `legacyManagementApiRuntimeLayer`, where the eager stack fails up front.
  */
 export function legacyLinkedDbResolverRuntimeLayer(subcommand: ReadonlyArray<string>) {
-  const cliConfig = legacyCliConfigLayer.pipe(Layer.provide(legacyDebugLoggerLayer));
+  const cliSettings = legacyCliSettingsLayer.pipe(Layer.provide(legacyDebugLoggerLayer));
   const httpClient = legacyHttpClientLayer.pipe(Layer.provide(legacyDebugLoggerLayer));
   const credentials = legacyCredentialsLayer.pipe(
-    Layer.provide(cliConfig),
+    Layer.provide(cliSettings),
     Layer.provide(legacyDebugLoggerLayer),
   );
   // Lazy factory: its build does NOT resolve a token (see doc above). The factory
@@ -183,18 +183,18 @@ export function legacyLinkedDbResolverRuntimeLayer(subcommand: ReadonlyArray<str
   // ambient requirements match `legacyManagementApiRuntimeLayer` exactly.
   const platformApiFactory = legacyPlatformApiFactoryLayer.pipe(
     Layer.provide(credentials),
-    Layer.provide(cliConfig),
+    Layer.provide(cliSettings),
     Layer.provide(legacyDebugLoggerLayer),
   );
   const built = Layer.mergeAll(
     platformApiFactory,
     httpClient,
     credentials,
-    cliConfig,
-    legacyProjectRefLayer.pipe(Layer.provide(platformApiFactory), Layer.provide(cliConfig)),
+    cliSettings,
+    legacyProjectRefLayer.pipe(Layer.provide(platformApiFactory), Layer.provide(cliSettings)),
     legacyLinkedProjectCacheLayer.pipe(
       Layer.provide(credentials),
-      Layer.provide(cliConfig),
+      Layer.provide(cliSettings),
       Layer.provide(httpClient),
     ),
     legacyTelemetryStateLayer,

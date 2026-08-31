@@ -19,10 +19,12 @@ introduce a second service registry, repository contract, or SQLite adapter.
 
 ## Managed startup at a glance
 
-The parent resolves the workspace identity before forking. During normal
-startup, the child owns the lease, binds the control endpoint, and performs the
-manager writes under that ownership. Recovery operations can acquire the same
-ownership through the lifecycle facade.
+The parent resolves the workspace identity before forking. The child creates a
+`SupervisorSession` actor and the complete control application before attempting
+the deterministic loopback bind. Ownership is claimed before expensive
+workspace reconciliation, while `/owner` and the session-fenced `/stop` route
+remain available throughout startup. Runtime RPC is gated until the runtime is
+published as running.
 
 ```mermaid
 sequenceDiagram
@@ -35,21 +37,23 @@ sequenceDiagram
 
     CLI->>Parent: daemonLayer(config, port intents, launch)
     Parent->>Child: fork + start message (resolved stack id)
+    Child->>Control: assemble /owner, /stop, and /rpc application
     Child->>Control: acquire ownership + bind deterministic endpoint
     Child->>Manager: ensure workspace + verify stack id
     Child->>Manager: resolve document, allocate/reuse ports
     Child->>Manager: write starting
-    Child->>Runtime: build Stack, ApiProxy, and DaemonServer
+    Child->>Runtime: build Stack and ApiProxy
     Child->>Manager: write running + runtime endpoint
     Child-->>Parent: started(endpoint)
     Parent-->>CLI: RemoteStack layer
-    CLI->>Control: stack.start(), status, logs, or service operation
+    CLI->>Control: same-version Stack RPC at /rpc
 ```
 
-`running` in the managed document means that the supervisor and control owner
-are ready. The service states are published by the same `Stack` runtime and
-move when the caller invokes `stack.start()` or an individual service
-operation.
+`running` in the managed document is recorded only after
+`SupervisorSession` has published a ready runtime. The actor is the one
+atomic state projection: control is available during `starting`, while RPC
+handlers read `runtimeStack` and fail fast with typed `StackUnavailableError`
+until `running` (and again during shutdown).
 
 ## Public entrypoints
 
@@ -97,10 +101,21 @@ stack.
 
 ### Concurrency and cleanup
 
-`DaemonServer` creates one lazily-started, uninterruptible shutdown fiber in
-the layer scope. Every stop or terminal-readiness caller joins that fiber, so
-concurrent requests share one transaction and interrupting one caller cannot
-cancel the owner. The short response-flush signal is also a scoped fiber.
+`SupervisorSession` owns one command `Queue`, one actor fiber, the startup
+fiber, and a child runtime scope. `/stop`, signals, startup completion, and
+unexpected runtime disposal submit commands to that actor instead of mutating
+lifecycle state independently. Shutdown publishes `stopping`, interrupts and
+joins startup, stops and disposes any constructed runtime, closes its scope,
+persists the terminal document state, and releases the control listener last.
+Concurrent stop callers join the same actor-owned cleanup transaction, which is
+also the session scope's idempotent finalizer. Explicit stops complete after all
+teardown attempts and write cleanup anomalies to the managed stack's
+`logs/supervisor.log`; startup and runtime failures preserve their primary
+cause. Unary calls and streams observe the same terminal signal, including its
+typed `stopping` or `failed` reason, before listener shutdown. For HTTP stop,
+Node and Bun close the listener gracefully after flushing a successful `202`;
+the stable client consumes that bounded response and polls the exact session
+fence until the owner disappears.
 
 `StackPreparation` resolves independent services with a concurrency cap of four.
 Its closure includes the resources for every public graph dependency a requested
@@ -138,17 +153,17 @@ runtime requests; it never edits the document directly.
 1. `daemonLayer` discovers the workspace and derives the stack id before the
    parent forks a supervisor child. Managed-only port intents and launch
    metadata stay separate from the generic daemon configuration.
-2. The child binds the loopback control endpoint first, re-checks workspace
-   discovery, and refuses to continue if the identity no longer derives the
-   same id.
-3. The child supervisor removes stale named container resources when required;
-   after acquiring ownership it re-reads the existing document, selects or
-   validates its concrete runtime, then the manager allocates or reuses ports
-   and records `starting`.
-4. The child builds the direct runtime and `DaemonServer`, records `running`
-   with its control endpoint, and sends the endpoint to the parent.
-5. The parent returns a `RemoteStack` layer. The CLI then calls
-   `stack.start()` over the control transport when service startup is needed.
+2. The child constructs the session actor and the complete static application,
+   then claims the deterministic endpoint. A bind failure never leaves a
+   partially installed runtime server.
+3. The owner re-checks workspace identity, re-reads the document, selects or
+   validates its concrete runtime, and reconciles stale named resources. The
+   manager allocates or reuses ports and records `starting`.
+4. The child builds the direct runtime, publishes it through
+   `SupervisorSession`, records `running`, and sends the verified owner
+   descriptor to the parent.
+5. The parent returns a `RemoteStack` layer. The CLI invokes `StackRpc` over
+   `POST /rpc` for runtime operations.
 
 `connectManagedStack` reads the document, probes the deterministic endpoint
 without binding it, and returns a `RemoteStack` only when the owner reports a
@@ -158,7 +173,7 @@ endpoint; mutating operations acquire control ownership.
 ### Update, stop, and delete
 
 - `updateManagedLaunch` is owner-gated. An attached client posts the validated
-  launch payload to `/managed/launch`; the owner invokes
+  launch payload to the same-version `UpdateLaunch` RPC; the owner invokes
   `ManagedStackManager.updateLaunch`, and the caller re-reads the document.
 - `stopManagedStack` asks an attached owner to perform a graceful
   `RemoteStack.stop()`, waits for the document to become `stopped`, and lets
@@ -246,14 +261,101 @@ sequence cannot yield an unambiguous owner or free endpoint. The manager
 reserves every known candidate against service allocation, and the document
 records the endpoint the owner actually bound. An exact service port can still
 equal a future candidate of an identity that has never started, so that
-low-probability conflict is rejected when ownership is acquired rather than
-forbidding every explicit port in the reserved range.
+candidate is skipped when ownership is acquired. Start fails only when the
+sequence cannot distinguish an owner from an ambiguous transport failure or
+find a free endpoint; explicit ports are not forbidden across the whole
+reserved range.
 
-This is deliberately a small single-user localhost mechanism. The control
-protocol has no token authentication; ownership, endpoint identity, and
-protocol-version checks provide the lifecycle boundary. `DaemonServer` exposes
-status, service operations, logs, graceful stop, and launch-update routes;
-`RemoteStack` is the typed client used by consumers.
+This is deliberately a small single-user localhost mechanism. The stable
+control protocol has no token authentication; ownership, endpoint identity,
+protocol-version checks, and the owner session fence provide the lifecycle
+boundary. The one static application exposes only:
+
+- `GET /owner` for the current supervisor lifecycle and CLI version, or the
+  current maintenance operation;
+- `POST /stop` for an idempotent shutdown request containing the ownership id,
+  exact owner session id, and explicit-user or upgrade-replacement intent; and
+- `POST /rpc` for same-version Effect RPC over framed NDJSON, fenced to the
+  expected ownership id and owner session before dispatch.
+
+`RemoteStack` is the thin typed RPC adapter. It never maintains a handwritten
+runtime route table or stream parser. Remote stop uses the stable `/stop` route
+and waits for the targeted owner session to end.
+
+The `/owner` payload is an exhaustive union. A `supervisor` owner publishes the
+deterministic ownership id, random `ownerSessionId`, control protocol/version,
+lifecycle state, readiness, and daemon CLI version. A `maintenance` owner
+publishes its operation (`delete`, `stop`, `update`, or `repair`) and has no
+daemon version or RPC surface. `/stop` requires ownership id, session id, and
+intent, returns `409` for a different owner session, `423` while maintenance
+owns the endpoint, and `202` only after the supervisor has accepted the
+one-shot shutdown request. The caller then observes the captured session under
+one deadline; disappearance completes as ended, while another valid owner is a
+replacement. The protocol is session-fenced from its first supported release;
+there is no legacy runtime compatibility window or second-server handoff.
+
+### CLI version identity and upgrade restart
+
+The owner response includes the daemon CLI version. Released and preview
+versions are immutable and unique, so that version is the compatibility
+identity. A `RemoteStack` RPC client is constructed only when the client CLI
+version equals the owner CLI version. A mismatch is a typed
+`DaemonUpgradeRequired`; it never becomes an attempted RPC request. Every RPC
+request repeats the same owner/session fence so a client that outlives its
+captured listener session is rejected before a handler runs.
+
+Direct source execution uses the visible `0.0.0-dev` sentinel. It is a
+development mode, not a cross-checkout compatibility promise: after changing
+runtime or RPC code, the developer restarts the managed stack before testing.
+
+Only an explicit `supabase start` may authorize an upgrade restart. It
+preflights the managed document and persisted launch selection while the old
+owner is live, sends a session-fenced replacement `/stop`, waits for that exact
+session to end, then starts the current version. The upgrade restart preserves the
+managed stack identity and creation metadata, data roots, runtime mode, pinned
+service versions, exclusions, and sticky port intents. It never invokes the
+destructive delete path or silently changes launch metadata.
+
+The public `@supabase/stack/effect` entry exposes this authorization as
+`restartManagedStackForUpgrade`. Ordinary `daemonLayer` calls cannot authorize a
+restart: an incompatible owner fails with `DaemonUpgradeRequired` and remains running.
+
+An upgrade restart is one parent-owned transaction. After preflight, the CLI
+emits its restart notice, then the parent uses the shared stable `ControlClient`
+with the captured ownership and session ids and waits for that exact session to
+end. It re-reads and preflights the persisted launch before spawning an ordinary
+child marked as the authorized replacement. The child only starts or attaches;
+it never decides to stop an incompatible owner. Persisted
+exclusions are applied to effective runtime service policies before preflight,
+active-port calculation, allocation, configuration resolution, and startup;
+copying them only into `stack.json` is insufficient. Once the new runtime is
+up, its managed summary is authoritative for subsequent launch updates.
+
+Connect-only commands fail with `DaemonUpgradeRequired`: status renders a degraded
+owner/document summary with an instruction to run `supabase start`, while logs,
+service operations, and other runtime commands return the actionable upgrade
+error. No read-only command restarts a live stack. A stop request always uses
+the stable control protocol, regardless of CLI version.
+
+The upgrade restart is a stop/start transaction rather than a supervisor handoff.
+Preflight failure leaves the old owner running; stop timeout never binds a new
+owner; startup failure preserves the document and data for retry. Concurrent
+ordinary starts never restart an incompatible stack, and a delayed stop
+containing the old session id receives `409` from the new owner. An explicit
+user stop is persisted before the old endpoint closes and prevents an attached
+or delayed replacement child from restarting the stack; a replacement stop
+does not set that user intent.
+
+### Static application and lifecycle ownership
+
+`SupervisorSession` owns lifecycle state, the owner session, runtime
+publication, and the serialized shutdown state machine. All shutdown sources
+submit to its `Queue`. The accepted `202` stop response is flushed by the
+listener's graceful close; the stable control client consumes the bounded
+response body and polls the exact fenced session until it disappears. The actor
+finishes startup cancellation and runtime-scope finalizers before terminal
+persistence and ownership/listener close. Node, Bun, and compiled Bun children
+use the same pre-bind application and session composition.
 
 ## Service execution and `ApiProxy`
 
@@ -273,7 +375,7 @@ id.
 `ApiProxy` listens on the configured public `apiPort` and routes Supabase API
 paths (`/auth`, `/rest`, `/functions`, `/realtime`, `/storage`, `/pg`,
 `/analytics`, and related endpoints) to the service ports. The database URL
-and direct service endpoints remain available from `Stack.getInfo()`. The
+and direct service endpoints remain available from `Stack.getInfo`. The
 loopback control endpoint is management traffic and is never the user-facing
 API URL.
 
@@ -289,30 +391,36 @@ self-dispatch path; the daemon branch does not run normal CLI command dispatch.
 
 ## Component map
 
-| Concern                                           | Owner                                                             |
-| ------------------------------------------------- | ----------------------------------------------------------------- |
-| Public Promise and Effect entrypoints             | `src/{node,bun,effect-node,effect-bun}.ts`                        |
-| Identity discovery and stack id                   | `managed/environment.ts`, `managed/identity.ts`, `managed/git.ts` |
-| Document paths, schema, and atomic persistence    | `managed/paths.ts`, `managed/document.ts`, `managed/store.ts`     |
-| Managed reads, writes, ports, and lifecycle state | `managed/manager.ts`, `managed/lifecycle.ts`, `discovery.ts`      |
-| Ownership and deterministic endpoint              | `managed/control.ts`                                              |
-| Detached child protocol and startup               | `supervisor.ts`, `daemon-node.ts`, `daemon-bun.ts`                |
-| Runtime control routes and client                 | `DaemonServer.ts`, `RemoteStack.ts`, `HttpTransportClient.ts`     |
-| Direct runtime construction and service lifecycle | `createStack.ts`, `layers.ts`, `LocalStack.ts`, `Stack.ts`        |
-| Asset resolution and native/Docker graph          | `StackPreparation.ts`, `StackBuilder.ts`, `ServiceCatalog.ts`     |
-| Public API routing                                | `ApiProxy.ts`                                                     |
-| Platform listeners and process services           | `platform-node.ts`, `platform-bun.ts`                             |
+| Concern                                           | Owner                                                                                   |
+| ------------------------------------------------- | --------------------------------------------------------------------------------------- |
+| Public Promise and Effect entrypoints             | `src/{node,bun,effect-node,effect-bun}.ts`                                              |
+| Identity discovery and stack id                   | `managed/environment.ts`, `managed/identity.ts`, `managed/git.ts`                       |
+| Document paths, schema, and atomic persistence    | `managed/paths.ts`, `managed/document.ts`, `managed/store.ts`                           |
+| Managed reads, writes, ports, and lifecycle state | `managed/manager.ts`, `managed/lifecycle.ts`, `discovery.ts`                            |
+| Ownership and deterministic endpoint              | `managed/control.ts`                                                                    |
+| Detached child protocol and startup               | `supervisor.ts`, `SupervisorUpgradeRestart.ts`, `daemon-node.ts`, `daemon-bun.ts`       |
+| Runtime control RPC and client                    | `SupervisorControlServer.ts`, `StackRpc.ts`, `RemoteStack.ts`, `HttpTransportClient.ts` |
+| Direct runtime construction and service lifecycle | `createStack.ts`, `layers.ts`, `LocalStack.ts`, `Stack.ts`                              |
+| Asset resolution and native/Docker graph          | `StackPreparation.ts`, `StackBuilder.ts`, `ServiceCatalog.ts`                           |
+| Public API routing                                | `ApiProxy.ts`                                                                           |
+| Platform listeners and process services           | `platform-node.ts`, `platform-bun.ts`                                                   |
 
 ## Testing boundary
 
 Integration tests exercise the surfaces a consumer uses: manager identity and
 documents, sibling worktrees and nested projects, detached start/reattach,
-launch updates, status and logs, graceful stop, stale-owner recovery, and
-deletion. A small number of end-to-end tests cover real subprocess and runtime
+launch updates through RPC, status and logs, graceful session-fenced stop,
+stale-owner recovery, and deletion. They also cover control before runtime
+construction, real HTTP/NDJSON unary and stream calls, stream cancellation,
+CLI version mismatch, upgrade restart and preservation (including actual
+excluded-service behavior and sticky-port reuse), concurrent lifecycle
+requests, cleanup after cancellation or failure, and response flush before
+close. Node and Bun control adapters share conflict classification, and a small
+number of end-to-end tests cover Node, Bun, and compiled-Bun subprocess
 boundaries.
 
 Unit tests are reserved for pure identity, port, document, projection, and
 platform algorithms or for branches unreachable through the public runtime
-surface. The testing entrypoint exposes only the `DaemonServer` and transport
+surface. The testing entrypoint exposes only the static control application and transport
 seams needed to build those journeys; it does not recreate a repository,
 SQLite adapter, or contract-fixture implementation.

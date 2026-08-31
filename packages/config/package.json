@@ -16,10 +16,10 @@
   },
   "scripts": {
     "build": "bun run ./scripts/build.ts",
-    "check:all": "nx run-many -t types:check lint:check fmt:check knip:check --projects=$npm_package_name,@supabase/root",
-    "fix:all": "nx run-many -t lint:fix fmt:fix knip:fix --projects=$npm_package_name,@supabase/root",
-    "test": "nx run-many -t test:core test:e2e --projects=$npm_package_name",
-    "test:core": "nx run-many -t test:unit test:integration --projects=$npm_package_name"
+    "types:check": "tsc --noEmit",
+    "test": "pnpm run test:unit",
+    "test:unit": "pnpm exec turbo run @supabase/config#test:unit:run --",
+    "test:unit:run": "bun --bun vitest run --project unit --coverage.reportsDirectory=coverage/unit"
   },
   "dependencies": {
     "dedent": "^1.7.2",
@@ -46,15 +46,6 @@
     },
     "@effect/platform-node": {
       "optional": true
-    }
-  },
-  "nx": {
-    "targets": {
-      "build": {
-        "outputs": [
-          "{projectRoot}/dist"
-        ]
-      }
     }
   }
 }

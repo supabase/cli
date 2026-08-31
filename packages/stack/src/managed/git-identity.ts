@@ -13,11 +13,24 @@ const gitCheckoutIdentitySchema = Schema.fromJsonString(
   }),
 );
 
+/** Internal versioned encoder shared by every Git checkout marker write path. */
+export const encodeGitCheckoutIdentity = (
+  identity: GitCheckoutIdentity,
+): Effect.Effect<string, InvalidManagedIdentityError> =>
+  Schema.encodeEffect(gitCheckoutIdentitySchema)(identity).pipe(
+    Effect.mapError(
+      (error) =>
+        new InvalidManagedIdentityError({
+          message: `The git checkout identity is invalid: ${String(error)}`,
+        }),
+    ),
+  );
+
 /** Internal versioned decoder shared by every Git checkout marker read path. */
 export const decodeGitCheckoutIdentity = (
   content: string,
 ): Effect.Effect<GitCheckoutIdentity, InvalidManagedIdentityError> =>
-  Schema.decodeUnknownEffect(gitCheckoutIdentitySchema)(content).pipe(
+  Schema.decodeEffect(gitCheckoutIdentitySchema)(content).pipe(
     Effect.mapError(
       (error) =>
         new InvalidManagedIdentityError({

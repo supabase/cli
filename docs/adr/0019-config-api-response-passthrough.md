@@ -229,3 +229,54 @@ API-sourced config values carry the raw response, governed by five rules:
   schema mirror explicitly awaiting the published `@supabase/config` package.
 - Linear: CLI-2155/CLI-2156 (sparse + diff), CLI-2231 (entrypoint split),
   CLI-2234 (public-surface audit), CLI-2169 (publish umbrella).
+
+## Addendum (2026-08-26): the attach step, and a precise reading of "verbatim" and "invisible" (CLI-2230)
+
+CLI-2230 shipped rule 1's attach step as `attachApiResponse` (plus the internal
+`attachFrozenApiResponse` it shares with `fromApiProjectConfig`), and shipped rule 1's raw-object
+requirement as a deep-cloned, deep-frozen copy of the caller's `rawAttributes` — never the
+caller's own object by reference. Read this ADR's "holding the raw v2 `data.attributes` object
+verbatim" (rule 1) as verbatim in the _structural_ sense — the attached value is deeply
+`toEqual`-equal to what the caller passed — not verbatim in the _identity_ sense: neither this
+package nor a caller can mutate the attached copy after the fact, including through the very
+reference `rawAttributes` was passed in by. Cloning and freezing also close two failure modes rule
+1 did not originally anticipate: a pathologically deep or self-referential `rawAttributes` and a
+non-cloneable (function- or symbol-valued) field both used to escape this ADR's own
+`ProjectConfigParseError` contract as a raw, uncaught `RangeError`/`DOMException`; the attach step
+now validates depth and wraps the clone before either can happen.
+
+Rule 3's "invisible to structural walks" claim is scoped to exactly that — serializers
+(`JSON.stringify`, object spread, `Object.assign`, `structuredClone`) and the structural walks in
+`sparse.ts`. It is not a claim about every possible form of inspection: a debug inspector that
+deliberately renders non-enumerable own properties (Bun's `console.log`, `util.inspect` with
+`showHidden`) still prints `_apiResponse`, HMAC digests and all. Never log an API-sourced
+`ProjectConfig` directly for this reason.
+
+## Addendum (2026-08-27): the lenient/typed boundary, precisely (a drift-audit fix)
+
+A drift audit of PR supabase/cli#6339 found that the pre-decode raw-attributes validation walk
+(`assertRawAttributesDepthWithinBound`, `project-config.ts`) had drifted from rule 2's own leniency
+promise: it rejected a non-finite number (`Infinity`/`-Infinity`, not just `NaN`) as `caller_misuse`
+before the lenient schema ever ran. That is wrong — `JSON.parse('{"x":1e400}')` legitimately yields
+`Infinity`, so a real platform response can carry one in a field nothing reads, and bucketing it as a
+_caller_ bug corrupts the `caller_misuse`/`api_response` telemetry split rule 2's own reason field
+exists to keep honest.
+
+The boundary, restated precisely: pre-decode rejection (`reason: "caller_misuse"`) is reserved for
+values `JSON.parse` cannot produce on any path, including a `bigint`, an `undefined`-valued key, `NaN`
+(no JSON literal encodes `NaN`; a numeric overflow literal like `1e400` only ever produces `±Infinity`,
+never `NaN`), a non-plain object (a `Map`/`Set`/`Date`/typed array), and structures that exceed the
+depth/node-visit bounds — every one of these is a programmatic-caller shape, not something a real
+platform response can contain. Every JSON-reachable oddity, including `±Infinity`, now always decodes:
+it rides through to `_apiResponse` like any other value, and on an unmapped path it surfaces through
+`unmappedApiFields()` as `null` — not because `±Infinity` fails to type-check as a `ReadonlyJsonValue`
+(it is a `number`, so it type-checks fine), but because it has no JSON spelling, so the report renders
+it the same way `JSON.stringify` itself would. A typed `api_response` throw remains
+reserved for a malformed envelope or an out-of-domain value on a **mapped** field, via the registry's
+own gates: `expectNumber`'s finite check (a mapped numeric field, e.g. `api.max_rows`, still rejects
+`±Infinity` — the tolerance above is for fields nothing reads, not for a value this package actually
+narrows), `expectNumberBetween`'s range gates (e.g. `storage.file_size_limit`'s non-negative bound),
+the CIDR/`pool_mode`-style resource-type discriminators, and the orphan-secret digest type checks
+(`unmappedSecretApiPaths`'s string-or-null validation in `project-config.ts`). Ruled by Colum Ferry via
+drift-audit adjudication, 2026-08-27; see [ADR 0021](0021-projectconfig-convergence-semantics.md) for
+the broader convergence-semantics documentation gap this same audit closed.

@@ -64,6 +64,7 @@ export const LEGACY_DOCS_TAGS: Readonly<Record<string, ReadonlyArray<string>>> =
   "supabase-secrets": ["management-api"],
   "supabase-seed": ["local-dev"],
   "supabase-services": ["local-dev"],
+  "supabase-workers": ["management-api"],
   "supabase-snippets": ["management-api"],
   "supabase-ssl-enforcement": ["management-api"],
   "supabase-sso": ["management-api"],
@@ -197,6 +198,7 @@ export const LEGACY_DOCS_DEFAULT_OVERRIDES: Readonly<Record<string, string>> = {
   "supabase-storage-rm linked": "true",
   "supabase-test-db local": "true",
   "supabase-test-new template": "pgtap",
+  "supabase-workers-push instances": "1",
 };
 
 /**

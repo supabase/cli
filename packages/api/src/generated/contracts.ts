@@ -4086,63 +4086,87 @@ export const V1GetPerformanceAdvisorsInput = Schema.Struct({
 });
 export const V1GetPerformanceAdvisorsOutput = Schema.Struct({
   lints: Schema.Array(
-    Schema.Struct({
-      name: Schema.Literals([
-        "unindexed_foreign_keys",
-        "auth_users_exposed",
-        "auth_rls_initplan",
-        "no_primary_key",
-        "unused_index",
-        "multiple_permissive_policies",
-        "policy_exists_rls_disabled",
-        "rls_enabled_no_policy",
-        "duplicate_index",
-        "security_definer_view",
-        "function_search_path_mutable",
-        "rls_disabled_in_public",
-        "extension_in_public",
-        "rls_references_user_metadata",
-        "materialized_view_in_api",
-        "foreign_table_in_api",
-        "unsupported_reg_types",
-        "auth_otp_long_expiry",
-        "auth_otp_short_length",
-        "ssl_not_enforced",
-        "network_restrictions_not_set",
-        "password_requirements_min_length",
-        "pitr_not_enabled",
-        "auth_leaked_password_protection",
-        "auth_insufficient_mfa_options",
-        "auth_password_policy_missing",
-        "leaked_service_key",
-        "no_backup_admin",
-        "vulnerable_postgres_version",
-      ]),
-      title: Schema.String,
-      level: Schema.Literals(["ERROR", "WARN", "INFO"]),
-      facing: Schema.Literal("EXTERNAL"),
-      categories: Schema.Array(Schema.Literals(["PERFORMANCE", "SECURITY"])),
-      description: Schema.String,
-      detail: Schema.String,
-      remediation: Schema.String,
-      metadata: Schema.optionalKey(
-        Schema.Struct({
-          schema: Schema.optionalKey(Schema.String),
-          name: Schema.optionalKey(Schema.String),
-          entity: Schema.optionalKey(Schema.String),
-          type: Schema.optionalKey(
-            Schema.Literals(["table", "view", "auth", "function", "extension", "compliance"]),
-          ),
-          fkey_name: Schema.optionalKey(Schema.String),
-          fkey_columns: Schema.optionalKey(
-            Schema.Array(
-              Schema.Number.check(Schema.isFinite().annotate({ expected: "a finite number" })),
+    Schema.StructWithRest(
+      Schema.Struct({
+        name: Schema.Literals([
+          "unindexed_foreign_keys",
+          "auth_users_exposed",
+          "auth_rls_initplan",
+          "no_primary_key",
+          "unused_index",
+          "multiple_permissive_policies",
+          "policy_exists_rls_disabled",
+          "rls_enabled_no_policy",
+          "duplicate_index",
+          "security_definer_view",
+          "function_search_path_mutable",
+          "rls_disabled_in_public",
+          "extension_in_public",
+          "rls_references_user_metadata",
+          "materialized_view_in_api",
+          "foreign_table_in_api",
+          "unsupported_reg_types",
+          "auth_otp_long_expiry",
+          "auth_otp_short_length",
+          "ssl_not_enforced",
+          "log_connections_not_enabled",
+          "network_restrictions_not_set",
+          "password_requirements_min_length",
+          "pitr_not_enabled",
+          "auth_leaked_password_protection",
+          "auth_insufficient_mfa_options",
+          "auth_password_policy_missing",
+          "leaked_service_key",
+          "no_backup_admin",
+          "vulnerable_postgres_version",
+          "db_not_reachable",
+          "db_connection_failing",
+          "db_connection_limit_reached",
+          "instance_telemetry_lost",
+          "instance_db_down",
+          "instance_alert_firing",
+          "log_service_error_rate_high",
+          "project_not_active",
+          "advisor_check_unavailable",
+        ]),
+        title: Schema.String,
+        level: Schema.Literals(["ERROR", "WARN", "INFO"]),
+        facing: Schema.Literal("EXTERNAL"),
+        categories: Schema.Array(Schema.Literals(["PERFORMANCE", "SECURITY", "HEALTH"])),
+        description: Schema.String,
+        detail: Schema.String,
+        remediation: Schema.String,
+        metadata: Schema.optionalKey(
+          Schema.Struct({
+            schema: Schema.optionalKey(Schema.String),
+            name: Schema.optionalKey(Schema.String),
+            entity: Schema.optionalKey(Schema.String),
+            type: Schema.optionalKey(
+              Schema.Literals([
+                "table",
+                "view",
+                "materialized view",
+                "foreign table",
+                "auth",
+                "function",
+                "extension",
+                "compliance",
+                "health",
+              ]),
             ),
-          ),
-        }),
-      ),
-      cache_key: Schema.String,
-    }),
+            fkey_name: Schema.optionalKey(Schema.String),
+            fkey_columns: Schema.optionalKey(
+              Schema.Array(
+                Schema.Number.check(Schema.isFinite().annotate({ expected: "a finite number" })),
+              ),
+            ),
+          }),
+        ),
+        cache_key: Schema.String,
+        observed_at: Schema.optionalKey(Schema.String.annotate({ format: "date-time" })),
+      }),
+      [Schema.Record(Schema.String, Schema.Json.annotate({ expected: "JSON value" }))],
+    ),
   ),
 });
 export const V1GetPgsodiumConfigInput = Schema.Struct({
@@ -5423,63 +5447,87 @@ export const V1GetSecurityAdvisorsInput = Schema.Struct({
 });
 export const V1GetSecurityAdvisorsOutput = Schema.Struct({
   lints: Schema.Array(
-    Schema.Struct({
-      name: Schema.Literals([
-        "unindexed_foreign_keys",
-        "auth_users_exposed",
-        "auth_rls_initplan",
-        "no_primary_key",
-        "unused_index",
-        "multiple_permissive_policies",
-        "policy_exists_rls_disabled",
-        "rls_enabled_no_policy",
-        "duplicate_index",
-        "security_definer_view",
-        "function_search_path_mutable",
-        "rls_disabled_in_public",
-        "extension_in_public",
-        "rls_references_user_metadata",
-        "materialized_view_in_api",
-        "foreign_table_in_api",
-        "unsupported_reg_types",
-        "auth_otp_long_expiry",
-        "auth_otp_short_length",
-        "ssl_not_enforced",
-        "network_restrictions_not_set",
-        "password_requirements_min_length",
-        "pitr_not_enabled",
-        "auth_leaked_password_protection",
-        "auth_insufficient_mfa_options",
-        "auth_password_policy_missing",
-        "leaked_service_key",
-        "no_backup_admin",
-        "vulnerable_postgres_version",
-      ]),
-      title: Schema.String,
-      level: Schema.Literals(["ERROR", "WARN", "INFO"]),
-      facing: Schema.Literal("EXTERNAL"),
-      categories: Schema.Array(Schema.Literals(["PERFORMANCE", "SECURITY"])),
-      description: Schema.String,
-      detail: Schema.String,
-      remediation: Schema.String,
-      metadata: Schema.optionalKey(
-        Schema.Struct({
-          schema: Schema.optionalKey(Schema.String),
-          name: Schema.optionalKey(Schema.String),
-          entity: Schema.optionalKey(Schema.String),
-          type: Schema.optionalKey(
-            Schema.Literals(["table", "view", "auth", "function", "extension", "compliance"]),
-          ),
-          fkey_name: Schema.optionalKey(Schema.String),
-          fkey_columns: Schema.optionalKey(
-            Schema.Array(
-              Schema.Number.check(Schema.isFinite().annotate({ expected: "a finite number" })),
+    Schema.StructWithRest(
+      Schema.Struct({
+        name: Schema.Literals([
+          "unindexed_foreign_keys",
+          "auth_users_exposed",
+          "auth_rls_initplan",
+          "no_primary_key",
+          "unused_index",
+          "multiple_permissive_policies",
+          "policy_exists_rls_disabled",
+          "rls_enabled_no_policy",
+          "duplicate_index",
+          "security_definer_view",
+          "function_search_path_mutable",
+          "rls_disabled_in_public",
+          "extension_in_public",
+          "rls_references_user_metadata",
+          "materialized_view_in_api",
+          "foreign_table_in_api",
+          "unsupported_reg_types",
+          "auth_otp_long_expiry",
+          "auth_otp_short_length",
+          "ssl_not_enforced",
+          "log_connections_not_enabled",
+          "network_restrictions_not_set",
+          "password_requirements_min_length",
+          "pitr_not_enabled",
+          "auth_leaked_password_protection",
+          "auth_insufficient_mfa_options",
+          "auth_password_policy_missing",
+          "leaked_service_key",
+          "no_backup_admin",
+          "vulnerable_postgres_version",
+          "db_not_reachable",
+          "db_connection_failing",
+          "db_connection_limit_reached",
+          "instance_telemetry_lost",
+          "instance_db_down",
+          "instance_alert_firing",
+          "log_service_error_rate_high",
+          "project_not_active",
+          "advisor_check_unavailable",
+        ]),
+        title: Schema.String,
+        level: Schema.Literals(["ERROR", "WARN", "INFO"]),
+        facing: Schema.Literal("EXTERNAL"),
+        categories: Schema.Array(Schema.Literals(["PERFORMANCE", "SECURITY", "HEALTH"])),
+        description: Schema.String,
+        detail: Schema.String,
+        remediation: Schema.String,
+        metadata: Schema.optionalKey(
+          Schema.Struct({
+            schema: Schema.optionalKey(Schema.String),
+            name: Schema.optionalKey(Schema.String),
+            entity: Schema.optionalKey(Schema.String),
+            type: Schema.optionalKey(
+              Schema.Literals([
+                "table",
+                "view",
+                "materialized view",
+                "foreign table",
+                "auth",
+                "function",
+                "extension",
+                "compliance",
+                "health",
+              ]),
             ),
-          ),
-        }),
-      ),
-      cache_key: Schema.String,
-    }),
+            fkey_name: Schema.optionalKey(Schema.String),
+            fkey_columns: Schema.optionalKey(
+              Schema.Array(
+                Schema.Number.check(Schema.isFinite().annotate({ expected: "a finite number" })),
+              ),
+            ),
+          }),
+        ),
+        cache_key: Schema.String,
+        observed_at: Schema.optionalKey(Schema.String.annotate({ format: "date-time" })),
+      }),
+      [Schema.Record(Schema.String, Schema.Json.annotate({ expected: "JSON value" }))],
+    ),
   ),
 });
 export const V1GetServicesHealthInput = Schema.Struct({
@@ -10216,7 +10264,10 @@ export const V2CreateOrganizationInvitationsInput = Schema.Struct({
     Schema.Struct({
       type: Schema.Literal("organization_invitation").annotate({ description: "Resource type." }),
       attributes: Schema.Struct({
-        email: Schema.String.annotate({ format: "email" }).check(
+        email: Schema.String.annotate({
+          description: "Email address of the invitation receipient.",
+          format: "email",
+        }).check(
           Schema.isPattern(
             new RegExp(
               "^(?!\\.)(?!.*\\.\\.)([A-Za-z0-9_'+\\-\\.]*)[A-Za-z0-9_+-]@([A-Za-z0-9][A-Za-z0-9\\-]*\\.)+[A-Za-z]{2,}$",
@@ -10297,7 +10348,10 @@ export const V2CreateOrganizationInvitationsOutput = Schema.Struct({
               ),
             ),
             meta: Schema.Struct({
-              email: Schema.String.annotate({ format: "email" }).check(
+              email: Schema.String.annotate({
+                description: "Email address of the invitation receipient.",
+                format: "email",
+              }).check(
                 Schema.isPattern(
                   new RegExp(
                     "^(?!\\.)(?!.*\\.\\.)([A-Za-z0-9_'+\\-\\.]*)[A-Za-z0-9_+-]@([A-Za-z0-9][A-Za-z0-9\\-]*\\.)+[A-Za-z]{2,}$",
@@ -10317,7 +10371,10 @@ export const V2CreateOrganizationInvitationsOutput = Schema.Struct({
     Schema.Struct({
       type: Schema.Literal("organization_invitation").annotate({ description: "Resource type." }),
       attributes: Schema.Struct({
-        email: Schema.String.annotate({ format: "email" }).check(
+        email: Schema.String.annotate({
+          description: "Email address of the invitation receipient.",
+          format: "email",
+        }).check(
           Schema.isPattern(
             new RegExp(
               "^(?!\\.)(?!.*\\.\\.)([A-Za-z0-9_'+\\-\\.]*)[A-Za-z0-9_+-]@([A-Za-z0-9][A-Za-z0-9\\-]*\\.)+[A-Za-z]{2,}$",
@@ -10520,7 +10577,10 @@ export const V2DeleteOrganizationInvitationsInput = Schema.Struct({
     Schema.Struct({
       type: Schema.Literal("organization_invitation").annotate({ description: "Resource type." }),
       attributes: Schema.Struct({
-        email: Schema.String.annotate({ format: "email" }).check(
+        email: Schema.String.annotate({
+          description: "Email address of the invitation receipient.",
+          format: "email",
+        }).check(
           Schema.isPattern(
             new RegExp(
               "^(?!\\.)(?!.*\\.\\.)([A-Za-z0-9_'+\\-\\.]*)[A-Za-z0-9_+-]@([A-Za-z0-9][A-Za-z0-9\\-]*\\.)+[A-Za-z]{2,}$",
@@ -10541,7 +10601,10 @@ export const V2DeleteOrganizationInvitationsOutput = Schema.Struct({
     Schema.Struct({
       type: Schema.Literal("organization_invitation").annotate({ description: "Resource type." }),
       attributes: Schema.Struct({
-        email: Schema.String.annotate({ format: "email" }).check(
+        email: Schema.String.annotate({
+          description: "Email address of the invitation receipient.",
+          format: "email",
+        }).check(
           Schema.isPattern(
             new RegExp(
               "^(?!\\.)(?!.*\\.\\.)([A-Za-z0-9_'+\\-\\.]*)[A-Za-z0-9_+-]@([A-Za-z0-9][A-Za-z0-9\\-]*\\.)+[A-Za-z]{2,}$",
@@ -12167,6 +12230,164 @@ export const V2PreviewAProjectTransferOutput = Schema.Struct({
     }),
   }),
 });
+export const V2RunProjectAdvisorsInput = Schema.Struct({
+  ref: Schema.String.check(
+    Schema.isMinLength(20).annotate({ expected: "a value with a length of at least 20" }),
+  )
+    .check(Schema.isMaxLength(20).annotate({ expected: "a value with a length of at most 20" }))
+    .check(
+      Schema.isPattern(new RegExp("^[a-z]+$")).annotate({
+        expected: "a string matching the RegExp ^[a-z]+$",
+      }),
+    ),
+  data: Schema.Struct({
+    type: Schema.Literal("project_advisors").annotate({ description: "Resource type." }),
+    attributes: Schema.Struct({
+      lints: Schema.Array(
+        Schema.Struct({
+          name: Schema.Literals([
+            "unindexed_foreign_keys",
+            "auth_users_exposed",
+            "auth_rls_initplan",
+            "no_primary_key",
+            "unused_index",
+            "multiple_permissive_policies",
+            "policy_exists_rls_disabled",
+            "rls_enabled_no_policy",
+            "duplicate_index",
+            "security_definer_view",
+            "function_search_path_mutable",
+            "rls_disabled_in_public",
+            "extension_in_public",
+            "rls_references_user_metadata",
+            "materialized_view_in_api",
+            "foreign_table_in_api",
+            "unsupported_reg_types",
+            "auth_otp_long_expiry",
+            "auth_otp_short_length",
+            "ssl_not_enforced",
+            "log_connections_not_enabled",
+            "network_restrictions_not_set",
+            "password_requirements_min_length",
+            "pitr_not_enabled",
+            "auth_leaked_password_protection",
+            "auth_insufficient_mfa_options",
+            "auth_password_policy_missing",
+            "leaked_service_key",
+            "no_backup_admin",
+            "vulnerable_postgres_version",
+            "db_not_reachable",
+            "db_connection_failing",
+            "db_connection_limit_reached",
+            "instance_telemetry_lost",
+            "instance_db_down",
+            "instance_alert_firing",
+            "log_service_error_rate_high",
+          ]),
+        }),
+      )
+        .check(Schema.isMinLength(1).annotate({ expected: "a value with a length of at least 1" }))
+        .check(
+          Schema.isMaxLength(10).annotate({ expected: "a value with a length of at most 10" }),
+        ),
+    }),
+  }),
+});
+export const V2RunProjectAdvisorsOutput = Schema.Struct({
+  data: Schema.Struct({
+    type: Schema.Literal("project_advisors").annotate({ description: "Resource type." }),
+    attributes: Schema.StructWithRest(
+      Schema.Struct({
+        lints: Schema.Array(
+          Schema.StructWithRest(
+            Schema.Struct({
+              name: Schema.Literals([
+                "unindexed_foreign_keys",
+                "auth_users_exposed",
+                "auth_rls_initplan",
+                "no_primary_key",
+                "unused_index",
+                "multiple_permissive_policies",
+                "policy_exists_rls_disabled",
+                "rls_enabled_no_policy",
+                "duplicate_index",
+                "security_definer_view",
+                "function_search_path_mutable",
+                "rls_disabled_in_public",
+                "extension_in_public",
+                "rls_references_user_metadata",
+                "materialized_view_in_api",
+                "foreign_table_in_api",
+                "unsupported_reg_types",
+                "auth_otp_long_expiry",
+                "auth_otp_short_length",
+                "ssl_not_enforced",
+                "log_connections_not_enabled",
+                "network_restrictions_not_set",
+                "password_requirements_min_length",
+                "pitr_not_enabled",
+                "auth_leaked_password_protection",
+                "auth_insufficient_mfa_options",
+                "auth_password_policy_missing",
+                "leaked_service_key",
+                "no_backup_admin",
+                "vulnerable_postgres_version",
+                "db_not_reachable",
+                "db_connection_failing",
+                "db_connection_limit_reached",
+                "instance_telemetry_lost",
+                "instance_db_down",
+                "instance_alert_firing",
+                "log_service_error_rate_high",
+                "project_not_active",
+                "advisor_check_unavailable",
+              ]),
+              title: Schema.String,
+              level: Schema.Literals(["ERROR", "WARN", "INFO"]),
+              facing: Schema.Literal("EXTERNAL"),
+              categories: Schema.Array(Schema.Literals(["PERFORMANCE", "SECURITY", "HEALTH"])),
+              description: Schema.String,
+              detail: Schema.String,
+              remediation: Schema.String,
+              metadata: Schema.optionalKey(
+                Schema.Struct({
+                  schema: Schema.optionalKey(Schema.String),
+                  name: Schema.optionalKey(Schema.String),
+                  entity: Schema.optionalKey(Schema.String),
+                  type: Schema.optionalKey(
+                    Schema.Literals([
+                      "table",
+                      "view",
+                      "materialized view",
+                      "foreign table",
+                      "auth",
+                      "function",
+                      "extension",
+                      "compliance",
+                      "health",
+                    ]),
+                  ),
+                  fkey_name: Schema.optionalKey(Schema.String),
+                  fkey_columns: Schema.optionalKey(
+                    Schema.Array(
+                      Schema.Number.check(
+                        Schema.isFinite().annotate({ expected: "a finite number" }),
+                      ),
+                    ),
+                  ),
+                }),
+              ),
+              cache_key: Schema.String,
+              observed_at: Schema.optionalKey(Schema.String.annotate({ format: "date-time" })),
+            }),
+            [Schema.Record(Schema.String, Schema.Json.annotate({ expected: "JSON value" }))],
+          ),
+        ),
+      }),
+      [Schema.Record(Schema.String, Schema.Json.annotate({ expected: "JSON value" }))],
+    ),
+  }),
+});
 export const V2TransferAProjectInput = Schema.Struct({
   ref: Schema.String.check(
     Schema.isMinLength(20).annotate({ expected: "a value with a length of at least 20" }),
@@ -12612,6 +12833,7 @@ export const openApiOperationIdMap = {
   "v2-list-organization-roles": "v2ListOrganizationRoles",
   "v2-list-private-link-associations": "v2ListPrivateLinkAssociations",
   "v2-preview-a-project-transfer": "v2PreviewAProjectTransfer",
+  "v2-run-project-advisors": "v2RunProjectAdvisors",
   "v2-transfer-a-project": "v2TransferAProject",
   "v2-update-log-drain": "v2UpdateLogDrain",
 } as const;
@@ -13854,7 +14076,7 @@ export const operationDefinitions = {
   v1GetProjectLogsAll: {
     id: "v1GetProjectLogsAll",
     description:
-      "Executes a SQL query on the project's logs.\n\nEither the `iso_timestamp_start` and `iso_timestamp_end` parameters must be provided.\nIf both are not provided, only the last 1 minute of logs will be queried.\nThe timestamp range must be no more than 24 hours and is rounded to the nearest minute. If the range is more than 24 hours, a validation error will be thrown.\n\nNote: Unless the `sql` parameter is provided, only edge_logs will be queried. See the [log query docs](/docs/guides/telemetry/logs?queryGroups=product&product=postgres&queryGroups=source&source=edge_logs#querying-with-the-logs-explorer:~:text=logs%20from%20the-,Sources,-drop%2Ddown%3A) for all available sources.",
+      "Executes a SQL query on the project's logs.\n\nEither the `iso_timestamp_start` and `iso_timestamp_end` parameters must be provided.\nIf both are not provided, only the last 1 minute of logs will be queried.\nThe timestamp range must be no more than 24 hours and is rounded to the nearest minute. If the range is more than 24 hours, a validation error will be thrown.\n\nNote: Unless the `sql` parameter is provided, only edge_logs will be queried. See the [log query docs](https://supabase.com/docs/guides/monitoring-and-debugging/logs#logs-explorer) for all available sources.",
     method: "GET",
     path: "/v1/projects/{ref}/analytics/endpoints/logs.all",
     pathParams: ["ref"],
@@ -15611,6 +15833,19 @@ export const operationDefinitions = {
     response: { kind: "json" },
     inputSchema: V2PreviewAProjectTransferInput,
     outputSchema: V2PreviewAProjectTransferOutput,
+  },
+  v2RunProjectAdvisors: {
+    id: "v2RunProjectAdvisors",
+    description: "Runs the project advisors with the given names",
+    method: "POST",
+    path: "/v2/projects/{ref}/advisors/run",
+    pathParams: ["ref"],
+    queryParams: [],
+    headerParams: [],
+    requestBody: { kind: "json", contentType: "application/json", fields: ["data"] },
+    response: { kind: "json" },
+    inputSchema: V2RunProjectAdvisorsInput,
+    outputSchema: V2RunProjectAdvisorsOutput,
   },
   v2TransferAProject: {
     id: "v2TransferAProject",

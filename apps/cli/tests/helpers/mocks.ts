@@ -4,7 +4,7 @@ import process from "node:process";
 import { BunServices } from "@effect/platform-bun";
 import { Deferred, Effect, Layer, Option, PubSub, Redacted, Stream } from "effect";
 import type { ReactElement } from "react";
-import type { ProjectEnvironment, ProjectPaths } from "@supabase/config";
+import type { CliProjectEnvironment, CliProjectPaths } from "@supabase/config";
 import { Stack, StackServiceState, type StackInfo } from "@supabase/stack/effect";
 import { HttpTransportClient } from "@supabase/stack/testing";
 import { Api } from "../../src/next/auth/api.service.ts";
@@ -12,18 +12,18 @@ import type { LoginSessionResponse, ProfileResponse } from "../../src/next/auth/
 import { Credentials } from "../../src/next/auth/credentials.service.ts";
 import { Crypto } from "../../src/next/auth/crypto.service.ts";
 import { ApiError } from "../../src/next/auth/errors.ts";
-import { cliConfigLayer } from "../../src/next/config/cli-config.layer.ts";
-import { ProjectHome } from "../../src/next/config/project-home.service.ts";
+import { cliSettingsLayer } from "../../src/next/config/cli-settings.layer.ts";
+import { CliProjectHome } from "../../src/next/config/cli-project-home.service.ts";
 import {
-  ProjectLocalServiceVersions,
+  CliProjectLocalServiceVersions,
   type LocalServiceVersionsState,
-} from "../../src/next/config/project-local-service-versions.service.ts";
+} from "../../src/next/config/cli-project-local-service-versions.service.ts";
 import { ProjectLinkRemote } from "../../src/next/config/project-link-remote.service.ts";
 import {
   ProjectLinkState,
   type ProjectLinkStateValue,
 } from "../../src/next/config/project-link-state.service.ts";
-import { ProjectContext } from "../../src/next/config/project-context.service.ts";
+import { CliProjectContext } from "../../src/next/config/cli-project-context.service.ts";
 import { NonInteractiveError } from "../../src/shared/output/errors.ts";
 import { Output } from "../../src/shared/output/output.service.ts";
 import type { OutputFormat } from "../../src/shared/output/types.ts";
@@ -653,31 +653,28 @@ export function mockStack(
 
   return {
     layer: Layer.succeed(Stack, {
-      getInfo: () => Effect.succeed(info),
-      start: () =>
-        Effect.gen(function* () {
-          started = true;
-          if (opts.startError !== undefined) {
-            return yield* Effect.fail(opts.startError as never);
-          }
-          if (opts.startPending) {
-            yield* Deferred.await(startDeferred);
-          }
-        }),
-      stop: () =>
-        Effect.gen(function* () {
-          stopped = true;
-          if (opts.stopPending) {
-            yield* Deferred.await(stopDeferred);
-          }
-        }),
-      dispose: () =>
-        Effect.gen(function* () {
-          stopped = true;
-          if (opts.stopPending) {
-            yield* Deferred.await(stopDeferred);
-          }
-        }),
+      getInfo: Effect.succeed(info),
+      start: Effect.gen(function* () {
+        started = true;
+        if (opts.startError !== undefined) {
+          return yield* Effect.fail(opts.startError as never);
+        }
+        if (opts.startPending) {
+          yield* Deferred.await(startDeferred);
+        }
+      }),
+      stop: Effect.gen(function* () {
+        stopped = true;
+        if (opts.stopPending) {
+          yield* Deferred.await(stopDeferred);
+        }
+      }),
+      dispose: Effect.gen(function* () {
+        stopped = true;
+        if (opts.stopPending) {
+          yield* Deferred.await(stopDeferred);
+        }
+      }),
       startService: () => Effect.void,
       stopService: () => Effect.void,
       restartService: () => Effect.void,
@@ -695,48 +692,45 @@ export function mockStack(
             error: null,
           }),
         ),
-      getAllStates: () => {
+      getAllStates: Effect.sync(() => {
         const latestStates = new Map(
           (stateHistory.length > 0
             ? stateHistory
             : [{ name: "postgres", status: "Pending" as const }]
           ).map((state) => [state.name, state] as const),
         );
-        return Effect.succeed(
-          [...latestStates.values()].map(
-            (state) =>
-              new StackServiceState({
-                name: state.name,
-                status: state.status,
-                pid: null,
-                exitCode: null,
-                restartCount: 0,
-                startedAt: null,
-                error: null,
-              }),
-          ),
+        return [...latestStates.values()].map(
+          (state) =>
+            new StackServiceState({
+              name: state.name,
+              status: state.status,
+              pid: null,
+              exitCode: null,
+              restartCount: 0,
+              startedAt: null,
+              error: null,
+            }),
         );
-      },
+      }),
       stateChanges: () => Effect.succeed(Stream.empty),
-      allStateChanges: () =>
-        opts.liveStateChanges
-          ? Stream.fromPubSub(statePubSub)
-          : opts.stateChanges
-            ? Stream.fromIterable(
-                opts.stateChanges.map(
-                  (change) =>
-                    new StackServiceState({
-                      name: change.name,
-                      status: change.status,
-                      pid: null,
-                      exitCode: null,
-                      restartCount: 0,
-                      startedAt: null,
-                      error: null,
-                    }),
-                ),
-              )
-            : Stream.empty,
+      allStateChanges: opts.liveStateChanges
+        ? Stream.fromPubSub(statePubSub)
+        : opts.stateChanges
+          ? Stream.fromIterable(
+              opts.stateChanges.map(
+                (change) =>
+                  new StackServiceState({
+                    name: change.name,
+                    status: change.status,
+                    pid: null,
+                    exitCode: null,
+                    restartCount: 0,
+                    startedAt: null,
+                    error: null,
+                  }),
+              ),
+            )
+          : Stream.empty,
       waitReady: () => Effect.void,
       waitAllReady: () => Effect.void,
       subscribeLogs: () => Stream.empty,
@@ -849,41 +843,41 @@ export function processEnvLayer(
   );
 }
 
-export function mockProjectContext(
+export function mockCliProjectContext(
   opts: {
-    paths?: Option.Option<ProjectPaths>;
-    projectEnv?: Option.Option<ProjectEnvironment>;
+    paths?: Option.Option<CliProjectPaths>;
+    projectEnv?: Option.Option<CliProjectEnvironment>;
   } = {},
-): Layer.Layer<ProjectContext> {
+): Layer.Layer<CliProjectContext> {
   return Layer.succeed(
-    ProjectContext,
-    ProjectContext.of({
+    CliProjectContext,
+    CliProjectContext.of({
       paths: opts.paths ?? Option.none(),
       projectEnv: opts.projectEnv ?? Option.none(),
     }),
   );
 }
 
-function mockProjectHome(
+function mockCliProjectHome(
   opts: {
     projectRoot?: string;
     supabaseDir?: string;
     projectHomeDir?: string;
   } = {},
-): Layer.Layer<ProjectHome> {
+): Layer.Layer<CliProjectHome> {
   const projectRoot = opts.projectRoot ?? "/test/project";
   const supabaseDir = opts.supabaseDir ?? `${projectRoot}/supabase`;
   const projectHomeDir = opts.projectHomeDir ?? `${projectRoot}/.supabase`;
 
   return Layer.succeed(
-    ProjectHome,
-    ProjectHome.of({
+    CliProjectHome,
+    CliProjectHome.of({
       projectRoot,
       supabaseDir,
       projectHomeDir,
       projectLinkPath: `${projectHomeDir}/project.json`,
       projectLocalVersionsPath: `${projectHomeDir}/local-versions.json`,
-      ensureProjectHomeDir: Effect.void,
+      ensureCliProjectHomeDir: Effect.void,
     }),
   );
 }
@@ -974,13 +968,13 @@ export function mockProjectLinkRemote(
   );
 }
 
-export function mockProjectLocalServiceVersions(
+export function mockCliProjectLocalServiceVersions(
   initialState?: LocalServiceVersionsState,
-): Layer.Layer<ProjectLocalServiceVersions, never, never> {
+): Layer.Layer<CliProjectLocalServiceVersions, never, never> {
   let state = initialState;
   return Layer.succeed(
-    ProjectLocalServiceVersions,
-    ProjectLocalServiceVersions.of({
+    CliProjectLocalServiceVersions,
+    CliProjectLocalServiceVersions.of({
       load: Effect.sync(() =>
         state === undefined ? Option.none<LocalServiceVersionsState>() : Option.some(state),
       ),
@@ -990,25 +984,25 @@ export function mockProjectLocalServiceVersions(
 
 export function emptyEnv() {
   const runtimeInfoLayer = mockRuntimeInfo();
-  const projectContextLayer = mockProjectContext();
+  const cliProjectContextLayer = mockCliProjectContext();
   const envLayer = processEnvLayer();
-  const projectHomeLayer = mockProjectHome();
+  const cliProjectHomeLayer = mockCliProjectHome();
   const projectLinkStateLayer = mockProjectLinkState();
-  const projectLocalServiceVersionsLayer = mockProjectLocalServiceVersions();
+  const cliProjectLocalServiceVersionsLayer = mockCliProjectLocalServiceVersions();
   const analytics = mockAnalytics();
   return Layer.mergeAll(
     BunServices.layer,
     runtimeInfoLayer,
-    projectContextLayer,
-    projectHomeLayer,
+    cliProjectContextLayer,
+    cliProjectHomeLayer,
     projectLinkStateLayer,
-    projectLocalServiceVersionsLayer,
+    cliProjectLocalServiceVersionsLayer,
     analytics.layer,
     mockTelemetryRuntime(),
     envLayer,
     mockTty(),
     mockProcessControl().layer,
-    cliConfigLayer.pipe(Layer.provide(runtimeInfoLayer), Layer.provide(projectContextLayer)),
+    cliSettingsLayer.pipe(Layer.provide(runtimeInfoLayer), Layer.provide(cliProjectContextLayer)),
     Layer.succeed(HttpTransportClient, {
       request: () => Effect.die("unexpected HttpTransportClient access in tests"),
     }),
@@ -1017,20 +1011,20 @@ export function emptyEnv() {
 
 export function withEnv(env: Record<string, string>) {
   const runtimeInfoLayer = mockRuntimeInfo();
-  const projectContextLayer = mockProjectContext();
+  const cliProjectContextLayer = mockCliProjectContext();
   const envLayer = processEnvLayer(env);
-  const projectHomeLayer = mockProjectHome();
+  const cliProjectHomeLayer = mockCliProjectHome();
   const analytics = mockAnalytics();
   return Layer.mergeAll(
     BunServices.layer,
     runtimeInfoLayer,
-    projectContextLayer,
-    projectHomeLayer,
+    cliProjectContextLayer,
+    cliProjectHomeLayer,
     analytics.layer,
     mockTelemetryRuntime(),
     envLayer,
     mockTty(),
     mockProcessControl().layer,
-    cliConfigLayer.pipe(Layer.provide(runtimeInfoLayer), Layer.provide(projectContextLayer)),
+    cliSettingsLayer.pipe(Layer.provide(runtimeInfoLayer), Layer.provide(cliProjectContextLayer)),
   );
 }

@@ -1,10 +1,27 @@
 import { BunServices } from "@effect/platform-bun";
-import { ProjectConfigStore } from "@supabase/config/effect";
+import { CliConfigStore } from "@supabase/config/effect";
 import { httpTransportClientLayer } from "@supabase/stack/effect";
-import { Cause, Console, Effect, Exit, Fiber, Layer, Runtime, Stdio } from "effect";
+import {
+  Cause,
+  Console,
+  Effect,
+  Exit,
+  FileSystem,
+  Fiber,
+  Layer,
+  Path,
+  Runtime,
+  Scope,
+  Stdio,
+} from "effect";
 import { CliError, CliOutput, Command } from "effect/unstable/cli";
+import { ChildProcessSpawner } from "effect/unstable/process";
 import { CLI_VERSION } from "./version.ts";
 import { Credentials } from "../../next/auth/credentials.service.ts";
+import type { CliProjectHome } from "../../next/config/cli-project-home.service.ts";
+import type { CliSettings } from "../../next/config/cli-settings.service.ts";
+import type { ProjectLinkState } from "../../next/config/project-link-state.service.ts";
+import type { LegacyPlatformApiFactory } from "../../legacy/auth/legacy-platform-api-factory.service.ts";
 import { jsonCliOutputFormatter } from "../output/json-formatter.ts";
 import { textCliOutputFormatter } from "../output/text-formatter.ts";
 import { outputLayerFor } from "../output/output.layer.ts";
@@ -13,20 +30,24 @@ import type { OutputFormat } from "../output/types.ts";
 import { Output } from "../output/output.service.ts";
 import { LegacyGoChildExitError } from "../legacy/legacy-go-child-exit.error.ts";
 import { GoProxyInvocation, goProxyInvocationLayer } from "../legacy/go-proxy-invocation.ts";
-import { cliConfigLayer } from "../../next/config/cli-config.layer.ts";
-import { projectHomeLayer } from "../../next/config/project-home.layer.ts";
-import { ProjectLocalServiceVersions } from "../../next/config/project-local-service-versions.service.ts";
-import { projectContextLayer } from "../../next/config/project-context.layer.ts";
+import { cliSettingsLayer } from "../../next/config/cli-settings.layer.ts";
+import { cliProjectHomeLayer } from "../../next/config/cli-project-home.layer.ts";
+import { CliProjectLocalServiceVersions } from "../../next/config/cli-project-local-service-versions.service.ts";
+import { cliProjectContextLayer } from "../../next/config/cli-project-context.layer.ts";
 import { projectLinkStateLayer } from "../../next/config/project-link-state.layer.ts";
 import { processControlLayer } from "../runtime/process-control.layer.ts";
 import { runtimeInfoLayer } from "../runtime/runtime-info.layer.ts";
 import { ttyLayer } from "../runtime/tty.layer.ts";
 import { CommandRuntime } from "../runtime/command-runtime.service.ts";
 import { ProcessControl } from "../runtime/process-control.service.ts";
+import type { RuntimeInfo } from "../runtime/runtime-info.service.ts";
+import type { Stdin } from "../runtime/stdin.service.ts";
+import type { Tty } from "../runtime/tty.service.ts";
 import type { Analytics } from "../telemetry/analytics.service.ts";
 import { aiToolLayer } from "../telemetry/ai-tool.layer.ts";
 import { AiTool } from "../telemetry/ai-tool.service.ts";
 import { telemetryRuntimeLayer } from "../telemetry/runtime.layer.ts";
+import type { TelemetryRuntime } from "../telemetry/runtime.service.ts";
 import { tracingLayer } from "../telemetry/tracing.layer.ts";
 import { CliArgs } from "./cli-args.service.ts";
 import { resolveAgentOutputFormatFromArgs } from "./agent-output.ts";
@@ -37,6 +58,34 @@ import {
   isValueTakingFlagTokenFor,
   resolvedCommandPathForArgv,
 } from "./subcommand-flag-suggestions.ts";
+
+/**
+ * Services the two CLI shells provide before evaluating a root command. Keep
+ * this list explicit: preserving the root command's requirement channel here
+ * makes an accidentally unprovided service fail at the shell boundary instead
+ * of becoming a runtime missing-service defect.
+ */
+type AllowedRunCliServices =
+  | Analytics
+  | ChildProcessSpawner.ChildProcessSpawner
+  | CliArgs
+  | CliProjectHome
+  | CliSettings
+  | CommandRuntime
+  | FileSystem.FileSystem
+  | Layer.Success<typeof httpTransportClientLayer>
+  | Path.Path
+  | ProcessControl
+  | ProjectLinkState
+  | RuntimeInfo
+  | Scope.Scope
+  | Stdio.Stdio
+  | TelemetryRuntime
+  | Tty
+  | LegacyPlatformApiFactory
+  | Stdin
+  | "effect/unstable/cli/GlobalFlag/linked"
+  | "effect/unstable/cli/GlobalFlag/local";
 
 // Global flags that consume the following argv token as their value. Keep this in
 // sync with the value-taking global flags defined in `shared/cli/global-flags.ts`
@@ -591,9 +640,9 @@ export function classifyParseErrorConsoleOutput(
  * handler, not just the parse phase that can actually raise `ShowHelp`: no
  * command handler in this codebase writes through `effect`'s `Console`
  * service directly (they go through the `Output` service instead). One
- * indirect exception is known — `@supabase/config`'s `loadProjectConfigFile`
+ * indirect exception is known — `@supabase/config`'s `loadCliConfigFile`
  * emits its deprecated-config-section warnings via `Console.error`, and is
- * reachable from handlers through `ProjectConfigStore`/`loadProjectConfig` —
+ * reachable from handlers through `CliConfigStore`/`loadCliConfig` —
  * so it pins itself to the real console (`Effect.provideService(Console.Console,
  * globalThis.console)`) rather than relying on whatever `Console.Console` is
  * ambient here; see CLI-1901 and that package's `io.ts` for why (a
@@ -641,21 +690,21 @@ export function withoutParseErrorHelpDump<A, E, R>(
   });
 }
 
-function projectContextLayerFor(runtimeLayer: Layer.Layer<never>) {
-  return projectContextLayer.pipe(Layer.provide(runtimeLayer), Layer.provide(BunServices.layer));
+function cliProjectContextLayerFor(runtimeLayer: Layer.Layer<never>) {
+  return cliProjectContextLayer.pipe(Layer.provide(runtimeLayer), Layer.provide(BunServices.layer));
 }
 
-function cliConfigLayerFor(runtimeLayer: Layer.Layer<never>) {
-  return cliConfigLayer.pipe(
-    Layer.provide(projectContextLayerFor(runtimeLayer)),
+function cliSettingsLayerFor(runtimeLayer: Layer.Layer<never>) {
+  return cliSettingsLayer.pipe(
+    Layer.provide(cliProjectContextLayerFor(runtimeLayer)),
     Layer.provide(runtimeLayer),
   );
 }
 
-function projectHomeLayerFor(runtimeLayer: Layer.Layer<never>) {
-  return projectHomeLayer.pipe(
-    Layer.provide(cliConfigLayerFor(runtimeLayer)),
-    Layer.provide(projectContextLayerFor(runtimeLayer)),
+function cliProjectHomeLayerFor(runtimeLayer: Layer.Layer<never>) {
+  return cliProjectHomeLayer.pipe(
+    Layer.provide(cliSettingsLayerFor(runtimeLayer)),
+    Layer.provide(cliProjectContextLayerFor(runtimeLayer)),
     Layer.provide(runtimeLayer),
     Layer.provide(BunServices.layer),
   );
@@ -691,8 +740,14 @@ export interface RunCliOptions {
   ) => Effect.Effect<void>;
 }
 
-function cliProgramFor(
-  rootCommand: Command.Command.Any,
+function cliProgramFor<
+  Name extends string,
+  Input,
+  ContextInput,
+  E,
+  R extends AllowedRunCliServices,
+>(
+  rootCommand: Command.Command<Name, Input, ContextInput, E, R>,
   args: ReadonlyArray<string>,
   options: RunCliOptions,
   outputFormat: OutputFormat,
@@ -705,13 +760,13 @@ function cliProgramFor(
       saveAccessToken: () => Effect.die("unexpected root credentials write"),
       deleteAccessToken: Effect.die("unexpected root credentials deletion"),
     }),
-    Layer.succeed(ProjectLocalServiceVersions, {
+    Layer.succeed(CliProjectLocalServiceVersions, {
       load: Effect.die("unexpected root project local service versions access"),
     }),
-    Layer.succeed(ProjectConfigStore, {
-      load: () => Effect.die("unexpected root project config access"),
-      loadFile: () => Effect.die("unexpected root project config file access"),
-      save: () => Effect.die("unexpected root project config write"),
+    Layer.succeed(CliConfigStore, {
+      load: () => Effect.die("unexpected root cli-config access"),
+      loadFile: () => Effect.die("unexpected root cli-config file access"),
+      save: () => Effect.die("unexpected root cli-config write"),
     }),
     Layer.succeed(
       CommandRuntime,
@@ -729,9 +784,9 @@ function cliProgramFor(
     Effect.provide(options.analyticsLayer),
     Effect.provide(tracingLayer),
     Effect.provide(telemetryRuntimeLayer),
-    Effect.provide(cliConfigLayerFor(runtimeLayer)),
-    Effect.provide(projectHomeLayerFor(runtimeLayer)),
-    Effect.provide(projectContextLayerFor(runtimeLayer)),
+    Effect.provide(cliSettingsLayerFor(runtimeLayer)),
+    Effect.provide(cliProjectHomeLayerFor(runtimeLayer)),
+    Effect.provide(cliProjectContextLayerFor(runtimeLayer)),
     Effect.provide(projectLinkStateLayer),
     Effect.provide(runtimeLayer),
     Effect.provide(httpTransportClientLayer),
@@ -741,7 +796,13 @@ function cliProgramFor(
   );
 }
 
-export async function runCli(rootCommand: Command.Command.Any, options: RunCliOptions) {
+export async function runCli<
+  Name extends string,
+  Input,
+  ContextInput,
+  E,
+  R extends AllowedRunCliServices,
+>(rootCommand: Command.Command<Name, Input, ContextInput, E, R>, options: RunCliOptions) {
   const args = await Effect.runPromise(
     Effect.gen(function* () {
       const stdio = yield* Stdio.Stdio;
@@ -870,9 +931,9 @@ export async function runCli(rootCommand: Command.Command.Any, options: RunCliOp
     }).pipe(
       Effect.provide(outputLayerFor(outputFormat)),
       Effect.provide(telemetryRuntimeLayer),
-      Effect.provide(projectHomeLayerFor(handledRuntimeLayer)),
-      Effect.provide(cliConfigLayerFor(handledRuntimeLayer)),
-      Effect.provide(projectContextLayerFor(handledRuntimeLayer)),
+      Effect.provide(cliProjectHomeLayerFor(handledRuntimeLayer)),
+      Effect.provide(cliSettingsLayerFor(handledRuntimeLayer)),
+      Effect.provide(cliProjectContextLayerFor(handledRuntimeLayer)),
       Effect.provide(processControlLayer),
       Effect.provide(runtimeInfoLayer),
       Effect.provide(ttyLayer),

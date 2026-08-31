@@ -11,7 +11,7 @@ import { mockOutput } from "../../../../../tests/helpers/mocks.ts";
 import {
   LEGACY_VALID_REF,
   buildLegacyTestRuntime,
-  mockLegacyCliConfig,
+  mockLegacyCliSettings,
   mockLegacyPlatformApi,
   useLegacyTempWorkdir,
 } from "../../../../../tests/helpers/legacy-mocks.ts";
@@ -60,7 +60,7 @@ function setup(opts: SetupOpts = {}) {
     apiUrl: opts.apiUrl,
     userAgent: opts.userAgent,
   });
-  const cliConfig = mockLegacyCliConfig({
+  const cliSettings = mockLegacyCliSettings({
     workdir: tempRoot.current,
     apiUrl: opts.apiUrl,
     userAgent: opts.userAgent,
@@ -68,7 +68,7 @@ function setup(opts: SetupOpts = {}) {
   const layer = buildLegacyTestRuntime({
     out,
     api,
-    cliConfig,
+    cliSettings,
     goOutput: opts.goOutput === undefined ? Option.none() : Option.some(opts.goOutput),
   });
   return { layer, out, api };
@@ -227,7 +227,7 @@ WalgEnabled = true
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("uses --project-ref flag value over LegacyCliConfig.projectId env", () => {
+  it.live("uses --project-ref flag value over LegacyCliSettings.projectId env", () => {
     const flagRef = "zzzzzzzzzzzzzzzzzzzz";
     const { layer, api } = setup({ response: PITR_RESPONSE });
     return Effect.gen(function* () {
@@ -244,11 +244,11 @@ WalgEnabled = true
 
     const out = mockOutput({ format: "text" });
     const api = mockLegacyPlatformApi({ response: { status: 200, body: PITR_RESPONSE } });
-    const cliConfig = mockLegacyCliConfig({
+    const cliSettings = mockLegacyCliSettings({
       workdir: localTempRoot,
       projectId: Option.none(),
     });
-    const layer = buildLegacyTestRuntime({ out, api, cliConfig });
+    const layer = buildLegacyTestRuntime({ out, api, cliSettings });
 
     return Effect.gen(function* () {
       yield* legacyBackupsList({ projectRef: Option.none() });
@@ -263,11 +263,11 @@ WalgEnabled = true
     const localTempRoot = mkdtempSync(join(tmpdir(), "supabase-backups-list-int-no-ref-"));
     const out = mockOutput({ format: "text" });
     const api = mockLegacyPlatformApi({ response: { status: 200, body: PITR_RESPONSE } });
-    const cliConfig = mockLegacyCliConfig({
+    const cliSettings = mockLegacyCliSettings({
       workdir: localTempRoot,
       projectId: Option.none(),
     });
-    const layer = buildLegacyTestRuntime({ out, api, cliConfig });
+    const layer = buildLegacyTestRuntime({ out, api, cliSettings });
 
     return Effect.gen(function* () {
       const exit = yield* Effect.exit(

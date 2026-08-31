@@ -1,6 +1,6 @@
 import { Layer } from "effect";
 
-import { legacyCliConfigLayer } from "../../../config/legacy-cli-config.layer.ts";
+import { legacyCliSettingsLayer } from "../../../config/legacy-cli-settings.layer.ts";
 import { legacyDbConfigLayer } from "../../../shared/legacy-db-config.layer.ts";
 import { legacyDbConnectionLayer } from "../../../shared/legacy-db-connection.layer.ts";
 import { legacyDebugLoggerLayer } from "../../../shared/legacy-debug-logger.layer.ts";
@@ -17,7 +17,7 @@ import { stdinLayer } from "../../../../shared/runtime/stdin.layer.ts";
  * The `--local` / `--db-url` paths go through `LegacyDbConfigResolver` +
  * `LegacyDbConnection` (auth-free). The `--linked` path POSTs to the Management
  * API over raw HTTP, so it needs `LegacyCredentials` / `HttpClient` /
- * `LegacyProjectRefResolver` / `LegacyCliConfig` (plus `LegacyTelemetryState` /
+ * `LegacyProjectRefResolver` / `LegacyCliSettings` (plus `LegacyTelemetryState` /
  * `CommandRuntime` / `LegacyLinkedProjectCache`) — supplied by
  * `legacyLinkedDbResolverRuntimeLayer`. That runtime exposes the access token
  * **lazily** via `LegacyPlatformApiFactory` rather than the eager `LegacyPlatformApi`
@@ -26,10 +26,10 @@ import { stdinLayer } from "../../../../shared/runtime/stdin.layer.ts";
  * `getAccessToken` itself), matching the token requirement only kicking in
  * on the `--linked` path.
  */
-const cliConfig = legacyCliConfigLayer.pipe(Layer.provide(legacyDebugLoggerLayer));
+const cliSettings = legacyCliSettingsLayer.pipe(Layer.provide(legacyDebugLoggerLayer));
 
 const dbConfig = legacyDbConfigLayer.pipe(
-  Layer.provide(cliConfig),
+  Layer.provide(cliSettings),
   Layer.provide(legacyDbConnectionLayer),
   Layer.provide(legacyDebugLoggerLayer),
   // The linked db-config resolver + the linked-resolver runtime both snapshot

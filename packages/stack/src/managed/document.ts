@@ -51,6 +51,8 @@ export interface ManagedStackDocument {
   };
   readonly ports: ReadonlyArray<ManagedPortAssignment>;
   readonly lifecycle: ManagedStackDocumentLifecycle;
+  /** A durable fence written by the identity-scoped public stop operation. */
+  readonly stopIntent?: "explicit";
   readonly runtime?: {
     readonly pid: number;
     readonly controlEndpoint: string;
@@ -81,7 +83,7 @@ const managedPortAssignmentSchema = Schema.Struct({
     "analytics.port",
     "db.pooler.port",
   ]),
-  port: Schema.Number,
+  port: Schema.Finite,
   intent: Schema.Literals(["automatic", "exact"]),
 });
 
@@ -104,9 +106,10 @@ const managedStackDocumentSchema = Schema.Struct({
   }),
   ports: Schema.Array(managedPortAssignmentSchema),
   lifecycle: Schema.Literals(["stopped", "starting", "running", "deleting", "failed"]),
+  stopIntent: Schema.optionalKey(Schema.Literal("explicit")),
   runtime: Schema.optionalKey(
     Schema.Struct({
-      pid: Schema.Number,
+      pid: Schema.Finite,
       controlEndpoint: Schema.String,
       protocolVersion: Schema.Literal(1),
     }),
@@ -136,7 +139,7 @@ export const decodeManagedStackDocument = (
   path: string,
   content: string,
 ): Effect.Effect<ManagedStackDocument, InvalidManagedStackDocumentError> =>
-  Schema.decodeUnknownEffect(ManagedStackDocumentSchema)(content).pipe(
+  Schema.decodeEffect(ManagedStackDocumentSchema)(content).pipe(
     Effect.mapError(() => new InvalidManagedStackDocumentError({ path })),
     Effect.flatMap((document) =>
       hasCorePortAssignments(document)
@@ -151,10 +154,10 @@ export const encodeManagedStackDocument = (
 ): Effect.Effect<string, InvalidManagedStackDocumentError> =>
   Effect.gen(function* () {
     if (!hasCorePortAssignments(document)) {
-      return yield* Effect.fail(new InvalidManagedStackDocumentError({ path }));
+      return yield* new InvalidManagedStackDocumentError({ path });
     }
-    const encoded = yield* Schema.encodeEffect(managedStackDocumentSchema)(document).pipe(
+    const encoded = yield* Schema.encodeEffect(ManagedStackDocumentSchema)(document).pipe(
       Effect.mapError(() => new InvalidManagedStackDocumentError({ path })),
     );
-    return JSON.stringify(encoded, null, 2) + "\n";
+    return `${encoded}\n`;
   });

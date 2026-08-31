@@ -5,7 +5,7 @@ import { mockOutput } from "../../../../../tests/helpers/mocks.ts";
 import {
   buildLegacyTestRuntime,
   legacyJsonResponse,
-  mockLegacyCliConfig,
+  mockLegacyCliSettings,
   mockLegacyPlatformApi,
   useLegacyTempWorkdir,
 } from "../../../../../tests/helpers/legacy-mocks.ts";
@@ -33,8 +33,8 @@ function setup(opts: SetupOpts = {}) {
         return legacyJsonResponse(request, 200, null);
       }),
   });
-  const cliConfig = mockLegacyCliConfig({ workdir: tempRoot.current });
-  const layer = buildLegacyTestRuntime({ out, api, cliConfig });
+  const cliSettings = mockLegacyCliSettings({ workdir: tempRoot.current });
+  const layer = buildLegacyTestRuntime({ out, api, cliSettings });
   return { layer, out, api };
 }
 

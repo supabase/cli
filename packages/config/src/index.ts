@@ -7,28 +7,29 @@
  * `@supabase/config/effect`.
  */
 export {
-  ProjectConfigSchema,
-  toProjectConfigJsonSchema,
-  type ProjectConfig,
-  type ProjectConfigJson,
+  CliConfigSchema,
+  toCliConfigJsonSchema,
+  type CliConfig,
+  type CliConfigJson,
 } from "./base.ts";
 export {
+  CliConfigParseError,
+  CliProjectEnvParseError,
   DuplicateRemoteProjectIdError,
   InvalidRemoteProjectIdError,
-  MissingProjectConfigValueError,
+  MissingCliConfigValueError,
   ProjectConfigParseError,
-  ProjectEnvParseError,
 } from "./errors.ts";
 export type { ConfigFormat } from "./config-format.ts";
 export {
-  type LoadedProjectConfig,
-  type LoadProjectConfigOptions,
-  type ProjectConfigValueOrigin,
-  type ProjectConfigValueSource,
-  type SaveProjectConfigOptions,
-  encodeProjectConfigToJson,
-  encodeProjectConfigToToml,
-  projectConfigValueSourceAt,
+  type LoadedCliConfig,
+  type LoadCliConfigOptions,
+  type CliConfigValueOrigin,
+  type CliConfigValueSource,
+  type SaveCliConfigOptions,
+  encodeCliConfigToJson,
+  encodeCliConfigToToml,
+  cliConfigValueSourceAt,
 } from "./config-document.ts";
 export {
   edgeFunctionDenoConfigFileName,
@@ -38,19 +39,36 @@ export {
   type ResolvedFunctionConfig,
 } from "./functions-manifest-model.ts";
 export type {
-  LoadProjectEnvironmentOptions,
-  ProjectEnvironment,
-  ResolvedProjectValue,
-  ResolveProjectOptions,
+  LoadCliProjectEnvironmentOptions,
+  CliProjectEnvironment,
+  ResolvedCliConfigValue,
+  ResolveCliConfigOptions,
 } from "./project.ts";
-export type { ProjectPaths } from "./paths.ts";
-export { PROJECT_CONFIG_SCHEMA_URL } from "./schema-metadata.ts";
+export type { CliProjectPaths } from "./paths.ts";
+export { CLI_CONFIG_SCHEMA_URL } from "./schema-metadata.ts";
 export {
-  type BaseProjectConfig,
-  type SparseProjectConfig,
-  getDefaultProjectConfig,
+  type EffectiveConfig,
+  type SparseCliConfig,
+  getDefaultCliConfig,
   omitDefaultValues,
-  subtractProjectConfig,
+  subtractCliConfig,
 } from "./sparse.ts";
 export { KONG_LOCAL_CA_CERT } from "./tls.ts";
 export { ENV_CAPTURE_REGEX } from "./lib/env.ts";
+export {
+  type CliConfigWithRawPresence,
+  type ProjectConfig,
+  type ReadonlyJsonValue,
+  type ToProjectConfigSource,
+  attachApiResponse,
+  comparableProjectConfigPaths,
+  fromApiProjectConfig,
+  fromConfigDocument,
+  isComparableProjectConfigPath,
+  toProjectConfig,
+  unmappedApiFields,
+} from "./project-config/project-config.ts";
+export { type ProjectConfigApiAttributes } from "./project-config/api-attributes.ts";
+export { type ProjectConfigMappingRow } from "./project-config/registry-row.ts";
+export { projectConfigMappingRows } from "./project-config/registry.ts";
+export { AUTH_HOOK_NAMES, unmappedSecretApiPaths } from "./project-config/registry-auth.ts";

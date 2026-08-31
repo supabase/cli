@@ -10,7 +10,7 @@ import {
   buildLegacyTestRuntime,
   LEGACY_DEFAULT_API_URL,
   LEGACY_VALID_REF,
-  mockLegacyCliConfig,
+  mockLegacyCliSettings,
   mockLegacyLinkedProjectCacheTracked,
   mockLegacyPlatformApi,
   mockLegacyTelemetryStateTracked,
@@ -148,12 +148,12 @@ function setup(opts: SetupOpts = {}) {
     },
   });
 
-  const cliConfig = mockLegacyCliConfig({ workdir: tempRoot.current });
+  const cliSettings = mockLegacyCliSettings({ workdir: tempRoot.current });
   const layer = Layer.mergeAll(
     buildLegacyTestRuntime({
       out,
       api: { layer: api.layer, httpClientLayer: api.httpClientLayer },
-      cliConfig,
+      cliSettings,
       telemetry: telemetry.layer,
       linkedProjectCache: cache.layer,
       analytics,
@@ -1170,7 +1170,7 @@ describe("legacy sso add integration", () => {
       // `sso add --type saml --domains --profile alternate.yml`: pflag hands
       // `--profile` to `--domains` and never marks profile changed, so viper
       // falls to SUPABASE_PROFILE — while the Effect parser read
-      // `alternate.yml` as the profile and built `LegacyCliConfig` from it.
+      // `alternate.yml` as the profile and built `LegacyCliSettings` from it.
       // Binary-verified (the demonstrated divergent input, PR #5974 round 7):
       // Go POSTs `{"domains":["--profile"],"type":"saml"}` to the env
       // profile's api_url; the parsed file's host receives nothing.
@@ -1302,7 +1302,7 @@ describe("legacy sso add integration", () => {
     () => {
       // When the scan and the parser saw the same token (every normal
       // invocation), the reconciliation resolves to `none` and the POST
-      // targets `LegacyCliConfig.apiUrl` — the layer already loaded exactly
+      // targets `LegacyCliSettings.apiUrl` — the layer already loaded exactly
       // the profile Go would.
       const agreed = writeProfileYaml("agreed.yml", "http://agreed.example");
       const restoreEnv = withProfileEnv(undefined);

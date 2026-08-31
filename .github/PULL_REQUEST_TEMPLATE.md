@@ -19,4 +19,4 @@ Closes #
 
 - [ ] The PR title follows [Conventional Commits](https://www.conventionalcommits.org/) (e.g. `fix(cli): …`).
 - [ ] Tests added or updated for the change.
-- [ ] `pnpm check:all` and `pnpm test` pass for the workspace(s) I touched.
+- [ ] From the repository root, `pnpm check:all` passes; relevant package tests pass for every touched workspace, and `pnpm types:check` passes for each touched TypeScript workspace (or workspace declaring it).

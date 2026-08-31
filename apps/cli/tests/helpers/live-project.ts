@@ -486,7 +486,7 @@ function cleanupDirectory(profilePath: string): Effect.Effect<void, Error, never
 
 function cleanupRemote(
   api: LiveApi,
-  environment: LiveProjectEnvironment,
+  environment: LiveCliProjectEnvironment,
 ): Effect.Effect<void, Error, never> {
   return keepLiveProject()
     ? Effect.sync(() => {
@@ -514,7 +514,7 @@ function combineCleanupExits(
     : Effect.fail(new AggregateError(errors, "Live cleanup failed"));
 }
 
-export interface LiveProjectEnvironment {
+export interface LiveCliProjectEnvironment {
   readonly project: {
     readonly ref: string;
     readonly dbUrl: string;
@@ -530,7 +530,7 @@ export interface LiveProjectEnvironment {
 /** Provision one project; the caller owns the outer Effect runtime boundary. */
 export function provisionLiveEnvironment(
   api: LiveApi,
-): Effect.Effect<LiveProjectEnvironment, Error, never> {
+): Effect.Effect<LiveCliProjectEnvironment, Error, never> {
   return Effect.gen(function* () {
     const password = databasePassword();
     const ref = yield* createProject(api, uniqueProjectName(), password);
@@ -553,7 +553,7 @@ export function provisionLiveEnvironment(
           storageBucket,
         },
         profilePath,
-      } satisfies LiveProjectEnvironment;
+      } satisfies LiveCliProjectEnvironment;
     });
     const setupExit = yield* Effect.exit(setup);
     if (Exit.isSuccess(setupExit)) return setupExit.value;
@@ -569,7 +569,7 @@ export function provisionLiveEnvironment(
 /** Delete the exact owned project and always remove its temporary profile. */
 export function cleanupLiveEnvironment(
   api: LiveApi,
-  environment: LiveProjectEnvironment,
+  environment: LiveCliProjectEnvironment,
 ): Effect.Effect<void, Error, never> {
   return Effect.gen(function* () {
     const [profileExit, projectExit] = yield* Effect.all(

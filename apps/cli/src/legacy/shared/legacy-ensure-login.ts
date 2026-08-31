@@ -1,7 +1,7 @@
 import { Effect, Option } from "effect";
 
 import { LegacyCredentials } from "../auth/legacy-credentials.service.ts";
-import { LegacyCliConfig } from "../config/legacy-cli-config.service.ts";
+import { LegacyCliSettings } from "../config/legacy-cli-settings.service.ts";
 import { LegacyTelemetryState } from "../telemetry/legacy-telemetry-state.service.ts";
 import type { NonInteractiveError } from "../../shared/output/errors.ts";
 import { Output } from "../../shared/output/output.service.ts";
@@ -42,9 +42,9 @@ export const legacyPostLoginTelemetry = Effect.fnUntraced(function* (token: stri
   const loginApi = yield* LegacyLoginApi;
   const telemetryState = yield* LegacyTelemetryState;
   const analytics = yield* Analytics;
-  const cliConfig = yield* LegacyCliConfig;
+  const cliSettings = yield* LegacyCliSettings;
 
-  const gotrueId = yield* loginApi.fetchGotrueId(cliConfig.apiUrl, token);
+  const gotrueId = yield* loginApi.fetchGotrueId(cliSettings.apiUrl, token);
   if (Option.isSome(gotrueId)) {
     yield* telemetryState.stitchLogin(gotrueId.value);
     yield* analytics
@@ -76,12 +76,12 @@ export const legacyBrowserLogin = Effect.fnUntraced(function* (opts: LegacyBrows
   const crypto = yield* LegacyLoginCrypto;
   const loginApi = yield* LegacyLoginApi;
   const credentials = yield* LegacyCredentials;
-  const cliConfig = yield* LegacyCliConfig;
+  const cliSettings = yield* LegacyCliSettings;
   const browser = yield* Browser;
   const tty = yield* Tty;
 
   const claudeHint = legacySuggestClaudePlugin({ stdoutIsTty: tty.stdoutIsTty });
-  const apiHost = cliConfig.apiUrl;
+  const apiHost = cliSettings.apiUrl;
 
   const { ecdh, publicKeyHex } = yield* crypto.generateKeyPair;
   const sessionId = yield* crypto.generateSessionId;
@@ -91,7 +91,7 @@ export const legacyBrowserLogin = Effect.fnUntraced(function* (opts: LegacyBrows
 
   // Go concatenates the query string without URL-encoding.
   const loginUrl =
-    `${legacyDashboardUrl(cliConfig.profile)}/cli/login` +
+    `${legacyDashboardUrl(cliSettings.profile)}/cli/login` +
     `?session_id=${sessionId}&token_name=${tokenName}&public_key=${publicKeyHex}`;
 
   // The banners are human-facing text — suppressed in json / stream-json so

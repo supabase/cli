@@ -78,15 +78,10 @@ const RETRYABLE_PULL_PATTERNS = [
   /i\/o timeout/i,
 ] as const;
 
-class PullAttemptError extends Error {
-  constructor(
-    readonly detail: string,
-    readonly daemonDown: boolean,
-  ) {
-    super(detail);
-    this.name = "PullAttemptError";
-  }
-}
+class PullAttemptError extends Data.TaggedError("PullAttemptError")<{
+  readonly detail: string;
+  readonly daemonDown: boolean;
+}> {}
 
 const pullRetrySchedule = Schedule.exponential(Duration.seconds(1)).pipe(
   Schedule.upTo({ times: 5 }),
@@ -225,11 +220,12 @@ export class StackPreparation extends Context.Service<
                   ? (publishEvent?.(new ServiceDownloadFinished({ service })) ?? Effect.void)
                   : Effect.void,
               );
-            const key = JSON.stringify({
+            const key = [
               service,
-              resolution,
-              containerRuntime: input.mode === "docker" ? input.containerRuntime : null,
-            });
+              resolution.type,
+              resolution.type === "docker" ? resolution.image : resolution.path,
+              input.mode === "docker" ? input.containerRuntime : "native",
+            ].join("\u0000");
             const existing = inFlight.get(key);
             if (existing !== undefined) return restore(Deferred.await(existing));
             const deferred = Deferred.makeUnsafe<ServiceResolution, StackPreparationError>();
@@ -333,15 +329,14 @@ const pullImage = (
         schedule: pullRetrySchedule,
       }),
       Effect.as(image),
-      Effect.catch((failure) =>
-        Effect.fail(
+      Effect.mapError(
+        (failure) =>
           new DockerPullError({
             image,
             detail: `Failed to pull canonical Docker image. ${failure.detail}`,
             cause: new Error(failure.detail),
             daemonDown: failure.daemonDown,
           }),
-        ),
       ),
     );
   });
@@ -366,13 +361,16 @@ const runPullCommand = (
         result.stderr.length > 0
           ? result.stderr
           : `${runtime} pull exited with code ${result.exitCode}`;
-      return yield* Effect.fail(new PullAttemptError(detail, isDockerDaemonDownMessage(detail)));
+      return yield* new PullAttemptError({
+        detail,
+        daemonDown: isDockerDaemonDownMessage(detail),
+      });
     }
     return result;
   }).pipe(
     Effect.scoped,
     Effect.catchTag("PlatformError", (error) =>
-      Effect.fail(new PullAttemptError(String(error), true)),
+      Effect.fail(new PullAttemptError({ detail: String(error), daemonDown: true })),
     ),
   );
 

@@ -46,7 +46,7 @@ import {
   mockTty,
 } from "../../../../../tests/helpers/mocks.ts";
 import {
-  mockLegacyCliConfig,
+  mockLegacyCliSettings,
   mockLegacyTelemetryStateTracked,
   legacySequentialExecBatch,
 } from "../../../../../tests/helpers/legacy-mocks.ts";
@@ -202,7 +202,7 @@ function setup(opts: SetupOpts = {}) {
     mockResolver(),
     connection.layer,
     docker.layer,
-    mockLegacyCliConfig({ workdir: "/work/project", projectId: Option.none() }),
+    mockLegacyCliSettings({ workdir: "/work/project", projectId: Option.none() }),
     runtimeInfoLayer,
     Layer.succeed(LegacyDebugFlag, false),
     Layer.succeed(LegacyNetworkIdFlag, Option.none()),

@@ -122,11 +122,13 @@ Important areas:
 - `src/shared/runtime/` for TTY, stdin, browser, Ink, and process-control services
 - `src/next/auth/` for login-related services
 
-The local stack commands use `@supabase/stack` for lifecycle, daemon transport, status, and logs.
-That stack layer now has an explicit preparation phase, so foreground and detached `start` flows
-can surface `Downloading` before normal runtime states. CLI-managed stacks use lazy service startup:
-direct listeners and Realtime start with the stack, while HTTP services activate on first proxied
-use. The package API itself keeps eager startup as its default.
+The local stack commands use `@supabase/stack` for lifecycle, status, logs, and runtime operations.
+Managed ownership uses stable loopback `GET /owner` and session-fenced `POST /stop`; same-version
+runtime calls use Effect RPC over framed NDJSON at `POST /rpc`. That stack layer now has an explicit
+preparation phase, so foreground and detached `start` flows can surface `Downloading` before normal
+runtime states. CLI-managed stacks use lazy service startup: direct listeners and Realtime start
+with the stack, while HTTP services activate on first proxied use. The package API itself keeps
+eager startup as its default.
 
 Useful companion docs:
 
@@ -135,18 +137,24 @@ Useful companion docs:
 
 ## Development
 
-From `apps/cli`:
+Repo-wide quality checks run from the repository root:
 
 ```sh
 pnpm check:all
 pnpm fix:all
+```
+
+Package-local checks and tests run from `apps/cli`:
+
+```sh
+pnpm types:check
 pnpm test
 ```
 
 Useful subsets:
 
 ```sh
-pnpm test:core                 # unit + integration (no binary required)
+pnpm run test:unit && pnpm run test:integration  # unit + integration (no binary required)
 pnpm test:legacy-integration   # legacy behavioral tests (requires SUPABASE_GO_BINARY — see CLAUDE.md)
 pnpm test:e2e                  # end-to-end subprocess tests
 ```

@@ -5,9 +5,9 @@
  * anomaly never fails the run except when the shadow does not come back after a cold export.
  */
 
-import { createHash } from "node:crypto";
+import { createHash, scryptSync } from "node:crypto";
 
-import type { ProjectConfig } from "@supabase/config";
+import type { CliConfig } from "@supabase/config";
 import {
   Clock,
   Effect,
@@ -143,10 +143,10 @@ export interface LegacyShadowCacheKeyInputs {
    * storage is enabled and `majorVersion >= 15`.
    */
   readonly storageTargetMigration: string;
-  readonly dbSettings: ProjectConfig["db"]["settings"];
+  readonly dbSettings: CliConfig["db"]["settings"];
   /**
-   * `api.auto_expose_new_tables` as config carries it. Hashed as the effective
-   * two-state behavior — see {@link legacyEffectiveShadowApiGrantsKept}.
+   * `api.auto_expose_new_tables` as config carries it (tri-state). Hashed as the
+   * effective two-state behavior — see {@link legacyEffectiveShadowApiGrantsKept}.
    */
   readonly autoExposeNewTables: Option.Option<boolean>;
   /**
@@ -223,19 +223,26 @@ function legacyCanonicalJson(value: unknown): string {
 
 /**
  * The two-state behavior `legacyApplyApiPrivileges` (`db-setup.ts`) actually derives from
- * `api.auto_expose_new_tables`' tri-state: it returns early ONLY for an explicit `true`, so unset
- * and explicit `false` both exec {@link LEGACY_START_REVOKE_API_PRIVILEGES_SQL} and bake the exact
- * same cluster. Hashing the raw tri-state would split those two into different keys and force a
- * spurious ~90MB re-snapshot for a config edit that changes nothing on disk.
+ * `api.auto_expose_new_tables`' tri-state: unset and explicit `true` both keep the grants and bake
+ * the exact same cluster; only an explicit `false` execs
+ * {@link LEGACY_START_REVOKE_API_PRIVILEGES_SQL}. Hashing the raw tri-state would split unset from
+ * `true` into different keys and force a spurious ~90MB re-snapshot for a config edit that changes
+ * nothing on disk.
  */
 const legacyEffectiveShadowApiGrantsKept = (value: Option.Option<boolean>): boolean =>
-  Option.getOrElse(value, () => false);
+  Option.getOrElse(value, () => true);
 
 /**
- * The cache key: a 16-hex-char (64-bit) sha256 prefix over a fixed field order. 64 bits is
+ * The cache key: a 16-hex-char (64-bit) scrypt prefix over a fixed field order. 64 bits is
  * ample for a per-settings global cache whose only cost of a collision would be a wrong baseline
  * — and every genuinely divergent input is in the payload, so a collision needs an actual hash
  * collision, not a missed field. Short enough to read in a filename.
+ *
+ * scrypt, not a fast hash: the payload embeds `jwt_secret`, `root_key`, `db_password`, and
+ * resolved vault values (excluding them would fingerprint the wrong PGDATA), and the key lands
+ * in filenames, where a fast hash invites offline brute-force toward those secrets
+ * (CodeQL js/insufficient-password-hash). The fixed salt is deliberate: the key must stay
+ * deterministic across runs, or the cache never hits.
  */
 export function legacyShadowCacheKey(inputs: LegacyShadowCacheKeyInputs): string {
   // JSON-encode unrestricted strings so a raw newline cannot forge the next payload line.
@@ -290,7 +297,7 @@ export function legacyShadowCacheKey(inputs: LegacyShadowCacheKeyInputs): string
   // Last, raw (it can contain anything, including newlines) — mirroring `setupInputsToken`,
   // which also appends `roles.sql` verbatim at the end of its own payload.
   const payload = `${lines.join("\n")}\nroles_sql=\n${inputs.rolesSql}`;
-  return createHash("sha256").update(payload, "utf8").digest("hex").slice(0, 16);
+  return scryptSync(payload, "supabase-shadow-cache-key", 32).toString("hex").slice(0, 16);
 }
 
 /**

@@ -134,7 +134,7 @@ function minimalAuthInput(overrides: Partial<LegacyAuthInput> = {}): LegacyAuthI
 
 // Moved from `legacy-local-config-values.unit.test.ts`: these describe blocks exercise checks
 // that now live entirely inside `legacyValidateResolvedConfig` and can be phrased as direct
-// calls with a hand-built `LegacyConfigValidationInput` — no `ProjectConfig`/schema decode, no
+// calls with a hand-built `LegacyConfigValidationInput` — no `CliConfig`/schema decode, no
 // env-override machinery, no file I/O, no `document` threading. Everything that still needs
 // one of those (value derivation, env-override mechanics, the 3 I/O checks' actual file reads)
 // stays in `legacy-local-config-values.unit.test.ts`.
@@ -1010,7 +1010,7 @@ describe("legacyValidateResolvedConfig", () => {
 
     it("throws Go's decode-time enum message for an invalid auth.captcha.provider, regardless of enabled", () => {
       // This scenario is only meaningful at this direct shared-validator level: it's
-      // unreachable through L's real ProjectConfig-typed flow — `@supabase/config`'s schema
+      // unreachable through L's real CliConfig-typed flow — `@supabase/config`'s schema
       // (packages/config/src/auth/captcha.ts, stringEnum(["hcaptcha", "turnstile"])) already
       // narrows `provider` to "hcaptcha" | "turnstile" | undefined before it ever reaches
       // `legacyResolveLocalConfigValues`, so an invalid provider value would fail schema

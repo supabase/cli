@@ -7,7 +7,7 @@ import {
   type ActiveBranch,
   type ProjectLinkStateValue,
 } from "./project-link-state.service.ts";
-import { ProjectHome } from "./project-home.service.ts";
+import { CliProjectHome } from "./cli-project-home.service.ts";
 
 const ProjectLinkStateValueFileSchema = Schema.fromJsonString(ProjectLinkStateValueSchema);
 const decodeProjectLinkStateValue = Schema.decodeUnknownEffect(ProjectLinkStateValueFileSchema);
@@ -26,7 +26,7 @@ function invalidProjectLinkStateError(filePath: string): InvalidProjectLinkState
 
 const makeProjectLinkState = Effect.gen(function* () {
   const fs = yield* FileSystem.FileSystem;
-  const projectHome = yield* ProjectHome;
+  const cliProjectHome = yield* CliProjectHome;
 
   const loadFromPath = (filePath: string) =>
     Effect.gen(function* () {
@@ -47,19 +47,19 @@ const makeProjectLinkState = Effect.gen(function* () {
     });
 
   const load = Effect.gen(function* () {
-    return yield* loadFromPath(projectHome.projectLinkPath);
+    return yield* loadFromPath(cliProjectHome.projectLinkPath);
   });
 
   const save = (state: ProjectLinkStateValue) =>
     Effect.gen(function* () {
-      yield* projectHome.ensureProjectHomeDir;
+      yield* cliProjectHome.ensureCliProjectHomeDir;
       const encoded = encodeProjectLinkStateValue(state);
-      yield* fs.writeFileString(projectHome.projectLinkPath, encodePrettyJson(encoded), {
+      yield* fs.writeFileString(cliProjectHome.projectLinkPath, encodePrettyJson(encoded), {
         mode: 0o600,
       });
     }).pipe(Effect.orDie);
 
-  const clear = fs.remove(projectHome.projectLinkPath).pipe(Effect.ignore, Effect.orDie);
+  const clear = fs.remove(cliProjectHome.projectLinkPath).pipe(Effect.ignore, Effect.orDie);
 
   const getActiveBranch = load.pipe(Effect.map(Option.map((state) => state.active_branch)));
 

@@ -1,20 +1,20 @@
 import { describe, expect, test } from "vitest";
 import { Schema } from "effect";
-import { ProjectConfigSchema } from "./base.ts";
-import { getDefaultProjectConfig, omitDefaultValues, subtractProjectConfig } from "./sparse.ts";
+import { CliConfigSchema } from "./base.ts";
+import { getDefaultCliConfig, omitDefaultValues, subtractCliConfig } from "./sparse.ts";
 
-const decodeProjectConfig = Schema.decodeUnknownSync(ProjectConfigSchema);
+const decodeCliConfig = Schema.decodeUnknownSync(CliConfigSchema);
 
-describe("getDefaultProjectConfig", () => {
+describe("getDefaultCliConfig", () => {
   test("all schema defaults are mutually valid", () => {
     // Decoding `{}` runs every business-rule check embedded in the schema, so
     // a future default that conflicts with another fails here, loudly, rather
     // than at import time in some consumer.
-    expect(() => getDefaultProjectConfig()).not.toThrow();
+    expect(() => getDefaultCliConfig()).not.toThrow();
   });
 
   test("materializes known schema defaults across sections", () => {
-    const defaults = getDefaultProjectConfig();
+    const defaults = getDefaultCliConfig();
     expect(defaults.api.port).toBe(54321);
     expect(defaults.api.schemas).toEqual(["public", "graphql_public"]);
     expect(defaults.db.port).toBe(54322);
@@ -26,13 +26,13 @@ describe("getDefaultProjectConfig", () => {
   });
 
   test("omits optional fields that carry no default", () => {
-    const defaults = getDefaultProjectConfig();
+    const defaults = getDefaultCliConfig();
     expect("project_id" in defaults).toBe(false);
     expect("external_url" in defaults.api).toBe(false);
   });
 
   test("is deeply frozen so mutation cannot poison the shared baseline", () => {
-    const defaults = getDefaultProjectConfig();
+    const defaults = getDefaultCliConfig();
     expect(Object.isFrozen(defaults)).toBe(true);
     expect(Object.isFrozen(defaults.api)).toBe(true);
     expect(Object.isFrozen(defaults.api.schemas)).toBe(true);
@@ -45,34 +45,34 @@ describe("getDefaultProjectConfig", () => {
 
 describe("omitDefaultValues", () => {
   test("a fully-default config subtracts to an empty overlay", () => {
-    expect(omitDefaultValues(getDefaultProjectConfig())).toEqual({});
-    expect(omitDefaultValues(decodeProjectConfig({}))).toEqual({});
+    expect(omitDefaultValues(getDefaultCliConfig())).toEqual({});
+    expect(omitDefaultValues(decodeCliConfig({}))).toEqual({});
   });
 
   test("keeps an overridden leaf and drops its default-valued siblings", () => {
-    const config = decodeProjectConfig({ api: { max_rows: 500 } });
+    const config = decodeCliConfig({ api: { max_rows: 500 } });
     expect(omitDefaultValues(config)).toEqual({ api: { max_rows: 500 } });
   });
 
   test("array comparison is order-sensitive", () => {
-    const reordered = decodeProjectConfig({ api: { schemas: ["graphql_public", "public"] } });
+    const reordered = decodeCliConfig({ api: { schemas: ["graphql_public", "public"] } });
     expect(omitDefaultValues(reordered)).toEqual({
       api: { schemas: ["graphql_public", "public"] },
     });
 
-    const exact = decodeProjectConfig({ api: { schemas: ["public", "graphql_public"] } });
+    const exact = decodeCliConfig({ api: { schemas: ["public", "graphql_public"] } });
     expect(omitDefaultValues(exact)).toEqual({});
   });
 
   test("sections emptied by subtraction disappear, cascading upward", () => {
     // `api.tls.enabled` defaults to `false`: the leaf is pruned, leaving
     // `tls: {}`, which is dropped, leaving `api: {}`, which is dropped.
-    const config = decodeProjectConfig({ api: { tls: { enabled: false } } });
+    const config = decodeCliConfig({ api: { tls: { enabled: false } } });
     expect(omitDefaultValues(config)).toEqual({});
   });
 
   test("optional fields with no default always survive when present", () => {
-    const config = decodeProjectConfig({
+    const config = decodeCliConfig({
       project_id: "my-project",
       api: { external_url: "https://api.example.com" },
     });
@@ -83,7 +83,7 @@ describe("omitDefaultValues", () => {
   });
 
   test("record entries absent from the defaults pass through whole", () => {
-    const config = decodeProjectConfig({ functions: { hello: { verify_jwt: false } } });
+    const config = decodeCliConfig({ functions: { hello: { verify_jwt: false } } });
     const sparse = omitDefaultValues(config);
     expect(sparse.functions).toEqual(config.functions);
   });
@@ -94,7 +94,7 @@ describe("omitDefaultValues", () => {
     // against global defaults would silently change the branch's effective
     // value. See ADR 0018: a remote block's baseline is the merged base
     // config, never the default config.
-    const config = decodeProjectConfig({
+    const config = decodeCliConfig({
       api: { max_rows: 500 },
       remotes: { staging: { project_id: "abcdefghijklmnopqrst", api: { max_rows: 1000 } } },
     });
@@ -110,7 +110,7 @@ describe("omitDefaultValues", () => {
     // `result[key] = value` assignment hit the legacy prototype setter and
     // silently drop the function from the sparse output.
     const raw: unknown = JSON.parse('{"functions": {"__proto__": {"verify_jwt": false}}}');
-    const sparse = omitDefaultValues(decodeProjectConfig(raw));
+    const sparse = omitDefaultValues(decodeCliConfig(raw));
     const functions = sparse.functions ?? {};
     expect(Object.hasOwn(functions, "__proto__")).toBe(true);
     const entry = Object.getOwnPropertyDescriptor(functions, "__proto__")?.value;
@@ -120,7 +120,7 @@ describe("omitDefaultValues", () => {
   });
 
   test("does not mutate its input", () => {
-    const config = decodeProjectConfig({
+    const config = decodeCliConfig({
       api: { max_rows: 500 },
       remotes: { staging: { project_id: "abcdefghijklmnopqrst" } },
     });
@@ -130,10 +130,10 @@ describe("omitDefaultValues", () => {
   });
 });
 
-describe("subtractProjectConfig", () => {
+describe("subtractCliConfig", () => {
   test("subtracting a config from itself yields an empty overlay", () => {
-    const config = decodeProjectConfig({ api: { max_rows: 500 } });
-    expect(subtractProjectConfig(config, config)).toEqual({});
+    const config = decodeCliConfig({ api: { max_rows: 500 } });
+    expect(subtractCliConfig(config, config)).toEqual({});
   });
 
   test("sparsifies a branch via its merged effective config, not the decoded block", () => {
@@ -145,13 +145,13 @@ describe("subtractProjectConfig", () => {
     // the overlay would wrongly pin the branch to the global default.
     const rawBase = { api: { max_rows: 500 }, db: { port: 54399 } };
     const rawRemote = { project_id: "abcdefghijklmnopqrst", api: { max_rows: 1000 } };
-    const base = decodeProjectConfig(rawBase);
-    const effectiveBranch = decodeProjectConfig({
+    const base = decodeCliConfig(rawBase);
+    const effectiveBranch = decodeCliConfig({
       ...rawBase,
       ...rawRemote,
       api: { ...rawBase.api, ...rawRemote.api },
     });
-    const overlay = subtractProjectConfig(effectiveBranch, base);
+    const overlay = subtractCliConfig(effectiveBranch, base);
     expect(overlay).toEqual({
       project_id: "abcdefghijklmnopqrst",
       api: { max_rows: 1000 },
@@ -165,8 +165,47 @@ describe("subtractProjectConfig", () => {
     // against the merged BASE config. `api.max_rows: 1000` equals the global
     // default but differs from the baseline's 500 — kept. `db.port: 54399`
     // differs from the global default but equals the baseline's — removed.
-    const baseline = decodeProjectConfig({ api: { max_rows: 500 }, db: { port: 54399 } });
-    const config = decodeProjectConfig({ api: { max_rows: 1000 }, db: { port: 54399 } });
-    expect(subtractProjectConfig(config, baseline)).toEqual({ api: { max_rows: 1000 } });
+    const baseline = decodeCliConfig({ api: { max_rows: 500 }, db: { port: 54399 } });
+    const config = decodeCliConfig({ api: { max_rows: 1000 }, db: { port: 54399 } });
+    expect(subtractCliConfig(config, baseline)).toEqual({ api: { max_rows: 1000 } });
+  });
+});
+
+describe("EffectiveConfig operand widening (CLI-2230)", () => {
+  // `EffectiveConfig` covers any deeply-partial operand, not just a decoded
+  // `CliConfig` — the hosted-subset `ProjectConfig` `toProjectConfig` produces
+  // (`./project-config/project-config.ts`) is one such operand, and is never
+  // a fully-materialized document. These pin the runtime behavior both
+  // helpers already had against genuinely sparse operands, not just against
+  // full decodes.
+
+  test("subtractCliConfig: equal sparse operands cancel out entirely", () => {
+    expect(subtractCliConfig({ api: { max_rows: 100 } }, { api: { max_rows: 100 } })).toEqual({});
+  });
+
+  test("subtractCliConfig: an empty value operand reports nothing, regardless of the baseline", () => {
+    expect(subtractCliConfig({}, { api: { max_rows: 100 }, db: { port: 54399 } })).toEqual({});
+  });
+
+  test("subtractCliConfig: a field absent from the baseline is kept verbatim", () => {
+    expect(subtractCliConfig({ api: { max_rows: 100 } }, {})).toEqual({ api: { max_rows: 100 } });
+  });
+
+  test("omitDefaultValues: a sparse value differing from schema defaults survives untouched", () => {
+    expect(omitDefaultValues({ api: { max_rows: 500 } })).toEqual({ api: { max_rows: 500 } });
+  });
+
+  test("omitDefaultValues: a sparse value equal to the schema default is subtracted away", () => {
+    const defaultMaxRows = getDefaultCliConfig().api.max_rows;
+    expect(omitDefaultValues({ api: { max_rows: defaultMaxRows } })).toEqual({});
+  });
+
+  test("omitDefaultValues: does not flood in default-valued siblings the sparse operand never mentioned", () => {
+    // Only the two keys actually present on the operand may appear on the
+    // result — a flooding implementation would additionally materialize
+    // every other `api.*` default (`port`, `schemas`, `db_schema`, …).
+    const sparse = omitDefaultValues({ api: { max_rows: 500, extra_search_path: [] } });
+    expect(sparse).toEqual({ api: { max_rows: 500, extra_search_path: [] } });
+    expect(Object.keys(sparse.api ?? {}).sort()).toEqual(["extra_search_path", "max_rows"]);
   });
 });

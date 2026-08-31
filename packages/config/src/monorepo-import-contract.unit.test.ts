@@ -16,11 +16,6 @@ import { fileURLToPath } from "node:url";
 // this package's `src/` — where those specifier strings legitimately appear
 // in test fixtures — out of the walk).
 //
-// Known limitation: Nx task caching means this only re-runs when
-// `packages/config` itself changes, not when some other workspace adds a
-// forbidden import. A workspace change that introduces a violation won't be
-// caught until something also touches `packages/config`.
-
 const srcDir = dirname(fileURLToPath(import.meta.url));
 const repoRoot = join(srcDir, "..", "..", "..");
 

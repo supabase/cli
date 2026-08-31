@@ -1,7 +1,7 @@
 import { mkdir } from "node:fs/promises";
-import { toProjectConfigJsonSchema } from "../src/base.ts";
+import { toCliConfigJsonSchema } from "../src/base.ts";
 
-const json = toProjectConfigJsonSchema();
+const json = toCliConfigJsonSchema();
 const schema = `${JSON.stringify(json, null, 2)}\n`;
 
 const formatter = Bun.spawn(["bun", "x", "oxfmt", "--stdin-filepath=./dist/schema.json"], {

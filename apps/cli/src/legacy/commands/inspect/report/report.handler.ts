@@ -5,7 +5,7 @@ import { LegacyDnsResolverFlag } from "../../../../shared/legacy/global-flags.ts
 import { Output } from "../../../../shared/output/output.service.ts";
 import { RuntimeInfo } from "../../../../shared/runtime/runtime-info.service.ts";
 import { Tty } from "../../../../shared/runtime/tty.service.ts";
-import { LegacyCliConfig } from "../../../config/legacy-cli-config.service.ts";
+import { LegacyCliSettings } from "../../../config/legacy-cli-settings.service.ts";
 import { legacyBold } from "../../../output/legacy-bold.ts";
 import { renderGlamourTable } from "../../../output/legacy-glamour-table.ts";
 import { LegacyDbConfigResolver } from "../../../shared/legacy-db-config.service.ts";
@@ -65,7 +65,7 @@ const legacyRunInspectReport = Effect.fnUntraced(function* (
   const output = yield* Output;
   const resolver = yield* LegacyDbConfigResolver;
   const dbConn = yield* LegacyDbConnection;
-  const cliConfig = yield* LegacyCliConfig;
+  const cliSettings = yield* LegacyCliSettings;
   const runtimeInfo = yield* RuntimeInfo;
   const tty = yield* Tty;
   const fs = yield* FileSystem.FileSystem;
@@ -90,7 +90,7 @@ const legacyRunInspectReport = Effect.fnUntraced(function* (
   // so a malformed `inspect.rules` config aborts before connecting or writing any
   // CSV files. They are applied later (in the summary rendering below), but
   // validated here up front.
-  const configRules = yield* legacyReadInspectRules(fs, path, cliConfig.workdir);
+  const configRules = yield* legacyReadInspectRules(fs, path, cliSettings.workdir);
 
   // `--linked` is the default, so absence of the others resolves to linked.
   const connType = target.connType ?? "linked";

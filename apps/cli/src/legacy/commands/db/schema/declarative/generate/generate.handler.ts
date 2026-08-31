@@ -8,7 +8,7 @@ import {
 import { legacyPromptYesNo } from "../../../../../../shared/legacy/legacy-prompt-yes-no.ts";
 import { Output } from "../../../../../../shared/output/output.service.ts";
 import { Tty } from "../../../../../../shared/runtime/tty.service.ts";
-import { LegacyCliConfig } from "../../../../../config/legacy-cli-config.service.ts";
+import { LegacyCliSettings } from "../../../../../config/legacy-cli-settings.service.ts";
 import { legacyBold } from "../../../../../shared/legacy-colors.ts";
 import { legacyReadProjectRefFile } from "../../../../../shared/legacy-temp-paths.ts";
 import {
@@ -58,7 +58,7 @@ export const legacyDbSchemaDeclarativeGenerate = Effect.fn("legacy.db.schema.dec
     const tty = yield* Tty;
     const fs = yield* FileSystem.FileSystem;
     const path = yield* Path.Path;
-    const cliConfig = yield* LegacyCliConfig;
+    const cliSettings = yield* LegacyCliSettings;
     const telemetryState = yield* LegacyTelemetryState;
     const linkedProjectCache = yield* LegacyLinkedProjectCache;
     const dnsResolver = yield* LegacyDnsResolverFlag;
@@ -69,7 +69,7 @@ export const legacyDbSchemaDeclarativeGenerate = Effect.fn("legacy.db.schema.dec
     // db_schema_declarative.go:73-78`, `pkg/config/config.go:789`). Load the project env
     // first and resolve against it, as `db reset` does for its own experimental gate, so a
     // `SUPABASE_EXPERIMENTAL` set only in `supabase/.env` opens the gate too.
-    const projectEnv = yield* legacyLoadProjectEnv(fs, path, cliConfig.workdir);
+    const projectEnv = yield* legacyLoadProjectEnv(fs, path, cliSettings.workdir);
     const experimental = yield* legacyResolveExperimentalWithProjectEnv(projectEnv);
     // `--yes` OR `SUPABASE_YES` (shell env or project `.env`): Go's prompts here
     // read `viper.GetBool("YES")` after `loadNestedEnv`, so the env var must
@@ -81,7 +81,7 @@ export const legacyDbSchemaDeclarativeGenerate = Effect.fn("legacy.db.schema.dec
     let linkedProjectRef: string | undefined;
 
     yield* Effect.gen(function* () {
-      const baseToml = yield* legacyReadDbToml(fs, path, cliConfig.workdir);
+      const baseToml = yield* legacyReadDbToml(fs, path, cliSettings.workdir);
       // Gate before the mutex check below — order matters; see
       // legacyRequirePgDelta's doc comment for why. The pg-delta gate also runs on
       // the BASE config: Go's declarative `PersistentPreRunE` gates before the root
@@ -123,12 +123,12 @@ export const legacyDbSchemaDeclarativeGenerate = Effect.fn("legacy.db.schema.dec
       // remote-merged config, matching Go's `Generate`) and into the post-run
       // linked-project cache finalizer below.
       if (Option.isSome(flags.linked)) {
-        const linkedRef = Option.isSome(cliConfig.projectId)
-          ? cliConfig.projectId
-          : yield* legacyReadProjectRefFile(fs, path, cliConfig.workdir);
+        const linkedRef = Option.isSome(cliSettings.projectId)
+          ? cliSettings.projectId
+          : yield* legacyReadProjectRefFile(fs, path, cliSettings.workdir);
         if (Option.isSome(linkedRef)) {
           linkedProjectRef = linkedRef.value;
-          toml = yield* legacyReadDbToml(fs, path, cliConfig.workdir, linkedRef.value);
+          toml = yield* legacyReadDbToml(fs, path, cliSettings.workdir, linkedRef.value);
         }
       }
 
@@ -139,7 +139,7 @@ export const legacyDbSchemaDeclarativeGenerate = Effect.fn("legacy.db.schema.dec
       const declarativeDirRel = Option.getOrElse(flags.outputDir, () =>
         legacyResolveDeclarativeDir(path, toml.pgDelta),
       );
-      const workdir = path.resolve(cliConfig.workdir);
+      const workdir = path.resolve(cliSettings.workdir);
       const declarativeDir = path.resolve(workdir, declarativeDirRel);
       const workdirFromOutput = path.relative(declarativeDir, workdir);
       const outputContainsWorkdir =
@@ -155,21 +155,25 @@ export const legacyDbSchemaDeclarativeGenerate = Effect.fn("legacy.db.schema.dec
           }),
         );
       }
-      yield* legacyWarnFormerDeclarativeDefault(fs, path, cliConfig.workdir, toml.pgDelta);
-      const migrationsDir = path.join(cliConfig.workdir, "supabase", "migrations");
+      yield* legacyWarnFormerDeclarativeDefault(fs, path, cliSettings.workdir, toml.pgDelta);
+      const migrationsDir = path.join(cliSettings.workdir, "supabase", "migrations");
       const local: LegacyLocalConn = { port: toml.port, password: toml.password };
 
       const run: LegacyDeclarativeRunContext = {
         pgDelta: {
           // `legacyResolvePgDeltaProjectId` mirrors Go's `Config.ProjectId` singleton
           // (`SUPABASE_PROJECT_ID` env → config.toml's `project_id` → sanitized workdir
-          // basename) — NOT `cliConfig.projectId` alone, which is env-only and resolves to
+          // basename) — NOT `cliSettings.projectId` alone, which is env-only and resolves to
           // `""` for a project relying on config.toml's `project_id` or the workdir-basename
           // default, mounting the WRONG `supabase_edge_runtime_` Deno-cache volume. `toml`
           // reflects any `--linked` remote merge above, so its own `appliedRemote`/`projectId`
           // suppress a conflicting ambient env var the same way `db diff`/`db pull` do.
-          projectId: legacyResolvePgDeltaProjectId(cliConfig.projectId, toml, cliConfig.workdir),
-          cwd: cliConfig.workdir,
+          projectId: legacyResolvePgDeltaProjectId(
+            cliSettings.projectId,
+            toml,
+            cliSettings.workdir,
+          ),
+          cwd: cliSettings.workdir,
           npmVersion: Option.getOrUndefined(toml.pgDelta.npmVersion),
           // Merged config's deno_version (re-loaded with the linked ref above on
           // `--linked`), so pg-delta runs under the remote-configured Deno image.
@@ -253,9 +257,9 @@ export const legacyDbSchemaDeclarativeGenerate = Effect.fn("legacy.db.schema.dec
           // ignoring read/validation errors and proceeding with local/custom. So swallow
           // a broken `.temp/project-ref` here (omit the linked choice) rather than
           // aborting; the explicit `--linked` branch above keeps propagating (hard path).
-          linkedRef = Option.isSome(cliConfig.projectId)
-            ? cliConfig.projectId
-            : yield* legacyReadProjectRefFile(fs, path, cliConfig.workdir).pipe(
+          linkedRef = Option.isSome(cliSettings.projectId)
+            ? cliSettings.projectId
+            : yield* legacyReadProjectRefFile(fs, path, cliSettings.workdir).pipe(
                 Effect.orElseSucceed(() => Option.none<string>()),
               );
           if (Option.isSome(linkedRef)) {
@@ -268,7 +272,7 @@ export const legacyDbSchemaDeclarativeGenerate = Effect.fn("legacy.db.schema.dec
           hasMigrations,
           fs,
           path,
-          cliConfig.workdir,
+          cliSettings.workdir,
           linkedRef,
           (yield* LegacyDeclarativeSeam).ensureLocalPostgresImageCurrent(),
         );

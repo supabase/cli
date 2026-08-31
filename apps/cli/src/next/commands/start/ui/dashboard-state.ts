@@ -1,4 +1,4 @@
-import { Effect, Layer, Context, Stream, SubscriptionRef } from "effect";
+import { Cause, Context, Effect, Layer, Stream, SubscriptionRef } from "effect";
 import type { StackServiceState, StackInfo } from "@supabase/stack/effect";
 import { Stack } from "@supabase/stack/effect";
 
@@ -27,21 +27,37 @@ export class StartDashboardState extends Context.Service<
     Effect.gen(function* () {
       const stack = yield* Stack;
 
-      const info = yield* stack.getInfo();
-      const initialStates = yield* stack.getAllStates();
+      const info = yield* stack.getInfo;
+      const initialStates = yield* stack.getAllStates;
       const stackInfoRef = yield* SubscriptionRef.make<StackInfo | null>(info);
       const serviceStatesRef =
         yield* SubscriptionRef.make<ReadonlyArray<StackServiceState>>(initialStates);
       const phaseRef = yield* SubscriptionRef.make<StartPhase>("starting");
       const errorRef = yield* SubscriptionRef.make<string | null>(null);
+      const markStopping = SubscriptionRef.set(errorRef, null).pipe(
+        Effect.andThen(SubscriptionRef.set(phaseRef, "stopping")),
+      );
 
-      yield* stack.allStateChanges().pipe(
+      yield* stack.allStateChanges.pipe(
         Stream.runForEach((state) =>
           SubscriptionRef.update(serviceStatesRef, (current) =>
             updateServiceStates(current, state),
           ),
         ),
-        Effect.ignore,
+        // A completed state stream means the remote/local stack has shut down
+        // normally. Keep that terminal transition distinct from an actual
+        // stream failure so the dashboard does not render a raw transport
+        // cause as a startup error.
+        Effect.andThen(markStopping),
+        Effect.catchTag("StackUnavailableError", (error) =>
+          error.phase === "stopping" ? markStopping : Effect.fail(error),
+        ),
+        Effect.catch((error) =>
+          Effect.all([
+            SubscriptionRef.set(errorRef, Cause.pretty(Cause.fail(error))),
+            SubscriptionRef.set(phaseRef, "failed"),
+          ]).pipe(Effect.asVoid),
+        ),
         Effect.forkScoped({ startImmediately: true }),
       );
 

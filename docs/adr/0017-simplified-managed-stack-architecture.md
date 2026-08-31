@@ -19,13 +19,13 @@ registry, or compatibility facade. Storage and lifecycle decisions stay in the
 manager; platform entrypoints only provide filesystem, path, process, HTTP,
 and control-transport services.
 
-Launch updates use the existing owner control route (`POST /managed/launch`).
-An attached caller asks the owner to update launch metadata; a caller with
-owned control updates the document directly. Stop acquires control first,
+Launch updates use same-version Effect RPC through the supervisor. An attached
+caller asks that supervisor to update launch metadata; a caller with owned
+maintenance control updates the document directly. Stop acquires control first,
 waits for the persisted `stopped` lifecycle, and handles a stale owner with
-deterministic cleanup keyed by stack id. Delete also requires owned control;
-stale running or failed documents are reconciled and cleaned before removal,
-while a live owner is never deleted underneath.
+deterministic cleanup keyed by stack id. Delete also requires a maintenance
+lease; stale running or failed documents are reconciled and cleaned before
+removal, while a live owner is never deleted underneath.
 
 Every managed document records one concrete launch selection. Native launch
 state has `mode: "native"`; container launch state has `mode: "docker"` and
@@ -43,6 +43,14 @@ stack id into the reserved loopback range `127.0.0.1:10000..32767`. This is
 pragmatic single-user localhost coordination, not a hostile multi-user security
 boundary. We are not adding control tokens until the threat model or a real
 collision rate justifies more protocol and persistence machinery.
+
+The stable owner protocol is an exhaustive supervisor/maintenance union.
+Supervisors publish lifecycle, readiness, and immutable CLI version identity;
+maintenance leases publish only their operation and cannot serve runtime RPC or
+be replaced as an incompatible daemon. Session-fenced stop requests carry
+explicit or replacement intent. The supervisor's queue serializes shutdown,
+persists an explicit stop before listener release, and leaves replacement stops
+eligible for the one authorized CLI-upgrade start.
 
 ## Why this replaces ADR-0015
 
