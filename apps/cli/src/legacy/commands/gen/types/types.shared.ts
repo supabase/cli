@@ -1,5 +1,6 @@
 import { Effect } from "effect";
-import { dockerfileServiceImage } from "../../../../shared/services/dockerfile-images.ts";
+import { dockerfileServiceImageRaw } from "../../../../shared/services/dockerfile-images.ts";
+import { slimImageForCurrentPin } from "../../../../shared/services/slim-images.ts";
 import { legacyGetRegistryImageUrl } from "../../../shared/legacy-docker-registry.ts";
 import {
   LegacyInvalidGenTypesDatabaseUrlError,
@@ -140,23 +141,12 @@ export function buildPostgresUrl(input: {
 }
 
 export function resolvePgmetaImage(versionOverride?: string) {
-  const defaultImage = dockerfileServiceImage("pgmeta");
-  if (versionOverride === undefined || versionOverride.trim().length === 0) {
-    return legacyGetRegistryImageUrl(defaultImage);
-  }
-  return legacyGetRegistryImageUrl(
-    replaceImageTag(defaultImage, `v${versionOverride.trim().replace(/^v/i, "")}`),
-  );
+  const raw = dockerfileServiceImageRaw("pgmeta");
+  const trimmed = versionOverride?.trim() ?? "";
+  const pin = trimmed.length > 0 ? `v${trimmed.replace(/^v/i, "")}` : undefined;
+  return legacyGetRegistryImageUrl(slimImageForCurrentPin("pgmeta", raw, pin));
 }
 
 export function legacyRootCaBundle() {
   return `${caStaging2021}${caProd2021}${caProd2025}`;
-}
-
-function replaceImageTag(image: string, tag: string): string {
-  const tagSeparator = image.lastIndexOf(":");
-  if (tagSeparator === -1) {
-    return image;
-  }
-  return `${image.slice(0, tagSeparator + 1)}${tag}`;
 }

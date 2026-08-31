@@ -18,10 +18,10 @@ import { legacyDescribeContainerCliFailure } from "../../legacy/shared/legacy-co
 import { legacyViperEnvStringWithProjectFallback } from "../legacy/legacy-viper-env.ts";
 import {
   buildFunctionsDockerRunArgs,
+  edgeRuntimeCacheVolume,
   ensureDockerNamedVolume,
   ensureDockerNetwork,
   isDockerRunning,
-  localDockerId,
   resolveDockerNetworkMode,
   resolveEdgeRuntimeVersion,
   resolveFunctionsDockerImage,
@@ -1065,6 +1065,7 @@ const downloadWithDockerUnbundle = Effect.fnUntraced(function* (
   const { projectId, denoVersion, image, projectEnvValues } = edgeRuntimeImage;
   const functionsDir = resolve(dependencies.projectRoot, "supabase", "functions");
   const hostEszipPath = resolve(eszipPath);
+  const cacheVolume = edgeRuntimeCacheVolume(projectId);
   const dockerEszipPath = posix.join(DOCKER_ESZIP_DIR, eszipFileName);
   const dockerOutputPath = posix.join(DOCKER_DENO_DIR, slug);
 
@@ -1091,7 +1092,7 @@ const downloadWithDockerUnbundle = Effect.fnUntraced(function* (
     yield* ensureDockerNetwork(networkMode, projectId).pipe(
       Effect.mapError(withLegacyBundleSuggestion(slug, styleAqua)),
     );
-    yield* ensureDockerNamedVolume(localDockerId("edge_runtime", projectId), projectId).pipe(
+    yield* ensureDockerNamedVolume(cacheVolume.name, projectId).pipe(
       Effect.mapError(withLegacyBundleSuggestion(slug, styleAqua)),
     );
 
@@ -1103,19 +1104,17 @@ const downloadWithDockerUnbundle = Effect.fnUntraced(function* (
     // environment doesn't allow, same carve-out as `deploy.ts`'s
     // `buildDockerBinds`.
     const binds = [
-      ...(process.env["BITBUCKET_CLONE_DIR"] === undefined
-        ? [`${localDockerId("edge_runtime", projectId)}:/root/.cache/deno:rw`]
-        : []),
+      ...(process.env["BITBUCKET_CLONE_DIR"] === undefined ? [cacheVolume.bind] : []),
       `${hostEszipPath}:${dockerEszipPath}:ro`,
       `${functionsDir}:${DOCKER_DENO_DIR}:rw`,
     ];
-    const command = buildFunctionsDockerRunArgs({
+    const spec = {
       image,
       projectId,
       networkMode,
       binds,
       containerArgs: ["unbundle", "--eszip", dockerEszipPath, "--output", dockerOutputPath],
-    });
+    };
 
     // Go pipes the container's stdout/stderr straight to `os.Stdout`/`getErrorLogger()`
     // while the container runs (`DockerRunOnceWithConfig`, copied live via the
@@ -1125,7 +1124,7 @@ const downloadWithDockerUnbundle = Effect.fnUntraced(function* (
     // (`download.go:279`); machine-output modes must keep stdout
     // payload-only (CLI-1546), so this mirrors `deploy.ts`'s own
     // `bundleFunctionWithDocker` routing.
-    const result = yield* runChildProcess("docker", command, {
+    const result = yield* runChildProcess("docker", buildFunctionsDockerRunArgs(spec), {
       stdout: "pipe",
       stderr: "pipe",
       onStdout: (chunk) => output.raw(chunk, output.format === "text" ? "stdout" : "stderr"),
@@ -1159,7 +1158,6 @@ const downloadWithDockerUnbundle = Effect.fnUntraced(function* (
         }),
       );
     }
-
     // Go: `downloadWithDockerUnbundle` has no final "Downloaded Function ..."
     // print, unlike `RunLegacy`/`downloadWithServerSideUnbundle` — its only
     // stdout/stderr text is "Downloading function: ..." above plus whatever

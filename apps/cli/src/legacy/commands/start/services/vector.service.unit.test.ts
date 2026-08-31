@@ -1,4 +1,5 @@
 import { describe, expect, it, test } from "@effect/vitest";
+import { afterEach, vi } from "vitest";
 import { Deferred, Effect, Sink, Stream } from "effect";
 import { ChildProcessSpawner } from "effect/unstable/process";
 
@@ -14,6 +15,10 @@ import {
   type LegacyVectorContainerSpecInput,
   type LegacyVectorDockerSocketPlan,
 } from "./vector.service.ts";
+
+afterEach(() => {
+  vi.unstubAllEnvs();
+});
 
 /** Matches the standing `mockSpawner` shape in `image-prepull.unit.test.ts`. */
 function mockSpawner(
@@ -294,6 +299,26 @@ describe("legacyBuildVectorContainerSpec", () => {
     const script = String(spec.cmd?.[1]);
     expect(script).toContain('"supabase_vector_proj"');
     expect(script).toContain('.appname == "supabase_kong_proj"');
+  });
+
+  test("slim image waits on Logflare with BusyBox wget flags", () => {
+    vi.stubEnv("SUPABASE_USE_SLIM_IMAGES", "1");
+    const spec = legacyBuildVectorContainerSpec({
+      ...base,
+      image: "ghcr.io/supabase/cli/vector:0.53.0",
+    });
+    expect(spec.entrypoint).toBe("sh");
+    expect(spec.secretFiles).toBeUndefined();
+    expect(String(spec.cmd?.[1])).toContain(
+      "until wget -q -T 2 --spider http://supabase_analytics_proj:4000/health",
+    );
+    expect(spec.healthcheck?.test).toEqual([
+      "CMD",
+      "wget",
+      "-q",
+      "--spider",
+      "http://127.0.0.1:9001/health",
+    ]);
   });
 });
 

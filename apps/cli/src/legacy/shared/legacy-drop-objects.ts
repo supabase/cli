@@ -7,7 +7,7 @@ import {
 } from "../../shared/telemetry/error-actionability.ts";
 import type { LegacyDbSession } from "./legacy-db-connection.service.ts";
 
-/** Dropping the user schemas failed (`DropUserSchemas` error). */
+/** Dropping the user-created database objects failed. */
 export class LegacyMigrationDropError extends Data.TaggedError("LegacyMigrationDropError")<{
   readonly message: string;
 }> {
@@ -17,19 +17,23 @@ export class LegacyMigrationDropError extends Data.TaggedError("LegacyMigrationD
 }
 
 /**
- * The embedded `DO $$ ... $$` block from `pkg/migration/queries/drop.sql`,
- * bundled verbatim. `migration.DropUserSchemas` runs this single statement to
- * drop every user-created schema/extension/object in `public` and truncate the
- * managed `auth` / `supabase_functions` / `supabase_migrations` tables.
+ * A single PL/pgSQL `DO` block that drops user schemas, non-managed
+ * extensions, and `public`-schema objects, drops every RLS policy and every
+ * non-Supabase publication database-wide (not just in `public`), then
+ * truncates the managed `auth` / `supabase_functions` / `supabase_migrations`
+ * tables. The schema loop anti-joins `pg_depend` scoped by `classid` to
+ * `pg_namespace` rows so an oid collision with another catalog cannot hide a
+ * user schema (supabase/cli#6375). Shared by `migration down` and `db reset`
+ * (`legacy-drop-schemas.ts`).
  */
-const LEGACY_DROP_OBJECTS_SQL = `do $$ declare
+export const legacyDropObjectsSql = `do $$ declare
   rec record;
 begin
   -- schemas
   for rec in
     select pn.*
-    from pg_namespace pn
-    left join pg_depend pd on pd.objid = pn.oid
+    from pg_catalog.pg_namespace pn
+    left join pg_catalog.pg_depend pd on pd.objid = pn.oid and pd.classid = 'pg_catalog.pg_namespace'::regclass
     where pd.deptype is null
       and not pn.nspname like any(array['information\\_schema', 'pg\\_%', '\\_analytics', '\\_realtime', '\\_supavisor', 'pgbouncer', 'pgmq', 'pgsodium', 'pgtle', 'supabase\\_migrations', 'vault', 'extensions', 'public'])
       and pn.nspowner::regrole::text != 'supabase_admin'
@@ -161,11 +165,10 @@ end $$;
 `;
 
 /**
- * Drops every user-created object, matching `migration.DropUserSchemas`:
- * one batched DO-block statement (a single
+ * Drops every user-created object as one DO-block statement (a single
  * statement is atomic in Postgres, so no explicit transaction is needed).
  */
 export const legacyDropUserSchemas = (session: LegacyDbSession) =>
   session
-    .exec(LEGACY_DROP_OBJECTS_SQL)
+    .exec(legacyDropObjectsSql)
     .pipe(Effect.mapError((cause) => new LegacyMigrationDropError({ message: cause.message })));

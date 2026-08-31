@@ -1,4 +1,4 @@
-import { describe, expect, test } from "vitest";
+import { afterEach, describe, expect, test, vi } from "vitest";
 
 import {
   legacyAppendStorageVectorEnv,
@@ -7,6 +7,10 @@ import {
   type LegacyStorageContainerSpecInput,
   type LegacyStorageEnvInput,
 } from "./storage.service.ts";
+
+afterEach(() => {
+  vi.unstubAllEnvs();
+});
 
 const baseEnvInput: LegacyStorageEnvInput = {
   targetMigration: "",
@@ -84,6 +88,7 @@ describe("legacyBuildStorageEnv", () => {
 
       const enabled = legacyBuildStorageEnv({ ...baseEnvInput, imageTransformationEnabled: true });
       expect(enabled["ENABLE_IMAGE_TRANSFORMATION"]).toBe("true");
+      expect(enabled["IMAGE_TRANSFORMATION_ENABLED"]).toBe("true");
     });
 
     test("IMGPROXY_URL always points at the imgproxy container regardless of the gate", () => {
@@ -224,6 +229,21 @@ describe("legacyBuildStorageContainerSpec", () => {
     });
   });
 
+  test("uses BusyBox wget flags on a slim storage image", () => {
+    vi.stubEnv("SUPABASE_USE_SLIM_IMAGES", "1");
+    const spec = legacyBuildStorageContainerSpec({
+      ...input,
+      image: "ghcr.io/supabase/cli/storage:v1.72.1",
+    });
+    expect(spec.healthcheck?.test).toEqual([
+      "CMD",
+      "wget",
+      "-q",
+      "--spider",
+      "http://127.0.0.1:5000/status",
+    ]);
+  });
+
   test("network alias is 'storage'", () => {
     const spec = legacyBuildStorageContainerSpec(input);
     expect(spec.networkAliases).toEqual(["storage"]);
@@ -238,12 +258,14 @@ describe("legacyBuildStorageContainerSpec", () => {
       imageTransformationEnabled: true,
     });
     expect(withImgproxy.env["ENABLE_IMAGE_TRANSFORMATION"]).toBe("true");
+    expect(withImgproxy.env["IMAGE_TRANSFORMATION_ENABLED"]).toBe("true");
 
     const withoutImgproxy = legacyBuildStorageContainerSpec({
       ...input,
       imageTransformationEnabled: false,
     });
     expect(withoutImgproxy.env["ENABLE_IMAGE_TRANSFORMATION"]).toBe("false");
+    expect(withoutImgproxy.env["IMAGE_TRANSFORMATION_ENABLED"]).toBe("false");
   });
 
   test("propagates the vector-buckets flag through to the container env", () => {
