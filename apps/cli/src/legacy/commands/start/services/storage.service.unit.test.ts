@@ -84,6 +84,7 @@ describe("legacyBuildStorageEnv", () => {
 
       const enabled = legacyBuildStorageEnv({ ...baseEnvInput, imageTransformationEnabled: true });
       expect(enabled["ENABLE_IMAGE_TRANSFORMATION"]).toBe("true");
+      expect(enabled["IMAGE_TRANSFORMATION_ENABLED"]).toBe("true");
     });
 
     test("IMGPROXY_URL always points at the imgproxy container regardless of the gate", () => {
@@ -238,12 +239,14 @@ describe("legacyBuildStorageContainerSpec", () => {
       imageTransformationEnabled: true,
     });
     expect(withImgproxy.env["ENABLE_IMAGE_TRANSFORMATION"]).toBe("true");
+    expect(withImgproxy.env["IMAGE_TRANSFORMATION_ENABLED"]).toBe("true");
 
     const withoutImgproxy = legacyBuildStorageContainerSpec({
       ...input,
       imageTransformationEnabled: false,
     });
     expect(withoutImgproxy.env["ENABLE_IMAGE_TRANSFORMATION"]).toBe("false");
+    expect(withoutImgproxy.env["IMAGE_TRANSFORMATION_ENABLED"]).toBe("false");
   });
 
   test("propagates the vector-buckets flag through to the container env", () => {

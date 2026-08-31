@@ -43,14 +43,7 @@ const PULL_ALIASES = [
 ] as const;
 
 function latestImagesToPull(): ReadonlyArray<string> {
-  const images = new Set<string>();
-  for (const alias of PULL_ALIASES) {
-    const raw = dockerfileServiceImageRaw(alias);
-    images.add(raw);
-    const slim = toSlimImage(alias, raw);
-    if (slim.startsWith("ghcr.io/supabase/cli/")) images.add(slim);
-  }
-  return [...images];
+  return PULL_ALIASES.map((alias) => toSlimImage(alias, dockerfileServiceImageRaw(alias)));
 }
 
 function readSectionPort(config: string, section: string): number {

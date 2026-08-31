@@ -56,6 +56,16 @@ function compareSemver(a: string, b: string): number {
   return 0;
 }
 
+export interface LegacyResolvedDbImage {
+  /** Pull/create reference — slim-translated when the flag is on and the pin is current. */
+  readonly image: string;
+  /**
+   * Unprefixed docker.io / OrioleDB / 13–15 identity for version-compare.
+   * Never `ghcr.io/...` — {@link legacyPostgresImageVersionTag} splits on the first `:`.
+   */
+  readonly configImage: string;
+}
+
 /**
  * Resolve the Postgres image for `majorVersion`, honoring the pinned version
  * written by `supabase start` to `supabase/.temp/postgres-version` (Go reads
@@ -77,9 +87,11 @@ export const legacyResolveDbImage = Effect.fnUntraced(function* (
     orioledbVersion.length > 0 &&
     (majorVersion === 15 || majorVersion === 17)
   ) {
-    return versionCompare(orioledbVersion, "15.1.1.13") > 0
-      ? `supabase/postgres:${orioledbVersion}-orioledb`
-      : `supabase/postgres:orioledb-${orioledbVersion}`;
+    const image =
+      versionCompare(orioledbVersion, "15.1.1.13") > 0
+        ? `supabase/postgres:${orioledbVersion}-orioledb`
+        : `supabase/postgres:orioledb-${orioledbVersion}`;
+    return { image, configImage: image };
   }
   const usedFallback = majorVersion === 13 || majorVersion === 14 || majorVersion === 15;
   let image = usedFallback ? (majorVersion === 14 ? LEGACY_PG14 : LEGACY_PG15) : legacyPgImageRaw();
@@ -101,7 +113,12 @@ export const legacyResolveDbImage = Effect.fnUntraced(function* (
   }
   // 13/14/15 fallbacks have no slim build. Historical PG17 pins stay docker.io.
   if (usedFallback) {
-    return image;
+    return { image, configImage: image };
   }
-  return slimImageForCurrentPin("pg", legacyPgImageRaw(), appliedPin);
+  const configImage =
+    appliedPin !== undefined ? replaceImageTag(legacyPgImageRaw(), appliedPin) : legacyPgImageRaw();
+  return {
+    image: slimImageForCurrentPin("pg", legacyPgImageRaw(), appliedPin),
+    configImage,
+  };
 });

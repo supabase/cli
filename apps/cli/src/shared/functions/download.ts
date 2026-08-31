@@ -48,7 +48,7 @@ const legacyEntrypointPath = "file:///src/index.ts";
 // — fixed container-side paths for the docker-unbundle path, unrelated to
 // deploy's `toDockerPath` host-mirroring scheme.
 const DOCKER_DENO_DIR = "/home/deno";
-const dockerIoEszipDir = "/root/eszips";
+const DOCKER_ESZIP_DIR = "/root/eszips";
 
 export interface DownloadFunctionsOptions {
   readonly functionName: Option.Option<string>;
@@ -1066,7 +1066,7 @@ const downloadWithDockerUnbundle = Effect.fnUntraced(function* (
   const functionsDir = resolve(dependencies.projectRoot, "supabase", "functions");
   const hostEszipPath = resolve(eszipPath);
   const cacheVolume = edgeRuntimeCacheVolume(projectId);
-  const dockerEszipPath = posix.join(dockerIoEszipDir, eszipFileName);
+  const dockerEszipPath = posix.join(DOCKER_ESZIP_DIR, eszipFileName);
   const dockerOutputPath = posix.join(DOCKER_DENO_DIR, slug);
 
   // Go: `viper.GetString("network-id")` else `NetId` (`docker.go:379-383`) —
@@ -1124,50 +1124,45 @@ const downloadWithDockerUnbundle = Effect.fnUntraced(function* (
     // (`download.go:279`); machine-output modes must keep stdout
     // payload-only (CLI-1546), so this mirrors `deploy.ts`'s own
     // `bundleFunctionWithDocker` routing.
-    const runUnbundleContainer = (command: ReadonlyArray<string>) =>
-      Effect.gen(function* () {
-        const result = yield* runChildProcess("docker", [...command], {
-          stdout: "pipe",
-          stderr: "pipe",
-          onStdout: (chunk) => output.raw(chunk, output.format === "text" ? "stdout" : "stderr"),
-          onStderr: (chunk) => output.raw(chunk, "stderr"),
-        }).pipe(
-          Effect.mapError(
-            withDockerStepFailure(
-              "failed to run the edge-runtime unbundle container",
-              slug,
-              styleAqua,
-            ),
-          ),
-        );
+    const result = yield* runChildProcess("docker", buildFunctionsDockerRunArgs(spec), {
+      stdout: "pipe",
+      stderr: "pipe",
+      onStdout: (chunk) => output.raw(chunk, output.format === "text" ? "stdout" : "stderr"),
+      onStderr: (chunk) => output.raw(chunk, "stderr"),
+    }).pipe(
+      Effect.mapError(
+        withDockerStepFailure(
+          "failed to run the edge-runtime unbundle container",
+          slug,
+          styleAqua,
+        ),
+      ),
+    );
 
-        if (result.exitCode !== 0) {
-          // Go's `getErrorLogger` (deno-v1 only) sets `CmdSuggestion =
-          // suggestDenoV2()` (assignment) as soon as a full stderr line reads
-          // "invalid eszip v2" (case-insensitive), then `downloadWithDockerUnbundle`
-          // appends `suggestLegacyBundle` (`+=`) once extraction has failed
-          // (`download.go:213,284-304`). Go's own implementation races these two
-          // goroutines (the pipe writer is never closed) — this resolves that
-          // race deterministically to the common (non-race) ordering instead of
-          // reproducing the nondeterminism. The line match is exact (not a
-          // substring) to match Go's `strings.EqualFold(line, "invalid eszip v2")`.
-          const invalidEszipV2 =
-            denoVersion === 1 &&
-            result.stderr
-              .split(/\r?\n/)
-              .some((line) => line.trim().toLowerCase() === "invalid eszip v2");
-          const suggestion =
-            (invalidEszipV2 ? suggestDenoV2(styleEmphasis) : "") +
-            suggestLegacyBundle(slug, styleAqua);
-          return yield* Effect.fail(
-            Object.assign(new Error(`error running container: exit ${result.exitCode}`), {
-              suggestion,
-            }),
-          );
-        }
-      });
-
-    yield* runUnbundleContainer(buildFunctionsDockerRunArgs(spec));
+    if (result.exitCode !== 0) {
+      // Go's `getErrorLogger` (deno-v1 only) sets `CmdSuggestion =
+      // suggestDenoV2()` (assignment) as soon as a full stderr line reads
+      // "invalid eszip v2" (case-insensitive), then `downloadWithDockerUnbundle`
+      // appends `suggestLegacyBundle` (`+=`) once extraction has failed
+      // (`download.go:213,284-304`). Go's own implementation races these two
+      // goroutines (the pipe writer is never closed) — this resolves that
+      // race deterministically to the common (non-race) ordering instead of
+      // reproducing the nondeterminism. The line match is exact (not a
+      // substring) to match Go's `strings.EqualFold(line, "invalid eszip v2")`.
+      const invalidEszipV2 =
+        denoVersion === 1 &&
+        result.stderr
+          .split(/\r?\n/)
+          .some((line) => line.trim().toLowerCase() === "invalid eszip v2");
+      const suggestion =
+        (invalidEszipV2 ? suggestDenoV2(styleEmphasis) : "") +
+        suggestLegacyBundle(slug, styleAqua);
+      return yield* Effect.fail(
+        Object.assign(new Error(`error running container: exit ${result.exitCode}`), {
+          suggestion,
+        }),
+      );
+    }
     // Go: `downloadWithDockerUnbundle` has no final "Downloaded Function ..."
     // print, unlike `RunLegacy`/`downloadWithServerSideUnbundle` — its only
     // stdout/stderr text is "Downloading function: ..." above plus whatever

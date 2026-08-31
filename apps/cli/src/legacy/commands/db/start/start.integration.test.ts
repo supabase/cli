@@ -2,7 +2,7 @@ import { existsSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from 
 import { join } from "node:path";
 
 import { BunServices } from "@effect/platform-bun";
-import { afterEach, describe, expect, it } from "@effect/vitest";
+import { afterEach, beforeEach, describe, expect, it } from "@effect/vitest";
 import { Cause, Effect, Exit, Layer, Option, PlatformError, Sink, Stream } from "effect";
 import { ChildProcessSpawner } from "effect/unstable/process";
 import * as HttpClient from "effect/unstable/http/HttpClient";
@@ -387,6 +387,9 @@ const currentBranchPath = (workdir: string) =>
   join(workdir, "supabase", ".branches", "_current_branch");
 
 describe("legacy db start", () => {
+  beforeEach(() => {
+    vi.stubEnv("SUPABASE_USE_SLIM_IMAGES", undefined);
+  });
   afterEach(() => {
     delete process.env["SUPABASE_NETWORK_ID"];
     vi.unstubAllEnvs();
@@ -680,25 +683,6 @@ describe("legacy db start", () => {
         expect(rollbackWasAttempted(child.spawned)).toBe(true);
         expect(volumePruneWasAttempted(child.spawned)).toBe(false);
       });
-    },
-  );
-
-  it.live(
-    "--from-backup under SUPABASE_USE_SLIM_IMAGES uses the same restore entrypoint as docker.io",
-    () => {
-      vi.stubEnv("SUPABASE_USE_SLIM_IMAGES", "1");
-      const { layer, child } = setup({ route: freshVolumeRoute(defaultRoute()) });
-      return Effect.gen(function* () {
-        yield* legacyDbStart(flags("/abs/host/backup.sql")).pipe(Effect.provide(layer));
-        const args = createArgs(child.spawned);
-        expect(args).not.toBeUndefined();
-        const script = args?.[(args?.indexOf("-c") ?? -1) + 1];
-        expect(script).toContain("/docker-entrypoint-initdb.d/migrate.sh");
-        expect(bindsFromCreateArgs(args ?? [])).toContain(
-          "/abs/host/backup.sql:/etc/backup.sql:ro",
-        );
-        expect(dbSetupJobCalls(child.spawned)).toHaveLength(0);
-      }).pipe(Effect.ensuring(Effect.sync(() => vi.unstubAllEnvs())));
     },
   );
 

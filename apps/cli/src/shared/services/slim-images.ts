@@ -57,12 +57,12 @@ function slimImageRef(service: ServiceName, rawTag: string): string {
 
 /**
  * Rewrites a docker.io image reference to its `ghcr.io/supabase/cli` slim
- * equivalent, keeping the Dockerfile's pinned version. The catalog owns tag
- * normalization (`v`-prefixing, `tagPrefix`), so pins that differ only in
- * prefix between the two registries (`supavisor`, `logflare`) land on the right
- * slim tag. Vector's docker.io tags carry an `-alpine` variant suffix that the
- * slim build does not publish, so the strip is scoped to `vector` only — an
- * `-alpine`-suffixed pin on any other service is a real tag, not a variant marker.
+ * equivalent, keeping the pin's version. The catalog owns tag normalization
+ * (`v`-prefixing, `tagPrefix`), so pins that differ only in prefix between the
+ * two registries (`supavisor`, `logflare`) land on the right slim tag. Vector's
+ * docker.io tags carry an `-alpine` variant suffix that the slim build does
+ * not publish, so the strip is scoped to `vector` only — an `-alpine`-suffixed
+ * pin on any other service is a real tag, not a variant marker.
  */
 export function toSlimImage(alias: string, image: string): string {
   const service = SLIM_SERVICE_BY_ALIAS[alias];

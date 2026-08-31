@@ -169,7 +169,7 @@ export const legacyDeclarativeSeamLayer = Layer.effect(
                   }),
               ),
             );
-            const image = yield* legacyResolveDbImage(
+            const { image } = yield* legacyResolveDbImage(
               fs,
               path,
               cliSettings.workdir,

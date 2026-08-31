@@ -150,7 +150,7 @@ export function legacyBuildStorageEnv(input: LegacyStorageEnvInput): Record<stri
     STORAGE_S3_REGION: input.s3Region,
     GLOBAL_S3_BUCKET: "stub",
     ENABLE_IMAGE_TRANSFORMATION: String(input.imageTransformationEnabled),
-    // storage-api prefers this key over ENABLE_IMAGE_TRANSFORMATION.
+    // storage-api prefers this key over ENABLE_IMAGE_TRANSFORMATION (v1.72+).
     IMAGE_TRANSFORMATION_ENABLED: String(input.imageTransformationEnabled),
     IMGPROXY_URL: `http://${input.imgproxyHost}:5001`,
     TUS_URL_PATH: "/storage/v1/upload/resumable",
@@ -205,26 +205,24 @@ export function legacyBuildStorageContainerSpec(
   input: LegacyStorageContainerSpecInput,
 ): LegacyStartContainerSpec {
   const containerName = legacyServiceContainerName("storage", input.projectId);
-  const env = {
-    ...legacyBuildStorageEnv({
-      targetMigration: input.targetMigration,
-      anonKey: input.anonKey,
-      serviceRoleKey: input.serviceRoleKey,
-      jwtSecret: input.jwtSecret,
-      jwks: input.jwks,
-      dbHost: legacyServiceContainerName("db", input.projectId),
-      dbPassword: legacyStartInternalDbPassword(input.dbUrl),
-      fileSizeLimit: input.fileSizeLimit,
-      s3Region: input.s3Region,
-      s3AccessKeyId: input.s3AccessKeyId,
-      s3SecretAccessKey: input.s3SecretAccessKey,
-      imageTransformationEnabled: input.imageTransformationEnabled,
-      imgproxyHost: legacyServiceContainerName("imgproxy", input.projectId),
-      s3ProtocolEnabled: input.s3ProtocolEnabled,
-      vectorBucketsEnabled: input.vectorBucketsEnabled,
-      projectEnvValues: input.projectEnvValues,
-    }),
-  };
+  const env = legacyBuildStorageEnv({
+    targetMigration: input.targetMigration,
+    anonKey: input.anonKey,
+    serviceRoleKey: input.serviceRoleKey,
+    jwtSecret: input.jwtSecret,
+    jwks: input.jwks,
+    dbHost: legacyServiceContainerName("db", input.projectId),
+    dbPassword: legacyStartInternalDbPassword(input.dbUrl),
+    fileSizeLimit: input.fileSizeLimit,
+    s3Region: input.s3Region,
+    s3AccessKeyId: input.s3AccessKeyId,
+    s3SecretAccessKey: input.s3SecretAccessKey,
+    imageTransformationEnabled: input.imageTransformationEnabled,
+    imgproxyHost: legacyServiceContainerName("imgproxy", input.projectId),
+    s3ProtocolEnabled: input.s3ProtocolEnabled,
+    vectorBucketsEnabled: input.vectorBucketsEnabled,
+    projectEnvValues: input.projectEnvValues,
+  });
 
   return {
     image: input.image,

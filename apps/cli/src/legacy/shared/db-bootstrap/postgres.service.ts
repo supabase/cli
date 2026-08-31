@@ -157,25 +157,16 @@ export interface LegacyPostgresStartServiceInput {
 export function legacyPostgresSettingsToPostgresConfig(
   settings: CliConfig["db"]["settings"],
 ): string {
-  const defined = Object.fromEntries(legacyDefinedPostgresSettings(settings));
+  const defined = Object.fromEntries(
+    Object.entries(settings ?? {}).filter(
+      (entry): entry is [string, string | number | boolean] => entry[1] !== undefined,
+    ),
+  );
   if (Object.keys(defined).length === 0) {
     return LEGACY_POSTGRES_CONFIG_HEADER;
   }
   const toml = encodeToml(defined).replaceAll('"', "'");
   return `${LEGACY_POSTGRES_CONFIG_HEADER}${toml}`;
-}
-
-/**
- * The `[db.settings]` keys the user actually set — an unset field must never reach either
- * renderer below: both the postgresql.conf TOML renderer and the `-c` argv renderer must
- * emit only keys the user actually set.
- */
-function legacyDefinedPostgresSettings(
-  settings: CliConfig["db"]["settings"],
-): ReadonlyArray<readonly [string, string | number | boolean]> {
-  return Object.entries(settings ?? {}).filter(
-    (entry): entry is [string, string | number | boolean] => entry[1] !== undefined,
-  );
 }
 
 /**
@@ -459,20 +450,10 @@ export function legacyBuildPostgresStartContainerSpec(
 }
 
 /**
- * Go's `NewContainerConfig("-c", "max_worker_processes=0")` (`CreateShadowDatabase`,
- * `apps/cli-go/internal/db/diff/diff.go:140`) — disables background workers in the
- * shadow database. {@link LEGACY_SHADOW_ENTRYPOINT_ARGS} joins it for the
- * docker.io entrypoint script's own `<args>` splice point.
+ * Shadow `docker-entrypoint.sh postgres -D /etc/postgresql <args>` splice —
+ * disables background workers (`CreateShadowDatabase`).
  */
-const LEGACY_SHADOW_ENTRYPOINT_ARGV: ReadonlyArray<string> = ["-c", "max_worker_processes=0"];
-
-/**
- * {@link LEGACY_SHADOW_ENTRYPOINT_ARGV} as the docker.io entrypoint script sees it:
- * not a docker flag, but text spliced into the script's own
- * `docker-entrypoint.sh postgres -D /etc/postgresql <args>` line, exactly like
- * every other `args` value {@link legacyPostgresEntrypointScriptPg15}/`Pg14` accept.
- */
-export const LEGACY_SHADOW_ENTRYPOINT_ARGS = LEGACY_SHADOW_ENTRYPOINT_ARGV.join(" ");
+export const LEGACY_SHADOW_ENTRYPOINT_ARGS = "-c max_worker_processes=0";
 
 /**
  * Input to {@link legacyBuildShadowPostgresContainerSpec} — the subset of

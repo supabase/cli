@@ -1,4 +1,4 @@
-import { afterEach, describe, expect, test, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
 import { Effect, Redacted } from "effect";
 import { FetchHttpClient } from "effect/unstable/http";
 import serviceImagesDockerfile from "../../../../cli-go/pkg/config/templates/Dockerfile" with { type: "text" };
@@ -20,6 +20,10 @@ const runLinkedFetch = (input: Parameters<typeof fetchLinkedServiceVersions>[0])
   Effect.runPromise(fetchLinkedServiceVersions(input).pipe(Effect.provide(FetchHttpClient.layer)));
 
 describe("services shared", () => {
+  beforeEach(() => {
+    vi.stubEnv("SUPABASE_USE_SLIM_IMAGES", undefined);
+  });
+
   afterEach(() => {
     vi.unstubAllEnvs();
   });

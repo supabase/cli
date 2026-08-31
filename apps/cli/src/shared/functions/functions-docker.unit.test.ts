@@ -256,13 +256,6 @@ describe("containerArchiveBytes", () => {
     const files = await new Bun.Archive(archive).files();
     expect(await files.get("root/index.ts")?.text()).toBe("export const x = 1;\n");
   });
-
-  it("accepts binary file bodies", async () => {
-    const body = new Uint8Array([0x00, 0x01, 0xfe, 0xff]);
-    const archive = await containerArchiveBytes({ "/tmp/eszips/output.eszip": body });
-    const files = await new Bun.Archive(archive).files();
-    expect(new Uint8Array(await files.get("tmp/eszips/output.eszip")!.arrayBuffer())).toEqual(body);
-  });
 });
 
 describe("resolveDockerNetworkMode", () => {

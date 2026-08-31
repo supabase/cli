@@ -810,6 +810,7 @@ export const legacyStart = Effect.fn("legacy.start")(function* (flags: LegacySta
       realtimeMaxHeaderLength,
       storageFileSizeLimit,
       postgresImage,
+      postgresConfigImage,
       serviceVersionOverrides,
       dbHealthTimeoutSeconds,
       storageTargetMigration,
@@ -1575,7 +1576,7 @@ export const legacyStart = Effect.fn("legacy.start")(function* (flags: LegacySta
           jwtExpiry: values.authJwtExpiry,
           projectId,
           networkId,
-          configImage: postgresImage,
+          configImage: postgresConfigImage,
           rootKey: values.rootKey,
           // `fromBackup` stays unset: `supabase start` always calls the DB
           // bootstrap with an empty `fromBackup` — only `db start` ever sets it.

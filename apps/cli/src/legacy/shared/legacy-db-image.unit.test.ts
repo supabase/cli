@@ -4,7 +4,7 @@ import { join } from "node:path";
 import { BunServices } from "@effect/platform-bun";
 import { describe, expect, it } from "@effect/vitest";
 import { Effect, FileSystem, Path } from "effect";
-import { afterEach, vi } from "vitest";
+import { afterEach, beforeEach, vi } from "vitest";
 
 import {
   dockerfileServiceImage,
@@ -32,12 +32,28 @@ const resolve = (workdir: string, majorVersion: number, orioledbVersion?: string
   }).pipe(Effect.provide(BunServices.layer));
 
 describe("legacyResolveDbImage", () => {
+  beforeEach(() => {
+    vi.stubEnv("SUPABASE_USE_SLIM_IMAGES", undefined);
+  });
+  afterEach(() => {
+    vi.unstubAllEnvs();
+  });
+
   it.effect("resolves the default Postgres image per major version", () => {
     const dir = withTemp();
     return Effect.gen(function* () {
-      expect(yield* resolve(dir, 14)).toBe("supabase/postgres:14.1.0.89");
-      expect(yield* resolve(dir, 15)).toBe("supabase/postgres:15.8.1.085");
-      expect(yield* resolve(dir, 17)).toBe(dockerfileServiceImage("pg"));
+      expect(yield* resolve(dir, 14)).toEqual({
+        image: "supabase/postgres:14.1.0.89",
+        configImage: "supabase/postgres:14.1.0.89",
+      });
+      expect(yield* resolve(dir, 15)).toEqual({
+        image: "supabase/postgres:15.8.1.085",
+        configImage: "supabase/postgres:15.8.1.085",
+      });
+      expect(yield* resolve(dir, 17)).toEqual({
+        image: dockerfileServiceImage("pg"),
+        configImage: currentPostgres,
+      });
       rmSync(dir, { recursive: true, force: true });
     });
   });
@@ -46,10 +62,19 @@ describe("legacyResolveDbImage", () => {
     const dir = withTemp();
     return Effect.gen(function* () {
       // > 15.1.1.13 → `<ver>-orioledb`
-      expect(yield* resolve(dir, 17, "16.0.0.1")).toBe("supabase/postgres:16.0.0.1-orioledb");
-      expect(yield* resolve(dir, 15, "15.1.1.20")).toBe("supabase/postgres:15.1.1.20-orioledb");
+      expect(yield* resolve(dir, 17, "16.0.0.1")).toEqual({
+        image: "supabase/postgres:16.0.0.1-orioledb",
+        configImage: "supabase/postgres:16.0.0.1-orioledb",
+      });
+      expect(yield* resolve(dir, 15, "15.1.1.20")).toEqual({
+        image: "supabase/postgres:15.1.1.20-orioledb",
+        configImage: "supabase/postgres:15.1.1.20-orioledb",
+      });
       // <= 15.1.1.13 → `orioledb-<ver>`
-      expect(yield* resolve(dir, 17, "15.1.0.55")).toBe("supabase/postgres:orioledb-15.1.0.55");
+      expect(yield* resolve(dir, 17, "15.1.0.55")).toEqual({
+        image: "supabase/postgres:orioledb-15.1.0.55",
+        configImage: "supabase/postgres:orioledb-15.1.0.55",
+      });
       rmSync(dir, { recursive: true, force: true });
     });
   });
@@ -57,22 +82,24 @@ describe("legacyResolveDbImage", () => {
   it.effect("ignores orioledb_version on a non-15/17 project", () => {
     const dir = withTemp();
     return Effect.gen(function* () {
-      expect(yield* resolve(dir, 14, "16.0.0.1")).toBe("supabase/postgres:14.1.0.89");
+      expect(yield* resolve(dir, 14, "16.0.0.1")).toEqual({
+        image: "supabase/postgres:14.1.0.89",
+        configImage: "supabase/postgres:14.1.0.89",
+      });
       rmSync(dir, { recursive: true, force: true });
     });
   });
 
   describe("pinned version with the slim-images flag on", () => {
-    afterEach(() => {
-      vi.unstubAllEnvs();
-    });
-
     it.effect("keeps a 13/14/15 fallback on docker.io, not the slim registry", () => {
       vi.stubEnv("SUPABASE_USE_SLIM_IMAGES", "true");
       const dir = withTemp();
       writePin(dir, "15.8.1.100");
       return Effect.gen(function* () {
-        expect(yield* resolve(dir, 15)).toBe("supabase/postgres:15.8.1.100");
+        expect(yield* resolve(dir, 15)).toEqual({
+          image: "supabase/postgres:15.8.1.100",
+          configImage: "supabase/postgres:15.8.1.100",
+        });
         rmSync(dir, { recursive: true, force: true });
       });
     });
@@ -82,7 +109,10 @@ describe("legacyResolveDbImage", () => {
       const dir = withTemp();
       writePin(dir, "17.9.9.999");
       return Effect.gen(function* () {
-        expect(yield* resolve(dir, 17)).toBe("supabase/postgres:17.9.9.999");
+        expect(yield* resolve(dir, 17)).toEqual({
+          image: "supabase/postgres:17.9.9.999",
+          configImage: "supabase/postgres:17.9.9.999",
+        });
         rmSync(dir, { recursive: true, force: true });
       });
     });
@@ -92,7 +122,10 @@ describe("legacyResolveDbImage", () => {
       const dir = withTemp();
       writePin(dir, currentPostgresTag);
       return Effect.gen(function* () {
-        expect(yield* resolve(dir, 17)).toBe(toSlimImage("pg", currentPostgres));
+        expect(yield* resolve(dir, 17)).toEqual({
+          image: toSlimImage("pg", currentPostgres),
+          configImage: currentPostgres,
+        });
         rmSync(dir, { recursive: true, force: true });
       });
     });

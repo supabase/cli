@@ -102,7 +102,7 @@ export function toDockerPath(hostPath: string) {
  * carry its `0644` default.
  */
 export function containerArchiveBytes(
-  files: Readonly<Record<string, string | Uint8Array>>,
+  files: Readonly<Record<string, string>>,
 ): Promise<Uint8Array> {
   return new Bun.Archive(
     Object.fromEntries(
@@ -146,14 +146,7 @@ export interface FunctionsDockerRunSpec {
  * associate an orphaned container with the project.
  */
 export function buildFunctionsDockerRunArgs(spec: FunctionsDockerRunSpec): Array<string> {
-  return buildFunctionsDockerContainerArgs(["run", "--rm"], spec);
-}
-
-function buildFunctionsDockerContainerArgs(
-  head: ReadonlyArray<string>,
-  spec: FunctionsDockerRunSpec,
-): Array<string> {
-  const command = [...head, ...spec.binds.flatMap((bind) => ["-v", bind])];
+  const command = ["run", "--rm", ...spec.binds.flatMap((bind) => ["-v", bind])];
   command.push("--network", spec.networkMode);
   if ((spec.platform ?? process.platform) === "linux") {
     command.push("--add-host", "host.docker.internal:host-gateway");

@@ -144,13 +144,13 @@ export const legacyServices = Effect.fn("legacy.services")(function* (_flags: Le
     const postgresImage =
       tomlValues === null
         ? undefined
-        : yield* legacyResolveDbImage(
+        : (yield* legacyResolveDbImage(
             fs,
             path,
             cliSettings.workdir,
             tomlValues.majorVersion,
             Option.getOrUndefined(tomlValues.orioledbVersion),
-          );
+          )).image;
     const edgeRuntimeImage =
       tomlValues === null
         ? undefined

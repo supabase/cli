@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 
-import { dockerfileServiceImageRaw, dockerfileServiceImages } from "./dockerfile-images.ts";
+import { dockerfileServiceImageRaw } from "./dockerfile-images.ts";
 import {
   pinMatchesCurrentImage,
   slimImageForAlias,
@@ -13,14 +13,6 @@ import {
 afterEach(() => {
   vi.unstubAllEnvs();
 });
-
-const imageForAlias = (alias: string): string => {
-  const spec = dockerfileServiceImages.find((image) => image.alias === alias);
-  if (spec === undefined) {
-    throw new Error(`Missing service image alias '${alias}' in Dockerfile manifest.`);
-  }
-  return spec.image;
-};
 
 describe("toSlimImage", () => {
   it.each([
@@ -38,16 +30,31 @@ describe("toSlimImage", () => {
     ["imgproxy", "ghcr.io/supabase/cli/imgproxy"],
     ["mailpit", "ghcr.io/supabase/cli/mailpit"],
   ])("maps the %s manifest pin onto %s", (alias, repository) => {
-    const translated = toSlimImage(alias, imageForAlias(alias));
+    const translated = toSlimImage(alias, dockerfileServiceImageRaw(alias));
     expect(translated.slice(0, translated.lastIndexOf(":"))).toBe(repository);
   });
 
-  it("keeps the Dockerfile version pin instead of the catalog default", () => {
-    expect(toSlimImage("pg", "supabase/postgres:17.6.1.165")).toBe(
-      "ghcr.io/supabase/cli/postgres:17.6.1.165",
+  it("keeps a non-current pin instead of the catalog default", () => {
+    expect(toSlimImage("pg", "supabase/postgres:17.6.1.164")).toBe(
+      "ghcr.io/supabase/cli/postgres:17.6.1.164",
     );
     expect(toSlimImage("studio", "supabase/studio:2026.08.17-sha-0c1da8f")).toBe(
       "ghcr.io/supabase/cli/studio:2026.08.17-sha-0c1da8f",
+    );
+  });
+
+  it("maps current docker.io pins onto the published slim tags", () => {
+    expect(toSlimImage("pg", dockerfileServiceImageRaw("pg"))).toBe(
+      "ghcr.io/supabase/cli/postgres:17.6.1.167",
+    );
+    expect(toSlimImage("supavisor", dockerfileServiceImageRaw("supavisor"))).toBe(
+      "ghcr.io/supabase/cli/pooler:v2.9.12",
+    );
+    expect(toSlimImage("realtime", dockerfileServiceImageRaw("realtime"))).toBe(
+      "ghcr.io/supabase/cli/realtime:v2.130.0",
+    );
+    expect(toSlimImage("storage", dockerfileServiceImageRaw("storage"))).toBe(
+      "ghcr.io/supabase/cli/storage:v1.72.1",
     );
   });
 
@@ -77,7 +84,7 @@ describe("toSlimImage", () => {
 
   it("passes through aliases with no slim build", () => {
     for (const alias of ["kong", "differ", "migra", "pgprove"]) {
-      const image = imageForAlias(alias);
+      const image = dockerfileServiceImageRaw(alias);
       expect(toSlimImage(alias, image)).toBe(image);
     }
   });
@@ -100,16 +107,11 @@ describe("slimImagesEnabled", () => {
     vi.stubEnv("SUPABASE_USE_SLIM_IMAGES", value);
     expect(slimImagesEnabled()).toBe(expected);
   });
-
-  it("is off when unset", () => {
-    vi.stubEnv("SUPABASE_USE_SLIM_IMAGES", undefined);
-    expect(slimImagesEnabled()).toBe(false);
-  });
 });
 
 describe("slimImageForAlias", () => {
   it("is a no-op while the flag is off", () => {
-    vi.stubEnv("SUPABASE_USE_SLIM_IMAGES", undefined);
+    vi.stubEnv("SUPABASE_USE_SLIM_IMAGES", "");
     expect(slimImageForAlias("pg", "supabase/postgres:17.6.1.165")).toBe(
       "supabase/postgres:17.6.1.165",
     );
@@ -125,7 +127,7 @@ describe("slimImageForAlias", () => {
 
 describe("usesSlimImageRuntime", () => {
   it("is false while the flag is off even for a ghcr ref", () => {
-    vi.stubEnv("SUPABASE_USE_SLIM_IMAGES", undefined);
+    vi.stubEnv("SUPABASE_USE_SLIM_IMAGES", "");
     expect(usesSlimImageRuntime("ghcr.io/supabase/cli/postgres:17.6.1.165")).toBe(false);
   });
 
@@ -162,7 +164,7 @@ describe("slimImageForCurrentPin", () => {
   });
 
   it("is a no-op while the flag is off", () => {
-    vi.stubEnv("SUPABASE_USE_SLIM_IMAGES", undefined);
+    vi.stubEnv("SUPABASE_USE_SLIM_IMAGES", "");
     const current = dockerfileServiceImageRaw("storage");
     expect(slimImageForCurrentPin("storage", current, "v1.67.0")).toBe(
       "supabase/storage-api:v1.67.0",
