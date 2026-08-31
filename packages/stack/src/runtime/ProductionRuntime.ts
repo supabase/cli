@@ -38,6 +38,11 @@ import {
 } from "../preparation/RuntimeArtifacts.ts";
 import { makeRuntimeEnvFileOwner, type RuntimeEnvFileOwner } from "./RuntimeEnvFile.ts";
 import {
+  makeRuntimeInputOwner,
+  type RuntimeInputOwner,
+  type RuntimeJsonFetcher,
+} from "./RuntimeInputOwner.ts";
+import {
   FUNCTIONS_BOOTSTRAP_CONTAINER_PATH,
   resolveContainerResolutionFor,
   runtimeSpecFor,
@@ -71,6 +76,7 @@ export interface ProductionRuntimeFactoryOptions {
   readonly logStore?: LogStore;
   readonly envFileOwner?: RuntimeEnvFileOwner;
   readonly functionsBootstrapOwner?: FunctionsBootstrapOwner;
+  readonly fetchJson?: RuntimeJsonFetcher;
   readonly bootstrapDatabase?: (
     state: PersistedStackState,
   ) => Effect.Effect<void, DatabaseBootstrapError | StackPreparationError>;
@@ -119,6 +125,9 @@ const runtimeMatches = (left: StackRuntime, right: StackRuntime): boolean => {
   if (left.kind === "native" || right.kind === "native") return true;
   return left.engine === right.engine;
 };
+
+const urlHost = (host: string): string =>
+  host.includes(":") && !host.startsWith("[") ? `[${host}]` : host;
 
 const redactEntry = <A extends { readonly message: string }>(
   entry: A,
@@ -209,16 +218,27 @@ export const withOwnedRuntimeFileCleanup = (
   driver: RuntimeDriver,
   envFiles: RuntimeEnvFileOwner,
   functionsBootstrap: FunctionsBootstrapOwner,
+  inputOwner?: RuntimeInputOwner,
 ): RuntimeDriver => {
   const cleanupFiles = (stackId: StackId): Effect.Effect<void, RuntimeDriverError> =>
-    Effect.all([envFiles.cleanupAll, functionsBootstrap.cleanupAll], {
-      concurrency: "unbounded",
-      discard: true,
-    }).pipe(
-      Effect.mapError((error) =>
-        driverError({ stackId, workloadId: "" }, "Unable to clean runtime files", error),
-      ),
-    );
+    Effect.gen(function* () {
+      const key = { stackId, workloadId: "" };
+      let cleanupCause: Cause.Cause<RuntimeDriverError> = Cause.empty;
+      const attempts = [
+        envFiles.cleanupAll,
+        functionsBootstrap.cleanupAll,
+        ...(inputOwner === undefined ? [] : [inputOwner.cleanupAll]),
+      ];
+      for (const attempt of attempts) {
+        const result = yield* Effect.exit(
+          attempt.pipe(
+            Effect.mapError((error) => driverError(key, "Unable to clean runtime files", error)),
+          ),
+        );
+        if (Exit.isFailure(result)) cleanupCause = Cause.combine(cleanupCause, result.cause);
+      }
+      if (cleanupCause.reasons.length > 0) return yield* Effect.failCause(cleanupCause);
+    });
   return {
     ...driver,
     cleanup: (request) =>
@@ -256,6 +276,29 @@ export const makeProductionRuntimeFactory = (
     }).pipe(
       Effect.mapError((error) => preparationError("Unable to resolve stack runtime paths", error)),
     );
+    const fetchJson: RuntimeJsonFetcher =
+      options.fetchJson ??
+      ((url) =>
+        // oxlint-disable effecttsgo/async-function -- production fetch leaf owns AbortSignal.
+        // oxlint-disable effecttsgo/global-fetch-in-effect -- production fetch leaf is the network boundary.
+        Effect.tryPromise({
+          try: async (signal) => {
+            const response = await fetch(url, { signal });
+            if (!response.ok) throw new Error(`HTTP ${response.status}`);
+            return await response.json();
+          },
+          catch: (cause) => preparationError("Unable to fetch Auth OIDC metadata", cause),
+        }));
+    // oxlint-enable effecttsgo/async-function
+    // oxlint-enable effecttsgo/global-fetch-in-effect
+    const inputOwner = yield* makeRuntimeInputOwner({
+      stateRoot: options.stateRoot,
+      stackId: options.stackId,
+      fetchJson,
+    }).pipe(Effect.provideService(Scope.Scope, ownerScope));
+    yield* Effect.addFinalizer(() =>
+      inputOwner.cleanupAll.pipe(Effect.catchTag("StackPreparationError", () => Effect.void)),
+    ).pipe(Effect.provideService(Scope.Scope, ownerScope));
     const registry = yield* makePortRegistry({
       stateRoot: options.stateRoot,
       store: options.stateStore,
@@ -267,6 +310,7 @@ export const makeProductionRuntimeFactory = (
         registry,
         store: options.stateStore,
         context: options.context,
+        resolveAuthTemplates: inputOwner.resolveAuthTemplates,
       }));
     const envFiles =
       options.envFileOwner ??
@@ -357,18 +401,48 @@ export const makeProductionRuntimeFactory = (
           };
           const runtimeInputs = (
             workload: PlannedWorkload,
+            fresh: PersistedStackState,
             generation: number,
             host: ContainerHostRoute | undefined,
           ): Effect.Effect<WorkloadRuntimeInputs, StackPreparationError> =>
             Effect.gen(function* () {
+              const material = yield* inputOwner.resolve(fresh, generation);
+              const templates = material.auth?.templates;
+              const apiListener = fresh.definition?.listeners.api;
+              const apiAssignment = fresh.ports.find((assignment) => assignment.field === "api");
+              const templateBaseUrl =
+                templates === undefined || templates.length === 0
+                  ? undefined
+                  : apiListener?.enabled !== true || apiAssignment === undefined
+                    ? yield* preparationError(
+                        "Configured Auth email templates require a public API listener",
+                      )
+                    : `http://${urlHost(host?.host ?? apiListener.address)}:${apiAssignment.port}`;
+              const auth =
+                material.auth === undefined
+                  ? undefined
+                  : {
+                      ...material.auth,
+                      ...(templateBaseUrl === undefined ? {} : { templateBaseUrl }),
+                    };
               const functions =
                 workload.id === "functions:edge-runtime"
                   ? {
                       bootstrapPath: yield* functionsPath(generation),
                       bootstrapContainerPath: FUNCTIONS_BOOTSTRAP_CONTAINER_PATH,
+                      ...(material.functions?.secrets === undefined
+                        ? {}
+                        : { secrets: material.functions.secrets }),
                     }
                   : undefined;
               return {
+                ...(auth === undefined ? {} : { auth }),
+                ...(workload.id === "analytics:analytics" && material.analytics !== undefined
+                  ? { analytics: material.analytics }
+                  : {}),
+                ...(workload.id === "pooler:pooler" && material.pooler !== undefined
+                  ? { pooler: material.pooler }
+                  : {}),
                 database: { dataPath: pathService.join(paths.data, "database") },
                 storage: { dataPath: pathService.join(paths.data, "storage") },
                 ...(functions === undefined ? {} : { functions }),
@@ -461,6 +535,7 @@ export const makeProductionRuntimeFactory = (
                         );
                       const inputs = yield* runtimeInputs(
                         workload,
+                        fresh,
                         key.desiredGeneration,
                         undefined,
                       ).pipe(Effect.mapError((error) => mapDriverError(key, error)));
@@ -565,6 +640,7 @@ export const makeProductionRuntimeFactory = (
                       }
                       const inputs = yield* runtimeInputs(
                         workload,
+                        fresh,
                         key.desiredGeneration,
                         route,
                       ).pipe(Effect.mapError((error) => mapDriverError(key, error)));
@@ -633,7 +709,47 @@ export const makeProductionRuntimeFactory = (
               logStore: logs,
             }).pipe(Effect.provideService(Scope.Scope, ownerScope));
           }
-          const ownedDriver = withOwnedRuntimeFileCleanup(driver, envFiles, functionsBootstrap);
+          const baseDriver = withOwnedRuntimeFileCleanup(
+            driver,
+            envFiles,
+            functionsBootstrap,
+            inputOwner,
+          );
+          const ownedDriver: RuntimeDriver = {
+            ...baseDriver,
+            stop: (key) =>
+              baseDriver
+                .stop(key)
+                .pipe(
+                  Effect.tap(() =>
+                    key.workloadId === "pooler:pooler"
+                      ? inputOwner
+                          .cleanupGeneration(key.desiredGeneration)
+                          .pipe(
+                            Effect.mapError((error) =>
+                              driverError(key, "Unable to clean pooler runtime input", error),
+                            ),
+                          )
+                      : Effect.void,
+                  ),
+                ),
+            remove: (key) =>
+              baseDriver
+                .remove(key)
+                .pipe(
+                  Effect.tap(() =>
+                    key.workloadId === "pooler:pooler"
+                      ? inputOwner
+                          .cleanupGeneration(key.desiredGeneration)
+                          .pipe(
+                            Effect.mapError((error) =>
+                              driverError(key, "Unable to clean pooler runtime input", error),
+                            ),
+                          )
+                      : Effect.void,
+                  ),
+                ),
+          };
           return {
             driver: ownedDriver,
             prepare: prepareArtifacts,

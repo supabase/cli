@@ -12,7 +12,12 @@ import {
   type ServerResponse,
   // oxlint-disable-next-line effecttsgo/node-builtin-import
 } from "node:http";
-import { createLazyActivator, makeGateway, type BackendEndpoint } from "./Gateway.ts";
+import {
+  createLazyActivator,
+  GatewayRouteNotFoundError,
+  makeGateway,
+  type BackendEndpoint,
+} from "./Gateway.ts";
 import { makeHttpGateway } from "./HttpGateway.ts";
 import { makeTcpGateway } from "./TcpGateway.ts";
 import type { HostListener } from "../state/PortCoordinator.ts";
@@ -45,6 +50,95 @@ const getStatus = (port: number, path: string) =>
   });
 
 describe("stack gateway", () => {
+  it.live("serves local HTTP routes before activation and rejects upgrades", () =>
+    withPlatform(
+      Effect.gen(function* () {
+        let localCalls = 0;
+        let activations = 0;
+        const gateway = yield* makeHttpGateway({
+          address: "127.0.0.1",
+          port: 0,
+          routes: [
+            {
+              match: (request) => request.path.startsWith("/email/"),
+              localResponse: (request) =>
+                request.method === "GET"
+                  ? Effect.sync(() => {
+                      localCalls += 1;
+                      return { body: "template", contentType: "text/plain; charset=utf-8" };
+                    })
+                  : Effect.fail(new GatewayRouteNotFoundError({ message: "Not found" })),
+            },
+          ],
+          activate: () =>
+            Effect.sync(() => {
+              activations += 1;
+              return { capability: "auth" as const, endpoint: { host: "127.0.0.1", port: 1 } };
+            }),
+        });
+        const response = yield* Effect.callback<{ status: number; body: string }, Error>(
+          (resume) => {
+            const request = requestHttp(
+              { host: "127.0.0.1", port: gateway.port, path: "/email/confirmation.html" },
+              (result) => {
+                const chunks: Buffer[] = [];
+                result.on("data", (chunk: Buffer) => chunks.push(chunk));
+                result.once("end", () =>
+                  resume(
+                    Effect.succeed({
+                      status: result.statusCode ?? 0,
+                      body: Buffer.concat(chunks).toString(),
+                    }),
+                  ),
+                );
+              },
+            );
+            request.once("error", (error) => resume(Effect.fail(error)));
+            request.end();
+            return Effect.sync(() => request.destroy());
+          },
+        );
+        expect(response).toEqual({ status: 200, body: "template" });
+        expect(localCalls).toBe(1);
+        expect(activations).toBe(0);
+        const failedMethod = yield* Effect.callback<number, Error>((resume) => {
+          const request = requestHttp(
+            {
+              host: "127.0.0.1",
+              port: gateway.port,
+              path: "/email/confirmation.html",
+              method: "POST",
+            },
+            (result) => {
+              result.resume();
+              result.once("end", () => resume(Effect.succeed(result.statusCode ?? 0)));
+            },
+          );
+          request.once("error", (error) => resume(Effect.fail(error)));
+          request.end();
+          return Effect.sync(() => request.destroy());
+        });
+        expect(failedMethod).toBe(404);
+        expect(localCalls).toBe(1);
+        expect(activations).toBe(0);
+        yield* Effect.callback<void, Error>((resume) => {
+          const socket = connectNet(gateway.port, "127.0.0.1");
+          socket.once("connect", () =>
+            socket.write(
+              "GET /email/confirmation.html HTTP/1.1\r\nHost: gateway.test\r\nConnection: Upgrade\r\nUpgrade: websocket\r\n\r\n",
+            ),
+          );
+          socket.once("close", () => resume(Effect.void));
+          socket.once("error", (error) => resume(Effect.fail(error)));
+          return Effect.sync(() => socket.destroy());
+        });
+        expect(localCalls).toBe(1);
+        expect(activations).toBe(0);
+        yield* gateway.close;
+      }),
+    ),
+  );
+
   it.live("routes an HTTP request after lazy activation and forwards the response", () =>
     withPlatform(
       Effect.gen(function* () {

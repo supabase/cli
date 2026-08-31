@@ -6,9 +6,11 @@ import type {
   ActivationResult,
   BackendEndpoint,
   GatewayRoute,
+  GatewayProxyRoute,
   GatewayRouteRequest,
   LazyActivator,
 } from "./Gateway.ts";
+import { isGatewayProxyRoute } from "./Gateway.ts";
 import type { HostListener } from "../state/PortCoordinator.ts";
 
 export interface TcpGatewayOptions {
@@ -18,7 +20,7 @@ export interface TcpGatewayOptions {
   readonly routes: ReadonlyArray<GatewayRoute>;
   readonly activate: LazyActivator["activate"];
   readonly resolveBackend?: (
-    route: GatewayRoute,
+    route: GatewayProxyRoute,
     request: GatewayRouteRequest,
     activation: ActivationResult,
   ) => Effect.Effect<BackendEndpoint, GatewayActivationError>;
@@ -115,6 +117,10 @@ const handleConnection = (
   source.once("close", () => active.delete(source));
   const route = routeFor(options.routes);
   if (route === undefined) {
+    source.destroy();
+    return;
+  }
+  if (!isGatewayProxyRoute(route)) {
     source.destroy();
     return;
   }

@@ -624,18 +624,7 @@ describe("workload runtime catalog", () => {
         });
         const vector = planned("analytics:vector");
         expect(containerResolutionFor(configured, vector)?.command).toEqual([]);
-        const vectorResolution = containerResolutionFor(configured, vector, {
-          analytics: { vectorConfigPath: "/tmp/vector.yaml" },
-        });
-        expect(vectorResolution?.command).toEqual([
-          "--config",
-          "/etc/vector/vector.yaml",
-          "--watch-config",
-          "false",
-        ]);
-        expect(vectorResolution?.mounts).toEqual([
-          { source: "/tmp/vector.yaml", target: "/etc/vector/vector.yaml", readOnly: true },
-        ]);
+        expect(containerResolutionFor(configured, vector)?.mounts).toEqual([]);
       }).pipe(Effect.provide(NodeServices.layer)),
   );
 
@@ -961,10 +950,12 @@ describe("workload runtime catalog", () => {
       );
       const symmetric = containerResolutionFor(state, functions, {
         auth: { jwks: '{"keys":[{"kty":"EC"}]}' },
+        functions: { secrets: { APP_SECRET: "value" } },
       });
       expect(symmetric?.env).toMatchObject({
         SUPABASE_INTERNAL_JWT_SECRET: "symmetric-secret",
         SUPABASE_JWKS: '{"keys":[{"kty":"EC"}]}',
+        APP_SECRET: "value",
       });
 
       const jwksCompiled = yield* compileStack({

@@ -11,7 +11,7 @@ import {
 } from "node:http";
 import { deriveStackId, type StackIdentity } from "../identity/Identity.ts";
 import { compileStack } from "../model/Compiler.ts";
-import { GatewayActivationError } from "../public/Errors.ts";
+import { GatewayActivationError, StackPreparationError } from "../public/Errors.ts";
 import { makeStackStateStore } from "../state/StackStateStore.ts";
 import { makePortRegistry } from "../state/PortRegistry.ts";
 import { makeSupervisorIngress } from "./Ingress.ts";
@@ -44,10 +44,10 @@ const listenBackend = (server: ReturnType<typeof createHttpServer>) =>
     () => closeServer(server),
   ).pipe(Effect.as(server));
 
-const request = (port: number) =>
+const request = (port: number, path = "/rest/v1/items", method = "GET") =>
   Effect.callback<{ readonly status: number; readonly body: string }, Error>((resume) => {
     const client = requestHttp(
-      { host: "127.0.0.1", port, path: "/rest/v1/items", method: "GET" },
+      { host: "127.0.0.1", port, path, method },
       (response: IncomingMessage) => {
         const chunks: Buffer[] = [];
         response.on("data", (chunk: Buffer) => chunks.push(chunk));
@@ -253,6 +253,154 @@ describe("Supervisor ingress", () => {
           )
           .pipe(Effect.exit);
         expect(Exit.isFailure(failed)).toBe(true);
+      }),
+    ),
+  );
+
+  it.live("serves accepted Auth templates locally with live content and no activation", () =>
+    run(
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const crypto = yield* Crypto.Crypto;
+        const context = Context.make(FileSystem.FileSystem, fs).pipe(
+          Context.add(Path.Path, path),
+          Context.add(Crypto.Crypto, crypto),
+        );
+        const root = yield* fs.makeTempDirectoryScoped({ prefix: "supabase-ingress-template-" });
+        const stackIdentity = {
+          ...identity,
+          projectRoot: root,
+          checkoutRoot: root,
+          workspaceId: root,
+          checkoutId: root,
+        };
+        const stackId = yield* deriveStackId(stackIdentity);
+        const templatePath = path.join(root, "templates", "confirmation.html");
+        const outsideRoot = yield* fs.makeTempDirectoryScoped({
+          prefix: "supabase-ingress-outside-",
+        });
+        const outsidePath = path.join(outsideRoot, "outside.html");
+        yield* fs.makeDirectory(path.join(root, "templates"), { recursive: true });
+        yield* fs.writeFileString(templatePath, "first");
+        const compiled = yield* compileStack({
+          projectRoot: root,
+          runtime: { kind: "native" },
+          config: {
+            capabilities: {
+              rest: { enabled: false },
+              auth: {
+                settings: {
+                  email: {
+                    template: { confirmation: { content_path: "templates/confirmation.html" } },
+                  },
+                },
+              },
+              realtime: { enabled: false },
+              storage: { enabled: false },
+              functions: { enabled: false },
+              studio: { enabled: false },
+              mail: { enabled: false },
+              analytics: { enabled: false },
+              pooler: { enabled: false },
+            },
+            listeners: {
+              database: { enabled: false },
+              pooler: { enabled: false },
+              studio: { enabled: false },
+              mailUi: { enabled: false },
+              smtp: { enabled: false },
+              pop3: { enabled: false },
+              functionsInspector: { enabled: false },
+            },
+          },
+        });
+        const store = yield* makeStackStateStore({ stateRoot: root });
+        const persisted = {
+          format: "supabase-stack-state-v1" as const,
+          identity: { ...stackIdentity, stackId },
+          runtime: { kind: "native" as const },
+          desiredGeneration: 1,
+          portsGeneration: null,
+          desiredLifecycle: "running" as const,
+          definition: compiled.definition,
+          inputFingerprint: compiled.inputFingerprint,
+          ports: [],
+          privatePorts: [],
+          secrets: {},
+        };
+        yield* store.write(stackId, persisted);
+        const registry = yield* makePortRegistry({ stateRoot: root, store });
+        const activated: string[] = [];
+        const ingress = yield* makeSupervisorIngress({
+          stackId,
+          registry,
+          store,
+          context,
+          apiMaterial: () =>
+            Effect.succeed({
+              publishableKey: "sb_publishable_test",
+              secretKey: "sb_secret_test",
+              anonJwt: "anon-jwt",
+              serviceRoleJwt: "service-jwt",
+            }),
+          resolveAuthTemplates: () =>
+            Effect.all({ root: fs.realPath(root), template: fs.realPath(templatePath) }).pipe(
+              Effect.mapError(
+                (cause) => new StackPreparationError({ message: "Template is unavailable", cause }),
+              ),
+              Effect.flatMap(({ root: canonicalRoot, template: canonicalPath }) =>
+                !path.relative(canonicalRoot, canonicalPath).startsWith("..") &&
+                !path.isAbsolute(path.relative(canonicalRoot, canonicalPath))
+                  ? Effect.succeed([
+                      {
+                        id: "confirmation",
+                        extension: ".html",
+                        canonicalPath,
+                      },
+                    ])
+                  : Effect.fail(new StackPreparationError({ message: "Template escaped root" })),
+              ),
+            ),
+        });
+        const input = {
+          stackId,
+          generation: 1,
+          desiredLifecycle: "running" as const,
+          state: persisted,
+          previous: persisted,
+          definition: compiled.definition,
+          inputFingerprint: compiled.inputFingerprint,
+          secrets: {},
+          plan: compiled.executionPlan,
+        };
+        const reservation = yield* ingress.acquire(input);
+        yield* ingress.open(input, reservation, (capability) => {
+          activated.push(capability);
+          return Effect.fail(new GatewayActivationError({ message: "not reached" }));
+        });
+        const api = reservation.assignments.api;
+        if (api === undefined) return yield* Effect.die("API listener was not assigned");
+        const first = yield* request(api.port, "/email/confirmation.html");
+        expect(first.status).toBe(200);
+        expect(first.body).toBe("first");
+        expect(activated).toEqual([]);
+        yield* fs.writeFileString(templatePath, "second");
+        const second = yield* request(api.port, "/email/confirmation.html?live=1");
+        expect(second.status).toBe(200);
+        expect(second.body).toBe("second");
+        expect((yield* request(api.port, "/email/unknown.html")).status).toBe(404);
+        expect((yield* request(api.port, "/email/confirmation.html", "POST")).status).toBe(404);
+        expect((yield* request(api.port, "/email/confirmation.html", "OPTIONS")).status).toBe(404);
+        expect((yield* request(api.port, "/email/../outside.html")).status).toBe(404);
+        expect((yield* request(api.port, "/email/%2e%2e/outside.html")).status).toBe(404);
+        yield* fs.remove(templatePath);
+        expect((yield* request(api.port, "/email/confirmation.html")).status).toBe(404);
+        yield* fs.writeFileString(outsidePath, "outside");
+        yield* fs.symlink(outsidePath, templatePath);
+        expect((yield* request(api.port, "/email/confirmation.html")).status).toBe(404);
+        expect(activated).toEqual([]);
+        yield* ingress.close;
       }),
     ),
   );

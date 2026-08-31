@@ -1,6 +1,10 @@
 import { NodeServices } from "@effect/platform-node";
 import { describe, expect, it } from "@effect/vitest";
-import { Effect, Exit, FileSystem, Path, Crypto, Stream } from "effect";
+import { Effect, Exit, FileSystem, Path, Crypto, Redacted, Stream } from "effect";
+// oxlint-disable-next-line effecttsgo/node-builtin-import
+import { createServer } from "node:http";
+// oxlint-disable-next-line effecttsgo/node-builtin-import
+import { createServer as createNetServer } from "node:net";
 import type { StackLogEntry } from "../public/Logs.ts";
 import { StackIdSchema } from "../public/StackId.ts";
 import type { StackRuntime } from "../public/Runtime.ts";
@@ -12,6 +16,14 @@ import { makeProductionRuntimeFactory, withOwnedRuntimeFileCleanup } from "./Pro
 import { RuntimeDriverError, type RuntimeDriver } from "./RuntimeDriver.ts";
 import type { RuntimeArtifactPreparer } from "../preparation/RuntimeArtifacts.ts";
 import type { PlannedWorkload } from "../model/ExecutionPlan.ts";
+import { compileStack } from "../model/Compiler.ts";
+import type {
+  ContainerContainerSpec,
+  ContainerEngine,
+  ContainerResource,
+  ContainerNetworkSpec,
+  ContainerVolumeSpec,
+} from "./ContainerEngine.ts";
 import {
   makeFunctionsBootstrapOwner,
   type FunctionsBootstrapOwner,
@@ -117,6 +129,82 @@ const bootstrap: FunctionsBootstrapOwner = {
   cleanupAll: Effect.void,
 };
 
+const ownerInputContainerEngine = (createdSpecs: ContainerContainerSpec[]): ContainerEngine => {
+  const resources: ContainerResource[] = [];
+  let nextId = 1;
+  const resource = (
+    kind: ContainerResource["kind"],
+    name: string,
+    labels: ContainerResource["labels"],
+  ): ContainerResource => ({
+    id: `${kind}-${nextId++}`,
+    name,
+    kind,
+    labels,
+    ...(kind === "workload" ? { state: "created" as const } : {}),
+  });
+  const updateState = (id: string, state: "running" | "stopped") => {
+    const index = resources.findIndex((entry) => entry.id === id);
+    const entry = resources[index];
+    if (entry !== undefined) resources[index] = { ...entry, state };
+  };
+  return {
+    kind: "docker",
+    executable: "test-container-engine",
+    preflight: Effect.sync(() => {
+      return { host: "host.docker.internal" };
+    }),
+    probe: Effect.void,
+    inspectImage: () => Effect.succeed({ present: true }),
+    pullImage: () => Effect.void,
+    listResources: () =>
+      Effect.sync(() => {
+        return [...resources];
+      }),
+    createNetwork: (spec: ContainerNetworkSpec) =>
+      Effect.sync(() => {
+        const created = resource("network", spec.name, spec.labels);
+        resources.push(created);
+        return created;
+      }),
+    removeNetwork: (id) =>
+      Effect.sync(() => {
+        const index = resources.findIndex((entry) => entry.id === id);
+        if (index >= 0) resources.splice(index, 1);
+      }),
+    createVolume: (spec: ContainerVolumeSpec) =>
+      Effect.sync(() => {
+        const created = resource("volume", spec.name, spec.labels);
+        resources.push(created);
+        return created;
+      }),
+    removeVolume: (id) =>
+      Effect.sync(() => {
+        const index = resources.findIndex((entry) => entry.id === id);
+        if (index >= 0) resources.splice(index, 1);
+      }),
+    createContainer: (spec) =>
+      Effect.sync(() => {
+        createdSpecs.push(spec);
+        const created = resource("workload", spec.name, spec.labels);
+        resources.push(created);
+        return created;
+      }),
+    copyToContainer: () => Effect.void,
+    startContainer: (id) =>
+      Effect.sync(() => {
+        updateState(id, "running");
+      }),
+    stopContainer: (id) => Effect.sync(() => updateState(id, "stopped")),
+    removeContainer: (id) =>
+      Effect.sync(() => {
+        const index = resources.findIndex((entry) => entry.id === id);
+        if (index >= 0) resources.splice(index, 1);
+      }),
+    streamLogs: () => Stream.empty,
+  };
+};
+
 describe("production runtime composition", () => {
   it.live("exposes artifact-only preparation without starting workloads or mutating state", () =>
     Effect.scoped(
@@ -209,6 +297,326 @@ describe("production runtime composition", () => {
           message: "token=rotated-secret",
         });
         expect(entries[0]?.message).toBe("token=[REDACTED]");
+      }).pipe(Effect.provide(NodeServices.layer)),
+    ),
+  );
+
+  it.live("wires owner material into container workloads", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const root = yield* fs.makeTempDirectoryScoped({ prefix: "supabase-production-inputs-" });
+        const template = path.join(root, "templates", "confirmation.html");
+        yield* fs.makeDirectory(path.dirname(template), { recursive: true });
+        yield* fs.writeFileString(template, "confirmation");
+        const gcpCredentials = path.join(root, "gcp.json");
+        yield* fs.writeFileString(gcpCredentials, "{}");
+        const compiled = yield* compileStack({
+          projectRoot: root,
+          runtime: { kind: "container", engine: "docker" },
+          config: {
+            capabilities: {
+              auth: {
+                settings: {
+                  email: {
+                    template: { confirmation: { content_path: "templates/confirmation.html" } },
+                  },
+                },
+              },
+              pooler: { enabled: true },
+              rest: { enabled: false },
+              realtime: { enabled: false },
+              storage: { enabled: false },
+              functions: {
+                enabled: true,
+                settings: {
+                  edge_runtime: { secrets: { FACTORY_SECRET: Redacted.make("factory-secret") } },
+                },
+              },
+              studio: { enabled: false },
+              mail: { enabled: false },
+              analytics: {
+                enabled: true,
+                settings: { backend: "bigquery", gcp_jwt_path: "gcp.json" },
+              },
+            },
+            listeners: {
+              database: { enabled: false },
+              studio: { enabled: false },
+              mailUi: { enabled: false },
+              smtp: { enabled: false },
+              pop3: { enabled: false },
+              functionsInspector: { enabled: false },
+            },
+          },
+        }).pipe(Effect.provide(NodeServices.layer));
+        const authServer = createServer((_request, response) => {
+          response.statusCode = 200;
+          response.setHeader("Connection", "close");
+          response.end("ok");
+        });
+        yield* Effect.acquireRelease(
+          Effect.callback<void, Error>((resume) => {
+            authServer.once("error", (error) => resume(Effect.fail(error)));
+            authServer.listen(0, "127.0.0.1", () => resume(Effect.void));
+          }),
+          () =>
+            Effect.callback<void>((resume) => {
+              if (!authServer.listening) return resume(Effect.void);
+              authServer.close(() => resume(Effect.void));
+            }),
+        );
+        const authAddress = authServer.address();
+        if (typeof authAddress !== "object" || authAddress === null)
+          return yield* Effect.die("Auth readiness server did not expose an address");
+        const functionsServer = createServer((_request, response) => {
+          response.statusCode = 200;
+          response.setHeader("Connection", "close");
+          response.end("ok");
+        });
+        yield* Effect.acquireRelease(
+          Effect.callback<void, Error>((resume) => {
+            functionsServer.once("error", (error) => resume(Effect.fail(error)));
+            functionsServer.listen(0, "127.0.0.1", () => resume(Effect.void));
+          }),
+          () =>
+            Effect.callback<void>((resume) => {
+              if (!functionsServer.listening) return resume(Effect.void);
+              functionsServer.close(() => resume(Effect.void));
+            }),
+        );
+        const functionsAddress = functionsServer.address();
+        if (typeof functionsAddress !== "object" || functionsAddress === null)
+          return yield* Effect.die("Functions readiness server did not expose an address");
+        const analyticsServer = createServer((_request, response) => {
+          response.statusCode = 200;
+          response.setHeader("Connection", "close");
+          response.end("ok");
+        });
+        yield* Effect.acquireRelease(
+          Effect.callback<void, Error>((resume) => {
+            analyticsServer.once("error", (error) => resume(Effect.fail(error)));
+            analyticsServer.listen(0, "127.0.0.1", () => resume(Effect.void));
+          }),
+          () =>
+            Effect.callback<void>((resume) => {
+              if (!analyticsServer.listening) return resume(Effect.void);
+              analyticsServer.close(() => resume(Effect.void));
+            }),
+        );
+        const analyticsAddress = analyticsServer.address();
+        if (typeof analyticsAddress !== "object" || analyticsAddress === null)
+          return yield* Effect.die("Analytics readiness server did not expose an address");
+        const poolerServer = createNetServer();
+        yield* Effect.acquireRelease(
+          Effect.callback<void, Error>((resume) => {
+            poolerServer.once("error", (error) => resume(Effect.fail(error)));
+            poolerServer.listen(0, "127.0.0.1", () => resume(Effect.void));
+          }),
+          () =>
+            Effect.callback<void>((resume) => {
+              if (!poolerServer.listening) return resume(Effect.void);
+              poolerServer.close(() => resume(Effect.void));
+            }),
+        );
+        const poolerAddress = poolerServer.address();
+        if (typeof poolerAddress !== "object" || poolerAddress === null)
+          return yield* Effect.die("Pooler readiness server did not expose an address");
+        const current = {
+          value: {
+            ...stateFor(
+              {
+                "secret:database.internal.password": { policy: "managed", value: "db-secret" },
+                "secret:auth.settings.jwt_secret": { policy: "managed", value: "jwt-secret" },
+                "secret:auth.settings.publishable_key": {
+                  policy: "managed",
+                  value: "sb_publishable_test",
+                },
+                "secret:auth.settings.secret_key": {
+                  policy: "managed",
+                  value: "sb_secret_test",
+                },
+                "secret:functions.settings.edge_runtime.secrets.FACTORY_SECRET": {
+                  policy: "managed",
+                  value: "factory-secret",
+                },
+              },
+              { kind: "container", engine: "docker" },
+            ),
+            identity: {
+              ...stateFor({}).identity,
+              projectRoot: root,
+              checkoutRoot: root,
+              workspaceId: root,
+              checkoutId: root,
+            },
+            desiredLifecycle: "running" as const,
+            definition: compiled.definition,
+            inputFingerprint: compiled.inputFingerprint,
+            portsGeneration: 1,
+            ports: [{ field: "api" as const, port: 40_000, intent: "exact" as const }],
+            privatePorts: [
+              {
+                workloadId: "auth:auth",
+                binding: "primary",
+                port: authAddress.port,
+              },
+              {
+                workloadId: "pooler:pooler",
+                binding: "primary",
+                port: poolerAddress.port,
+              },
+              {
+                workloadId: "functions:edge-runtime",
+                binding: "primary",
+                port: functionsAddress.port,
+              },
+              {
+                workloadId: "analytics:analytics",
+                binding: "primary",
+                port: analyticsAddress.port,
+              },
+            ],
+          },
+        } satisfies { value: PersistedStackState };
+        const context = yield* Effect.context<FileSystem.FileSystem | Path.Path | Crypto.Crypto>();
+        const createdSpecs: ContainerContainerSpec[] = [];
+        const engine = ownerInputContainerEngine(createdSpecs);
+        const factory = yield* makeProductionRuntimeFactory({
+          stateRoot: root,
+          stackId,
+          ownerSessionId: "owner",
+          stateStore: stateStoreFor(current),
+          context,
+          ingress,
+          containerEngine: engine,
+          artifactPreparer: {
+            prepare: (_runtime, workload) =>
+              Effect.succeed({
+                workloadId: workload.id,
+                capability: workload.capability,
+                version: "test",
+                outcome: "present" as const,
+                image: workload.selected.kind === "container" ? workload.selected.image : undefined,
+              }),
+          },
+          logStore: memoryLogStore([]),
+          bootstrapDatabase: () => Effect.void,
+        });
+        const runtime = yield* factory.make(current.value);
+        const auth = compiled.executionPlan.workloads.find(
+          (workload) => workload.id === "auth:auth",
+        );
+        const pooler = compiled.executionPlan.workloads.find(
+          (workload) => workload.id === "pooler:pooler",
+        );
+        if (auth === undefined || pooler === undefined)
+          return yield* Effect.die("Expected Auth and Pooler workloads");
+        yield* runtime.driver.start(
+          {
+            stackId,
+            desiredGeneration: 1,
+            workloadId: auth.id,
+            specHash: auth.specHash,
+          },
+          auth,
+        );
+        const authSpec = createdSpecs.find((spec) => spec.labels.workloadId === auth.id);
+        if (authSpec === undefined || authSpec.envFile === undefined)
+          return yield* Effect.die("Auth container was not captured");
+        const authEnv = yield* fs.readFileString(authSpec.envFile);
+        expect(authEnv).toContain("GOTRUE_JWT_SECRET=jwt-secret");
+        expect(authEnv).toContain(
+          "GOTRUE_MAILER_TEMPLATES_CONFIRMATION=http://host.docker.internal:40000/email/confirmation.html",
+        );
+        const functions = compiled.executionPlan.workloads.find(
+          (workload) => workload.id === "functions:edge-runtime",
+        );
+        const analytics = compiled.executionPlan.workloads.find(
+          (workload) => workload.id === "analytics:analytics",
+        );
+        if (functions === undefined || analytics === undefined)
+          return yield* Effect.die("Expected Functions and Analytics workloads");
+        yield* runtime.driver.start(
+          {
+            stackId,
+            desiredGeneration: 1,
+            workloadId: functions.id,
+            specHash: functions.specHash,
+          },
+          functions,
+        );
+        const functionsSpec = createdSpecs.find((spec) => spec.labels.workloadId === functions.id);
+        if (functionsSpec?.envFile === undefined)
+          return yield* Effect.die("Functions container was not captured");
+        expect(yield* fs.readFileString(functionsSpec.envFile)).toContain(
+          "FACTORY_SECRET=factory-secret",
+        );
+        yield* runtime.driver.start(
+          {
+            stackId,
+            desiredGeneration: 1,
+            workloadId: analytics.id,
+            specHash: analytics.specHash,
+          },
+          analytics,
+        );
+        const analyticsSpec = createdSpecs.find((spec) => spec.labels.workloadId === analytics.id);
+        expect(analyticsSpec?.mounts).toContainEqual({
+          source: expect.stringContaining("gcp.json"),
+          target: "/opt/app/rel/logflare/bin/gcloud.json",
+          readOnly: true,
+        });
+        yield* runtime.driver.start(
+          {
+            stackId,
+            desiredGeneration: 1,
+            workloadId: pooler.id,
+            specHash: pooler.specHash,
+          },
+          pooler,
+        );
+        const poolerSpec = createdSpecs.find((spec) => spec.labels.workloadId === pooler.id);
+        expect(poolerSpec?.mounts).toContainEqual({
+          source: expect.stringContaining("pooler_tenant.exs"),
+          target: "/app/pooler_tenant.exs",
+          readOnly: true,
+        });
+        expect(poolerSpec?.command?.join(" ")).toContain("/app/bin/supavisor eval");
+        const tenantPath = poolerSpec?.mounts.find(
+          (mount) => mount.target === "/app/pooler_tenant.exs",
+        )?.source;
+        if (tenantPath === undefined)
+          return yield* Effect.die("Pooler tenant mount was not captured");
+        expect(yield* fs.exists(tenantPath)).toBe(true);
+        yield* runtime.driver.stop({
+          stackId,
+          desiredGeneration: 1,
+          workloadId: pooler.id,
+          specHash: pooler.specHash,
+        });
+        expect(yield* fs.exists(tenantPath)).toBe(false);
+        yield* runtime.driver.start(
+          {
+            stackId,
+            desiredGeneration: 2,
+            workloadId: pooler.id,
+            specHash: pooler.specHash,
+          },
+          pooler,
+        );
+        const generationTwoSpec = createdSpecs.find(
+          (spec) => spec.labels.workloadId === pooler.id && spec.labels.desiredGeneration === 2,
+        );
+        const generationTwoTenantPath = generationTwoSpec?.mounts.find(
+          (mount) => mount.target === "/app/pooler_tenant.exs",
+        )?.source;
+        if (generationTwoTenantPath === undefined)
+          return yield* Effect.die("Second-generation Pooler tenant mount was not captured");
+        expect(yield* fs.exists(generationTwoTenantPath)).toBe(true);
+        yield* runtime.driver.cleanup({ stackId, destroy: false });
+        expect(yield* fs.exists(generationTwoTenantPath)).toBe(false);
       }).pipe(Effect.provide(NodeServices.layer)),
     ),
   );

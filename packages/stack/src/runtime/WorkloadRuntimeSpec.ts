@@ -42,12 +42,12 @@ export interface WorkloadRuntimeInputs {
   /** Resolved host path for the BigQuery service-account file. */
   readonly analytics?: Readonly<{
     readonly gcpJwtPath?: string;
-    readonly vectorConfigPath?: string;
   }>;
   /** Stack-owned Edge Runtime bootstrap source and its private container target. */
   readonly functions?: Readonly<{
     readonly bootstrapPath?: string;
     readonly bootstrapContainerPath?: string;
+    readonly secrets?: Readonly<Record<string, string>>;
   }>;
   /** Stack-owned native persistent data paths. Containers use their named volumes instead. */
   readonly database?: Readonly<{ readonly dataPath?: string }>;
@@ -414,6 +414,7 @@ const edgeRuntimeJwtEnvironment = (
       state.ports.find((assignment) => assignment.field === "api")?.port ?? "",
     ),
     SUPABASE_JWKS: inputs.auth?.jwks ?? '{"keys":[]}',
+    ...inputs.functions?.secrets,
   });
 
 const functionsConfigEnvironment = (state: PersistedStackState): string => {
@@ -1264,20 +1265,7 @@ const specs: Readonly<Record<string, WorkloadRuntimeSpecDefinition>> = {
       ...capabilityEnv(state, "analytics", "VECTOR"),
       VECTOR_API_PORT: String(port),
     }),
-    containerArgs: (_state, _workload, _port, inputs = {}) =>
-      inputs.analytics?.vectorConfigPath === undefined
-        ? []
-        : ["--config", "/etc/vector/vector.yaml", "--watch-config", "false"],
-    containerMounts: (_state, _workload, inputs = {}) =>
-      inputs.analytics?.vectorConfigPath === undefined
-        ? []
-        : [
-            {
-              source: inputs.analytics.vectorConfigPath,
-              target: "/etc/vector/vector.yaml",
-              readOnly: true,
-            },
-          ],
+    containerArgs: () => [],
     networkAliases: ["supabase-vector"],
     readiness: { protocol: "http", path: "/health" },
   },

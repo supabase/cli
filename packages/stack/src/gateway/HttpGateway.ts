@@ -19,13 +19,15 @@ import {
 import type {
   ActivationResult,
   BackendEndpoint,
+  GatewayLocalResponse,
+  GatewayProxyRoute,
   GatewayRoute,
   GatewayRouteRequest,
   GatewayHeaders,
   LazyActivator,
   PreparedGatewayRoute,
 } from "./Gateway.ts";
-import { GatewayRouteNotFoundError } from "./Gateway.ts";
+import { GatewayRouteNotFoundError, isGatewayProxyRoute } from "./Gateway.ts";
 import type { HostListener } from "../state/PortCoordinator.ts";
 
 class GatewayBackendError extends Data.TaggedError("GatewayBackendError")<{
@@ -39,7 +41,7 @@ export interface HttpGatewayOptions {
   readonly routes: ReadonlyArray<GatewayRoute>;
   readonly activate: LazyActivator["activate"];
   readonly resolveBackend?: (
-    route: GatewayRoute,
+    route: GatewayProxyRoute,
     request: GatewayRouteRequest,
     activation: ActivationResult,
   ) => Effect.Effect<BackendEndpoint, GatewayActivationError>;
@@ -97,6 +99,17 @@ const respond = (
   response.statusCode = status;
   response.setHeader("content-type", "application/json");
   response.end(body);
+};
+
+const respondLocal = (
+  response: ServerResponse,
+  local: GatewayLocalResponse,
+  options: HttpGatewayOptions,
+): void => {
+  setCors(response, options);
+  response.statusCode = local.status ?? 200;
+  response.setHeader("content-type", local.contentType ?? "application/octet-stream");
+  response.end(local.body);
 };
 
 const routeFor = (
@@ -248,7 +261,12 @@ const handleRequest = (
 ): void => {
   const view = requestView(request);
   setCors(response, options);
+  const earlyRoute = routeFor(view, options.routes);
   if (request.method === "OPTIONS") {
+    if (earlyRoute?.localResponse !== undefined) {
+      respond(response, 404, JSON.stringify({ error: "Not found" }), options);
+      return;
+    }
     response.statusCode = 204;
     response.end();
     return;
@@ -263,6 +281,20 @@ const handleRequest = (
   }
   const route = routeFor(view, options.routes);
   if (route === undefined) {
+    respond(response, 404, JSON.stringify({ error: "Not found" }), options);
+    return;
+  }
+  if (route.localResponse !== undefined) {
+    const local = route.localResponse(view);
+    const fiber = runFork(local);
+    fiber.addObserver((exit) => {
+      if (Exit.isSuccess(exit)) respondLocal(response, exit.value, options);
+      else if (!response.writableEnded && !response.destroyed)
+        respond(response, 404, JSON.stringify({ error: "Not found" }), options);
+    });
+    return;
+  }
+  if (!isGatewayProxyRoute(route)) {
     respond(response, 404, JSON.stringify({ error: "Not found" }), options);
     return;
   }
@@ -344,6 +376,15 @@ const handleUpgrade = (
   const view = requestView(request);
   const route = routeFor(view, options.routes);
   if (route === undefined) {
+    socket.destroy();
+    return;
+  }
+  // Local routes are HTTP-only and must never invoke their handler for upgrades.
+  if (route.localResponse !== undefined) {
+    socket.destroy();
+    return;
+  }
+  if (!isGatewayProxyRoute(route)) {
     socket.destroy();
     return;
   }

@@ -3,6 +3,7 @@ import type { LifecycleInput } from "./Lifecycle.ts";
 import type {
   ActivationResult,
   GatewayRoute,
+  GatewayProxyRoute,
   GatewayRouteRequest,
   StackGateway,
 } from "../gateway/Gateway.ts";
@@ -12,7 +13,7 @@ import {
   type StackError,
 } from "../public/Errors.ts";
 import { routeCatalogFor, type GatewayApiMaterial } from "../gateway/RouteCatalog.ts";
-import { makeGateway } from "../gateway/Gateway.ts";
+import { GatewayRouteNotFoundError, makeGateway } from "../gateway/Gateway.ts";
 import {
   makePortCoordinator,
   type HostListener,
@@ -59,6 +60,15 @@ export interface SupervisorIngressOptions {
   readonly apiMaterial?: (
     state: LifecycleInput["state"],
   ) => Effect.Effect<GatewayApiMaterial, StackPreparationError>;
+  /** Resolves the accepted generation's Auth templates for live local serving. */
+  readonly resolveAuthTemplates?: (state: LifecycleInput["state"]) => Effect.Effect<
+    ReadonlyArray<{
+      readonly id: string;
+      readonly canonicalPath: string;
+      readonly extension: string;
+    }>,
+    StackPreparationError
+  >;
   readonly bindHost?: (
     address: string,
     port: number,
@@ -100,7 +110,7 @@ const defaultApiMaterial = (
 const routeBackend = (
   input: LifecycleInput,
   reservation: SupervisorIngressReservation,
-  route: Pick<GatewayRoute, "capability" | "binding">,
+  route: Pick<GatewayProxyRoute, "capability" | "binding">,
   activation: ActivationResult,
 ) => {
   if (route.binding === undefined) return Effect.succeed(activation.endpoint);
@@ -113,6 +123,20 @@ const routeBackend = (
     : Effect.succeed({ host: "127.0.0.1", port: assignment.port });
 };
 
+const templateContentType = (extension: string): string => {
+  switch (extension.toLowerCase()) {
+    case ".html":
+    case ".htm":
+      return "text/html; charset=utf-8";
+    case ".txt":
+      return "text/plain; charset=utf-8";
+    case ".json":
+      return "application/json";
+    default:
+      return "application/octet-stream";
+  }
+};
+
 /** Compose PortCoordinator and StackGateway under one Supervisor owner scope. */
 export const makeSupervisorIngress = (
   options: SupervisorIngressOptions,
@@ -122,6 +146,7 @@ export const makeSupervisorIngress = (
   Scope.Scope | Crypto.Crypto | FileSystem.FileSystem | Path.Path
 > =>
   Effect.gen(function* () {
+    const fs = yield* FileSystem.FileSystem;
     const ownerScope = yield* Scope.Scope;
     const lock = yield* Semaphore.make(1);
     const current = yield* Ref.make<
@@ -206,15 +231,63 @@ export const makeSupervisorIngress = (
             return;
           const material = yield* (options.apiMaterial ?? defaultApiMaterial)(input.state);
           const catalog = routeCatalogFor(input.plan, material);
+          const resolveTemplates = options.resolveAuthTemplates;
+          const templateRoute: GatewayRoute | undefined =
+            resolveTemplates === undefined
+              ? undefined
+              : {
+                  match: (request) => {
+                    const pathname = request.path.split("?", 1)[0] ?? request.path;
+                    return pathname === "/email" || pathname.startsWith("/email/");
+                  },
+                  localResponse: (request) => {
+                    const pathname = request.path.split("?", 1)[0] ?? request.path;
+                    if (request.method !== "GET")
+                      return Effect.fail(
+                        new GatewayRouteNotFoundError({ message: "Auth template not found" }),
+                      );
+                    return resolveTemplates(input.state).pipe(
+                      Effect.mapError(
+                        () => new GatewayRouteNotFoundError({ message: "Auth template not found" }),
+                      ),
+                      Effect.flatMap((templates) => {
+                        const template = templates.find(
+                          (entry) => `/email/${entry.id}${entry.extension}` === pathname,
+                        );
+                        return template === undefined
+                          ? Effect.fail(
+                              new GatewayRouteNotFoundError({
+                                message: "Auth template not found",
+                              }),
+                            )
+                          : fs.readFile(template.canonicalPath).pipe(
+                              Effect.mapError(
+                                () =>
+                                  new GatewayRouteNotFoundError({
+                                    message: "Auth template not found",
+                                  }),
+                              ),
+                              Effect.map((body) => ({
+                                body,
+                                contentType: templateContentType(template.extension),
+                              })),
+                            );
+                      }),
+                    );
+                  },
+                };
           const http = reservation.hostListeners
             .filter((listener) => isHttpPortField(listener.field))
             .map((listener) => ({
               field: listener.field,
               options: {
                 listener,
-                routes: catalog.http.get(listener.field) ?? [],
+                routes:
+                  listener.field === "api" && templateRoute !== undefined
+                    ? [templateRoute, ...(catalog.http.get(listener.field) ?? [])]
+                    : (catalog.http.get(listener.field) ?? []),
                 resolveBackend: (
-                  route: GatewayRoute,
+                  route: GatewayProxyRoute,
                   _request: GatewayRouteRequest,
                   result: ActivationResult,
                 ) => routeBackend(input, reservation, route, result),
@@ -228,7 +301,7 @@ export const makeSupervisorIngress = (
                 listener,
                 routes: catalog.tcp.get(listener.field) ?? [],
                 resolveBackend: (
-                  route: GatewayRoute,
+                  route: GatewayProxyRoute,
                   _request: GatewayRouteRequest,
                   result: ActivationResult,
                 ) => routeBackend(input, reservation, route, result),

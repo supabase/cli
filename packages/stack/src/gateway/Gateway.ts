@@ -153,6 +153,13 @@ export interface GatewayRouteRequest {
   readonly headers: Readonly<Record<string, string | string[] | undefined>>;
 }
 
+/** A response produced locally without activating or resolving a backend. */
+export interface GatewayLocalResponse {
+  readonly status?: number;
+  readonly body: string | Uint8Array;
+  readonly contentType?: string;
+}
+
 export type GatewayHeaderValue = string | string[];
 export type GatewayHeaders = Readonly<Record<string, GatewayHeaderValue>>;
 export type GatewayHeaderTransform = (
@@ -160,7 +167,7 @@ export type GatewayHeaderTransform = (
   headers: GatewayHeaders,
 ) => GatewayHeaders;
 
-export interface GatewayRoute {
+export interface GatewayProxyRoute {
   readonly capability: CapabilityName;
   /** Workload binding selected when a capability exposes multiple endpoints. */
   readonly binding?: string;
@@ -173,7 +180,27 @@ export interface GatewayRoute {
   readonly prepare?: (
     request: GatewayRouteRequest,
   ) => Effect.Effect<PreparedGatewayRoute, GatewayRouteNotFoundError | GatewayActivationError>;
+  /** Proxy routes never produce a local response. */
+  readonly localResponse?: never;
 }
+
+/** HTTP-only route that produces a response without activating a capability. */
+export interface GatewayLocalRoute {
+  readonly capability?: never;
+  readonly binding?: never;
+  readonly match: (request: GatewayRouteRequest) => boolean;
+  readonly upstreamPath?: never;
+  readonly upstreamHeaders?: never;
+  readonly prepare?: never;
+  readonly localResponse: (
+    request: GatewayRouteRequest,
+  ) => Effect.Effect<GatewayLocalResponse, GatewayRouteNotFoundError>;
+}
+
+export type GatewayRoute = GatewayProxyRoute | GatewayLocalRoute;
+
+export const isGatewayProxyRoute = (route: GatewayRoute): route is GatewayProxyRoute =>
+  route.capability !== undefined;
 
 export interface StackGateway {
   readonly http: ReadonlyMap<PortField, HttpGateway>;
