@@ -50,7 +50,7 @@ export const legacyListLocalMigrations = Effect.fnUntraced(function* (
   // order for a supplementary-plane filename character alongside a BMP private-use one (see
   // {@link legacyCompareUtf8Bytes}'s own doc comment). Left uncorrected, such a migrations
   // directory would replay in a different order than previous releases, and a dependent
-  // migration could fail or produce a different shadow schema (review: PRRT_kwDOErm0O86W3OyD).
+  // migration could fail or produce a different shadow schema.
   const sorted = [...names].sort(legacyCompareUtf8Bytes);
   const result: Array<string> = [];
   for (let index = 0; index < sorted.length; index++) {

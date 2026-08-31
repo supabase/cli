@@ -69,13 +69,6 @@
  * NEVER called (Go's `resetDatabase`/`resetDatabase14`/`resetDatabase15` never
  * call it), and no rollback on failure (Go's `cmd/db.go` only wraps `--mode
  * start` in a `DockerRemoveAll` cleanup — the recreate dispatch has none).
- *
- * `pgcache.TryCacheMigrationsCatalog`'s best-effort catalog warmup (part of Go's
- * `SetupLocalDatabase`, reachable from the PG15 path above via
- * `legacyStartSetupLocalDatabase`) IS reached here too — see `db-setup.ts`'s own
- * header for the exact gate/citations. `reset.layers.ts` composes
- * `legacyEdgeRuntimeScriptLayer`/`legacyPgDeltaSslProbeLayer` for it, matching
- * `db start`'s own layer composition (`db/start/start.layers.ts`).
  */
 
 import { Data, Effect, Result, Schedule, type FileSystem, type Path } from "effect";

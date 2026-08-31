@@ -8,10 +8,7 @@ import { legacyCliSettingsLayer } from "../../config/legacy-cli-settings.layer.t
 import { legacyProjectRefLayer } from "../../config/legacy-project-ref.layer.ts";
 import { legacyDbConnectionLayer } from "../../shared/legacy-db-connection.layer.ts";
 import { legacyDebugLoggerLayer } from "../../shared/legacy-debug-logger.layer.ts";
-import { legacyDockerRunLayer } from "../../shared/legacy-docker-run.layer.ts";
-import { legacyEdgeRuntimeScriptLayer } from "../../shared/legacy-edge-runtime-script.layer.ts";
 import { legacyIdentityStitchLayer } from "../../shared/legacy-identity-stitch.ts";
-import { legacyPgDeltaSslProbeLayer } from "../../shared/legacy-pgdelta-ssl-probe.layer.ts";
 import { legacyLinkedProjectCacheLayer } from "../../telemetry/legacy-linked-project-cache.layer.ts";
 import { legacyTelemetryStateLayer } from "../../telemetry/legacy-telemetry-state.layer.ts";
 import { commandRuntimeLayer } from "../../../shared/runtime/command-runtime.layer.ts";
@@ -50,14 +47,6 @@ const platformApi = legacyPlatformApiLayer.pipe(
   Layer.provide(legacyIdentityStitchLayer),
 );
 const platformApiFactory = legacyPlatformApiFactoryFromApiLayer.pipe(Layer.provide(platformApi));
-// `legacyDbPushCore` (the native push step, CLI-1953) needs a Postgres connection
-// and the edge-runtime/pg-delta stack for its best-effort migrations-catalog cache
-// — same sub-layers `db push` itself composes (`push.layers.ts`), reusing this
-// file's own `cliSettings` reference rather than a second parallel one.
-const edgeRuntime = legacyEdgeRuntimeScriptLayer.pipe(
-  Layer.provide(legacyDockerRunLayer),
-  Layer.provide(cliSettings),
-);
 
 export const legacyBootstrapRuntimeLayer = Layer.mergeAll(
   platformApi,
@@ -74,10 +63,7 @@ export const legacyBootstrapRuntimeLayer = Layer.mergeAll(
   ),
   legacyTelemetryStateLayer,
   legacyDbConnectionLayer,
-  legacyDockerRunLayer,
-  edgeRuntime,
-  legacyPgDeltaSslProbeLayer,
-  // Exposed bare (not just used to feed sibling sub-layers, as elsewhere in this
+  // Exposed bare (not just used to feed sibling sub-layers, as elsewhere in this)
   // file) because `bootstrap.handler.ts` now calls `legacyResolveLinkedConn`
   // (CLI-1953's IPv4-pooler-fallback push connection) directly, which reads it.
   debugLogger,

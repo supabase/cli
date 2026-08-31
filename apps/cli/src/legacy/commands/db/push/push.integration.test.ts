@@ -31,8 +31,6 @@ import {
   type LegacyPgConnInput,
   type LegacyDbSession,
 } from "../../../shared/legacy-db-connection.service.ts";
-import { LegacyEdgeRuntimeScript } from "../../../shared/legacy-edge-runtime-script.service.ts";
-import { LegacyPgDeltaSslProbe } from "../../../shared/legacy-pgdelta-ssl-probe.service.ts";
 import { legacyDbPush } from "./push.handler.ts";
 import type { LegacyDbPushFlags } from "./push.command.ts";
 
@@ -203,13 +201,6 @@ function setup(
   const telemetry = mockLegacyTelemetryStateTracked();
   const linkedCache = mockLegacyLinkedProjectCacheTracked();
 
-  const edge = Layer.succeed(LegacyEdgeRuntimeScript, {
-    run: () => Effect.succeed({ stdout: '{"version":1}', stderr: "" }),
-  });
-  const sslProbe = Layer.succeed(LegacyPgDeltaSslProbe, {
-    requireSsl: () => Effect.succeed(false),
-    requireSslForHost: () => Effect.succeed(false),
-  });
   const projectRefLayer = Layer.succeed(LegacyProjectRefResolver, {
     resolve: () => Effect.succeed(opts.projectRef ?? LEGACY_VALID_REF),
     resolveForLink: () => Effect.succeed(opts.projectRef ?? LEGACY_VALID_REF),
@@ -259,8 +250,6 @@ function setup(
     projectRefLayer,
     telemetry.layer,
     linkedCache.layer,
-    edge,
-    sslProbe,
   );
   return {
     layer,

@@ -13,12 +13,6 @@ import { LegacyDbExecError } from "../legacy-db-connection.errors.ts";
 import { LegacyDbConnection, type LegacyDbSession } from "../legacy-db-connection.service.ts";
 import { LegacyDockerRun, type LegacyDockerRunOpts } from "../legacy-docker-run.service.ts";
 import { LegacyDockerRunError } from "../legacy-docker-run.errors.ts";
-import { LegacyEdgeRuntimeScriptError } from "../legacy-edge-runtime-script.errors.ts";
-import {
-  LegacyEdgeRuntimeScript,
-  type LegacyEdgeRuntimeRunOpts,
-} from "../legacy-edge-runtime-script.service.ts";
-import { LegacyPgDeltaSslProbe } from "../legacy-pgdelta-ssl-probe.service.ts";
 import {
   LegacyDbSetupError,
   legacyResolveDbSetupPrelude,
@@ -164,35 +158,6 @@ function mockDockerRunFails() {
   return { layer };
 }
 
-/**
- * `LegacyEdgeRuntimeScript`/`LegacyPgDeltaSslProbe` back
- * `legacyTryCacheMigrationsCatalog`'s own pg-delta catalog-export call (`db-setup.ts`'s
- * pgcache-warmup step) — required by {@link legacyStartSetupLocalDatabase}'s own widened
- * effect environment regardless of whether a given test's config actually enables
- * pg-delta (the early `!params.enabled` return means these mocks are never invoked at
- * runtime unless a test opts in via `writeConfigToml`'s `[experimental.pgdelta]`).
- */
-function mockEdgeRuntime(opts: { readonly stdout?: string; readonly failWith?: string } = {}) {
-  const calls: Array<LegacyEdgeRuntimeRunOpts> = [];
-  const layer = Layer.succeed(LegacyEdgeRuntimeScript, {
-    run: (runOpts: LegacyEdgeRuntimeRunOpts) => {
-      calls.push(runOpts);
-      if (opts.failWith !== undefined) {
-        return Effect.fail(new LegacyEdgeRuntimeScriptError({ message: opts.failWith }));
-      }
-      return Effect.succeed({ stdout: opts.stdout ?? '{"version":1}', stderr: "" });
-    },
-  });
-  return { layer, calls };
-}
-
-function mockPgDeltaSslProbeLayer() {
-  return Layer.succeed(LegacyPgDeltaSslProbe, {
-    requireSsl: () => Effect.succeed(false),
-    requireSslForHost: () => Effect.succeed(false),
-  });
-}
-
 function makeWorkdir(): string {
   return mkdtempSync(join(tmpdir(), "legacy-db-setup-"));
 }
@@ -244,7 +209,6 @@ const run = (
   input: Omit<LegacyStartSetupLocalDatabaseInput, "fs" | "path">,
   out: ReturnType<typeof mockOutput>,
   docker: ReturnType<typeof mockDockerRun> | ReturnType<typeof mockDockerRunFails>,
-  edgeRuntime: ReturnType<typeof mockEdgeRuntime> = mockEdgeRuntime(),
 ) =>
   Effect.gen(function* () {
     const fs = yield* FileSystem.FileSystem;
@@ -261,8 +225,6 @@ const run = (
         out.layer,
         docker.layer,
         mockRuntimeInfo({ platform: "darwin" }),
-        edgeRuntime.layer,
-        mockPgDeltaSslProbeLayer(),
       ),
     ),
   );

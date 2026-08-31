@@ -103,7 +103,7 @@ export const legacyDbReset = Effect.fn("legacy.db.reset")(function* (flags: Lega
     // `process.env` for the container image resolution below (review CLI-1958). `db push`
     // (`push.handler.ts`) scopes this the same way, as the first statement of its own
     // `body` — mirror that exactly so a private/air-gapped registry configured only in
-    // `supabase/.env` reaches the catalog export instead of silently falling back to the
+    // `supabase/.env` reaches image resolution instead of silently falling back to the
     // default registries.
     yield* legacyApplyProjectEnv(projectEnv);
     const target = resolveLegacyDbTargetFlags(cliArgs.args);

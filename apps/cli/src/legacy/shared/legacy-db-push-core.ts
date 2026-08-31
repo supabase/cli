@@ -1,4 +1,4 @@
-import { Effect, FileSystem, Option, Path } from "effect";
+import { Effect, FileSystem, Path } from "effect";
 
 import { legacyPromptYesNo } from "../../shared/legacy/legacy-prompt-yes-no.ts";
 import { CONTEXT_CANCELED_MESSAGE } from "../../shared/output/errors.ts";
@@ -99,33 +99,6 @@ export interface LegacyDbPushCoreInput {
   readonly includeSeed: boolean;
   readonly includeVault: boolean;
   readonly dnsResolver: "native" | "https";
-  /**
-   * `LegacyCliSettings.projectId` (`SUPABASE_PROJECT_ID` env override only) — the
-   * top precedence tier of the pg-delta Docker-volume id. Combined internally
-   * with `toml.projectId`, `projectRef`, and a workdir-basename default via
-   * {@link legacyResolveLocalProjectId}, mirroring `Config.ProjectId`
-   * resolution: env override → config.toml `project_id` → `flags.ProjectRef`
-   * (when non-empty) → workdir basename. That third tier comes from
-   * `flags.LoadConfig` seeding
-   * `utils.Config.ProjectId = ProjectRef` *before* `Config.Load` runs, so on
-   * the linked path (default `db push`, and bootstrap — both resolve
-   * `ProjectRef` before loading config) a config.toml that omits `project_id`
-   * (e.g. a downloaded bootstrap template's own file) keeps the linked ref
-   * rather than falling to the workdir basename; only `--local`/`--db-url`
-   * (where Go never seeds `ProjectRef`) fall straight to the basename.
-   * Passing this env-only tier straight through as the id (as bootstrap's own
-   * `config.toml` is scaffolded fresh mid-handler, after `LegacyCliSettings` was
-   * already built) would bind the pg-delta edge-runtime cache volume to the
-   * generic `supabase_edge_runtime_` name shared by every unrelated project.
-   * The resolved id is sanitized ({@link legacySanitizeProjectId}) before it
-   * reaches {@link LegacyPgDeltaContext.projectId} — `Config.Validate`
-   * rewrites `Config.ProjectId` to its
-   * sanitized form once at config-load time, so every later reader (including
-   * `EdgeRuntimeId`) sees the already-sanitized value; an unsanitized
-   * `project_id` (e.g. `"my app"` from a downloaded bootstrap template) would
-   * otherwise reach the Docker volume name unescaped.
-   */
-  readonly projectId: Option.Option<string>;
   /** Already loaded + validated `config.toml`, e.g. via `legacyCheckDbToml`. */
   readonly toml: LegacyDbTomlValues;
   /** Already resolved confirm-prompt default, e.g. via `legacyResolveYesWithProjectEnv`. */

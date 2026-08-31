@@ -42,8 +42,6 @@ import {
   type LegacyDbSession,
 } from "../../shared/legacy-db-connection.service.ts";
 import { legacyDockerRunLayer } from "../../shared/legacy-docker-run.layer.ts";
-import { LegacyEdgeRuntimeScript } from "../../shared/legacy-edge-runtime-script.service.ts";
-import { LegacyPgDeltaSslProbe } from "../../shared/legacy-pgdelta-ssl-probe.service.ts";
 import { LEGACY_START_EXCLUDABLE_KEYS } from "./start.exclude.ts";
 import type { LegacyStartFlags } from "./start.command.ts";
 import { legacyStart } from "./start.handler.ts";
@@ -428,13 +426,6 @@ function setup(opts: SetupOpts = {}) {
     onSecretCopy: opts.onSecretCopy,
   });
   const dbSession = fakeDbSession();
-  const edgeRuntime = Layer.succeed(LegacyEdgeRuntimeScript, {
-    run: () => Effect.succeed({ stdout: '{"version":1}', stderr: "" }),
-  });
-  const sslProbe = Layer.succeed(LegacyPgDeltaSslProbe, {
-    requireSsl: () => Effect.succeed(false),
-    requireSslForHost: () => Effect.succeed(false),
-  });
 
   const layer = Layer.mergeAll(
     BunServices.layer,
@@ -471,8 +462,6 @@ function setup(opts: SetupOpts = {}) {
     Layer.succeed(LegacyNetworkIdFlag, opts.networkId ?? Option.none()),
     mockTty({ stdinIsTty: false }),
     mockStdin(false),
-    edgeRuntime,
-    sslProbe,
   );
 
   return { workdir, out, telemetry, analytics, child, dbSession, layer };

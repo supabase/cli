@@ -23,7 +23,7 @@ export function legacyShouldUsePgDelta(inputs: {
  * Reports whether `db diff` should run in pg-delta mode. Mirrors Go's
  * `resolveDiffEngine`: an explicit `--use-migra`,
  * `--use-pgadmin`, or `--use-pg-schema` is an authoritative rollback that clears
- * pg-delta mode; `--use-migra` defaults to true so only an explicit pass
+ * pg-delta mode. `--use-migra` is off unless passed, so only an explicit pass
  * (`useMigraChanged`) counts as opting out.
  */
 export function legacyResolveDiffEngine(inputs: {

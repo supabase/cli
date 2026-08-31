@@ -177,9 +177,10 @@ transaction metadata.
 
 ## Notes / Delegation
 
-- `--use-migra` (default), `--use-pgadmin`, `--use-pg-schema`, `--use-pg-delta` are a
-  mutually-exclusive engine group; `--db-url` / `--linked` / `--local` are a
-  mutually-exclusive target group (default `--local`).
+- `--use-migra`, `--use-pgadmin`, `--use-pg-schema`, `--use-pg-delta` are a
+  mutually-exclusive engine group (pg-delta is the default when none is passed);
+  `--db-url` / `--linked` / `--local` are a mutually-exclusive target group
+  (default `--local`).
 - **`--project-ref`** (TS-only, no Go equivalent on any user-facing `db`
   command) overrides ONLY the linked-ref resolution `LegacyProjectRefResolver`
   performs (flag > `SUPABASE_PROJECT_ID` > `.temp/project-ref`) — unlike

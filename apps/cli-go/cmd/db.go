@@ -187,7 +187,7 @@ func shouldUsePgDelta() bool {
 // env default (pgDeltaDefault) applies unless an explicit non-pg-delta engine is selected:
 // --use-migra, --use-pgadmin, or --use-pg-schema is an authoritative rollback that clears
 // pg-delta mode so diff.Run skips pg-delta-specific declarative shadow setup and the
-// PGDELTA_DEBUG capture path. --use-migra defaults to true, so only an explicit pass
+// PGDELTA_DEBUG capture path. --use-migra is off unless passed, so only an explicit pass
 // (useMigraChanged) counts as opting out.
 func resolveDiffEngine(useMigraChanged, usePgAdmin, usePgSchema, pgDeltaDefault bool) bool {
 	if useMigraChanged || usePgAdmin || usePgSchema {
@@ -216,7 +216,7 @@ func init() {
 	dbCmd.AddCommand(dbBranchCmd)
 	// Build diff command
 	diffFlags := dbDiffCmd.Flags()
-	diffFlags.BoolVar(&useMigra, "use-migra", true, "Use migra to generate schema diff.")
+	diffFlags.BoolVar(&useMigra, "use-migra", false, "Use migra to generate schema diff.")
 	diffFlags.BoolVar(&usePgAdmin, "use-pgadmin", false, "Use pgAdmin to generate schema diff.")
 	diffFlags.BoolVar(&usePgSchema, "use-pg-schema", false, "Use pg-schema-diff to generate schema diff.")
 	diffFlags.BoolVar(&usePgDelta, "use-pg-delta", false, "Use pg-delta to generate schema diff.")

@@ -41,8 +41,6 @@ import {
 } from "../../../../shared/legacy/global-flags.ts";
 import type { OutputFormat } from "../../../../shared/output/types.ts";
 import { legacyDockerRunLayer } from "../../../shared/legacy-docker-run.layer.ts";
-import { LegacyEdgeRuntimeScript } from "../../../shared/legacy-edge-runtime-script.service.ts";
-import { LegacyPgDeltaSslProbe } from "../../../shared/legacy-pgdelta-ssl-probe.service.ts";
 import { LegacyDbConfigResolver } from "../../../shared/legacy-db-config.service.ts";
 import type {
   LegacyDbConfigFlags,
@@ -467,14 +465,6 @@ function setup(
   });
   const route = opts.route ?? defaultLocalResetRoute(opts.routeOpts);
   const child = mockContainerCliSpawner(route);
-  const edgeRuntime = Layer.succeed(LegacyEdgeRuntimeScript, {
-    run: () => Effect.succeed({ stdout: '{"version":1}', stderr: "" }),
-  });
-  const pgDeltaSslProbe = Layer.succeed(LegacyPgDeltaSslProbe, {
-    requireSsl: () => Effect.succeed(false),
-    requireSslForHost: () => Effect.succeed(false),
-  });
-
   const layer = Layer.mergeAll(
     out.layer,
     conn.layer,
@@ -489,8 +479,6 @@ function setup(
       Layer.provide(child.layer),
       Layer.provide(mockProcessControl().layer),
     ),
-    edgeRuntime,
-    pgDeltaSslProbe,
     Layer.succeed(LegacyNetworkIdFlag, Option.none()),
     // The remote-reset confirmation is answered through mockOutput's
     // `promptConfirmResponses` (the TTY/clack path), so mark stdin a TTY. Stdin is

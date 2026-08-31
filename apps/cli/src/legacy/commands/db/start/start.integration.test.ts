@@ -33,8 +33,6 @@ import {
   type LegacyDbSession,
 } from "../../../shared/legacy-db-connection.service.ts";
 import { legacyDockerRunLayer } from "../../../shared/legacy-docker-run.layer.ts";
-import { LegacyEdgeRuntimeScript } from "../../../shared/legacy-edge-runtime-script.service.ts";
-import { LegacyPgDeltaSslProbe } from "../../../shared/legacy-pgdelta-ssl-probe.service.ts";
 import { legacyDbStart } from "./start.handler.ts";
 import type { LegacyDbStartFlags } from "./start.command.ts";
 
@@ -302,13 +300,6 @@ function setup(opts: SetupOpts = {}) {
         : baseRoute;
   const child = mockContainerCliSpawner(route);
   const dbSession = fakeDbSession();
-  const edgeRuntime = Layer.succeed(LegacyEdgeRuntimeScript, {
-    run: () => Effect.succeed({ stdout: '{"version":1}', stderr: "" }),
-  });
-  const sslProbe = Layer.succeed(LegacyPgDeltaSslProbe, {
-    requireSsl: () => Effect.succeed(false),
-    requireSslForHost: () => Effect.succeed(false),
-  });
 
   let connectAttempts = 0;
   const connectFailures = opts.connectFailures ?? 0;
@@ -350,8 +341,6 @@ function setup(opts: SetupOpts = {}) {
     Layer.succeed(CliArgs, { args: ["db", "start"] }),
     Layer.succeed(LegacyExperimentalFlag, opts.experimental ?? false),
     Layer.succeed(LegacyDebugFlag, opts.debug ?? false),
-    edgeRuntime,
-    sslProbe,
   );
   return {
     layer,

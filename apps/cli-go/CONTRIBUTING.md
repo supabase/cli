@@ -46,7 +46,7 @@ The Supabase API client is generated from OpenAPI spec. See [our guide](api/READ
 
 > **Scope:** this workflow only applies to the Go binary's own edge-runtime pg-delta
 > path, which the TypeScript CLI still reaches through the delegated
-> `db remote commit` / `db pull --experimental` commands. The main TypeScript CLI
+> `db remote commit` command. The main TypeScript CLI
 > bundles `@supabase/pg-delta` in-process and reads neither `PGDELTA_NPM_REGISTRY`
 > nor `supabase/.temp/pgdelta-version` — to test a local pg-delta build there,
 > update the `@supabase/pg-delta` dependency pin in `apps/cli/package.json` /
@@ -94,8 +94,7 @@ pg-delta path (ordinary `db diff` / `db pull` run the TypeScript in-process engi
 ignore this registry), for example:
 
 ```sh
-supabase db pull --experimental --db-url "$DATABASE_URL"
-# or: supabase db remote commit
+supabase db remote commit
 ```
 
 When set, the CLI injects a scoped `.npmrc` and forwards `NPM_CONFIG_REGISTRY` into the edge-runtime container (`PgDeltaNpmRegistryOption` in `internal/utils/pgdelta_local.go`).
