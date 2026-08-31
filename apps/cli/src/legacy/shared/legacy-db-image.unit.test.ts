@@ -14,14 +14,12 @@ import {
   POSTGRES_FALLBACK_IMAGE_PG14,
   POSTGRES_FALLBACK_IMAGE_PG15,
 } from "../../shared/services/services.shared.ts";
-import { toSlimImage } from "../../shared/services/slim-images.ts";
+import { imageTag, toSlimImage } from "../../shared/services/slim-images.ts";
 import { legacyResolveDbImage } from "./legacy-db-image.ts";
 
 const currentPostgres = dockerfileServiceImageRaw("pg");
-const currentPostgresTag = currentPostgres.split(":")[1] ?? "";
-const pg15Tag = POSTGRES_FALLBACK_IMAGE_PG15.slice(
-  POSTGRES_FALLBACK_IMAGE_PG15.lastIndexOf(":") + 1,
-);
+const currentPostgresTag = imageTag(currentPostgres) ?? "";
+const pg15Tag = imageTag(POSTGRES_FALLBACK_IMAGE_PG15) ?? "";
 
 const withTemp = () => mkdtempSync(join(tmpdir(), "legacy-db-image-"));
 

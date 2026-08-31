@@ -126,7 +126,7 @@ describe("services shared", () => {
     });
   });
 
-  // Explicit overrides are used verbatim — including historical PG15 pins.
+  // Explicit overrides keep their registry; a serviceVersions pin still rewrites the tag.
   test("leaves explicit image overrides on docker.io when SUPABASE_USE_SLIM_IMAGES is set", () => {
     vi.stubEnv("SUPABASE_USE_SLIM_IMAGES", "true");
     const rows = listLocalServiceVersions({
