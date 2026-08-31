@@ -1007,3 +1007,12 @@ private-port reservation plus gateway ownership atomic with accepted lifecycle g
 - Added combined local/remote JWKS, space-bearing native artifact paths, positive container tenant-path, and
   sibling-generation cleanup coverage. Focused owner/secret/workload/catalog integration verification passes 57
   cases with stack type-check, Effect lint, formatting, and diff checks green.
+
+#### Task 14 Fable correction round 2 (2026-08-31)
+
+- Added a public owner-surface scope-teardown regression: a gated materialization and a distinct generation
+  queued behind the execution lane both terminate with failure when the explicit owner scope closes, proving the
+  owner `onExit` handoff completes both deferred callers without hanging.
+- Removed redundant `Effect.yieldNow` scheduler nudges from cold-join and interrupted-waiter tests; startup uses
+  `forkChild(..., { startImmediately: true })` and Deferred gates exclusively. Focused owner/secret/workload/catalog
+  integration verification passes 58 cases with stack type-check, Effect lint, formatting, and diff checks green.
