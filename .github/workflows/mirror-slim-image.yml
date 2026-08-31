@@ -145,23 +145,7 @@ jobs:
         with:
           registry: public.ecr.aws
 
-      - name: Check if destination is already mirrored
-        id: check
-        env:
-          DESTINATION: ${{ steps.validate.outputs.destination }}
-          DIGEST: ${{ steps.validate.outputs.digest }}
-        run: |
-          set -euo pipefail
-          if DEST_DIGEST="$(regctl manifest head "$DESTINATION" 2>/dev/null)" \
-            && [ "$DEST_DIGEST" = "$DIGEST" ]; then
-            echo "$DESTINATION already resolves to $DIGEST; nothing to do"
-            echo "skip=true" >> "$GITHUB_OUTPUT"
-          else
-            echo "skip=false" >> "$GITHUB_OUTPUT"
-          fi
-
       - name: Ensure ECR Public repository exists
-        if: steps.check.outputs.skip != 'true'
         env:
           SERVICE: ${{ steps.validate.outputs.service }}
         run: |
@@ -186,13 +170,20 @@ jobs:
           fi
 
       - name: Mirror image
-        if: steps.check.outputs.skip != 'true'
         env:
           SOURCE: ${{ steps.validate.outputs.source }}
           DESTINATION: ${{ steps.validate.outputs.destination }}
           DIGEST: ${{ steps.validate.outputs.digest }}
         # Copy by digest so the copy cannot race a tag move on the source; the
         # whole index, all child manifests, and any referrers move as-is.
+        #
+        # The copy runs unconditionally, with no early exit when the
+        # destination tag already resolves to the digest: regctl's copy is
+        # incremental, so a re-dispatch after a complete copy is a cheap
+        # verification pass, while re-running after a partial failure (root
+        # index pushed but referrers or digest-tags missing) completes the
+        # copy instead of skipping it. Re-dispatches therefore still exit
+        # successfully with the destination digest unchanged.
         run: |
           set -euo pipefail
           regctl image copy --referrers --digest-tags \
