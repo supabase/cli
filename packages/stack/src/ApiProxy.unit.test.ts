@@ -1,3 +1,4 @@
+// oxlint-disable effecttsgo/async-function, effecttsgo/global-date, effecttsgo/global-fetch, effecttsgo/new-promise, effecttsgo/node-builtin-import -- Unit tests exercise the public Promise facade and native HTTP, gzip, and timestamp boundaries.
 import * as NodeHttpServer from "@effect/platform-node/NodeHttpServer";
 import * as http from "node:http";
 import { gzipSync } from "node:zlib";

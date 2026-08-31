@@ -149,14 +149,11 @@ export class PortConflictError extends Data.TaggedError("PortConflictError")<{
   readonly service: string;
 }> {}
 
-export class StackError extends Error {
+export class StackError extends Data.TaggedError("StackError")<{
   readonly code: string;
-  constructor(opts: { code: string; message: string; cause?: unknown }) {
-    super(opts.message, { cause: opts.cause });
-    this.code = opts.code;
-    this.name = "StackError";
-  }
-}
+  readonly message: string;
+  readonly cause?: unknown;
+}> {}
 
 const taggedStackErrorCodes = [
   ["ServiceNotFoundError", "SERVICE_NOT_FOUND"],

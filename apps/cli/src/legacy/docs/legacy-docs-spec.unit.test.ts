@@ -79,6 +79,43 @@ describe("legacyDocsStripOverlayHeading", () => {
 });
 
 describe("legacyBuildDocsSpec", () => {
+  it("never publishes an unlisted command subtree", () => {
+    // The guarantee is that `Command.unlisted` keeps a family out of the public
+    // docs reference. Nothing pinned it, for the `experimental` family or for the
+    // older `db test|branch|remote` precedent, so a future refactor could quietly
+    // start publishing them.
+    //
+    // Derived from the tree rather than matching a `supabase-experimental*`
+    // prefix, so it covers every unlisted subtree that exists now or later.
+    const { spec } = legacyBuiltSpec();
+    const emitted = new Set(spec.commands.map((command) => command.id));
+
+    const hidden: Array<string> = [];
+    const walk = (command: unknown, prefix: ReadonlyArray<string>, unlisted: boolean): void => {
+      const node = command as {
+        readonly name: string;
+        readonly unlisted?: boolean;
+        readonly subcommands?: ReadonlyArray<{ readonly commands?: ReadonlyArray<unknown> }>;
+      };
+      const here = prefix.length === 0 && node.name === "supabase" ? [] : [...prefix, node.name];
+      // Unlisted is inherited: hiding a parent hides everything beneath it.
+      const hiddenHere = unlisted || node.unlisted === true;
+      if (hiddenHere && here.length > 0) {
+        hidden.push(`supabase-${here.join("-")}`);
+      }
+      for (const group of node.subcommands ?? []) {
+        for (const child of group.commands ?? []) {
+          walk(child, here, hiddenHere);
+        }
+      }
+    };
+    walk(legacyRoot, [], false);
+
+    // Guards the guard: if the walk found nothing, the assertion below is vacuous.
+    expect(hidden.length).toBeGreaterThan(0);
+    expect(hidden.filter((id) => emitted.has(id))).toEqual([]);
+  });
+
   it("emits the clispec envelope with the requested version", () => {
     const { spec } = legacyBuiltSpec();
     expect(spec.clispec).toBe("001");

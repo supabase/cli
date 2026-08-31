@@ -1,3 +1,5 @@
+// oxlint-disable effecttsgo/async-function, effecttsgo/global-error-in-effect-failure, effecttsgo/node-builtin-import -- Lifecycle tests await the public Promise facade and exercise native path fixtures; Error values model unknown startup failures.
+
 import { describe, expect, it } from "vitest";
 import { NodeFileSystem } from "@effect/platform-node";
 import { Cause, Effect, Exit, Result } from "effect";

@@ -29,6 +29,23 @@ func TestLoadToken(t *testing.T) {
 		assert.Equal(t, token, loaded)
 	})
 
+	t.Run("loads v0 token from env var", func(t *testing.T) {
+		v0Token := "sbp_v0_" + token[len("sbp_"):]
+		t.Setenv("SUPABASE_ACCESS_TOKEN", v0Token)
+		fsys := afero.NewMemMapFs()
+		loaded, err := LoadAccessTokenFS(fsys)
+		assert.NoError(t, err)
+		assert.Equal(t, v0Token, loaded)
+	})
+
+	t.Run("throws error on unknown version prefix", func(t *testing.T) {
+		t.Setenv("SUPABASE_ACCESS_TOKEN", "sbp_v1_"+token[len("sbp_"):])
+		fsys := afero.NewMemMapFs()
+		loaded, err := LoadAccessTokenFS(fsys)
+		assert.ErrorIs(t, err, ErrInvalidToken)
+		assert.Empty(t, loaded)
+	})
+
 	t.Run("throws error on invalid token", func(t *testing.T) {
 		t.Setenv("SUPABASE_ACCESS_TOKEN", "invalid")
 		// Setup in-memory fs

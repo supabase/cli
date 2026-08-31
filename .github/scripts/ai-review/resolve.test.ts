@@ -19,9 +19,6 @@ function makePr(overrides: Partial<PrDetails> = {}): PrDetails {
     authorIsBot: false,
     headRepoFullName: REPO,
     baseRepoFullName: REPO,
-    additions: 10,
-    deletions: 5,
-    changedFiles: 3,
     ...overrides,
   };
 }
@@ -93,7 +90,6 @@ describe("resolveDecision: closed PR", () => {
       expect(result).toEqual({
         shouldRun: false,
         skipReason: "PR #42 is closed.",
-        mode: "review",
         trigger: expectedTrigger,
       });
     },
@@ -108,7 +104,6 @@ describe("resolveDecision: auto trigger (pull_request) skip conditions", () => {
     expect(result).toEqual({
       shouldRun: false,
       skipReason: "PR is a draft.",
-      mode: "review",
       trigger: "auto",
     });
   });
@@ -120,7 +115,6 @@ describe("resolveDecision: auto trigger (pull_request) skip conditions", () => {
     expect(result).toEqual({
       shouldRun: false,
       skipReason: "PR author is a bot.",
-      mode: "review",
       trigger: "auto",
     });
   });
@@ -132,7 +126,6 @@ describe("resolveDecision: auto trigger (pull_request) skip conditions", () => {
     expect(result).toEqual({
       shouldRun: false,
       skipReason: "PR is from a fork; ask a maintainer to comment /ai-review instead.",
-      mode: "review",
       trigger: "auto",
     });
   });
@@ -176,7 +169,6 @@ describe("resolveDecision: auto trigger (pull_request) skip conditions", () => {
     });
     const result = await resolveDecision({ eventName: "pull_request", prNumber: pr.number }, io);
     expect(result.shouldRun).toBe(true);
-    expect(result.mode).toBe("review");
     expect(result.skipReason).toBeUndefined();
   });
 });
@@ -194,7 +186,6 @@ describe("resolveDecision: manual trigger bypasses auto-only skips", () => {
       io,
     );
     expect(result.shouldRun).toBe(true);
-    expect(result.mode).toBe("review");
     expect(result.trigger).toBe("manual");
   });
 
@@ -208,62 +199,6 @@ describe("resolveDecision: manual trigger bypasses auto-only skips", () => {
     expect(result.shouldRun).toBe(true);
     expect(calls.listReviews).toBe(0);
     expect(calls.listIssueComments).toBe(0);
-  });
-});
-
-describe("resolveDecision: size guard boundaries", () => {
-  test.each([
-    [
-      "combined additions+deletions at exactly 8000",
-      { additions: 4000, deletions: 4000, changedFiles: 10 },
-      "review",
-    ],
-    [
-      "combined additions+deletions just under (7999)",
-      { additions: 4000, deletions: 3999, changedFiles: 10 },
-      "review",
-    ],
-    [
-      "combined additions+deletions just over (8001)",
-      { additions: 4000, deletions: 4001, changedFiles: 10 },
-      "too-large",
-    ],
-    ["changed files at exactly 120", { additions: 10, deletions: 10, changedFiles: 120 }, "review"],
-    [
-      "changed files just under (119)",
-      { additions: 10, deletions: 10, changedFiles: 119 },
-      "review",
-    ],
-    [
-      "changed files just over (121)",
-      { additions: 10, deletions: 10, changedFiles: 121 },
-      "too-large",
-    ],
-  ] as const)("%s -> mode %s", async (_label, overrides, expectedMode) => {
-    const pr = makePr(overrides);
-    const { io } = makeIo(pr);
-    const result = await resolveDecision(
-      { eventName: "workflow_dispatch", prNumber: pr.number },
-      io,
-    );
-    expect(result.shouldRun).toBe(true);
-    expect(result.mode).toBe(expectedMode);
-    if (expectedMode === "too-large") {
-      expect(result.skipReason).toContain("too large for a full AI review");
-    } else {
-      expect(result.skipReason).toBeUndefined();
-    }
-  });
-
-  test("still applies to a manually-authorized PR that would otherwise be auto-skipped", async () => {
-    const pr = makePr({ draft: true, additions: 8000, deletions: 1, changedFiles: 200 });
-    const { io } = makeIo(pr);
-    const result = await resolveDecision(
-      { eventName: "workflow_dispatch", prNumber: pr.number },
-      io,
-    );
-    expect(result.shouldRun).toBe(true);
-    expect(result.mode).toBe("too-large");
   });
 });
 
@@ -440,7 +375,6 @@ describe("resolveDecision: issue_comment authorization", () => {
         "Commenter @rando is not authorized to run /ai-review " +
         "(author_association=NONE, permission=n/a); requires repository write access " +
         "(or being the repository owner).",
-      mode: "review",
       trigger: "manual",
     });
     expect(reactions).toEqual([]);

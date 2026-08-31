@@ -40,7 +40,7 @@ fi
 rm -rf "$workdir"
 mkdir -p "$workdir/supabase/.temp" "$workdir/bin"
 
-# A bare config.toml: the tape's `workers new` is what adds the first
+# A bare config.toml: the tape's `experimental workers new` is what adds the first
 # [workers.<name>] section, so the recording shows it being written.
 printf 'project_id = "%s"\n' "$project_ref" > "$workdir/supabase/config.toml"
 printf '%s' "$project_ref" > "$workdir/supabase/.temp/project-ref"

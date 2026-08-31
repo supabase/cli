@@ -1,3 +1,4 @@
+// oxlint-disable effecttsgo/async-function, effecttsgo/global-timers, effecttsgo/new-promise, effecttsgo/node-builtin-import, effecttsgo/run-effect-inside-effect -- Node transport tests coordinate native HTTP agents, sockets, and readiness callbacks in the integration harness.
 import { Deferred, Cause, Effect, Exit, Predicate } from "effect";
 import { HttpServerResponse } from "effect/unstable/http";
 import { Agent, createServer, get, type Server } from "node:http";

@@ -1,3 +1,5 @@
+// oxlint-disable effecttsgo/async-function -- These tests exercise the public Promise facade of config resolution through Vitest callbacks.
+
 import { describe, expect, it } from "vitest";
 import { NodeFileSystem } from "@effect/platform-node";
 import { Cause, Effect, Exit, FileSystem } from "effect";

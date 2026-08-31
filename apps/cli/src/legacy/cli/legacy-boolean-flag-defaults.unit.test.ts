@@ -14,7 +14,7 @@ import { legacyRoot } from "./root.ts";
  * off with `Flag.withDefault(false)` or `Flag.optional`.
  *
  * `workers push --wait` shipped without either and made a plain
- * `supabase workers push` unusable. Nothing caught it: handler integration
+ * `supabase experimental workers push` unusable. Nothing caught it: handler integration
  * tests build their flags record directly, so they never touch the parser, and
  * the required-ness is invisible to the type checker because a required boolean
  * flag still infers as `boolean`.

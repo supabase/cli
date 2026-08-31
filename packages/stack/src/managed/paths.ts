@@ -1,4 +1,5 @@
 import { homedir } from "node:os";
+// oxlint-disable-next-line effecttsgo/node-builtin-import -- These exported path helpers are pure platform-aware boundary functions.
 import { join, resolve } from "node:path";
 import { Effect } from "effect";
 import { validateManagedUuid } from "./ids.ts";
@@ -152,7 +153,7 @@ export const assertManagedStackRootEffect = (
     const actual = resolve(stackRoot);
     return actual === expected
       ? actual
-      : yield* Effect.fail(new UnsafeManagedStackPathError({ path: stackRoot }));
+      : yield* new UnsafeManagedStackPathError({ path: stackRoot });
   });
 
 export const ordinaryWorkspaceIdentityPath = (workspacePath: string): string =>

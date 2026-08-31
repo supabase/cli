@@ -1,3 +1,4 @@
+// oxlint-disable-next-line effecttsgo/node-builtin-import -- Docker bootstrap paths use native path semantics at a synchronous layer-construction boundary.
 import { join } from "node:path";
 import { Data, Effect, Layer } from "effect";
 import { FileSystem, Path } from "effect";
@@ -242,13 +243,11 @@ export const restartManagedStackForUpgrade = (
     );
     const owner = probe?.status;
     if (owner !== undefined && !isControlSupervisorStatus(owner)) {
-      return yield* Effect.fail(
-        new UpgradeRestartError({
-          stackId: startMsg.stackId,
-          newCliVersion: startMsg.cliVersion,
-          detail: `Managed stack is busy with ${owner.operation} maintenance`,
-        }),
-      );
+      return yield* new UpgradeRestartError({
+        stackId: startMsg.stackId,
+        newCliVersion: startMsg.cliVersion,
+        detail: `Managed stack is busy with ${owner.operation} maintenance`,
+      });
     }
     if (owner?.daemonCliVersion === startMsg.cliVersion) {
       return yield* launchManagedSupervisor(startMsg, daemonEntryPoint);

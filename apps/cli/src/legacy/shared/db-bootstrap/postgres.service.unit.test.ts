@@ -219,6 +219,16 @@ describe("legacyBuildPostgresStartContainerSpec", () => {
     expect(spec.env.POSTGRES_INITDB_ARGS).toBeUndefined();
   });
 
+  test("version-compare uses docker.io configImage when the pull image is a slim ghcr ref", () => {
+    const spec = legacyBuildPostgresStartContainerSpec(
+      baseInput({
+        image: "ghcr.io/supabase/cli/postgres:17.6.1.167",
+        configImage: "supabase/postgres:17.6.1.167",
+      }),
+    );
+    expect(spec.env.POSTGRES_INITDB_ARGS).toBeUndefined();
+  });
+
   test("healthcheck matches Go's pg_isready probe", () => {
     const spec = legacyBuildPostgresStartContainerSpec(baseInput());
     expect(spec.healthcheck).toEqual({

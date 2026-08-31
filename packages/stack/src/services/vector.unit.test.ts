@@ -1,3 +1,5 @@
+// oxlint-disable effecttsgo/async-function -- Vector tests call the Promise-returning service facade from Vitest callbacks.
+
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { stackIdentity } from "../StackIdentity.ts";
 import { DEFAULT_VERSIONS, dockerImageForService } from "../versions.ts";

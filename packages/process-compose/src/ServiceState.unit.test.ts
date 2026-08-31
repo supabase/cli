@@ -26,7 +26,7 @@ describe("ServiceState", () => {
       ...state,
       status: "Running",
       pid: 1234,
-      startedAt: Date.now(),
+      startedAt: 1_700_000_000_000,
     });
     expect(running.status).toBe("Running");
     expect(running.pid).toBe(1234);

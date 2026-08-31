@@ -1,3 +1,5 @@
+// oxlint-disable effecttsgo/async-function -- Warmup tests await native dependency probes from Vitest callbacks.
+
 import { describe, expect, test } from "vitest";
 import type { PrefetchOptions, PrefetchResult } from "../../src/node.ts";
 import { warmStackE2eDependencies } from "./warmup.ts";

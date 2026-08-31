@@ -122,4 +122,52 @@ describe("legacyGetRegistryImageUrl", () => {
       ),
     ).toBe("merged.example/supabase/pg_prove:3.36");
   });
+
+  // Slim images are published only under `ghcr.io/supabase/cli`. Rewriting them
+  // by last path segment would silently pull the unrelated non-slim mirror, and
+  // no mirror of them exists for a registry override to point at.
+  const SLIM_IMAGE = "ghcr.io/supabase/cli/postgres:17.6.1.165";
+
+  it("leaves a slim image unrewritten, whatever the registry override says", () => {
+    for (const registry of [undefined, "public.ecr.aws", "docker.io", "my.mirror.example"]) {
+      expect(withRegistry(registry, () => legacyGetRegistryImageUrl(SLIM_IMAGE))).toBe(SLIM_IMAGE);
+    }
+    expect(
+      withRegistry(undefined, () =>
+        legacyGetRegistryImageUrl(SLIM_IMAGE, {
+          SUPABASE_INTERNAL_IMAGE_REGISTRY: "my.mirror.example",
+        }),
+      ),
+    ).toBe(SLIM_IMAGE);
+  });
+
+  it("plans a single pull candidate for a slim image", () => {
+    for (const registry of [undefined, "public.ecr.aws", "docker.io", "my.mirror.example"]) {
+      expect(withRegistry(registry, () => legacyGetRegistryImageUrlCandidates(SLIM_IMAGE))).toEqual(
+        [SLIM_IMAGE],
+      );
+    }
+    expect(
+      withRegistry(undefined, () =>
+        legacyGetRegistryImageUrlCandidates(SLIM_IMAGE, {
+          SUPABASE_INTERNAL_IMAGE_REGISTRY: "my.mirror.example",
+        }),
+      ),
+    ).toEqual([SLIM_IMAGE]);
+  });
+
+  it("still rewrites the non-slim ghcr.io/supabase namespace", () => {
+    expect(
+      withRegistry("docker.io", () => legacyGetRegistryImageUrl("ghcr.io/supabase/postgres:17.6")),
+    ).toBe("ghcr.io/supabase/postgres:17.6");
+    expect(
+      withRegistry(undefined, () =>
+        legacyGetRegistryImageUrlCandidates("ghcr.io/supabase/postgres:17.6"),
+      ),
+    ).toEqual([
+      "public.ecr.aws/supabase/postgres:17.6",
+      "ghcr.io/supabase/postgres:17.6",
+      "supabase/postgres:17.6",
+    ]);
+  });
 });

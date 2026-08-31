@@ -1,5 +1,5 @@
-# Screencast of the full `supabase workers` lifecycle, recorded against a real
-# linked project. Run from the repository root:
+# Screencast of the full `supabase experimental workers` lifecycle, recorded
+# against a real linked project. Run from the repository root:
 #
 #   apps/cli/demo/setup.sh
 #   vhs apps/cli/demo/workers.tape
@@ -12,10 +12,10 @@
 Output apps/cli/demo/workers.gif
 
 Set Shell bash
-# `workers --help` lays its global-flag table out at a fixed ~173 columns and
-# does not reflow, so the frame is sized to fit it rather than the other way
-# round: 1560px at 14px JetBrains Mono is ~176 columns. The height is what that
-# same help output needs; every other step is shorter.
+# `experimental workers --help` lays its global-flag table out at a fixed ~173
+# columns and does not reflow, so the frame is sized to fit it rather than the
+# other way round: 1560px at 14px JetBrains Mono is ~176 columns. The height is
+# what that same help output needs; every other step is shorter.
 Set FontSize 14
 Set Width 1560
 Set Height 700
@@ -38,7 +38,7 @@ Show
 Sleep 1s
 
 # --- What the group offers -------------------------------------------------
-Type "supabase workers --help"
+Type "supabase experimental workers --help"
 Enter
 Sleep 6s
 
@@ -47,7 +47,7 @@ Enter
 Sleep 500ms
 
 # --- new: scaffold locally, nothing deployed -------------------------------
-Type "supabase workers new"
+Type "supabase experimental workers new"
 Enter
 Sleep 2s
 Type "hello-api"
@@ -80,7 +80,7 @@ Sleep 500ms
 # --- push: build and deploy ------------------------------------------------
 # Returns once the platform accepts the spec and the uploaded context; the
 # server-side build runs on after it. `--wait` blocks for the build's verdict.
-Type "supabase workers push hello-api"
+Type "supabase experimental workers push hello-api"
 Enter
 Sleep 8s
 
@@ -89,7 +89,7 @@ Enter
 Sleep 500ms
 
 # --- list: config.toml unioned with what the API reports -------------------
-Type "supabase workers list"
+Type "supabase experimental workers list"
 Enter
 Sleep 8s
 
@@ -98,7 +98,7 @@ Enter
 Sleep 500ms
 
 # --- status: one worker in detail ------------------------------------------
-Type "supabase workers status hello-api"
+Type "supabase experimental workers status hello-api"
 Enter
 Sleep 7s
 
@@ -107,7 +107,7 @@ Enter
 Sleep 500ms
 
 # --- delete: irreversible, so it confirms by name --------------------------
-Type "supabase workers delete hello-api"
+Type "supabase experimental workers delete hello-api"
 Enter
 Sleep 3s
 Type "hello-api"

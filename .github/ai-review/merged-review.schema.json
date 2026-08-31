@@ -85,7 +85,7 @@
               "verdict": {
                 "type": "string",
                 "enum": ["confirmed", "refuted", "uncertain"],
-                "description": "confirmed = Codex verified the evidence; refuted = Codex found concrete counter-evidence; uncertain = could not verify either way. Codex-originated findings are always \"confirmed\"."
+                "description": "confirmed = the adjudicator verified the evidence by reading the code; refuted = it found concrete counter-evidence; uncertain = it could not verify either way. Applies to findings from EITHER reviewer — a Codex-originated finding can be refuted or left uncertain too."
               },
               "reason": {
                 "type": "string",

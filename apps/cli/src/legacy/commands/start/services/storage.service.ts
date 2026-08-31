@@ -37,13 +37,17 @@
 import type { CliConfig } from "@supabase/config";
 
 import { legacyServiceContainerName } from "../../../shared/legacy-docker-ids.ts";
-import { ramInBytes } from "../../../shared/legacy-size-units.ts";
 import type { LegacyStartContainerSpec } from "../../../shared/db-bootstrap/docker-create-args.ts";
+import { ramInBytes } from "../../../shared/legacy-size-units.ts";
 import { legacyEnvOrDefault } from "../lib/legacy-env-or-default.ts";
 import {
   legacyStartInternalDbUrl,
   legacyStartInternalDbPassword,
 } from "../../../shared/db-bootstrap/internal-db-connection.ts";
+import {
+  legacySlimWgetHealthcheck,
+  legacyUsesSlimRuntime,
+} from "../../../shared/db-bootstrap/slim-runtime.ts";
 
 /** Both the container's `FILE_STORAGE_BACKEND_PATH` and its named-volume mount target. */
 const LEGACY_STORAGE_DOCKER_PATH = "/mnt";
@@ -150,6 +154,8 @@ export function legacyBuildStorageEnv(input: LegacyStorageEnvInput): Record<stri
     STORAGE_S3_REGION: input.s3Region,
     GLOBAL_S3_BUCKET: "stub",
     ENABLE_IMAGE_TRANSFORMATION: String(input.imageTransformationEnabled),
+    // storage-api prefers this key over ENABLE_IMAGE_TRANSFORMATION (v1.72+).
+    IMAGE_TRANSFORMATION_ENABLED: String(input.imageTransformationEnabled),
     IMGPROXY_URL: `http://${input.imgproxyHost}:5001`,
     TUS_URL_PATH: "/storage/v1/upload/resumable",
     S3_PROTOCOL_ENABLED: String(input.s3ProtocolEnabled),
@@ -227,21 +233,22 @@ export function legacyBuildStorageContainerSpec(
     containerName,
     env,
     binds: [`${containerName}:${LEGACY_STORAGE_DOCKER_PATH}`],
-    healthcheck: {
-      // "For some reason, localhost resolves to IPv6 address on GitPod which breaks
-      // healthcheck." — IPv4 loopback pinned.
-      test: [
-        "CMD",
-        "wget",
-        "--no-verbose",
-        "--tries=1",
-        "--spider",
-        "http://127.0.0.1:5000/status",
-      ],
-      intervalSeconds: 10,
-      timeoutSeconds: 2,
-      retries: 3,
-    },
+    // IPv4 loopback: localhost can resolve to IPv6 on GitPod and miss the listener.
+    healthcheck: legacyUsesSlimRuntime(input.image)
+      ? legacySlimWgetHealthcheck("http://127.0.0.1:5000/status")
+      : {
+          test: [
+            "CMD",
+            "wget",
+            "--no-verbose",
+            "--tries=1",
+            "--spider",
+            "http://127.0.0.1:5000/status",
+          ],
+          intervalSeconds: 10,
+          timeoutSeconds: 2,
+          retries: 3,
+        },
     restartPolicy: "unless-stopped",
     networkId: input.networkId,
     // The Storage network alias.

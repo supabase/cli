@@ -375,7 +375,7 @@ id.
 `ApiProxy` listens on the configured public `apiPort` and routes Supabase API
 paths (`/auth`, `/rest`, `/functions`, `/realtime`, `/storage`, `/pg`,
 `/analytics`, and related endpoints) to the service ports. The database URL
-and direct service endpoints remain available from `Stack.getInfo()`. The
+and direct service endpoints remain available from `Stack.getInfo`. The
 loopback control endpoint is management traffic and is never the user-facing
 API URL.
 
