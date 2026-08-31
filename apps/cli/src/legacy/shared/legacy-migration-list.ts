@@ -11,6 +11,8 @@ const INIT_SCHEMA_CUTOFF = 20211209000000;
 // Valid migration filenames: `<digits>_<name>.sql`.
 const MIGRATE_FILE_PATTERN = /^([0-9]+)_(.*)\.sql$/;
 
+const NO_MIGRATIONS: ReadonlyArray<string> = [];
+
 /**
  * Lists local migration file paths under `migrationsDir`. Entries are sorted byte-wise over each
  * name's UTF-8 encoding, via {@link legacyCompareUtf8Bytes} — not JS's default
@@ -36,7 +38,7 @@ export const legacyListLocalMigrations = Effect.fnUntraced(function* (
   const names = yield* fs.readDirectory(migrationsDir).pipe(
     Effect.catchTag("PlatformError", (error) =>
       Predicate.isTagged(error.reason, "NotFound")
-        ? Effect.succeed([] as ReadonlyArray<string>)
+        ? Effect.succeed(NO_MIGRATIONS)
         : Effect.fail(
             new LegacyMigrationsReadError({
               message: `failed to read directory: ${error.message}`,
@@ -44,7 +46,7 @@ export const legacyListLocalMigrations = Effect.fnUntraced(function* (
           ),
     ),
   );
-  if (names.length === 0) return [] as ReadonlyArray<string>;
+  if (names.length === 0) return NO_MIGRATIONS;
   // Entries must sort byte-wise over each name's UTF-8 encoding — NOT JS's default
   // `Array.prototype.sort()`, which compares UTF-16 code units and disagrees with byte/codepoint
   // order for a supplementary-plane filename character alongside a BMP private-use one (see
@@ -86,5 +88,5 @@ export const legacyListLocalMigrations = Effect.fnUntraced(function* (
     }
     result.push(entryPath);
   }
-  return result as ReadonlyArray<string>;
+  return result;
 });
