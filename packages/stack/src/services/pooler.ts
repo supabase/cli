@@ -33,6 +33,8 @@ export interface NativePoolerOptions extends Omit<PoolerServiceOptions, "dbHost"
   readonly adminPort: number;
   readonly sessionPort: number;
   readonly transactionPort: number;
+  /** Base of the eight private Supavisor shard listeners (four per mode). */
+  readonly internalPort: number;
   /** Stack-unique Erlang short name and cookie for host-level distribution. */
   readonly nodeName: string;
   readonly releaseCookie: string;
@@ -193,10 +195,15 @@ export const makePoolerServiceDocker = (opts: DockerPoolerOptions): ServiceDef =
     });
   })();
 
+const poolerNativeShardPorts = (basePort: number, offset: number): string =>
+  Array.from({ length: 4 }, (_, index) => String(basePort + offset + index)).join(",");
+
 const poolerNativeEnv = (opts: NativePoolerOptions): Record<string, string> => ({
   PORT: String(opts.adminPort),
   PROXY_PORT_SESSION: String(opts.sessionPort),
   PROXY_PORT_TRANSACTION: String(opts.transactionPort),
+  SESSION_PROXY_PORTS: poolerNativeShardPorts(opts.internalPort, 0),
+  TRANSACTION_PROXY_PORTS: poolerNativeShardPorts(opts.internalPort, 4),
   DATABASE_URL: `ecto://postgres:postgres@127.0.0.1:${opts.dbPort}/_supabase`,
   CLUSTER_POSTGRES: "true",
   SECRET_KEY_BASE: opts.secretKeyBase,

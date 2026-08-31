@@ -377,9 +377,9 @@ export const startNativeLogWriter = (
         });
 
       const subscribed = Deferred.makeUnsafe<void, StackBuildError>();
-      const shutdownMarker = `\u0000native-log-writer:${runtimeRoot}`;
+      const shutdownMarker = `native-log-writer:${runtimeRoot}`;
       const worker = Effect.gen(function* () {
-        const pull = yield* Stream.toPull(logBuffer.subscribeAll);
+        const pull = yield* Stream.toPull(logBuffer.subscribeAllInternal);
         yield* Deferred.succeed(subscribed, undefined);
         let running = true;
         while (running) {
@@ -388,11 +388,13 @@ export const startNativeLogWriter = (
             running = false;
           } else {
             const byService = new Map<string, Array<LogEntry>>();
-            for (const entry of chunk) {
-              if (entry.service === shutdownMarker && entry.line === shutdownMarker) {
+            for (const event of chunk) {
+              if (event._tag === "Control" && event.id === shutdownMarker) {
                 running = false;
                 break;
               }
+              if (event._tag !== "Entry") continue;
+              const entry = event.entry;
               const entries = byService.get(entry.service);
               if (entries === undefined) {
                 byService.set(entry.service, [entry]);
@@ -445,7 +447,7 @@ export const startNativeLogWriter = (
         shutdownStarted = true;
         return Effect.exit(
           logBuffer
-            .append(shutdownMarker, "stderr", shutdownMarker)
+            .appendControl(shutdownMarker)
             .pipe(
               Effect.andThen(
                 Fiber.join(workerFiber).pipe(

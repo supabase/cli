@@ -7,6 +7,10 @@ export interface LogEntry {
   readonly line: string;
 }
 
+export type LogBufferInternalEvent =
+  | { readonly _tag: "Entry"; readonly entry: LogEntry }
+  | { readonly _tag: "Control"; readonly id: string };
+
 const MAX_BUFFER_SIZE = 10_000;
 
 export class LogBuffer extends Context.Service<
@@ -17,8 +21,11 @@ export class LogBuffer extends Context.Service<
       stream: "stdout" | "stderr",
       line: string,
     ) => Effect.Effect<void>;
+    /** Publishes an ordered control event to internal consumers only. */
+    readonly appendControl: (id: string) => Effect.Effect<void>;
     readonly subscribe: (service: string) => Stream.Stream<LogEntry>;
     readonly subscribeAll: Stream.Stream<LogEntry>;
+    readonly subscribeAllInternal: Stream.Stream<LogBufferInternalEvent>;
     readonly history: (service: string, limit?: number) => Effect.Effect<ReadonlyArray<LogEntry>>;
     readonly historyAll: (
       limit?: number,
@@ -34,8 +41,10 @@ export class LogBuffer extends Context.Service<
       // Log delivery must never block child stdout/stderr draining. The bounded history refs
       // below remain authoritative; live subscribers receive the newest entries when slow.
       const globalPubSub = yield* PubSub.sliding<LogEntry>(4096);
+      const internalPubSub = yield* PubSub.unbounded<LogBufferInternalEvent>();
       const globalBuffer = yield* Ref.make<Array<LogEntry>>([]);
       const serviceInitialization = Semaphore.makeUnsafe(1);
+      const publicationLock = Semaphore.makeUnsafe(1);
 
       const getOrCreate = (service: string) =>
         Effect.gen(function* () {
@@ -62,6 +71,7 @@ export class LogBuffer extends Context.Service<
             const { pubsub, buffer } = yield* getOrCreate(service);
             yield* PubSub.publish(pubsub, entry);
             yield* PubSub.publish(globalPubSub, entry);
+            yield* PubSub.publish(internalPubSub, { _tag: "Entry", entry });
             yield* Ref.update(globalBuffer, (buf) => {
               const next = buf.concat(entry);
               return next.length > MAX_BUFFER_SIZE ? next.slice(-MAX_BUFFER_SIZE) : next;
@@ -70,7 +80,13 @@ export class LogBuffer extends Context.Service<
               const next = buf.concat(entry);
               return next.length > MAX_BUFFER_SIZE ? next.slice(-MAX_BUFFER_SIZE) : next;
             });
-          }),
+          }).pipe(publicationLock.withPermit),
+
+        appendControl: (id) =>
+          PubSub.publish(internalPubSub, {
+            _tag: "Control",
+            id,
+          }).pipe(publicationLock.withPermit),
 
         subscribe: (service) =>
           Stream.unwrap(
@@ -81,6 +97,7 @@ export class LogBuffer extends Context.Service<
           ),
 
         subscribeAll: Stream.fromPubSub(globalPubSub),
+        subscribeAllInternal: Stream.fromPubSub(internalPubSub),
 
         history: (service, limit = 100) =>
           Effect.gen(function* () {

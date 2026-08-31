@@ -504,7 +504,7 @@ describe("prefetch", () => {
 
     expect(result.pgmeta).toEqual({
       type: "docker",
-      image: dockerImageForService("pgmeta", DEFAULT_VERSIONS.pgmeta),
+      image: dockerImageForService("pgmeta", DOCKER_DEFAULT_VERSIONS.pgmeta),
     });
   });
 

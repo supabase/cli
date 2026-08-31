@@ -47,7 +47,8 @@ const defaultPorts: AllocatedPorts = {
   vectorAdminPort: 54341,
   poolerSessionPort: 54339,
   poolerTransactionPort: 54340,
-  poolerApiPort: 54341,
+  poolerApiPort: 54342,
+  poolerInternalPort: 54343,
 };
 
 const defaultConfig: ResolvedStackConfig = {
@@ -137,6 +138,7 @@ const poolerConfig: ResolvedStackConfig = {
     sessionPort: defaultPorts.poolerSessionPort,
     transactionPort: defaultPorts.poolerTransactionPort,
     apiPort: defaultPorts.poolerApiPort,
+    internalPort: defaultPorts.poolerInternalPort,
     mode: "transaction",
     version: DEFAULT_VERSIONS.pooler,
     tenantId: "pooler tenant/@42",

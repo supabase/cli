@@ -16,7 +16,6 @@ import {
   FileSystem,
   Layer,
   Match,
-  Random,
   Path,
   Ref,
   Schema,
@@ -28,6 +27,7 @@ import {
 import { ChildProcessSpawner } from "effect/unstable/process";
 import { FetchHttpClient } from "effect/unstable/http";
 import type { CleanupTargets } from "./CleanupTargets.ts";
+import { generateBeamReleaseCookie } from "./BeamCookie.ts";
 import { cleanupLocalStackResources } from "./cleanup.ts";
 import {
   DockerPullError,
@@ -42,6 +42,7 @@ import {
   type ResolvedFunctionsBundle,
 } from "./functions.ts";
 import { detectPlatform, dockerHostAddress } from "./Platform.ts";
+import type { PortField } from "./PortCatalog.ts";
 import type { PortLease } from "./PortAllocator.ts";
 import {
   activationReadinessPolicy,
@@ -74,6 +75,15 @@ type StackService = typeof Stack.Service;
 
 const READINESS_DIAGNOSTIC_LOG_LIMIT = 20;
 const READINESS_DIAGNOSTIC_LINE_LIMIT = 512;
+
+/** Pooler bootstrap briefly binds its private shard listeners before the public server starts. */
+const portFieldsForDefinition = (
+  name: string,
+  mode: ResolvedStackConfig["runtime"]["mode"],
+): ReadonlyArray<PortField> =>
+  name === "pooler-bootstrap" && mode === "native"
+    ? ["poolerInternalPort"]
+    : portFieldsForService(name, mode);
 
 /** @internal Enriches a readiness timeout without changing diagnostic failure semantics. */
 export const attachReadinessDiagnostics = (
@@ -252,10 +262,10 @@ export const localStackLayer = (
       const projectionLock = Semaphore.makeUnsafe(1);
       // One stack-owned cookie is shared by all native BEAM services and remains stable across
       // JIT preparation, restarts, and definition rebuilds for this LocalStack instance.
-      const beamReleaseCookie = yield* Effect.gen(function* () {
-        const first = yield* Random.nextInt;
-        const second = yield* Random.nextInt;
-        return `supabase_${Math.abs(first).toString(36)}${Math.abs(second).toString(36)}_cookie`;
+      const beamReleaseCookie = yield* Effect.try({
+        try: generateBeamReleaseCookie,
+        catch: (cause) =>
+          new StackBuildError({ detail: "Failed to generate native BEAM release cookie", cause }),
       });
 
       const logBufferServices = yield* Layer.buildWithScope(LogBuffer.layer, scope);
@@ -558,6 +568,16 @@ export const localStackLayer = (
               }),
             ),
             Effect.ensuring(
+              Effect.suspend(() => {
+                if (runtimeState === undefined && nativeLogWriter !== undefined) {
+                  const writer = nativeLogWriter;
+                  nativeLogWriter = undefined;
+                  return writer.shutdown.pipe(Effect.ignore);
+                }
+                return Effect.void;
+              }),
+            ),
+            Effect.ensuring(
               Effect.sync(() => {
                 runtimeDeferred = undefined;
               }),
@@ -674,10 +694,10 @@ export const localStackLayer = (
         // Reservation may yield while disposal flips the lifecycle state.
         beforeStart: (name: string) =>
           portLease
-            .reserve(portFieldsForService(name, config.runtime.mode))
+            .reserve(portFieldsForDefinition(name, config.runtime.mode))
             .pipe(Effect.andThen(requireMutable(`start service ${name}`))),
         beforeSpawn: (name: string) =>
-          portLease.release(portFieldsForService(name, config.runtime.mode)),
+          portLease.release(portFieldsForDefinition(name, config.runtime.mode)),
       };
       const knownServiceError = (service: string, cause: ServiceNotFoundError) =>
         new StackBuildError({

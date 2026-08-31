@@ -28,7 +28,7 @@ export {
   SpawnError,
 } from "./errors.ts";
 
-export type { LogEntry } from "./LogBuffer.ts";
+export type { LogBufferInternalEvent, LogEntry } from "./LogBuffer.ts";
 export { LogBuffer } from "./LogBuffer.ts";
 
 export type { ResolvedGraph } from "./DependencyGraph.ts";

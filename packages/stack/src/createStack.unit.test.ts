@@ -41,7 +41,8 @@ const testPorts = (config?: Parameters<typeof resolveConfigEffect>[0]): PortSet 
     vectorAdminPort: 40_018,
     poolerSessionPort: 40_016,
     poolerTransactionPort: 40_017,
-    poolerApiPort: 40_018,
+    poolerApiPort: 40_019,
+    poolerInternalPort: 40_020,
   } satisfies Record<PortField, number>;
   return { ...ports, apiPort: config?.port ?? ports.apiPort };
 };

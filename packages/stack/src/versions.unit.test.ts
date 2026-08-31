@@ -121,7 +121,7 @@ describe("dockerImageForService", () => {
       `ghcr.io/supabase/vector:${DOCKER_DEFAULT_VERSIONS.vector}`,
     );
     expect(dockerImageForService("pooler", DOCKER_DEFAULT_VERSIONS.pooler)).toBe(
-      "ghcr.io/supabase/supavisor:2.9.12",
+      `ghcr.io/supabase/supavisor:${DOCKER_DEFAULT_VERSIONS.pooler}`,
     );
   });
 

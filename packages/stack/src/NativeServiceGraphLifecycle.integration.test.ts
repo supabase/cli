@@ -18,6 +18,7 @@ import {
 } from "effect";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
+import { createServer } from "node:net";
 import { Stack } from "./Stack.ts";
 import { localStackLayer } from "./LocalStack.ts";
 import { StackBuilder } from "./StackBuilder.ts";
@@ -31,6 +32,9 @@ import { buildGraph, type ServiceDef } from "@supabase/process-compose";
 import { StackBuildError } from "./errors.ts";
 import type { PreparedStackArtifacts } from "./StackPreparation.ts";
 import type { ResolvedStackConfig } from "./StackConfig.ts";
+import type { PortLease } from "./PortAllocator.ts";
+import { reservePortSet } from "./PortAllocator.ts";
+import { systemError, type PlatformError } from "effect/PlatformError";
 
 interface SpawnRecord {
   readonly service: string;
@@ -94,7 +98,102 @@ const oneShotServices = new Set([
   "pooler-bootstrap",
 ]);
 
-const controllableSpawner = () => {
+const nativeLifecycleError = (method: string, port: number, cause: unknown): PlatformError =>
+  systemError({
+    _tag: "Unknown",
+    module: "native-service-lifecycle-test",
+    method,
+    pathOrDescriptor: port,
+    cause,
+  });
+
+const listenTestServer = (server: ReturnType<typeof createServer>, port: number) =>
+  Effect.callback<void, PlatformError>((resume, signal) => {
+    let completed = false;
+    const cleanup = () => {
+      server.off("error", onError);
+      server.off("listening", onListening);
+      signal.removeEventListener("abort", onAbort);
+    };
+    const complete = (effect: Effect.Effect<void, PlatformError>) => {
+      if (completed) return;
+      completed = true;
+      cleanup();
+      resume(effect);
+    };
+    const onError = (cause: unknown) =>
+      complete(Effect.fail(nativeLifecycleError("listen", port, cause)));
+    const onListening = () => complete(Effect.void);
+    const onAbort = () => {
+      if (completed) return;
+      completed = true;
+      cleanup();
+    };
+
+    server.once("error", onError);
+    server.once("listening", onListening);
+    signal.addEventListener("abort", onAbort, { once: true });
+    if (signal.aborted) {
+      onAbort();
+      return Effect.sync(() => {
+        cleanup();
+        if (server.listening) server.close();
+      });
+    }
+    try {
+      server.listen({ port, host: "127.0.0.1", signal });
+    } catch (cause) {
+      onError(cause);
+    }
+    return Effect.sync(() => {
+      cleanup();
+      if (server.listening) server.close();
+    });
+  });
+
+const closeTestServer = (server: ReturnType<typeof createServer>, port: number) =>
+  Effect.callback<void, PlatformError>((resume, signal) => {
+    let completed = false;
+    const cleanup = () => {
+      server.off("error", onError);
+      server.off("close", onClose);
+      signal.removeEventListener("abort", onAbort);
+    };
+    const complete = (effect: Effect.Effect<void, PlatformError>) => {
+      if (completed) return;
+      completed = true;
+      cleanup();
+      resume(effect);
+    };
+    const onError = (cause: unknown) =>
+      complete(Effect.fail(nativeLifecycleError("close", port, cause)));
+    const onClose = () => complete(Effect.void);
+    const onAbort = () => {
+      if (completed) return;
+      completed = true;
+      cleanup();
+      if (server.listening) server.close();
+    };
+
+    server.once("error", onError);
+    server.once("close", onClose);
+    signal.addEventListener("abort", onAbort, { once: true });
+    if (signal.aborted) {
+      onAbort();
+      return Effect.void;
+    }
+    try {
+      server.close();
+    } catch (cause) {
+      onError(cause);
+    }
+    return Effect.sync(() => {
+      cleanup();
+      if (server.listening) server.close();
+    });
+  });
+
+const controllableSpawner = (options: { readonly bindPoolerBootstrapPort?: number } = {}) => {
   const spawned: SpawnRecord[] = [];
   const killed: string[] = [];
   let nextPid = 10_000;
@@ -110,6 +209,12 @@ const controllableSpawner = () => {
           supervisor === null
             ? null
             : serviceNameForSupervisor(supervisor.command, supervisor.args);
+        if (options.bindPoolerBootstrapPort !== undefined && service === "pooler-bootstrap") {
+          const port = options.bindPoolerBootstrapPort;
+          const server = createServer();
+          yield* listenTestServer(server, port);
+          yield* closeTestServer(server, port);
+        }
         const exitDeferred = yield* Deferred.make<ChildProcessSpawner.ExitCode>();
         let running = true;
         const pid = nextPid++;
@@ -192,6 +297,7 @@ const ports = (base: number): PortSet => ({
   poolerSessionPort: base + 17,
   poolerTransactionPort: base + 18,
   poolerApiPort: base + 19,
+  poolerInternalPort: base + 20,
 });
 
 const allBinaries = Object.fromEntries(
@@ -279,12 +385,18 @@ const setup = (
   config: ResolvedStackConfig,
   spawner = controllableSpawner(),
   resolver = mockBinaryResolver({ binaries: allBinaries }),
-) => {
-  const layer = localStackLayer(config, {
+  portLease: PortLease = {
     ports: config.ports,
     reserve: () => Effect.void,
     release: () => Effect.void,
     releaseAll: Effect.void,
+  },
+) => {
+  const layer = localStackLayer(config, {
+    ports: portLease.ports,
+    reserve: portLease.reserve,
+    release: portLease.release,
+    releaseAll: portLease.releaseAll,
   }).pipe(
     Layer.provide(graphWithExecHealth),
     Layer.provide(
@@ -387,6 +499,47 @@ describe("native service graph lifecycle", () => {
           yield* stack.dispose;
         }).pipe(Effect.provide(layer));
       }).pipe(Effect.provide(NodeServices.layer), Effect.scoped),
+  );
+
+  it.live("starts Pooler when its bootstrap binds the allocated private shard span", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const root = yield* fs.makeTempDirectoryScoped({
+        directory: tmpdir(),
+        prefix: "supabase-native-pooler-bootstrap-",
+      });
+      const lease = yield* reservePortSet([
+        { field: "poolerInternalPort", selection: { kind: "automatic" } },
+      ]);
+      const internalPort = lease.ports.poolerInternalPort;
+      if (internalPort === undefined) {
+        yield* lease.releaseAll;
+        return yield* Effect.die(new Error("Expected Pooler internal port allocation"));
+      }
+      yield* Effect.gen(function* () {
+        const config = yield* makeConfig(root, internalPort - 20);
+        const spawner = controllableSpawner({ bindPoolerBootstrapPort: internalPort });
+        const internalLease: PortLease = {
+          ports: config.ports,
+          reserve: (fields) =>
+            fields.includes("poolerInternalPort")
+              ? lease.reserve(["poolerInternalPort"])
+              : Effect.void,
+          release: (fields) =>
+            fields.includes("poolerInternalPort")
+              ? lease.release(["poolerInternalPort"])
+              : Effect.void,
+          releaseAll: lease.releaseAll,
+        };
+        const { layer } = setup(config, spawner, undefined, internalLease);
+        yield* Effect.gen(function* () {
+          const stack = yield* Stack;
+          yield* stack.start;
+          expect((yield* stack.getState("pooler")).status).toBe("Healthy");
+          yield* stack.dispose;
+        }).pipe(Effect.provide(layer));
+      }).pipe(Effect.ensuring(lease.releaseAll));
+    }).pipe(Effect.provide(NodeServices.layer), Effect.scoped),
   );
 
   it.live("recovers one crashed Storage stack without affecting a sibling stack", () =>

@@ -39,8 +39,10 @@ function mockLogBuffer() {
           entries.push({ service, stream, line });
           entryEvents.notify();
         }),
+      appendControl: (_line: string) => Effect.void,
       subscribe: (_service: string) => Stream.empty,
       subscribeAll: Stream.empty,
+      subscribeAllInternal: Stream.empty,
       history: (service: string, limit = 100) =>
         Effect.gen(function* () {
           const timestamp = yield* Clock.currentTimeMillis;

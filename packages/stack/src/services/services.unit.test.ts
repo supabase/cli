@@ -644,6 +644,7 @@ describe("native auxiliary service definitions", () => {
     const imgproxy = makeImgproxyServiceNative({
       binPath: imgproxyArtifactRoot,
       port: 54332,
+      dataDir: `${dataDir}/`,
       dependencies: [{ service: "storage", condition: "healthy" }],
     });
 
@@ -695,6 +696,7 @@ describe("native auxiliary service definitions", () => {
     expect(imgproxy.env).toMatchObject({
       IMGPROXY_BIND: "127.0.0.1:54332",
       IMGPROXY_LOCAL_FILESYSTEM_ROOT: "/",
+      IMGPROXY_ALLOWED_SOURCES: "local:////tmp/stacks/project-a/data/storage/",
       IMGPROXY_USE_ETAG: "/",
     });
     expect(imgproxy.env?.IMGPROXY_LOCAL_FILESYSTEM_ROOT).toBe("/");

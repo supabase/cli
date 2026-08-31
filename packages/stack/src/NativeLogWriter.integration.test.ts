@@ -491,18 +491,19 @@ describe("native log writer", () => {
       const realLogBuffer = Context.get(services, LogBuffer);
       const logBuffer = {
         ...realLogBuffer,
-        subscribeAll: Stream.make(
+        subscribeAllInternal: Stream.make(
           {
-            timestamp: 0,
-            service: "auth",
-            stream: "stdout",
-            line: "failed",
+            _tag: "Entry" as const,
+            entry: { timestamp: 0, service: "auth", stream: "stdout" as const, line: "failed" },
           },
           {
-            timestamp: 0,
-            service: "postgres",
-            stream: "stdout",
-            line: "healthy",
+            _tag: "Entry" as const,
+            entry: {
+              timestamp: 0,
+              service: "postgres",
+              stream: "stdout" as const,
+              line: "healthy",
+            },
           },
         ),
       };

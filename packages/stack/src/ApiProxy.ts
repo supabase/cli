@@ -52,6 +52,10 @@ class RealtimeWebSocketProxyError extends Data.TaggedError("RealtimeWebSocketPro
   readonly cause?: unknown;
 }> {}
 
+class RealtimeBackendSocketClosed extends Data.TaggedError("RealtimeBackendSocketClosed")<{
+  readonly closeEvent: Socket.CloseEvent;
+}> {}
+
 function transformRealtimeWebSocketUrl(requestUrl: string, config: ProxyConfig): string {
   const stripped = requestUrl.startsWith("/realtime/v1")
     ? requestUrl.slice("/realtime/v1".length)
@@ -70,12 +74,29 @@ function transformRealtimeWebSocketUrl(requestUrl: string, config: ProxyConfig):
   return url.toString();
 }
 
-function expectedSocketClose(error: Socket.SocketError): boolean {
-  return (
-    Predicate.isTagged(error.reason, "SocketCloseError") &&
-    (error.reason.code === 1000 || error.reason.code === 1001)
-  );
-}
+const isSendableWebSocketCloseCode = (code: number): boolean =>
+  Number.isInteger(code) &&
+  ((code >= 1000 && code <= 1014 && code !== 1004 && code !== 1005 && code !== 1006) ||
+    (code >= 3000 && code <= 4999));
+
+const backendCloseEvent = (error: Socket.SocketError): Socket.CloseEvent | undefined => {
+  if (!Predicate.isTagged(error.reason, "SocketCloseError")) return undefined;
+
+  const { code, closeReason } = error.reason;
+  if (code === 1005) return new Socket.CloseEvent(1000, closeReason ?? "");
+  if (code === 1006) return new Socket.CloseEvent(1011, "realtime backend connection lost");
+  if (
+    !isSendableWebSocketCloseCode(code) ||
+    (closeReason !== undefined && Buffer.byteLength(closeReason, "utf8") > 123)
+  ) {
+    return new Socket.CloseEvent(1011, "realtime backend sent an invalid close frame");
+  }
+
+  return new Socket.CloseEvent(code, closeReason);
+};
+
+const backendWriterCloseEvent = (error: Socket.SocketError): Socket.CloseEvent =>
+  backendCloseEvent(error) ?? new Socket.CloseEvent(1011, "realtime backend connection lost");
 
 function websocketMessageChunk(
   data: NodeSocket.NodeWS.RawData,
@@ -362,11 +383,28 @@ function makeRealtimeWebSocketHandler(
               ) => Effect.Effect<void, Socket.SocketError>
             >();
 
-          const clientToBackend = clientSocket.runRaw((chunk) =>
-            Effect.flatMap(Deferred.await(backendWriter), (write) =>
-              write(realtimeClientFrame(chunk)),
-            ),
-          );
+          const clientToBackend = clientSocket
+            .runRaw((chunk) =>
+              Deferred.await(backendWriter).pipe(
+                Effect.flatMap((write) => write(realtimeClientFrame(chunk))),
+                Effect.catchTag("SocketError", (error) =>
+                  Effect.fail(
+                    new RealtimeBackendSocketClosed({
+                      closeEvent: backendWriterCloseEvent(error),
+                    }),
+                  ),
+                ),
+              ),
+            )
+            .pipe(
+              Effect.catchTags({
+                RealtimeBackendSocketClosed: ({ closeEvent }) => Effect.succeed(closeEvent),
+                SocketError: (error) =>
+                  Predicate.isTagged(error.reason, "SocketCloseError")
+                    ? Effect.void
+                    : Effect.fail(error),
+              }),
+            );
           const clientFiber = yield* clientToBackend.pipe(
             Effect.forkChild({ startImmediately: true }),
           );
@@ -401,13 +439,17 @@ function makeRealtimeWebSocketHandler(
             return;
           }
           const backendSocket = backendResult.success;
-          const backendToClient = backendSocket.runRaw((chunk) =>
-            Effect.flatMap(Deferred.await(clientWriter), (write) => write(chunk)),
-          );
+          const backendToClient = backendSocket
+            .runRaw((chunk) =>
+              Effect.flatMap(Deferred.await(clientWriter), (write) => write(chunk)),
+            )
+            .pipe(
+              Effect.catchTag("SocketError", (error) => {
+                const closeEvent = backendCloseEvent(error);
+                return closeEvent === undefined ? Effect.fail(error) : Effect.succeed(closeEvent);
+              }),
+            );
           const bridge = Effect.race(Fiber.join(clientFiber), backendToClient).pipe(
-            Effect.catchTag("SocketError", (error) =>
-              expectedSocketClose(error) ? Effect.void : Effect.fail(error),
-            ),
             Effect.mapError((error) =>
               error instanceof RealtimeWebSocketProxyError
                 ? error
@@ -419,7 +461,9 @@ function makeRealtimeWebSocketHandler(
           );
           yield* Deferred.succeed(backendWriter, yield* backendSocket.writer);
           const bridgeResult = yield* bridge.pipe(Effect.result);
-          if (Result.isFailure(bridgeResult)) {
+          if (Result.isSuccess(bridgeResult) && Socket.isCloseEvent(bridgeResult.success)) {
+            yield* closeClient(bridgeResult.success);
+          } else if (Result.isFailure(bridgeResult)) {
             yield* closeClient(new Socket.CloseEvent(1011, "realtime proxy error"));
           }
         }),

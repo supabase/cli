@@ -640,12 +640,20 @@ export class StackBuilder extends Context.Service<
 
         if (configuredServiceEnabled(config, "imgproxy")) {
           const storageConfig = config.storage;
+          // validateResolvedConfig enforces this dependency; keep the builder fail-loud if it diverges.
+          if (storageConfig === false) {
+            return yield* new StackBuildError({
+              detail: "imgproxy requires storage to be enabled",
+              reason: "invalid_config",
+            });
+          }
           const imgproxyResolution = yield* requirePreparedResolution(prepared, "imgproxy");
           defs.push({
             ...(imgproxyResolution.type === "binary"
               ? makeImgproxyServiceNative({
                   binPath: imgproxyResolution.path,
                   port: config.imgproxy.port,
+                  dataDir: storageConfig.dataDir,
                   dependencies: [{ service: "storage", condition: "healthy" }],
                 })
               : makeImgproxyServiceDocker({
@@ -653,7 +661,7 @@ export class StackBuilder extends Context.Service<
                   image: imgproxyResolution.image,
                   port: config.imgproxy.port,
                   identity,
-                  dataDir: storageConfig === false ? "" : storageConfig.dataDir,
+                  dataDir: storageConfig.dataDir,
                   platformOs: platform.os,
                   dependencies: [{ service: "storage", condition: "healthy" }],
                 })),
@@ -800,6 +808,12 @@ export class StackBuilder extends Context.Service<
         if (configuredServiceEnabled(config, "pooler")) {
           const poolerResolution = yield* requirePreparedResolution(prepared, "pooler");
           if (poolerResolution.type === "binary") {
+            if (config.pooler.internalPort === undefined) {
+              return yield* new StackBuildError({
+                detail: "Native Pooler requires an allocated internal listener span",
+                reason: "invalid_config",
+              });
+            }
             yield* prepareNativeDirectory(
               join(config.runtimeRoot, "pooler"),
               "Failed to prepare the native Pooler runtime directory",
@@ -810,6 +824,7 @@ export class StackBuilder extends Context.Service<
               adminPort: config.pooler.apiPort,
               sessionPort: config.pooler.sessionPort,
               transactionPort: config.pooler.transactionPort,
+              internalPort: config.pooler.internalPort,
               nodeName: beamNodeName("pooler", identity.key),
               releaseCookie,
               dbPort: config.dbPort,

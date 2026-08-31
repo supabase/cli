@@ -309,7 +309,12 @@ export const SERVICE_CATALOG: {
     },
     activation: { activates: [], owns: [] },
     preparation: preparation(["eager"], "eager", ["postgres"]),
-    portFields: ["poolerSessionPort", "poolerTransactionPort", "poolerApiPort"],
+    portFields: [
+      "poolerSessionPort",
+      "poolerTransactionPort",
+      "poolerApiPort",
+      "poolerInternalPort",
+    ],
   },
 };
 

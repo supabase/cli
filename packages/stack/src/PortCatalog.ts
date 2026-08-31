@@ -23,6 +23,8 @@ export interface AllocatedPorts {
   readonly poolerSessionPort: number;
   readonly poolerTransactionPort: number;
   readonly poolerApiPort: number;
+  /** Native Supavisor's private session/transaction shard listener span. */
+  readonly poolerInternalPort: number;
 }
 
 /** A selected allocation may contain any subset of the catalog fields. */
@@ -156,6 +158,13 @@ const PORT_CATALOG_ENTRIES: {
     service: "pooler",
     persistence: "sticky",
   },
+  poolerInternalPort: {
+    field: "poolerInternalPort",
+    service: "pooler",
+    nativeOnly: true,
+    span: 8,
+    persistence: "runtime",
+  },
 };
 
 export const PORT_CATALOG = PORT_CATALOG_ENTRIES;
@@ -180,6 +189,7 @@ export const PORT_FIELDS = [
   "poolerSessionPort",
   "poolerTransactionPort",
   "poolerApiPort",
+  "poolerInternalPort",
 ] as const satisfies ReadonlyArray<PortField>;
 export const stickyPortFields: ReadonlyArray<PortField> = PORT_FIELDS.filter(
   (field) => PORT_CATALOG[field].persistence === "sticky",
@@ -234,6 +244,7 @@ export const AllocatedPortsSchema = Schema.Struct({
   poolerSessionPort: Schema.Finite,
   poolerTransactionPort: Schema.Finite,
   poolerApiPort: Schema.Finite,
+  poolerInternalPort: Schema.Finite,
 });
 
 export const PortSetSchema = Schema.Struct({
@@ -257,6 +268,7 @@ export const PortSetSchema = Schema.Struct({
   poolerSessionPort: Schema.optionalKey(Schema.Finite),
   poolerTransactionPort: Schema.optionalKey(Schema.Finite),
   poolerApiPort: Schema.optionalKey(Schema.Finite),
+  poolerInternalPort: Schema.optionalKey(Schema.Finite),
 });
 
 export const ResolvedPortsSchema = Schema.Struct({

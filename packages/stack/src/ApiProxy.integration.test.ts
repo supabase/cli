@@ -100,64 +100,147 @@ function buildBunProxyLayer(
   ) as Layer.Layer<ApiProxy, never, never>;
 }
 
+const proxyConfigFor = (backendPort: number): ProxyConfig => ({
+  listenPort: 0,
+  gotruePort: backendPort,
+  postgrestPort: backendPort,
+  postgrestAdminPort: backendPort,
+  edgeRuntimePort: backendPort,
+  realtimePort: backendPort,
+  realtimeTenantId: "realtime-test",
+  storagePort: backendPort,
+  pgmetaPort: backendPort,
+  analyticsPort: backendPort,
+  poolerPort: backendPort,
+  studioPort: backendPort,
+  publishableKey: PUBLISHABLE_KEY,
+  secretKey: "sb_secret_testkey",
+  anonJwt: "test-anon-jwt-token",
+  serviceRoleJwt: "test-service-role-jwt-token",
+});
+
+const clientAddress = (port: number): string =>
+  `ws://127.0.0.1:${port}/realtime/v1/websocket?apikey=${PUBLISHABLE_KEY}&vsn=1.0.0`;
+
+const awaitClientOpen = (client: NodeSocket.NodeWS.WebSocket): Promise<void> =>
+  new Promise((resolve, reject) => {
+    client.once("open", resolve);
+    client.once("error", reject);
+  });
+
+const awaitClientClose = (
+  client: NodeSocket.NodeWS.WebSocket,
+): Promise<{ readonly code: number; readonly reason: string }> =>
+  new Promise((resolve, reject) => {
+    client.once("close", (code, reason) => resolve({ code, reason: rawDataToUtf8(reason) }));
+    client.once("error", reject);
+  });
+
+async function openNodeProxyWebSocket(onMessage?: Parameters<typeof startWebSocketBackend>[0]) {
+  const backend = await startWebSocketBackend(onMessage);
+  const runtime = ManagedRuntime.make(buildProxyLayer(proxyConfigFor(backend.port)));
+  const proxy = await runtime.runPromise(ApiProxy);
+  const address = proxy.address;
+  if (!Predicate.isTagged(address, "TcpAddress")) throw new Error("Expected TCP proxy address");
+  const client = new NodeSocket.NodeWS.WebSocket(clientAddress(address.port), "realtime-v1");
+  return {
+    backend,
+    runtime,
+    client,
+    dispose: async () => {
+      if (client.readyState !== NodeSocket.NodeWS.WebSocket.CLOSED) client.terminate();
+      await runtime.dispose();
+      await backend.stop();
+    },
+  };
+}
+
 describe("ApiProxy realtime websocket", () => {
   test("forwards frames with the backend path, tenant host, and projected query key", async () => {
-    const backend = await startWebSocketBackend();
-    const config: ProxyConfig = {
-      listenPort: 0,
-      gotruePort: backend.port,
-      postgrestPort: backend.port,
-      postgrestAdminPort: backend.port,
-      edgeRuntimePort: backend.port,
-      realtimePort: backend.port,
-      realtimeTenantId: "realtime-test",
-      storagePort: backend.port,
-      pgmetaPort: backend.port,
-      analyticsPort: backend.port,
-      poolerPort: backend.port,
-      studioPort: backend.port,
-      publishableKey: PUBLISHABLE_KEY,
-      secretKey: "sb_secret_testkey",
-      anonJwt: "test-anon-jwt-token",
-      serviceRoleJwt: "test-service-role-jwt-token",
-    };
-    const runtime = ManagedRuntime.make(buildProxyLayer(config));
-    const proxy = await runtime.runPromise(ApiProxy);
-    const address = proxy.address;
-    if (!Predicate.isTagged(address, "TcpAddress")) throw new Error("Expected TCP proxy address");
-
-    const client = new NodeSocket.NodeWS.WebSocket(
-      `ws://127.0.0.1:${address.port}/realtime/v1/websocket?apikey=${PUBLISHABLE_KEY}&vsn=1.0.0`,
-      "realtime-v1",
-    );
+    const fixture = await openNodeProxyWebSocket();
     const payload = '["hello realtime"]';
     try {
-      await new Promise<void>((resolve, reject) => {
-        client.once("open", resolve);
-        client.once("error", reject);
-      });
+      await awaitClientOpen(fixture.client);
       const echoed = new Promise<{ readonly text: string; readonly isBinary: boolean }>(
         (resolve, reject) => {
-          client.once("message", (data, isBinary) =>
+          fixture.client.once("message", (data, isBinary) =>
             resolve({ text: rawDataToUtf8(data), isBinary }),
           );
-          client.once("error", reject);
+          fixture.client.once("error", reject);
         },
       );
-      client.send(payload);
+      fixture.client.send(payload);
 
       expect(await echoed).toEqual({ text: payload, isBinary: false });
-      expect(backend.messageIsBinary()).toBe(false);
-      expect(backend.request()).toEqual({
+      expect(fixture.backend.messageIsBinary()).toBe(false);
+      expect(fixture.backend.request()).toEqual({
         url: "/socket/websocket?apikey=test-anon-jwt-token&vsn=1.0.0",
         host: "realtime-test",
       });
     } finally {
-      if (client.readyState !== NodeSocket.NodeWS.WebSocket.CLOSED) client.terminate();
-      await runtime.dispose();
-      await backend.stop();
+      await fixture.dispose();
     }
   });
+
+  test(
+    "forwards a clean backend close code and reason to the client",
+    { timeout: 5_000 },
+    async () => {
+      const fixture = await openNodeProxyWebSocket((websocket) => {
+        websocket.close(1000, "backend shutdown");
+      });
+      try {
+        const closed = awaitClientClose(fixture.client);
+        await awaitClientOpen(fixture.client);
+        fixture.client.send("close");
+
+        await expect(closed).resolves.toEqual({ code: 1000, reason: "backend shutdown" });
+      } finally {
+        await fixture.dispose();
+      }
+    },
+  );
+
+  test(
+    "forwards an application backend close code and reason to the client",
+    { timeout: 5_000 },
+    async () => {
+      const fixture = await openNodeProxyWebSocket((websocket) => {
+        websocket.close(1013, "service restarting");
+      });
+      try {
+        const closed = awaitClientClose(fixture.client);
+        await awaitClientOpen(fixture.client);
+        fixture.client.send("close");
+
+        await expect(closed).resolves.toEqual({ code: 1013, reason: "service restarting" });
+      } finally {
+        await fixture.dispose();
+      }
+    },
+  );
+
+  test(
+    "normalizes an unsendable backend close code before forwarding it",
+    { timeout: 5_000 },
+    async () => {
+      const fixture = await openNodeProxyWebSocket((websocket) => {
+        websocket.terminate();
+      });
+      try {
+        const closed = awaitClientClose(fixture.client);
+        await awaitClientOpen(fixture.client);
+        fixture.client.send("close");
+
+        await expect(closed).resolves.toEqual({
+          code: 1011,
+          reason: "realtime backend connection lost",
+        });
+      } finally {
+        await fixture.dispose();
+      }
+    },
+  );
 
   (typeof Bun === "undefined" ? test.skip : test)(
     "forwards a Phoenix join from supabase-js after delayed Bun activation",
@@ -188,24 +271,7 @@ describe("ApiProxy realtime websocket", () => {
           ]),
         );
       });
-      const config: ProxyConfig = {
-        listenPort: 0,
-        gotruePort: backend.port,
-        postgrestPort: backend.port,
-        postgrestAdminPort: backend.port,
-        edgeRuntimePort: backend.port,
-        realtimePort: backend.port,
-        realtimeTenantId: "realtime-test",
-        storagePort: backend.port,
-        pgmetaPort: backend.port,
-        analyticsPort: backend.port,
-        poolerPort: backend.port,
-        studioPort: backend.port,
-        publishableKey: PUBLISHABLE_KEY,
-        secretKey: "sb_secret_testkey",
-        anonJwt: "test-anon-jwt-token",
-        serviceRoleJwt: "test-service-role-jwt-token",
-      };
+      const config = proxyConfigFor(backend.port);
       let transportConnected: (() => void) | undefined;
       const transport = new Promise<void>((resolve) => {
         transportConnected = resolve;

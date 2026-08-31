@@ -32,6 +32,7 @@ const testPorts: PortSet = {
   poolerSessionPort: 40_014,
   poolerTransactionPort: 40_015,
   poolerApiPort: 40_019,
+  poolerInternalPort: 40_020,
 };
 
 const resolveConfig = (
@@ -105,6 +106,7 @@ describe("resolved service preparation policies", () => {
 
     expect(config.vector).toMatchObject({ version: "0.53.0-alpine" });
     expect(config.pooler).toMatchObject({ version: "2.9.12" });
+    expect(config.pooler).not.toHaveProperty("internalPort");
   });
 
   it("resolves independent Pooler protocol ports and Mailpit data ownership", async () => {
@@ -127,6 +129,7 @@ describe("resolved service preparation policies", () => {
       sessionPort: 41_001,
       transactionPort: 41_002,
       apiPort: 41_003,
+      internalPort: 40_020,
     });
     expect(config.mailpit).toMatchObject({ dataDir: "/tmp/explicit-mailpit" });
   });

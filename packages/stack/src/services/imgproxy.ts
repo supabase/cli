@@ -17,7 +17,7 @@ interface ImgproxyServiceOptions {
   readonly dependencies: ReadonlyArray<ServiceDependency>;
 }
 
-export interface NativeImgproxyOptions extends Omit<ImgproxyServiceOptions, "dataDir"> {
+export interface NativeImgproxyOptions extends ImgproxyServiceOptions {
   readonly binPath: string;
 }
 
@@ -34,12 +34,18 @@ const imgproxyHealthCheck = (port: number): ServiceDef["healthCheck"] =>
     ...stackHealthBudgets.imgproxy,
   });
 
-const imgproxyEnv = (port: number, host: "127.0.0.1" | "") => ({
+const normalizeLocalSourcePrefix = (dataDir: string): string => {
+  const withoutTrailingSeparators = dataDir.replace(/\/+$/u, "");
+  return withoutTrailingSeparators.length === 0 ? "/" : `${withoutTrailingSeparators}/`;
+};
+
+const imgproxyEnv = (port: number, host: "127.0.0.1" | "", dataDir: string) => ({
   IMGPROXY_BIND: `${host}:${port}`,
   // Storage emits absolute local:/// URLs. Keeping the root at / makes those
   // URLs addressable on the host while the data directory remains owned by
   // Storage and is not treated as imgproxy's independent state.
   IMGPROXY_LOCAL_FILESYSTEM_ROOT: "/",
+  IMGPROXY_ALLOWED_SOURCES: `local:///${normalizeLocalSourcePrefix(dataDir)}`,
   IMGPROXY_USE_ETAG: "/",
   IMGPROXY_MAX_SRC_RESOLUTION: "50",
   IMGPROXY_MAX_SRC_FILE_SIZE: "25000000",
@@ -53,7 +59,7 @@ export const makeImgproxyServiceNative = (opts: NativeImgproxyOptions): ServiceD
   nativeRunService({
     name: "imgproxy",
     command: `${opts.binPath}/bin/imgproxy`,
-    env: imgproxyEnv(opts.port, "127.0.0.1"),
+    env: imgproxyEnv(opts.port, "127.0.0.1", opts.dataDir),
     dependencies: opts.dependencies,
     healthCheck: imgproxyHealthCheck(opts.port),
   });
@@ -66,7 +72,7 @@ export const makeImgproxyServiceDocker = (opts: DockerImgproxyOptions): ServiceD
     image: opts.image,
     networkArgs: dockerNetworkArgs(opts.platformOs, [opts.port]),
     volumes: [`${opts.dataDir}:${IMGPROXY_STORAGE_DIR}`],
-    env: imgproxyEnv(opts.port, ""),
+    env: imgproxyEnv(opts.port, "", IMGPROXY_STORAGE_DIR),
     dependencies: opts.dependencies,
     healthCheck: imgproxyHealthCheck(opts.port),
   });

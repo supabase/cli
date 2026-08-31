@@ -86,6 +86,30 @@ describe("LogBuffer", () => {
     }).pipe(Effect.provide(layer)),
   );
 
+  it.live("keeps ordered controls internal to the log buffer", () =>
+    Effect.gen(function* () {
+      const log = yield* LogBuffer;
+      const publicFiber = yield* Effect.forkChild(
+        log.subscribeAll.pipe(Stream.take(1), Stream.runCollect),
+        { startImmediately: true },
+      );
+      const internalFiber = yield* Effect.forkChild(
+        log.subscribeAllInternal.pipe(Stream.take(2), Stream.runCollect),
+        { startImmediately: true },
+      );
+
+      yield* log.append("svc", "stdout", "entry");
+      yield* log.appendControl("shutdown");
+
+      const publicEntries = yield* Fiber.join(publicFiber);
+      const internalEvents = yield* Fiber.join(internalFiber);
+      expect(publicEntries.map((entry) => entry.line)).toEqual(["entry"]);
+      expect(internalEvents.map((event) => event._tag)).toEqual(["Entry", "Control"]);
+      expect(internalEvents[1]).toEqual({ _tag: "Control", id: "shutdown" });
+      expect((yield* log.historyAll()).map((entry) => entry.line)).toEqual(["entry"]);
+    }).pipe(Effect.provide(layer)),
+  );
+
   it.live("multiple services are independent", () =>
     Effect.gen(function* () {
       const log = yield* LogBuffer;

@@ -7,7 +7,11 @@ import { resolve } from "node:path";
 import { describe, expect, it } from "vitest";
 import { NodeFileSystem } from "@effect/platform-node";
 import { Cause, Effect, Exit, FileSystem } from "effect";
-import { reservePortSet, type PortReservationRequest } from "./PortAllocator.ts";
+import {
+  PortAllocationError,
+  reservePortSet,
+  type PortReservationRequest,
+} from "./PortAllocator.ts";
 
 const PORT_LEASE_CHILD = resolve(import.meta.dirname, "../tests/helpers/port-lease-child.ts");
 const STACK_PACKAGE_ROOT = resolve(import.meta.dirname, "..");
@@ -145,6 +149,78 @@ const startChildLease = () => {
   return { child, ready };
 };
 
+const MAX_PG_META_COLLISION_ATTEMPTS = 32;
+
+type PgMetaCollisionAttempt =
+  | { readonly kind: "retry"; readonly detail: string }
+  | {
+      readonly kind: "collision";
+      readonly adminPort: number;
+      readonly basePort: number;
+      readonly error: PortAllocationError;
+    }
+  | {
+      readonly kind: "unexpected";
+      readonly adminPort: number;
+      readonly basePort: number;
+      readonly error: unknown;
+    }
+  | {
+      readonly kind: "unexpected-success";
+      readonly adminPort: number;
+      readonly basePort: number;
+    };
+
+/**
+ * Keep the candidate admin listener owned while reservePortSet probes the
+ * exact PgMeta span. A base-port collision is retried with a fresh candidate;
+ * the scoped listener is closed before the next candidate is selected.
+ */
+const probePgMetaAdminCollision = (): Effect.Effect<
+  PgMetaCollisionAttempt,
+  Error,
+  FileSystem.FileSystem
+> =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const occupied = yield* occupyFreePort();
+      const adminPort = occupied.port;
+      if (adminPort < 2 || adminPort > 65_535) {
+        return {
+          kind: "retry",
+          detail: `Ephemeral admin candidate ${adminPort} cannot form a valid PgMeta span`,
+        } as const;
+      }
+      const basePort = adminPort - 1;
+      const exit = yield* reservePortSet([
+        { field: "pgmetaPort", selection: { kind: "exact", port: basePort } },
+      ]).pipe(Effect.exit);
+      if (Exit.isSuccess(exit)) {
+        yield* exit.value.releaseAll;
+        return { kind: "unexpected-success", adminPort, basePort } as const;
+      }
+      const error = Cause.squash(exit.cause);
+      if (
+        error instanceof PortAllocationError &&
+        error.field === "pgmetaPort" &&
+        error.port === adminPort
+      ) {
+        return { kind: "collision", adminPort, basePort, error } as const;
+      }
+      if (
+        error instanceof PortAllocationError &&
+        error.field === "pgmetaPort" &&
+        error.port === basePort
+      ) {
+        return {
+          kind: "retry",
+          detail: `PgMeta base ${basePort} was already unavailable`,
+        } as const;
+      }
+      return { kind: "unexpected", adminPort, basePort, error } as const;
+    }),
+  );
+
 describe("reservePortSet", () => {
   it.each(["node", "bun"] as const)(
     "closes a pending listener when allocation is interrupted under %s",
@@ -186,6 +262,24 @@ describe("reservePortSet", () => {
     }
   });
 
+  it("keeps native Pooler shard listener spans disjoint across stacks", async () => {
+    const first = await run(reservePortSet([automatic("poolerInternalPort")]));
+    const second = await run(reservePortSet([automatic("poolerInternalPort")]));
+    try {
+      const firstBase = first.ports.poolerInternalPort;
+      const secondBase = second.ports.poolerInternalPort;
+      if (firstBase === undefined || secondBase === undefined) {
+        throw new Error("Expected native Pooler internal port allocations");
+      }
+      const firstSpan = new Set(Array.from({ length: 8 }, (_, index) => firstBase + index));
+      const secondSpan = new Set(Array.from({ length: 8 }, (_, index) => secondBase + index));
+      expect([...firstSpan].some((port) => secondSpan.has(port))).toBe(false);
+    } finally {
+      await run(first.releaseAll);
+      await run(second.releaseAll);
+    }
+  });
+
   it("keeps the PgMeta admin port out of other automatic allocations", async () => {
     const lease = await run(reservePortSet([automatic("pgmetaPort"), automatic("apiPort")]));
     try {
@@ -202,22 +296,34 @@ describe("reservePortSet", () => {
 
   it("rejects an exact PgMeta base when its admin port is already owned", async () => {
     await run(
-      Effect.scoped(
-        Effect.gen(function* () {
-          const occupied = yield* occupyFreePort();
-          expect(occupied.port).toBeGreaterThan(1);
-          const exit = yield* reservePortSet([
-            { field: "pgmetaPort", selection: { kind: "exact", port: occupied.port - 1 } },
-          ]).pipe(Effect.exit);
-          expect(Exit.isFailure(exit)).toBe(true);
-          if (Exit.isFailure(exit)) {
-            expect(Cause.squash(exit.cause)).toMatchObject({
-              field: "pgmetaPort",
-              port: occupied.port,
-            });
+      Effect.gen(function* () {
+        const retries: Array<string> = [];
+        for (let attempt = 1; attempt <= MAX_PG_META_COLLISION_ATTEMPTS; attempt += 1) {
+          const outcome = yield* probePgMetaAdminCollision();
+          if (outcome.kind === "retry") {
+            retries.push(outcome.detail);
+            continue;
           }
-        }),
-      ),
+          if (outcome.kind === "collision") {
+            expect(outcome.error).toMatchObject({
+              field: "pgmetaPort",
+              port: outcome.adminPort,
+            });
+            return;
+          }
+          if (outcome.kind === "unexpected-success") {
+            throw new Error(
+              `PgMeta exact allocation unexpectedly succeeded for base ${outcome.basePort} while admin ${outcome.adminPort} was owned`,
+            );
+          }
+          throw new Error(
+            `PgMeta exact allocation failed unexpectedly for base ${outcome.basePort} with ${String(outcome.error)}`,
+          );
+        }
+        throw new Error(
+          `Unable to obtain a free PgMeta base after ${MAX_PG_META_COLLISION_ATTEMPTS} attempts: ${retries.join("; ")}`,
+        );
+      }),
     );
   });
 

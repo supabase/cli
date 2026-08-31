@@ -51,6 +51,7 @@ const basePorts: AllocatedPorts = {
   poolerSessionPort: 3019,
   poolerTransactionPort: 3020,
   poolerApiPort: 3021,
+  poolerInternalPort: 3022,
 };
 
 const baseConfig: ResolvedStackConfig = {

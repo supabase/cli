@@ -37,6 +37,7 @@ const ports: AllocatedPorts = {
   poolerSessionPort: 41017,
   poolerTransactionPort: 41018,
   poolerApiPort: 41019,
+  poolerInternalPort: 41020,
 };
 
 const binaryRoots: Record<string, string> = Object.fromEntries(
@@ -69,7 +70,7 @@ describe("StackBuilder native graph", () => {
     );
 
     try {
-      const result = await Effect.runPromise(
+      const built = await Effect.runPromise(
         Effect.scoped(
           Effect.gen(function* () {
             const config = yield* resolveConfig(fullNativeConfig, {
@@ -87,13 +88,17 @@ describe("StackBuilder native graph", () => {
             };
             const prepared = yield* preparation.prepare(input);
             const scope = yield* Effect.scope;
-            return yield* builder
-              .build(config, prepared, { beamReleaseCookie: "stack-release-cookie" })
-              .pipe(Effect.provideService(Scope.Scope, scope));
+            return {
+              result: yield* builder
+                .build(config, prepared, { beamReleaseCookie: "stack-release-cookie" })
+                .pipe(Effect.provideService(Scope.Scope, scope)),
+              storageDataDir: config.storage === false ? "" : config.storage.dataDir,
+            };
           }).pipe(Effect.provide(layer)),
         ),
       );
 
+      const { result, storageDataDir } = built;
       const names = result.graph.startOrder.map((service) => service.name);
       expect(names).toEqual(
         expect.arrayContaining([
@@ -114,7 +119,7 @@ describe("StackBuilder native graph", () => {
         const definition = result.graph.startOrder.find((candidate) => candidate.name === service);
         expect(definition, service).toBeDefined();
         expect(definition?.command, service).not.toMatch(/^(docker|podman)$/);
-        if (service !== "postgres") expect(definition?.command, service).toContain("/opt/slim/");
+        if (service !== "postgres") expect(definition?.command, service).toContain("/bin/");
       }
       expect(
         result.graph.startOrder.find((service) => service.name === "storage")?.env,
@@ -122,6 +127,12 @@ describe("StackBuilder native graph", () => {
         SERVER_HOST: "127.0.0.1",
         DATABASE_URL: `postgresql://supabase_storage_admin:postgres@127.0.0.1:${ports.dbPort}/postgres`,
         IMGPROXY_URL: `http://127.0.0.1:${ports.imgproxyPort}`,
+      });
+      expect(
+        result.graph.startOrder.find((service) => service.name === "imgproxy")?.env,
+      ).toMatchObject({
+        IMGPROXY_LOCAL_FILESYSTEM_ROOT: "/",
+        IMGPROXY_ALLOWED_SOURCES: `local:///${storageDataDir.replace(/\/+$/u, "")}/`,
       });
       expect(result.graph.startOrder.find((service) => service.name === "auth")?.env).toMatchObject(
         {
@@ -163,6 +174,12 @@ describe("StackBuilder native graph", () => {
         PORT: String(ports.poolerApiPort),
         PROXY_PORT_SESSION: String(ports.poolerSessionPort),
         PROXY_PORT_TRANSACTION: String(ports.poolerTransactionPort),
+        SESSION_PROXY_PORTS: Array.from({ length: 4 }, (_, index) =>
+          String(ports.poolerInternalPort + index),
+        ).join(","),
+        TRANSACTION_PROXY_PORTS: Array.from({ length: 4 }, (_, index) =>
+          String(ports.poolerInternalPort + 4 + index),
+        ).join(","),
         NODE_NAME: `pooler_${ports.apiPort}`,
         NODE_IP: "127.0.0.1",
       });

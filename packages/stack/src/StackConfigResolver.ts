@@ -434,19 +434,23 @@ function resolvePoolerConfig(
   input: PoolerConfig | undefined,
   raw: PoolerConfig | false | undefined,
   ports: PortSet,
+  mode: StackRuntimeSelection["mode"],
   versions: VersionResolutionOptions,
 ): Effect.Effect<ResolvedPoolerConfig | false, StackBuildError> {
   if (raw === false) return Effect.succeed(false);
   const cfg = input ?? {};
-  return Effect.all({
+  const publicPorts = Effect.all({
     sessionPort: requiredPort(ports, "poolerSessionPort"),
     transactionPort: requiredPort(ports, "poolerTransactionPort"),
     apiPort: requiredPort(ports, "poolerApiPort"),
-  }).pipe(
-    Effect.map(({ sessionPort, transactionPort, apiPort }) => ({
+  });
+  const internalPort = mode === "native" ? requiredPort(ports, "poolerInternalPort") : Effect.void;
+  return Effect.all({ publicPorts, internalPort }).pipe(
+    Effect.map(({ publicPorts: { sessionPort, transactionPort, apiPort }, internalPort }) => ({
       sessionPort,
       transactionPort,
       apiPort,
+      ...(internalPort === undefined ? {} : { internalPort }),
       mode: cfg.mode ?? "transaction",
       version: resolveServiceVersion("pooler", cfg.version, versions),
       tenantId: cfg.tenantId ?? "pooler-dev",
@@ -658,6 +662,8 @@ export const portRequestsForConfig = (
           return poolerInput?.transactionPort;
         case "poolerApiPort":
           return poolerInput?.apiPort;
+        case "poolerInternalPort":
+          return undefined;
         case "postgrestPort":
         case "postgrestAdminPort":
           return undefined;
@@ -879,7 +885,13 @@ export function resolveConfig(
             )
           : false,
         pooler: poolerEnabled
-          ? yield* resolvePoolerConfig(poolerInput, config.pooler, ports, versionResolution)
+          ? yield* resolvePoolerConfig(
+              poolerInput,
+              config.pooler,
+              ports,
+              runtime.mode,
+              versionResolution,
+            )
           : false,
       };
     }).pipe(

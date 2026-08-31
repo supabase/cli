@@ -300,6 +300,8 @@ export interface ResolvedPoolerConfig {
   readonly sessionPort: number;
   readonly transactionPort: number;
   readonly apiPort: number;
+  /** Base port for native Supavisor's private session/transaction shard listeners. */
+  readonly internalPort?: number;
   readonly mode: "transaction" | "session";
   readonly version: string;
   readonly tenantId: string;
