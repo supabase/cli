@@ -38,7 +38,7 @@
 | ---- | ------------------------------------------------------------------------------------------ |
 | `0`  | success — restore initiated                                                                |
 | `1`  | `LegacyPlatformAuthRequiredError` — no token in env/keyring/file                           |
-| `1`  | `LegacyInvalidAccessTokenError` — token violates `^sbp_(oauth_)?[a-f0-9]{40}$`             |
+| `1`  | `LegacyInvalidAccessTokenError` — token violates `^sbp_(oauth_\|v0_)?[a-f0-9]{40}$`        |
 | `1`  | `LegacyProjectNotLinkedError` — `--project-ref` unset, env/file empty, and stdin not a TTY |
 | `1`  | `LegacyInvalidProjectRefError` — resolved ref violates `^[a-z]{20}$`                       |
 | `1`  | `LegacyBackupRestoreUnexpectedStatusError` — non-201 response from the restore endpoint    |
