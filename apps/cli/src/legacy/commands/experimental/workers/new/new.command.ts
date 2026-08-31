@@ -42,7 +42,7 @@ const cliSettings = legacyCliSettingsLayer.pipe(Layer.provide(legacyDebugLoggerL
 const legacyWorkersNewRuntimeLayer = Layer.mergeAll(
   cliSettings,
   legacyTelemetryStateLayer,
-  commandRuntimeLayer(["workers", "new"]),
+  commandRuntimeLayer(["experimental", "workers", "new"]),
 );
 
 export const legacyWorkersNewCommand = Command.make("new", config).pipe(

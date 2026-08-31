@@ -31,5 +31,5 @@ export const legacyWorkersListCommand = Command.make("list", config).pipe(
       withJsonErrorHandling,
     ),
   ),
-  Command.provide(legacyManagementApiRuntimeLayer(["workers", "list"])),
+  Command.provide(legacyManagementApiRuntimeLayer(["experimental", "workers", "list"])),
 );

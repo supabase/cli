@@ -39,5 +39,5 @@ export const legacyWorkersDeleteCommand = Command.make("delete", config).pipe(
       withJsonErrorHandling,
     ),
   ),
-  Command.provide(legacyManagementApiRuntimeLayer(["workers", "delete"])),
+  Command.provide(legacyManagementApiRuntimeLayer(["experimental", "workers", "delete"])),
 );

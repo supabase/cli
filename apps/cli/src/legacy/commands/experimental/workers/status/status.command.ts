@@ -32,5 +32,5 @@ export const legacyWorkersStatusCommand = Command.make("status", config).pipe(
       withJsonErrorHandling,
     ),
   ),
-  Command.provide(legacyManagementApiRuntimeLayer(["workers", "status"])),
+  Command.provide(legacyManagementApiRuntimeLayer(["experimental", "workers", "status"])),
 );

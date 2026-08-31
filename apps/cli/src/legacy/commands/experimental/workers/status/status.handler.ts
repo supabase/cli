@@ -30,7 +30,7 @@ import type { LegacyWorkersStatusFlags } from "./status.command.ts";
  * scrolled away, plus the live instance tally, which is the only place it is
  * available — the list endpoint stays free of per-worker backend calls.
  */
-export const legacyWorkersStatus = Effect.fn("legacy.workers.status")(function* (
+export const legacyWorkersStatus = Effect.fn("legacy.experimental.workers.status")(function* (
   flags: LegacyWorkersStatusFlags,
 ) {
   const output = yield* Output;

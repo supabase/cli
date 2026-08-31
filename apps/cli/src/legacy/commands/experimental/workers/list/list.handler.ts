@@ -79,7 +79,7 @@ function toCells(row: WorkerRow): ReadonlyArray<string> {
   ];
 }
 
-export const legacyWorkersList = Effect.fn("legacy.workers.list")(function* (
+export const legacyWorkersList = Effect.fn("legacy.experimental.workers.list")(function* (
   flags: LegacyWorkersListFlags,
 ) {
   const output = yield* Output;

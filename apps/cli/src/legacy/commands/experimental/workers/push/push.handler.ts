@@ -393,7 +393,7 @@ const deployOneWorker = Effect.fnUntraced(function* (input: {
  * the run, because a build that failed is usually the thing to fix before
  * spending minutes on the rest.
  */
-export const legacyWorkersPush = Effect.fn("legacy.workers.push")(function* (
+export const legacyWorkersPush = Effect.fn("legacy.experimental.workers.push")(function* (
   flags: LegacyWorkersPushFlags,
   options: {
     readonly pollSchedule?: Schedule.Schedule<unknown>;

@@ -58,5 +58,5 @@ export const legacyWorkersPushCommand = Command.make("push", config).pipe(
       withJsonErrorHandling,
     ),
   ),
-  Command.provide(legacyManagementApiRuntimeLayer(["workers", "push"])),
+  Command.provide(legacyManagementApiRuntimeLayer(["experimental", "workers", "push"])),
 );
