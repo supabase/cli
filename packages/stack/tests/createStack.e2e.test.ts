@@ -20,10 +20,16 @@ describe("createStack e2e", () => {
     projectDir = mkdtempSync(join(tmpdir(), "supabase-e2e-project-"));
     writeFunction(projectDir, "hello", "hello");
     writeSharedFunction(projectDir);
+    writeNestedWorkerPathFunction(projectDir);
 
     stack = await createStack({
       projectDir,
-      functions: functionsBundle(projectDir, ["hello", "shared-alpha", "shared-beta"]),
+      functions: functionsBundle(projectDir, [
+        "hello",
+        "shared-alpha",
+        "shared-beta",
+        "nested-worker-path",
+      ]),
       jwtSecret: "super-secret-jwt-token-with-at-least-32-characters-long",
       postgres: { dataDir },
     });
@@ -78,6 +84,7 @@ describe("createStack e2e", () => {
         fetchFunctionWhenReady(`${stack.url}/functions/v1/shared-beta`),
       ]);
       const reusedAlpha = await fetchFunctionWhenReady(`${stack.url}/functions/v1/shared-alpha`);
+      const nested = await fetchFunctionWhenReady(`${stack.url}/functions/v1/nested-worker-path`);
 
       expect(alpha.status).toBe(200);
       expect(await alpha.text()).toBe("shared-alpha:shared-import-ok");
@@ -85,6 +92,8 @@ describe("createStack e2e", () => {
       expect(await beta.text()).toBe("shared-beta:shared-import-ok");
       expect(reusedAlpha.status).toBe(200);
       expect(await reusedAlpha.text()).toBe("shared-alpha:shared-import-ok");
+      expect(nested.status).toBe(200);
+      expect(await nested.text()).toBe("nested-worker-path:nested-source");
     },
   );
 
@@ -187,6 +196,25 @@ Deno.serve(() => new Response(
   );
 }
 
+function writeNestedWorkerPathFunction(projectDir: string) {
+  const dir = join(
+    projectDir,
+    "supabase",
+    "functions",
+    "shared",
+    ".supabase-worker",
+    "shared-alpha",
+  );
+  mkdirSync(dir, { recursive: true });
+  writeFileSync(
+    join(dir, "index.ts"),
+    `Deno.serve(() => new Response(
+  (Deno.env.get("SUPABASE_FUNCTION_SLUG") ?? "") + ":nested-source",
+));
+`,
+  );
+}
+
 function functionsBundle(
   projectDir: string,
   names: ReadonlyArray<string>,
@@ -200,7 +228,11 @@ function functionsBundle(
         projectDir,
         "supabase",
         "functions",
-        name.startsWith("shared-") ? "shared" : name,
+        name === "nested-worker-path"
+          ? join("shared", ".supabase-worker", "shared-alpha")
+          : name.startsWith("shared-")
+            ? "shared"
+            : name,
         "index.ts",
       ),
       importMapPath: null,

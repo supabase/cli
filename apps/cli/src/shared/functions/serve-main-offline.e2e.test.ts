@@ -71,6 +71,12 @@ const KONG_FUNCTIONS_CONFIG = JSON.stringify({
     staticFiles: [],
     verifyJWT: false,
   },
+  "nested-worker-path": {
+    entrypointPath: "/app/functions/custom/.supabase-worker/custom/index.ts",
+    importMapPath: "",
+    staticFiles: [],
+    verifyJWT: false,
+  },
 });
 const CUSTOM_FUNCTION = `import { sharedValue } from "../_shared/value.ts";
 
@@ -83,6 +89,11 @@ Deno.serve(() => new Response("ok", {
     "X-Function-Only": Deno.env.get("FUNCTION_ONLY") ?? "",
     "X-Global-Only": Deno.env.get("GLOBAL_ONLY") ?? "",
     "Access-Control-Expose-Headers": "X-Custom-Id",
+  },
+}));`;
+const NESTED_FUNCTION = `Deno.serve(() => new Response("ok", {
+  headers: {
+    "X-Function-Slug": Deno.env.get("SUPABASE_FUNCTION_SLUG") ?? "",
   },
 }));`;
 
@@ -133,6 +144,24 @@ const authFailureCases = [
 function containerLogs(container: string): string {
   const result = spawnSync("docker", ["logs", container], { encoding: "utf8" });
   return `${result.stdout ?? ""}\n${result.stderr ?? ""}`;
+}
+
+async function fetchFunctionWhenReady(url: string, init?: RequestInit): Promise<Response> {
+  const deadline = Date.now() + SERVE_OFFLINE_STARTUP_TIMEOUT_MS;
+  let lastError: unknown;
+
+  while (Date.now() < deadline) {
+    try {
+      const response = await fetch(url, init);
+      if (response.status !== 502 && response.status !== 503) return response;
+      lastError = new Error(`Received ${response.status} from ${url}`);
+    } catch (error) {
+      lastError = error;
+    }
+    await Bun.sleep(250);
+  }
+
+  throw new Error(`Function at ${url} did not become ready`, { cause: lastError });
 }
 
 async function writeKongConfig(dir: string, edgeRuntimeContainer: string) {
@@ -314,7 +343,14 @@ describe("functions serve runtime template (offline)", () => {
         await writeFile(join(dir, "index.ts"), await bundleServeMainTemplate());
         await mkdir(join(dir, "functions", "custom"), { recursive: true });
         await mkdir(join(dir, "functions", "_shared"), { recursive: true });
+        await mkdir(join(dir, "functions", "custom", ".supabase-worker", "custom"), {
+          recursive: true,
+        });
         await writeFile(join(dir, "functions", "custom", "index.ts"), CUSTOM_FUNCTION);
+        await writeFile(
+          join(dir, "functions", "custom", ".supabase-worker", "custom", "index.ts"),
+          NESTED_FUNCTION,
+        );
         await writeFile(
           join(dir, "functions", "_shared", "value.ts"),
           'export const sharedValue = "shared-import-ok";\n',
@@ -421,10 +457,10 @@ describe("functions serve runtime template (offline)", () => {
         );
 
         const [customResponse, aliasResponse] = await Promise.all([
-          fetch(`${functionsUrl}/custom`, {
+          fetchFunctionWhenReady(`${functionsUrl}/custom`, {
             headers: { Origin: "http://localhost:3000" },
           }),
-          fetch(`${functionsUrl}/custom-alias`),
+          fetchFunctionWhenReady(`${functionsUrl}/custom-alias`),
         ]);
         expect(customResponse.status).toBe(200);
         expect(customResponse.headers.get("x-custom-id")).toBe("abc123");
@@ -439,6 +475,9 @@ describe("functions serve runtime template (offline)", () => {
         expect(aliasResponse.status).toBe(200);
         expect(aliasResponse.headers.get("x-function-slug")).toBe("custom-alias");
         expect(aliasResponse.headers.get("x-shared-import")).toBe("shared-import-ok");
+        const nestedResponse = await fetchFunctionWhenReady(`${functionsUrl}/nested-worker-path`);
+        expect(nestedResponse.status).toBe(200);
+        expect(nestedResponse.headers.get("x-function-slug")).toBe("nested-worker-path");
         const runtimeLogs = containerLogs(runtimeContainer);
         expect(runtimeLogs).toContain("Functions config:");
         expect(runtimeLogs).toContain('"custom"');

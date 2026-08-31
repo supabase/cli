@@ -21,7 +21,7 @@ import {
 } from "./functions.ts";
 import {
   buildFunctionEnv,
-  resolveWorkerServicePath,
+  createWorkerServicePathResolver,
   verifyRequest,
 } from "./services/edge-runtime-main.ts";
 
@@ -349,20 +349,27 @@ describe("stack Functions runtime env", () => {
     expect(env.SUPABASE_URL).toBe("http://api-gw:8000");
   });
 
-  it("uses distinct worker identities when functions share a source directory", () => {
+  it("uses stable temporary worker paths when functions share a source directory", () => {
+    let nextWorkerId = 0;
+    const resolveWorkerServicePath = createWorkerServicePathResolver(
+      () => `/tmp/supabase-worker-${++nextWorkerId}`,
+    );
     const functions = {
       alpha: { entrypointPath: "/supabase/functions/shared/alpha.ts" },
       beta: { entrypointPath: "/supabase/functions/shared/beta.ts" },
       isolated: { entrypointPath: "/supabase/functions/isolated/index.ts" },
+      nested: {
+        entrypointPath: "/supabase/functions/shared/.supabase-worker/alpha/index.ts",
+      },
     };
 
-    expect(resolveWorkerServicePath(functions, "alpha")).toBe(
+    expect(resolveWorkerServicePath(functions, "alpha")).toBe("/tmp/supabase-worker-1");
+    expect(resolveWorkerServicePath(functions, "beta")).toBe("/tmp/supabase-worker-2");
+    expect(resolveWorkerServicePath(functions, "alpha")).toBe("/tmp/supabase-worker-1");
+    expect(resolveWorkerServicePath(functions, "isolated")).toBe("/supabase/functions/isolated");
+    expect(resolveWorkerServicePath(functions, "nested")).toBe(
       "/supabase/functions/shared/.supabase-worker/alpha",
     );
-    expect(resolveWorkerServicePath(functions, "beta")).toBe(
-      "/supabase/functions/shared/.supabase-worker/beta",
-    );
-    expect(resolveWorkerServicePath(functions, "isolated")).toBe("/supabase/functions/isolated");
   });
 });
 

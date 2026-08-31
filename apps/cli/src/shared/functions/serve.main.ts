@@ -123,9 +123,10 @@ const functionsConfig: Record<string, FunctionConfig> = (() => {
 })();
 
 // Edge Runtime pools user workers by servicePath. Keep the source directory for the
-// common case, but give each function a stable logical path when multiple configured
-// functions share that directory. maybeEntrypoint still points at the real source file,
-// so module resolution (including ../_shared imports) is unchanged.
+// common case, but give each function a process-owned temporary path when multiple
+// configured functions share that directory. Deno creates each path outside the set of
+// existing source directories, so a real function directory cannot use the same pool key.
+// maybeEntrypoint still points at the real source file, so module resolution is unchanged.
 const workerServicePaths = (() => {
   const sourcePathCounts = new Map<string, number>();
   for (const config of Object.values(functionsConfig)) {
@@ -139,7 +140,7 @@ const workerServicePaths = (() => {
       const servicePath =
         sourcePathCounts.get(sourcePath) === 1
           ? sourcePath
-          : join(sourcePath, ".supabase-worker", encodeURIComponent(functionName));
+          : Deno.makeTempDirSync({ prefix: "supabase-worker-" });
       return [functionName, servicePath];
     }),
   );

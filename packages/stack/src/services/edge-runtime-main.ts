@@ -185,26 +185,37 @@ export function buildFunctionEnv(config: any, functionConfig: any, functionName:
   };
 }
 
-export function resolveWorkerServicePath(
-  functions: Record<string, { entrypointPath: string }>,
-  functionName: string,
-) {
-  const functionConfig = functions[functionName];
-  if (!functionConfig) {
-    throw new Error(`Function ${functionName} is not configured`);
-  }
-  const sourcePath = dirname(functionConfig.entrypointPath);
-  const sharesSourcePath = Object.entries(functions).some(
-    ([otherName, otherConfig]) =>
-      otherName !== functionName && dirname(otherConfig.entrypointPath) === sourcePath,
-  );
+export function createWorkerServicePathResolver(makeTempDir: () => string) {
+  const sharedWorkerPaths = new Map<string, string>();
 
-  // Edge Runtime pools user workers by servicePath. maybeEntrypoint remains the real
-  // source file, so this logical suffix changes only the worker's cache identity.
-  return sharesSourcePath
-    ? `${sourcePath}/.supabase-worker/${encodeURIComponent(functionName)}`
-    : sourcePath;
+  return (functions: Record<string, { entrypointPath: string }>, functionName: string) => {
+    const functionConfig = functions[functionName];
+    if (!functionConfig) {
+      throw new Error(`Function ${functionName} is not configured`);
+    }
+    const sourcePath = dirname(functionConfig.entrypointPath);
+    const sharesSourcePath = Object.entries(functions).some(
+      ([otherName, otherConfig]) =>
+        otherName !== functionName && dirname(otherConfig.entrypointPath) === sourcePath,
+    );
+    if (!sharesSourcePath) return sourcePath;
+
+    // Edge Runtime pools user workers by servicePath. A real temporary directory cannot
+    // collide with an existing source directory. maybeEntrypoint remains the real source
+    // file, so the temporary path changes only the worker's cache identity.
+    const key = `${sourcePath}\0${functionName}`;
+    const existingPath = sharedWorkerPaths.get(key);
+    if (existingPath) return existingPath;
+
+    const workerPath = makeTempDir();
+    sharedWorkerPaths.set(key, workerPath);
+    return workerPath;
+  };
 }
+
+const resolveWorkerServicePath = createWorkerServicePathResolver(() =>
+  Deno.makeTempDirSync({ prefix: "supabase-worker-" }),
+);
 
 async function serveFunction(req: Request, config: any, functionName: string, functionConfig: any) {
   const authError = await verifyRequest(req, config, functionConfig);
