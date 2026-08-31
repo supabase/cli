@@ -514,6 +514,7 @@ export const makeSupervisor = (
       slots: Map<string, OwnedResult<A, E>>,
       key: string,
       effect: Effect.Effect<A, E>,
+      onWaiterInterrupt?: (owned: OwnedResult<A, E>) => Effect.Effect<void>,
     ): Effect.Effect<A, E> =>
       Effect.gen(function* () {
         const owned = yield* admission.withPermit(
@@ -538,7 +539,9 @@ export const makeSupervisor = (
             return deferred;
           }),
         );
-        const result = yield* Deferred.await(owned);
+        const result = yield* onWaiterInterrupt === undefined
+          ? Deferred.await(owned)
+          : Deferred.await(owned).pipe(Effect.onInterrupt(() => onWaiterInterrupt(owned)));
         return yield* joinExit(result);
       });
 
@@ -705,6 +708,10 @@ export const makeSupervisor = (
         if (state.desiredLifecycle !== "running")
           return yield* new StackNotRunningError({
             message: "Stack must be running before activation",
+          });
+        if (yield* Ref.get(recoveryFailure))
+          return yield* new StackNotRunningError({
+            message: "Stack recovery has failed; start or restart the stack before activation",
           });
         const definition = state.definition;
         if (definition === undefined || !definition.capabilities[capability].enabled)
@@ -929,22 +936,21 @@ export const makeSupervisor = (
     const stopOperation = () => controller.stop().pipe(Effect.provideContext(options.context));
     const shutdownSignal = yield* Deferred.make<void, never>();
     const signalShutdown = Deferred.succeed(shutdownSignal, undefined).pipe(Effect.asVoid);
+    const signalShutdownAfterSuccess = <A, E>(owned: OwnedResult<A, E>) =>
+      Deferred.await(owned).pipe(
+        Effect.flatMap((result) => (Exit.isSuccess(result) ? signalShutdown : Effect.void)),
+      );
+    const continueShutdownAfterInterrupt = <A, E>(owned: OwnedResult<A, E>) =>
+      FiberSet.run(ownedFibers, signalShutdownAfterSuccess(owned), {
+        startImmediately: true,
+      }).pipe(Effect.asVoid);
     const stop = submitOwned(stopOwned, "stop", stopOperation());
     const quiesceOwned = new Map<string, OwnedResult<PersistedStackState, StackError>>();
-    const quiesceOwnedEffect = submitOwned(quiesceOwned, "quiesce", stopOperation());
-    const quiesce = quiesceOwnedEffect.pipe(
-      Effect.onInterrupt(() =>
-        FiberSet.run(
-          ownedFibers,
-          quiesceOwnedEffect.pipe(
-            Effect.matchEffect({
-              onFailure: () => Effect.void,
-              onSuccess: () => signalShutdown,
-            }),
-          ),
-          { startImmediately: true },
-        ),
-      ),
+    const quiesce = submitOwned(
+      quiesceOwned,
+      "quiesce",
+      stopOperation(),
+      continueShutdownAfterInterrupt,
     );
     const operation = <A>(effect: Effect.Effect<A, StackError>, fallback: StackRpcError["tag"]) =>
       effect.pipe(
@@ -953,7 +959,12 @@ export const makeSupervisor = (
     const destroyOperation = controller
       .destroy()
       .pipe(Effect.provideContext(options.context), Effect.andThen(Ref.set(phase, "stopped")));
-    const destroy = submitOwned(destroyOwned, "destroy", destroyOperation).pipe(Effect.asVoid);
+    const destroy = submitOwned(
+      destroyOwned,
+      "destroy",
+      destroyOperation,
+      continueShutdownAfterInterrupt,
+    ).pipe(Effect.asVoid);
     const logs = (logOptions?: LogOptions): Stream.Stream<StackLogEntry, StackError> =>
       runtime.logStore === undefined
         ? Stream.fail(new StackNotRunningError({ message: "Stack logs are unavailable" }))

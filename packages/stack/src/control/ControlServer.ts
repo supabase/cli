@@ -306,6 +306,11 @@ const demuxSocket = (
         yield* socket.runRaw(processChunk, { onOpen });
         yield* Fiber.interrupt(prefaceDeadline);
       }),
+    ).pipe(
+      Effect.catchReasons("SocketError", {
+        SocketReadError: () => Effect.void,
+        SocketCloseError: () => Effect.void,
+      }),
     );
 
   return Socket.make({

@@ -181,6 +181,8 @@ const makeFixture = (
     readonly preflightStarted?: Deferred.Deferred<void>;
     readonly stopGate?: Deferred.Deferred<void>;
     readonly stopStarted?: Deferred.Deferred<void>;
+    readonly destroyGate?: Deferred.Deferred<void>;
+    readonly destroyStarted?: Deferred.Deferred<void>;
     readonly recoveryFailFirst?: Ref.Ref<boolean>;
     readonly recoveryStarted?: Deferred.Deferred<void>;
   } = {},
@@ -254,6 +256,10 @@ const makeFixture = (
             ...current,
             `cleanup:${destroy ? "destroy" : "stop"}`,
           ]);
+          if (destroy && fixtureOptions.destroyStarted !== undefined)
+            yield* Deferred.succeed(fixtureOptions.destroyStarted, undefined);
+          if (destroy && fixtureOptions.destroyGate !== undefined)
+            yield* Deferred.await(fixtureOptions.destroyGate);
           if (!destroy && fixtureOptions.stopStarted !== undefined)
             yield* Deferred.succeed(fixtureOptions.stopStarted, undefined);
           if (!destroy && fixtureOptions.stopGate !== undefined)
@@ -1076,6 +1082,23 @@ describe("Supervisor composition", () => {
     ),
   );
 
+  it.live("completes accepted destroy after its waiter is interrupted", () =>
+    run(
+      Effect.gen(function* () {
+        const destroyGate = yield* Deferred.make<void>();
+        const destroyStarted = yield* Deferred.make<void>();
+        const fixture = yield* makeFixture({ destroyGate, destroyStarted });
+        yield* fixture.supervisor.start({ config: { capabilities: { rest: {} } } });
+        const waiter = yield* Effect.forkChild(fixture.supervisor.destroy);
+        yield* Deferred.await(destroyStarted);
+        yield* Fiber.interrupt(waiter);
+        yield* Deferred.succeed(destroyGate, undefined);
+        yield* fixture.supervisor.shutdown;
+        expect(yield* fixture.store.read(fixture.id)).toBeUndefined();
+      }),
+    ),
+  );
+
   it.live("recovers a running durable intent and starts missing eager workloads", () =>
     run(
       Effect.gen(function* () {
@@ -1180,6 +1203,8 @@ describe("Supervisor composition", () => {
         const fixture = yield* makeFixture();
         yield* fixture.supervisor.start({ config: { capabilities: { rest: {} } } });
         const failFirst = yield* Ref.make(true);
+        const activationCalls = yield* Ref.make(0);
+        const startCalls = yield* Ref.make(0);
         const recoveredResources = yield* Ref.make<ReadonlyArray<ObservedWorkload>>([]);
         const recovered = yield* makeSupervisor({
           identity,
@@ -1193,6 +1218,7 @@ describe("Supervisor composition", () => {
               observe: () => Ref.get(recoveredResources),
               start: (key) =>
                 Effect.gen(function* () {
+                  yield* Ref.update(startCalls, (count) => count + 1);
                   const ready = { ...key, state: "ready" as const };
                   yield* Ref.update(recoveredResources, (current) => [
                     ...current.filter((entry) => entry.workloadId !== key.workloadId),
@@ -1218,12 +1244,21 @@ describe("Supervisor composition", () => {
                   return [];
                 }),
             },
+            activate: () =>
+              Ref.update(activationCalls, (count) => count + 1).pipe(
+                Effect.andThen(Effect.succeed({ host: "127.0.0.1", port: 9999 })),
+              ),
           },
         });
         yield* recovered.recover;
         const failedStatus = yield* recovered.status;
         expect(failedStatus.lifecycle).toBe("stopped");
         expect(failedStatus.capabilities.find(({ name }) => name === "rest")?.state).toBe("failed");
+        const activation = yield* recovered.activate("rest").pipe(Effect.exit);
+        expect(Exit.isFailure(activation)).toBe(true);
+        expect(errorOf(activation)).toBeInstanceOf(StackNotRunningError);
+        expect(yield* Ref.get(activationCalls)).toBe(0);
+        expect(yield* Ref.get(startCalls)).toBe(0);
         yield* recovered.start({ config: { capabilities: { rest: {} } } });
         expect((yield* recovered.status).lifecycle).toBe("running");
         yield* recovered.recover;

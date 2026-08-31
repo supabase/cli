@@ -928,3 +928,15 @@ private-port reservation plus gateway ownership atomic with accepted lifecycle g
 - Start/restart identity uses compiler-normalized definitions and effective secret values in a canonical SHA-256 digest;
   equivalent defaults join, distinct transient secrets remain isolated. Focused supervisor/control/handle/lifecycle
   verification passed 74 integration tests with stack type-check, Effect lint, formatting, and diff checks green.
+
+#### Task 13B2b7 correction round 2 — owned interruption and recovery guards (2026-08-31)
+
+- Owned lifecycle waiters now retain and pass the exact accepted Deferred to interruption continuations;
+  quiesce and destroy therefore complete terminal shutdown after waiter timeout/disconnect without re-evaluating
+  the operation. Activation rejects while persisted recovery is failed and resumes only after explicit recovery.
+- Client reset read/close errors are treated as normal per-connection completion while open/write failures remain
+  visible. A real handles flow persists an unsupported plan, observes failed status after fd3/control readiness,
+  probes the same owner, and restores state for scoped cleanup.
+- Supervisor readiness uses a bounded thirty-second local deadline to accommodate real subprocess startup; the
+  subprocess-backed handles suite carries the same test guard. Focused lifecycle/control/handles verification is
+  green with stack type-check, Effect lint, formatting, and diff checks.

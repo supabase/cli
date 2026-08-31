@@ -13,6 +13,7 @@ import {
   Stream,
 } from "effect";
 import { ChildProcess } from "effect/unstable/process";
+import { compileStack } from "../model/Compiler.ts";
 import {
   createStack,
   findStack,
@@ -20,10 +21,12 @@ import {
   openStack,
   listStacks,
 } from "../public/EffectStack.ts";
+import { deriveStackId, resolveStackIdentity } from "../identity/Identity.ts";
 import { defaultRuntimeEnvironment, type StackRuntimeEnvironmentValue } from "./Launcher.ts";
 import { StackIdSchema } from "../public/StackId.ts";
 import type { StackId } from "../public/StackId.ts";
 import { readOwnerMetadata, StackRuntimeEnvironment } from "../state/Ownership.ts";
+import { makeStackStateStore } from "../state/StackStateStore.ts";
 import { makeControlClient } from "../control/ControlServer.ts";
 import { resolveStackPaths } from "../state/Paths.ts";
 import { STACK_RPC_RELEASE } from "../control/StackRpc.ts";
@@ -325,6 +328,79 @@ describe("managed stack handles", { timeout: 30_000 }, () => {
         expect((yield* second.status()).lifecycle).toBe("unconfigured");
         yield* first.close();
         yield* second.close();
+      }),
+    ),
+  );
+
+  it.live("publishes an attachable owner before corrupt persisted recovery fails", () =>
+    withRuntimeRoot((project) =>
+      Effect.gen(function* () {
+        const env = yield* StackRuntimeEnvironment;
+        const identity = yield* resolveStackIdentity({ projectRoot: project });
+        const stackId = yield* deriveStackId(identity);
+        const store = yield* makeStackStateStore({ stateRoot: env.stateRoot });
+        const compiled = yield* compileStack({
+          projectRoot: project,
+          runtime: { kind: "native" },
+          config: { capabilities: { rest: {} } },
+        });
+        const corruptDefinition = {
+          ...compiled.definition,
+          capabilities: {
+            ...compiled.definition.capabilities,
+            rest: { ...compiled.definition.capabilities.rest, version: "unsupported" },
+          },
+        };
+        const persisted = {
+          format: "supabase-stack-state-v1" as const,
+          identity: { ...identity, stackId },
+          runtime: { kind: "native" } as const,
+          desiredGeneration: 1,
+          portsGeneration: null,
+          desiredLifecycle: "running" as const,
+          definition: corruptDefinition,
+          inputFingerprint: compiled.inputFingerprint,
+          ports: [],
+          privatePorts: [],
+          secrets: {},
+        };
+        yield* store.initialize(stackId, persisted);
+        const stack = yield* createStack({
+          projectRoot: project,
+          runtime: { kind: "native" },
+        });
+        yield* Effect.gen(function* () {
+          const failed = yield* stack.watchStatus().pipe(
+            Stream.filter(
+              (status) =>
+                status.lifecycle === "stopped" &&
+                status.capabilities.some(
+                  ({ name, state }) => name === "rest" && state === "failed",
+                ),
+            ),
+            Stream.runHead,
+            Effect.timeout("30 seconds"),
+          );
+          const attached = Option.isSome(failed) ? yield* openStack(stack.id) : undefined;
+          if (attached !== undefined) {
+            const status = yield* attached.status();
+            expect(status.lifecycle).toBe("stopped");
+            expect(status.capabilities.find(({ name }) => name === "rest")?.state).toBe("failed");
+            yield* attached.close();
+          }
+          expect(Option.isSome(failed)).toBe(true);
+        }).pipe(
+          Effect.ensuring(
+            store
+              .replace(
+                stack.id,
+                { ...persisted, definition: compiled.definition },
+                persisted.desiredGeneration,
+              )
+              .pipe(Effect.ignore),
+          ),
+        );
+        yield* stack.close();
       }),
     ),
   );
