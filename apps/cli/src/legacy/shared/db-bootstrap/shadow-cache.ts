@@ -1,7 +1,8 @@
 /**
  * Shadow baseline cache for `db diff`/`db pull`/catalog resolution. Snapshots the platform
  * baseline as a PGDATA tar under `${SUPABASE_HOME}/cache/shadow-baseline/` (keep 3, 2-day TTL).
- * Off unless `SUPABASE_SHADOW_CACHE` is set (viper bool + project dotenv). A cache miss or
+ * On by default; an explicitly set `SUPABASE_SHADOW_CACHE` that is not viper-true (`0`/`false`/
+ * empty/garbage, from the shell env or the project dotenv) turns it off. A cache miss or
  * anomaly never fails the run except when the shadow does not come back after a cold export.
  */
 
@@ -77,7 +78,7 @@ import {
 
 type Spawner = ChildProcessSpawner["Service"];
 
-/** `SUPABASE_SHADOW_CACHE` — opt-in gate (viper bool; unset is off). */
+/** `SUPABASE_SHADOW_CACHE` — opt-out gate (viper bool when set; unset is ON). */
 export const LEGACY_SHADOW_CACHE_ENV = "SUPABASE_SHADOW_CACHE";
 
 /**
@@ -980,7 +981,8 @@ const legacyWarmShadow = <E>(
  * `legacy-pgdelta-next-shadow.layer.ts` for the scoped `acquireRelease` form next uses so the
  * container outlives provision (the engine keeps using the URL after this returns).
  *
- * Unset or falsey {@link LEGACY_SHADOW_CACHE_ENV} is the uncached create. Otherwise it
+ * An explicitly falsey {@link LEGACY_SHADOW_CACHE_ENV} (set, but not viper-true) is the
+ * uncached create. Otherwise — including when the variable is unset, the default — it
  * restores this key's snapshot (warm) or creates one and exports the baseline (cold).
  *
  * Runs inside `acquireUseRelease`'s uninterruptible `acquire`, same as
@@ -991,8 +993,9 @@ const legacyWarmShadow = <E>(
  *
  * The `E` in the error channel is {@link legacyResolveShadowCacheKeyInputs}'s own JWKS
  * resolution alone (see that function's doc comment): every OTHER failure this function's own
- * body can produce while computing the key or restoring the snapshot is caught and degraded to a
- * cold provision — a genuine JWKS failure is the one case that must reach the caller instead,
+ * body can produce while computing the key or restoring the snapshot is caught and degraded — an
+ * unusable cache root to the plain uncached shadow (with a warning), anything on the warm path to
+ * a cold provision — a genuine JWKS failure is the one case that must reach the caller instead,
  * since a real cold provision at this input would have failed the same way.
  */
 export const legacyAcquireShadowDatabase = <E>(
@@ -1010,6 +1013,7 @@ export const legacyAcquireShadowDatabase = <E>(
       !legacyViperEnvBoolWithProjectFallback(
         LEGACY_SHADOW_CACHE_ENV,
         input.setup.projectEnvValues ?? {},
+        { whenUnset: true },
       )
     ) {
       return yield* legacyUncachedShadow(spawner, input);
@@ -1022,11 +1026,33 @@ export const legacyAcquireShadowDatabase = <E>(
         : legacyResolveShadowCacheKeyInputs(input, opts),
     );
     if (Option.isNone(keyInputs)) return yield* legacyUncachedShadow(spawner, input);
-    const key = legacyShadowCacheKey(keyInputs.value);
-    const tarPath = input.path.join(
-      legacyShadowBaselineCacheDir(input.path),
-      legacyShadowBaselineTarFileName(key),
+
+    // The cache root must be usable BEFORE committing to the cached lifecycle: the cold path
+    // drops `--rm` and pays a stop → export → restart cycle whose write is already doomed when
+    // this directory cannot be written (an unwritable or root-squashed `SUPABASE_HOME`) — and
+    // with the cache on by default, every affected invocation would pay that cycle just to warn.
+    // The mkdir is the exact one the export performs (which keeps its own as a safety net for a
+    // root that vanishes mid-run), but alone it is not a sufficient probe: recursive mkdir on an
+    // ALREADY-EXISTING directory creates nothing and succeeds regardless of permission, so the
+    // `access(W_OK)` check is what catches a pre-existing read-only root (EACCES for the current
+    // user, EROFS on a read-only mount, a root-squashing NFS server's denial).
+    const cacheDir = legacyShadowBaselineCacheDir(input.path);
+    const cacheRoot = yield* Effect.result(
+      input.fs
+        .makeDirectory(cacheDir, { recursive: true, mode: 0o700 })
+        .pipe(Effect.andThen(input.fs.access(cacheDir, { writable: true }))),
     );
+    if (Result.isFailure(cacheRoot)) {
+      const output = yield* Output;
+      yield* output.raw(
+        `Warning: shadow baseline cache unavailable (cannot write ${cacheDir}: ${cacheRoot.failure.message}); continuing uncached.\n`,
+        "stderr",
+      );
+      return yield* legacyUncachedShadow(spawner, input);
+    }
+
+    const key = legacyShadowCacheKey(keyInputs.value);
+    const tarPath = input.path.join(cacheDir, legacyShadowBaselineTarFileName(key));
 
     const cached = yield* input.fs.exists(tarPath).pipe(Effect.orElseSucceed(() => false));
     if (!cached)

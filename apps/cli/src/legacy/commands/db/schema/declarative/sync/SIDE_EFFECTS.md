@@ -57,7 +57,7 @@ disabling safe compaction.
 | `SUPABASE_USE_PG_DELTA_NEXT` | set to `false` for legacy edge-runtime pg-delta                                                                                                                                                                                                                                                                                                                                                                      | no        |
 | `PGDELTA_NPM_REGISTRY`       | legacy opt-out's private npm registry                                                                                                                                                                                                                                                                                                                                                                                | no        |
 | `SUPABASE_HOME`              | overrides the `~/.supabase` root used for the shadow baseline cache (and other CLI state)                                                                                                                                                                                                                                                                                                                            | no        |
-| `SUPABASE_SHADOW_CACHE`      | shadow baseline cache; opt-in (`1`/`true`); the shadow's post-baseline PGDATA is snapshotted to a tar and restored into the next run's fresh container (see Notes)                                                                                                                                                                                                                                                   | no        |
+| `SUPABASE_SHADOW_CACHE`      | shadow baseline cache; on by default, opt-out (`0`/`false`); the shadow's post-baseline PGDATA is snapshotted to a tar and restored into the next run's fresh container (see Notes)                                                                                                                                                                                                                                  | no        |
 | `PGDELTA_DEBUG`              | bundled-engine debug artifacts                                                                                                                                                                                                                                                                                                                                                                                       | no        |
 | `SUPABASE_SERVICES_HOSTNAME` | local DB host for the bootstrap generate                                                                                                                                                                                                                                                                                                                                                                             | no        |
 | `DOCKER_HOST`                | tcp daemon host used as the local DB host fallback                                                                                                                                                                                                                                                                                                                                                                   | no        |
@@ -146,11 +146,11 @@ existing SQL or creates an export manifest.
   with the same flag. A real version/tag mismatch still suggests
   `supabase stop --all --no-backup` then `supabase start`.
 
-### Shadow baseline cache (`SUPABASE_SHADOW_CACHE`, default OFF)
+### Shadow baseline cache (`SUPABASE_SHADOW_CACHE`, default ON)
 
 The bundled (pg-delta next) engine provisions both plan shadows through
-`legacyAcquireShadowDatabase` (`legacy-pgdelta-next-shadow.layer.ts`): off unless
-`SUPABASE_SHADOW_CACHE` is set (ambient env or project dotenv); `--no-cache`
+`legacyAcquireShadowDatabase` (`legacy-pgdelta-next-shadow.layer.ts`): on by default, off when
+`SUPABASE_SHADOW_CACHE` is set to anything not viper-true (ambient env or project dotenv); `--no-cache`
 bypasses restore and publish for that invocation. Next allocates an ephemeral host port per
 shadow; the cache key hashes the cluster recipe (including the effective Webhooks/`pg_net`
 policy), not the published port, so worktrees and repeated syncs with the same settings share
