@@ -145,7 +145,7 @@ export const SERVICE_CATALOG: {
   postgres: {
     name: "postgres",
     configKey: "postgres",
-    defaultVersions: { native: "17.6.1.165", docker: "17.6.1.165" },
+    defaultVersions: { native: "17.6.1.165", docker: "17.6.1.167" },
     artifact: {
       docker: { repository: "postgres" },
       native: nativeSource("postgres", [
@@ -201,7 +201,7 @@ export const SERVICE_CATALOG: {
   realtime: {
     name: "realtime",
     configKey: "realtime",
-    defaultVersions: { native: "v2.129.1", docker: "v2.129.9" },
+    defaultVersions: { native: "v2.129.1", docker: "v2.130.0" },
     artifact: {
       docker: { repository: "realtime" },
       native: nativeSource("realtime", ["bin/migrate", "bin/realtime", "bin/server"]),
@@ -213,7 +213,7 @@ export const SERVICE_CATALOG: {
   storage: {
     name: "storage",
     configKey: "storage",
-    defaultVersions: { native: "v1.70.1", docker: "v1.71.0" },
+    defaultVersions: { native: "v1.70.1", docker: "v1.72.1" },
     artifact: {
       docker: { repository: "storage" },
       native: nativeSource("storage", ["bin/storage"]),
@@ -249,9 +249,9 @@ export const SERVICE_CATALOG: {
   pgmeta: {
     name: "pgmeta",
     configKey: "pgmeta",
-    defaultVersions: { native: "v0.98.0", docker: "v0.98.0" },
+    defaultVersions: { native: "v0.98.0", docker: "0.99.0" },
     artifact: {
-      docker: { repository: "pgmeta" },
+      docker: { repository: "pgmeta", tagPrefix: "v" },
       native: nativeSource("pgmeta", ["bin/pgmeta"]),
     },
     activation: { activates: [], owns: [] },
@@ -302,7 +302,7 @@ export const SERVICE_CATALOG: {
   pooler: {
     name: "pooler",
     configKey: "pooler",
-    defaultVersions: { native: "v2.9.10", docker: "2.9.7" },
+    defaultVersions: { native: "v2.9.10", docker: "2.9.12" },
     artifact: {
       docker: { registry: SUPABASE_GHCR_REGISTRY, repository: "supavisor" },
       native: nativeSource("pooler", ["bin/migrate", "bin/supavisor", "bin/server"]),

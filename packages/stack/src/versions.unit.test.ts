@@ -121,21 +121,21 @@ describe("dockerImageForService", () => {
       `ghcr.io/supabase/vector:${DOCKER_DEFAULT_VERSIONS.vector}`,
     );
     expect(dockerImageForService("pooler", DOCKER_DEFAULT_VERSIONS.pooler)).toBe(
-      "ghcr.io/supabase/supavisor:2.9.7",
+      "ghcr.io/supabase/supavisor:2.9.12",
     );
   });
 
   it("keeps runtime-specific defaults for native and Docker consumers", () => {
     expect(defaultVersionsForRuntime("native")).toEqual(DEFAULT_VERSIONS);
     expect(DOCKER_DEFAULT_VERSIONS.vector).toBe("0.53.0-alpine");
-    expect(DOCKER_DEFAULT_VERSIONS.pooler).toBe("2.9.7");
+    expect(DOCKER_DEFAULT_VERSIONS.pooler).toBe("2.9.12");
     expect(DEFAULT_VERSIONS.vector).toBe("0.53.0");
     expect(DEFAULT_VERSIONS.pooler).toBe("v2.9.10");
     expect(dockerImageForService("vector", DOCKER_DEFAULT_VERSIONS.vector)).toBe(
       "ghcr.io/supabase/vector:0.53.0-alpine",
     );
     expect(dockerImageForService("pooler", DOCKER_DEFAULT_VERSIONS.pooler)).toBe(
-      "ghcr.io/supabase/supavisor:2.9.7",
+      "ghcr.io/supabase/supavisor:2.9.12",
     );
   });
 
@@ -176,11 +176,11 @@ describe("dockerImageForService", () => {
   });
 
   it("uses the frozen Docker tags for the public versions", () => {
-    expect(dockerImageForArtifact("pgmeta", DEFAULT_VERSIONS.pgmeta)).toBe(
-      "ghcr.io/supabase/cli/pgmeta:v0.98.0",
+    expect(dockerImageForArtifact("pgmeta", DOCKER_DEFAULT_VERSIONS.pgmeta)).toBe(
+      "ghcr.io/supabase/cli/pgmeta:v0.99.0",
     );
     expect(dockerImageForArtifact("pooler", DOCKER_DEFAULT_VERSIONS.pooler)).toBe(
-      "ghcr.io/supabase/supavisor:2.9.7",
+      "ghcr.io/supabase/supavisor:2.9.12",
     );
   });
 

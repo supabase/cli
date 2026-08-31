@@ -179,7 +179,7 @@ describe("prefetch", () => {
     });
     expect(result.pooler).toEqual({
       type: "docker",
-      image: "ghcr.io/supabase/supavisor:2.9.7",
+      image: "ghcr.io/supabase/supavisor:2.9.12",
     });
     expect(spawner.spawned).toContainEqual({
       command: "docker",
