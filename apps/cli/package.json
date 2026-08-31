@@ -69,7 +69,7 @@
     "@supabase/api": "workspace:*",
     "@supabase/config": "workspace:*",
     "@supabase/pg-delta": "1.0.0-alpha.48",
-    "@supabase/pg-topo": "1.0.0-alpha.5",
+    "@supabase/pg-topo": "1.0.0-alpha.6",
     "@supabase/process-compose": "workspace:*",
     "@supabase/stack": "workspace:*",
     "@tsconfig/bun": "catalog:",
