@@ -951,3 +951,17 @@ private-port reservation plus gateway ownership atomic with accepted lifecycle g
   non-terminal, and raw client reset read/close errors complete only that connection.
 - Focused supervisor/control/handle/lifecycle verification passed 80 integration tests with stack type-check,
   Effect lint, formatting, and diff checks green.
+
+#### Task 13B2b7 Fable delta — freshness and atomic handoffs (2026-08-31)
+
+- Accepted Fable findings 1.1–1.4 and the generation-bump regression from 1.5; deferred the duplicate candidate
+  materialization and classifier/test-scaffolding refactors as disproportionate to this minimal slice.
+- Deferred recovery now re-reads persisted state after acquiring execution. Superseded generation/lifecycle/input
+  becomes a no-op owned by the newer lifecycle operation, while generation adoption refuses stale backward moves.
+  A restart-before-recovery regression preserves running status, generation, and credentials.
+- Owned waiter acceptance and continuation registration are now masked atomically, restoring interruption only for
+  the Deferred wait. Maintenance response classification is attached before operation evaluation and guarded so
+  normal completion cannot be forked twice.
+- Launcher owner rereads now derive their 25ms schedule budget from the bounded 30-second readiness deadline.
+  Focused lifecycle/control/handle verification passed 81 integration tests with stack type-check, Effect lint,
+  formatting, and diff checks green.

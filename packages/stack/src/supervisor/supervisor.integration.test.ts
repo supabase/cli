@@ -185,6 +185,7 @@ const makeFixture = (
     readonly destroyStarted?: Deferred.Deferred<void>;
     readonly recoveryFailFirst?: Ref.Ref<boolean>;
     readonly recoveryStarted?: Deferred.Deferred<void>;
+    readonly recoveryGate?: Deferred.Deferred<void>;
   } = {},
 ) =>
   Effect.gen(function* () {
@@ -270,6 +271,8 @@ const makeFixture = (
         Effect.gen(function* () {
           if (fixtureOptions.recoveryStarted !== undefined)
             yield* Deferred.succeed(fixtureOptions.recoveryStarted, undefined);
+          if (fixtureOptions.recoveryGate !== undefined)
+            yield* Deferred.await(fixtureOptions.recoveryGate);
           if (fixtureOptions.recoveryFailFirst !== undefined) {
             const fail = yield* Ref.get(fixtureOptions.recoveryFailFirst);
             if (fail) {
@@ -359,7 +362,7 @@ const makeFixture = (
       runtime,
     });
     yield* Ref.set(calls, []);
-    return { supervisor, calls, logOptions, failDestroy, context, store, id };
+    return { supervisor, calls, logOptions, failDestroy, context, store, id, runtime };
   });
 
 const run = <A, E, R>(effect: Effect.Effect<A, E, R>) =>
@@ -1143,6 +1146,53 @@ describe("Supervisor composition", () => {
         expect(status.desiredLifecycle).toBe("running");
         expect(status.lifecycle).toBe("running");
         expect(yield* Ref.get(fixture.calls)).toContain("recover");
+      }),
+    ),
+  );
+
+  it.live("skips stale deferred recovery after restart adopts a newer generation", () =>
+    run(
+      Effect.gen(function* () {
+        const stopGate = yield* Deferred.make<void>();
+        const stopStarted = yield* Deferred.make<void>();
+        const fixture = yield* makeFixture({ stopGate, stopStarted });
+        yield* fixture.supervisor.start({ config: { capabilities: { rest: {} } } });
+        const recovered = yield* makeSupervisor({
+          identity,
+          stackId: fixture.id,
+          ownerSessionId: "deferred-recovery-owner",
+          rpcRelease: "test-release",
+          stateStore: fixture.store,
+          context: fixture.context,
+          runtime: fixture.runtime,
+        });
+        const restart = yield* Effect.forkChild(recovered.restart());
+        yield* Deferred.await(stopStarted);
+        const recover = yield* Effect.forkChild(recovered.recover);
+        yield* Deferred.succeed(stopGate, undefined);
+        yield* Fiber.join(restart);
+        yield* Fiber.join(recover);
+        const running = yield* fixture.store
+          .read(fixture.id)
+          .pipe(Effect.provideContext(fixture.context));
+        if (running === undefined)
+          return yield* new StackStateInvalidError({ message: "running fixture state is missing" });
+        expect(running.desiredLifecycle).toBe("running");
+        expect(running.desiredGeneration).toBe(3);
+        const withCredentials = {
+          ...running,
+          ports: [
+            { field: "api", port: 55433, intent: "exact" as const },
+            { field: "database", port: 55432, intent: "exact" as const },
+          ] as const,
+          portsGeneration: running.desiredGeneration,
+        };
+        yield* fixture.store
+          .replace(fixture.id, withCredentials, running.desiredGeneration)
+          .pipe(Effect.provideContext(fixture.context));
+        expect((yield* recovered.status).lifecycle).toBe("running");
+        const credentials = yield* invokeCredentials(recovered);
+        expect(Redacted.value(credentials.database.password)).toEqual(expect.any(String));
       }),
     ),
   );

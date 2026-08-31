@@ -447,6 +447,11 @@ export const makeSupervisor = (
       Effect.gen(function* () {
         const current = yield* Ref.get(generation);
         if (current === input.generation && input.desiredLifecycle === "running") return;
+        if (input.generation < current)
+          return yield* new StackLifecycleConflictError({
+            stackId: options.stackId,
+            message: "Lifecycle input generation is older than the adopted generation",
+          });
         yield* Ref.set(generation, input.generation);
         activationOwned.clear();
         yield* initializeActivation(input.plan);
@@ -517,31 +522,37 @@ export const makeSupervisor = (
       onWaiterInterrupt?: (owned: OwnedResult<A, E>) => Effect.Effect<void>,
     ): Effect.Effect<A, E> =>
       Effect.gen(function* () {
-        const owned = yield* admission.withPermit(
+        const result = yield* Effect.uninterruptibleMask((restore) =>
           Effect.gen(function* () {
-            const current = slots.get(key);
-            if (current !== undefined) return current;
-            const deferred = yield* Deferred.make<Exit.Exit<A, E>, never>();
-            slots.set(key, deferred);
-            const owner = Effect.gen(function* () {
-              const result = yield* execution.withPermit(effect).pipe(Effect.exit);
-              yield* Deferred.succeed(deferred, result);
-            }).pipe(
-              Effect.ensuring(
-                admission.withPermit(
-                  Effect.sync(() => {
-                    if (slots.get(key) === deferred) slots.delete(key);
-                  }),
-                ),
-              ),
+            const owned = yield* admission.withPermit(
+              Effect.gen(function* () {
+                const current = slots.get(key);
+                if (current !== undefined) return current;
+                const deferred = yield* Deferred.make<Exit.Exit<A, E>, never>();
+                slots.set(key, deferred);
+                const owner = Effect.gen(function* () {
+                  const result = yield* execution.withPermit(effect).pipe(Effect.exit);
+                  yield* Deferred.succeed(deferred, result);
+                }).pipe(
+                  Effect.ensuring(
+                    admission.withPermit(
+                      Effect.sync(() => {
+                        if (slots.get(key) === deferred) slots.delete(key);
+                      }),
+                    ),
+                  ),
+                );
+                yield* FiberSet.run(ownedFibers, owner, { startImmediately: true });
+                return deferred;
+              }),
             );
-            yield* FiberSet.run(ownedFibers, owner, { startImmediately: true });
-            return deferred;
+            const awaitResult =
+              onWaiterInterrupt === undefined
+                ? Deferred.await(owned)
+                : Deferred.await(owned).pipe(Effect.onInterrupt(() => onWaiterInterrupt(owned)));
+            return yield* restore(awaitResult);
           }),
         );
-        const result = yield* onWaiterInterrupt === undefined
-          ? Deferred.await(owned)
-          : Deferred.await(owned).pipe(Effect.onInterrupt(() => onWaiterInterrupt(owned)));
         return yield* joinExit(result);
       });
 
@@ -627,8 +638,20 @@ export const makeSupervisor = (
     const status = snapshot();
 
     const recoveryOperation: Effect.Effect<void, StackError> = Effect.gen(function* () {
-      const definition = initial.definition;
-      if (definition === undefined || initial.desiredLifecycle !== "running") {
+      const current = yield* read();
+      if (current === undefined)
+        return yield* new StackStateInvalidError({ message: "Stack state is missing" });
+      // Recovery is deferred until after owner publication. A lifecycle operation may have
+      // superseded the construction snapshot while it waited for execution; that operation owns
+      // the current phase/generation, so stale recovery must become a no-op.
+      if (
+        current.desiredGeneration !== initial.desiredGeneration ||
+        current.desiredLifecycle !== initial.desiredLifecycle ||
+        current.inputFingerprint !== initial.inputFingerprint
+      )
+        return;
+      const definition = current.definition;
+      if (definition === undefined || current.desiredLifecycle !== "running") {
         yield* Ref.set(recoveryFailure, false);
         if (options.runtime !== undefined || options.runtimeFactory !== undefined)
           yield* runtime.driver
@@ -645,7 +668,7 @@ export const makeSupervisor = (
       yield* publish().pipe(Effect.ignore);
       const attempt = yield* Effect.exit(
         Effect.gen(function* () {
-          const plan = yield* rebuildExecutionPlan(initial.runtime, definition).pipe(
+          const plan = yield* rebuildExecutionPlan(current.runtime, definition).pipe(
             Effect.provideContext(options.context),
             Effect.mapError(
               (error) => new StackStateInvalidError({ message: error.message, cause: error }),
@@ -653,19 +676,19 @@ export const makeSupervisor = (
           );
           const request: RuntimeRecoveryRequest = {
             stackId: options.stackId,
-            desiredGeneration: initial.desiredGeneration,
+            desiredGeneration: current.desiredGeneration,
             desiredLifecycle: "running",
             plan,
           };
           const recoveryInput: LifecycleInput = {
             stackId: options.stackId,
-            generation: initial.desiredGeneration,
+            generation: current.desiredGeneration,
             desiredLifecycle: "running",
-            state: initial,
-            previous: initial,
+            state: current,
+            previous: current,
             definition,
-            inputFingerprint: initial.inputFingerprint ?? "",
-            secrets: initial.secrets,
+            inputFingerprint: current.inputFingerprint ?? "",
+            secrets: current.secrets,
             plan,
           };
           yield* initializeActivation(plan);
@@ -945,6 +968,8 @@ export const makeSupervisor = (
         startImmediately: true,
       }).pipe(Effect.asVoid);
     const stop = submitOwned(stopOwned, "stop", stopOperation());
+    // Keep stop and quiesce in separate slots: quiesce's waiter interruption is terminal, while
+    // ordinary maintenance stop must never inherit that shutdown continuation.
     const quiesceOwned = new Map<string, OwnedResult<PersistedStackState, StackError>>();
     const quiesce = submitOwned(
       quiesceOwned,

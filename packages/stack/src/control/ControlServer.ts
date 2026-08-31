@@ -159,8 +159,14 @@ const demuxSocket = (
             ),
           );
 
-        const dispatchMaintenance = (frame: Uint8Array): Effect.Effect<void, Socket.SocketError> =>
-          Effect.gen(function* () {
+        const dispatchMaintenance = (
+          frame: Uint8Array,
+        ): Effect.Effect<void, Socket.SocketError> => {
+          let responseValue: MaintenanceResponse | undefined;
+          let operationName: MaintenanceRequest["op"] | undefined;
+          let responseWritten = false;
+          let completionStarted = false;
+          const dispatch = Effect.gen(function* () {
             const decoded = yield* Effect.exit(decodeFrame(frame));
             if (Exit.isFailure(decoded)) {
               yield* close;
@@ -186,6 +192,7 @@ const demuxSocket = (
               yield* close;
               return;
             }
+            operationName = request.value.op;
             const operation =
               request.value.op === "probe"
                 ? options.maintenanceHandlers.probe
@@ -196,49 +203,51 @@ const demuxSocket = (
             const response = Exit.isSuccess(result)
               ? result.value
               : protocolFailure("operation-failed");
-            let responseWritten = false;
-            const completion = Effect.gen(function* () {
-              yield* sendJson(response).pipe(
-                Effect.tap(() =>
-                  Effect.sync(() => {
-                    responseWritten = true;
-                  }),
-                ),
-              );
-              yield* close;
-              yield* markPrefaceReady;
-              if (response.ok && options.onMaintenanceComplete !== undefined) {
-                // The connection scope closes as soon as the close frame is sent;
-                // completion belongs to the owner session and must outlive it.
-                yield* FiberSet.run(
-                  completionFibers,
-                  options.onMaintenanceComplete(request.value.op),
-                  { startImmediately: true },
-                );
-              }
-            });
-            yield* completion.pipe(
-              Effect.onExit((exit) => {
-                if (!response.ok || request.value.op !== "quiesce" || Exit.isSuccess(exit))
-                  return Effect.void;
-                const connectionFailure =
-                  Cause.hasInterruptsOnly(exit.cause) || isResponseConnectionFailure(exit.cause);
-                if (!connectionFailure) return Effect.void;
-                const callback = responseWritten
-                  ? options.onMaintenanceComplete
-                  : options.onMaintenanceAbandoned;
-                return callback === undefined
-                  ? Effect.void
-                  : FiberSet.run(completionFibers, callback(request.value.op), {
-                      startImmediately: true,
-                    }).pipe(Effect.asVoid);
-              }),
-              Effect.catchReasons("SocketError", {
-                SocketWriteError: () => Effect.void,
-                SocketCloseError: () => Effect.void,
-              }),
+            responseValue = response;
+            yield* sendJson(response).pipe(
+              Effect.tap(() =>
+                Effect.sync(() => {
+                  responseWritten = true;
+                }),
+              ),
             );
+            yield* close;
+            yield* markPrefaceReady;
+            if (response.ok && options.onMaintenanceComplete !== undefined) {
+              // The connection scope closes as soon as the close frame is sent;
+              // completion belongs to the owner session and must outlive it.
+              completionStarted = true;
+              yield* FiberSet.run(
+                completionFibers,
+                options.onMaintenanceComplete(request.value.op),
+                { startImmediately: true },
+              );
+            }
           });
+          return dispatch.pipe(
+            Effect.onExit((exit) => {
+              const response = responseValue;
+              if (response === undefined || !response.ok || operationName !== "quiesce")
+                return Effect.void;
+              if (Exit.isSuccess(exit)) return Effect.void;
+              const connectionFailure =
+                Cause.hasInterruptsOnly(exit.cause) || isResponseConnectionFailure(exit.cause);
+              if (!connectionFailure || (responseWritten && completionStarted)) return Effect.void;
+              const callback = responseWritten
+                ? options.onMaintenanceComplete
+                : options.onMaintenanceAbandoned;
+              if (callback === undefined) return Effect.void;
+              completionStarted = true;
+              return FiberSet.run(completionFibers, callback("quiesce"), {
+                startImmediately: true,
+              }).pipe(Effect.asVoid);
+            }),
+            Effect.catchReasons("SocketError", {
+              SocketWriteError: () => Effect.void,
+              SocketCloseError: () => Effect.void,
+            }),
+          );
+        };
 
         const processFrames = (input: Uint8Array): Effect.Effect<void, Socket.SocketError | E, R> =>
           Effect.gen(function* () {
@@ -491,6 +500,9 @@ export const startControlServer = (
             })
           : protocol.send(clientId, response, transferables),
     });
+    // Keep handler defects as keyed Exit responses so destroy request state can be cleaned by
+    // the same send path as typed failures. Without this option RpcServer emits a client-level
+    // Defect frame that has no requestId for the terminal handoff.
     const rpcProgram = RpcServer.make(StackRpcGroup, {
       disableTracing: true,
       disableFatalDefects: true,
