@@ -149,7 +149,7 @@ export const LEGACY_DOCS_DEFAULT_OVERRIDES: Readonly<Record<string, string>> = {
   "supabase-db-lint fail-on": "none",
   "supabase-db-lint level": "warning",
   "supabase-db-lint local": "true",
-  "supabase-db-pull diff-engine": "migra",
+  "supabase-db-pull diff-engine": "pg-delta",
   "supabase-db-pull linked": "true",
   "supabase-db-push linked": "true",
   "supabase-db-query local": "true",

@@ -101,7 +101,7 @@ import { legacyUpdateMigrationHistory } from "./pull.sync.ts";
 
 // Established output contract; ends with a `.`.
 const DEPRECATION_LINE =
-  "Flag --use-pg-delta has been deprecated, use --declarative with [experimental.pgdelta] enabled = true in your config.toml instead.";
+  "Flag --use-pg-delta has been deprecated, use --declarative instead.";
 
 /**
  * Explains the in-sync non-zero exit. Go prints its generic

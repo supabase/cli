@@ -77,7 +77,7 @@ var (
 	useDeclarative bool
 	pullDiffEngine = utils.EnumFlag{
 		Allowed: []string{"migra", "pg-delta"},
-		Value:   "migra",
+		Value:   "pg-delta",
 	}
 	diffFrom   string
 	diffTo     string
@@ -199,7 +199,7 @@ func resolveDiffEngine(useMigraChanged, usePgAdmin, usePgSchema, pgDeltaDefault 
 // resolvePullDiffEngine selects whether migration-style db pull uses pg-delta for the
 // shadow diff step. An explicit --diff-engine flag always wins, so --diff-engine migra is
 // an authoritative rollback even when pg-delta is enabled in config; otherwise the default
-// follows whether pg-delta is the active engine (config / env).
+// follows whether pg-delta is the active engine.
 func resolvePullDiffEngine(engineFlagChanged bool, engine string, pgDeltaDefault bool) bool {
 	if engineFlagChanged {
 		return engine == "pg-delta"
@@ -237,7 +237,7 @@ func init() {
 	// schema files exported through pg-delta. --use-pg-delta is the deprecated alias.
 	pullFlags.BoolVar(&useDeclarative, "declarative", false, "Pull schema as declarative files using pg-delta instead of creating a migration.")
 	pullFlags.BoolVar(&useDeclarative, "use-pg-delta", false, "Use pg-delta to pull declarative schema.")
-	cobra.CheckErr(pullFlags.MarkDeprecated("use-pg-delta", "use --declarative with [experimental.pgdelta] enabled = true in your config.toml instead."))
+	cobra.CheckErr(pullFlags.MarkDeprecated("use-pg-delta", "use --declarative instead."))
 	pullFlags.Var(&pullDiffEngine, "diff-engine", "Diff engine to use for migration-style db pull.")
 	pullFlags.StringSliceVarP(&schema, "schema", "s", []string{}, "Comma separated list of schema to include.")
 	pullFlags.String("db-url", "", "Pulls from the database specified by the connection string (must be percent-encoded).")

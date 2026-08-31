@@ -1346,7 +1346,7 @@ describe("legacy db diff", () => {
       return Effect.gen(function* () {
         yield* legacyDbDiff(flags({ usePgSchema: Option.some(true) }));
         // The TS wrapper prints its own deprecation notice pointing at pg-delta /
-        // the default migra engine, additive to (not a replacement for) the
+        // the migra rollback, additive to (not a replacement for) the
         // delegated Go child's own "experimental" warning (unchanged, printed by
         // the real Go binary rather than this mocked proxy). Assert on a stable
         // substring so future wording tweaks don't require touching every test site.
