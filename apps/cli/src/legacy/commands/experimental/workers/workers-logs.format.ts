@@ -132,6 +132,35 @@ function formatLogTime(timestampMs: number): string {
 }
 
 /**
+ * The short label for a stream, and the column it sits in.
+ *
+ * Bracketed and left-aligned, following `next/commands/logs`, which distinguishes
+ * interleaved sources the same way (`[postgres] ready`). Padded so the messages
+ * line up: a ragged left edge is harder to scan than a slightly wider one.
+ *
+ * Abbreviated because the wire names are internal and long - `worker_guest_logs`
+ * would cost 19 columns to say "the worker's own output". The words match
+ * `--source`, so what is printed is what the flag accepts.
+ */
+const STREAM_TAGS: Readonly<Record<string, string>> = {
+  [WORKER_LOG_STREAMS.app]: "app",
+  [WORKER_LOG_STREAMS.requests]: "req",
+  [WORKER_LOG_STREAMS.builds]: "build",
+};
+
+const TAG_WIDTH = Math.max(...Object.values(STREAM_TAGS).map((tag) => tag.length)) + 2;
+
+/**
+ * An unrecognised stream gets its raw name rather than a placeholder: the log
+ * contract is additive-only, and the name is more use than a `?` - at the cost of
+ * a wider column for that line only, which is the right trade for something that
+ * should not be appearing yet.
+ */
+function streamTag(stream: string): string {
+  return `[${STREAM_TAGS[stream] ?? stream}]`.padEnd(TAG_WIDTH);
+}
+
+/**
  * One rendered line.
  *
  * Per-stream layouts rather than one shared format, because `event_message` means
@@ -145,16 +174,26 @@ function formatLogTime(timestampMs: number): string {
  */
 export function legacyRenderWorkerLogLine(
   entry: WorkerLogEntry,
-  stream: LegacyColorStream = process.stdout,
+  options: {
+    /**
+     * Whether to prefix the stream tag. False when `--source` has already pinned
+     * one stream, where every line would carry the same tag and it would be
+     * width spent saying nothing.
+     */
+    readonly showStream: boolean;
+    readonly colorStream?: LegacyColorStream;
+  },
 ): string {
   const time = formatLogTime(entry.timestampMs);
   const level = legacyWorkerLogLevel(entry);
+  const colorStream = options.colorStream ?? process.stdout;
+  const prefix = options.showStream ? `${time}  ${streamTag(entry.stream)}` : time;
 
   if (entry.stream === WORKER_LOG_STREAMS.requests) {
     const { status, method, path, duration_ms: duration } = entry.attributes;
     const request = [status, method, path].filter((part) => part !== undefined).join(" ");
     const suffix = duration === undefined ? "" : ` ${duration}ms`;
-    return `${time}  ${colourise(`${request}${suffix}`, level, stream)}`;
+    return `${prefix}  ${colourise(`${request}${suffix}`, level, colorStream)}`;
   }
 
   if (entry.stream === WORKER_LOG_STREAMS.builds) {
@@ -162,10 +201,10 @@ export function legacyRenderWorkerLogLine(
     const described = [event ?? entry.message, reason]
       .filter((part) => part !== undefined)
       .join(" ");
-    return `${time}  ${colourise(described, level, stream)}`;
+    return `${prefix}  ${colourise(described, level, colorStream)}`;
   }
 
   // Guest output, and anything newer. The message is the payload, and it is the
   // untrusted one.
-  return `${time}  ${colourise(stripControlSequences(entry.message), level, stream)}`;
+  return `${prefix}  ${colourise(stripControlSequences(entry.message), level, colorStream)}`;
 }

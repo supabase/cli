@@ -98,12 +98,13 @@ describe("legacy workers logs", () => {
     return Effect.gen(function* () {
       yield* legacyWorkersLogs(flags());
 
-      const lines = out.stdoutText.trimEnd().split("\n");
-      expect(lines.map((line) => line.split("  ")[1])).toEqual([
-        "listening on :8080",
-        "terminate hook",
-        "app drained",
-      ]);
+      // `<time>  [app]    <message>` — the tag is present because no --source
+      // pinned a stream.
+      const messages = out.stdoutText
+        .trimEnd()
+        .split("\n")
+        .map((line) => line.replace(/^\S+\s+\[\S+\]\s+/u, ""));
+      expect(messages).toEqual(["listening on :8080", "terminate hook", "app drained"]);
     }).pipe(Effect.provide(layer), Effect.ensuring(Effect.sync(repo.cleanup)));
   });
 

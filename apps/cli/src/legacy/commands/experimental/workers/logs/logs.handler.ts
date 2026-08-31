@@ -138,6 +138,10 @@ export const legacyWorkersLogs = Effect.fn("legacy.experimental.workers.logs")(f
     // `--tail 0` means "no history", not "no new lines".
     const pollTail = Math.max(flags.tail, 1);
 
+    // The stream tag only earns its width when streams are actually mixed; with
+    // `--source` every line would carry the same one.
+    const showStream = Option.isNone(flags.source);
+
     /**
      * Write a batch of lines out, in whichever form the format calls for.
      *
@@ -169,7 +173,9 @@ export const legacyWorkersLogs = Effect.fn("legacy.experimental.workers.logs")(f
           }
           return;
         }
-        yield* output.raw(`${batch.map((entry) => legacyRenderWorkerLogLine(entry)).join("\n")}\n`);
+        yield* output.raw(
+          `${batch.map((entry) => legacyRenderWorkerLogLine(entry, { showStream })).join("\n")}\n`,
+        );
       });
 
     const streams = Option.isSome(flags.source)
