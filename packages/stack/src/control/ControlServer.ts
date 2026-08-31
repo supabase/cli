@@ -166,6 +166,22 @@ const demuxSocket = (
           let operationName: MaintenanceRequest["op"] | undefined;
           let responseWritten = false;
           let completionStarted = false;
+          const startCompletion = (
+            callback: (op: MaintenanceRequest["op"]) => Effect.Effect<void>,
+            op: MaintenanceRequest["op"],
+          ) =>
+            Effect.uninterruptible(
+              FiberSet.run(completionFibers, callback(op), { startImmediately: true }).pipe(
+                // This witness is set only after the completion fiber has been
+                // handed to the owner-scoped FiberSet. The uninterruptible
+                // region keeps the fork and witness atomic to dispatch/onExit.
+                Effect.tap(() =>
+                  Effect.sync(() => {
+                    completionStarted = true;
+                  }),
+                ),
+              ),
+            );
           const dispatch = Effect.gen(function* () {
             const decoded = yield* Effect.exit(decodeFrame(frame));
             if (Exit.isFailure(decoded)) {
@@ -216,12 +232,7 @@ const demuxSocket = (
             if (response.ok && options.onMaintenanceComplete !== undefined) {
               // The connection scope closes as soon as the close frame is sent;
               // completion belongs to the owner session and must outlive it.
-              completionStarted = true;
-              yield* FiberSet.run(
-                completionFibers,
-                options.onMaintenanceComplete(request.value.op),
-                { startImmediately: true },
-              );
+              yield* startCompletion(options.onMaintenanceComplete, request.value.op);
             }
           });
           return dispatch.pipe(
@@ -237,10 +248,7 @@ const demuxSocket = (
                 ? options.onMaintenanceComplete
                 : options.onMaintenanceAbandoned;
               if (callback === undefined) return Effect.void;
-              completionStarted = true;
-              return FiberSet.run(completionFibers, callback("quiesce"), {
-                startImmediately: true,
-              }).pipe(Effect.asVoid);
+              return startCompletion(callback, "quiesce").pipe(Effect.asVoid);
             }),
             Effect.catchReasons("SocketError", {
               SocketWriteError: () => Effect.void,

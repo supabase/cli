@@ -965,3 +965,16 @@ private-port reservation plus gateway ownership atomic with accepted lifecycle g
 - Launcher owner rereads now derive their 25ms schedule budget from the bounded 30-second readiness deadline.
   Focused lifecycle/control/handle verification passed 81 integration tests with stack type-check, Effect lint,
   formatting, and diff checks green.
+
+#### Task 13B2b7 Fable delta — completion witness and recovery retry (2026-08-31)
+
+- Accepted Fable findings 1.1, 1.2, and cleanup 3.1; deferred the duplicate-suppression test and classifier
+  refactor as disproportionate to this minimal slice.
+- Maintenance completion callbacks now fork into the owner-scoped FiberSet and publish their completion witness
+  inside one uninterruptible handoff, so an interruption before the fork remains recoverable while a completed fork
+  cannot be classified twice.
+- Recovery now has an explicit same-generation fail-then-retry regression: the first attempt exposes stopped/failed
+  status, the second succeeds without changing generation, and the driver is invoked exactly twice. Removed the
+  unused recovery gate from the shared fixture.
+- Focused lifecycle/control/handle verification passed 81 integration tests with stack type-check, Effect lint,
+  formatting, and diff checks green.

@@ -185,7 +185,6 @@ const makeFixture = (
     readonly destroyStarted?: Deferred.Deferred<void>;
     readonly recoveryFailFirst?: Ref.Ref<boolean>;
     readonly recoveryStarted?: Deferred.Deferred<void>;
-    readonly recoveryGate?: Deferred.Deferred<void>;
   } = {},
 ) =>
   Effect.gen(function* () {
@@ -271,8 +270,6 @@ const makeFixture = (
         Effect.gen(function* () {
           if (fixtureOptions.recoveryStarted !== undefined)
             yield* Deferred.succeed(fixtureOptions.recoveryStarted, undefined);
-          if (fixtureOptions.recoveryGate !== undefined)
-            yield* Deferred.await(fixtureOptions.recoveryGate);
           if (fixtureOptions.recoveryFailFirst !== undefined) {
             const fail = yield* Ref.get(fixtureOptions.recoveryFailFirst);
             if (fail) {
@@ -1253,6 +1250,7 @@ describe("Supervisor composition", () => {
         const fixture = yield* makeFixture();
         yield* fixture.supervisor.start({ config: { capabilities: { rest: {} } } });
         const failFirst = yield* Ref.make(true);
+        const recoverCalls = yield* Ref.make(0);
         const activationCalls = yield* Ref.make(0);
         const startCalls = yield* Ref.make(0);
         const recoveredResources = yield* Ref.make<ReadonlyArray<ObservedWorkload>>([]);
@@ -1287,6 +1285,7 @@ describe("Supervisor composition", () => {
               cleanup: () => Ref.set(recoveredResources, []),
               recover: () =>
                 Effect.gen(function* () {
+                  yield* Ref.update(recoverCalls, (count) => count + 1);
                   if (yield* Ref.get(failFirst)) {
                     yield* Ref.set(failFirst, false);
                     return yield* new RuntimeDriverError({ message: "injected recovery failure" });
@@ -1309,10 +1308,12 @@ describe("Supervisor composition", () => {
         expect(errorOf(activation)).toBeInstanceOf(StackNotRunningError);
         expect(yield* Ref.get(activationCalls)).toBe(0);
         expect(yield* Ref.get(startCalls)).toBe(0);
-        yield* recovered.start({ config: { capabilities: { rest: {} } } });
-        expect((yield* recovered.status).lifecycle).toBe("running");
+        const failedGeneration = failedStatus.desiredGeneration;
         yield* recovered.recover;
-        expect((yield* recovered.status).lifecycle).toBe("running");
+        const retriedStatus = yield* recovered.status;
+        expect(retriedStatus.lifecycle).toBe("running");
+        expect(retriedStatus.desiredGeneration).toBe(failedGeneration);
+        expect(yield* Ref.get(recoverCalls)).toBe(2);
       }),
     ),
   );
