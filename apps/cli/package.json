@@ -68,7 +68,7 @@
     "@parcel/watcher-win32-x64": "2.6.0",
     "@supabase/api": "workspace:*",
     "@supabase/config": "workspace:*",
-    "@supabase/pg-delta": "1.0.0-alpha.46",
+    "@supabase/pg-delta": "1.0.0-alpha.48",
     "@supabase/pg-topo": "1.0.0-alpha.5",
     "@supabase/process-compose": "workspace:*",
     "@supabase/stack": "workspace:*",
