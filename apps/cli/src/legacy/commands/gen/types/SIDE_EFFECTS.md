@@ -2,20 +2,23 @@
 
 ## Files Read
 
-| Path                                    | Format     | When                                                                                     |
-| --------------------------------------- | ---------- | ---------------------------------------------------------------------------------------- |
-| `~/.supabase/access-token`              | plain text | when `SUPABASE_ACCESS_TOKEN` unset and `--linked` or `--project-id`                      |
-| `<workdir>/supabase/config.toml`        | TOML       | when selecting schemas; `--local` uses embedded defaults when the file is missing        |
-| `<workdir>{/supabase}/.env*`            | dotenv     | `--local`; resolves the same nested environment overrides as the legacy CLI              |
-| `<workdir>/supabase/.temp/rest-version` | plain text | `--local` only, when `db.major_version > 14` — forces v9 compat if the tag contains `v9` |
+| Path                                    | Format     | When                                                                                                                                    |
+| --------------------------------------- | ---------- | --------------------------------------------------------------------------------------------------------------------------------------- |
+| `~/.supabase/access-token`              | plain text | when `SUPABASE_ACCESS_TOKEN` unset and `--linked` or `--project-id`                                                                     |
+| `<workdir>/supabase/config.toml`        | TOML       | when selecting schemas; `--local` uses embedded defaults when the file is missing                                                       |
+| `<workdir>{/supabase}/.env*`            | dotenv     | `--local` (nested env overrides) and `--db-url` (shared resolver layers project env under shell `PG*` fallbacks before parsing the DSN) |
+| `<workdir>/supabase/.temp/rest-version` | plain text | `--local` only, when `db.major_version > 14` — forces v9 compat if the tag contains `v9`                                                |
+| `.pgpass` / `pg_service.conf`           | libpq      | `--db-url` only, when the DSN, `PGPASSFILE`/`PGSERVICEFILE`, or libpq defaults reference them                                           |
+| `$PGSSLROOTCERT` CA bundle              | PEM        | `--db-url` only, when the DSN or `PGSSLROOTCERT` sets `sslrootcert`                                                                     |
+| `$PGSSLCERT` / `$PGSSLKEY`              | PEM        | `--db-url` only, when the DSN or `PGSSLCERT`/`PGSSLKEY` set a client cert pair                                                          |
 
 ## Files Written
 
-| Path | Format | When |
-| ---- | ------ | ---- |
-| —    | —      | —    |
+| Path                                       | Format | When                                                                                                                                                                               |
+| ------------------------------------------ | ------ | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `$TMPDIR/supabase-gen-types-ca-*/root.crt` | PEM    | remote native generation whose DSN has no explicit `sslmode` and the SSL probe reports TLS — scoped temp file of the embedded Supabase CA bundle, removed when generation finishes |
 
-No files are written.
+No project files are written. Container env is not used.
 
 ## API Routes
 
@@ -50,16 +53,28 @@ connection to the target database (the shared driver layer handles TLS for
 remote targets and the `--dns-resolver` DoH mode), runs the package's
 introspection queries against `pg_catalog`/`information_schema`, and renders the
 requested language locally. `--query-timeout` is applied as the session's
-`statement_timeout` and, when the connection string carries no explicit
-`connect_timeout`, as the connect timeout. `--local` connects to the
-host-mapped database port from `supabase/config.toml` (`db.port`).
+`statement_timeout` (the flag wins over a DSN `statement_timeout`) and as a
+client-side bound around `introspect()`; `0` disables both. When the connection
+string carries no explicit `connect_timeout`, a positive `--query-timeout` is
+also used as the connect timeout — `0` leaves the driver's default (10s remote,
+2s local). `--local` connects to the host-mapped database port from
+`supabase/config.toml` (`db.port`).
 
 For a remote target whose DSN carries no explicit `sslmode`, a raw TCP
 `SSLRequest` probe (the shared pg-delta probe, default 10s timeout) is opened
 to the target host/port first: a server that does not speak SSL is connected
 with `sslmode=disable`, so plain-TCP databases (common when self-hosting)
-keep working as they did with pg-meta. A probe failure keeps the driver's TLS
-default and lets the connection attempt surface the real error.
+keep working as they did with pg-meta. A server that speaks TLS is connected
+with `sslmode=require` plus the embedded Supabase CA bundle (the driver
+promotes `require` + a root cert to `verify-ca`), matching the retired
+`PG_META_DB_SSL_ROOT_CERT` injection. A probe failure keeps the driver's TLS
+default and lets the connection attempt surface the real error. An explicit
+`sslmode` / `sslrootcert` on the DSN is left unchanged.
+
+`--network-id` / `SUPABASE_NETWORK_ID` are unused: generation no longer runs
+inside a container, so a hostname reachable only on a Docker network will not
+resolve. `--local` uses the published host port instead; `--db-url` must be
+host-reachable.
 
 ## Subprocesses
 
@@ -71,17 +86,19 @@ Type generation itself runs no subprocess and pulls no container image.
 
 ## Environment Variables
 
-| Variable                     | Purpose                                                            | Required?                                                                                                     |
-| ---------------------------- | ------------------------------------------------------------------ | ------------------------------------------------------------------------------------------------------------- |
-| `SUPABASE_ACCESS_TOKEN`      | auth token for linked/project-id mode                              | no (falls back to keyring → `~/.supabase/access-token`)                                                       |
-| `SUPABASE_PROJECT_ID`        | local Docker container project ID                                  | no (falls back to the workdir name)                                                                           |
-| `SUPABASE_DB_PORT`           | local database port                                                | no (defaults to `54322`)                                                                                      |
-| `SUPABASE_DB_MAJOR_VERSION`  | local PostgreSQL major version                                     | no (defaults to `17`)                                                                                         |
-| `SUPABASE_API_SCHEMAS`       | local schemas used when `--schema` is omitted                      | no (defaults to `public,graphql_public`)                                                                      |
-| `SUPABASE_ENV`               | selects nested dotenv files for local generation                   | no (defaults to `development`)                                                                                |
-| `SUPABASE_PROFILE`           | built-in profile name or YAML file path                            | no (falls back to `~/.supabase/profile` -> `supabase`)                                                        |
-| `SUPABASE_DB_PASSWORD`       | database password for `--local` and the `--linked` workdir project | no (defaults to `postgres`; **ignored** for ad-hoc `--project-id`, which always mints a temporary login role) |
-| `SUPABASE_SERVICES_HOSTNAME` | host used for the local database connection                        | no (defaults to `127.0.0.1`)                                                                                  |
+| Variable                                                                                                                                                                                                                       | Purpose                                                            | Required?                                                                                                     |
+| ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ | ------------------------------------------------------------------ | ------------------------------------------------------------------------------------------------------------- |
+| `SUPABASE_ACCESS_TOKEN`                                                                                                                                                                                                        | auth token for linked/project-id mode                              | no (falls back to keyring → `~/.supabase/access-token`)                                                       |
+| `SUPABASE_PROJECT_ID`                                                                                                                                                                                                          | local Docker container project ID                                  | no (falls back to the workdir name)                                                                           |
+| `SUPABASE_DB_PORT`                                                                                                                                                                                                             | local database port                                                | no (defaults to `54322`)                                                                                      |
+| `SUPABASE_DB_MAJOR_VERSION`                                                                                                                                                                                                    | local PostgreSQL major version                                     | no (defaults to `17`)                                                                                         |
+| `SUPABASE_API_SCHEMAS`                                                                                                                                                                                                         | local schemas used when `--schema` is omitted                      | no (defaults to `public,graphql_public`)                                                                      |
+| `SUPABASE_ENV`                                                                                                                                                                                                                 | selects nested dotenv files for local generation                   | no (defaults to `development`)                                                                                |
+| `SUPABASE_PROFILE`                                                                                                                                                                                                             | built-in profile name or YAML file path                            | no (falls back to `~/.supabase/profile` -> `supabase`)                                                        |
+| `SUPABASE_DB_PASSWORD`                                                                                                                                                                                                         | database password for `--local` and the `--linked` workdir project | no (defaults to `postgres`; **ignored** for ad-hoc `--project-id`, which always mints a temporary login role) |
+| `SUPABASE_SERVICES_HOSTNAME`                                                                                                                                                                                                   | host used for the local database connection                        | no (defaults to `127.0.0.1`)                                                                                  |
+| `SUPABASE_NETWORK_ID`                                                                                                                                                                                                          | unused (native generation does not join a Docker network)          | no                                                                                                            |
+| libpq vars (`PGHOST`, `PGPORT`, `PGUSER`, `PGPASSWORD`, `PGDATABASE`, `PGSSLMODE`, `PGSSLROOTCERT`, `PGSSLCERT`, `PGSSLKEY`, `PGSSLPASSWORD`, `PGCONNECT_TIMEOUT`, `PGSERVICE`, `PGSERVICEFILE`, `PGPASSFILE`, `PGAPPNAME`, …) | `--db-url` connection fallbacks, service/passfile, and TLS files   | no                                                                                                            |
 
 ## Exit Codes
 
