@@ -102,7 +102,7 @@ describe("service version overrides", () => {
     await expect(
       Effect.runPromise(parseServiceVersionOverrides(["pooler="], "docker").pipe(Effect.flip)),
     ).resolves.toMatchObject({
-      suggestion: "Pass --service-version pooler=2.9.7.",
+      suggestion: `Pass --service-version pooler=${DOCKER_DEFAULT_VERSIONS.pooler}.`,
     });
   });
 });

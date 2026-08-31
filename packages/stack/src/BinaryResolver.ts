@@ -46,7 +46,7 @@ interface SlimServiceManifest {
   readonly entrypoint: ReadonlyArray<string>;
   readonly cmd: ReadonlyArray<string>;
   readonly runtime_requires?: null | "glibc";
-  readonly libc: null | "glibc";
+  readonly libc: null | "glibc" | "musl";
   readonly os_floor: null | {
     readonly kind: string;
     readonly floor: string | null;
@@ -70,7 +70,7 @@ interface AssetInfo {
 
 interface HostCompatibilityRequirement {
   readonly runtimeRequires: null | "glibc";
-  readonly libc: null | "glibc";
+  readonly libc: null | "glibc" | "musl";
   readonly osFloor: null | {
     readonly kind: "glibc" | "macos";
     readonly floor: string | null;
@@ -185,7 +185,11 @@ const isSlimServiceManifest = (value: unknown): value is SlimServiceManifest => 
     value.runtime_requires !== "glibc"
   )
     return false;
-  if (!("libc" in value) || (value.libc !== null && value.libc !== "glibc")) return false;
+  if (
+    !("libc" in value) ||
+    (value.libc !== null && value.libc !== "glibc" && value.libc !== "musl")
+  )
+    return false;
   if (!("os_floor" in value)) return false;
   if (value.os_floor !== null) {
     if (typeof value.os_floor !== "object") return false;
@@ -292,7 +296,7 @@ const validateHostCompatibility = (
     const requiresGlibc =
       requirement.libc === "glibc" ||
       requirement.runtimeRequires === "glibc" ||
-      requirement.osFloor?.kind === "glibc";
+      (requirement.osFloor?.kind === "glibc" && requirement.osFloor.floor !== null);
     if (requirement.osFloor?.kind === "macos" && platform.os !== "darwin") {
       return yield* new BinaryHostCompatibilityError({
         target,
@@ -481,7 +485,11 @@ export class BinaryResolver extends Context.Service<
             (host.runtimeRequires !== null && host.runtimeRequires !== "glibc")
           )
             return false;
-          if (!("libc" in host) || (host.libc !== null && host.libc !== "glibc")) return false;
+          if (
+            !("libc" in host) ||
+            (host.libc !== null && host.libc !== "glibc" && host.libc !== "musl")
+          )
+            return false;
           if (!("osFloor" in host)) return false;
           if (host.osFloor !== null) {
             if (typeof host.osFloor !== "object") return false;

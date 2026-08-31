@@ -433,6 +433,44 @@ describe("BinaryResolver slim-services installer", () => {
     }),
   );
 
+  it.live("accepts static-musl manifests without requiring a glibc host", () =>
+    Effect.gen(function* () {
+      const root = makeRoot();
+      try {
+        const fixture = makeFixture(root, {
+          runtime_requires: null,
+          libc: "musl",
+          os_floor: {
+            kind: "glibc",
+            floor: null,
+            offender: null,
+            scanned: 1,
+            bundled_glibc: false,
+          },
+        });
+        const resolverLayer = makeResolverLayer(root, fixture);
+        const result = yield* Effect.gen(function* () {
+          const resolver = yield* BinaryResolver;
+          const first = yield* resolver.resolveWithMetadata({
+            service: "postgrest",
+            version: DEFAULT_VERSIONS.postgrest,
+          });
+          const second = yield* resolver.resolveWithMetadata({
+            service: "postgrest",
+            version: DEFAULT_VERSIONS.postgrest,
+          });
+          return { first, second };
+        }).pipe(Effect.provide(resolverLayer));
+
+        expect(result.first.downloaded).toBe(true);
+        expect(result.second.downloaded).toBe(false);
+        expect(existsSync(join(result.second.path, "bin/postgrest"))).toBe(true);
+      } finally {
+        rmSync(root, { recursive: true, force: true });
+      }
+    }),
+  );
+
   it.effect("reclaims interrupted staging while preserving complete cache entries", () =>
     Effect.gen(function* () {
       const root = makeRoot();
