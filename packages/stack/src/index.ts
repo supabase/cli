@@ -29,6 +29,7 @@ export type { ServiceName, VersionManifest } from "./versions.ts";
 export type { ServiceResolution, StackPreparationError } from "./StackPreparation.ts";
 export type { PrefetchOptions, PrefetchResult } from "./prefetch.ts";
 export type { StackHandle } from "./stackHandle.ts";
+export { StackError } from "./errors.ts";
 export type {
   FunctionsReloadConfig,
   FunctionsRuntimeConfig,
