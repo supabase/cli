@@ -54,6 +54,13 @@ requested language locally. `--query-timeout` is applied as the session's
 `connect_timeout`, as the connect timeout. `--local` connects to the
 host-mapped database port from `supabase/config.toml` (`db.port`).
 
+For a remote target whose DSN carries no explicit `sslmode`, a raw TCP
+`SSLRequest` probe (the shared pg-delta probe, default 10s timeout) is opened
+to the target host/port first: a server that does not speak SSL is connected
+with `sslmode=disable`, so plain-TCP databases (common when self-hosting)
+keep working as they did with pg-meta. A probe failure keeps the driver's TLS
+default and lets the connection attempt surface the real error.
+
 ## Subprocesses
 
 | Command                                                      | When      | Purpose                            |
@@ -154,5 +161,9 @@ go`/`--lang swift`/`--lang python` — the defaults-only claim above holds only 
   other `--db-url` command.
 - The legacy positional language argument (`supabase gen types typescript`) is still accepted;
   any other positional language requires an explicit `--lang` flag.
+- Go and Python output now lists entities in the canonical sorted order
+  (`sortGeneratorMetadata`) instead of pg-meta's environment-dependent SQL row
+  order; the rendered content is otherwise identical (verified byte-identical
+  for TypeScript and Swift, whose templates sort internally).
 - The linked-project telemetry cache is written only when a project ref is resolved
   (`--linked`/`--project-id`/fallback) — it's skipped when no ref is available.

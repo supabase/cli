@@ -36,6 +36,12 @@ blockExoticSubdeps: true
 overrides:
   # pg-topo's parser chain otherwise resolves bleeding-edge Node globals that conflict with Bun's web types.
   "@launchql/protobufjs>@types/node": "24.10.4"
+  # postgrest-typegen pins prettier 3.5.3, whose dist trips a Bun bundler
+  # renaming bug under `bun build --compile` ("Cannot access 'a4' before
+  # initialization" inside the TypeScript parser). 3.9.6 — the version this
+  # repo already uses — bundles cleanly, and pg-meta itself floated ^3.3.3,
+  # so aligning versions carries no output-parity risk.
+  "@supabase/postgrest-typegen>prettier": "3.9.6"
 
 minimumReleaseAge: 10200
 minimumReleaseAgeExclude:

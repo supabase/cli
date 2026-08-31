@@ -63,6 +63,7 @@ catalogs:
 
 overrides:
   '@launchql/protobufjs>@types/node': 24.10.4
+  '@supabase/postgrest-typegen>prettier': 3.9.6
 
 patchedDependencies:
   '@libpg-query/parser@17.6.10': ed67c0ca88b6ced3ec50fd6862f191d6192a246cf20d9c777d45efdb8373bed3
@@ -5642,11 +5643,6 @@ packages:
       rxjs:
         optional: true
 
-  prettier@3.5.3:
-    resolution: {integrity: sha512-QQtaxnoDJeAkDvDKWCLiwIXkTgRhwYDEQCghU9Z6q03iyek/rxRh/2lC3HB7P8sWT2xC/y5JDctPLBIGzHKbhw==}
-    engines: {node: '>=14'}
-    hasBin: true
-
   prettier@3.9.6:
     resolution: {integrity: sha512-OpN0zzVdiaiAhxpuuj5efpIS4sY9j7bY6uR5mnj5yPzGkdkjNKSJeUThPb60Jw29QuAZgA4o+/iB49kFiaBX6g==}
     engines: {node: '>=14'}
@@ -8553,7 +8549,7 @@ snapshots:
     dependencies:
       arktype: 2.2.3
       pg-format: 1.0.4
-      prettier: 3.5.3
+      prettier: 3.9.6
 
   '@supabase/realtime-js@2.112.3':
     dependencies:
@@ -11822,8 +11818,6 @@ snapshots:
   posthog-node@5.49.1:
     dependencies:
       '@posthog/core': 1.48.1
-
-  prettier@3.5.3: {}
 
   prettier@3.9.6: {}
 

@@ -10,6 +10,7 @@ import { Effect, Layer } from "effect";
 
 import { legacyAcquirePgPool } from "../../../shared/legacy-db-connection.sql-pg.layer.ts";
 import type { LegacyPgConnInput } from "../../../shared/legacy-db-connection.service.ts";
+import { LegacyPgDeltaSslProbe } from "../../../shared/legacy-pgdelta-ssl-probe.service.ts";
 import { LegacyGenTypesMetadataError } from "./types.errors.ts";
 import { type LegacyGenTypesGenerateInput, LegacyGenTypesGenerator } from "./types.generator.ts";
 
@@ -36,13 +37,31 @@ function applyTimeouts(conn: LegacyPgConnInput, queryTimeoutSeconds: number): Le
   };
 }
 
-const generate = (input: LegacyGenTypesGenerateInput) =>
+const generate = (sslProbe: LegacyPgDeltaSslProbe["Service"], input: LegacyGenTypesGenerateInput) =>
   Effect.scoped(
     Effect.gen(function* () {
-      const pool = yield* legacyAcquirePgPool(
-        applyTimeouts(input.conn, input.queryTimeoutSeconds),
-        { isLocal: input.isLocal, dnsResolver: input.dnsResolver },
-      );
+      let conn = applyTimeouts(input.conn, input.queryTimeoutSeconds);
+      // The driver requires TLS for remote targets, but the retired pg-meta
+      // path adapted to the server: its SSLRequest probe decided whether the
+      // container connected with TLS at all, so a plain-TCP server (common
+      // for self-hosted databases) still worked. Keep that adaptivity: when
+      // the DSN carries no explicit `sslmode`, probe the server and disable
+      // TLS only when it does not speak SSL. A probe failure keeps the
+      // driver's TLS default so the real connect error (and its IPv6 pooler
+      // classification) surfaces from the connection attempt itself.
+      if (!input.isLocal && conn.sslmode === undefined) {
+        const useTls = yield* sslProbe
+          .requireSslForHost(conn.host, conn.port)
+          .pipe(Effect.orElseSucceed(() => true));
+        if (!useTls) {
+          conn = { ...conn, sslmode: "disable" };
+        }
+      }
+
+      const pool = yield* legacyAcquirePgPool(conn, {
+        isLocal: input.isLocal,
+        dnsResolver: input.dnsResolver,
+      });
 
       // `introspect` drives the injected queryable itself, so the foreign
       // Promise boundary is wrapped exactly once here; a live `pg.Pool`
@@ -95,4 +114,10 @@ const generate = (input: LegacyGenTypesGenerateInput) =>
  * driver-layer connection parity (TLS mode, DoH resolver, fallback hosts),
  * introspected and rendered by `@supabase/postgrest-typegen`.
  */
-export const legacyGenTypesGeneratorLayer = Layer.succeed(LegacyGenTypesGenerator, { generate });
+export const legacyGenTypesGeneratorLayer = Layer.effect(
+  LegacyGenTypesGenerator,
+  Effect.gen(function* () {
+    const sslProbe = yield* LegacyPgDeltaSslProbe;
+    return { generate: (input: LegacyGenTypesGenerateInput) => generate(sslProbe, input) };
+  }),
+);

@@ -11,6 +11,7 @@ import { legacyDbConfigLayer } from "../../../shared/legacy-db-config.layer.ts";
 import { LegacyDbConfigResolver } from "../../../shared/legacy-db-config.service.ts";
 import { legacyDbConnectionLayer } from "../../../shared/legacy-db-connection.layer.ts";
 import { legacyDebugLoggerLayer } from "../../../shared/legacy-debug-logger.layer.ts";
+import { legacyPgDeltaSslProbeLayer } from "../../../shared/legacy-pgdelta-ssl-probe.layer.ts";
 import {
   LegacyIdentityStitch,
   legacyIdentityStitchLayer,
@@ -66,7 +67,7 @@ export const legacyGenTypesRuntimeLayer = (() => {
       Layer.provide(httpClient),
       Layer.provide(legacyIdentityStitchLayer),
     ),
-    legacyGenTypesGeneratorLayer,
+    legacyGenTypesGeneratorLayer.pipe(Layer.provide(legacyPgDeltaSslProbeLayer)),
     legacyTelemetryStateLayer,
     // The one per-command identity stitcher, exposed at top level so
     // `withLegacyCommandInstrumentation` can read
