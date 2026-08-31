@@ -198,6 +198,7 @@ export const LEGACY_DOCS_DEFAULT_OVERRIDES: Readonly<Record<string, string>> = {
   "supabase-storage-rm linked": "true",
   "supabase-test-db local": "true",
   "supabase-test-new template": "pgtap",
+  "supabase-workers-logs tail": "100",
   "supabase-workers-push instances": "1",
 };
 
