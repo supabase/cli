@@ -461,8 +461,8 @@ describe("legacy workers new", () => {
     }).pipe(Effect.provide(layer), Effect.ensuring(Effect.sync(repo.cleanup)));
   });
 
-  // A plain file used to read as an empty directory, which then failed with a
-  // bare EEXIST from `makeDirectory` instead of naming what was in the way.
+  // A plain file must not read as an empty directory: that fails with a bare
+  // EEXIST from `makeDirectory` instead of naming what is in the way.
   it.live("refuses a plain file at the destination", () => {
     const repo = project({ "supabase/workers/api": "not a directory" });
     const { layer } = setupLegacyWorkers({ workdir: repo.dir });
