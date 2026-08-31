@@ -157,7 +157,10 @@ policy), not the published port, so worktrees and repeated syncs with the same s
 a warm hit. The migrations shadow follows project config; the declarative shadow forces
 `pg_net` off — those are distinct keys when Webhooks are enabled. A warm hit skips the
 platform baseline on both shadows (`legacyMigrateNextShadowDatabase` /
-`legacySetupShadowDatabase` are baseline-state-aware). Artifact:
+`legacySetupShadowDatabase` are baseline-state-aware). When both snapshots are
+already published they restore concurrently; a first-run pair that shares a
+cache key builds the baseline once and hands it off; otherwise the two shadows
+stay sequential so progress lines never interleave. Artifact:
 `~/.supabase/cache/shadow-baseline/shadow-baseline-<key>.tar` (~90MB; `SUPABASE_HOME` overrides
 the root), keyed by a hash of every input baked into the cluster (including the effective
 Webhooks/`pg_net` policy); shared across worktrees with the same settings; retention is LRU

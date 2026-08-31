@@ -253,7 +253,7 @@ export const SERVICE_CATALOG = {
   pgmeta: {
     name: "pgmeta",
     configKey: "pgmeta",
-    defaultVersion: "0.98.0",
+    defaultVersion: "0.99.0",
     runtimeSupport: "docker-only",
     artifact: {
       docker: { repository: "pgmeta", tagPrefix: "v" },
