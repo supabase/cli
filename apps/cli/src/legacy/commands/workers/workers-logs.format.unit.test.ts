@@ -88,7 +88,7 @@ describe("legacyWorkerLogLevel", () => {
 
 describe("legacyRenderWorkerLogLine", () => {
   it("prints the time and message for guest output", () => {
-    expect(legacyRenderWorkerLogLine(entry(), PLAIN)).toBe(
+    expect(legacyRenderWorkerLogLine(entry(), { showStream: false, colorStream: PLAIN })).toBe(
       `${T}  workers shim: listening on :8080 (serving)`,
     );
   });
@@ -102,7 +102,7 @@ describe("legacyRenderWorkerLogLine", () => {
         message: "GET /",
         attributes: { status: "200", method: "GET", path: "/", duration_ms: "23" },
       }),
-      PLAIN,
+      { showStream: false, colorStream: PLAIN },
     );
 
     expect(line).toBe(`${T}  200 GET / 23ms`);
@@ -115,7 +115,7 @@ describe("legacyRenderWorkerLogLine", () => {
         message: "build_failed ref/api",
         attributes: { event: "build_failed", reason: "exit status 1" },
       }),
-      PLAIN,
+      { showStream: false, colorStream: PLAIN },
     );
 
     expect(line).toBe(`${T}  build_failed exit status 1`);
@@ -125,7 +125,7 @@ describe("legacyRenderWorkerLogLine", () => {
     // The log contract is additive-only, so a new stream must still print.
     const line = legacyRenderWorkerLogLine(
       entry({ stream: "worker_future_logs", message: "something new" }),
-      PLAIN,
+      { showStream: false, colorStream: PLAIN },
     );
 
     expect(line).toBe(`${T}  something new`);
@@ -136,7 +136,7 @@ describe("legacyRenderWorkerLogLine", () => {
     // asserted on a UTC machine too, where local and UTC would otherwise coincide.
     const utc = new Date(AT).toISOString().slice(11, 19);
     const offsetMinutes = new Date(AT).getTimezoneOffset();
-    const line = legacyRenderWorkerLogLine(entry(), PLAIN);
+    const line = legacyRenderWorkerLogLine(entry(), { showStream: false, colorStream: PLAIN });
 
     expect(line.startsWith(`${T}  `)).toBe(true);
     if (offsetMinutes !== 0) {
@@ -145,13 +145,15 @@ describe("legacyRenderWorkerLogLine", () => {
   });
 
   it("renders a blank guest line as a blank line, not a dropped entry", () => {
-    expect(legacyRenderWorkerLogLine(entry({ message: "" }), PLAIN)).toBe(`${T}  `);
+    expect(
+      legacyRenderWorkerLogLine(entry({ message: "" }), { showStream: false, colorStream: PLAIN }),
+    ).toBe(`${T}  `);
   });
 
   it("strips ANSI escapes a worker printed, so it cannot forge output", () => {
     const line = legacyRenderWorkerLogLine(
       entry({ message: `${ESCAPE}[31mfake error${ESCAPE}[0m` }),
-      PLAIN,
+      { showStream: false, colorStream: PLAIN },
     );
 
     expect(line).toBe(`${T}  fake error`);
@@ -161,17 +163,17 @@ describe("legacyRenderWorkerLogLine", () => {
   it("strips a cursor-repositioning sequence", () => {
     const line = legacyRenderWorkerLogLine(
       entry({ message: `${ESCAPE}[2A${ESCAPE}[1Goverwritten` }),
-      PLAIN,
+      { showStream: false, colorStream: PLAIN },
     );
 
     expect(line).toBe(`${T}  overwritten`);
   });
 
   it("strips an OSC window-title sequence", () => {
-    const line = legacyRenderWorkerLogLine(
-      entry({ message: `${ESCAPE}]0;title${ESCAPE}\\kept` }),
-      PLAIN,
-    );
+    const line = legacyRenderWorkerLogLine(entry({ message: `${ESCAPE}]0;title${ESCAPE}\\kept` }), {
+      showStream: false,
+      colorStream: PLAIN,
+    });
 
     expect(line).toBe(`${T}  kept`);
   });
@@ -179,7 +181,12 @@ describe("legacyRenderWorkerLogLine", () => {
   it("keeps a stack trace's newlines and indentation intact", () => {
     const trace = "TypeError: boom\n    at handler (index.js:3:11)\n\tat run (index.js:9:2)";
 
-    expect(legacyRenderWorkerLogLine(entry({ message: trace }), PLAIN)).toBe(`${T}  ${trace}`);
+    expect(
+      legacyRenderWorkerLogLine(entry({ message: trace }), {
+        showStream: false,
+        colorStream: PLAIN,
+      }),
+    ).toBe(`${T}  ${trace}`);
   });
 
   it("tints an error line red and a warning yellow, on the message only", () => {
@@ -192,8 +199,14 @@ describe("legacyRenderWorkerLogLine", () => {
       attributes: { status: "404", method: "GET", path: "/" },
     });
 
-    const errorLine = legacyRenderWorkerLogLine(server, COLOURED);
-    const warnLine = legacyRenderWorkerLogLine(client, COLOURED);
+    const errorLine = legacyRenderWorkerLogLine(server, {
+      showStream: false,
+      colorStream: COLOURED,
+    });
+    const warnLine = legacyRenderWorkerLogLine(client, {
+      showStream: false,
+      colorStream: COLOURED,
+    });
 
     // The timestamp stays plain so nothing a script greps on changes colour.
     expect(errorLine.startsWith(`${T}  `)).toBe(true);
@@ -208,7 +221,7 @@ describe("legacyRenderWorkerLogLine", () => {
         stream: "worker_ingress_logs",
         attributes: { status: "200", method: "GET", path: "/" },
       }),
-      COLOURED,
+      { showStream: false, colorStream: COLOURED },
     );
 
     expect(line).not.toContain(ESCAPE);
@@ -220,9 +233,51 @@ describe("legacyRenderWorkerLogLine", () => {
         stream: "worker_ingress_logs",
         attributes: { status: "500", method: "GET", path: "/" },
       }),
-      PLAIN,
+      { showStream: false, colorStream: PLAIN },
     );
 
     expect(line).not.toContain(ESCAPE);
+  });
+
+  it("tags each stream with the word --source accepts", () => {
+    const tagged = (stream: string, attributes: Record<string, string> = {}) =>
+      legacyRenderWorkerLogLine(entry({ stream, attributes }), {
+        showStream: true,
+        colorStream: PLAIN,
+      });
+
+    expect(tagged("worker_guest_logs")).toContain("[app]");
+    expect(tagged("worker_ingress_logs", { status: "200", method: "GET", path: "/" })).toContain(
+      "[req]",
+    );
+    expect(tagged("worker_api_logs", { event: "deploy_accepted" })).toContain("[build]");
+  });
+
+  it("pads the tags so messages line up", () => {
+    const app = legacyRenderWorkerLogLine(entry(), { showStream: true, colorStream: PLAIN });
+    const build = legacyRenderWorkerLogLine(
+      entry({ stream: "worker_api_logs", attributes: { event: "deploy_accepted" } }),
+      { showStream: true, colorStream: PLAIN },
+    );
+
+    // A ragged left edge is harder to scan than a slightly wider one.
+    expect(app.indexOf("workers shim")).toBe(build.indexOf("deploy_accepted"));
+  });
+
+  it("names an unknown stream rather than hiding it behind a placeholder", () => {
+    const line = legacyRenderWorkerLogLine(
+      entry({ stream: "worker_future_logs", message: "from the future" }),
+      { showStream: true, colorStream: PLAIN },
+    );
+
+    expect(line).toContain("[worker_future_logs]");
+    expect(line).toContain("from the future");
+  });
+
+  it("omits the tag when one stream was pinned", () => {
+    const line = legacyRenderWorkerLogLine(entry(), { showStream: false, colorStream: PLAIN });
+
+    expect(line).not.toContain("[");
+    expect(line).toBe(`${T}  workers shim: listening on :8080 (serving)`);
   });
 });
