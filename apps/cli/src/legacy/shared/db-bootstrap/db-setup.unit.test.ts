@@ -5,6 +5,7 @@ import type { CliConfig } from "@supabase/config";
 import { CliConfigSchema } from "@supabase/config";
 import { BunServices } from "@effect/platform-bun";
 import { describe, expect, it } from "@effect/vitest";
+import { afterEach, vi } from "vitest";
 import { Deferred, Effect, FileSystem, Layer, Path, Schema, Sink, Stream } from "effect";
 import { ChildProcessSpawner } from "effect/unstable/process";
 
@@ -230,6 +231,10 @@ const run = (
   );
 
 describe("legacyStartSetupLocalDatabase", () => {
+  afterEach(() => {
+    vi.unstubAllEnvs();
+  });
+
   describe("PG <= 14 vs PG >= 15 schema branch", () => {
     it.effect("PG14: execs globals + the PG14 initial schema, runs no one-shot docker jobs", () => {
       const workdir = makeWorkdir();
@@ -324,6 +329,41 @@ describe("legacyStartSetupLocalDatabase", () => {
         }),
       );
     });
+
+    it.effect(
+      "slim refs: runs realtime, storage, and auth one-shots on the resolved slim images",
+      () => {
+        vi.stubEnv("SUPABASE_USE_SLIM_IMAGES", "1");
+        const workdir = makeWorkdir();
+        const { session } = fakeSession();
+        const out = mockOutput();
+        const docker = mockDockerRun();
+        return run(
+          baseInput(workdir, session, {
+            majorVersion: 15,
+            images: {
+              realtime: "ghcr.io/supabase/cli/realtime:v2.129.3",
+              storage: "ghcr.io/supabase/cli/storage:v1.70.3",
+              auth: "ghcr.io/supabase/cli/auth:v2.196.0",
+            },
+          }),
+          out,
+          docker,
+        ).pipe(
+          Effect.map(() => {
+            expect(docker.runs.map((job) => job.image)).toEqual([
+              "ghcr.io/supabase/cli/realtime:v2.129.3",
+              "ghcr.io/supabase/cli/storage:v1.70.3",
+              "ghcr.io/supabase/cli/auth:v2.196.0",
+            ]);
+            expect(docker.runs[0]?.cmd?.[0]).toBe("/app/bin/realtime");
+            expect(docker.runs[1]?.cmd).toEqual(["node", "dist/scripts/migrate-call.js"]);
+            expect(docker.runs[2]?.cmd).toEqual(["gotrue", "migrate"]);
+            rmSync(workdir, { recursive: true, force: true });
+          }),
+        );
+      },
+    );
 
     it.effect(
       "labels every one-shot job with the project's Docker labels, matching Go's DockerStart (review: Codex, PR #6022)",

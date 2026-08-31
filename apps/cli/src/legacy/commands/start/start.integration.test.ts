@@ -3,7 +3,7 @@ import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node
 import { join } from "node:path";
 
 import { BunServices } from "@effect/platform-bun";
-import { describe, expect, it } from "@effect/vitest";
+import { afterEach, beforeEach, describe, expect, it } from "@effect/vitest";
 import { Effect, Exit, Fiber, Layer, Option, PlatformError, Sink, Stream } from "effect";
 import { ChildProcessSpawner } from "effect/unstable/process";
 import * as HttpClient from "effect/unstable/http/HttpClient";
@@ -316,9 +316,12 @@ function freshVolumeRoute(
 function mockStorageBucketHttpClient() {
   const createdBucketRequests: Array<string> = [];
   const createdBucketBodies: Array<unknown> = [];
+  /** Every request in order, so a test can assert a readiness probe preceded seeding. */
+  const requests: Array<{ method: string; url: string }> = [];
   const layer = Layer.succeed(
     HttpClient.HttpClient,
     HttpClient.make((request) => {
+      requests.push({ method: request.method, url: request.url });
       if (request.method === "GET" && request.url.includes("/storage/v1/bucket")) {
         return Effect.succeed(
           HttpClientResponse.fromWeb(
@@ -356,7 +359,7 @@ function mockStorageBucketHttpClient() {
       );
     }),
   );
-  return { layer, createdBucketRequests, createdBucketBodies };
+  return { layer, createdBucketRequests, createdBucketBodies, requests };
 }
 
 /**
@@ -533,6 +536,13 @@ const VAULT_ENCRYPTED =
   "encrypted:BKiXH15AyRzeohGyUrmB6cGjSklCrrBjdesQlX1VcXo/Xp20Bi2gGZ3AlIqxPQDmjVAALnhZamKnuY73l8Dz1P+BYiZUgxTSLzdCvdYUyVbNekj2UudbdUizBViERtZkuQwZHIv/";
 
 describe("legacy start integration", () => {
+  beforeEach(() => {
+    vi.stubEnv("SUPABASE_USE_SLIM_IMAGES", undefined);
+  });
+  afterEach(() => {
+    vi.unstubAllEnvs();
+  });
+
   describe("--exclude validation", () => {
     it.live("warns on stderr for an invalid --exclude value, even when already running", () => {
       const { layer, out } = setup({
@@ -2562,6 +2572,9 @@ content_path = "./supabase/templates/custom_notice.html"
       return Effect.gen(function* () {
         yield* legacyStart(flags({ exclude: ["edge-runtime"] }));
         expect(http.createdBucketRequests).toHaveLength(1);
+        // docker.io Storage carries its own Docker healthcheck, so readiness
+        // never goes through the gateway.
+        expect(http.requests.some((entry) => entry.url.includes("/storage/v1/status"))).toBe(false);
       }).pipe(Effect.provide(layer));
     });
 

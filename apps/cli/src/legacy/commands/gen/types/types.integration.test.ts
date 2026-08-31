@@ -2371,6 +2371,7 @@ describe("legacy gen types", () => {
             true,
           );
           expect(child.spawned[1]?.args).toContain(resolvePgmetaImage());
+          expect(child.spawned[1]?.args.slice(-2)).toEqual(["node", "dist/server/server.js"]);
           // The local/db-url paths have no project ref, so they must not
           // populate the linked-project cache.
           expect(linkedProjectCache.cached).toBe(false);

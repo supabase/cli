@@ -253,7 +253,7 @@ export const legacyDbDump = Effect.fn("legacy.db.dump")(function* (flags: Legacy
     // real container path; the dry-run script above is image-independent). The
     // file is never opened on dry-run, so it is created/truncated only here,
     // after the dry-run early return.
-    const image = yield* legacyResolveDbImage(
+    const { image } = yield* legacyResolveDbImage(
       fs,
       path,
       cliSettings.workdir,

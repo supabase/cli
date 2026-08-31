@@ -19,7 +19,10 @@
  *      run-to-completion container on the SAME Docker network as `db` — Go's
  *      `DockerStart` defaults `NetworkMode` to `utils.NetId` when unset,
  *      `docker.go:379-383`), each gated on its own service's `enabled` flag and none
- *      of which touch `conn` directly:
+ *      of which touch `conn` directly. The realtime one-shot still
+ *      runs so user migrations see the tenant before long-running
+ *      containers boot. Storage and auth use the resolved image and
+ *      the same argv on both families.
  *      - `initRealtimeJob` (`start.go:268-295`) — reuses
  *        `./realtime-env.ts`'s `legacyBuildRealtimeEnv`, which builds
  *        the byte-identical env-var literal Go's own `initRealtimeJob` embeds
@@ -753,6 +756,9 @@ const legacyStartInitSchema15 = Effect.fnUntraced(function* (
   const dbPassword = legacyStartInternalDbPassword(input.dbUrl);
 
   if (input.config.realtime.enabled) {
+    // Realtime's ENTRYPOINT (`tini` + `/app/entry.sh`) migrates, seeds
+    // when `SEED_SELF_HOST=true`, then `exec "$@"`. Passing only `cmd` (no
+    // entrypoint override) runs that one-shot before user migrations.
     yield* legacyRunStartMigrateJob(spawner, {
       image: input.images.realtime,
       networkId: input.networkId,

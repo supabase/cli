@@ -17,6 +17,7 @@
       "default": "./src/managed-node.ts"
     },
     "./managed-model": "./src/managed/model.ts",
+    "./versions": "./src/versions.ts",
     "./testing": "./src/testing.ts",
     "./daemon-bun": "./src/daemon-bun.ts"
   },

@@ -4670,8 +4670,11 @@ const (
 	InstanceDbDown                V1ProjectAdvisorsResponseLintsName = "instance_db_down"
 	InstanceTelemetryLost         V1ProjectAdvisorsResponseLintsName = "instance_telemetry_lost"
 	LeakedServiceKey              V1ProjectAdvisorsResponseLintsName = "leaked_service_key"
+	LogAuthErrorRateHigh          V1ProjectAdvisorsResponseLintsName = "log_auth_error_rate_high"
 	LogConnectionsNotEnabled      V1ProjectAdvisorsResponseLintsName = "log_connections_not_enabled"
-	LogServiceErrorRateHigh       V1ProjectAdvisorsResponseLintsName = "log_service_error_rate_high"
+	LogDataApiErrorRateHigh       V1ProjectAdvisorsResponseLintsName = "log_data_api_error_rate_high"
+	LogEdgeFunctionErrorRateHigh  V1ProjectAdvisorsResponseLintsName = "log_edge_function_error_rate_high"
+	LogStorageErrorRateHigh       V1ProjectAdvisorsResponseLintsName = "log_storage_error_rate_high"
 	MaterializedViewInApi         V1ProjectAdvisorsResponseLintsName = "materialized_view_in_api"
 	MultiplePermissivePolicies    V1ProjectAdvisorsResponseLintsName = "multiple_permissive_policies"
 	NetworkRestrictionsNotSet     V1ProjectAdvisorsResponseLintsName = "network_restrictions_not_set"
@@ -4733,9 +4736,15 @@ func (e V1ProjectAdvisorsResponseLintsName) Valid() bool {
 		return true
 	case LeakedServiceKey:
 		return true
+	case LogAuthErrorRateHigh:
+		return true
 	case LogConnectionsNotEnabled:
 		return true
-	case LogServiceErrorRateHigh:
+	case LogDataApiErrorRateHigh:
+		return true
+	case LogEdgeFunctionErrorRateHigh:
+		return true
+	case LogStorageErrorRateHigh:
 		return true
 	case MaterializedViewInApi:
 		return true
