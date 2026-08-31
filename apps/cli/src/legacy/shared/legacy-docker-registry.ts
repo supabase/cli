@@ -12,7 +12,16 @@
  * When no registry override is configured, callers that can retry pulls should
  * use `legacyGetRegistryImageUrlCandidates`: ECR stays the fast default, with
  * GHCR and the source image as fallbacks for transient registry throttling.
+ *
+ * Slim images (`isSlimImageRef`) skip every rewrite below and pull from where
+ * they exist: both helpers key their rewrite on an image's LAST path segment,
+ * which would turn `ghcr.io/supabase/cli/postgres:…` into the unrelated
+ * non-slim `…/supabase/postgres:…` mirror. There is no mirror to redirect
+ * slim refs to, hence `SUPABASE_INTERNAL_IMAGE_REGISTRY` does not apply to
+ * them either.
  */
+import { isSlimImageRef } from "../../shared/services/slim-images.ts";
+
 const LEGACY_INTERNAL_IMAGE_REGISTRY_ENV = "SUPABASE_INTERNAL_IMAGE_REGISTRY";
 const DEFAULT_REGISTRY = "public.ecr.aws";
 const DEFAULT_SUPABASE_REGISTRY = `${DEFAULT_REGISTRY}/supabase`;
@@ -57,6 +66,9 @@ export function legacyGetRegistryImageUrl(
   imageName: string,
   projectEnvValues?: Readonly<Record<string, string>>,
 ): string {
+  if (isSlimImageRef(imageName)) {
+    return imageName;
+  }
   const registry = legacyGetRegistry(projectEnvValues);
   if (registry === DOCKER_HUB_REGISTRY) {
     return imageName;
@@ -68,6 +80,10 @@ export function legacyGetRegistryImageUrlCandidates(
   imageName: string,
   projectEnvValues?: Readonly<Record<string, string>>,
 ): ReadonlyArray<string> {
+  if (isSlimImageRef(imageName)) {
+    return [imageName];
+  }
+
   if (legacyGetRegistryOverride(projectEnvValues) !== undefined) {
     return [legacyGetRegistryImageUrl(imageName, projectEnvValues)];
   }
