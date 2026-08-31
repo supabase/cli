@@ -41,6 +41,7 @@ import {
   LEGACY_SHADOW_BASELINE_KEEP,
   LEGACY_SHADOW_CACHE_ENV,
   legacyAcquireShadowDatabase,
+  legacyPeekShadowBaseline,
   type LegacyShadowCacheOpts,
 } from "./shadow-cache.ts";
 import { legacyRemoveShadowDatabase } from "./shadow-database.ts";
@@ -748,9 +749,15 @@ describe("legacyAcquireShadowDatabase", () => {
           // a daemon hiccup), so the tar survives the fallback decision...
           expect(yield* soleTarName(fs, path)).toHaveLength(1);
           // ...and the cold fallback's own export atomically republishes over it, so a genuinely
-          // corrupt tar still self-heals within this one run.
+          // corrupt tar still self-heals within this one run. Corrupt the bytes first: a
+          // skip-if-published that treated "tar exists" as "sibling just published" would leave
+          // this garbage in place forever.
+          const [tarName = ""] = yield* soleTarName(fs, path);
+          const tarPath = path.join(shadowCacheDir(path), tarName);
+          yield* fs.writeFileString(tarPath, "not-a-real-snapshot");
           yield* fallback.snapshotBaseline;
           expect(yield* soleTarName(fs, path)).toHaveLength(1);
+          expect(yield* fs.readFileString(tarPath)).toBe(expectedTarFor(tarName));
         }),
       ).pipe(Effect.provide(Layer.mergeAll(BunServices.layer, out.layer, cluster.layer)));
     },
@@ -945,5 +952,149 @@ describe("legacyAcquireShadowDatabase", () => {
         expect(yield* soleTarName(fs, path)).toEqual([]);
       }),
     ).pipe(Effect.provide(Layer.mergeAll(BunServices.layer, out.layer, fakeCluster().layer)));
+  });
+
+  it.live("concurrent same-key cold snapshots publish exactly one intact tar", () => {
+    const docker = mockLegacyDockerDaemonCliSpawner();
+    const cluster = fakeCluster();
+    const out = mockOutput();
+    return withShadowCacheHome(
+      "1",
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        // Plan shadows acquire before either has published, so both go cold with the same key
+        // (host port is not a key input) and race toward the same tar path.
+        const [first, second] = yield* Effect.all(
+          [
+            legacyAcquireShadowDatabase(docker.spawner, shadowInput(fs, path)),
+            legacyAcquireShadowDatabase(
+              docker.spawner,
+              shadowInput(fs, path, { shadowPort: 54321 }),
+            ),
+          ],
+          { concurrency: 2 },
+        );
+        expect(first.baselinePresent).toBe(false);
+        expect(second.baselinePresent).toBe(false);
+
+        yield* Effect.all([first.snapshotBaseline, second.snapshotBaseline], { concurrency: 2 });
+
+        expect(docker.stepCalls("cp-out")).toHaveLength(1);
+        const tars = yield* soleTarName(fs, path);
+        expect(tars).toHaveLength(1);
+        expect(yield* fs.readFileString(path.join(shadowCacheDir(path), tars[0] ?? ""))).toBe(
+          expectedTarFor(tars[0] ?? ""),
+        );
+        const leftovers = yield* fs.readDirectory(shadowCacheDir(path));
+        expect(leftovers.filter((entry) => entry.includes("partial"))).toEqual([]);
+
+        expect(docker.containers.get(first.containerId)?.running).toBe(true);
+        expect(docker.containers.get(second.containerId)?.running).toBe(true);
+
+        yield* legacyRemoveShadowDatabase(docker.spawner, first.containerId);
+        yield* legacyRemoveShadowDatabase(docker.spawner, second.containerId);
+        expect(docker.ids()).toEqual([]);
+      }),
+    ).pipe(Effect.provide(Layer.mergeAll(BunServices.layer, out.layer, cluster.layer)));
+  });
+});
+
+describe("legacyPeekShadowBaseline", () => {
+  it.live("reports cold before a snapshot exists, warm after, and uncachable on bypass", () => {
+    const docker = mockLegacyDockerDaemonCliSpawner();
+    const cluster = fakeCluster();
+    const out = mockOutput();
+    return withShadowCacheHome(
+      "1",
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const input = shadowInput(fs, path);
+
+        const before = yield* legacyPeekShadowBaseline(input);
+        expect(before.state).toBe("cold");
+
+        yield* coldRun(docker, input);
+        const after = yield* legacyPeekShadowBaseline(input);
+        expect(after.state).toBe("warm");
+        expect(after.state === "uncachable" || before.state === "uncachable").toBe(false);
+        if (after.state !== "uncachable" && before.state !== "uncachable") {
+          expect(after.key).toBe(before.key);
+        }
+
+        const viaConfig = yield* legacyPeekShadowBaseline(input, { webhooks: "config" });
+        const viaDisabled = yield* legacyPeekShadowBaseline(input, { webhooks: "disabled" });
+        const viaEnabled = yield* legacyPeekShadowBaseline(input, { webhooks: "enabled" });
+        if (
+          viaConfig.state !== "uncachable" &&
+          viaDisabled.state !== "uncachable" &&
+          viaEnabled.state !== "uncachable"
+        ) {
+          expect(viaConfig.key).toBe(viaDisabled.key);
+          expect(viaEnabled.key).not.toBe(viaConfig.key);
+        } else {
+          expect.unreachable("cache-eligible input peeked as uncachable");
+        }
+
+        expect((yield* legacyPeekShadowBaseline(input, { bypassCache: true })).state).toBe(
+          "uncachable",
+        );
+      }),
+    ).pipe(Effect.provide(Layer.mergeAll(BunServices.layer, out.layer, cluster.layer)));
+  });
+
+  it.live("reports uncachable when the cache env gate is off", () => {
+    const cluster = fakeCluster();
+    const out = mockOutput();
+    return withShadowCacheHome(
+      "0",
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        expect((yield* legacyPeekShadowBaseline(shadowInput(fs, path))).state).toBe("uncachable");
+      }),
+    ).pipe(Effect.provide(Layer.mergeAll(BunServices.layer, out.layer, cluster.layer)));
+  });
+
+  it.live("acquire reuses peeked key inputs instead of re-resolving JWKS", () => {
+    const docker = mockLegacyDockerDaemonCliSpawner();
+    const cluster = fakeCluster();
+    const out = mockOutput();
+    return withShadowCacheHome(
+      "1",
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        let jwksResolutions = 0;
+        const base = shadowInput(fs, path);
+        const input: typeof base = {
+          ...base,
+          setup: {
+            ...base.setup,
+            config: {
+              ...defaultConfig,
+              realtime: { ...defaultConfig.realtime, enabled: true },
+            },
+            jwks: Effect.sync(() => {
+              jwksResolutions += 1;
+              return '{"keys":[]}';
+            }),
+          },
+        };
+
+        const peek = yield* legacyPeekShadowBaseline(input);
+        expect(peek.state).toBe("cold");
+        expect(jwksResolutions).toBe(1);
+
+        const handle = yield* legacyAcquireShadowDatabase(
+          docker.spawner,
+          input,
+          peek.state === "uncachable" ? {} : { precomputedKeyInputs: peek.keyInputs },
+        );
+        expect(jwksResolutions).toBe(1);
+        yield* legacyRemoveShadowDatabase(docker.spawner, handle.containerId);
+      }),
+    ).pipe(Effect.provide(Layer.mergeAll(BunServices.layer, out.layer, cluster.layer)));
   });
 });
