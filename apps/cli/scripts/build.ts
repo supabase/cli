@@ -303,6 +303,7 @@ async function buildMuslBinaries() {
         `--define=SUPABASE_LIBC=${JSON.stringify(libc)}`,
         serveMainTemplateDefine,
         ...posthogBuildDefines,
+        ...oxfmtExternalArgs,
         `--outfile=${outfile}`,
       ]);
 
