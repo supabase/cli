@@ -70,6 +70,7 @@
     "@supabase/config": "workspace:*",
     "@supabase/pg-delta": "1.0.0-alpha.46",
     "@supabase/pg-topo": "1.0.0-alpha.5",
+    "@supabase/postgrest-typegen": "0.1.0",
     "@supabase/process-compose": "workspace:*",
     "@supabase/stack": "workspace:*",
     "@tsconfig/bun": "catalog:",

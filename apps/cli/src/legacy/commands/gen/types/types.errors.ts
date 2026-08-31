@@ -39,12 +39,16 @@ export class LegacyInvalidGenTypesDurationError extends Data.TaggedError(
   }
 }
 
-export class LegacyInvalidGenTypesDatabaseUrlError extends Data.TaggedError(
-  "LegacyInvalidGenTypesDatabaseUrlError",
-)<{
+/**
+ * A `postgrest-typegen` introspection query or language generator failed
+ * against a live database the CLI successfully connected to. Both stages
+ * derive entirely from the user's schema contents, so they classify as a
+ * database finding rather than a CLI defect.
+ */
+export class LegacyGenTypesMetadataError extends Data.TaggedError("LegacyGenTypesMetadataError")<{
   readonly message: string;
 }> {
   get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
-    return actionability.provideFlags;
+    return actionability.dbFinding;
   }
 }

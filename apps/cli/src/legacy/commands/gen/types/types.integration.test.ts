@@ -1,5 +1,4 @@
 import { existsSync, mkdtempSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
-import { createServer } from "node:net";
 import { tmpdir } from "node:os";
 import { basename, join } from "node:path";
 import { describe, expect, it } from "@effect/vitest";
@@ -11,13 +10,11 @@ import type {
   V1GetProjectOutput,
 } from "@supabase/api/effect";
 import { ChildProcessSpawner } from "effect/unstable/process";
-import { CliOutput, Command } from "effect/unstable/cli";
 import * as HttpClientError from "effect/unstable/http/HttpClientError";
 import * as HttpClientRequest from "effect/unstable/http/HttpClientRequest";
 import * as HttpClientResponse from "effect/unstable/http/HttpClientResponse";
 import { Deferred, Effect, Exit, Layer, Option, PlatformError, Sink, Stdio, Stream } from "effect";
 import {
-  LEGACY_GLOBAL_FLAGS,
   LegacyDebugFlag,
   LegacyDnsResolverFlag,
   LegacyNetworkIdFlag,
@@ -25,14 +22,7 @@ import {
 } from "../../../../shared/legacy/global-flags.ts";
 import { LegacyPlatformApiFactory } from "../../../auth/legacy-platform-api-factory.service.ts";
 import { LegacyPlatformApi } from "../../../auth/legacy-platform-api.service.ts";
-import {
-  mockAnalytics,
-  mockOutput,
-  mockProcessControl,
-  mockRuntimeInfo,
-  mockTty,
-  processEnvLayer,
-} from "../../../../../tests/helpers/mocks.ts";
+import { mockOutput, mockProcessControl } from "../../../../../tests/helpers/mocks.ts";
 import {
   buildLegacyTestRuntime,
   LEGACY_VALID_REF,
@@ -42,32 +32,21 @@ import {
   mockLegacyTelemetryStateTracked,
 } from "../../../../../tests/helpers/legacy-mocks.ts";
 import { mockChildProcessSpawner } from "../../../../../../../packages/process-compose/tests/helpers/mocks.ts";
-import { textCliOutputFormatter } from "../../../../shared/output/text-formatter.ts";
-import { processControlLayer } from "../../../../shared/runtime/process-control.layer.ts";
-import { TelemetryRuntime } from "../../../../shared/telemetry/runtime.service.ts";
-import { makeTelemetryIdentity } from "../../../../shared/telemetry/identity.ts";
 import type { LegacyPgConnInput } from "../../../shared/legacy-db-connection.service.ts";
+import { LegacyDbConnectError } from "../../../shared/legacy-db-connection.errors.ts";
 import type { LegacyDbConfigError } from "../../../shared/legacy-db-config.service.ts";
 import { LegacyDbConfigResolver } from "../../../shared/legacy-db-config.service.ts";
 import { LegacyDbConfigLoadError } from "../../../shared/legacy-db-config.errors.ts";
-import {
-  LegacyPgDeltaSslProbe,
-  LegacyPgDeltaSslProbeError,
-} from "../../../shared/legacy-pgdelta-ssl-probe.service.ts";
-import { legacyPgDeltaSslProbeLayer } from "../../../shared/legacy-pgdelta-ssl-probe.layer.ts";
 import type {
   LegacyDbConfigFlags,
   LegacyResolvedDbConfig,
 } from "../../../shared/legacy-db-config.types.ts";
-import { legacyGenCommand } from "../gen.command.ts";
 import type { LegacyGenTypesFlags } from "./types.command.ts";
+import { LegacyGenTypesMetadataError } from "./types.errors.ts";
+import type { LegacyGenTypesGenerateInput } from "./types.generator.ts";
+import { LegacyGenTypesGenerator } from "./types.generator.ts";
 import { legacyGenTypes } from "./types.handler.ts";
-import {
-  localDbContainerId,
-  localNetworkId,
-  parseQueryTimeoutSeconds,
-  resolvePgmetaImage,
-} from "./types.shared.ts";
+import { localDbContainerId, parseQueryTimeoutSeconds } from "./types.shared.ts";
 
 function writeConfig(workdir: string, contents: string) {
   const supabaseDir = join(workdir, "supabase");
@@ -87,42 +66,6 @@ function ensureDefaultConfig(workdir: string) {
     return;
   }
   writeConfig(workdir, ['project_id = "demo"', "", "[api]", "schemas = []"].join("\n"));
-}
-
-/** Extracts the `KEY=VALUE` entries passed via `docker run --env <entry>` arguments. */
-function dockerEnv(args: ReadonlyArray<string>) {
-  const entries: string[] = [];
-  for (let index = 0; index < args.length; index += 1) {
-    if (args[index] === "--env") {
-      const entry = args[index + 1];
-      if (entry !== undefined) {
-        entries.push(entry);
-      }
-    }
-  }
-  return {
-    entries,
-    has: (entry: string) => entries.includes(entry),
-    startsWith: (prefix: string) => entries.some((entry) => entry.startsWith(prefix)),
-  };
-}
-
-/** The argv of the `docker run` invocation captured during a spawn. */
-function captureDockerRun() {
-  let args: ReadonlyArray<string> | undefined;
-  return {
-    onSpawn: (record: { readonly command: string; readonly args: ReadonlyArray<string> }) => {
-      if (record.command === "docker" && record.args.includes("run")) {
-        args = record.args;
-      }
-    },
-    get args() {
-      return args;
-    },
-    get env() {
-      return dockerEnv(args ?? []);
-    },
-  };
 }
 
 function defaultFlags(overrides: Partial<LegacyGenTypesFlags> = {}): LegacyGenTypesFlags {
@@ -200,6 +143,30 @@ function mockDbConfigResolver(
   return { layer, resolves, poolerFallbacks };
 }
 
+/**
+ * Recording fake for the native typegen seam. Each `generate` call is captured;
+ * the nth call resolves with the nth entry of `results` (falling back to a
+ * plain `"generated"` success when the list is exhausted or absent).
+ */
+function mockLegacyGenTypesGenerator(
+  opts: {
+    readonly output?: string;
+    readonly results?: ReadonlyArray<
+      Effect.Effect<string, LegacyDbConnectError | LegacyGenTypesMetadataError>
+    >;
+  } = {},
+) {
+  const calls: Array<LegacyGenTypesGenerateInput> = [];
+  const layer = Layer.succeed(LegacyGenTypesGenerator, {
+    generate: (input) =>
+      Effect.suspend(() => {
+        calls.push(input);
+        return opts.results?.[calls.length - 1] ?? Effect.succeed(opts.output ?? "generated");
+      }),
+  });
+  return { layer, calls };
+}
+
 type BranchConfig = typeof V1GetABranchConfigOutput.Type;
 type LoginRole = typeof V1CreateLoginRoleOutput.Type;
 type PoolerConfig = typeof V1GetPoolerConfigOutput.Type;
@@ -213,17 +180,19 @@ function setup(
     readonly format?: "text" | "json" | "stream-json";
     readonly goOutput?: Option.Option<"env" | "pretty" | "json" | "toml" | "yaml">;
     readonly projectTypes?: string;
-    readonly childStdout?: ReadonlyArray<string>;
     readonly childStderr?: ReadonlyArray<string>;
     readonly childExitCode?: number;
     readonly childLayer?: Layer.Layer<ChildProcessSpawner.ChildProcessSpawner>;
     readonly debug?: boolean;
-    readonly networkId?: Option.Option<string>;
     readonly onSpawn?: (record: {
       readonly command: string;
       readonly args: ReadonlyArray<string>;
     }) => void;
     readonly args?: ReadonlyArray<string>;
+    readonly generatorOutput?: string;
+    readonly generatorResults?: ReadonlyArray<
+      Effect.Effect<string, LegacyDbConnectError | LegacyGenTypesMetadataError>
+    >;
     readonly generateTypescriptTypes?: (input: {
       readonly ref: string;
       readonly included_schemas?: string;
@@ -244,7 +213,6 @@ function setup(
     ) => Effect.Effect<LegacyResolvedDbConfig, LegacyDbConfigError>;
     readonly poolerFallback?: Option.Option<LegacyPgConnInput>;
     readonly poolerFallbackFails?: boolean;
-    readonly sslProbeLayer?: Layer.Layer<LegacyPgDeltaSslProbe>;
   } = {},
 ) {
   const workdir = opts.workdir ?? mkdtempSync(join(tmpdir(), "supabase-gen-types-"));
@@ -262,9 +230,13 @@ function setup(
     poolerFallback: opts.poolerFallback,
     poolerFallbackFails: opts.poolerFallbackFails,
   });
+  const generator = mockLegacyGenTypesGenerator({
+    output: opts.generatorOutput,
+    results: opts.generatorResults,
+  });
   const processControl = mockProcessControl();
   const child = mockChildProcessSpawner({
-    stdout: [...(opts.childStdout ?? [])],
+    stdout: [],
     stderr: [...(opts.childStderr ?? [])],
     exitCode: opts.childExitCode ?? 0,
     onSpawn: opts.onSpawn,
@@ -361,15 +333,12 @@ function setup(
     Layer.succeed(LegacyOutputFlag, opts.goOutput ?? Option.none()),
     Layer.succeed(LegacyDebugFlag, opts.debug ?? false),
     Layer.succeed(LegacyDnsResolverFlag, "native" as const),
-    Layer.succeed(LegacyNetworkIdFlag, opts.networkId ?? Option.none()),
-    opts.sslProbeLayer ??
-      legacyPgDeltaSslProbeLayer.pipe(
-        Layer.provide(Layer.succeed(LegacyDebugFlag, opts.debug ?? false)),
-      ),
+    Layer.succeed(LegacyNetworkIdFlag, Option.none()),
     Layer.succeed(LegacyPlatformApiFactory, {
       make: LegacyPlatformApi.pipe(Effect.provide(api.layer)),
     }),
     dbConfig.layer,
+    generator.layer,
   );
 
   return {
@@ -378,71 +347,11 @@ function setup(
     telemetry,
     linkedProjectCache,
     dbConfig,
+    generator,
     processControl,
     child,
     api,
     layer,
-  };
-}
-
-function mockSequentialChildProcessSpawner(
-  steps: ReadonlyArray<{
-    readonly exitCode?: number;
-    readonly stdout?: ReadonlyArray<string>;
-    readonly stderr?: ReadonlyArray<string>;
-  }>,
-) {
-  const encoder = new TextEncoder();
-  const spawned: Array<{ command: string; args: ReadonlyArray<string> }> = [];
-  let stepIndex = 0;
-
-  const layer = Layer.succeed(
-    ChildProcessSpawner.ChildProcessSpawner,
-    ChildProcessSpawner.make((command) =>
-      Effect.gen(function* () {
-        const cmd = command._tag === "StandardCommand" ? command.command : "";
-        const args = command._tag === "StandardCommand" ? command.args : [];
-        spawned.push({ command: cmd, args });
-
-        const step = steps[Math.min(stepIndex, steps.length - 1)];
-        stepIndex += 1;
-        const exitDeferred = yield* Deferred.make<ChildProcessSpawner.ExitCode>();
-
-        yield* Effect.forkDetach(
-          Effect.gen(function* () {
-            yield* Effect.sleep("10 millis");
-            yield* Deferred.succeed(
-              exitDeferred,
-              ChildProcessSpawner.ExitCode(step?.exitCode ?? 0),
-            );
-          }),
-        );
-
-        const stdoutBytes = (step?.stdout ?? []).map((line) => encoder.encode(`${line}\n`));
-        const stderrBytes = (step?.stderr ?? []).map((line) => encoder.encode(`${line}\n`));
-
-        return ChildProcessSpawner.makeHandle({
-          pid: ChildProcessSpawner.ProcessId(2000 + spawned.length),
-          stdout: Stream.fromIterable(stdoutBytes),
-          stderr: Stream.fromIterable(stderrBytes),
-          all: Stream.empty,
-          exitCode: Deferred.await(exitDeferred),
-          isRunning: Effect.succeed(false),
-          stdin: Sink.drain,
-          kill: () => Effect.void,
-          unref: Effect.succeed(Effect.void),
-          getInputFd: () => Sink.drain,
-          getOutputFd: () => Stream.empty,
-        });
-      }),
-    ),
-  );
-
-  return {
-    layer,
-    get spawned() {
-      return spawned;
-    },
   };
 }
 
@@ -518,137 +427,24 @@ function mockDockerMissingChildProcessSpawner(
   };
 }
 
-async function withSslProbeServer<T>(
-  run: (port: number) => Promise<T>,
-  response: "N" | "S" = "N",
-  options: { readonly host?: string; readonly port?: number } = {},
-): Promise<T> {
-  const host = options.host ?? "127.0.0.1";
-  const port = options.port ?? 0;
-  const server = createServer((socket) => {
-    socket.once("data", () => {
-      socket.write(Buffer.from(response));
-      socket.end();
-    });
-  });
-
-  await new Promise<void>((resolve, reject) => {
-    server.once("error", reject);
-    server.listen(port, host, () => resolve());
-  });
-
-  const address = server.address();
-  if (address === null || typeof address === "string") {
-    server.close();
-    throw new Error("failed to bind ssl probe server");
-  }
-
-  try {
-    return await run(address.port);
-  } finally {
-    await new Promise<void>((resolve, reject) =>
-      server.close((error) => (error ? reject(error) : resolve())),
-    );
-  }
-}
+const IPV6_CONNECT_FAILURE = new LegacyDbConnectError({
+  message: `failed to connect to postgres: could not translate host name "db.${LEGACY_VALID_REF}.supabase.co" to address: No address associated with hostname`,
+});
 
 const nonTypescriptProjectRefScenarios = [
-  { lang: "go", stdout: "type PublicMovies struct {}" },
-  { lang: "swift", stdout: "struct PublicMovies: Codable {}" },
-  { lang: "python", stdout: "class PublicMovies(BaseModel):" },
+  { lang: "go", output: "type PublicMovies struct {}" },
+  { lang: "swift", output: "struct PublicMovies: Codable {}" },
+  { lang: "python", output: "class PublicMovies(BaseModel):" },
 ] as const satisfies ReadonlyArray<{
   readonly lang: Exclude<LegacyGenTypesFlags["lang"], "typescript">;
-  readonly stdout: string;
+  readonly output: string;
 }>;
-
-const legacyTestRoot = Command.make("supabase").pipe(
-  Command.withSubcommands([legacyGenCommand]),
-  Command.withGlobalFlags(LEGACY_GLOBAL_FLAGS),
-);
 
 describe("legacy gen types", () => {
   it.effect("accepts Go-style microsecond duration aliases", () =>
     Effect.gen(function* () {
       expect(yield* parseQueryTimeoutSeconds(`15${"µ"}s`)).toBe(0);
       expect(yield* parseQueryTimeoutSeconds(`15${"μ"}s`)).toBe(0);
-    }),
-  );
-
-  it.live("runs tokenless local generation through command wiring", () =>
-    Effect.tryPromise({
-      try: () =>
-        withSslProbeServer(async (port) => {
-          const workdir = mkdtempSync(join(tmpdir(), "supabase-gen-types-command-local-"));
-          writeConfig(
-            workdir,
-            [
-              'project_id = "demo"',
-              "",
-              "[api]",
-              'schemas = ["public"]',
-              "",
-              "[db]",
-              `port = ${port}`,
-            ].join("\n"),
-          );
-          const out = mockOutput({ format: "text", interactive: false });
-          const analytics = mockAnalytics();
-          const child = mockSequentialChildProcessSpawner([
-            { exitCode: 0 },
-            { exitCode: 0, stdout: ["export type Database = {};"] },
-          ]);
-          const args = [
-            "gen",
-            "types",
-            "typescript",
-            "--local",
-            "--schema",
-            "public",
-            "--workdir",
-            workdir,
-          ];
-          const layer = Layer.mergeAll(
-            BunServices.layer,
-            CliOutput.layer(textCliOutputFormatter()),
-            out.layer,
-            analytics.layer,
-            processControlLayer,
-            processEnvLayer({ SUPABASE_HOME: workdir }),
-            mockRuntimeInfo({ cwd: workdir, homeDir: workdir }),
-            mockTty({ stdinIsTty: false, stdoutIsTty: false }),
-            child.layer,
-            Stdio.layerTest({ args: Effect.succeed(args) }),
-            Layer.succeed(
-              TelemetryRuntime,
-              TelemetryRuntime.of({
-                configDir: join(workdir, ".supabase"),
-                tracesDir: join(workdir, ".supabase", "traces"),
-                consent: "granted",
-                showDebug: false,
-                deviceId: "test-device-id",
-                sessionId: "test-session-id",
-                identity: makeTelemetryIdentity(undefined),
-                isFirstRun: false,
-                isTty: false,
-                isCi: false,
-                os: "linux",
-                arch: "x64",
-                cliVersion: "0.1.0",
-              }),
-            ),
-          );
-
-          await Effect.runPromise(
-            Command.runWith(legacyTestRoot, { version: "0.0.0-test" })(args).pipe(
-              Effect.provide(layer),
-            ) as Effect.Effect<void>,
-          );
-
-          expect(out.stdoutText).toContain("export type Database = {};");
-          expect(out.stderrText).not.toContain("Access token not provided");
-          expect(child.spawned).toHaveLength(2);
-        }),
-      catch: (cause) => (cause instanceof Error ? cause : new Error(String(cause))),
     }),
   );
 
@@ -814,9 +610,8 @@ describe("legacy gen types", () => {
     // this argv (both `local` and `linked` parse as independently true,
     // since its tokenizer is unaware of pflag's value consumption); only the
     // pflag-faithful scan can tell them apart.
-    // `childExitCode: 1` fails the local target's `container inspect`, keeping the
-    // downstream failure deterministic before the real SSL probe can reach whatever
-    // is listening on the local db port.
+    // `childExitCode: 1` fails the local target's `container inspect`, keeping
+    // the downstream failure deterministic before any generation runs.
     const { layer } = setup({
       args: ["gen", "types", "-s", "--linked", "--local"],
       childExitCode: 1,
@@ -1038,56 +833,38 @@ describe("legacy gen types", () => {
   });
 
   it.live(
-    "forwards --query-timeout and --swift-access-control to pg-meta for implicit linked non-TypeScript generation",
-    () =>
-      Effect.tryPromise({
-        try: () =>
-          withSslProbeServer(async (port) => {
-            const docker = captureDockerRun();
-            const { layer, dbConfig } = setup({
-              args: [
-                "gen",
-                "types",
-                "--lang",
-                "go",
-                "--query-timeout",
-                "20s",
-                "--swift-access-control",
-                "public",
-              ],
-              projectId: Option.some(LEGACY_VALID_REF),
-              childStdout: ["type PublicMovies struct {}"],
-              dbConfigResolve: () =>
-                Effect.succeed(
-                  remoteResolvedConfig({
-                    host: "127.0.0.1",
-                    port,
-                    user: "postgres",
-                    password: "workdir-password",
-                    database: "postgres",
-                  }),
-                ),
-              onSpawn: docker.onSpawn,
-            });
+    "forwards --query-timeout and --swift-access-control to the generator for implicit linked non-TypeScript generation",
+    () => {
+      const { layer, dbConfig, generator } = setup({
+        args: [
+          "gen",
+          "types",
+          "--lang",
+          "go",
+          "--query-timeout",
+          "20s",
+          "--swift-access-control",
+          "public",
+        ],
+        projectId: Option.some(LEGACY_VALID_REF),
+        generatorOutput: "type PublicMovies struct {}",
+      });
 
-            await Effect.runPromise(
-              legacyGenTypes(
-                defaultFlags({ lang: "go", queryTimeout: "20s", swiftAccessControl: "public" }),
-              ).pipe(Effect.provide(layer)),
-            );
+      return Effect.gen(function* () {
+        yield* legacyGenTypes(
+          defaultFlags({ lang: "go", queryTimeout: "20s", swiftAccessControl: "public" }),
+        ).pipe(Effect.provide(layer));
 
-            // Unlike an explicit --linked/--project-id, the implicit fallback never
-            // sets the "linked"/"project-id" mutex keys, so --query-timeout and
-            // --swift-access-control clear every guard here and reach pg-meta — the
-            // SIDE_EFFECTS.md defaults-invariant note is scoped to the explicit
-            // paths for exactly this reason.
-            expect(dbConfig.resolves[0]?.adHocProjectRef).toBe(false);
-            expect(docker.env.has("PG_QUERY_TIMEOUT_SECS=20")).toBe(true);
-            expect(docker.env.has("PG_CONN_TIMEOUT_SECS=20")).toBe(true);
-            expect(docker.env.has("PG_META_GENERATE_TYPES_SWIFT_ACCESS_CONTROL=public")).toBe(true);
-          }),
-        catch: (cause) => (cause instanceof Error ? cause : new Error(String(cause))),
-      }),
+        // Unlike an explicit --linked/--project-id, the implicit fallback never
+        // sets the "linked"/"project-id" mutex keys, so --query-timeout and
+        // --swift-access-control clear every guard here and reach the
+        // generator — the SIDE_EFFECTS.md defaults-invariant note is scoped to
+        // the explicit paths for exactly this reason.
+        expect(dbConfig.resolves[0]?.adHocProjectRef).toBe(false);
+        expect(generator.calls[0]?.queryTimeoutSeconds).toBe(20);
+        expect(generator.calls[0]?.swiftAccessControl).toBe("public");
+      });
+    },
   );
 
   it.live("prefers the --postgrest-v9-compat guard over mutex group errors", () => {
@@ -1164,1113 +941,710 @@ describe("legacy gen types", () => {
     });
   });
 
-  it.live("allows --swift-access-control for local non-Swift generation", () =>
-    Effect.tryPromise({
-      try: () =>
-        withSslProbeServer(async (port) => {
-          const docker = captureDockerRun();
-          const workdir = mkdtempSync(join(tmpdir(), "supabase-gen-types-local-swift-flag-"));
-          writeConfig(
-            workdir,
-            [
-              'project_id = "demo"',
-              "",
-              "[api]",
-              'schemas = ["public"]',
-              "",
-              "[db]",
-              `port = ${port}`,
-            ].join("\n"),
-          );
+  it.live("allows --swift-access-control for local non-Swift generation", () => {
+    const workdir = mkdtempSync(join(tmpdir(), "supabase-gen-types-local-swift-flag-"));
+    writeConfig(
+      workdir,
+      ['project_id = "demo"', "", "[api]", 'schemas = ["public"]', "", "[db]", "port = 54321"].join(
+        "\n",
+      ),
+    );
 
-          const { layer } = setup({
-            workdir,
-            args: [
-              "gen",
-              "types",
-              "--local",
-              "--lang",
-              "python",
-              "--swift-access-control",
-              "public",
-            ],
-            childStdout: ["generated"],
-            onSpawn: docker.onSpawn,
-          });
+    const { layer, generator } = setup({
+      workdir,
+      args: ["gen", "types", "--local", "--lang", "python", "--swift-access-control", "public"],
+    });
 
-          // Go has no "--swift-access-control requires --lang swift" guard —
-          // the value is always forwarded to pg-meta regardless of language.
-          await Effect.runPromise(
-            legacyGenTypes(
-              defaultFlags({ local: true, lang: "python", swiftAccessControl: "public" }),
-            ).pipe(Effect.provide(layer)),
-          );
+    // Go has no "--swift-access-control requires --lang swift" guard —
+    // the value is always forwarded to the generator regardless of language.
+    return Effect.gen(function* () {
+      yield* legacyGenTypes(
+        defaultFlags({ local: true, lang: "python", swiftAccessControl: "public" }),
+      ).pipe(Effect.provide(layer));
 
-          expect(docker.env.has("PG_META_GENERATE_TYPES=python")).toBe(true);
-          expect(docker.env.has("PG_META_GENERATE_TYPES_SWIFT_ACCESS_CONTROL=public")).toBe(true);
+      expect(generator.calls[0]?.lang).toBe("python");
+      expect(generator.calls[0]?.swiftAccessControl).toBe("public");
+    });
+  });
+
+  it.live("allows --postgrest-v9-compat together with --db-url", () => {
+    const dbUrl = "postgresql://postgres:postgres@127.0.0.1:5432/postgres";
+    const { layer, generator } = setup({
+      args: ["gen", "types", "--db-url", dbUrl, "--postgrest-v9-compat"],
+    });
+
+    return Effect.gen(function* () {
+      yield* legacyGenTypes(
+        defaultFlags({
+          dbUrl: Option.some(dbUrl),
+          postgrestV9Compat: true,
         }),
-      catch: (cause) => (cause instanceof Error ? cause : new Error(String(cause))),
-    }),
-  );
+      ).pipe(Effect.provide(layer));
 
-  it.live("allows --postgrest-v9-compat together with --db-url", () =>
-    Effect.tryPromise({
-      try: () =>
-        withSslProbeServer(async (port) => {
-          const docker = captureDockerRun();
-          const { layer } = setup({
-            args: [
-              "gen",
-              "types",
-              "--db-url",
-              `postgresql://postgres:postgres@127.0.0.1:${port}/postgres`,
-              "--postgrest-v9-compat",
-            ],
-            childStdout: ["generated"],
-            onSpawn: docker.onSpawn,
-          });
-
-          await Effect.runPromise(
-            legacyGenTypes(
-              defaultFlags({
-                dbUrl: Option.some(`postgresql://postgres:postgres@127.0.0.1:${port}/postgres`),
-                postgrestV9Compat: true,
-              }),
-            ).pipe(Effect.provide(layer)),
-          );
-
-          expect(
-            docker.env.has("PG_META_GENERATE_TYPES_DETECT_ONE_TO_ONE_RELATIONSHIPS=false"),
-          ).toBe(true);
-        }),
-      catch: (cause) => (cause instanceof Error ? cause : new Error(String(cause))),
-    }),
-  );
+      expect(generator.calls[0]?.postgrestV9Compat).toBe(true);
+    });
+  });
 
   for (const scenario of nonTypescriptProjectRefScenarios) {
-    it.live(`generates ${scenario.lang} types from a project ref through the DB resolver`, () =>
-      Effect.tryPromise({
-        try: () =>
-          withSslProbeServer(async (port) => {
-            const docker = captureDockerRun();
-            const { layer, out, child, api, linkedProjectCache, dbConfig } = setup({
-              args: ["gen", "types", "--lang", scenario.lang, "--project-id", LEGACY_VALID_REF],
-              childStdout: [scenario.stdout],
-              dbConfigResolve: (input) =>
-                Effect.succeed(
-                  remoteResolvedConfig(
-                    {
-                      host: "127.0.0.1",
-                      port,
-                      user: `cli_login_${LEGACY_VALID_REF}`,
-                      password: "temporary-password",
-                      database: "postgres",
-                    },
-                    (input.linkedProjectRef !== undefined
-                      ? Option.getOrUndefined(input.linkedProjectRef)
-                      : undefined) ?? LEGACY_VALID_REF,
-                  ),
-                ),
-              getABranchConfig: ({ branch_id_or_ref }) =>
-                Effect.fail(new Error(`unexpected preview branch lookup for ${branch_id_or_ref}`)),
-              getProject: ({ ref }) =>
-                Effect.succeed({
-                  id: ref,
-                  ref,
-                  organization_id: "org-id",
-                  organization_slug: "org",
-                  name: "demo",
-                  region: "us-east-1",
-                  created_at: "2025-01-01T00:00:00Z",
-                  status: "ACTIVE_HEALTHY",
-                  database: {
-                    host: `127.0.0.1:${port}`,
-                    version: "15.1",
-                    postgres_engine: "15",
-                    release_channel: "ga",
-                  },
-                }),
-              createLoginRole: ({ ref }) =>
-                Effect.fail(new Error(`unexpected login role creation for ${ref}`)),
-              onSpawn: docker.onSpawn,
-            });
+    it.live(`generates ${scenario.lang} types from a project ref through the DB resolver`, () => {
+      const { layer, out, api, linkedProjectCache, dbConfig, generator } = setup({
+        args: ["gen", "types", "--lang", scenario.lang, "--project-id", LEGACY_VALID_REF],
+        generatorOutput: scenario.output,
+        dbConfigResolve: (input) =>
+          Effect.succeed(
+            remoteResolvedConfig(
+              {
+                host: "127.0.0.1",
+                port: 5432,
+                user: `cli_login_${LEGACY_VALID_REF}`,
+                password: "temporary-password",
+                database: "postgres",
+              },
+              (input.linkedProjectRef !== undefined
+                ? Option.getOrUndefined(input.linkedProjectRef)
+                : undefined) ?? LEGACY_VALID_REF,
+            ),
+          ),
+        getABranchConfig: ({ branch_id_or_ref }) =>
+          Effect.fail(new Error(`unexpected preview branch lookup for ${branch_id_or_ref}`)),
+        createLoginRole: ({ ref }) =>
+          Effect.fail(new Error(`unexpected login role creation for ${ref}`)),
+      });
 
-            await Effect.runPromise(
-              legacyGenTypes(
-                defaultFlags({
-                  projectId: Option.some(LEGACY_VALID_REF),
-                  lang: scenario.lang,
-                }),
-              ).pipe(Effect.provide(layer)),
-            );
-
-            expect(api.requests).toContainEqual({
-              method: "getProject",
-              input: { ref: LEGACY_VALID_REF },
-            });
-            expect(api.requests).not.toContainEqual(
-              expect.objectContaining({ method: "createLoginRole" }),
-            );
-            expect(api.requests).not.toContainEqual(
-              expect.objectContaining({ method: "getABranchConfig" }),
-            );
-            expect(api.requests).not.toContainEqual(
-              expect.objectContaining({ method: "generateTypescriptTypes" }),
-            );
-            expect(child.spawned[0]?.args).toContain("--network");
-            expect(child.spawned[0]?.args).toContain("host");
-            expect(out.stderrText).toContain(`Connecting to 127.0.0.1 ${port}`);
-            expect(
-              docker.env.has(
-                `PG_META_DB_URL=postgresql://cli_login_${LEGACY_VALID_REF}:temporary-password@127.0.0.1:${port}/postgres?connect_timeout=10`,
-              ),
-            ).toBe(true);
-            expect(dbConfig.resolves).toHaveLength(1);
-            expect(dbConfig.resolves[0]?.connType).toBe("linked");
-            // --project-id is an ad-hoc remote ref: the resolver must not inherit
-            // the workdir's ambient password / saved pooler URL.
-            expect(dbConfig.resolves[0]?.adHocProjectRef).toBe(true);
-            const linkedProjectRef = dbConfig.resolves[0]?.linkedProjectRef;
-            expect(
-              linkedProjectRef !== undefined ? Option.getOrUndefined(linkedProjectRef) : undefined,
-            ).toBe(LEGACY_VALID_REF);
-            expect(docker.env.has(`PG_META_GENERATE_TYPES=${scenario.lang}`)).toBe(true);
-            expect(docker.env.has("PG_META_GENERATE_TYPES_INCLUDED_SCHEMAS=public")).toBe(true);
-            expect(out.stdoutText).toContain(scenario.stdout);
-            expect(linkedProjectCache.cached).toBe(true);
+      return Effect.gen(function* () {
+        yield* legacyGenTypes(
+          defaultFlags({
+            projectId: Option.some(LEGACY_VALID_REF),
+            lang: scenario.lang,
           }),
-        catch: (cause) => (cause instanceof Error ? cause : new Error(String(cause))),
-      }),
-    );
+        ).pipe(Effect.provide(layer));
+
+        expect(api.requests).toContainEqual({
+          method: "getProject",
+          input: { ref: LEGACY_VALID_REF },
+        });
+        expect(api.requests).not.toContainEqual(
+          expect.objectContaining({ method: "createLoginRole" }),
+        );
+        expect(api.requests).not.toContainEqual(
+          expect.objectContaining({ method: "getABranchConfig" }),
+        );
+        expect(api.requests).not.toContainEqual(
+          expect.objectContaining({ method: "generateTypescriptTypes" }),
+        );
+        expect(out.stderrText).toContain("Connecting to 127.0.0.1 5432");
+        expect(dbConfig.resolves).toHaveLength(1);
+        expect(dbConfig.resolves[0]?.connType).toBe("linked");
+        // --project-id is an ad-hoc remote ref: the resolver must not inherit
+        // the workdir's ambient password / saved pooler URL.
+        expect(dbConfig.resolves[0]?.adHocProjectRef).toBe(true);
+        const linkedProjectRef = dbConfig.resolves[0]?.linkedProjectRef;
+        expect(
+          linkedProjectRef !== undefined ? Option.getOrUndefined(linkedProjectRef) : undefined,
+        ).toBe(LEGACY_VALID_REF);
+        expect(generator.calls).toHaveLength(1);
+        expect(generator.calls[0]?.conn).toEqual({
+          host: "127.0.0.1",
+          port: 5432,
+          user: `cli_login_${LEGACY_VALID_REF}`,
+          password: "temporary-password",
+          database: "postgres",
+        });
+        expect(generator.calls[0]?.isLocal).toBe(false);
+        expect(generator.calls[0]?.lang).toBe(scenario.lang);
+        expect(generator.calls[0]?.includedSchemas).toEqual(["public"]);
+        expect(out.stdoutText).toBe(`${scenario.output}\n`);
+        expect(linkedProjectCache.cached).toBe(true);
+      });
+    });
   }
 
-  it.live("resolves the linked workdir DB without ad-hoc project-ref semantics", () =>
-    Effect.tryPromise({
-      try: () =>
-        withSslProbeServer(async (port) => {
-          const docker = captureDockerRun();
-          const { layer, dbConfig } = setup({
-            args: ["gen", "types", "--lang", "go", "--linked"],
-            projectId: Option.some(LEGACY_VALID_REF),
-            childStdout: ["type PublicMovies struct {}"],
-            dbConfigResolve: () =>
-              Effect.succeed(
-                remoteResolvedConfig({
-                  host: "127.0.0.1",
-                  port,
-                  user: "postgres",
-                  password: "workdir-password",
-                  database: "postgres",
-                }),
-              ),
-            onSpawn: docker.onSpawn,
-          });
+  it.live("resolves the linked workdir DB without ad-hoc project-ref semantics", () => {
+    const { layer, dbConfig } = setup({
+      args: ["gen", "types", "--lang", "go", "--linked"],
+      projectId: Option.some(LEGACY_VALID_REF),
+      generatorOutput: "type PublicMovies struct {}",
+    });
 
-          await Effect.runPromise(
-            legacyGenTypes(defaultFlags({ linked: true, lang: "go" })).pipe(Effect.provide(layer)),
-          );
+    return Effect.gen(function* () {
+      yield* legacyGenTypes(defaultFlags({ linked: true, lang: "go" })).pipe(Effect.provide(layer));
 
-          expect(dbConfig.resolves).toHaveLength(1);
-          expect(dbConfig.resolves[0]?.connType).toBe("linked");
-          // --linked is the workdir's own project: keep workdir-scoped credentials.
-          expect(dbConfig.resolves[0]?.adHocProjectRef).toBe(false);
-        }),
-      catch: (cause) => (cause instanceof Error ? cause : new Error(String(cause))),
-    }),
-  );
+      expect(dbConfig.resolves).toHaveLength(1);
+      expect(dbConfig.resolves[0]?.connType).toBe("linked");
+      // --linked is the workdir's own project: keep workdir-scoped credentials.
+      expect(dbConfig.resolves[0]?.adHocProjectRef).toBe(false);
+    });
+  });
 
-  it.live("preserves resolver URL options for remote non-TypeScript typegen", () =>
-    Effect.tryPromise({
-      try: () =>
-        withSslProbeServer(async (port) => {
-          const docker = captureDockerRun();
-          const { layer } = setup({
-            args: ["gen", "types", "--lang", "go", "--project-id", LEGACY_VALID_REF],
-            childStdout: ["type PublicMovies struct {}"],
-            dbConfigResolve: () =>
-              Effect.succeed(
-                remoteResolvedConfig({
-                  host: "127.0.0.1",
-                  port,
-                  user: `postgres.${LEGACY_VALID_REF}`,
-                  password: "pooler-password",
-                  database: "postgres",
-                  options: `reference=${LEGACY_VALID_REF}`,
-                }),
-              ),
-            onSpawn: docker.onSpawn,
-          });
-
-          await Effect.runPromise(
-            legacyGenTypes(
-              defaultFlags({
-                projectId: Option.some(LEGACY_VALID_REF),
-                lang: "go",
-              }),
-            ).pipe(Effect.provide(layer)),
-          );
-
-          expect(
-            docker.env.has(
-              `PG_META_DB_URL=postgresql://postgres.${LEGACY_VALID_REF}:pooler-password@127.0.0.1:${port}/postgres?connect_timeout=10&options=reference%3D${LEGACY_VALID_REF}`,
-            ),
-          ).toBe(true);
-        }),
-      catch: (cause) => (cause instanceof Error ? cause : new Error(String(cause))),
-    }),
-  );
-
-  it.live("retries remote pg-meta through the IPv4 pooler on a container IPv6 failure", () =>
-    Effect.tryPromise({
-      try: () =>
-        withSslProbeServer(async (port) => {
-          const child = mockSequentialChildProcessSpawner([
-            {
-              exitCode: 1,
-              stderr: [
-                'could not translate host name "db.abcdefghijklmnopqrst.supabase.co" to address: No address associated with hostname',
-              ],
-            },
-            { exitCode: 0, stdout: ["type RetriedViaPooler struct {}"] },
-          ]);
-          const poolerConn: LegacyPgConnInput = {
+  it.live("preserves resolver URL options for remote non-TypeScript typegen", () => {
+    const { layer, generator } = setup({
+      args: ["gen", "types", "--lang", "go", "--project-id", LEGACY_VALID_REF],
+      generatorOutput: "type PublicMovies struct {}",
+      dbConfigResolve: () =>
+        Effect.succeed(
+          remoteResolvedConfig({
             host: "127.0.0.1",
-            port,
+            port: 5432,
             user: `postgres.${LEGACY_VALID_REF}`,
             password: "pooler-password",
             database: "postgres",
-          };
-          const { layer, out, dbConfig } = setup({
-            args: ["gen", "types", "--lang", "go", "--project-id", LEGACY_VALID_REF],
-            childLayer: child.layer,
-            sslProbeLayer: Layer.succeed(LegacyPgDeltaSslProbe, {
-              requireSsl: () => Effect.succeed(false),
-              requireSslForHost: () => Effect.succeed(false),
-            }),
-            dbConfigResolve: () =>
-              Effect.succeed(
-                remoteResolvedConfig({
-                  host: `db.${LEGACY_VALID_REF}.supabase.co`,
-                  port,
-                  user: "postgres",
-                  password: "direct-password",
-                  database: "postgres",
-                }),
-              ),
-            poolerFallback: Option.some(poolerConn),
-          });
+            options: `reference=${LEGACY_VALID_REF}`,
+          }),
+        ),
+    });
 
-          await Effect.runPromise(
-            legacyGenTypes(
-              defaultFlags({
-                projectId: Option.some(LEGACY_VALID_REF),
-                lang: "go",
-              }),
-            ).pipe(Effect.provide(layer)),
-          );
-
-          expect(out.stdoutText).toContain("type RetriedViaPooler struct {}");
-          expect(out.stderrText).toContain("does not support IPv6");
-          expect(out.stderrText).toContain("Retrying via the IPv4 connection pooler.");
-          expect(child.spawned).toHaveLength(2);
-          expect(
-            dockerEnv(child.spawned[0]?.args ?? []).has(
-              `PG_META_DB_URL=postgresql://postgres:direct-password@db.${LEGACY_VALID_REF}.supabase.co:${port}/postgres?connect_timeout=10`,
-            ),
-          ).toBe(true);
-          expect(
-            dockerEnv(child.spawned[1]?.args ?? []).has(
-              `PG_META_DB_URL=postgresql://postgres.${LEGACY_VALID_REF}:pooler-password@127.0.0.1:${port}/postgres?connect_timeout=10`,
-            ),
-          ).toBe(true);
-          expect(dbConfig.poolerFallbacks).toHaveLength(1);
-          expect(dbConfig.poolerFallbacks[0]?.connType).toBe("linked");
-          expect(dbConfig.poolerFallbacks[0]?.adHocProjectRef).toBe(true);
+    return Effect.gen(function* () {
+      yield* legacyGenTypes(
+        defaultFlags({
+          projectId: Option.some(LEGACY_VALID_REF),
+          lang: "go",
         }),
-      catch: (cause) => (cause instanceof Error ? cause : new Error(String(cause))),
-    }),
-  );
+      ).pipe(Effect.provide(layer));
 
-  it.live("retries remote pg-meta through the IPv4 pooler on Node ENETUNREACH stderr", () =>
-    Effect.tryPromise({
-      try: () =>
-        withSslProbeServer(async (port) => {
-          const child = mockSequentialChildProcessSpawner([
-            {
-              exitCode: 1,
-              stderr: ["connect ENETUNREACH 2600:1f18::1:5432 - Local (:::0)"],
-            },
-            { exitCode: 0, stdout: ["type RetriedViaPooler struct {}"] },
-          ]);
-          const poolerConn: LegacyPgConnInput = {
-            host: "127.0.0.1",
-            port,
-            user: `postgres.${LEGACY_VALID_REF}`,
-            password: "pooler-password",
+      // Supavisor pooler URLs carry the tenant in `options=reference=<ref>`;
+      // the resolved connection must reach the driver intact.
+      expect(generator.calls[0]?.conn.options).toBe(`reference=${LEGACY_VALID_REF}`);
+      expect(generator.calls[0]?.conn.user).toBe(`postgres.${LEGACY_VALID_REF}`);
+    });
+  });
+
+  it.live("retries remote generation through the IPv4 pooler on an IPv6 connect failure", () => {
+    const poolerConn: LegacyPgConnInput = {
+      host: "127.0.0.1",
+      port: 6543,
+      user: `postgres.${LEGACY_VALID_REF}`,
+      password: "pooler-password",
+      database: "postgres",
+    };
+    const { layer, out, dbConfig, generator } = setup({
+      args: ["gen", "types", "--lang", "go", "--project-id", LEGACY_VALID_REF],
+      generatorResults: [
+        Effect.fail(IPV6_CONNECT_FAILURE),
+        Effect.succeed("type RetriedViaPooler struct {}"),
+      ],
+      dbConfigResolve: () =>
+        Effect.succeed(
+          remoteResolvedConfig({
+            host: `db.${LEGACY_VALID_REF}.supabase.co`,
+            port: 5432,
+            user: "postgres",
+            password: "direct-password",
             database: "postgres",
-          };
-          const { layer, out, dbConfig } = setup({
-            args: ["gen", "types", "--lang", "go", "--project-id", LEGACY_VALID_REF],
-            childLayer: child.layer,
-            sslProbeLayer: Layer.succeed(LegacyPgDeltaSslProbe, {
-              requireSsl: () => Effect.succeed(false),
-              requireSslForHost: () => Effect.succeed(false),
-            }),
-            dbConfigResolve: () =>
-              Effect.succeed(
-                remoteResolvedConfig({
-                  host: `db.${LEGACY_VALID_REF}.supabase.co`,
-                  port,
-                  user: "postgres",
-                  password: "direct-password",
-                  database: "postgres",
-                }),
-              ),
-            poolerFallback: Option.some(poolerConn),
-          });
+          }),
+        ),
+      poolerFallback: Option.some(poolerConn),
+    });
 
-          await Effect.runPromise(
-            legacyGenTypes(
-              defaultFlags({
-                projectId: Option.some(LEGACY_VALID_REF),
-                lang: "go",
-              }),
-            ).pipe(Effect.provide(layer)),
-          );
-
-          expect(out.stdoutText).toContain("type RetriedViaPooler struct {}");
-          expect(child.spawned).toHaveLength(2);
-          expect(dbConfig.poolerFallbacks).toHaveLength(1);
+    return Effect.gen(function* () {
+      yield* legacyGenTypes(
+        defaultFlags({
+          projectId: Option.some(LEGACY_VALID_REF),
+          lang: "go",
         }),
-      catch: (cause) => (cause instanceof Error ? cause : new Error(String(cause))),
-    }),
-  );
+      ).pipe(Effect.provide(layer));
 
-  it.live("does not retry remote pg-meta when the container failure is not IPv6", () =>
-    Effect.tryPromise({
-      try: () =>
-        withSslProbeServer(async (port) => {
-          const child = mockSequentialChildProcessSpawner([
-            { exitCode: 1, stderr: ["permission denied for schema public"] },
-          ]);
-          const { layer, dbConfig } = setup({
-            args: ["gen", "types", "--lang", "go", "--project-id", LEGACY_VALID_REF],
-            childLayer: child.layer,
-            sslProbeLayer: Layer.succeed(LegacyPgDeltaSslProbe, {
-              requireSsl: () => Effect.succeed(false),
-              requireSslForHost: () => Effect.succeed(false),
-            }),
-            dbConfigResolve: () =>
-              Effect.succeed(
-                remoteResolvedConfig({
-                  host: `db.${LEGACY_VALID_REF}.supabase.co`,
-                  port,
-                  user: "postgres",
-                  password: "direct-password",
-                  database: "postgres",
-                }),
-              ),
-            poolerFallback: Option.some({
-              host: "127.0.0.1",
-              port,
+      expect(out.stdoutText).toContain("type RetriedViaPooler struct {}");
+      expect(out.stderrText).toContain("does not support IPv6");
+      expect(out.stderrText).toContain("Retrying via the IPv4 connection pooler.");
+      expect(generator.calls).toHaveLength(2);
+      expect(generator.calls[0]?.conn.host).toBe(`db.${LEGACY_VALID_REF}.supabase.co`);
+      expect(generator.calls[1]?.conn).toEqual(poolerConn);
+      expect(generator.calls[1]?.isLocal).toBe(false);
+      expect(dbConfig.poolerFallbacks).toHaveLength(1);
+      expect(dbConfig.poolerFallbacks[0]?.connType).toBe("linked");
+      expect(dbConfig.poolerFallbacks[0]?.adHocProjectRef).toBe(true);
+    });
+  });
+
+  it.live("retries remote generation through the IPv4 pooler on a Node ENETUNREACH failure", () => {
+    const poolerConn: LegacyPgConnInput = {
+      host: "127.0.0.1",
+      port: 6543,
+      user: `postgres.${LEGACY_VALID_REF}`,
+      password: "pooler-password",
+      database: "postgres",
+    };
+    const { layer, out, dbConfig, generator } = setup({
+      args: ["gen", "types", "--lang", "go", "--project-id", LEGACY_VALID_REF],
+      generatorResults: [
+        Effect.fail(
+          new LegacyDbConnectError({
+            message:
+              "failed to connect to postgres: connect ENETUNREACH 2600:1f18::1:5432 - Local (:::0)",
+          }),
+        ),
+        Effect.succeed("type RetriedViaPooler struct {}"),
+      ],
+      dbConfigResolve: () =>
+        Effect.succeed(
+          remoteResolvedConfig({
+            host: `db.${LEGACY_VALID_REF}.supabase.co`,
+            port: 5432,
+            user: "postgres",
+            password: "direct-password",
+            database: "postgres",
+          }),
+        ),
+      poolerFallback: Option.some(poolerConn),
+    });
+
+    return Effect.gen(function* () {
+      yield* legacyGenTypes(
+        defaultFlags({
+          projectId: Option.some(LEGACY_VALID_REF),
+          lang: "go",
+        }),
+      ).pipe(Effect.provide(layer));
+
+      expect(out.stdoutText).toContain("type RetriedViaPooler struct {}");
+      expect(generator.calls).toHaveLength(2);
+      expect(dbConfig.poolerFallbacks).toHaveLength(1);
+    });
+  });
+
+  it.live("does not retry remote generation when the failure is not IPv6", () => {
+    const { layer, dbConfig, generator } = setup({
+      args: ["gen", "types", "--lang", "go", "--project-id", LEGACY_VALID_REF],
+      generatorResults: [
+        Effect.fail(
+          new LegacyGenTypesMetadataError({
+            message: "failed to introspect database: permission denied for schema public",
+          }),
+        ),
+      ],
+      dbConfigResolve: () =>
+        Effect.succeed(
+          remoteResolvedConfig({
+            host: `db.${LEGACY_VALID_REF}.supabase.co`,
+            port: 5432,
+            user: "postgres",
+            password: "direct-password",
+            database: "postgres",
+          }),
+        ),
+      poolerFallback: Option.some({
+        host: "127.0.0.1",
+        port: 6543,
+        user: `postgres.${LEGACY_VALID_REF}`,
+        password: "pooler-password",
+        database: "postgres",
+      }),
+    });
+
+    return Effect.gen(function* () {
+      const exit = yield* legacyGenTypes(
+        defaultFlags({
+          projectId: Option.some(LEGACY_VALID_REF),
+          lang: "go",
+        }),
+      ).pipe(Effect.provide(layer), Effect.exit);
+
+      expect(Exit.isFailure(exit)).toBe(true);
+      expect(generator.calls).toHaveLength(1);
+      expect(dbConfig.poolerFallbacks).toHaveLength(0);
+    });
+  });
+
+  it.live("does not run pooler fallback a second time when the retry also fails with IPv6", () => {
+    const { layer, dbConfig, generator } = setup({
+      args: ["gen", "types", "--lang", "go", "--project-id", LEGACY_VALID_REF],
+      generatorResults: [Effect.fail(IPV6_CONNECT_FAILURE), Effect.fail(IPV6_CONNECT_FAILURE)],
+      dbConfigResolve: () =>
+        Effect.succeed(
+          remoteResolvedConfig({
+            host: `db.${LEGACY_VALID_REF}.supabase.co`,
+            port: 5432,
+            user: "postgres",
+            password: "direct-password",
+            database: "postgres",
+          }),
+        ),
+      poolerFallback: Option.some({
+        host: "127.0.0.1",
+        port: 6543,
+        user: `postgres.${LEGACY_VALID_REF}`,
+        password: "pooler-password",
+        database: "postgres",
+      }),
+    });
+
+    return Effect.gen(function* () {
+      const exit = yield* legacyGenTypes(
+        defaultFlags({
+          projectId: Option.some(LEGACY_VALID_REF),
+          lang: "go",
+        }),
+      ).pipe(Effect.provide(layer), Effect.exit);
+
+      expect(Exit.isFailure(exit)).toBe(true);
+      expect(generator.calls).toHaveLength(2);
+      expect(dbConfig.poolerFallbacks).toHaveLength(1);
+    });
+  });
+
+  it.live(
+    "does not retry remote generation when the resolved connection is already a pooler host",
+    () => {
+      const { layer, out, dbConfig, generator } = setup({
+        args: ["gen", "types", "--lang", "go", "--project-id", LEGACY_VALID_REF],
+        generatorResults: [Effect.fail(IPV6_CONNECT_FAILURE)],
+        dbConfigResolve: () =>
+          Effect.succeed(
+            remoteResolvedConfig({
+              host: "aws-0-us-east-1.pooler.supabase.com",
+              port: 5432,
               user: `postgres.${LEGACY_VALID_REF}`,
               password: "pooler-password",
               database: "postgres",
             }),
-          });
-
-          const exit = await Effect.runPromise(
-            legacyGenTypes(
-              defaultFlags({
-                projectId: Option.some(LEGACY_VALID_REF),
-                lang: "go",
-              }),
-            ).pipe(Effect.provide(layer), Effect.exit),
-          );
-
-          expect(Exit.isFailure(exit)).toBe(true);
-          expect(child.spawned).toHaveLength(1);
-          expect(dbConfig.poolerFallbacks).toHaveLength(0);
-        }),
-      catch: (cause) => (cause instanceof Error ? cause : new Error(String(cause))),
-    }),
-  );
-
-  it.live(
-    "does not run pooler fallback a second time when the retry also exits with IPv6 stderr",
-    () =>
-      Effect.tryPromise({
-        try: () =>
-          withSslProbeServer(async (port) => {
-            const child = mockSequentialChildProcessSpawner([
-              {
-                exitCode: 1,
-                stderr: [
-                  `could not translate host name "db.${LEGACY_VALID_REF}.supabase.co" to address: No address associated with hostname`,
-                ],
-              },
-              {
-                exitCode: 1,
-                stderr: [
-                  `could not translate host name "db.${LEGACY_VALID_REF}.supabase.co" to address: No address associated with hostname`,
-                ],
-              },
-            ]);
-            const { layer, dbConfig } = setup({
-              args: ["gen", "types", "--lang", "go", "--project-id", LEGACY_VALID_REF],
-              childLayer: child.layer,
-              sslProbeLayer: Layer.succeed(LegacyPgDeltaSslProbe, {
-                requireSsl: () => Effect.succeed(false),
-                requireSslForHost: () => Effect.succeed(false),
-              }),
-              dbConfigResolve: () =>
-                Effect.succeed(
-                  remoteResolvedConfig({
-                    host: `db.${LEGACY_VALID_REF}.supabase.co`,
-                    port,
-                    user: "postgres",
-                    password: "direct-password",
-                    database: "postgres",
-                  }),
-                ),
-              poolerFallback: Option.some({
-                host: "127.0.0.1",
-                port,
-                user: `postgres.${LEGACY_VALID_REF}`,
-                password: "pooler-password",
-                database: "postgres",
-              }),
-            });
-
-            const exit = await Effect.runPromise(
-              legacyGenTypes(
-                defaultFlags({
-                  projectId: Option.some(LEGACY_VALID_REF),
-                  lang: "go",
-                }),
-              ).pipe(Effect.provide(layer), Effect.exit),
-            );
-
-            expect(Exit.isFailure(exit)).toBe(true);
-            expect(child.spawned).toHaveLength(2);
-            expect(dbConfig.poolerFallbacks).toHaveLength(1);
-          }),
-        catch: (cause) => (cause instanceof Error ? cause : new Error(String(cause))),
-      }),
-  );
-
-  it.live(
-    "does not retry remote pg-meta when the resolved connection is already a pooler host",
-    () =>
-      Effect.tryPromise({
-        try: () =>
-          Effect.runPromise(
-            Effect.gen(function* () {
-              const child = mockSequentialChildProcessSpawner([
-                {
-                  exitCode: 1,
-                  stderr: [
-                    `could not translate host name "db.${LEGACY_VALID_REF}.supabase.co" to address: No address associated with hostname`,
-                  ],
-                },
-              ]);
-              const { layer, out, dbConfig } = setup({
-                args: ["gen", "types", "--lang", "go", "--project-id", LEGACY_VALID_REF],
-                childLayer: child.layer,
-                sslProbeLayer: Layer.succeed(LegacyPgDeltaSslProbe, {
-                  requireSsl: () => Effect.succeed(false),
-                  requireSslForHost: () => Effect.succeed(false),
-                }),
-                dbConfigResolve: () =>
-                  Effect.succeed(
-                    remoteResolvedConfig({
-                      host: "aws-0-us-east-1.pooler.supabase.com",
-                      port: 5432,
-                      user: `postgres.${LEGACY_VALID_REF}`,
-                      password: "pooler-password",
-                      database: "postgres",
-                    }),
-                  ),
-                poolerFallback: Option.some({
-                  host: "aws-0-us-east-1.pooler.supabase.com",
-                  port: 5432,
-                  user: `postgres.${LEGACY_VALID_REF}`,
-                  password: "pooler-password",
-                  database: "postgres",
-                }),
-              });
-
-              const exit = yield* legacyGenTypes(
-                defaultFlags({
-                  projectId: Option.some(LEGACY_VALID_REF),
-                  lang: "go",
-                }),
-              ).pipe(Effect.provide(layer), Effect.exit);
-
-              expect(Exit.isFailure(exit)).toBe(true);
-              expect(child.spawned).toHaveLength(1);
-              expect(dbConfig.poolerFallbacks).toHaveLength(0);
-              expect(out.stderrText).not.toContain("Retrying via the IPv4 connection pooler.");
-            }),
           ),
-        catch: (cause) => (cause instanceof Error ? cause : new Error(String(cause))),
-      }),
-  );
-
-  it.live("retries remote pg-meta when the TLS probe fails with ENETUNREACH", () =>
-    Effect.tryPromise({
-      try: () =>
-        Effect.runPromise(
-          Effect.gen(function* () {
-            let probeCalls = 0;
-            const child = mockSequentialChildProcessSpawner([
-              { exitCode: 0, stdout: ["type RetriedAfterProbeFailure struct {}"] },
-            ]);
-            const { layer, out, dbConfig } = setup({
-              args: ["gen", "types", "--lang", "go", "--project-id", LEGACY_VALID_REF],
-              childLayer: child.layer,
-              sslProbeLayer: Layer.succeed(LegacyPgDeltaSslProbe, {
-                requireSsl: () => Effect.succeed(false),
-                requireSslForHost: () =>
-                  Effect.gen(function* () {
-                    probeCalls += 1;
-                    if (probeCalls === 1) {
-                      return yield* Effect.fail(
-                        new LegacyPgDeltaSslProbeError({
-                          message: "network is unreachable",
-                          cause: Object.assign(new Error(), { code: "ENETUNREACH" }),
-                        }),
-                      );
-                    }
-                    return false;
-                  }),
-              }),
-              dbConfigResolve: () =>
-                Effect.succeed(
-                  remoteResolvedConfig({
-                    host: `db.${LEGACY_VALID_REF}.supabase.co`,
-                    port: 5432,
-                    user: "postgres",
-                    password: "direct-password",
-                    database: "postgres",
-                  }),
-                ),
-              poolerFallback: Option.some({
-                host: "aws-0-us-east-1.pooler.supabase.com",
-                port: 5432,
-                user: `postgres.${LEGACY_VALID_REF}`,
-                password: "pooler-password",
-                database: "postgres",
-              }),
-            });
-
-            yield* legacyGenTypes(
-              defaultFlags({
-                projectId: Option.some(LEGACY_VALID_REF),
-                lang: "go",
-              }),
-            ).pipe(Effect.provide(layer));
-
-            expect(out.stdoutText).toContain("type RetriedAfterProbeFailure struct {}");
-            expect(probeCalls).toBe(2);
-            expect(child.spawned).toHaveLength(1);
-            expect(dbConfig.poolerFallbacks).toHaveLength(1);
-          }),
-        ),
-      catch: (cause) => (cause instanceof Error ? cause : new Error(String(cause))),
-    }),
-  );
-
-  it.live("does not retry remote pg-meta when the TLS probe fails with ECONNREFUSED", () =>
-    Effect.tryPromise({
-      try: () =>
-        Effect.runPromise(
-          Effect.gen(function* () {
-            const child = mockSequentialChildProcessSpawner([
-              { exitCode: 0, stdout: ["should not spawn"] },
-            ]);
-            const { layer, dbConfig } = setup({
-              args: ["gen", "types", "--lang", "go", "--project-id", LEGACY_VALID_REF],
-              childLayer: child.layer,
-              sslProbeLayer: Layer.succeed(LegacyPgDeltaSslProbe, {
-                requireSsl: () => Effect.succeed(false),
-                requireSslForHost: () =>
-                  Effect.fail(
-                    new LegacyPgDeltaSslProbeError({
-                      message: "connection refused",
-                      cause: Object.assign(new Error(), { code: "ECONNREFUSED" }),
-                    }),
-                  ),
-              }),
-              dbConfigResolve: () =>
-                Effect.succeed(
-                  remoteResolvedConfig({
-                    host: `db.${LEGACY_VALID_REF}.supabase.co`,
-                    port: 5432,
-                    user: "postgres",
-                    password: "direct-password",
-                    database: "postgres",
-                  }),
-                ),
-              poolerFallback: Option.some({
-                host: "aws-0-us-east-1.pooler.supabase.com",
-                port: 5432,
-                user: `postgres.${LEGACY_VALID_REF}`,
-                password: "pooler-password",
-                database: "postgres",
-              }),
-            });
-
-            const exit = yield* legacyGenTypes(
-              defaultFlags({
-                projectId: Option.some(LEGACY_VALID_REF),
-                lang: "go",
-              }),
-            ).pipe(Effect.provide(layer), Effect.exit);
-
-            expect(Exit.isFailure(exit)).toBe(true);
-            expect(child.spawned).toHaveLength(0);
-            expect(dbConfig.poolerFallbacks).toHaveLength(0);
-          }),
-        ),
-      catch: (cause) => (cause instanceof Error ? cause : new Error(String(cause))),
-    }),
-  );
-
-  it.live("preserves the original remote pg-meta error when pooler fallback resolution fails", () =>
-    Effect.tryPromise({
-      try: () =>
-        withSslProbeServer(async (port) => {
-          const child = mockSequentialChildProcessSpawner([
-            {
-              exitCode: 1,
-              stderr: [
-                'could not translate host name "db.abcdefghijklmnopqrst.supabase.co" to address: No address associated with hostname',
-              ],
-            },
-          ]);
-          const { layer } = setup({
-            args: ["gen", "types", "--lang", "go", "--project-id", LEGACY_VALID_REF],
-            childLayer: child.layer,
-            sslProbeLayer: Layer.succeed(LegacyPgDeltaSslProbe, {
-              requireSsl: () => Effect.succeed(false),
-              requireSslForHost: () => Effect.succeed(false),
-            }),
-            dbConfigResolve: () =>
-              Effect.succeed(
-                remoteResolvedConfig({
-                  host: `db.${LEGACY_VALID_REF}.supabase.co`,
-                  port,
-                  user: "postgres",
-                  password: "direct-password",
-                  database: "postgres",
-                }),
-              ),
-            poolerFallbackFails: true,
-          });
-
-          const exit = await Effect.runPromise(
-            legacyGenTypes(
-              defaultFlags({
-                projectId: Option.some(LEGACY_VALID_REF),
-                lang: "go",
-              }),
-            ).pipe(Effect.provide(layer), Effect.exit),
-          );
-
-          expect(Exit.isFailure(exit)).toBe(true);
-          if (Exit.isFailure(exit)) {
-            expect(String(exit.cause)).toContain("error running container: exit 1");
-            expect(String(exit.cause)).not.toContain("pooler fallback failed");
-          }
-          expect(child.spawned).toHaveLength(1);
+        poolerFallback: Option.some({
+          host: "aws-0-us-east-1.pooler.supabase.com",
+          port: 5432,
+          user: `postgres.${LEGACY_VALID_REF}`,
+          password: "pooler-password",
+          database: "postgres",
         }),
-      catch: (cause) => (cause instanceof Error ? cause : new Error(String(cause))),
-    }),
-  );
+      });
 
-  it.live("uses remote config schemas for explicit project-ref pg-meta typegen", () =>
-    Effect.tryPromise({
-      try: () =>
-        withSslProbeServer(async (port) => {
-          const workdir = mkdtempSync(join(tmpdir(), "supabase-gen-types-remote-config-"));
-          writeConfig(
-            workdir,
-            [
-              'project_id = "base"',
-              "",
-              "[api]",
-              'schemas = ["public"]',
-              "",
-              "[remotes.staging]",
-              `project_id = "${LEGACY_VALID_REF}"`,
-              "",
-              "[remotes.staging.api]",
-              'schemas = ["private"]',
-              "",
-            ].join("\n"),
-          );
-          const docker = captureDockerRun();
-          const { layer } = setup({
-            workdir,
-            args: ["gen", "types", "--lang", "go", "--project-id", LEGACY_VALID_REF],
-            childStdout: ["type PrivateMovies struct {}"],
-            dbConfigResolve: () =>
-              Effect.succeed(
-                remoteResolvedConfig({
-                  host: "127.0.0.1",
-                  port,
-                  user: "postgres",
-                  password: "direct-password",
-                  database: "postgres",
-                }),
-              ),
-            onSpawn: docker.onSpawn,
-          });
-
-          try {
-            await Effect.runPromise(
-              legacyGenTypes(
-                defaultFlags({
-                  projectId: Option.some(LEGACY_VALID_REF),
-                  lang: "go",
-                }),
-              ).pipe(Effect.provide(layer)),
-            );
-          } finally {
-            rmSync(workdir, { recursive: true, force: true });
-          }
-
-          expect(docker.env.has("PG_META_GENERATE_TYPES_INCLUDED_SCHEMAS=public,private")).toBe(
-            true,
-          );
-          expect(docker.env.has("PG_META_GENERATE_TYPES_INCLUDED_SCHEMAS=public")).toBe(false);
-        }),
-      catch: (cause) => (cause instanceof Error ? cause : new Error(String(cause))),
-    }),
-  );
-
-  it.live("uses remote config schemas for linked pg-meta typegen", () =>
-    Effect.tryPromise({
-      try: () =>
-        withSslProbeServer(async (port) => {
-          const workdir = mkdtempSync(join(tmpdir(), "supabase-gen-types-linked-config-"));
-          writeConfig(
-            workdir,
-            [
-              'project_id = "base"',
-              "",
-              "[api]",
-              'schemas = ["public"]',
-              "",
-              "[remotes.staging]",
-              `project_id = "${LEGACY_VALID_REF}"`,
-              "",
-              "[remotes.staging.api]",
-              'schemas = ["private"]',
-              "",
-            ].join("\n"),
-          );
-          const docker = captureDockerRun();
-          const { layer } = setup({
-            workdir,
+      return Effect.gen(function* () {
+        const exit = yield* legacyGenTypes(
+          defaultFlags({
             projectId: Option.some(LEGACY_VALID_REF),
-            args: ["gen", "types", "--lang", "go", "--linked"],
-            childStdout: ["type PrivateMovies struct {}"],
-            dbConfigResolve: () =>
-              Effect.succeed(
-                remoteResolvedConfig({
-                  host: "127.0.0.1",
-                  port,
-                  user: "postgres",
-                  password: "direct-password",
-                  database: "postgres",
-                }),
-              ),
-            onSpawn: docker.onSpawn,
-          });
+            lang: "go",
+          }),
+        ).pipe(Effect.provide(layer), Effect.exit);
 
-          try {
-            await Effect.runPromise(
-              legacyGenTypes(
-                defaultFlags({
-                  linked: true,
-                  lang: "go",
-                }),
-              ).pipe(Effect.provide(layer)),
-            );
-          } finally {
-            rmSync(workdir, { recursive: true, force: true });
-          }
-
-          expect(docker.env.has("PG_META_GENERATE_TYPES_INCLUDED_SCHEMAS=public,private")).toBe(
-            true,
-          );
-          expect(docker.env.has("PG_META_GENERATE_TYPES_INCLUDED_SCHEMAS=public")).toBe(false);
-        }),
-      catch: (cause) => (cause instanceof Error ? cause : new Error(String(cause))),
-    }),
+        expect(Exit.isFailure(exit)).toBe(true);
+        expect(generator.calls).toHaveLength(1);
+        expect(dbConfig.poolerFallbacks).toHaveLength(0);
+        expect(out.stderrText).not.toContain("Retrying via the IPv4 connection pooler.");
+      });
+    },
   );
 
-  it.live("falls back to preview branch config for non-TypeScript project refs", () =>
-    Effect.tryPromise({
-      try: () =>
-        withSslProbeServer(async (port) => {
-          const docker = captureDockerRun();
-          const { layer, api, dbConfig } = setup({
-            args: ["gen", "types", "--lang", "python", "--project-id", LEGACY_VALID_REF],
-            childStdout: ["class PublicMovies(BaseModel):"],
-            getProject: () =>
-              Effect.fail(statusApiError(404, `{"message":"Preview branch not found"}`)),
-            getABranchConfig: ({ branch_id_or_ref }) =>
-              Effect.succeed({
-                ref: branch_id_or_ref,
-                postgres_version: "15.1",
-                postgres_engine: "15",
-                release_channel: "ga",
-                status: "ACTIVE_HEALTHY",
-                db_host: "127.0.0.1",
-                db_port: port,
-                db_user: "branch_user",
-                db_pass: "branch-password",
-                jwt_secret: "secret",
-              }),
-            createLoginRole: ({ ref }) =>
-              Effect.fail(new Error(`unexpected login role creation for ${ref}`)),
-            onSpawn: docker.onSpawn,
-          });
-
-          await Effect.runPromise(
-            legacyGenTypes(
-              defaultFlags({
-                projectId: Option.some(LEGACY_VALID_REF),
-                lang: "python",
-              }),
-            ).pipe(Effect.provide(layer)),
-          );
-
-          expect(api.requests).toContainEqual({
-            method: "getProject",
-            input: { ref: LEGACY_VALID_REF },
-          });
-          expect(api.requests).toContainEqual({
-            method: "getABranchConfig",
-            input: { branch_id_or_ref: LEGACY_VALID_REF },
-          });
-          expect(api.requests).not.toContainEqual(
-            expect.objectContaining({ method: "createLoginRole" }),
-          );
-          expect(dbConfig.resolves).toHaveLength(0);
-          expect(
-            docker.env.has(
-              `PG_META_DB_URL=postgresql://branch_user:branch-password@127.0.0.1:${port}/postgres?connect_timeout=10`,
-            ),
-          ).toBe(true);
-        }),
-      catch: (cause) => (cause instanceof Error ? cause : new Error(String(cause))),
-    }),
-  );
-
-  it.live("retries preview branch pg-meta through the branch IPv4 pooler", () =>
-    Effect.tryPromise({
-      try: () =>
-        Effect.runPromise(
-          Effect.gen(function* () {
-            const poolerHost = "aws-0-us-east-1.pooler.supabase.com";
-            const child = mockSequentialChildProcessSpawner([
-              {
-                exitCode: 1,
-                stderr: [
-                  `could not translate host name "db.${LEGACY_VALID_REF}.supabase.co" to address: No address associated with hostname`,
-                ],
-              },
-              { exitCode: 0, stdout: ["class RetriedViaBranchPooler(BaseModel):"] },
-            ]);
-            const { layer, api } = setup({
-              args: ["gen", "types", "--lang", "python", "--project-id", LEGACY_VALID_REF],
-              childLayer: child.layer,
-              sslProbeLayer: Layer.succeed(LegacyPgDeltaSslProbe, {
-                requireSsl: () => Effect.succeed(false),
-                requireSslForHost: () => Effect.succeed(false),
-              }),
-              getProject: () => Effect.fail(statusApiError(404, `{"message":"Not found"}`)),
-              getABranchConfig: ({ branch_id_or_ref }) =>
-                Effect.succeed({
-                  ref: branch_id_or_ref,
-                  postgres_version: "15.1",
-                  postgres_engine: "15",
-                  release_channel: "ga",
-                  status: "ACTIVE_HEALTHY",
-                  db_host: `db.${branch_id_or_ref}.supabase.co`,
-                  db_port: 5432,
-                  db_user: "branch_user",
-                  db_pass: "branch-password",
-                  jwt_secret: "secret",
-                }),
-              getPoolerConfig: ({ ref }) =>
-                Effect.succeed([
-                  {
-                    identifier: "primary",
-                    database_type: "PRIMARY",
-                    is_using_scram_auth: true,
-                    db_user: "postgres",
-                    db_host: "db.example",
-                    db_port: 5432,
-                    db_name: "postgres",
-                    connection_string: `postgres://postgres.${ref}:[YOUR-PASSWORD]@${poolerHost}:6543/postgres`,
-                    connectionString: `postgres://postgres.${ref}:[YOUR-PASSWORD]@${poolerHost}:6543/postgres`,
-                    default_pool_size: null,
-                    max_client_conn: null,
-                    pool_mode: "transaction",
-                  },
-                ]),
-            });
-
-            yield* legacyGenTypes(
-              defaultFlags({
-                projectId: Option.some(LEGACY_VALID_REF),
-                lang: "python",
-              }),
-            ).pipe(Effect.provide(layer));
-
-            expect(api.requests).toContainEqual({
-              method: "getPoolerConfig",
-              input: { ref: LEGACY_VALID_REF },
-            });
-            expect(child.spawned).toHaveLength(2);
-            expect(
-              dockerEnv(child.spawned[1]?.args ?? []).has(
-                `PG_META_DB_URL=postgresql://postgres.${LEGACY_VALID_REF}:branch-password@${poolerHost}:5432/postgres?connect_timeout=10`,
-              ),
-            ).toBe(true);
+  it.live("preserves the original generation error when pooler fallback resolution fails", () => {
+    const { layer, generator } = setup({
+      args: ["gen", "types", "--lang", "go", "--project-id", LEGACY_VALID_REF],
+      generatorResults: [Effect.fail(IPV6_CONNECT_FAILURE)],
+      dbConfigResolve: () =>
+        Effect.succeed(
+          remoteResolvedConfig({
+            host: `db.${LEGACY_VALID_REF}.supabase.co`,
+            port: 5432,
+            user: "postgres",
+            password: "direct-password",
+            database: "postgres",
           }),
         ),
-      catch: (cause) => (cause instanceof Error ? cause : new Error(String(cause))),
-    }),
-  );
+      poolerFallbackFails: true,
+    });
 
-  it.live("skips preview branch pooler fallback when the pooler URL fails validation", () =>
-    Effect.tryPromise({
-      try: () =>
-        Effect.runPromise(
-          Effect.gen(function* () {
-            const child = mockSequentialChildProcessSpawner([
-              {
-                exitCode: 1,
-                stderr: [
-                  `could not translate host name "db.${LEGACY_VALID_REF}.supabase.co" to address: No address associated with hostname`,
-                ],
-              },
-            ]);
-            const { layer, api } = setup({
-              args: ["gen", "types", "--lang", "python", "--project-id", LEGACY_VALID_REF],
-              childLayer: child.layer,
-              sslProbeLayer: Layer.succeed(LegacyPgDeltaSslProbe, {
-                requireSsl: () => Effect.succeed(false),
-                requireSslForHost: () => Effect.succeed(false),
-              }),
-              getProject: () => Effect.fail(statusApiError(404, `{"message":"Not found"}`)),
-              getABranchConfig: ({ branch_id_or_ref }) =>
-                Effect.succeed({
-                  ref: branch_id_or_ref,
-                  postgres_version: "15.1",
-                  postgres_engine: "15",
-                  release_channel: "ga",
-                  status: "ACTIVE_HEALTHY",
-                  db_host: `db.${branch_id_or_ref}.supabase.co`,
-                  db_port: 5432,
-                  db_user: "branch_user",
-                  db_pass: "branch-password",
-                  jwt_secret: "secret",
-                }),
-              getPoolerConfig: ({ ref }) =>
-                Effect.succeed([
-                  {
-                    identifier: "primary",
-                    database_type: "PRIMARY",
-                    is_using_scram_auth: true,
-                    db_user: "postgres",
-                    db_host: "db.example",
-                    db_port: 5432,
-                    db_name: "postgres",
-                    connection_string: `postgres://postgres.${ref}:[YOUR-PASSWORD]@pooler.example.com:6543/postgres`,
-                    connectionString: `postgres://postgres.${ref}:[YOUR-PASSWORD]@pooler.example.com:6543/postgres`,
-                    default_pool_size: null,
-                    max_client_conn: null,
-                    pool_mode: "transaction",
-                  },
-                ]),
-            });
-
-            const exit = yield* legacyGenTypes(
-              defaultFlags({
-                projectId: Option.some(LEGACY_VALID_REF),
-                lang: "python",
-              }),
-            ).pipe(Effect.provide(layer), Effect.exit);
-
-            expect(Exit.isFailure(exit)).toBe(true);
-            expect(api.requests).toContainEqual({
-              method: "getPoolerConfig",
-              input: { ref: LEGACY_VALID_REF },
-            });
-            expect(child.spawned).toHaveLength(1);
-          }),
-        ),
-      catch: (cause) => (cause instanceof Error ? cause : new Error(String(cause))),
-    }),
-  );
-
-  it.live("falls back to preview branch config for any project 404 body", () =>
-    Effect.tryPromise({
-      try: () =>
-        withSslProbeServer(async (port) => {
-          const docker = captureDockerRun();
-          const { layer, api, dbConfig } = setup({
-            args: ["gen", "types", "--lang", "python", "--project-id", LEGACY_VALID_REF],
-            childStdout: ["class PublicMovies(BaseModel):"],
-            // The Management API's 404 wording is not guaranteed; a generic body
-            // must still route to the branch config endpoint.
-            getProject: () => Effect.fail(statusApiError(404, `{"message":"Not found"}`)),
-            getABranchConfig: ({ branch_id_or_ref }) =>
-              Effect.succeed({
-                ref: branch_id_or_ref,
-                postgres_version: "15.1",
-                postgres_engine: "15",
-                release_channel: "ga",
-                status: "ACTIVE_HEALTHY",
-                db_host: "127.0.0.1",
-                db_port: port,
-                db_user: "branch_user",
-                db_pass: "branch-password",
-                jwt_secret: "secret",
-              }),
-            onSpawn: docker.onSpawn,
-          });
-
-          await Effect.runPromise(
-            legacyGenTypes(
-              defaultFlags({
-                projectId: Option.some(LEGACY_VALID_REF),
-                lang: "python",
-              }),
-            ).pipe(Effect.provide(layer)),
-          );
-
-          expect(api.requests).toContainEqual({
-            method: "getABranchConfig",
-            input: { branch_id_or_ref: LEGACY_VALID_REF },
-          });
-          expect(dbConfig.resolves).toHaveLength(0);
-          expect(
-            docker.env.has(
-              `PG_META_DB_URL=postgresql://branch_user:branch-password@127.0.0.1:${port}/postgres?connect_timeout=10`,
-            ),
-          ).toBe(true);
+    return Effect.gen(function* () {
+      const exit = yield* legacyGenTypes(
+        defaultFlags({
+          projectId: Option.some(LEGACY_VALID_REF),
+          lang: "go",
         }),
-      catch: (cause) => (cause instanceof Error ? cause : new Error(String(cause))),
-    }),
-  );
+      ).pipe(Effect.provide(layer), Effect.exit);
+
+      expect(Exit.isFailure(exit)).toBe(true);
+      if (Exit.isFailure(exit)) {
+        expect(String(exit.cause)).toContain("could not translate host name");
+        expect(String(exit.cause)).not.toContain("pooler fallback failed");
+      }
+      expect(generator.calls).toHaveLength(1);
+    });
+  });
+
+  it.live("uses remote config schemas for explicit project-ref typegen", () => {
+    const workdir = mkdtempSync(join(tmpdir(), "supabase-gen-types-remote-config-"));
+    writeConfig(
+      workdir,
+      [
+        'project_id = "base"',
+        "",
+        "[api]",
+        'schemas = ["public"]',
+        "",
+        "[remotes.staging]",
+        `project_id = "${LEGACY_VALID_REF}"`,
+        "",
+        "[remotes.staging.api]",
+        'schemas = ["private"]',
+        "",
+      ].join("\n"),
+    );
+    const { layer, generator } = setup({
+      workdir,
+      args: ["gen", "types", "--lang", "go", "--project-id", LEGACY_VALID_REF],
+      generatorOutput: "type PrivateMovies struct {}",
+    });
+
+    return Effect.gen(function* () {
+      try {
+        yield* legacyGenTypes(
+          defaultFlags({
+            projectId: Option.some(LEGACY_VALID_REF),
+            lang: "go",
+          }),
+        ).pipe(Effect.provide(layer));
+      } finally {
+        rmSync(workdir, { recursive: true, force: true });
+      }
+
+      expect(generator.calls[0]?.includedSchemas).toEqual(["public", "private"]);
+    });
+  });
+
+  it.live("uses remote config schemas for linked typegen", () => {
+    const workdir = mkdtempSync(join(tmpdir(), "supabase-gen-types-linked-config-"));
+    writeConfig(
+      workdir,
+      [
+        'project_id = "base"',
+        "",
+        "[api]",
+        'schemas = ["public"]',
+        "",
+        "[remotes.staging]",
+        `project_id = "${LEGACY_VALID_REF}"`,
+        "",
+        "[remotes.staging.api]",
+        'schemas = ["private"]',
+        "",
+      ].join("\n"),
+    );
+    const { layer, generator } = setup({
+      workdir,
+      projectId: Option.some(LEGACY_VALID_REF),
+      args: ["gen", "types", "--lang", "go", "--linked"],
+      generatorOutput: "type PrivateMovies struct {}",
+    });
+
+    return Effect.gen(function* () {
+      try {
+        yield* legacyGenTypes(
+          defaultFlags({
+            linked: true,
+            lang: "go",
+          }),
+        ).pipe(Effect.provide(layer));
+      } finally {
+        rmSync(workdir, { recursive: true, force: true });
+      }
+
+      expect(generator.calls[0]?.includedSchemas).toEqual(["public", "private"]);
+    });
+  });
+
+  it.live("falls back to preview branch config for non-TypeScript project refs", () => {
+    const { layer, api, dbConfig, generator } = setup({
+      args: ["gen", "types", "--lang", "python", "--project-id", LEGACY_VALID_REF],
+      generatorOutput: "class PublicMovies(BaseModel):",
+      getProject: () => Effect.fail(statusApiError(404, `{"message":"Preview branch not found"}`)),
+      getABranchConfig: ({ branch_id_or_ref }) =>
+        Effect.succeed({
+          ref: branch_id_or_ref,
+          postgres_version: "15.1",
+          postgres_engine: "15",
+          release_channel: "ga",
+          status: "ACTIVE_HEALTHY",
+          db_host: "127.0.0.1",
+          db_port: 5432,
+          db_user: "branch_user",
+          db_pass: "branch-password",
+          jwt_secret: "secret",
+        }),
+      createLoginRole: ({ ref }) =>
+        Effect.fail(new Error(`unexpected login role creation for ${ref}`)),
+    });
+
+    return Effect.gen(function* () {
+      yield* legacyGenTypes(
+        defaultFlags({
+          projectId: Option.some(LEGACY_VALID_REF),
+          lang: "python",
+        }),
+      ).pipe(Effect.provide(layer));
+
+      expect(api.requests).toContainEqual({
+        method: "getProject",
+        input: { ref: LEGACY_VALID_REF },
+      });
+      expect(api.requests).toContainEqual({
+        method: "getABranchConfig",
+        input: { branch_id_or_ref: LEGACY_VALID_REF },
+      });
+      expect(api.requests).not.toContainEqual(
+        expect.objectContaining({ method: "createLoginRole" }),
+      );
+      expect(dbConfig.resolves).toHaveLength(0);
+      expect(generator.calls[0]?.conn).toEqual({
+        host: "127.0.0.1",
+        port: 5432,
+        user: "branch_user",
+        password: "branch-password",
+        database: "postgres",
+      });
+      expect(generator.calls[0]?.isLocal).toBe(false);
+    });
+  });
+
+  it.live("retries preview branch generation through the branch IPv4 pooler", () => {
+    const poolerHost = "aws-0-us-east-1.pooler.supabase.com";
+    const { layer, api, generator } = setup({
+      args: ["gen", "types", "--lang", "python", "--project-id", LEGACY_VALID_REF],
+      generatorResults: [
+        Effect.fail(IPV6_CONNECT_FAILURE),
+        Effect.succeed("class RetriedViaBranchPooler(BaseModel):"),
+      ],
+      getProject: () => Effect.fail(statusApiError(404, `{"message":"Not found"}`)),
+      getABranchConfig: ({ branch_id_or_ref }) =>
+        Effect.succeed({
+          ref: branch_id_or_ref,
+          postgres_version: "15.1",
+          postgres_engine: "15",
+          release_channel: "ga",
+          status: "ACTIVE_HEALTHY",
+          db_host: `db.${branch_id_or_ref}.supabase.co`,
+          db_port: 5432,
+          db_user: "branch_user",
+          db_pass: "branch-password",
+          jwt_secret: "secret",
+        }),
+      getPoolerConfig: ({ ref }) =>
+        Effect.succeed([
+          {
+            identifier: "primary",
+            database_type: "PRIMARY",
+            is_using_scram_auth: true,
+            db_user: "postgres",
+            db_host: "db.example",
+            db_port: 5432,
+            db_name: "postgres",
+            connection_string: `postgres://postgres.${ref}:[YOUR-PASSWORD]@${poolerHost}:6543/postgres`,
+            connectionString: `postgres://postgres.${ref}:[YOUR-PASSWORD]@${poolerHost}:6543/postgres`,
+            default_pool_size: null,
+            max_client_conn: null,
+            pool_mode: "transaction",
+          },
+        ]),
+    });
+
+    return Effect.gen(function* () {
+      yield* legacyGenTypes(
+        defaultFlags({
+          projectId: Option.some(LEGACY_VALID_REF),
+          lang: "python",
+        }),
+      ).pipe(Effect.provide(layer));
+
+      expect(api.requests).toContainEqual({
+        method: "getPoolerConfig",
+        input: { ref: LEGACY_VALID_REF },
+      });
+      expect(generator.calls).toHaveLength(2);
+      expect(generator.calls[1]?.conn.host).toBe(poolerHost);
+      expect(generator.calls[1]?.conn.user).toBe(`postgres.${LEGACY_VALID_REF}`);
+      // The branch credentials replace the pooler URL's placeholder password.
+      expect(generator.calls[1]?.conn.password).toBe("branch-password");
+    });
+  });
+
+  it.live("skips preview branch pooler fallback when the pooler URL fails validation", () => {
+    const { layer, api, generator } = setup({
+      args: ["gen", "types", "--lang", "python", "--project-id", LEGACY_VALID_REF],
+      generatorResults: [Effect.fail(IPV6_CONNECT_FAILURE)],
+      getProject: () => Effect.fail(statusApiError(404, `{"message":"Not found"}`)),
+      getABranchConfig: ({ branch_id_or_ref }) =>
+        Effect.succeed({
+          ref: branch_id_or_ref,
+          postgres_version: "15.1",
+          postgres_engine: "15",
+          release_channel: "ga",
+          status: "ACTIVE_HEALTHY",
+          db_host: `db.${branch_id_or_ref}.supabase.co`,
+          db_port: 5432,
+          db_user: "branch_user",
+          db_pass: "branch-password",
+          jwt_secret: "secret",
+        }),
+      getPoolerConfig: ({ ref }) =>
+        Effect.succeed([
+          {
+            identifier: "primary",
+            database_type: "PRIMARY",
+            is_using_scram_auth: true,
+            db_user: "postgres",
+            db_host: "db.example",
+            db_port: 5432,
+            db_name: "postgres",
+            connection_string: `postgres://postgres.${ref}:[YOUR-PASSWORD]@pooler.example.com:6543/postgres`,
+            connectionString: `postgres://postgres.${ref}:[YOUR-PASSWORD]@pooler.example.com:6543/postgres`,
+            default_pool_size: null,
+            max_client_conn: null,
+            pool_mode: "transaction",
+          },
+        ]),
+    });
+
+    return Effect.gen(function* () {
+      const exit = yield* legacyGenTypes(
+        defaultFlags({
+          projectId: Option.some(LEGACY_VALID_REF),
+          lang: "python",
+        }),
+      ).pipe(Effect.provide(layer), Effect.exit);
+
+      expect(Exit.isFailure(exit)).toBe(true);
+      expect(api.requests).toContainEqual({
+        method: "getPoolerConfig",
+        input: { ref: LEGACY_VALID_REF },
+      });
+      expect(generator.calls).toHaveLength(1);
+    });
+  });
+
+  it.live("falls back to preview branch config for any project 404 body", () => {
+    const { layer, api, dbConfig, generator } = setup({
+      args: ["gen", "types", "--lang", "python", "--project-id", LEGACY_VALID_REF],
+      generatorOutput: "class PublicMovies(BaseModel):",
+      // The Management API's 404 wording is not guaranteed; a generic body
+      // must still route to the branch config endpoint.
+      getProject: () => Effect.fail(statusApiError(404, `{"message":"Not found"}`)),
+      getABranchConfig: ({ branch_id_or_ref }) =>
+        Effect.succeed({
+          ref: branch_id_or_ref,
+          postgres_version: "15.1",
+          postgres_engine: "15",
+          release_channel: "ga",
+          status: "ACTIVE_HEALTHY",
+          db_host: "127.0.0.1",
+          db_port: 5432,
+          db_user: "branch_user",
+          db_pass: "branch-password",
+          jwt_secret: "secret",
+        }),
+    });
+
+    return Effect.gen(function* () {
+      yield* legacyGenTypes(
+        defaultFlags({
+          projectId: Option.some(LEGACY_VALID_REF),
+          lang: "python",
+        }),
+      ).pipe(Effect.provide(layer));
+
+      expect(api.requests).toContainEqual({
+        method: "getABranchConfig",
+        input: { branch_id_or_ref: LEGACY_VALID_REF },
+      });
+      expect(dbConfig.resolves).toHaveLength(0);
+      expect(generator.calls[0]?.conn.user).toBe("branch_user");
+      expect(generator.calls[0]?.conn.password).toBe("branch-password");
+    });
+  });
 
   it.live("fails clearly when preview branch config does not include DB credentials", () => {
     const { layer } = setup({
@@ -2304,6 +1678,152 @@ describe("legacy gen types", () => {
     });
   });
 
+  it.live("surfaces a non-404 project lookup failure for non-TypeScript generation", () => {
+    const { layer, dbConfig, generator } = setup({
+      args: ["gen", "types", "--lang", "go", "--project-id", LEGACY_VALID_REF],
+      getProject: () => Effect.fail(statusApiError(500, `{"message":"boom"}`)),
+    });
+
+    return Effect.gen(function* () {
+      const exit = yield* legacyGenTypes(
+        defaultFlags({
+          projectId: Option.some(LEGACY_VALID_REF),
+          lang: "go",
+        }),
+      ).pipe(Effect.provide(layer), Effect.exit);
+
+      expect(Exit.isFailure(exit)).toBe(true);
+      if (Exit.isFailure(exit)) {
+        // Only a 404 routes to the preview-branch fallback; any other status
+        // surfaces as the mapped project database config error.
+        expect(String(exit.cause)).toContain("unexpected project database config status 500");
+      }
+      expect(dbConfig.resolves).toHaveLength(0);
+      expect(generator.calls).toHaveLength(0);
+    });
+  });
+
+  it.live("maps project lookup network failures for non-TypeScript generation", () => {
+    const { layer } = setup({
+      args: ["gen", "types", "--lang", "go", "--project-id", LEGACY_VALID_REF],
+      getProject: () => Effect.fail(new Error("network error")),
+    });
+
+    return Effect.gen(function* () {
+      const exit = yield* legacyGenTypes(
+        defaultFlags({
+          projectId: Option.some(LEGACY_VALID_REF),
+          lang: "go",
+        }),
+      ).pipe(Effect.provide(layer), Effect.exit);
+
+      expect(Exit.isFailure(exit)).toBe(true);
+      if (Exit.isFailure(exit)) {
+        expect(String(exit.cause)).toContain("failed to get project database config");
+      }
+    });
+  });
+
+  it.live("maps preview branch config network failures after the project 404", () => {
+    const { layer } = setup({
+      args: ["gen", "types", "--lang", "python", "--project-id", LEGACY_VALID_REF],
+      getProject: () => Effect.fail(statusApiError(404, `{"message":"Not found"}`)),
+      getABranchConfig: () => Effect.fail(new Error("network error")),
+    });
+
+    return Effect.gen(function* () {
+      const exit = yield* legacyGenTypes(
+        defaultFlags({
+          projectId: Option.some(LEGACY_VALID_REF),
+          lang: "python",
+        }),
+      ).pipe(Effect.provide(layer), Effect.exit);
+
+      expect(Exit.isFailure(exit)).toBe(true);
+      if (Exit.isFailure(exit)) {
+        expect(String(exit.cause)).toContain("failed to get preview branch database config");
+      }
+    });
+  });
+
+  it.live("maps preview branch config status failures after the project 404", () => {
+    const { layer, generator } = setup({
+      args: ["gen", "types", "--lang", "python", "--project-id", LEGACY_VALID_REF],
+      getProject: () => Effect.fail(statusApiError(404, `{"message":"Not found"}`)),
+      getABranchConfig: () => Effect.fail(statusApiError(500, `{"message":"boom"}`)),
+    });
+
+    return Effect.gen(function* () {
+      const exit = yield* legacyGenTypes(
+        defaultFlags({
+          projectId: Option.some(LEGACY_VALID_REF),
+          lang: "python",
+        }),
+      ).pipe(Effect.provide(layer), Effect.exit);
+
+      expect(Exit.isFailure(exit)).toBe(true);
+      if (Exit.isFailure(exit)) {
+        expect(String(exit.cause)).toContain(
+          "unexpected preview branch database config status 500",
+        );
+      }
+      expect(generator.calls).toHaveLength(0);
+    });
+  });
+
+  it.live("skips preview branch pooler fallback when no primary pooler is configured", () => {
+    const { layer, generator } = setup({
+      args: ["gen", "types", "--lang", "python", "--project-id", LEGACY_VALID_REF],
+      generatorResults: [Effect.fail(IPV6_CONNECT_FAILURE)],
+      getProject: () => Effect.fail(statusApiError(404, `{"message":"Not found"}`)),
+      getABranchConfig: ({ branch_id_or_ref }) =>
+        Effect.succeed({
+          ref: branch_id_or_ref,
+          postgres_version: "15.1",
+          postgres_engine: "15",
+          release_channel: "ga",
+          status: "ACTIVE_HEALTHY",
+          db_host: `db.${branch_id_or_ref}.supabase.co`,
+          db_port: 5432,
+          db_user: "branch_user",
+          db_pass: "branch-password",
+          jwt_secret: "secret",
+        }),
+      getPoolerConfig: () => Effect.succeed([]),
+    });
+
+    return Effect.gen(function* () {
+      const exit = yield* legacyGenTypes(
+        defaultFlags({
+          projectId: Option.some(LEGACY_VALID_REF),
+          lang: "python",
+        }),
+      ).pipe(Effect.provide(layer), Effect.exit);
+
+      expect(Exit.isFailure(exit)).toBe(true);
+      expect(generator.calls).toHaveLength(1);
+    });
+  });
+
+  it.live("maps project type generation status failures", () => {
+    const { layer } = setup({
+      generateTypescriptTypes: () => Effect.fail(statusApiError(500, "generation broke")),
+    });
+
+    return Effect.gen(function* () {
+      const exit = yield* legacyGenTypes(
+        defaultFlags({
+          projectId: Option.some(LEGACY_VALID_REF),
+        }),
+      ).pipe(Effect.provide(layer), Effect.exit);
+
+      expect(Exit.isFailure(exit)).toBe(true);
+      if (Exit.isFailure(exit)) {
+        expect(String(exit.cause)).toContain("failed to retrieve generated types");
+      }
+    });
+  });
+
   it.live("maps project type generation network failures", () => {
     const { layer } = setup({
       generateTypescriptTypes: () => Effect.fail(new Error("network error")),
@@ -2325,331 +1845,209 @@ describe("legacy gen types", () => {
     });
   });
 
-  it.live("spawns pg-meta for local generation and forwards child output", () =>
-    Effect.tryPromise({
-      try: () =>
-        withSslProbeServer(async (port) => {
-          const docker = captureDockerRun();
-          const workdir = mkdtempSync(join(tmpdir(), "supabase-gen-types-local-"));
-          writeConfig(
-            workdir,
-            [
-              'project_id = "demo"',
-              "",
-              "[api]",
-              "port = 54321",
-              'schemas = ["public", "custom"]',
-              "",
-              "[db]",
-              `port = ${port}`,
-            ].join("\n"),
-          );
+  it.live("generates locally through the native generator", () => {
+    const workdir = mkdtempSync(join(tmpdir(), "supabase-gen-types-local-"));
+    writeConfig(
+      workdir,
+      [
+        'project_id = "demo"',
+        "",
+        "[api]",
+        "port = 54321",
+        'schemas = ["public", "custom"]',
+        "",
+        "[db]",
+        "port = 54322",
+      ].join("\n"),
+    );
 
-          const { layer, out, child, linkedProjectCache } = setup({
-            workdir,
-            childStdout: ["export type Database = {};"],
-            childStderr: ["pg-meta warning"],
-            onSpawn: docker.onSpawn,
-          });
+    const { layer, out, child, linkedProjectCache, generator, dbConfig } = setup({
+      workdir,
+      generatorOutput: "export type Database = {};",
+    });
 
-          await Effect.runPromise(
-            legacyGenTypes(defaultFlags({ local: true })).pipe(Effect.provide(layer)),
-          );
+    return Effect.gen(function* () {
+      yield* legacyGenTypes(defaultFlags({ local: true })).pipe(Effect.provide(layer));
 
-          expect(out.stderrText).toContain("Connecting to db 5432");
-          expect(out.stderrText).toContain("pg-meta warning");
-          expect(out.stdoutText).toContain("export type Database = {};");
-          expect(child.spawned).toHaveLength(2);
-          expect(child.spawned[0]).toEqual({
-            command: "docker",
-            args: ["container", "inspect", "supabase_db_demo"],
-          });
-          expect(child.spawned[1]?.command).toBe("docker");
-          expect(child.spawned[1]?.args).toContain("--network");
-          expect(child.spawned[1]?.args).toContain("supabase_network_demo");
-          expect(docker.env.has("PG_META_GENERATE_TYPES_INCLUDED_SCHEMAS=public,custom")).toBe(
-            true,
-          );
-          expect(child.spawned[1]?.args).toContain(resolvePgmetaImage());
-          // The local/db-url paths have no project ref, so they must not
-          // populate the linked-project cache.
-          expect(linkedProjectCache.cached).toBe(false);
-        }),
-      catch: (cause) => (cause instanceof Error ? cause : new Error(String(cause))),
-    }),
-  );
+      expect(out.stderrText).toContain("Connecting to 127.0.0.1 54322");
+      expect(out.stdoutText).toBe("export type Database = {};\n");
+      // The only remaining subprocess is the local-stack `container inspect`;
+      // generation itself is in-process.
+      expect(child.spawned).toEqual([
+        { command: "docker", args: ["container", "inspect", "supabase_db_demo"] },
+      ]);
+      expect(generator.calls).toHaveLength(1);
+      expect(generator.calls[0]?.conn).toEqual({
+        host: "127.0.0.1",
+        port: 54322,
+        user: "postgres",
+        password: "postgres",
+        database: "postgres",
+      });
+      expect(generator.calls[0]?.isLocal).toBe(true);
+      expect(generator.calls[0]?.includedSchemas).toEqual(["public", "custom"]);
+      // The local path never consults the DB config resolver.
+      expect(dbConfig.resolves).toHaveLength(0);
+      // The local/db-url paths have no project ref, so they must not
+      // populate the linked-project cache.
+      expect(linkedProjectCache.cached).toBe(false);
+    });
+  });
 
-  it.live("falls back to podman when the docker executable is missing for local generation", () =>
-    Effect.tryPromise({
-      try: () =>
-        withSslProbeServer(async (port) => {
-          const workdir = mkdtempSync(join(tmpdir(), "supabase-gen-types-local-podman-"));
-          writeConfig(
-            workdir,
-            [
-              'project_id = "demo"',
-              "",
-              "[api]",
-              'schemas = ["public"]',
-              "",
-              "[db]",
-              `port = ${port}`,
-            ].join("\n"),
-          );
-          const child = mockDockerMissingChildProcessSpawner([
-            { exitCode: 0 },
-            { exitCode: 0, stdout: ["export type Database = {};"] },
-          ]);
-          const { layer, out } = setup({
-            workdir,
-            childLayer: child.layer,
-          });
+  it.live("falls back to podman when the docker executable is missing for local generation", () => {
+    const workdir = mkdtempSync(join(tmpdir(), "supabase-gen-types-local-podman-"));
+    writeConfig(
+      workdir,
+      ['project_id = "demo"', "", "[api]", 'schemas = ["public"]', "", "[db]", "port = 54322"].join(
+        "\n",
+      ),
+    );
+    const child = mockDockerMissingChildProcessSpawner([{ exitCode: 0 }]);
+    const { layer, out } = setup({
+      workdir,
+      childLayer: child.layer,
+      generatorOutput: "export type Database = {};",
+    });
 
-          await Effect.runPromise(
-            legacyGenTypes(defaultFlags({ local: true })).pipe(Effect.provide(layer)),
-          );
+    return Effect.gen(function* () {
+      yield* legacyGenTypes(defaultFlags({ local: true })).pipe(Effect.provide(layer));
 
-          expect(out.stdoutText).toContain("export type Database = {};");
-          expect(child.spawned[0]).toEqual({
-            command: "docker",
-            args: ["container", "inspect", "supabase_db_demo"],
-          });
-          expect(child.spawned[1]).toEqual({
-            command: "podman",
-            args: ["container", "inspect", "supabase_db_demo"],
-          });
-          expect(child.spawned[2]?.command).toBe("docker");
-          expect(child.spawned[2]?.args).toContain("run");
-          expect(child.spawned[3]?.command).toBe("podman");
-          expect(child.spawned[3]?.args).toContain("run");
-          expect(child.spawned[3]?.args).toContain("supabase_network_demo");
-        }),
-      catch: (cause) => (cause instanceof Error ? cause : new Error(String(cause))),
-    }),
-  );
+      expect(out.stdoutText).toContain("export type Database = {};");
+      expect(child.spawned).toEqual([
+        { command: "docker", args: ["container", "inspect", "supabase_db_demo"] },
+        { command: "podman", args: ["container", "inspect", "supabase_db_demo"] },
+      ]);
+    });
+  });
 
-  it.live("uses sanitized local docker ids and env-backed local db passwords", () =>
-    Effect.tryPromise({
-      try: () =>
-        withSslProbeServer(async (port) => {
-          const docker = captureDockerRun();
-          const workdir = mkdtempSync(join(tmpdir(), "supabase-gen-types-local-sanitized-"));
-          writeConfig(
-            workdir,
-            [
-              'project_id = "..demo project with spaces"',
-              "",
-              "[api]",
-              'schemas = ["public"]',
-              "",
-              "[db]",
-              `port = ${port}`,
-            ].join("\n"),
-          );
+  it.live("uses sanitized local docker ids and env-backed local db passwords", () => {
+    const workdir = mkdtempSync(join(tmpdir(), "supabase-gen-types-local-sanitized-"));
+    writeConfig(
+      workdir,
+      [
+        'project_id = "..demo project with spaces"',
+        "",
+        "[api]",
+        'schemas = ["public"]',
+        "",
+        "[db]",
+        "port = 54322",
+      ].join("\n"),
+    );
 
-          const previousPassword = process.env["SUPABASE_DB_PASSWORD"];
-          process.env["SUPABASE_DB_PASSWORD"] = "secret-password";
-          try {
-            const { layer, child } = setup({
-              workdir,
-              childStdout: ["generated"],
-              onSpawn: docker.onSpawn,
-            });
+    const previousPassword = process.env["SUPABASE_DB_PASSWORD"];
+    process.env["SUPABASE_DB_PASSWORD"] = "secret-password";
+    const { layer, child, generator } = setup({ workdir });
 
-            await Effect.runPromise(
-              legacyGenTypes(defaultFlags({ local: true })).pipe(Effect.provide(layer)),
-            );
+    return Effect.gen(function* () {
+      try {
+        yield* legacyGenTypes(defaultFlags({ local: true })).pipe(Effect.provide(layer));
 
-            expect(child.spawned[0]).toEqual({
-              command: "docker",
-              args: ["container", "inspect", "supabase_db_demo_project_with_spaces"],
-            });
-            expect(child.spawned[1]?.args).toContain("supabase_network_demo_project_with_spaces");
-            expect(
-              docker.env.has(
-                "PG_META_DB_URL=postgresql://postgres:secret-password@db:5432/postgres?connect_timeout=10",
-              ),
-            ).toBe(true);
-          } finally {
-            if (previousPassword === undefined) {
-              delete process.env["SUPABASE_DB_PASSWORD"];
-            } else {
-              process.env["SUPABASE_DB_PASSWORD"] = previousPassword;
-            }
-          }
-        }),
-      catch: (cause) => (cause instanceof Error ? cause : new Error(String(cause))),
-    }),
-  );
+        expect(child.spawned[0]).toEqual({
+          command: "docker",
+          args: ["container", "inspect", "supabase_db_demo_project_with_spaces"],
+        });
+        expect(generator.calls[0]?.conn.password).toBe("secret-password");
+      } finally {
+        if (previousPassword === undefined) {
+          delete process.env["SUPABASE_DB_PASSWORD"];
+        } else {
+          process.env["SUPABASE_DB_PASSWORD"] = previousPassword;
+        }
+      }
+    });
+  });
 
-  it.live("forces v9 compat when rest-version reports v9 on a modern database", () =>
-    Effect.tryPromise({
-      try: () =>
-        withSslProbeServer(async (port) => {
-          const docker = captureDockerRun();
-          const workdir = mkdtempSync(join(tmpdir(), "supabase-gen-types-local-v9-"));
-          writeConfig(
-            workdir,
-            [
-              'project_id = "demo"',
-              "",
-              "[api]",
-              'schemas = ["public"]',
-              "",
-              "[db]",
-              "major_version = 15",
-              `port = ${port}`,
-            ].join("\n"),
-          );
-          writeTempFile(workdir, "rest-version", "v9.0.1\n");
+  it.live("forces v9 compat when rest-version reports v9 on a modern database", () => {
+    const workdir = mkdtempSync(join(tmpdir(), "supabase-gen-types-local-v9-"));
+    writeConfig(
+      workdir,
+      [
+        'project_id = "demo"',
+        "",
+        "[api]",
+        'schemas = ["public"]',
+        "",
+        "[db]",
+        "major_version = 15",
+        "port = 54322",
+      ].join("\n"),
+    );
+    writeTempFile(workdir, "rest-version", "v9.0.1\n");
 
-          const { layer } = setup({
-            workdir,
-            childStdout: ["generated"],
-            onSpawn: docker.onSpawn,
-          });
+    const { layer, generator } = setup({ workdir });
 
-          await Effect.runPromise(
-            legacyGenTypes(defaultFlags({ local: true })).pipe(Effect.provide(layer)),
-          );
+    return Effect.gen(function* () {
+      yield* legacyGenTypes(defaultFlags({ local: true })).pipe(Effect.provide(layer));
 
-          expect(
-            docker.env.has("PG_META_GENERATE_TYPES_DETECT_ONE_TO_ONE_RELATIONSHIPS=false"),
-          ).toBe(true);
-        }),
-      catch: (cause) => (cause instanceof Error ? cause : new Error(String(cause))),
-    }),
-  );
+      expect(generator.calls[0]?.postgrestV9Compat).toBe(true);
+    });
+  });
 
-  it.live("ignores rest-version v9 marker on databases older than 15", () =>
-    Effect.tryPromise({
-      try: () =>
-        withSslProbeServer(async (port) => {
-          const docker = captureDockerRun();
-          const workdir = mkdtempSync(join(tmpdir(), "supabase-gen-types-local-pg14-"));
-          writeConfig(
-            workdir,
-            [
-              'project_id = "demo"',
-              "",
-              "[api]",
-              'schemas = ["public"]',
-              "",
-              "[db]",
-              "major_version = 14",
-              `port = ${port}`,
-            ].join("\n"),
-          );
-          writeTempFile(workdir, "rest-version", "v9.0.1\n");
+  it.live("ignores rest-version v9 marker on databases older than 15", () => {
+    const workdir = mkdtempSync(join(tmpdir(), "supabase-gen-types-local-pg14-"));
+    writeConfig(
+      workdir,
+      [
+        'project_id = "demo"',
+        "",
+        "[api]",
+        'schemas = ["public"]',
+        "",
+        "[db]",
+        "major_version = 14",
+        "port = 54322",
+      ].join("\n"),
+    );
+    writeTempFile(workdir, "rest-version", "v9.0.1\n");
 
-          const { layer } = setup({
-            workdir,
-            childStdout: ["generated"],
-            onSpawn: docker.onSpawn,
-          });
+    const { layer, generator } = setup({ workdir });
 
-          await Effect.runPromise(
-            legacyGenTypes(defaultFlags({ local: true })).pipe(Effect.provide(layer)),
-          );
+    return Effect.gen(function* () {
+      yield* legacyGenTypes(defaultFlags({ local: true })).pipe(Effect.provide(layer));
 
-          expect(
-            docker.env.has("PG_META_GENERATE_TYPES_DETECT_ONE_TO_ONE_RELATIONSHIPS=true"),
-          ).toBe(true);
-        }),
-      catch: (cause) => (cause instanceof Error ? cause : new Error(String(cause))),
-    }),
-  );
+      expect(generator.calls[0]?.postgrestV9Compat).toBe(false);
+    });
+  });
 
-  it.live("overrides the pg-meta image version from the pgmeta-version temp file", () =>
-    Effect.tryPromise({
-      try: () =>
-        withSslProbeServer(async (port) => {
-          const docker = captureDockerRun();
-          const workdir = mkdtempSync(join(tmpdir(), "supabase-gen-types-local-pgmeta-"));
-          writeConfig(
-            workdir,
-            [
-              'project_id = "demo"',
-              "",
-              "[api]",
-              'schemas = ["public"]',
-              "",
-              "[db]",
-              `port = ${port}`,
-            ].join("\n"),
-          );
-          writeTempFile(workdir, "pgmeta-version", "v0.99.0\n");
+  it.live("prefers explicit --schema over config schemas for local generation", () => {
+    const workdir = mkdtempSync(join(tmpdir(), "supabase-gen-types-local-schema-"));
+    writeConfig(
+      workdir,
+      [
+        'project_id = "demo"',
+        "",
+        "[api]",
+        'schemas = ["public", "custom"]',
+        "",
+        "[db]",
+        "port = 54322",
+      ].join("\n"),
+    );
+    const { layer, generator } = setup({ workdir });
 
-          const { layer, child } = setup({
-            workdir,
-            childStdout: ["generated"],
-            onSpawn: docker.onSpawn,
-          });
+    return Effect.gen(function* () {
+      yield* legacyGenTypes(defaultFlags({ local: true, schema: ["auth", "storage"] })).pipe(
+        Effect.provide(layer),
+      );
 
-          await Effect.runPromise(
-            legacyGenTypes(defaultFlags({ local: true })).pipe(Effect.provide(layer)),
-          );
+      expect(generator.calls[0]?.includedSchemas).toEqual(["auth", "storage"]);
+    });
+  });
 
-          expect(child.spawned[1]?.args).toContain(resolvePgmetaImage("0.99.0"));
-        }),
-      catch: (cause) => (cause instanceof Error ? cause : new Error(String(cause))),
-    }),
-  );
+  it.live("falls back to the workdir basename when config has no project_id", () => {
+    const workdir = mkdtempSync(join(tmpdir(), "supabase-gen-types-local-noid-"));
+    writeConfig(workdir, ["[api]", 'schemas = ["public"]', "", "[db]", "port = 54322"].join("\n"));
+    const { layer, child } = setup({ workdir });
 
-  it.live("prefers explicit --schema over config schemas for local generation", () =>
-    Effect.tryPromise({
-      try: () =>
-        withSslProbeServer(async (port) => {
-          const docker = captureDockerRun();
-          const workdir = mkdtempSync(join(tmpdir(), "supabase-gen-types-local-schema-"));
-          writeConfig(
-            workdir,
-            [
-              'project_id = "demo"',
-              "",
-              "[api]",
-              'schemas = ["public", "custom"]',
-              "",
-              "[db]",
-              `port = ${port}`,
-            ].join("\n"),
-          );
-          const { layer } = setup({ workdir, childStdout: ["generated"], onSpawn: docker.onSpawn });
+    return Effect.gen(function* () {
+      yield* legacyGenTypes(defaultFlags({ local: true })).pipe(Effect.provide(layer));
 
-          await Effect.runPromise(
-            legacyGenTypes(defaultFlags({ local: true, schema: ["auth", "storage"] })).pipe(
-              Effect.provide(layer),
-            ),
-          );
-
-          expect(docker.env.has("PG_META_GENERATE_TYPES_INCLUDED_SCHEMAS=auth,storage")).toBe(true);
-        }),
-      catch: (cause) => (cause instanceof Error ? cause : new Error(String(cause))),
-    }),
-  );
-
-  it.live("falls back to the workdir basename when config has no project_id", () =>
-    Effect.tryPromise({
-      try: () =>
-        withSslProbeServer(async (port) => {
-          const workdir = mkdtempSync(join(tmpdir(), "supabase-gen-types-local-noid-"));
-          writeConfig(
-            workdir,
-            ["[api]", 'schemas = ["public"]', "", "[db]", `port = ${port}`].join("\n"),
-          );
-          const { layer, child } = setup({ workdir, childStdout: ["generated"] });
-
-          await Effect.runPromise(
-            legacyGenTypes(defaultFlags({ local: true })).pipe(Effect.provide(layer)),
-          );
-
-          const inspectId = child.spawned[0]?.args[2] ?? "";
-          expect(inspectId.startsWith("supabase_db_")).toBe(true);
-          expect(inspectId).not.toBe("supabase_db_demo");
-        }),
-      catch: (cause) => (cause instanceof Error ? cause : new Error(String(cause))),
-    }),
-  );
+      const inspectId = child.spawned[0]?.args[2] ?? "";
+      expect(inspectId.startsWith("supabase_db_")).toBe(true);
+      expect(inspectId).not.toBe("supabase_db_demo");
+    });
+  });
 
   it.live("generates from --project-id without a local project config", () => {
     const workdir = mkdtempSync(join(tmpdir(), "supabase-gen-types-pid-no-config-"));
@@ -2887,21 +2285,10 @@ describe("legacy gen types", () => {
 
   it.live("generates locally with Go defaults when supabase/config.toml is missing", () => {
     const workdir = mkdtempSync(join(tmpdir(), "supabase-gen-types-local-no-config-"));
-    const docker = captureDockerRun();
-    const probes: Array<{ host: string; port: number }> = [];
-    const { layer, out, child } = setup({
+    const { layer, out, child, generator } = setup({
       workdir,
       skipConfig: true,
-      childStdout: ["generated"],
-      onSpawn: docker.onSpawn,
-      sslProbeLayer: Layer.succeed(LegacyPgDeltaSslProbe, {
-        requireSsl: () => Effect.succeed(false),
-        requireSslForHost: (host, port) =>
-          Effect.sync(() => {
-            probes.push({ host, port });
-            return false;
-          }),
-      }),
+      generatorOutput: "generated",
     });
 
     return Effect.gen(function* () {
@@ -2912,11 +2299,9 @@ describe("legacy gen types", () => {
         command: "docker",
         args: ["container", "inspect", localDbContainerId(projectId)],
       });
-      expect(child.spawned[1]?.args).toContain(localNetworkId(projectId));
-      expect(probes).toEqual([{ host: "127.0.0.1", port: 54322 }]);
-      expect(docker.env.has("PG_META_GENERATE_TYPES_INCLUDED_SCHEMAS=public,graphql_public")).toBe(
-        true,
-      );
+      expect(generator.calls[0]?.conn.host).toBe("127.0.0.1");
+      expect(generator.calls[0]?.conn.port).toBe(54322);
+      expect(generator.calls[0]?.includedSchemas).toEqual(["public", "graphql_public"]);
       expect(out.stdoutText).toContain("generated");
     });
   });
@@ -2933,25 +2318,13 @@ describe("legacy gen types", () => {
         "SUPABASE_DB_PASSWORD=remote-password",
         "SUPABASE_API_SCHEMAS=private,graphql_public",
         "SUPABASE_SERVICES_HOSTNAME=host.docker.internal",
-        "SUPABASE_INTERNAL_IMAGE_REGISTRY=mirror.example.com",
         "",
       ].join("\n"),
     );
-    const docker = captureDockerRun();
-    const probes: Array<{ host: string; port: number }> = [];
-    const { layer, out, child } = setup({
+    const { layer, out, child, generator } = setup({
       workdir,
       skipConfig: true,
-      childStdout: ["generated"],
-      onSpawn: docker.onSpawn,
-      sslProbeLayer: Layer.succeed(LegacyPgDeltaSslProbe, {
-        requireSsl: () => Effect.succeed(false),
-        requireSslForHost: (host, port) =>
-          Effect.sync(() => {
-            probes.push({ host, port });
-            return false;
-          }),
-      }),
+      generatorOutput: "generated",
     });
 
     return Effect.gen(function* () {
@@ -2961,21 +2334,12 @@ describe("legacy gen types", () => {
         command: "docker",
         args: ["container", "inspect", localDbContainerId("configless-env-project")],
       });
-      expect(child.spawned[1]?.args).toContain(localNetworkId("configless-env-project"));
-      expect(probes).toEqual([{ host: "host.docker.internal", port: 55432 }]);
-      expect(
-        docker.env.has("PG_META_GENERATE_TYPES_INCLUDED_SCHEMAS=public,private,graphql_public"),
-      ).toBe(true);
-      expect(
-        docker.env.has(
-          "PG_META_DB_URL=postgresql://postgres:postgres@db:5432/postgres?connect_timeout=10",
-        ),
-      ).toBe(true);
-      expect(
-        child.spawned[1]?.args.some((arg) =>
-          arg.startsWith("mirror.example.com/supabase/postgres-meta:"),
-        ),
-      ).toBe(true);
+      expect(generator.calls[0]?.conn.host).toBe("host.docker.internal");
+      expect(generator.calls[0]?.conn.port).toBe(55432);
+      // SUPABASE_DB_PASSWORD is deliberately excluded when applying project
+      // env, so the local connection keeps the default password.
+      expect(generator.calls[0]?.conn.password).toBe("postgres");
+      expect(generator.calls[0]?.includedSchemas).toEqual(["public", "private", "graphql_public"]);
       expect(out.stdoutText).toContain("generated");
     });
   });
@@ -3004,255 +2368,120 @@ describe("legacy gen types", () => {
     });
   });
 
-  it.live("defaults schemas to public for a db-url run without a project config", () =>
-    Effect.tryPromise({
-      try: () =>
-        withSslProbeServer(async (port) => {
-          const docker = captureDockerRun();
-          const workdir = mkdtempSync(join(tmpdir(), "supabase-gen-types-dburl-no-config-"));
-          const { layer } = setup({
-            workdir,
-            skipConfig: true,
-            childStdout: ["generated"],
-            onSpawn: docker.onSpawn,
-          });
+  it.live("defaults schemas to public for a db-url run without a project config", () => {
+    const workdir = mkdtempSync(join(tmpdir(), "supabase-gen-types-dburl-no-config-"));
+    const dbUrl = "postgresql://postgres:postgres@127.0.0.1:5432/postgres";
+    const { layer, dbConfig, generator } = setup({
+      workdir,
+      skipConfig: true,
+    });
 
-          await Effect.runPromise(
-            legacyGenTypes(
-              defaultFlags({
-                dbUrl: Option.some(`postgresql://postgres:postgres@127.0.0.1:${port}/postgres`),
-              }),
-            ).pipe(Effect.provide(layer)),
-          );
+    return Effect.gen(function* () {
+      yield* legacyGenTypes(defaultFlags({ dbUrl: Option.some(dbUrl) })).pipe(
+        Effect.provide(layer),
+      );
 
-          expect(docker.env.has("PG_META_GENERATE_TYPES_INCLUDED_SCHEMAS=public")).toBe(true);
-        }),
-      catch: (cause) => (cause instanceof Error ? cause : new Error(String(cause))),
-    }),
-  );
-
-  it.live("surfaces pg-meta container failures after local db inspection succeeds", () => {
-    return Effect.tryPromise({
-      try: () =>
-        withSslProbeServer(async (port) => {
-          const workdir = mkdtempSync(join(tmpdir(), "supabase-gen-types-local-run-error-"));
-          writeConfig(
-            workdir,
-            [
-              'project_id = "demo"',
-              "",
-              "[api]",
-              'schemas = ["public"]',
-              "",
-              "[db]",
-              `port = ${port}`,
-            ].join("\n"),
-          );
-          const sequence = mockSequentialChildProcessSpawner([
-            { exitCode: 0 },
-            { exitCode: 1, stderr: ["pg-meta failed"] },
-          ]);
-          const { layer } = setup({
-            workdir,
-            childLayer: sequence.layer,
-          });
-
-          const exit = await Effect.runPromise(
-            legacyGenTypes(defaultFlags({ local: true })).pipe(Effect.provide(layer), Effect.exit),
-          );
-
-          expect(Exit.isFailure(exit)).toBe(true);
-          if (Exit.isFailure(exit)) {
-            expect(String(exit.cause)).toContain("error running container: exit 1");
-          }
-          expect(sequence.spawned).toHaveLength(2);
-        }),
-      catch: (cause) => (cause instanceof Error ? cause : new Error(String(cause))),
+      expect(dbConfig.resolves).toHaveLength(1);
+      expect(dbConfig.resolves[0]?.connType).toBe("db-url");
+      expect(
+        dbConfig.resolves[0] !== undefined
+          ? Option.getOrUndefined(dbConfig.resolves[0].dbUrl)
+          : undefined,
+      ).toBe(dbUrl);
+      expect(generator.calls[0]?.includedSchemas).toEqual(["public"]);
     });
   });
 
-  it.live("spawns pg-meta for db-url generation", () =>
-    Effect.tryPromise({
-      try: () =>
-        withSslProbeServer(async (port) => {
-          const docker = captureDockerRun();
-          const { layer, out, child } = setup({
-            childStdout: ["generated"],
-            onSpawn: docker.onSpawn,
-          });
+  it.live("surfaces generation failures after local db inspection succeeds", () => {
+    const workdir = mkdtempSync(join(tmpdir(), "supabase-gen-types-local-run-error-"));
+    writeConfig(
+      workdir,
+      ['project_id = "demo"', "", "[api]", 'schemas = ["public"]', "", "[db]", "port = 54322"].join(
+        "\n",
+      ),
+    );
+    const { layer, child } = setup({
+      workdir,
+      generatorResults: [
+        Effect.fail(
+          new LegacyGenTypesMetadataError({
+            message: "failed to introspect database: relation does not exist",
+          }),
+        ),
+      ],
+    });
 
-          await Effect.runPromise(
-            legacyGenTypes(
-              defaultFlags({
-                dbUrl: Option.some(`postgresql://postgres:postgres@127.0.0.1:${port}/postgres`),
-                lang: "swift",
-                schema: ["public"],
-                swiftAccessControl: "public",
-                postgrestV9Compat: true,
-                queryTimeout: "20s",
-              }),
-            ).pipe(Effect.provide(layer)),
-          );
+    return Effect.gen(function* () {
+      const exit = yield* legacyGenTypes(defaultFlags({ local: true })).pipe(
+        Effect.provide(layer),
+        Effect.exit,
+      );
 
-          expect(out.stderrText).toContain(`Connecting to 127.0.0.1 ${port}`);
-          expect(child.spawned[0]?.args).toContain("--network");
-          expect(child.spawned[0]?.args).toContain("host");
-          expect(docker.env.has("PG_META_GENERATE_TYPES=swift")).toBe(true);
-          expect(docker.env.has("PG_QUERY_TIMEOUT_SECS=20")).toBe(true);
-          expect(
-            docker.env.has("PG_META_GENERATE_TYPES_DETECT_ONE_TO_ONE_RELATIONSHIPS=false"),
-          ).toBe(true);
+      expect(Exit.isFailure(exit)).toBe(true);
+      if (Exit.isFailure(exit)) {
+        expect(String(exit.cause)).toContain(
+          "failed to introspect database: relation does not exist",
+        );
+      }
+      expect(child.spawned).toHaveLength(1);
+    });
+  });
+
+  it.live("runs the native generator for db-url generation", () => {
+    const dbUrl = "postgresql://postgres:postgres@127.0.0.1:5432/postgres";
+    const { layer, out, dbConfig, generator, linkedProjectCache } = setup({
+      generatorOutput: "generated",
+    });
+
+    return Effect.gen(function* () {
+      yield* legacyGenTypes(
+        defaultFlags({
+          dbUrl: Option.some(dbUrl),
+          lang: "swift",
+          schema: ["public"],
+          swiftAccessControl: "public",
+          postgrestV9Compat: true,
+          queryTimeout: "20s",
         }),
-      catch: (cause) => (cause instanceof Error ? cause : new Error(String(cause))),
-    }),
-  );
+      ).pipe(Effect.provide(layer));
 
-  it.live("injects the CA bundle env var when the database speaks TLS", () =>
-    Effect.tryPromise({
-      try: () =>
-        withSslProbeServer(async (port) => {
-          const docker = captureDockerRun();
-          const { layer } = setup({
-            childStdout: ["generated"],
-            onSpawn: docker.onSpawn,
-          });
+      expect(out.stderrText).toContain("Connecting to 127.0.0.1 5432");
+      expect(dbConfig.resolves).toHaveLength(1);
+      expect(dbConfig.resolves[0]?.connType).toBe("db-url");
+      expect(generator.calls[0]?.lang).toBe("swift");
+      expect(generator.calls[0]?.swiftAccessControl).toBe("public");
+      expect(generator.calls[0]?.postgrestV9Compat).toBe(true);
+      expect(generator.calls[0]?.queryTimeoutSeconds).toBe(20);
+      expect(generator.calls[0]?.isLocal).toBe(false);
+      expect(out.stdoutText).toBe("generated\n");
+      expect(linkedProjectCache.cached).toBe(false);
+    });
+  });
 
-          await Effect.runPromise(
-            legacyGenTypes(
-              defaultFlags({
-                dbUrl: Option.some(`postgresql://postgres:postgres@127.0.0.1:${port}/postgres`),
-                schema: ["public"],
-              }),
-            ).pipe(Effect.provide(layer)),
-          );
-
-          expect(docker.env.startsWith("PG_META_DB_SSL_ROOT_CERT=")).toBe(true);
-        }, "S"),
-      catch: (cause) => (cause instanceof Error ? cause : new Error(String(cause))),
-    }),
-  );
-
-  // The SSL probe does not special-case `--debug`: a successful probe
-  // returns true regardless, so the bundle is passed to pgmeta regardless of
-  // the flag.
-  it.live("passes the CA bundle env var in --debug mode when TLS is supported", () =>
-    Effect.tryPromise({
-      try: () =>
-        withSslProbeServer(async (port) => {
-          const docker = captureDockerRun();
-          const { layer } = setup({
-            childStdout: ["generated"],
-            debug: true,
-            onSpawn: docker.onSpawn,
-          });
-
-          await Effect.runPromise(
-            legacyGenTypes(
-              defaultFlags({
-                dbUrl: Option.some(`postgresql://postgres:postgres@127.0.0.1:${port}/postgres`),
-                schema: ["public"],
-              }),
-            ).pipe(Effect.provide(layer)),
-          );
-
-          expect(docker.env.startsWith("PG_META_DB_SSL_ROOT_CERT=")).toBe(true);
-        }, "S"),
-      catch: (cause) => (cause instanceof Error ? cause : new Error(String(cause))),
-    }),
-  );
-
-  it.live("warns on stderr when SUPABASE_CA_SKIP_VERIFY is enabled", () =>
-    Effect.tryPromise({
-      try: () =>
-        withSslProbeServer(async (port) => {
-          const previous = process.env["SUPABASE_CA_SKIP_VERIFY"];
-          process.env["SUPABASE_CA_SKIP_VERIFY"] = "true";
-          try {
-            const { layer, out } = setup({ childStdout: ["generated"] });
-
-            await Effect.runPromise(
-              legacyGenTypes(
-                defaultFlags({
-                  dbUrl: Option.some(`postgresql://postgres:postgres@127.0.0.1:${port}/postgres`),
-                  schema: ["public"],
-                }),
-              ).pipe(Effect.provide(layer)),
-            );
-
-            expect(out.stderrText).toContain(
-              "WARNING: TLS certificate verification disabled for SSL probe (SUPABASE_CA_SKIP_VERIFY=true)",
-            );
-          } finally {
-            if (previous === undefined) {
-              delete process.env["SUPABASE_CA_SKIP_VERIFY"];
-            } else {
-              process.env["SUPABASE_CA_SKIP_VERIFY"] = previous;
-            }
-          }
+  it.live("passes the resolver's local detection through for a local db-url", () => {
+    const dbUrl = "postgresql://postgres@127.0.0.1:54322/postgres";
+    const { layer, generator } = setup({
+      dbConfigResolve: () =>
+        Effect.succeed({
+          conn: {
+            host: "127.0.0.1",
+            port: 54322,
+            user: "postgres",
+            password: "postgres",
+            database: "postgres",
+          },
+          isLocal: true,
         }),
-      catch: (cause) => (cause instanceof Error ? cause : new Error(String(cause))),
-    }),
-  );
+    });
 
-  it.live("honors the --network-id override for the db-url connection", () =>
-    Effect.tryPromise({
-      try: () =>
-        withSslProbeServer(async (port) => {
-          const docker = captureDockerRun();
-          const { layer, child } = setup({
-            childStdout: ["generated"],
-            networkId: Option.some("custom-network"),
-            onSpawn: docker.onSpawn,
-          });
+    return Effect.gen(function* () {
+      yield* legacyGenTypes(defaultFlags({ dbUrl: Option.some(dbUrl) })).pipe(
+        Effect.provide(layer),
+      );
 
-          await Effect.runPromise(
-            legacyGenTypes(
-              defaultFlags({
-                dbUrl: Option.some(`postgresql://postgres:postgres@127.0.0.1:${port}/postgres`),
-                schema: ["public"],
-              }),
-            ).pipe(Effect.provide(layer)),
-          );
-
-          expect(child.spawned[0]?.args).toContain("custom-network");
-          expect(child.spawned[0]?.args).not.toContain("host");
-        }),
-      catch: (cause) => (cause instanceof Error ? cause : new Error(String(cause))),
-    }),
-  );
-
-  it.live("defaults bare db-url connections to the postgres database", () =>
-    Effect.tryPromise({
-      try: () =>
-        withSslProbeServer(async (port) => {
-          const docker = captureDockerRun();
-          const { layer } = setup({
-            childStdout: ["generated"],
-            onSpawn: docker.onSpawn,
-          });
-
-          await Effect.runPromise(
-            legacyGenTypes(
-              defaultFlags({
-                dbUrl: Option.some(`postgresql://postgres:postgres@127.0.0.1:${port}`),
-                lang: "swift",
-                schema: ["public"],
-                swiftAccessControl: "public",
-                postgrestV9Compat: true,
-                queryTimeout: "20s",
-              }),
-            ).pipe(Effect.provide(layer)),
-          );
-
-          expect(
-            docker.env.has(
-              `PG_META_DB_URL=postgresql://postgres:postgres@127.0.0.1:${port}/postgres`,
-            ),
-          ).toBe(true);
-        }),
-      catch: (cause) => (cause instanceof Error ? cause : new Error(String(cause))),
-    }),
-  );
+      expect(generator.calls[0]?.isLocal).toBe(true);
+    });
+  });
 
   it.live("accepts legacy positional typescript without changing behavior", () => {
     const { layer } = setup({
@@ -3300,30 +2529,22 @@ describe("legacy gen types", () => {
     },
   );
 
-  it.live("allows legacy positional non-typescript when --lang is explicitly set", () =>
-    Effect.tryPromise({
-      try: () =>
-        withSslProbeServer(async (port) => {
-          const docker = captureDockerRun();
-          const { layer } = setup({
-            args: ["gen", "types", "go", "--lang", "go"],
-            childStdout: ["generated"],
-            onSpawn: docker.onSpawn,
-          });
+  it.live("allows legacy positional non-typescript when --lang is explicitly set", () => {
+    const dbUrl = "postgresql://postgres:postgres@127.0.0.1:5432/postgres";
+    const { layer, generator } = setup({
+      args: ["gen", "types", "go", "--lang", "go"],
+    });
 
-          await Effect.runPromise(
-            legacyGenTypes(
-              defaultFlags({
-                dbUrl: Option.some(`postgresql://postgres:postgres@127.0.0.1:${port}/postgres`),
-                lang: "go",
-                schema: ["public"],
-              }),
-            ).pipe(Effect.provide(layer)),
-          );
-
-          expect(docker.env.has("PG_META_GENERATE_TYPES=go")).toBe(true);
+    return Effect.gen(function* () {
+      yield* legacyGenTypes(
+        defaultFlags({
+          dbUrl: Option.some(dbUrl),
+          lang: "go",
+          schema: ["public"],
         }),
-      catch: (cause) => (cause instanceof Error ? cause : new Error(String(cause))),
-    }),
-  );
+      ).pipe(Effect.provide(layer));
+
+      expect(generator.calls[0]?.lang).toBe("go");
+    });
+  });
 });
