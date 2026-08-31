@@ -221,7 +221,7 @@ describe("workload runtime catalog", () => {
   );
 
   it("resolves service-owned startup processes and slim container command contracts", () => {
-    const root = "/tmp/slim-artifact";
+    const root = "/tmp/slim artifact";
     const auth = planned("auth:auth");
     expect(runtimeSpecFor(auth)?.nativeStartupProcesses(root, state, auth, 9999)).toEqual([
       { executable: `${root}/bin/auth`, args: ["migrate"], cwd: root },
@@ -274,14 +274,16 @@ describe("workload runtime catalog", () => {
     });
     expect(tenantStartup?.[1]?.args.join(" ")).not.toContain("secret");
 
+    const nativeTenantEnv = runtimeSpecFor(pooler)?.env(state, pooler, 6543, "native", tenantInput);
+    expect(nativeTenantEnv).not.toHaveProperty("SUPABASE_POOLER_TENANT_PATH");
     const containerTenantEnv = runtimeSpecFor(pooler)?.env(
       state,
       pooler,
       6543,
-      "native",
+      "container",
       tenantInput,
     );
-    expect(containerTenantEnv).not.toHaveProperty("SUPABASE_POOLER_TENANT_PATH");
+    expect(containerTenantEnv?.SUPABASE_POOLER_TENANT_PATH).toBe("/app/pooler_tenant.exs");
 
     expect(containerResolutionFor(state, auth)?.command).toEqual([
       "/bin/sh",

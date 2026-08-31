@@ -994,3 +994,16 @@ private-port reservation plus gateway ownership atomic with accepted lifecycle g
   pass 55 cases with stack type-check, Effect lint, formatting, and diff checks green. Production wiring remains
   the next slice; `RuntimeInputOwner.resolve(state, generation)` now derives runtime from persisted state and the
   owner requires an ambient `Scope` for its FiberSet.
+
+#### Task 14 Fable correction round 1 (2026-08-31)
+
+- Pooler sizing now rejects missing or whitespace persisted values while retaining the compiler's finite-number
+  contract; invalid sizing fails before any generation file is published. Generated tenant create clauses use
+  consistent Elixir indentation.
+- Runtime-input tests now gate an actual cold in-flight resolve with `Deferred`, prove one discovery/JWKS pair,
+  shared tenant material, warm-cache reuse, and survival when a joined waiter is interrupted. Owner finalization is
+  attached outside semaphore acquisition so queued interruption clears only its matching slot and completes the
+  exact deferred exit; successful cache publication remains conditional on slot ownership.
+- Added combined local/remote JWKS, space-bearing native artifact paths, positive container tenant-path, and
+  sibling-generation cleanup coverage. Focused owner/secret/workload/catalog integration verification passes 57
+  cases with stack type-check, Effect lint, formatting, and diff checks green.

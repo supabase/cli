@@ -1,6 +1,6 @@
 import { NodeServices } from "@effect/platform-node";
 import { describe, expect, it } from "@effect/vitest";
-import { Cause, Effect, Exit, FileSystem, Option, Path, Redacted } from "effect";
+import { Cause, Deferred, Effect, Exit, FileSystem, Fiber, Option, Path, Redacted } from "effect";
 import { generateKeyPairSync } from "node:crypto";
 import { compileStack, type CompiledStack } from "../model/Compiler.ts";
 import { StackIdSchema } from "../public/StackId.ts";
@@ -109,7 +109,17 @@ describe("runtime input owner", () => {
             { ...second, alg: "RS256", kid: "rsa-key" },
           ]),
         );
-        const base = yield* compiledState(root);
+        const base = yield* compiledState(root, {
+          capabilities: {
+            auth: {
+              settings: {
+                third_party: {
+                  workos: { enabled: true, issuer_url: "https://issuer.example" },
+                },
+              },
+            },
+          },
+        });
         if (base.definition === undefined) return yield* Effect.die("compiled definition missing");
         const state: PersistedStackState = {
           ...base,
@@ -124,11 +134,20 @@ describe("runtime input owner", () => {
             },
           },
         };
-        const owner = yield* makeRuntimeInputOwner({ stateRoot: root, stackId });
+        const owner = yield* makeRuntimeInputOwner({
+          stateRoot: root,
+          stackId,
+          fetchJson: (url) =>
+            Effect.succeed(
+              url.endsWith("openid-configuration")
+                ? { jwks_uri: "https://issuer.example/keys" }
+                : { keys: [{ kty: "RSA", n: "n", e: "AQAB" }] },
+            ),
+        });
         const material = yield* owner.resolve(state, 1);
         expect(JSON.parse(material.auth?.jwtKeys ?? "[]")).toHaveLength(2);
         const jwks = JSON.parse(material.auth?.jwks ?? "{}");
-        expect(jwks.keys).toHaveLength(2);
+        expect(jwks.keys).toHaveLength(3);
         expect(jwks.keys.every((key: Record<string, unknown>) => !Object.hasOwn(key, "d"))).toBe(
           true,
         );
@@ -381,17 +400,22 @@ describe("runtime input owner", () => {
         };
         const first = yield* owner.resolve(nativeState, 3);
         const second = yield* owner.resolve(nativeState, 3);
-        expect(second.pooler?.tenantPath).toBe(first.pooler?.tenantPath);
-        const tenant = first.pooler?.tenantPath;
-        expect(tenant).toBeDefined();
-        expect((yield* fs.stat(tenant!)).mode & 0o777).toBe(0o600);
-        const content = yield* fs.readFileString(tenant!);
+        const thirdGenerationTenant = first.pooler?.tenantPath;
+        expect(second.pooler?.tenantPath).toBe(thirdGenerationTenant);
+        expect(thirdGenerationTenant).toBeDefined();
+        expect((yield* fs.stat(thirdGenerationTenant!)).mode & 0o777).toBe(0o600);
+        const content = yield* fs.readFileString(thirdGenerationTenant!);
         expect(content).toContain('"db_host" => "127.0.0.1"');
         expect(content).toContain('"external_id" => "pooler-dev"');
         expect(content).toContain('"db_port" => 30001');
         expect(content).not.toContain('"db_password" => ""');
+        const fourth = yield* owner.resolve(nativeState, 4);
+        const fourthGenerationTenant = fourth.pooler?.tenantPath;
+        expect(fourthGenerationTenant).toBeDefined();
+        expect(fourthGenerationTenant).not.toBe(thirdGenerationTenant);
         yield* owner.cleanupGeneration(3);
-        expect(yield* fs.exists(path.dirname(tenant!))).toBe(false);
+        expect(yield* fs.exists(path.dirname(thirdGenerationTenant!))).toBe(false);
+        expect(yield* fs.exists(fourthGenerationTenant!)).toBe(true);
       }),
     ),
   );
@@ -457,6 +481,40 @@ describe("runtime input owner", () => {
     ),
   );
 
+  it.live("fails closed when persisted Pooler sizing is missing or blank", () =>
+    withPlatform(
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const root = yield* fs.makeTempDirectoryScoped({ prefix: "runtime-input-pooler-sizing-" });
+        const base = yield* compiledState(root, {
+          capabilities: { pooler: { enabled: true, settings: { pool_mode: "session" } } },
+        });
+        const native = {
+          ...base,
+          privatePorts: [{ workloadId: "database:database", binding: "primary", port: 30_001 }],
+        };
+        const missing = JSON.parse(JSON.stringify(native));
+        delete missing.definition.capabilities.pooler.settings.default_pool_size;
+        const blank = JSON.parse(JSON.stringify(native));
+        blank.definition.capabilities.pooler.settings.default_pool_size = "  ";
+        const owner = yield* makeRuntimeInputOwner({ stateRoot: root, stackId });
+        for (const [generation, invalid] of [
+          [10, missing],
+          [11, blank],
+        ] as const) {
+          const failed = yield* owner.resolve(invalid, generation).pipe(Effect.exit);
+          expect(errorOf(failed)?.message).toContain("sizing settings are invalid");
+          expect(
+            yield* fs.exists(
+              path.join(root, stackId, "runtime", "inputs", "pooler", `${generation}`),
+            ),
+          ).toBe(false);
+        }
+      }),
+    ),
+  );
+
   it.live("does not publish a Pooler file when Functions validation fails", () =>
     withPlatform(
       Effect.gen(function* () {
@@ -487,12 +545,76 @@ describe("runtime input owner", () => {
     ),
   );
 
-  it.live("single-flights equivalent resolution and retries failed generations", () =>
+  it.live("single-flights cold equivalent resolutions and reuses the completed material", () =>
+    withPlatform(
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const root = yield* fs.makeTempDirectoryScoped({ prefix: "runtime-input-single-flight-" });
+        const started = yield* Deferred.make<void>();
+        const release = yield* Deferred.make<void>();
+        let fetches = 0;
+        const state = yield* compiledState(root, {
+          capabilities: {
+            auth: {
+              settings: {
+                third_party: { workos: { enabled: true, issuer_url: "https://issuer.example" } },
+              },
+            },
+            pooler: { enabled: true },
+          },
+        });
+        const native = {
+          ...state,
+          privatePorts: [{ workloadId: "database:database", binding: "primary", port: 30_001 }],
+        };
+        const owner = yield* makeRuntimeInputOwner({
+          stateRoot: root,
+          stackId,
+          fetchJson: (url) => {
+            fetches += 1;
+            return Effect.gen(function* () {
+              if (fetches === 1) {
+                yield* Deferred.succeed(started, undefined);
+                yield* Deferred.await(release);
+              }
+              return url.endsWith("openid-configuration")
+                ? { jwks_uri: "https://issuer.example/keys" }
+                : { keys: [{ kty: "RSA", n: "n", e: "AQAB" }] };
+            });
+          },
+        });
+        const first = yield* Effect.forkChild(owner.resolve(native, 5), {
+          startImmediately: true,
+        });
+        yield* Deferred.await(started);
+        const second = yield* Effect.forkChild(owner.resolve(native, 5), {
+          startImmediately: true,
+        });
+        yield* Effect.yieldNow;
+        expect(fetches).toBe(1);
+        yield* Deferred.succeed(release, undefined);
+        const [firstMaterial, secondMaterial] = yield* Effect.all([
+          Fiber.join(first),
+          Fiber.join(second),
+        ]);
+        expect(fetches).toBe(2);
+        expect(firstMaterial.auth?.jwks).toBe(secondMaterial.auth?.jwks);
+        expect(firstMaterial.pooler?.tenantPath).toBe(secondMaterial.pooler?.tenantPath);
+        const cached = yield* owner.resolve(native, 5);
+        expect(cached.pooler?.tenantPath).toBe(firstMaterial.pooler?.tenantPath);
+        expect(fetches).toBe(2);
+      }),
+    ),
+  );
+
+  it.live("keeps the owner alive when an in-flight waiter is interrupted", () =>
     withPlatform(
       Effect.gen(function* () {
         const root = yield* (yield* FileSystem.FileSystem).makeTempDirectoryScoped({
-          prefix: "runtime-input-single-flight-",
+          prefix: "runtime-input-single-flight-interrupt-",
         });
+        const started = yield* Deferred.make<void>();
+        const release = yield* Deferred.make<void>();
         let fetches = 0;
         const state = yield* compiledState(root, {
           capabilities: {
@@ -508,28 +630,34 @@ describe("runtime input owner", () => {
           stackId,
           fetchJson: (url) => {
             fetches += 1;
-            return fetches === 1
-              ? Effect.fail(new Error("transient"))
-              : Effect.succeed(
-                  url.endsWith("openid-configuration")
-                    ? { jwks_uri: "https://issuer.example/keys" }
-                    : { keys: [{ kty: "RSA", n: "n", e: "AQAB" }] },
-                );
+            return Effect.gen(function* () {
+              if (fetches === 1) {
+                yield* Deferred.succeed(started, undefined);
+                yield* Deferred.await(release);
+              }
+              return url.endsWith("openid-configuration")
+                ? { jwks_uri: "https://issuer.example/keys" }
+                : { keys: [{ kty: "RSA", n: "n", e: "AQAB" }] };
+            });
           },
         });
-        const failed = yield* owner.resolve(state, 5).pipe(Effect.exit);
-        expect(Exit.isFailure(failed)).toBe(true);
-        const recovered = yield* owner.resolve(state, 5);
-        expect(recovered.auth?.jwks).toContain('"keys"');
-        const results = yield* Effect.all([owner.resolve(state, 5), owner.resolve(state, 5)], {
-          concurrency: "unbounded",
+        const first = yield* Effect.forkChild(owner.resolve(state, 6), {
+          startImmediately: true,
         });
-        expect(results).toHaveLength(2);
-        expect(fetches).toBe(3);
-        yield* owner.cleanupGeneration(5);
-        const retried = yield* owner.resolve(state, 5);
-        expect(retried.auth?.jwks).toContain('"keys"');
-        expect(fetches).toBe(5);
+        yield* Deferred.await(started);
+        const second = yield* Effect.forkChild(owner.resolve(state, 6), {
+          startImmediately: true,
+        });
+        yield* Effect.yieldNow;
+        expect(fetches).toBe(1);
+        yield* Fiber.interrupt(second);
+        yield* Deferred.succeed(release, undefined);
+        const firstMaterial = yield* Fiber.join(first);
+        expect(firstMaterial.auth?.jwks).toContain('"keys"');
+        expect(fetches).toBe(2);
+        const cached = yield* owner.resolve(state, 6);
+        expect(cached.auth?.jwks).toBe(firstMaterial.auth?.jwks);
+        expect(fetches).toBe(2);
       }),
     ),
   );

@@ -105,7 +105,9 @@ const invalidGeneration = (generation: number): boolean =>
   !Number.isSafeInteger(generation) || generation < 0;
 
 const finiteSetting = (value: string): number | undefined => {
-  const parsed = Number(value);
+  const trimmed = value.trim();
+  if (trimmed.length === 0) return undefined;
+  const parsed = Number(trimmed);
   return Number.isFinite(parsed) ? parsed : undefined;
 };
 
@@ -221,7 +223,7 @@ params = %{
 
 case Supavisor.Tenants.get_tenant_by_external_id(params["external_id"]) do
   nil ->
-  {:ok, _} = Supavisor.Tenants.create_tenant(params)
+    {:ok, _} = Supavisor.Tenants.create_tenant(params)
   existing ->
     existing = Supavisor.Repo.preload(existing, :users)
     {:ok, _} = Supavisor.Tenants.update_tenant(existing, params)
@@ -614,30 +616,32 @@ export const makeRuntimeInputOwner = (
                   never
                 >();
                 pending.set(key, deferred);
-                const owner = execution.withPermit(
-                  Effect.gen(function* () {
-                    const stillCurrent = yield* admission.withPermit(
-                      Effect.sync(() => pending.get(key) === deferred),
-                    );
-                    if (!stillCurrent) {
-                      yield* Deferred.succeed(
-                        deferred,
-                        Exit.fail(failure("Runtime input generation was invalidated")),
+                const owner = execution
+                  .withPermit(
+                    Effect.gen(function* () {
+                      const stillCurrent = yield* admission.withPermit(
+                        Effect.sync(() => pending.get(key) === deferred),
                       );
-                      return;
-                    }
-                    const exit = yield* materialize(state, generation).pipe(Effect.exit);
-                    yield* Effect.uninterruptible(
-                      Effect.gen(function* () {
-                        yield* Effect.sync(() => {
-                          if (pending.get(key) === deferred) pending.delete(key);
-                          if (Exit.isSuccess(exit)) completed.set(key, exit.value);
-                        });
-                        yield* Deferred.succeed(deferred, exit);
-                      }),
-                    );
-                  }),
-                );
+                      if (!stillCurrent)
+                        return yield* failure("Runtime input generation was invalidated");
+                      return yield* materialize(state, generation);
+                    }),
+                  )
+                  .pipe(
+                    Effect.onExit((exit) =>
+                      Effect.uninterruptible(
+                        Effect.gen(function* () {
+                          const current = yield* Effect.sync(() => pending.get(key) === deferred);
+                          if (current)
+                            yield* Effect.sync(() => {
+                              pending.delete(key);
+                              if (Exit.isSuccess(exit)) completed.set(key, exit.value);
+                            });
+                          yield* Deferred.succeed(deferred, exit);
+                        }),
+                      ),
+                    ),
+                  );
                 yield* FiberSet.run(ownedFibers, owner, { startImmediately: true });
                 return waitingAdmission(deferred);
               }),
