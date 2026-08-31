@@ -77,9 +77,9 @@ describe("legacy workers delete", () => {
     }).pipe(Effect.provide(layer), Effect.ensuring(Effect.sync(repo.cleanup)));
   });
 
-  // The refusal used to live at emit time, which on this command is *after* the
-  // DELETE: `--yes -o env` removed the worker and then exited non-zero with no
-  // payload, which a script reads as "the delete failed" and may retry.
+  // The refusal has to precede the DELETE. At emit time `--yes -o env` would
+  // remove the worker and then exit non-zero with no payload, which a script
+  // reads as "the delete failed" and may retry.
   // Deletion never touches local files, so a malformed local config has no
   // business standing between the user and a worker they named explicitly.
   it.live("deletes a remote worker despite an unparseable local config", () => {
@@ -328,8 +328,8 @@ describe("legacy workers delete", () => {
     }).pipe(Effect.provide(layer), Effect.ensuring(Effect.sync(repo.cleanup)));
   });
 
-  // `interactive` follows stdout, so a plain `>` redirect reaches this branch
-  // even from a live terminal — the case that used to delete without asking.
+  // `interactive` follows stdout, so a plain `>` redirect reaches this branch even
+  // from a live terminal — the case where deleting without asking would be worst.
   it.live("refuses when stdout is redirected and no --yes was given", () => {
     const repo = project();
     const { layer, http } = setupLegacyWorkers({
@@ -662,7 +662,7 @@ describe("legacy workers delete", () => {
     }).pipe(Effect.provide(layer), Effect.ensuring(Effect.sync(repo.cleanup)));
   });
 
-  // Deletion never reads the local source, so a `source` that no longer resolves
+  // Deletion never reads the local source, so a `source` that does not resolve
   // inside the project must not block removing the remote worker.
   it.live("deletes the remote worker even when the configured source is unusable", () => {
     const repo = project('project_id = "demo"\n\n[workers.api]\nsource = "../../elsewhere"\n');

@@ -1159,8 +1159,8 @@ describe("legacy workers push", () => {
     }).pipe(Effect.provide(layer), Effect.ensuring(Effect.sync(repo.cleanup)));
   });
 
-  // The "nothing to deploy" guard counts directory entries, so a tree of empty
-  // subdirectories used to package to zero files and deploy an image with no
+  // The "nothing to deploy" guard counts directory entries, so without this a tree
+  // of empty subdirectories packages to zero files and deploys an image with no
   // handler in it.
   it.live("refuses a source holding only empty directories, before minting a slot", () => {
     const repo = project({ "supabase/workers/api/nested/.keep": "" });
@@ -1216,8 +1216,8 @@ describe("legacy workers push", () => {
     }).pipe(Effect.provide(layer), Effect.ensuring(Effect.sync(repo.cleanup)));
   });
 
-  // A malformed config.toml used to fail outside the finalizers, so the run
-  // skipped the telemetry flush every invocation is supposed to perform.
+  // A malformed config.toml must fail inside the finalizers, or the run skips the
+  // telemetry flush every invocation is supposed to perform.
   it.live("flushes telemetry when the project config cannot be loaded", () => {
     const repo = project({ "supabase/config.toml": "project_id = [unclosed\n" });
     const { layer, telemetry } = setupLegacyWorkers({ workdir: repo.dir, routes: routes() });

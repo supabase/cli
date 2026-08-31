@@ -470,8 +470,8 @@ describe("legacy workers list", () => {
 
   // `pretty` is the human default; `table` and `csv` are accepted by the global
   // flag for `db query`'s benefit, and every resource command is meant to ignore
-  // them and render text. All three used to fall through to the TOML encoder,
-  // which is the trap the payload allowlist closes.
+  // them and render text. Falling through to the TOML encoder is the trap the
+  // payload allowlist closes.
   it.live.each(["pretty", "table", "csv"] as const)(
     "renders text rather than TOML for -o %s",
     (goOutput) => {
