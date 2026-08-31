@@ -716,11 +716,11 @@ describe("runtime input owner", () => {
     ),
   );
 
-  it.live("does not republish completed material after concurrent cleanup", () =>
+  it.live("retires older generations and fences their in-flight waiters", () =>
     withPlatform(
       Effect.gen(function* () {
         const root = yield* (yield* FileSystem.FileSystem).makeTempDirectoryScoped({
-          prefix: "runtime-input-cleanup-race-",
+          prefix: "runtime-input-generation-retire-",
         });
         const started = yield* Deferred.make<void>();
         const release = yield* Deferred.make<void>();
@@ -734,6 +734,7 @@ describe("runtime input owner", () => {
             },
           },
         });
+        const newer = { ...state, inputFingerprint: `${state.inputFingerprint}-new` };
         const owner = yield* makeRuntimeInputOwner({
           stateRoot: root,
           stackId,
@@ -750,17 +751,32 @@ describe("runtime input owner", () => {
             });
           },
         });
-        const materializing = yield* Effect.forkChild(owner.resolve(state, 30), {
+        const first = yield* Effect.forkChild(owner.resolve(state, 40), {
           startImmediately: true,
         });
         yield* Deferred.await(started);
-        const cleanup = yield* Effect.forkChild(owner.cleanupAll, { startImmediately: true });
+        const firstWaiter = yield* Effect.forkChild(owner.resolve(state, 40), {
+          startImmediately: true,
+        });
+        const second = yield* Effect.forkChild(owner.resolve(newer, 41), {
+          startImmediately: true,
+        });
+        const firstExit = yield* Fiber.join(first).pipe(Effect.exit);
+        const firstWaiterExit = yield* Fiber.join(firstWaiter).pipe(Effect.exit);
+        expect(Exit.isFailure(firstExit)).toBe(true);
+        expect(Exit.isFailure(firstWaiterExit)).toBe(true);
+        expect(errorOf(firstExit)?.message).toContain("generation was invalidated");
+        expect(errorOf(firstWaiterExit)?.message).toContain("generation was invalidated");
         yield* Deferred.succeed(release, undefined);
-        const materializingExit = yield* Fiber.join(materializing).pipe(Effect.exit);
-        const cleanupExit = yield* Fiber.join(cleanup).pipe(Effect.exit);
-        expect(Exit.isSuccess(materializingExit)).toBe(true);
-        expect(Exit.isSuccess(cleanupExit)).toBe(true);
-        yield* owner.resolve(state, 30);
+        const secondMaterial = yield* Fiber.join(second);
+        expect(secondMaterial.auth?.jwks).toContain('"keys"');
+        // The superseded owner may finish its already-started fetch, but its
+        // result is fenced and never enters the cache.
+        expect(fetches).toBe(4);
+        const late = yield* owner.resolve(state, 40).pipe(Effect.exit);
+        expect(Exit.isFailure(late)).toBe(true);
+        expect(errorOf(late)?.message).toContain("generation was invalidated");
+        yield* owner.resolve(newer, 41);
         expect(fetches).toBe(4);
       }),
     ),

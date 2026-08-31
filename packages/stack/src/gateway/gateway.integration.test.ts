@@ -1,11 +1,12 @@
 import { NodeServices } from "@effect/platform-node";
 import { describe, expect, it } from "@effect/vitest";
-import { Effect, Exit, FileSystem, Redacted } from "effect";
+import { Deferred, Effect, Exit, FileSystem, Fiber, Redacted } from "effect";
 import { GatewayActivationError } from "../public/Errors.ts";
 import { connect as connectNet, createServer, type Server } from "node:net";
 // oxlint-disable-next-line effecttsgo/node-builtin-import
 import {
   Agent,
+  type ClientRequest,
   createServer as createHttpServer,
   request as requestHttp,
   type IncomingMessage,
@@ -133,6 +134,62 @@ describe("stack gateway", () => {
           return Effect.sync(() => socket.destroy());
         });
         expect(localCalls).toBe(1);
+        expect(activations).toBe(0);
+        yield* gateway.close;
+      }),
+    ),
+  );
+
+  it.live("keeps local routing usable when a client disconnects mid-response", () =>
+    withPlatform(
+      Effect.gen(function* () {
+        const started = yield* Deferred.make<void>();
+        const release = yield* Deferred.make<void>();
+        let localCalls = 0;
+        let activations = 0;
+        const gateway = yield* makeHttpGateway({
+          address: "127.0.0.1",
+          port: 0,
+          routes: [
+            {
+              match: (request) => request.path.startsWith("/email/"),
+              localResponse: () =>
+                Effect.gen(function* () {
+                  localCalls += 1;
+                  yield* Deferred.succeed(started, undefined);
+                  yield* Deferred.await(release);
+                  return { body: "template", contentType: "text/plain; charset=utf-8" };
+                }),
+            },
+          ],
+          activate: () =>
+            Effect.sync(() => {
+              activations += 1;
+              return { capability: "auth" as const, endpoint: { host: "127.0.0.1", port: 1 } };
+            }),
+        });
+        let request: ClientRequest | undefined;
+        const pending = yield* Effect.forkChild(
+          Effect.callback<void, Error>((resume) => {
+            request = requestHttp(
+              { host: "127.0.0.1", port: gateway.port, path: "/email/confirmation.html" },
+              (response) => {
+                response.resume();
+                response.once("end", () => resume(Effect.void));
+              },
+            );
+            request.once("error", () => resume(Effect.void));
+            request.end();
+            return Effect.sync(() => request?.destroy());
+          }),
+          { startImmediately: true },
+        );
+        yield* Deferred.await(started);
+        request?.destroy();
+        yield* Deferred.succeed(release, undefined);
+        yield* Fiber.join(pending).pipe(Effect.exit);
+        expect(yield* getStatus(gateway.port, "/email/confirmation.html")).toBe(200);
+        expect(localCalls).toBe(2);
         expect(activations).toBe(0);
         yield* gateway.close;
       }),

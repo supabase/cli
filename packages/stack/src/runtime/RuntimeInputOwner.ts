@@ -449,7 +449,7 @@ export const makeRuntimeInputOwner = (
           return yield* failure("Persisted Auth JWT secret is missing");
         const publicKeys = [...remote, ...localPublic, ...symmetric];
         const templates =
-          state.definition?.capabilities.auth.enabled === false
+          state.definition?.capabilities.auth.enabled !== true
             ? []
             : yield* resolveAuthTemplates(state);
         return {
@@ -557,8 +557,10 @@ export const makeRuntimeInputOwner = (
     const commonCompleted = new Map<string, RuntimeInputMaterial>();
     const poolerPending = new Map<string, OwnedResult<string>>();
     const poolerCompleted = new Map<string, string>();
+    let acceptedGeneration: number | undefined;
     const keyFor = (state: PersistedStackState, generation: number): string =>
       `${state.identity.projectRoot}\u0000${state.inputFingerprint ?? ""}\u0000${state.runtime.kind}\u0000${generation}`;
+    const generationFor = (key: string): number => Number(key.slice(key.lastIndexOf("\u0000") + 1));
 
     const materializeCommon = (
       state: PersistedStackState,
@@ -566,7 +568,7 @@ export const makeRuntimeInputOwner = (
       Effect.gen(function* () {
         const jwtConsumers = ["rest", "auth", "realtime", "storage", "functions"] as const;
         const resolvesAuthMaterial = jwtConsumers.some(
-          (capability) => state.definition?.capabilities[capability].enabled !== false,
+          (capability) => state.definition?.capabilities[capability].enabled === true,
         );
         const auth = resolvesAuthMaterial ? yield* resolveAuth(state) : undefined;
         const analyticsSettings = settingsFor(state, "analytics");
@@ -574,11 +576,11 @@ export const makeRuntimeInputOwner = (
           ? settingValue(state, analyticsSettings.gcp_jwt_path)
           : "";
         const analytics =
-          state.definition?.capabilities.analytics.enabled === false || gcpPath.length === 0
+          state.definition?.capabilities.analytics.enabled !== true || gcpPath.length === 0
             ? undefined
             : { gcpJwtPath: yield* resolveProjectFile(state, gcpPath) };
         const functions =
-          state.definition?.capabilities.functions.enabled === false
+          state.definition?.capabilities.functions.enabled !== true
             ? undefined
             : { secrets: yield* resolveFunctionsEdgeRuntimeSecrets(state) };
         return {
@@ -609,33 +611,38 @@ export const makeRuntimeInputOwner = (
                   return { kind: "waiting", deferred: current } satisfies Admission;
                 const deferred = yield* Deferred.make<Exit.Exit<A, StackPreparationError>, never>();
                 pending.set(key, deferred);
-                const owner = execution
-                  .withPermit(
+                const publish = (exit: Exit.Exit<A, StackPreparationError>) =>
+                  Effect.uninterruptible(
                     Effect.gen(function* () {
-                      const stillCurrent = yield* admission.withPermit(
-                        Effect.sync(() => pending.get(key) === deferred),
-                      );
-                      if (!stillCurrent)
-                        return yield* failure("Runtime input generation was invalidated");
-                      return yield* materialize;
-                    }),
-                  )
-                  .pipe(
-                    Effect.onExit((exit) =>
-                      Effect.uninterruptible(
-                        Effect.gen(function* () {
-                          yield* admission.withPermit(
-                            Effect.sync(() => {
-                              if (pending.get(key) !== deferred) return;
-                              pending.delete(key);
-                              if (Exit.isSuccess(exit)) completed.set(key, exit.value);
-                            }),
-                          );
-                          yield* Deferred.succeed(deferred, exit);
+                      const completion = yield* admission.withPermit(
+                        Effect.sync(() => {
+                          if (pending.get(key) !== deferred)
+                            return Exit.fail(failure("Runtime input generation was invalidated"));
+                          pending.delete(key);
+                          if (Exit.isSuccess(exit)) completed.set(key, exit.value);
+                          return exit;
                         }),
-                      ),
-                    ),
+                      );
+                      yield* Deferred.succeed(deferred, completion);
+                    }),
                   );
+                let entered = false;
+                const materializing = Effect.uninterruptibleMask((restore) =>
+                  Effect.gen(function* () {
+                    entered = true;
+                    const stillCurrent = yield* admission.withPermit(
+                      Effect.sync(() => pending.get(key) === deferred),
+                    );
+                    if (!stillCurrent)
+                      return yield* failure("Runtime input generation was invalidated");
+                    return yield* restore(materialize);
+                  }).pipe(Effect.onExit(publish)),
+                );
+                const owner = execution.withPermit(materializing).pipe(
+                  // An owner interrupted while queued on execution never enters
+                  // `materializing`; this fallback still wakes its waiters.
+                  Effect.onExit((exit) => (entered ? Effect.void : publish(exit))),
+                );
                 yield* FiberSet.run(ownedFibers, owner, { startImmediately: true });
                 return { kind: "waiting", deferred } satisfies Admission;
               }),
@@ -655,6 +662,38 @@ export const makeRuntimeInputOwner = (
     ): Effect.Effect<RuntimeInputMaterial, StackPreparationError> =>
       Effect.gen(function* () {
         const key = keyFor(state, generation);
+        type Retirement = Readonly<{
+          readonly rejected: boolean;
+          readonly retired: ReadonlyArray<OwnedResult<RuntimeInputMaterial>>;
+        }>;
+        const retirement = yield* admission.withPermit(
+          Effect.sync((): Retirement => {
+            const accepted = acceptedGeneration;
+            if (accepted !== undefined && generation < accepted)
+              return { rejected: true, retired: [] };
+            if (accepted === undefined || generation <= accepted) {
+              acceptedGeneration = generation;
+              return { rejected: false, retired: [] };
+            }
+            const retired: Array<OwnedResult<RuntimeInputMaterial>> = [];
+            for (const [pendingKey, deferred] of commonPending)
+              if (generationFor(pendingKey) < generation) {
+                commonPending.delete(pendingKey);
+                retired.push(deferred);
+              }
+            for (const completedKey of commonCompleted.keys())
+              if (generationFor(completedKey) < generation) commonCompleted.delete(completedKey);
+            acceptedGeneration = generation;
+            return { rejected: false, retired };
+          }),
+        );
+        yield* Effect.forEach(retirement.retired, (deferred) =>
+          Deferred.succeed(
+            deferred,
+            Exit.fail(failure("Runtime input generation was invalidated")),
+          ),
+        );
+        if (retirement.rejected) return yield* failure("Runtime input generation was invalidated");
         const common = yield* singleFlight(
           key,
           commonPending,
@@ -706,6 +745,7 @@ export const makeRuntimeInputOwner = (
             commonCompleted.clear();
             poolerPending.clear();
             poolerCompleted.clear();
+            acceptedGeneration = undefined;
           }),
         );
         yield* mapFile(

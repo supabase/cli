@@ -308,6 +308,8 @@ export const makeProductionRuntimeFactory = (
         );
       }),
     );
+    // Register this child scope before constructing drivers: LIFO cleanup
+    // stops workloads, closes owner fibers, then removes generated files.
     const registry = yield* makePortRegistry({
       stateRoot: options.stateRoot,
       store: options.stateStore,

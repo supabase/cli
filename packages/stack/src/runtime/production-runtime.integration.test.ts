@@ -634,6 +634,141 @@ describe("production runtime composition", () => {
     ),
   );
 
+  it.live("scopes Auth template URL requirements to the Auth workload", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const root = yield* fs.makeTempDirectoryScoped({
+          prefix: "supabase-production-auth-scope-",
+        });
+        const template = path.join(root, "confirmation.html");
+        yield* fs.writeFileString(template, "confirmation");
+        const compiled = yield* compileStack({
+          projectRoot: root,
+          runtime: { kind: "container", engine: "docker" },
+          config: {
+            capabilities: {
+              auth: {
+                settings: {
+                  email: { template: { confirmation: { content_path: "confirmation.html" } } },
+                },
+              },
+              rest: { enabled: true },
+              realtime: { enabled: false },
+              storage: { enabled: false },
+              functions: { enabled: false },
+              studio: { enabled: false },
+              mail: { enabled: false },
+              analytics: { enabled: false },
+              pooler: { enabled: false },
+            },
+            listeners: {
+              api: { enabled: false },
+              database: { enabled: false },
+              pooler: { enabled: false },
+              studio: { enabled: false },
+              mailUi: { enabled: false },
+              smtp: { enabled: false },
+              pop3: { enabled: false },
+              functionsInspector: { enabled: false },
+            },
+          },
+        }).pipe(Effect.provide(NodeServices.layer));
+        const restServer = createServer((_request, response) => {
+          response.statusCode = 200;
+          response.setHeader("Connection", "close");
+          response.end("ok");
+        });
+        yield* Effect.acquireRelease(
+          Effect.callback<void, Error>((resume) => {
+            restServer.once("error", (error) => resume(Effect.fail(error)));
+            restServer.listen(0, "127.0.0.1", () => resume(Effect.void));
+          }),
+          () =>
+            Effect.callback<void>((resume) => {
+              if (!restServer.listening) return resume(Effect.void);
+              restServer.close(() => resume(Effect.void));
+            }),
+        );
+        const address = restServer.address();
+        if (typeof address !== "object" || address === null)
+          return yield* Effect.die("REST readiness server did not expose an address");
+        const current = {
+          value: {
+            ...stateFor(
+              {
+                "secret:database.internal.password": { policy: "managed", value: "db-secret" },
+                "secret:auth.settings.jwt_secret": { policy: "managed", value: "jwt-secret" },
+              },
+              { kind: "container", engine: "docker" },
+            ),
+            identity: {
+              ...stateFor({}).identity,
+              projectRoot: root,
+              checkoutRoot: root,
+              workspaceId: root,
+              checkoutId: root,
+            },
+            desiredLifecycle: "running" as const,
+            definition: compiled.definition,
+            inputFingerprint: compiled.inputFingerprint,
+            privatePorts: [
+              { workloadId: "rest:rest", binding: "primary", port: address.port },
+              { workloadId: "rest:rest", binding: "admin", port: address.port + 1 },
+              { workloadId: "auth:auth", binding: "primary", port: address.port + 2 },
+            ],
+          },
+        } satisfies { value: PersistedStackState };
+        const context = yield* Effect.context<FileSystem.FileSystem | Path.Path | Crypto.Crypto>();
+        const createdSpecs: ContainerContainerSpec[] = [];
+        const factory = yield* makeProductionRuntimeFactory({
+          stateRoot: root,
+          stackId,
+          ownerSessionId: "owner",
+          stateStore: stateStoreFor(current),
+          context,
+          ingress,
+          containerEngine: ownerInputContainerEngine(createdSpecs),
+          artifactPreparer: {
+            prepare: (_runtime, workload) =>
+              Effect.succeed({
+                workloadId: workload.id,
+                capability: workload.capability,
+                version: "test",
+                outcome: "present" as const,
+                image: workload.selected.kind === "container" ? workload.selected.image : undefined,
+              }),
+          },
+          logStore: memoryLogStore([]),
+          bootstrapDatabase: () => Effect.void,
+        });
+        const runtime = yield* factory.make(current.value);
+        const rest = compiled.executionPlan.workloads.find(
+          (workload) => workload.id === "rest:rest",
+        );
+        const auth = compiled.executionPlan.workloads.find(
+          (workload) => workload.id === "auth:auth",
+        );
+        if (rest === undefined || auth === undefined)
+          return yield* Effect.die("Expected REST and Auth workloads");
+        yield* runtime.driver.start(
+          { stackId, desiredGeneration: 1, workloadId: rest.id, specHash: rest.specHash },
+          rest,
+        );
+        expect(createdSpecs.some((spec) => spec.labels.workloadId === rest.id)).toBe(true);
+        const authStart = yield* runtime.driver
+          .start(
+            { stackId, desiredGeneration: 1, workloadId: auth.id, specHash: auth.specHash },
+            auth,
+          )
+          .pipe(Effect.exit);
+        expect(Exit.isFailure(authStart)).toBe(true);
+        expect(createdSpecs.some((spec) => spec.labels.workloadId === auth.id)).toBe(false);
+      }).pipe(Effect.provide(NodeServices.layer)),
+    ),
+  );
+
   it.live("closes the production owner scope while input resolution is in flight", () =>
     Effect.scoped(
       Effect.gen(function* () {
