@@ -949,5 +949,5 @@ private-port reservation plus gateway ownership atomic with accepted lifecycle g
 - Quiesce retains its Supervisor-owned exact-operation continuation for interrupted waiters and adds a transport
   abandoned path for successful responses interrupted before normal completion. Maintenance stop/probe remain
   non-terminal, and raw client reset read/close errors complete only that connection.
-- Focused supervisor/control/handle/lifecycle verification passed 79 integration tests with stack type-check,
+- Focused supervisor/control/handle/lifecycle verification passed 80 integration tests with stack type-check,
   Effect lint, formatting, and diff checks green.

@@ -493,6 +493,7 @@ export const startControlServer = (
     });
     const rpcProgram = RpcServer.make(StackRpcGroup, {
       disableTracing: true,
+      disableFatalDefects: true,
       concurrency: MAINTENANCE_MAX_CONCURRENT_REQUESTS,
     }).pipe(
       Effect.provideService(RpcServer.Protocol, patchedProtocol),

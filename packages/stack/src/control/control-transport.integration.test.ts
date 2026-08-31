@@ -468,6 +468,51 @@ describe("control transport", () => {
     ),
   );
 
+  it.live("returns a request-scoped defect for destroy and keeps the endpoint usable", () =>
+    withServer(
+      ({ endpoint, stackId, ownerSessionId, completion, abandoned }) =>
+        Effect.gen(function* () {
+          const preface = encodePreface({
+            kind: "rpc",
+            release: "stack-rpc-v1@0.1.0",
+            stackId,
+            ownerSessionId,
+          });
+          const frame = yield* makeDestroyRequestFrame();
+          const response = yield* sendRawSequenceAndReadFrame(endpoint, [
+            concatBytes(preface, frame),
+          ]);
+          expect(response).toMatchObject({
+            _tag: "Exit",
+            requestId: "1",
+            exit: { _tag: "Failure" },
+          });
+          const completionExit = yield* Deferred.await(completion).pipe(
+            Effect.timeout("100 millis"),
+            Effect.exit,
+          );
+          const abandonedExit = yield* Deferred.await(abandoned).pipe(
+            Effect.timeout("100 millis"),
+            Effect.exit,
+          );
+          expect(Exit.isFailure(completionExit)).toBe(true);
+          expect(Exit.isFailure(abandonedExit)).toBe(true);
+
+          const client = makeControlClient(endpoint, { stackId, ownerSessionId });
+          const rpc = yield* client.rpc;
+          const status = yield* rpc.status(undefined);
+          expect(status.id).toBe(stackId);
+        }),
+      ({ completion, abandoned }) => ({
+        rpcHandlers: {
+          destroy: () => Effect.die(new Error("injected destroy defect")),
+        },
+        onDestroyResponse: () => Deferred.succeed(completion, undefined).pipe(Effect.asVoid),
+        onDestroyAbandoned: () => Deferred.succeed(abandoned, undefined).pipe(Effect.asVoid),
+      }),
+    ),
+  );
+
   it.live("signals abandoned quiesce shutdown when the response connection is lost", () =>
     withServer(
       ({
