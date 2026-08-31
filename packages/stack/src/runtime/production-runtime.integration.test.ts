@@ -1,6 +1,17 @@
 import { NodeServices } from "@effect/platform-node";
 import { describe, expect, it } from "@effect/vitest";
-import { Effect, Exit, FileSystem, Path, Crypto, Redacted, Stream } from "effect";
+import {
+  Deferred,
+  Effect,
+  Exit,
+  FileSystem,
+  Fiber,
+  Path,
+  Crypto,
+  Redacted,
+  Scope,
+  Stream,
+} from "effect";
 // oxlint-disable-next-line effecttsgo/node-builtin-import
 import { createServer } from "node:http";
 // oxlint-disable-next-line effecttsgo/node-builtin-import
@@ -14,6 +25,7 @@ import type { SupervisorIngress } from "../supervisor/Ingress.ts";
 import type { LogStore } from "../supervisor/LogStore.ts";
 import { makeProductionRuntimeFactory, withOwnedRuntimeFileCleanup } from "./ProductionRuntime.ts";
 import { RuntimeDriverError, type RuntimeDriver } from "./RuntimeDriver.ts";
+import { StackPreparationError } from "../public/Errors.ts";
 import type { RuntimeArtifactPreparer } from "../preparation/RuntimeArtifacts.ts";
 import type { PlannedWorkload } from "../model/ExecutionPlan.ts";
 import { compileStack } from "../model/Compiler.ts";
@@ -597,6 +609,7 @@ describe("production runtime composition", () => {
           specHash: pooler.specHash,
         });
         expect(yield* fs.exists(tenantPath)).toBe(false);
+        current.value = { ...current.value, desiredGeneration: 2, portsGeneration: 2 };
         yield* runtime.driver.start(
           {
             stackId,
@@ -617,6 +630,153 @@ describe("production runtime composition", () => {
         expect(yield* fs.exists(generationTwoTenantPath)).toBe(true);
         yield* runtime.driver.cleanup({ stackId, destroy: false });
         expect(yield* fs.exists(generationTwoTenantPath)).toBe(false);
+      }).pipe(Effect.provide(NodeServices.layer)),
+    ),
+  );
+
+  it.live("closes the production owner scope while input resolution is in flight", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const root = yield* fs.makeTempDirectoryScoped({
+          prefix: "supabase-production-owner-close-",
+        });
+        const compiled = yield* compileStack({
+          projectRoot: root,
+          runtime: { kind: "container", engine: "docker" },
+          config: {
+            capabilities: {
+              auth: {
+                settings: {
+                  third_party: { workos: { enabled: true, issuer_url: "https://issuer.example" } },
+                },
+              },
+              pooler: { enabled: true },
+              rest: { enabled: false },
+              realtime: { enabled: false },
+              storage: { enabled: false },
+              functions: { enabled: false },
+              studio: { enabled: false },
+              mail: { enabled: false },
+              analytics: { enabled: false },
+            },
+            listeners: {
+              database: { enabled: false },
+              pooler: { enabled: false },
+              studio: { enabled: false },
+              mailUi: { enabled: false },
+              smtp: { enabled: false },
+              pop3: { enabled: false },
+              functionsInspector: { enabled: false },
+            },
+          },
+        }).pipe(Effect.provide(NodeServices.layer));
+        const poolerServer = createNetServer();
+        yield* Effect.acquireRelease(
+          Effect.callback<void, Error>((resume) => {
+            poolerServer.once("error", (error) => resume(Effect.fail(error)));
+            poolerServer.listen(0, "127.0.0.1", () => resume(Effect.void));
+          }),
+          () =>
+            Effect.callback<void>((resume) => {
+              if (!poolerServer.listening) return resume(Effect.void);
+              poolerServer.close(() => resume(Effect.void));
+            }),
+        );
+        const poolerAddress = poolerServer.address();
+        if (typeof poolerAddress !== "object" || poolerAddress === null)
+          return yield* Effect.die("Pooler readiness server did not expose an address");
+        const current = {
+          value: {
+            ...stateFor(
+              {
+                "secret:database.internal.password": { policy: "managed", value: "db-secret" },
+                "secret:auth.settings.jwt_secret": { policy: "managed", value: "jwt-secret" },
+              },
+              { kind: "container", engine: "docker" },
+            ),
+            identity: {
+              ...stateFor({}).identity,
+              projectRoot: root,
+              checkoutRoot: root,
+              workspaceId: root,
+              checkoutId: root,
+            },
+            definition: compiled.definition,
+            inputFingerprint: compiled.inputFingerprint,
+            desiredLifecycle: "running" as const,
+            portsGeneration: 1,
+            privatePorts: [
+              { workloadId: "pooler:pooler", binding: "primary", port: poolerAddress.port },
+            ],
+          },
+        } satisfies { value: PersistedStackState };
+        const ownerScope = yield* Scope.make();
+        const context = yield* Effect.context<FileSystem.FileSystem | Path.Path | Crypto.Crypto>();
+        const createdSpecs: ContainerContainerSpec[] = [];
+        const engine = ownerInputContainerEngine(createdSpecs);
+        const started = yield* Deferred.make<void>();
+        const release = yield* Deferred.make<void>();
+        let fetches = 0;
+        const factory = yield* makeProductionRuntimeFactory({
+          stateRoot: root,
+          stackId,
+          ownerSessionId: "owner",
+          stateStore: stateStoreFor(current),
+          context,
+          ingress,
+          containerEngine: engine,
+          artifactPreparer: {
+            prepare: (_runtime, workload) =>
+              Effect.succeed({
+                workloadId: workload.id,
+                capability: workload.capability,
+                version: "test",
+                outcome: "present" as const,
+                image: workload.selected.kind === "container" ? workload.selected.image : undefined,
+              }),
+          },
+          fetchJson: (url) =>
+            Effect.gen(function* () {
+              fetches += 1;
+              if (fetches > 2) {
+                yield* Deferred.succeed(started, undefined);
+                yield* Deferred.await(release);
+              }
+              return url.endsWith("openid-configuration")
+                ? { jwks_uri: "https://issuer.example/keys" }
+                : { keys: [{ kty: "RSA", n: "n", e: "AQAB" }] };
+            }),
+          logStore: memoryLogStore([]),
+          bootstrapDatabase: () => Effect.void,
+        }).pipe(Effect.provideService(Scope.Scope, ownerScope));
+        const runtime = yield* factory.make(current.value);
+        const pooler = compiled.executionPlan.workloads.find(
+          (workload) => workload.id === "pooler:pooler",
+        );
+        if (pooler === undefined) return yield* Effect.die("Expected Pooler workload");
+        yield* runtime.driver.start(
+          { stackId, desiredGeneration: 1, workloadId: pooler.id, specHash: pooler.specHash },
+          pooler,
+        );
+        const firstTenant = createdSpecs
+          .find((spec) => spec.labels.desiredGeneration === 1)
+          ?.mounts.find((mount) => mount.target === "/app/pooler_tenant.exs")?.source;
+        if (firstTenant === undefined) return yield* Effect.die("Missing first Pooler tenant");
+        current.value = { ...current.value, desiredGeneration: 2, portsGeneration: 2 };
+        const inFlight = yield* Effect.forkChild(
+          runtime.driver.start(
+            { stackId, desiredGeneration: 2, workloadId: pooler.id, specHash: pooler.specHash },
+            pooler,
+          ),
+          { startImmediately: true },
+        );
+        yield* Deferred.await(started);
+        yield* Scope.close(ownerScope, Exit.void);
+        const inFlightExit = yield* Fiber.join(inFlight).pipe(Effect.exit);
+        expect(Exit.isFailure(inFlightExit)).toBe(true);
+        expect(yield* fs.exists(firstTenant)).toBe(false);
+        yield* Deferred.succeed(release, undefined);
       }).pipe(Effect.provide(NodeServices.layer)),
     ),
   );
@@ -701,5 +861,36 @@ describe("production runtime composition", () => {
     const result = Effect.runSyncExit(wrapped.cleanup({ stackId, destroy: false }));
     expect(Exit.isFailure(result)).toBe(true);
     expect(calls.sort()).toEqual(["env", "functions"]);
+  });
+
+  it("continues owner cleanup when one file owner fails", () => {
+    const calls: string[] = [];
+    const driver: RuntimeDriver = {
+      observe: () => Effect.succeed([]),
+      start: () => Effect.die("unused"),
+      stop: () => Effect.void,
+      remove: () => Effect.void,
+      cleanup: () => Effect.void,
+      recover: () => Effect.succeed([]),
+    };
+    const envOwner: RuntimeEnvFileOwner = {
+      write: () => Effect.die("unused"),
+      cleanupGeneration: () => Effect.void,
+      cleanupAll: Effect.gen(function* () {
+        calls.push("env");
+        return yield* new StackPreparationError({ message: "env cleanup failed" });
+      }),
+    };
+    const functionsOwner: FunctionsBootstrapOwner = {
+      write: () => Effect.die("unused"),
+      cleanupGeneration: () => Effect.void,
+      cleanupAll: Effect.sync(() => {
+        calls.push("functions");
+      }),
+    };
+    const wrapped = withOwnedRuntimeFileCleanup(driver, envOwner, functionsOwner);
+    const result = Effect.runSyncExit(wrapped.cleanup({ stackId, destroy: false }));
+    expect(Exit.isFailure(result)).toBe(true);
+    expect(calls).toEqual(["env", "functions"]);
   });
 });

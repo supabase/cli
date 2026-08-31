@@ -261,9 +261,9 @@ const handleRequest = (
 ): void => {
   const view = requestView(request);
   setCors(response, options);
-  const earlyRoute = routeFor(view, options.routes);
+  const route = routeFor(view, options.routes);
   if (request.method === "OPTIONS") {
-    if (earlyRoute?.localResponse !== undefined) {
+    if (route !== undefined && !isGatewayProxyRoute(route)) {
       respond(response, 404, JSON.stringify({ error: "Not found" }), options);
       return;
     }
@@ -279,23 +279,19 @@ const handleRequest = (
     response.end(JSON.stringify({ ok: true }));
     return;
   }
-  const route = routeFor(view, options.routes);
   if (route === undefined) {
     respond(response, 404, JSON.stringify({ error: "Not found" }), options);
     return;
   }
-  if (route.localResponse !== undefined) {
+  if (!isGatewayProxyRoute(route)) {
     const local = route.localResponse(view);
     const fiber = runFork(local);
     fiber.addObserver((exit) => {
-      if (Exit.isSuccess(exit)) respondLocal(response, exit.value, options);
+      if (Exit.isSuccess(exit) && !response.writableEnded && !response.destroyed)
+        respondLocal(response, exit.value, options);
       else if (!response.writableEnded && !response.destroyed)
         respond(response, 404, JSON.stringify({ error: "Not found" }), options);
     });
-    return;
-  }
-  if (!isGatewayProxyRoute(route)) {
-    respond(response, 404, JSON.stringify({ error: "Not found" }), options);
     return;
   }
   const preparation: Effect.Effect<
@@ -380,10 +376,6 @@ const handleUpgrade = (
     return;
   }
   // Local routes are HTTP-only and must never invoke their handler for upgrades.
-  if (route.localResponse !== undefined) {
-    socket.destroy();
-    return;
-  }
   if (!isGatewayProxyRoute(route)) {
     socket.destroy();
     return;

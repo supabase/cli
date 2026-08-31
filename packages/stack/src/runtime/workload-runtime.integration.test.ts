@@ -950,13 +950,21 @@ describe("workload runtime catalog", () => {
       );
       const symmetric = containerResolutionFor(state, functions, {
         auth: { jwks: '{"keys":[{"kty":"EC"}]}' },
-        functions: { secrets: { APP_SECRET: "value" } },
+        functions: {
+          secrets: {
+            APP_SECRET: "value",
+            EMPTY_SECRET: "",
+            EDGE_RUNTIME_PORT: "secret-collision",
+          },
+        },
       });
       expect(symmetric?.env).toMatchObject({
         SUPABASE_INTERNAL_JWT_SECRET: "symmetric-secret",
         SUPABASE_JWKS: '{"keys":[{"kty":"EC"}]}',
         APP_SECRET: "value",
+        EMPTY_SECRET: "",
       });
+      expect(symmetric?.env.EDGE_RUNTIME_PORT).toBe("9000");
 
       const jwksCompiled = yield* compileStack({
         projectRoot: state.identity.projectRoot,

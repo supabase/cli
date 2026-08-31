@@ -126,8 +126,10 @@ const runtimeMatches = (left: StackRuntime, right: StackRuntime): boolean => {
   return left.engine === right.engine;
 };
 
-const urlHost = (host: string): string =>
-  host.includes(":") && !host.startsWith("[") ? `[${host}]` : host;
+const urlHost = (host: string): string => {
+  const normalized = host === "0.0.0.0" ? "127.0.0.1" : host === "::" ? "::1" : host;
+  return normalized.includes(":") && !normalized.startsWith("[") ? `[${normalized}]` : normalized;
+};
 
 const redactEntry = <A extends { readonly message: string }>(
   entry: A,
@@ -291,14 +293,21 @@ export const makeProductionRuntimeFactory = (
         }));
     // oxlint-enable effecttsgo/async-function
     // oxlint-enable effecttsgo/global-fetch-in-effect
+    const inputOwnerScope = yield* Scope.fork(ownerScope, "sequential");
     const inputOwner = yield* makeRuntimeInputOwner({
       stateRoot: options.stateRoot,
       stackId: options.stackId,
       fetchJson,
-    }).pipe(Effect.provideService(Scope.Scope, ownerScope));
-    yield* Effect.addFinalizer(() =>
-      inputOwner.cleanupAll.pipe(Effect.catchTag("StackPreparationError", () => Effect.void)),
-    ).pipe(Effect.provideService(Scope.Scope, ownerScope));
+    }).pipe(Effect.provideService(Scope.Scope, inputOwnerScope));
+    yield* Scope.addFinalizer(
+      ownerScope,
+      Effect.gen(function* () {
+        yield* Scope.close(inputOwnerScope, Exit.void);
+        yield* inputOwner.cleanupAll.pipe(
+          Effect.catchTag("StackPreparationError", () => Effect.void),
+        );
+      }),
+    );
     const registry = yield* makePortRegistry({
       stateRoot: options.stateRoot,
       store: options.stateStore,
@@ -406,12 +415,14 @@ export const makeProductionRuntimeFactory = (
             host: ContainerHostRoute | undefined,
           ): Effect.Effect<WorkloadRuntimeInputs, StackPreparationError> =>
             Effect.gen(function* () {
-              const material = yield* inputOwner.resolve(fresh, generation);
+              const material = yield* inputOwner.resolve(fresh, generation, {
+                includePooler: workload.id === "pooler:pooler",
+              });
               const templates = material.auth?.templates;
               const apiListener = fresh.definition?.listeners.api;
               const apiAssignment = fresh.ports.find((assignment) => assignment.field === "api");
               const templateBaseUrl =
-                templates === undefined || templates.length === 0
+                workload.id !== "auth:auth" || templates === undefined || templates.length === 0
                   ? undefined
                   : apiListener?.enabled !== true || apiAssignment === undefined
                     ? yield* preparationError(

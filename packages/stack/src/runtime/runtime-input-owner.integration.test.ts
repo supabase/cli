@@ -418,8 +418,8 @@ describe("runtime input owner", () => {
           ...state,
           privatePorts: [{ workloadId: "database:database", binding: "primary", port: 30_001 }],
         };
-        const first = yield* owner.resolve(nativeState, 3);
-        const second = yield* owner.resolve(nativeState, 3);
+        const first = yield* owner.resolve(nativeState, 3, { includePooler: true });
+        const second = yield* owner.resolve(nativeState, 3, { includePooler: true });
         const thirdGenerationTenant = first.pooler?.tenantPath;
         expect(second.pooler?.tenantPath).toBe(thirdGenerationTenant);
         expect(thirdGenerationTenant).toBeDefined();
@@ -429,13 +429,43 @@ describe("runtime input owner", () => {
         expect(content).toContain('"external_id" => "pooler-dev"');
         expect(content).toContain('"db_port" => 30001');
         expect(content).not.toContain('"db_password" => ""');
-        const fourth = yield* owner.resolve(nativeState, 4);
+        const fourth = yield* owner.resolve(nativeState, 4, { includePooler: true });
         const fourthGenerationTenant = fourth.pooler?.tenantPath;
         expect(fourthGenerationTenant).toBeDefined();
         expect(fourthGenerationTenant).not.toBe(thirdGenerationTenant);
         yield* owner.cleanupGeneration(3);
         expect(yield* fs.exists(path.dirname(thirdGenerationTenant!))).toBe(false);
         expect(yield* fs.exists(fourthGenerationTenant!)).toBe(true);
+      }),
+    ),
+  );
+
+  it.live("does not recreate cleaned Pooler material for non-Pooler work", () =>
+    withPlatform(
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const root = yield* fs.makeTempDirectoryScoped({ prefix: "runtime-input-pooler-lazy-" });
+        const state = yield* compiledState(root, {
+          capabilities: { pooler: { enabled: true, settings: { pool_mode: "session" } } },
+        });
+        const nativeState: PersistedStackState = {
+          ...state,
+          privatePorts: [{ workloadId: "database:database", binding: "primary", port: 30_001 }],
+        };
+        const owner = yield* makeRuntimeInputOwner({ stateRoot: root, stackId });
+        const first = yield* owner.resolve(nativeState, 3, { includePooler: true });
+        const tenant = first.pooler?.tenantPath;
+        expect(tenant).toBeDefined();
+        yield* owner.cleanupGeneration(3);
+        const common = yield* owner.resolve(nativeState, 3);
+        expect(common.pooler).toBeUndefined();
+        expect(yield* fs.exists(path.join(root, stackId, "runtime", "inputs", "pooler", "3"))).toBe(
+          false,
+        );
+        const recreated = yield* owner.resolve(nativeState, 3, { includePooler: true });
+        expect(recreated.pooler?.tenantPath).toBeDefined();
+        expect(yield* fs.exists(recreated.pooler?.tenantPath ?? "")).toBe(true);
       }),
     ),
   );
@@ -471,7 +501,7 @@ describe("runtime input owner", () => {
         };
         const containerState = state;
         const owner = yield* makeRuntimeInputOwner({ stateRoot: root, stackId });
-        const material = yield* owner.resolve(containerState, 4);
+        const material = yield* owner.resolve(containerState, 4, { includePooler: true });
         const tenant = material.pooler?.tenantPath;
         expect(tenant).toBeDefined();
         const content = yield* fs.readFileString(tenant!);
@@ -495,7 +525,7 @@ describe("runtime input owner", () => {
           capabilities: { pooler: { enabled: true, settings: { pool_mode: "session" } } },
         });
         const owner = yield* makeRuntimeInputOwner({ stateRoot: root, stackId });
-        const failed = yield* owner.resolve(state, 9).pipe(Effect.exit);
+        const failed = yield* owner.resolve(state, 9, { includePooler: true }).pipe(Effect.exit);
         expect(Exit.isFailure(failed)).toBe(true);
       }),
     ),
@@ -525,7 +555,9 @@ describe("runtime input owner", () => {
           [10, missing],
           [11, blank],
         ] as const) {
-          const failed = yield* owner.resolve(invalid, generation).pipe(Effect.exit);
+          const failed = yield* owner
+            .resolve(invalid, generation, { includePooler: true })
+            .pipe(Effect.exit);
           expect(errorOf(failed)?.message).toContain("sizing settings are invalid");
           expect(
             yield* fs.exists(
@@ -558,7 +590,9 @@ describe("runtime input owner", () => {
           privatePorts: [{ workloadId: "database:database", binding: "primary", port: 30_001 }],
         };
         const owner = yield* makeRuntimeInputOwner({ stateRoot: root, stackId });
-        const failed = yield* owner.resolve(nativeState, 7).pipe(Effect.exit);
+        const failed = yield* owner
+          .resolve(nativeState, 7, { includePooler: true })
+          .pipe(Effect.exit);
         expect(Exit.isFailure(failed)).toBe(true);
         expect(yield* fs.exists(path.join(root, stackId, "runtime", "inputs", "pooler", "7"))).toBe(
           false,
@@ -605,11 +639,11 @@ describe("runtime input owner", () => {
             });
           },
         });
-        const first = yield* Effect.forkChild(owner.resolve(native, 5), {
+        const first = yield* Effect.forkChild(owner.resolve(native, 5, { includePooler: true }), {
           startImmediately: true,
         });
         yield* Deferred.await(started);
-        const second = yield* Effect.forkChild(owner.resolve(native, 5), {
+        const second = yield* Effect.forkChild(owner.resolve(native, 5, { includePooler: true }), {
           startImmediately: true,
         });
         expect(fetches).toBe(1);
@@ -621,7 +655,7 @@ describe("runtime input owner", () => {
         expect(fetches).toBe(2);
         expect(firstMaterial.auth?.jwks).toBe(secondMaterial.auth?.jwks);
         expect(firstMaterial.pooler?.tenantPath).toBe(secondMaterial.pooler?.tenantPath);
-        const cached = yield* owner.resolve(native, 5);
+        const cached = yield* owner.resolve(native, 5, { includePooler: true });
         expect(cached.pooler?.tenantPath).toBe(firstMaterial.pooler?.tenantPath);
         expect(fetches).toBe(2);
       }),
@@ -678,6 +712,56 @@ describe("runtime input owner", () => {
         const cached = yield* owner.resolve(state, 6);
         expect(cached.auth?.jwks).toBe(firstMaterial.auth?.jwks);
         expect(fetches).toBe(2);
+      }),
+    ),
+  );
+
+  it.live("does not republish completed material after concurrent cleanup", () =>
+    withPlatform(
+      Effect.gen(function* () {
+        const root = yield* (yield* FileSystem.FileSystem).makeTempDirectoryScoped({
+          prefix: "runtime-input-cleanup-race-",
+        });
+        const started = yield* Deferred.make<void>();
+        const release = yield* Deferred.make<void>();
+        let fetches = 0;
+        const state = yield* compiledState(root, {
+          capabilities: {
+            auth: {
+              settings: {
+                third_party: { workos: { enabled: true, issuer_url: "https://issuer.example" } },
+              },
+            },
+          },
+        });
+        const owner = yield* makeRuntimeInputOwner({
+          stateRoot: root,
+          stackId,
+          fetchJson: (url) => {
+            fetches += 1;
+            return Effect.gen(function* () {
+              if (fetches === 1) {
+                yield* Deferred.succeed(started, undefined);
+                yield* Deferred.await(release);
+              }
+              return url.endsWith("openid-configuration")
+                ? { jwks_uri: "https://issuer.example/keys" }
+                : { keys: [{ kty: "RSA", n: "n", e: "AQAB" }] };
+            });
+          },
+        });
+        const materializing = yield* Effect.forkChild(owner.resolve(state, 30), {
+          startImmediately: true,
+        });
+        yield* Deferred.await(started);
+        const cleanup = yield* Effect.forkChild(owner.cleanupAll, { startImmediately: true });
+        yield* Deferred.succeed(release, undefined);
+        const materializingExit = yield* Fiber.join(materializing).pipe(Effect.exit);
+        const cleanupExit = yield* Fiber.join(cleanup).pipe(Effect.exit);
+        expect(Exit.isSuccess(materializingExit)).toBe(true);
+        expect(Exit.isSuccess(cleanupExit)).toBe(true);
+        yield* owner.resolve(state, 30);
+        expect(fetches).toBe(4);
       }),
     ),
   );
@@ -842,6 +926,25 @@ describe("runtime input owner", () => {
         });
         const failed = yield* owner.resolveAuthTemplates(collisionState).pipe(Effect.exit);
         expect(errorOf(failed)?.message).toContain("Duplicate Auth email template id");
+        yield* fs.writeFileString(path.join(root, "welcome"), "welcome");
+        const extensionCollisionState = yield* compiledState(root, {
+          capabilities: {
+            auth: {
+              settings: {
+                email: {
+                  template: {
+                    welcome: { content_path: "confirm.html" },
+                    "welcome.html": { content_path: "welcome" },
+                  },
+                },
+              },
+            },
+          },
+        });
+        const extensionCollision = yield* owner
+          .resolveAuthTemplates(extensionCollisionState)
+          .pipe(Effect.exit);
+        expect(errorOf(extensionCollision)?.message).toContain("Duplicate Auth email URL");
       }),
     ),
   );

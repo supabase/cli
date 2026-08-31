@@ -405,8 +405,8 @@ const usesResolvedJwks = (state: PersistedStackState): boolean => {
 const edgeRuntimeJwtEnvironment = (
   state: PersistedStackState,
   inputs: WorkloadRuntimeInputs,
-): Record<string, string> =>
-  compactEnvironment({
+): Record<string, string> => {
+  const fixed = compactEnvironment({
     SUPABASE_INTERNAL_JWT_SECRET: secret(state, "secret:auth.settings.jwt_secret"),
     SUPABASE_INTERNAL_PUBLISHABLE_KEY: secret(state, "secret:auth.settings.publishable_key"),
     SUPABASE_INTERNAL_SECRET_KEY: secret(state, "secret:auth.settings.secret_key"),
@@ -414,8 +414,11 @@ const edgeRuntimeJwtEnvironment = (
       state.ports.find((assignment) => assignment.field === "api")?.port ?? "",
     ),
     SUPABASE_JWKS: inputs.auth?.jwks ?? '{"keys":[]}',
-    ...inputs.functions?.secrets,
   });
+  // Preserve explicitly empty owner-resolved values. Spec-owned variables are
+  // spread after this helper in the workload env so they retain precedence.
+  return { ...fixed, ...inputs.functions?.secrets };
+};
 
 const functionsConfigEnvironment = (state: PersistedStackState): string => {
   const settings = settingsFor(state, "functions");
