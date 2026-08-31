@@ -1016,3 +1016,11 @@ private-port reservation plus gateway ownership atomic with accepted lifecycle g
 - Removed redundant `Effect.yieldNow` scheduler nudges from cold-join and interrupted-waiter tests; startup uses
   `forkChild(..., { startImmediately: true })` and Deferred gates exclusively. Focused owner/secret/workload/catalog
   integration verification passes 58 cases with stack type-check, Effect lint, formatting, and diff checks green.
+
+#### Task 14 lint-compliance correction (2026-08-31)
+
+- The injected OIDC fetcher now exposes `StackPreparationError` in its typed failure channel; JSON output uses
+  Effect schema encoding at the production boundary, while dynamic integration fixtures carry narrow rationale
+  comments for their direct parse/stringify assertions. The exact changed-file Effect lint now exits cleanly.
+- Focused owner/secret/workload/catalog integration verification remains green at 58 cases with stack type-check,
+  formatting, and diff checks passing.

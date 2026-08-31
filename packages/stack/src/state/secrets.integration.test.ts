@@ -124,6 +124,7 @@ describe("managed and pass-through secrets", () => {
       };
       yield* fs.writeFileString(
         path.join(root, "keys.json"),
+        // oxlint-disable-next-line effecttsgo/prefer-schema-over-json -- dynamic JWK fixture JSON
         JSON.stringify([privateJwk, { kty: "EC", alg: "ES256", d: "invalid" }]),
       );
       const failed = yield* resolveSigningKeyMaterial({

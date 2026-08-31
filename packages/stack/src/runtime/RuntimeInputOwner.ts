@@ -22,7 +22,7 @@ import {
 import { resolveThirdPartyIssuer } from "../model/capabilities/auth-third-party.ts";
 
 /** A parsed JSON document fetched by the owner for OIDC discovery. */
-export type RuntimeJsonFetcher = (url: string) => Effect.Effect<unknown, unknown>;
+export type RuntimeJsonFetcher = (url: string) => Effect.Effect<unknown, StackPreparationError>;
 
 export interface RuntimeAuthTemplate {
   /** Stable URL id used by GoTrue's mailer template setting. */
@@ -93,6 +93,7 @@ const settingValue = (state: PersistedStackState, value: unknown): string => {
   if (Array.isArray(value)) return value.map((entry) => settingValue(state, entry)).join(",");
   if (isRecord(value) && typeof value.slot === "string" && Object.keys(value).length === 1)
     return state.secrets[value.slot]?.value ?? "";
+  // oxlint-disable-next-line effecttsgo/prefer-schema-over-json -- dynamic persisted settings are stringified for workload env values
   return JSON.stringify(value) ?? "";
 };
 
@@ -130,7 +131,7 @@ const extensionFor = (configuredPath: string): string => {
 const publicRemoteJwks = Schema.Struct({ keys: Schema.Array(Schema.Unknown) });
 const oidcDiscovery = Schema.Struct({ jwks_uri: Schema.String });
 
-const decodeJson = (value: unknown): Effect.Effect<unknown, unknown> =>
+const decodeJson = (value: unknown): Effect.Effect<unknown, Schema.SchemaError> =>
   typeof value === "string"
     ? Schema.decodeEffect(Schema.fromJsonString(Schema.Unknown))(value)
     : Effect.succeed(value);
@@ -447,7 +448,9 @@ export const makeRuntimeInputOwner = (
             : yield* resolveAuthTemplates(state);
         return {
           ...(local === undefined ? {} : { jwtKeys: local.privateKeysJson }),
-          jwks: JSON.stringify({ keys: publicKeys }),
+          jwks: yield* Schema.encodeEffect(Schema.fromJsonString(Schema.Unknown))({
+            keys: publicKeys,
+          }).pipe(Effect.mapError(() => failure("Unable to encode Auth JWKS"))),
           ...(templates.length === 0 ? {} : { templates }),
         };
       });

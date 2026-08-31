@@ -14,6 +14,7 @@ import {
 } from "effect";
 import { generateKeyPairSync } from "node:crypto";
 import { compileStack, type CompiledStack } from "../model/Compiler.ts";
+import { StackPreparationError } from "../public/Errors.ts";
 import { StackIdSchema } from "../public/StackId.ts";
 import type { StackRuntime } from "../public/Runtime.ts";
 import type { PersistedStackState } from "../state/StackState.ts";
@@ -115,6 +116,7 @@ describe("runtime input owner", () => {
         });
         yield* fs.writeFileString(
           path.join(root, "keys.json"),
+          // oxlint-disable-next-line effecttsgo/prefer-schema-over-json -- dynamic JWK fixture JSON
           JSON.stringify([
             { ...first, alg: "ES256", kid: "ec-key" },
             { ...second, alg: "RS256", kid: "rsa-key" },
@@ -156,7 +158,9 @@ describe("runtime input owner", () => {
             ),
         });
         const material = yield* owner.resolve(state, 1);
+        // oxlint-disable-next-line effecttsgo/prefer-schema-over-json -- inspect generated JWT fixture
         expect(JSON.parse(material.auth?.jwtKeys ?? "[]")).toHaveLength(2);
+        // oxlint-disable-next-line effecttsgo/prefer-schema-over-json -- inspect generated JWKS fixture
         const jwks = JSON.parse(material.auth?.jwks ?? "{}");
         expect(jwks.keys).toHaveLength(3);
         expect(jwks.keys.every((key: Record<string, unknown>) => !Object.hasOwn(key, "d"))).toBe(
@@ -177,6 +181,7 @@ describe("runtime input owner", () => {
         });
         yield* fs.writeFileString(
           path.join(root, "keys.json"),
+          // oxlint-disable-next-line effecttsgo/prefer-schema-over-json -- dynamic JWK fixture JSON
           JSON.stringify([
             { ...valid, alg: "ES256" },
             { kty: "EC", alg: "ES256", d: "bad" },
@@ -235,6 +240,7 @@ describe("runtime input owner", () => {
           "https://securetoken.google.com/demo/.well-known/openid-configuration",
           "https://issuer.example/keys",
         ]);
+        // oxlint-disable-next-line effecttsgo/prefer-schema-over-json -- inspect generated JWKS fixture
         expect(JSON.parse(material.auth?.jwks ?? "{}").keys).toHaveLength(2);
       }),
     ),
@@ -252,6 +258,7 @@ describe("runtime input owner", () => {
           },
         });
         const owner = yield* makeRuntimeInputOwner({ stateRoot: root, stackId });
+        // oxlint-disable-next-line effecttsgo/prefer-schema-over-json -- inspect generated JWKS fixture
         const jwks = JSON.parse((yield* owner.resolve(state, 1)).auth?.jwks ?? "{}");
         expect(jwks.keys).toEqual([
           {
@@ -354,12 +361,14 @@ describe("runtime input owner", () => {
         const owner = yield* makeRuntimeInputOwner({
           stateRoot: root,
           stackId,
-          fetchJson: () => Effect.fail(new Error("transport failure")),
+          fetchJson: () => Effect.fail(new StackPreparationError({ message: "transport failure" })),
         });
         const failed = yield* owner.resolve(state, 1).pipe(Effect.exit);
         const error = errorOf(failed);
         expect(error?.message).toContain("OIDC discovery request failed");
+        // oxlint-disable-next-line effecttsgo/prefer-schema-over-json -- assert sanitized diagnostic payload
         expect(JSON.stringify(error)).not.toContain("secret-token");
+        // oxlint-disable-next-line effecttsgo/prefer-schema-over-json -- assert sanitized diagnostic payload
         expect(JSON.stringify(error)).not.toContain("fragment");
       }),
     ),
@@ -505,8 +514,10 @@ describe("runtime input owner", () => {
           ...base,
           privatePorts: [{ workloadId: "database:database", binding: "primary", port: 30_001 }],
         };
+        // oxlint-disable-next-line effecttsgo/prefer-schema-over-json -- clone dynamic persisted fixture
         const missing = JSON.parse(JSON.stringify(native));
         delete missing.definition.capabilities.pooler.settings.default_pool_size;
+        // oxlint-disable-next-line effecttsgo/prefer-schema-over-json -- clone dynamic persisted fixture
         const blank = JSON.parse(JSON.stringify(native));
         blank.definition.capabilities.pooler.settings.default_pool_size = "  ";
         const owner = yield* makeRuntimeInputOwner({ stateRoot: root, stackId });
