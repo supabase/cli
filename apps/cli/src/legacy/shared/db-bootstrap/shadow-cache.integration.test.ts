@@ -56,7 +56,7 @@ const withShadowCacheEnv = <A, E, R>(value: string | undefined, body: Effect.Eff
 
 /**
  * Isolates the global shadow-baseline cache under a per-test `SUPABASE_HOME` so tests never
- * write into the developer's real `~/.supabase`. Nested with the opt-in/opt-out gate.
+ * write into the developer's real `~/.supabase`. Nested with the cache env gate.
  */
 const withShadowCacheHome = <A, E, R>(
   value: string | undefined,
