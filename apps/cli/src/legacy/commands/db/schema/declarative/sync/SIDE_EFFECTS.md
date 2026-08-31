@@ -61,7 +61,7 @@ disabling safe compaction.
 | `PGDELTA_DEBUG`              | bundled-engine debug artifacts                                                                                                                                                                                                        | no        |
 | `SUPABASE_SERVICES_HOSTNAME` | local DB host for the bootstrap generate                                                                                                                                                                                              | no        |
 | `DOCKER_HOST`                | tcp daemon host used as the local DB host fallback                                                                                                                                                                                    | no        |
-| `SUPABASE_USE_SLIM_IMAGES`   | resolves both scoped shadow Postgres containers (bundled engine) / the shadow's platform-baseline container (legacy opt-out) from the slim `ghcr.io/supabase/cli` builds instead of the docker.io Dockerfile pins (`true`/`1` enable) | no        |
+| `SUPABASE_USE_SLIM_IMAGES`   | resolves current-pin shadow Postgres images from the slim `ghcr.io/supabase/cli` builds (`true`/`1` enable); majors 13/15 use `15.14.1.167` when the flag is on; historical pins, PG14, OrioleDB, and flag-off `15.8.1.085` stay on docker.io | no        |
 
 ## Exit Codes
 
@@ -140,11 +140,11 @@ existing SQL or creates an export manifest.
   declarative apply, and diff run through the edge-runtime pg-delta scripts.
 - **Stale local-container guard.** Before diffing against the running local `db`
   target, the running container's actual image is inspected and compared
-  against the currently-configured/resolved one; a family mismatch (a docker.io
-  container when a slim `ghcr.io/supabase/cli` image is now expected, or vice
-  versa, e.g. after toggling `SUPABASE_USE_SLIM_IMAGES` between runs without
-  restarting) is treated as stale even when the tags otherwise match, and fails
-  with a suggestion to `supabase stop --all --no-backup` then `supabase start`.
+  against the currently-configured/resolved one. A same-tag family mismatch
+  (slim vs docker.io, e.g. after toggling `SUPABASE_USE_SLIM_IMAGES` without
+  restarting) fails with a suggestion to `supabase stop` then `supabase start`
+  with the same flag. A real version/tag mismatch still suggests
+  `supabase stop --all --no-backup` then `supabase start`.
 
 ### Shadow baseline cache (`SUPABASE_SHADOW_CACHE`, default OFF)
 

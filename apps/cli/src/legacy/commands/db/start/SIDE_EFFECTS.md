@@ -31,9 +31,11 @@ composition reuses too — see that command's `SIDE_EFFECTS.md`):
    `cron.launch_active_jobs = off` appended to `postgresql.conf` — applies regardless of
    `db.major_version`. The backup file itself is bind-mounted `:ro` at `/etc/backup.sql`
    (host path resolved against the CALLER's cwd when relative).
-   `SUPABASE_USE_SLIM_IMAGES` rewrites the current Dockerfile pin to
-   `ghcr.io/supabase/cli/postgres`; a historical `.temp/postgres-version` pin stays on
-   docker.io. The restore entrypoint is the same on both families.
+   `SUPABASE_USE_SLIM_IMAGES` rewrites the current Dockerfile pin (and majors
+   13/15's published slim PG15 pin, `15.14.1.167`) to
+   `ghcr.io/supabase/cli/postgres`; a historical `.temp/postgres-version` pin,
+   PG14, OrioleDB, and flag-off majors 13/15 (`15.8.1.085`) stay on docker.io.
+   The restore entrypoint is the same on both families.
 6. Wait for the container to become healthy (`db.health_timeout`, default `2m`). A timeout
    fails the command UNLESS `--from-backup` is set, in which case it is swallowed (a large
    restore can exceed the timeout) — the container-logs dump to stderr still happens
@@ -113,7 +115,7 @@ native container command in this codebase — never `supabase-go`.
 | Variable                                                                                                             | Purpose                                                                                                                                                                                                                                         | Required? |
 | -------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | --------- |
 | `SUPABASE_PROJECT_ID`                                                                                                | overrides the local container id                                                                                                                                                                                                                | no        |
-| `SUPABASE_USE_SLIM_IMAGES`                                                                                           | resolves the current Dockerfile pin from the slim `ghcr.io/supabase/cli/<service>` builds (`true`/`1` enable); historical `.temp` pins, the pg 13/14/15 fallbacks, and OrioleDB images stay on docker.io | no        |
+| `SUPABASE_USE_SLIM_IMAGES`                                                                                           | resolves the current Dockerfile pin (and majors 13/15's published slim PG15 pin, `15.14.1.167`) from the slim `ghcr.io/supabase/cli` builds (`true`/`1` enable); historical `.temp` pins, PG14, OrioleDB, and flag-off majors 13/15 (`15.8.1.085`) stay on docker.io | no        |
 | `SUPABASE_DB_PORT`                                                                                                   | overrides `db.port` (the published host port)                                                                                                                                                                                                   | no        |
 | `SUPABASE_DB_MAJOR_VERSION`                                                                                          | overrides `db.major_version` (image selection, schema branch)                                                                                                                                                                                   | no        |
 | `SUPABASE_DB_HEALTH_TIMEOUT`                                                                                         | overrides `db.health_timeout`                                                                                                                                                                                                                   | no        |

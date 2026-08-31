@@ -44,7 +44,7 @@ Tenant calls send `apikey: <serviceKey>` and additionally
 | -------------------------- | ---------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------- |
 | `SUPABASE_ACCESS_TOKEN`    | auth token for Management API linked-version checks                                                                          | no (falls back to keyring, then `~/.supabase/access-token`) |
 | `SUPABASE_PROFILE`         | built-in profile name or YAML file path                                                                                      | no (falls back to `~/.supabase/profile` -> `supabase`)      |
-| `SUPABASE_USE_SLIM_IMAGES` | rewrites the local `LOCAL` column's image references to the slim `ghcr.io/supabase/cli/<service>` builds (`true`/`1` enable) | no                                                          |
+| `SUPABASE_USE_SLIM_IMAGES` | Ambient `process.env` only (`true`/`1` enable). Rewrites current-pin `LOCAL` images to `ghcr.io/supabase/cli/<service>`. Kong stays on docker.io. Majors 13/15 list the slim `15.14.1.167` pin when the flag is on; flag-off keeps `15.8.1.085`. | no                                                          |
 
 ## Exit Codes
 

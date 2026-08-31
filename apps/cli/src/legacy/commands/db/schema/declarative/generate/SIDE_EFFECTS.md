@@ -59,7 +59,7 @@ formatting without disabling safe compaction.
 | `PGDELTA_DEBUG`              | bundled-engine debug artifacts                                                                                                                                            | no        |
 | `SUPABASE_SERVICES_HOSTNAME` | local DB host for `--local`                                                                                                                                               | no        |
 | `DOCKER_HOST`                | tcp daemon host used as the local DB host fallback                                                                                                                        | no        |
-| `SUPABASE_USE_SLIM_IMAGES`   | resolves the legacy opt-out's shadow platform-baseline container from the slim `ghcr.io/supabase/cli` builds instead of the docker.io Dockerfile pins (`true`/`1` enable) | no        |
+| `SUPABASE_USE_SLIM_IMAGES`   | resolves the current-pin shadow Postgres image from the slim `ghcr.io/supabase/cli` builds (`true`/`1` enable); majors 13/15 use `15.14.1.167` when the flag is on; historical pins, PG14, OrioleDB, and flag-off `15.8.1.085` stay on docker.io | no        |
 
 ## Exit Codes
 
@@ -112,9 +112,8 @@ always go to stderr, in every `--output-format`. On success:
   container) using the same primitives as `db diff` and `db pull`.
 - **Stale local-container guard.** `--local`/smart-mode's Local target inspects
   the running local `db` container's actual image and compares it against the
-  currently-configured/resolved one before reading from it; a family mismatch
-  (a docker.io container when a slim `ghcr.io/supabase/cli` image is now
-  expected, or vice versa, e.g. after toggling `SUPABASE_USE_SLIM_IMAGES`
-  between runs without restarting) is treated as stale even when the tags
-  otherwise match, and fails with a suggestion to reset the local database
-  (`supabase stop --all --no-backup`, then `supabase start`).
+  currently-configured/resolved one before reading from it. A same-tag family
+  mismatch (slim vs docker.io, e.g. after toggling `SUPABASE_USE_SLIM_IMAGES`
+  without restarting) fails with a suggestion to `supabase stop` then
+  `supabase start` with the same flag. A real version/tag mismatch still
+  suggests `supabase stop --all --no-backup` then `supabase start`.
