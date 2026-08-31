@@ -6,9 +6,7 @@
   "exports": {
     ".": "./src/index.ts",
     "./effect": "./src/effect.ts",
-    "./testing": "./src/testing.ts",
-    "./functions/serve-main-bundler": "./src/functions/serve-main-bundler.ts",
-    "./functions/serve-main-deps": "./src/functions/serve-main-deps.ts"
+    "./testing": "./src/testing.ts"
   },
   "scripts": {
     "test": "pnpm run test:unit && pnpm run test:integration",

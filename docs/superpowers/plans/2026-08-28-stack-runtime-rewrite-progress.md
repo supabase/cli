@@ -1036,3 +1036,12 @@ private-port reservation plus gateway ownership atomic with accepted lifecycle g
 - Knip, stack type-check, package unit tests, focused control/supervisor/functions integration tests, generic and Effect
   lint, formatting, and `git diff --check` pass. Full integration was also verified with two workers (384/384); the
   default parallel run remains subject to concurrent native-process load as documented in the runtime test fix.
+
+#### Task 15 — close the stack package export surface (2026-08-31)
+
+- Closed `@supabase/stack` to the package root, `./effect`, and `./testing`; the Edge Runtime bootstrap modules
+  remain private stack-owned sources used internally by `ProductionRuntime`.
+- The two CLI Functions bridges now import those exact private sources through documented monorepo-internal relative
+  paths, preserving source execution and compiled CLI bundling without a new public alias or duplicate runtime.
+- Bridge identity tests assert both CLI modules expose the stack-owned implementations and that no private Functions
+  subpaths remain in the package export map.

@@ -1,6 +1,21 @@
 import { describe, expect, it } from "vitest";
 
 import { dirname, join, STATUS_CODE, STATUS_TEXT, toFileUrl } from "./serve-main-deps.ts";
+import {
+  dirname as stackDirname,
+  join as stackJoin,
+  STATUS_CODE as stackStatusCode,
+  STATUS_TEXT as stackStatusText,
+  toFileUrl as stackToFileUrl,
+} from "../../../../../packages/stack/src/functions/serve-main-deps.ts";
+
+it("bridges the stack-owned private dependency helpers", () => {
+  expect(dirname).toBe(stackDirname);
+  expect(join).toBe(stackJoin);
+  expect(STATUS_CODE).toBe(stackStatusCode);
+  expect(STATUS_TEXT).toBe(stackStatusText);
+  expect(toFileUrl).toBe(stackToFileUrl);
+});
 
 describe("posix join", () => {
   it("joins absolute segments with a single separator", () => {
