@@ -8018,47 +8018,53 @@ type UpdateAuthConfigBody struct {
 	SecurityCaptchaProvider                               nullable.Nullable[UpdateAuthConfigBodySecurityCaptchaProvider]    `json:"security_captcha_provider,omitempty"`
 	SecurityCaptchaSecret                                 nullable.Nullable[string]                                         `json:"security_captcha_secret,omitempty"`
 	SecurityManualLinkingEnabled                          nullable.Nullable[bool]                                           `json:"security_manual_linking_enabled,omitempty"`
-	SecurityRefreshTokenReuseInterval                     nullable.Nullable[int]                                            `json:"security_refresh_token_reuse_interval,omitempty"`
-	SecuritySbForwardedForEnabled                         nullable.Nullable[bool]                                           `json:"security_sb_forwarded_for_enabled,omitempty"`
-	SecurityUpdatePasswordRequireReauthentication         nullable.Nullable[bool]                                           `json:"security_update_password_require_reauthentication,omitempty"`
-	SessionsInactivityTimeout                             nullable.Nullable[float32]                                        `json:"sessions_inactivity_timeout,omitempty"`
-	SessionsSinglePerUser                                 nullable.Nullable[bool]                                           `json:"sessions_single_per_user,omitempty"`
-	SessionsTags                                          nullable.Nullable[string]                                         `json:"sessions_tags,omitempty"`
-	SessionsTimebox                                       nullable.Nullable[float32]                                        `json:"sessions_timebox,omitempty"`
-	SiteUrl                                               nullable.Nullable[string]                                         `json:"site_url,omitempty"`
-	SmsAutoconfirm                                        nullable.Nullable[bool]                                           `json:"sms_autoconfirm,omitempty"`
-	SmsMaxFrequency                                       nullable.Nullable[int]                                            `json:"sms_max_frequency,omitempty"`
-	SmsMessagebirdAccessKey                               nullable.Nullable[string]                                         `json:"sms_messagebird_access_key,omitempty"`
-	SmsMessagebirdOriginator                              nullable.Nullable[string]                                         `json:"sms_messagebird_originator,omitempty"`
-	SmsOtpExp                                             nullable.Nullable[int]                                            `json:"sms_otp_exp,omitempty"`
-	SmsOtpLength                                          *int                                                              `json:"sms_otp_length,omitempty"`
-	SmsProvider                                           nullable.Nullable[UpdateAuthConfigBodySmsProvider]                `json:"sms_provider,omitempty"`
-	SmsTemplate                                           nullable.Nullable[string]                                         `json:"sms_template,omitempty"`
-	SmsTestOtp                                            nullable.Nullable[string]                                         `json:"sms_test_otp,omitempty"`
-	SmsTestOtpValidUntil                                  nullable.Nullable[time.Time]                                      `json:"sms_test_otp_valid_until,omitempty"`
-	SmsTextlocalApiKey                                    nullable.Nullable[string]                                         `json:"sms_textlocal_api_key,omitempty"`
-	SmsTextlocalSender                                    nullable.Nullable[string]                                         `json:"sms_textlocal_sender,omitempty"`
-	SmsTwilioAccountSid                                   nullable.Nullable[string]                                         `json:"sms_twilio_account_sid,omitempty"`
-	SmsTwilioAuthToken                                    nullable.Nullable[string]                                         `json:"sms_twilio_auth_token,omitempty"`
-	SmsTwilioContentSid                                   nullable.Nullable[string]                                         `json:"sms_twilio_content_sid,omitempty"`
-	SmsTwilioMessageServiceSid                            nullable.Nullable[string]                                         `json:"sms_twilio_message_service_sid,omitempty"`
-	SmsTwilioVerifyAccountSid                             nullable.Nullable[string]                                         `json:"sms_twilio_verify_account_sid,omitempty"`
-	SmsTwilioVerifyAuthToken                              nullable.Nullable[string]                                         `json:"sms_twilio_verify_auth_token,omitempty"`
-	SmsTwilioVerifyMessageServiceSid                      nullable.Nullable[string]                                         `json:"sms_twilio_verify_message_service_sid,omitempty"`
-	SmsVonageApiKey                                       nullable.Nullable[string]                                         `json:"sms_vonage_api_key,omitempty"`
-	SmsVonageApiSecret                                    nullable.Nullable[string]                                         `json:"sms_vonage_api_secret,omitempty"`
-	SmsVonageFrom                                         nullable.Nullable[string]                                         `json:"sms_vonage_from,omitempty"`
-	SmtpAdminEmail                                        nullable.Nullable[openapi_types.Email]                            `json:"smtp_admin_email,omitempty"`
-	SmtpHost                                              nullable.Nullable[string]                                         `json:"smtp_host,omitempty"`
-	SmtpMaxFrequency                                      nullable.Nullable[int]                                            `json:"smtp_max_frequency,omitempty"`
-	SmtpPass                                              nullable.Nullable[string]                                         `json:"smtp_pass,omitempty"`
-	SmtpPort                                              nullable.Nullable[string]                                         `json:"smtp_port,omitempty"`
-	SmtpSenderName                                        nullable.Nullable[string]                                         `json:"smtp_sender_name,omitempty"`
-	SmtpUser                                              nullable.Nullable[string]                                         `json:"smtp_user,omitempty"`
-	UriAllowList                                          nullable.Nullable[string]                                         `json:"uri_allow_list,omitempty"`
-	WebauthnRpDisplayName                                 nullable.Nullable[string]                                         `json:"webauthn_rp_display_name,omitempty"`
-	WebauthnRpId                                          nullable.Nullable[string]                                         `json:"webauthn_rp_id,omitempty"`
-	WebauthnRpOrigins                                     nullable.Nullable[string]                                         `json:"webauthn_rp_origins,omitempty"`
+
+	// SecurityRefreshTokenReuseInterval Refresh token reuse interval in seconds. Maximum 300 seconds (5 minutes).
+	SecurityRefreshTokenReuseInterval             nullable.Nullable[int]  `json:"security_refresh_token_reuse_interval,omitempty"`
+	SecuritySbForwardedForEnabled                 nullable.Nullable[bool] `json:"security_sb_forwarded_for_enabled,omitempty"`
+	SecurityUpdatePasswordRequireReauthentication nullable.Nullable[bool] `json:"security_update_password_require_reauthentication,omitempty"`
+
+	// SessionsInactivityTimeout Session inactivity timeout in hours. Maximum 8760 hours (1 year).
+	SessionsInactivityTimeout nullable.Nullable[float32] `json:"sessions_inactivity_timeout,omitempty"`
+	SessionsSinglePerUser     nullable.Nullable[bool]    `json:"sessions_single_per_user,omitempty"`
+	SessionsTags              nullable.Nullable[string]  `json:"sessions_tags,omitempty"`
+
+	// SessionsTimebox Session timebox in hours. Maximum 8760 hours (1 year).
+	SessionsTimebox                  nullable.Nullable[float32]                         `json:"sessions_timebox,omitempty"`
+	SiteUrl                          nullable.Nullable[string]                          `json:"site_url,omitempty"`
+	SmsAutoconfirm                   nullable.Nullable[bool]                            `json:"sms_autoconfirm,omitempty"`
+	SmsMaxFrequency                  nullable.Nullable[int]                             `json:"sms_max_frequency,omitempty"`
+	SmsMessagebirdAccessKey          nullable.Nullable[string]                          `json:"sms_messagebird_access_key,omitempty"`
+	SmsMessagebirdOriginator         nullable.Nullable[string]                          `json:"sms_messagebird_originator,omitempty"`
+	SmsOtpExp                        nullable.Nullable[int]                             `json:"sms_otp_exp,omitempty"`
+	SmsOtpLength                     *int                                               `json:"sms_otp_length,omitempty"`
+	SmsProvider                      nullable.Nullable[UpdateAuthConfigBodySmsProvider] `json:"sms_provider,omitempty"`
+	SmsTemplate                      nullable.Nullable[string]                          `json:"sms_template,omitempty"`
+	SmsTestOtp                       nullable.Nullable[string]                          `json:"sms_test_otp,omitempty"`
+	SmsTestOtpValidUntil             nullable.Nullable[time.Time]                       `json:"sms_test_otp_valid_until,omitempty"`
+	SmsTextlocalApiKey               nullable.Nullable[string]                          `json:"sms_textlocal_api_key,omitempty"`
+	SmsTextlocalSender               nullable.Nullable[string]                          `json:"sms_textlocal_sender,omitempty"`
+	SmsTwilioAccountSid              nullable.Nullable[string]                          `json:"sms_twilio_account_sid,omitempty"`
+	SmsTwilioAuthToken               nullable.Nullable[string]                          `json:"sms_twilio_auth_token,omitempty"`
+	SmsTwilioContentSid              nullable.Nullable[string]                          `json:"sms_twilio_content_sid,omitempty"`
+	SmsTwilioMessageServiceSid       nullable.Nullable[string]                          `json:"sms_twilio_message_service_sid,omitempty"`
+	SmsTwilioVerifyAccountSid        nullable.Nullable[string]                          `json:"sms_twilio_verify_account_sid,omitempty"`
+	SmsTwilioVerifyAuthToken         nullable.Nullable[string]                          `json:"sms_twilio_verify_auth_token,omitempty"`
+	SmsTwilioVerifyMessageServiceSid nullable.Nullable[string]                          `json:"sms_twilio_verify_message_service_sid,omitempty"`
+	SmsVonageApiKey                  nullable.Nullable[string]                          `json:"sms_vonage_api_key,omitempty"`
+	SmsVonageApiSecret               nullable.Nullable[string]                          `json:"sms_vonage_api_secret,omitempty"`
+	SmsVonageFrom                    nullable.Nullable[string]                          `json:"sms_vonage_from,omitempty"`
+	SmtpAdminEmail                   nullable.Nullable[openapi_types.Email]             `json:"smtp_admin_email,omitempty"`
+	SmtpHost                         nullable.Nullable[string]                          `json:"smtp_host,omitempty"`
+	SmtpMaxFrequency                 nullable.Nullable[int]                             `json:"smtp_max_frequency,omitempty"`
+	SmtpPass                         nullable.Nullable[string]                          `json:"smtp_pass,omitempty"`
+	SmtpPort                         nullable.Nullable[string]                          `json:"smtp_port,omitempty"`
+	SmtpSenderName                   nullable.Nullable[string]                          `json:"smtp_sender_name,omitempty"`
+	SmtpUser                         nullable.Nullable[string]                          `json:"smtp_user,omitempty"`
+	UriAllowList                     nullable.Nullable[string]                          `json:"uri_allow_list,omitempty"`
+	WebauthnRpDisplayName            nullable.Nullable[string]                          `json:"webauthn_rp_display_name,omitempty"`
+	WebauthnRpId                     nullable.Nullable[string]                          `json:"webauthn_rp_id,omitempty"`
+	WebauthnRpOrigins                nullable.Nullable[string]                          `json:"webauthn_rp_origins,omitempty"`
 }
 
 // UpdateAuthConfigBodyDbMaxPoolSizeUnit defines model for UpdateAuthConfigBody.DbMaxPoolSizeUnit.
