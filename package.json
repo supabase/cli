@@ -42,10 +42,14 @@
     "verdaccio": "^6.9.3"
   },
   "devEngines": {
+    "packageManager": {
+      "name": "pnpm",
+      "version": "12.2.1",
+      "onFail": "error"
+    },
     "runtime": {
       "name": "node",
       "version": "24"
     }
-  },
-  "packageManager": "pnpm@11.4.0"
+  }
 }
