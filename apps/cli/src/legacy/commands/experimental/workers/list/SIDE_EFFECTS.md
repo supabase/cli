@@ -1,4 +1,4 @@
-# `supabase workers list`
+# `supabase experimental workers list`
 
 > **No live test yet.** `workers` runs against the v2 Management API, which the
 > supabase/cli-e2e-ci supabox stack is not expected to serve, so a `*.live.test.ts`

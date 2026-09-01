@@ -8,11 +8,11 @@ import {
   workerResource,
   workersRoute,
   WORKERS_PROJECT_REF,
-} from "../../../../../tests/helpers/legacy-workers.ts";
+} from "../../../../../../tests/helpers/legacy-workers.ts";
 import {
   InvalidWorkerNameError,
   WorkerNotDeployedError,
-} from "../../../../shared/workers/workers.errors.ts";
+} from "../../../../../shared/workers/workers.errors.ts";
 import { LegacyWorkersEnvNotSupportedError } from "../workers.errors.ts";
 import { legacyWorkersStatus } from "./status.handler.ts";
 
@@ -195,7 +195,7 @@ describe("legacy workers status", () => {
       yield* legacyWorkersStatus({ name: "api", projectRef: Option.none() });
 
       expect(out.stdoutText).toContain("deleting");
-      expect(out.stdoutText).not.toContain("re-run supabase workers push");
+      expect(out.stdoutText).not.toContain("re-run supabase experimental workers push");
     }).pipe(Effect.provide(layer), Effect.ensuring(Effect.sync(repo.cleanup)));
   });
 
@@ -223,7 +223,7 @@ describe("legacy workers status", () => {
 
       expect(out.stdoutText).toContain("failed");
       expect(out.stdoutText).toContain("exit status 1");
-      expect(out.stdoutText).toContain("supabase workers push api");
+      expect(out.stdoutText).toContain("supabase experimental workers push api");
     }).pipe(Effect.provide(layer), Effect.ensuring(Effect.sync(repo.cleanup)));
   });
 
@@ -261,7 +261,7 @@ describe("legacy workers status", () => {
 
       expect(error).toBeInstanceOf(WorkerNotDeployedError);
       const suggestion = error instanceof WorkerNotDeployedError ? error.suggestion : "";
-      expect(suggestion).toContain("supabase workers push api");
+      expect(suggestion).toContain("supabase experimental workers push api");
     }).pipe(Effect.provide(layer), Effect.ensuring(Effect.sync(repo.cleanup)));
   });
 

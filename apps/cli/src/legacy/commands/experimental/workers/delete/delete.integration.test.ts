@@ -8,13 +8,13 @@ import {
   workerResource,
   workersRoute,
   WORKERS_PROJECT_REF,
-} from "../../../../../tests/helpers/legacy-workers.ts";
+} from "../../../../../../tests/helpers/legacy-workers.ts";
 import {
   WorkerDeleteConfirmationRequiredError,
   WorkerDeleteNotConfirmedError,
   WorkerNotDeployedError,
   WorkersApiUnexpectedStatusError,
-} from "../../../../shared/workers/workers.errors.ts";
+} from "../../../../../shared/workers/workers.errors.ts";
 import { LegacyWorkersEnvNotSupportedError } from "../workers.errors.ts";
 import { legacyWorkersDelete } from "./delete.handler.ts";
 
@@ -72,7 +72,7 @@ describe("legacy workers delete", () => {
       // Nothing local is touched — that is what makes `push` a one-command undo.
       expect(existsSync(join(repo.dir, "supabase", "workers", "api", "index.js"))).toBe(true);
       expect(readFileSync(join(repo.dir, "supabase", "config.toml"), "utf8")).toBe(CONFIG);
-      expect(out.stdoutText).toContain("supabase workers push api");
+      expect(out.stdoutText).toContain("supabase experimental workers push api");
     }).pipe(Effect.provide(layer), Effect.ensuring(Effect.sync(repo.cleanup)));
   });
 
@@ -289,7 +289,7 @@ describe("legacy workers delete", () => {
     }).pipe(Effect.provide(layer), Effect.ensuring(Effect.sync(repo.cleanup)));
   });
 
-  // `printf 'api\n' | supabase workers delete api`: stdout is still a TTY, so
+  // `printf 'api\n' | supabase experimental workers delete api`: stdout is still a TTY, so
   // `output.interactive` stayed true and the prompt read the worker name off the
   // pipe — a confirmation the user never typed.
   it.live("refuses to read the confirmation off a piped stdin", () => {
@@ -380,7 +380,7 @@ describe("legacy workers delete", () => {
       expect(error).toBeInstanceOf(WorkerNotDeployedError);
       // Not `workers push`: somebody deleting "api" does not want to deploy it.
       const suggestion = error instanceof WorkerNotDeployedError ? error.suggestion : "";
-      expect(suggestion).toContain("supabase workers list");
+      expect(suggestion).toContain("supabase experimental workers list");
       expect(suggestion).not.toContain("workers push");
       expect(out.messages.filter((message) => message.type === "warn")).toHaveLength(0);
     }).pipe(Effect.provide(layer), Effect.ensuring(Effect.sync(repo.cleanup)));

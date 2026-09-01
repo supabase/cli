@@ -1,7 +1,7 @@
 /**
  * Text rendering for the workers commands.
  *
- * Two conventions this shell holds and `supabase workers` follows rather than
+ * Two conventions this shell holds and `supabase experimental workers` follows rather than
  * inventing its own: results are written with `output.raw` as plain text, with
  * no `intro`/`outro` framing, which no other handler here uses, and tabular
  * output goes through `renderGlamourTable`, so `workers list` sits beside

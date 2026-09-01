@@ -1,8 +1,8 @@
 import { Argument, Command, Flag } from "effect/unstable/cli";
 import type * as CliCommand from "effect/unstable/cli/Command";
-import { withJsonErrorHandling } from "../../../../shared/output/json-error-handling.ts";
-import { legacyManagementApiRuntimeLayer } from "../../../shared/legacy-management-api-runtime.layer.ts";
-import { withLegacyCommandInstrumentation } from "../../../telemetry/legacy-command-instrumentation.ts";
+import { withJsonErrorHandling } from "../../../../../shared/output/json-error-handling.ts";
+import { legacyManagementApiRuntimeLayer } from "../../../../shared/legacy-management-api-runtime.layer.ts";
+import { withLegacyCommandInstrumentation } from "../../../../telemetry/legacy-command-instrumentation.ts";
 import { legacyWorkersDelete } from "./delete.handler.ts";
 
 // No local `--yes`: it is a root persistent flag every other confirming command
@@ -25,11 +25,11 @@ export const legacyWorkersDeleteCommand = Command.make("delete", config).pipe(
   Command.withShortDescription("Delete a worker from Supabase"),
   Command.withExamples([
     {
-      command: "supabase workers delete api",
+      command: "supabase experimental workers delete api",
       description: "Delete a worker, confirming by typing its name",
     },
     {
-      command: "supabase workers delete api --yes",
+      command: "supabase experimental workers delete api --yes",
       description: "Skip the confirmation prompt (scripts and CI)",
     },
   ]),
@@ -39,5 +39,5 @@ export const legacyWorkersDeleteCommand = Command.make("delete", config).pipe(
       withJsonErrorHandling,
     ),
   ),
-  Command.provide(legacyManagementApiRuntimeLayer(["workers", "delete"])),
+  Command.provide(legacyManagementApiRuntimeLayer(["experimental", "workers", "delete"])),
 );
