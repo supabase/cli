@@ -41,6 +41,10 @@ describe("complete workload catalog", () => {
     expect(WORKLOAD_CATALOG["studio:pgmeta"]?.containerImage).toBe(
       "ghcr.io/supabase/cli/pgmeta:v0.99.0",
     );
+    expect(WORKLOAD_CATALOG["studio:pgmeta"]).toMatchObject({
+      nativeVersion: "v0.99.0",
+      supportedNativeVersions: ["v0.99.0"],
+    });
     expect(WORKLOAD_CATALOG["analytics:analytics"]?.containerImage).toBe(
       "ghcr.io/supabase/cli/analytics:v1.50.6",
     );
@@ -50,6 +54,10 @@ describe("complete workload catalog", () => {
     expect(WORKLOAD_CATALOG["analytics:vector"]?.containerImage).toBe(
       "ghcr.io/supabase/cli/vector:0.53.0",
     );
+    expect(WORKLOAD_CATALOG["analytics:vector"]).toMatchObject({
+      nativeVersion: "0.53.0",
+      supportedNativeVersions: ["0.53.0"],
+    });
     expect(WORKLOAD_CATALOG["storage:imgproxy"]?.containerImage).toBe(
       "ghcr.io/supabase/cli/imgproxy:v3.8.0",
     );
@@ -162,6 +170,35 @@ describe("complete workload catalog", () => {
     }),
   );
 
+  it.live("uses canonical native release tags for companion workloads", () =>
+    Effect.gen(function* () {
+      const result = yield* compile({
+        capabilities: {
+          storage: { settings: { image_transformation: { enabled: true } } },
+          analytics: { settings: { vector_port: 9001 } },
+        },
+      });
+      const expected = [
+        ["studio:pgmeta", "pgmeta", "v0.99.0"],
+        ["analytics:vector", "vector", "0.53.0"],
+      ] as const;
+      for (const [id, service, version] of expected) {
+        const workload = result.executionPlan.workloads.find((entry) => entry.id === id);
+        expect(workload).toBeDefined();
+        if (workload === undefined) continue;
+        expect(workload.artifacts.native.release).toBe(version);
+        const artifact = yield* resolveNativeArtifactForWorkload(workload, {
+          os: "darwin",
+          arch: "arm64",
+        });
+        expect(artifact.releaseTag).toBe(`${service}-${version}`);
+        expect(artifact.downloadUrl).toBe(
+          `https://github.com/supabase/slim-services/releases/download/${service}-${version}/${service}-${version}-darwin-arm64.tar.zst`,
+        );
+      }
+    }),
+  );
+
   it.live("materialized settings control optional companion workloads", () =>
     Effect.gen(function* () {
       const defaults = yield* compile({});
@@ -170,6 +207,11 @@ describe("complete workload catalog", () => {
       );
       expect(defaults.executionPlan.workloads.some(({ id }) => id === "analytics:vector")).toBe(
         false,
+      );
+      expect(defaults.executionPlan.workloads).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({ id: "storage:storage", dependencies: ["database:database"] }),
+        ]),
       );
 
       const enabled = yield* compile({
@@ -186,6 +228,11 @@ describe("complete workload catalog", () => {
       );
       expect(enabled.executionPlan.workloads).toEqual(
         expect.arrayContaining([
+          expect.objectContaining({
+            id: "storage:storage",
+            dependencies: ["database:database", "storage:imgproxy"],
+          }),
+          expect.objectContaining({ id: "storage:imgproxy", dependencies: [] }),
           expect.objectContaining({
             id: "analytics:analytics",
             dependencies: ["database:database"],

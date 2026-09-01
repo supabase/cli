@@ -135,6 +135,13 @@ const defaults: DatabaseSettings = {
   vault: {},
 };
 
+const postgres17Release = release("17.6.1.167", [
+  workload("database", "database", "17.6.1.167", "ghcr.io/supabase/cli/postgres:17.6.1.167", {
+    bootstrap: "database",
+    readiness: { mode: "tcp", portField: "database" },
+  }),
+]);
+
 export const DatabaseModule: CapabilityModule<DatabaseSettings> = {
   name: "database",
   settings: DatabaseSettingsSchema,
@@ -144,18 +151,8 @@ export const DatabaseModule: CapabilityModule<DatabaseSettings> = {
   defaultVersion: "17.6.1.167",
   dependencies: [],
   releases: {
-    "17": release("17.6.1.167", [
-      workload("database", "database", "17.6.1.167", "ghcr.io/supabase/cli/postgres:17.6.1.167", {
-        bootstrap: "database",
-        readiness: { mode: "tcp", portField: "database" },
-      }),
-    ]),
-    "17.6.1.167": release("17.6.1.167", [
-      workload("database", "database", "17.6.1.167", "ghcr.io/supabase/cli/postgres:17.6.1.167", {
-        bootstrap: "database",
-        readiness: { mode: "tcp", portField: "database" },
-      }),
-    ]),
+    "17": postgres17Release,
+    "17.6.1.167": postgres17Release,
   },
   routes: [{ listener: "database", protocol: "tcp" }],
   secretPolicy: () => "passthrough",

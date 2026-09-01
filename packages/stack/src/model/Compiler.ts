@@ -33,7 +33,11 @@ import {
 } from "./capabilities/index.ts";
 import { resolveThirdPartyIssuer } from "./capabilities/auth-third-party.ts";
 import { CAPABILITY_MODULES, createExecutionPlan, type ExecutionPlan } from "./ExecutionPlan.ts";
-import type { CapabilityModule, CapabilityRelease } from "./CapabilityModule.ts";
+import type {
+  CapabilityModule,
+  CapabilityRelease,
+  MaterializedSettings,
+} from "./CapabilityModule.ts";
 import type { SecretGenerator, SecretJwtSigning } from "../state/SecretStore.ts";
 
 type InputFingerprint = Schema.Schema.Type<typeof InputFingerprintSchema>;
@@ -42,20 +46,6 @@ const InputFingerprintSchema = Schema.String.pipe(Schema.brand("InputFingerprint
 interface SecretSlot {
   readonly slot: string;
 }
-
-type MaterializedValue<T> = [T] extends [Redacted.Redacted<unknown>]
-  ? SecretSlot
-  : T extends ReadonlyArray<infer Item>
-    ? ReadonlyArray<MaterializedValue<Item>>
-    : T extends object
-      ? {
-          readonly [Key in keyof T]-?:
-            | MaterializedValue<Exclude<T[Key], undefined>>
-            | (undefined extends T[Key] ? null : never);
-        }
-      : T;
-
-type MaterializedSettings<T> = MaterializedValue<T>;
 
 interface MaterializedCapability<T> {
   readonly enabled: boolean;
@@ -565,7 +555,9 @@ const materializeCapability = <T>(
     for (const entry of selectedRelease.workloads) {
       const bytes = yield* crypto.digest(
         "SHA-256",
-        new TextEncoder().encode(canonical({ workload: entry, version, settings: slotted })),
+        new TextEncoder().encode(
+          canonical({ workload: entry, version, settings: completeSettings }),
+        ),
       );
       specHashes.set(`${module.name}:${entry.name}`, digestHex(bytes));
     }

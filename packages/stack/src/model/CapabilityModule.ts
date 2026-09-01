@@ -1,4 +1,4 @@
-import type { Schema } from "effect";
+import type { Redacted, Schema } from "effect";
 import type { CapabilityName, ActivationMode } from "../public/Capability.ts";
 import type { PortField } from "../public/Status.ts";
 
@@ -29,6 +29,21 @@ export interface WorkloadSpec {
   }>;
 }
 
+/** Settings shape persisted by the compiler, where absent and secret leaves are materialized. */
+type MaterializedValue<T> = [T] extends [Redacted.Redacted<unknown>]
+  ? { readonly slot: string }
+  : T extends ReadonlyArray<infer Item>
+    ? ReadonlyArray<MaterializedValue<Item>>
+    : T extends object
+      ? {
+          readonly [Key in keyof T]-?:
+            | MaterializedValue<Exclude<T[Key], undefined>>
+            | (undefined extends T[Key] ? null : never);
+        }
+      : T;
+
+export type MaterializedSettings<T> = MaterializedValue<T>;
+
 export interface CapabilityModule<Settings> {
   readonly name: CapabilityName;
   readonly settings: Schema.Schema<Settings>;
@@ -49,7 +64,7 @@ export interface CapabilityModule<Settings> {
   readonly materialize: (settings: Settings, projectRoot: string) => Settings;
   /** Selects private companion workloads from fully materialized settings. */
   readonly selectWorkloads?: (
-    settings: unknown,
+    settings: MaterializedSettings<Settings>,
     workloads: ReadonlyArray<WorkloadSpec>,
   ) => ReadonlyArray<WorkloadSpec>;
 }

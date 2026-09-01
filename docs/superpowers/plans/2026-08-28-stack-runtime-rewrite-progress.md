@@ -98,6 +98,12 @@ updated in the same commit as each completed slice. Scratch review packages live
 > wrong: adding a version is a catalog change, while retaining unsupported historical selectors would
 > create runtime identities that cannot be prepared.
 
+> **Uncertain:** Studio currently depends on Analytics and therefore fails compilation when Studio is
+> enabled but Analytics is disabled. The design specifies dependency failure for disabled required
+> capabilities but does not decide whether Studio must support a degraded Analytics-free mode. Keep
+> the current fail-closed contract until that product behavior is explicitly decided; do not add
+> conditional runtime wiring speculatively.
+
 When the design does not determine another choice, record it here as:
 
 > **Ruling:** decision — reason — cost if wrong.
@@ -1192,8 +1198,10 @@ The final public Stack-package scenario is one `runWholeStackScenario(mode)` bod
   remains covered through `HostListener` and Supervisor ingress. The native early-exit regression now awaits the
   caller's typed lifecycle failure instead of an incidental final log line that failed-start teardown may cancel.
   The named native test passed 20 consecutive runs and the complete integration project passed five consecutive
-  default-parallel runs (449 tests each).
-- Fresh completion gates passed the Stack package test command (5 unit and 449 integration tests), Stack and CLI
+  default-parallel runs (449 tests each; the suite now contains 450 after the descendant-cleanup regression was
+  added in `packages/stack/src/runtime/native-runtime.integration.test.ts`).
+- Fresh completion gates passed the Stack package test command (5 unit and 451 integration tests after the
+  post-merge canonical-artifact regression), Stack and CLI
   type-checks, scoped generic and Effect lint, Stack Knip analysis, tracked-file formatting, and `git diff --check`.
 - Fable milestone reports:
   `/Users/jgoux/.codex/fable-reviews/cli/20260901T020640Z.md`,
@@ -1225,3 +1233,14 @@ The final public Stack-package scenario is one `runWholeStackScenario(mode)` bod
 - The exact stale test-owned EPMD processes were terminated after evidence capture. The final native E2E must be rerun
   from a host with no EPMD listener after rebuilt artifacts are available, and teardown must leave no EPMD process.
   Until that proof exists, the rewrite is not complete and Step 5 remains open.
+- Post-merge Fable review:
+  `/Users/jgoux/.codex/fable-reviews/cli/20260901T043012Z.md`. Independently validated Keep findings cover canonical
+  native artifact tags, typed companion selection, removal of the false imgproxy/database edge, an explicit
+  user-supplied Pooler tenant in the E2E, and small catalog type/duplication cleanup. The Studio/Analytics contract
+  remains recorded above as uncertain. Findings about cross-package registry tests, hypothetical unobserved process
+  exits, explicit-undefined defaults, generic registry-reference parsing, and PID reuse were refuted or deferred as
+  unreachable, already intentional, or disproportionate to this minimal rewrite.
+- Convergence Fable review:
+  `/Users/jgoux/.codex/fable-reviews/cli/20260901T045319Z.md`. The second pass reached consensus with no material
+  finding. Its one concrete low-cost hardening was applied: fresh workload spec hashes now name the completed
+  materialized settings explicitly instead of relying on the managed-slot helper mutating an earlier alias in place.

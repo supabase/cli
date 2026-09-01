@@ -33,7 +33,7 @@ export const AnalyticsModule: CapabilityModule<AnalyticsSettings> = {
         dependencies: ["database:database"],
         readiness: { mode: "http", portField: "api" },
       }),
-      workload("vector", "analytics", "0.53.0-alpine", "ghcr.io/supabase/cli/vector:0.53.0", {
+      workload("vector", "analytics", "0.53.0", "ghcr.io/supabase/cli/vector:0.53.0", {
         dependencies: ["analytics:analytics"],
         readiness: { mode: "tcp" },
       }),
@@ -43,11 +43,7 @@ export const AnalyticsModule: CapabilityModule<AnalyticsSettings> = {
   secretPolicy: () => "passthrough",
   managedSecretSlots: ["analytics.settings.api_key"],
   selectWorkloads: (settings, workloads) => {
-    const value =
-      typeof settings === "object" && settings !== null && !Array.isArray(settings)
-        ? Object.fromEntries(Object.entries(settings)).vector_port
-        : undefined;
-    const enabled = typeof value === "number";
+    const enabled = typeof settings.vector_port === "number";
     return workloads.filter((entry) => enabled || entry.name !== "vector");
   },
   materialize: (settings) => settings,

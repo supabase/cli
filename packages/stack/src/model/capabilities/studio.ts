@@ -27,7 +27,7 @@ export const StudioModule: CapabilityModule<StudioSettings> = {
           readiness: { mode: "http", portField: "studio" },
         },
       ),
-      workload("pgmeta", "studio", "0.99.0", "ghcr.io/supabase/cli/pgmeta:v0.99.0", {
+      workload("pgmeta", "studio", "v0.99.0", "ghcr.io/supabase/cli/pgmeta:v0.99.0", {
         dependencies: ["database:database"],
         readiness: { mode: "http" },
       }),

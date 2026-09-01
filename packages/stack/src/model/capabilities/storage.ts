@@ -105,11 +105,10 @@ export const StorageModule: CapabilityModule<StorageSettings> = {
   releases: {
     "v1.72.1": release("v1.72.1", [
       workload("storage", "storage", "v1.72.1", "ghcr.io/supabase/cli/storage:v1.72.1", {
-        dependencies: ["database:database", "storage:imgproxy"],
+        dependencies: ["database:database"],
         readiness: { mode: "http", portField: "api" },
       }),
       workload("imgproxy", "storage", "v3.8.0", "ghcr.io/supabase/cli/imgproxy:v3.8.0", {
-        dependencies: ["database:database"],
         readiness: { mode: "http" },
       }),
     ]),
@@ -119,24 +118,14 @@ export const StorageModule: CapabilityModule<StorageSettings> = {
     path === "storage.settings.s3_protocol.secret_access_key" ? "managed" : "passthrough",
   managedSecretSlots: ["storage.settings.s3_protocol.secret_access_key"],
   selectWorkloads: (settings, workloads) => {
-    const record = (value: unknown): Record<string, unknown> | undefined =>
-      typeof value === "object" && value !== null && !Array.isArray(value)
-        ? Object.fromEntries(Object.entries(value))
-        : undefined;
-    const value = record(settings)?.image_transformation;
-    const enabled = record(value)?.enabled === true;
+    const enabled = settings.image_transformation?.enabled === true;
     return workloads
       .filter((entry) => enabled || entry.name !== "imgproxy")
       .map((entry) =>
-        entry.name === "storage"
+        entry.name === "storage" && enabled
           ? {
               ...entry,
-              dependencies: enabled
-                ? [
-                    ...entry.dependencies.filter((dependency) => dependency !== "storage:imgproxy"),
-                    "storage:imgproxy",
-                  ]
-                : entry.dependencies.filter((dependency) => dependency !== "storage:imgproxy"),
+              dependencies: [...entry.dependencies, "storage:imgproxy"],
             }
           : entry,
       );

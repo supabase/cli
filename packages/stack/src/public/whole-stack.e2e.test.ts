@@ -208,7 +208,11 @@ const onePixelPng = Uint8Array.from(
   (character) => character.charCodeAt(0),
 );
 
-const stackConfig = (functionSlug: string, analyticsApiKey: string): PromiseStackConfig => ({
+const stackConfig = (
+  functionSlug: string,
+  analyticsApiKey: string,
+  poolerTenantId: string,
+): PromiseStackConfig => ({
   capabilities: {
     database: { version: "17.6.1.167" },
     rest: { enabled: true, activation: "lazy" },
@@ -231,7 +235,7 @@ const stackConfig = (functionSlug: string, analyticsApiKey: string): PromiseStac
     studio: { enabled: true, activation: "lazy" },
     mail: { enabled: true },
     analytics: { enabled: true, settings: { vector_port: 9001, api_key: analyticsApiKey } },
-    pooler: { enabled: true },
+    pooler: { enabled: true, settings: { tenant_id: poolerTenantId } },
   },
   listeners: {
     api: { enabled: true },
@@ -302,12 +306,13 @@ const runWholeStackScenario = async (mode: (typeof RUNTIME_CASES)[number]): Prom
   const password = "SupabaseStackE2e!123";
   const markers = { first: `first-${identity}`, second: `second-${identity}` };
   const analyticsApiKey = `analytics-key-${identity}`;
+  const poolerTenantId = `pooler-${identity}`;
   let projectRoot = "";
 
   await using stack: TestStack = await createTestStack({
     name: `stack-e2e-${identity}`,
     runtime: mode.runtime,
-    config: stackConfig(functionSlug, analyticsApiKey),
+    config: stackConfig(functionSlug, analyticsApiKey, poolerTenantId),
     setupProject: async (root) => {
       projectRoot = root;
       const directory = join(root, "supabase", "functions", functionSlug);
@@ -538,7 +543,7 @@ const runWholeStackScenario = async (mode: (typeof RUNTIME_CASES)[number]): Prom
   // Pooler is a separate public TCP listener over the same database credentials.
   const poolerUrl = new URL(credentials.database.url);
   poolerUrl.port = String(pooler.port);
-  poolerUrl.username = "postgres.pooler-dev";
+  poolerUrl.username = `postgres.${poolerTenantId}`;
   const poolerRows = await databaseQuery(poolerUrl.toString(), "SELECT 42 AS answer");
   expect(poolerRows).toEqual([{ answer: 42 }]);
 

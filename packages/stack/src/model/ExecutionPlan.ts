@@ -13,9 +13,24 @@ import {
   StudioModule,
   AnalyticsModule,
 } from "./capabilities/index.ts";
-import type { WorkloadSpec, NativeArtifact, ContainerArtifact } from "./CapabilityModule.ts";
+import type {
+  WorkloadSpec,
+  NativeArtifact,
+  ContainerArtifact,
+  MaterializedSettings,
+} from "./CapabilityModule.ts";
 import { Effect } from "effect";
 import { InvalidStackConfigError } from "../public/Errors.ts";
+import type { AnalyticsSettings } from "./capabilities/analytics.ts";
+import type { AuthSettings } from "./capabilities/auth.ts";
+import type { DatabaseSettings } from "./capabilities/database.ts";
+import type { FunctionsSettings } from "./capabilities/functions.ts";
+import type { MailSettings } from "./capabilities/mail.ts";
+import type { PoolerSettings } from "./capabilities/pooler.ts";
+import type { RealtimeSettings } from "./capabilities/realtime.ts";
+import type { RestSettings } from "./capabilities/rest.ts";
+import type { StorageSettings } from "./capabilities/storage.ts";
+import type { StudioSettings } from "./capabilities/studio.ts";
 
 export const CAPABILITY_MODULES = {
   database: DatabaseModule,
@@ -67,24 +82,56 @@ export interface EnabledCapability {
   readonly activation: "eager" | "lazy";
 }
 
+type PlanSettings = {
+  readonly database: MaterializedSettings<DatabaseSettings>;
+  readonly rest: MaterializedSettings<RestSettings>;
+  readonly auth: MaterializedSettings<AuthSettings>;
+  readonly realtime: MaterializedSettings<RealtimeSettings>;
+  readonly storage: MaterializedSettings<StorageSettings>;
+  readonly functions: MaterializedSettings<FunctionsSettings>;
+  readonly studio: MaterializedSettings<StudioSettings>;
+  readonly mail: MaterializedSettings<MailSettings>;
+  readonly analytics: MaterializedSettings<AnalyticsSettings>;
+  readonly pooler: MaterializedSettings<PoolerSettings>;
+};
+
+const selectedWorkloads = (
+  name: CapabilityName,
+  modules: typeof CAPABILITY_MODULES,
+  settings: PlanSettings,
+  workloads: ReadonlyArray<WorkloadSpec>,
+): ReadonlyArray<WorkloadSpec> => {
+  switch (name) {
+    case "database":
+      return modules.database.selectWorkloads?.(settings.database, workloads) ?? workloads;
+    case "rest":
+      return modules.rest.selectWorkloads?.(settings.rest, workloads) ?? workloads;
+    case "auth":
+      return modules.auth.selectWorkloads?.(settings.auth, workloads) ?? workloads;
+    case "realtime":
+      return modules.realtime.selectWorkloads?.(settings.realtime, workloads) ?? workloads;
+    case "storage":
+      return modules.storage.selectWorkloads?.(settings.storage, workloads) ?? workloads;
+    case "functions":
+      return modules.functions.selectWorkloads?.(settings.functions, workloads) ?? workloads;
+    case "studio":
+      return modules.studio.selectWorkloads?.(settings.studio, workloads) ?? workloads;
+    case "mail":
+      return modules.mail.selectWorkloads?.(settings.mail, workloads) ?? workloads;
+    case "analytics":
+      return modules.analytics.selectWorkloads?.(settings.analytics, workloads) ?? workloads;
+    case "pooler":
+      return modules.pooler.selectWorkloads?.(settings.pooler, workloads) ?? workloads;
+  }
+};
+
 export const createExecutionPlan = (
   runtime: StackRuntime,
   enabled: Readonly<{ [Name in CapabilityName]: EnabledCapability }>,
   specHashes: ReadonlyMap<string, string>,
   versions: Readonly<{ [Name in CapabilityName]: string }>,
   modules: typeof CAPABILITY_MODULES = CAPABILITY_MODULES,
-  settings: Readonly<{ [Name in CapabilityName]: unknown }> = {
-    database: undefined,
-    rest: undefined,
-    auth: undefined,
-    realtime: undefined,
-    storage: undefined,
-    functions: undefined,
-    studio: undefined,
-    mail: undefined,
-    analytics: undefined,
-    pooler: undefined,
-  },
+  settings: PlanSettings,
 ): Effect.Effect<ExecutionPlan, InvalidStackConfigError> => {
   const dependencyMap = {
     database: modules.database.dependencies,
@@ -153,8 +200,7 @@ export const createExecutionPlan = (
     if (!enabled[name].enabled) return [];
     const release = modules[name].releases[versions[name]];
     if (release === undefined) return [];
-    const selectedEntries =
-      modules[name].selectWorkloads?.(settings[name], release.workloads) ?? release.workloads;
+    const selectedEntries = selectedWorkloads(name, modules, settings, release.workloads);
     return selectedEntries.map((entry) => ({
       id: `${name}:${entry.name}`,
       capability: name,

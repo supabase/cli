@@ -18,7 +18,7 @@ export interface NativeWorkloadArtifact {
   readonly requiredRuntimePaths: ReadonlyArray<string>;
   readonly executablePath: string;
   readonly nativeProcess?: NativeWorkloadProcess;
-  readonly containerAlias?: string;
+  readonly containerAlias: string;
 }
 
 /** Artifact-root-relative process metadata for native Node workloads. */
@@ -170,7 +170,7 @@ export const WORKLOAD_CATALOG: Readonly<Record<string, WorkloadCatalogEntry>> = 
     "ghcr.io/supabase/cli/pgmeta:v0.99.0",
     "app/dist/server/server.js",
     ["node/bin/node", "app/dist/server/server.js"],
-    ["0.99.0", "v0.99.0"],
+    ["v0.99.0"],
     {
       nativeProcess: {
         executablePath: "node/bin/node",
@@ -204,7 +204,7 @@ export const WORKLOAD_CATALOG: Readonly<Record<string, WorkloadCatalogEntry>> = 
     "ghcr.io/supabase/cli/vector:0.53.0",
     "bin/vector",
     ["bin/vector", "share/doc/vector/config/vector.yaml"],
-    ["0.53.0", "0.53.0-alpine"],
+    ["0.53.0"],
     { containerAlias: "supabase-vector" },
   ),
   "pooler:pooler": native(
@@ -279,12 +279,6 @@ export const resolveNativeArtifactForWorkload = (
         platform: `${platform.os}/${platform.arch}`,
       }),
     );
-  const normalizedVersion =
-    workload.id === "studio:pgmeta"
-      ? "v0.99.0"
-      : workload.id === "analytics:vector"
-        ? "0.53.0"
-        : workload.artifacts.native.release;
   if (!entry.supportedNativeVersions.includes(workload.artifacts.native.release))
     return Effect.fail(
       new StackPreparationError({
@@ -294,5 +288,5 @@ export const resolveNativeArtifactForWorkload = (
         version: workload.artifacts.native.release,
       }),
     );
-  return Effect.succeed(artifactFor(entry, target, normalizedVersion));
+  return Effect.succeed(artifactFor(entry, target, workload.artifacts.native.release));
 };
