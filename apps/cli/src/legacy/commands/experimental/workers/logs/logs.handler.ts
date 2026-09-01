@@ -57,6 +57,27 @@ import type { LegacyWorkersLogsFlags } from "./logs.command.ts";
 const SEEN_ID_LIMIT = 5000;
 
 /**
+ * How many rows one poll asks for per request.
+ *
+ * Independent of `--tail`, which bounds only the history a run opens with.
+ * Sharing them meant `--tail 1 --follow` polled with `limit 1`: the query orders
+ * newest-first, so a burst came back as its newest row alone and the cursor then
+ * advanced past the rest, dropping them for good. The default `--tail 100` had
+ * the same hole above 100 rows in a polling interval.
+ */
+const FOLLOW_PAGE_SIZE = 1000;
+
+/**
+ * How many requests one poll may spend draining a burst.
+ *
+ * A bound rather than an open loop: the endpoint allows 10 requests a minute, so
+ * an unbounded drain could spend a whole window's allowance on one poll. Rows
+ * beyond it are not lost — the cursor only advances past what was emitted, so
+ * the next poll re-asks for them.
+ */
+const FOLLOW_MAX_PAGES = 5;
+
+/**
  * How long one poll may keep failing before the tail gives up.
  *
  * Bounded by elapsed time rather than attempts, and spaced, so a 429 or a
@@ -142,9 +163,6 @@ export const legacyWorkersLogs = Effect.fn("legacy.experimental.workers.logs")(f
       const pollSchedule =
         options.pollSchedule ?? Schedule.spaced(`${WORKER_LOG_POLL_SECONDS} seconds`);
       const readRetrySchedule = options.retrySchedule ?? FOLLOW_READ_RETRY;
-      // A poll asks for whatever arrived since the cursor, not for `--tail` lines;
-      // `--tail 0` means "no history", not "no new lines".
-      const pollTail = Math.max(flags.tail, 1);
 
       // The stream tag only earns its width when streams are actually mixed; with
       // `--kind` every line would carry the same one.
@@ -284,18 +302,43 @@ export const legacyWorkersLogs = Effect.fn("legacy.experimental.workers.logs")(f
 
       const pollOnce = Effect.gen(function* () {
         const cursor = yield* Ref.get(newestSeenMs);
-        const rows = yield* fetchWorkerLogs(api, projectRef, {
-          name,
-          streams,
-          tail: pollTail,
-          window: followWindow(new Date(), cursor),
-        });
+
+        // One request only ever answers with the newest page of its window, so a
+        // burst bigger than a page needs several. Walk `end` backwards while
+        // pages come back full; a short page means the window is drained.
+        const collected: Array<WorkerLogEntry> = [];
+        let end = new Date();
+        for (let page = 0; page < FOLLOW_MAX_PAGES; page += 1) {
+          const rows = yield* fetchWorkerLogs(api, projectRef, {
+            name,
+            streams,
+            tail: FOLLOW_PAGE_SIZE,
+            window: followWindow(end, cursor),
+          });
+          collected.push(...rows);
+          if (rows.length < FOLLOW_PAGE_SIZE) {
+            break;
+          }
+          // Rows arrive oldest-first, so the next page ends where this one began.
+          const nextEnd = new Date(rows[0]!.timestampMs);
+          // A full page whose rows all share one timestamp cannot narrow the
+          // window. Stop rather than re-request it; the cursor has not advanced
+          // past those rows, so the next poll's grace window still covers them.
+          if (nextEnd.getTime() >= end.getTime()) {
+            break;
+          }
+          end = nextEnd;
+        }
 
         // Windows always overlap - the server rounds them to the minute and the
         // cursor deliberately lags - so dedupe is what makes the overlap invisible
         // rather than a source of repeats.
         const printed = yield* Ref.get(seenIds);
-        const fresh = rows.filter((row) => !printed.has(row.id));
+        const fresh = collected
+          .filter((row) => !printed.has(row.id))
+          // Each page is oldest-first but the pages themselves walk backwards, so
+          // the concatenation is not ordered until this runs.
+          .sort((left, right) => left.timestampMs - right.timestampMs);
         if (fresh.length === 0) {
           return;
         }

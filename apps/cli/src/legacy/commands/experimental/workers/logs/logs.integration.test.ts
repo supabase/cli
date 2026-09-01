@@ -775,6 +775,60 @@ describe("legacy workers logs", () => {
     }).pipe(Effect.ensuring(Effect.sync(repo.cleanup)));
   });
 
+  // `--tail` bounds the history a run opens with; reusing it as the poll size
+  // meant `--tail 1 --follow` asked each poll for a single row.
+  it.live("polls with a page size independent of --tail", () => {
+    const repo = project();
+    const { layer, http } = setupLegacyWorkers({
+      workdir: repo.dir,
+      routes: {
+        [LOGS_ROUTE]: [
+          logsResponse([workerLogRow({ id: "a", tsMs: T1 })]),
+          logsResponse([workerLogRow({ id: "b", tsMs: T2 })]),
+        ],
+      },
+    });
+
+    return Effect.gen(function* () {
+      yield* legacyWorkersLogs(flags({ tail: 1, follow: true }), followFor(0));
+
+      expect(sentQuery(http.requests[0]!).sql ?? "").toContain("limit 1");
+      expect(sentQuery(http.requests[1]!).sql ?? "").toContain("limit 1000");
+    }).pipe(Effect.provide(layer), Effect.ensuring(Effect.sync(repo.cleanup)));
+  });
+
+  // The query orders newest-first, so a full page means there is more below it.
+  // Advancing the cursor on that page alone dropped the remainder for good.
+  it.live("drains a burst larger than one page before advancing the cursor", () => {
+    const repo = project();
+    const fullPage = Array.from({ length: 1000 }, (_, index) =>
+      workerLogRow({ id: `burst-${index}`, tsMs: T2 + index, message: `burst ${index}` }),
+    );
+    const { layer, out, http } = setupLegacyWorkers({
+      workdir: repo.dir,
+      routes: {
+        [LOGS_ROUTE]: [
+          // Non-empty, so the run does not spend its second request on the
+          // deployed-worker check that an empty history triggers.
+          logsResponse([workerLogRow({ id: "seed", tsMs: T1 - 100_000, message: "seed" })]),
+          logsResponse(fullPage),
+          logsResponse([workerLogRow({ id: "straggler", tsMs: T1, message: "older line" })]),
+        ],
+      },
+    });
+
+    return Effect.gen(function* () {
+      yield* legacyWorkersLogs(flags({ follow: true }), followFor(0));
+
+      // The second page is only requested because the first came back full.
+      expect(http.requests).toHaveLength(3);
+      expect(out.stdoutText).toContain("older line");
+      expect(out.stdoutText).toContain("burst 999");
+      // Oldest first across pages, not merely within each one.
+      expect(out.stdoutText.indexOf("older line")).toBeLessThan(out.stdoutText.indexOf("burst 0"));
+    }).pipe(Effect.provide(layer), Effect.ensuring(Effect.sync(repo.cleanup)));
+  });
+
   it.live("records exit 130 on SIGINT and still runs its finalizers", () => {
     const repo = project();
     const { layer, processControl, telemetry } = setupLegacyWorkers({
