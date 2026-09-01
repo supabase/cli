@@ -90,10 +90,11 @@
     "prettier": "3.9.6",
     "react": "^19.2.8",
     "react-devtools-core": "^7.0.1",
-    "semantic-release": "^25.0.9",
+    "semantic-release": "catalog:",
     "smol-toml": "^1.8.0",
     "tldts": "catalog:",
     "typescript": "catalog:",
+    "vite": "^6.0.0 || ^7.0.0 || ^8.0.0",
     "vitest": "catalog:",
     "yaml": "^2.9.0"
   },

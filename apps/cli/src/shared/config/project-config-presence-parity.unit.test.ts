@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { Schema } from "effect";
-import { AUTH_HOOK_NAMES, CliConfigSchema, fromConfigDocument } from "@supabase/config";
+import { CliConfigSchema, fromConfigDocument } from "@supabase/config";
+import { AUTH_HOOK_NAMES } from "@supabase/config/internal";
 import {
   legacyPresenceIn,
   type LegacyConfigPushPresence,

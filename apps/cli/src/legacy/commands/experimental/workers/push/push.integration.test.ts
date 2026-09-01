@@ -1140,6 +1140,38 @@ describe("legacy workers push", () => {
     }).pipe(Effect.provide(layer), Effect.ensuring(Effect.sync(repo.cleanup)));
   });
 
+  // `--output-format json` asked for a stream of events, so progress does not
+  // belong in it — unlike the "not attempted" report, which every format gets.
+  it.live("keeps per-worker progress out of json mode", () => {
+    const repo = project({
+      "supabase/config.toml": `project_id = "demo"\n\n[workers.api]\nruntime = "node"\n\n[workers.web]\nruntime = "node"\n`,
+      "supabase/workers/web/index.js": "export default {};\n",
+    });
+    const { layer, out } = setupLegacyWorkers({
+      workdir: repo.dir,
+      format: "json",
+      routes: {
+        ...routes(),
+        [`POST ${workersRoute("/web/uploads")}`]: { status: 201, body: uploadSlot },
+        [`POST ${workersRoute("/web/deploy")}`]: {
+          status: 202,
+          body: { data: workerResource({ name: "web", runtime: "node", buildState: "building" }) },
+        },
+        [`GET ${workersRoute("/web")}`]: {
+          status: 200,
+          body: { data: workerResource({ name: "web", runtime: "node", buildState: "active" }) },
+        },
+      },
+    });
+
+    return Effect.gen(function* () {
+      yield* push({ names: [] });
+
+      expect(out.stderrText).not.toContain("Deploying Worker");
+      expect(out.stdoutText).not.toContain("Deployed 2 Workers");
+    }).pipe(Effect.provide(layer), Effect.ensuring(Effect.sync(repo.cleanup)));
+  });
+
   // `-o env` cannot express the `workers` array. Discovering that at emit time
   // meant failing with the project already changed, inviting a retry that
   // deployed all over again.
