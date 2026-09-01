@@ -1,6 +1,6 @@
 import { Effect, Option } from "effect";
-import { Output } from "../../../../shared/output/output.service.ts";
-import { legacyAqua } from "../../../shared/legacy-colors.ts";
+import { Output } from "../../../../../shared/output/output.service.ts";
+import { legacyAqua } from "../../../../shared/legacy-colors.ts";
 import { legacyRenderWorkerDetails } from "../workers.format.ts";
 import {
   legacyEmitWorkersMachineOutput,
@@ -8,20 +8,20 @@ import {
   legacyWorkersMachineOutputRequested,
   legacyWorkersProjectRefSuffix,
 } from "../workers.output.ts";
-import { LegacyPlatformApi } from "../../../auth/legacy-platform-api.service.ts";
-import { displayPath } from "../../../../shared/workers/worker-paths.ts";
-import { deleteWorker, getWorker } from "../../../../shared/workers/workers-api.ts";
+import { LegacyPlatformApi } from "../../../../auth/legacy-platform-api.service.ts";
+import { displayPath } from "../../../../../shared/workers/worker-paths.ts";
+import { deleteWorker, getWorker } from "../../../../../shared/workers/workers-api.ts";
 import {
   WorkerDeleteConfirmationRequiredError,
   WorkerDeleteNotConfirmedError,
   WorkerNotDeployedError,
   WorkersApiUnexpectedStatusError,
-} from "../../../../shared/workers/workers.errors.ts";
-import { legacyResolveYes } from "../../../../shared/legacy/global-flags.ts";
-import { LegacyProjectRefResolver } from "../../../config/legacy-project-ref.service.ts";
-import { Tty } from "../../../../shared/runtime/tty.service.ts";
-import { LegacyLinkedProjectCache } from "../../../telemetry/legacy-linked-project-cache.service.ts";
-import { LegacyTelemetryState } from "../../../telemetry/legacy-telemetry-state.service.ts";
+} from "../../../../../shared/workers/workers.errors.ts";
+import { legacyResolveYes } from "../../../../../shared/legacy/global-flags.ts";
+import { LegacyProjectRefResolver } from "../../../../config/legacy-project-ref.service.ts";
+import { Tty } from "../../../../../shared/runtime/tty.service.ts";
+import { LegacyLinkedProjectCache } from "../../../../telemetry/legacy-linked-project-cache.service.ts";
+import { LegacyTelemetryState } from "../../../../telemetry/legacy-telemetry-state.service.ts";
 import {
   legacyDescribeWorkerForReporting,
   legacyLoadWorkersProjectForReporting,
@@ -30,7 +30,7 @@ import {
 import type { LegacyWorkersDeleteFlags } from "./delete.command.ts";
 
 /**
- * `supabase workers delete [name]` — delete the worker; its instances and image
+ * `supabase experimental workers delete [name]` — delete the worker; its instances and image
  * are torn down asynchronously. Whether it exists is asked of the API, never of
  * a local file.
  *
@@ -50,7 +50,7 @@ import type { LegacyWorkersDeleteFlags } from "./delete.command.ts";
  * stdout, so merely redirecting output would otherwise delete unattended. This
  * refuses instead, and says which flag would have authorised it.
  */
-export const legacyWorkersDelete = Effect.fn("legacy.workers.delete")(function* (
+export const legacyWorkersDelete = Effect.fn("legacy.experimental.workers.delete")(function* (
   flags: LegacyWorkersDeleteFlags,
 ) {
   const output = yield* Output;
@@ -115,7 +115,7 @@ export const legacyWorkersDelete = Effect.fn("legacy.workers.delete")(function* 
           // `status`'s wording, inherited, pointed the wrong way here: somebody
           // deleting "api" and hearing "nothing is deployed" does not want to
           // deploy it — they want to see what *is* deployed.
-          suggestion: `See what is deployed with \`supabase workers list${refSuffix}\`.`,
+          suggestion: `See what is deployed with \`supabase experimental workers list${refSuffix}\`.`,
         }),
       );
     }
@@ -127,7 +127,7 @@ export const legacyWorkersDelete = Effect.fn("legacy.workers.delete")(function* 
       // redirected stdout, whichever flag asked for it.
       //
       // `output.interactive` only tracks *stdout*, so on its own it still let
-      // `printf 'api\n' | supabase workers delete api` feed the pipe straight
+      // `printf 'api\n' | supabase experimental workers delete api` feed the pipe straight
       // into the prompt and delete without `--yes`. The confirmation is only
       // meaningful from a keyboard, so stdin has to be a terminal too — the same
       // pair `projects delete` guards its prompt with.
@@ -135,7 +135,7 @@ export const legacyWorkersDelete = Effect.fn("legacy.workers.delete")(function* 
         return yield* Effect.fail(
           new WorkerDeleteConfirmationRequiredError({
             detail: `Deleting "${name}" from project ${projectRef} needs confirmation, and there is no interactive terminal to ask on.`,
-            suggestion: `Re-run \`supabase workers delete ${name} --yes${refSuffix}\` to confirm without a prompt.`,
+            suggestion: `Re-run \`supabase experimental workers delete ${name} --yes${refSuffix}\` to confirm without a prompt.`,
           }),
         );
       }
@@ -166,7 +166,7 @@ export const legacyWorkersDelete = Effect.fn("legacy.workers.delete")(function* 
         return yield* Effect.fail(
           new WorkerDeleteNotConfirmedError({
             detail: `The confirmation did not match "${name}", so nothing was deleted.`,
-            suggestion: `Re-run \`supabase workers delete ${name}${refSuffix}\` and type the name exactly, or pass --yes.`,
+            suggestion: `Re-run \`supabase experimental workers delete ${name}${refSuffix}\` and type the name exactly, or pass --yes.`,
           }),
         );
       }
@@ -232,7 +232,9 @@ export const legacyWorkersDelete = Effect.fn("legacy.workers.delete")(function* 
         // alone is not enough to redeploy from, so `push` would fail on the very
         // command this line recommends.
         if (keptSource !== undefined) {
-          yield* output.raw(`Redeploy it with supabase workers push ${name}${refSuffix}.\n`);
+          yield* output.raw(
+            `Redeploy it with supabase experimental workers push ${name}${refSuffix}.\n`,
+          );
         }
       } else {
         yield* output.raw(

@@ -1,20 +1,20 @@
 import { Effect } from "effect";
-import { Output } from "../../../../shared/output/output.service.ts";
-import { renderGlamourTable } from "../../../output/legacy-glamour-table.ts";
+import { Output } from "../../../../../shared/output/output.service.ts";
+import { renderGlamourTable } from "../../../../output/legacy-glamour-table.ts";
 import { legacyEmitWorkersMachineOutput, legacyRejectWorkersEnvOutput } from "../workers.output.ts";
-import { LegacyPlatformApi } from "../../../auth/legacy-platform-api.service.ts";
-import { LegacyCliSettings } from "../../../config/legacy-cli-settings.service.ts";
-import { formatApiSize } from "../../../../shared/workers/worker-runtimes.ts";
-import { workerUrl } from "../../../../shared/workers/worker-url.ts";
-import { listWorkers, type WorkerRecord } from "../../../../shared/workers/workers-api.ts";
-import { LegacyProjectRefResolver } from "../../../config/legacy-project-ref.service.ts";
-import { LegacyLinkedProjectCache } from "../../../telemetry/legacy-linked-project-cache.service.ts";
-import { LegacyTelemetryState } from "../../../telemetry/legacy-telemetry-state.service.ts";
+import { LegacyPlatformApi } from "../../../../auth/legacy-platform-api.service.ts";
+import { LegacyCliSettings } from "../../../../config/legacy-cli-settings.service.ts";
+import { formatApiSize } from "../../../../../shared/workers/worker-runtimes.ts";
+import { workerUrl } from "../../../../../shared/workers/worker-url.ts";
+import { listWorkers, type WorkerRecord } from "../../../../../shared/workers/workers-api.ts";
+import { LegacyProjectRefResolver } from "../../../../config/legacy-project-ref.service.ts";
+import { LegacyLinkedProjectCache } from "../../../../telemetry/legacy-linked-project-cache.service.ts";
+import { LegacyTelemetryState } from "../../../../telemetry/legacy-telemetry-state.service.ts";
 import { legacyDiscoverWorkerNames, legacyLoadWorkersProject } from "../workers.shared.ts";
 import type { LegacyWorkersListFlags } from "./list.command.ts";
 
 /**
- * `supabase workers list` — every worker in this project, deployed or not.
+ * `supabase experimental workers list` — every worker in this project, deployed or not.
  *
  * A union of two sources, because either half alone is misleading: the
  * project's `[workers.*]` entries (scaffolded, maybe never deployed) and what
@@ -79,7 +79,7 @@ function toCells(row: WorkerRow): ReadonlyArray<string> {
   ];
 }
 
-export const legacyWorkersList = Effect.fn("legacy.workers.list")(function* (
+export const legacyWorkersList = Effect.fn("legacy.experimental.workers.list")(function* (
   flags: LegacyWorkersListFlags,
 ) {
   const output = yield* Output;
@@ -164,7 +164,9 @@ export const legacyWorkersList = Effect.fn("legacy.workers.list")(function* (
     }
 
     if (rows.length === 0) {
-      yield* output.raw("No workers found. Scaffold one with supabase workers new <name>.\n");
+      yield* output.raw(
+        "No workers found. Scaffold one with supabase experimental workers new <name>.\n",
+      );
       return;
     }
 

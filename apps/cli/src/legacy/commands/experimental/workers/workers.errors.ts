@@ -3,7 +3,7 @@ import {
   actionability,
   type CliErrorActionabilityDeclaration,
   ErrorActionabilityId,
-} from "../../../shared/telemetry/error-actionability.ts";
+} from "../../../../shared/telemetry/error-actionability.ts";
 
 /**
  * `--output env` cannot represent a payload containing a list.

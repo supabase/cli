@@ -20,7 +20,7 @@ import { LegacyTelemetryState } from "../../src/legacy/telemetry/legacy-telemetr
 import { mockOutput, mockRuntimeInfo, mockTty } from "./mocks.ts";
 
 /**
- * Shared scaffolding for the `supabase workers` command integration tests.
+ * Shared scaffolding for the `supabase experimental workers` command integration tests.
  *
  * Every worker command reads a real `supabase/config.toml` and a real worker
  * directory, so these tests run against a per-test temp project rather than a
@@ -257,7 +257,7 @@ export interface WorkersSetupOptions {
   /**
    * Whether stdin is a terminal. Defaults to `interactive`, so a text-mode test
    * can prompt; set it false to model a piped stdin with a TTY stdout, which is
-   * what `printf 'api\n' | supabase workers delete api` looks like.
+   * what `printf 'api\n' | supabase experimental workers delete api` looks like.
    */
   readonly stdinIsTty?: boolean;
   readonly linked?: boolean;

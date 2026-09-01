@@ -1,23 +1,23 @@
 import { join, relative, sep } from "node:path";
 import { Effect, FileSystem, Option } from "effect";
-import { Output } from "../../../../shared/output/output.service.ts";
+import { Output } from "../../../../../shared/output/output.service.ts";
 import { legacyRenderWorkerDetails } from "../workers.format.ts";
 import {
   legacyEmitWorkersMachineOutput,
   legacyWorkersMachineOutputRequested,
 } from "../workers.output.ts";
-import { LegacyTelemetryState } from "../../../telemetry/legacy-telemetry-state.service.ts";
-import { RuntimeInfo } from "../../../../shared/runtime/runtime-info.service.ts";
+import { LegacyTelemetryState } from "../../../../telemetry/legacy-telemetry-state.service.ts";
+import { RuntimeInfo } from "../../../../../shared/runtime/runtime-info.service.ts";
 import {
   commitWorkerEntry,
   planWorkerEntry,
   WorkerAlreadyConfiguredError,
-} from "../../../../shared/workers/worker-config.ts";
+} from "../../../../../shared/workers/worker-config.ts";
 import {
   confineWorkerPath,
   displayPath,
   resolveWorkerSource,
-} from "../../../../shared/workers/worker-paths.ts";
+} from "../../../../../shared/workers/worker-paths.ts";
 import {
   DEFAULT_WORKER_RUNTIME,
   DEFAULT_WORKER_SIZE,
@@ -30,17 +30,17 @@ import {
   WORKER_SIZES,
   type WorkerRuntime,
   type WorkerSize,
-} from "../../../../shared/workers/worker-runtimes.ts";
-import { WORKER_STACKS } from "../../../../shared/workers/worker-stacks.ts";
+} from "../../../../../shared/workers/worker-runtimes.ts";
+import { WORKER_STACKS } from "../../../../../shared/workers/worker-stacks.ts";
 import {
   InvalidWorkerNameError,
   WorkerDirectoryExistsError,
-} from "../../../../shared/workers/workers.errors.ts";
+} from "../../../../../shared/workers/workers.errors.ts";
 import { legacyLoadWorkersProjectForEntryWrite } from "../workers.shared.ts";
 import type { LegacyWorkersNewFlags } from "./new.command.ts";
 
 /**
- * `supabase workers new <name>` — scaffold `supabase/workers/<name>/` from the
+ * `supabase experimental workers new <name>` — scaffold `supabase/workers/<name>/` from the
  * chosen runtime's starter files and record the choice in `config.toml`.
  * Nothing is deployed; this is entirely local-disk work.
  *
@@ -122,7 +122,7 @@ const destinationIsFree = Effect.fnUntraced(function* (target: string) {
   return entries.length === 0;
 });
 
-export const legacyWorkersNew = Effect.fn("legacy.workers.new")(function* (
+export const legacyWorkersNew = Effect.fn("legacy.experimental.workers.new")(function* (
   flags: LegacyWorkersNewFlags,
 ) {
   const fs = yield* FileSystem.FileSystem;
@@ -274,6 +274,6 @@ export const legacyWorkersNew = Effect.fn("legacy.workers.new")(function* (
         ["Access", "public"],
       ]),
     );
-    yield* output.raw(`Deploy it with supabase workers push ${name}.\n`);
+    yield* output.raw(`Deploy it with supabase experimental workers push ${name}.\n`);
   }).pipe(Effect.ensuring(telemetryState.flush));
 });

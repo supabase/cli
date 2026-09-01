@@ -1,19 +1,22 @@
 import { Effect, FileSystem, Option, Predicate, type Schedule } from "effect";
 import type { PlatformError } from "effect/PlatformError";
-import { Output } from "../../../../shared/output/output.service.ts";
+import { Output } from "../../../../../shared/output/output.service.ts";
 import { legacyRenderWorkerDetails } from "../workers.format.ts";
 import {
   legacyEmitWorkersMachineOutput,
   legacyRejectWorkersEnvOutput,
   legacyWorkersMachineOutputRequested,
 } from "../workers.output.ts";
-import { legacyAqua } from "../../../shared/legacy-colors.ts";
-import { LegacyPlatformApi } from "../../../auth/legacy-platform-api.service.ts";
-import { LegacyCliSettings } from "../../../config/legacy-cli-settings.service.ts";
-import { classifyWorkerDir } from "../../../../shared/workers/worker-classify.ts";
-import { formatBytes, packageWorkerDirectory } from "../../../../shared/workers/worker-package.ts";
-import { displayPath } from "../../../../shared/workers/worker-paths.ts";
-import type { WorkerEntry } from "../../../../shared/workers/worker-config.ts";
+import { legacyAqua } from "../../../../shared/legacy-colors.ts";
+import { LegacyPlatformApi } from "../../../../auth/legacy-platform-api.service.ts";
+import { LegacyCliSettings } from "../../../../config/legacy-cli-settings.service.ts";
+import { classifyWorkerDir } from "../../../../../shared/workers/worker-classify.ts";
+import {
+  formatBytes,
+  packageWorkerDirectory,
+} from "../../../../../shared/workers/worker-package.ts";
+import { displayPath } from "../../../../../shared/workers/worker-paths.ts";
+import type { WorkerEntry } from "../../../../../shared/workers/worker-config.ts";
 import {
   apiSizeFor,
   DEFAULT_WORKER_INSTANCES,
@@ -23,25 +26,25 @@ import {
   parseWorkerSize,
   WORKER_RUNTIMES,
   WORKER_SIZES,
-} from "../../../../shared/workers/worker-runtimes.ts";
-import { workerUrl } from "../../../../shared/workers/worker-url.ts";
+} from "../../../../../shared/workers/worker-runtimes.ts";
+import { workerUrl } from "../../../../../shared/workers/worker-url.ts";
 import {
   awaitWorkerBuild,
   createWorkerUpload,
   deployWorker,
   uploadBuildContext,
   type WorkerDeploySpec,
-} from "../../../../shared/workers/workers-api.ts";
+} from "../../../../../shared/workers/workers-api.ts";
 import {
   NoWorkersToDeployError,
   UnknownWorkerRuntimeError,
   UnknownWorkerSizeError,
   WorkerBuildFailedError,
   WorkerSourceMissingError,
-} from "../../../../shared/workers/workers.errors.ts";
-import { LegacyProjectRefResolver } from "../../../config/legacy-project-ref.service.ts";
-import { LegacyLinkedProjectCache } from "../../../telemetry/legacy-linked-project-cache.service.ts";
-import { LegacyTelemetryState } from "../../../telemetry/legacy-telemetry-state.service.ts";
+} from "../../../../../shared/workers/workers.errors.ts";
+import { LegacyProjectRefResolver } from "../../../../config/legacy-project-ref.service.ts";
+import { LegacyLinkedProjectCache } from "../../../../telemetry/legacy-linked-project-cache.service.ts";
+import { LegacyTelemetryState } from "../../../../telemetry/legacy-telemetry-state.service.ts";
 import {
   legacyDescribeWorker,
   legacyDiscoverWorkerNames,
@@ -52,7 +55,7 @@ import {
 import type { LegacyWorkersPushFlags } from "./push.command.ts";
 
 /**
- * `supabase workers push [name...]` — build (when there is code to build) and
+ * `supabase experimental workers push [name...]` — build (when there is code to build) and
  * deploy the worker into the linked project. Registered under `deploy` as an
  * alias, for anyone reaching for the `supabase functions` verb out of habit.
  *
@@ -135,7 +138,7 @@ function resolveInstances(options: {
 /**
  * What to do about a worker whose source directory is not there at all.
  *
- * `supabase workers new` is only an answer for a name the config has never
+ * `supabase experimental workers new` is only an answer for a name the config has never
  * heard of — `new` refuses any name already under `[workers.<name>]`, so
  * offering it to a configured worker would answer with a second error. A
  * configured worker is missing a directory, not a config entry, and when the
@@ -149,7 +152,7 @@ function missingSourceSuggestion(input: {
   readonly entry: WorkerEntry | undefined;
 }): string {
   if (input.entry === undefined) {
-    return `Scaffold it with \`supabase workers new ${input.name}\`.`;
+    return `Scaffold it with \`supabase experimental workers new ${input.name}\`.`;
   }
   if (input.entry.source !== undefined) {
     return `Create ${input.sourceDisplay}, or correct \`source\` under [workers.${input.name}] in ${input.configPath}.`;
@@ -160,7 +163,7 @@ function missingSourceSuggestion(input: {
 /**
  * What to do about a source directory that exists but holds nothing to deploy.
  *
- * Deliberately does not point at `supabase workers new`. That command refuses
+ * Deliberately does not point at `supabase experimental workers new`. That command refuses
  * any name already present in `config.toml`, which is where a pushed worker
  * almost always comes from, and it refuses a directory that exists and is not
  * empty — so for both callers here it would answer with a second error rather
@@ -333,7 +336,7 @@ const deployOneWorker = Effect.fnUntraced(function* (input: {
         detail: `The build for "${name}" failed${
           settled.stateReason === undefined ? "" : `: ${settled.stateReason}`
         }.`,
-        suggestion: `Fix the issue, then re-run \`supabase workers push ${name}\`.`,
+        suggestion: `Fix the issue, then re-run \`supabase experimental workers push ${name}\`.`,
       }),
     );
   }
@@ -381,7 +384,7 @@ const deployOneWorker = Effect.fnUntraced(function* (input: {
 });
 
 /**
- * `supabase workers push [name...]` — deploy the named workers, or every worker
+ * `supabase experimental workers push [name...]` — deploy the named workers, or every worker
  * in the project when none are named, mirroring `supabase functions deploy`.
  *
  * Deploys run one at a time rather than concurrently: each is a server-side
@@ -390,7 +393,7 @@ const deployOneWorker = Effect.fnUntraced(function* (input: {
  * the run, because a build that failed is usually the thing to fix before
  * spending minutes on the rest.
  */
-export const legacyWorkersPush = Effect.fn("legacy.workers.push")(function* (
+export const legacyWorkersPush = Effect.fn("legacy.experimental.workers.push")(function* (
   flags: LegacyWorkersPushFlags,
   options: {
     readonly pollSchedule?: Schedule.Schedule<unknown>;
@@ -423,7 +426,7 @@ export const legacyWorkersPush = Effect.fn("legacy.workers.push")(function* (
             project.projectRoot,
             project.workersDir,
           )}.`,
-          suggestion: "Scaffold one with `supabase workers new <name>`.",
+          suggestion: "Scaffold one with `supabase experimental workers new <name>`.",
         }),
       );
     }

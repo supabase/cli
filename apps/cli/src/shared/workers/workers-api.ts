@@ -483,7 +483,7 @@ export const awaitWorkerBuild = Effect.fnUntraced(function* (
     return yield* Effect.fail(
       new WorkerBuildTimeoutError({
         detail: `"${name}" was still building when this command stopped waiting.`,
-        suggestion: `Check on it with \`supabase workers status ${name}\`.`,
+        suggestion: `Check on it with \`supabase experimental workers status ${name}\`.`,
       }),
     );
   }
