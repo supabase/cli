@@ -471,8 +471,6 @@ describe("native auxiliary service definitions", () => {
     const dependencies = [{ service: "postgres", condition: "healthy" }] as const;
     const bundle = makeRealtimeServicesNative({
       binPath: artifactRoot,
-      nodeName: "realtime_id_stack_a",
-      releaseCookie: "supabase_stack_a_cookie",
       port: 54330,
       dbPort: DB_PORT,
       jwtSecret: JWT_SECRET,
@@ -513,11 +511,14 @@ describe("native auxiliary service definitions", () => {
       API_JWT_JWKS: "native-jwks",
       SECRET_KEY_BASE: "native-secret-key-base",
       MAX_HEADER_LENGTH: "4096",
-      NODE_NAME: "realtime_id_stack_a",
-      NODE_IP: "127.0.0.1",
-      RELEASE_NODE: "realtime_id_stack_a@127.0.0.1",
-      RELEASE_COOKIE: "supabase_stack_a_cookie",
+      RELEASE_DISTRIBUTION: "none",
     });
+    expect(bundle.server.env).not.toHaveProperty("ERL_EPMD_ADDRESS");
+    expect(bundle.server.env).not.toHaveProperty("NODE_NAME");
+    expect(bundle.server.env).not.toHaveProperty("NODE_IP");
+    expect(bundle.server.env).not.toHaveProperty("RELEASE_NODE");
+    expect(bundle.server.env).not.toHaveProperty("RELEASE_COOKIE");
+    expect(bundle.seed.env).toMatchObject({ PORT: "0" });
     expect(bundle.server.healthCheck?.probe).toEqual({
       _tag: "Http",
       host: "127.0.0.1",

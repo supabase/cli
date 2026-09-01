@@ -58,22 +58,11 @@ export interface BuildResult {
   readonly serviceProjection: StackServiceProjectionCatalog;
 }
 
-/** Secrets owned by one in-process stack runtime while its native graph is built. */
-export interface StackBuilderBuildOptions {
-  readonly beamReleaseCookie?: string;
-}
-
 // Serial health-check paths used by dependency waits; keep each path aligned
 // with the corresponding service's transitive dependencies.
 const postgresStartupPath: ReadonlyArray<ServiceName> = ["postgres"];
 const storageStartupPath: ReadonlyArray<ServiceName> = ["postgres", "storage"];
 const analyticsStartupPath: ReadonlyArray<ServiceName> = ["postgres", "analytics"];
-
-/** Derive a stack-unique, valid Erlang short node name from the owned identity. */
-const analyticsNodeName = (identityKey: string): string =>
-  `logflare_${identityKey.replaceAll("-", "_")}`;
-const beamNodeName = (service: "realtime" | "pooler", identityKey: string): string =>
-  `${service}_${identityKey.replaceAll("-", "_")}`;
 
 const postgresDependencyTimeoutSeconds = dependencyTimeoutSecondsForServices(postgresStartupPath);
 
@@ -254,16 +243,11 @@ export class StackBuilder extends Context.Service<
     readonly build: (
       config: ResolvedStackConfig,
       prepared: PreparedStackArtifacts,
-      options?: StackBuilderBuildOptions,
     ) => Effect.Effect<BuildResult, StackBuildError, FileSystem.FileSystem | Scope.Scope>;
   }
 >()("local/StackBuilder") {
   static layer: Layer.Layer<StackBuilder> = Layer.succeed(this, {
-    build: (
-      config: ResolvedStackConfig,
-      prepared: PreparedStackArtifacts,
-      options?: StackBuilderBuildOptions,
-    ) =>
+    build: (config: ResolvedStackConfig, prepared: PreparedStackArtifacts) =>
       Effect.gen(function* () {
         yield* validateResolvedConfig(config);
 
@@ -322,11 +306,6 @@ export class StackBuilder extends Context.Service<
           postgresInitCompletionBudgetSeconds;
         const jwtJwks = generateJwks(config.jwtSecret);
         const identity = stackIdentity(config);
-        // The owning LocalStack supplies one secret for its entire runtime. Direct builder
-        // consumers get an ephemeral fallback so native definitions remain self-contained.
-        const releaseCookie =
-          options?.beamReleaseCookie ?? `supabase_${identity.key.replaceAll("-", "")}_cookie`;
-
         const postgresService =
           postgresResolution.type === "binary"
             ? makePostgresService({
@@ -528,8 +507,6 @@ export class StackBuilder extends Context.Service<
           if (realtimeResolution.type === "binary") {
             const bundle = makeRealtimeServicesNative({
               binPath: realtimeResolution.path,
-              nodeName: beamNodeName("realtime", identity.key),
-              releaseCookie,
               port: config.realtime.port,
               dbPort: config.dbPort,
               jwtSecret: config.jwtSecret,
@@ -703,8 +680,6 @@ export class StackBuilder extends Context.Service<
             const bundle = makeAnalyticsServicesNative({
               binPath: analyticsResolution.path,
               runtimeRoot: config.runtimeRoot,
-              nodeName: analyticsNodeName(identity.key),
-              releaseCookie,
               hostPort: config.analytics.port,
               dbPort: config.dbPort,
               apiKey: config.analytics.apiKey,
@@ -823,8 +798,6 @@ export class StackBuilder extends Context.Service<
               sessionPort: config.pooler.sessionPort,
               transactionPort: config.pooler.transactionPort,
               internalPort: config.pooler.internalPort,
-              nodeName: beamNodeName("pooler", identity.key),
-              releaseCookie,
               dbPort: config.dbPort,
               poolMode: config.pooler.mode,
               defaultPoolSize: config.pooler.defaultPoolSize,

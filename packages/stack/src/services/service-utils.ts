@@ -49,12 +49,6 @@ export interface NativeRunServiceOptions {
   readonly restart?: ServiceDef["restart"];
 }
 
-/** Keep native Erlang distribution on the owning stack's loopback interface. */
-export const nativeBeamLoopbackEnv = {
-  ERL_AFLAGS: "-proto_dist inet_tcp -kernel inet_dist_use_interface '{127,0,0,1}'",
-  ERL_EPMD_ADDRESS: "127.0.0.1",
-} as const;
-
 export const nativeRunService = (opts: NativeRunServiceOptions): ServiceDef => ({
   name: opts.name,
   command: opts.command,

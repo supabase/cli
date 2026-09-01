@@ -7,8 +7,6 @@ describe("makeAnalyticsServicesNative", () => {
     const bundle = makeAnalyticsServicesNative({
       binPath: "/cache/analytics/v1.50.3/darwin-arm64",
       runtimeRoot: "/tmp/stacks/project-a/runtime",
-      nodeName: "logflare_stack_a",
-      releaseCookie: "stack-release-cookie",
       hostPort: 54327,
       dbPort: 54322,
       apiKey: "analytics-key",
@@ -77,7 +75,7 @@ end`,
     expect(bundle.server).toMatchObject({
       name: "analytics",
       command: "/cache/analytics/v1.50.3/darwin-arm64/bin/logflare",
-      args: ["start", "--sname", "logflare_stack_a"],
+      args: ["start"],
       restart: "unless-stopped",
       dependencies: [{ service: "analytics-seed", condition: "completed" }],
     });
@@ -90,13 +88,14 @@ end`,
       DB_POOL_SIZE: "2",
       LOGFLARE_PUBSUB_POOL_SIZE: "2",
       ELIXIR_ERL_OPTIONS: "+S 1:1 +SDio 1 +sbwt none +sbwtdcpu none +sbwtdio none",
-      ERL_AFLAGS: "-proto_dist inet_tcp -kernel inet_dist_use_interface '{127,0,0,1}'",
-      ERL_EPMD_ADDRESS: "127.0.0.1",
+      RELEASE_DISTRIBUTION: "none",
       ERL_CRASH_DUMP: "/tmp/stacks/project-a/runtime/analytics/erl_crash.dump",
-      RELEASE_COOKIE: "stack-release-cookie",
       LOGFLARE_PUBLIC_ACCESS_TOKEN: "analytics-key-public",
       LOGFLARE_PRIVATE_ACCESS_TOKEN: "analytics-key",
     });
+    expect(bundle.server.env).not.toHaveProperty("ERL_AFLAGS");
+    expect(bundle.server.env).not.toHaveProperty("ERL_EPMD_ADDRESS");
+    expect(bundle.server.env).not.toHaveProperty("RELEASE_COOKIE");
     expect(bundle.server.healthCheck?.probe).toEqual({
       _tag: "Http",
       host: "127.0.0.1",

@@ -5,7 +5,6 @@ import { dockerPortMapArgs } from "../Platform.ts";
 import type { StackIdentity } from "../StackIdentity.ts";
 import {
   dockerRunService,
-  nativeBeamLoopbackEnv,
   nativeRunService,
   type ContainerRuntimeOptions,
   type ServiceDependency,
@@ -35,9 +34,6 @@ export interface NativePoolerOptions extends Omit<PoolerServiceOptions, "dbHost"
   readonly transactionPort: number;
   /** Base of the eight private Supavisor shard listeners (four per mode). */
   readonly internalPort: number;
-  /** Stack-unique Erlang short name and cookie for host-level distribution. */
-  readonly nodeName: string;
-  readonly releaseCookie: string;
 }
 
 export interface NativePoolerServiceBundle {
@@ -212,14 +208,10 @@ const poolerNativeEnv = (opts: NativePoolerOptions): Record<string, string> => (
   METRICS_JWT_SECRET: opts.jwtSecret,
   REGION: "local",
   RUN_JANITOR: "true",
-  ...nativeBeamLoopbackEnv,
+  RELEASE_DISTRIBUTION: "none",
   RLIMIT_NOFILE: "",
   ELIXIR_ERL_OPTIONS: "+fnu +S 1:1 +SDio 1 +sbwt none +sbwtdcpu none +sbwtdio none",
   ERL_CRASH_DUMP: join(opts.runtimeRoot, "pooler", "erl_crash.dump"),
-  NODE_NAME: opts.nodeName,
-  NODE_IP: "127.0.0.1",
-  RELEASE_NODE: `${opts.nodeName}@127.0.0.1`,
-  RELEASE_COOKIE: opts.releaseCookie,
 });
 
 export const makePoolerServicesNative = (opts: NativePoolerOptions): NativePoolerServiceBundle => {

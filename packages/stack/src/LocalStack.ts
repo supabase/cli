@@ -27,7 +27,6 @@ import {
 import { ChildProcessSpawner } from "effect/unstable/process";
 import { FetchHttpClient } from "effect/unstable/http";
 import type { CleanupTargets } from "./CleanupTargets.ts";
-import { generateBeamReleaseCookie } from "./BeamCookie.ts";
 import { cleanupLocalStackResources } from "./cleanup.ts";
 import {
   DockerPullError,
@@ -260,14 +259,6 @@ export const localStackLayer = (
       const disposedSignal = yield* Deferred.make<void>();
       const lifecycleLock = Semaphore.makeUnsafe(1);
       const projectionLock = Semaphore.makeUnsafe(1);
-      // One stack-owned cookie is shared by all native BEAM services and remains stable across
-      // JIT preparation, restarts, and definition rebuilds for this LocalStack instance.
-      const beamReleaseCookie = yield* Effect.try({
-        try: generateBeamReleaseCookie,
-        catch: (cause) =>
-          new StackBuildError({ detail: "Failed to generate native BEAM release cookie", cause }),
-      });
-
       const logBufferServices = yield* Layer.buildWithScope(LogBuffer.layer, scope);
       const logBuffer = Context.get(logBufferServices, LogBuffer);
 
@@ -518,7 +509,7 @@ export const localStackLayer = (
           const effect = Effect.gen(function* () {
             const prepared = yield* ensurePlanned;
             const { graph, serviceProjection, cleanupTargets } = yield* builder
-              .build(config, prepared, { beamReleaseCookie })
+              .build(config, prepared)
               .pipe(
                 Effect.provideService(FileSystem.FileSystem, fs),
                 Effect.provideService(Scope.Scope, scope),
@@ -1163,7 +1154,7 @@ export const localStackLayer = (
               const prepared = yield* ensurePlanned;
               const runtime = yield* ensureRuntime;
               const buildResult = yield* builder
-                .build(nextConfig, prepared, { beamReleaseCookie })
+                .build(nextConfig, prepared)
                 .pipe(
                   Effect.provideService(FileSystem.FileSystem, fs),
                   Effect.provideService(Scope.Scope, scope),

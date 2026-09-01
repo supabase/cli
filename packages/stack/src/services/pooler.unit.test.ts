@@ -11,8 +11,6 @@ const makePooler = (mode: "transaction" | "session", tenantId = "pooler-dev") =>
     sessionPort: 54330,
     transactionPort: 54331,
     internalPort: 54400,
-    nodeName: "supavisor_id_stack_a",
-    releaseCookie: "supabase_stack_a_cookie",
     dbPort: 54322,
     poolMode: mode,
     defaultPoolSize: 20,
@@ -49,8 +47,7 @@ describe("makePoolerServicesNative", () => {
       TRANSACTION_PROXY_PORTS: "54404,54405,54406,54407",
       DATABASE_URL: "ecto://postgres:postgres@127.0.0.1:54322/_supabase",
       API_JWT_SECRET: "super-secret-jwt-token-with-at-least-32-characters-long",
-      NODE_NAME: "supavisor_id_stack_a",
-      RELEASE_COOKIE: "supabase_stack_a_cookie",
+      RELEASE_DISTRIBUTION: "none",
     });
     expect(bundle.bootstrap.args?.[0]).toBe("eval");
     expect(bundle.bootstrap.args?.[1]).toContain('"external_id" => "pooler-dev"');
@@ -69,7 +66,7 @@ describe("makePoolerServicesNative", () => {
     });
   });
 
-  it("binds both public proxy listeners with the stack identity", () => {
+  it("binds both public proxy listeners", () => {
     const transaction = makePooler("transaction").server;
     expect(transaction.env).toMatchObject({
       PORT: "54329",
@@ -77,13 +74,16 @@ describe("makePoolerServicesNative", () => {
       PROXY_PORT_SESSION: "54330",
       SESSION_PROXY_PORTS: "54400,54401,54402,54403",
       TRANSACTION_PROXY_PORTS: "54404,54405,54406,54407",
-      NODE_NAME: "supavisor_id_stack_a",
-      NODE_IP: "127.0.0.1",
-      RELEASE_NODE: "supavisor_id_stack_a@127.0.0.1",
-      RELEASE_COOKIE: "supabase_stack_a_cookie",
+      RELEASE_DISTRIBUTION: "none",
       ELIXIR_ERL_OPTIONS: "+fnu +S 1:1 +SDio 1 +sbwt none +sbwtdcpu none +sbwtdio none",
       ERL_CRASH_DUMP: "/tmp/stacks/project-a/runtime/pooler/erl_crash.dump",
     });
+    expect(transaction.env).not.toHaveProperty("ERL_AFLAGS");
+    expect(transaction.env).not.toHaveProperty("ERL_EPMD_ADDRESS");
+    expect(transaction.env).not.toHaveProperty("NODE_NAME");
+    expect(transaction.env).not.toHaveProperty("NODE_IP");
+    expect(transaction.env).not.toHaveProperty("RELEASE_NODE");
+    expect(transaction.env).not.toHaveProperty("RELEASE_COOKIE");
 
     const session = makePooler("session").server;
     expect(session.env).toMatchObject({

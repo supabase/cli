@@ -5,7 +5,6 @@ import { dockerPortMapArgs } from "../Platform.ts";
 import type { StackIdentity } from "../StackIdentity.ts";
 import {
   dockerRunService,
-  nativeBeamLoopbackEnv,
   nativeRunService,
   type ContainerRuntimeOptions,
   type ServiceDependency,
@@ -23,10 +22,6 @@ interface AnalyticsServiceOptions {
 export interface NativeAnalyticsOptions extends AnalyticsServiceOptions {
   readonly binPath: string;
   readonly runtimeRoot: string;
-  /** A stack-unique, valid BEAM short node name for Logflare distribution. */
-  readonly nodeName: string;
-  /** A stack-owned secret shared by the native BEAM services. */
-  readonly releaseCookie: string;
 }
 
 export interface NativeAnalyticsServiceBundle {
@@ -128,7 +123,7 @@ const analyticsEnv = (
   LOGFLARE_LOG_LEVEL: "warn",
   LOGFLARE_NODE_HOST: opts.nodeHost,
   LOGFLARE_FEATURE_FLAG_OVERRIDE: "'multibackend=true'",
-  RELEASE_COOKIE: opts.releaseCookie ?? "cookie",
+  ...(opts.releaseCookie === undefined ? {} : { RELEASE_COOKIE: opts.releaseCookie }),
   ...(opts.backend === "postgres"
     ? {
         POSTGRES_BACKEND_URL: `postgresql://postgres:postgres@${opts.dbHost}:${opts.dbPort}/_supabase`,
@@ -142,7 +137,7 @@ const analyticsEnv = (
   ...(opts.runtimeRoot === undefined
     ? {}
     : {
-        ...nativeBeamLoopbackEnv,
+        RELEASE_DISTRIBUTION: "none",
         ELIXIR_ERL_OPTIONS: "+S 1:1 +SDio 1 +sbwt none +sbwtdcpu none +sbwtdio none",
         DB_POOL_SIZE: "2",
         LOGFLARE_PUBSUB_POOL_SIZE: "2",
@@ -157,6 +152,7 @@ export const makeAnalyticsServiceDocker = (opts: DockerAnalyticsOptions): Servic
     listenPort: runtimeNetwork.listenPort,
     nodeHost: "0.0.0.0",
     runtimeRoot: undefined,
+    releaseCookie: "cookie",
   });
 
   return dockerRunService({
@@ -210,7 +206,7 @@ export const makeAnalyticsServicesNative = (
   const server = nativeRunService({
     name: "analytics",
     command: `${opts.binPath}/bin/logflare`,
-    args: ["start", "--sname", opts.nodeName],
+    args: ["start"],
     env,
     dependencies: [{ service: seed.name, condition: "completed" }],
     healthCheck: analyticsHealthCheck(opts.hostPort),

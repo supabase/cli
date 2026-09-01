@@ -4,7 +4,6 @@ import type { StackIdentity } from "../StackIdentity.ts";
 import {
   dockerRunService,
   hostHttpHealthCheck,
-  nativeBeamLoopbackEnv,
   nativeRunService,
   type ContainerRuntimeOptions,
   type ServiceDependency,
@@ -26,9 +25,6 @@ interface RealtimeServiceOptions {
 
 export interface NativeRealtimeOptions extends Omit<RealtimeServiceOptions, "dbHost"> {
   readonly binPath: string;
-  /** Stack-unique Erlang short name and cookie for host-level distribution. */
-  readonly nodeName: string;
-  readonly releaseCookie: string;
 }
 
 export interface NativeRealtimeServiceBundle {
@@ -50,8 +46,7 @@ const realtimeEnv = (
   opts: Omit<RealtimeServiceOptions, "dbHost"> & {
     readonly dbHost?: string;
     readonly dbUser?: string;
-    readonly nodeName?: string;
-    readonly releaseCookie?: string;
+    readonly native?: boolean;
   },
 ): Record<string, string> => ({
   PORT: String(opts.port),
@@ -67,21 +62,12 @@ const realtimeEnv = (
   METRICS_JWT_SECRET: opts.jwtSecret,
   APP_NAME: "realtime",
   SECRET_KEY_BASE: opts.secretKeyBase,
-  ERL_AFLAGS: "-proto_dist inet_tcp",
   DNS_NODES: "",
   RLIMIT_NOFILE: "",
   SEED_SELF_HOST: "true",
   RUN_JANITOR: "true",
   MAX_HEADER_LENGTH: String(opts.maxHeaderLength),
-  ...(opts.nodeName === undefined || opts.releaseCookie === undefined
-    ? {}
-    : {
-        ...nativeBeamLoopbackEnv,
-        NODE_NAME: opts.nodeName,
-        NODE_IP: "127.0.0.1",
-        RELEASE_NODE: `${opts.nodeName}@127.0.0.1`,
-        RELEASE_COOKIE: opts.releaseCookie,
-      }),
+  ...(opts.native ? { RELEASE_DISTRIBUTION: "none" } : { ERL_AFLAGS: "-proto_dist inet_tcp" }),
 });
 
 const realtimeDockerHealthCheck = (port: number, tenantId: string): ServiceDef["healthCheck"] => ({
@@ -122,7 +108,7 @@ export const makeRealtimeServiceDocker = (opts: DockerRealtimeOptions): ServiceD
 export const makeRealtimeServicesNative = (
   opts: NativeRealtimeOptions,
 ): NativeRealtimeServiceBundle => {
-  const env = realtimeEnv({ ...opts, dbUser: "supabase_admin" });
+  const env = realtimeEnv({ ...opts, dbUser: "supabase_admin", native: true });
   const migrate = nativeRunService({
     name: "realtime-migrate",
     command: `${opts.binPath}/bin/migrate`,
@@ -134,7 +120,7 @@ export const makeRealtimeServicesNative = (
     name: "realtime-seed",
     command: `${opts.binPath}/bin/realtime`,
     args: ["eval", "Realtime.Release.seeds(Realtime.Repo)"],
-    env,
+    env: { ...env, PORT: "0" },
     dependencies: [{ service: migrate.name, condition: "completed" }],
     restart: "no",
   });

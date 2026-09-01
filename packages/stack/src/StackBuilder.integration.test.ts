@@ -90,7 +90,7 @@ describe("StackBuilder native graph", () => {
             const scope = yield* Effect.scope;
             return {
               result: yield* builder
-                .build(config, prepared, { beamReleaseCookie: "stack-release-cookie" })
+                .build(config, prepared)
                 .pipe(Effect.provideService(Scope.Scope, scope)),
               storageDataDir: config.storage === false ? "" : config.storage.dataDir,
             };
@@ -141,16 +141,17 @@ describe("StackBuilder native graph", () => {
         },
       );
       expect(result.graph.startOrder.find((service) => service.name === "analytics")?.args).toEqual(
-        ["start", "--sname", "logflare_41000"],
+        ["start"],
       );
       for (const service of ["realtime", "analytics", "pooler"] as const) {
-        expect(
-          result.graph.startOrder.find((candidate) => candidate.name === service)?.env,
-        ).toMatchObject({
-          ERL_EPMD_ADDRESS: "127.0.0.1",
-          ERL_AFLAGS: "-proto_dist inet_tcp -kernel inet_dist_use_interface '{127,0,0,1}'",
-          RELEASE_COOKIE: "stack-release-cookie",
-        });
+        const env = result.graph.startOrder.find((candidate) => candidate.name === service)?.env;
+        expect(env).toMatchObject({ RELEASE_DISTRIBUTION: "none" });
+        expect(env).not.toHaveProperty("ERL_EPMD_ADDRESS");
+        expect(env).not.toHaveProperty("ERL_AFLAGS");
+        expect(env).not.toHaveProperty("NODE_NAME");
+        expect(env).not.toHaveProperty("NODE_IP");
+        expect(env).not.toHaveProperty("RELEASE_NODE");
+        expect(env).not.toHaveProperty("RELEASE_COOKIE");
       }
       expect(
         result.graph.startOrder.find((service) => service.name === "studio")?.env,
@@ -180,8 +181,6 @@ describe("StackBuilder native graph", () => {
         TRANSACTION_PROXY_PORTS: Array.from({ length: 4 }, (_, index) =>
           String(ports.poolerInternalPort + 4 + index),
         ).join(","),
-        NODE_NAME: `pooler_${ports.apiPort}`,
-        NODE_IP: "127.0.0.1",
       });
       expect(result.serviceProjection.get("realtime-migrate")).toEqual({
         visibility: "internal",
@@ -213,67 +212,6 @@ describe("StackBuilder native graph", () => {
       expect(vectorConfig).toContain("native_logs");
     } finally {
       rmSync(root, { recursive: true, force: true });
-    }
-  });
-
-  it("derives distinct valid Analytics short node names for sibling identities", async () => {
-    const roots: Array<string> = [];
-    const buildAnalytics = async (
-      instanceId: string,
-      apiPort: number,
-    ): Promise<ReadonlyArray<string>> => {
-      const root = mkdtempSync(join(tmpdir(), "supabase-stack-builder-identity-"));
-      roots.push(root);
-      const resolver = mockBinaryResolver({ binaries: binaryRoots });
-      const spawner = mockChildProcessSpawner();
-      const layer = Layer.mergeAll(
-        StackBuilder.layer,
-        NodeFileSystem.layer,
-        StackPreparation.layer.pipe(Layer.provide(resolver.layer), Layer.provide(spawner.layer)),
-      );
-      return Effect.runPromise(
-        Effect.scoped(
-          Effect.gen(function* () {
-            const config = yield* resolveConfig(
-              { ...fullNativeConfig, instanceId },
-              {
-                ports: { ...ports, apiPort },
-                stackRoot: join(root, "stack"),
-                runtimeRoot: join(root, "runtime"),
-                runtime: { mode: "native", containerRuntime: null },
-              },
-            );
-            const preparation = yield* StackPreparation;
-            const builder = yield* StackBuilder;
-            const prepared = yield* preparation.prepare({
-              mode: "native",
-              services: SERVICE_NAMES,
-              versions: {},
-            });
-            const scope = yield* Effect.scope;
-            const result = yield* builder
-              .build(config, prepared)
-              .pipe(Effect.provideService(Scope.Scope, scope));
-            return (
-              result.graph.startOrder.find((service) => service.name === "analytics")?.args ?? []
-            );
-          }).pipe(Effect.provide(layer)),
-        ),
-      );
-    };
-
-    try {
-      const first = await buildAnalytics("stack-a", 42000);
-      const second = await buildAnalytics("stack-b", 42001);
-      const maximum = await buildAnalytics(`a${"-".repeat(63)}`, 42002);
-      expect(first).toEqual(["start", "--sname", "logflare_id_stack_a"]);
-      expect(second).toEqual(["start", "--sname", "logflare_id_stack_b"]);
-      expect(first).not.toEqual(second);
-      expect(maximum[2]).toBe(`logflare_id_a${"_".repeat(63)}`);
-      expect(maximum[2]).toMatch(/^[A-Za-z0-9_]+$/);
-      expect(maximum[2]?.length).toBeLessThanOrEqual(255);
-    } finally {
-      for (const root of roots) rmSync(root, { recursive: true, force: true });
     }
   });
 
