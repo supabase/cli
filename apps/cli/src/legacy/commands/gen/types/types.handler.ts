@@ -1,4 +1,4 @@
-import { loadCliConfig } from "@supabase/config/effect";
+import { loadCliConfig } from "@supabase/config/internal";
 import { ChildProcessSpawner } from "effect/unstable/process";
 import { Effect, FileSystem, Option, Path, Stdio, Stream } from "effect";
 import { LegacyDnsResolverFlag } from "../../../../shared/legacy/global-flags.ts";

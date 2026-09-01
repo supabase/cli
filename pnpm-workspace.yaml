@@ -27,6 +27,7 @@ catalog:
   "oxfmt": "^0.63.0"
   "oxlint": "1.78.0"
   "oxlint-tsgolint": "^7.0.2001"
+  "semantic-release": "^25.0.9"
   "tldts": "^7.4.10"
   "turbo": "2.10.11"
   "vitest": "^4.1.10"

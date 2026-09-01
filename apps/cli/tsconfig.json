@@ -1,17 +1,32 @@
 {
   "extends": "@tsconfig/bun/tsconfig.json",
-  // Published packages that export `bun` → TypeScript source. tsc under that
-  // condition typechecks their src with our noUncheckedIndexedAccess.
-  "exclude": ["node_modules", "supabase", "src/shared/workers/stacks"],
   "compilerOptions": {
+    // Lets `tsc` resolve `@supabase/config`'s exports-map `bun` condition
+    // straight to its `src/*.ts` sources (self-typed, no `.d.ts` needed)
+    // instead of `dist/*.d.ts`, which requires that package to be built
+    // first — see `packages/config/package.json`'s exports map and
+    // `packages/config/AGENTS.md`'s "Build" section (CLI-2234). This also
+    // affects any OTHER dependency whose own exports map declares a `bun`
+    // condition (e.g. `@supabase/pg-topo`, `@supabase/postgrest-typegen`).
+    "customConditions": ["bun"],
+    // `@supabase/pg-topo` (external, from supabase/pg-toolbelt) also declares
+    // a `bun` exports condition, pointing at its UNBUILT `src/*.ts`, which
+    // carries type errors at 1.0.0-alpha.5 that its shipped `dist/*.d.ts`
+    // does not surface. `paths` wins over exports-condition resolution, so
+    // pin its types to the published declarations. Drop this once a fixed
+    // pg-topo release (>= 1.0.0-alpha.6) clears the pnpm minimumReleaseAge
+    // window and is bumped in this package.
+    // Same pin for `@supabase/postgrest-typegen`: `bun` is source that fails
+    // noUncheckedIndexedAccess and has no pg-format types.
     "paths": {
+      "@supabase/pg-topo": ["./node_modules/@supabase/pg-topo/dist/index.d.ts"],
       "@supabase/postgrest-typegen/generation": [
         "./node_modules/@supabase/postgrest-typegen/dist/generation/index.d.ts"
       ],
       "@supabase/postgrest-typegen/introspection": [
         "./node_modules/@supabase/postgrest-typegen/dist/introspection/index.d.ts"
-      ],
-      "@supabase/pg-topo": ["./node_modules/@supabase/pg-topo/dist/index.d.ts"]
+      ]
     }
-  }
+  },
+  "exclude": ["supabase", "src/shared/workers/stacks"]
 }

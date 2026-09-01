@@ -48,6 +48,9 @@ catalogs:
     oxlint-tsgolint:
       specifier: ^7.0.2001
       version: 7.0.2001
+    semantic-release:
+      specifier: ^25.0.9
+      version: 25.0.9
     tldts:
       specifier: ^7.4.10
       version: 7.4.10
@@ -268,7 +271,7 @@ importers:
         specifier: ^7.0.1
         version: 7.0.1
       semantic-release:
-        specifier: ^25.0.9
+        specifier: 'catalog:'
         version: 25.0.9(typescript@7.0.2)
       smol-toml:
         specifier: ^1.8.0
@@ -279,6 +282,9 @@ importers:
       typescript:
         specifier: 'catalog:'
         version: 7.0.2
+      vite:
+        specifier: ^6.0.0 || ^7.0.0 || ^8.0.0
+        version: 8.1.4(@types/node@26.2.0)(esbuild@0.28.2)(jiti@2.7.0)(yaml@2.9.0)
       vitest:
         specifier: 'catalog:'
         version: 4.1.10(@types/node@26.2.0)(@vitest/coverage-istanbul@4.1.10)(vite@8.1.4(@types/node@26.2.0)(esbuild@0.28.2)(jiti@2.7.0)(yaml@2.9.0))
@@ -439,6 +445,9 @@ importers:
 
   packages/config:
     dependencies:
+      '@standard-schema/spec':
+        specifier: ^1.1.0
+        version: 1.1.0
       dedent:
         specifier: ^1.7.2
         version: 1.7.2
@@ -452,6 +461,12 @@ importers:
       '@effect/platform-node':
         specifier: 'catalog:'
         version: 4.0.0-rc.111(effect@4.0.0-rc.111)(redis@6.2.1)
+      '@semantic-release/commit-analyzer':
+        specifier: ^13.0.1
+        version: 13.0.1(semantic-release@25.0.9(typescript@7.0.2))
+      '@semantic-release/release-notes-generator':
+        specifier: ^14.1.1
+        version: 14.1.1(semantic-release@25.0.9(typescript@7.0.2))
       '@tsconfig/bun':
         specifier: 'catalog:'
         version: 1.0.11
@@ -464,9 +479,15 @@ importers:
       effect:
         specifier: 'catalog:'
         version: 4.0.0-rc.111
+      semantic-release:
+        specifier: 'catalog:'
+        version: 25.0.9(typescript@7.0.2)
       typescript:
         specifier: 'catalog:'
         version: 7.0.2
+      vite:
+        specifier: ^6.0.0 || ^7.0.0 || ^8.0.0
+        version: 8.1.4(@types/node@26.2.0)(esbuild@0.28.2)(jiti@2.7.0)(yaml@2.9.0)
       vitest:
         specifier: 'catalog:'
         version: 4.1.10(@types/node@26.2.0)(@vitest/coverage-istanbul@4.1.10)(vite@8.1.4(@types/node@26.2.0)(esbuild@0.28.2)(jiti@2.7.0)(yaml@2.9.0))

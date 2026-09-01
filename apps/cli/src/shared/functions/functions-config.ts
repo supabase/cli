@@ -1,6 +1,7 @@
 import { basename } from "node:path";
 import { Effect, type FileSystem, type Path } from "effect";
-import { loadCliConfig, type LoadedCliConfig } from "@supabase/config/effect";
+import type { LoadedCliConfig } from "@supabase/config/effect";
+import { loadCliConfig } from "@supabase/config/effect";
 import { normalizeProjectId } from "./functions-docker.ts";
 
 /**
@@ -61,10 +62,10 @@ export const loadFunctionsCliConfig = Effect.fnUntraced(function* (input: {
   readonly goConfigCompat: FunctionsGoConfigCompat | undefined;
 }) {
   if (input.goConfigCompat === undefined) {
-    const loaded = yield* loadCliConfig(input.projectRoot, {
-      ...(input.projectRef === undefined ? {} : { projectRef: input.projectRef }),
-      goViperCompat: false,
-    });
+    const loaded = yield* loadCliConfig(
+      input.projectRoot,
+      input.projectRef === undefined ? {} : { projectRef: input.projectRef },
+    );
     return {
       loaded,
       projectEnvValues: undefined,
