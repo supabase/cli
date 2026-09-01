@@ -56,6 +56,36 @@ packageExtensions:
       # @types packages.
       "@types/debug": "^4.1.12"
       "@types/pg": "^8.23.1"
+  # The root `prepare` script (`effect-tsgo patch --oxlint`) replaces files
+  # INSIDE these installed packages: oxlint's dist/index.d.ts, the current
+  # platform's @oxlint/binding-* native module, and the @oxlint-tsgolint/*
+  # binary. Under `virtualStoreType: global`, each package's store directory
+  # is keyed only by the hash of its own dependency graph and shared with
+  # every checkout on the machine that resolves the same graph — so those
+  # in-place patches would leak into unrelated projects using the same
+  # oxlint version. Declaring @effect/tsgo (the patcher) as a dependency of
+  # every package it mutates folds the patcher's version into that hash,
+  # giving these packages store directories private to identically-patched
+  # checkouts and re-keyed whenever @effect/tsgo is bumped.
+  # (`catalog:` is not resolvable inside packageExtensions, so this version
+  # must be kept in sync with the `@effect/tsgo` catalog entry above.)
+  oxlint: &effect-tsgo-patched
+    dependencies:
+      "@effect/tsgo": "0.36.5"
+  "@oxlint/binding-darwin-arm64": *effect-tsgo-patched
+  "@oxlint/binding-darwin-x64": *effect-tsgo-patched
+  "@oxlint/binding-linux-arm64-gnu": *effect-tsgo-patched
+  "@oxlint/binding-linux-arm64-musl": *effect-tsgo-patched
+  "@oxlint/binding-linux-x64-gnu": *effect-tsgo-patched
+  "@oxlint/binding-linux-x64-musl": *effect-tsgo-patched
+  "@oxlint/binding-win32-arm64-msvc": *effect-tsgo-patched
+  "@oxlint/binding-win32-x64-msvc": *effect-tsgo-patched
+  "@oxlint-tsgolint/darwin-arm64": *effect-tsgo-patched
+  "@oxlint-tsgolint/darwin-x64": *effect-tsgo-patched
+  "@oxlint-tsgolint/linux-arm64": *effect-tsgo-patched
+  "@oxlint-tsgolint/linux-x64": *effect-tsgo-patched
+  "@oxlint-tsgolint/win32-arm64": *effect-tsgo-patched
+  "@oxlint-tsgolint/win32-x64": *effect-tsgo-patched
 
 minimumReleaseAge: 10200
 minimumReleaseAgeExclude:
