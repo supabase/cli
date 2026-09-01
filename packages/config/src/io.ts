@@ -6,7 +6,7 @@ import {
   encodeCliConfigToTomlDocument,
   isObject,
   type LoadedCliConfig,
-  type LoadCliConfigOptions,
+  type InternalLoadCliConfigOptions,
   cliConfigSchemaKey,
   type CliConfigValueSource,
   type SaveCliConfigOptions,
@@ -482,7 +482,7 @@ export const configTomlPath = Effect.fnUntraced(function* (cwd: string) {
 
 export const loadCliConfigFile = Effect.fnUntraced(function* (
   filePath: string,
-  options?: LoadCliConfigOptions,
+  options?: InternalLoadCliConfigOptions,
 ) {
   const fs = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
@@ -640,7 +640,7 @@ export const loadCliConfigFile = Effect.fnUntraced(function* (
 
 export const loadCliConfig = Effect.fnUntraced(function* (
   cwd: string,
-  options?: LoadCliConfigOptions,
+  options?: InternalLoadCliConfigOptions,
 ) {
   const fs = yield* FileSystem.FileSystem;
   const project = yield* findCliProjectPaths(cwd, { search: options?.search });

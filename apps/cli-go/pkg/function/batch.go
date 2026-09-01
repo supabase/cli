@@ -27,7 +27,7 @@ const (
 
 func (s *EdgeRuntimeAPI) UpsertFunctions(ctx context.Context, functionConfig config.FunctionConfig, filter ...func(string) bool) error {
 	policy := backoff.WithContext(backoff.WithMaxRetries(backoff.NewExponentialBackOff(), maxRetries), ctx)
-	result, err := backoff.RetryWithData(func() ([]api.FunctionResponse, error) {
+	result, err := backoff.RetryWithData(func() ([]api.FunctionResponseOutput, error) {
 		resp, err := s.client.V1ListAllFunctionsWithResponse(ctx, s.project)
 		if err != nil {
 			return nil, errors.Errorf("failed to list functions: %w", err)

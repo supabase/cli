@@ -109,7 +109,7 @@ func TestRunLegacyUnbundle(t *testing.T) {
 		gock.New(utils.DefaultApiHost).
 			Get("/v1/projects/" + project + "/functions/" + slug).
 			Reply(http.StatusOK).
-			JSON(api.FunctionResponse{Id: "1"})
+			JSON(api.FunctionResponseOutput{Id: "1"})
 		gock.New(utils.DefaultApiHost).
 			Get("/v1/projects/" + project + "/functions/" + slug + "/body").
 			Reply(http.StatusOK)
@@ -344,7 +344,7 @@ func TestDownloadAllRejectsMaliciousSlug(t *testing.T) {
 	gock.New(utils.DefaultApiHost).
 		Get("/v1/projects/" + project + "/functions").
 		Reply(http.StatusOK).
-		JSON([]api.FunctionResponse{{
+		JSON([]api.FunctionResponseOutput{{
 			Id:   "poc-id",
 			Name: "poc",
 			Slug: maliciousSlug,
@@ -447,11 +447,11 @@ func TestRunServerSideUnbundle(t *testing.T) {
 		gock.New(utils.DefaultApiHost).
 			Get(fmt.Sprintf("/v1/projects/%s/functions/%s", project, slug)).
 			Reply(http.StatusOK).
-			JSON(api.FunctionSlugResponse{
+			JSON(api.FunctionSlugResponseOutput{
 				Id:             "1",
 				Name:           slug,
 				Slug:           slug,
-				Status:         api.FunctionSlugResponseStatus("ACTIVE"),
+				Status:         api.FunctionSlugResponseOutputStatus("ACTIVE"),
 				Version:        1,
 				CreatedAt:      0,
 				UpdatedAt:      0,
@@ -481,11 +481,11 @@ func TestRunServerSideUnbundle(t *testing.T) {
 		gock.New(utils.DefaultApiHost).
 			Get(fmt.Sprintf("/v1/projects/%s/functions/%s", project, slug)).
 			Reply(http.StatusOK).
-			JSON(api.FunctionSlugResponse{
+			JSON(api.FunctionSlugResponseOutput{
 				Id:             "1",
 				Name:           slug,
 				Slug:           slug,
-				Status:         api.FunctionSlugResponseStatus("ACTIVE"),
+				Status:         api.FunctionSlugResponseOutputStatus("ACTIVE"),
 				Version:        1,
 				CreatedAt:      0,
 				UpdatedAt:      0,
@@ -515,11 +515,11 @@ func TestRunServerSideUnbundle(t *testing.T) {
 		gock.New(utils.DefaultApiHost).
 			Get(fmt.Sprintf("/v1/projects/%s/functions/%s", project, slug)).
 			Reply(http.StatusOK).
-			JSON(api.FunctionSlugResponse{
+			JSON(api.FunctionSlugResponseOutput{
 				Id:             "1",
 				Name:           slug,
 				Slug:           slug,
-				Status:         api.FunctionSlugResponseStatus("ACTIVE"),
+				Status:         api.FunctionSlugResponseOutputStatus("ACTIVE"),
 				Version:        1,
 				CreatedAt:      0,
 				UpdatedAt:      0,
@@ -766,7 +766,7 @@ func TestDownloadFunction(t *testing.T) {
 		gock.New(utils.DefaultApiHost).
 			Get("/v1/projects/" + project + "/functions/" + slug).
 			Reply(http.StatusOK).
-			JSON(api.FunctionResponse{Id: "1"})
+			JSON(api.FunctionResponseOutput{Id: "1"})
 		gock.New(utils.DefaultApiHost).
 			Get("/v1/projects/" + project + "/functions/" + slug + "/body").
 			ReplyError(errors.New("network error"))
@@ -782,7 +782,7 @@ func TestDownloadFunction(t *testing.T) {
 		gock.New(utils.DefaultApiHost).
 			Get("/v1/projects/" + project + "/functions/" + slug).
 			Reply(http.StatusOK).
-			JSON(api.FunctionResponse{Id: "1"})
+			JSON(api.FunctionResponseOutput{Id: "1"})
 		gock.New(utils.DefaultApiHost).
 			Get("/v1/projects/" + project + "/functions/" + slug + "/body").
 			Reply(http.StatusServiceUnavailable)
@@ -800,7 +800,7 @@ func TestDownloadFunction(t *testing.T) {
 		gock.New(utils.DefaultApiHost).
 			Get("/v1/projects/" + project + "/functions/" + slug).
 			Reply(http.StatusOK).
-			JSON(api.FunctionResponse{Id: "1"})
+			JSON(api.FunctionResponseOutput{Id: "1"})
 		gock.New(utils.DefaultApiHost).
 			Get("/v1/projects/" + project + "/functions/" + slug + "/body").
 			Reply(http.StatusOK)
@@ -825,7 +825,7 @@ func TestGetMetadata(t *testing.T) {
 		gock.New(utils.DefaultApiHost).
 			Get("/v1/projects/" + project + "/functions/" + slug).
 			Reply(http.StatusOK).
-			JSON(api.FunctionResponse{Id: "1"})
+			JSON(api.FunctionResponseOutput{Id: "1"})
 		// Run test
 		meta, err := getFunctionMetadata(context.Background(), project, slug)
 		// Check error

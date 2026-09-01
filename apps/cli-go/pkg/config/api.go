@@ -68,7 +68,7 @@ func (a *api) ToUpdatePostgrestConfigBody() v1API.V1UpdatePostgrestConfigBody {
 	return body
 }
 
-func (a *api) FromRemoteApiConfig(remoteConfig v1API.PostgrestConfigWithJWTSecretResponse) {
+func (a *api) FromRemoteApiConfig(remoteConfig v1API.PostgrestConfigWithJWTSecretResponseOutput) {
 	if a.Enabled = len(remoteConfig.DbSchema) > 0; !a.Enabled {
 		return
 	}
@@ -90,7 +90,7 @@ func (a *api) FromRemoteApiConfig(remoteConfig v1API.PostgrestConfigWithJWTSecre
 	a.MaxRows = cast.IntToUint(remoteConfig.MaxRows)
 }
 
-func (a *api) DiffWithRemote(remoteConfig v1API.PostgrestConfigWithJWTSecretResponse) ([]byte, error) {
+func (a *api) DiffWithRemote(remoteConfig v1API.PostgrestConfigWithJWTSecretResponseOutput) ([]byte, error) {
 	copy := *a
 	// Convert the config values into easily comparable remoteConfig values
 	currentValue, err := ToTomlBytes(copy)

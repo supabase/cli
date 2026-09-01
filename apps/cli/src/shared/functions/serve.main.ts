@@ -122,6 +122,30 @@ const functionsConfig: Record<string, FunctionConfig> = (() => {
   }
 })();
 
+// Edge Runtime pools user workers by servicePath. Keep the source directory for the
+// common case, but give each function a process-owned temporary path when multiple
+// configured functions share that directory. Deno creates each path outside the set of
+// existing source directories, so a real function directory cannot use the same pool key.
+// maybeEntrypoint still points at the real source file, so module resolution is unchanged.
+const workerServicePaths = (() => {
+  const sourcePathCounts = new Map<string, number>();
+  for (const config of Object.values(functionsConfig)) {
+    const sourcePath = dirname(config.entrypointPath);
+    sourcePathCounts.set(sourcePath, (sourcePathCounts.get(sourcePath) ?? 0) + 1);
+  }
+
+  return Object.fromEntries(
+    Object.entries(functionsConfig).map(([functionName, config]) => {
+      const sourcePath = dirname(config.entrypointPath);
+      const servicePath =
+        sourcePathCounts.get(sourcePath) === 1
+          ? sourcePath
+          : Deno.makeTempDirSync({ prefix: "supabase-worker-" });
+      return [functionName, servicePath];
+    }),
+  );
+})();
+
 /* --- JWT verification --- */
 export function extractBearerToken(rawToken: string) {
   const tokenParts = rawToken.split(" ");
@@ -317,7 +341,7 @@ Deno.serve({
       }
     }
 
-    const servicePath = dirname(functionsConfig[functionName].entrypointPath);
+    const servicePath = workerServicePaths[functionName];
     console.error(`serving the request with ${servicePath}`);
 
     // Ref: https://supabase.com/docs/guides/functions/limits
@@ -331,6 +355,8 @@ Deno.serve({
           ([name, _]) => !name.startsWith("SUPABASE_"),
         ),
       ),
+      // Listed after the spreads so neither the container env nor function config can shadow it
+      SUPABASE_FUNCTION_SLUG: functionName,
     };
     if (SUPABASE_PUBLISHABLE_KEY) {
       envVarsObj["SUPABASE_PUBLISHABLE_KEYS"] = JSON.stringify({
