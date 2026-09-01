@@ -5,7 +5,7 @@ import {
   StackStateGenerationMismatchError,
   StackStateInvalidError,
 } from "../public/Errors.ts";
-import { resolveStackPaths } from "./Paths.ts";
+import { resolveStackPaths, type StackPaths } from "./Paths.ts";
 import { deriveStackId } from "../identity/Identity.ts";
 import { StackIdSchema } from "../public/StackId.ts";
 import {
@@ -80,16 +80,6 @@ export interface StackStateStore {
 const isRecord = (value: unknown): value is Readonly<Record<string, unknown>> =>
   typeof value === "object" && value !== null && !Array.isArray(value);
 
-const hasExactKeys = (
-  value: unknown,
-  keys: ReadonlyArray<string>,
-): value is Readonly<Record<string, unknown>> => {
-  if (!isRecord(value)) return false;
-  const actual = Object.keys(value).sort();
-  const expected = [...keys].sort();
-  return actual.length === expected.length && expected.every((key, index) => actual[index] === key);
-};
-
 const stateError = (message: string, cause?: unknown) =>
   new StackStateInvalidError({ message, ...(cause === undefined ? {} : { cause }) });
 
@@ -110,23 +100,18 @@ const decodeState = (
   if (raw.format !== STACK_STATE_FORMAT) {
     return Effect.fail(
       new StackStateFormatUnsupportedError({
-        format: isRecord(raw) && typeof raw.format === "string" ? raw.format : undefined,
+        format: raw.format,
         message: `Unsupported stack state format; expected ${STACK_STATE_FORMAT}`,
       }),
     );
   }
   if (!isRecord(raw.secrets))
     return Effect.fail(stateError("Persisted secret values must be a record"));
-  for (const [slot, entry] of Object.entries(raw.secrets)) {
+  // Schema.Record validates values but does not enforce dynamic object-key checks
+  // while decoding JSON, so retain this format-level slot-name guard.
+  for (const slot of Object.keys(raw.secrets))
     if (!/^[A-Za-z0-9_.:/-]+$/.test(slot))
       return Effect.fail(stateError(`Persisted secret slot key is invalid: ${slot}`));
-    if (!isRecord(entry) || !hasExactKeys(entry, ["policy", "value"]))
-      return Effect.fail(stateError(`Persisted secret entry ${slot} has an invalid shape`));
-    if (entry.policy !== "managed" && entry.policy !== "passthrough")
-      return Effect.fail(stateError(`Persisted secret entry ${slot} has an invalid policy`));
-    if (typeof entry.value !== "string")
-      return Effect.fail(stateError(`Persisted secret entry ${slot} has an invalid value`));
-  }
   return Schema.decodeUnknownEffect(PersistedStackStateSchema)(raw, {
     onExcessProperty: "error",
   }).pipe(
@@ -155,6 +140,16 @@ const validateIdentityForStackId = (
     ),
   );
 };
+
+const validateStateSchema = (
+  state: PersistedStackState,
+): Effect.Effect<void, StackStateInvalidError> =>
+  Schema.decodeEffect(PersistedStackStateSchema)(state, {
+    onExcessProperty: "error",
+  }).pipe(
+    Effect.mapError((error) => stateError(`Invalid persisted stack state: ${String(error)}`)),
+    Effect.asVoid,
+  );
 
 const atomicWrite = (
   fs: FileSystem.FileSystem,
@@ -228,6 +223,31 @@ const atomicWrite = (
       );
     // Effect Platform has no portable directory-fsync operation; file sync plus same-directory
     // rename is the strongest cross-platform atomicity guarantee available here.
+  });
+
+const validateState = (
+  stackId: string,
+  state: PersistedStackState,
+): Effect.Effect<void, StackStateInvalidError, Crypto.Crypto> =>
+  Effect.gen(function* () {
+    yield* validateIdentityForStackId(state.identity, stackId);
+    yield* validateStateSchema(state);
+  });
+
+const persistValidatedState = (
+  fs: FileSystem.FileSystem,
+  path: Path.Path,
+  crypto: Crypto.Crypto,
+  paths: StackPaths,
+  state: PersistedStackState,
+): Effect.Effect<void, StackStateInvalidError> =>
+  Effect.gen(function* () {
+    yield* ownerDirectory(fs, paths.stackRoot).pipe(
+      Effect.mapError((error) =>
+        stateError(`Unable to create stack state directory: ${error.message}`),
+      ),
+    );
+    yield* atomicWrite(fs, path, crypto, paths.stateDocument, paths.stackRoot, state);
   });
 
 /**
@@ -377,25 +397,13 @@ export const makeStackStateStore = (options: {
         options.stateRoot,
         Effect.gen(function* () {
           const paths = yield* pathsFor(stackId);
-          yield* validateIdentityForStackId(next.identity, stackId);
-          yield* Schema.decodeEffect(PersistedStackStateSchema)(next, {
-            onExcessProperty: "error",
-          }).pipe(
-            Effect.mapError((error) =>
-              stateError(`Invalid persisted stack state: ${String(error)}`),
-            ),
-          );
+          yield* validateState(stackId, next);
           const existing = yield* read(stackId);
           if (existing !== undefined)
             return yield* stateError(
               "Stack state already exists; use a generation-fenced replacement",
             );
-          yield* ownerDirectory(fs, paths.stackRoot).pipe(
-            Effect.mapError((error) =>
-              stateError(`Unable to create stack state directory: ${error.message}`),
-            ),
-          );
-          yield* atomicWrite(fs, path, crypto, paths.stateDocument, paths.stackRoot, next);
+          yield* persistValidatedState(fs, path, crypto, paths, next);
         }),
       );
 
@@ -413,20 +421,8 @@ export const makeStackStateStore = (options: {
           const existing = yield* read(stackId);
           if (existing !== undefined) return existing;
           const paths = yield* pathsFor(stackId);
-          yield* validateIdentityForStackId(candidate.identity, stackId);
-          yield* Schema.decodeEffect(PersistedStackStateSchema)(candidate, {
-            onExcessProperty: "error",
-          }).pipe(
-            Effect.mapError((error) =>
-              stateError(`Invalid persisted stack state: ${String(error)}`),
-            ),
-          );
-          yield* ownerDirectory(fs, paths.stackRoot).pipe(
-            Effect.mapError((error) =>
-              stateError(`Unable to create stack state directory: ${error.message}`),
-            ),
-          );
-          yield* atomicWrite(fs, path, crypto, paths.stateDocument, paths.stackRoot, candidate);
+          yield* validateState(stackId, candidate);
+          yield* persistValidatedState(fs, path, crypto, paths, candidate);
           return candidate;
         }),
       );
@@ -454,19 +450,8 @@ export const makeStackStateStore = (options: {
             message: "Persisted stack state generation changed",
           });
         }
-        if (next.identity.stackId !== stackId)
-          return yield* stateError("Persisted identity does not match StackId");
-        yield* Schema.decodeEffect(PersistedStackStateSchema)(next, {
-          onExcessProperty: "error",
-        }).pipe(
-          Effect.mapError((error) => stateError(`Invalid persisted stack state: ${String(error)}`)),
-        );
-        yield* ownerDirectory(fs, paths.stackRoot).pipe(
-          Effect.mapError((error) =>
-            stateError(`Unable to create stack state directory: ${error.message}`),
-          ),
-        );
-        yield* atomicWrite(fs, path, crypto, paths.stateDocument, paths.stackRoot, next);
+        yield* validateStateSchema(next);
+        yield* persistValidatedState(fs, path, crypto, paths, next);
       });
 
     const replace = (

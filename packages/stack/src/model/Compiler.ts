@@ -542,9 +542,10 @@ const materializeCapability = <T>(
 > => {
   const selected = enabledSettings(module.name, { [module.name]: raw });
   const mergedInput = merge(module.defaultSettings, selected.settings);
+  const materialized = module.materialize?.(mergedInput, projectRoot) ?? mergedInput;
   const normalized = normalizeFunctions
-    ? materializeFunctionsRoot(module.materialize(mergedInput, projectRoot), projectRoot, path)
-    : Effect.succeed(module.materialize(mergedInput, projectRoot));
+    ? materializeFunctionsRoot(materialized, projectRoot, path)
+    : Effect.succeed(materialized);
   return Effect.gen(function* () {
     const normalizedSettings = yield* normalized;
     const merged = materializeAbsence(normalizedSettings);

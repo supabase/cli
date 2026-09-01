@@ -7,6 +7,7 @@ import {
   Fiber,
   Option,
   Path,
+  Predicate,
   Ref,
   Scope,
   Schema,
@@ -72,6 +73,8 @@ import {
   type StackLogsError,
   type DestroyStackError,
   type StackError,
+  type StackErrorTag,
+  isStackErrorTag,
 } from "./Errors.ts";
 import { readOwnerMetadata } from "../state/Ownership.ts";
 import { makeControlClient } from "../control/ControlServer.ts";
@@ -226,6 +229,43 @@ const environment = () =>
 
 type ControlError = StackRpcError | RpcClientError | SocketError | MaintenanceProtocolError;
 
+const stackErrorFactories = {
+  InvalidStackIdentityError: (message: string) => new InvalidStackIdentityError({ message }),
+  InvalidProjectRootError: (message: string) => new InvalidProjectRootError({ message }),
+  InvalidStackConfigError: (message: string) => new InvalidStackConfigError({ message }),
+  StackVersionUnsupportedError: (message: string) => new StackVersionUnsupportedError({ message }),
+  StackNotFoundError: (message: string) => new StackNotFoundError({ message }),
+  StackOwnershipConflictError: (message: string) => new StackOwnershipConflictError({ message }),
+  StackRuntimeMismatchError: (message: string) => new StackRuntimeMismatchError({ message }),
+  StackDefinitionRequiredError: (message: string) => new StackDefinitionRequiredError({ message }),
+  StackNotRunningError: (message: string) => new StackNotRunningError({ message }),
+  StackMustBeStoppedError: (message: string) => new StackMustBeStoppedError({ message }),
+  StackLifecycleConflictError: (message: string) => new StackLifecycleConflictError({ message }),
+  StackStateInvalidError: (message: string) => new StackStateInvalidError({ message }),
+  StackStateFormatUnsupportedError: (message: string) =>
+    new StackStateFormatUnsupportedError({ message }),
+  StackStateGenerationMismatchError: (message: string) =>
+    new StackStateGenerationMismatchError({ message }),
+  StackUpgradeRequiredError: (message: string) => new StackUpgradeRequiredError({ message }),
+  StackUpgradeReplacementError: (message: string) => new StackUpgradeReplacementError({ message }),
+  StackSecretMismatchError: (message: string) => new StackSecretMismatchError({ message }),
+  InvalidJwtSigningMaterialError: (message: string) =>
+    new InvalidJwtSigningMaterialError({ message }),
+  PortAllocationError: (message: string) => new PortAllocationError({ message }),
+  PortUnavailableError: (message: string) => new PortUnavailableError({ message }),
+  GatewayAuthenticationError: (message: string) => new GatewayAuthenticationError({ message }),
+  GatewayStaleGenerationError: (message: string) => new GatewayStaleGenerationError({ message }),
+  GatewayActivationError: (message: string) => new GatewayActivationError({ message }),
+  StackPreparationError: (message: string) => new StackPreparationError({ message }),
+  ArtifactIntegrityError: (message: string) => new ArtifactIntegrityError({ message }),
+  ContainerPullError: (message: string) => new ContainerPullError({ message }),
+  StackReconciliationError: (message: string) => new StackReconciliationError({ message }),
+  ServiceStartError: (message: string) => new ServiceStartError({ message }),
+  ServiceReadinessError: (message: string) => new ServiceReadinessError({ message }),
+  ContainerEngineError: (message: string) => new ContainerEngineError({ message }),
+  StackDestructionError: (message: string) => new StackDestructionError({ message }),
+} satisfies Record<StackErrorTag, (message: string) => StackError>;
+
 const errorForRpc = (error: ControlError): StackError => {
   if (
     typeof error === "object" &&
@@ -235,76 +275,12 @@ const errorForRpc = (error: ControlError): StackError => {
     typeof error.tag === "string" &&
     typeof error.message === "string"
   ) {
-    switch (error.tag) {
-      case "InvalidStackIdentityError":
-        return new InvalidStackIdentityError({ message: error.message });
-      case "InvalidProjectRootError":
-        return new InvalidProjectRootError({ message: error.message });
-      case "InvalidStackConfigError":
-        return new InvalidStackConfigError({ message: error.message });
-      case "StackVersionUnsupportedError":
-        return new StackVersionUnsupportedError({ message: error.message });
-      case "StackNotFoundError":
-        return new StackNotFoundError({ message: error.message });
-      case "StackDefinitionRequiredError":
-        return new StackDefinitionRequiredError({ message: error.message });
-      case "StackNotRunningError":
-        return new StackNotRunningError({ message: error.message });
-      case "StackUpgradeRequiredError":
-        return new StackUpgradeRequiredError({ message: error.message });
-      case "StackUpgradeReplacementError":
-        return new StackUpgradeReplacementError({ message: error.message });
-      case "StackDestructionError":
-        return new StackDestructionError({ message: error.message });
-      case "StackOwnershipConflictError":
-        return new StackOwnershipConflictError({ message: error.message });
-      case "StackRuntimeMismatchError":
-        return new StackRuntimeMismatchError({ message: error.message });
-      case "StackMustBeStoppedError":
-        return new StackMustBeStoppedError({ message: error.message });
-      case "StackLifecycleConflictError":
-        return new StackLifecycleConflictError({ message: error.message });
-      case "StackStateInvalidError":
-        return new StackStateInvalidError({ message: error.message });
-      case "StackStateFormatUnsupportedError":
-        return new StackStateFormatUnsupportedError({ message: error.message });
-      case "StackStateGenerationMismatchError":
-        return new StackStateGenerationMismatchError({ message: error.message });
-      case "StackSecretMismatchError":
-        return new StackSecretMismatchError({ message: error.message });
-      case "InvalidJwtSigningMaterialError":
-        return new InvalidJwtSigningMaterialError({ message: error.message });
-      case "PortAllocationError":
-        return new PortAllocationError({ message: error.message });
-      case "PortUnavailableError":
-        return new PortUnavailableError({ message: error.message });
-      case "GatewayAuthenticationError":
-        return new GatewayAuthenticationError({ message: error.message });
-      case "GatewayStaleGenerationError":
-        return new GatewayStaleGenerationError({ message: error.message });
-      case "GatewayActivationError":
-        return new GatewayActivationError({ message: error.message });
-      case "StackPreparationError":
-        return new StackPreparationError({ message: error.message });
-      case "ArtifactIntegrityError":
-        return new ArtifactIntegrityError({ message: error.message });
-      case "ContainerPullError":
-        return new ContainerPullError({ message: error.message });
-      case "StackReconciliationError":
-        return new StackReconciliationError({ message: error.message });
-      case "ServiceStartError":
-        return new ServiceStartError({ message: error.message });
-      case "ServiceReadinessError":
-        return new ServiceReadinessError({ message: error.message });
-      case "ContainerEngineError":
-        return new ContainerEngineError({ message: error.message });
-      case "StackRpcProtocolError":
-        return new StackStateInvalidError({ message: error.message });
-      default:
-        return new StackStateInvalidError({ message: error.message });
-    }
+    if (isStackErrorTag(error.tag)) return stackErrorFactories[error.tag](error.message);
+    if (error.tag === "StackRpcProtocolError")
+      return new StackUpgradeRequiredError({ message: error.message });
+    return new StackStateInvalidError({ message: error.message });
   }
-  return new StackStateInvalidError({ message: "Stack control request failed" });
+  return new StackStateInvalidError({ message: error.message });
 };
 
 const statusError = (error: ControlError): StackStatusError => {
@@ -314,7 +290,7 @@ const statusError = (error: ControlError): StackStatusError => {
     mapped instanceof StackStateFormatUnsupportedError ||
     mapped instanceof StackUpgradeRequiredError
     ? mapped
-    : new StackStateInvalidError({ message: "Stack control request failed" });
+    : new StackStateInvalidError({ message: mapped.message });
 };
 
 const credentialsError = (error: ControlError): StackCredentialsError => {
@@ -324,7 +300,7 @@ const credentialsError = (error: ControlError): StackCredentialsError => {
     mapped instanceof StackSecretMismatchError ||
     mapped instanceof InvalidJwtSigningMaterialError
     ? mapped
-    : new StackNotRunningError({ message: "Stack credentials are unavailable" });
+    : new StackNotRunningError({ message: mapped.message });
 };
 
 const prepareError = (error: ControlError): PrepareStackError => {
@@ -333,7 +309,7 @@ const prepareError = (error: ControlError): PrepareStackError => {
     mapped instanceof ArtifactIntegrityError ||
     mapped instanceof ContainerPullError
     ? mapped
-    : new StackPreparationError({ message: "Stack preparation failed" });
+    : new StackPreparationError({ message: mapped.message });
 };
 
 const startError = (error: ControlError): StackStartError => {
@@ -353,7 +329,7 @@ const startError = (error: ControlError): StackStartError => {
     mapped instanceof ServiceReadinessError ||
     mapped instanceof ContainerEngineError
     ? mapped
-    : new StackStateInvalidError({ message: "Stack start failed" });
+    : new StackStateInvalidError({ message: mapped.message });
 };
 
 const restartError = (error: ControlError): StackRestartError => {
@@ -369,7 +345,7 @@ const stopError = (error: ControlError): StackStopError => {
     mapped instanceof ServiceReadinessError ||
     mapped instanceof ContainerEngineError
     ? mapped
-    : new StackLifecycleConflictError({ message: "Stack stop failed" });
+    : new StackLifecycleConflictError({ message: mapped.message });
 };
 
 const destroyError = (error: ControlError): DestroyStackError => {
@@ -379,7 +355,7 @@ const destroyError = (error: ControlError): DestroyStackError => {
     mapped instanceof StackLifecycleConflictError ||
     mapped instanceof ContainerEngineError
     ? mapped
-    : new StackDestructionError({ message: "Stack destruction failed" });
+    : new StackDestructionError({ message: mapped.message });
 };
 
 /** Internal control-transport seam used by public lifecycle integration tests. */
@@ -398,12 +374,49 @@ export const makeHandle = (
       ownerSessionId: metadata.ownerSessionId,
       rpcRelease: metadata.rpcRelease,
     });
-    const check = <A, E, R>(effect: Effect.Effect<A, E, R>) =>
-      Ref.get(closed).pipe(Effect.flatMap((isClosed) => (isClosed ? Effect.interrupt : effect)));
+    const check = <A, E, R>(effect: Effect.Effect<A, E, R>): Effect.Effect<A, E, R> =>
+      Ref.get(closed).pipe(
+        Effect.flatMap((isClosed): Effect.Effect<A, E, R> =>
+          isClosed ? Effect.interrupt : effect,
+        ),
+      );
+    const mapRpcClientFailure = <E extends StackError>(
+      error: RpcClientError,
+      mapError: (error: ControlError) => E,
+    ): Effect.Effect<never, E> =>
+      Effect.exit(Effect.scoped(client.probe())).pipe(
+        Effect.flatMap((probe) => {
+          if (
+            Exit.isSuccess(probe) &&
+            probe.value.ok &&
+            probe.value.op === "probe" &&
+            probe.value.rpcRelease !== STACK_RPC_RELEASE
+          ) {
+            const mismatch: StackRpcError = {
+              tag: "StackRpcProtocolError",
+              message: `Stack owner release ${probe.value.rpcRelease} requires explicit restart`,
+            };
+            return Effect.fail(mapError(mismatch));
+          }
+          return Effect.fail(mapError(error));
+        }),
+      );
     const invoke = <A, E extends StackError>(
       call: (rpc: StackRpcClient) => Effect.Effect<A, StackRpcError | RpcClientError>,
       mapError: (error: ControlError) => E,
-    ) => check(Effect.scoped(client.rpc.pipe(Effect.flatMap(call), Effect.mapError(mapError))));
+    ): Effect.Effect<A, E> => {
+      const rpcCall: Effect.Effect<A, StackRpcError | RpcClientError> = Effect.scoped(
+        client.rpc.pipe(Effect.flatMap(call)),
+      );
+      const mapped: Effect.Effect<A, E> = rpcCall.pipe(
+        Effect.catchIf(
+          (error): error is RpcClientError => Predicate.isTagged(error, "RpcClientError"),
+          (error) => mapRpcClientFailure(error, mapError),
+          (error) => Effect.fail(mapError(error)),
+        ),
+      );
+      return check(mapped);
+    };
     const destroyAndAwaitOwner: Effect.Effect<void, DestroyStackError> = check(
       Effect.gen(function* () {
         const ownerConnected = yield* Deferred.make<void>();
@@ -484,8 +497,20 @@ export const makeHandle = (
         Stream.unwrap(
           check(
             client.rpc.pipe(
-              Effect.map((rpc) => rpc.watchStatus(undefined).pipe(Stream.mapError(statusError))),
-              Effect.mapError(statusError),
+              Effect.map((rpc) =>
+                rpc.watchStatus(undefined).pipe(
+                  Stream.catchIf(
+                    (error): error is RpcClientError => Predicate.isTagged(error, "RpcClientError"),
+                    (error) => Stream.fromEffect(mapRpcClientFailure(error, statusError)),
+                    (error) => Stream.fail(statusError(error)),
+                  ),
+                ),
+              ),
+              Effect.catchIf(
+                (error): error is RpcClientError => Predicate.isTagged(error, "RpcClientError"),
+                (error) => mapRpcClientFailure(error, statusError),
+                (error) => Effect.fail(statusError(error)),
+              ),
             ),
           ),
         ).pipe(Stream.scoped),
@@ -501,7 +526,7 @@ export const makeHandle = (
                       mapped instanceof StackNotRunningError ||
                       mapped instanceof StackStateInvalidError
                       ? mapped
-                      : new StackStateInvalidError({ message: "Stack logs are unavailable" });
+                      : new StackStateInvalidError({ message: mapped.message });
                   }),
                 ),
               ),
@@ -511,7 +536,7 @@ export const makeHandle = (
                   mapped instanceof StackNotRunningError ||
                   mapped instanceof StackStateInvalidError
                   ? mapped
-                  : new StackStateInvalidError({ message: "Stack logs are unavailable" });
+                  : new StackStateInvalidError({ message: mapped.message });
               }),
             ),
           ),

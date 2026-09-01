@@ -17,17 +17,11 @@ export const StudioModule: CapabilityModule<StudioSettings> = {
   dependencies: ["rest", "analytics"],
   releases: {
     "2026.08.24-sha-8ec45b2": release("2026.08.24-sha-8ec45b2", [
-      workload(
-        "studio",
-        "studio",
-        "2026.08.24-sha-8ec45b2",
-        "ghcr.io/supabase/cli/studio:2026.08.24-sha-8ec45b2",
-        {
-          dependencies: ["studio:pgmeta", "analytics:analytics"],
-          readiness: { mode: "http", portField: "studio" },
-        },
-      ),
-      workload("pgmeta", "studio", "v0.99.0", "ghcr.io/supabase/cli/pgmeta:v0.99.0", {
+      workload("studio", "studio", {
+        dependencies: ["studio:pgmeta", "analytics:analytics"],
+        readiness: { mode: "http", portField: "studio" },
+      }),
+      workload("pgmeta", "studio", {
         dependencies: ["database:database"],
         readiness: { mode: "http" },
       }),
@@ -36,5 +30,4 @@ export const StudioModule: CapabilityModule<StudioSettings> = {
   routes: [{ listener: "studio", protocol: "http" }],
   secretPolicy: () => "passthrough",
   managedSecretSlots: [],
-  materialize: (settings) => settings,
 };

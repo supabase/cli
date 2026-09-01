@@ -103,6 +103,46 @@ export class StackDestructionError extends Data.TaggedError(
   "StackDestructionError",
 )<StackErrorFields> {}
 
+/** Stable wire tags for errors produced by the managed stack runtime. */
+export const STACK_ERROR_TAGS = [
+  "InvalidStackIdentityError",
+  "InvalidProjectRootError",
+  "InvalidStackConfigError",
+  "StackVersionUnsupportedError",
+  "StackNotFoundError",
+  "StackOwnershipConflictError",
+  "StackRuntimeMismatchError",
+  "StackDefinitionRequiredError",
+  "StackNotRunningError",
+  "StackMustBeStoppedError",
+  "StackLifecycleConflictError",
+  "StackStateInvalidError",
+  "StackStateFormatUnsupportedError",
+  "StackStateGenerationMismatchError",
+  "StackUpgradeRequiredError",
+  "StackUpgradeReplacementError",
+  "StackSecretMismatchError",
+  "InvalidJwtSigningMaterialError",
+  "PortAllocationError",
+  "PortUnavailableError",
+  "GatewayAuthenticationError",
+  "GatewayStaleGenerationError",
+  "GatewayActivationError",
+  "StackPreparationError",
+  "ArtifactIntegrityError",
+  "ContainerPullError",
+  "StackReconciliationError",
+  "ServiceStartError",
+  "ServiceReadinessError",
+  "ContainerEngineError",
+  "StackDestructionError",
+] as const;
+
+export type StackErrorTag = (typeof STACK_ERROR_TAGS)[number];
+
+export const isStackErrorTag = (tag: string): tag is StackErrorTag =>
+  STACK_ERROR_TAGS.some((candidate) => candidate === tag);
+
 export type StackError =
   | InvalidStackIdentityError
   | InvalidProjectRootError

@@ -1,19 +1,7 @@
 import { describe, expect, it } from "@effect/vitest";
 import { Effect, Exit, Schema } from "effect";
+import { CAPABILITY_NAMES } from "./Capability.ts";
 import { StackStatusSchema } from "./Status.ts";
-
-const CAPABILITY_NAMES = [
-  "database",
-  "rest",
-  "auth",
-  "realtime",
-  "storage",
-  "functions",
-  "studio",
-  "mail",
-  "analytics",
-  "pooler",
-] as const;
 
 const STATUS_FIXTURE = {
   id: "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",

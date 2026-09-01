@@ -54,9 +54,6 @@ export interface LogStore {
   readonly read: (
     options?: LogOptions,
   ) => Effect.Effect<ReadonlyArray<StackLogEntry>, LogStoreError>;
-  readonly retained: (
-    options?: LogOptions,
-  ) => Effect.Effect<ReadonlyArray<StackLogEntry>, LogStoreError>;
   /**
    * Returns retained records followed by live records when `follow` is true.
    * Subscription creation and retained snapshotting happen in one critical
@@ -414,7 +411,6 @@ export const makeLogStore = (
       path: options.path,
       append,
       read,
-      retained: read,
       stream,
     };
   });

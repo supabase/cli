@@ -158,6 +158,49 @@ const preparedHeaders = (
       filteredRequestHeaders(request),
   );
 
+interface ResolvedProxyRequest {
+  readonly backend: BackendEndpoint;
+  readonly path: string;
+  readonly headers: Record<string, string | string[]>;
+}
+
+const resolveProxyRequest = (
+  request: IncomingMessage,
+  view: GatewayRouteRequest,
+  route: GatewayProxyRoute,
+  options: HttpGatewayOptions,
+): Effect.Effect<
+  ResolvedProxyRequest,
+  GatewayRouteNotFoundError | GatewayActivationError | GatewayBackendError
+> => {
+  const preparation: Effect.Effect<
+    PreparedGatewayRoute | undefined,
+    GatewayRouteNotFoundError | GatewayActivationError
+  > = route.prepare === undefined ? Effect.as(Effect.void, undefined) : route.prepare(view);
+  return preparation.pipe(
+    Effect.flatMap((prepared) =>
+      Effect.suspend(() => options.activate(route.capability)).pipe(
+        Effect.flatMap((result) => {
+          const resolved =
+            prepared === undefined
+              ? options.resolveBackend === undefined
+                ? Effect.succeed(result.endpoint)
+                : options.resolveBackend(route, view, result)
+              : prepared.resolveBackend(result);
+          return resolved.pipe(
+            Effect.map((backend) => ({
+              backend,
+              path: preparedPath(route, prepared, view),
+              headers: preparedHeaders(route, prepared, view, request),
+            })),
+            Effect.mapError((cause) => new GatewayBackendError({ cause })),
+          );
+        }),
+      ),
+    ),
+  );
+};
+
 const proxy = (
   request: IncomingMessage,
   response: ServerResponse,
@@ -294,31 +337,7 @@ const handleRequest = (
     });
     return;
   }
-  const preparation: Effect.Effect<
-    PreparedGatewayRoute | undefined,
-    GatewayRouteNotFoundError | GatewayActivationError
-  > = route.prepare === undefined ? Effect.as(Effect.void, undefined) : route.prepare(view);
-  const activation = preparation.pipe(
-    Effect.flatMap((prepared) =>
-      Effect.suspend(() => options.activate(route.capability)).pipe(
-        Effect.flatMap((result) => {
-          const resolved =
-            prepared === undefined
-              ? options.resolveBackend === undefined
-                ? Effect.succeed(result.endpoint)
-                : options.resolveBackend(route, view, result)
-              : prepared.resolveBackend(result);
-          return resolved.pipe(
-            Effect.map((backend) => ({
-              backend,
-              path: preparedPath(route, prepared, view),
-              headers: preparedHeaders(route, prepared, view, request),
-            })),
-            Effect.mapError((cause) => new GatewayBackendError({ cause })),
-          );
-        }),
-      ),
-    ),
+  const activation = resolveProxyRequest(request, view, route, options).pipe(
     Effect.flatMap(({ backend, path, headers }) =>
       proxy(request, response, backend, options, path, headers),
     ),
@@ -380,31 +399,7 @@ const handleUpgrade = (
     socket.destroy();
     return;
   }
-  const preparation: Effect.Effect<
-    PreparedGatewayRoute | undefined,
-    GatewayRouteNotFoundError | GatewayActivationError
-  > = route.prepare === undefined ? Effect.as(Effect.void, undefined) : route.prepare(view);
-  const activation = preparation.pipe(
-    Effect.flatMap((prepared) =>
-      Effect.suspend(() => options.activate(route.capability)).pipe(
-        Effect.flatMap((result) => {
-          const resolved =
-            prepared === undefined
-              ? options.resolveBackend === undefined
-                ? Effect.succeed(result.endpoint)
-                : options.resolveBackend(route, view, result)
-              : prepared.resolveBackend(result);
-          return resolved.pipe(
-            Effect.map((backend) => ({
-              backend,
-              path: preparedPath(route, prepared, view),
-              headers: preparedHeaders(route, prepared, view, request),
-            })),
-            Effect.mapError((cause) => new GatewayBackendError({ cause })),
-          );
-        }),
-      ),
-    ),
+  const activation = resolveProxyRequest(request, view, route, options).pipe(
     Effect.flatMap(({ backend, path, headers }) =>
       Effect.callback<void, GatewayBackendError>((resume) => {
         const target = new Socket();

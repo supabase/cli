@@ -27,35 +27,12 @@ import { StackConfigSchema, type StackConfig } from "../public/Config.ts";
 import type { StackRuntime } from "../public/Runtime.ts";
 import {
   GatewayActivationError,
-  InvalidStackIdentityError,
-  InvalidProjectRootError,
   InvalidStackConfigError,
   StackDefinitionRequiredError,
   StackLifecycleConflictError,
-  StackNotFoundError,
   StackNotRunningError,
-  StackMustBeStoppedError,
-  StackOwnershipConflictError,
-  StackRuntimeMismatchError,
   StackReconciliationError,
-  StackVersionUnsupportedError,
-  StackStateFormatUnsupportedError,
-  StackUpgradeRequiredError,
-  StackUpgradeReplacementError,
-  StackStateGenerationMismatchError,
-  StackSecretMismatchError,
-  InvalidJwtSigningMaterialError,
-  PortAllocationError,
-  PortUnavailableError,
-  ServiceStartError,
-  ServiceReadinessError,
-  ContainerEngineError,
-  StackDestructionError,
-  GatewayAuthenticationError,
-  GatewayStaleGenerationError,
   StackPreparationError,
-  ArtifactIntegrityError,
-  ContainerPullError,
   StackStateInvalidError,
   type StackError,
 } from "../public/Errors.ts";
@@ -372,41 +349,7 @@ const mapReconcileError = (error: unknown): StackError => {
   });
 };
 
-const rpcTag = (error: StackError, fallback: StackRpcError["tag"]): StackRpcError["tag"] => {
-  if (error instanceof InvalidStackIdentityError) return "InvalidStackIdentityError";
-  if (error instanceof InvalidProjectRootError) return "InvalidProjectRootError";
-  if (error instanceof InvalidStackConfigError) return "InvalidStackConfigError";
-  if (error instanceof StackNotFoundError) return "StackNotFoundError";
-  if (error instanceof StackOwnershipConflictError) return "StackOwnershipConflictError";
-  if (error instanceof StackRuntimeMismatchError) return "StackRuntimeMismatchError";
-  if (error instanceof StackDefinitionRequiredError) return "StackDefinitionRequiredError";
-  if (error instanceof StackVersionUnsupportedError) return "StackVersionUnsupportedError";
-  if (error instanceof StackLifecycleConflictError) return "StackLifecycleConflictError";
-  if (error instanceof StackNotRunningError) return "StackNotRunningError";
-  if (error instanceof StackMustBeStoppedError) return "StackMustBeStoppedError";
-  if (error instanceof StackStateInvalidError) return "StackStateInvalidError";
-  if (error instanceof StackStateFormatUnsupportedError) return "StackStateFormatUnsupportedError";
-  if (error instanceof StackStateGenerationMismatchError)
-    return "StackStateGenerationMismatchError";
-  if (error instanceof StackUpgradeRequiredError) return "StackUpgradeRequiredError";
-  if (error instanceof StackUpgradeReplacementError) return "StackUpgradeReplacementError";
-  if (error instanceof StackSecretMismatchError) return "StackSecretMismatchError";
-  if (error instanceof InvalidJwtSigningMaterialError) return "InvalidJwtSigningMaterialError";
-  if (error instanceof PortAllocationError) return "PortAllocationError";
-  if (error instanceof PortUnavailableError) return "PortUnavailableError";
-  if (error instanceof ServiceStartError) return "ServiceStartError";
-  if (error instanceof ServiceReadinessError) return "ServiceReadinessError";
-  if (error instanceof ContainerEngineError) return "ContainerEngineError";
-  if (error instanceof StackReconciliationError) return "StackReconciliationError";
-  if (error instanceof StackDestructionError) return "StackDestructionError";
-  if (error instanceof GatewayAuthenticationError) return "GatewayAuthenticationError";
-  if (error instanceof GatewayStaleGenerationError) return "GatewayStaleGenerationError";
-  if (error instanceof GatewayActivationError) return "GatewayActivationError";
-  if (error instanceof StackPreparationError) return "StackPreparationError";
-  if (error instanceof ArtifactIntegrityError) return "ArtifactIntegrityError";
-  if (error instanceof ContainerPullError) return "ContainerPullError";
-  return fallback;
-};
+const rpcTag = (error: StackError): StackRpcError["tag"] => error._tag;
 
 /** Compose one owner process around the durable lifecycle controller and a runtime driver. */
 export const makeSupervisor = (
@@ -1002,10 +945,8 @@ export const makeSupervisor = (
       stopOperation(),
       continueShutdownAfterInterrupt,
     );
-    const operation = <A>(effect: Effect.Effect<A, StackError>, fallback: StackRpcError["tag"]) =>
-      effect.pipe(
-        Effect.mapError((error) => rpcError(rpcTag(error, fallback), stateErrorMessage(error))),
-      );
+    const operation = <A>(effect: Effect.Effect<A, StackError>) =>
+      effect.pipe(Effect.mapError((error) => rpcError(rpcTag(error), stateErrorMessage(error))));
     const destroyOperation = controller
       .destroy()
       .pipe(Effect.provideContext(options.context), Effect.andThen(Ref.set(phase, "stopped")));
@@ -1060,9 +1001,7 @@ export const makeSupervisor = (
     const credentials: Effect.Effect<EffectStackCredentials, StackRpcError> = Effect.gen(
       function* () {
         const state = yield* read().pipe(
-          Effect.mapError((error) =>
-            rpcError(rpcTag(error, "StackStateInvalidError"), stateErrorMessage(error)),
-          ),
+          Effect.mapError((error) => rpcError(rpcTag(error), stateErrorMessage(error))),
         );
         const actualPhase = yield* Ref.get(phase);
         const adoptedGeneration = yield* Ref.get(generation);
@@ -1264,30 +1203,22 @@ export const makeSupervisor = (
       }).pipe(Effect.provideContext(options.context));
     const rpcHandlers: StackRpcHandlers = StackRpcGroup.of({
       status: () =>
-        status.pipe(
-          Effect.mapError((error) => rpcError("StackStateInvalidError", stateErrorMessage(error))),
-        ),
+        status.pipe(Effect.mapError((error) => rpcError(rpcTag(error), stateErrorMessage(error)))),
       credentials: () => credentials,
       prepare: ({ config, capabilities }) =>
         prepareOperation({ config, capabilities }).pipe(
-          Effect.mapError((error) =>
-            rpcError(rpcTag(error, "StackPreparationError"), stateErrorMessage(error)),
-          ),
+          Effect.mapError((error) => rpcError(rpcTag(error), stateErrorMessage(error))),
         ),
-      start: ({ config }: { readonly config?: StackConfig }) =>
-        operation(start({ config }), "StackReconciliationError"),
-      restart: ({ config }: { readonly config?: StackConfig }) =>
-        operation(restart({ config }), "StackReconciliationError"),
-      destroy: () => operation(destroy, "StackDestructionError"),
+      start: ({ config }: { readonly config?: StackConfig }) => operation(start({ config })),
+      restart: ({ config }: { readonly config?: StackConfig }) => operation(restart({ config })),
+      destroy: () => operation(destroy),
       logs: (logOptions: LogOptions) =>
         logs(logOptions).pipe(
-          Stream.mapError((error) =>
-            rpcError(rpcTag(error, "StackStateInvalidError"), stateErrorMessage(error)),
-          ),
+          Stream.mapError((error) => rpcError(rpcTag(error), stateErrorMessage(error))),
         ),
       watchStatus: () =>
         watchStatus.pipe(
-          Stream.mapError((error) => rpcError("StackStateInvalidError", String(error))),
+          Stream.mapError((error) => rpcError(rpcTag(error), stateErrorMessage(error))),
         ),
     });
     return {

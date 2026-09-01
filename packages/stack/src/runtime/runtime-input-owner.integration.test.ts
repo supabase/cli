@@ -19,6 +19,7 @@ import { StackIdSchema } from "../public/StackId.ts";
 import type { StackRuntime } from "../public/Runtime.ts";
 import type { PersistedStackState } from "../state/StackState.ts";
 import { resolveSecrets } from "../state/SecretStore.ts";
+import { containerAliasFor } from "../model/WorkloadCatalog.ts";
 import { makeRuntimeInputOwner } from "./RuntimeInputOwner.ts";
 
 const stackId = StackIdSchema.make("f".repeat(64));
@@ -557,7 +558,7 @@ describe("runtime input owner", () => {
         expect(tenant).toBeDefined();
         const content = yield* fs.readFileString(tenant!);
         expect(content).toContain('"external_id" => "tenant-custom"');
-        expect(content).toContain('"db_host" => "supabase-database"');
+        expect(content).toContain(`"db_host" => "${containerAliasFor("database:database")}"`);
         expect(content).toContain('"db_port" => 5432');
         expect(content).toContain("\\#{System.halt()}");
         expect(content).toContain("Supavisor.Repo.preload(existing, :users)");

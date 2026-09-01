@@ -136,7 +136,7 @@ const defaults: DatabaseSettings = {
 };
 
 const postgres17Release = release("17.6.1.167", [
-  workload("database", "database", "17.6.1.167", "ghcr.io/supabase/cli/postgres:17.6.1.167", {
+  workload("database", "database", {
     bootstrap: "database",
     readiness: { mode: "tcp", portField: "database" },
   }),
@@ -157,5 +157,4 @@ export const DatabaseModule: CapabilityModule<DatabaseSettings> = {
   routes: [{ listener: "database", protocol: "tcp" }],
   secretPolicy: () => "passthrough",
   managedSecretSlots: [],
-  materialize: (settings) => settings,
 };

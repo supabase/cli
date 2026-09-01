@@ -15,7 +15,7 @@ import {
 } from "effect";
 import { startControlServer } from "../control/ControlServer.ts";
 import { STACK_RPC_RELEASE, type StackRpcHandlers } from "../control/StackRpc.ts";
-import { StackDestructionError } from "./Errors.ts";
+import { StackDestructionError, StackUpgradeRequiredError } from "./Errors.ts";
 import { makeHandle } from "./EffectStack.ts";
 import * as effectApi from "../effect.ts";
 import { CAPABILITY_NAMES } from "./Capability.ts";
@@ -128,6 +128,72 @@ describe("Effect stack lifecycle handoff", () => {
           if (Option.isSome(error)) {
             expect(error.value).toBeInstanceOf(StackDestructionError);
             expect(error.value.message).toContain("control connection");
+          }
+        }
+        yield* stack.close();
+      }).pipe(Effect.provide(NodeServices.layer)),
+    ),
+  );
+
+  it.live("surfaces an incompatible RPC release from an existing handle", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const root = yield* fs.makeTempDirectoryScoped({ prefix: "supabase-effect-stack-" });
+        const endpoint = { kind: "unix" as const, path: path.join(root, "control.sock") };
+        const ownerSessionId = "session";
+        const rpcHandlers: StackRpcHandlers = {
+          status: () => Effect.succeed(runningStatus),
+          credentials: () => Effect.succeed(credentials),
+          prepare: () => Effect.succeed({ capabilities: [] }),
+          start: () => Effect.succeed(runningStatus),
+          restart: () => Effect.succeed(runningStatus),
+          destroy: () => Effect.void,
+          logs: () => Stream.empty,
+          watchStatus: () => Stream.empty,
+        };
+        yield* startControlServer({
+          endpoint,
+          stackId,
+          ownerSessionId,
+          rpcRelease: "stack-rpc-v0@0.0.1",
+          rpcHandlers,
+          maintenanceHandlers: {
+            probe: Effect.succeed({
+              ok: true,
+              op: "probe",
+              stackId,
+              ownerSessionId,
+              rpcRelease: "stack-rpc-v0@0.0.1",
+            } as const),
+            stop: Effect.succeed({ ok: true, op: "stop" } as const),
+            quiesce: Effect.succeed({ ok: true, op: "quiesce" } as const),
+          },
+        });
+        const stack = yield* makeHandle(stackId, {
+          endpoint,
+          ownerSessionId,
+          rpcRelease: STACK_RPC_RELEASE,
+        });
+        const result = yield* stack.status().pipe(Effect.exit);
+        expect(Exit.isFailure(result)).toBe(true);
+        if (Exit.isFailure(result)) {
+          const error = Cause.findErrorOption(result.cause);
+          expect(Option.isSome(error)).toBe(true);
+          if (Option.isSome(error)) {
+            expect(error.value).toBeInstanceOf(StackUpgradeRequiredError);
+            expect(error.value.message).toContain("stack-rpc-v0@0.0.1");
+          }
+        }
+        const streamResult = yield* stack.watchStatus().pipe(Stream.runHead, Effect.exit);
+        expect(Exit.isFailure(streamResult)).toBe(true);
+        if (Exit.isFailure(streamResult)) {
+          const error = Cause.findErrorOption(streamResult.cause);
+          expect(Option.isSome(error)).toBe(true);
+          if (Option.isSome(error)) {
+            expect(error.value).toBeInstanceOf(StackUpgradeRequiredError);
+            expect(error.value.message).toContain("stack-rpc-v0@0.0.1");
           }
         }
         yield* stack.close();

@@ -21,10 +21,9 @@ const nativeWorkload = (selected: PlannedWorkload["selected"]): PlannedWorkload 
   readiness: { mode: "tcp" },
   restart: { maxAttempts: 1, backoffMs: 0 },
   artifacts: {
-    native: { kind: "native", service: "postgres", release: "17.6.1.167" },
+    native: { kind: "native", release: "17.6.1.167" },
     container: {
       kind: "container",
-      service: "postgres",
       image: "ghcr.io/supabase/cli/postgres:17.6.1.167",
     },
   },
@@ -120,7 +119,7 @@ describe("runtime artifact preparation", () => {
     const result = Effect.runSync(
       runtime.prepare(
         { kind: "native" },
-        nativeWorkload({ kind: "native", service: "postgres", release: "17.6.1.167" }),
+        nativeWorkload({ kind: "native", release: "17.6.1.167" }),
       ),
     );
     expect(result.outcome).toBe("downloaded");
@@ -142,7 +141,6 @@ describe("runtime artifact preparation", () => {
         { kind: "container", engine: "docker" },
         nativeWorkload({
           kind: "container",
-          service: "postgres",
           image: "ghcr.io/supabase/cli/postgres:17.6.1.167",
         }),
       ),
@@ -170,7 +168,6 @@ describe("runtime artifact preparation", () => {
         { kind: "container", engine: "podman" },
         nativeWorkload({
           kind: "container",
-          service: "postgres",
           image: "ghcr.io/supabase/cli/postgres:17.6.1.167",
         }),
       ),
@@ -198,7 +195,6 @@ describe("runtime artifact preparation", () => {
         { kind: "native" },
         nativeWorkload({
           kind: "container",
-          service: "postgres",
           image: "ghcr.io/supabase/cli/postgres:17.6.1.167",
         }),
       ),

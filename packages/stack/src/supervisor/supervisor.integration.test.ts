@@ -337,7 +337,6 @@ const makeFixture = (
         path: "memory://logs",
         append: () => Effect.succeed(entry),
         read: () => Effect.succeed([entry]),
-        retained: () => Effect.succeed([entry]),
         stream: (options) =>
           Stream.unwrap(
             Ref.update(logOptions, (current) => [...current, options]).pipe(

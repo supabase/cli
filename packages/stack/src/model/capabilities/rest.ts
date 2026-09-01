@@ -34,7 +34,7 @@ export const RestModule: CapabilityModule<RestSettings> = {
   dependencies: ["database"],
   releases: {
     "v16.2": release("v16.2", [
-      workload("rest", "rest", "v16.2", "ghcr.io/supabase/cli/postgrest:v16.2", {
+      workload("rest", "rest", {
         dependencies: ["database:database"],
         readiness: { mode: "http", portField: "api" },
       }),
@@ -43,5 +43,4 @@ export const RestModule: CapabilityModule<RestSettings> = {
   routes: [{ listener: "api", protocol: "http" }],
   secretPolicy: () => "passthrough",
   managedSecretSlots: [],
-  materialize: (settings) => settings,
 };

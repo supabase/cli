@@ -19,6 +19,7 @@ import type {
   ContainerArtifact,
   MaterializedSettings,
 } from "./CapabilityModule.ts";
+import { WORKLOAD_CATALOG } from "./WorkloadCatalog.ts";
 import { Effect } from "effect";
 import { InvalidStackConfigError } from "../public/Errors.ts";
 import type { AnalyticsSettings } from "./capabilities/analytics.ts";
@@ -196,23 +197,56 @@ export const createExecutionPlan = (
       ? modules[name].routes.map((route) => ({ capability: name, ...route }))
       : [],
   );
-  const declaredWorkloads = CAPABILITY_NAMES.flatMap((name) => {
-    if (!enabled[name].enabled) return [];
+  const declaredWorkloads: PlannedWorkload[] = [];
+  for (const name of CAPABILITY_NAMES) {
+    if (!enabled[name].enabled) continue;
     const release = modules[name].releases[versions[name]];
-    if (release === undefined) return [];
+    if (release === undefined)
+      return Effect.fail(
+        new InvalidStackConfigError({
+          message: `Missing ${name} release ${versions[name]}`,
+          capability: name,
+          version: versions[name],
+        }),
+      );
     const selectedEntries = selectedWorkloads(name, modules, settings, release.workloads);
-    return selectedEntries.map((entry) => ({
-      id: `${name}:${entry.name}`,
-      capability: name,
-      ...(entry.bootstrap === undefined ? {} : { bootstrap: entry.bootstrap }),
-      dependencies: entry.dependencies,
-      readiness: entry.readiness,
-      restart: entry.restart,
-      artifacts: entry.artifacts,
-      selected: runtime.kind === "native" ? entry.artifacts.native : entry.artifacts.container,
-      specHash: specHashes.get(`${name}:${entry.name}`) ?? "",
-    }));
-  });
+    for (const entry of selectedEntries) {
+      const id = `${name}:${entry.name}`;
+      const catalog = WORKLOAD_CATALOG[id];
+      if (catalog === undefined)
+        return Effect.fail(
+          new InvalidStackConfigError({
+            message: `Missing workload catalog entry ${id}`,
+            capability: name,
+            workload: id,
+          }),
+        );
+      const artifacts: PlannedWorkload["artifacts"] = {
+        native: { kind: "native", release: catalog.nativeVersion },
+        container: { kind: "container", image: catalog.containerImage },
+      };
+      const specHash = specHashes.get(id);
+      if (specHash === undefined || specHash.length === 0)
+        return Effect.fail(
+          new InvalidStackConfigError({
+            message: `Missing workload spec hash ${id}`,
+            capability: name,
+            workload: id,
+          }),
+        );
+      declaredWorkloads.push({
+        id,
+        capability: name,
+        ...(entry.bootstrap === undefined ? {} : { bootstrap: entry.bootstrap }),
+        dependencies: entry.dependencies,
+        readiness: entry.readiness,
+        restart: entry.restart,
+        artifacts,
+        selected: runtime.kind === "native" ? artifacts.native : artifacts.container,
+        specHash,
+      });
+    }
+  }
   const byId = new Map(declaredWorkloads.map((entry) => [entry.id, entry]));
   const workloadOrder: typeof declaredWorkloads = [];
   const visiting = new Set<string>();

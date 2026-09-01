@@ -2,6 +2,8 @@ import { NodeServices } from "@effect/platform-node";
 import { describe, expect, it } from "@effect/vitest";
 import { Cause, Effect, Exit, Option } from "effect";
 import { compileStack } from "./Compiler.ts";
+import { CAPABILITY_NAMES } from "../public/Capability.ts";
+import { CAPABILITY_MODULES } from "./ExecutionPlan.ts";
 import {
   resolveNativeArtifactForWorkload,
   targetForPlatform,
@@ -22,50 +24,6 @@ const compileContainer = (config: Parameters<typeof compileStack>[0]["config"]) 
   }).pipe(Effect.provide(NodeServices.layer));
 
 describe("complete workload catalog", () => {
-  it("keeps native releases paired with their canonical container images", () => {
-    expect(WORKLOAD_CATALOG["database:database"]).toMatchObject({
-      nativeVersion: "17.6.1.167",
-      containerImage: "ghcr.io/supabase/cli/postgres:17.6.1.167",
-      supportedNativeVersions: ["17.6.1.167"],
-    });
-    expect(WORKLOAD_CATALOG["auth:auth"]?.containerImage).toBe(
-      "ghcr.io/supabase/cli/auth:v2.196.0",
-    );
-    expect(WORKLOAD_CATALOG["realtime:realtime"]?.nativeVersion).toBe("v2.130.0");
-    expect(WORKLOAD_CATALOG["realtime:realtime"]?.containerImage).toBe(
-      "ghcr.io/supabase/cli/realtime:v2.130.0",
-    );
-    expect(WORKLOAD_CATALOG["storage:storage"]?.containerImage).toBe(
-      "ghcr.io/supabase/cli/storage:v1.72.1",
-    );
-    expect(WORKLOAD_CATALOG["studio:pgmeta"]?.containerImage).toBe(
-      "ghcr.io/supabase/cli/pgmeta:v0.99.0",
-    );
-    expect(WORKLOAD_CATALOG["studio:pgmeta"]).toMatchObject({
-      nativeVersion: "v0.99.0",
-      supportedNativeVersions: ["v0.99.0"],
-    });
-    expect(WORKLOAD_CATALOG["analytics:analytics"]?.containerImage).toBe(
-      "ghcr.io/supabase/cli/analytics:v1.50.6",
-    );
-    expect(WORKLOAD_CATALOG["mail:mail"]?.containerImage).toBe(
-      "ghcr.io/supabase/cli/mailpit:v1.30.2",
-    );
-    expect(WORKLOAD_CATALOG["analytics:vector"]?.containerImage).toBe(
-      "ghcr.io/supabase/cli/vector:0.53.0",
-    );
-    expect(WORKLOAD_CATALOG["analytics:vector"]).toMatchObject({
-      nativeVersion: "0.53.0",
-      supportedNativeVersions: ["0.53.0"],
-    });
-    expect(WORKLOAD_CATALOG["storage:imgproxy"]?.containerImage).toBe(
-      "ghcr.io/supabase/cli/imgproxy:v3.8.0",
-    );
-    expect(WORKLOAD_CATALOG["pooler:pooler"]?.containerImage).toBe(
-      "ghcr.io/supabase/cli/pooler:v2.9.12",
-    );
-  });
-
   it("matches the executable paths shipped by slim-services archives", () => {
     const expected = {
       "database:database": "share/supabase-cli/bin/supabase-postgres-init.sh",
@@ -115,38 +73,41 @@ describe("complete workload catalog", () => {
       "bin/supavisor",
       "bin/server",
     ]);
-    expect(Object.values(WORKLOAD_CATALOG).map((entry) => entry.containerAlias)).toEqual(
-      expect.arrayContaining([
-        "supabase-database",
-        "supabase-rest",
-        "supabase-auth",
-        "supabase-realtime",
-        "supabase-storage",
-        "supabase-imgproxy",
-        "supabase-functions",
-        "supabase-studio",
-        "supabase-pgmeta",
-        "supabase-mail",
-        "supabase-analytics",
-        "supabase-vector",
-        "supabase-pooler",
-      ]),
-    );
-    expect(WORKLOAD_CATALOG["storage:storage"]?.nativeProcess).toEqual({
-      executablePath: "node/bin/node",
-      args: ["app/dist/start/server.js"],
-      cwd: "app",
-    });
-    expect(WORKLOAD_CATALOG["studio:pgmeta"]?.nativeProcess).toEqual({
-      executablePath: "node/bin/node",
-      args: ["app/dist/server/server.js"],
-      cwd: "app",
-    });
-    expect(WORKLOAD_CATALOG["studio:studio"]?.nativeProcess).toEqual({
-      executablePath: "node/bin/node",
-      args: ["app/apps/studio/docker-entrypoint.mjs"],
-      cwd: "app",
-    });
+  });
+
+  it.live("keeps persisted capability versions aligned with catalog releases", () =>
+    Effect.gen(function* () {
+      const defaults = yield* compile({});
+      for (const name of CAPABILITY_NAMES) {
+        const capability = defaults.definition.capabilities[name];
+        if (!capability.enabled) continue;
+        const workload =
+          defaults.executionPlan.workloads.find((entry) => entry.id === `${name}:${name}`) ??
+          defaults.executionPlan.workloads.find((entry) => entry.capability === name);
+        expect(workload).toBeDefined();
+        if (workload === undefined) continue;
+        expect(workload.artifacts.native.release).toBe(capability.version);
+      }
+
+      const databaseAlias = yield* compile({ capabilities: { database: { version: "17" } } });
+      const database = databaseAlias.executionPlan.workloads.find(
+        (entry) => entry.id === "database:database",
+      );
+      expect(database).toBeDefined();
+      if (database === undefined) return;
+      expect(databaseAlias.definition.capabilities.database.version).toBe(
+        database.artifacts.native.release,
+      );
+      expect(database.artifacts.native.release).toBe(
+        WORKLOAD_CATALOG["database:database"]?.nativeVersion,
+      );
+    }),
+  );
+
+  it("registers every release under its canonical version key", () => {
+    for (const name of CAPABILITY_NAMES)
+      for (const release of Object.values(CAPABILITY_MODULES[name].releases))
+        expect(CAPABILITY_MODULES[name].releases[release.version]).toBe(release);
   });
 
   it.live("resolves every declared workload to a slim-services native release", () =>
@@ -178,22 +139,21 @@ describe("complete workload catalog", () => {
           analytics: { settings: { vector_port: 9001 } },
         },
       });
-      const expected = [
-        ["studio:pgmeta", "pgmeta", "v0.99.0"],
-        ["analytics:vector", "vector", "0.53.0"],
-      ] as const;
-      for (const [id, service, version] of expected) {
+      for (const id of ["studio:pgmeta", "analytics:vector"] as const) {
+        const catalog = WORKLOAD_CATALOG[id];
+        expect(catalog).toBeDefined();
+        if (catalog === undefined) continue;
         const workload = result.executionPlan.workloads.find((entry) => entry.id === id);
         expect(workload).toBeDefined();
         if (workload === undefined) continue;
-        expect(workload.artifacts.native.release).toBe(version);
+        expect(workload.artifacts.native.release).toBe(catalog.nativeVersion);
         const artifact = yield* resolveNativeArtifactForWorkload(workload, {
           os: "darwin",
           arch: "arm64",
         });
-        expect(artifact.releaseTag).toBe(`${service}-${version}`);
+        expect(artifact.releaseTag).toBe(`${catalog.service}-${catalog.nativeVersion}`);
         expect(artifact.downloadUrl).toBe(
-          `https://github.com/supabase/slim-services/releases/download/${service}-${version}/${service}-${version}-darwin-arm64.tar.zst`,
+          `https://github.com/supabase/slim-services/releases/download/${catalog.service}-${catalog.nativeVersion}/${catalog.service}-${catalog.nativeVersion}-darwin-arm64.tar.zst`,
         );
       }
     }),
@@ -257,9 +217,13 @@ describe("complete workload catalog", () => {
       const images = new Map(
         result.executionPlan.workloads.map((entry) => [entry.id, entry.artifacts.container.image]),
       );
-      expect(images.get("mail:mail")).toBe("ghcr.io/supabase/cli/mailpit:v1.30.2");
-      expect(images.get("storage:imgproxy")).toBe("ghcr.io/supabase/cli/imgproxy:v3.8.0");
-      expect(images.get("analytics:vector")).toBe("ghcr.io/supabase/cli/vector:0.53.0");
+      expect(images.get("mail:mail")).toBe(WORKLOAD_CATALOG["mail:mail"]?.containerImage);
+      expect(images.get("storage:imgproxy")).toBe(
+        WORKLOAD_CATALOG["storage:imgproxy"]?.containerImage,
+      );
+      expect(images.get("analytics:vector")).toBe(
+        WORKLOAD_CATALOG["analytics:vector"]?.containerImage,
+      );
     }),
   );
 
@@ -275,8 +239,10 @@ describe("complete workload catalog", () => {
         os: "linux",
         arch: "x64",
       });
-      expect(artifact.version).toBe("17.6.1.167");
-      expect(artifact.downloadUrl).toContain("postgres-17.6.1.167-linux-amd64.tar.zst");
+      expect(artifact.version).toBe(WORKLOAD_CATALOG["database:database"]?.nativeVersion);
+      expect(artifact.downloadUrl).toContain(
+        `postgres-${WORKLOAD_CATALOG["database:database"]?.nativeVersion}-linux-amd64.tar.zst`,
+      );
     }),
   );
 

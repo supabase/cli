@@ -37,6 +37,7 @@ import {
 } from "./ProductionRuntime.ts";
 import { RuntimeDriverError, type RuntimeDriver } from "./RuntimeDriver.ts";
 import { InvalidStackConfigError, StackPreparationError } from "../public/Errors.ts";
+import { DatabaseBootstrapError } from "../model/DatabaseBootstrap.ts";
 import type { RuntimeArtifactPreparer } from "../preparation/RuntimeArtifacts.ts";
 import type { PlannedWorkload } from "../model/ExecutionPlan.ts";
 import { compileStack } from "../model/Compiler.ts";
@@ -91,10 +92,9 @@ const workloadFor = (
   readiness: { mode: "tcp" },
   restart: { maxAttempts: 1, backoffMs: 0 },
   artifacts: {
-    native: { kind: "native", service: "postgres", release: "17.6.1.167" },
+    native: { kind: "native", release: "17.6.1.167" },
     container: {
       kind: "container",
-      service: "postgres",
       image: "ghcr.io/supabase/cli/postgres:17.6.1.167",
     },
   },
@@ -102,8 +102,15 @@ const workloadFor = (
   specHash: `hash-${id}`,
 });
 
-const stateStoreFor = (current: { value: PersistedStackState }): StackStateStore => ({
-  read: () => Effect.sync(() => current.value),
+const stateStoreFor = (
+  current: { value: PersistedStackState },
+  onRead?: () => void,
+): StackStateStore => ({
+  read: () =>
+    Effect.sync(() => {
+      onRead?.();
+      return current.value;
+    }),
   write: () => Effect.die("unused"),
   initialize: () => Effect.die("unused"),
   replace: () => Effect.die("unused"),
@@ -126,7 +133,6 @@ const memoryLogStore = (entries: StackLogEntry[]): LogStore => ({
       return entry;
     }),
   read: () => Effect.succeed(entries),
-  retained: () => Effect.succeed(entries),
   stream: () => Stream.fromIterable(entries),
 });
 
@@ -306,6 +312,194 @@ const ownerInputContainerEngine = (createdSpecs: ContainerContainerSpec[]): Cont
 };
 
 describe("production runtime composition", () => {
+  it.live("retries a transient database bootstrap connection failure", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const root = yield* fs.makeTempDirectoryScoped({
+          prefix: "supabase-production-bootstrap-",
+        });
+        const readinessServer = createNetServer((socket) => socket.end());
+        yield* listenForNativeReadiness(readinessServer);
+        const address = readinessServer.address();
+        if (typeof address !== "object" || address === null)
+          return yield* Effect.die("Database readiness server did not expose an address");
+        const compiled = yield* compileStack({
+          projectRoot: root,
+          runtime: { kind: "container", engine: "docker" },
+        });
+        const current = {
+          value: {
+            ...stateFor(
+              {
+                "secret:database.internal.password": { policy: "managed", value: "db-secret" },
+                "secret:auth.settings.jwt_secret": { policy: "managed", value: "jwt-secret" },
+              },
+              { kind: "container", engine: "docker" },
+            ),
+            identity: {
+              ...stateFor({}).identity,
+              projectRoot: root,
+              checkoutRoot: root,
+              workspaceId: root,
+              checkoutId: root,
+            },
+            desiredLifecycle: "running" as const,
+            definition: compiled.definition,
+            inputFingerprint: compiled.inputFingerprint,
+            privatePorts: [
+              { workloadId: "database:database", binding: "primary", port: address.port },
+            ],
+          },
+        } satisfies { value: PersistedStackState };
+        const database = compiled.executionPlan.workloads.find(
+          (workload) => workload.id === "database:database",
+        );
+        if (database === undefined) return yield* Effect.die("Expected database workload");
+        const createdSpecs: ContainerContainerSpec[] = [];
+        let attempts = 0;
+        const context = yield* Effect.context<FileSystem.FileSystem | Path.Path | Crypto.Crypto>();
+        const factory = yield* makeProductionRuntimeFactory({
+          stateRoot: root,
+          stackId,
+          ownerSessionId: "owner",
+          stateStore: stateStoreFor(current),
+          context,
+          ingress,
+          containerEngine: ownerInputContainerEngine(createdSpecs),
+          artifactPreparer: {
+            prepare: (_runtime, workload) =>
+              Effect.succeed({
+                workloadId: workload.id,
+                capability: workload.capability,
+                version: "test",
+                outcome: "present" as const,
+                image: workload.selected.kind === "container" ? workload.selected.image : undefined,
+              }),
+          },
+          logStore: memoryLogStore([]),
+          bootstrapDatabase: () => {
+            attempts += 1;
+            return attempts === 1
+              ? Effect.fail(
+                  new DatabaseBootstrapError({
+                    message: "Database is still accepting connections",
+                    retryable: true,
+                  }),
+                )
+              : Effect.void;
+          },
+        });
+        const runtime = yield* factory.make(current.value);
+        const ready = yield* runtime.driver.start(
+          {
+            stackId,
+            desiredGeneration: 1,
+            workloadId: database.id,
+            specHash: database.specHash,
+          },
+          database,
+        );
+        expect(ready.state).toBe("ready");
+        expect(attempts).toBe(2);
+        yield* runtime.driver.stop({
+          stackId,
+          desiredGeneration: 1,
+          workloadId: database.id,
+          specHash: database.specHash,
+        });
+      }),
+    ).pipe(Effect.provide(NodeServices.layer)),
+  );
+
+  it.live("does not retry non-retryable database bootstrap failures", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const root = yield* fs.makeTempDirectoryScoped({
+          prefix: "supabase-production-bootstrap-fail-",
+        });
+        const readinessServer = createNetServer((socket) => socket.end());
+        yield* listenForNativeReadiness(readinessServer);
+        const address = readinessServer.address();
+        if (typeof address !== "object" || address === null)
+          return yield* Effect.die("Database readiness server did not expose an address");
+        const compiled = yield* compileStack({
+          projectRoot: root,
+          runtime: { kind: "container", engine: "docker" },
+        });
+        const current = {
+          value: {
+            ...stateFor(
+              {
+                "secret:database.internal.password": { policy: "managed", value: "db-secret" },
+                "secret:auth.settings.jwt_secret": { policy: "managed", value: "jwt-secret" },
+              },
+              { kind: "container", engine: "docker" },
+            ),
+            identity: {
+              ...stateFor({}).identity,
+              projectRoot: root,
+              checkoutRoot: root,
+              workspaceId: root,
+              checkoutId: root,
+            },
+            desiredLifecycle: "running" as const,
+            definition: compiled.definition,
+            inputFingerprint: compiled.inputFingerprint,
+            privatePorts: [
+              { workloadId: "database:database", binding: "primary", port: address.port },
+            ],
+          },
+        } satisfies { value: PersistedStackState };
+        const database = compiled.executionPlan.workloads.find(
+          (workload) => workload.id === "database:database",
+        );
+        if (database === undefined) return yield* Effect.die("Expected database workload");
+        let attempts = 0;
+        const context = yield* Effect.context<FileSystem.FileSystem | Path.Path | Crypto.Crypto>();
+        const factory = yield* makeProductionRuntimeFactory({
+          stateRoot: root,
+          stackId,
+          ownerSessionId: "owner",
+          stateStore: stateStoreFor(current),
+          context,
+          ingress,
+          containerEngine: ownerInputContainerEngine([]),
+          artifactPreparer: {
+            prepare: (_runtime, workload) =>
+              Effect.succeed({
+                workloadId: workload.id,
+                capability: workload.capability,
+                version: "test",
+                outcome: "present" as const,
+                image: workload.selected.kind === "container" ? workload.selected.image : undefined,
+              }),
+          },
+          logStore: memoryLogStore([]),
+          bootstrapDatabase: () => {
+            attempts += 1;
+            return Effect.fail(new DatabaseBootstrapError({ message: "invalid password" }));
+          },
+        });
+        const runtime = yield* factory.make(current.value);
+        const result = yield* runtime.driver
+          .start(
+            {
+              stackId,
+              desiredGeneration: 1,
+              workloadId: database.id,
+              specHash: database.specHash,
+            },
+            database,
+          )
+          .pipe(Effect.exit);
+        expect(Exit.isFailure(result)).toBe(true);
+        expect(attempts).toBe(1);
+      }),
+    ).pipe(Effect.provide(NodeServices.layer)),
+  );
+
   it.live("activates a capability through its public listener workload", () =>
     Effect.scoped(
       Effect.gen(function* () {
@@ -836,6 +1030,8 @@ describe("production runtime composition", () => {
   it.live("exposes artifact-only preparation without starting workloads or mutating state", () =>
     Effect.scoped(
       Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const root = yield* fs.makeTempDirectoryScoped({ prefix: "supabase-production-prepare-" });
         const current = { value: stateFor({}) };
         const preparedCalls: string[] = [];
         const preparer: RuntimeArtifactPreparer = {
@@ -855,7 +1051,7 @@ describe("production runtime composition", () => {
         };
         const context = yield* Effect.context<FileSystem.FileSystem | Path.Path | Crypto.Crypto>();
         const factory = yield* makeProductionRuntimeFactory({
-          stateRoot: "/tmp/production-runtime-prepare-state",
+          stateRoot: root,
           stackId,
           ownerSessionId: "owner",
           stateStore: stateStoreFor(current),
@@ -873,12 +1069,10 @@ describe("production runtime composition", () => {
         const result = yield* runtime.prepare({ kind: "native" }, [
           workloadFor("database:database", "database", {
             kind: "native",
-            service: "postgres",
             release: "17.6.1.167",
           }),
           workloadFor("rest:download", "rest", {
             kind: "native",
-            service: "postgres",
             release: "17.6.1.167",
           }),
         ]);
@@ -895,25 +1089,60 @@ describe("production runtime composition", () => {
   it.live("redacts logs using secret slots materialized after factory creation", () =>
     Effect.scoped(
       Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const root = yield* fs.makeTempDirectoryScoped({ prefix: "supabase-production-logs-" });
         const current = { value: stateFor({}) };
+        const reads = { value: 0 };
         const entries: StackLogEntry[] = [];
+        const compiled = yield* compileStack({
+          projectRoot: root,
+          runtime: { kind: "native" },
+        });
+        const candidate = {
+          ...stateFor({
+            "secret:auth.settings.jwt_secret": {
+              policy: "managed" as const,
+              value: "rotated-secret",
+            },
+          }),
+          desiredLifecycle: "running" as const,
+          definition: compiled.definition,
+          inputFingerprint: compiled.inputFingerprint,
+        } satisfies PersistedStackState;
         const context = yield* Effect.context<FileSystem.FileSystem | Path.Path | Crypto.Crypto>();
         const factory = yield* makeProductionRuntimeFactory({
-          stateRoot: "/tmp/production-runtime-state",
+          stateRoot: root,
           stackId,
           ownerSessionId: "owner",
-          stateStore: stateStoreFor(current),
+          stateStore: stateStoreFor(current, () => reads.value++),
           context,
           ingress,
-          artifactPreparer: artifacts,
+          artifactPreparer: {
+            prepare: (_runtime, workload) =>
+              Effect.succeed({
+                workloadId: workload.id,
+                capability: workload.capability,
+                version: "test",
+                outcome: "present" as const,
+              }),
+          },
           envFileOwner: envFiles,
           functionsBootstrapOwner: bootstrap,
           logStore: memoryLogStore(entries),
           bootstrapDatabase: () => Effect.void,
         });
         const runtime = yield* factory.make(current.value);
-        current.value = stateFor({
-          "secret:auth.settings.jwt_secret": { policy: "managed", value: "rotated-secret" },
+        if (runtime.preflight === undefined) return yield* Effect.die("preflight seam missing");
+        yield* runtime.preflight({
+          stackId,
+          generation: 1,
+          desiredLifecycle: "running",
+          state: candidate,
+          previous: current.value,
+          definition: compiled.definition,
+          inputFingerprint: compiled.inputFingerprint,
+          secrets: candidate.secrets,
+          plan: compiled.executionPlan,
         });
         const logStore = runtime.logStore;
         expect(logStore).toBeDefined();
@@ -923,7 +1152,14 @@ describe("production runtime composition", () => {
           stream: "stdout",
           message: "token=rotated-secret",
         });
+        yield* logStore.append({
+          source: "auth",
+          stream: "stdout",
+          message: "token=rotated-secret again",
+        });
         expect(entries[0]?.message).toBe("token=[REDACTED]");
+        expect(entries[1]?.message).toBe("token=[REDACTED] again");
+        expect(reads.value).toBe(1);
       }).pipe(Effect.provide(NodeServices.layer)),
     ),
   );
@@ -983,17 +1219,7 @@ describe("production runtime composition", () => {
           response.setHeader("Connection", "close");
           response.end("ok");
         });
-        yield* Effect.acquireRelease(
-          Effect.callback<void, Error>((resume) => {
-            authServer.once("error", (error) => resume(Effect.fail(error)));
-            authServer.listen(0, "127.0.0.1", () => resume(Effect.void));
-          }),
-          () =>
-            Effect.callback<void>((resume) => {
-              if (!authServer.listening) return resume(Effect.void);
-              authServer.close(() => resume(Effect.void));
-            }),
-        );
+        yield* listenForNativeReadiness(authServer);
         const authAddress = authServer.address();
         if (typeof authAddress !== "object" || authAddress === null)
           return yield* Effect.die("Auth readiness server did not expose an address");
@@ -1002,17 +1228,7 @@ describe("production runtime composition", () => {
           response.setHeader("Connection", "close");
           response.end("ok");
         });
-        yield* Effect.acquireRelease(
-          Effect.callback<void, Error>((resume) => {
-            functionsServer.once("error", (error) => resume(Effect.fail(error)));
-            functionsServer.listen(0, "127.0.0.1", () => resume(Effect.void));
-          }),
-          () =>
-            Effect.callback<void>((resume) => {
-              if (!functionsServer.listening) return resume(Effect.void);
-              functionsServer.close(() => resume(Effect.void));
-            }),
-        );
+        yield* listenForNativeReadiness(functionsServer);
         const functionsAddress = functionsServer.address();
         if (typeof functionsAddress !== "object" || functionsAddress === null)
           return yield* Effect.die("Functions readiness server did not expose an address");
@@ -1021,32 +1237,12 @@ describe("production runtime composition", () => {
           response.setHeader("Connection", "close");
           response.end("ok");
         });
-        yield* Effect.acquireRelease(
-          Effect.callback<void, Error>((resume) => {
-            analyticsServer.once("error", (error) => resume(Effect.fail(error)));
-            analyticsServer.listen(0, "127.0.0.1", () => resume(Effect.void));
-          }),
-          () =>
-            Effect.callback<void>((resume) => {
-              if (!analyticsServer.listening) return resume(Effect.void);
-              analyticsServer.close(() => resume(Effect.void));
-            }),
-        );
+        yield* listenForNativeReadiness(analyticsServer);
         const analyticsAddress = analyticsServer.address();
         if (typeof analyticsAddress !== "object" || analyticsAddress === null)
           return yield* Effect.die("Analytics readiness server did not expose an address");
         const poolerServer = createNetServer();
-        yield* Effect.acquireRelease(
-          Effect.callback<void, Error>((resume) => {
-            poolerServer.once("error", (error) => resume(Effect.fail(error)));
-            poolerServer.listen(0, "127.0.0.1", () => resume(Effect.void));
-          }),
-          () =>
-            Effect.callback<void>((resume) => {
-              if (!poolerServer.listening) return resume(Effect.void);
-              poolerServer.close(() => resume(Effect.void));
-            }),
-        );
+        yield* listenForNativeReadiness(poolerServer);
         const poolerAddress = poolerServer.address();
         if (typeof poolerAddress !== "object" || poolerAddress === null)
           return yield* Effect.die("Pooler readiness server did not expose an address");
@@ -1295,17 +1491,7 @@ describe("production runtime composition", () => {
           response.setHeader("Connection", "close");
           response.end("ok");
         });
-        yield* Effect.acquireRelease(
-          Effect.callback<void, Error>((resume) => {
-            restServer.once("error", (error) => resume(Effect.fail(error)));
-            restServer.listen(0, "127.0.0.1", () => resume(Effect.void));
-          }),
-          () =>
-            Effect.callback<void>((resume) => {
-              if (!restServer.listening) return resume(Effect.void);
-              restServer.close(() => resume(Effect.void));
-            }),
-        );
+        yield* listenForNativeReadiness(restServer);
         const address = restServer.address();
         if (typeof address !== "object" || address === null)
           return yield* Effect.die("REST readiness server did not expose an address");
@@ -1422,17 +1608,7 @@ describe("production runtime composition", () => {
           },
         }).pipe(Effect.provide(NodeServices.layer));
         const poolerServer = createNetServer();
-        yield* Effect.acquireRelease(
-          Effect.callback<void, Error>((resume) => {
-            poolerServer.once("error", (error) => resume(Effect.fail(error)));
-            poolerServer.listen(0, "127.0.0.1", () => resume(Effect.void));
-          }),
-          () =>
-            Effect.callback<void>((resume) => {
-              if (!poolerServer.listening) return resume(Effect.void);
-              poolerServer.close(() => resume(Effect.void));
-            }),
-        );
+        yield* listenForNativeReadiness(poolerServer);
         const poolerAddress = poolerServer.address();
         if (typeof poolerAddress !== "object" || poolerAddress === null)
           return yield* Effect.die("Pooler readiness server did not expose an address");

@@ -37,7 +37,6 @@ const key: RuntimeWorkloadKey = {
 
 const containerArtifact: ContainerArtifact = {
   kind: "container",
-  service: "database",
   image: "example/database:1",
 };
 
@@ -48,7 +47,7 @@ const workload = (selected: PlannedWorkload["selected"] = containerArtifact): Pl
   readiness: { mode: "tcp" },
   restart: { maxAttempts: 1, backoffMs: 0 },
   artifacts: {
-    native: { kind: "native", service: "database", release: "1" },
+    native: { kind: "native", release: "1" },
     container: containerArtifact,
   },
   selected,
@@ -224,7 +223,6 @@ const memoryLogStore = (records: LogRecord[]): LogStore => ({
       ...record,
     })).pipe(Effect.tap((entry) => Effect.sync(() => records.push(entry)))),
   read: () => Effect.succeed([]),
-  retained: () => Effect.succeed([]),
   stream: () => Stream.empty,
 });
 
@@ -744,7 +742,6 @@ describe("container runtime", () => {
           path: logError.path,
           append: () => Effect.fail(logError),
           read: () => Effect.succeed([]),
-          retained: () => Effect.succeed([]),
           stream: () => Stream.empty,
         },
         resolveWorkload: () =>
@@ -790,7 +787,6 @@ describe("container runtime", () => {
           path: logError.path,
           append: () => Effect.fail(logError),
           read: () => Effect.succeed([]),
-          retained: () => Effect.succeed([]),
           stream: () => Stream.empty,
         },
         resolveWorkload: () =>
@@ -1031,7 +1027,7 @@ describe("container runtime", () => {
         ownerSessionId: "owner-session",
       });
       const result = yield* runtime
-        .start(key, workload({ kind: "native", service: "database", release: "1" }))
+        .start(key, workload({ kind: "native", release: "1" }))
         .pipe(Effect.exit);
       expect(Exit.isFailure(result)).toBe(true);
       expect(called).toBe(false);
@@ -1120,7 +1116,6 @@ describe("container runtime", () => {
         path: logError.path,
         append: () => Effect.fail(logError),
         read: () => Effect.succeed([]),
-        retained: () => Effect.succeed([]),
         stream: () => Stream.empty,
       };
       const runtime = yield* makeContainerRuntime({

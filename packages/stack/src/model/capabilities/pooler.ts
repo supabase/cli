@@ -28,7 +28,7 @@ export const PoolerModule: CapabilityModule<PoolerSettings> = {
   dependencies: ["database"],
   releases: {
     "v2.9.12": release("v2.9.12", [
-      workload("pooler", "pooler", "v2.9.12", "ghcr.io/supabase/cli/pooler:v2.9.12", {
+      workload("pooler", "pooler", {
         dependencies: ["database:database"],
         readiness: { mode: "tcp", portField: "pooler" },
       }),
@@ -40,5 +40,4 @@ export const PoolerModule: CapabilityModule<PoolerSettings> = {
       ? "managed"
       : "passthrough",
   managedSecretSlots: ["pooler.settings.encryption_key", "pooler.settings.secret_key_base"],
-  materialize: (settings) => settings,
 };

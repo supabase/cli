@@ -75,16 +75,10 @@ export const FunctionsModule: CapabilityModule<FunctionsSettings> = {
   dependencies: ["database"],
   releases: {
     "v1.74.3": release("v1.74.3", [
-      workload(
-        "edge-runtime",
-        "functions",
-        "v1.74.3",
-        "ghcr.io/supabase/cli/edge-runtime:v1.74.3",
-        {
-          dependencies: ["database:database"],
-          readiness: { mode: "http", portField: "functionsInspector" },
-        },
-      ),
+      workload("edge-runtime", "functions", {
+        dependencies: ["database:database"],
+        readiness: { mode: "http", portField: "functionsInspector" },
+      }),
     ]),
   },
   routes: [

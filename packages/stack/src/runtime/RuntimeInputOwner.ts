@@ -15,11 +15,13 @@ import type { PersistedStackState } from "../state/StackState.ts";
 import type { StackId } from "../public/StackId.ts";
 import { StackPreparationError } from "../public/Errors.ts";
 import { resolveStackPaths } from "../state/Paths.ts";
+import { isRecord, settingValue, settingsFor } from "../state/MaterializedSettings.ts";
 import {
   resolveSigningKeyMaterial,
   type ResolvedSigningKeyMaterial,
 } from "../state/SecretStore.ts";
 import { resolveThirdPartyIssuer } from "../model/capabilities/auth-third-party.ts";
+import { containerAliasFor } from "../model/WorkloadCatalog.ts";
 
 /** A parsed JSON document fetched by the owner for OIDC discovery. */
 export type RuntimeJsonFetcher = (url: string) => Effect.Effect<unknown, StackPreparationError>;
@@ -93,25 +95,6 @@ const mapFile = <A, R>(
   effect.pipe(
     Effect.mapError((error) => failure(`Unable to ${operation}`, { path: target, cause: error })),
   );
-
-const isRecord = (value: unknown): value is Readonly<Record<string, unknown>> =>
-  typeof value === "object" && value !== null && !Array.isArray(value);
-
-const settingValue = (state: PersistedStackState, value: unknown): string => {
-  if (value === null || value === undefined) return "";
-  if (typeof value === "string" || typeof value === "number" || typeof value === "boolean")
-    return String(value);
-  if (Array.isArray(value)) return value.map((entry) => settingValue(state, entry)).join(",");
-  if (isRecord(value) && typeof value.slot === "string" && Object.keys(value).length === 1)
-    return state.secrets[value.slot]?.value ?? "";
-  // oxlint-disable-next-line effecttsgo/prefer-schema-over-json -- dynamic persisted settings are stringified for workload env values
-  return JSON.stringify(value) ?? "";
-};
-
-type CapabilitySettingName = keyof NonNullable<PersistedStackState["definition"]>["capabilities"];
-
-const settingsFor = (state: PersistedStackState, capability: CapabilitySettingName): unknown =>
-  state.definition?.capabilities[capability].settings;
 
 const invalidGeneration = (generation: number): boolean =>
   !Number.isSafeInteger(generation) || generation < 0;
@@ -543,9 +526,7 @@ export const makeRuntimeInputOwner = (
       const nativeAssignment = state.privatePorts.find(
         (entry) => entry.workloadId === "database:database" && entry.binding === "primary",
       );
-      if (runtime === "native" && nativeAssignment === undefined)
-        return Effect.fail(failure("Persisted native database assignment is missing"));
-      const dbHost = runtime === "container" ? "supabase-database" : "127.0.0.1";
+      const dbHost = runtime === "container" ? containerAliasFor("database:database") : "127.0.0.1";
       const dbPort = runtime === "container" ? 5432 : nativeAssignment?.port;
       if (dbPort === undefined)
         return Effect.fail(failure("Persisted native database assignment is missing"));
@@ -671,6 +652,20 @@ export const makeRuntimeInputOwner = (
     const keyFor = (state: PersistedStackState, generation: number): string =>
       `${state.identity.projectRoot}\u0000${state.inputFingerprint ?? ""}\u0000${state.runtime.kind}\u0000${generation}`;
     const generationFor = (key: string): number => Number(key.slice(key.lastIndexOf("\u0000") + 1));
+    const retireEntries = <A>(
+      pending: Map<string, OwnedResult<A>>,
+      completed: Map<string, A>,
+      matches: (key: string) => boolean,
+    ): ReadonlyArray<OwnedResult<A>> => {
+      const retired: Array<OwnedResult<A>> = [];
+      for (const [key, deferred] of pending)
+        if (matches(key)) {
+          pending.delete(key);
+          retired.push(deferred);
+        }
+      for (const key of completed.keys()) if (matches(key)) completed.delete(key);
+      return retired;
+    };
 
     const materializeCommon = (
       state: PersistedStackState,
@@ -799,14 +794,11 @@ export const makeRuntimeInputOwner = (
               acceptedGeneration = generation;
               return { rejected: false, retired: [] };
             }
-            const retired: Array<OwnedResult<RuntimeInputMaterial>> = [];
-            for (const [pendingKey, deferred] of commonPending)
-              if (generationFor(pendingKey) < generation) {
-                commonPending.delete(pendingKey);
-                retired.push(deferred);
-              }
-            for (const completedKey of commonCompleted.keys())
-              if (generationFor(completedKey) < generation) commonCompleted.delete(completedKey);
+            const retired = retireEntries(
+              commonPending,
+              commonCompleted,
+              (pendingKey) => generationFor(pendingKey) < generation,
+            );
             acceptedGeneration = generation;
             return { rejected: false, retired };
           }),
@@ -849,17 +841,7 @@ export const makeRuntimeInputOwner = (
               const matches = (key: string) => key.endsWith(`\u0000${generation}`);
               if (owner === "pooler") {
                 const retired = yield* admission.withPermit(
-                  Effect.sync(() => {
-                    const deferreds: Array<OwnedResult<string>> = [];
-                    for (const [key, deferred] of poolerPending)
-                      if (matches(key)) {
-                        poolerPending.delete(key);
-                        deferreds.push(deferred);
-                      }
-                    for (const key of poolerCompleted.keys())
-                      if (matches(key)) poolerCompleted.delete(key);
-                    return deferreds;
-                  }),
+                  Effect.sync(() => retireEntries(poolerPending, poolerCompleted, matches)),
                 );
                 yield* Effect.forEach(retired, (deferred) =>
                   Deferred.succeed(
@@ -872,17 +854,7 @@ export const makeRuntimeInputOwner = (
                 // completed and in-flight entries so a same-generation
                 // restart publishes a fresh config path.
                 const retired = yield* admission.withPermit(
-                  Effect.sync(() => {
-                    const deferreds: Array<OwnedResult<RuntimeInputMaterial>> = [];
-                    for (const [key, deferred] of commonPending)
-                      if (matches(key)) {
-                        commonPending.delete(key);
-                        deferreds.push(deferred);
-                      }
-                    for (const key of commonCompleted.keys())
-                      if (matches(key)) commonCompleted.delete(key);
-                    return deferreds;
-                  }),
+                  Effect.sync(() => retireEntries(commonPending, commonCompleted, matches)),
                 );
                 yield* Effect.forEach(retired, (deferred) =>
                   Deferred.succeed(

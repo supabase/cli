@@ -14,11 +14,14 @@ import { describe, expect, test } from "vitest";
 import { createTestStack, type TestStack } from "../testing.ts";
 import { CAPABILITY_NAMES } from "./Capability.ts";
 import type { PromiseStackCredentials } from "./Credentials.ts";
+import type { StackLogEntry } from "./Logs.ts";
 import type { PromiseStackConfig } from "./PromiseStack.ts";
 import type { StackEndpoint, StackStatus } from "./Status.ts";
 
 const E2E_TIMEOUT_MS = 15 * 60_000;
 const REQUEST_TIMEOUT_MS = 60_000;
+// Studio's first lazy request can start four workloads sequentially (4 × 30s).
+const LAZY_STUDIO_ACTIVATION_TIMEOUT_MS = 180_000;
 const ANALYTICS_QUERY_RETRY_SCHEDULE = Schedule.spaced("1 second").pipe(
   Schedule.upTo({ duration: "3 minutes" }),
 );
@@ -64,6 +67,37 @@ const request = async (base: string, path: string, init: RequestInit = {}): Prom
     throw new Error(`${method} ${url} returned ${response.status}: ${body}`);
   }
   return response;
+};
+
+const throwStudioProfileDiagnostics = async (stack: TestStack, cause: unknown): Promise<never> => {
+  let status: StackStatus | undefined;
+  try {
+    status = await stack.status();
+  } catch {
+    // Preserve the original request failure when status is unavailable.
+  }
+  const studio = status?.capabilities.find(({ name }) => name === "studio");
+  const recentLogs: StackLogEntry[] = [];
+  try {
+    for await (const entry of stack.logs({ follow: false })) {
+      if (entry.source !== "studio" && entry.source !== "gateway") continue;
+      recentLogs.push(entry);
+      if (recentLogs.length > 50) recentLogs.shift();
+    }
+  } catch {
+    // Preserve the original request failure when logs are unavailable.
+  }
+  const reason = cause instanceof Error ? cause.message : String(cause);
+  const state = studio === undefined ? "unavailable" : studio.state;
+  const error = studio?.error === undefined ? "none" : studio.error;
+  const logs =
+    recentLogs.length === 0
+      ? "none"
+      : recentLogs.map((entry) => `${entry.source}/${entry.stream}: ${entry.message}`).join("\n");
+  throw new Error(
+    `Studio profile request failed: ${reason}; Studio state=${state}; error=${error}; recent logs:\n${logs}`,
+    { cause },
+  );
 };
 
 const jsonValue = async (response: Response): Promise<unknown> => response.json();
@@ -511,10 +545,15 @@ const runWholeStackScenario = async (mode: (typeof RUNTIME_CASES)[number]): Prom
   });
   await Effect.runPromise(Effect.retry(mailAttempt, { schedule: MAILPIT_DELIVERY_RETRY_SCHEDULE }));
 
-  // Studio's profile endpoint traverses the Studio workload and its pgmeta dependency.
-  await request(studio.url, "/api/platform/profile", {
-    headers: serviceHeaders(credentials),
-  });
+  // Studio's profile endpoint lazily activates Studio and its transitive dependencies.
+  try {
+    await request(studio.url, "/api/platform/profile", {
+      headers: serviceHeaders(credentials),
+      signal: AbortSignal.timeout(LAZY_STUDIO_ACTIVATION_TIMEOUT_MS),
+    });
+  } catch (cause) {
+    await throwStudioProfileDiagnostics(stack, cause);
+  }
 
   // Analytics exercises health, authenticated ingestion, and query through the public API route;
   // vector is a readiness dependency selected by the configured vector_port above.

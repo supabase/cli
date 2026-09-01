@@ -5,13 +5,11 @@ import type { PortField } from "../public/Status.ts";
 /** Logical artifact descriptors. Download/image resolution belongs to preparation. */
 export interface NativeArtifact {
   readonly kind: "native";
-  readonly service: string;
   readonly release: string;
 }
 
 export interface ContainerArtifact {
   readonly kind: "container";
-  readonly service: string;
   readonly image: string;
 }
 
@@ -23,10 +21,6 @@ export interface WorkloadSpec {
   readonly dependencies: ReadonlyArray<string>;
   readonly readiness: Readonly<{ readonly mode: "http" | "tcp"; readonly portField?: PortField }>;
   readonly restart: Readonly<{ readonly maxAttempts: number; readonly backoffMs: number }>;
-  readonly artifacts: Readonly<{
-    readonly native: NativeArtifact;
-    readonly container: ContainerArtifact;
-  }>;
 }
 
 /** Settings shape persisted by the compiler, where absent and secret leaves are materialized. */
@@ -61,7 +55,8 @@ export interface CapabilityModule<Settings> {
   readonly secretPolicy: (path: string) => "managed" | "passthrough";
   /** Managed slots required by the artifact even when omitted from user config. */
   readonly managedSecretSlots: ReadonlyArray<string>;
-  readonly materialize: (settings: Settings, projectRoot: string) => Settings;
+  /** Optional settings normalization. Omitted modules use their merged settings unchanged. */
+  readonly materialize?: (settings: Settings, projectRoot: string) => Settings;
   /** Selects private companion workloads from fully materialized settings. */
   readonly selectWorkloads?: (
     settings: MaterializedSettings<Settings>,
@@ -79,23 +74,9 @@ export const release = (
   workloads: ReadonlyArray<WorkloadSpec>,
 ): CapabilityRelease => ({ version, workloads });
 
-const nativeArtifact = (service: string, release: string): NativeArtifact => ({
-  kind: "native",
-  service,
-  release,
-});
-
-const containerArtifact = (service: string, image: string): ContainerArtifact => ({
-  kind: "container",
-  service,
-  image,
-});
-
 export const workload = (
   name: string,
   capability: CapabilityName,
-  release: string,
-  image: string,
   options: {
     readonly bootstrap?: WorkloadSpec["bootstrap"];
     readonly dependencies?: ReadonlyArray<string>;
@@ -109,8 +90,4 @@ export const workload = (
   dependencies: options.dependencies ?? [],
   readiness: options.readiness ?? { mode: "tcp" },
   restart: options.restart ?? { maxAttempts: 5, backoffMs: 250 },
-  artifacts: {
-    native: nativeArtifact(name, release),
-    container: containerArtifact(name, image),
-  },
 });

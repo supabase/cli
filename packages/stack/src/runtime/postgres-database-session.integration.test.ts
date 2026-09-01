@@ -1,14 +1,109 @@
 import { describe, expect, it } from "@effect/vitest";
 import { Cause, Effect, Exit, Redacted, Ref } from "effect";
-import { SqlError, UnknownError } from "effect/unstable/sql/SqlError";
+import {
+  AuthenticationError,
+  ConnectionError,
+  SqlError,
+  UnknownError,
+} from "effect/unstable/sql/SqlError";
 import {
   ensureInternalDatabase,
   makeDatabaseSessionFromAcquisition,
   makeDatabaseSessionFromSqlClient,
   type DatabaseSqlClient,
 } from "./PostgresDatabaseSession.ts";
+import { DatabaseBootstrapError } from "../model/DatabaseBootstrap.ts";
 
 describe("Postgres database session", () => {
+  it.live("classifies SQL connection failures without retaining raw causes", () =>
+    Effect.gen(function* () {
+      const reasons = [
+        [ConnectionError, true],
+        [AuthenticationError, false],
+        [UnknownError, false],
+      ] as const;
+      for (const [Reason, retryable] of reasons) {
+        const secret = "database-secret";
+        const client: DatabaseSqlClient = {
+          unsafe: () =>
+            Effect.fail(
+              new SqlError({
+                reason: new Reason({
+                  message: `connection failed with ${secret}`,
+                  cause: new Error(`underlying ${secret}`),
+                }),
+              }),
+            ),
+          withTransaction: <A, E, R>(effect: Effect.Effect<A, E, R>) => effect,
+        };
+        const result = yield* makeDatabaseSessionFromSqlClient(client)
+          .execute("SELECT 1")
+          .pipe(Effect.exit);
+        expect(Exit.isFailure(result)).toBe(true);
+        if (Exit.isFailure(result)) {
+          const error = Cause.squash(result.cause);
+          expect(error).toBeInstanceOf(DatabaseBootstrapError);
+          if (!(error instanceof DatabaseBootstrapError)) continue;
+          expect(error).toMatchObject({ retryable });
+          expect(error.message).not.toContain(secret);
+          expect(error.cause).toBeUndefined();
+        }
+      }
+    }),
+  );
+
+  it.live("classifies connection-acquisition UnknownError as retryable", () =>
+    Effect.gen(function* () {
+      const secret = "database-secret";
+      const acquire = Effect.fail(
+        new SqlError({
+          reason: new UnknownError({
+            message: `connection refused ${secret}`,
+            cause: new Error(`underlying ${secret}`),
+          }),
+        }),
+      );
+      const result = yield* Effect.scoped(makeDatabaseSessionFromAcquisition(acquire)).pipe(
+        Effect.exit,
+      );
+      expect(Exit.isFailure(result)).toBe(true);
+      if (Exit.isFailure(result)) {
+        const error = Cause.squash(result.cause);
+        expect(error).toBeInstanceOf(DatabaseBootstrapError);
+        if (!(error instanceof DatabaseBootstrapError)) return;
+        expect(error.retryable).toBe(true);
+        expect(error.message).not.toContain(secret);
+        expect(error.cause).toBeUndefined();
+      }
+    }),
+  );
+
+  it.live("keeps connection-acquisition AuthenticationError non-retryable", () =>
+    Effect.gen(function* () {
+      const secret = "database-secret";
+      const acquire = Effect.fail(
+        new SqlError({
+          reason: new AuthenticationError({
+            message: `authentication failed ${secret}`,
+            cause: new Error(`underlying ${secret}`),
+          }),
+        }),
+      );
+      const result = yield* Effect.scoped(makeDatabaseSessionFromAcquisition(acquire)).pipe(
+        Effect.exit,
+      );
+      expect(Exit.isFailure(result)).toBe(true);
+      if (Exit.isFailure(result)) {
+        const error = Cause.squash(result.cause);
+        expect(error).toBeInstanceOf(DatabaseBootstrapError);
+        if (!(error instanceof DatabaseBootstrapError)) return;
+        expect(error.retryable).toBe(false);
+        expect(error.message).not.toContain(secret);
+        expect(error.cause).toBeUndefined();
+      }
+    }),
+  );
+
   it.live("creates the internal database once and provisions service schemas", () =>
     Effect.gen(function* () {
       const calls: Array<{ readonly sql: string; readonly params: ReadonlyArray<unknown> }> = [];

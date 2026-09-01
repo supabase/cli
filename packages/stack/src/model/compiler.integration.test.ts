@@ -81,6 +81,37 @@ describe("closed capability compiler", () => {
     }),
   );
 
+  it.live("persists defaults consumed by workload runtimes", () =>
+    Effect.gen(function* () {
+      const result = yield* compile({});
+      expect(result.definition.capabilities.rest.settings).toMatchObject({
+        schemas: ["public", "graphql_public"],
+        extra_search_path: ["public", "extensions"],
+        max_rows: 1000,
+      });
+      expect(result.definition.capabilities.auth.settings).toMatchObject({
+        site_url: "http://127.0.0.1:3000",
+        jwt_expiry: 3600,
+      });
+      expect(result.definition.capabilities.mail.settings).toEqual({
+        admin_email: "admin@email.com",
+        sender_name: "Admin",
+      });
+      expect(result.definition.capabilities.analytics.settings).toMatchObject({
+        backend: "postgres",
+        gcp_project_id: "local",
+        gcp_project_number: "0",
+      });
+      expect(result.definition.capabilities.realtime.settings).toMatchObject({
+        max_header_length: 4096,
+      });
+      expect(result.definition.capabilities.functions.settings).toMatchObject({
+        functions_root: "/tmp/supabase-project/supabase/functions",
+        edge_runtime: { policy: "per_worker", deno_version: 2 },
+      });
+    }),
+  );
+
   it.live("materializes a non-default auth setting", () =>
     Effect.gen(function* () {
       const result = yield* compile({
@@ -596,10 +627,9 @@ describe("closed capability compiler", () => {
         expect(
           result.executionPlan.workloads.find((w) => w.id === "database:database")?.artifacts,
         ).toEqual({
-          native: { kind: "native", service: "database", release },
+          native: { kind: "native", release },
           container: {
             kind: "container",
-            service: "database",
             image: `ghcr.io/supabase/cli/postgres:${release}`,
           },
         });

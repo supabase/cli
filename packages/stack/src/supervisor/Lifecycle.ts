@@ -185,6 +185,24 @@ const materializeCandidate = (
     };
   });
 
+const persistedCandidate = (
+  stackId: StackId,
+  state: PersistedStackState,
+  runtime: StackRuntime,
+): Effect.Effect<Candidate, StackError, LifecycleRequirements> =>
+  Effect.gen(function* () {
+    const definition = state.definition;
+    const inputFingerprint = state.inputFingerprint;
+    if (definition === undefined || inputFingerprint === undefined)
+      return yield* invalidDefinition(stackId);
+    return {
+      definition,
+      inputFingerprint,
+      secrets: state.secrets,
+      plan: yield* rebuildExecutionPlan(runtime, definition),
+    };
+  });
+
 const lifecycleInput = (
   stackId: StackId,
   previous: PersistedStackState,
@@ -335,27 +353,16 @@ export const makeLifecycleController = (
             if (current.desiredLifecycle === "destroying")
               return yield* lifecycleConflict("Stack is being destroyed");
             if (current.desiredLifecycle === "stopped") {
-              if (current.definition === undefined || current.inputFingerprint === undefined)
-                return yield* invalidDefinition(options.stackId);
-              const candidate: Candidate = {
-                definition: current.definition,
-                inputFingerprint: current.inputFingerprint,
-                secrets: current.secrets,
-                plan: yield* rebuildExecutionPlan(current.runtime, current.definition),
-              };
+              const candidate = yield* persistedCandidate(
+                options.stackId,
+                current,
+                current.runtime,
+              );
               // Stopped state is durable intent, not proof that runtime cleanup completed. Retry
               // the idempotent cleanup without changing the generation.
               return { state: current, previous: current, candidate, cleanup: true };
             }
-            const definition = current.definition;
-            if (definition === undefined || current.inputFingerprint === undefined)
-              return yield* invalidDefinition(options.stackId);
-            const candidate: Candidate = {
-              definition,
-              inputFingerprint: current.inputFingerprint,
-              secrets: current.secrets,
-              plan: yield* rebuildExecutionPlan(current.runtime, definition),
-            };
+            const candidate = yield* persistedCandidate(options.stackId, current, current.runtime);
             const next: PersistedStackState = {
               ...current,
               desiredLifecycle: "stopped",
@@ -418,16 +425,11 @@ export const makeLifecycleController = (
               desiredGeneration: current.desiredGeneration + 1,
             };
             yield* options.stateStore.replace(options.stackId, stopped, current.desiredGeneration);
-            const currentDefinition = current.definition;
-            const currentFingerprint = current.inputFingerprint;
-            if (currentDefinition === undefined || currentFingerprint === undefined)
-              return yield* invalidDefinition(options.stackId);
-            const stoppedCandidate: Candidate = {
-              definition: currentDefinition,
-              inputFingerprint: currentFingerprint,
-              secrets: current.secrets,
-              plan: yield* rebuildExecutionPlan(current.runtime, currentDefinition),
-            };
+            const stoppedCandidate = yield* persistedCandidate(
+              options.stackId,
+              current,
+              current.runtime,
+            );
             return { current, stopped, stoppedCandidate };
           }),
         );
@@ -502,15 +504,7 @@ export const makeLifecycleController = (
       previous: PersistedStackState,
     ): Effect.Effect<void, StackError, LifecycleRequirements> =>
       Effect.gen(function* () {
-        const definition = state.definition;
-        if (definition === undefined || state.inputFingerprint === undefined)
-          return yield* invalidDefinition(options.stackId);
-        const candidate: Candidate = {
-          definition,
-          inputFingerprint: state.inputFingerprint,
-          secrets: state.secrets,
-          plan: yield* rebuildExecutionPlan(state.runtime, definition),
-        };
+        const candidate = yield* persistedCandidate(options.stackId, state, state.runtime);
         const input = lifecycleInput(options.stackId, previous, state, candidate);
         yield* options.backend.reconcile(input);
         yield* options.backend.cleanup(input);

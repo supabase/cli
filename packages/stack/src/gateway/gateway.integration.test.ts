@@ -722,6 +722,7 @@ describe("stack gateway", () => {
           }),
         );
         expect(responses).toEqual(fixtures);
+        yield* gateway.close;
         yield* closeServer(backend);
       }),
     ),

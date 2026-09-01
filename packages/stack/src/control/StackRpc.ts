@@ -7,6 +7,7 @@ import { StackConfigSchema } from "../public/Config.ts";
 import { CapabilityNameSchema } from "../public/Capability.ts";
 import { LogOptionsSchema, StackLogEntrySchema } from "../public/Logs.ts";
 import { StackStatusSchema } from "../public/Status.ts";
+import { STACK_ERROR_TAGS } from "../public/Errors.ts";
 
 /** Pinned release identifier. A changed release must go through explicit restart. */
 export const STACK_RPC_RELEASE = "stack-rpc-v1@0.1.0" as const;
@@ -18,37 +19,7 @@ export class StackRpcProtocolError extends Data.TaggedError("StackRpcProtocolErr
 }> {}
 
 const StackRpcErrorTagSchema = Schema.Literals([
-  "InvalidStackIdentityError",
-  "InvalidProjectRootError",
-  "InvalidStackConfigError",
-  "StackVersionUnsupportedError",
-  "StackNotFoundError",
-  "StackOwnershipConflictError",
-  "StackRuntimeMismatchError",
-  "StackDefinitionRequiredError",
-  "StackNotRunningError",
-  "StackMustBeStoppedError",
-  "StackLifecycleConflictError",
-  "StackStateInvalidError",
-  "StackStateFormatUnsupportedError",
-  "StackStateGenerationMismatchError",
-  "StackUpgradeRequiredError",
-  "StackUpgradeReplacementError",
-  "StackSecretMismatchError",
-  "InvalidJwtSigningMaterialError",
-  "PortAllocationError",
-  "PortUnavailableError",
-  "GatewayAuthenticationError",
-  "GatewayStaleGenerationError",
-  "GatewayActivationError",
-  "StackPreparationError",
-  "ArtifactIntegrityError",
-  "ContainerPullError",
-  "StackReconciliationError",
-  "ServiceStartError",
-  "ServiceReadinessError",
-  "ContainerEngineError",
-  "StackDestructionError",
+  ...STACK_ERROR_TAGS,
   "StackRpcProtocolError",
 ] as const);
 

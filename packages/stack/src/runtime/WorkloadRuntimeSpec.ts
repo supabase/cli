@@ -1,12 +1,24 @@
 import type { PersistedStackState } from "../state/StackState.ts";
 import type { ExecutionPlan, PlannedWorkload } from "../model/ExecutionPlan.ts";
 import type { CapabilityName } from "../public/Capability.ts";
+import {
+  flattenSettings,
+  isRecord,
+  secret,
+  settingValue,
+  settingsFor,
+  valueAt,
+} from "../state/MaterializedSettings.ts";
 import type {
   ContainerHostRoute,
   ContainerMount,
   ContainerStartupProcess,
 } from "./ContainerEngine.ts";
-import { WORKLOAD_CATALOG, type NativeWorkloadProcess } from "../model/WorkloadCatalog.ts";
+import {
+  catalogEntryFor,
+  containerAliasFor,
+  type NativeWorkloadProcess,
+} from "../model/WorkloadCatalog.ts";
 import { parseFileSize } from "../model/capabilities/storage.ts";
 import { resolveThirdPartyIssuer } from "../model/capabilities/auth-third-party.ts";
 import { Effect } from "effect";
@@ -107,7 +119,6 @@ export interface WorkloadRuntimeSpec {
     workload: PlannedWorkload,
     inputs?: WorkloadRuntimeInputs,
   ) => ReadonlyArray<ContainerMount>;
-  readonly networkAliases?: ReadonlyArray<string>;
   readonly readiness: Readonly<{
     readonly protocol: "http" | "tcp";
     readonly path?: string;
@@ -215,19 +226,8 @@ export const validateWorkloadRuntimeInputs = (
         message: "Managed JWT signing secret is required for the configured auth mode",
         workload: workload.id,
       });
-    if (workload.id === "auth:auth") {
-      const signing = state.definition?.security.jwt.signing;
-      if (
-        signing?.kind === "jwks-file" &&
-        (inputs.auth?.jwtKeys === undefined || inputs.auth.jwtKeys.length === 0)
-      )
-        return yield* new StackPreparationError({
-          message: "Resolved JWT signing keys are required for Auth",
-          workload: workload.id,
-        });
-    }
     if (workload.id === "analytics:analytics") {
-      const backend = valueAt(state, "analytics", "backend") || "postgres";
+      const backend = valueAt(state, "analytics", "backend");
       if (
         backend === "bigquery" &&
         valueAt(state, "analytics", "gcp_jwt_path").length > 0 &&
@@ -250,6 +250,14 @@ export const validateWorkloadRuntimeInputs = (
         });
     }
     if (workload.id === "auth:auth") {
+      if (
+        signing?.kind === "jwks-file" &&
+        (inputs.auth?.jwtKeys === undefined || inputs.auth.jwtKeys.length === 0)
+      )
+        return yield* new StackPreparationError({
+          message: "Resolved JWT signing keys are required for Auth",
+          workload: workload.id,
+        });
       const email = settingsFor(state, "auth");
       const emailSettings = isRecord(email) && isRecord(email.email) ? email.email : undefined;
       const templates = emailSettings?.template;
@@ -276,9 +284,6 @@ export const validateWorkloadRuntimeInputs = (
 
 export const FUNCTIONS_CONTAINER_ROOT = "/__supabase_functions";
 export const FUNCTIONS_BOOTSTRAP_CONTAINER_PATH = "/root";
-const DATABASE_NETWORK_ALIAS = "supabase-database";
-
-const MAIL_NETWORK_ALIAS = "supabase-mail";
 
 const compactEnvironment = (
   environment: Readonly<Record<string, string>>,
@@ -291,58 +296,8 @@ const beamDistributionEnvironment = (
 ): Readonly<Record<string, string>> =>
   runtime === "native" ? { RELEASE_DISTRIBUTION: "none" } : {};
 
-const isRecord = (value: unknown): value is Readonly<Record<string, unknown>> =>
-  typeof value === "object" && value !== null && !Array.isArray(value);
-
-const settingsFor = (state: PersistedStackState, capability: CapabilityName): unknown =>
-  state.definition === undefined ? undefined : state.definition.capabilities[capability].settings;
-
 const capabilityEnabled = (state: PersistedStackState, capability: CapabilityName): boolean =>
   state.definition?.capabilities[capability].enabled ?? true;
-
-const secret = (state: PersistedStackState, slot: string): string =>
-  state.secrets[slot]?.value ?? "";
-
-const settingValue = (state: PersistedStackState, value: unknown): string => {
-  if (value === null || value === undefined) return "";
-  if (typeof value === "string" || typeof value === "number" || typeof value === "boolean")
-    return String(value);
-  if (Array.isArray(value)) return value.map((entry) => settingValue(state, entry)).join(",");
-  if (isRecord(value) && typeof value.slot === "string" && Object.keys(value).length === 1)
-    return secret(state, value.slot);
-  return JSON.stringify(value) ?? "";
-};
-
-/** Flatten all materialized settings so no capability field silently disappears at runtime. */
-const flattenSettings = (
-  state: PersistedStackState,
-  value: unknown,
-  prefix: string,
-  out: Record<string, string>,
-): void => {
-  if (value === null || value === undefined) return;
-  if (isRecord(value) && typeof value.slot === "string" && Object.keys(value).length === 1) {
-    out[prefix] = secret(state, value.slot);
-    return;
-  }
-  if (Array.isArray(value)) {
-    out[prefix] = value.map((entry) => settingValue(state, entry)).join(",");
-    return;
-  }
-  if (isRecord(value)) {
-    for (const [key, entry] of Object.entries(value)) {
-      const normalized = key.replace(/[^A-Za-z0-9]+/gu, "_").toUpperCase();
-      flattenSettings(
-        state,
-        entry,
-        prefix.length === 0 ? normalized : `${prefix}_${normalized}`,
-        out,
-      );
-    }
-    return;
-  }
-  out[prefix] = settingValue(state, value);
-};
 
 const capabilityEnv = (
   state: PersistedStackState,
@@ -355,15 +310,6 @@ const capabilityEnv = (
   if (settings !== undefined) flattenSettings(state, settings, prefix, out);
   for (const key of Object.keys(out)) if (omit(key)) delete out[key];
   return out;
-};
-
-const valueAt = (state: PersistedStackState, capability: CapabilityName, path: string): string => {
-  let current: unknown = settingsFor(state, capability);
-  for (const segment of path.split(".")) {
-    if (!isRecord(current)) return "";
-    current = current[segment];
-  }
-  return settingValue(state, current);
 };
 
 const dbPort = (state: PersistedStackState): number =>
@@ -409,7 +355,7 @@ const containerPortFor = (
 };
 
 const dbHost = (runtime: WorkloadRuntimeKind): string =>
-  runtime === "container" ? DATABASE_NETWORK_ALIAS : "127.0.0.1";
+  runtime === "container" ? containerAliasFor("database:database") : "127.0.0.1";
 
 const dbUrl = (
   state: PersistedStackState,
@@ -440,9 +386,9 @@ const edgeRuntimeJwtEnvironment = (
     ),
     SUPABASE_JWKS: inputs.auth?.jwks ?? '{"keys":[]}',
   });
-  // Preserve explicitly empty owner-resolved values. Spec-owned variables are
-  // spread after this helper in the workload env so they retain precedence.
-  return { ...fixed, ...inputs.functions?.secrets };
+  // Preserve explicitly empty owner-resolved values. Fixed runtime credentials
+  // must win over user function secrets with reserved names.
+  return { ...inputs.functions?.secrets, ...fixed };
 };
 
 const functionsConfigEnvironment = (state: PersistedStackState): string => {
@@ -476,16 +422,15 @@ const common = (workload: PlannedWorkload, port: number): Record<string, string>
 });
 
 const functionsRoot = (state: PersistedStackState): string =>
-  valueAt(state, "functions", "functions_root") ||
-  `${state.identity.projectRoot}/supabase/functions`;
+  valueAt(state, "functions", "functions_root");
 
 const privateEndpointFor = (
   state: PersistedStackState,
   workloadId: string,
   bindings: WorkloadBindings,
   binding: WorkloadBindingName,
-  runtime: WorkloadRuntimeKind = "native",
-  alias = "supabase-workload",
+  runtime: WorkloadRuntimeKind,
+  alias: string,
 ): Readonly<{ readonly host: string; readonly port: number }> | undefined => {
   const declared = bindingFor(bindings, binding);
   if (declared === undefined) return undefined;
@@ -501,9 +446,6 @@ const privateEndpointFor = (
       };
 };
 
-const aliasFor = (workload: PlannedWorkload): string =>
-  WORKLOAD_CATALOG[workload.id]?.containerAlias ?? `supabase-${workload.id.replace(/:/gu, "-")}`;
-
 const artifactPath = (root: string, relative: string): string =>
   relative === "." ? root : `${root.replace(/\/+$/u, "")}/${relative}`;
 
@@ -511,20 +453,17 @@ const nativeArgsFor = (
   workload: PlannedWorkload,
   args: ReadonlyArray<string>,
   inputs: WorkloadRuntimeInputs,
-): ReadonlyArray<string> =>
-  workload.id === "analytics:vector" && inputs.analytics?.vectorConfigPath !== undefined
-    ? ["--config", inputs.analytics.vectorConfigPath]
-    : workload.id === "functions:edge-runtime" && inputs.functions?.bootstrapPath !== undefined
-      ? (() => {
-          const bootstrapPath = inputs.functions?.bootstrapPath;
-          if (bootstrapPath === undefined) return args;
-          const bootstrapDirectory =
-            bootstrapPath.slice(0, bootstrapPath.lastIndexOf("/")) || bootstrapPath;
-          return args.map((arg) =>
-            arg.startsWith("--main-service=") ? `--main-service=${bootstrapDirectory}` : arg,
-          );
-        })()
-      : args;
+): ReadonlyArray<string> => {
+  if (workload.id === "analytics:vector" && inputs.analytics?.vectorConfigPath !== undefined)
+    return ["--config", inputs.analytics.vectorConfigPath];
+  const bootstrapPath = inputs.functions?.bootstrapPath;
+  if (workload.id !== "functions:edge-runtime" || bootstrapPath === undefined) return args;
+  const bootstrapDirectory =
+    bootstrapPath.slice(0, bootstrapPath.lastIndexOf("/")) || bootstrapPath;
+  return args.map((arg) =>
+    arg.startsWith("--main-service=") ? `--main-service=${bootstrapDirectory}` : arg,
+  );
+};
 
 const nativeProcessFor = (
   artifactRoot: string,
@@ -534,7 +473,8 @@ const nativeProcessFor = (
   spec: WorkloadRuntimeSpecDefinition,
   inputs: WorkloadRuntimeInputs = {},
 ): NativeProcessResolution => {
-  const metadata: NativeWorkloadProcess | undefined = WORKLOAD_CATALOG[workload.id]?.nativeProcess;
+  const catalog = catalogEntryFor(workload.id);
+  const metadata: NativeWorkloadProcess | undefined = catalog?.nativeProcess;
   if (metadata !== undefined) {
     const metadataArgs = metadata.args.map((arg) =>
       arg.startsWith("app/") || arg.startsWith("share/") ? artifactPath(artifactRoot, arg) : arg,
@@ -545,7 +485,7 @@ const nativeProcessFor = (
       cwd: artifactPath(artifactRoot, metadata.cwd),
     };
   }
-  const executablePath = WORKLOAD_CATALOG[workload.id]?.executablePath;
+  const executablePath = catalog?.executablePath;
   const resolvedPort = privatePortFor(state, workload.id, "primary") ?? port;
   const args = spec
     .args(state, workload, resolvedPort, "native")
@@ -632,14 +572,14 @@ const withRestSettings = (
     ...common(workload, port),
     ...capabilityEnv(state, "rest", "PGRST"),
     PGRST_DB_URI: dbUrl(state, "authenticator", runtime),
-    PGRST_DB_SCHEMAS: valueAt(state, "rest", "schemas") || "public,graphql_public",
-    PGRST_DB_EXTRA_SEARCH_PATH: valueAt(state, "rest", "extra_search_path") || "public,extensions",
+    PGRST_DB_SCHEMAS: valueAt(state, "rest", "schemas"),
+    PGRST_DB_EXTRA_SEARCH_PATH: valueAt(state, "rest", "extra_search_path"),
     PGRST_DB_ANON_ROLE: "anon",
     PGRST_JWT_SECRET: usesResolvedJwks(state)
       ? (_inputs.auth?.jwks ?? "")
       : secret(state, "secret:auth.settings.jwt_secret"),
     PGRST_SERVER_PORT: String(port),
-    PGRST_DB_MAX_ROWS: valueAt(state, "rest", "max_rows") || "1000",
+    PGRST_DB_MAX_ROWS: valueAt(state, "rest", "max_rows"),
     PGRST_ADMIN_SERVER_PORT: String(workloadPort(state, "rest:rest", "admin", runtime, 3001)),
     PGRST_OPENAPI_SERVER_PROXY_URI: valueAt(state, "rest", "external_url"),
   });
@@ -806,12 +746,13 @@ const withAuthSettings = (
     ),
     GOTRUE_DB_DATABASE_URL: dbUrl(state, "supabase_auth_admin", runtime),
     GOTRUE_DB_DRIVER: "postgres",
-    GOTRUE_SITE_URL: valueAt(state, "auth", "site_url") || "http://127.0.0.1:3000",
+    GOTRUE_SITE_URL: valueAt(state, "auth", "site_url"),
     GOTRUE_JWT_SECRET: secret(state, "secret:auth.settings.jwt_secret"),
-    GOTRUE_JWT_EXP: valueAt(state, "auth", "jwt_expiry") || "3600",
+    GOTRUE_JWT_EXP: valueAt(state, "auth", "jwt_expiry"),
     GOTRUE_JWT_AUD: "authenticated",
     GOTRUE_JWT_ADMIN_ROLES: "service_role",
     GOTRUE_JWT_DEFAULT_GROUP_NAME: "authenticated",
+    // GoTrue releases consume either spelling; keep both for cross-version compatibility.
     GOTRUE_JWT_VALIDMETHODS: "HS256,RS256,ES256",
     GOTRUE_JWT_VALID_METHODS: "HS256,RS256,ES256",
     ...(inputs.auth?.jwtKeys === undefined ? {} : { GOTRUE_JWT_KEYS: inputs.auth.jwtKeys }),
@@ -897,10 +838,11 @@ const withAuthSettings = (
         }
       : capabilityEnabled(state, "mail")
         ? {
-            GOTRUE_SMTP_HOST: runtime === "container" ? MAIL_NETWORK_ALIAS : "127.0.0.1",
+            GOTRUE_SMTP_HOST:
+              runtime === "container" ? containerAliasFor("mail:mail") : "127.0.0.1",
             GOTRUE_SMTP_PORT: String(workloadPort(state, "mail:mail", "smtp", runtime, 1025)),
-            GOTRUE_SMTP_ADMIN_EMAIL: valueAt(state, "mail", "admin_email") || "admin@email.com",
-            GOTRUE_SMTP_SENDER_NAME: valueAt(state, "mail", "sender_name") || "Admin",
+            GOTRUE_SMTP_ADMIN_EMAIL: valueAt(state, "mail", "admin_email"),
+            GOTRUE_SMTP_SENDER_NAME: valueAt(state, "mail", "sender_name"),
           }
         : {}),
     GOTRUE_SMS_AUTOCONFIRM:
@@ -934,8 +876,9 @@ const withStorageSettings = (
   port: number,
   workload: PlannedWorkload,
   inputs: WorkloadRuntimeInputs = {},
-): Record<string, string> =>
-  compactEnvironment({
+): Record<string, string> => {
+  const fileSizeLimit = parseFileSize(valueAt(state, "storage", "file_size_limit"));
+  return compactEnvironment({
     ...common(workload, port),
     ...capabilityEnv(
       state,
@@ -952,8 +895,7 @@ const withStorageSettings = (
     SERVICE_KEY: secret(state, "secret:auth.settings.service_role_key"),
     AUTH_JWT_SECRET: secret(state, "secret:auth.settings.jwt_secret"),
     DATABASE_URL: dbUrl(state, "supabase_storage_admin", runtime),
-    FILE_SIZE_LIMIT:
-      parseFileSize(valueAt(state, "storage", "file_size_limit") || "50MiB") ?? "52428800",
+    ...(fileSizeLimit === undefined ? {} : { FILE_SIZE_LIMIT: fileSizeLimit }),
     STORAGE_BACKEND: "file",
     FILE_STORAGE_BACKEND_PATH:
       runtime === "container"
@@ -963,12 +905,11 @@ const withStorageSettings = (
       runtime === "container"
         ? "/mnt"
         : (inputs.storage?.dataPath ?? `${state.identity.projectRoot}/.supabase/storage`),
-    ENABLE_IMAGE_TRANSFORMATION:
-      valueAt(state, "storage", "image_transformation.enabled") || "false",
-    S3_PROTOCOL_ENABLED: valueAt(state, "storage", "s3_protocol.enabled") || "true",
-    S3_PROTOCOL_ACCESS_KEY_ID: valueAt(state, "storage", "s3_protocol.access_key_id") || "local",
+    ENABLE_IMAGE_TRANSFORMATION: valueAt(state, "storage", "image_transformation.enabled"),
+    S3_PROTOCOL_ENABLED: valueAt(state, "storage", "s3_protocol.enabled"),
+    S3_PROTOCOL_ACCESS_KEY_ID: valueAt(state, "storage", "s3_protocol.access_key_id"),
     S3_PROTOCOL_ACCESS_KEY_SECRET: valueAt(state, "storage", "s3_protocol.secret_access_key"),
-    STORAGE_S3_REGION: valueAt(state, "storage", "s3_protocol.region") || "local",
+    STORAGE_S3_REGION: valueAt(state, "storage", "s3_protocol.region"),
     GLOBAL_S3_BUCKET: "stub",
     TENANT_ID: "stub",
     S3_PROTOCOL_PREFIX: "/storage/v1",
@@ -980,7 +921,7 @@ const withStorageSettings = (
     TUS_URL_PATH: "/storage/v1/upload/resumable",
     IMGPROXY_URL:
       runtime === "container"
-        ? "http://supabase-imgproxy:5001"
+        ? `http://${containerAliasFor("storage:imgproxy")}:5001`
         : `http://127.0.0.1:${workloadPort(state, "storage:imgproxy", "primary", runtime, 5001)}`,
     ...(valueAt(state, "storage", "vector.enabled") === "true"
       ? {
@@ -991,6 +932,7 @@ const withStorageSettings = (
         }
       : {}),
   });
+};
 
 const databaseArgs = (
   state: PersistedStackState,
@@ -1020,7 +962,7 @@ const analyticsEnv = (
   workload: PlannedWorkload,
   inputs: WorkloadRuntimeInputs = {},
 ): Record<string, string> => {
-  const backend = valueAt(state, "analytics", "backend") || "postgres";
+  const backend = valueAt(state, "analytics", "backend");
   const gcpJwtPath = inputs.analytics?.gcpJwtPath ?? "";
   return compactEnvironment({
     ...common(workload, port),
@@ -1049,8 +991,8 @@ const analyticsEnv = (
         }
       : {
           GOOGLE_DATASET_ID_APPEND: "_prod",
-          GOOGLE_PROJECT_ID: valueAt(state, "analytics", "gcp_project_id") || "local",
-          GOOGLE_PROJECT_NUMBER: valueAt(state, "analytics", "gcp_project_number") || "0",
+          GOOGLE_PROJECT_ID: valueAt(state, "analytics", "gcp_project_id"),
+          GOOGLE_PROJECT_NUMBER: valueAt(state, "analytics", "gcp_project_number"),
           GOOGLE_APPLICATION_CREDENTIALS:
             runtime === "container" && gcpJwtPath.length > 0
               ? "/opt/app/rel/logflare/bin/gcloud.json"
@@ -1076,7 +1018,6 @@ const specs: Readonly<Record<string, WorkloadRuntimeSpecDefinition>> = {
       }),
     containerArgs: (state, _workload, port) => databaseArgs(state, port, "container"),
     readiness: { protocol: "tcp" },
-    networkAliases: [DATABASE_NETWORK_ALIAS],
   },
   "rest:rest": {
     bindings: { primary: { containerPort: 3000 }, admin: { containerPort: 3001 } },
@@ -1084,7 +1025,6 @@ const specs: Readonly<Record<string, WorkloadRuntimeSpecDefinition>> = {
     env: (state, workload, port, runtime = "native", inputs = {}) =>
       withRestSettings(state, runtime, port, workload, inputs),
     containerArgs: () => [],
-    networkAliases: ["supabase-rest"],
     readiness: { protocol: "http", path: "/" },
   },
   "auth:auth": {
@@ -1094,7 +1034,6 @@ const specs: Readonly<Record<string, WorkloadRuntimeSpecDefinition>> = {
       withAuthSettings(state, runtime, port, workload, inputs),
     containerArgs: () => [],
     containerStartupProcesses: [{ entrypoint: "/usr/local/bin/auth", command: ["migrate"] }],
-    networkAliases: ["supabase-auth"],
     readiness: { protocol: "http", path: "/health" },
   },
   "realtime:realtime": {
@@ -1120,7 +1059,7 @@ const specs: Readonly<Record<string, WorkloadRuntimeSpecDefinition>> = {
         DNS_NODES: "''",
         APP_NAME: "realtime",
         SEED_SELF_HOST: "true",
-        MAX_HEADER_LENGTH: valueAt(state, "realtime", "max_header_length") || "4096",
+        MAX_HEADER_LENGTH: valueAt(state, "realtime", "max_header_length"),
         ERL_AFLAGS:
           valueAt(state, "realtime", "ip_version") === "IPv6"
             ? "-proto_dist inet6_tcp"
@@ -1128,7 +1067,6 @@ const specs: Readonly<Record<string, WorkloadRuntimeSpecDefinition>> = {
         RUN_JANITOR: "true",
       }),
     containerArgs: () => [],
-    networkAliases: ["supabase-realtime"],
     readiness: { protocol: "http", path: "/healthcheck" },
   },
   "storage:storage": {
@@ -1140,7 +1078,6 @@ const specs: Readonly<Record<string, WorkloadRuntimeSpecDefinition>> = {
     containerStartupProcesses: [
       { entrypoint: "/node/bin/node", command: ["dist/scripts/migrate-call.js"] },
     ],
-    networkAliases: ["supabase-storage"],
     readiness: { protocol: "http", path: "/status" },
   },
   "storage:imgproxy": {
@@ -1152,7 +1089,6 @@ const specs: Readonly<Record<string, WorkloadRuntimeSpecDefinition>> = {
       IMGPROXY_LOCAL_FILESYSTEM_ROOT: "/",
     }),
     containerArgs: () => [],
-    networkAliases: ["supabase-imgproxy"],
     readiness: { protocol: "http", path: "/health" },
   },
   "functions:edge-runtime": {
@@ -1162,7 +1098,7 @@ const specs: Readonly<Record<string, WorkloadRuntimeSpecDefinition>> = {
       "start",
       `--main-service=${functionsRoot(state)}`,
       `--port=${port}`,
-      `--policy=${valueAt(state, "functions", "edge_runtime.policy") || "per_worker"}`,
+      `--policy=${valueAt(state, "functions", "edge_runtime.policy")}`,
     ],
     env: (state, workload, port, runtime = "native", inputs = {}) => ({
       ...common(workload, port),
@@ -1175,8 +1111,8 @@ const specs: Readonly<Record<string, WorkloadRuntimeSpecDefinition>> = {
         runtime === "container" ? FUNCTIONS_CONTAINER_ROOT : functionsRoot(state),
       SUPABASE_INTERNAL_FUNCTIONS_CONFIG: functionsConfigEnvironment(state),
       SUPABASE_URL: apiListenerUrl(state, runtime === "container" ? inputs : undefined),
-      EDGE_RUNTIME_POLICY: valueAt(state, "functions", "edge_runtime.policy") || "per_worker",
-      EDGE_RUNTIME_DENO_VERSION: valueAt(state, "functions", "edge_runtime.deno_version") || "2",
+      EDGE_RUNTIME_POLICY: valueAt(state, "functions", "edge_runtime.policy"),
+      EDGE_RUNTIME_DENO_VERSION: valueAt(state, "functions", "edge_runtime.deno_version"),
       INSPECTOR_MODE: valueAt(state, "functions", "inspector.mode"),
       INSPECTOR_MAIN: valueAt(state, "functions", "inspector.main"),
     }),
@@ -1184,12 +1120,11 @@ const specs: Readonly<Record<string, WorkloadRuntimeSpecDefinition>> = {
       "start",
       `--main-service=${FUNCTIONS_BOOTSTRAP_CONTAINER_PATH}`,
       `--port=${port}`,
-      `--policy=${valueAt(state, "functions", "edge_runtime.policy") || "per_worker"}`,
+      `--policy=${valueAt(state, "functions", "edge_runtime.policy")}`,
     ],
     containerMounts: (state) => [
       { source: functionsRoot(state), target: FUNCTIONS_CONTAINER_ROOT, readOnly: true },
     ],
-    networkAliases: ["supabase-functions"],
     readiness: { protocol: "http", path: "/_internal/health" },
   },
   "studio:studio": {
@@ -1203,16 +1138,16 @@ const specs: Readonly<Record<string, WorkloadRuntimeSpecDefinition>> = {
         HOSTNAME: "0.0.0.0",
         STUDIO_PG_META_URL:
           runtime === "container"
-            ? "http://supabase-pgmeta:8080"
+            ? `http://${containerAliasFor("studio:pgmeta")}:8080`
             : `http://127.0.0.1:${workloadPort(state, "studio:pgmeta", "primary", runtime, 8080)}`,
         LOGFLARE_URL:
           runtime === "container"
-            ? "http://supabase-analytics:4000"
+            ? `http://${containerAliasFor("analytics:analytics")}:4000`
             : `http://127.0.0.1:${workloadPort(state, "analytics:analytics", "primary", runtime, 4000)}`,
         LOGFLARE_PRIVATE_ACCESS_TOKEN: valueAt(state, "analytics", "api_key"),
         NEXT_PUBLIC_ENABLE_LOGS:
           valueAt(state, "analytics", "backend").length > 0 ? "true" : "false",
-        NEXT_ANALYTICS_BACKEND_PROVIDER: valueAt(state, "analytics", "backend") || "postgres",
+        NEXT_ANALYTICS_BACKEND_PROVIDER: valueAt(state, "analytics", "backend"),
         SUPABASE_URL: apiGatewayUrl(state, runtime === "container" ? inputs : undefined),
         SUPABASE_PUBLIC_URL: apiGatewayUrl(state, runtime === "container" ? inputs : undefined),
         SUPABASE_ANON_KEY: secret(state, "secret:auth.settings.anon_key"),
@@ -1233,7 +1168,6 @@ const specs: Readonly<Record<string, WorkloadRuntimeSpecDefinition>> = {
     containerMounts: (state) => [
       { source: functionsRoot(state), target: FUNCTIONS_CONTAINER_ROOT, readOnly: true },
     ],
-    networkAliases: ["supabase-studio"],
     readiness: { protocol: "http", path: "/api/platform/profile" },
   },
   "studio:pgmeta": {
@@ -1250,7 +1184,6 @@ const specs: Readonly<Record<string, WorkloadRuntimeSpecDefinition>> = {
       PG_META_DB_PASSWORD: secret(state, "secret:database.internal.password"),
     }),
     containerArgs: () => [],
-    networkAliases: ["supabase-pgmeta"],
     readiness: { protocol: "http", path: "/health" },
   },
   "mail:mail": {
@@ -1269,7 +1202,6 @@ const specs: Readonly<Record<string, WorkloadRuntimeSpecDefinition>> = {
       MP_SMTP_DISABLE_RDNS: "true",
     }),
     containerArgs: () => [],
-    networkAliases: [MAIL_NETWORK_ALIAS],
     readiness: { protocol: "http", path: "/readyz", binding: "ui" },
   },
   "analytics:analytics": {
@@ -1280,7 +1212,7 @@ const specs: Readonly<Record<string, WorkloadRuntimeSpecDefinition>> = {
     // The slim container entrypoint performs Logflare migrations before start.
     containerArgs: () => [],
     containerMounts: (state, _workload, inputs = {}) => {
-      const backend = valueAt(state, "analytics", "backend") || "postgres";
+      const backend = valueAt(state, "analytics", "backend");
       const source = inputs.analytics?.gcpJwtPath ?? "";
       return backend === "bigquery" && source.length > 0
         ? [
@@ -1292,7 +1224,6 @@ const specs: Readonly<Record<string, WorkloadRuntimeSpecDefinition>> = {
           ]
         : [];
     },
-    networkAliases: ["supabase-analytics"],
     readiness: { protocol: "http", path: "/health" },
   },
   "analytics:vector": {
@@ -1305,7 +1236,7 @@ const specs: Readonly<Record<string, WorkloadRuntimeSpecDefinition>> = {
       VECTOR_API_PORT: String(port),
       LOGFLARE_URL:
         runtime === "container"
-          ? "http://supabase-analytics:4000"
+          ? `http://${containerAliasFor("analytics:analytics")}:4000`
           : `http://127.0.0.1:${workloadPort(state, "analytics:analytics", "primary", runtime, 4000)}`,
       LOGFLARE_PRIVATE_ACCESS_TOKEN: valueAt(state, "analytics", "api_key"),
     }),
@@ -1323,7 +1254,6 @@ const specs: Readonly<Record<string, WorkloadRuntimeSpecDefinition>> = {
               readOnly: true,
             },
           ],
-    networkAliases: ["supabase-vector"],
     readiness: { protocol: "http", path: "/health" },
   },
   "pooler:pooler": {
@@ -1377,7 +1307,6 @@ const specs: Readonly<Record<string, WorkloadRuntimeSpecDefinition>> = {
               readOnly: true,
             },
           ],
-    networkAliases: ["supabase-pooler"],
     readiness: { protocol: "tcp" },
   },
 };
@@ -1436,7 +1365,8 @@ export const validatePrivateAssignments = (
 
 export const runtimeSpecFor = (workload: PlannedWorkload): WorkloadRuntimeSpec | undefined => {
   const spec = specs[workload.id];
-  if (spec === undefined) return undefined;
+  const catalog = catalogEntryFor(workload.id);
+  if (spec === undefined || catalog === undefined) return undefined;
   const primary =
     spec.bindings.primary ??
     spec.bindings.admin ??
@@ -1447,28 +1377,11 @@ export const runtimeSpecFor = (workload: PlannedWorkload): WorkloadRuntimeSpec |
   return {
     ...spec,
     containerPort: primary.containerPort,
-    networkAliases: [aliasFor(workload)],
     cwd: spec.cwd ?? ((state) => state.identity.projectRoot),
     args: (state, currentWorkload, port, runtime = "native") =>
-      spec.args(
-        state,
-        currentWorkload,
-        runtime === "container"
-          ? containerPortFor(state, currentWorkload.id, "primary", primary.containerPort)
-          : (privatePortFor(state, currentWorkload.id, "primary") ?? port),
-        runtime,
-      ),
+      spec.args(state, currentWorkload, port, runtime),
     env: (state, currentWorkload, port, runtime = "native", inputs = {}) =>
-      spec.env(
-        state,
-        currentWorkload,
-        runtime === "container"
-          ? containerPortFor(state, currentWorkload.id, "primary", primary.containerPort)
-          : (privatePortFor(state, currentWorkload.id, spec.readiness.binding ?? "primary") ??
-              port),
-        runtime,
-        inputs,
-      ),
+      spec.env(state, currentWorkload, port, runtime, inputs),
     containerStartupProcesses: spec.containerStartupProcesses ?? [],
     readiness: { ...spec.readiness, binding: spec.readiness.binding ?? "primary" },
     privateEndpoint:
@@ -1480,7 +1393,7 @@ export const runtimeSpecFor = (workload: PlannedWorkload): WorkloadRuntimeSpec |
           spec.bindings,
           binding,
           runtime,
-          aliasFor(workload),
+          catalog.containerAlias,
         )),
     nativeProcess: (artifactRoot, state, currentWorkload, port, inputs = {}) =>
       nativeProcessFor(artifactRoot, state, currentWorkload, port, spec, inputs),
@@ -1498,6 +1411,8 @@ export const containerResolutionFor = (
 ): ContainerWorkloadResolution | undefined => {
   const spec = runtimeSpecFor(workload);
   if (spec === undefined) return undefined;
+  const catalog = catalogEntryFor(workload.id);
+  if (catalog === undefined) return undefined;
   return {
     command: spec.containerArgs(
       state,
@@ -1514,7 +1429,7 @@ export const containerResolutionFor = (
       inputs,
     ),
     mounts: spec.containerMounts?.(state, workload, inputs) ?? [],
-    networkAliases: [aliasFor(workload)],
+    networkAliases: [catalog.containerAlias],
     publications: declaredBindings(spec.bindings).flatMap(([binding, definition]) => {
       const assignment = state.privatePorts.find(
         (entry) => entry.workloadId === workload.id && entry.binding === binding,

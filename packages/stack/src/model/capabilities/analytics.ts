@@ -18,8 +18,8 @@ export const AnalyticsModule: CapabilityModule<AnalyticsSettings> = {
   defaultSettings: {
     backend: "postgres",
     vector_port: undefined,
-    gcp_project_id: undefined,
-    gcp_project_number: undefined,
+    gcp_project_id: "local",
+    gcp_project_number: "0",
     gcp_jwt_path: undefined,
     api_key: undefined,
   },
@@ -29,11 +29,11 @@ export const AnalyticsModule: CapabilityModule<AnalyticsSettings> = {
   dependencies: ["database"],
   releases: {
     "v1.50.6": release("v1.50.6", [
-      workload("analytics", "analytics", "v1.50.6", "ghcr.io/supabase/cli/analytics:v1.50.6", {
+      workload("analytics", "analytics", {
         dependencies: ["database:database"],
         readiness: { mode: "http", portField: "api" },
       }),
-      workload("vector", "analytics", "0.53.0", "ghcr.io/supabase/cli/vector:0.53.0", {
+      workload("vector", "analytics", {
         dependencies: ["analytics:analytics"],
         readiness: { mode: "tcp" },
       }),
@@ -46,5 +46,4 @@ export const AnalyticsModule: CapabilityModule<AnalyticsSettings> = {
     const enabled = typeof settings.vector_port === "number";
     return workloads.filter((entry) => enabled || entry.name !== "vector");
   },
-  materialize: (settings) => settings,
 };

@@ -58,6 +58,8 @@ export class DatabaseBootstrapError extends Data.TaggedError("DatabaseBootstrapE
   readonly message: string;
   readonly statement?: string;
   readonly revision?: string;
+  /** Whether retrying the database operation may succeed once the server settles. */
+  readonly retryable?: boolean;
   readonly cause?: unknown;
 }> {}
 
@@ -126,6 +128,7 @@ const statementError = (error: DatabaseBootstrapError, statement: string, revisi
     message: error.message,
     statement,
     ...(revision === undefined ? {} : { revision }),
+    ...(error.retryable === undefined ? {} : { retryable: error.retryable }),
     ...(error.cause === undefined ? {} : { cause: error.cause }),
   });
 
@@ -155,57 +158,45 @@ export const runDatabaseBootstrap = (
       }),
     );
     for (const revision of options.revisions) {
-      yield* session
-        .transaction((transaction) =>
-          Effect.gen(function* () {
-            // Re-check under a transaction-scoped advisory lock. This prevents
-            // two owners from both applying a non-idempotent revision after
-            // observing the same pre-lock snapshot.
-            yield* transaction
-              .execute(ADVISORY_LOCK_STATEMENT)
-              .pipe(Effect.mapError((error) => statementError(error, ADVISORY_LOCK_STATEMENT)));
-            const rows = yield* transaction
-              .query(APPLIED_REVISIONS_STATEMENT)
-              .pipe(Effect.mapError((error) => statementError(error, APPLIED_REVISIONS_STATEMENT)));
-            const applied = new Set<string>();
-            for (const row of rows) {
-              const decoded = yield* Schema.decodeUnknownEffect(RevisionRowSchema)(row).pipe(
-                Effect.mapError(
-                  (cause) =>
-                    new DatabaseBootstrapError({
-                      message: `Bootstrap tracking row is malformed: ${String(cause)}`,
-                      statement: APPLIED_REVISIONS_STATEMENT,
-                    }),
-                ),
-              );
-              applied.add(decoded.revision);
-            }
-            if (applied.has(revision.id)) return;
-            yield* transaction
-              .execute(revision.statement)
-              .pipe(
-                Effect.mapError((error) => statementError(error, revision.statement, revision.id)),
-              );
-            yield* transaction
-              .execute(RECORD_REVISION_STATEMENT, [revision.id])
-              .pipe(
-                Effect.mapError((error) =>
-                  statementError(error, RECORD_REVISION_STATEMENT, revision.id),
-                ),
-              );
-          }),
-        )
-        .pipe(
-          Effect.mapError((error) =>
-            error instanceof DatabaseBootstrapError
-              ? error
-              : new DatabaseBootstrapError({
-                  message: `Unable to commit database bootstrap revision ${revision.id}`,
-                  revision: revision.id,
-                  cause: error,
-                }),
-          ),
-        );
+      yield* session.transaction((transaction) =>
+        Effect.gen(function* () {
+          // Re-check under a transaction-scoped advisory lock. This prevents
+          // two owners from both applying a non-idempotent revision after
+          // observing the same pre-lock snapshot.
+          yield* transaction
+            .execute(ADVISORY_LOCK_STATEMENT)
+            .pipe(Effect.mapError((error) => statementError(error, ADVISORY_LOCK_STATEMENT)));
+          const rows = yield* transaction
+            .query(APPLIED_REVISIONS_STATEMENT)
+            .pipe(Effect.mapError((error) => statementError(error, APPLIED_REVISIONS_STATEMENT)));
+          const applied = new Set<string>();
+          for (const row of rows) {
+            const decoded = yield* Schema.decodeUnknownEffect(RevisionRowSchema)(row).pipe(
+              Effect.mapError(
+                (cause) =>
+                  new DatabaseBootstrapError({
+                    message: `Bootstrap tracking row is malformed: ${String(cause)}`,
+                    statement: APPLIED_REVISIONS_STATEMENT,
+                  }),
+              ),
+            );
+            applied.add(decoded.revision);
+          }
+          if (applied.has(revision.id)) return;
+          yield* transaction
+            .execute(revision.statement)
+            .pipe(
+              Effect.mapError((error) => statementError(error, revision.statement, revision.id)),
+            );
+          yield* transaction
+            .execute(RECORD_REVISION_STATEMENT, [revision.id])
+            .pipe(
+              Effect.mapError((error) =>
+                statementError(error, RECORD_REVISION_STATEMENT, revision.id),
+              ),
+            );
+        }),
+      );
     }
     if (options.credentials?.roles !== undefined || options.settings !== undefined) {
       yield* session.transaction((transaction) =>

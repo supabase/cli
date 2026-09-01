@@ -9,14 +9,14 @@ export type MailSettings = Schema.Schema.Type<typeof MailSettingsSchema>;
 export const MailModule: CapabilityModule<MailSettings> = {
   name: "mail",
   settings: MailSettingsSchema,
-  defaultSettings: { admin_email: undefined, sender_name: undefined },
+  defaultSettings: { admin_email: "admin@email.com", sender_name: "Admin" },
   defaultEnabled: true,
   defaultActivation: "eager",
   defaultVersion: "v1.30.2",
   dependencies: [],
   releases: {
     "v1.30.2": release("v1.30.2", [
-      workload("mail", "mail", "v1.30.2", "ghcr.io/supabase/cli/mailpit:v1.30.2", {
+      workload("mail", "mail", {
         readiness: { mode: "http", portField: "mailUi" },
       }),
     ]),
@@ -28,5 +28,4 @@ export const MailModule: CapabilityModule<MailSettings> = {
   ],
   secretPolicy: () => "passthrough",
   managedSecretSlots: [],
-  materialize: (settings) => settings,
 };

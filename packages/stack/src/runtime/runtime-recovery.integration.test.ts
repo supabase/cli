@@ -21,7 +21,6 @@ const stackId = StackIdSchema.make("e".repeat(64));
 const otherStackId = StackIdSchema.make("f".repeat(64));
 const artifact: ContainerArtifact = {
   kind: "container",
-  service: "database",
   image: "example/database:1",
 };
 const key: RuntimeWorkloadKey = {
@@ -37,7 +36,7 @@ const workload = (selected: PlannedWorkload["selected"] = artifact): PlannedWork
   readiness: { mode: "tcp" },
   restart: { maxAttempts: 1, backoffMs: 0 },
   artifacts: {
-    native: { kind: "native", service: "database", release: "1" },
+    native: { kind: "native", release: "1" },
     container: artifact,
   },
   selected,
@@ -432,7 +431,7 @@ describe("runtime recovery", () => {
           waitForReadiness: () => Effect.void,
         });
         const otherKey = { ...key, stackId: otherStackId };
-        const nativeWorkload = workload({ kind: "native", service: "database", release: "1" });
+        const nativeWorkload = workload({ kind: "native", release: "1" });
         yield* runtime.start(key, nativeWorkload);
         yield* runtime.start(otherKey, { ...nativeWorkload, id: otherKey.workloadId });
         yield* runtime.cleanup({ stackId, destroy: true });
@@ -459,7 +458,7 @@ describe("runtime recovery", () => {
             }),
           waitForReadiness: () => Effect.void,
         });
-        const nativeWorkload = workload({ kind: "native", service: "database", release: "1" });
+        const nativeWorkload = workload({ kind: "native", release: "1" });
         yield* runtime.start(key, nativeWorkload);
         const otherKey = { ...key, stackId: otherStackId };
         yield* runtime.start(otherKey, { ...nativeWorkload, id: otherKey.workloadId });

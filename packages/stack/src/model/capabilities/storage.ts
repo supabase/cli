@@ -104,11 +104,11 @@ export const StorageModule: CapabilityModule<StorageSettings> = {
   dependencies: ["database"],
   releases: {
     "v1.72.1": release("v1.72.1", [
-      workload("storage", "storage", "v1.72.1", "ghcr.io/supabase/cli/storage:v1.72.1", {
+      workload("storage", "storage", {
         dependencies: ["database:database"],
         readiness: { mode: "http", portField: "api" },
       }),
-      workload("imgproxy", "storage", "v3.8.0", "ghcr.io/supabase/cli/imgproxy:v3.8.0", {
+      workload("imgproxy", "storage", {
         readiness: { mode: "http" },
       }),
     ]),

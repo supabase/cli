@@ -229,14 +229,9 @@ const isWorkloadResource = (
 ): entry is ContainerResource & { readonly labels: ContainerWorkloadLabels } =>
   entry.kind === "workload" && entry.labels.role === "workload";
 
-const isManagedContainer = (
-  entry: ContainerResource,
-): entry is ContainerResource & { readonly labels: ContainerWorkloadLabels } =>
-  entry.kind === "workload" && entry.labels.role === "workload";
-
 /** Startup containers use the deterministic suffix emitted by startupLabelsFor. */
 const isStartupContainer = (entry: ContainerResource): boolean =>
-  isManagedContainer(entry) && /^.+:startup:(?:0|[1-9]\d*)$/.test(entry.labels.specHash);
+  isWorkloadResource(entry) && /^.+:startup:(?:0|[1-9]\d*)$/.test(entry.labels.specHash);
 
 const isNetworkResource = (
   entry: ContainerResource,
@@ -533,7 +528,7 @@ export const makeContainerRuntime = (
           (entry) => entry.kind === "workload" && entry.name === nameFor(key, "workload"),
         );
         const collision =
-          namedCollision !== undefined && isManagedContainer(namedCollision)
+          namedCollision !== undefined && isWorkloadResource(namedCollision)
             ? namedCollision
             : undefined;
         if (
@@ -816,7 +811,7 @@ export const makeContainerRuntime = (
 
           // Stop and remove every stack workload before touching its network. A failed
           // stop does not prevent the remove attempt; all failures are returned together.
-          for (const entry of owned.filter(isManagedContainer)) {
+          for (const entry of owned.filter(isWorkloadResource)) {
             if (entry.state === "running")
               yield* attempt(
                 withEngine(
@@ -909,7 +904,7 @@ export const makeContainerRuntime = (
 
           // Recovery never starts or creates anything. Workload identities are evaluated before
           // retaining the network so stale resources cannot leak into the new owner.
-          for (const entry of owned.filter(isManagedContainer)) {
+          for (const entry of owned.filter(isWorkloadResource)) {
             const hash = desiredHashes.get(entry.labels.workloadId);
             const current =
               entry.labels.desiredGeneration === request.desiredGeneration &&

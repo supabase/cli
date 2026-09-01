@@ -23,10 +23,10 @@ const workload = (
   readiness: { mode: "tcp" },
   restart,
   artifacts: {
-    native: { kind: "native", service: id, release: "test" },
-    container: { kind: "container", service: id, image: `test/${id}` },
+    native: { kind: "native", release: "test" },
+    container: { kind: "container", image: `test/${id}` },
   },
-  selected: { kind: "native", service: id, release: "test" },
+  selected: { kind: "native", release: "test" },
   specHash: id,
 });
 const planFor = (workloads: ReadonlyArray<PlannedWorkload>): ExecutionPlan => ({

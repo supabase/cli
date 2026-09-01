@@ -94,15 +94,76 @@ const planned = (id: string): PlannedWorkload => {
     readiness: { mode: "tcp" },
     restart: { maxAttempts: 1, backoffMs: 0 },
     artifacts: {
-      native: { kind: "native", service: entry.service, release: entry.nativeVersion },
-      container: { kind: "container", service: entry.service, image: entry.containerImage },
+      native: { kind: "native", release: entry.nativeVersion },
+      container: { kind: "container", image: entry.containerImage },
     },
-    selected: { kind: "native", service: entry.service, release: entry.nativeVersion },
+    selected: { kind: "native", release: entry.nativeVersion },
     specHash: `${capability}:${name}`,
   };
 };
 
 describe("workload runtime catalog", () => {
+  it.live("consumes persisted runtime defaults without rebuilding them", () =>
+    Effect.gen(function* () {
+      const compiled = yield* compileStack({
+        projectRoot: state.identity.projectRoot,
+        runtime: { kind: "native" },
+      }).pipe(Effect.provide(NodeServices.layer));
+      const configured: PersistedStackState = { ...state, definition: compiled.definition };
+      const rest = planned("rest:rest");
+      expect(runtimeSpecFor(rest)?.env(configured, rest, 3000)).toMatchObject({
+        PGRST_DB_SCHEMAS: "public,graphql_public",
+        PGRST_DB_EXTRA_SEARCH_PATH: "public,extensions",
+        PGRST_DB_MAX_ROWS: "1000",
+      });
+      const auth = planned("auth:auth");
+      expect(runtimeSpecFor(auth)?.env(configured, auth, 3000)).toMatchObject({
+        GOTRUE_SITE_URL: "http://127.0.0.1:3000",
+        GOTRUE_JWT_EXP: "3600",
+        GOTRUE_SMTP_ADMIN_EMAIL: "admin@email.com",
+        GOTRUE_SMTP_SENDER_NAME: "Admin",
+      });
+      const storage = planned("storage:storage");
+      expect(runtimeSpecFor(storage)?.env(configured, storage, 5000)).toMatchObject({
+        FILE_SIZE_LIMIT: "52428800",
+        ENABLE_IMAGE_TRANSFORMATION: "false",
+        S3_PROTOCOL_ENABLED: "true",
+        S3_PROTOCOL_ACCESS_KEY_ID: "625729a08b95bf1b7ff351a663f3a23c",
+        STORAGE_S3_REGION: "local",
+      });
+      const realtime = planned("realtime:realtime");
+      expect(runtimeSpecFor(realtime)?.env(configured, realtime, 4000)).toMatchObject({
+        MAX_HEADER_LENGTH: "4096",
+      });
+      const functions = planned("functions:edge-runtime");
+      expect(runtimeSpecFor(functions)?.env(configured, functions, 9000)).toMatchObject({
+        FUNCTIONS_ROOT: `${state.identity.projectRoot}/supabase/functions`,
+        EDGE_RUNTIME_POLICY: "per_worker",
+        EDGE_RUNTIME_DENO_VERSION: "2",
+      });
+      expect(runtimeSpecFor(functions)?.args(configured, functions, 9000)).toContain(
+        "--policy=per_worker",
+      );
+
+      const bigquery = yield* compileStack({
+        projectRoot: state.identity.projectRoot,
+        runtime: { kind: "native" },
+        config: { capabilities: { analytics: { settings: { backend: "bigquery" } } } },
+      }).pipe(Effect.provide(NodeServices.layer));
+      const analytics = planned("analytics:analytics");
+      expect(
+        runtimeSpecFor(analytics)?.env(
+          { ...state, definition: bigquery.definition },
+          analytics,
+          4000,
+        ),
+      ).toMatchObject({
+        GOOGLE_PROJECT_ID: "local",
+        GOOGLE_PROJECT_NUMBER: "0",
+      });
+    }).pipe(Effect.provide(NodeServices.layer)),
+  );
+
   it.live("derives one closed private binding intent for every planned workload binding", () =>
     Effect.gen(function* () {
       const compiled = yield* compileStack({
@@ -209,7 +270,7 @@ describe("workload runtime catalog", () => {
       expect(spec.env(state, workload, port).SUPABASE_STACK_WORKLOAD).toBe(id);
       expect(spec.readiness.protocol).toMatch(/http|tcp/u);
       expect(spec.args(state, workload, port)).toBeInstanceOf(Array);
-      expect(spec.cwd(state, workload)).toBeTruthy();
+      expect(typeof spec.cwd(state, workload)).toBe("string");
       expect(spec.privateEndpoint(state, spec.readiness.binding)).toEqual({
         host: "127.0.0.1",
         port: expect.any(Number),
@@ -218,7 +279,9 @@ describe("workload runtime catalog", () => {
         host: WORKLOAD_CATALOG[id]?.containerAlias,
         port: spec.bindings[spec.readiness.binding]?.containerPort,
       });
-      expect(spec.networkAliases).toEqual([WORKLOAD_CATALOG[id]?.containerAlias]);
+      expect(containerResolutionFor(state, workload)?.networkAliases).toEqual([
+        WORKLOAD_CATALOG[id]?.containerAlias,
+      ]);
     }
   });
 
@@ -247,11 +310,16 @@ describe("workload runtime catalog", () => {
         { address: "127.0.0.1", hostPort: 30011, containerPort: 1025 },
         { address: "127.0.0.1", hostPort: 30012, containerPort: 1110 },
       ]);
-      expect(runtimeSpecFor(mail)?.env(state, mail, 8025)).toMatchObject({
+      expect(runtimeSpecFor(mail)?.env(state, mail, 30010)).toMatchObject({
         MP_UI_BIND_ADDR: "127.0.0.1:30010",
         MP_SMTP_BIND_ADDR: "127.0.0.1:30011",
         MP_POP3_BIND_ADDR: "127.0.0.1:30012",
       });
+      const realtime = planned("realtime:realtime");
+      expect(runtimeSpecFor(realtime)?.env(state, realtime, 32000).PORT).toBe("32000");
+      expect(
+        runtimeSpecFor(realtime)?.env(state, realtime, 32000).SUPABASE_STACK_PRIVATE_PORT,
+      ).toBe("32000");
       const secondState: PersistedStackState = {
         ...state,
         privatePorts: state.privatePorts.map((assignment) => ({
@@ -640,12 +708,6 @@ describe("workload runtime catalog", () => {
         expect(
           analytics?.env(configured, planned("analytics:analytics"), 4000, "container"),
         ).not.toHaveProperty("LOGFLARE_PUBLIC_ACCESS_TOKEN");
-        expect(analytics?.env(state, planned("analytics:analytics"), 4000, "native")).toMatchObject(
-          {
-            DB_USERNAME: "supabase_admin",
-            POSTGRES_BACKEND_URL: expect.stringContaining("/_supabase"),
-          },
-        );
         expect(
           analytics?.containerMounts?.(configured, planned("analytics:analytics"), analyticsInputs),
         ).toEqual([
@@ -662,7 +724,7 @@ describe("workload runtime catalog", () => {
           [],
         );
         const pooler = runtimeSpecFor(planned("pooler:pooler"));
-        expect(pooler?.env(configured, planned("pooler:pooler"), 6543)).toMatchObject({
+        expect(pooler?.env(configured, planned("pooler:pooler"), 30016)).toMatchObject({
           POOL_MODE: "session",
           MAX_CLIENT_CONN: "250",
           TENANT_ID: "pooler-dev",
@@ -783,7 +845,7 @@ describe("workload runtime catalog", () => {
           runtimeSpecFor(planned("analytics:vector"))?.env(
             configured,
             planned("analytics:vector"),
-            9001,
+            30014,
             "native",
           ).VECTOR_API_ADDRESS,
         ).toBe("127.0.0.1:30014");
@@ -1164,11 +1226,19 @@ describe("workload runtime catalog", () => {
             APP_SECRET: "value",
             EMPTY_SECRET: "",
             EDGE_RUNTIME_PORT: "secret-collision",
+            SUPABASE_INTERNAL_JWT_SECRET: "forbidden-jwt",
+            SUPABASE_INTERNAL_PUBLISHABLE_KEY: "forbidden-publishable",
+            SUPABASE_INTERNAL_SECRET_KEY: "forbidden-secret",
+            SUPABASE_INTERNAL_HOST_PORT: "forbidden-port",
+            SUPABASE_JWKS: "forbidden-jwks",
           },
         },
       });
       expect(symmetric?.env).toMatchObject({
         SUPABASE_INTERNAL_JWT_SECRET: "symmetric-secret",
+        SUPABASE_INTERNAL_PUBLISHABLE_KEY: "sb_publishable_test",
+        SUPABASE_INTERNAL_SECRET_KEY: "sb_secret_test",
+        SUPABASE_INTERNAL_HOST_PORT: "54321",
         SUPABASE_JWKS: '{"keys":[{"kty":"EC"}]}',
         APP_SECRET: "value",
         EMPTY_SECRET: "",

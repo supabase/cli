@@ -32,10 +32,10 @@ const workload = (id: string, bootstrap?: "database"): PlannedWorkload => ({
   readiness: { mode: "tcp" },
   restart: { maxAttempts: 1, backoffMs: 0 },
   artifacts: {
-    native: { kind: "native", service: id, release: "test" },
-    container: { kind: "container", service: id, image: `test/${id}` },
+    native: { kind: "native", release: "test" },
+    container: { kind: "container", image: `test/${id}` },
   },
-  selected: { kind: "native", service: id, release: "test" },
+  selected: { kind: "native", release: "test" },
   specHash: id,
 });
 
@@ -290,7 +290,6 @@ describe("native runtime", { timeout: 15_000 }, () => {
               new LogStoreError({ path: "memory://failing-log-store", message: "disk full" }),
             ),
           read: () => Effect.succeed([]),
-          retained: () => Effect.succeed([]),
           stream: () => Stream.empty,
         };
         const runtime = yield* makeNativeRuntime({
@@ -652,7 +651,6 @@ describe("native runtime", { timeout: 15_000 }, () => {
               }),
             ),
           read: () => Effect.succeed([]),
-          retained: () => Effect.succeed([]),
           stream: () => Stream.empty,
         };
         const runtime = yield* makeNativeRuntime({
@@ -808,7 +806,6 @@ describe("native runtime", { timeout: 15_000 }, () => {
               return yield* Deferred.await(appendFailure);
             }),
           read: () => Effect.succeed([]),
-          retained: () => Effect.succeed([]),
           stream: () => Stream.empty,
         };
         const runtime = yield* makeNativeRuntime({

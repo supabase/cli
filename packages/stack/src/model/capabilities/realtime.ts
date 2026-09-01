@@ -17,7 +17,7 @@ export const RealtimeModule: CapabilityModule<RealtimeSettings> = {
   dependencies: ["database"],
   releases: {
     "v2.130.0": release("v2.130.0", [
-      workload("realtime", "realtime", "v2.130.0", "ghcr.io/supabase/cli/realtime:v2.130.0", {
+      workload("realtime", "realtime", {
         dependencies: ["database:database"],
         readiness: { mode: "http", portField: "api" },
       }),
@@ -26,5 +26,4 @@ export const RealtimeModule: CapabilityModule<RealtimeSettings> = {
   routes: [{ listener: "api", protocol: "http" }],
   secretPolicy: () => "passthrough",
   managedSecretSlots: [],
-  materialize: (settings) => settings,
 };

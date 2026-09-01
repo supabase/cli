@@ -1,6 +1,6 @@
 import { PgClient } from "@effect/sql-pg";
-import { Context, Duration, Effect, Layer, Redacted, Schema, Scope } from "effect";
-import type { SqlError } from "effect/unstable/sql/SqlError";
+import { Context, Duration, Effect, Layer, Predicate, Redacted, Schema, Scope } from "effect";
+import { isSqlError, type SqlError } from "effect/unstable/sql/SqlError";
 import {
   DatabaseBootstrapError,
   type DatabaseBootstrapSetting,
@@ -37,7 +37,15 @@ const sqlFailure = (operation: string): DatabaseBootstrapError =>
 const mapSqlError =
   (operation: string) =>
   (error: unknown): DatabaseBootstrapError =>
-    error instanceof DatabaseBootstrapError ? error : sqlFailure(operation);
+    error instanceof DatabaseBootstrapError
+      ? error
+      : new DatabaseBootstrapError({
+          message: `Database bootstrap ${operation} failed`,
+          retryable:
+            isSqlError(error) &&
+            (error.isRetryable ||
+              (operation === "connection" && Predicate.isTagged(error.reason, "UnknownError"))),
+        });
 
 const GeneratedStatementSchema = Schema.Struct({ statement: Schema.String });
 
