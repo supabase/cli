@@ -1,4 +1,6 @@
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { spawnSync } from "node:child_process";
+import { closeSync, existsSync, mkdirSync, openSync, readFileSync, writeFileSync } from "node:fs";
+import process from "node:process";
 import { join } from "node:path";
 import { BunServices } from "@effect/platform-bun";
 import { describe, expect, it } from "@effect/vitest";
@@ -951,6 +953,33 @@ describe("legacy db dump integration", () => {
   const UNICODE_SQL = "insert into t values ('Oranges \u{1F34A}', 'd\u00f6Terra');\n";
   const NON_ASCII_WARNING = "The dump contains non-ASCII characters";
   const PIPED_WIN32 = { platform: "win32", stdoutIsPipe: true } as const;
+
+  // Real-runtime probe of the classification `ttyLayer` ships for
+  // `stdoutIsPipe`. A shell pipeline is used for the pipe case: spawnSync's
+  // own "pipe" stdio is a socketpair under Bun, which fstats as a socket.
+  const PROBE = 'process.stdout.write(String(require("node:fs").fstatSync(1).isFIFO()));';
+
+  it.skipIf(process.platform === "win32")("classifies a real piped stdout as a pipe", () => {
+    const result = spawnSync("/bin/sh", ["-c", `"${process.execPath}" -e '${PROBE}' | cat`], {
+      encoding: "utf8",
+    });
+    expect(result.status).toBe(0);
+    expect(result.stdout).toBe("true");
+  });
+
+  it.skipIf(process.platform === "win32")("classifies a file-backed stdout as not a pipe", () => {
+    const file = join(tmp.current, "pipe-probe.txt");
+    const fd = openSync(file, "w");
+    try {
+      const result = spawnSync(process.execPath, ["-e", PROBE], {
+        stdio: ["ignore", fd, "inherit"],
+      });
+      expect(result.status).toBe(0);
+    } finally {
+      closeSync(fd);
+    }
+    expect(readFileSync(file, "utf8")).toBe("false");
+  });
 
   it.live("windows: warns when a piped stdout dump contains non-ASCII text", () => {
     const { layer, out } = setup({ isLocal: true, stdout: UNICODE_SQL, ...PIPED_WIN32 });
