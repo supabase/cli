@@ -100,8 +100,9 @@ surface must update that test deliberately — it is not meant to be a silent pa
 `dist/` is gitignored and rebuilt on demand — no build output is checked in. The public type
 surface is instead enforced per-PR by export snapshots and purity walkers (see "Testing" below)
 plus the repo-root `pnpm check:config-api` (`tools/config-api-compare.ts`), which diffs this
-package's declaration output between the PR base and head commits and is advisory at PR time. A
-release-time tarball diff is planned under CLI-2233 as the hard gate.
+package's declaration output between the PR base and head commits and is advisory at PR time. The
+hard gate is a release-time tarball diff — `tools/config-release-gate.ts`, run by the `plan` job in
+`.github/workflows/release-config.yml` — see "Releases" below.
 
 ### Publishing the tarball (CLI-2234)
 
@@ -132,3 +133,47 @@ own guarantees and must stay green after any entrypoint or type-surface change:
 - `scripts/json-schema-postprocess.unit.test.ts` / `scripts/build-artifacts.unit.test.ts` — the
   JSON Schema post-processing `renderJsonSchema` applies (non-finite-number `anyOf` collapse,
   `$id`/`title`/`description`), the second against the real generated documents.
+
+## Releases (CLI-2233)
+
+This package has its own release train, independent of the CLI's — a `fix:`/`feat:` commit
+elsewhere in the monorepo never releases `@supabase/config`, and vice versa.
+
+- **Path-filtered conventional commits.** `semantic-release` computes the next version from commits
+  scoped to `packages/config/` via `scripts/semantic-release-path-filter.ts`.
+- **Tag format:** `config-v<version>` — never collides with the CLI's `v<version>` tags.
+- **Stable-only, from `develop`.** No beta/alpha channel; every release publishes to npm under the
+  `latest` dist-tag.
+- **Workflow:** `.github/workflows/release-config.yml` — a `plan` job computes the version, packs
+  the release tarball, and runs the type-surface gate against the declarations inside that tarball;
+  a human approves the `config-release` GitHub environment (reviewing the plan job's step summary:
+  release notes + type-surface diff); then an OIDC/provenance publish job publishes **that exact
+  tarball** (`npm publish <tgz> --ignore-scripts` — no rebuild, no repack, no lifecycle scripts:
+  the approved bytes are the published bytes).
+- **`package.json`'s committed `version` (`0.1.0`) is a placeholder.** The real version is stamped
+  into the tarball at pack time (`npm pkg set version` in the plan job) from the computed version —
+  never hand-bump the committed field, and never hand-push a `config-v*` tag.
+- **Local dry runs:** `scripts/release-plan.ts` runs the plan locally without publishing;
+  `tools/config-release-gate.ts --tarball` rehearses the type-surface gate locally.
+
+### One-time setup (tracked under CLI-2169)
+
+Four things must be settled before the first real publish:
+
+1. The `config-release` GitHub environment needs required reviewers configured in repo settings. An
+   environment referenced by a workflow is auto-created WITHOUT protection rules — the plan job
+   asserts the rule exists and refuses to plan a real release until it does, so the first release
+   attempt fails closed rather than publishing unreviewed.
+2. npm trusted publishing must be configured for the package, which requires the package to exist
+   first. The very first publish is a manual bootstrap — use a granular, single-package,
+   short-expiry token and revoke it as soon as the trusted publisher is configured (repo
+   `supabase/cli`, workflow `release-config.yml`, environment `config-release`).
+3. Push a baseline `config-v*` tag (e.g. `config-v0.1.0`) on a `develop` commit. This is required,
+   not optional: with no baseline, semantic-release would cut `1.0.0` with release notes generated
+   from the entire monorepo history — a whole-history changelog as both the approval artifact and
+   the public GH release body. `scripts/release-plan.ts` refuses to plan without a baseline tag
+   (escape hatch: `CONFIG_RELEASE_ALLOW_NO_BASELINE=1`). This is the single exception to the
+   "never hand-push a `config-v*` tag" rule above.
+4. Add a repository tag ruleset protecting `config-v*` (alongside `v*`), restricted to the release
+   App. The last `config-v*` tag is the version oracle: a stray hand-pushed tag permanently skews
+   versioning, and a deleted tag makes the next plan re-cut an already-published version.

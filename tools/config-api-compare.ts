@@ -22,17 +22,26 @@
  * `.d.ts` trees.
  *
  * Advisory at PR time (a base-vs-head diff has no acceptance artifact to
- * gate on); the hard release-time gate is tracked under CLI-2233.
+ * gate on); the hard release-time gate is `tools/config-release-gate.ts`,
+ * run by `.github/workflows/release-config.yml` (CLI-2233).
  *
  * Exit codes: 0 identical (or compare skipped), 1 surface differs, 2 tool
  * failure.
  */
 
-import { appendFile, cp, mkdir, mkdtemp, readFile, rm } from "node:fs/promises";
+import { cp, mkdir, mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import process from "node:process";
 import { parseArgs } from "node:util";
+import {
+  type CompareResult,
+  countByStatus,
+  countDeclarationFiles,
+  diffDeclarationTrees,
+  renderDiffDetailsBlocks,
+  writeStepSummary,
+} from "./lib/dts-diff.ts";
 
 const repoRoot = path.resolve(import.meta.dir, "..");
 const packageRoot = path.join(repoRoot, "packages", "config");
@@ -283,24 +292,6 @@ interface EmitResult {
   readonly fileCount: number;
 }
 
-async function countDeclarationFiles(dir: string): Promise<number> {
-  const glob = new Bun.Glob("**/*.d.ts");
-  let count = 0;
-  for await (const _relativePath of glob.scan({ cwd: dir })) {
-    count++;
-  }
-  return count;
-}
-
-async function listDeclarationFiles(dir: string): Promise<string[]> {
-  const glob = new Bun.Glob("**/*.d.ts");
-  const relativePaths: string[] = [];
-  for await (const relativePath of glob.scan({ cwd: dir })) {
-    relativePaths.push(relativePath);
-  }
-  return relativePaths.sort();
-}
-
 /**
  * Spawns this package's own `node_modules/.bin/tsc` directly rather than
  * `pnpm exec tsc` (the same corepack-avoidance lesson as the old
@@ -328,98 +319,6 @@ async function emitDeclarations(
   ]);
   const fileCount = await countDeclarationFiles(outDir);
   return { exitCode, stdout, stderr, fileCount };
-}
-
-async function unifiedDiff(
-  oldPath: string,
-  newPath: string,
-  oldLabel: string,
-  newLabel: string,
-): Promise<string> {
-  const proc = Bun.spawn(["diff", "-u", "-L", oldLabel, "-L", newLabel, oldPath, newPath], {
-    stdout: "pipe",
-    stderr: "pipe",
-  });
-  const [, stdout] = await Promise.all([proc.exited, new Response(proc.stdout).text()]);
-  return stdout;
-}
-
-interface FileEntry {
-  readonly status: "added" | "removed" | "changed";
-  readonly path: string;
-  readonly diff: string;
-}
-
-interface CompareResult {
-  readonly identical: boolean;
-  readonly entries: readonly FileEntry[];
-}
-
-/** Diffs the two emitted `.d.ts` trees (`**\/*.d.ts` only — the glob itself never matches `.d.ts.map`). */
-async function diffDeclarationTrees(headDir: string, baseDir: string): Promise<CompareResult> {
-  const [headFiles, baseFiles] = await Promise.all([
-    listDeclarationFiles(headDir),
-    listDeclarationFiles(baseDir),
-  ]);
-  const headSet = new Set(headFiles);
-  const baseSet = new Set(baseFiles);
-
-  const entries: FileEntry[] = [];
-
-  for (const relativePath of headFiles) {
-    if (!baseSet.has(relativePath)) {
-      entries.push({
-        status: "added",
-        path: relativePath,
-        diff: await unifiedDiff(
-          "/dev/null",
-          path.join(headDir, relativePath),
-          "/dev/null",
-          `head/${relativePath}`,
-        ),
-      });
-      continue;
-    }
-
-    const [headContent, baseContent] = await Promise.all([
-      readFile(path.join(headDir, relativePath), "utf8"),
-      readFile(path.join(baseDir, relativePath), "utf8"),
-    ]);
-    if (headContent !== baseContent) {
-      entries.push({
-        status: "changed",
-        path: relativePath,
-        diff: await unifiedDiff(
-          path.join(baseDir, relativePath),
-          path.join(headDir, relativePath),
-          `base/${relativePath}`,
-          `head/${relativePath}`,
-        ),
-      });
-    }
-  }
-
-  for (const relativePath of baseFiles) {
-    if (!headSet.has(relativePath)) {
-      entries.push({
-        status: "removed",
-        path: relativePath,
-        diff: await unifiedDiff(
-          path.join(baseDir, relativePath),
-          "/dev/null",
-          `base/${relativePath}`,
-          "/dev/null",
-        ),
-      });
-    }
-  }
-
-  entries.sort((a, b) => a.path.localeCompare(b.path));
-  return { identical: entries.length === 0, entries };
-}
-
-function countByStatus(entries: readonly FileEntry[], status: FileEntry["status"]): number {
-  return entries.filter((entry) => entry.status === status).length;
 }
 
 function renderTextReport(baseLabel: string, headLabel: string, result: CompareResult): string {
@@ -450,7 +349,8 @@ function renderMarkdownSummary(
     "## Config type-surface diff (advisory)",
     "",
     `Comparing \`${baseLabel}\` against \`${headLabel}\` for \`@supabase/config\`'s compiled ` +
-      "declaration surface. Advisory only — see CLI-2233 for the planned release-time hard gate.",
+      "declaration surface. Advisory only — the release-time hard gate is " +
+      "`tools/config-release-gate.ts`, run by the Release Config workflow (CLI-2233).",
     "",
   ];
   if (result.identical) {
@@ -464,18 +364,7 @@ function renderMarkdownSummary(
       `${countByStatus(result.entries, "changed")} changed**`,
     "",
   );
-  for (const entry of result.entries) {
-    lines.push(
-      `<details><summary>${entry.status}: <code>${entry.path}</code></summary>`,
-      "",
-      "```diff",
-      entry.diff.trimEnd(),
-      "```",
-      "",
-      "</details>",
-      "",
-    );
-  }
+  lines.push(...renderDiffDetailsBlocks(result.entries));
   return lines.join("\n");
 }
 
@@ -501,14 +390,6 @@ function renderSkippedSummary(baseLabel: string, headLabel: string, baseEmit: Em
       'to emit against the current install\'s dependencies is treated as "nothing to compare" ' +
       "rather than a false positive.",
   ].join("\n");
-}
-
-async function writeStepSummary(markdown: string): Promise<void> {
-  const summaryPath = process.env.GITHUB_STEP_SUMMARY;
-  if (!summaryPath) {
-    return;
-  }
-  await appendFile(summaryPath, `${markdown}\n`);
 }
 
 async function main(): Promise<number> {

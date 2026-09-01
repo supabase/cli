@@ -79,10 +79,13 @@
   "devDependencies": {
     "@effect/platform-bun": "catalog:",
     "@effect/platform-node": "catalog:",
+    "@semantic-release/commit-analyzer": "^13.0.1",
+    "@semantic-release/release-notes-generator": "^14.1.1",
     "@tsconfig/bun": "catalog:",
     "@types/bun": "catalog:",
     "@vitest/coverage-istanbul": "catalog:",
     "effect": "catalog:",
+    "semantic-release": "catalog:",
     "typescript": "catalog:",
     "vite": "^6.0.0 || ^7.0.0 || ^8.0.0",
     "vitest": "catalog:"
