@@ -5,11 +5,13 @@ name: AI Review
 # exhaustive pass that runs at most once per PR. See
 # .github/ai-review/README.md for the full design and security model.
 #
-# Two ways to trigger a run today:
+# Three ways to trigger a run:
 #   - workflow_dispatch, for testing / ad-hoc runs against any PR number.
 #   - an internal maintainer commenting `/ai-review` on a PR.
-# The `pull_request` trigger below is intentionally commented out (shadow
-# mode) until the prompts are tuned against real PRs — see the README.
+#   - automatically, when a PR opens or leaves draft. resolve.ts gates the
+#     automatic path to PR authors with repository write access; external
+#     contributors' PRs are skipped and go through the manual `/ai-review`
+#     maintainer path instead.
 on:
   workflow_dispatch:
     inputs:
@@ -20,14 +22,10 @@ on:
   issue_comment:
     types:
       - created
-  # Shadow-mode rollout: uncomment once the prompts have been tuned against
-  # recent real PRs (see .github/ai-review/README.md), and disable the Codex
-  # GitHub App's automatic reviews (chatgpt.com/codex/settings/code-review)
-  # in the same change so the two don't double-review every PR.
-  # pull_request:
-  #   types:
-  #     - opened
-  #     - ready_for_review
+  pull_request:
+    types:
+      - opened
+      - ready_for_review
 
 permissions: {}
 
@@ -44,7 +42,7 @@ env:
 # (even one that isn't `/ai-review`) would cancel an in-flight review via
 # `cancel-in-progress`. Give those runs their own per-run group so they can
 # never cancel a real review; only genuine `/ai-review` comments, dispatches,
-# and (future) `pull_request` events share the PR's group. The command test is
+# and `pull_request` events share the PR's group. The command test is
 # exact equality (`!= '/ai-review'`), mirroring resolve.ts's first-line check —
 # `startsWith` would let a near-miss like `/ai-reviewers` (which resolve.ts
 # rejects) land in the shared group and cancel a running review anyway.
@@ -85,8 +83,8 @@ jobs:
       trigger: ${{ steps.resolve.outputs.trigger }}
     steps:
       # Base repo, default ref, pinned explicitly — this job runs trusted
-      # repository code exclusively, and must keep doing so even if the
-      # `pull_request` trigger above is ever uncommented.
+      # repository code exclusively, and must keep doing so even though the
+      # `pull_request` trigger above hands it PR-authored event payloads.
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           ref: ${{ github.event.repository.default_branch }}

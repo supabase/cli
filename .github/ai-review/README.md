@@ -32,8 +32,8 @@ resolve  ──────>┤                 ├──> adjudicate ──> po
 
 - **`resolve`** (`.github/scripts/ai-review/resolve.ts`) decides whether this
   run should happen at all. It applies the once-per-PR dedup guard, the
-  draft/bot/fork skips (for the future automatic trigger), and authorization
-  for manual `/ai-review` requests. There is no size cap: the models review
+  automatic trigger's draft/bot/fork skips and author write-access gate, and
+  authorization for manual `/ai-review` requests. There is no size cap: the models review
   agentically — reading the diff and the changed files via their own tools over
   many turns, like the local CLI — so PRs of any size are reviewed (very large
   diffs best-effort, within the model's context/turn budget). One caveat: the
@@ -71,25 +71,26 @@ on the same PR:
 Both bypass the dedup guard and the draft/fork/bot skips (a human explicitly
 asked).
 
-## Rollout
+## Automatic trigger
 
-The pipeline currently runs only on-demand (`workflow_dispatch` or
-`/ai-review`) — the `pull_request` trigger in the workflow is commented out
-("shadow mode"). Rollout plan:
+The `pull_request` trigger (`opened` / `ready_for_review`) is live. The
+automatic path is **internal PRs only**: `resolve.ts` skips drafts, bots, and
+fork PRs, and requires the PR author to hold effective repository **write
+access** (`admin`/`write`, the same `WRITE_PERMISSIONS` gate as the manual
+`/ai-review` path). A same-repo branch already implies the author could push,
+so the permission lookup is defense-in-depth — it also catches access revoked
+since the branch was pushed. External contributors' PRs are never reviewed
+automatically; a maintainer comments `/ai-review` to request one.
 
-1. Run it manually against a sample of recent real PRs; tune the two prompts
-   in this directory against what it actually produces. **This only works
-   end-to-end once the current security fixes are merged to `develop`**: the
-   prompts, schemas, and validation script are read from a trusted checkout of
-   the _default branch_ (not the PR under review), and `post-review` checks
-   out `develop` explicitly — so prompt/script tweaks on a feature branch
-   don't take effect until they land on `develop`. Use `workflow_dispatch`
-   against real merged/in-flight PRs post-merge to iterate.
-2. Once satisfied, uncomment the `pull_request` trigger block in
-   `ai-review.yml`.
-3. In the same change, disable the Codex GitHub App's automatic reviews at
-   <https://chatgpt.com/codex/settings/code-review> so PRs aren't
-   double-reviewed.
+Prompt/script tweaks take effect only once they land on `develop`: the
+prompts, schemas, and validation script are read from a trusted checkout of
+the _default branch_ (not the PR under review), and `post-review` checks out
+`develop` explicitly. Use `workflow_dispatch` against real merged/in-flight
+PRs post-merge to iterate.
+
+The Codex GitHub App's automatic reviews must stay disabled at
+<https://chatgpt.com/codex/settings/code-review> so PRs aren't
+double-reviewed.
 
 `merged-review.schema.json` uses `pattern` (on `category`) and `minItems` (on
 `sources`); some OpenAI structured-output strict-mode implementations have
@@ -161,6 +162,12 @@ run 400s on the output schema because of this, drop `pattern`/`minItems` from
   (`/ai-reviewers`, `/ai-review-please`, etc. don't fire). The workflow's job
   `if:` also pre-filters cheaply on `author_association` as defense-in-depth,
   but `resolve.ts`'s checks are the actual gate.
+- **The automatic trigger requires the PR author to hold write access.**
+  `resolve.ts` resolves the PR author's effective repository permission and
+  requires `admin`/`write` before an automatic review runs, on top of the
+  fork/draft/bot skips — so an external contributor's PR can never spend
+  review budget or feed the models without a maintainer explicitly asking
+  via `/ai-review`.
 - **The only write-capable job runs exclusively trusted code.**
   `post-review` checks out the base branch (`develop`) explicitly and never
   the PR head, so a malicious PR cannot smuggle a change into the one job
