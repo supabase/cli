@@ -850,6 +850,53 @@ describe("legacy workers logs", () => {
     }).pipe(Effect.provide(layer), Effect.ensuring(Effect.sync(repo.cleanup)));
   });
 
+  // A 404 answers the same way every time. Retrying it held the error back for a
+  // minute and spent the endpoint's ten-per-minute allowance getting nowhere.
+  it.live("surfaces a definitive poll failure without retrying it", () => {
+    const repo = project();
+    const { layer, http } = setupLegacyWorkers({
+      workdir: repo.dir,
+      routes: {
+        [LOGS_ROUTE]: [logsResponse([workerLogRow({ id: "a", tsMs: T1 })]), { status: 404 }],
+      },
+    });
+
+    return Effect.gen(function* () {
+      yield* legacyWorkersLogs(flags({ follow: true }), {
+        pollSchedule: Schedule.recurs(0),
+        // Would retry three times over if the failure were treated as transient.
+        retrySchedule: Schedule.recurs(3),
+      }).pipe(Effect.flip);
+
+      // History, then the one poll that failed — no second attempt at it.
+      expect(http.requests).toHaveLength(2);
+    }).pipe(Effect.provide(layer), Effect.ensuring(Effect.sync(repo.cleanup)));
+  });
+
+  // A rate limit is the server asking for exactly that, so it still rides out.
+  it.live("retries a rate-limited poll", () => {
+    const repo = project();
+    const { layer, http } = setupLegacyWorkers({
+      workdir: repo.dir,
+      routes: {
+        [LOGS_ROUTE]: [
+          logsResponse([workerLogRow({ id: "a", tsMs: T1 })]),
+          { status: 429 },
+          logsResponse([workerLogRow({ id: "b", tsMs: T2, message: "after the limit" })]),
+        ],
+      },
+    });
+
+    return Effect.gen(function* () {
+      yield* legacyWorkersLogs(flags({ follow: true }), {
+        pollSchedule: Schedule.recurs(0),
+        retrySchedule: Schedule.recurs(3),
+      });
+
+      expect(http.requests).toHaveLength(3);
+    }).pipe(Effect.provide(layer), Effect.ensuring(Effect.sync(repo.cleanup)));
+  });
+
   // `--tail` bounds the history a run opens with; reusing it as the poll size
   // meant `--tail 1 --follow` asked each poll for a single row.
   it.live("polls with a page size independent of --tail", () => {

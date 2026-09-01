@@ -23,7 +23,13 @@ import {
   WORKER_LOG_STREAMS,
 } from "../../../../../shared/workers/worker-logs.sql.ts";
 import { getWorker } from "../../../../../shared/workers/workers-api.ts";
-import { WorkerNotDeployedError } from "../../../../../shared/workers/workers.errors.ts";
+import {
+  WorkerLogsQueryFailedError,
+  WorkerLogsRateLimitedError,
+  WorkerNotDeployedError,
+  WorkersApiNetworkError,
+  WorkersApiUnexpectedStatusError,
+} from "../../../../../shared/workers/workers.errors.ts";
 import { LegacyProjectRefResolver } from "../../../../config/legacy-project-ref.service.ts";
 import { LegacyLinkedProjectCache } from "../../../../telemetry/legacy-linked-project-cache.service.ts";
 import { LegacyTelemetryState } from "../../../../telemetry/legacy-telemetry-state.service.ts";
@@ -87,6 +93,32 @@ const FOLLOW_MAX_PAGES = 5;
 const FOLLOW_READ_RETRY = Schedule.spaced("5 seconds").pipe(
   Schedule.upTo({ duration: "1 minute" }),
 );
+
+/**
+ * Which poll failures are worth spending another request on.
+ *
+ * A tail should ride out a 429 or a momentary blip, but 401, 402 and 404 answer
+ * the same way every time. Retrying those held the error back for a minute and
+ * spent most of the endpoint's ten-requests-per-minute allowance getting nowhere,
+ * so the reader waited longer and then hit a rate limit on top of the real cause.
+ *
+ * Server-side statuses are retried and client-side ones are not, with the
+ * exception of 408 and 429, which are the server asking for exactly that. A
+ * decode failure carries the response's own status, so a malformed 200 body is
+ * correctly read as terminal: it will not parse any better on a second attempt.
+ */
+function isRetryableFollowFailure(error: unknown): boolean {
+  if (error instanceof WorkersApiUnexpectedStatusError) {
+    return error.status >= 500 || error.status === 408 || error.status === 429;
+  }
+  return (
+    error instanceof WorkerLogsRateLimitedError ||
+    error instanceof WorkersApiNetworkError ||
+    // The endpoint reports a rejected or timed-out query this way, and its own
+    // suggestion is to retry shortly.
+    error instanceof WorkerLogsQueryFailedError
+  );
+}
 
 /**
  * Test seams for the follow loop.
@@ -384,8 +416,11 @@ export const legacyWorkersLogs = Effect.fn("legacy.experimental.workers.logs")(f
 
       // A 429 or a blip should not end a tail the user is watching; the schedule is
       // spaced in seconds, so retrying rides out a transient failure without
-      // spending the rate limit.
-      const poll = pollOnce.pipe(Effect.retry({ schedule: readRetrySchedule }));
+      // spending the rate limit. Anything definitive surfaces on the first
+      // attempt — see `isRetryableFollowFailure`.
+      const poll = pollOnce.pipe(
+        Effect.retry({ schedule: readRetrySchedule, while: isRetryableFollowFailure }),
+      );
 
       // `repeat` runs the body before applying the schedule, so the first poll is
       // immediate. That is wanted: it catches anything that landed while the history
