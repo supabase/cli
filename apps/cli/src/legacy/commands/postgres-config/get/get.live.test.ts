@@ -1,0 +1,21 @@
+import { expect } from "vitest";
+
+import { test } from "../../../../../tests/helpers/live.ts";
+
+// A freshly provisioned project can have zero overrides, so the golden path
+// pins the payload shape rather than any key: exit 0 and a JSON object on
+// payload-only stdout.
+test("reads the current config of the target project", async ({ cli, project }) => {
+  const result = await cli([
+    "postgres-config",
+    "get",
+    "--project-ref",
+    project.ref,
+    "--experimental",
+    "-o",
+    "json",
+  ]);
+  expect(result.exitCode, result.stderr).toBe(0);
+  expect(result.stdout, result.stderr).not.toBe("");
+  expect(JSON.parse(result.stdout), result.stdout).toBeTypeOf("object");
+});
