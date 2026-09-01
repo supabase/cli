@@ -151,20 +151,38 @@ async function fetchColdFunction(
   diagnosticContainers: readonly string[],
   init?: RequestInit,
 ): Promise<Response> {
-  try {
-    const response = await fetch(url, {
-      ...init,
-      signal: AbortSignal.timeout(SERVE_OFFLINE_STARTUP_TIMEOUT_MS),
-    });
-    if (response.status !== 200) {
-      throw new Error(`Received ${response.status} from ${url}`);
+  // Runtime health does not start user workers, and Edge Runtime exposes no
+  // per-worker readiness signal. A cold worker can briefly disconnect or
+  // return 502/503, so retry only those transient outcomes.
+  const deadline = Date.now() + SERVE_OFFLINE_STARTUP_TIMEOUT_MS;
+  let lastError: unknown;
+
+  for (;;) {
+    try {
+      const response = await fetch(url, {
+        ...init,
+        signal: AbortSignal.timeout(Math.max(1, deadline - Date.now())),
+      });
+      if (response.status !== 502 && response.status !== 503) {
+        return response;
+      }
+      lastError = new Error(`Received ${response.status} from ${url}`);
+      await response.body?.cancel();
+    } catch (error) {
+      lastError = error;
     }
-    return response;
-  } catch (cause) {
-    const diagnostics = diagnosticContainers
-      .map((container) => `${container} logs:\n${containerLogs(container)}`)
-      .join("\n");
-    throw new Error(`Function at ${url} did not become ready.\n${diagnostics}`, { cause });
+
+    const remainingMs = deadline - Date.now();
+    if (remainingMs <= 0) {
+      const diagnostics = diagnosticContainers
+        .map((container) => `${container} logs:\n${containerLogs(container)}`)
+        .join("\n");
+      throw new Error(`Function at ${url} did not become ready.\n${diagnostics}`, {
+        cause: lastError,
+      });
+    }
+
+    await Bun.sleep(Math.min(250, remainingMs));
   }
 }
 
