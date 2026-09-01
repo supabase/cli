@@ -93,7 +93,7 @@ jobs:
 
       - uses: jdx/mise-action@3c2e0cf82a5b2e5249f0d3635a4d83d0ae861518 # v4
         with:
-          version: 2026.7.0
+          version: 2026.9.0
           install: true
           install_args: >-
             go
