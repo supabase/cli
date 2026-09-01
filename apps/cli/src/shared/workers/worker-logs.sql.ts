@@ -83,7 +83,7 @@ export const WORKER_LOG_POLL_SECONDS = 10;
  * Wider than one poll interval, so a line delayed by a full cycle is still
  * inside the next window.
  */
-export const WORKER_LOG_CURSOR_GRACE_SECONDS = 60;
+const WORKER_LOG_CURSOR_GRACE_SECONDS = 60;
 
 /**
  * Timestamps for the endpoint's `iso_timestamp_start`/`iso_timestamp_end`.

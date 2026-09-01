@@ -1,16 +1,33 @@
 import { describe, expect, it } from "@effect/vitest";
+import { afterEach, beforeEach, vi } from "vitest";
 import type { WorkerLogEntry } from "../../../../shared/workers/worker-logs-api.ts";
 import { legacyRenderWorkerLogLine, legacyWorkerLogLevel } from "./workers-logs.format.ts";
 
 const ESCAPE = "\u001b";
 
 /**
- * Colour is decided by the stream, so the tests supply one. This keeps them
- * independent of ambient NO_COLOR / CI / TTY state, and lets the coloured
- * rendering be asserted at all rather than only its absence.
+ * Colour is decided by the stream, so the tests supply one — and by the
+ * environment, so the tests pin that too. `legacySupportsColor` consults
+ * NO_COLOR / CLICOLOR / CLICOLOR_FORCE / CI *before* it ever asks the stream,
+ * so a fake stream alone does not make these deterministic: under CI, where
+ * `CI` is set, a `hasColors: () => true` stream still renders plain.
+ *
+ * Neutralised the same way `legacy-colors.unit.test.ts` does it — empty string
+ * reads as unset for every variable the gate consults.
  */
 const PLAIN = { hasColors: () => false };
 const COLOURED = { hasColors: () => true };
+
+beforeEach(() => {
+  vi.stubEnv("NO_COLOR", "");
+  vi.stubEnv("CLICOLOR", "");
+  vi.stubEnv("CLICOLOR_FORCE", "");
+  vi.stubEnv("CI", "");
+});
+
+afterEach(() => {
+  vi.unstubAllEnvs();
+});
 const AT = Date.parse("2026-08-31T14:45:32.576Z");
 
 /**

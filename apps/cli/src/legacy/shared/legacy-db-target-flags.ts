@@ -121,6 +121,7 @@ export const VALUE_CONSUMING_LONG_FLAGS = new Set([
   "import-map",
   "inspect-mode",
   "instances",
+  "kind",
   "lang",
   "last",
   "metadata-file",
