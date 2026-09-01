@@ -51,7 +51,7 @@ import type { LegacyWorkersDeleteFlags } from "./delete.command.ts";
  * stdout, so merely redirecting output would otherwise delete unattended. This
  * refuses instead, and says which flag would have authorised it.
  */
-export const legacyWorkersDelete = Effect.fn("legacy.workers.delete")(function* (
+export const legacyWorkersDelete = Effect.fn("legacy.experimental.workers.delete")(function* (
   flags: LegacyWorkersDeleteFlags,
 ) {
   const output = yield* Output;

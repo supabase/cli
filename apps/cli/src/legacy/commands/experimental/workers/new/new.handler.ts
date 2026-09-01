@@ -192,7 +192,7 @@ const destinationIsFree = Effect.fnUntraced(function* (target: string) {
   return entries.length === 0;
 });
 
-export const legacyWorkersNew = Effect.fn("legacy.workers.new")(function* (
+export const legacyWorkersNew = Effect.fn("legacy.experimental.workers.new")(function* (
   flags: LegacyWorkersNewFlags,
 ) {
   const fs = yield* FileSystem.FileSystem;
