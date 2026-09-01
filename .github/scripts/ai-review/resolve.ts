@@ -192,11 +192,12 @@ export async function resolveDecision(input: ResolveInput, io: ResolveIo): Promi
   }
 
   // Authoritative auto-trigger authorization: only PRs authored by someone
-  // with effective repository write access are reviewed automatically. A
-  // same-repo branch already implies the author could push when they opened
-  // the PR, so this is defense-in-depth (it also catches access revoked
-  // since); an unresolvable permission counts as unauthorized. Mirrors the
-  // manual path's gate above and `contribution-gate.ts`'s `WRITE_PERMISSIONS`.
+  // with effective repository write access are reviewed automatically. This
+  // is the actual author check, not defense-in-depth — a same-repo head
+  // branch only proves the branch exists in this repo, not that the AUTHOR
+  // pushed it (a PR can be opened from a branch someone else pushed). An
+  // unresolvable permission counts as unauthorized. Mirrors the manual
+  // path's gate above and `contribution-gate.ts`'s `WRITE_PERMISSIONS`.
   const authorPermission = await io.fetchPermission(pr.authorLogin);
   if (authorPermission === undefined || !WRITE_PERMISSIONS.has(authorPermission)) {
     return {

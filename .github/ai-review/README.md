@@ -33,14 +33,14 @@ resolve  ──────>┤                 ├──> adjudicate ──> po
 - **`resolve`** (`.github/scripts/ai-review/resolve.ts`) decides whether this
   run should happen at all. It applies the once-per-PR dedup guard, the
   automatic trigger's draft/bot/fork skips and author write-access gate, and
-  authorization for manual `/ai-review` requests. There is no size cap: the models review
-  agentically — reading the diff and the changed files via their own tools over
-  many turns, like the local CLI — so PRs of any size are reviewed (very large
-  diffs best-effort, within the model's context/turn budget). One caveat: the
-  diff is fetched with `gh pr diff`, which GitHub itself caps (≈300 files /
-  20k lines / 1 MB); a PR beyond those limits gets a truncated diff, so the
-  review is truncated with it. Generating the diff from the base/head refs
-  instead is a possible follow-up.
+  authorization for manual `/ai-review` requests. There is no size cap: the
+  models review agentically — reading the diff and the changed files via
+  their own tools over many turns, like the local CLI — so PRs of any size
+  are reviewed (very large diffs best-effort, within the model's context/turn
+  budget). One caveat: the diff is fetched with `gh pr diff`, which GitHub
+  itself caps (≈300 files / 20k lines / 1 MB); a PR beyond those limits gets
+  a truncated diff, so the review is truncated with it. Generating the diff
+  from the base/head refs instead is a possible follow-up.
 - **`claude-review`** and **`codex-review`** run **in parallel** — each gives
   its model an independent, exhaustive pass and produces structured JSON
   findings validated against `findings.schema.json`. Claude reads the PR's
@@ -77,10 +77,11 @@ The `pull_request` trigger (`opened` / `ready_for_review`) is live. The
 automatic path is **internal PRs only**: `resolve.ts` skips drafts, bots, and
 fork PRs, and requires the PR author to hold effective repository **write
 access** (`admin`/`write`, the same `WRITE_PERMISSIONS` gate as the manual
-`/ai-review` path). A same-repo branch already implies the author could push,
-so the permission lookup is defense-in-depth — it also catches access revoked
-since the branch was pushed. External contributors' PRs are never reviewed
-automatically; a maintainer comments `/ai-review` to request one.
+`/ai-review` path). The permission lookup is the authoritative author check:
+a same-repo head branch only proves the branch exists in this repo, not that
+the PR author pushed it, so the author's own permission is always resolved.
+External contributors' PRs are never reviewed automatically; a maintainer
+comments `/ai-review` to request one.
 
 Prompt/script tweaks take effect only once they land on `develop`: the
 prompts, schemas, and validation script are read from a trusted checkout of
@@ -170,8 +171,14 @@ run 400s on the output schema because of this, drop `pattern`/`minItems` from
   via `/ai-review`.
 - **The only write-capable job runs exclusively trusted code.**
   `post-review` checks out the base branch (`develop`) explicitly and never
-  the PR head, so a malicious PR cannot smuggle a change into the one job
-  that can write back to it.
+  the PR head, so a PR cannot smuggle a script change into the one job that
+  can write back to it. The checkout pin alone is not the whole boundary for
+  `pull_request` runs, though: GitHub executes the workflow FILE from the
+  PR's own ref for those events. That is safe here because the automatic
+  path only admits same-repo PRs, whose authors hold write access anyway
+  (a workflow edit gains them nothing they don't already have), while fork
+  PRs run with a read-only token and no secrets. `issue_comment` and
+  `workflow_dispatch` runs always use the default branch's workflow file.
 - **Model text is sanitized before it's rendered.** `sanitizeModelText()`
   redacts secret-shaped substrings (`redactSecrets()`; see below), strips HTML
   comments (so injected diff content can't forge the hidden dedup/supersede
