@@ -1,7 +1,8 @@
 import { readFileSync } from "node:fs";
 import { basename } from "node:path";
 
-import { ENV_CAPTURE_REGEX, type CliConfig } from "@supabase/config";
+import type { CliConfig } from "@supabase/config";
+import { ENV_CAPTURE_REGEX } from "@supabase/config/internal";
 import { defaultJwtSecret, defaultPublishableKey, defaultSecretKey } from "@supabase/stack/effect";
 import { Schema } from "effect";
 

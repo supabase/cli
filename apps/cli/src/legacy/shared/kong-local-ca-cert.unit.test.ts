@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { KONG_LOCAL_CA_CERT } from "./tls.ts";
+import { KONG_LOCAL_CA_CERT } from "./kong-local-ca-cert.ts";
 
 describe("KONG_LOCAL_CA_CERT", () => {
   it("is a non-empty PEM certificate", () => {

@@ -12,22 +12,10 @@ import {
   ProjectConfigApiAttributesSchema,
   type ProjectConfigApiAttributes,
 } from "./api-attributes.ts";
+import { HOSTED_SECTION_KEYS, type HostedSectionKey } from "./hosted-sections.ts";
 import { AUTH_HOOK_NAMES, unmappedSecretApiPaths } from "./registry-auth.ts";
 import { expectString } from "./registry-row.ts";
 import { projectConfigMappingRows } from "./registry.ts";
-
-const HOSTED_SECTION_KEYS = [
-  "api",
-  "auth",
-  "db",
-  "realtime",
-  "storage",
-  "workers",
-  "experimental",
-] as const;
-
-/** The seven keys {@link ProjectConfig} can carry, derived once so the type and the runtime walk below can't drift apart. */
-type HostedSectionKey = (typeof HOSTED_SECTION_KEYS)[number];
 
 /**
  * A deeply-readonly JSON value — the shape of everything under

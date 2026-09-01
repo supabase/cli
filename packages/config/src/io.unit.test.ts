@@ -13,7 +13,7 @@ import {
   encodeCliConfigToToml,
   cliConfigValueSourceAt,
   type LoadedCliConfig,
-  type LoadCliConfigOptions,
+  type InternalLoadCliConfigOptions,
 } from "./config-document.ts";
 import {
   configJsonPath,
@@ -2173,7 +2173,7 @@ describe("config io deprecated [auth.external.{linkedin,slack}] back-compat", ()
     errorSpy = undefined;
   });
 
-  async function loadToml(contents: string, options?: LoadCliConfigOptions) {
+  async function loadToml(contents: string, options?: InternalLoadCliConfigOptions) {
     const cwd = makeTempProject();
     const path = await runConfigEffect(configTomlPath(cwd));
     await mkdir(join(cwd, "supabase"), { recursive: true });

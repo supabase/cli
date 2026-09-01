@@ -1,11 +1,7 @@
 import { describe, expect, test } from "vitest";
 import { Cause } from "effect";
 import { CliError, Command } from "effect/unstable/cli";
-import {
-  CliConfigParseError,
-  CliProjectEnvParseError,
-  MissingCliConfigValueError,
-} from "@supabase/config";
+import { CliConfigParseError, CliProjectEnvParseError } from "@supabase/config";
 import { legacyBranchesCommand } from "../../legacy/commands/branches/branches.command.ts";
 import { legacyNetworkRestrictionsCommand } from "../../legacy/commands/network-restrictions/network-restrictions.command.ts";
 import { CliProjectHomeNotDirectoryError } from "../../next/config/cli-project-home.service.ts";
@@ -211,17 +207,6 @@ describe("normalizeCliError", () => {
     expect(normalizeCliError(error)).toEqual({
       code: "CliProjectEnvParseError",
       message: "CliProjectEnvParseError",
-    });
-  });
-
-  test("MissingCliConfigValueError falls back to its bare tag as both code and message", () => {
-    const error = new MissingCliConfigValueError({
-      configPath: "project_id",
-    });
-
-    expect(normalizeCliError(error)).toEqual({
-      code: "MissingCliConfigValueError",
-      message: "MissingCliConfigValueError",
     });
   });
 

@@ -1,0 +1,203 @@
+name: Mirror Slim Image
+
+# Mirrors slim service images published by supabase/slim-services from
+# ghcr.io/supabase/cli/<service>:<version> to
+# public.ecr.aws/supabase/cli/<service>:<version>.
+#
+# The slim-services release pipeline sends a `mirror-slim-image`
+# repository_dispatch to this repo, then anonymously polls the ECR Public
+# destination (15-minute timeout) and fails its release unless the destination
+# resolves to the exact index digest it published. The copy must therefore be
+# digest-preserving: we use `regctl image copy`, which moves the whole OCI
+# index (all platform manifests and referrers) byte-for-byte. Do NOT switch
+# this to `docker buildx imagetools create` — it can rewrite the index and
+# change its digest, breaking the sender's verification.
+#
+# The payload arrives with whatever authority holds the dispatch token, so it
+# is validated as untrusted input: names are pattern-checked, source and
+# destination are derived here rather than trusted from the payload, and the
+# source must resolve to the digest claimed by the sender before anything is
+# copied.
+#
+# Full contract: docs/design/ecr-mirror-dispatch.md in supabase/slim-services.
+
+on:
+  repository_dispatch:
+    types:
+      - mirror-slim-image
+  workflow_dispatch:
+    inputs:
+      service:
+        description: "Service name (e.g. postgrest)"
+        required: true
+        type: string
+      version:
+        description: "Image tag (e.g. v16.2)"
+        required: true
+        type: string
+      digest:
+        description: "Expected index digest (sha256:<64 hex chars>)"
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: mirror-slim-image-${{ github.event.client_payload.service || inputs.service }}-${{ github.event.client_payload.version || inputs.version }}
+  cancel-in-progress: false
+
+jobs:
+  mirror:
+    runs-on: ubuntu-latest
+    # The sender's poll times out after 15 minutes; fail fast instead of
+    # hanging past that window.
+    timeout-minutes: 10
+    permissions:
+      contents: read
+      packages: read
+      id-token: write
+    steps:
+      - name: Validate payload
+        id: validate
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          SERVICE: ${{ github.event.client_payload.service || inputs.service }}
+          VERSION: ${{ github.event.client_payload.version || inputs.version }}
+          DIGEST: ${{ github.event.client_payload.digest || inputs.digest }}
+          PAYLOAD_SOURCE: ${{ github.event.client_payload.source }}
+          PAYLOAD_DESTINATION: ${{ github.event.client_payload.destination }}
+        run: |
+          set -euo pipefail
+          if [[ ! "$SERVICE" =~ ^[a-z][a-z0-9-]*$ ]]; then
+            echo "::error::invalid service name: '$SERVICE'"
+            exit 1
+          fi
+          if [[ ! "$VERSION" =~ ^[A-Za-z0-9._-]+$ ]]; then
+            echo "::error::invalid version: '$VERSION'"
+            exit 1
+          fi
+          if [[ ! "$DIGEST" =~ ^sha256:[0-9a-f]{64}$ ]]; then
+            echo "::error::invalid digest: '$DIGEST'"
+            exit 1
+          fi
+          SOURCE="ghcr.io/supabase/cli/${SERVICE}:${VERSION}"
+          DESTINATION="public.ecr.aws/supabase/cli/${SERVICE}:${VERSION}"
+          # Never trust the payload's source/destination strings; require them
+          # to match the values derived from service + version.
+          if [ "$EVENT_NAME" = "repository_dispatch" ]; then
+            if [ "$PAYLOAD_SOURCE" != "$SOURCE" ]; then
+              echo "::error::payload source '$PAYLOAD_SOURCE' does not match derived '$SOURCE'"
+              exit 1
+            fi
+            if [ "$PAYLOAD_DESTINATION" != "$DESTINATION" ]; then
+              echo "::error::payload destination '$PAYLOAD_DESTINATION' does not match derived '$DESTINATION'"
+              exit 1
+            fi
+          fi
+          {
+            echo "service=$SERVICE"
+            echo "source=$SOURCE"
+            echo "destination=$DESTINATION"
+            echo "digest=$DIGEST"
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Install regctl
+        # Installed under $RUNNER_TEMP (always writable by the job user) and
+        # exposed to later steps via $GITHUB_PATH.
+        run: |
+          set -euo pipefail
+          install -d "${RUNNER_TEMP}/regctl-bin"
+          curl -fsSLo "${RUNNER_TEMP}/regctl-bin/regctl" \
+            https://github.com/regclient/regclient/releases/download/v0.11.5/regctl-linux-amd64
+          echo "c93aa7638749f5aaac1a8e01787321889c78f0101809bb2880343478d0ba0467  ${RUNNER_TEMP}/regctl-bin/regctl" | sha256sum -c -
+          chmod +x "${RUNNER_TEMP}/regctl-bin/regctl"
+          echo "${RUNNER_TEMP}/regctl-bin" >> "$GITHUB_PATH"
+          "${RUNNER_TEMP}/regctl-bin/regctl" version
+
+      - name: Log in to ghcr.io
+        uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f # v4.6.0
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Verify source digest
+        env:
+          SOURCE: ${{ steps.validate.outputs.source }}
+          DIGEST: ${{ steps.validate.outputs.digest }}
+        run: |
+          set -euo pipefail
+          SOURCE_DIGEST="$(regctl manifest head "$SOURCE")"
+          if [ "$SOURCE_DIGEST" != "$DIGEST" ]; then
+            echo "::error::source $SOURCE resolves to $SOURCE_DIGEST, expected $DIGEST"
+            exit 1
+          fi
+
+      - name: Configure aws credentials
+        uses: aws-actions/configure-aws-credentials@e6de054238d6b7531b4efff3b6587d9aade6a06c # v6.2.3
+        with:
+          role-to-assume: ${{ secrets.PROD_AWS_ROLE }}
+          aws-region: us-east-1
+
+      - name: Log in to ECR Public
+        uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f # v4.6.0
+        with:
+          registry: public.ecr.aws
+
+      - name: Ensure ECR Public repository exists
+        env:
+          SERVICE: ${{ steps.validate.outputs.service }}
+        run: |
+          set -euo pipefail
+          REPO_NAME="cli/${SERVICE}"
+          if aws ecr-public describe-repositories \
+            --repository-names "$REPO_NAME" --region us-east-1 >/dev/null 2>&1; then
+            echo "ECR Public repository $REPO_NAME exists"
+            exit 0
+          fi
+          if CREATE_ERR="$(aws ecr-public create-repository \
+            --repository-name "$REPO_NAME" --region us-east-1 2>&1 >/dev/null)"; then
+            echo "created ECR Public repository $REPO_NAME"
+          elif grep -q RepositoryAlreadyExistsException <<< "$CREATE_ERR"; then
+            # Concurrent run for another version of the same new service won
+            # the creation race; the repository exists, which is all we need.
+            echo "ECR Public repository $REPO_NAME was created concurrently"
+          else
+            echo "$CREATE_ERR"
+            echo "::error::ECR Public repository '$REPO_NAME' does not exist and this role cannot create it (missing ecr-public:CreateRepository). Create it once manually — aws ecr-public create-repository --repository-name '$REPO_NAME' --region us-east-1 — then re-run this workflow."
+            exit 1
+          fi
+
+      - name: Mirror image
+        env:
+          SOURCE: ${{ steps.validate.outputs.source }}
+          DESTINATION: ${{ steps.validate.outputs.destination }}
+          DIGEST: ${{ steps.validate.outputs.digest }}
+        # Copy by digest so the copy cannot race a tag move on the source; the
+        # whole index, all child manifests, and any referrers move as-is.
+        #
+        # The copy runs unconditionally, with no early exit when the
+        # destination tag already resolves to the digest: regctl's copy is
+        # incremental, so a re-dispatch after a complete copy is a cheap
+        # verification pass, while re-running after a partial failure (root
+        # index pushed but referrers or digest-tags missing) completes the
+        # copy instead of skipping it. Re-dispatches therefore still exit
+        # successfully with the destination digest unchanged.
+        run: |
+          set -euo pipefail
+          regctl image copy --referrers --digest-tags \
+            "${SOURCE%:*}@${DIGEST}" "$DESTINATION"
+
+      - name: Verify destination digest
+        env:
+          DESTINATION: ${{ steps.validate.outputs.destination }}
+          DIGEST: ${{ steps.validate.outputs.digest }}
+        run: |
+          set -euo pipefail
+          DEST_DIGEST="$(regctl manifest head "$DESTINATION")"
+          if [ "$DEST_DIGEST" != "$DIGEST" ]; then
+            echo "::error::destination $DESTINATION resolves to $DEST_DIGEST, expected $DIGEST"
+            exit 1
+          fi
+          echo "$DESTINATION resolves to $DIGEST"
