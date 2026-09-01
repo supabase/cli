@@ -1,4 +1,15 @@
-import { Cause, Deferred, Effect, Exit, Fiber, Option, Scope, Semaphore, Stream } from "effect";
+import {
+  Cause,
+  Deferred,
+  Effect,
+  Exit,
+  Fiber,
+  Option,
+  Scope,
+  Semaphore,
+  Stream,
+  type Duration,
+} from "effect";
 import type { ContainerArtifact } from "../model/CapabilityModule.ts";
 import type { PlannedWorkload } from "../model/ExecutionPlan.ts";
 import type { StackId } from "../public/StackId.ts";
@@ -32,6 +43,8 @@ import {
 export interface ContainerRuntimeOptions {
   readonly engine: ContainerEngine;
   readonly ownerSessionId: string;
+  /** Maximum time allowed for each service-owned startup process. */
+  readonly startupProcessTimeout?: Duration.Input;
   readonly resolveWorkload?: (
     key: RuntimeWorkloadKey,
     workload: PlannedWorkload,
@@ -246,6 +259,8 @@ export const makeContainerRuntime = (
   options: ContainerRuntimeOptions,
 ): Effect.Effect<RuntimeDriver, never> =>
   Effect.gen(function* () {
+    const startupProcessTimeout =
+      options.startupProcessTimeout ?? ("5 minutes" satisfies Duration.Input);
     const parentScope = yield* Effect.serviceOption(Scope.Scope);
     const runtimeScope = Option.isSome(parentScope)
       ? yield* Scope.fork(parentScope.value, "parallel")
@@ -399,9 +414,9 @@ export const makeContainerRuntime = (
           }
           const exitCode = yield* withEngine(key, options.engine.waitContainer(container.id));
           const logs =
-            logFiber === undefined
-              ? Exit.succeed(undefined)
-              : yield* Effect.exit(Fiber.join(logFiber));
+            logFiber === undefined ? Exit.succeed(undefined) : yield* Fiber.await(logFiber);
+          const logFailure =
+            Exit.isFailure(logs) && !Cause.hasInterruptsOnly(logs.cause) ? logs.cause : undefined;
           const exitFailure =
             exitCode === 0
               ? undefined
@@ -413,11 +428,11 @@ export const makeContainerRuntime = (
                 );
           if (exitFailure !== undefined) {
             const exitCause = Cause.fail(exitFailure);
-            return yield* Exit.isFailure(logs)
-              ? Effect.failCause(Cause.combine(exitCause, logs.cause))
+            return yield* logFailure !== undefined
+              ? Effect.failCause(Cause.combine(exitCause, logFailure))
               : Effect.failCause(exitCause);
           }
-          if (Exit.isFailure(logs)) return yield* Effect.failCause(logs.cause);
+          if (logFailure !== undefined) return yield* Effect.failCause(logFailure);
         });
       const release = (
         container: ContainerResource,
@@ -433,7 +448,18 @@ export const makeContainerRuntime = (
               Exit.isFailure(useExit) ? Cause.combine(useExit.cause, removed.cause) : removed.cause,
             );
         });
-      return Effect.acquireUseRelease(acquire, use, release);
+      return Effect.acquireUseRelease(acquire, use, release).pipe(
+        Effect.timeoutOrElse({
+          duration: startupProcessTimeout,
+          orElse: () =>
+            Effect.fail(
+              toDriverError(
+                key,
+                new Error(`Container startup process timed out for ${key.workloadId}`),
+              ),
+            ),
+        }),
+      );
     };
 
     const start = (

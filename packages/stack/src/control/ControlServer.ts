@@ -452,6 +452,10 @@ export const startControlServer = (
     const destroyRequests = new Set<string>();
     const destroyDisconnects = new Set<number>();
     const disconnects = yield* Queue.unbounded<number>();
+    const startDestroyCompletion = (callback: () => Effect.Effect<void>) =>
+      Effect.uninterruptible(
+        FiberSet.run(completionFibers, callback(), { startImmediately: true }).pipe(Effect.asVoid),
+      );
     yield* FiberSet.run(
       completionFibers,
       Effect.forever(
@@ -498,9 +502,9 @@ export const startControlServer = (
               destroyRequests.delete(key);
               if (successful) {
                 if (wroteResponse && options.onDestroyResponse !== undefined)
-                  yield* options.onDestroyResponse();
+                  yield* startDestroyCompletion(options.onDestroyResponse);
                 if (!wroteResponse && options.onDestroyAbandoned !== undefined)
-                  yield* options.onDestroyAbandoned();
+                  yield* startDestroyCompletion(options.onDestroyAbandoned);
               }
               if (![...destroyRequests].some((request) => request.startsWith(`${clientId}:`))) {
                 if (destroyDisconnects.delete(clientId)) yield* Queue.offer(disconnects, clientId);
@@ -627,6 +631,8 @@ export interface ControlClient {
     Socket.SocketError | MaintenanceProtocolError,
     Scope.Scope
   >;
+  /** Connects with an RPC preface and completes when the owner closes the socket. */
+  readonly awaitClose: (onOpen?: Effect.Effect<void>) => Effect.Effect<void, Socket.SocketError>;
   readonly rpc: Effect.Effect<StackRpcClient, RpcClientError, Scope.Scope>;
 }
 
@@ -725,6 +731,38 @@ export const makeControlClient = (
     probe: () => maintenance("probe"),
     stop: () => maintenance("stop"),
     quiesce: () => maintenance("quiesce"),
+    awaitClose: (onOpen = Effect.void) =>
+      Effect.scoped(
+        Effect.gen(function* () {
+          const socket = yield* NodeSocket.makeNet({
+            path: endpointPath(endpoint),
+            openTimeout: MAINTENANCE_REQUEST_DEADLINE_MS,
+          });
+          const write = yield* socket.writer;
+          const prefaceFailure = yield* Deferred.make<never, Socket.SocketError>();
+          const read = socket.runRaw(() => Effect.void, {
+            onOpen: write(
+              encodePreface({
+                kind: "rpc",
+                release: options.rpcRelease ?? STACK_RPC_RELEASE,
+                stackId: options.stackId,
+                ownerSessionId: options.ownerSessionId,
+              }),
+            ).pipe(
+              Effect.matchEffect({
+                onFailure: (error) => Deferred.fail(prefaceFailure, error).pipe(Effect.asVoid),
+                onSuccess: () => onOpen,
+              }),
+            ),
+          });
+          return yield* Effect.raceFirst(read, Deferred.await(prefaceFailure)).pipe(
+            Effect.catchFilter(
+              Socket.SocketCloseError.filterClean((code) => code === 1000),
+              () => Effect.void,
+            ),
+          );
+        }),
+      ),
     rpc: Effect.gen(function* () {
       const socket = yield* NodeSocket.makeNet({
         path: endpointPath(endpoint),

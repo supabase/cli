@@ -7,4 +7,14 @@ export * from "./Logs.ts";
 export * from "./Credentials.ts";
 export * from "./Errors.ts";
 export * from "./Config.ts";
-export * from "./EffectStack.ts";
+export { createStack, openStack, findStack, listStacks, inspectStack } from "./EffectStack.ts";
+export type {
+  EffectStack,
+  StartStackOptions,
+  PrepareStackOptions,
+  CreateStackOptions,
+  FindStackOptions,
+  ListStacksOptions,
+  PreparedCapability,
+  PrepareStackResult,
+} from "./EffectStack.ts";

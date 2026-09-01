@@ -1,5 +1,6 @@
 import { describe, expect, it } from "@effect/vitest";
 import { Cause, Deferred, Effect, Exit, Fiber, Option, Stream } from "effect";
+import * as TestClock from "effect/testing/TestClock";
 import { NodeServices } from "@effect/platform-node";
 import type { ExecutionPlan, PlannedWorkload } from "../model/ExecutionPlan.ts";
 import type { ContainerArtifact } from "../model/CapabilityModule.ts";
@@ -522,6 +523,38 @@ describe("container runtime", () => {
     }),
   );
 
+  it.live("ignores an interrupt-only one-shot log follower exit", () =>
+    Effect.gen(function* () {
+      const state: FakeContainerState = {
+        resources: [],
+        imagePresent: true,
+        calls: [],
+        createdSpecs: [],
+        nextId: 1,
+      };
+      let streamCalls = 0;
+      const runtime = yield* makeContainerRuntime({
+        engine: {
+          ...fakeContainerEngine(state),
+          streamLogs: () => {
+            streamCalls += 1;
+            return streamCalls === 1 ? Stream.failCause(Cause.interrupt()) : Stream.empty;
+          },
+        },
+        ownerSessionId: "owner-session",
+        logStore: memoryLogStore([]),
+        resolveWorkload: () =>
+          Effect.succeed({
+            startup: [{ entrypoint: "/usr/local/bin/auth", command: ["migrate"] }],
+          }),
+      });
+      const ready = yield* runtime.start(key, workload());
+      expect(ready.state).toBe("ready");
+      expect(streamCalls).toBe(2);
+      yield* runtime.stop(key);
+    }),
+  );
+
   it.live("hides in-flight startup containers from observation", () =>
     Effect.gen(function* () {
       const state: FakeContainerState = {
@@ -631,6 +664,55 @@ describe("container runtime", () => {
       expect(state.createdSpecs).toHaveLength(1);
       expect(state.calls.some((call) => call.startsWith("remove:"))).toBe(true);
       expect(state.calls.filter((call) => call.startsWith("start:"))).toHaveLength(1);
+      expect(state.resources.some((resource) => resource.kind === "workload")).toBe(false);
+    }),
+  );
+
+  it.effect("times out a startup migration and removes the exact init container", () =>
+    Effect.gen(function* () {
+      const state: FakeContainerState = {
+        resources: [],
+        imagePresent: true,
+        calls: [],
+        createdSpecs: [],
+        nextId: 1,
+      };
+      const waitEntered = yield* Deferred.make<void>();
+      const waitForever = yield* Deferred.make<number, never>();
+      const runtime = yield* makeContainerRuntime({
+        engine: {
+          ...fakeContainerEngine(state),
+          waitContainer: () =>
+            Effect.gen(function* () {
+              yield* Deferred.succeed(waitEntered, undefined);
+              return yield* Deferred.await(waitForever);
+            }),
+        },
+        ownerSessionId: "owner-session",
+        startupProcessTimeout: "5 seconds",
+        resolveWorkload: () =>
+          Effect.succeed({
+            startup: [{ entrypoint: "/usr/local/bin/auth", command: ["migrate"] }],
+          }),
+      });
+      const running = yield* runtime
+        .start(key, workload())
+        .pipe(Effect.forkChild({ startImmediately: true }));
+      yield* Deferred.await(waitEntered);
+      yield* TestClock.adjust("5 seconds");
+      const result = yield* Fiber.join(running).pipe(Effect.exit);
+      expect(Exit.isFailure(result)).toBe(true);
+      if (Exit.isFailure(result)) {
+        const error = Cause.findErrorOption(result.cause);
+        expect(Option.isSome(error)).toBe(true);
+        if (Option.isSome(error)) {
+          expect(error.value).toBeInstanceOf(RuntimeDriverError);
+          expect(error.value.message).toContain("startup process timed out");
+        }
+      }
+      expect(state.createdSpecs).toHaveLength(1);
+      expect(state.calls.filter((call) => call.startsWith("start:")).length).toBe(1);
+      expect(state.calls.filter((call) => call.startsWith("remove:")).length).toBe(1);
       expect(state.resources.some((resource) => resource.kind === "workload")).toBe(false);
     }),
   );

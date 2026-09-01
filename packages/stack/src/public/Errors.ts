@@ -178,6 +178,9 @@ export type StackStartError =
   | StackStateFormatUnsupportedError
   | StackUpgradeRequiredError
   | StackSecretMismatchError
+  | StackPreparationError
+  | ArtifactIntegrityError
+  | ContainerPullError
   | StackReconciliationError
   | ServiceStartError
   | ServiceReadinessError

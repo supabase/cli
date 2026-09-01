@@ -22,6 +22,8 @@ export type ControlEndpoint = UnixControlEndpoint | WindowsControlEndpoint;
 /** Host details are supplied by the process composition boundary. */
 export interface StackRuntimeEnvironmentValue {
   readonly stateRoot: string;
+  /** Optional shared immutable artifact cache; defaults to `<stateRoot>/artifacts`. */
+  readonly artifactCacheRoot?: string;
   /** A short local IPC directory (for example `/tmp`). */
   readonly tempRoot: string;
   readonly platform: "posix" | "windows";

@@ -1,6 +1,20 @@
-import { Cause, Context, Crypto, Effect, Exit, FileSystem, Path, Ref, Scope, Stream } from "effect";
+import {
+  Cause,
+  Config,
+  Context,
+  Crypto,
+  Duration,
+  Effect,
+  Exit,
+  FileSystem,
+  Path,
+  Ref,
+  Scope,
+  Stream,
+} from "effect";
 import { ChildProcessSpawner } from "effect/unstable/process";
 import type { PlannedWorkload } from "../model/ExecutionPlan.ts";
+import type { StackDefinition } from "../model/Compiler.ts";
 import { bundleServeMainTemplate } from "../functions/serve-main-bundler.ts";
 import {
   makeFunctionsBootstrapOwner,
@@ -42,6 +56,7 @@ import {
   type RuntimeInputOwner,
   type RuntimeJsonFetcher,
 } from "./RuntimeInputOwner.ts";
+import type { NativeProcessSpec } from "./NativeProcess.ts";
 import {
   FUNCTIONS_BOOTSTRAP_CONTAINER_PATH,
   resolveContainerResolutionFor,
@@ -52,7 +67,8 @@ import {
 } from "./WorkloadRuntimeSpec.ts";
 import { makeNativeRuntime } from "./NativeRuntime.ts";
 import { makeContainerRuntime, type ContainerWorkloadResolution } from "./ContainerRuntime.ts";
-import { probeReadiness } from "./ReadinessProbe.ts";
+import { DEFAULT_READINESS_DEADLINE, probeReadiness } from "./ReadinessProbe.ts";
+import { parseGoDuration } from "../model/capabilities/database.ts";
 import type { ContainerEngine, ContainerHostRoute } from "./ContainerEngine.ts";
 import { bootstrapDatabaseAt } from "./PostgresDatabaseSession.ts";
 import type { DatabaseBootstrapError } from "../model/DatabaseBootstrap.ts";
@@ -66,6 +82,7 @@ type RuntimeContext = FileSystem.FileSystem | Path.Path | Crypto.Crypto;
 
 export interface ProductionRuntimeFactoryOptions {
   readonly stateRoot: string;
+  readonly artifactCacheRoot?: string;
   readonly stackId: StackId;
   readonly ownerSessionId: string;
   readonly stateStore: StackStateStore;
@@ -102,6 +119,9 @@ const stateSecrets = (state: PersistedStackState): ReadonlyArray<string> =>
     .map((entry) => entry.value)
     .filter((value) => value.length > 0);
 
+const startupTimeout = (startup: NativeProcessSpec): NativeProcessSpec["timeout"] =>
+  startup.timeout;
+
 const currentStateReader = (options: ProductionRuntimeFactoryOptions) =>
   options.stateStore.read(options.stackId).pipe(
     Effect.provideContext(options.context),
@@ -130,6 +150,51 @@ const urlHost = (host: string): string => {
   const normalized = host === "0.0.0.0" ? "127.0.0.1" : host === "::" ? "::1" : host;
   return normalized.includes(":") && !normalized.startsWith("[") ? `[${normalized}]` : normalized;
 };
+
+const DATABASE_WORKLOAD_ID = "database:database";
+/** Atomic lifecycle witness for a successfully migrated native cluster. */
+export const NATIVE_DATABASE_MIGRATION_MARKER = ".supabase-stack-migration-complete";
+const isDatabaseWorkload = (workload: PlannedWorkload): boolean =>
+  workload.id === DATABASE_WORKLOAD_ID;
+const configuredDatabaseReadinessDeadline = (
+  definition: StackDefinition | undefined,
+): Effect.Effect<Duration.Duration, StackPreparationError> => {
+  if (definition === undefined)
+    return Effect.fail(preparationError("Persisted database definition is missing"));
+  const configured = definition.capabilities.database.settings.health_timeout;
+  if (configured === undefined || configured === null)
+    return Effect.fail(preparationError("Persisted database health_timeout is missing"));
+  return Effect.try({
+    try: () => parseGoDuration(configured),
+    catch: (cause) => preparationError(`Invalid database health_timeout: ${configured}`, cause),
+  }).pipe(
+    Effect.flatMap((duration) =>
+      Duration.isNegative(duration) || Duration.isZero(duration)
+        ? Effect.fail(
+            preparationError(
+              `Invalid database health_timeout: ${configured}; duration must be positive`,
+            ),
+          )
+        : Effect.succeed(duration),
+    ),
+  );
+};
+
+export const readinessDeadlineFor = (
+  state: PersistedStackState,
+  workload: PlannedWorkload,
+): Effect.Effect<Duration.Duration, StackPreparationError> =>
+  isDatabaseWorkload(workload)
+    ? configuredDatabaseReadinessDeadline(state.definition)
+    : Effect.succeed(DEFAULT_READINESS_DEADLINE);
+
+const validateDatabaseReadinessBudget = (
+  definition: StackDefinition,
+  workloads: ReadonlyArray<PlannedWorkload>,
+): Effect.Effect<void, StackPreparationError> =>
+  workloads.some(isDatabaseWorkload)
+    ? configuredDatabaseReadinessDeadline(definition).pipe(Effect.asVoid)
+    : Effect.void;
 
 const redactEntry = <A extends { readonly message: string }>(
   entry: A,
@@ -195,13 +260,20 @@ const readinessFor = (
   const endpoint = spec.privateEndpoint(state, spec.readiness.binding, "native");
   if (endpoint === undefined)
     return Effect.fail(preparationError(`Missing private readiness assignment for ${workload.id}`));
-  return probeReadiness({
-    mode: spec.readiness.protocol,
-    host: "127.0.0.1",
-    port: endpoint.port,
-    ...(spec.readiness.path === undefined ? {} : { path: spec.readiness.path }),
-    ...(spec.readiness.headers === undefined ? {} : { headers: spec.readiness.headers }),
-  });
+  return readinessDeadlineFor(state, workload).pipe(
+    Effect.flatMap((deadline) =>
+      probeReadiness(
+        {
+          mode: spec.readiness.protocol,
+          host: "127.0.0.1",
+          port: endpoint.port,
+          ...(spec.readiness.path === undefined ? {} : { path: spec.readiness.path }),
+          ...(spec.readiness.headers === undefined ? {} : { headers: spec.readiness.headers }),
+        },
+        { deadline },
+      ),
+    ),
+  );
 };
 
 const bootstrapContent = Effect.tryPromise({
@@ -269,6 +341,7 @@ export const makeProductionRuntimeFactory = (
 > =>
   Effect.gen(function* () {
     const initial = yield* currentStateReader(options);
+    const fileSystem = yield* FileSystem.FileSystem;
     const pathService = yield* Path.Path;
     const childSpawner = yield* ChildProcessSpawner.ChildProcessSpawner;
     const ownerScope = yield* Scope.Scope;
@@ -342,6 +415,7 @@ export const makeProductionRuntimeFactory = (
       options.artifactPreparer ??
       (yield* makeProductionRuntimeArtifactPreparer({
         stateRoot: options.stateRoot,
+        artifactCacheRoot: options.artifactCacheRoot,
         runtime: initial.runtime,
         platform: {
           os:
@@ -450,7 +524,7 @@ export const makeProductionRuntimeFactory = (
                   : undefined;
               return {
                 ...(auth === undefined ? {} : { auth }),
-                ...(workload.id === "analytics:analytics" && material.analytics !== undefined
+                ...(workload.id.startsWith("analytics:") && material.analytics !== undefined
                   ? { analytics: material.analytics }
                   : {}),
                 ...(workload.id === "pooler:pooler" && material.pooler !== undefined
@@ -469,6 +543,9 @@ export const makeProductionRuntimeFactory = (
                 return yield* new StackRuntimeMismatchError({
                   message: "Lifecycle runtime does not match persisted runtime",
                 });
+              // Eagerly validate the candidate before any engine/artifact work. Start-time checks
+              // below revalidate the fresh persisted definition because it is runtime authority.
+              yield* validateDatabaseReadinessBudget(input.definition, input.plan.workloads);
               if (input.state.runtime.kind === "container") {
                 if (
                   containerEngine === undefined ||
@@ -505,7 +582,8 @@ export const makeProductionRuntimeFactory = (
           > =>
             Effect.gen(function* () {
               const workload = input.plan.workloads.find(
-                (entry) => entry.capability === capability,
+                (entry) =>
+                  entry.capability === capability && entry.readiness.portField !== undefined,
               );
               if (workload === undefined)
                 return yield* new GatewayActivationError({
@@ -546,6 +624,11 @@ export const makeProductionRuntimeFactory = (
                           key,
                           `Unknown runtime specification for ${workload.id}`,
                         );
+                      // Revalidate the fresh persisted definition before spawning; preflight checks
+                      // the candidate definition, while this state is the runtime authority.
+                      const readinessBudget = yield* readinessDeadlineFor(fresh, workload).pipe(
+                        Effect.mapError((error) => mapDriverError(key, error)),
+                      );
                       const inputs = yield* runtimeInputs(
                         workload,
                         fresh,
@@ -576,7 +659,7 @@ export const makeProductionRuntimeFactory = (
                           key,
                           `Missing private port assignment for ${workload.id}`,
                         );
-                      const process = spec.nativeProcess(
+                      const resolvedNativeProcess = spec.nativeProcess(
                         prepared.artifactRoot,
                         fresh,
                         workload,
@@ -590,6 +673,87 @@ export const makeProductionRuntimeFactory = (
                         "native",
                         inputs,
                       );
+                      let postReadiness: ReadonlyArray<NativeProcessSpec> = [];
+                      if (isDatabaseWorkload(workload)) {
+                        const dataPath = inputs.database?.dataPath;
+                        if (dataPath === undefined)
+                          return yield* driverError(
+                            key,
+                            "Resolved database data path is unavailable for native migration",
+                          );
+                        const markerPath = pathService.join(
+                          dataPath,
+                          NATIVE_DATABASE_MIGRATION_MARKER,
+                        );
+                        const migrated = yield* fileSystem
+                          .exists(markerPath)
+                          .pipe(
+                            Effect.mapError((error) =>
+                              driverError(
+                                key,
+                                `Unable to inspect native database data path: ${error.message}`,
+                                error,
+                              ),
+                            ),
+                          );
+                        if (!migrated) {
+                          const pgVersionPath = pathService.join(dataPath, "PG_VERSION");
+                          const initialized = yield* fileSystem
+                            .exists(pgVersionPath)
+                            .pipe(
+                              Effect.mapError((error) =>
+                                driverError(
+                                  key,
+                                  `Unable to inspect native database data path: ${error.message}`,
+                                  error,
+                                ),
+                              ),
+                            );
+                          if (initialized)
+                            yield* fileSystem
+                              .remove(dataPath, { recursive: true, force: true })
+                              .pipe(
+                                Effect.mapError((error) =>
+                                  driverError(
+                                    key,
+                                    `Unable to remove incomplete native database data path: ${error.message}`,
+                                    error,
+                                  ),
+                                ),
+                              );
+                          const migrationsPath = pathService.join(
+                            prepared.artifactRoot,
+                            "share/supabase-cli/migrations",
+                          );
+                          const artifactBin = pathService.join(prepared.artifactRoot, "bin");
+                          const hostPath = yield* Config.string("PATH").pipe(
+                            Config.withDefault(""),
+                            Effect.mapError((error) =>
+                              driverError(key, "Unable to read host PATH", error),
+                            ),
+                          );
+                          postReadiness = [
+                            {
+                              executable: pathService.join(migrationsPath, "migrate.sh"),
+                              cwd: migrationsPath,
+                              timeout: readinessBudget,
+                              successMarker: markerPath,
+                              env: {
+                                ...environment,
+                                PATH:
+                                  hostPath.length === 0
+                                    ? artifactBin
+                                    : `${artifactBin}:${hostPath}`,
+                                POSTGRES_HOST: "127.0.0.1",
+                                POSTGRES_PORT: String(endpoint.port),
+                                POSTGRES_DB: "postgres",
+                                POSTGRES_USER: "supabase_admin",
+                                POSTGRES_PASSWORD: environment.POSTGRES_PASSWORD ?? "",
+                              },
+                            },
+                          ];
+                        }
+                      }
                       return {
                         startup: spec
                           .nativeStartupProcesses(
@@ -601,9 +765,15 @@ export const makeProductionRuntimeFactory = (
                           )
                           .map((startup) => ({
                             ...startup,
+                            timeout:
+                              startupTimeout(startup) ??
+                              (isDatabaseWorkload(workload)
+                                ? readinessBudget
+                                : Duration.minutes(5)),
                             env: { ...environment, ...startup.env },
                           })),
-                        main: { ...process, env: environment },
+                        postReadiness,
+                        main: { ...resolvedNativeProcess, env: environment },
                       };
                     }),
                   ),
@@ -616,7 +786,13 @@ export const makeProductionRuntimeFactory = (
               bootstrapDatabase: (key, workload) =>
                 workload.bootstrap === "database"
                   ? freshState(key).pipe(
-                      Effect.flatMap((fresh) => bootstrapDatabase(fresh)),
+                      Effect.flatMap((fresh) =>
+                        readinessDeadlineFor(fresh, workload).pipe(
+                          Effect.flatMap((deadline) =>
+                            bootstrapDatabase(fresh).pipe(Effect.timeout(deadline)),
+                          ),
+                        ),
+                      ),
                       Effect.mapError((error) => mapDriverError(key, error)),
                     )
                   : Effect.void,
@@ -624,6 +800,8 @@ export const makeProductionRuntimeFactory = (
             }).pipe(
               Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, childSpawner),
               Effect.provideService(Scope.Scope, ownerScope),
+              Effect.provideService(FileSystem.FileSystem, fileSystem),
+              Effect.provideService(Path.Path, pathService),
               Effect.mapError((error) =>
                 preparationError("Unable to initialize native runtime", error),
               ),
@@ -644,6 +822,11 @@ export const makeProductionRuntimeFactory = (
                           key,
                           `Unknown runtime specification for ${workload.id}`,
                         );
+                      // Revalidate the fresh persisted definition before creating a container;
+                      // preflight checks the candidate definition, while this state is authoritative.
+                      yield* readinessDeadlineFor(fresh, workload).pipe(
+                        Effect.mapError((error) => mapDriverError(key, error)),
+                      );
                       let route = yield* Ref.get(hostRoute);
                       if (route === undefined) {
                         route = yield* containerEngine.preflight.pipe(
@@ -715,7 +898,13 @@ export const makeProductionRuntimeFactory = (
               bootstrapDatabase: (key, workload) =>
                 workload.bootstrap === "database"
                   ? freshState(key).pipe(
-                      Effect.flatMap((fresh) => bootstrapDatabase(fresh)),
+                      Effect.flatMap((fresh) =>
+                        readinessDeadlineFor(fresh, workload).pipe(
+                          Effect.flatMap((deadline) =>
+                            bootstrapDatabase(fresh).pipe(Effect.timeout(deadline)),
+                          ),
+                        ),
+                      ),
                       Effect.mapError((error) => mapDriverError(key, error)),
                     )
                   : Effect.void,
@@ -728,40 +917,28 @@ export const makeProductionRuntimeFactory = (
             functionsBootstrap,
             inputOwner,
           );
+          const cleanupOwnedInputs = (key: RuntimeWorkloadKey) =>
+            key.workloadId === "pooler:pooler"
+              ? inputOwner
+                  .cleanupGeneration(key.desiredGeneration, "pooler")
+                  .pipe(
+                    Effect.mapError((error) =>
+                      driverError(key, "Unable to clean pooler runtime input", error),
+                    ),
+                  )
+              : key.workloadId === "analytics:vector"
+                ? inputOwner
+                    .cleanupGeneration(key.desiredGeneration, "vector")
+                    .pipe(
+                      Effect.mapError((error) =>
+                        driverError(key, "Unable to clean Vector runtime input", error),
+                      ),
+                    )
+                : Effect.void;
           const ownedDriver: RuntimeDriver = {
             ...baseDriver,
-            stop: (key) =>
-              baseDriver
-                .stop(key)
-                .pipe(
-                  Effect.tap(() =>
-                    key.workloadId === "pooler:pooler"
-                      ? inputOwner
-                          .cleanupGeneration(key.desiredGeneration)
-                          .pipe(
-                            Effect.mapError((error) =>
-                              driverError(key, "Unable to clean pooler runtime input", error),
-                            ),
-                          )
-                      : Effect.void,
-                  ),
-                ),
-            remove: (key) =>
-              baseDriver
-                .remove(key)
-                .pipe(
-                  Effect.tap(() =>
-                    key.workloadId === "pooler:pooler"
-                      ? inputOwner
-                          .cleanupGeneration(key.desiredGeneration)
-                          .pipe(
-                            Effect.mapError((error) =>
-                              driverError(key, "Unable to clean pooler runtime input", error),
-                            ),
-                          )
-                      : Effect.void,
-                  ),
-                ),
+            stop: (key) => baseDriver.stop(key).pipe(Effect.tap(() => cleanupOwnedInputs(key))),
+            remove: (key) => baseDriver.remove(key).pipe(Effect.tap(() => cleanupOwnedInputs(key))),
           };
           return {
             driver: ownedDriver,

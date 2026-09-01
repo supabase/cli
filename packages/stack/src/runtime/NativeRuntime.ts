@@ -1,4 +1,16 @@
-import { Cause, Deferred, Effect, Exit, Fiber, Ref, Scope, Semaphore, Stream } from "effect";
+import {
+  Cause,
+  Deferred,
+  Effect,
+  Exit,
+  Fiber,
+  FileSystem,
+  Path,
+  Ref,
+  Scope,
+  Semaphore,
+  Stream,
+} from "effect";
 import { ChildProcessSpawner } from "effect/unstable/process";
 import type { ExitCode } from "effect/unstable/process/ChildProcessSpawner";
 import type * as ChildProcessSpawnerService from "effect/unstable/process/ChildProcessSpawner";
@@ -58,6 +70,8 @@ export interface NativeRuntimeOptions {
 interface NativeProcessPlan {
   readonly startup: ReadonlyArray<NativeProcessSpec>;
   readonly main: NativeProcessSpec;
+  /** One-shot processes that require the long-lived workload to be ready. */
+  readonly postReadiness?: ReadonlyArray<NativeProcessSpec>;
 }
 
 interface OutputAccumulator {
@@ -161,10 +175,12 @@ export const makeNativeRuntime = (
 ): Effect.Effect<
   RuntimeDriver,
   RuntimeDriverError,
-  ChildProcessSpawnerService.ChildProcessSpawner | Scope.Scope
+  ChildProcessSpawnerService.ChildProcessSpawner | Scope.Scope | FileSystem.FileSystem | Path.Path
 > =>
   Effect.gen(function* () {
     const childSpawner = yield* ChildProcessSpawner.ChildProcessSpawner;
+    const fileSystem = yield* FileSystem.FileSystem;
+    const pathService = yield* Path.Path;
     const parentScope = yield* Scope.Scope;
     const runtimeScope = yield* Scope.fork(parentScope, "parallel");
     const lifecycle = yield* Semaphore.make(1);
@@ -241,11 +257,35 @@ export const makeNativeRuntime = (
       }).pipe(Effect.forkIn(resource.scope), Effect.asVoid);
     };
 
+    const writeSuccessMarker = (markerPath: string): Effect.Effect<void, NativeProcessError> =>
+      Effect.gen(function* () {
+        const parent = pathService.dirname(markerPath);
+        yield* fileSystem.makeDirectory(parent, { recursive: true });
+        const temporary = yield* fileSystem.makeTempFile({
+          directory: parent,
+          prefix: ".supabase-stack-marker-",
+        });
+        yield* fileSystem.writeFileString(temporary, "completed\n");
+        yield* fileSystem.chmod(temporary, 0o600);
+        yield* fileSystem
+          .rename(temporary, markerPath)
+          .pipe(Effect.ensuring(fileSystem.remove(temporary, { force: true }).pipe(Effect.ignore)));
+      }).pipe(
+        Effect.mapError(
+          (error) =>
+            new NativeProcessError({
+              message: error instanceof Error ? error.message : String(error),
+              cause: error,
+            }),
+        ),
+      );
+
     /** Runs one short-lived, service-owned startup process in its own scope. */
     const runStartupProcess = (
       resource: Resource,
       spec: NativeProcessSpec,
       launcher: NativeProcessLauncher | undefined,
+      phase: "startup" | "post-readiness",
     ): Effect.Effect<void, RuntimeDriverError> =>
       Effect.gen(function* () {
         const startupScope = yield* Scope.fork(resource.scope, "parallel");
@@ -254,12 +294,12 @@ export const makeNativeRuntime = (
           const process = yield* spawnNativeProcess(spec, launcher).pipe(
             Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, childSpawner),
             Scope.provide(startupScope),
-            Effect.mapError((error) => processError(error, resource.key, "startup spawn")),
+            Effect.mapError((error) => processError(error, resource.key, `${phase} spawn`)),
           );
           started = process;
           const exitCode = yield* Effect.cached(
             process.exitCode.pipe(
-              Effect.mapError((error) => processError(error, resource.key, "startup")),
+              Effect.mapError((error) => processError(error, resource.key, `${phase} wait`)),
             ),
           );
           const consume =
@@ -279,7 +319,7 @@ export const makeNativeRuntime = (
             Effect.mapError((error) =>
               driverError(
                 resource.key,
-                `Native startup log stream failed for ${resource.key.workloadId}: ${errorMessage(error)}`,
+                `Native ${phase} log stream failed for ${resource.key.workloadId}: ${errorMessage(error)}`,
                 error,
               ),
             ),
@@ -290,21 +330,45 @@ export const makeNativeRuntime = (
           // when the child exits before its pipes finish, while a stream
           // failure interrupts the exit waiter and startup cleanup kills the
           // exact child.
-          yield* Effect.all([exitCode.pipe(Effect.asVoid), Fiber.join(outputFiber)], {
+          const completed = Effect.all([exitCode.pipe(Effect.asVoid), Fiber.join(outputFiber)], {
             concurrency: "unbounded",
             discard: true,
           });
+          yield* spec.timeout === undefined
+            ? completed
+            : completed.pipe(
+                Effect.timeoutOrElse({
+                  duration: spec.timeout,
+                  orElse: () =>
+                    Effect.fail(
+                      driverError(
+                        resource.key,
+                        `Native ${phase} process timed out for ${resource.key.workloadId}`,
+                      ),
+                    ),
+                }),
+              );
           const result = yield* exitCode.pipe(Effect.exit);
           if (Exit.isFailure(result))
             return yield* driverError(
               resource.key,
-              `Native startup process failed for ${resource.key.workloadId}`,
+              `Native ${phase} process failed for ${resource.key.workloadId}`,
               result.cause,
             );
           if (result.value !== 0)
             return yield* driverError(
               resource.key,
-              `Native startup process exited with code ${String(result.value)} for ${resource.key.workloadId}`,
+              `Native ${phase} process exited with code ${String(result.value)} for ${resource.key.workloadId}`,
+            );
+          if (spec.successMarker !== undefined)
+            yield* writeSuccessMarker(spec.successMarker).pipe(
+              Effect.mapError((error) =>
+                driverError(
+                  resource.key,
+                  `Native ${phase} success marker failed for ${resource.key.workloadId}: ${error.message}`,
+                  error,
+                ),
+              ),
             );
         });
         yield* Effect.uninterruptibleMask((restore) =>
@@ -318,13 +382,13 @@ export const makeNativeRuntime = (
                     if (child === undefined) return Effect.void;
                     return child.isRunning.pipe(
                       Effect.mapError((error) =>
-                        processError(error, resource.key, "startup probe"),
+                        processError(error, resource.key, `${phase} probe`),
                       ),
                       Effect.flatMap((running) =>
                         running
                           ? child.kill.pipe(
                               Effect.mapError((error) =>
-                                processError(error, resource.key, "startup stop"),
+                                processError(error, resource.key, `${phase} stop`),
                               ),
                             )
                           : Effect.void,
@@ -352,6 +416,10 @@ export const makeNativeRuntime = (
     const runStart = (resource: Resource): Effect.Effect<void> =>
       Effect.gen(function* () {
         const { key, workload } = resource;
+        const ensureNotStopped = (): Effect.Effect<void, RuntimeDriverError> =>
+          resource.stopRequested
+            ? Effect.fail(driverError(key, "Native workload was stopped while starting"))
+            : Effect.void;
         const operation = Effect.gen(function* () {
           const launcher =
             options.resolveLauncher === undefined
@@ -359,18 +427,23 @@ export const makeNativeRuntime = (
               : yield* options.resolveLauncher(key, workload);
           const resolved = yield* options.resolveProcess(key, workload);
           for (const startup of resolved.startup)
-            yield* runStartupProcess(resource, startup, launcher);
+            yield* runStartupProcess(resource, startup, launcher, "startup");
           const process = yield* spawnNativeProcess(resolved.main, launcher).pipe(
             Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, childSpawner),
             Scope.provide(resource.scope),
             Effect.mapError((error) => processError(error, key, "spawn")),
           );
           resource.process = process;
-          const exitCode = yield* Effect.cached(process.exitCode);
+          // Keep one process-exit observation owned by the resource scope. The
+          // readiness race has waiter-owned fibers which may be interrupted;
+          // sharing an Effect.cached waiter would let that interruption poison
+          // the observation used by the long-lived workload watcher.
+          const exitFiber = yield* Effect.forkIn(process.exitCode, resource.scope);
+          const exitCode = Fiber.join(exitFiber);
           yield* Effect.forkIn(watchProcess(resource, process, exitCode), resource.scope);
           yield* attachLogs(resource, process);
           const readiness = options.waitForReadiness;
-          const exitedBeforeReady = exitCode.pipe(
+          const mainExit = exitCode.pipe(
             Effect.flatMap((code) =>
               Effect.fail(
                 driverError(
@@ -380,39 +453,35 @@ export const makeNativeRuntime = (
               ),
             ),
           );
-          yield* Effect.raceFirst(
-            Effect.raceFirst(readiness(key, workload, process), Deferred.await(resource.failure)),
-            exitedBeforeReady,
-          );
-          const running = yield* process.isRunning.pipe(
-            Effect.mapError((error) => processError(error, key, "probe")),
-          );
-          if (!running)
-            return yield* driverError(
-              key,
-              `Native workload ${key.workloadId} exited before readiness`,
-            );
-          if (resource.stopRequested)
-            return yield* driverError(key, "Native workload was stopped while starting");
-          if (workload.bootstrap === "database") {
-            if (options.bootstrapDatabase === undefined)
-              return yield* driverError(key, "Database bootstrap resolver is not configured");
-            yield* options
-              .bootstrapDatabase(key, workload, process)
-              .pipe(Effect.mapError((error) => driverError(key, error.message, error)));
-          }
-          if (resource.stopRequested)
-            return yield* driverError(key, "Native workload was stopped while starting");
-          if (yield* Deferred.isDone(resource.failure))
-            return yield* Deferred.await(resource.failure);
-          const ready = yield* Ref.modify(resource.state, (current) => {
-            if (current.state !== "starting") return [undefined, current];
-            const next: ObservedWorkload = { ...current, state: "ready" };
-            return [next, next];
+          const preReady = Effect.gen(function* () {
+            yield* readiness(key, workload, process);
+            yield* ensureNotStopped();
+            for (const postReadiness of resolved.postReadiness ?? [])
+              yield* runStartupProcess(resource, postReadiness, launcher, "post-readiness");
+            yield* ensureNotStopped();
+            if (workload.bootstrap === "database") {
+              if (options.bootstrapDatabase === undefined)
+                return yield* driverError(key, "Database bootstrap resolver is not configured");
+              yield* options
+                .bootstrapDatabase(key, workload, process)
+                .pipe(Effect.mapError((error) => driverError(key, error.message, error)));
+            }
+            yield* ensureNotStopped();
+            if (yield* Deferred.isDone(resource.failure))
+              return yield* Deferred.await(resource.failure);
+            const ready = yield* Ref.modify(resource.state, (current) => {
+              if (current.state !== "starting") return [undefined, current];
+              const next: ObservedWorkload = { ...current, state: "ready" };
+              return [next, next];
+            });
+            if (ready === undefined)
+              return yield* driverError(key, "Native workload exited or stopped before readiness");
+            return ready;
           });
-          if (ready === undefined)
-            return yield* driverError(key, "Native workload exited or stopped before readiness");
-          return ready;
+          return yield* Effect.raceFirst(
+            Effect.raceFirst(preReady, Deferred.await(resource.failure)),
+            mainExit,
+          );
         });
         const result = yield* operation.pipe(
           Effect.mapError((error) =>

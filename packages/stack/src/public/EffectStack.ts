@@ -1,4 +1,17 @@
-import { Crypto, Effect, Exit, FileSystem, Option, Path, Ref, Scope, Schema, Stream } from "effect";
+import {
+  Crypto,
+  Deferred,
+  Effect,
+  Exit,
+  FileSystem,
+  Fiber,
+  Option,
+  Path,
+  Ref,
+  Scope,
+  Schema,
+  Stream,
+} from "effect";
 import type { RpcClientError } from "effect/unstable/rpc/RpcClientError";
 import type { SocketError } from "effect/unstable/socket/Socket";
 import type { StackIdentity } from "../identity/Identity.ts";
@@ -332,6 +345,9 @@ const startError = (error: ControlError): StackStartError => {
     mapped instanceof StackStateFormatUnsupportedError ||
     mapped instanceof StackUpgradeRequiredError ||
     mapped instanceof StackSecretMismatchError ||
+    mapped instanceof StackPreparationError ||
+    mapped instanceof ArtifactIntegrityError ||
+    mapped instanceof ContainerPullError ||
     mapped instanceof StackReconciliationError ||
     mapped instanceof ServiceStartError ||
     mapped instanceof ServiceReadinessError ||
@@ -366,7 +382,8 @@ const destroyError = (error: ControlError): DestroyStackError => {
     : new StackDestructionError({ message: "Stack destruction failed" });
 };
 
-const makeHandle = (
+/** Internal control-transport seam used by public lifecycle integration tests. */
+export const makeHandle = (
   id: StackId,
   metadata: {
     readonly endpoint: Parameters<typeof makeControlClient>[0];
@@ -387,6 +404,57 @@ const makeHandle = (
       call: (rpc: StackRpcClient) => Effect.Effect<A, StackRpcError | RpcClientError>,
       mapError: (error: ControlError) => E,
     ) => check(Effect.scoped(client.rpc.pipe(Effect.flatMap(call), Effect.mapError(mapError))));
+    const destroyAndAwaitOwner: Effect.Effect<void, DestroyStackError> = check(
+      Effect.gen(function* () {
+        const ownerConnected = yield* Deferred.make<void>();
+        const ownerWatch = client.awaitClose(
+          Deferred.succeed(ownerConnected, undefined).pipe(Effect.asVoid),
+        );
+        const ownerFiber = yield* Effect.forkChild(ownerWatch, { startImmediately: true });
+        const ownerReady = Deferred.await(ownerConnected).pipe(
+          Effect.raceFirst(
+            Fiber.join(ownerFiber).pipe(
+              Effect.flatMap(() =>
+                Effect.fail(
+                  new StackDestructionError({
+                    message: "Unable to observe Supervisor control connection",
+                  }),
+                ),
+              ),
+              Effect.mapError(
+                (cause) =>
+                  new StackDestructionError({
+                    message: "Unable to observe Supervisor control connection",
+                    cause,
+                  }),
+              ),
+            ),
+          ),
+        );
+        const result = yield* Effect.exit(
+          ownerReady.pipe(
+            Effect.andThen(invoke((rpc) => rpc.destroy(undefined), destroyError)),
+            // The owner closes its control server only after all workload cleanup has completed.
+            // Await the exact preface-only socket instead of decoding a terminal RPC stream Exit.
+            Effect.andThen(
+              Fiber.join(ownerFiber).pipe(
+                Effect.mapError(
+                  (cause) =>
+                    new StackDestructionError({
+                      message: "Unable to observe Supervisor shutdown completion",
+                      cause,
+                    }),
+                ),
+              ),
+            ),
+          ),
+        );
+        if (Exit.isFailure(result)) {
+          yield* Fiber.interrupt(ownerFiber);
+        }
+        return yield* result;
+      }),
+    );
     const status = () => invoke((rpc) => rpc.status(undefined), statusError);
     return {
       id,
@@ -410,7 +478,7 @@ const makeHandle = (
             ),
           ),
         ),
-      destroy: () => invoke((rpc) => rpc.destroy(undefined), destroyError),
+      destroy: () => destroyAndAwaitOwner,
       close: () => Ref.set(closed, true),
       watchStatus: () =>
         Stream.unwrap(

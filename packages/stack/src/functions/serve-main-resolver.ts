@@ -115,7 +115,12 @@ export const resolveFunctionConfig = async (options: {
   if (directoryInfo === undefined || !directoryInfo.isDirectory) return undefined;
   if (!(await safeRealPath(fs, canonicalRoot, functionDirectory))) return undefined;
 
-  const rawEntrypoint = override?.entrypointPath ?? override?.entrypoint ?? "index.ts";
+  const rawEntrypoint =
+    override?.entrypointPath && override.entrypointPath.length > 0
+      ? override.entrypointPath
+      : override?.entrypoint && override.entrypoint.length > 0
+        ? override.entrypoint
+        : "index.ts";
   const entrypointPath = relativePath(functionDirectory, rawEntrypoint);
   if (!(await safeRealPath(fs, canonicalRoot, entrypointPath))) return undefined;
   const entrypointInfo = await optionalInfo(fs, entrypointPath);

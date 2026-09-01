@@ -1,9 +1,13 @@
 import { NodeServices } from "@effect/platform-node";
 import { describe, expect, it } from "@effect/vitest";
-import { Effect, Exit, Redacted } from "effect";
+import { Effect, Exit, FileSystem, Redacted } from "effect";
 import { WORKLOAD_CATALOG } from "../model/WorkloadCatalog.ts";
 import type { PlannedWorkload } from "../model/ExecutionPlan.ts";
+import { deriveStackId } from "../identity/Identity.ts";
 import type { PersistedStackState } from "../state/StackState.ts";
+import { makePortCoordinator, type ListenerIntents } from "../state/PortCoordinator.ts";
+import { makePortRegistry } from "../state/PortRegistry.ts";
+import { makeStackStateStore } from "../state/StackStateStore.ts";
 import { CAPABILITY_NAMES } from "../public/Capability.ts";
 import { compileStack } from "../model/Compiler.ts";
 import {
@@ -15,6 +19,17 @@ import {
   runtimeSpecFor,
   validateWorkloadRuntimeInputs,
 } from "./WorkloadRuntimeSpec.ts";
+
+const disabledListenerIntents: ListenerIntents = {
+  api: { enabled: false, address: "127.0.0.1", port: "automatic" },
+  database: { enabled: false, address: "127.0.0.1", port: "automatic" },
+  pooler: { enabled: false, address: "127.0.0.1", port: "automatic" },
+  studio: { enabled: false, address: "127.0.0.1", port: "automatic" },
+  mailUi: { enabled: false, address: "127.0.0.1", port: "automatic" },
+  smtp: { enabled: false, address: "127.0.0.1", port: "automatic" },
+  pop3: { enabled: false, address: "127.0.0.1", port: "automatic" },
+  functionsInspector: { enabled: false, address: "127.0.0.1", port: "automatic" },
+};
 
 const state: PersistedStackState = {
   format: "supabase-stack-state-v1",
@@ -106,6 +121,80 @@ describe("workload runtime catalog", () => {
           ["primary", "admin", "ui", "smtp", "pop3"].includes(binding),
         ),
       ).toBe(true);
+    }).pipe(Effect.provide(NodeServices.layer)),
+  );
+
+  it.live("compiles pgmeta's primary and admin ports before the Vector companion", () =>
+    Effect.gen(function* () {
+      const compiled = yield* compileStack({
+        projectRoot: state.identity.projectRoot,
+        runtime: { kind: "native" },
+        config: {
+          capabilities: {
+            analytics: { enabled: true, settings: { vector_port: 9001 } },
+            studio: { enabled: true },
+          },
+        },
+      }).pipe(Effect.provide(NodeServices.layer));
+      const relevant = privateBindingIntentsFor(compiled.executionPlan).filter(
+        ({ workloadId }) => workloadId === "studio:pgmeta" || workloadId === "analytics:vector",
+      );
+      expect(relevant).toEqual([
+        { workloadId: "studio:pgmeta", binding: "primary" },
+        { workloadId: "studio:pgmeta", binding: "admin" },
+        { workloadId: "analytics:vector", binding: "primary" },
+      ]);
+
+      const fs = yield* FileSystem.FileSystem;
+      const root = yield* fs.makeTempDirectoryScoped({ prefix: "supabase-pgmeta-ports-" });
+      const identity = {
+        ...state.identity,
+        projectRoot: root,
+        checkoutRoot: root,
+        workspaceId: root,
+        checkoutId: root,
+      };
+      const stackId = yield* deriveStackId(identity);
+      const store = yield* makeStackStateStore({ stateRoot: root });
+      yield* store.write(stackId, {
+        ...state,
+        identity: { ...identity, stackId },
+        desiredGeneration: 0,
+        portsGeneration: null,
+        desiredLifecycle: "stopped",
+        ports: [],
+        privatePorts: [],
+      });
+      const registry = yield* makePortRegistry({ stateRoot: root, store });
+      const reservation = yield* makePortCoordinator(registry, store).planAndReserve(
+        stackId,
+        disabledListenerIntents,
+        {
+          lifecycle: "stopped",
+          privateBindings: privateBindingIntentsFor(compiled.executionPlan),
+        },
+      );
+      const pgmetaPrimary = reservation.privateAssignments.find(
+        ({ workloadId, binding }) => workloadId === "studio:pgmeta" && binding === "primary",
+      );
+      const pgmetaAdmin = reservation.privateAssignments.find(
+        ({ workloadId, binding }) => workloadId === "studio:pgmeta" && binding === "admin",
+      );
+      const vectorPrimary = reservation.privateAssignments.find(
+        ({ workloadId, binding }) => workloadId === "analytics:vector" && binding === "primary",
+      );
+      if (pgmetaPrimary === undefined || pgmetaAdmin === undefined || vectorPrimary === undefined)
+        throw new Error("Compiled plan did not reserve pgmeta and Vector bindings");
+      expect(pgmetaAdmin.port).toBe(pgmetaPrimary.port + 1);
+      expect(vectorPrimary.port).toBeGreaterThan(pgmetaAdmin.port);
+      const pgmetaResolution = containerResolutionFor(
+        { ...state, privatePorts: reservation.privateAssignments },
+        planned("studio:pgmeta"),
+      );
+      expect(pgmetaResolution?.publications).toEqual([
+        { address: "127.0.0.1", hostPort: pgmetaPrimary.port, containerPort: 8080 },
+        { address: "127.0.0.1", hostPort: pgmetaAdmin.port, containerPort: 8081 },
+      ]);
     }).pipe(Effect.provide(NodeServices.layer)),
   );
 
@@ -237,6 +326,11 @@ describe("workload runtime catalog", () => {
     const realtime = planned("realtime:realtime");
     expect(runtimeSpecFor(realtime)?.nativeStartupProcesses(root, state, realtime, 4000)).toEqual([
       { executable: `${root}/bin/migrate`, args: [], cwd: root },
+      {
+        executable: `${root}/bin/realtime`,
+        args: ["eval", "Realtime.Release.seeds(Realtime.Repo)"],
+        cwd: root,
+      },
     ]);
     const analytics = planned("analytics:analytics");
     expect(runtimeSpecFor(analytics)?.nativeStartupProcesses(root, state, analytics, 4000)).toEqual(
@@ -338,6 +432,7 @@ describe("workload runtime catalog", () => {
                   functions: { hello: { verify_jwt: false } },
                 },
               },
+              studio: { settings: { api_url: "https://studio.example" } },
               pooler: { enabled: true, settings: { pool_mode: "session", max_client_conn: 250 } },
               auth: {
                 settings: {
@@ -385,10 +480,27 @@ describe("workload runtime catalog", () => {
             },
           },
         });
-        const configured: PersistedStackState = { ...state, definition: compiled.definition };
+        const configured: PersistedStackState = {
+          ...state,
+          definition: compiled.definition,
+          secrets: {
+            ...state.secrets,
+            "secret:analytics.settings.api_key": { policy: "passthrough", value: "api-key" },
+          },
+        };
         const rest = runtimeSpecFor(planned("rest:rest"));
         const storage = runtimeSpecFor(planned("storage:storage"));
         const functions = planned("functions:edge-runtime");
+        expect(runtimeSpecFor(functions)?.env(configured, functions, 9000, "native")).toMatchObject(
+          {
+            SUPABASE_URL: "http://127.0.0.1:54321",
+          },
+        );
+        expect(
+          runtimeSpecFor(functions)?.env(configured, functions, 9000, "container", {
+            hostRoute: { host: "host.docker.internal", gateway: "host-gateway" },
+          }),
+        ).toMatchObject({ SUPABASE_URL: "http://host.docker.internal:54321" });
         expect(rest?.env(configured, planned("rest:rest"), 3000, "native")).toMatchObject({
           PGRST_DB_SCHEMAS: "private",
           PGRST_DB_EXTRA_SEARCH_PATH: "extensions",
@@ -479,7 +591,8 @@ describe("workload runtime catalog", () => {
             auth: { jwks: '{"keys":[]}' },
           }),
         ).toMatchObject({ ERL_AFLAGS: "-proto_dist inet6_tcp", API_JWT_JWKS: '{"keys":[]}' });
-        expect(realtime?.readiness.headers).toEqual({ Host: "realtime-dev" });
+        expect(realtime?.readiness.headers).toBeUndefined();
+        expect(realtime?.readiness.path).toBe("/healthcheck");
         const analytics = runtimeSpecFor(planned("analytics:analytics"));
         const analyticsInputs = { analytics: { gcpJwtPath: "/tmp/gcp.json" } };
         expect(
@@ -495,6 +608,28 @@ describe("workload runtime catalog", () => {
           GOOGLE_PROJECT_NUMBER: "42",
           GOOGLE_APPLICATION_CREDENTIALS: "/tmp/gcp.json",
         });
+        expect(
+          analytics?.env(configured, planned("analytics:analytics"), 4000, "native"),
+        ).toMatchObject({
+          LOGFLARE_PRIVATE_ACCESS_TOKEN: "api-key",
+        });
+        expect(
+          analytics?.env(configured, planned("analytics:analytics"), 4000, "native"),
+        ).not.toHaveProperty("LOGFLARE_PUBLIC_ACCESS_TOKEN");
+        expect(
+          analytics?.env(configured, planned("analytics:analytics"), 4000, "container"),
+        ).toMatchObject({
+          LOGFLARE_PRIVATE_ACCESS_TOKEN: "api-key",
+        });
+        expect(
+          analytics?.env(configured, planned("analytics:analytics"), 4000, "container"),
+        ).not.toHaveProperty("LOGFLARE_PUBLIC_ACCESS_TOKEN");
+        expect(analytics?.env(state, planned("analytics:analytics"), 4000, "native")).toMatchObject(
+          {
+            DB_USERNAME: "supabase_admin",
+            POSTGRES_BACKEND_URL: expect.stringContaining("/_supabase"),
+          },
+        );
         expect(
           analytics?.containerMounts?.(configured, planned("analytics:analytics"), analyticsInputs),
         ).toEqual([
@@ -612,17 +747,77 @@ describe("workload runtime catalog", () => {
           ),
         ).toEqual({
           executable: "/tmp/native-artifact/bin/vector",
-          args: [
-            "--config",
-            "/tmp/native-artifact/share/doc/vector/config/vector.yaml",
-            "--watch-config",
-            "false",
-          ],
+          args: ["--config", "/tmp/native-artifact/share/doc/vector/config/vector.yaml"],
           cwd: "/tmp/supabase-runtime-spec",
+        });
+        expect(
+          runtimeSpecFor(planned("analytics:vector"))?.nativeProcess(
+            nodeArtifactRoot,
+            configured,
+            planned("analytics:vector"),
+            9001,
+            { analytics: { vectorConfigPath: "/tmp/vector.yaml" } },
+          ),
+        ).toEqual({
+          executable: "/tmp/native-artifact/bin/vector",
+          args: ["--config", "/tmp/vector.yaml"],
+          cwd: "/tmp/supabase-runtime-spec",
+        });
+        expect(
+          runtimeSpecFor(planned("analytics:vector"))?.env(
+            configured,
+            planned("analytics:vector"),
+            9001,
+            "native",
+          ).VECTOR_API_ADDRESS,
+        ).toBe("127.0.0.1:30014");
+        expect(
+          runtimeSpecFor(planned("analytics:vector"))?.env(
+            configured,
+            planned("analytics:vector"),
+            9001,
+            "container",
+          ).VECTOR_API_ADDRESS,
+        ).toBe("0.0.0.0:9001");
+        expect(
+          runtimeSpecFor(planned("analytics:vector"))?.env(
+            configured,
+            planned("analytics:vector"),
+            9001,
+            "native",
+          ),
+        ).toMatchObject({
+          LOGFLARE_URL: "http://127.0.0.1:30013",
+          LOGFLARE_PRIVATE_ACCESS_TOKEN: "api-key",
+        });
+        expect(
+          runtimeSpecFor(planned("analytics:vector"))?.env(
+            configured,
+            planned("analytics:vector"),
+            9001,
+            "container",
+          ),
+        ).toMatchObject({
+          LOGFLARE_URL: "http://supabase-analytics:4000",
+          LOGFLARE_PRIVATE_ACCESS_TOKEN: "api-key",
         });
         const vector = planned("analytics:vector");
         expect(containerResolutionFor(configured, vector)?.command).toEqual([]);
         expect(containerResolutionFor(configured, vector)?.mounts).toEqual([]);
+        expect(
+          containerResolutionFor(configured, vector, {
+            analytics: { vectorConfigPath: "/tmp/vector.yaml" },
+          }),
+        ).toMatchObject({
+          command: ["--config", "/etc/vector/vector.yaml"],
+          mounts: [
+            {
+              source: "/tmp/vector.yaml",
+              target: "/etc/vector/vector.yaml",
+              readOnly: true,
+            },
+          ],
+        });
       }).pipe(Effect.provide(NodeServices.layer)),
   );
 

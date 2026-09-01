@@ -1,4 +1,4 @@
-import { Data, Effect, Option, Scope, Stream } from "effect";
+import { Data, Effect, Option, Scope, Stream, type Duration } from "effect";
 import { fileURLToPath } from "node:url";
 import { ChildProcess } from "effect/unstable/process";
 import type { PlatformError } from "effect/PlatformError";
@@ -11,8 +11,12 @@ import type {
 export interface NativeProcessSpec {
   readonly executable: string;
   readonly args?: ReadonlyArray<string>;
-  readonly env?: Readonly<Record<string, string | undefined>>;
+  readonly env?: Readonly<Record<string, string>>;
   readonly cwd?: string;
+  /** Maximum time allowed for this service-owned one-shot process. */
+  readonly timeout?: Duration.Input;
+  /** Exact lifecycle witness written after a successful one-shot process. */
+  readonly successMarker?: string;
 }
 
 /**
@@ -99,11 +103,40 @@ export const spawnNativeProcess = (
       stream: Stream.Stream<Uint8Array, PlatformError>,
     ): Stream.Stream<Uint8Array, NativeProcessError> =>
       stream.pipe(Stream.mapError((error) => mapProcessError(error, spec)));
+    const cleanupProcessGroup = Effect.try({
+      try: () => {
+        if (globalThis.process.platform === "win32") return;
+        try {
+          globalThis.process.kill(-Number(handle.pid), "SIGKILL");
+        } catch (error) {
+          if (
+            typeof error === "object" &&
+            error !== null &&
+            "code" in error &&
+            error.code === "ESRCH"
+          )
+            return;
+          throw error;
+        }
+      },
+      catch: (error) => mapProcessError(error, spec),
+    });
+    const exitCode = yield* Effect.cached(
+      mapError(handle.exitCode).pipe(
+        Effect.tap(
+          () =>
+            // The launcher exits with the workload's code, but its descendants
+            // can keep the detached process group alive. The parent still owns
+            // that exact group, so terminate it after capturing the exit code.
+            cleanupProcessGroup,
+        ),
+      ),
+    );
     return {
       pid: handle.pid,
       stdout: mapStreamError(handle.stdout),
       stderr: mapStreamError(handle.stderr),
-      exitCode: mapError(handle.exitCode),
+      exitCode,
       isRunning: mapError(handle.isRunning),
       kill: mapError(
         Effect.gen(function* () {

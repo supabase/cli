@@ -1,7 +1,10 @@
+// oxlint-disable effecttsgo/prefer-schema-over-json -- generated shell fixtures use protocol JSON quoting, not product serialization.
 import { NodeServices } from "@effect/platform-node";
 import { describe, expect, it } from "@effect/vitest";
 import {
+  Cause,
   Deferred,
+  Duration,
   Effect,
   Exit,
   FileSystem,
@@ -10,6 +13,7 @@ import {
   Crypto,
   Redacted,
   Scope,
+  Option,
   Stream,
 } from "effect";
 // oxlint-disable-next-line effecttsgo/node-builtin-import
@@ -21,11 +25,18 @@ import { StackIdSchema } from "../public/StackId.ts";
 import type { StackRuntime } from "../public/Runtime.ts";
 import type { PersistedStackState } from "../state/StackState.ts";
 import type { StackStateStore } from "../state/StackStateStore.ts";
+import { resolveStackPaths } from "../state/Paths.ts";
 import type { SupervisorIngress } from "../supervisor/Ingress.ts";
 import type { LogStore } from "../supervisor/LogStore.ts";
-import { makeProductionRuntimeFactory, withOwnedRuntimeFileCleanup } from "./ProductionRuntime.ts";
+import type { LifecycleInput } from "../supervisor/Lifecycle.ts";
+import {
+  makeProductionRuntimeFactory,
+  NATIVE_DATABASE_MIGRATION_MARKER,
+  readinessDeadlineFor,
+  withOwnedRuntimeFileCleanup,
+} from "./ProductionRuntime.ts";
 import { RuntimeDriverError, type RuntimeDriver } from "./RuntimeDriver.ts";
-import { StackPreparationError } from "../public/Errors.ts";
+import { InvalidStackConfigError, StackPreparationError } from "../public/Errors.ts";
 import type { RuntimeArtifactPreparer } from "../preparation/RuntimeArtifacts.ts";
 import type { PlannedWorkload } from "../model/ExecutionPlan.ts";
 import { compileStack } from "../model/Compiler.ts";
@@ -129,6 +140,51 @@ const artifacts: RuntimeArtifactPreparer = {
   prepare: () => Effect.die("unused"),
 };
 
+const writeNativeDatabaseFixture = (
+  fs: FileSystem.FileSystem,
+  path: Path.Path,
+  root: string,
+  eventsPath: string,
+  failFirstMigration = false,
+) =>
+  Effect.gen(function* () {
+    const initDirectory = path.join(root, "share/supabase-cli/bin");
+    const migrationDirectory = path.join(root, "share/supabase-cli/migrations");
+    yield* fs.makeDirectory(initDirectory, { recursive: true });
+    yield* fs.makeDirectory(migrationDirectory, { recursive: true });
+    const main = path.join(initDirectory, "supabase-postgres-init.sh");
+    yield* fs.writeFileString(
+      main,
+      "#!/bin/sh\ntrap 'exit 0' TERM INT\nwhile :; do sleep 1; done\n",
+    );
+    yield* fs.chmod(main, 0o755);
+    const migrate = path.join(migrationDirectory, "migrate.sh");
+    const firstMigrationPath = `${eventsPath}.migration-attempted`;
+    yield* fs.writeFileString(
+      migrate,
+      `#!/bin/sh
+set -eu
+${failFirstMigration ? `if [ ! -e ${JSON.stringify(firstMigrationPath)} ]; then touch ${JSON.stringify(firstMigrationPath)}; exit 7; fi` : ""}
+printf 'migration|host=%s|port=%s|db=%s|user=%s|password=%s|path=%s\\n' "$POSTGRES_HOST" "$POSTGRES_PORT" "$POSTGRES_DB" "$POSTGRES_USER" "$POSTGRES_PASSWORD" "$PATH" >> ${JSON.stringify(eventsPath)}
+`,
+    );
+    yield* fs.chmod(migrate, 0o755);
+    return { main, migrate };
+  });
+
+const listenForNativeReadiness = (server: ReturnType<typeof createNetServer>) =>
+  Effect.acquireRelease(
+    Effect.callback<void, Error>((resume) => {
+      server.once("error", (error) => resume(Effect.fail(error)));
+      server.listen(0, "127.0.0.1", () => resume(Effect.void));
+    }),
+    () =>
+      Effect.callback<void>((resume) => {
+        if (!server.listening) return resume(Effect.void);
+        server.close(() => resume(Effect.void));
+      }),
+  );
+
 const envFiles: RuntimeEnvFileOwner = {
   write: () => Effect.die("unused"),
   cleanupGeneration: () => Effect.void,
@@ -219,6 +275,434 @@ const ownerInputContainerEngine = (createdSpecs: ContainerContainerSpec[]): Cont
 };
 
 describe("production runtime composition", () => {
+  it.live("activates a capability through its public listener workload", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const root = yield* fs.makeTempDirectoryScoped({
+          prefix: "supabase-production-activation-endpoint-",
+        });
+        const compiled = yield* compileStack({
+          projectRoot: root,
+          runtime: { kind: "native" },
+          config: {
+            capabilities: {
+              database: {},
+              rest: { enabled: false },
+              auth: { enabled: false },
+              realtime: { enabled: false },
+              storage: {
+                enabled: true,
+                settings: { image_transformation: { enabled: true } },
+              },
+              functions: { enabled: false },
+              studio: { enabled: false },
+              mail: { enabled: false },
+              analytics: { enabled: false },
+              pooler: { enabled: false },
+            },
+          },
+        });
+        const current = {
+          value: {
+            ...stateFor({}),
+            identity: {
+              ...stateFor({}).identity,
+              projectRoot: root,
+              checkoutRoot: root,
+              workspaceId: root,
+              checkoutId: root,
+            },
+            desiredLifecycle: "running" as const,
+            definition: compiled.definition,
+            inputFingerprint: compiled.inputFingerprint,
+            privatePorts: [
+              { workloadId: "storage:imgproxy", binding: "primary", port: 41_001 },
+              { workloadId: "storage:storage", binding: "primary", port: 41_002 },
+            ],
+          },
+        } satisfies { value: PersistedStackState };
+        const context = yield* Effect.context<FileSystem.FileSystem | Path.Path | Crypto.Crypto>();
+        const factory = yield* makeProductionRuntimeFactory({
+          stateRoot: root,
+          stackId,
+          ownerSessionId: "owner",
+          stateStore: stateStoreFor(current),
+          context,
+          ingress,
+          artifactPreparer: artifacts,
+          logStore: memoryLogStore([]),
+          bootstrapDatabase: () => Effect.void,
+        });
+        const runtime = yield* factory.make(current.value);
+        const input = {
+          stackId,
+          generation: 1,
+          desiredLifecycle: "running" as const,
+          state: current.value,
+          previous: current.value,
+          definition: compiled.definition,
+          inputFingerprint: compiled.inputFingerprint,
+          secrets: current.value.secrets,
+          plan: compiled.executionPlan,
+        } satisfies LifecycleInput;
+        if (runtime.activate === undefined) return yield* Effect.die("activation seam missing");
+        const endpoint = yield* runtime.activate("storage", input);
+        expect(endpoint).toEqual({ host: "127.0.0.1", port: 41_002 });
+      }),
+    ).pipe(Effect.provide(NodeServices.layer)),
+  );
+
+  it.live("runs canonical PostgreSQL migrations before bootstrap on first native boot", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const root = yield* fs.makeTempDirectoryScoped({ prefix: "supabase-production-pg-first-" });
+        const eventsPath = path.join(root, "events");
+        const artifactRoot = path.join(root, "artifact");
+        yield* writeNativeDatabaseFixture(fs, path, artifactRoot, eventsPath);
+        const readinessServer = createNetServer((socket) => socket.end());
+        yield* listenForNativeReadiness(readinessServer);
+        const address = readinessServer.address();
+        if (typeof address !== "object" || address === null)
+          return yield* Effect.die("Native readiness server did not expose an address");
+        const compiled = yield* compileStack({
+          projectRoot: root,
+          runtime: { kind: "native" },
+        });
+        const current = {
+          value: {
+            ...stateFor({
+              "secret:database.internal.password": { policy: "managed", value: "db-secret" },
+              "secret:auth.settings.jwt_secret": { policy: "managed", value: "jwt-secret" },
+            }),
+            identity: {
+              ...stateFor({}).identity,
+              projectRoot: root,
+              checkoutRoot: root,
+              workspaceId: root,
+              checkoutId: root,
+            },
+            desiredLifecycle: "running" as const,
+            definition: compiled.definition,
+            inputFingerprint: compiled.inputFingerprint,
+            privatePorts: [
+              { workloadId: "database:database", binding: "primary", port: address.port },
+            ],
+          },
+        } satisfies { value: PersistedStackState };
+        const runtimePaths = yield* resolveStackPaths({ stateRoot: root, stackId });
+        const databaseDataPath = path.join(runtimePaths.data, "database");
+        const bootstrap = () =>
+          Effect.gen(function* () {
+            const previous = yield* fs.readFileString(eventsPath);
+            yield* fs.writeFileString(eventsPath, `${previous}bootstrap\n`);
+          }).pipe(
+            Effect.mapError(
+              (cause) => new StackPreparationError({ message: "bootstrap fixture failed", cause }),
+            ),
+          );
+        const context = yield* Effect.context<FileSystem.FileSystem | Path.Path | Crypto.Crypto>();
+        const factory = yield* makeProductionRuntimeFactory({
+          stateRoot: root,
+          stackId,
+          ownerSessionId: "owner",
+          stateStore: stateStoreFor(current),
+          context,
+          ingress,
+          artifactPreparer: {
+            prepare: () =>
+              Effect.succeed({
+                workloadId: "database:database",
+                capability: "database" as const,
+                version: "17.6.1.166",
+                outcome: "present" as const,
+                artifactRoot,
+              }),
+          },
+          logStore: memoryLogStore([]),
+          bootstrapDatabase: bootstrap,
+        });
+        const runtime = yield* factory.make(current.value);
+        const database = compiled.executionPlan.workloads.find(
+          (workload) => workload.id === "database:database",
+        );
+        if (database === undefined) return yield* Effect.die("Expected database workload");
+        const ready = yield* runtime.driver.start(
+          {
+            stackId,
+            desiredGeneration: 1,
+            workloadId: database.id,
+            specHash: database.specHash,
+          },
+          database,
+        );
+        expect(ready.state).toBe("ready");
+        expect(
+          yield* fs.exists(path.join(databaseDataPath, NATIVE_DATABASE_MIGRATION_MARKER)),
+        ).toBe(true);
+        const events = yield* fs.readFileString(eventsPath);
+        expect(events).toContain("migration|host=127.0.0.1");
+        expect(events).toContain("port=" + String(address.port));
+        expect(events).toContain("db=postgres");
+        expect(events).toContain("user=supabase_admin");
+        expect(events).toContain("password=db-secret");
+        expect(events).toContain(`path=${path.join(artifactRoot, "bin")}:`);
+        expect(events.indexOf("migration")).toBeLessThan(events.indexOf("bootstrap"));
+        yield* runtime.driver.stop({
+          stackId,
+          desiredGeneration: 1,
+          workloadId: database.id,
+          specHash: database.specHash,
+        });
+      }),
+    ).pipe(Effect.provide(NodeServices.layer)),
+  );
+
+  it.live(
+    "retries canonical PostgreSQL migrations when PG_VERSION exists without completion marker",
+    () =>
+      Effect.scoped(
+        Effect.gen(function* () {
+          const fs = yield* FileSystem.FileSystem;
+          const path = yield* Path.Path;
+          const root = yield* fs.makeTempDirectoryScoped({
+            prefix: "supabase-production-pg-existing-",
+          });
+          const eventsPath = path.join(root, "events");
+          const artifactRoot = path.join(root, "artifact");
+          yield* writeNativeDatabaseFixture(fs, path, artifactRoot, eventsPath, true);
+          const readinessServer = createNetServer((socket) => socket.end());
+          yield* listenForNativeReadiness(readinessServer);
+          const address = readinessServer.address();
+          if (typeof address !== "object" || address === null)
+            return yield* Effect.die("Native readiness server did not expose an address");
+          const compiled = yield* compileStack({
+            projectRoot: root,
+            runtime: { kind: "native" },
+          });
+          const current = {
+            value: {
+              ...stateFor({
+                "secret:database.internal.password": { policy: "managed", value: "db-secret" },
+                "secret:auth.settings.jwt_secret": { policy: "managed", value: "jwt-secret" },
+              }),
+              identity: {
+                ...stateFor({}).identity,
+                projectRoot: root,
+                checkoutRoot: root,
+                workspaceId: root,
+                checkoutId: root,
+              },
+              desiredLifecycle: "running" as const,
+              definition: compiled.definition,
+              inputFingerprint: compiled.inputFingerprint,
+              privatePorts: [
+                { workloadId: "database:database", binding: "primary", port: address.port },
+              ],
+            },
+          } satisfies { value: PersistedStackState };
+          const runtimePaths = yield* resolveStackPaths({ stateRoot: root, stackId });
+          const databaseDataPath = path.join(runtimePaths.data, "database");
+          yield* fs.makeDirectory(databaseDataPath, { recursive: true });
+          yield* fs.writeFileString(path.join(databaseDataPath, "PG_VERSION"), "17\n");
+          const bootstrap = () =>
+            Effect.gen(function* () {
+              const previous = yield* fs
+                .readFileString(eventsPath)
+                .pipe(Effect.catchTag("PlatformError", () => Effect.succeed("")));
+              yield* fs.writeFileString(eventsPath, `${previous}bootstrap\n`);
+            }).pipe(
+              Effect.mapError(
+                (cause) =>
+                  new StackPreparationError({ message: "bootstrap fixture failed", cause }),
+              ),
+            );
+          const context = yield* Effect.context<
+            FileSystem.FileSystem | Path.Path | Crypto.Crypto
+          >();
+          const factory = yield* makeProductionRuntimeFactory({
+            stateRoot: root,
+            stackId,
+            ownerSessionId: "owner",
+            stateStore: stateStoreFor(current),
+            context,
+            ingress,
+            artifactPreparer: {
+              prepare: () =>
+                Effect.succeed({
+                  workloadId: "database:database",
+                  capability: "database" as const,
+                  version: "17.6.1.166",
+                  outcome: "present" as const,
+                  artifactRoot,
+                }),
+            },
+            logStore: memoryLogStore([]),
+            bootstrapDatabase: bootstrap,
+          });
+          const runtime = yield* factory.make(current.value);
+          const database = compiled.executionPlan.workloads.find(
+            (workload) => workload.id === "database:database",
+          );
+          if (database === undefined) return yield* Effect.die("Expected database workload");
+          const failed = yield* runtime.driver
+            .start(
+              {
+                stackId,
+                desiredGeneration: 1,
+                workloadId: database.id,
+                specHash: database.specHash,
+              },
+              database,
+            )
+            .pipe(Effect.exit);
+          expect(Exit.isFailure(failed)).toBe(true);
+          expect(
+            yield* fs.exists(path.join(databaseDataPath, NATIVE_DATABASE_MIGRATION_MARKER)),
+          ).toBe(false);
+          yield* runtime.driver.start(
+            {
+              stackId,
+              desiredGeneration: 1,
+              workloadId: database.id,
+              specHash: database.specHash,
+            },
+            database,
+          );
+          const events = yield* fs.readFileString(eventsPath);
+          expect(events).toContain("migration|host=127.0.0.1");
+          expect(events).toContain("bootstrap\n");
+          expect(
+            yield* fs.exists(path.join(databaseDataPath, NATIVE_DATABASE_MIGRATION_MARKER)),
+          ).toBe(true);
+          yield* runtime.driver.stop({
+            stackId,
+            desiredGeneration: 1,
+            workloadId: database.id,
+            specHash: database.specHash,
+          });
+          yield* fs.writeFileString(eventsPath, "");
+          yield* runtime.driver.start(
+            {
+              stackId,
+              desiredGeneration: 1,
+              workloadId: database.id,
+              specHash: database.specHash,
+            },
+            database,
+          );
+          expect(yield* fs.readFileString(eventsPath)).toBe("bootstrap\n");
+          yield* runtime.driver.stop({
+            stackId,
+            desiredGeneration: 1,
+            workloadId: database.id,
+            specHash: database.specHash,
+          });
+        }),
+      ).pipe(Effect.provide(NodeServices.layer)),
+  );
+
+  it.live("wires persisted database and generic readiness deadlines", () =>
+    Effect.gen(function* () {
+      const configured = yield* compileStack({
+        projectRoot: "/tmp/production-runtime-readiness-budget",
+        runtime: { kind: "native" },
+        config: { capabilities: { database: { settings: { health_timeout: "90s" } } } },
+      });
+      const defaulted = yield* compileStack({
+        projectRoot: "/tmp/production-runtime-readiness-budget-default",
+        runtime: { kind: "native" },
+      });
+      const configuredDatabase = configured.executionPlan.workloads.find(
+        ({ id }) => id === "database:database",
+      );
+      const defaultDatabase = defaulted.executionPlan.workloads.find(
+        ({ id }) => id === "database:database",
+      );
+      const generic = configured.executionPlan.workloads.find(({ id }) => id === "rest:rest");
+      if (
+        configuredDatabase === undefined ||
+        defaultDatabase === undefined ||
+        generic === undefined
+      )
+        return;
+      const configuredState = {
+        ...stateFor({}),
+        definition: configured.definition,
+        inputFingerprint: configured.inputFingerprint,
+      };
+      const defaultState = {
+        ...stateFor({}),
+        definition: defaulted.definition,
+        inputFingerprint: defaulted.inputFingerprint,
+      };
+      expect(
+        Duration.toMillis(yield* readinessDeadlineFor(configuredState, configuredDatabase)),
+      ).toBe(90_000);
+      expect(Duration.toMillis(yield* readinessDeadlineFor(defaultState, defaultDatabase))).toBe(
+        120_000,
+      );
+      expect(Duration.toMillis(yield* readinessDeadlineFor(configuredState, generic))).toBe(30_000);
+    }).pipe(Effect.provide(NodeServices.layer)),
+  );
+
+  it.live("rejects an invalid database readiness budget before creating a workload", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const result = yield* compileStack({
+          projectRoot: "/tmp/production-runtime-invalid-health-timeout",
+          runtime: { kind: "container", engine: "docker" },
+          config: {
+            capabilities: { database: { settings: { health_timeout: "not-a-duration" } } },
+          },
+        }).pipe(Effect.exit);
+        expect(Exit.isFailure(result)).toBe(true);
+        if (Exit.isFailure(result)) {
+          const cause = Option.getOrUndefined(Cause.findErrorOption(result.cause));
+          expect(cause).toBeInstanceOf(InvalidStackConfigError);
+        }
+      }).pipe(Effect.provide(NodeServices.layer)),
+    ),
+  );
+
+  it.live("rejects a zero persisted database readiness budget", () =>
+    Effect.gen(function* () {
+      const compiled = yield* compileStack({
+        projectRoot: "/tmp/production-runtime-zero-health-timeout",
+        runtime: { kind: "native" },
+      });
+      const database = compiled.executionPlan.workloads.find(
+        ({ id }) => id === "database:database",
+      );
+      if (database === undefined) return;
+      const state = {
+        ...stateFor({}),
+        definition: {
+          ...compiled.definition,
+          capabilities: {
+            ...compiled.definition.capabilities,
+            database: {
+              ...compiled.definition.capabilities.database,
+              settings: {
+                ...compiled.definition.capabilities.database.settings,
+                health_timeout: "0",
+              },
+            },
+          },
+        },
+      };
+      const result = yield* readinessDeadlineFor(state, database).pipe(Effect.exit);
+      expect(Exit.isFailure(result)).toBe(true);
+      if (Exit.isFailure(result)) {
+        expect(Option.getOrUndefined(Cause.findErrorOption(result.cause))).toBeInstanceOf(
+          StackPreparationError,
+        );
+      }
+    }).pipe(Effect.provide(NodeServices.layer)),
+  );
+
   it.live("exposes artifact-only preparation without starting workloads or mutating state", () =>
     Effect.scoped(
       Effect.gen(function* () {

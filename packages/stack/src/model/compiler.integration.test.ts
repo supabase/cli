@@ -4,6 +4,7 @@ import { Cause, Effect, Exit, Option, Redacted } from "effect";
 import { InvalidStackConfigError, StackVersionUnsupportedError } from "../public/Errors.ts";
 import { canonicalize, compileStack } from "./Compiler.ts";
 import { resolveThirdPartyIssuer } from "./capabilities/auth-third-party.ts";
+import { DEFAULT_DATABASE_HEALTH_TIMEOUT } from "./capabilities/database.ts";
 import { parseFileSize } from "./capabilities/storage.ts";
 
 const layer = NodeServices.layer;
@@ -44,6 +45,29 @@ describe("closed capability compiler", () => {
       expect(result.definition.capabilities.database.settings).toMatchObject({
         health_timeout: "5m",
       });
+    }),
+  );
+
+  it.live("materializes the default database health timeout", () =>
+    Effect.gen(function* () {
+      const result = yield* compile({});
+      expect(result.definition.capabilities.database.settings.health_timeout).toBe(
+        DEFAULT_DATABASE_HEALTH_TIMEOUT,
+      );
+    }),
+  );
+
+  it.live("rejects an invalid database health timeout during compilation", () =>
+    Effect.gen(function* () {
+      const result = yield* compile({
+        capabilities: { database: { settings: { health_timeout: "not-a-duration" } } },
+      }).pipe(Effect.exit);
+      expect(Exit.isFailure(result)).toBe(true);
+      expect(failureOf(result)).toBeInstanceOf(InvalidStackConfigError);
+      const zero = yield* compile({
+        capabilities: { database: { settings: { health_timeout: "0" } } },
+      }).pipe(Effect.exit);
+      expect(failureOf(zero)).toBeInstanceOf(InvalidStackConfigError);
     }),
   );
 
@@ -336,6 +360,36 @@ describe("closed capability compiler", () => {
     }),
   );
 
+  it.live("creates a managed Analytics access key when omitted", () =>
+    Effect.gen(function* () {
+      const result = yield* compile({});
+      expect(result.definition.capabilities.analytics.settings).toMatchObject({
+        api_key: { slot: "secret:analytics.settings.api_key" },
+      });
+      expect(result.secrets).toContainEqual({
+        slot: "secret:analytics.settings.api_key",
+        policy: "managed",
+        generator: { kind: "random-base64url", bytes: 32 },
+      });
+    }),
+  );
+
+  it.live("preserves a supplied Analytics access key as pass-through", () =>
+    Effect.gen(function* () {
+      const result = yield* compile({
+        capabilities: { analytics: { settings: { api_key: Redacted.make("custom-api-key") } } },
+      });
+      expect(result.secrets).toContainEqual({
+        slot: "secret:analytics.settings.api_key",
+        policy: "passthrough",
+        value: Redacted.make("custom-api-key"),
+      });
+      expect(result.definition.capabilities.analytics.settings.api_key).toEqual({
+        slot: "secret:analytics.settings.api_key",
+      });
+    }),
+  );
+
   it.live("materializes a non-default pooler setting", () =>
     Effect.gen(function* () {
       const result = yield* compile({
@@ -345,6 +399,49 @@ describe("closed capability compiler", () => {
         pool_mode: "session",
       });
       expect(result.definition.capabilities.pooler.enabled).toBe(true);
+    }),
+  );
+
+  it.live("attaches artifact-compatible generators for managed pooler keys", () =>
+    Effect.gen(function* () {
+      const result = yield* compile({ capabilities: { pooler: { enabled: true } } });
+      expect(result.secrets).toContainEqual({
+        slot: "secret:pooler.settings.encryption_key",
+        policy: "managed",
+        generator: { kind: "random-base64url", bytes: 24 },
+      });
+      expect(result.secrets).toContainEqual({
+        slot: "secret:pooler.settings.secret_key_base",
+        policy: "managed",
+        generator: { kind: "random-base64url", bytes: 48 },
+      });
+    }),
+  );
+
+  it.live("rejects pooler key values that violate the artifact contract", () =>
+    Effect.gen(function* () {
+      const invalidEncryption = yield* compile({
+        capabilities: {
+          pooler: {
+            enabled: true,
+            settings: { encryption_key: Redacted.make("too-short") },
+          },
+        },
+      }).pipe(Effect.exit);
+      expect(failureOf(invalidEncryption)).toBeInstanceOf(InvalidStackConfigError);
+      expect(failureOf(invalidEncryption)?.setting).toBe(
+        "capabilities.pooler.settings.encryption_key",
+      );
+
+      const invalidSecretBase = yield* compile({
+        capabilities: {
+          pooler: {
+            enabled: true,
+            settings: { secret_key_base: Redacted.make("!".repeat(63)) },
+          },
+        },
+      }).pipe(Effect.exit);
+      expect(failureOf(invalidSecretBase)).toBeInstanceOf(InvalidStackConfigError);
     }),
   );
 

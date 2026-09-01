@@ -229,7 +229,9 @@ export const makeSupervisorIngress = (
             entry.gateway !== undefined
           )
             return;
-          const material = yield* (options.apiMaterial ?? defaultApiMaterial)(input.state);
+          const material = input.definition.listeners.api.enabled
+            ? yield* (options.apiMaterial ?? defaultApiMaterial)(input.state)
+            : undefined;
           const catalog = routeCatalogFor(input.plan, material);
           const resolveTemplates = options.resolveAuthTemplates;
           const templateRoute: GatewayRoute | undefined =

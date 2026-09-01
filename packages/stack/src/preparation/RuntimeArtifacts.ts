@@ -170,6 +170,8 @@ const nativeResult = (
  */
 export const makeProductionRuntimeArtifactPreparer = (options: {
   readonly stateRoot: string;
+  /** Optional cache root shared across disposable stack state roots. */
+  readonly artifactCacheRoot?: string;
   readonly platform?: ContainerPlatform;
   readonly runtime?: StackRuntime;
 }): Effect.Effect<
@@ -185,7 +187,12 @@ export const makeProductionRuntimeArtifactPreparer = (options: {
     if (options.stateRoot.trim().length === 0)
       return yield* error("Artifact cache state root must not be blank");
     const path = yield* Path.Path;
-    const cacheRoot = path.join(path.resolve(options.stateRoot), "artifacts");
+    if (options.artifactCacheRoot !== undefined && options.artifactCacheRoot.trim().length === 0)
+      return yield* error("Artifact cache root must not be blank");
+    const cacheRoot =
+      options.artifactCacheRoot === undefined
+        ? path.join(path.resolve(options.stateRoot), "artifacts")
+        : path.resolve(options.artifactCacheRoot);
     const artifacts = new Map<string, NativeWorkloadArtifact>();
     const store =
       options.runtime?.kind === "container"

@@ -30,39 +30,25 @@ export const AnalyticsModule: CapabilityModule<AnalyticsSettings> = {
   releases: {
     "v1.50.6": release("v1.50.6", [
       workload("analytics", "analytics", "v1.50.6", "ghcr.io/supabase/cli/analytics:v1.50.6", {
-        dependencies: ["database:database", "analytics:vector"],
+        dependencies: ["database:database"],
         readiness: { mode: "http", portField: "api" },
       }),
       workload("vector", "analytics", "0.53.0-alpine", "ghcr.io/supabase/cli/vector:0.53.0", {
-        dependencies: [],
+        dependencies: ["analytics:analytics"],
         readiness: { mode: "tcp" },
       }),
     ]),
   },
   routes: [{ listener: "api", protocol: "http" }],
   secretPolicy: () => "passthrough",
-  managedSecretSlots: [],
+  managedSecretSlots: ["analytics.settings.api_key"],
   selectWorkloads: (settings, workloads) => {
     const value =
       typeof settings === "object" && settings !== null && !Array.isArray(settings)
         ? Object.fromEntries(Object.entries(settings)).vector_port
         : undefined;
     const enabled = typeof value === "number";
-    return workloads
-      .filter((entry) => enabled || entry.name !== "vector")
-      .map((entry) =>
-        entry.name === "analytics"
-          ? {
-              ...entry,
-              dependencies: enabled
-                ? [
-                    ...entry.dependencies.filter((dependency) => dependency !== "analytics:vector"),
-                    "analytics:vector",
-                  ]
-                : entry.dependencies.filter((dependency) => dependency !== "analytics:vector"),
-            }
-          : entry,
-      );
+    return workloads.filter((entry) => enabled || entry.name !== "vector");
   },
   materialize: (settings) => settings,
 };

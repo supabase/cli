@@ -82,7 +82,6 @@ class RuntimeAttemptControlError extends RuntimeDriverError {
 export const makeReconciler = (options: ReconcilerOptions): Effect.Effect<Reconciler> =>
   Effect.gen(function* () {
     const lifecycle = yield* Semaphore.make(1);
-    const readinessTimeout = options.readinessTimeout ?? "30 seconds";
     // Restart budgets are Supervisor-local. A new accepted generation gets a fresh key; repeated
     // observations of the same failed generation cannot silently reset an exhausted budget.
     const exhausted = new Map<string, number>();
@@ -215,21 +214,25 @@ export const makeReconciler = (options: ReconcilerOptions): Effect.Effect<Reconc
               yield* quiesceDependents();
               continue;
             }
-            const attempt = options.driver.start(action.key, action.workload).pipe(
-              Effect.timeoutOption(readinessTimeout),
-              Effect.flatMap((result) =>
-                Option.isSome(result)
-                  ? Effect.succeed(result.value)
-                  : Effect.fail(
-                      new RuntimeReadinessTimeoutError({
-                        message: `Readiness deadline exceeded for ${action.workload.id}`,
-                        stackId: request.stackId,
-                        workloadId: action.workload.id,
-                        desiredGeneration: request.desiredGeneration,
-                      }),
+            const start = options.driver.start(action.key, action.workload);
+            const attempt =
+              options.readinessTimeout === undefined
+                ? start
+                : start.pipe(
+                    Effect.timeoutOption(options.readinessTimeout),
+                    Effect.flatMap((result) =>
+                      Option.isSome(result)
+                        ? Effect.succeed(result.value)
+                        : Effect.fail(
+                            new RuntimeReadinessTimeoutError({
+                              message: `Readiness deadline exceeded for ${action.workload.id}`,
+                              stackId: request.stackId,
+                              workloadId: action.workload.id,
+                              desiredGeneration: request.desiredGeneration,
+                            }),
+                          ),
                     ),
-              ),
-            );
+                  );
             const schedule: Schedule.Schedule<unknown, RuntimeAttemptControlError> =
               Schedule.exponential(`${Math.max(0, action.workload.restart.backoffMs)} millis`).pipe(
                 Schedule.upTo({ times: Math.max(0, maxAttempts - 1) }),

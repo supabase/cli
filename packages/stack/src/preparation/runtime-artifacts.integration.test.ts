@@ -88,6 +88,15 @@ describe("runtime artifact preparation", () => {
           runtime: { kind: "native" },
         });
         expect(native.containerEngine).toBeUndefined();
+        const sharedRoot = path.join(root, "shared-artifacts");
+        const isolatedStateRoot = path.join(root, "isolated-state");
+        yield* makeProductionRuntimeArtifactPreparer({
+          stateRoot: isolatedStateRoot,
+          artifactCacheRoot: sharedRoot,
+          runtime: { kind: "native" },
+        });
+        expect(yield* fs.exists(sharedRoot)).toBe(true);
+        expect(yield* fs.exists(path.join(isolatedStateRoot, "artifacts"))).toBe(false);
       }).pipe(Effect.provide(NodeServices.layer)),
     ),
   );

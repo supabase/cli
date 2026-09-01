@@ -2,18 +2,23 @@ import { NodeServices } from "@effect/platform-node";
 import { describe, expect, it } from "@effect/vitest";
 import {
   Cause,
+  Crypto,
+  Deferred,
   Effect,
   Exit,
   FileSystem,
   Fiber,
   Option,
   Path,
+  Redacted,
   Result,
   Schema,
+  Scope,
   Stream,
 } from "effect";
 import { ChildProcess } from "effect/unstable/process";
 import { compileStack } from "../model/Compiler.ts";
+import { CAPABILITY_NAMES } from "../public/Capability.ts";
 import {
   createStack,
   findStack,
@@ -21,6 +26,7 @@ import {
   openStack,
   listStacks,
 } from "../public/EffectStack.ts";
+import type { StackStatus } from "../public/Status.ts";
 import { deriveStackId, resolveStackIdentity } from "../identity/Identity.ts";
 import {
   defaultRuntimeEnvironment,
@@ -30,13 +36,19 @@ import {
 } from "./Launcher.ts";
 import { StackIdSchema } from "../public/StackId.ts";
 import type { StackId } from "../public/StackId.ts";
-import { readOwnerMetadata, StackRuntimeEnvironment } from "../state/Ownership.ts";
+import {
+  acquireOwnership,
+  publishOwnership,
+  readOwnerMetadata,
+  StackRuntimeEnvironment,
+} from "../state/Ownership.ts";
 import { makeStackStateStore } from "../state/StackStateStore.ts";
-import { makeControlClient } from "../control/ControlServer.ts";
+import { makeControlClient, startControlServer } from "../control/ControlServer.ts";
 import { resolveStackPaths } from "../state/Paths.ts";
-import { STACK_RPC_RELEASE } from "../control/StackRpc.ts";
+import { STACK_RPC_RELEASE, type StackRpcHandlers } from "../control/StackRpc.ts";
 import {
   ContainerEngineError,
+  StackPreparationError,
   StackRuntimeMismatchError,
   StackUpgradeRequiredError,
 } from "../public/Errors.ts";
@@ -325,6 +337,209 @@ describe("managed stack handles", { timeout: 30_000 }, () => {
         expect(status.lifecycle).toBe("unconfigured");
         expect(status.desiredLifecycle).toBe("unconfigured");
         yield* stack.close();
+      }),
+    ),
+  );
+
+  it.live("preserves preparation failures returned by the owner start RPC", () =>
+    withRuntimeRoot((project) =>
+      Effect.gen(function* () {
+        const env = yield* StackRuntimeEnvironment;
+        const crypto = yield* Crypto.Crypto;
+        const identity = yield* resolveStackIdentity({ projectRoot: project });
+        const stackId = yield* deriveStackId(identity);
+        const store = yield* makeStackStateStore({ stateRoot: env.stateRoot });
+        yield* store.initialize(stackId, {
+          format: "supabase-stack-state-v1",
+          identity: { ...identity, stackId },
+          runtime: { kind: "native" },
+          desiredGeneration: 0,
+          portsGeneration: null,
+          desiredLifecycle: "stopped",
+          ports: [],
+          privatePorts: [],
+          secrets: {},
+        });
+        const ownerSessionId = yield* crypto.randomUUIDv4;
+        const lease = yield* acquireOwnership({
+          stateRoot: env.stateRoot,
+          stackId,
+          ownerSessionId,
+          rpcRelease: STACK_RPC_RELEASE,
+          environment: env,
+        });
+        yield* publishOwnership(lease);
+        const status: StackStatus = {
+          id: stackId,
+          lifecycle: "stopped",
+          desiredLifecycle: "stopped",
+          runtime: { kind: "native" },
+          desiredGeneration: 0,
+          endpoints: {},
+          versions: {},
+          capabilities: CAPABILITY_NAMES.map((name) => ({
+            name,
+            activation: "eager",
+            state: "stopped",
+          })),
+        };
+        const handlers: StackRpcHandlers = {
+          status: () => Effect.succeed(status),
+          credentials: () =>
+            Effect.succeed({
+              database: {
+                url: Redacted.make("postgres://localhost"),
+                password: Redacted.make("secret"),
+              },
+              api: {
+                publishableKey: "publishable",
+                secretKey: Redacted.make("secret"),
+                anonJwt: "anon",
+                serviceRoleJwt: Redacted.make("service"),
+              },
+            }),
+          prepare: () => Effect.succeed({ capabilities: [] }),
+          start: () =>
+            Effect.fail({ tag: "StackPreparationError", message: "artifact is incomplete" }),
+          restart: () => Effect.succeed(status),
+          destroy: () => Effect.void,
+          logs: () => Stream.empty,
+          watchStatus: () => Stream.empty,
+        };
+        yield* startControlServer({
+          endpoint: lease.metadata.endpoint,
+          stackId,
+          ownerSessionId,
+          rpcRelease: STACK_RPC_RELEASE,
+          maintenanceHandlers: {
+            probe: Effect.succeed({
+              ok: true,
+              op: "probe",
+              stackId,
+              ownerSessionId,
+              rpcRelease: STACK_RPC_RELEASE,
+            }),
+            stop: Effect.succeed({ ok: true, op: "stop" }),
+            quiesce: Effect.succeed({ ok: true, op: "quiesce" }),
+          },
+          rpcHandlers: handlers,
+        });
+        const stack = yield* openStack(stackId);
+        const failed = yield* stack.start({ config: {} }).pipe(Effect.exit);
+        const error = Exit.isFailure(failed)
+          ? Option.getOrUndefined(Cause.findErrorOption(failed.cause))
+          : undefined;
+        yield* stack.close();
+        yield* lease.release;
+        expect(Exit.isFailure(failed)).toBe(true);
+        expect(error).toBeInstanceOf(StackPreparationError);
+        expect(error).toMatchObject({ message: "artifact is incomplete" });
+      }),
+    ),
+  );
+
+  it.live("waits for the owner control socket to close before destroy resolves", () =>
+    withRuntimeRoot((project) =>
+      Effect.gen(function* () {
+        const env = yield* StackRuntimeEnvironment;
+        const crypto = yield* Crypto.Crypto;
+        const identity = yield* resolveStackIdentity({ projectRoot: project });
+        const stackId = yield* deriveStackId(identity);
+        const store = yield* makeStackStateStore({ stateRoot: env.stateRoot });
+        yield* store.initialize(stackId, {
+          format: "supabase-stack-state-v1",
+          identity: { ...identity, stackId },
+          runtime: { kind: "native" },
+          desiredGeneration: 0,
+          portsGeneration: null,
+          desiredLifecycle: "stopped",
+          ports: [],
+          privatePorts: [],
+          secrets: {},
+        });
+        const ownerSessionId = yield* crypto.randomUUIDv4;
+        const lease = yield* acquireOwnership({
+          stateRoot: env.stateRoot,
+          stackId,
+          ownerSessionId,
+          rpcRelease: STACK_RPC_RELEASE,
+          environment: env,
+        });
+        yield* publishOwnership(lease);
+        const ownerScope = yield* Scope.make();
+        const status: StackStatus = {
+          id: stackId,
+          lifecycle: "stopped",
+          desiredLifecycle: "stopped",
+          runtime: { kind: "native" },
+          desiredGeneration: 0,
+          endpoints: {},
+          versions: {},
+          capabilities: CAPABILITY_NAMES.map((name) => ({
+            name,
+            activation: "eager",
+            state: "stopped",
+          })),
+        };
+        const destroyStarted = yield* Deferred.make<void>();
+        const responseRelease = yield* Deferred.make<void>();
+        const callbackStarted = yield* Deferred.make<void>();
+        const callbackRelease = yield* Deferred.make<void>();
+        const callbackCompleted = yield* Deferred.make<void>();
+        const destroyDone = yield* Deferred.make<void>();
+        yield* startControlServer({
+          endpoint: lease.metadata.endpoint,
+          stackId,
+          ownerSessionId,
+          rpcRelease: STACK_RPC_RELEASE,
+          maintenanceHandlers: {
+            probe: Effect.succeed({
+              ok: true,
+              op: "probe",
+              stackId,
+              ownerSessionId,
+              rpcRelease: STACK_RPC_RELEASE,
+            }),
+            stop: Effect.succeed({ ok: true, op: "stop" }),
+            quiesce: Effect.succeed({ ok: true, op: "quiesce" }),
+          },
+          rpcHandlers: {
+            status: () => Effect.succeed(status),
+            credentials: () =>
+              Effect.fail({ tag: "StackNotRunningError" as const, message: "not running" }),
+            prepare: () => Effect.succeed({ capabilities: [] }),
+            start: () => Effect.succeed(status),
+            restart: () => Effect.succeed(status),
+            destroy: () =>
+              Deferred.succeed(destroyStarted, undefined).pipe(
+                Effect.andThen(Deferred.await(responseRelease)),
+                Effect.asVoid,
+              ),
+            logs: () => Stream.empty,
+            watchStatus: () => Stream.make(status),
+          },
+          onDestroyResponse: () =>
+            Deferred.succeed(callbackStarted, undefined).pipe(
+              Effect.andThen(Deferred.await(callbackRelease)),
+              Effect.andThen(Deferred.succeed(callbackCompleted, undefined)),
+              Effect.asVoid,
+            ),
+        }).pipe(Effect.provideService(Scope.Scope, ownerScope));
+        const stack = yield* openStack(stackId);
+        const destroyFiber = yield* Effect.forkChild(
+          stack.destroy().pipe(Effect.andThen(Deferred.succeed(destroyDone, undefined))),
+          { startImmediately: true },
+        );
+        yield* Deferred.await(destroyStarted);
+        yield* Deferred.succeed(responseRelease, undefined);
+        yield* Deferred.await(callbackStarted);
+        expect(yield* Deferred.isDone(destroyDone)).toBe(false);
+        yield* Deferred.succeed(callbackRelease, undefined);
+        yield* Deferred.await(callbackCompleted);
+        yield* Scope.close(ownerScope, Exit.void);
+        yield* Fiber.join(destroyFiber);
+        yield* stack.close();
+        yield* lease.release;
       }),
     ),
   );

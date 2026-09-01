@@ -131,6 +131,19 @@ const realtimeWebsocketPath =
     return `${pathname}?${mapped}`;
   };
 
+const realtimeWebsocketHeaders =
+  (material: GatewayApiMaterial | undefined): GatewayHeaderTransform =>
+  (request, headers) => {
+    const output: Record<string, string | string[]> = {
+      ...(material === undefined
+        ? headers
+        : authorizationTransform(material, "authorization")(request, headers)),
+    };
+    removeHeader(output, "host");
+    output.host = "realtime-dev";
+    return output;
+  };
+
 const prefixRoute = (
   capability: CapabilityName,
   prefix: string,
@@ -167,7 +180,7 @@ const realtimeWebsocketRoute = (material?: GatewayApiMaterial): GatewayRoute =>
         (isUpgrade || pathname === "/realtime/v1/websocket")
       );
     },
-    material === undefined ? undefined : authorizationTransform(material, "authorization"),
+    realtimeWebsocketHeaders(material),
   );
 
 const apiRoutes = (

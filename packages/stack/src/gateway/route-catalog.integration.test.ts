@@ -71,6 +71,15 @@ describe("public gateway route catalog", () => {
       expect(headersFor("/realtime/v1/api/tenants", { apikey: "sb_secret" }).authorization).toBe(
         "Bearer service-role-jwt",
       );
+      const realtimeWebsocketHeaders = headersFor("/realtime/v1/websocket", {
+        Host: "127.0.0.1:40000",
+        apikey: "sb_publishable",
+      });
+      expect(realtimeWebsocketHeaders).toMatchObject({
+        host: "realtime-dev",
+        authorization: "Bearer anon-jwt",
+      });
+      expect(realtimeWebsocketHeaders).not.toHaveProperty("Host");
       expect(
         headersFor("/storage/v1/object/list", { apikey: "sb_publishable" }).authorization,
       ).toBe("Bearer anon-jwt");

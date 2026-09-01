@@ -359,7 +359,7 @@ const makeFixture = (
       runtime,
     });
     yield* Ref.set(calls, []);
-    return { supervisor, calls, logOptions, failDestroy, context, store, id, runtime };
+    return { supervisor, calls, logOptions, failDestroy, context, store, id, runtime, resources };
   });
 
 const run = <A, E, R>(effect: Effect.Effect<A, E, R>) =>
@@ -1318,6 +1318,46 @@ describe("Supervisor composition", () => {
     ),
   );
 
+  it.live("projects observed workload errors into failed capability status", () =>
+    run(
+      Effect.gen(function* () {
+        const fixture = yield* makeFixture();
+        yield* fixture.supervisor.start({
+          config: {
+            capabilities: {
+              database: {},
+              rest: { enabled: false },
+              auth: { enabled: false },
+              realtime: { enabled: false },
+              storage: { enabled: false },
+              functions: { enabled: false },
+              studio: { enabled: false },
+              mail: { enabled: false },
+              analytics: { enabled: false },
+              pooler: { enabled: false },
+            },
+          },
+        });
+        yield* Ref.set(fixture.resources, [
+          {
+            stackId: fixture.id,
+            desiredGeneration: 1,
+            workloadId: "database:database",
+            specHash: "test",
+            state: "failed",
+            error: "native process exited with code 3",
+          },
+        ]);
+        const status = yield* fixture.supervisor.status;
+        expect(status.lifecycle).toBe("stopped");
+        expect(status.capabilities.find(({ name }) => name === "database")).toMatchObject({
+          state: "failed",
+          error: "native process exited with code 3",
+        });
+      }),
+    ),
+  );
+
   it.live("acquires ingress before eager workloads and opens it after readiness", () =>
     run(
       Effect.gen(function* () {
@@ -1331,6 +1371,39 @@ describe("Supervisor composition", () => {
         expect(events.indexOf("acquire:1")).toBeGreaterThanOrEqual(0);
         expect(events.indexOf("start:database:database")).toBeGreaterThan(0);
         expect(events.indexOf("open:1")).toBeGreaterThan(events.indexOf("start:rest:rest"));
+      }),
+    ),
+  );
+
+  it.live("reserves and opens a database listener when the API listener is disabled", () =>
+    run(
+      Effect.gen(function* () {
+        const timeline = yield* Ref.make<ReadonlyArray<string>>([]);
+        const fixture = yield* makeFixture({
+          timeline,
+          ingress: makeMockIngress(timeline),
+        });
+        yield* fixture.supervisor.start({
+          config: {
+            capabilities: {
+              database: {},
+              rest: { enabled: false },
+              auth: { enabled: false },
+              realtime: { enabled: false },
+              storage: { enabled: false },
+              functions: { enabled: false },
+              studio: { enabled: false },
+              mail: { enabled: false },
+              analytics: { enabled: false },
+              pooler: { enabled: false },
+            },
+            listeners: { api: { enabled: false } },
+          },
+        });
+        const events = yield* Ref.get(timeline);
+        expect(events).toContain("start:database:database");
+        expect(events).toContain("acquire:1");
+        expect(events).toContain("open:1");
       }),
     ),
   );

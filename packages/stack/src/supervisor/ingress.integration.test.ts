@@ -257,6 +257,103 @@ describe("Supervisor ingress", () => {
     ),
   );
 
+  it.live("opens non-API listeners without resolving API gateway material", () =>
+    run(
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const crypto = yield* Crypto.Crypto;
+        const context = Context.make(FileSystem.FileSystem, fs).pipe(
+          Context.add(Path.Path, path),
+          Context.add(Crypto.Crypto, crypto),
+        );
+        const root = yield* fs.makeTempDirectoryScoped({ prefix: "supabase-ingress-no-api-" });
+        const stackIdentity = {
+          ...identity,
+          projectRoot: root,
+          checkoutRoot: root,
+          workspaceId: root,
+          checkoutId: root,
+        };
+        const stackId = yield* deriveStackId(stackIdentity);
+        const compiled = yield* compileStack({
+          projectRoot: root,
+          runtime: { kind: "native" },
+          config: {
+            capabilities: {
+              rest: { enabled: false },
+              auth: { enabled: false },
+              realtime: { enabled: false },
+              storage: { enabled: false },
+              functions: { enabled: false },
+              studio: { enabled: false },
+              mail: { enabled: false },
+              analytics: { enabled: false },
+              pooler: { enabled: false },
+            },
+            listeners: {
+              api: { enabled: false },
+              database: { enabled: true },
+              pooler: { enabled: false },
+              studio: { enabled: false },
+              mailUi: { enabled: false },
+              smtp: { enabled: false },
+              pop3: { enabled: false },
+              functionsInspector: { enabled: false },
+            },
+          },
+        });
+        const store = yield* makeStackStateStore({ stateRoot: root });
+        const persisted = {
+          format: "supabase-stack-state-v1" as const,
+          identity: { ...stackIdentity, stackId },
+          runtime: { kind: "native" as const },
+          desiredGeneration: 1,
+          portsGeneration: null,
+          desiredLifecycle: "running" as const,
+          definition: compiled.definition,
+          inputFingerprint: compiled.inputFingerprint,
+          ports: [],
+          privatePorts: [],
+          secrets: {},
+        };
+        yield* store.write(stackId, persisted);
+        const registry = yield* makePortRegistry({ stateRoot: root, store });
+        const ingress = yield* makeSupervisorIngress({
+          stackId,
+          registry,
+          store,
+          context,
+          apiMaterial: () =>
+            Effect.fail(new StackPreparationError({ message: "API material must not resolve" })),
+        });
+        const input = {
+          stackId,
+          generation: 1,
+          desiredLifecycle: "running" as const,
+          state: persisted,
+          previous: persisted,
+          definition: compiled.definition,
+          inputFingerprint: compiled.inputFingerprint,
+          secrets: {},
+          plan: compiled.executionPlan,
+        };
+        const reservation = yield* ingress.acquire(input);
+        expect(reservation.assignments.api).toBeUndefined();
+        expect(reservation.assignments.database?.port).toEqual(expect.any(Number));
+        expect(reservation.privateAssignments).toEqual(
+          expect.arrayContaining([
+            { workloadId: "database:database", binding: "primary", port: expect.any(Number) },
+          ]),
+        );
+        yield* ingress.open(input, reservation, () =>
+          Effect.fail(new GatewayActivationError({ message: "not reached" })),
+        );
+        yield* ingress.close;
+      }),
+    ),
+  );
+
   it.live("serves accepted Auth templates locally with live content and no activation", () =>
     run(
       Effect.gen(function* () {

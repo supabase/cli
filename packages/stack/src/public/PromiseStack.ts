@@ -4,6 +4,7 @@ import {
   Effect,
   Exit,
   FileSystem,
+  Layer,
   Option,
   Path,
   Redacted,
@@ -32,6 +33,7 @@ import type { LogOptions, StackLogEntry } from "./Logs.ts";
 import type { StackDescriptor, StackInspection, StackStatus } from "./Status.ts";
 import type { StackId } from "./StackId.ts";
 import type { PreparedCapability, PrepareStackResult } from "./EffectStack.ts";
+import { StackRuntimeEnvironment, type StackRuntimeEnvironmentValue } from "../state/Ownership.ts";
 
 // Promise methods are the deliberate outer boundary of this package.
 // oxlint-disable effecttsgo/async-function -- Promise facade methods must expose Promise/AsyncIterable APIs.
@@ -243,7 +245,12 @@ const makeScope = () => Effect.runPromise(Scope.make());
 
 export const makePromiseApi = (
   platformLayer: PlatformLayer = NodeServices.layer,
+  runtimeEnvironment?: StackRuntimeEnvironmentValue,
 ): PromiseStackApi => {
+  const providedLayer =
+    runtimeEnvironment === undefined
+      ? platformLayer
+      : Layer.mergeAll(platformLayer, Layer.succeed(StackRuntimeEnvironment, runtimeEnvironment));
   const run = async <A, E>(
     effect: Effect.Effect<A, E, RuntimeRequirements>,
     scope?: Scope.Scope,
@@ -252,7 +259,7 @@ export const makePromiseApi = (
     const actualScope = scope ?? (await makeScope());
     try {
       return await Effect.runPromise(
-        effect.pipe(Effect.provide(platformLayer), Effect.provideService(Scope.Scope, actualScope)),
+        effect.pipe(Effect.provide(providedLayer), Effect.provideService(Scope.Scope, actualScope)),
       );
     } finally {
       if (ownedScope) await Effect.runPromise(Scope.close(actualScope, Exit.void));

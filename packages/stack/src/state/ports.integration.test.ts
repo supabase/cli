@@ -3,7 +3,7 @@ import { describe, expect, it } from "@effect/vitest";
 import { Cause, Deferred, Effect, Exit, Fiber, FileSystem, Option, Scope } from "effect";
 import { createServer, type Server } from "node:net";
 // oxlint-disable-next-line effecttsgo/node-builtin-import
-import { createServer as createHttpServer, type Server as HttpServer } from "node:http";
+import { createServer as createHttpServer } from "node:http";
 import { deriveStackId, type StackIdentity } from "../identity/Identity.ts";
 import {
   PortAllocationError,
@@ -14,6 +14,7 @@ import {
 import { makePortRegistry } from "./PortRegistry.ts";
 import { makePortCoordinator, type HostListener, type ListenerIntents } from "./PortCoordinator.ts";
 import { makeStackStateStore, type PersistedStackState } from "./StackStateStore.ts";
+import { bindHostListener } from "../supervisor/HostListener.ts";
 
 const layer = NodeServices.layer;
 const intents = (port: "automatic" | number): ListenerIntents => ({
@@ -97,32 +98,7 @@ const holdHostPort = (port: number): Effect.Effect<Server, Error, Scope.Scope> =
       }),
   );
 
-const holdHttpPort = (port: number): Effect.Effect<HttpServer, Error, Scope.Scope> =>
-  Effect.acquireRelease(
-    Effect.callback<HttpServer, Error>((resume) => {
-      const server = createHttpServer();
-      const onError = (error: Error) => {
-        server.removeListener("error", onError);
-        resume(Effect.fail(error));
-      };
-      server.once("error", onError);
-      server.listen({ host: "127.0.0.1", port }, () => {
-        server.removeListener("error", onError);
-        resume(Effect.succeed(server));
-      });
-      return Effect.sync(() => server.removeListener("error", onError));
-    }),
-    (server) =>
-      Effect.callback<void, never>((resume) => {
-        if (!server.listening) {
-          resume(Effect.void);
-          return;
-        }
-        server.close(() => resume(Effect.void));
-      }),
-  );
-
-const bindTestNative = (
+const makeTestHostListener = (
   address: string,
   port: number,
   field: HostListener["field"],
@@ -132,35 +108,41 @@ const bindTestNative = (
     field === "api" || field === "studio" || field === "mailUi" || field === "functionsInspector";
   if (isHttp)
     return Effect.acquireRelease(
-      holdHttpPort(port).pipe(
-        Effect.map((server) => ({
+      Effect.gen(function* () {
+        const server = createHttpServer();
+        const close = yield* Effect.cached(
+          Effect.sync(() => {
+            if (server.listening) server.close();
+            hooks.onClose?.();
+          }),
+        );
+        return {
           address,
           port,
           field,
-          binding: { kind: "http" as const, server },
-          close: Effect.sync(() => hooks.onClose?.()),
-        })),
-        Effect.mapError(
-          (cause) =>
-            new PortUnavailableError({ port, field, message: "host listener unavailable", cause }),
-        ),
-      ),
+          binding: { kind: "http", server },
+          close,
+        } satisfies HostListener;
+      }),
       (listener) => listener.close,
     );
   return Effect.acquireRelease(
-    holdHostPort(port).pipe(
-      Effect.map((server) => ({
+    Effect.gen(function* () {
+      const server = createServer({ allowHalfOpen: true });
+      const close = yield* Effect.cached(
+        Effect.sync(() => {
+          if (server.listening) server.close();
+          hooks.onClose?.();
+        }),
+      );
+      return {
         address,
         port,
         field,
-        binding: { kind: "tcp" as const, server, allowHalfOpen: true as const },
-        close: Effect.sync(() => hooks.onClose?.()),
-      })),
-      Effect.mapError(
-        (cause) =>
-          new PortUnavailableError({ port, field, message: "host listener unavailable", cause }),
-      ),
-    ),
+        binding: { kind: "tcp", server, allowHalfOpen: true },
+        close,
+      } satisfies HostListener;
+    }),
     (listener) => listener.close,
   );
 };
@@ -299,7 +281,7 @@ describe("sticky port coordination", () => {
         });
         const registry = yield* makePortRegistry({ stateRoot: root, store });
         const coordinator = makePortCoordinator(registry, store, {
-          bindHost: bindTestNative,
+          bindHost: makeTestHostListener,
         });
         const result = yield* coordinator.planAndReserve(
           stackId,
@@ -333,7 +315,7 @@ describe("sticky port coordination", () => {
         });
         const registry = yield* makePortRegistry({ stateRoot: root, store });
         const coordinator = makePortCoordinator(registry, store, {
-          bindHost: bindTestNative,
+          bindHost: makeTestHostListener,
         });
         const result = yield* coordinator.planAndReserve(
           stackId,
@@ -370,7 +352,7 @@ describe("sticky port coordination", () => {
         });
         const registry = yield* makePortRegistry({ stateRoot: root, store });
         const coordinator = makePortCoordinator(registry, store, {
-          bindHost: bindTestNative,
+          bindHost: makeTestHostListener,
         });
         const result = yield* coordinator.planAndReserve(stackId, disabledIntents(), {
           lifecycle: "running",
@@ -473,7 +455,7 @@ describe("sticky port coordination", () => {
         const occupiedPort = hostAddress.port;
         const registry = yield* makePortRegistry({ stateRoot: root, store });
         const coordinator = makePortCoordinator(registry, store, {
-          bindHost: bindTestNative,
+          bindHost: bindHostListener,
         });
         const exit = yield* coordinator
           .planAndReserve(
@@ -495,7 +477,7 @@ describe("sticky port coordination", () => {
     ),
   );
 
-  it.live("transfers native sockets without a bind-close-rebind", () =>
+  it.live("retains coordinated listener ownership through the enclosing scope", () =>
     Effect.gen(function* () {
       const bound = new Set<number>();
       let closed = 0;
@@ -512,7 +494,7 @@ describe("sticky port coordination", () => {
             bindHost: (address, port, field) =>
               bound.has(port)
                 ? Effect.fail(new PortUnavailableError({ port, field, message: "already bound" }))
-                : bindTestNative(address, port, field, {
+                : makeTestHostListener(address, port, field, {
                     onClose: () => {
                       bound.delete(port);
                       closed += 1;
@@ -553,7 +535,7 @@ describe("sticky port coordination", () => {
               return Effect.fail(
                 new PortUnavailableError({ port, field, message: "simulated second bind failure" }),
               );
-            return bindTestNative(address, port, field, {
+            return makeTestHostListener(address, port, field, {
               onClose: () => bound.delete(port),
             }).pipe(Effect.tap(() => Effect.sync(() => bound.add(port))));
           },
@@ -593,7 +575,7 @@ describe("sticky port coordination", () => {
         const closed = new Set<number>();
         const coordinator = makePortCoordinator(registry, store, {
           bindHost: (address, port, field) =>
-            bindTestNative(address, port, field, {
+            makeTestHostListener(address, port, field, {
               onClose: () => {
                 bound.delete(port);
                 closed.add(port);

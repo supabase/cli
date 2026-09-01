@@ -174,6 +174,11 @@ const unsafeArchivePath = (value: string): boolean => {
   return false;
 };
 
+const pathEscapesRoot = (path: Path.Path, root: string, candidate: string): boolean => {
+  const relative = path.relative(root, candidate);
+  return path.isAbsolute(relative) || relative === ".." || relative.startsWith(`..${path.sep}`);
+};
+
 const archiveLinkEscapes = (member: string, target: string): boolean => {
   if (target.trim().startsWith("/") || /^[A-Za-z]:[\\/]/u.test(target.trim())) return true;
   const depth =
@@ -206,8 +211,7 @@ const validateExtractedTree = (
     for (const entry of entries) {
       const candidate = path.join(destination, entry);
       const resolved = yield* fs.realPath(candidate);
-      const relative = path.relative(root, resolved);
-      if (path.isAbsolute(relative) || relative === ".." || relative.startsWith(`..${path.sep}`))
+      if (pathEscapesRoot(path, root, resolved))
         return yield* new StackPreparationError({
           message: "Slim-services archive entry escapes its staging directory",
           path: entry,
@@ -225,10 +229,10 @@ const validateExtractedTree = (
   );
 
 /**
- * Current Postgres slim archives keep init scripts below `migrations/`, while
- * the shipped init entrypoint looks for the historical sibling directory.
- * Publish one contained relative alias so the entrypoint and archive layout
- * agree without copying or reimplementing the bootstrap revisions.
+ * Postgres slim archives keep init scripts below `migrations/`. Older archives
+ * may also contain a real historical sibling directory, which would make the
+ * native init script run every migration twice. Remove only that exact sibling
+ * path so the native archive has the same layout as the container image.
  */
 export const normalizeSlimServicesLayout = (
   artifact: NativeWorkloadArtifact,
@@ -258,22 +262,17 @@ export const normalizeSlimServicesLayout = (
         path: "share/supabase-cli/migrations/init-scripts",
       });
     const aliasExists = yield* exists(alias);
-    if (!aliasExists) {
-      yield* fs.symlink("migrations/init-scripts", alias).pipe(
-        Effect.mapError(
-          (cause) =>
-            new StackPreparationError({
-              message: "Unable to normalize Postgres slim init-scripts layout",
-              cause,
-            }),
-        ),
-      );
-      return;
-    }
-    const [realTarget, realAlias] = yield* Effect.all([
-      fs.realPath(target),
-      fs.realPath(alias),
-    ]).pipe(
+    if (!aliasExists) return;
+    const root = yield* fs.realPath(destination).pipe(
+      Effect.mapError(
+        (cause) =>
+          new StackPreparationError({
+            message: "Unable to inspect Postgres slim artifact root",
+            cause,
+          }),
+      ),
+    );
+    const realAlias = yield* fs.realPath(alias).pipe(
       Effect.mapError(
         (cause) =>
           new StackPreparationError({
@@ -282,10 +281,19 @@ export const normalizeSlimServicesLayout = (
           }),
       ),
     );
-    if (realTarget !== realAlias)
+    if (pathEscapesRoot(path, root, realAlias))
       return yield* new StackPreparationError({
-        message: "Postgres slim init-scripts alias resolves outside its target",
+        message: "Postgres slim init-scripts alias resolves outside its artifact root",
       });
+    yield* fs.remove(alias, { recursive: true, force: true }).pipe(
+      Effect.mapError(
+        (cause) =>
+          new StackPreparationError({
+            message: "Unable to remove Postgres slim init-scripts alias",
+            cause,
+          }),
+      ),
+    );
   });
 };
 

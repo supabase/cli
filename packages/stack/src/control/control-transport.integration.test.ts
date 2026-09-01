@@ -306,7 +306,15 @@ describe("control transport", () => {
 
   it.live("counts a successful destroy send before an immediate disconnect", () =>
     withServer(
-      ({ endpoint, stackId, ownerSessionId, completion, abandoned }) =>
+      ({
+        endpoint,
+        stackId,
+        ownerSessionId,
+        completionStarted,
+        completionRelease,
+        completion,
+        abandoned,
+      }) =>
         Effect.gen(function* () {
           const preface = encodePreface({
             kind: "rpc",
@@ -319,6 +327,18 @@ describe("control transport", () => {
             concatBytes(preface, frame),
           ]);
           expect(response).toMatchObject({ _tag: "Exit", requestId: "1" });
+          yield* Deferred.await(completionStarted).pipe(
+            Effect.timeoutOrElse({
+              duration: 1_000,
+              orElse: () =>
+                Effect.fail(
+                  new MaintenanceProtocolError({
+                    message: "destroy completion did not survive the response disconnect",
+                  }),
+                ),
+            }),
+          );
+          yield* Deferred.succeed(completionRelease, undefined);
           yield* Deferred.await(completion).pipe(
             Effect.timeoutOrElse({
               duration: 1_000,
@@ -334,8 +354,13 @@ describe("control transport", () => {
           );
           expect(Exit.isFailure(abandonedExit)).toBe(true);
         }),
-      ({ completion, abandoned }) => ({
-        onDestroyResponse: () => Deferred.succeed(completion, undefined).pipe(Effect.asVoid),
+      ({ completionStarted, completionRelease, completion, abandoned }) => ({
+        onDestroyResponse: () =>
+          Deferred.succeed(completionStarted, undefined).pipe(
+            Effect.andThen(Deferred.await(completionRelease)),
+            Effect.andThen(Deferred.succeed(completion, undefined)),
+            Effect.asVoid,
+          ),
         onDestroyAbandoned: () => Deferred.succeed(abandoned, undefined).pipe(Effect.asVoid),
       }),
     ),

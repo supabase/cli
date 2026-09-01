@@ -20,6 +20,7 @@ export type SecretGenerator =
   | { readonly kind: "publishable-key" }
   | { readonly kind: "secret-key" }
   | { readonly kind: "jwt-secret" }
+  | { readonly kind: "random-base64url"; readonly bytes: number }
   | {
       readonly kind: "jwt-token";
       readonly role: "anon" | "service_role";
@@ -442,6 +443,8 @@ const generatedFor = (
       );
     case "jwt-secret":
       return randomEncoded(crypto, 32, declaration.slot);
+    case "random-base64url":
+      return randomEncoded(crypto, generator.bytes, declaration.slot);
     case "jwt-token":
       return generateJwtToken(generator, resolved[AUTH_JWT_SECRET_SLOT]?.value);
   }

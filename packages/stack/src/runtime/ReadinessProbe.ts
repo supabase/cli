@@ -1,8 +1,8 @@
-import { Duration, Effect, Schedule } from "effect";
+import { Duration, Effect, Option, Schedule } from "effect";
 // oxlint-disable-next-line effecttsgo/node-builtin-import -- Node callback boundary owns cancellation.
 import { request as httpRequest, type IncomingMessage } from "node:http";
 // oxlint-disable-next-line effecttsgo/node-builtin-import -- Node callback boundary owns cancellation.
-import { createConnection, type Socket } from "node:net";
+import { Socket } from "node:net";
 import { RuntimeDriverError } from "./RuntimeDriver.ts";
 import { StackPreparationError } from "../public/Errors.ts";
 
@@ -15,11 +15,16 @@ export interface ReadinessTarget {
 }
 
 export interface ReadinessProbeOptions {
-  /** Number of retries after the initial attempt. */
+  /** Optional maximum number of retries after the initial attempt. */
   readonly retries?: number;
   /** Delay between attempts; defaults to a short spaced schedule. */
   readonly retryDelay?: Duration.Input;
+  /** Total time allowed for the initial attempt and all retries; zero ignores retries. */
+  readonly deadline?: Duration.Input;
 }
+
+/** Default total readiness budget for non-database workloads. */
+export const DEFAULT_READINESS_DEADLINE = Duration.seconds(30);
 
 const preparationError = (message: string): StackPreparationError =>
   new StackPreparationError({ message });
@@ -63,6 +68,17 @@ const validateTarget = (target: ReadinessTarget): Effect.Effect<void, StackPrepa
     }
   }
   return Effect.void;
+};
+
+const decodeDuration = (
+  value: Duration.Input,
+  name: string,
+): Effect.Effect<Duration.Duration, StackPreparationError> => {
+  const decoded = Duration.fromInput(value);
+  if (Option.isNone(decoded)) return Effect.fail(preparationError(`${name} is invalid`));
+  if (!Duration.isFinite(decoded.value) || Duration.isNegative(decoded.value))
+    return Effect.fail(preparationError(`${name} must be finite and non-negative`));
+  return Effect.succeed(decoded.value);
 };
 
 const httpAttempt = (target: ReadinessTarget): Effect.Effect<void, RuntimeDriverError> =>
@@ -143,12 +159,13 @@ const tcpAttempt = (target: ReadinessTarget): Effect.Effect<void, RuntimeDriverE
     const onError = (cause: Error) =>
       finish(Effect.fail(runtimeError(target, "Readiness TCP connection failed", cause)));
     const onClose = () => {
-      if (!settled) finish(Effect.fail(runtimeError(target, "Readiness TCP connection closed")));
+      finish(Effect.fail(runtimeError(target, "Readiness TCP connection closed")));
     };
-    socket = createConnection({ host: target.host, port: target.port });
+    socket = new Socket();
     socket.once("connect", onConnect);
     socket.once("error", onError);
     socket.once("close", onClose);
+    socket.connect({ host: target.host, port: target.port });
     return Effect.sync(() => {
       if (settled) return;
       settled = true;
@@ -167,12 +184,27 @@ export const probeReadiness = (
 ): Effect.Effect<void, RuntimeDriverError | StackPreparationError> =>
   Effect.gen(function* () {
     yield* validateTarget(target);
-    const retries = options.retries ?? 3;
-    if (!Number.isSafeInteger(retries) || retries < 0)
+    const retries = options.retries;
+    if (retries !== undefined && (!Number.isSafeInteger(retries) || retries < 0))
       return yield* preparationError("Readiness retry count is invalid");
-    const attempt = target.mode === "http" ? httpAttempt(target) : tcpAttempt(target);
-    const schedule = Schedule.spaced(options.retryDelay ?? "100 millis").pipe(
-      Schedule.upTo({ times: retries }),
+    const retryDelay = yield* decodeDuration(
+      options.retryDelay ?? Duration.millis(100),
+      "Readiness retry delay",
     );
-    yield* Effect.retry(attempt, schedule);
+    const deadline = yield* decodeDuration(
+      options.deadline ?? DEFAULT_READINESS_DEADLINE,
+      "Readiness deadline",
+    );
+    const attempt = target.mode === "http" ? httpAttempt(target) : tcpAttempt(target);
+    // A zero budget preserves the legacy `0s` meaning: perform one immediate probe, with no
+    // retry delay. A positive budget interrupts whichever owned request/socket is still active.
+    if (Duration.isZero(deadline)) return yield* attempt;
+    const schedule =
+      retries === undefined
+        ? Schedule.spaced(retryDelay)
+        : Schedule.spaced(retryDelay).pipe(Schedule.upTo({ times: retries }));
+    yield* Effect.timeoutOrElse(Effect.retry(attempt, schedule), {
+      duration: deadline,
+      orElse: () => Effect.fail(runtimeError(target, "Readiness deadline exceeded")),
+    });
   });

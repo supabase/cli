@@ -96,6 +96,60 @@ describe("Edge Runtime request-time function resolver", () => {
     }
   });
 
+  it("normalizes persisted empty entrypoint settings to index.ts", async () => {
+    const root = await mkdtemp(join(tmpdir(), "stack-functions-resolver-empty-entrypoint-"));
+    try {
+      const functionRoot = join(root, "hello");
+      await mkdir(functionRoot, { recursive: true });
+      await writeFile(join(functionRoot, "index.ts"), "export default 1");
+      await writeFile(join(functionRoot, "deno.json"), "{}");
+      const canonicalRoot = await realpath(root);
+
+      const config = await resolveFunctionConfig({
+        root,
+        slug: "hello",
+        overrides: {
+          hello: {
+            enabled: true,
+            verify_jwt: false,
+            import_map: "",
+            entrypoint: "",
+            static_files: [],
+            env: {},
+          },
+        },
+        fs: nodeFileSystem,
+      });
+
+      expect(config).toMatchObject({
+        entrypointPath: join(canonicalRoot, "hello", "index.ts"),
+        importMapPath: join(canonicalRoot, "hello", "deno.json"),
+        verifyJWT: false,
+      });
+
+      await writeFile(join(functionRoot, "custom.ts"), "export default 2");
+      const explicit = await resolveFunctionConfig({
+        root,
+        slug: "hello",
+        overrides: {
+          hello: {
+            enabled: true,
+            verify_jwt: false,
+            import_map: "",
+            entrypointPath: "custom.ts",
+            entrypoint: "index.ts",
+            static_files: [],
+            env: {},
+          },
+        },
+        fs: nodeFileSystem,
+      });
+      expect(explicit?.entrypointPath).toBe(join(canonicalRoot, "hello", "custom.ts"));
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
   it("requires an absolute root and rejects traversal and symlink escapes", async () => {
     const root = await mkdtemp(join(tmpdir(), "stack-functions-resolver-paths-"));
     const outside = await mkdtemp(join(tmpdir(), "stack-functions-resolver-outside-"));

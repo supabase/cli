@@ -1,4 +1,4 @@
-import { Crypto, Effect, Path, Redacted, Schema } from "effect";
+import { Crypto, Duration, Effect, Path, Redacted, Schema } from "effect";
 import { InvalidStackConfigError, StackVersionUnsupportedError } from "../public/Errors.ts";
 import { StackConfigSchema, type StackConfig } from "../public/Config.ts";
 import type {
@@ -29,6 +29,7 @@ import {
   parseFileSize,
   StudioModule,
   AnalyticsModule,
+  parseGoDuration,
 } from "./capabilities/index.ts";
 import { resolveThirdPartyIssuer } from "./capabilities/auth-third-party.ts";
 import { CAPABILITY_MODULES, createExecutionPlan, type ExecutionPlan } from "./ExecutionPlan.ts";
@@ -269,6 +270,21 @@ const attachAuthSecretGenerators = (
   }
 };
 
+const managedRandomBase64urlGenerators: Readonly<Record<string, SecretGenerator>> = {
+  "secret:analytics.settings.api_key": { kind: "random-base64url", bytes: 32 },
+  "secret:pooler.settings.encryption_key": { kind: "random-base64url", bytes: 24 },
+  "secret:pooler.settings.secret_key_base": { kind: "random-base64url", bytes: 48 },
+};
+
+const attachManagedRandomSecretGenerators = (slots: SecretSlotInput[]): void => {
+  for (let index = 0; index < slots.length; index++) {
+    const entry = slots[index];
+    if (entry === undefined || entry.policy !== "managed") continue;
+    const generator = managedRandomBase64urlGenerators[entry.slot];
+    if (generator !== undefined) slots[index] = { ...entry, generator };
+  }
+};
+
 const setMaterializedPath = (
   value: unknown,
   parts: ReadonlyArray<string>,
@@ -375,6 +391,66 @@ const validateStorageFileSizes = (
       return Effect.fail(new InvalidStackConfigError({ message: "Invalid storage file size" }));
   }
   return Effect.void;
+};
+
+const validateDatabaseHealthTimeout = (
+  config: StackConfig,
+): Effect.Effect<void, InvalidStackConfigError> => {
+  const database = config.capabilities?.database;
+  if (database === undefined || !("settings" in database) || database.settings === undefined)
+    return Effect.void;
+  const value = database.settings.health_timeout;
+  if (value === undefined) return Effect.void;
+  return Effect.try({
+    try: () => parseGoDuration(value),
+    catch: (cause) =>
+      new InvalidStackConfigError({
+        message: `Invalid database health_timeout: ${value}`,
+        setting: "capabilities.database.settings.health_timeout",
+        cause,
+      }),
+  }).pipe(
+    Effect.flatMap((duration) =>
+      Duration.isNegative(duration) || Duration.isZero(duration)
+        ? Effect.fail(
+            new InvalidStackConfigError({
+              message: `Invalid database health_timeout: ${value}; duration must be positive`,
+              setting: "capabilities.database.settings.health_timeout",
+            }),
+          )
+        : Effect.void,
+    ),
+  );
+};
+
+const validatePoolerKeys = (config: StackConfig): Effect.Effect<void, InvalidStackConfigError> => {
+  const pooler = config.capabilities?.pooler;
+  if (pooler === undefined || !("settings" in pooler) || pooler.settings === undefined)
+    return Effect.void;
+  const settings = pooler.settings;
+  const validate = (
+    value: Redacted.Redacted<string> | undefined,
+    expectedLength: number,
+    field: string,
+  ): Effect.Effect<void, InvalidStackConfigError> => {
+    if (value === undefined) return Effect.void;
+    const text = Redacted.value(value);
+    if (
+      text.length !== expectedLength ||
+      [...text].some((character) => character < "!" || character > "~")
+    )
+      return Effect.fail(
+        new InvalidStackConfigError({
+          message: `Invalid pooler ${field}: expected ${expectedLength} printable ASCII characters`,
+          setting: `capabilities.pooler.settings.${field}`,
+        }),
+      );
+    return Effect.void;
+  };
+  return Effect.gen(function* () {
+    yield* validate(settings.encryption_key, 32, "encryption_key");
+    yield* validate(settings.secret_key_base, 64, "secret_key_base");
+  });
 };
 
 const validateFunctionKeys = (config: unknown): Effect.Effect<void, InvalidStackConfigError> => {
@@ -691,6 +767,8 @@ export const compileStack = (
     const crypto = yield* Crypto.Crypto;
     yield* validateFunctionKeys(input.config ?? {});
     const config = yield* decodeConfig(input.config ?? {});
+    yield* validateDatabaseHealthTimeout(config);
+    yield* validatePoolerKeys(config);
     yield* validateStorageFileSizes(config);
     const jwtSecret = yield* canonicalJwtSecret(config);
     const rawCapabilities = isRecord(config.capabilities) ? config.capabilities : {};
@@ -724,6 +802,7 @@ export const compileStack = (
       for (const slot of INTERNAL_MANAGED_SECRET_SLOTS) slots.push({ slot, policy: "managed" });
       collectSuppliedSecrets(config, slots, jwtSecret);
       attachAuthSecretGenerators(slots, input.projectRoot, config.security?.jwt?.signing);
+      attachManagedRandomSecretGenerators(slots);
       const executionPlan = yield* planForDefinition(input.runtime, previous.definition, crypto);
       return {
         definition: previous.definition,
@@ -889,6 +968,7 @@ export const compileStack = (
     const rawJwt = config.security?.jwt;
     ensureCanonicalJwtSlot(slots, jwtSecret);
     attachAuthSecretGenerators(slots, input.projectRoot, rawJwt?.signing);
+    attachManagedRandomSecretGenerators(slots);
     const security = {
       jwt: {
         issuer: rawJwt?.issuer ?? null,

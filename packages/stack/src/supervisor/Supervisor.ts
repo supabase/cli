@@ -212,6 +212,12 @@ const activePlan = (plan: ExecutionPlan, active: ReadonlySet<CapabilityName>): E
   stopOrder: plan.stopOrder.filter((name) => active.has(name)),
 });
 
+const observedForCapability = (
+  name: CapabilityName,
+  observed: ReadonlyArray<ObservedWorkload>,
+): ReadonlyArray<ObservedWorkload> =>
+  observed.filter((entry) => entry.workloadId.startsWith(`${name}:`));
+
 const capabilityState = (
   name: CapabilityName,
   state: PersistedStackState,
@@ -232,11 +238,25 @@ const capabilityState = (
   if (recoveryFailed) return "failed";
   if (configured.activation === "lazy" && !active.has(name)) return "dormant";
   if (phase === "starting") return "starting";
-  const resources = observed.filter((entry) => entry.workloadId.startsWith(`${name}:`));
+  const resources = observedForCapability(name, observed);
   if (resources.some((entry) => entry.state === "failed")) return "failed";
   if (resources.some((entry) => entry.state === "starting")) return "starting";
   if (resources.length > 0 && resources.every((entry) => entry.state === "ready")) return "ready";
   return "stopped";
+};
+
+const capabilityError = (
+  name: CapabilityName,
+  observed: ReadonlyArray<ObservedWorkload>,
+  state: CapabilityStatus["state"],
+): string | undefined => {
+  if (state !== "failed") return undefined;
+  const failed = observedForCapability(name, observed).filter((entry) => entry.state === "failed");
+  if (failed.length === 1) return failed[0]?.error;
+  const details = failed.flatMap((entry) =>
+    entry.error === undefined ? [] : [`${entry.workloadId}: ${entry.error}`],
+  );
+  return details.length === 0 ? undefined : details.join("; ");
 };
 
 const statusFor = (
@@ -253,11 +273,16 @@ const statusFor = (
     ),
     Effect.map((id) => {
       const definition = state.definition;
-      const capabilities = CAPABILITY_NAMES.map((name) => ({
-        name,
-        activation: definition?.capabilities[name].activation ?? "eager",
-        state: capabilityState(name, state, observed, active, phase, recoveryFailed),
-      }));
+      const capabilities = CAPABILITY_NAMES.map((name) => {
+        const capability = capabilityState(name, state, observed, active, phase, recoveryFailed);
+        const error = capabilityError(name, observed, capability);
+        return {
+          name,
+          activation: definition?.capabilities[name].activation ?? "eager",
+          state: capability,
+          ...(error === undefined ? {} : { error }),
+        };
+      });
       const versions: Partial<Record<CapabilityName, string>> = {};
       if (definition !== undefined)
         for (const name of CAPABILITY_NAMES) versions[name] = definition.capabilities[name].version;

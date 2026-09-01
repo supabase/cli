@@ -41,7 +41,11 @@ interface RuntimeInputMaterial {
     readonly jwks: string;
     readonly templates?: ReadonlyArray<RuntimeAuthTemplate>;
   }>;
-  readonly analytics?: Readonly<{ readonly gcpJwtPath?: string }>;
+  readonly analytics?: Readonly<{
+    readonly gcpJwtPath?: string;
+    /** Generation-scoped Vector config owned by this stack runtime. */
+    readonly vectorConfigPath?: string;
+  }>;
   readonly pooler?: Readonly<{ readonly tenantPath?: string }>;
   readonly functions?: Readonly<{ readonly secrets: Readonly<Record<string, string>> }>;
 }
@@ -61,9 +65,15 @@ export interface RuntimeInputOwner {
   readonly resolveAuthTemplates: (
     state: PersistedStackState,
   ) => Effect.Effect<ReadonlyArray<RuntimeAuthTemplate>, StackPreparationError>;
-  readonly cleanupGeneration: (generation: number) => Effect.Effect<void, StackPreparationError>;
+  /** Removes only the generation-owned material for the stopped workload. */
+  readonly cleanupGeneration: (
+    generation: number,
+    owner: RuntimeInputOwnerKind,
+  ) => Effect.Effect<void, StackPreparationError>;
   readonly cleanupAll: Effect.Effect<void, StackPreparationError>;
 }
+
+type RuntimeInputOwnerKind = "pooler" | "vector";
 
 export interface RuntimeInputOwnerOptions {
   readonly stateRoot: string;
@@ -255,6 +265,50 @@ const resolveFunctionsEdgeRuntimeSecrets = (
   return Effect.succeed(output);
 };
 
+const vectorConfig = `data_dir: /tmp
+api:
+  enabled: true
+  address: "\${VECTOR_API_ADDRESS}"
+
+sources:
+  stack_heartbeat:
+    type: demo_logs
+    format: json
+    count: 1
+  stack_keepalive:
+    type: internal_metrics
+
+transforms:
+  stack_marker:
+    type: remap
+    inputs:
+      - stack_heartbeat
+    source: |
+      .event_message = "supabase-stack-vector"
+      del(.message)
+      .project = "default"
+
+sinks:
+  analytics:
+    type: http
+    inputs:
+      - stack_marker
+    uri: "\${LOGFLARE_URL}/logs?source_name=postgres.logs"
+    method: post
+    request:
+      headers:
+        x-api-key: "\${LOGFLARE_PRIVATE_ACCESS_TOKEN}"
+      retry_attempts: 5
+      retry_initial_backoff_secs: 1
+      retry_max_duration_secs: 10
+    encoding:
+      codec: json
+  keepalive:
+    type: blackhole
+    inputs:
+      - stack_keepalive
+`;
+
 export const makeRuntimeInputOwner = (
   options: RuntimeInputOwnerOptions,
 ): Effect.Effect<
@@ -274,6 +328,7 @@ export const makeRuntimeInputOwner = (
       Effect.mapError((cause) => failure("Unable to resolve runtime input paths", { cause })),
     );
     const poolerRoot = path.join(stackPaths.runtime, "inputs", "pooler");
+    const vectorRoot = path.join(stackPaths.runtime, "inputs", "vector");
 
     const resolveProjectFile = (
       state: PersistedStackState,
@@ -550,6 +605,61 @@ export const makeRuntimeInputOwner = (
       });
     };
 
+    const writeVectorConfig = (
+      state: PersistedStackState,
+      generation: number,
+    ): Effect.Effect<string, StackPreparationError> => {
+      if (invalidGeneration(generation)) return Effect.fail(failure("Invalid Vector generation"));
+      const assignment = state.privatePorts.find(
+        (entry) => entry.workloadId === "analytics:vector" && entry.binding === "primary",
+      );
+      if (state.runtime.kind === "native" && assignment === undefined)
+        return Effect.fail(failure("Persisted native Vector assignment is missing"));
+      const generationRoot = path.join(vectorRoot, String(generation));
+      const target = path.join(generationRoot, "vector.yaml");
+      return Effect.gen(function* () {
+        yield* mapFile(
+          generationRoot,
+          "create Vector config directory",
+          fs.makeDirectory(generationRoot, { recursive: true, mode: 0o700 }),
+        );
+        yield* mapFile(
+          generationRoot,
+          "secure Vector config directory",
+          fs.chmod(generationRoot, 0o700),
+        );
+        const token = yield* crypto.randomUUIDv4.pipe(
+          Effect.mapError(() => failure("Unable to allocate Vector config file")),
+        );
+        const temporary = path.join(generationRoot, `.vector.yaml.${token}.tmp`);
+        yield* Effect.ensuring(
+          Effect.scoped(
+            Effect.gen(function* () {
+              const file = yield* mapFile(
+                temporary,
+                "create Vector config",
+                fs.open(temporary, { flag: "w", mode: 0o600 }),
+              );
+              yield* mapFile(
+                temporary,
+                "write Vector config",
+                file.writeAll(new TextEncoder().encode(vectorConfig)),
+              );
+              yield* mapFile(temporary, "sync Vector config", file.sync);
+            }),
+          ).pipe(
+            Effect.andThen(mapFile(temporary, "secure Vector config", fs.chmod(temporary, 0o600))),
+            Effect.andThen(mapFile(target, "publish Vector config", fs.rename(temporary, target))),
+            Effect.andThen(
+              mapFile(target, "secure published Vector config", fs.chmod(target, 0o600)),
+            ),
+          ),
+          fs.remove(temporary, { force: true }).pipe(Effect.catchCause(() => Effect.void)),
+        );
+        return target;
+      });
+    };
+
     const joinExit = <A, E>(result: Exit.Exit<A, E>): Effect.Effect<A, E> =>
       Exit.isSuccess(result) ? Effect.succeed(result.value) : Effect.failCause(result.cause);
     type OwnedResult<A> = Deferred.Deferred<Exit.Exit<A, StackPreparationError>, never>;
@@ -564,6 +674,7 @@ export const makeRuntimeInputOwner = (
 
     const materializeCommon = (
       state: PersistedStackState,
+      generation: number,
     ): Effect.Effect<RuntimeInputMaterial, StackPreparationError> =>
       Effect.gen(function* () {
         const jwtConsumers = ["rest", "auth", "realtime", "storage", "functions"] as const;
@@ -575,10 +686,23 @@ export const makeRuntimeInputOwner = (
         const gcpPath = isRecord(analyticsSettings)
           ? settingValue(state, analyticsSettings.gcp_jwt_path)
           : "";
+        const analyticsEnabled = state.definition?.capabilities.analytics.enabled === true;
+        const vectorPort = isRecord(analyticsSettings)
+          ? settingValue(state, analyticsSettings.vector_port)
+          : "";
+        const vectorConfigPath =
+          analyticsEnabled && vectorPort.length > 0
+            ? yield* writeVectorConfig(state, generation)
+            : undefined;
         const analytics =
-          state.definition?.capabilities.analytics.enabled !== true || gcpPath.length === 0
+          !analyticsEnabled || (gcpPath.length === 0 && vectorConfigPath === undefined)
             ? undefined
-            : { gcpJwtPath: yield* resolveProjectFile(state, gcpPath) };
+            : {
+                ...(gcpPath.length === 0
+                  ? {}
+                  : { gcpJwtPath: yield* resolveProjectFile(state, gcpPath) }),
+                ...(vectorConfigPath === undefined ? {} : { vectorConfigPath }),
+              };
         const functions =
           state.definition?.capabilities.functions.enabled !== true
             ? undefined
@@ -698,7 +822,7 @@ export const makeRuntimeInputOwner = (
           key,
           commonPending,
           commonCompleted,
-          materializeCommon(state),
+          materializeCommon(state, generation),
         );
         if (
           options.includePooler !== true ||
@@ -714,23 +838,64 @@ export const makeRuntimeInputOwner = (
         return { ...common, pooler: { tenantPath } };
       });
 
-    const cleanupGeneration = (generation: number): Effect.Effect<void, StackPreparationError> =>
+    const cleanupGeneration = (
+      generation: number,
+      owner: RuntimeInputOwnerKind,
+    ): Effect.Effect<void, StackPreparationError> =>
       invalidGeneration(generation)
-        ? Effect.fail(failure("Invalid pooler generation"))
+        ? Effect.fail(failure("Invalid runtime input generation"))
         : execution.withPermit(
             Effect.gen(function* () {
-              yield* admission.withPermit(
-                Effect.sync(() => {
-                  for (const key of poolerPending.keys())
-                    if (key.endsWith(`\u0000${generation}`)) poolerPending.delete(key);
-                  for (const key of poolerCompleted.keys())
-                    if (key.endsWith(`\u0000${generation}`)) poolerCompleted.delete(key);
-                }),
-              );
+              const matches = (key: string) => key.endsWith(`\u0000${generation}`);
+              if (owner === "pooler") {
+                const retired = yield* admission.withPermit(
+                  Effect.sync(() => {
+                    const deferreds: Array<OwnedResult<string>> = [];
+                    for (const [key, deferred] of poolerPending)
+                      if (matches(key)) {
+                        poolerPending.delete(key);
+                        deferreds.push(deferred);
+                      }
+                    for (const key of poolerCompleted.keys())
+                      if (matches(key)) poolerCompleted.delete(key);
+                    return deferreds;
+                  }),
+                );
+                yield* Effect.forEach(retired, (deferred) =>
+                  Deferred.succeed(
+                    deferred,
+                    Exit.fail(failure("Runtime input generation was invalidated")),
+                  ),
+                );
+              } else {
+                // Vector config is part of common material. Invalidate both
+                // completed and in-flight entries so a same-generation
+                // restart publishes a fresh config path.
+                const retired = yield* admission.withPermit(
+                  Effect.sync(() => {
+                    const deferreds: Array<OwnedResult<RuntimeInputMaterial>> = [];
+                    for (const [key, deferred] of commonPending)
+                      if (matches(key)) {
+                        commonPending.delete(key);
+                        deferreds.push(deferred);
+                      }
+                    for (const key of commonCompleted.keys())
+                      if (matches(key)) commonCompleted.delete(key);
+                    return deferreds;
+                  }),
+                );
+                yield* Effect.forEach(retired, (deferred) =>
+                  Deferred.succeed(
+                    deferred,
+                    Exit.fail(failure("Runtime input generation was invalidated")),
+                  ),
+                );
+              }
+              const root = owner === "pooler" ? poolerRoot : vectorRoot;
               yield* mapFile(
-                path.join(poolerRoot, String(generation)),
-                "clean pooler tenant generation",
-                fs.remove(path.join(poolerRoot, String(generation)), {
+                path.join(root, String(generation)),
+                `clean ${owner} generation`,
+                fs.remove(path.join(root, String(generation)), {
                   recursive: true,
                   force: true,
                 }),
@@ -739,19 +904,33 @@ export const makeRuntimeInputOwner = (
           );
     const cleanupAll = execution.withPermit(
       Effect.gen(function* () {
-        yield* admission.withPermit(
+        const pending = yield* admission.withPermit(
           Effect.sync(() => {
+            const common = [...commonPending.values()];
+            const pooler = [...poolerPending.values()];
             commonPending.clear();
             commonCompleted.clear();
             poolerPending.clear();
             poolerCompleted.clear();
             acceptedGeneration = undefined;
+            return { common, pooler };
           }),
+        );
+        yield* Effect.forEach(pending.common, (deferred) =>
+          Deferred.succeed(deferred, Exit.fail(failure("Runtime inputs were invalidated"))),
+        );
+        yield* Effect.forEach(pending.pooler, (deferred) =>
+          Deferred.succeed(deferred, Exit.fail(failure("Runtime inputs were invalidated"))),
         );
         yield* mapFile(
           poolerRoot,
           "clean pooler tenant files",
           fs.remove(poolerRoot, { recursive: true, force: true }),
+        );
+        yield* mapFile(
+          vectorRoot,
+          "clean Vector configs",
+          fs.remove(vectorRoot, { recursive: true, force: true }),
         );
       }),
     );

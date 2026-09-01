@@ -84,6 +84,7 @@ type ChildResult =
 
 interface LaunchPayload {
   readonly stateRoot: string;
+  readonly artifactCacheRoot?: string;
   readonly tempRoot: string;
   readonly platform: "posix" | "windows";
   readonly stackId: StackId;
@@ -363,6 +364,9 @@ export const ensureSupervisor = (
     );
     const payload: LaunchPayload = {
       stateRoot: options.environment.stateRoot,
+      ...(options.environment.artifactCacheRoot === undefined
+        ? {}
+        : { artifactCacheRoot: options.environment.artifactCacheRoot }),
       tempRoot: options.environment.tempRoot,
       platform: options.environment.platform,
       stackId: options.stackId,

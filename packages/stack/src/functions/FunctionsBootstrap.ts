@@ -54,14 +54,14 @@ export const makeFunctionsBootstrapOwner = (
       if (input.content.includes("\u0000"))
         return Effect.fail(failure("Functions bootstrap contains an invalid character"));
       const generationRoot = path.join(root, String(input.generation));
-      const target = path.join(generationRoot, "main.ts");
+      const target = path.join(generationRoot, "index.ts");
       return Effect.gen(function* () {
         const token = yield* crypto.randomUUIDv4.pipe(
           Effect.mapError((cause) =>
             failure("Unable to allocate functions bootstrap file", { cause }),
           ),
         );
-        const temporary = path.join(generationRoot, `.main.ts.${token}.tmp`);
+        const temporary = path.join(generationRoot, `.index.ts.${token}.tmp`);
         return yield* Effect.gen(function* () {
           yield* mapFs(
             generationRoot,
@@ -95,7 +95,11 @@ export const makeFunctionsBootstrapOwner = (
             "secure published functions bootstrap file",
             fs.chmod(target, 0o600),
           );
-          return target;
+          return yield* mapFs(
+            target,
+            "resolve published functions bootstrap file",
+            fs.realPath(target),
+          );
         }).pipe(
           Effect.ensuring(
             fs

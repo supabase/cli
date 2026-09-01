@@ -95,6 +95,25 @@ describe("managed and pass-through secrets", () => {
     }).pipe(Effect.provide(layer)),
   );
 
+  it.live("generates artifact-compatible pooler managed keys", () =>
+    Effect.gen(function* () {
+      const compiled = yield* compileStack({
+        projectRoot: "/tmp/project",
+        runtime: { kind: "native" },
+        config: { capabilities: { pooler: { enabled: true } } },
+      });
+      const candidate = { declarations: compiled.secrets };
+      const first = yield* resolveSecrets(candidate, undefined, "stopped");
+      const second = yield* resolveSecrets(candidate, first.persisted, "running");
+      const encryptionKey = first.persisted["secret:pooler.settings.encryption_key"]?.value;
+      const secretKeyBase = first.persisted["secret:pooler.settings.secret_key_base"]?.value;
+      expect(encryptionKey).toMatch(/^[A-Za-z0-9_-]{32}$/);
+      expect(secretKeyBase).toMatch(/^[A-Za-z0-9_-]{64}$/);
+      expect(second.persisted["secret:pooler.settings.encryption_key"]?.value).toBe(encryptionKey);
+      expect(second.persisted["secret:pooler.settings.secret_key_base"]?.value).toBe(secretKeyBase);
+    }).pipe(Effect.provide(layer)),
+  );
+
   it.live("rejects a configured JWKS file without a private signing key", () =>
     Effect.gen(function* () {
       const compiled = yield* compileStack({

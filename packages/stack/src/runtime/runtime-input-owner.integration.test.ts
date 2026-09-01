@@ -411,12 +411,18 @@ describe("runtime input owner", () => {
         const path = yield* Path.Path;
         const root = yield* fs.makeTempDirectoryScoped({ prefix: "runtime-input-pooler-" });
         const state = yield* compiledState(root, {
-          capabilities: { pooler: { enabled: true, settings: { pool_mode: "session" } } },
+          capabilities: {
+            analytics: { settings: { vector_port: 9001 } },
+            pooler: { enabled: true, settings: { pool_mode: "session" } },
+          },
         });
         const owner = yield* makeRuntimeInputOwner({ stateRoot: root, stackId });
         const nativeState: PersistedStackState = {
           ...state,
-          privatePorts: [{ workloadId: "database:database", binding: "primary", port: 30_001 }],
+          privatePorts: [
+            { workloadId: "database:database", binding: "primary", port: 30_001 },
+            { workloadId: "analytics:vector", binding: "primary", port: 30_008 },
+          ],
         };
         const first = yield* owner.resolve(nativeState, 3, { includePooler: true });
         const second = yield* owner.resolve(nativeState, 3, { includePooler: true });
@@ -429,13 +435,58 @@ describe("runtime input owner", () => {
         expect(content).toContain('"external_id" => "pooler-dev"');
         expect(content).toContain('"db_port" => 30001');
         expect(content).not.toContain('"db_password" => ""');
+        expect(first.analytics?.vectorConfigPath).toBeDefined();
         const fourth = yield* owner.resolve(nativeState, 4, { includePooler: true });
         const fourthGenerationTenant = fourth.pooler?.tenantPath;
         expect(fourthGenerationTenant).toBeDefined();
         expect(fourthGenerationTenant).not.toBe(thirdGenerationTenant);
-        yield* owner.cleanupGeneration(3);
+        yield* owner.cleanupGeneration(3, "pooler");
         expect(yield* fs.exists(path.dirname(thirdGenerationTenant!))).toBe(false);
         expect(yield* fs.exists(fourthGenerationTenant!)).toBe(true);
+        expect(yield* fs.exists(first.analytics?.vectorConfigPath ?? "")).toBe(true);
+      }),
+    ),
+  );
+
+  it.live("writes and cleans generation-scoped Vector config material", () =>
+    withPlatform(
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const root = yield* fs.makeTempDirectoryScoped({ prefix: "runtime-input-vector-" });
+        const base = yield* compiledState(root, {
+          capabilities: { analytics: { settings: { vector_port: 9001 } } },
+        });
+        const owner = yield* makeRuntimeInputOwner({ stateRoot: root, stackId });
+        const native: PersistedStackState = {
+          ...base,
+          privatePorts: [{ workloadId: "analytics:vector", binding: "primary", port: 30_008 }],
+        };
+        const material = yield* owner.resolve(native, 7);
+        const configPath = material.analytics?.vectorConfigPath;
+        expect(configPath).toBeDefined();
+        expect(yield* fs.stat(configPath!)).toMatchObject({ type: "File" });
+        expect(yield* fs.readFileString(configPath!)).toContain('address: "${VECTOR_API_ADDRESS}"');
+        expect(yield* fs.readFileString(configPath!)).toContain("type: demo_logs");
+        expect(yield* fs.readFileString(configPath!)).toContain("count: 1");
+        expect(yield* fs.readFileString(configPath!)).toContain("type: internal_metrics");
+        expect(yield* fs.readFileString(configPath!)).toContain("type: blackhole");
+        const config = yield* fs.readFileString(configPath!);
+        expect(config).toContain("type: remap");
+        expect(config).toContain('.event_message = "supabase-stack-vector"');
+        expect(config).toContain("del(.message)");
+        expect(config).toContain('uri: "${LOGFLARE_URL}/logs?source_name=postgres.logs"');
+        expect(config).toContain('x-api-key: "${LOGFLARE_PRIVATE_ACCESS_TOKEN}"');
+        expect(config).toContain("retry_attempts: 5");
+        expect(config).toContain("retry_max_duration_secs: 10");
+        expect(config).not.toContain('x-api-key: "api-key"');
+        yield* owner.cleanupGeneration(7, "vector");
+        expect(yield* fs.exists(path.join(root, stackId, "runtime", "inputs", "vector", "7"))).toBe(
+          false,
+        );
+        const rematerialized = yield* owner.resolve(native, 7);
+        expect(rematerialized.analytics?.vectorConfigPath).toBeDefined();
+        expect(yield* fs.exists(rematerialized.analytics?.vectorConfigPath ?? "")).toBe(true);
       }),
     ),
   );
@@ -457,7 +508,7 @@ describe("runtime input owner", () => {
         const first = yield* owner.resolve(nativeState, 3, { includePooler: true });
         const tenant = first.pooler?.tenantPath;
         expect(tenant).toBeDefined();
-        yield* owner.cleanupGeneration(3);
+        yield* owner.cleanupGeneration(3, "pooler");
         const common = yield* owner.resolve(nativeState, 3);
         expect(common.pooler).toBeUndefined();
         expect(yield* fs.exists(path.join(root, stackId, "runtime", "inputs", "pooler", "3"))).toBe(

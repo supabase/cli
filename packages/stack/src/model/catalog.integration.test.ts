@@ -66,7 +66,7 @@ describe("complete workload catalog", () => {
       "realtime:realtime": "bin/server",
       "storage:storage": "app/dist/start/server.js",
       "storage:imgproxy": "bin/imgproxy",
-      "functions:edge-runtime": "bin/.edge-runtime-wrapped",
+      "functions:edge-runtime": "bin/edge-runtime",
       "studio:studio": "app/apps/studio/server.js",
       "studio:pgmeta": "app/dist/server/server.js",
       "mail:mail": "bin/mailpit",
@@ -83,9 +83,15 @@ describe("complete workload catalog", () => {
       "bin/realtime",
       "bin/server",
     ]);
-    expect(WORKLOAD_CATALOG["database:database"]?.requiredRuntimePaths).toContain(
-      "share/supabase-cli/init-scripts",
-    );
+    expect(WORKLOAD_CATALOG["database:database"]?.requiredRuntimePaths).toEqual([
+      "bin/postgres",
+      "bin/pg_isready",
+      "bin/psql",
+      "share/supabase-cli/bin/supabase-postgres-init.sh",
+      "share/supabase-cli/config/pgsodium_getkey.sh",
+      "share/supabase-cli/migrations",
+      "lib",
+    ]);
     expect(WORKLOAD_CATALOG["storage:storage"]?.requiredRuntimePaths).toEqual([
       "node/bin/node",
       "app/dist/start/server.js",
@@ -177,6 +183,18 @@ describe("complete workload catalog", () => {
       );
       expect(enabled.executionPlan.workloads.some(({ id }) => id === "analytics:vector")).toBe(
         true,
+      );
+      expect(enabled.executionPlan.workloads).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({
+            id: "analytics:analytics",
+            dependencies: ["database:database"],
+          }),
+          expect.objectContaining({
+            id: "analytics:vector",
+            dependencies: ["analytics:analytics"],
+          }),
+        ]),
       );
     }),
   );

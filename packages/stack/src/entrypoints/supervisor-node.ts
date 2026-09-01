@@ -7,7 +7,6 @@ import * as NodeFs from "node:fs";
 import {
   acquireOwnership,
   publishOwnership,
-  StackRuntimeEnvironment,
   type StackRuntimeEnvironmentValue,
 } from "../state/Ownership.ts";
 import { makeStackStateStore } from "../state/StackStateStore.ts";
@@ -29,8 +28,9 @@ const IdentitySchema = Schema.Struct({
   stackName: Schema.String,
 });
 
-export const SupervisorArgsSchema = Schema.Struct({
+const SupervisorArgsSchema = Schema.Struct({
   stateRoot: Schema.String,
+  artifactCacheRoot: Schema.optional(Schema.String),
   tempRoot: Schema.String,
   platform: Schema.Literals(["posix", "windows"] as const),
   stackId: StackIdSchema,
@@ -39,7 +39,7 @@ export const SupervisorArgsSchema = Schema.Struct({
   identity: IdentitySchema,
 });
 
-export const ReadySchema = Schema.Union([
+const ReadySchema = Schema.Union([
   Schema.Struct({
     ok: Schema.Literal(true),
     stackId: StackIdSchema,
@@ -101,11 +101,14 @@ const writeReadiness = (
     });
   });
 
-export const runSupervisor = (args: SupervisorArgs) =>
+const runSupervisor = (args: SupervisorArgs) =>
   Effect.scoped(
     Effect.gen(function* () {
       const environment: StackRuntimeEnvironmentValue = {
         stateRoot: args.stateRoot,
+        ...(args.artifactCacheRoot === undefined
+          ? {}
+          : { artifactCacheRoot: args.artifactCacheRoot }),
         tempRoot: args.tempRoot,
         platform: args.platform,
       };
@@ -121,6 +124,9 @@ export const runSupervisor = (args: SupervisorArgs) =>
       const context = yield* Effect.context<FileSystem.FileSystem | Path.Path | Crypto.Crypto>();
       const runtimeFactory = yield* makeProductionRuntimeFactory({
         stateRoot: args.stateRoot,
+        ...(args.artifactCacheRoot === undefined
+          ? {}
+          : { artifactCacheRoot: args.artifactCacheRoot }),
         stackId: args.stackId,
         ownerSessionId,
         stateStore: store,
@@ -156,7 +162,7 @@ export const runSupervisor = (args: SupervisorArgs) =>
     }),
   ).pipe(Effect.provide(NodeServices.layer));
 
-export const parseSupervisorArgs = (argv: ReadonlyArray<string>) =>
+const parseSupervisorArgs = (argv: ReadonlyArray<string>) =>
   Schema.decodeEffect(Schema.fromJsonString(SupervisorArgsSchema))(argv[0] ?? "{}");
 
 export const runSupervisorProcess = (argv: ReadonlyArray<string>): Promise<void> =>
@@ -167,5 +173,3 @@ export const runSupervisorProcess = (argv: ReadonlyArray<string>): Promise<void>
 if (import.meta.main) {
   await runSupervisorProcess(process.argv.slice(2));
 }
-
-export { StackRuntimeEnvironment };
