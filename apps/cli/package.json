@@ -41,7 +41,7 @@
     "test:e2e:run": "bun --bun vitest run --project e2e",
     "test:live": "bun --bun vitest run --project live",
     "test:smoke": "bun run tests/smoke-test.ts",
-    "types:check": "tsc --noEmit"
+    "types:check": "tsc --noEmit -p tsconfig.types.json"
   },
   "dependencies": {
     "eciesjs": "^0.5.0",

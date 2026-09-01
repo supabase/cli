@@ -215,6 +215,7 @@ Inside Effect code, compose schemas through their Effect APIs:
 ## Code Quality
 
 Never `git commit` or `git push` until lint and `types:check` have been run and passed for the change. Targeted unit/integration tests are not a substitute — CI Check code quality runs `pnpm check:all` (`types:check`, oxlint, oxfmt, knip). Before commit or push, from each changed TypeScript workspace run `pnpm types:check`, and from the repo root run `pnpm exec oxlint` (or `pnpm check:all`). If those fail, fix them before committing.
+After every `git push` to a branch that has a PR, check GitHub CI for that PR (`gh pr checks` / `gh run list`) and report whether it is green. If it is not, diagnose and fix; do not leave a red PR as done.
 
 Run repo-wide quality checks from the repository root with `pnpm check:all` or `pnpm fix:all`; these root scripts are the only quality entrypoints and delegate orchestration to Turbo. For package-local work, run `pnpm types:check` and the applicable package test scripts from the workspace you changed. Do not consider a task complete until all relevant scripts pass.
 Do not waive or defer failing checks in a changed workspace as "pre-existing". If a required check fails, fix it before closing the task. Only treat a failure as an external blocker when it cannot be resolved within the workspace, and in that case call it out explicitly.
