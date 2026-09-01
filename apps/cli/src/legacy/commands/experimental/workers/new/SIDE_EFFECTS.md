@@ -41,8 +41,9 @@ records — so nothing is asked, and nothing written, for a name the command was
 going to refuse. With `-o json|yaml|toml|env`, a redirected stdout, or a stdin
 that is not a terminal, there is nowhere to ask, and the command fails instead
 of defaulting: unlike the runtime and size, the name has no default to fall back
-on. Every prompt is gated on both streams, so `printf 'api\n' | supabase workers
-new` takes that failure path rather than reading the worker name off the pipe.
+on. Every prompt is gated on both streams, so
+`printf 'api\n' | supabase experimental workers new` takes that failure path
+rather than reading the worker name off the pipe.
 
 Writes to `config.toml` are append-only. A worker already recorded under
 `[workers.<name>]` is refused outright — before the runtime and size prompts,
