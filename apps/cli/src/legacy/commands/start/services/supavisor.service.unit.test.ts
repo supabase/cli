@@ -1,10 +1,14 @@
-import { describe, expect, test } from "vitest";
+import { afterEach, describe, expect, test, vi } from "vitest";
 
 import {
   legacyBuildSupavisorContainerSpec,
   legacyBuildSupavisorStartCmd,
   type LegacySupavisorContainerSpecInput,
 } from "./supavisor.service.ts";
+
+afterEach(() => {
+  vi.unstubAllEnvs();
+});
 
 const base: LegacySupavisorContainerSpecInput = {
   image: "supabase/supavisor:2.0.0",
@@ -126,5 +130,20 @@ describe("legacyBuildSupavisorContainerSpec", () => {
     expect(spec.restartPolicy).toBe("unless-stopped");
     expect(spec.networkId).toBe("supabase_network_proj");
     expect(spec.networkAliases).toEqual(["pooler"]);
+  });
+
+  test("uses wget for the healthcheck on a slim pooler image", () => {
+    vi.stubEnv("SUPABASE_USE_SLIM_IMAGES", "1");
+    const spec = legacyBuildSupavisorContainerSpec({
+      ...base,
+      image: "ghcr.io/supabase/cli/pooler:v2.9.12",
+    });
+    expect(spec.healthcheck?.test).toEqual([
+      "CMD",
+      "wget",
+      "-q",
+      "--spider",
+      "http://127.0.0.1:4000/api/health",
+    ]);
   });
 });

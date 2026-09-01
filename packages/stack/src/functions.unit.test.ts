@@ -1,3 +1,5 @@
+// oxlint-disable effecttsgo/async-function, effecttsgo/node-builtin-import, effecttsgo/prefer-schema-over-json -- Functions tests exercise native filesystem fixtures and JSON/JWT protocol payloads through the public Promise facade.
+
 import { describe, expect, it } from "@effect/vitest";
 import { NodeServices } from "@effect/platform-node";
 import { mkdtempSync, symlinkSync } from "node:fs";

@@ -1,3 +1,4 @@
+// oxlint-disable effecttsgo/node-builtin-import, effecttsgo/process-env, effecttsgo/process-env-in-effect -- The child fixture is a native subprocess boundary that composes platform layers and forwards its environment to the supervisor.
 import { NodeFileSystem, NodePath, NodeServices } from "@effect/platform-node";
 import { Deferred, Effect, Layer, Stream, Duration } from "effect";
 import { createServer, type Server } from "node:net";
@@ -123,9 +124,9 @@ const testStackLayer = (
     return waitForFile(path);
   };
   return Layer.succeed(Stack, {
-    getInfo: () => Effect.succeed(info),
-    start: () => Effect.void,
-    stop: () =>
+    getInfo: Effect.succeed(info),
+    start: Effect.void,
+    stop:
       mode === "hold-stop"
         ? Effect.gen(function* () {
             const stageFile = process.env["SUPABASE_STACK_TEST_STOP_BEGAN_FILE"];
@@ -135,16 +136,16 @@ const testStackLayer = (
             yield* waitForStopRelease();
           })
         : Effect.void,
-    dispose: () => Effect.void,
+    dispose: Effect.void,
     startService: () => Effect.void,
     stopService: () => Effect.void,
     restartService: () => Effect.void,
     reloadFunctions: () => Effect.void,
     reloadEdgeRuntime: () => Effect.void,
     getState: () => Effect.die("test stack has no external service state"),
-    getAllStates: () => Effect.succeed([]),
+    getAllStates: Effect.succeed([]),
     stateChanges: () => Effect.succeed(Stream.empty),
-    allStateChanges: () => Stream.empty,
+    allStateChanges: Stream.empty,
     waitReady: () => Effect.void,
     waitAllReady: () =>
       mode === "readiness-failure"
@@ -175,7 +176,7 @@ const testRuntime = ({
   readonly lease: PortLease;
 }): Effect.Effect<
   Layer.Layer<Stack | LocalStackLifecycle>,
-  unknown,
+  SupervisorStartError,
   import("effect").Scope.Scope
 > => {
   const mode = testMode();
@@ -197,9 +198,10 @@ const testRuntime = ({
     }
     yield* Effect.addFinalizer(() => closeTestPorts(servers));
     if (mode === "fail-after-bind") {
-      return yield* Effect.fail(
-        new SupervisorStartError({ message: "Supervisor test runtime failed after binding" }),
-      );
+      // Returning the failed yield exits this fixture before the success layer is constructed.
+      return yield* new SupervisorStartError({
+        message: "Supervisor test runtime failed after binding",
+      });
     }
     return Layer.mergeAll(
       testStackLayer(config, mode, disposed),
@@ -208,7 +210,11 @@ const testRuntime = ({
         isDisposed: Effect.succeed(mode === "readiness-failure"),
       }),
     );
-  });
+  }).pipe(
+    Effect.catchTag("StackBuildError", (cause) =>
+      Effect.fail(new SupervisorStartError({ message: cause.detail })),
+    ),
+  );
 };
 
 const observeAttachedBeforeReady = (value: unknown): Effect.Effect<void> => {
@@ -311,13 +317,17 @@ export const runTestSupervisor = (): void => {
       runtimeLayer: testRuntime,
       resolutionTimeout: resolutionTimeout(),
     };
+    // runSupervisor's runtime layers are provided in dependency order: the decorated manager
+    // and transport layers must be built before the platform services are attached.
     const program = runSupervisor(supervisorPlatform).pipe(
+      // oxlint-disable-next-line effecttsgo/multiple-effect-provide -- Child supervisor composes manager, transport, and platform layers in dependency order.
       Effect.provide(gitConfigStoreLayer),
       Effect.provide(testControlTransportLayer(nodeControlTransportLayer)),
       Effect.provide(NodeServices.layer),
       Effect.provide(NodeFileSystem.layer),
       Effect.provide(NodePath.layer),
     );
+    // The child process is intentionally launched at this native Promise boundary.
     void Effect.runPromise(program);
     return;
   }
@@ -344,12 +354,16 @@ export const runTestSupervisor = (): void => {
       runtimeLayer: testRuntime,
       resolutionTimeout: resolutionTimeout(),
     };
+    // runSupervisor's runtime layers are provided in dependency order: the decorated manager
+    // and transport layers must be built before the platform services are attached.
     const program = runSupervisor(supervisorPlatform).pipe(
+      // oxlint-disable-next-line effecttsgo/multiple-effect-provide -- Child supervisor composes manager, transport, and platform layers in dependency order.
       Effect.provide(gitConfigStoreLayer),
       Effect.provide(testControlTransportLayer(bunPlatform.controlTransportLayer)),
       Effect.provide(bunServices.layer),
       Effect.provide(bunFileSystem.layer),
     );
+    // The child process is intentionally launched at this native Promise boundary.
     return Effect.runPromise(program);
   });
 };

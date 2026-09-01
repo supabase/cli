@@ -116,7 +116,12 @@ const WORKER_NAME_PATTERN = /^[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?$/;
 const workerNameRequirement =
   "Use lowercase letters, digits and hyphens, starting and ending with a letter or digit.";
 
-/** `undefined` when `name` is a valid worker name, else why it is not. */
+/**
+ * `undefined` when `name` is a name this CLI can *record*, else why it is not.
+ *
+ * For commands that write `[workers.<name>]` — which is `new`, and `push` only
+ * because it deploys what `new` wrote.
+ */
 export function validateWorkerNameMessage(name: string): string | undefined {
   return WORKER_NAME_PATTERN.test(name) ? undefined : workerNameRequirement;
 }

@@ -1,24 +1,23 @@
 import * as Net from "node:net";
 import { Duration, Effect, Match, Ref, Schedule } from "effect";
+import { HttpClient } from "effect/unstable/http";
 import { ChildProcess, ChildProcessSpawner } from "effect/unstable/process";
 import { defaults, type HealthCheckConfig, type ProbeConfig } from "./ServiceDef.ts";
 
 const executeProbe = (
   probe: ProbeConfig,
   timeoutSeconds: number,
-): Effect.Effect<boolean, never, ChildProcessSpawner.ChildProcessSpawner> => {
+): Effect.Effect<
+  boolean,
+  never,
+  ChildProcessSpawner.ChildProcessSpawner | HttpClient.HttpClient
+> => {
   return Match.valueTags(probe, {
     Http: (probe) =>
-      Effect.tryPromise({
-        try: (signal) =>
-          fetch(`${probe.scheme}://${probe.host}:${probe.port}${probe.path}`, {
-            signal,
-          }),
-        catch: (cause) => cause,
-      }).pipe(
+      HttpClient.get(`${probe.scheme}://${probe.host}:${probe.port}${probe.path}`).pipe(
         Effect.timeout(Duration.seconds(timeoutSeconds)),
-        Effect.map((res) => res.ok),
-        Effect.catch(() => Effect.succeed(false)),
+        Effect.map((res) => res.status >= 200 && res.status < 300),
+        Effect.orElseSucceed(() => false),
       ),
     Exec: (probe) => {
       const cmd = ChildProcess.make(probe.command, probe.args, {
@@ -31,7 +30,7 @@ const executeProbe = (
           Effect.timeout(Duration.seconds(timeoutSeconds)),
           Effect.map((opt) => opt ?? false),
         ),
-      ).pipe(Effect.catch(() => Effect.succeed(false)));
+      ).pipe(Effect.orElseSucceed(() => false));
     },
     Tcp: (probe) =>
       Effect.callback<boolean>((resume) => {
@@ -48,21 +47,21 @@ const executeProbe = (
       }).pipe(
         Effect.timeout(Duration.seconds(timeoutSeconds)),
         Effect.map((opt) => opt ?? false),
-        Effect.catch(() => Effect.succeed(false)),
+        Effect.orElseSucceed(() => false),
       ),
   });
 };
 
 export interface HealthProbeCallbacks {
-  readonly onHealthy: () => Effect.Effect<void>;
-  readonly onUnhealthy: () => Effect.Effect<void>;
+  readonly onHealthy: Effect.Effect<void>;
+  readonly onUnhealthy: Effect.Effect<void>;
 }
 
 export const runHealthProbe = (config: {
   readonly name: string;
   readonly healthCheck: HealthCheckConfig;
   readonly callbacks: HealthProbeCallbacks;
-}): Effect.Effect<void, never, ChildProcessSpawner.ChildProcessSpawner> =>
+}): Effect.Effect<void, never, ChildProcessSpawner.ChildProcessSpawner | HttpClient.HttpClient> =>
   Effect.gen(function* () {
     const hc = config.healthCheck;
     const initialDelay = hc.initialDelaySeconds ?? defaults.healthCheck.initialDelaySeconds;
@@ -92,7 +91,7 @@ export const runHealthProbe = (config: {
           if (phase !== "Healthy" && successes + 1 >= successThreshold) {
             phase = "Healthy";
             hasEverBeenHealthy = true;
-            yield* config.callbacks.onHealthy();
+            yield* config.callbacks.onHealthy;
           }
         } else {
           const { failures } = yield* Ref.getAndUpdate(counters, (c) => ({
@@ -104,7 +103,7 @@ export const runHealthProbe = (config: {
             : startupFailureThreshold;
           if (phase !== "Unhealthy" && failures + 1 >= activeFailureThreshold) {
             phase = "Unhealthy";
-            yield* config.callbacks.onUnhealthy();
+            yield* config.callbacks.onUnhealthy;
           }
         }
       }),

@@ -170,3 +170,42 @@ describe("subtractCliConfig", () => {
     expect(subtractCliConfig(config, baseline)).toEqual({ api: { max_rows: 1000 } });
   });
 });
+
+describe("EffectiveConfig operand widening (CLI-2230)", () => {
+  // `EffectiveConfig` covers any deeply-partial operand, not just a decoded
+  // `CliConfig` — the hosted-subset `ProjectConfig` `toProjectConfig` produces
+  // (`./project-config/project-config.ts`) is one such operand, and is never
+  // a fully-materialized document. These pin the runtime behavior both
+  // helpers already had against genuinely sparse operands, not just against
+  // full decodes.
+
+  test("subtractCliConfig: equal sparse operands cancel out entirely", () => {
+    expect(subtractCliConfig({ api: { max_rows: 100 } }, { api: { max_rows: 100 } })).toEqual({});
+  });
+
+  test("subtractCliConfig: an empty value operand reports nothing, regardless of the baseline", () => {
+    expect(subtractCliConfig({}, { api: { max_rows: 100 }, db: { port: 54399 } })).toEqual({});
+  });
+
+  test("subtractCliConfig: a field absent from the baseline is kept verbatim", () => {
+    expect(subtractCliConfig({ api: { max_rows: 100 } }, {})).toEqual({ api: { max_rows: 100 } });
+  });
+
+  test("omitDefaultValues: a sparse value differing from schema defaults survives untouched", () => {
+    expect(omitDefaultValues({ api: { max_rows: 500 } })).toEqual({ api: { max_rows: 500 } });
+  });
+
+  test("omitDefaultValues: a sparse value equal to the schema default is subtracted away", () => {
+    const defaultMaxRows = getDefaultCliConfig().api.max_rows;
+    expect(omitDefaultValues({ api: { max_rows: defaultMaxRows } })).toEqual({});
+  });
+
+  test("omitDefaultValues: does not flood in default-valued siblings the sparse operand never mentioned", () => {
+    // Only the two keys actually present on the operand may appear on the
+    // result — a flooding implementation would additionally materialize
+    // every other `api.*` default (`port`, `schemas`, `db_schema`, …).
+    const sparse = omitDefaultValues({ api: { max_rows: 500, extra_search_path: [] } });
+    expect(sparse).toEqual({ api: { max_rows: 500, extra_search_path: [] } });
+    expect(Object.keys(sparse.api ?? {}).sort()).toEqual(["extra_search_path", "max_rows"]);
+  });
+});

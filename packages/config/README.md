@@ -17,8 +17,8 @@ It owns:
   the CLI reads and writes.
 - `ProjectConfig` — the hosted-project subset: a sparse overlay of the hosted sections (api, auth,
   db, realtime, storage, workers, experimental) describing what a Supabase project looks like on
-  the platform. Being introduced by CLI-2230 (in flight); once it lands, this package exports a
-  mapping function (`toProjectConfig`) that produces it from a Management API response.
+  the platform. Introduced by CLI-2230: produced by `toProjectConfig` from either a `CliConfig`
+  document or a Management API response — see "ProjectConfig mapping" below.
 - `CliSettings` — the CLI's own runtime settings; lives in `apps/cli`, not this package.
 
 Use the `Cli*` prefix for the local checkout side and a bare `Project*` name for the hosted
@@ -39,6 +39,106 @@ their inputs (`resolveCliConfigValue`, `MissingCliConfigValueError`). See
   `CliConfigStore` service, `cliConfigStoreLayer`, and other Effect programs (config
   loading/saving, project env resolution, functions manifest inference).
 - `@supabase/config/schema.json` — generated JSON Schema for `CliConfig`.
+
+## ProjectConfig mapping
+
+The hosted-project subset — `ProjectConfig` — and its normalizers live on the pure entrypoint
+(`@supabase/config`), so the CLI and Studio share one implementation:
+
+- `toProjectConfig(source)` — thin dispatcher over the two normalizers; pass `{ cliConfig }`
+  or `{ apiResponse }`. Throws `ProjectConfigParseError` when `source` carries neither own key
+  or both.
+- `fromConfigDocument(cliConfig)` — projection of a `CliConfig` document (or any
+  `EffectiveConfig`): keeps the hosted sections (`api`, `auth`, `db`, `realtime`, `storage`,
+  `workers`, `experimental`), drops local-only ones. Hosted sections are copied at field
+  granularity, omitting every `x-secret` leaf, and every duration/byte-size field a mapping
+  row canonicalizes (e.g. a document's `"24h"` becomes `"24h0m0s"`, matching what the API side
+  would emit for the same logical value) — parity with `fromApiProjectConfig`'s own secret
+  omission and canonical spellings. **Not a verbatim rendering of the document**: per
+  [ADR 0021](../../docs/adr/0021-projectconfig-convergence-semantics.md), the result also
+  applies SMS-provider push precedence and disabled-sentinel pruning, so it predicts what the
+  hosted config will look like _after_ pushing the document, not the document's own declared
+  values. **RECOMMENDED for a file-sourced config**: pass `{ config, document }` instead of a
+  bare `cliConfig` whenever a raw `document` is available (`LoadedCliConfig`'s own shape —
+  `@supabase/config/io`'s loaders return one, and it is structurally assignable here without a
+  cast). With `document`, the projection additionally mirrors the legacy push pipeline's own
+  raw-presence gates (a raw-absent `auth.captcha`, an un-raw-declared external provider, …), which
+  a bare `cliConfig` operand cannot — see ADR 0021's "Limits" section for exactly which fields
+  this closes and which residual gap remains even with `document` supplied. `@supabase/config/io`'s
+  `loadCliConfig` supplies a `document`; `saveCliConfig`'s returned `LoadedCliConfig` does NOT
+  (there is no raw file being re-read on a save), so passing that result straight into
+  `fromConfigDocument` silently falls back to the un-remedied, bare-`cliConfig` behavior.
+- `fromApiProjectConfig(input)` — translation of a Management API v2 project-config response
+  (the full envelope, its `data` object, or bare `data.attributes`): registry-driven renames, boolean inversions, and
+  unit conversions; lenient toward API keys this package version doesn't know; secret fields
+  omitted (the API reports HMAC digests, never plaintext). Attaches a deep-cloned, deep-frozen
+  copy of the raw attributes as a non-enumerable `_apiResponse` — invisible to encodes and
+  structural walks, never persisted (ADR 0019). Also not a byte-for-byte echo of the response
+  (ADR 0021): a `null` on a gating boolean canonicalizes to `enabled: false`, and the same
+  disabled-sentinel pruning `fromConfigDocument` applies runs here too. Both normalizers throw
+  `ProjectConfigParseError` on malformed API input (a bad envelope, a mapped field of the wrong
+  type, or an unparseable schema-decode failure).
+- `unmappedApiFields(projectConfig)` — the API fields this package version doesn't map,
+  derived from the same mapping registry.
+- `attachApiResponse(projectConfig, rawAttributes)` — re-attaches `_apiResponse` after a
+  spread/`structuredClone`/state-store round-trip already dropped it.
+- `comparableProjectConfigPaths` / `isComparableProjectConfigPath(path)` — the registry-derived
+  field paths `fromApiProjectConfig` can actually speak for, so a diff consumer restricts its
+  comparison instead of hand-maintaining an equivalent field list.
+
+`ProjectConfig` is sparse by design: it carries only what its source actually said, so it
+composes with `subtractCliConfig`/`omitDefaultValues` (operand type `EffectiveConfig`) without
+fabricating drift from schema defaults. Diffing two independently-sourced `ProjectConfig`s (a
+remote response against a local document, rather than either against schema defaults) still needs
+restricting to `comparableProjectConfigPaths`/`isComparableProjectConfigPath` — and at LEAF-path
+granularity: `isComparableProjectConfigPath` takes a full path like
+`["auth", "email", "smtp", "enabled"]`, not a top-level section name, so filtering
+`Object.entries(overlay)` (section names only) restricts nothing.
+
+```ts
+import {
+  subtractCliConfig,
+  toProjectConfig,
+  isComparableProjectConfigPath,
+} from "@supabase/config";
+
+const remote = toProjectConfig({ apiResponse }); // Management API v2 project-config response
+// `loaded` here is whatever `@supabase/config/io`'s loader returned (a
+// `LoadedCliConfig`) — passing it directly (not just `loaded.config`) is the
+// RECOMMENDED form: it unlocks the raw-presence masking described above.
+const local = toProjectConfig({ cliConfig: loaded });
+
+// `overlay` is what `local` says that `remote` doesn't already agree with.
+const overlay = subtractCliConfig(local, remote);
+
+// Restrict to individual LEAF paths — see the granularity note above.
+function leafPaths(
+  value: unknown,
+  prefix: ReadonlyArray<string> = [],
+): ReadonlyArray<ReadonlyArray<string>> {
+  if (value !== null && typeof value === "object" && !Array.isArray(value)) {
+    return Object.entries(value as Record<string, unknown>).flatMap(([key, child]) =>
+      leafPaths(child, [...prefix, key]),
+    );
+  }
+  return [prefix];
+}
+
+const restrictedDrift = leafPaths(overlay).filter(isComparableProjectConfigPath);
+// e.g. [["api", "schemas"], ["api", "max_rows"], ["auth", "site_url"]] — the fields `local`
+// DECLARES that `remote` doesn't already agree with, restricted to what `fromApiProjectConfig`
+// can actually speak for.
+```
+
+This example computes **one direction** of a drift check: values the local document declares that
+differ from the remote. It does not surface remote-only settings — a field the API maps
+unconditionally (e.g. `auth.email.smtp.enabled`) where the local document never declared the
+subsection produces no leaf in this overlay at all. Finding those needs the reverse subtraction
+(`subtractCliConfig(remote, local)`) intersected with the paths the document-side operand actually
+declares, per the comparison contract on the `ProjectConfig` docstring — the comparable-path set
+only says which paths the API mapper can represent, not which ones a given document spoke for. A
+complete two-sided drift computation is `config diff`'s job (CLI-2156); this example is its
+building block, not a substitute.
 
 ## Usage
 

@@ -1,3 +1,5 @@
+// oxlint-disable effecttsgo/node-builtin-import -- Entrypoint integration tests invoke the native process boundary directly.
+
 import { execFileSync } from "node:child_process";
 import { expect, test } from "vitest";
 

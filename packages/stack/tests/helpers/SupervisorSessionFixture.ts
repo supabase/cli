@@ -1,13 +1,24 @@
-import { Cause, Deferred, Effect, Fiber, Ref } from "effect";
+import { Cause, Data, Deferred, Effect, Fiber, Ref } from "effect";
 import type { Stack } from "../../src/Stack.ts";
 import { SupervisorSession } from "../../src/SupervisorSession.ts";
 
+class SupervisorSessionFixtureCloseError extends Data.TaggedError(
+  "SupervisorSessionFixtureCloseError",
+)<{
+  readonly cause: unknown;
+}> {}
+
+const normalizeClose = <E>(
+  close: Effect.Effect<void, E>,
+): Effect.Effect<void, SupervisorSessionFixtureCloseError> =>
+  close.pipe(Effect.mapError((cause) => new SupervisorSessionFixtureCloseError({ cause })));
+
 /** A running session actor for integration tests that host the control app in-process. */
-export const makeSupervisorSessionFixture = (input: {
+export const makeSupervisorSessionFixture = <E = never>(input: {
   readonly ownershipId: string;
   readonly ownerSessionId: string;
   readonly daemonCliVersion: string;
-  readonly close?: Effect.Effect<void, unknown>;
+  readonly close?: Effect.Effect<void, E>;
 }) =>
   Effect.gen(function* () {
     const scope = yield* Effect.scope;
@@ -15,7 +26,9 @@ export const makeSupervisorSessionFixture = (input: {
     const startup = Deferred.makeUnsafe<Stack["Service"]>();
     const running = Deferred.makeUnsafe<void>();
     const disposed = Deferred.makeUnsafe<void>();
-    const closeRef = Ref.makeUnsafe<Effect.Effect<void, unknown>>(input.close ?? Effect.void);
+    const closeRef = Ref.makeUnsafe<Effect.Effect<void, SupervisorSessionFixtureCloseError>>(
+      normalizeClose(input.close ?? Effect.void),
+    );
     const runFiber = yield* controller
       .run({
         startup: () => Deferred.await(startup),
@@ -36,7 +49,8 @@ export const makeSupervisorSessionFixture = (input: {
           Effect.andThen(Deferred.await(running)),
           Effect.asVoid,
         ),
-      setClose: (close: Effect.Effect<void, unknown>) => Ref.set(closeRef, close),
+      setClose: <CloseError>(close: Effect.Effect<void, CloseError>) =>
+        Ref.set(closeRef, normalizeClose(close)),
       disposeRuntime: Deferred.succeed(disposed, undefined).pipe(Effect.asVoid),
       requestShutdown: (_reason?: "stop" | "signal" | "startup-failure" | "dispose") =>
         controller.service.submitShutdownWithIntent("explicit").pipe(Effect.andThen(awaitShutdown)),

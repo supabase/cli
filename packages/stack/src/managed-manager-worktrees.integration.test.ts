@@ -1,3 +1,4 @@
+// oxlint-disable effecttsgo/multiple-effect-provide, effecttsgo/node-builtin-import -- Worktree-manager tests use native path fixtures to model isolated workspaces; manager dependencies are intentionally provided in dependency order.
 import { it } from "@effect/vitest";
 import { NodeFileSystem, NodePath } from "@effect/platform-node";
 import { Effect } from "effect";
@@ -46,7 +47,7 @@ describe("managed stack worktrees journeys", () => {
         expect(second.stack.ports.some((assignment) => firstPorts.has(assignment.port))).toBe(
           false,
         );
-        const listings = yield* manager.listStacks();
+        const listings = yield* manager.listStacks;
         expect(listings).toEqual(
           expect.arrayContaining([
             expect.objectContaining({ id: first.stack.id, status: "healthy" }),

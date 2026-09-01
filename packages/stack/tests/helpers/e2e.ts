@@ -1,3 +1,5 @@
+// oxlint-disable effecttsgo/async-function, effecttsgo/global-date, effecttsgo/global-fetch -- The e2e helper polls a native HTTP endpoint with wall-clock deadlines from Vitest's Promise boundary.
+
 /**
  * Poll an Edge Function endpoint until the gateway can actually serve it.
  *

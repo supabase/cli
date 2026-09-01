@@ -1,3 +1,4 @@
+// oxlint-disable effecttsgo/async-function, effecttsgo/crypto-random-uuid, effecttsgo/global-fetch, effecttsgo/global-fetch-in-effect, effecttsgo/new-promise, effecttsgo/node-builtin-import, effecttsgo/prefer-schema-over-json, effecttsgo/process-env -- Compiled-supervisor tests cross native child-process, filesystem, HTTP, environment, and serialization boundaries from Vitest's Promise harness.
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
 import { fork, type ChildProcess } from "node:child_process";
@@ -5,7 +6,7 @@ import { mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "nod
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
-import { Effect, Schedule, Schema } from "effect";
+import { Data, Effect, Schedule, Schema } from "effect";
 import { describe, expect, test, beforeAll, afterAll } from "vitest";
 import { controlEndpoint, type ControlEndpoint } from "./managed/control.ts";
 import { deriveStackId, type EnvironmentIdentity } from "./managed/environment.ts";
@@ -190,9 +191,11 @@ const waitForProcessExit = (pid: number): Promise<void> => {
       return false;
     },
     catch: () => undefined,
-  }).pipe(Effect.catch(() => Effect.succeed(true)));
+  }).pipe(Effect.orElseSucceed(() => true));
   const probe = attempt.pipe(
-    Effect.flatMap((exited) => (exited ? Effect.succeed(true) : Effect.fail(new Error("alive")))),
+    Effect.flatMap((exited) =>
+      exited ? Effect.succeed(true) : Effect.fail(new EndpointStillAliveError()),
+    ),
     Effect.retry(Schedule.spaced("25 millis").pipe(Schedule.upTo({ duration: "30 seconds" }))),
     Effect.asVoid,
   );
@@ -211,7 +214,7 @@ const waitForDocumentLifecycle = (roots: TestRoots, lifecycle: string): Promise<
       const value = JSON.parse(readFileSync(path, "utf8")) as { readonly lifecycle?: string };
       if (value.lifecycle !== lifecycle) throw new Error("document lifecycle has not settled");
     },
-    catch: (cause) => cause,
+    catch: (cause) => new DocumentNotReadyError({ cause: String(cause) }),
   }).pipe(
     Effect.retry(Schedule.spaced("25 millis").pipe(Schedule.upTo({ duration: "30 seconds" }))),
     Effect.asVoid,
@@ -219,7 +222,15 @@ const waitForDocumentLifecycle = (roots: TestRoots, lifecycle: string): Promise<
   return Effect.runPromise(probe);
 };
 
-class EndpointStillAliveError extends Error {}
+class EndpointStillAliveError extends Data.TaggedError("EndpointStillAliveError")<{}> {}
+
+class DocumentNotReadyError extends Data.TaggedError("DocumentNotReadyError")<{
+  readonly cause: string;
+}> {}
+
+class EndpointUnavailableError extends Data.TaggedError("EndpointUnavailableError")<{
+  readonly cause: string;
+}> {}
 
 const waitForEndpointUnavailable = (endpoint: ControlEndpoint): Promise<void> => {
   const attempt = Effect.tryPromise({
@@ -227,11 +238,15 @@ const waitForEndpointUnavailable = (endpoint: ControlEndpoint): Promise<void> =>
       const response = await fetch(`${endpoint.url}/owner`);
       if (response.ok) throw new EndpointStillAliveError();
     },
-    catch: (cause) => cause,
+    catch: (cause) =>
+      cause instanceof EndpointStillAliveError
+        ? cause
+        : new EndpointUnavailableError({ cause: String(cause) }),
   }).pipe(
-    Effect.catch((cause) =>
-      cause instanceof EndpointStillAliveError ? Effect.fail(cause) : Effect.succeed(undefined),
-    ),
+    Effect.catchTags({
+      EndpointStillAliveError: (cause) => Effect.fail(cause),
+      EndpointUnavailableError: () => Effect.void,
+    }),
     Effect.retry(Schedule.spaced("25 millis").pipe(Schedule.upTo({ duration: "30 seconds" }))),
     Effect.asVoid,
   );

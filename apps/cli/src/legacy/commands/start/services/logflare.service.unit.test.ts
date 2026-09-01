@@ -1,11 +1,15 @@
 import { join } from "node:path";
 
-import { describe, expect, test } from "vitest";
+import { afterEach, describe, expect, test, vi } from "vitest";
 
 import {
   legacyBuildLogflareContainerSpec,
   type LegacyLogflareContainerSpecInput,
 } from "./logflare.service.ts";
+
+afterEach(() => {
+  vi.unstubAllEnvs();
+});
 
 const base: LegacyLogflareContainerSpecInput = {
   image: "supabase/logflare:1.0.0",
@@ -116,5 +120,40 @@ describe("legacyBuildLogflareContainerSpec", () => {
       workdir: "/workdir",
     });
     expect(spec.binds).toEqual([`${join("/workdir", "")}:/opt/app/rel/logflare/bin/gcloud.json`]);
+  });
+
+  test("bigquery on a slim analytics image uses the same gcloud.json bind as docker.io", () => {
+    vi.stubEnv("SUPABASE_USE_SLIM_IMAGES", "1");
+    const spec = legacyBuildLogflareContainerSpec({
+      ...base,
+      image: "ghcr.io/supabase/cli/analytics:v1.50.6",
+      backend: "bigquery",
+      gcpProjectId: "my-project",
+      gcpProjectNumber: "123456",
+      gcpJwtPath: "gcloud.json",
+    });
+    expect(spec.binds).toEqual([
+      `${join("/workdir", "gcloud.json")}:/opt/app/rel/logflare/bin/gcloud.json`,
+    ]);
+    expect(spec.env.GOOGLE_APPLICATION_CREDENTIALS).toBeUndefined();
+  });
+
+  test("overrides the entrypoint and uses wget on a slim analytics image", () => {
+    vi.stubEnv("SUPABASE_USE_SLIM_IMAGES", "1");
+    const slim = legacyBuildLogflareContainerSpec({
+      ...base,
+      image: "ghcr.io/supabase/cli/analytics:v1.50.6",
+    });
+    const dockerIo = legacyBuildLogflareContainerSpec(base);
+    expect(slim.entrypoint).toBe(dockerIo.entrypoint);
+    expect(slim.cmd).toEqual(dockerIo.cmd);
+    expect(slim.healthcheck?.test).toEqual([
+      "CMD",
+      "wget",
+      "-q",
+      "--spider",
+      "http://127.0.0.1:4000/health",
+    ]);
+    expect(slim.healthcheck?.startPeriodSeconds).toBe(10);
   });
 });

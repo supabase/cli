@@ -9,7 +9,6 @@ allowBuilds:
   "@launchql/protobufjs": true
   esbuild: true
   msgpackr-extract: true
-  nx: true
   sharp: true
 
 catalog:
@@ -17,17 +16,16 @@ catalog:
   "@effect/platform-bun": "4.0.0-rc.111"
   "@effect/platform-node": "4.0.0-rc.111"
   "@effect/sql-pg": "4.0.0-rc.111"
+  "@effect/tsgo": "0.36.5"
   "@effect/vitest": "4.0.0-rc.111"
-  "@nx/devkit": "^23.1.1"
   "@tsconfig/bun": "^1.0.11"
   "@types/bun": "^1.4.0"
   "typescript": "^7.0.2"
   "@vitest/coverage-istanbul": "^4.1.10"
   "effect": "4.0.0-rc.111"
   "knip": "^6.32.2"
-  "nx": "^23.1.1"
   "oxfmt": "^0.63.0"
-  "oxlint": "^1.78.0"
+  "oxlint": "1.78.0"
   "oxlint-tsgolint": "^7.0.2001"
   "tldts": "^7.4.10"
   "turbo": "2.10.11"

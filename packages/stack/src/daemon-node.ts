@@ -1,3 +1,5 @@
+// oxlint-disable effecttsgo/multiple-effect-provide -- Daemon startup layers are provided in dependency order so managed transport and platform scopes remain distinct.
+
 import { NodeFileSystem, NodePath, NodeServices } from "@effect/platform-node";
 import { Effect, Layer } from "effect";
 import { runSupervisor } from "./supervisor.ts";

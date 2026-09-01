@@ -1,3 +1,4 @@
+// oxlint-disable effecttsgo/global-fetch-in-effect, effecttsgo/multiple-effect-provide, effecttsgo/node-builtin-import, effecttsgo/prefer-schema-over-json -- Lifecycle tests coordinate native manager control and intentionally dynamic JSON protocol fixtures; manager dependencies are staged in order because several scenario layers consume earlier services.
 import { it } from "@effect/vitest";
 import { NodeFileSystem, NodePath } from "@effect/platform-node";
 import { Cause, Deferred, Effect, Exit, Fiber, FileSystem, Layer } from "effect";
@@ -141,6 +142,7 @@ describe("managed stack lifecycle journeys", () => {
 
   it.live("stops an owner whose document is still starting", () => {
     const { layer, workspace } = setup();
+    const ownerSessionId = "starting-owner-session";
     return Effect.scoped(
       Effect.gen(function* () {
         const manager = yield* ManagedStackManager;
@@ -149,9 +151,8 @@ describe("managed stack lifecycle journeys", () => {
         const stopped = { value: false };
         const localStack = {
           ...controlStack(),
-          stop: () => Effect.sync(() => void (stopped.value = true)),
+          stop: Effect.sync(() => void (stopped.value = true)),
         } satisfies Stack["Service"];
-        const ownerSessionId = crypto.randomUUID();
         const lifecycle = yield* makeSupervisorSessionFixture({
           ownershipId: stackId,
           ownerSessionId,
@@ -239,6 +240,7 @@ describe("managed stack lifecycle journeys", () => {
 
   it.live("reports a CLI mismatch before rejecting an incompatible starting owner", () => {
     const { layer, workspace } = setup();
+    const ownerSessionId = "mismatch-owner-session";
     return Effect.scoped(
       Effect.gen(function* () {
         const manager = yield* ManagedStackManager;
@@ -246,7 +248,7 @@ describe("managed stack lifecycle journeys", () => {
         const stackId = deriveStackId(environment.identity, "default");
         const lifecycle = yield* makeSupervisorSessionFixture({
           ownershipId: stackId,
-          ownerSessionId: crypto.randomUUID(),
+          ownerSessionId,
           daemonCliVersion: "old-cli",
         });
         const owner = yield* acquireControl({

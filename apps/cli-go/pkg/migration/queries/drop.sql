@@ -4,8 +4,8 @@ begin
   -- schemas
   for rec in
     select pn.*
-    from pg_namespace pn
-    left join pg_depend pd on pd.objid = pn.oid
+    from pg_catalog.pg_namespace pn
+    left join pg_catalog.pg_depend pd on pd.objid = pn.oid and pd.classid = 'pg_catalog.pg_namespace'::regclass
     where pd.deptype is null
       and not pn.nspname like any(array['information\_schema', 'pg\_%', '\_analytics', '\_realtime', '\_supavisor', 'pgbouncer', 'pgmq', 'pgsodium', 'pgtle', 'supabase\_migrations', 'vault', 'extensions', 'public'])
       and pn.nspowner::regrole::text != 'supabase_admin'

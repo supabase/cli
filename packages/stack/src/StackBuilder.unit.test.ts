@@ -1,3 +1,5 @@
+// oxlint-disable effecttsgo/any-unknown-in-error-context, effecttsgo/node-builtin-import -- Builder tests assert dynamic startup failures while using native filesystem/path fixtures.
+
 import { describe, expect, it } from "@effect/vitest";
 import { NodeFileSystem } from "@effect/platform-node";
 import { Deferred, Effect, FileSystem, Layer, Predicate, Scope, Sink, Stream } from "effect";

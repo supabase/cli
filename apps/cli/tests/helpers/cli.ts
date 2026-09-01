@@ -299,7 +299,8 @@ export function spawnSupabase(
   args: string[],
   options?: {
     cwd?: string;
-    env?: Record<string, string>;
+    /** `undefined` REMOVES the key from the child env (base env and pins included). */
+    env?: Record<string, string | undefined>;
     /** Reuse a temp SUPABASE_HOME directory instead of creating a new one per call. */
     home?: string;
     /** Write this string to stdin, then close it. */
@@ -322,15 +323,23 @@ export function spawnSupabase(
   // build artifact without needing platform wrapper packages.
   let execCmd: string;
   let execArgs: string[];
-  const env: Record<string, string> = {
+  // An `undefined` in `options.env` removes the key entirely — pins and ambient values alike —
+  // so a cache-subject test can run with a variable genuinely absent (the shipped default),
+  // not just overridden.
+  const mergedEnv: Record<string, string | undefined> = {
     ...subprocessBaseEnv(),
     SUPABASE_HOME: homeDir,
     SUPABASE_NO_KEYRING: "1",
     SUPABASE_TELEMETRY_DISABLED: "1",
-    // Isolate e2e from a developer/CI soak (`SUPABASE_SHADOW_CACHE=1`). Cache-subject tests opt in via `options.env`.
+    // Isolate e2e from the default-ON shadow cache. Cache-subject tests opt back in (or unset
+    // the key with `undefined`) via `options.env`.
     SUPABASE_SHADOW_CACHE: "0",
     ...options?.env,
   };
+  const env: Record<string, string> = {};
+  for (const [key, value] of Object.entries(mergedEnv)) {
+    if (value !== undefined) env[key] = value;
+  }
   if (entrypoint === "legacy") {
     assertBuildArtifactsExist("legacy", LEGACY_BINARY_PATH);
     env["SUPABASE_CLI_BINARY_OVERRIDE"] = LEGACY_BINARY_PATH;
@@ -518,7 +527,8 @@ export async function runSupabase(
   args: string[],
   options?: {
     cwd?: string;
-    env?: Record<string, string>;
+    /** `undefined` REMOVES the key from the child env (base env and pins included). */
+    env?: Record<string, string | undefined>;
     /** Reuse a temp SUPABASE_HOME directory instead of creating a new one per call. */
     home?: string;
     /** Write this string to stdin, then close it. */

@@ -27,6 +27,7 @@ interface NativeReleaseSource {
 }
 
 interface DockerImageSource {
+  readonly registry?: string;
   readonly repository: string;
   readonly tagPrefix?: string;
 }
@@ -77,7 +78,8 @@ export interface ServiceCatalogEntry<Name extends ServiceName> {
   readonly portFields: ReadonlyArray<PortField>;
 }
 
-const SUPABASE_GHCR_REGISTRY = "ghcr.io/supabase/cli";
+const SUPABASE_GHCR_REGISTRY = "ghcr.io/supabase";
+const SUPABASE_CLI_GHCR_REGISTRY = `${SUPABASE_GHCR_REGISTRY}/cli`;
 const SLIM_RELEASE_BASE = "https://github.com/supabase/slim-services/releases/download";
 
 const nativeRelease = (
@@ -126,7 +128,7 @@ export const SERVICE_CATALOG = {
   postgres: {
     name: "postgres",
     configKey: "postgres",
-    defaultVersion: "17.6.1.165",
+    defaultVersion: "17.6.1.167",
     runtimeSupport: "native-preferred",
     artifact: {
       docker: { repository: "postgres" },
@@ -153,7 +155,7 @@ export const SERVICE_CATALOG = {
   postgrest: {
     name: "postgrest",
     configKey: "postgrest",
-    defaultVersion: "v16.1",
+    defaultVersion: "v16.2",
     runtimeSupport: "native-preferred",
     artifact: {
       docker: { repository: "postgrest" },
@@ -203,7 +205,7 @@ export const SERVICE_CATALOG = {
   realtime: {
     name: "realtime",
     configKey: "realtime",
-    defaultVersion: "v2.129.3",
+    defaultVersion: "v2.130.0",
     runtimeSupport: "docker-only",
     artifact: {
       docker: { repository: "realtime" },
@@ -215,7 +217,7 @@ export const SERVICE_CATALOG = {
   storage: {
     name: "storage",
     configKey: "storage",
-    defaultVersion: "v1.70.3",
+    defaultVersion: "v1.72.1",
     runtimeSupport: "docker-only",
     artifact: {
       docker: { repository: "storage" },
@@ -251,7 +253,7 @@ export const SERVICE_CATALOG = {
   pgmeta: {
     name: "pgmeta",
     configKey: "pgmeta",
-    defaultVersion: "0.98.0",
+    defaultVersion: "0.99.0",
     runtimeSupport: "docker-only",
     artifact: {
       docker: { repository: "pgmeta", tagPrefix: "v" },
@@ -263,7 +265,7 @@ export const SERVICE_CATALOG = {
   studio: {
     name: "studio",
     configKey: "studio",
-    defaultVersion: "2026.08.17-sha-0c1da8f",
+    defaultVersion: "2026.08.24-sha-8ec45b2",
     runtimeSupport: "docker-only",
     artifact: {
       docker: { repository: "studio" },
@@ -275,7 +277,7 @@ export const SERVICE_CATALOG = {
   analytics: {
     name: "analytics",
     configKey: "analytics",
-    defaultVersion: "v1.50.4",
+    defaultVersion: "v1.50.6",
     runtimeSupport: "docker-only",
     artifact: {
       docker: { repository: "analytics" },
@@ -287,10 +289,10 @@ export const SERVICE_CATALOG = {
   vector: {
     name: "vector",
     configKey: "vector",
-    defaultVersion: "0.53.0",
+    defaultVersion: "0.53.0-alpine",
     runtimeSupport: "docker-only",
     artifact: {
-      docker: { repository: "vector" },
+      docker: { registry: SUPABASE_GHCR_REGISTRY, repository: "vector" },
     },
     activation: { activates: [], owns: [] },
     preparation: preparation(["lazy", "eager"], "lazy", ["analytics"]),
@@ -299,10 +301,10 @@ export const SERVICE_CATALOG = {
   pooler: {
     name: "pooler",
     configKey: "pooler",
-    defaultVersion: "v2.9.10",
+    defaultVersion: "2.9.12",
     runtimeSupport: "docker-only",
     artifact: {
-      docker: { repository: "pooler" },
+      docker: { registry: SUPABASE_GHCR_REGISTRY, repository: "supavisor" },
     },
     activation: { activates: [], owns: [] },
     preparation: preparation(["eager"], "eager", ["postgres"]),
@@ -339,5 +341,5 @@ export const requiredPreparationDependencies = (service: ServiceName): ReadonlyA
 
 export const dockerImageForArtifact = (service: ServiceName, version: string): string => {
   const source = serviceMetadata(service).artifact.docker;
-  return `${SUPABASE_GHCR_REGISTRY}/${source.repository}:${source.tagPrefix ?? ""}${version}`;
+  return `${source.registry ?? SUPABASE_CLI_GHCR_REGISTRY}/${source.repository}:${source.tagPrefix ?? ""}${version}`;
 };
