@@ -81,6 +81,26 @@ export const legacyWorkersMachineOutputRequested = Effect.fnUntraced(function* (
 });
 
 /**
+ * The format a run actually renders in, with `-o` given priority over
+ * `--output-format`.
+ *
+ * `-o pretty|table|csv` encode nothing and fall through to the text rendering,
+ * and an explicit `-o` outranks `--output-format` when both are set. Branching
+ * on `output.format` alone therefore emitted JSON for `-o pretty
+ * --output-format json`, which asked for exactly the opposite.
+ *
+ * `-o json|yaml|toml|env` are absent from the result on purpose: those are
+ * handled by `legacyEmitWorkersMachineOutput`, which runs before any of this and
+ * owns its own stdout.
+ */
+export const legacyWorkersRenderFormat = Effect.fnUntraced(function* () {
+  const output = yield* Output;
+  const goFormat = Option.getOrUndefined(yield* LegacyOutputFlag);
+  const forcesText = goFormat !== undefined && !emitsPayloadFor(goFormat);
+  return forcesText ? ("text" as const) : output.format;
+});
+
+/**
  * Refuse `-o env` before the command does anything.
  *
  * `env` is a flat `KEY=value` list and every workers payload has structure a

@@ -698,6 +698,43 @@ describe("legacy workers logs", () => {
     }).pipe(Effect.provide(layer), Effect.ensuring(Effect.sync(repo.cleanup)));
   });
 
+  // `-o` outranks `--output-format` when both are set, and `-o pretty` encodes
+  // nothing — so this pair asks for the text rendering, not for JSON.
+  it.live("renders text when -o pretty overrides --output-format json", () => {
+    const repo = project();
+    const { layer, out } = setupLegacyWorkers({
+      workdir: repo.dir,
+      goOutput: "pretty",
+      format: "json",
+      routes: { [LOGS_ROUTE]: logsResponse([workerLogRow({ tsMs: T1 })]) },
+    });
+
+    return Effect.gen(function* () {
+      yield* legacyWorkersLogs(flags());
+
+      expect(out.stdoutText).not.toBe("");
+      expect(out.messages.filter((message) => message.type === "success")).toHaveLength(0);
+    }).pipe(Effect.provide(layer), Effect.ensuring(Effect.sync(repo.cleanup)));
+  });
+
+  // Same precedence, on the branch that refuses a tail: `-o pretty` means this
+  // run has no single-payload format to be incompatible with.
+  it.live("allows --follow when -o pretty overrides --output-format json", () => {
+    const repo = project();
+    const { layer, out } = setupLegacyWorkers({
+      workdir: repo.dir,
+      goOutput: "pretty",
+      format: "json",
+      routes: { [LOGS_ROUTE]: logsResponse([workerLogRow({ tsMs: T1 })]) },
+    });
+
+    return Effect.gen(function* () {
+      yield* legacyWorkersLogs(flags({ follow: true }), followFor(1));
+
+      expect(out.stdoutText).not.toBe("");
+    }).pipe(Effect.provide(layer), Effect.ensuring(Effect.sync(repo.cleanup)));
+  });
+
   it.live("refuses --follow for the single-payload output formats", () => {
     const repo = project();
 

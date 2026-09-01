@@ -28,7 +28,10 @@ import { LegacyProjectRefResolver } from "../../../../config/legacy-project-ref.
 import { LegacyLinkedProjectCache } from "../../../../telemetry/legacy-linked-project-cache.service.ts";
 import { LegacyTelemetryState } from "../../../../telemetry/legacy-telemetry-state.service.ts";
 import { legacyValidateWorkerName } from "../workers.shared.ts";
-import { legacyWorkersMachineOutputRequested } from "../workers.output.ts";
+import {
+  legacyWorkersMachineOutputRequested,
+  legacyWorkersRenderFormat,
+} from "../workers.output.ts";
 import type { LegacyWorkersLogsFlags } from "./logs.command.ts";
 
 /**
@@ -117,11 +120,15 @@ export const legacyWorkersLogs = Effect.fn("legacy.experimental.workers.logs")(f
     // means failing after the query has already been paid for.
     yield* legacyRejectWorkersEnvOutput();
 
+    // Resolved once, before anything branches: `-o` outranks `--output-format`,
+    // so `output.format` on its own is not what this run renders in.
+    const renderFormat = yield* legacyWorkersRenderFormat();
+
     // Also up front: a tail has no single terminal payload, so the bounded
     // machine formats cannot express it. `stream-json` can, and is allowed.
     if (flags.follow) {
       const machineOutput = yield* legacyWorkersMachineOutputRequested();
-      if (machineOutput || output.format === "json") {
+      if (machineOutput || renderFormat === "json") {
         return yield* new LegacyWorkersFollowNotSupportedError({
           message:
             "--follow cannot be combined with a single-payload output format. " +
@@ -158,7 +165,7 @@ export const legacyWorkersLogs = Effect.fn("legacy.experimental.workers.logs")(f
         if (batch.length === 0) {
           return;
         }
-        if (output.format === "stream-json") {
+        if (renderFormat === "stream-json") {
           for (const entry of batch) {
             const level = legacyWorkerLogLevel(entry);
             yield* output.event({
@@ -233,7 +240,7 @@ export const legacyWorkersLogs = Effect.fn("legacy.experimental.workers.logs")(f
     // One structured emission, in the structured branch only, and only for a
     // bounded read. A tail has no terminal payload to put here — it emits a
     // `log-entry` event per line through `emitLines` instead.
-    if (!flags.follow && output.format !== "text") {
+    if (!flags.follow && renderFormat !== "text") {
       yield* output.success("", payload);
       return;
     }
@@ -254,7 +261,7 @@ export const legacyWorkersLogs = Effect.fn("legacy.experimental.workers.logs")(f
 
     // A tail with nothing to show yet would otherwise look like a hang. On stderr,
     // so it never lands in piped output.
-    if (flags.follow && entries.length === 0 && output.format === "text") {
+    if (flags.follow && entries.length === 0 && renderFormat === "text") {
       yield* output.raw(`Waiting for new logs from "${name}". Press Ctrl+C to stop.\n`, "stderr");
     }
 
