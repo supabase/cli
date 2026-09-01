@@ -38,6 +38,25 @@ overrides:
   # pg-topo's parser chain otherwise resolves bleeding-edge Node globals that conflict with Bun's web types.
   "@launchql/protobufjs>@types/node": "24.10.4"
 
+packageExtensions:
+  # The global virtual store (virtualStoreType: global) has no hidden hoist
+  # directory (node_modules/.pnpm/node_modules), so type packages these
+  # dependencies reach for without declaring them are no longer resolvable
+  # by tsc's node_modules walk-up. Declare them explicitly here.
+  bun-types:
+    dependencies:
+      # bun-types' fetch overrides do `import("undici-types")` but only
+      # declare @types/node; keep this range in sync with @types/node's own
+      # undici-types dependency so both resolve to the same copy.
+      undici-types: "~8.3.0"
+  "@supabase/pg-delta":
+    dependencies:
+      # pg-delta is consumed as raw TypeScript source (via the `bun` exports
+      # condition), which imports `pg` and `debug` without shipping their
+      # @types packages.
+      "@types/debug": "^4.1.12"
+      "@types/pg": "^8.23.1"
+
 minimumReleaseAge: 10200
 minimumReleaseAgeExclude:
   - "@turbo/darwin-64@2.10.11"
