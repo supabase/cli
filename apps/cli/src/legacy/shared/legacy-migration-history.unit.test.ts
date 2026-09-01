@@ -5,6 +5,8 @@ import { stripAnsi } from "../../../tests/helpers/ansi.ts";
 import { LegacyDbExecError } from "./legacy-db-connection.errors.ts";
 import type { LegacyDbSession } from "./legacy-db-connection.service.ts";
 import {
+  legacyCreateMigrationTable,
+  legacyCreateSeedTable,
   legacyFindPendingMigrations,
   legacyListRemoteMigrations,
   legacyReconcileMigrations,
@@ -237,5 +239,83 @@ describe("legacyResolveMigrationFile (byte-ordered match, Go's sort.Strings via 
     expect(Option.isSome(result) ? result.value : undefined).toBe(
       `/supabase/migrations/${privateUse}`,
     );
+  });
+});
+
+describe("legacyCreateMigrationTable / legacyCreateSeedTable (provisioning probe, #6393)", () => {
+  const HISTORY_DDL = [
+    "BEGIN",
+    "SET LOCAL lock_timeout = '4s'",
+    "CREATE SCHEMA IF NOT EXISTS supabase_migrations",
+    "CREATE TABLE IF NOT EXISTS supabase_migrations.schema_migrations (version text NOT NULL PRIMARY KEY)",
+    "ALTER TABLE supabase_migrations.schema_migrations ADD COLUMN IF NOT EXISTS statements text[]",
+    "ALTER TABLE supabase_migrations.schema_migrations ADD COLUMN IF NOT EXISTS name text",
+    "COMMIT",
+  ];
+
+  const probedSession = (probeRows: ReadonlyArray<Record<string, unknown>>) => {
+    const execs: Array<string> = [];
+    const queries: Array<{ sql: string; params?: ReadonlyArray<unknown> }> = [];
+    const session: LegacyDbSession = {
+      exec: (sql) => {
+        execs.push(sql);
+        return Effect.void;
+      },
+      execBatch: () => Effect.die("unused"),
+      query: (sql, params) => {
+        queries.push({ sql, ...(params === undefined ? {} : { params }) });
+        return Effect.succeed(probeRows);
+      },
+      extensionExists: () => Effect.die("unused"),
+      copyToCsv: () => Effect.die("unused"),
+      queryRaw: () => Effect.die("unused"),
+    };
+    return { session, execs, queries };
+  };
+
+  it("puts no DDL on the wire when a ledger is already provisioned", async () => {
+    const { session, execs, queries } = probedSession([{ provisioned: true }]);
+    await Effect.runPromise(legacyCreateMigrationTable(session));
+    await Effect.runPromise(legacyCreateSeedTable(session));
+    expect(execs).toEqual([]);
+    expect(queries).toHaveLength(2);
+    expect(queries[0]?.sql).toContain("'supabase_migrations.schema_migrations'");
+    expect(queries[1]?.sql).toContain("'supabase_migrations.seed_files'");
+  });
+
+  it("keeps the probes on the simple query protocol: no bind parameters", async () => {
+    const { session, queries } = probedSession([{ provisioned: true }]);
+    await Effect.runPromise(legacyCreateMigrationTable(session));
+    await Effect.runPromise(legacyCreateSeedTable(session));
+    expect(queries).toHaveLength(2);
+    expect(queries.filter((q) => q.params !== undefined)).toEqual([]);
+    expect(queries.filter((q) => q.sql.includes("$"))).toEqual([]);
+  });
+
+  for (const [shape, rows] of [
+    ["an absent ledger (no rows)", []],
+    ["a partial ledger (provisioned: false)", [{ provisioned: false }]],
+    ["an unexpected result shape", [{ wat: 1 }]],
+  ] as const) {
+    it(`runs the full Go-ordered DDL against ${shape}`, async () => {
+      const { session, execs } = probedSession([...rows]);
+      await Effect.runPromise(legacyCreateMigrationTable(session));
+      expect(execs).toEqual(HISTORY_DDL);
+    });
+  }
+
+  it("propagates a probe failure without opening a transaction to roll back", async () => {
+    const error = new LegacyDbExecError({ message: "effect/sql/SqlError: Connection error" });
+    const execs: Array<string> = [];
+    const session: LegacyDbSession = {
+      ...failingSession(error),
+      exec: (sql) => {
+        execs.push(sql);
+        return Effect.void;
+      },
+    };
+    expect(await Effect.runPromise(Effect.flip(legacyCreateMigrationTable(session)))).toBe(error);
+    expect(await Effect.runPromise(Effect.flip(legacyCreateSeedTable(session)))).toBe(error);
+    expect(execs).toEqual([]);
   });
 });

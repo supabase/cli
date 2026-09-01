@@ -42,9 +42,11 @@
 When repairing specific versions, prints `Repaired migration history: [<versions>]
 => <status>` to stderr, then `Finished supabase migration repair.` to stdout and
 the suggestion `Run supabase migration list to show the updated migration history.`
-to stderr. The DB mutation is one transaction: create the history table, then (for
-repair-all) `TRUNCATE`, plus `applied` → per-version `UPSERT` from the local file,
-`reverted` → `DELETE ... WHERE version = ANY($1)`.
+to stderr. The DB work is the history-table provisioning (its own transaction,
+skipped entirely when a read-only probe finds the ledger already provisioned, so a
+provisioned remote runs no provisioning DDL — supabase/cli#6393) followed by one
+repair transaction: (for repair-all) `TRUNCATE`, plus `applied` → per-version
+`UPSERT` from the local file, `reverted` → `DELETE ... WHERE version = ANY($1)`.
 
 > **Atomicity note:** the old Go CLI ran the TRUNCATE/UPSERT/DELETE via a batched
 > pipeline (not an explicit transaction), so a partial failure mid-batch (e.g.

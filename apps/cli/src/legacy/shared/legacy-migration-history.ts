@@ -76,35 +76,73 @@ const SELECT_SEED_TABLE = "SELECT path, hash FROM supabase_migrations.seed_files
 export const MIGRATE_FILE_PATTERN = /^([0-9]+)_(.*)\.sql$/u;
 
 /**
- * Creates the migration-history schema/table (idempotent). `CreateMigrationTable`.
- * The setup runs in one transaction so `SET LOCAL lock_timeout` is scoped to it and
- * reverts on `COMMIT`, matching Go's implicit `pgconn.ExecBatch` transaction; the GUC
- * never leaks into the caller's subsequent work. A failed statement rolls back.
+ * Read-only probe: `true` when the relation is an ordinary or partitioned table
+ * carrying every live column its DDL creates, i.e. when each setup statement
+ * below is a guaranteed no-op. Sent with no bind parameters, matching the wire
+ * shape of the `migration list` SELECT that demonstrably survives the poolers
+ * this setup DDL dies on (supabase/cli#6393). Any unexpected answer falls
+ * through to the DDL path. Interpolates its arguments verbatim: callers pass
+ * compile-time literals only.
  */
-export const legacyCreateMigrationTable = (session: LegacyDbSession) =>
-  Effect.gen(function* () {
-    yield* session.exec("BEGIN");
-    yield* session.exec(SET_LOCAL_LOCK_TIMEOUT);
-    yield* session.exec(CREATE_VERSION_SCHEMA);
-    yield* session.exec(CREATE_VERSION_TABLE);
-    yield* session.exec(ADD_STATEMENTS_COLUMN);
-    yield* session.exec(ADD_NAME_COLUMN);
-    yield* session.exec("COMMIT");
-  }).pipe(Effect.tapError(() => session.exec("ROLLBACK").pipe(Effect.ignore)));
+const legacyProvisionedProbe = (relation: string, columns: ReadonlyArray<string>) =>
+  `SELECT count(*) = ${columns.length} AS provisioned FROM pg_catalog.pg_attribute a JOIN pg_catalog.pg_class c ON c.oid = a.attrelid WHERE a.attrelid = pg_catalog.to_regclass('${relation}') AND c.relkind IN ('r', 'p') AND NOT a.attisdropped AND a.attname IN (${columns.map((column) => `'${column}'`).join(", ")})`;
+
+const SELECT_VERSION_TABLE_PROVISIONED = legacyProvisionedProbe(
+  "supabase_migrations.schema_migrations",
+  ["version", "name", "statements"],
+);
+const SELECT_SEED_TABLE_PROVISIONED = legacyProvisionedProbe("supabase_migrations.seed_files", [
+  "path",
+  "hash",
+]);
+
+const legacyIsTableProvisioned = (session: LegacyDbSession, probe: string) =>
+  session.query(probe).pipe(Effect.map((rows) => rows[0]?.["provisioned"] === true));
 
 /**
- * Creates the `seed_files` schema/table (idempotent). `CreateSeedTable`. Same
- * transaction-scoped `SET LOCAL lock_timeout` as `legacyCreateMigrationTable` so the
- * timeout reverts on `COMMIT` and never leaks into the seed SQL the caller runs next.
+ * Creates the migration-history schema/table (idempotent). `CreateMigrationTable`.
+ * Skipped entirely when the provisioning probe finds the ledger already current, so
+ * an already-provisioned remote runs no DDL (supabase/cli#6393); an older or partial
+ * ledger still gets the full setup. The setup runs in one transaction so
+ * `SET LOCAL lock_timeout` is scoped to it and reverts on `COMMIT`, matching Go's
+ * implicit `pgconn.ExecBatch` transaction; the GUC never leaks into the caller's
+ * subsequent work. A failed statement rolls back.
+ */
+export const legacyCreateMigrationTable = (session: LegacyDbSession) =>
+  Effect.flatMap(
+    legacyIsTableProvisioned(session, SELECT_VERSION_TABLE_PROVISIONED),
+    (provisioned) =>
+      provisioned
+        ? Effect.void
+        : Effect.gen(function* () {
+            yield* session.exec("BEGIN");
+            yield* session.exec(SET_LOCAL_LOCK_TIMEOUT);
+            yield* session.exec(CREATE_VERSION_SCHEMA);
+            yield* session.exec(CREATE_VERSION_TABLE);
+            yield* session.exec(ADD_STATEMENTS_COLUMN);
+            yield* session.exec(ADD_NAME_COLUMN);
+            yield* session.exec("COMMIT");
+          }).pipe(Effect.tapError(() => session.exec("ROLLBACK").pipe(Effect.ignore))),
+  );
+
+/**
+ * Creates the `seed_files` schema/table (idempotent). `CreateSeedTable`. Probed and
+ * skipped when already provisioned; otherwise the same transaction-scoped
+ * `SET LOCAL lock_timeout` as `legacyCreateMigrationTable` so the timeout reverts on
+ * `COMMIT` and never leaks into the seed SQL the caller runs next.
  */
 export const legacyCreateSeedTable = (session: LegacyDbSession) =>
-  Effect.gen(function* () {
-    yield* session.exec("BEGIN");
-    yield* session.exec(SET_LOCAL_LOCK_TIMEOUT);
-    yield* session.exec(CREATE_VERSION_SCHEMA);
-    yield* session.exec(CREATE_SEED_TABLE);
-    yield* session.exec("COMMIT");
-  }).pipe(Effect.tapError(() => session.exec("ROLLBACK").pipe(Effect.ignore)));
+  Effect.flatMap(legacyIsTableProvisioned(session, SELECT_SEED_TABLE_PROVISIONED), (provisioned) =>
+    provisioned
+      ? Effect.void
+      : Effect.gen(function* () {
+          yield* session.exec("BEGIN");
+          yield* session.exec(SET_LOCAL_LOCK_TIMEOUT);
+          yield* session.exec(CREATE_VERSION_SCHEMA);
+          yield* session.exec(CREATE_SEED_TABLE);
+          yield* session.exec("COMMIT");
+        }).pipe(Effect.tapError(() => session.exec("ROLLBACK").pipe(Effect.ignore))),
+  );
 
 /** A recorded seed file's path + content hash. `migration.SeedFile`. */
 export interface LegacySeedRow {
