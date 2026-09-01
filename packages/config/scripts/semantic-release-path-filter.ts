@@ -79,6 +79,20 @@ export async function filterCommitsToPackage<T extends { hash: string }>(
   }
 
   const hashes = commits.map((commit) => commit.hash);
+  // `git diff-tree --stdin` echoes each commit's FULL object ID, and the
+  // header recognition below matches echoed elements against the input set —
+  // an abbreviated input hash would never match its own echo, silently
+  // dropping that commit's paths (a missed release, not an error). Refuse
+  // anything but full OIDs up front. (semantic-release always supplies full
+  // hashes; this guards other callers.)
+  const invalidHashes = hashes.filter((hash) => !/^(?:[0-9a-f]{40}|[0-9a-f]{64})$/.test(hash));
+  if (invalidHashes.length > 0) {
+    throw new Error(
+      `filterCommitsToPackage requires full lowercase hex object IDs; got: ${invalidHashes
+        .slice(0, 3)
+        .join(", ")}${invalidHashes.length > 3 ? ", …" : ""}`,
+    );
+  }
   const knownHashes = new Set(hashes);
 
   const proc = Bun.spawn(["git", "diff-tree", "--stdin", "-r", "--root", "--name-only", "-z"], {

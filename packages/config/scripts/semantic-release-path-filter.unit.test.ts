@@ -216,6 +216,12 @@ describe("semantic-release-path-filter", () => {
       }
     });
 
+    test("rejects an abbreviated hash instead of silently dropping its commit (diff-tree echoes full OIDs)", async () => {
+      await expect(
+        filterCommitsToPackage([{ hash: hashConfigOnly.slice(0, 7) }], repoDir),
+      ).rejects.toThrow(/full lowercase hex object IDs/);
+    });
+
     test("rejects with a descriptive error when git diff-tree exits non-zero", async () => {
       const notARepo = await mkdtemp(join(tmpdir(), "semantic-release-path-filter-not-a-repo-"));
       try {

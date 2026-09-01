@@ -68,8 +68,9 @@ jobs:
         run: pnpm run check:all
 
       # Advisory only (base-vs-head diff, no acceptance artifact to gate a
-      # required check on) — the hard release-time gate is tracked under
-      # CLI-2233. `continue-on-error` flags the diff without failing the job;
+      # required check on) — the hard release-time gate is
+      # tools/config-release-gate.ts in release-config.yml (CLI-2233).
+      # `continue-on-error` flags the diff without failing the job;
       # the tool's own fetch/unshallow fallback resolves a merge-base from
       # this checkout's shallow clone, and skips the compare (exit 0) rather
       # than failing when history still can't be resolved.

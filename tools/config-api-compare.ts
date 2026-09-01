@@ -22,7 +22,8 @@
  * `.d.ts` trees.
  *
  * Advisory at PR time (a base-vs-head diff has no acceptance artifact to
- * gate on); the hard release-time gate is tracked under CLI-2233.
+ * gate on); the hard release-time gate is `tools/config-release-gate.ts`,
+ * run by `.github/workflows/release-config.yml` (CLI-2233).
  *
  * Exit codes: 0 identical (or compare skipped), 1 surface differs, 2 tool
  * failure.
@@ -348,7 +349,8 @@ function renderMarkdownSummary(
     "## Config type-surface diff (advisory)",
     "",
     `Comparing \`${baseLabel}\` against \`${headLabel}\` for \`@supabase/config\`'s compiled ` +
-      "declaration surface. Advisory only — see CLI-2233 for the planned release-time hard gate.",
+      "declaration surface. Advisory only — the release-time hard gate is " +
+      "`tools/config-release-gate.ts`, run by the Release Config workflow (CLI-2233).",
     "",
   ];
   if (result.identical) {

@@ -153,19 +153,37 @@ function fenceFor(content: string): string {
   return "`".repeat(Math.max(3, longestRun + 1));
 }
 
-/** GITHUB_STEP_SUMMARY is capped at ~1 MB; past this, a diff stops being reviewable inline anyway. */
+/** Per-file cap; past this, a diff stops being reviewable inline anyway. */
 const MAX_RENDERED_DIFF_LENGTH = 20_000;
+
+/**
+ * Aggregate cap across all rendered blocks — GITHUB_STEP_SUMMARY rejects
+ * uploads past 1024 KiB (the whole summary is dropped, losing the approver's
+ * evidence entirely), and the per-file cap alone doesn't bound how many
+ * capped files there are. Headroom is left for the surrounding summary text.
+ */
+const MAX_RENDERED_TOTAL_LENGTH = 800_000;
 
 /** The `<details>` markdown block for each changed file, shared verbatim by both tools' summaries. */
 export function renderDiffDetailsBlocks(entries: readonly FileEntry[]): string[] {
   const lines: string[] = [];
-  for (const entry of entries) {
+  let renderedTotal = 0;
+  for (const [index, entry] of entries.entries()) {
     let diff = entry.diff.trimEnd();
     if (diff.length > MAX_RENDERED_DIFF_LENGTH) {
       diff =
         `${diff.slice(0, MAX_RENDERED_DIFF_LENGTH)}\n` +
         `… diff truncated (${diff.length} chars total) — see the job log for the full diff`;
     }
+    if (renderedTotal + diff.length > MAX_RENDERED_TOTAL_LENGTH) {
+      lines.push(
+        `⚠️ **${entries.length - index} more changed file(s) omitted — the rendered diff exceeds ` +
+          "the step-summary size limit. See the job log for the full diff.**",
+        "",
+      );
+      break;
+    }
+    renderedTotal += diff.length;
     const fence = fenceFor(diff);
     lines.push(
       `<details><summary>${entry.status}: <code>${escapeHtml(entry.path)}</code></summary>`,

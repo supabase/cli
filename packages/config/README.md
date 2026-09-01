@@ -22,9 +22,12 @@ npm install @supabase/config effect@rc
 ```
 
 ```ts
-import { CliConfigSchema, toProjectConfig } from "@supabase/config";
+import { getDefaultCliConfig, toProjectConfig } from "@supabase/config";
 
-const projectConfig = toProjectConfig({ cliConfig: someCliConfig });
+// Project a config document onto the hosted-project subset — here the
+// schema-derived default document; a real caller would load one with
+// `loadCliConfig` from `@supabase/config/io` (see "Usage" below).
+const projectConfig = toProjectConfig({ cliConfig: getDefaultCliConfig() });
 ```
 
 This package is not yet published (`private: true`; publishing is tracked separately). Once it
@@ -48,7 +51,7 @@ load. A missing peer surfaces as a raw module-resolution error (e.g. `Cannot fin
 '@effect/platform-node'`) the first time something imports `./io` or `./effect` — not a curated
 message — so install the peer for your runtime before importing either subpath. The `browser`
 condition is the one exception: it needs no platform peer, since it resolves to a stub that throws
-its own curated error only when invoked (see "Entrypoints" above).
+its own curated error only when invoked (see "Entrypoints" below).
 
 ## Naming
 

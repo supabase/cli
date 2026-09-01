@@ -144,13 +144,15 @@ elsewhere in the monorepo never releases `@supabase/config`, and vice versa.
 - **Tag format:** `config-v<version>` — never collides with the CLI's `v<version>` tags.
 - **Stable-only, from `develop`.** No beta/alpha channel; every release publishes to npm under the
   `latest` dist-tag.
-- **Workflow:** `.github/workflows/release-config.yml` — a `plan` job computes the version, runs
-  the type-surface gate, and packs the release tarball; a human approves the `config-release`
-  GitHub environment (reviewing the plan job's step summary: release notes + type-surface diff);
-  then an OIDC/provenance publish job publishes **that exact tarball** (no rebuild — the approved
-  bytes are the published bytes).
-- **`package.json`'s `version` field is never committed.** It is set at publish time from the
-  computed version — never hand-bump it, and never hand-push a `config-v*` tag.
+- **Workflow:** `.github/workflows/release-config.yml` — a `plan` job computes the version, packs
+  the release tarball, and runs the type-surface gate against the declarations inside that tarball;
+  a human approves the `config-release` GitHub environment (reviewing the plan job's step summary:
+  release notes + type-surface diff); then an OIDC/provenance publish job publishes **that exact
+  tarball** (`npm publish <tgz> --ignore-scripts` — no rebuild, no repack, no lifecycle scripts:
+  the approved bytes are the published bytes).
+- **`package.json`'s committed `version` (`0.1.0`) is a placeholder.** The real version is stamped
+  into the tarball at pack time (`npm pkg set version` in the plan job) from the computed version —
+  never hand-bump the committed field, and never hand-push a `config-v*` tag.
 - **Local dry runs:** `scripts/release-plan.ts` runs the plan locally without publishing;
   `tools/config-release-gate.ts --tarball` rehearses the type-surface gate locally.
 

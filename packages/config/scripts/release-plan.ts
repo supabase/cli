@@ -46,10 +46,23 @@ export interface NoReleasePlan {
 
 export type ReleasePlan = ReleaseDuePlan | NoReleasePlan;
 
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null;
+}
+
 async function readPackageJson(): Promise<ConfigPackageJson> {
-  return JSON.parse(
-    await Bun.file(path.join(packageRoot, "package.json")).text(),
-  ) as ConfigPackageJson;
+  const packageJsonPath = path.join(packageRoot, "package.json");
+  const parsed: unknown = JSON.parse(await Bun.file(packageJsonPath).text());
+  if (
+    !isRecord(parsed) ||
+    typeof parsed.name !== "string" ||
+    (parsed.private !== undefined && typeof parsed.private !== "boolean")
+  ) {
+    throw new Error(
+      `${packageJsonPath} is malformed: expected a string "name" and an optional boolean "private".`,
+    );
+  }
+  return { name: parsed.name, private: parsed.private };
 }
 
 /**

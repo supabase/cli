@@ -7,7 +7,7 @@
  * `tools/config-api-compare.ts`).
  *
  * Usage:
- *   bun tools/config-release-gate.ts --version <next version> [--registry <url>] [--tarball <path>]
+ *   bun tools/config-release-gate.ts --version <next version> [--registry <url>] [--tarball <path>] [--local-dist <dir>]
  *
  * `--version` is the version semantic-release computed for this release.
  * `--registry` defaults to `npm config get registry` (the same
@@ -17,6 +17,10 @@
  * "published" side instead of querying the registry — for local testing and
  * pipeline rehearsal. A registry-downloaded tarball is verified against the
  * registry's `dist.integrity` and refused if its URL points off-registry.
+ * `--local-dist` overrides the "next release" side (default:
+ * `packages/config/dist`) — the release workflow points it at the dist tree
+ * extracted from the packed release tarball, so the approver's evidence is
+ * generated from the exact artifact the publish job ships.
  *
  * This tool never builds `packages/config/dist` itself — run the package
  * build first. When the package has never been published (npm view returns
@@ -254,7 +258,7 @@ async function resolvePublishedSide(
   };
 }
 
-type BumpClass = "major" | "minor" | "patch" | "none" | "unknown";
+type BumpClass = "major" | "minor" | "patch" | "none" | "downgrade" | "unknown";
 
 interface VersionParts {
   readonly major: number;
@@ -275,25 +279,45 @@ function parseVersionParts(version: string): VersionParts | null {
  * plain "x.y.z" is the expected shape on both sides. The published side comes
  * from outside this pipeline though (`dist-tags.latest`, or `--tarball`), so
  * an unparseable version degrades to `"unknown"` (warnings skipped, noted in
- * the summary) instead of failing the plan job.
+ * the summary) instead of failing the plan job. Ordering matters, not just
+ * inequality: an equal or LOWER next version means tag/registry skew (a
+ * hand-pushed or deleted `config-v*` tag), which deserves its own warning
+ * rather than a spurious "major bump".
  */
 function computeBumpClass(publishedVersion: string, nextVersion: string): BumpClass {
   const published = parseVersionParts(publishedVersion);
   const next = parseVersionParts(nextVersion);
   if (published === null || next === null) return "unknown";
-  if (next.major !== published.major) return "major";
-  if (next.minor !== published.minor) return "minor";
-  if (next.patch !== published.patch) return "patch";
+  for (const part of ["major", "minor", "patch"] as const) {
+    if (next[part] > published[part]) return part;
+    if (next[part] < published[part]) return "downgrade";
+  }
   return "none";
 }
 
 /** A `changed` file whose unified diff removes lines — the shape an export deletion takes. */
 function hasRemovedDeclarationLines(entries: readonly FileEntry[]): boolean {
-  return entries.some(
-    (entry) =>
-      entry.status === "changed" &&
-      entry.diff.split("\n").some((line) => line.startsWith("-") && !line.startsWith("---")),
-  );
+  return entries.some((entry) => entry.status === "changed" && unifiedDiffRemovesLines(entry.diff));
+}
+
+/**
+ * Only lines inside hunks (after the first `@@`) count — a prefix test alone
+ * would both miss a removed content line that itself starts with `--` (its
+ * hunk rendering starts with `---`) and false-positive on the old-file
+ * header.
+ */
+function unifiedDiffRemovesLines(diff: string): boolean {
+  let inHunk = false;
+  for (const line of diff.split("\n")) {
+    if (line.startsWith("@@")) {
+      inHunk = true;
+      continue;
+    }
+    if (inHunk && line.startsWith("-")) {
+      return true;
+    }
+  }
+  return false;
 }
 
 /**
@@ -307,6 +331,20 @@ function computeWarnings(bumpClass: BumpClass, result: CompareResult): string[] 
       "Could not classify the version bump (a version is not a plain x.y.z) — review the diff without semver hints.",
     );
     return warnings;
+  }
+  if (bumpClass === "none") {
+    warnings.push(
+      "The next version EQUALS the published version — version computation is skewed (a config-v* " +
+        "tag was hand-pushed or deleted); the publish step will refuse to ship different bytes " +
+        "under it. Do not approve without investigating.",
+    );
+  }
+  if (bumpClass === "downgrade") {
+    warnings.push(
+      "The next version is LOWER than the published version — tag/registry skew (a config-v* tag " +
+        "was hand-pushed or deleted, or the registry was seeded outside this pipeline). Do not " +
+        "approve without investigating.",
+    );
   }
   if (!result.identical && bumpClass === "patch") {
     warnings.push(
@@ -410,6 +448,7 @@ async function main(): Promise<number> {
       version: { type: "string" },
       registry: { type: "string" },
       tarball: { type: "string" },
+      "local-dist": { type: "string" },
     },
   });
 
@@ -423,10 +462,14 @@ async function main(): Promise<number> {
   const registry =
     values.registry ?? (values.tarball ? DEFAULT_REGISTRY : await ambientNpmRegistry());
 
-  if (!(await pathExists(localDistDir)) || (await countDeclarationFiles(localDistDir)) === 0) {
+  const localDist = values["local-dist"] ?? localDistDir;
+
+  if (!(await pathExists(localDist)) || (await countDeclarationFiles(localDist)) === 0) {
     throw new Error(
-      `${localDistDir} has no .d.ts files — run the package build first (e.g. ` +
-        "`pnpm exec turbo run @supabase/config#build`).",
+      `${localDist} has no .d.ts files — ` +
+        (values["local-dist"]
+          ? "the packed tarball lost its declarations (the .gitignore/packlist trap packages/config/.npmignore exists for)."
+          : "run the package build first (e.g. `pnpm exec turbo run @supabase/config#build`)."),
     );
   }
 
@@ -442,33 +485,31 @@ async function main(): Promise<number> {
       return 0;
     }
 
-    // A published tarball without declarations means "nothing to diff", not a
+    // A published tarball without declarations means "no baseline", not a
     // tool failure — the .gitignore/packlist trap that motivated
     // packages/config/.npmignore (CLI-2234) is exactly how such a tarball
-    // could exist, and it must not block every subsequent release.
-    if ((await countDeclarationFiles(published.distDir)) === 0) {
+    // could exist, and it must not block every subsequent release. Diff
+    // against an empty tree instead of skipping, so the approver still sees
+    // the next release's full surface (as additions) rather than approving
+    // sight unseen.
+    let publishedDistDir = published.distDir;
+    const extraWarnings: string[] = [];
+    if ((await countDeclarationFiles(publishedDistDir)) === 0) {
       const message =
-        `published ${published.version} tarball contains no .d.ts files — nothing to diff against; ` +
-        "the next release's full surface ships as reviewed.";
+        `published ${published.version} tarball contains no .d.ts files — no baseline to diff ` +
+        "against; the next release's full surface is shown below as additions.";
       console.warn(`[config-release-gate] ${message}`);
-      await writeStepSummary(
-        [
-          "## @supabase/config release gate — type-surface diff",
-          "",
-          `\`${published.version}\` → \`${nextVersion}\``,
-          "",
-          `⚠️ **${message}**`,
-        ].join("\n"),
-      );
-      return 0;
+      extraWarnings.push(message);
+      publishedDistDir = path.join(extractDir, "empty-published-dist");
+      await mkdir(publishedDistDir, { recursive: true });
     }
 
     console.log(
       `[config-release-gate] comparing published ${published.version} against next ${nextVersion}...`,
     );
-    const result = await diffDeclarationTrees(localDistDir, published.distDir);
+    const result = await diffDeclarationTrees(localDist, publishedDistDir);
     const bumpClass = computeBumpClass(published.version, nextVersion);
-    const warnings = computeWarnings(bumpClass, result);
+    const warnings = [...extraWarnings, ...computeWarnings(bumpClass, result)];
 
     console.log(renderTextReport(published.version, nextVersion, result, warnings));
     await writeStepSummary(renderMarkdownSummary(published.version, nextVersion, result, warnings));
