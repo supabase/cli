@@ -5,7 +5,10 @@ import { mkdir, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { Effect, FileSystem, Path, Redacted } from "effect";
-import { findCliProjectRootFor, loadCliProjectEnvironmentFor } from "./bun.ts";
+import {
+  findCliProjectRoot as findCliProjectRootFromBun,
+  loadCliProjectEnvironment as loadCliProjectEnvironmentFromBun,
+} from "./bun.ts";
 import { CliConfigParseError, CliProjectEnvParseError } from "./errors.ts";
 import {
   findCliProjectPaths,
@@ -14,6 +17,7 @@ import {
   resolveCliConfigSubtree,
   resolveCliConfigValue,
 } from "./effect.ts";
+import { resolveCliConfigValue as resolveCliConfigValueInternal } from "./internal.ts";
 
 function makeTempProject(): string {
   return mkdtempSync(join(tmpdir(), "supabase-project-config-"));
@@ -44,7 +48,7 @@ describe("project discovery and lazy env resolution", () => {
       expect(paths?.projectRoot).toBe(packageRoot);
       expect(paths?.supabaseDir).toBe(join(packageRoot, "supabase"));
       expect(paths?.configPath).toBe(join(packageRoot, "supabase", "config.toml"));
-      expect(await findCliProjectRootFor(nestedCwd)).toBe(packageRoot);
+      expect(await findCliProjectRootFromBun(nestedCwd)).toBe(packageRoot);
     } finally {
       await rm(cwd, { recursive: true, force: true });
     }
@@ -169,7 +173,7 @@ describe("project discovery and lazy env resolution", () => {
         join(packageRoot, "supabase", ".env.local"),
       ]);
 
-      const fromBun = await loadCliProjectEnvironmentFor({
+      const fromBun = await loadCliProjectEnvironmentFromBun({
         cwd: nestedCwd,
         baseEnv: {
           OVERRIDE_ME: "from-ambient",
@@ -608,9 +612,12 @@ jwt_secret = "env(lowercase_secret)"
       const projectEnv = await runConfigEffect(loadCliProjectEnvironment({ cwd: projectRoot }));
 
       const resolved = await runConfigEffect(
-        resolveCliConfigValue(loaded!.config.auth.jwt_secret, projectEnv!, "auth.jwt_secret", {
-          goViperCompat: true,
-        }),
+        resolveCliConfigValueInternal(
+          loaded!.config.auth.jwt_secret,
+          projectEnv!,
+          "auth.jwt_secret",
+          { goViperCompat: true },
+        ),
       );
 
       expect(Redacted.isRedacted(resolved)).toBe(true);

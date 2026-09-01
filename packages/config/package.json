@@ -2,17 +2,67 @@
   "name": "@supabase/config",
   "version": "0.1.0",
   "private": true,
+  "description": "Supabase project configuration schema, parsing, and validation, built on Effect Schema.",
+  "keywords": [
+    "config",
+    "effect",
+    "schema",
+    "supabase"
+  ],
+  "homepage": "https://github.com/supabase/cli#readme",
+  "bugs": {
+    "url": "https://github.com/supabase/cli/issues"
+  },
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/supabase/cli.git",
+    "directory": "packages/config"
+  },
+  "files": [
+    "src",
+    "!src/**/*.test.ts",
+    "dist",
+    "docs"
+  ],
   "type": "module",
+  "sideEffects": false,
   "exports": {
-    ".": "./src/index.ts",
+    ".": {
+      "bun": "./src/index.ts",
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
+    },
+    "./internal": {
+      "bun": "./src/internal.ts",
+      "types": "./dist/internal.d.ts",
+      "default": "./dist/internal.js"
+    },
     "./io": {
       "bun": "./src/bun.ts",
-      "node": "./src/node.ts",
-      "browser": "./src/io-browser.ts",
-      "default": "./src/node.ts"
+      "node": {
+        "types": "./dist/node.d.ts",
+        "default": "./dist/node.js"
+      },
+      "browser": {
+        "types": "./dist/io-browser.d.ts",
+        "default": "./dist/io-browser.js"
+      },
+      "default": {
+        "types": "./dist/node.d.ts",
+        "default": "./dist/node.js"
+      }
     },
-    "./effect": "./src/effect.ts",
-    "./schema.json": "./dist/schema.json"
+    "./effect": {
+      "bun": "./src/effect.ts",
+      "types": "./dist/effect.d.ts",
+      "default": "./dist/effect.js"
+    },
+    "./schema.json": "./dist/schema.json",
+    "./project-schema.json": "./dist/project-schema.json"
+  },
+  "publishConfig": {
+    "access": "public"
   },
   "scripts": {
     "build": "bun run ./scripts/build.ts",
@@ -22,6 +72,7 @@
     "test:unit:run": "bun --bun vitest run --project unit --coverage.reportsDirectory=coverage/unit"
   },
   "dependencies": {
+    "@standard-schema/spec": "^1.1.0",
     "dedent": "^1.7.2",
     "smol-toml": "^1.8.0"
   },
@@ -33,12 +84,13 @@
     "@vitest/coverage-istanbul": "catalog:",
     "effect": "catalog:",
     "typescript": "catalog:",
+    "vite": "^6.0.0 || ^7.0.0 || ^8.0.0",
     "vitest": "catalog:"
   },
   "peerDependencies": {
-    "@effect/platform-bun": "catalog:",
-    "@effect/platform-node": "catalog:",
-    "effect": "catalog:"
+    "@effect/platform-bun": ">=4.0.0-rc.111 <5",
+    "@effect/platform-node": ">=4.0.0-rc.111 <5",
+    "effect": ">=4.0.0-rc.111 <5"
   },
   "peerDependenciesMeta": {
     "@effect/platform-bun": {
@@ -47,5 +99,8 @@
     "@effect/platform-node": {
       "optional": true
     }
+  },
+  "engines": {
+    "node": ">=20"
   }
 }

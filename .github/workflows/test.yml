@@ -67,6 +67,16 @@ jobs:
       - name: Check code quality
         run: pnpm run check:all
 
+      # Advisory only (base-vs-head diff, no acceptance artifact to gate a
+      # required check on) — the hard release-time gate is tracked under
+      # CLI-2233. `continue-on-error` flags the diff without failing the job;
+      # the tool's own fetch/unshallow fallback resolves a merge-base from
+      # this checkout's shallow clone, and skips the compare (exit 0) rather
+      # than failing when history still can't be resolved.
+      - name: config type-surface diff (advisory)
+        continue-on-error: true
+        run: pnpm run check:config-api
+
   test-unit:
     if: |
       !startsWith(github.head_ref, 'release-notes/') &&
