@@ -297,7 +297,7 @@ describe("legacyCreateMigrationTable / legacyCreateSeedTable (provisioning probe
     ["a partial ledger (provisioned: false)", [{ provisioned: false }]],
     ["an unexpected result shape", [{ wat: 1 }]],
   ] as const) {
-    it(`runs the full Go-ordered DDL against ${shape}`, async () => {
+    it(`runs the full provisioning DDL in order against ${shape}`, async () => {
       const { session, execs } = probedSession([...rows]);
       await Effect.runPromise(legacyCreateMigrationTable(session));
       expect(execs).toEqual(HISTORY_DDL);

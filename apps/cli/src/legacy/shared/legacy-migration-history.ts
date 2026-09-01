@@ -81,7 +81,10 @@ export const MIGRATE_FILE_PATTERN = /^([0-9]+)_(.*)\.sql$/u;
  * below is a guaranteed no-op. Sent with no bind parameters, matching the wire
  * shape of the `migration list` SELECT that demonstrably survives the poolers
  * this setup DDL dies on (supabase/cli#6393). Any unexpected answer falls
- * through to the DDL path. Interpolates its arguments verbatim: callers pass
+ * through to the DDL path, but a probe FAILURE deliberately aborts instead: a
+ * connection that cannot serve this SELECT will not serve the setup transaction
+ * either, and failing loudly surfaces the real error rather than masking it
+ * behind a DDL failure. Interpolates its arguments verbatim: callers pass
  * compile-time literals only.
  */
 const legacyProvisionedProbe = (relation: string, columns: ReadonlyArray<string>) =>
