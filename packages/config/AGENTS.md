@@ -177,7 +177,7 @@ release fails unexpectedly, and restore them if repo or npm settings are ever re
    `scripts/release-plan.ts` refuses to plan in that state (escape hatch:
    `CONFIG_RELEASE_ALLOW_NO_BASELINE=1`). Seeding it was the single exception to the "never
    hand-push a `config-v*` tag" rule above.
-4. **The "Protect config-v* release tags" ruleset** restricts creating, moving, and deleting
+4. **The "Protect `config-v*` release tags" ruleset** restricts creating, moving, and deleting
    `config-v*` tags to the `supabase-cli-releaser` App (the same App the release workflows mint
    tokens from). The last `config-v*` tag is the version oracle: a stray hand-pushed tag
    permanently skews versioning, and a deleted tag wedges the next plan on an already-published
