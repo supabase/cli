@@ -336,7 +336,7 @@ export const legacyDbDump = Effect.fn("legacy.db.dump")(function* (flags: Legacy
               ? (chunk) =>
                   Effect.suspend(() => {
                     for (let i = 0; !sawNonAscii && i < chunk.length; i += 1) {
-                      sawNonAscii = chunk[i]! > 0x7f;
+                      if (chunk[i]! > 0x7f) sawNonAscii = true;
                     }
                     return output.rawBytes(chunk);
                   })
