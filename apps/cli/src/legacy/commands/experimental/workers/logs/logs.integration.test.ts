@@ -1,6 +1,6 @@
 import { rmSync } from "node:fs";
 import { describe, expect, it } from "@effect/vitest";
-import { Effect, Option, Schedule } from "effect";
+import { Effect, Exit, Option, Schedule } from "effect";
 import {
   makeWorkersProject,
   setupLegacyWorkers,
@@ -548,6 +548,26 @@ describe("legacy workers logs", () => {
       yield* legacyWorkersLogs(flags()).pipe(Effect.ignore);
 
       expect(telemetry.flushed).toBe(true);
+    }).pipe(Effect.provide(layer), Effect.ensuring(Effect.sync(repo.cleanup)));
+  });
+
+  // The command has run by the time the ref fails to resolve, so its post-run
+  // event still has to be written. Resolution sits above the query, so the
+  // failing-query test above does not cover this path.
+  it.live("flushes telemetry when the project ref cannot be resolved", () => {
+    const repo = project();
+    const { layer, telemetry, http } = setupLegacyWorkers({
+      workdir: repo.dir,
+      linked: false,
+      routes: {},
+    });
+
+    return Effect.gen(function* () {
+      const exit = yield* legacyWorkersLogs(flags()).pipe(Effect.exit);
+
+      expect(Exit.isFailure(exit)).toBe(true);
+      expect(telemetry.flushed).toBe(true);
+      expect(http.requests).toHaveLength(0);
     }).pipe(Effect.provide(layer), Effect.ensuring(Effect.sync(repo.cleanup)));
   });
 
