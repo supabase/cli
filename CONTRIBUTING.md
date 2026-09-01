@@ -52,13 +52,13 @@ mise install
 
 `mise install` resolves the versions this repo expects from a handful of files, rather than hardcoding them all in one place:
 
-| Tool          | Version source                               |
-| ------------- | -------------------------------------------- |
-| Bun           | `.bun-version`                               |
-| Node.js       | `devEngines.runtime` field in `package.json` |
-| pnpm          | `packageManager` field in `package.json`     |
-| Go            | `mise.toml`                                  |
-| golangci-lint | `mise.toml`                                  |
+| Tool          | Version source                                      |
+| ------------- | --------------------------------------------------- |
+| Bun           | `.bun-version`                                      |
+| Node.js       | `devEngines.runtime` field in `package.json`        |
+| pnpm          | `devEngines.packageManager` field in `package.json` |
+| Go            | `mise.toml`                                         |
+| golangci-lint | `mise.toml`                                         |
 
 The Go and golangci-lint entries in `mise.toml` are intentionally temporary while the Go CLI remains in the repo. The canonical Go module metadata still lives in `apps/cli-go/go.mod`; keep the `mise.toml` entries aligned only until the Go code is removed.
 
