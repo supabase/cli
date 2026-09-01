@@ -178,6 +178,61 @@ describe("legacyRenderWorkerLogLine", () => {
     expect(line).toBe(`${T}  kept`);
   });
 
+  // A carriage return returns the cursor to column zero, so a line carrying one
+  // can overwrite the timestamp and tag already printed to its left.
+  it("strips a carriage return so a line cannot overwrite its own prefix", () => {
+    const line = legacyRenderWorkerLogLine(entry({ message: "harmless\r00:00:00  forged" }), {
+      showStream: false,
+      colorStream: PLAIN,
+    });
+
+    expect(line).toBe(`${T}  harmless00:00:00  forged`);
+    expect(line).not.toContain("\r");
+  });
+
+  it("folds a CRLF to a newline rather than dropping the break", () => {
+    expect(
+      legacyRenderWorkerLogLine(entry({ message: "first\r\nsecond" }), {
+        showStream: false,
+        colorStream: PLAIN,
+      }),
+    ).toBe(`${T}  first\nsecond`);
+  });
+
+  // The request path is chosen by whoever called the worker, so it is as
+  // untrusted as anything the worker printed itself.
+  it("strips control sequences from request attributes", () => {
+    const line = legacyRenderWorkerLogLine(
+      entry({
+        stream: "worker_ingress_logs",
+        attributes: {
+          status: "200",
+          method: "GET",
+          path: `/${ESCAPE}[31m\rforged`,
+          duration_ms: `12${ESCAPE}[0m`,
+        },
+      }),
+      { showStream: false, colorStream: PLAIN },
+    );
+
+    expect(line).toBe(`${T}  200 GET /forged 12ms`);
+    expect(line).not.toContain(ESCAPE);
+  });
+
+  // A build reason is relayed from the builder, which reports what it was given.
+  it("strips control sequences from build attributes", () => {
+    const line = legacyRenderWorkerLogLine(
+      entry({
+        stream: "worker_api_logs",
+        attributes: { event: `build_failed${ESCAPE}[2A`, reason: "oom\rforged" },
+      }),
+      { showStream: false, colorStream: PLAIN },
+    );
+
+    expect(line).toBe(`${T}  build_failed oomforged`);
+    expect(line).not.toContain(ESCAPE);
+  });
+
   it("keeps a stack trace's newlines and indentation intact", () => {
     const trace = "TypeError: boom\n    at handler (index.js:3:11)\n\tat run (index.js:9:2)";
 

@@ -59,8 +59,17 @@ const OSC_SEQUENCE = /\u001b\][^\u0007\u001b]*(?:\u0007|\u001b\\)?/gu;
 const CSI_SEQUENCE = /\u001b\[[0-9;?]*[ -/]*[@-~]/gu;
 /** Remaining two-character escape sequences. */
 const ESCAPE_SEQUENCE = /\u001b[@-Z\\-_]/gu;
-/** Leftover C0 controls and DEL, keeping tab, newline and carriage return. */
-const C0_CONTROLS = /[\u0000-\u0008\u000b\u000c\u000e-\u001f\u007f]/gu;
+/** CRLF pairs, folded to a bare newline before lone carriage returns go. */
+const CRLF_PAIR = /\u000d\u000a/gu;
+/**
+ * Leftover C0 controls and DEL, keeping only tab and newline.
+ *
+ * A carriage return is stripped rather than kept: it returns the cursor to
+ * column zero, so a line carrying one can overwrite the timestamp and stream tag
+ * already printed to its left and forge output that looks like the CLI's own.
+ * Real line breaks survive as the `CRLF_PAIR` fold above.
+ */
+const C0_CONTROLS = /[\u0000-\u0008\u000b-\u001f\u007f]/gu;
 /* oxlint-enable no-control-regex */
 
 /**
@@ -77,6 +86,7 @@ const C0_CONTROLS = /[\u0000-\u0008\u000b\u000c\u000e-\u001f\u007f]/gu;
  */
 function stripControlSequences(message: string): string {
   return message
+    .replaceAll(CRLF_PAIR, "\n")
     .replaceAll(OSC_SEQUENCE, "")
     .replaceAll(CSI_SEQUENCE, "")
     .replaceAll(ESCAPE_SEQUENCE, "")
@@ -191,8 +201,11 @@ export function legacyRenderWorkerLogLine(
 
   if (entry.stream === WORKER_LOG_STREAMS.requests) {
     const { status, method, path, duration_ms: duration } = entry.attributes;
-    const request = [status, method, path].filter((part) => part !== undefined).join(" ");
-    const suffix = duration === undefined ? "" : ` ${duration}ms`;
+    const request = [status, method, path]
+      .filter((part) => part !== undefined)
+      .map(stripControlSequences)
+      .join(" ");
+    const suffix = duration === undefined ? "" : ` ${stripControlSequences(duration)}ms`;
     return `${prefix}  ${colourise(`${request}${suffix}`, level, colorStream)}`;
   }
 
@@ -200,11 +213,18 @@ export function legacyRenderWorkerLogLine(
     const { event, reason } = entry.attributes;
     const described = [event ?? entry.message, reason]
       .filter((part) => part !== undefined)
+      .map(stripControlSequences)
       .join(" ");
     return `${prefix}  ${colourise(described, level, colorStream)}`;
   }
 
-  // Guest output, and anything newer. The message is the payload, and it is the
-  // untrusted one.
+  // Guest output, and anything newer. The message is the payload.
+  //
+  // Every branch above sanitises too: a request `path` is chosen by whoever
+  // called the worker, and a build `reason` is relayed from the builder, so
+  // "the guest message is the only untrusted string" was never true. The
+  // `stream` the tag is derived from is not sanitised because it cannot carry
+  // anything: the query only returns rows whose stream is one of three
+  // literals.
   return `${prefix}  ${colourise(stripControlSequences(entry.message), level, colorStream)}`;
 }
