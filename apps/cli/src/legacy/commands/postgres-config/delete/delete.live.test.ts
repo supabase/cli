@@ -1,25 +1,32 @@
 import { expect } from "vitest";
 
-import { requireLiveSuccess, test, throwWithCleanup } from "../../../../../tests/helpers/live.ts";
+import {
+  postgresConfigLiveFlags,
+  removePostgresConfigLiveOverride,
+  requireLiveSuccess,
+  test,
+  throwWithCleanup,
+} from "../../../../../tests/helpers/live.ts";
 
 // Seeds its own override and proves it landed before deleting, so the absence
-// assertion cannot be satisfied by the pre-seed state; the test leaves the
-// shared project unchanged.
+// assertion cannot be satisfied by the pre-seed state. Teardown removes the
+// seeded key only when the test did not already prove it gone.
 test("removes the test-seeded override and get proves it is gone", async ({ cli, project }) => {
-  const target = ["--project-ref", project.ref, "--experimental"];
-  const noRestart = [...target, "--no-restart"];
+  const flags = postgresConfigLiveFlags(project);
   let targetError: unknown;
   const cleanupErrors: Array<unknown> = [];
+  let cleanupNeeded = true;
   try {
     const seeded = await cli([
       "postgres-config",
       "update",
       "--config",
       "maintenance_work_mem=16MB",
-      ...noRestart,
+      ...flags,
+      "--no-restart",
     ]);
     requireLiveSuccess(seeded, "postgres-config update setup for postgres-config delete");
-    const before = await cli(["postgres-config", "get", ...target, "-o", "json"]);
+    const before = await cli(["postgres-config", "get", ...flags, "-o", "json"]);
     requireLiveSuccess(before, "postgres-config get seed proof for postgres-config delete");
     expect(before.stdout, before.stderr).not.toBe("");
     const seededConfig = JSON.parse(before.stdout) as Record<string, unknown>;
@@ -30,31 +37,31 @@ test("removes the test-seeded override and get proves it is gone", async ({ cli,
       "delete",
       "--config",
       "maintenance_work_mem",
-      ...noRestart,
+      ...flags,
+      "--no-restart",
+      "-o",
+      "json",
     ]);
     expect(removed.exitCode, removed.stderr).toBe(0);
-    expect(removed.stdout, removed.stderr).toContain("Parameter");
-    expect(removed.stdout, removed.stderr).not.toContain("maintenance_work_mem");
+    expect(removed.stdout, removed.stderr).not.toBe("");
+    const remaining = JSON.parse(removed.stdout) as Record<string, unknown>;
+    expect(remaining["maintenance_work_mem"], removed.stdout).toBeUndefined();
 
-    const proof = await cli(["postgres-config", "get", ...target, "-o", "json"]);
+    const proof = await cli(["postgres-config", "get", ...flags, "-o", "json"]);
     requireLiveSuccess(proof, "postgres-config get proof for postgres-config delete");
     expect(proof.stdout, proof.stderr).not.toBe("");
     const config = JSON.parse(proof.stdout) as Record<string, unknown>;
     expect(config["maintenance_work_mem"], proof.stdout).toBeUndefined();
+    cleanupNeeded = false;
   } catch (error) {
     targetError = error;
   } finally {
-    try {
-      const restored = await cli([
-        "postgres-config",
-        "delete",
-        "--config",
-        "maintenance_work_mem",
-        ...noRestart,
-      ]);
-      requireLiveSuccess(restored, "postgres-config delete cleanup after postgres-config delete");
-    } catch (error) {
-      cleanupErrors.push(error);
+    if (cleanupNeeded) {
+      try {
+        await removePostgresConfigLiveOverride(cli, project, "maintenance_work_mem");
+      } catch (error) {
+        cleanupErrors.push(error);
+      }
     }
   }
   throwWithCleanup(targetError, cleanupErrors);

@@ -1,6 +1,6 @@
 import { expect } from "vitest";
 
-import { test } from "../../../../../tests/helpers/live.ts";
+import { postgresConfigLiveFlags, test } from "../../../../../tests/helpers/live.ts";
 
 // A freshly provisioned project can have zero overrides, so the golden path
 // pins the payload shape rather than any key: exit 0 and a JSON object on
@@ -9,13 +9,14 @@ test("reads the current config of the target project", async ({ cli, project }) 
   const result = await cli([
     "postgres-config",
     "get",
-    "--project-ref",
-    project.ref,
-    "--experimental",
+    ...postgresConfigLiveFlags(project),
     "-o",
     "json",
   ]);
   expect(result.exitCode, result.stderr).toBe(0);
   expect(result.stdout, result.stderr).not.toBe("");
-  expect(JSON.parse(result.stdout), result.stdout).toBeTypeOf("object");
+  const config: unknown = JSON.parse(result.stdout);
+  expect(config, result.stdout).toBeTypeOf("object");
+  expect(config, result.stdout).not.toBeNull();
+  expect(Array.isArray(config), result.stdout).toBe(false);
 });

@@ -1,12 +1,17 @@
 import { expect } from "vitest";
 
-import { requireLiveSuccess, test, throwWithCleanup } from "../../../../../tests/helpers/live.ts";
+import {
+  postgresConfigLiveFlags,
+  removePostgresConfigLiveOverride,
+  requireLiveSuccess,
+  test,
+  throwWithCleanup,
+} from "../../../../../tests/helpers/live.ts";
 
 // --no-restart skips the database restart; work_mem is a dynamic parameter, so
 // the override still takes effect.
 test("applies an override with --no-restart and get proves it", async ({ cli, project }) => {
-  const target = ["--project-ref", project.ref, "--experimental"];
-  const noRestart = [...target, "--no-restart"];
+  const flags = postgresConfigLiveFlags(project);
   let targetError: unknown;
   const cleanupErrors: Array<unknown> = [];
   try {
@@ -15,12 +20,17 @@ test("applies an override with --no-restart and get proves it", async ({ cli, pr
       "update",
       "--config",
       "work_mem=7MB",
-      ...noRestart,
+      ...flags,
+      "--no-restart",
+      "-o",
+      "json",
     ]);
     expect(updated.exitCode, updated.stderr).toBe(0);
-    expect(updated.stdout, updated.stderr).toMatch(/\bwork_mem +\| 7MB\b/u);
+    expect(updated.stdout, updated.stderr).not.toBe("");
+    const applied = JSON.parse(updated.stdout) as Record<string, unknown>;
+    expect(applied["work_mem"], updated.stdout).toBe("7MB");
 
-    const proof = await cli(["postgres-config", "get", ...target, "-o", "json"]);
+    const proof = await cli(["postgres-config", "get", ...flags, "-o", "json"]);
     requireLiveSuccess(proof, "postgres-config get proof for postgres-config update");
     expect(proof.stdout, proof.stderr).not.toBe("");
     const config = JSON.parse(proof.stdout) as Record<string, unknown>;
@@ -29,14 +39,7 @@ test("applies an override with --no-restart and get proves it", async ({ cli, pr
     targetError = error;
   } finally {
     try {
-      const removed = await cli([
-        "postgres-config",
-        "delete",
-        "--config",
-        "work_mem",
-        ...noRestart,
-      ]);
-      requireLiveSuccess(removed, "postgres-config delete cleanup after postgres-config update");
+      await removePostgresConfigLiveOverride(cli, project, "work_mem");
     } catch (error) {
       cleanupErrors.push(error);
     }
