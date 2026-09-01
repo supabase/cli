@@ -429,6 +429,10 @@ const IPV6_CONNECT_FAILURE = new LegacyDbConnectError({
   message: `failed to connect to postgres: could not translate host name "db.${LEGACY_VALID_REF}.supabase.co" to address: No address associated with hostname`,
 });
 
+const NATIVE_ENOTFOUND_CONNECT_FAILURE = new LegacyDbConnectError({
+  message: `failed to connect to postgres: failed to connect to \`host=db.${LEGACY_VALID_REF}.supabase.co user=postgres database=postgres\`: hostname resolving error (getaddrinfo ENOTFOUND)`,
+});
+
 const nonTypescriptProjectRefScenarios = [
   { lang: "go", output: "type PublicMovies struct {}" },
   { lang: "swift", output: "struct PublicMovies: Codable {}" },
@@ -1199,6 +1203,50 @@ describe("legacy gen types", () => {
       expect(dbConfig.poolerFallbacks).toHaveLength(1);
     });
   });
+
+  it.live(
+    "retries remote generation through the IPv4 pooler on a native ENOTFOUND connect error",
+    () => {
+      const poolerConn: LegacyPgConnInput = {
+        host: "127.0.0.1",
+        port: 6543,
+        user: `postgres.${LEGACY_VALID_REF}`,
+        password: "pooler-password",
+        database: "postgres",
+      };
+      const { layer, out, dbConfig, generator } = setup({
+        args: ["gen", "types", "--lang", "go", "--project-id", LEGACY_VALID_REF],
+        generatorResults: [
+          Effect.fail(NATIVE_ENOTFOUND_CONNECT_FAILURE),
+          Effect.succeed("type RetriedViaPooler struct {}"),
+        ],
+        dbConfigResolve: () =>
+          Effect.succeed(
+            remoteResolvedConfig({
+              host: `db.${LEGACY_VALID_REF}.supabase.co`,
+              port: 5432,
+              user: "postgres",
+              password: "direct-password",
+              database: "postgres",
+            }),
+          ),
+        poolerFallback: Option.some(poolerConn),
+      });
+
+      return Effect.gen(function* () {
+        yield* legacyGenTypes(
+          defaultFlags({
+            projectId: Option.some(LEGACY_VALID_REF),
+            lang: "go",
+          }),
+        ).pipe(Effect.provide(layer));
+
+        expect(out.stdoutText).toContain("type RetriedViaPooler struct {}");
+        expect(generator.calls).toHaveLength(2);
+        expect(dbConfig.poolerFallbacks).toHaveLength(1);
+      });
+    },
+  );
 
   it.live("does not retry remote generation when the failure is not IPv6", () => {
     const { layer, dbConfig, generator } = setup({

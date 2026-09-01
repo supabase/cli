@@ -88,6 +88,13 @@ describe("legacyIsIPv6ConnectivityError", () => {
   it("does not classify unrelated errors", () => {
     expect(legacyIsIPv6ConnectivityError("permission denied for schema public")).toBe(false);
     expect(legacyIsIPv6ConnectivityError("")).toBe(false);
+    // Suggestion path must not treat a DNS miss as IPv6; pooler fallback uses
+    // `legacyIsIPv6ConnectivityErrorCause` for the native rendered shape.
+    expect(
+      legacyIsIPv6ConnectivityError(
+        "failed to connect to `host=db.x.supabase.co user=postgres database=postgres`: hostname resolving error (getaddrinfo ENOTFOUND)",
+      ),
+    ).toBe(false);
   });
 });
 
@@ -592,5 +599,22 @@ describe("legacyIsIPv6ConnectivityErrorCause", () => {
         new Error("could not translate host name: no address associated with hostname"),
       ),
     ).toBe(true);
+  });
+
+  it("classifies the native rendered ENOTFOUND connect error", () => {
+    expect(
+      legacyIsIPv6ConnectivityErrorCause(
+        new Error(
+          "failed to connect to postgres: failed to connect to `host=db.x.supabase.co user=postgres database=postgres`: hostname resolving error (getaddrinfo ENOTFOUND)",
+        ),
+      ),
+    ).toBe(true);
+    expect(
+      legacyIsIPv6ConnectivityErrorCause(
+        new Error(
+          "failed to connect to postgres: failed to connect to `host=db.x.supabase.co user=postgres database=postgres`: hostname resolving error (getaddrinfo EAI_AGAIN db.x.supabase.co)",
+        ),
+      ),
+    ).toBe(false);
   });
 });

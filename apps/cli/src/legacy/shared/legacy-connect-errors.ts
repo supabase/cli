@@ -455,6 +455,10 @@ function hasStringCode(error: unknown): error is {
  * Used by the container-level pooler fallback (`gen types` / `db dump`); the
  * connect-suggestion path uses the narrower `legacyHasIPv6DialCause` instead,
  * which must not treat a DNS miss as IPv6.
+ *
+ * Native connect errors drop `code`/`cause` and render
+ * `hostname resolving error (getaddrinfo ENOTFOUND)` — the message fallback
+ * must recognize that shape. Do not add it to `legacyIsIPv6ConnectivityError`.
  */
 export function legacyIsIPv6ConnectivityErrorCause(error: unknown): boolean {
   if (error instanceof AggregateError) {
@@ -487,5 +491,8 @@ export function legacyIsIPv6ConnectivityErrorCause(error: unknown): boolean {
     }
   }
 
-  return legacyIsIPv6ConnectivityError(error instanceof Error ? error.message : String(error));
+  const text = error instanceof Error ? error.message : String(error);
+  if (legacyIsIPv6ConnectivityError(text)) return true;
+  const lower = text.toLowerCase();
+  return lower.includes("hostname resolving error") && lower.includes("enotfound");
 }
