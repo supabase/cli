@@ -1244,3 +1244,22 @@ The final public Stack-package scenario is one `runWholeStackScenario(mode)` bod
   `/Users/jgoux/.codex/fable-reviews/cli/20260901T045319Z.md`. The second pass reached consensus with no material
   finding. Its one concrete low-cost hardening was applied: fresh workload spec hashes now name the completed
   materialized settings explicitly instead of relying on the managed-slot helper mutating an earlier alias in place.
+- Upstream BEAM correction PR: `supabase/slim-services#293`. Its shared fail-closed artifact fixup changes generated
+  release environments from an unconditional named-distribution assignment to `name` as the default, preserving an
+  explicit caller value. Native Realtime, Analytics, and Pooler artifact smokes request `none`; derived images omit
+  the override and therefore retain their existing named-distribution default.
+- Stack runtime environments now set `RELEASE_DISTRIBUTION=none` only for native Realtime, Analytics, and Pooler.
+  One red/green integration scenario covers all three native mappings and proves all three container mappings omit
+  the variable. `ProductionRuntime` shares the resolved environment across startup migrations/evals and the main
+  process, so no parallel startup mechanism is required.
+- Replacing the already-published artifacts remains separately approval-gated. Until those releases are rebuilt from
+  the upstream correction, the final clean-host E2E/no-EPMD proof remains open.
+- Pause checkpoint Fable review:
+  `/Users/jgoux/.codex/fable-reviews/cli/20260901T052134Z.md`. The design remains accepted. The next bounded pass must
+  add behavior-level override verification against the three built artifacts, remove Analytics' native-only
+  `--sname` smoke argument so the smoke matches Stack, prove `ProductionRuntime` propagates the resolved BEAM value
+  into a real startup process, and document why container environments intentionally omit the variable. Pooler's
+  template was initialized and independently confirmed to contain the exact assignment handled by the upstream
+  fixup; the artifact rollout gate was already recorded above.
+- Resume from the committed Stack-side environment mapping and the pushed upstream PR. Do not replace published
+  Realtime, Analytics, or Pooler assets until that separate destructive release action is explicitly confirmed.

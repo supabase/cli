@@ -285,6 +285,11 @@ const compactEnvironment = (
 ): Readonly<Record<string, string>> =>
   Object.fromEntries(Object.entries(environment).filter(([, value]) => value.length > 0));
 
+const beamDistributionEnvironment = (
+  runtime: WorkloadRuntimeKind,
+): Readonly<Record<string, string>> =>
+  runtime === "native" ? { RELEASE_DISTRIBUTION: "none" } : {};
+
 const isRecord = (value: unknown): value is Readonly<Record<string, unknown>> =>
   typeof value === "object" && value !== null && !Array.isArray(value);
 
@@ -1018,6 +1023,7 @@ const analyticsEnv = (
   const gcpJwtPath = inputs.analytics?.gcpJwtPath ?? "";
   return compactEnvironment({
     ...common(workload, port),
+    ...beamDistributionEnvironment(runtime),
     ...capabilityEnv(state, "analytics", "ANALYTICS", (key) => key === "ANALYTICS_GCP_JWT_PATH"),
     PORT: String(port),
     PHX_HTTP_PORT: String(port),
@@ -1096,6 +1102,7 @@ const specs: Readonly<Record<string, WorkloadRuntimeSpecDefinition>> = {
     env: (state, workload, port, runtime = "native", inputs = {}) =>
       compactEnvironment({
         ...common(workload, port),
+        ...beamDistributionEnvironment(runtime),
         ...capabilityEnv(state, "realtime", "REALTIME"),
         PORT: String(port),
         DB_HOST: dbHost(runtime),
@@ -1323,6 +1330,7 @@ const specs: Readonly<Record<string, WorkloadRuntimeSpecDefinition>> = {
     args: () => ["start"],
     env: (state, workload, port, runtime = "native", inputs = {}) => ({
       ...common(workload, port),
+      ...beamDistributionEnvironment(runtime),
       ...capabilityEnv(state, "pooler", "POOLER"),
       PORT: "4000",
       PROXY_PORT_SESSION:

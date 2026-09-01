@@ -222,6 +222,22 @@ describe("workload runtime catalog", () => {
     }
   });
 
+  it("uses native-only BEAM distribution for Realtime, Analytics, and Pooler", () => {
+    const beamWorkloads = ["realtime:realtime", "analytics:analytics", "pooler:pooler"] as const;
+    for (const [index, id] of beamWorkloads.entries()) {
+      const workload = planned(id);
+      const spec = runtimeSpecFor(workload);
+      expect(spec).toBeDefined();
+      if (spec === undefined) continue;
+      expect(spec.env(state, workload, 30_100 + index, "native")).toMatchObject({
+        RELEASE_DISTRIBUTION: "none",
+      });
+      expect(spec.env(state, workload, 30_100 + index, "container")).not.toHaveProperty(
+        "RELEASE_DISTRIBUTION",
+      );
+    }
+  });
+
   it.live("uses durable binding assignments for native endpoints and container publications", () =>
     Effect.gen(function* () {
       const mail = planned("mail:mail");
