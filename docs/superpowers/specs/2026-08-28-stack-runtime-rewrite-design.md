@@ -914,7 +914,9 @@ configuration normalization, graph planning, transitions, restart decisions, and
 Real subprocess, process-tree, ownership, filesystem, socket, and transport seams remain in
 integration tests. Container lifecycle and lazy activation use controlled Docker/Podman engine
 integration. Direct tests of a private boundary are added only when a concrete observability gap
-cannot be covered through the public surface. A small e2e suite covers only critical CLI workflows.
+cannot be covered through the public surface. The final e2e contract uses only the public Stack
+package and runs one user-shaped whole-stack scenario in native and Docker mode, with only the
+runtime selector changed; the CLI is not part of that scenario.
 
 ### Public integration scenarios
 

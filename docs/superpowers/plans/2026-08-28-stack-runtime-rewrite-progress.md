@@ -20,8 +20,8 @@ updated in the same commit as each completed slice. Scratch review packages live
 - [x] Approved architecture imported as the canonical tracked design.
 - [x] Layer-by-layer implementation plan completed and reviewed against the design.
 - [x] Legacy process-compose package and stack implementation removed.
-- [ ] Greenfield rewrite implemented through the public Effect and Promise surfaces.
-- [ ] Targeted test suite green.
+- [x] Greenfield rewrite implemented through the public Effect and Promise surfaces.
+- [x] Targeted test suite green.
 - [ ] Completion audit, final review, push, and pull request completed.
 
 ## Slice ledger
@@ -285,15 +285,9 @@ Implementation continues after recording a ruling; this file is not a question q
 
 #### Task 3 review fixes — round 2 — 2026-08-28
 
-- **Superseded release decision:** the alias behavior recorded below is historical. The rewrite now
-  accepts only PostgreSQL `17.6.1.166`; PostgreSQL 15 remains deferred until its matching native
-  archive and derived image are published, and every other selector fails before mutation.
-- Preserved the authoritative database major alias: selector `13` intentionally resolves to the
-  current Supabase Postgres `15.8.1.085` release. This follows
-  `apps/cli-go/pkg/config/config.go:825-831` and the documented fallthrough in
-  `apps/cli/src/shared/services/services.shared.ts:107-116`; the legacy `pg13` constant is not
-  an active runtime artifact. The native and container descriptors remain coherent for that
-  selected release (and for majors 14, 15, and 17).
+- **Superseded release decision:** earlier selector-alias work was removed. The rewrite accepts only
+  PostgreSQL `17.6.1.166`; PostgreSQL 15 remains deferred until its matching native archive and
+  derived image are published, and every other selector fails before mutation.
 - Identical-fingerprint reuse now branches immediately after strict decode, Functions-root
   normalization, and fingerprint calculation. It collects only supplied Redacted slots, validates
   persisted versions and capability/workload closure, and rebuilds a fresh runtime plan from the
@@ -304,8 +298,9 @@ Implementation continues after recording a ruling; this file is not a question q
   and per-function overrides; recursive unknown-field tests reject the removed controls.
 - Persisted-definition codecs remain a Task 4 responsibility; Task 3 intentionally exports concrete
   input schemas/types and release metadata without a generated or open materialized settings bag.
-- Round-2 RED/GREEN: the targeted compiler/public suites pass (32 tests), including the DB13 alias,
-  immediate reuse, removed Functions controls, exact tagged failures, and closure checks.
+- Round-2 RED/GREEN: the targeted compiler/public suites pass (32 tests), including rejection of
+  unsupported database selectors, immediate reuse, removed Functions controls, exact tagged
+  failures, and closure checks.
 - `pnpm --dir packages/stack types:check` — passed.
 - `pnpm --dir packages/stack exec vitest run --project integration src/model/compiler.integration.test.ts src/public/public-model.integration.test.ts` — passed, 32 tests.
 - `pnpm exec oxlint --config .oxlintrc.effect.json packages/stack/src/model packages/stack/src/public/Config.ts packages/stack/src/public/Status.ts packages/stack/src/public/Errors.ts` — passed with zero warnings.
@@ -1102,3 +1097,131 @@ private-port reservation plus gateway ownership atomic with accepted lifecycle g
   evidence gaps: exit-zero plus failed log persistence still blocks main creation, both Docker and Podman execute the
   strict wait decoder, and the deliberate init/main name reuse is documented beside the invariant. The milestone is
   converged conditional only on the shared Docker E2E exercising the pinned images.
+
+#### Pause checkpoint — shared whole-stack E2E and native PostgreSQL startup (2026-08-31)
+
+- Added the public `createTestStack` resource helper draft with an isolated project/state root, `setupProject`,
+  automatic start/readiness, and exact destroy/close/root cleanup. Added one Stack-package-only whole-stack E2E body
+  parameterized solely by native versus Docker mode; it exercises SQL, REST, Auth, Realtime, Storage/imgproxy,
+  Functions live discovery and cross-service REST, SMTP/Mailpit, Studio/pgmeta, Analytics, and Pooler. This E2E is a
+  draft and has not yet completed against either real runtime.
+- Readiness budgets are converged: the persisted database `health_timeout` drives database readiness, other workloads
+  use the shared 30-second budget, the outer Effect timeout is the sole total deadline, and Reconciler no longer masks
+  PostgreSQL's budget with an implicit cap. Missing persisted defaults fail before spawn. Compiler/default/configured/
+  generic/zero/cancellation behavior passed 69 focused Bun integration tests. Fable reports are saved at
+  `/Users/jgoux/.codex/fable-reviews/cli/20260831T161313Z.md` and
+  `/Users/jgoux/.codex/fable-reviews/cli/20260831T163013Z.md`; the second pass found no remaining logic defect.
+- Native process preparation now preserves the host environment with string-only service overrides and uses Bun-safe
+  fd3/fd4 read streams. `NativeRuntime` supports scoped post-readiness one-shots and continuously races the complete
+  readiness → post-readiness → database-bootstrap → ready transition against the owned main exit and log failure.
+  The pinned PostgreSQL archive normalization removes the contained duplicate root `init-scripts` sibling while
+  preserving `migrations/init-scripts`; catalog/artifact/runtime coverage passed 55 focused tests and the native suite
+  passed 21/21. The second native Fable consensus pass was intentionally interrupted for this pause and produced no
+  report; rerun it with the full fifteen-minute allowance before accepting the checkpoint.
+- PostgreSQL production wiring is the exact next implementation step and is not started: detect first boot from the
+  database data directory, run the artifact's canonical `share/supabase-cli/migrations/migrate.sh` as a native
+  post-readiness process, then run the existing Stack database bootstrap. Do not add Stack-owned Supabase migration
+  SQL or database-reset behavior.
+- After native PostgreSQL boots, run the shared native E2E and address only observed service gaps. One known likely
+  gap is Analytics Vector: the pinned generic artifact/image ships a demo config with its API disabled, while the
+  current runtime spec expects `/health`; resolve this with the smallest shared native/container Stack-owned config
+  if the real E2E reproduces it. Then run the unchanged Docker case, Fable-review the whole E2E milestone, audit the
+  remaining design checklist, and perform final verification.
+- The worktree intentionally remains uncommitted at this pause. `.repos/slim-services/` is a read-only upstream
+  checkout used for artifact/container comparison and must not be committed.
+
+#### Final rewrite checkpoint — runtime parity, whole-stack E2E, and Fable consensus (2026-09-01)
+
+This checkpoint supersedes only the incomplete-status statements in the pause checkpoint above; the pause remains
+as historical evidence of what was known at that time.
+
+- Native PostgreSQL first boot now runs the pinned `17.6.1.166` artifact's canonical
+  `share/supabase-cli/migrations/migrate.sh` after readiness and before Stack bootstrap. An atomic
+  `.supabase-stack-migration-complete` witness is published only after exit 0; `PG_VERSION` without the witness
+  identifies an incomplete first boot, so the exact PGDATA is recreated before retry and is never published ready.
+  Pre-witness development data is intentionally disposable: this package is unreleased and has no shipped producer
+  or consumer requiring a compatibility backfill. PostgreSQL 15 and every other selector remain unsupported.
+- Stateful service migrations are part of workload startup rather than caller hooks. Native Auth, Storage, Realtime,
+  Analytics, and Pooler run their artifact migration processes before their main process is accepted ready. Container
+  Auth and Storage use explicit one-shot init containers; Realtime, Analytics, and Pooler retain the pinned image-owned
+  entrypoint migrations. Dependents cannot start until these phases succeed.
+- Runtime inputs are generation-owned and atomic. Pooler cleanup removes only Pooler tenant input; Vector cleanup
+  removes only Vector material and invalidates its cache so a same-generation restart republishes the config. Vector
+  emits one finite E2E marker to Analytics and uses `internal_metrics` to a blackhole solely to remain a long-lived
+  companion, avoiding recurring synthetic Analytics rows.
+- Omitted Analytics API keys are generated once as managed 32-byte base64url secrets and persisted; caller-supplied
+  keys remain pass-through values that may change only while stopped. Log redaction no longer treats the fixed text
+  `api-key` as a secret. Database `health_timeout` is persisted and must be strictly positive before mutation.
+- Native launcher ownership is covered under both Bun and Node fd3 adapters. Graceful SIGTERM/SIGINT forwarding is
+  tracked separately from exact process-group termination, so later owner-pipe loss still escalates to SIGKILL and
+  cannot orphan descendants. The launcher inherits only the explicit host allowlist and never ambient database
+  credentials.
+- Destroy completion uses a preface-only control socket owned by the Supervisor scope. The response callback is
+  handed to an owner-scoped fiber uninterruptibly; `destroy()` returns only after the exact owner closes the socket.
+  The internal `makeHandle` test seam is not exported by `@supabase/stack/effect`.
+- Native artifacts share one immutable test cache outside disposable stack roots. `.repos/slim-services/` is ignored
+  by Git and remains a read-only upstream comparison checkout, not part of the product diff.
+
+The final public Stack-package scenario is one `runWholeStackScenario(mode)` body; only the runtime selector changes:
+
+| Capability | User-shaped observable proof                                                                           |
+| ---------- | ------------------------------------------------------------------------------------------------------ |
+| Database   | Connect with public credentials and execute SQL against PostgreSQL 17.                                 |
+| REST       | Trigger lazy activation, authenticate, insert, and read a real row.                                    |
+| Auth       | Sign up a user and request password recovery.                                                          |
+| Realtime   | Subscribe over WebSocket and observe the inserted database-change payload.                             |
+| Storage    | Create a bucket, upload/download an image, and transform it through imgproxy.                          |
+| Functions  | Discover a function through Edge Runtime, call REST from it, edit it live, and observe the new result. |
+| Studio     | Trigger lazy activation and reach the profile endpoint through its pgmeta dependency.                  |
+| Mail       | Deliver Auth recovery mail over SMTP and observe it through Mailpit.                                   |
+| Analytics  | Authenticate, ingest/query a marker, and query the one Vector-delivered marker.                        |
+| Pooler     | Connect through the public pooler listener and execute SQL.                                            |
+
+- Native whole-stack E2E: 1 passed in 63.92s; log `/tmp/whole-native-e2e-vector-keepalive-043459.log`.
+- Docker whole-stack E2E: 1 passed in 95.88s; log `/tmp/whole-docker-e2e-vector-keepalive-043615.log`.
+- Final named-file rerun exercised both parameterized cases together: 2 passed in 120.98s; log
+  `/tmp/whole-native-e2e-final.log`.
+- Both post-run audits found no owned listeners in 30000-30020, Supervisor/launcher/workload processes, disposable
+  roots, or matching Docker containers, networks, and volumes. The final audit also enumerated every
+  `com.supabase.stack.stackId` Docker resource: no resource was created by the final run; stopped remnants from
+  earlier August 31 development attempts were left untouched rather than treated as this run's ownership.
+- Final focused correction verification passed 137 integration tests across seven files, Stack type-checking,
+  formatting, and `git diff --check`.
+- Final parallel-suite verification removed two test-only synchronization hazards without changing runtime behavior.
+  Lower-level port-coordinator tests now use scope-owned non-listening listener objects while real binding/adoption
+  remains covered through `HostListener` and Supervisor ingress. The native early-exit regression now awaits the
+  caller's typed lifecycle failure instead of an incidental final log line that failed-start teardown may cancel.
+  The named native test passed 20 consecutive runs and the complete integration project passed five consecutive
+  default-parallel runs (449 tests each).
+- Fresh completion gates passed the Stack package test command (5 unit and 449 integration tests), Stack and CLI
+  type-checks, scoped generic and Effect lint, Stack Knip analysis, tracked-file formatting, and `git diff --check`.
+- Fable milestone reports:
+  `/Users/jgoux/.codex/fable-reviews/cli/20260901T020640Z.md`,
+  `/Users/jgoux/.codex/fable-reviews/cli/20260901T023939Z.md`, and
+  `/Users/jgoux/.codex/fable-reviews/cli/20260901T025708Z.md`. The first two passes produced bounded corrections;
+  the third reached consensus with no material remaining finding. Refuted items were either unreachable through the
+  serialized Supervisor/Reconciler boundary, already fail-closed before execution, or disproportionate cleanup for
+  this minimal milestone. Database reset remains completely outside this rewrite.
+
+#### Final cleanup correction — native BEAM distribution (2026-09-01)
+
+- A clean-host native whole-stack rerun passed the complete user flow in 43.05s, then exposed one teardown defect
+  missed by the earlier process audit: Realtime left its artifact-bundled `epmd -daemon` listening on port 4369.
+  The exact process had been reparented to PID 1 and moved into a process group outside the Stack launcher, proving
+  that ordinary negative-PGID cleanup cannot own this daemon.
+- A generic native-process regression first proved that same-group descendants survived after a direct workload
+  exited normally. `NativeProcess.exitCode` now performs one cached, parent-side cleanup of the exact launcher group
+  after capturing the exit code; ESRCH is the only tolerated already-gone result. The regression failed before the
+  correction, passed ten consecutive runs after it, and the native runtime integration file passes 27 tests.
+- That generic correction deliberately remains: it closes the normal descendant contract for every native workload.
+  It cannot reach Erlang's deliberately detached daemon. The pinned Realtime, Analytics, and Pooler artifacts each
+  bundle an `env.sh` that unconditionally resets `RELEASE_DISTRIBUTION=name`, even though their generated release
+  launcher already supports `RELEASE_DISTRIBUTION=none`.
+- The minimal completion path is an upstream `supabase/slim-services` artifact correction: make those three generated
+  `env.sh` files treat `name` as a default while honoring a caller value, rebuild the published native artifacts and
+  derived images, then set `RELEASE_DISTRIBUTION=none` only for native Stack workloads. Docker keeps its distributed
+  default. Stack-owned release wrappers, mutable cache patching, global PID scans, and a managed hidden EPMD port were
+  rejected because they add lifecycle machinery or weaken artifact parity.
+- The exact stale test-owned EPMD processes were terminated after evidence capture. The final native E2E must be rerun
+  from a host with no EPMD listener after rebuilt artifacts are available, and teardown must leave no EPMD process.
+  Until that proof exists, the rewrite is not complete and Step 5 remains open.

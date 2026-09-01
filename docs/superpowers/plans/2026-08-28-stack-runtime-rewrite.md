@@ -93,22 +93,22 @@ artifact keys, state schemas, drivers, or control protocols.
 - Moves the generic `mockChildProcessSpawner` test utility to
   `apps/cli/tests/helpers/child-process-spawner.ts`; this is test infrastructure, not a runtime API.
 
-- [ ] **Step 1: Record the deletion baseline**
+- [x] **Step 1: Record the deletion baseline**
 
   Add the base commit and the exact active process-compose references to the tracked progress file.
 
-- [ ] **Step 2: Delete both legacy implementations before writing replacement runtime code**
+- [x] **Step 2: Delete both legacy implementations before writing replacement runtime code**
 
   Keep only package configuration, the empty public barrels, and the approved tracked design. Do not
   copy orchestration implementation into the new tree.
 
-- [ ] **Step 3: Remove workspace and CLI process-compose coupling**
+- [x] **Step 3: Remove workspace and CLI process-compose coupling**
 
   Remove manifest/config/lockfile entries, process-compose self-dispatch in the CLI bootstrap, old
   telemetry adapters, and active documentation references. Preserve `.repos/process-compose` and
   historical design/ADR references because those are source history, not the deleted workspace.
 
-- [ ] **Step 4: Regenerate the lockfile and verify the empty boundary**
+- [x] **Step 4: Regenerate the lockfile and verify the empty boundary**
 
   ```bash
   pnpm install --lockfile-only
@@ -119,7 +119,7 @@ artifact keys, state schemas, drivers, or control protocols.
 
   Expected: install and stack type-check exit 0; the search finds no active reference.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
   ```bash
   git add -A
@@ -144,7 +144,7 @@ artifact keys, state schemas, drivers, or control protocols.
 - Promise secret-bearing types contain `string`; Effect secret-bearing types contain
   `Redacted.Redacted<string>`.
 
-- [ ] **Step 1: Write decoding and snapshot-contract integration tests**
+- [x] **Step 1: Write decoding and snapshot-contract integration tests**
 
   ```ts
   it.effect("decodes a complete status snapshot", () =>
@@ -156,7 +156,7 @@ artifact keys, state schemas, drivers, or control protocols.
 
   Assert with public predicates or error matching rather than Effect runtime fields.
 
-- [ ] **Step 2: Run RED**
+- [x] **Step 2: Run RED**
 
   ```bash
   pnpm --dir packages/stack exec vitest run --project integration src/public/public-model.integration.test.ts
@@ -164,13 +164,13 @@ artifact keys, state schemas, drivers, or control protocols.
 
   Expected: failure because the schemas do not exist.
 
-- [ ] **Step 3: Implement schemas and errors with Effect v4 APIs**
+- [x] **Step 3: Implement schemas and errors with Effect v4 APIs**
 
   Use `Data.TaggedError` for ordinary domain failures and pinned v4 `Schema.TaggedErrorClass` only for
   failures that cross a schema-serialized boundary. Decode through `Schema.decodeUnknownEffect`;
   never throw expected validation failures.
 
-- [ ] **Step 4: Verify and commit**
+- [x] **Step 4: Verify and commit**
 
   ```bash
   pnpm --dir packages/stack exec vitest run --project integration src/public/public-model.integration.test.ts
@@ -298,14 +298,14 @@ artifact keys, state schemas, drivers, or control protocols.
 - Automatic assignments are globally exclusive while stopped/running; stopped exact assignments may
   coexist and are validated only on start. Assignments stay sticky after bind races.
 
-- [ ] **Step 1: Write state, secret, and port scenarios first**
+- [x] **Step 1: Write state, secret, and port scenarios first**
 
   Test atomic old-or-new reads, corrupt-state fail-closed behavior, exact-identity cleanup, managed
   generation/reuse/mismatch, stopped-only pass-through replacement, no secret bytes in fingerprints/
   log messages, automatic sticky exclusivity, exact stopped coexistence, live exact conflicts,
   unchanged assignment reuse, native socket transfer, and container bind-race retention.
 
-- [ ] **Step 2: Verify RED, then implement atomic state and scoped acquisition**
+- [x] **Step 2: Verify RED, then implement atomic state and scoped acquisition**
 
   Encode/decode through Effect Schema; atomically replace owner-only state through a sibling temporary
   file and required fsync operations. Reserve complete candidate sets under the short registry lock
@@ -313,7 +313,7 @@ artifact keys, state schemas, drivers, or control protocols.
   authoritative publish result for containers. Never bind-release-rebind an automatic native port.
   The first release reads and writes only `supabase-stack-state-v1`; add no migration framework.
 
-- [ ] **Step 3: Verify and commit**
+- [x] **Step 3: Verify and commit**
 
   Run the three targeted integration files plus stack type-check and commit:
 
@@ -341,25 +341,25 @@ artifact keys, state schemas, drivers, or control protocols.
 - One atomic ownership primitive and endpoint carries frozen bounded-JSON maintenance operations plus
   exact-release Effect RPC. Ordinary handles are scoped/closeable; owner work outlives handles.
 
-- [ ] **Step 1: Write multi-process handle scenarios and verify RED**
+- [x] **Step 1: Write multi-process handle scenarios and verify RED**
 
   Cover create without config/start, same identity joining one owner, open-only behavior, read-only
   discovery, closing/caller exit survival, concurrent equivalent create, incompatible owner failure,
   and stable maintenance stop.
 
-- [ ] **Step 2: Implement ownership and protocols**
+- [x] **Step 2: Implement ownership and protocols**
 
   Use one endpoint, random owner session, bounded framing, typed decode failures, and Effect RPC for
   exact-release operations. Register all callback listeners before starting I/O, resume at most once,
   and remove every owned listener/socket in the cancellation Effect.
 
-- [ ] **Step 3: Implement shared launch/attachment**
+- [x] **Step 3: Implement shared launch/attachment**
 
   Represent launch with a cached Effect/shared Fiber or `Deferred<Exit<...>>`; never a boolean plus
   polling. Waiter interruption must not cancel owner launch or cleanup. Supervisor state is allocated
   inside its scoped Effect execution.
 
-- [ ] **Step 4: Verify and commit**
+- [x] **Step 4: Verify and commit**
 
   Run `handles.integration.test.ts`, stack type-check, update progress, and commit:
 
@@ -384,19 +384,19 @@ artifact keys, state schemas, drivers, or control protocols.
 - `status`/`watchStatus` publish complete projections; logs have bounded storage, opaque cursors,
   exact known-secret redaction, and atomic retained-to-live handoff.
 
-- [ ] **Step 1: Write failure-isolation and concurrency scenarios**
+- [x] **Step 1: Write failure-isolation and concurrency scenarios**
 
   Cover dependency ordering, reverse stop, independent branch survival, blocked dependents, readiness
   deadlines, bounded restart budgets, caller cancellation, generation fences, one reconciliation at a
   time, first watch snapshot, no duplicate/gap log handoff, and capability-only public attribution.
 
-- [ ] **Step 2: Implement with Effect coordination primitives**
+- [x] **Step 2: Implement with Effect coordination primitives**
 
   Use one `Semaphore` for lifecycle serialization, `SubscriptionRef` for current snapshot and change
   stream, `PubSub` for live logs, `Deferred` for activation/readiness handoff, and `Schedule` for retry.
   Do not recreate waiter arrays, boolean gates, or sleep-based propagation.
 
-- [ ] **Step 3: Verify and commit**
+- [x] **Step 3: Verify and commit**
 
   Run the two integration files and the focused pure planner test, then commit:
 
@@ -421,10 +421,13 @@ artifact keys, state schemas, drivers, or control protocols.
   ports, network, secrets, or workload mutation.
 - `NativeRuntime` implements `RuntimeDriver` with exact process-tree ownership. Database bootstrap is
   a post-probe readiness phase on the real database workload, not a synthetic workload. Task 7 defines
-  the release-plan resolver and PostgreSQL runner; Task 13 supplies each supported release's concrete
-  ordered revision catalog. Applied revisions live inside PostgreSQL only and gate every database
-  dependent on completion. Gateway listener ownership and native transfer belong to Task 8, where the
-  gateway contract is implemented; Task 7 does not add a speculative listener interface.
+  the release-plan resolver and PostgreSQL runner. A native release's bundled, non-idempotent first-boot
+  migration script uses one atomic PGDATA completion witness; an initialized directory without that
+  witness is recreated before retry and is never published ready. Task 13 supplies the runtime-owned
+  ordered bootstrap revision catalog, whose applied revisions live inside PostgreSQL. Both phases gate
+  every database dependent on completion. Gateway listener ownership and native transfer belong to
+  Task 8, where the gateway contract is implemented; Task 7 does not add a speculative listener
+  interface.
 
 - [x] **Step 1: Write preparation/native behavior tests and verify RED**
 
@@ -653,19 +656,20 @@ artifact keys, state schemas, drivers, or control protocols.
 - Completes all ten capabilities with exhaustive settings and real native/container artifacts.
 - Does not add new public lifecycle concepts or a second Functions-serving path.
 
-- [ ] **Step 1: Audit capability and platform coverage**
+- [x] **Step 1: Audit capability and platform coverage**
 
   Build the requirement-to-source/test table in the tracked progress document. For every capability,
   identify exhaustive settings coverage, exact native and container artifacts, dependency edges,
   ports, secrets, routes, probes, and activation behavior.
 
-- [ ] **Step 2: Fill only demonstrated gaps test-first**
+- [x] **Step 2: Fill only demonstrated gaps test-first**
 
   Exercise at least one native and one container preparation/execution mapping per capability. Keep
   Functions exclusively on the managed Edge Runtime and reject unsupported exact artifacts before
-  durable or runtime mutation.
+  durable or runtime mutation. The final real-runtime proof consumes only the public Stack package;
+  the CLI is not part of this E2E contract.
 
-- [ ] **Step 3: Verify and commit**
+- [x] **Step 3: Verify and commit**
 
   Run only the affected catalog/compiler/runtime integration files and stack type-check. Commit:
 
@@ -683,30 +687,32 @@ observed caller needs in a separate session after this rewrite is complete.
 
 - Modify: package README and architecture docs, tracked progress, public export metadata, and CLI
   docs/help affected by the new lifecycle
-- Create: a small set of stack/CLI e2e smoke files only where real compiled subprocess/container
-  boundaries are not covered by integration tests
+- Create: one `packages/stack` whole-stack E2E scenario shared unchanged by native and Docker mode
 
 **Interfaces:**
 
 - Confirms all ten capabilities, limits public exports to `.`,
   `./effect`, and `./testing`, and leaves no process-compose or legacy stack surface.
 
-- [ ] **Step 1: Audit every spec requirement against authoritative evidence**
+- [x] **Step 1: Audit every spec requirement against authoritative evidence**
 
   Build a requirement-to-test/source table in the tracked progress document. Missing or indirect
   evidence is incomplete work, not a pass.
 
-- [ ] **Step 2: Fill audit gaps test-first**
+- [x] **Step 2: Fill audit gaps test-first**
 
-  Treat any missing catalog/platform evidence as incomplete Task 13 work. Add the smallest compiled
-  CLI smoke for start/status/stop and managed Functions serving.
+  Treat any missing catalog/platform evidence as incomplete Task 13 work. Complete one user-shaped
+  Stack-package scenario that creates and starts a managed stack, exercises every capability and
+  private companion through observable behavior, and disposes it. Run the exact same scenario in
+  native and Docker mode with only the runtime selector changed.
 
-- [ ] **Step 3: Run final targeted verification**
+- [x] **Step 3: Run final targeted verification**
 
   ```bash
   pnpm --dir packages/stack types:check
   pnpm --dir packages/stack exec vitest run --project unit
   pnpm --dir packages/stack exec vitest run --project integration
+  pnpm --dir packages/stack exec vitest run --project e2e src/public/whole-stack.e2e.test.ts
   pnpm --dir apps/cli types:check
   pnpm exec oxlint --config .oxlintrc.json packages/stack apps/cli/src/next apps/cli/src/shared/telemetry
   pnpm exec oxlint --config .oxlintrc.effect.json packages/stack
@@ -717,9 +723,9 @@ observed caller needs in a separate session after this rewrite is complete.
   pnpm exec knip-bun --workspace packages/stack
   ```
 
-  Run only the named new e2e smoke files, not an unrelated e2e suite.
+  Run only the named Stack-package whole-stack E2E file, not an unrelated E2E suite.
 
-- [ ] **Step 4: Whole-branch review and one fix wave**
+- [x] **Step 4: Whole-branch review and one fix wave**
 
   Review the full merge-base diff against the design and progress rulings. Fix every load-bearing
   finding, re-run affected targeted checks, and record any adjudicated non-blocking ruling.
