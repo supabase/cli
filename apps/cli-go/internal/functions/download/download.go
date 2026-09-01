@@ -70,7 +70,7 @@ func RunLegacy(ctx context.Context, slug string, projectRef string, fsys afero.F
 	return nil
 }
 
-func getFunctionMetadata(ctx context.Context, projectRef, slug string) (*api.FunctionSlugResponse, error) {
+func getFunctionMetadata(ctx context.Context, projectRef, slug string) (*api.FunctionSlugResponseOutput, error) {
 	resp, err := utils.GetSupabase().V1GetAFunctionWithResponse(ctx, projectRef, slug)
 	if err != nil {
 		return nil, errors.Errorf("failed to get function metadata: %w", err)
