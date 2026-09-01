@@ -285,6 +285,7 @@ const compactEnvironment = (
 ): Readonly<Record<string, string>> =>
   Object.fromEntries(Object.entries(environment).filter(([, value]) => value.length > 0));
 
+// Native unpacked BEAM releases use `none` to avoid contacting the host EPMD; containers omit it so the artifact/image default remains `name`.
 const beamDistributionEnvironment = (
   runtime: WorkloadRuntimeKind,
 ): Readonly<Record<string, string>> =>

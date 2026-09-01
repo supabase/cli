@@ -172,6 +172,35 @@ printf 'migration|host=%s|port=%s|db=%s|user=%s|password=%s|path=%s\\n' "$POSTGR
     return { main, migrate };
   });
 
+const writeNativeRealtimeFixture = (
+  fs: FileSystem.FileSystem,
+  path: Path.Path,
+  root: string,
+  eventsPath: string,
+) =>
+  Effect.gen(function* () {
+    const bin = path.join(root, "bin");
+    yield* fs.makeDirectory(bin, { recursive: true });
+    const migrate = path.join(bin, "migrate");
+    yield* fs.writeFileString(
+      migrate,
+      `#!/bin/sh
+printf 'realtime-migrate|RELEASE_DISTRIBUTION=%s\\n' "\${RELEASE_DISTRIBUTION:-missing}" >> ${JSON.stringify(eventsPath)}
+`,
+    );
+    yield* fs.chmod(migrate, 0o755);
+    const realtime = path.join(bin, "realtime");
+    yield* fs.writeFileString(realtime, "#!/bin/sh\nexit 0\n");
+    yield* fs.chmod(realtime, 0o755);
+    const server = path.join(bin, "server");
+    yield* fs.writeFileString(
+      server,
+      "#!/bin/sh\ntrap 'exit 0' TERM INT\nwhile :; do sleep 1; done\n",
+    );
+    yield* fs.chmod(server, 0o755);
+    return { migrate, realtime, server };
+  });
+
 const listenForNativeReadiness = (server: ReturnType<typeof createNetServer>) =>
   Effect.acquireRelease(
     Effect.callback<void, Error>((resume) => {
@@ -349,6 +378,115 @@ describe("production runtime composition", () => {
         if (runtime.activate === undefined) return yield* Effect.die("activation seam missing");
         const endpoint = yield* runtime.activate("storage", input);
         expect(endpoint).toEqual({ host: "127.0.0.1", port: 41_002 });
+      }),
+    ).pipe(Effect.provide(NodeServices.layer)),
+  );
+
+  it.live("propagates native BEAM environment to a realtime startup process", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const root = yield* fs.makeTempDirectoryScoped({ prefix: "supabase-production-beam-" });
+        const eventsPath = path.join(root, "events");
+        const artifactRoot = path.join(root, "artifact");
+        yield* writeNativeRealtimeFixture(fs, path, artifactRoot, eventsPath);
+        const readinessServer = createServer((_request, response) => {
+          response.statusCode = 200;
+          response.setHeader("Connection", "close");
+          response.end("ok");
+        });
+        yield* Effect.acquireRelease(
+          Effect.callback<void, Error>((resume) => {
+            readinessServer.once("error", (error) => resume(Effect.fail(error)));
+            readinessServer.listen(0, "127.0.0.1", () => resume(Effect.void));
+          }),
+          () =>
+            Effect.callback<void>((resume) => {
+              if (!readinessServer.listening) return resume(Effect.void);
+              readinessServer.close(() => resume(Effect.void));
+            }),
+        );
+        const address = readinessServer.address();
+        if (typeof address !== "object" || address === null)
+          return yield* Effect.die("Realtime readiness server did not expose an address");
+        const compiled = yield* compileStack({
+          projectRoot: root,
+          runtime: { kind: "native" },
+          config: {
+            capabilities: {
+              database: {},
+              rest: { enabled: false },
+              auth: { enabled: false },
+              realtime: { enabled: true },
+              storage: { enabled: false },
+              functions: { enabled: false },
+              studio: { enabled: false },
+              mail: { enabled: false },
+              analytics: { enabled: false },
+              pooler: { enabled: false },
+            },
+          },
+        });
+        const current = {
+          value: {
+            ...stateFor({
+              "secret:database.internal.password": { policy: "managed", value: "db-secret" },
+              "secret:auth.settings.jwt_secret": { policy: "managed", value: "jwt-secret" },
+            }),
+            identity: {
+              ...stateFor({}).identity,
+              projectRoot: root,
+              checkoutRoot: root,
+              workspaceId: root,
+              checkoutId: root,
+            },
+            desiredLifecycle: "running" as const,
+            definition: compiled.definition,
+            inputFingerprint: compiled.inputFingerprint,
+            privatePorts: [
+              { workloadId: "realtime:realtime", binding: "primary", port: address.port },
+            ],
+          },
+        } satisfies { value: PersistedStackState };
+        const context = yield* Effect.context<FileSystem.FileSystem | Path.Path | Crypto.Crypto>();
+        const factory = yield* makeProductionRuntimeFactory({
+          stateRoot: root,
+          stackId,
+          ownerSessionId: "owner",
+          stateStore: stateStoreFor(current),
+          context,
+          ingress,
+          artifactPreparer: {
+            prepare: () =>
+              Effect.succeed({
+                workloadId: "realtime:realtime",
+                capability: "realtime" as const,
+                version: "v2.130.0",
+                outcome: "present" as const,
+                artifactRoot,
+              }),
+          },
+          logStore: memoryLogStore([]),
+          bootstrapDatabase: () => Effect.void,
+        });
+        const runtime = yield* factory.make(current.value);
+        const realtime = compiled.executionPlan.workloads.find(
+          (workload) => workload.id === "realtime:realtime",
+        );
+        if (realtime === undefined) return yield* Effect.die("Expected Realtime workload");
+        const key = {
+          stackId,
+          desiredGeneration: 1,
+          workloadId: realtime.id,
+          specHash: realtime.specHash,
+        };
+        const ready = yield* runtime.driver.start(key, realtime);
+        expect(ready.state).toBe("ready");
+        expect(yield* fs.readFileString(eventsPath)).toContain(
+          "realtime-migrate|RELEASE_DISTRIBUTION=none",
+        );
+        yield* runtime.driver.stop(key);
       }),
     ).pipe(Effect.provide(NodeServices.layer)),
   );
