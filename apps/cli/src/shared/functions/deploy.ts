@@ -42,10 +42,10 @@ import {
 } from "./deploy.errors.ts";
 import {
   buildFunctionsDockerRunArgs,
+  edgeRuntimeCacheVolume,
   ensureDockerNamedVolume,
   ensureDockerNetwork,
   isDockerRunning,
-  localDockerId,
   resolveDockerNetworkMode,
   resolveEdgeRuntimeVersion,
   resolveFunctionsDockerImage,
@@ -1231,9 +1231,10 @@ export async function buildDockerBinds(
     },
   ];
   if (process.env["BITBUCKET_CLONE_DIR"] === undefined) {
+    const cacheVolume = edgeRuntimeCacheVolume(projectId);
     binds.unshift({
-      hostPath: localDockerId("edge_runtime", projectId),
-      containerPath: "/root/.cache/deno",
+      hostPath: cacheVolume.name,
+      containerPath: cacheVolume.containerPath,
       mode: "rw",
       externalScope: false,
     });
@@ -1423,6 +1424,10 @@ const bundleFunctionWithDocker = Effect.fnUntraced(function* (
       });
     }
     const outputPath = join(outputDir, "output.eszip");
+    // `edgeRuntimeImage` applies the tag VERBATIM (Go's `replaceImageTag`)
+    // — a `.temp/edge-runtime-version` pin flows through unmodified, `v`
+    // prefix or not (see the helper's doc in `functions.shared.ts`).
+    const rawImage = edgeRuntimeImage(edgeRuntimeVersion);
     const binds = yield* Effect.promise(() =>
       buildDockerBinds(projectId, functionsDir, outputDir, config, {
         onWarning: (message) => Effect.runPromise(output.raw(message, "stderr")),
@@ -1435,15 +1440,9 @@ const bundleFunctionWithDocker = Effect.fnUntraced(function* (
     // `PulledEdgeRuntimeImage` is: per-slug matches Go's per-container
     // `DockerStart` exactly, and the first resolve failure aborts the loop,
     // so the only cost is one cached `docker image inspect` per function.
-    const image = yield* resolveFunctionsDockerImage(
-      // `edgeRuntimeImage` applies the tag VERBATIM (Go's `replaceImageTag`)
-      // — a `.temp/edge-runtime-version` pin flows through unmodified, `v`
-      // prefix or not (see the helper's doc in `functions.shared.ts`).
-      edgeRuntimeImage(edgeRuntimeVersion),
-      projectEnvValues,
-    );
+    const image = yield* resolveFunctionsDockerImage(rawImage, projectEnvValues);
     yield* ensureDockerNetwork(networkMode, projectId);
-    yield* ensureDockerNamedVolume(localDockerId("edge_runtime", projectId), projectId);
+    yield* ensureDockerNamedVolume(edgeRuntimeCacheVolume(projectId).name, projectId);
 
     const env: Array<string> = [];
     if (

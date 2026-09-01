@@ -1,9 +1,13 @@
-import { describe, expect, test } from "vitest";
+import { afterEach, describe, expect, test, vi } from "vitest";
 
 import {
   legacyBuildRealtimeContainerSpec,
   type LegacyRealtimeContainerSpecInput,
 } from "./realtime.service.ts";
+
+afterEach(() => {
+  vi.unstubAllEnvs();
+});
 
 describe("legacyBuildRealtimeContainerSpec", () => {
   const input: LegacyRealtimeContainerSpecInput = {
@@ -64,5 +68,22 @@ describe("legacyBuildRealtimeContainerSpec", () => {
       dbUrl: "postgresql://postgres:another-secret@127.0.0.1:54322/postgres",
     });
     expect(spec.env["DB_PASSWORD"]).toBe("another-secret");
+  });
+
+  test("uses wget for the healthcheck on a slim realtime image", () => {
+    vi.stubEnv("SUPABASE_USE_SLIM_IMAGES", "1");
+    const spec = legacyBuildRealtimeContainerSpec({
+      ...input,
+      image: "ghcr.io/supabase/cli/realtime:v2.130.0",
+    });
+    expect(spec.healthcheck?.test).toEqual([
+      "CMD",
+      "wget",
+      "-q",
+      "--spider",
+      "--header",
+      "Host:realtime-dev",
+      "http://127.0.0.1:4000/api/ping",
+    ]);
   });
 });

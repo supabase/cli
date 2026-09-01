@@ -128,7 +128,7 @@ export const SERVICE_CATALOG = {
   postgres: {
     name: "postgres",
     configKey: "postgres",
-    defaultVersion: "17.6.1.165",
+    defaultVersion: "17.6.1.167",
     runtimeSupport: "native-preferred",
     artifact: {
       docker: { repository: "postgres" },
@@ -205,7 +205,7 @@ export const SERVICE_CATALOG = {
   realtime: {
     name: "realtime",
     configKey: "realtime",
-    defaultVersion: "v2.129.9",
+    defaultVersion: "v2.130.0",
     runtimeSupport: "docker-only",
     artifact: {
       docker: { repository: "realtime" },
@@ -217,7 +217,7 @@ export const SERVICE_CATALOG = {
   storage: {
     name: "storage",
     configKey: "storage",
-    defaultVersion: "v1.71.0",
+    defaultVersion: "v1.72.1",
     runtimeSupport: "docker-only",
     artifact: {
       docker: { repository: "storage" },
@@ -253,7 +253,7 @@ export const SERVICE_CATALOG = {
   pgmeta: {
     name: "pgmeta",
     configKey: "pgmeta",
-    defaultVersion: "0.98.0",
+    defaultVersion: "0.99.0",
     runtimeSupport: "docker-only",
     artifact: {
       docker: { repository: "pgmeta", tagPrefix: "v" },
@@ -301,7 +301,7 @@ export const SERVICE_CATALOG = {
   pooler: {
     name: "pooler",
     configKey: "pooler",
-    defaultVersion: "2.9.7",
+    defaultVersion: "2.9.12",
     runtimeSupport: "docker-only",
     artifact: {
       docker: { registry: SUPABASE_GHCR_REGISTRY, repository: "supavisor" },

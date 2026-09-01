@@ -5,7 +5,7 @@ import { describe, expect, it } from "@effect/vitest";
 import { edgeRuntimeNofileUlimit } from "@supabase/stack/effect";
 import { Deferred, Effect, Exit, Sink, Stream } from "effect";
 import { type ChildProcess, ChildProcessSpawner } from "effect/unstable/process";
-import { beforeEach } from "vitest";
+import { afterEach, beforeEach, vi } from "vitest";
 
 import { useLegacyTempWorkdir } from "../../../../../tests/helpers/legacy-mocks.ts";
 import { mockOutput } from "../../../../../tests/helpers/mocks.ts";
@@ -128,6 +128,10 @@ describe("legacyStartEdgeRuntimeContainer", () => {
   // so nothing under it is ever read; it only needs to exist.
   beforeEach(() => {
     mkdirSync(join(tempWorkdir.current, "supabase", "functions"), { recursive: true });
+  });
+
+  afterEach(() => {
+    vi.unstubAllEnvs();
   });
 
   it.effect(
@@ -343,6 +347,50 @@ describe("legacyStartEdgeRuntimeContainer", () => {
         expect(yield* Effect.promise(() => mainService.text())).toContain(
           "SUPABASE_INTERNAL_FUNCTIONS_CONFIG",
         );
+      }),
+  );
+
+  it.effect(
+    "slim edge-runtime uses the docker.io entrypoint, /root main service, and shared cache volume",
+    () =>
+      Effect.gen(function* () {
+        vi.stubEnv("SUPABASE_USE_SLIM_IMAGES", "1");
+        const mock = mockDockerSpawner();
+        const out = mockOutput();
+        const input = {
+          ...baseInput(tempWorkdir.current),
+          image: "ghcr.io/supabase/cli/edge-runtime:v1.74.2",
+        };
+
+        yield* legacyStartEdgeRuntimeContainer(input).pipe(
+          Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, mock.spawner),
+          Effect.provide(out.layer),
+        );
+
+        const createArgs = mock.runCall!.args;
+        expect(createArgs).toContain("--entrypoint");
+        expect(createArgs).toContain("sh");
+        const script = createArgs.at(-1);
+        expect(script).toContain("--main-service=/root");
+        expect(script).not.toContain("--main-service=/tmp");
+
+        const volumeCreate = mock.calls.find((call) => call.args[0] === "volume");
+        expect(volumeCreate?.args.at(-1)).toBe("supabase_edge_runtime_proj");
+        expect(createArgs).not.toContain("supabase_edge_runtime_slim_proj:/home/nonroot:rw");
+
+        const cp = mock.calls.find((call) => call.args[0] === "cp");
+        expect(cp?.args).toEqual(["cp", "-", "supabase_edge_runtime_proj:/"]);
+        const stdin = cp?.stdin;
+        expect(Stream.isStream(stdin)).toBe(true);
+        if (!Stream.isStream(stdin)) return yield* Effect.die("docker cp stdin was not a stream");
+        const chunks = yield* Stream.runCollect(stdin);
+        expect(chunks).toHaveLength(1);
+        const archiveBytes = chunks[0];
+        if (!(archiveBytes instanceof Uint8Array)) {
+          return yield* Effect.die("docker cp stdin did not contain archive bytes");
+        }
+        const files = yield* Effect.promise(() => new Bun.Archive(archiveBytes).files());
+        expect([...files.keys()]).toEqual(["root/index.ts"]);
       }),
   );
 

@@ -43,7 +43,12 @@ interface LegacyPgDeltaNextShadowShape {
   >;
   /**
    * Provisions the independent migrated and declarative shadows needed by a
-   * declarative plan. Both are removed when the current Effect scope closes.
+   * declarative plan. Concurrency is strategy-driven (see
+   * `legacy-pgdelta-next-shadow.plan.ts`): warm snapshots restore in parallel,
+   * a shared cold baseline is built once and handed off, and everything else
+   * runs sequentially — with the concurrent shapes buffering the declarative
+   * side's output so progress lines never interleave. Both shadows are removed
+   * when the current Effect scope closes.
    */
   readonly provisionPlan: (
     opts: LegacyPgDeltaNextShadowInput,

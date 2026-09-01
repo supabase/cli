@@ -185,6 +185,31 @@ describe("makePostgresServiceDocker", () => {
     expect(def.restart).toBe("unless-stopped");
     expect(def.supervision?.orphanCleanup).toBeDefined();
   });
+
+  it("prepares the Linux postgres socket directory before dropping privileges", () => {
+    const def = makePostgresServiceDocker({
+      runtime: "docker",
+      image: dockerImageForService("postgres", DEFAULT_VERSIONS.postgres),
+      dataDir: "/tmp/supabase/data",
+      port: DB_PORT,
+      platformOs: "linux",
+      identity: EPHEMERAL_IDENTITY,
+      dependencies: [],
+    });
+    const command = def.args?.at(-1) ?? "";
+    const mkdirIndex = command.indexOf("busybox mkdir -p /run/postgresql");
+    const chownIndex = command.indexOf("busybox chown ", mkdirIndex);
+    const chmodIndex = command.indexOf("busybox chmod 2775 /run/postgresql");
+    const suIndex = command.indexOf("exec busybox su -s /usr/bin/sh supabase_cli");
+
+    expect(mkdirIndex).toBeGreaterThanOrEqual(0);
+    expect(chownIndex).toBeGreaterThan(mkdirIndex);
+    expect(chmodIndex).toBeGreaterThan(chownIndex);
+    expect(suIndex).toBeGreaterThan(chmodIndex);
+    expect(command.slice(mkdirIndex, chmodIndex)).toMatch(
+      /busybox chown \d+:\d+ \/run\/postgresql/,
+    );
+  });
 });
 
 describe("makePostgrestService", () => {
@@ -479,6 +504,8 @@ describe("docker-backed auxiliary services", () => {
     expect(def.args).toContain("/tmp/supabase/storage:/var/lib/storage");
     expect(def.args).toContain("54331:54331");
     expect(def.dependencies).toEqual(dependencies);
+    expect(def.env?.ENABLE_IMAGE_TRANSFORMATION).toBe("true");
+    expect(def.env?.IMAGE_TRANSFORMATION_ENABLED).toBe("true");
     expect(def.healthCheck?.probe).toEqual(
       expect.objectContaining({ _tag: "Http", port: 54331, path: "/status" }),
     );
