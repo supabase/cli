@@ -107,11 +107,17 @@ redacted. No custom events.
 | Mode                          | stdout                                                                                              | stderr                                                    |
 | ----------------------------- | --------------------------------------------------------------------------------------------------- | --------------------------------------------------------- |
 | text (default)                | one line per entry, oldest first, per-stream layout; `HH:MM:SS` local time; severity as colour      | the spinner, and the `status` hint when there are no logs |
-| `--output-format json`        | one structured result carrying every entry                                                          | as above                                                  |
-| `--output-format stream-json` | the same result as a single terminal event                                                          | as above                                                  |
-| `-o json` / `yaml` / `toml`   | the same payload in that encoding, and nothing else                                                 | as above                                                  |
-| `-o pretty` / `table` / `csv` | the text rendering — these fall through rather than encoding                                        | as above                                                  |
+| `--output-format json`        | one structured result carrying every entry                                                          | neither — both are text-only                              |
+| `--output-format stream-json` | the same result as a single terminal event                                                          | neither — both are text-only                              |
+| `-o json` / `yaml` / `toml`   | the same payload in that encoding, and nothing else                                                 | neither — both are text-only                              |
+| `-o pretty` / `table` / `csv` | the text rendering — these fall through rather than encoding                                        | both, as in text                                          |
 | `-o env`                      | refused before any request; the payload nests a `logs` array a flat `KEY=value` list cannot express | the error                                                 |
+
+A structured emission is the end of a bounded read: the handler returns at
+`legacyEmitWorkersMachineOutput` or at `output.success`, so the no-logs line and
+its `status` trailer below them are never reached, and `output.task` is a no-op
+in those modes. `-o pretty`, `table` and `csv` are the exception, since they
+encode nothing and fall through to the same text branch.
 
 With `--follow`, `stream-json` emits a `log-entry` event per line rather than one
 terminal `result` — a tail has no last element. Its `stream` field is `stderr` when
