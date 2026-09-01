@@ -982,7 +982,12 @@ describe("legacy db dump integration", () => {
   });
 
   it.live("windows: warns when a piped stdout dump contains non-ASCII text", () => {
-    const { layer, out } = setup({ isLocal: true, stdout: UNICODE_SQL, ...PIPED_WIN32 });
+    const { layer, out } = setup({
+      isLocal: true,
+      stdout: UNICODE_SQL,
+      ...PIPED_WIN32,
+      env: { MSYSTEM: "" },
+    });
     return Effect.gen(function* () {
       yield* legacyDbDump(flags({ local: Option.some(true) }));
       expect(out.stdoutText).toBe(UNICODE_SQL);
