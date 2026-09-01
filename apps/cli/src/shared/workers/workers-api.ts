@@ -12,6 +12,7 @@ import { Effect, Option, Schedule, Schema } from "effect";
 import * as HttpClient from "effect/unstable/http/HttpClient";
 import * as HttpClientError from "effect/unstable/http/HttpClientError";
 import * as HttpClientRequest from "effect/unstable/http/HttpClientRequest";
+import { CLI_UPGRADE_GUIDE_URL } from "../cli/version.ts";
 import {
   WorkerBuildTimeoutError,
   WorkersApiNetworkError,
@@ -193,7 +194,7 @@ const decodeBody = <A, I>(
         new WorkersApiUnexpectedStatusError({
           status,
           detail: `The Workers API returned a response this CLI could not read while trying to ${operation}: ${error.message}.`,
-          suggestion: "Update the CLI with `supabase update`, then retry.",
+          suggestion: `Update the CLI, then retry: ${CLI_UPGRADE_GUIDE_URL}`,
         }),
     ),
   );

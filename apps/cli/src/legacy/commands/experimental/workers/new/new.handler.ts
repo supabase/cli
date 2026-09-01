@@ -69,10 +69,10 @@ function defaultFirst<T>(values: ReadonlyArray<T>, defaultValue: T): Array<T> {
  * whichever flag asked for it.
  *
  * `output.interactive` only tracks *stdout*, so on its own it still let
- * `printf 'api\n' | supabase experimental workers new` feed the pipe straight into the name
- * prompt instead of taking the documented non-interactive path. A prompt is
- * only answerable from a keyboard, so stdin has to be a terminal too — the same
- * pair `workers delete` guards its confirmation with.
+ * `printf 'api\n' | supabase experimental workers new` feed the pipe straight
+ * into the name prompt instead of taking the documented non-interactive path. A
+ * prompt is only answerable from a keyboard, so stdin has to be a terminal too
+ * — the same pair `workers delete` guards its confirmation with.
  */
 const canPromptFor = Effect.fnUntraced(function* (machineOutput: boolean) {
   const output = yield* Output;
@@ -85,10 +85,10 @@ const canPromptFor = Effect.fnUntraced(function* (machineOutput: boolean) {
  *
  * The name is the one input here that cannot be defaulted — it is the
  * directory, the `config.toml` key and the hostname — so a bare
- * `supabase experimental workers new` asks rather than failing the parse. The prompt
- * validates against everything the command would otherwise refuse a moment
- * later, so a mistyped or already-recorded name is corrected in place instead
- * of ending the run.
+ * `supabase experimental workers new` asks rather than failing the parse. The
+ * prompt validates against everything the command would otherwise refuse a
+ * moment later, so a mistyped or already-recorded name is corrected in place
+ * instead of ending the run.
  */
 const resolveName = Effect.fnUntraced(function* (options: {
   readonly explicit: Option.Option<string>;
