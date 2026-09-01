@@ -11,14 +11,12 @@ export const startNonInteractive = Effect.fnUntraced(function* () {
   return yield* Effect.gen(function* () {
     yield* startStackWithProgress();
     yield* printStackConnectionInfo();
-    yield* stack
-      .allStateChanges()
-      .pipe(Stream.runForEach((state) => output.info(`${state.name}: ${state.status}`)));
+    yield* stack.allStateChanges.pipe(
+      Stream.runForEach((state) => output.info(`${state.name}: ${state.status}`)),
+    );
   })
     .pipe(Effect.raceFirst(interruptOnSignal))
     .pipe(
-      Effect.ensuring(
-        Effect.uninterruptible(stack.dispose().pipe(Effect.catch(() => Effect.void))),
-      ),
+      Effect.ensuring(Effect.uninterruptible(stack.dispose.pipe(Effect.catch(() => Effect.void)))),
     );
 });

@@ -19,7 +19,7 @@ describe("workers schema", () => {
 
   // Keys outside the DNS-label pattern fall outside the record's index
   // signature and are dropped, the same way `[functions.<slug>]` treats a slug
-  // its own pattern does not match. `supabase workers new` validates the name
+  // its own pattern does not match. `supabase experimental workers new` validates the name
   // up front so the CLI never writes one that would vanish here.
   test("drops worker names that are not DNS labels", () => {
     expect(decode({ Not_A_Label: {}, api: { runtime: "node" } })).toEqual({
@@ -27,7 +27,7 @@ describe("workers schema", () => {
     });
   });
 
-  // Every dial is optional: a worker scaffolded by `supabase workers new` records
+  // Every dial is optional: a worker scaffolded by `supabase experimental workers new` records
   // only what it prompted for, and `push` resolves the rest from its own defaults.
   test("decodes a worker table with no dials set", () => {
     expect(decode({ api: {} })).toEqual({ api: {} });

@@ -44,9 +44,9 @@ and its CLI consumer:
 Prefix rule: `Cli*` names the local checkout side — what the CLI reads, writes, or resolves about
 itself on disk. A bare `Project*` name is reserved for the hosted Supabase project. Helpers that
 operate on config values follow the config family regardless of their inputs, not the shape of
-whatever they're passed — `resolveCliConfigValue` and `MissingCliConfigValueError` are `Cli*`-named
-even though both operate on plain config values, because the config they resolve or complain about
-is the local-checkout document.
+whatever they're passed — `resolveCliConfigValue` and `CliConfigParseError` are `Cli*`-named even
+though one resolves a config value and the other reports a parse failure, because in both cases the
+config in question is the local-checkout document.
 
 This convention is documented normatively in three places, so it is available wherever a session —
 human or agent — starts working in this repo:

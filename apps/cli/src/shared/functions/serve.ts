@@ -2,14 +2,16 @@ import {
   CliConfigSchema,
   findCliProjectPaths,
   inferFunctionsManifest,
-  loadCliConfig,
-  resolveCliConfigSubtree,
-  resolveCliConfigValue,
   type CliConfig,
   type CliProjectEnvironment,
   type ResolvedCliConfigValue,
   type ResolvedFunctionConfig as ManifestFunctionConfig,
 } from "@supabase/config/effect";
+import {
+  loadCliConfig,
+  resolveCliConfigSubtree,
+  resolveCliConfigValue,
+} from "@supabase/config/internal";
 import {
   defaultJwtSecret,
   defaultPublishableKey,
@@ -75,6 +77,7 @@ import {
 import {
   containerArchiveBytes,
   dockerProjectLabels,
+  edgeRuntimeCacheVolume,
   ensureDockerNamedVolume,
   ensureDockerNetwork,
   localDockerId,
@@ -119,7 +122,7 @@ const ignoredDirNames = new Set([
 const dockerLogRetryDelay = Duration.millis(400);
 const dockerLogDiagnosticTailLength = 4_096;
 const defaultSupabaseEnv = "development";
-const serveMainContainerPath = "/root/index.ts";
+const serveMainDir = "/root";
 const shellVariableNamePattern = /^[A-Za-z_][A-Za-z0-9_]*$/;
 let cachedLegacyFunctionsServeMainTemplate: string | undefined;
 const watchIgnoreGlobs = [
@@ -1664,7 +1667,6 @@ export const startEdgeRuntimeContainer = Effect.fn("functions.startEdgeRuntimeCo
     const watchableBinds = new Map<string, DockerBind>();
     const emittedScopeWarnings = new Set<string>();
     const functionsConfig: Record<string, ServeFunctionContainerConfig> = {};
-
     for (const config of functionConfigs) {
       if (!config.enabled) {
         yield* output.raw(`Skipped serving Function: ${config.slug}\n`, "stderr");
@@ -1717,7 +1719,7 @@ export const startEdgeRuntimeContainer = Effect.fn("functions.startEdgeRuntimeCo
 
     const binds = [...functionBinds.values()];
 
-    yield* ensureDockerNamedVolume(localDockerId("edge_runtime", projectId), projectId);
+    yield* ensureDockerNamedVolume(edgeRuntimeCacheVolume(projectId).name, projectId);
     yield* ensureDockerNetwork(networkMode, projectId);
 
     const env = [
@@ -1770,10 +1772,11 @@ export const startEdgeRuntimeContainer = Effect.fn("functions.startEdgeRuntimeCo
       });
 
       const labels = dockerProjectLabels(projectId);
+      const serveMainFile = `${serveMainDir}/index.ts`;
       const runtimeCommand = [
         "edge-runtime",
         "start",
-        "--main-service=/root",
+        `--main-service=${serveMainDir}`,
         `--port=${dockerRuntimeServerPort}`,
         `--policy=${input.config.edgeRuntimePolicy}`,
         ...buildFunctionsServeInspectArgs(input.inspectMode, input.inspectMain),
@@ -1784,7 +1787,7 @@ export const startEdgeRuntimeContainer = Effect.fn("functions.startEdgeRuntimeCo
       // `sh -c` argv hits Windows ENAMETOOLONG (#5711), and a single-file host bind mounts as
       // an empty directory on daemons that cannot see this host's filesystem (#6254, #4190).
       const serveMainArchive = yield* Effect.tryPromise({
-        try: () => containerArchiveBytes({ [serveMainContainerPath]: serveMainTemplate }),
+        try: () => containerArchiveBytes({ [serveMainFile]: serveMainTemplate }),
         catch: (cause) => (cause instanceof Error ? cause : new Error(String(cause))),
       });
       const containerProjectRoot = toDockerPath(input.projectRoot);

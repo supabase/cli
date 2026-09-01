@@ -1,8 +1,10 @@
 // @supabase/stack/effect — Bun-bound Effect interfaces and consumer layers.
+// oxlint-disable effecttsgo/multiple-effect-provide -- Consumer layers are staged in dependency order; merging them would alter managed scope ownership.
 
 export * from "./effect.ts";
 
 import { Effect, type Layer } from "effect";
+// oxlint-disable-next-line effecttsgo/node-builtin-import -- Bun effect entrypoint uses native path semantics for managed state roots.
 import { join } from "node:path";
 import type { PortLease } from "./PortAllocator.ts";
 import type { Stack } from "./Stack.ts";

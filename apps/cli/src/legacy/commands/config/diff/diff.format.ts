@@ -2,7 +2,7 @@ import {
   type ConfigChange,
   type ConfigChangeSet,
   projectConfigApiBlockKeys,
-} from "@supabase/config";
+} from "@supabase/config/internal";
 
 import { LEGACY_BRANCH_UUID_PATTERN } from "../../../shared/legacy-branch-ref.resolver.ts";
 import { legacySanitizeInlineName } from "../../../shared/legacy-http-errors.ts";

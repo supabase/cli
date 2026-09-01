@@ -1,3 +1,5 @@
+// oxlint-disable effecttsgo/async-function, effecttsgo/global-console -- Standalone Deno/EdgeRuntime bootstrap must expose native async handlers and host logging APIs.
+
 declare const Deno: any;
 declare const EdgeRuntime: any;
 
@@ -171,11 +173,8 @@ function fileUrl(path: string) {
   return new URL(`file://${path}`).href;
 }
 
-async function serveFunction(req: Request, config: any, functionName: string, functionConfig: any) {
-  const authError = await verifyRequest(req, config, functionConfig);
-  if (authError) return authError;
-
-  const envVars = Object.entries({
+export function buildFunctionEnv(config: any, functionConfig: any, functionName: string) {
+  return {
     ...config.env,
     ...functionConfig.env,
     SUPABASE_URL: config.supabaseUrl,
@@ -184,11 +183,52 @@ async function serveFunction(req: Request, config: any, functionName: string, fu
     SUPABASE_DB_URL: config.dbUrl,
     SUPABASE_PUBLISHABLE_KEYS: JSON.stringify({ default: config.publishableKey }),
     SUPABASE_SECRET_KEYS: JSON.stringify({ default: config.secretKey }),
-  });
+    SUPABASE_FUNCTION_SLUG: functionName,
+  };
+}
+
+export function createWorkerServicePathResolver(makeTempDir: () => string) {
+  const sharedWorkerPaths = new Map<string, string>();
+
+  return (functions: Record<string, { entrypointPath: string }>, functionName: string) => {
+    const functionConfig = functions[functionName];
+    if (!functionConfig) {
+      throw new Error(`Function ${functionName} is not configured`);
+    }
+    const sourcePath = dirname(functionConfig.entrypointPath);
+    const sharesSourcePath = Object.entries(functions).some(
+      ([otherName, otherConfig]) =>
+        otherName !== functionName && dirname(otherConfig.entrypointPath) === sourcePath,
+    );
+    if (!sharesSourcePath) return sourcePath;
+
+    // Edge Runtime pools user workers by servicePath. A real temporary directory cannot
+    // collide with an existing source directory. maybeEntrypoint remains the real source
+    // file, so the temporary path changes only the worker's cache identity.
+    const key = `${sourcePath}\0${functionName}`;
+    const existingPath = sharedWorkerPaths.get(key);
+    if (existingPath) return existingPath;
+
+    const workerPath = makeTempDir();
+    sharedWorkerPaths.set(key, workerPath);
+    return workerPath;
+  };
+}
+
+const resolveWorkerServicePath = createWorkerServicePathResolver(() =>
+  Deno.makeTempDirSync({ prefix: "supabase-worker-" }),
+);
+
+async function serveFunction(req: Request, config: any, functionName: string, functionConfig: any) {
+  const authError = await verifyRequest(req, config, functionConfig);
+  if (authError) return authError;
+
+  const envVars = Object.entries(buildFunctionEnv(config, functionConfig, functionName));
+  const servicePath = resolveWorkerServicePath(config.functions, functionName);
 
   try {
     const worker = await EdgeRuntime.userWorkers.create({
-      servicePath: dirname(functionConfig.entrypointPath),
+      servicePath,
       memoryLimitMb: 256,
       workerTimeoutMs: 400000,
       noModuleCache: false,

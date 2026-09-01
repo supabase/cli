@@ -1,3 +1,5 @@
+// oxlint-disable effecttsgo/node-builtin-import, effecttsgo/process-env -- Synchronous Docker socket discovery runs before Effect runtime construction and preserves the service's sync API.
+
 import { accessSync, constants } from "node:fs";
 import { dockerNetworkArgs } from "../Platform.ts";
 import type { ContainerRuntime } from "../ContainerRuntime.ts";

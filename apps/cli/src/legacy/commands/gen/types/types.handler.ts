@@ -1,4 +1,4 @@
-import { loadCliConfig } from "@supabase/config/effect";
+import { loadCliConfig } from "@supabase/config/internal";
 import { ChildProcessSpawner } from "effect/unstable/process";
 import { Effect, FileSystem, Option, Path, Stdio, Stream } from "effect";
 import {
@@ -440,13 +440,14 @@ export const legacyGenTypes = Effect.fn("legacy.gen.types")(function* (flags: Le
             // `--network-id` overrides any base network mode (even the
             // "host" mode used for --db-url), so honour the override here too.
             const networkMode = Option.isSome(networkId) ? networkId.value : input.networkMode;
+            const pgmetaImage = resolvePgmetaImage(input.pgmetaVersionOverride);
             const args = [
               "run",
               "--rm",
               "--network",
               networkMode,
               ...env.flatMap((entry) => ["--env", entry]),
-              resolvePgmetaImage(input.pgmetaVersionOverride),
+              pgmetaImage,
               "node",
               "dist/server/server.js",
             ];

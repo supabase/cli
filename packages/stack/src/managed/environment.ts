@@ -1,4 +1,5 @@
 import { createHash } from "node:crypto";
+// oxlint-disable-next-line effecttsgo/node-builtin-import -- Git/workspace identity canonicalization needs platform-native path semantics before Effect filesystem access.
 import { isAbsolute, relative, sep } from "node:path";
 import { Effect, FileSystem } from "effect";
 import {
@@ -290,11 +291,9 @@ export const validateEnvironmentRepair = (
   Effect.gen(function* () {
     const current = yield* discoverInternal(request.path);
     if (request.reason === "duplicate") {
-      return yield* Effect.fail(
-        new InvalidManagedIdentityError({
-          message: "Duplicate checkout evidence requires an explicit ownership decision",
-        }),
-      );
+      return yield* new InvalidManagedIdentityError({
+        message: "Duplicate checkout evidence requires an explicit ownership decision",
+      });
     }
     const currentUpdates = current.state === "needsRepair" ? current.repair.updates : [];
     const requestedUpdates = request.updates;
@@ -318,9 +317,9 @@ export const validateEnvironmentRepair = (
       current.identity.contextId !== request.identity.contextId ||
       !updatesMatch
     ) {
-      return yield* Effect.fail(
-        new InvalidManagedIdentityError({ message: "Workspace identity changed before repair" }),
-      );
+      return yield* new InvalidManagedIdentityError({
+        message: "Workspace identity changed before repair",
+      });
     }
     return current.repair;
   });

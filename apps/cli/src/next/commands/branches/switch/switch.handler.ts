@@ -143,7 +143,7 @@ export const switchBranch = Effect.fn("branches.switch")(function* (opts: {
         Effect.gen(function* () {
           const stack = yield* Stack;
           const stopping = yield* output.task("Stopping local stack...");
-          yield* stack.stop().pipe(Effect.tapError(() => stopping.fail()));
+          yield* stack.stop.pipe(Effect.tapError(() => stopping.fail()));
           yield* stopping.clear();
         }).pipe(Effect.provide(existingLayer.value)),
       );

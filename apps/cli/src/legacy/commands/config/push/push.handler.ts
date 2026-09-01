@@ -1,5 +1,6 @@
 import { dirname } from "node:path";
-import { findCliProjectRoot, loadCliConfig } from "@supabase/config/effect";
+import { findCliProjectRoot } from "@supabase/config/effect";
+import { loadCliConfig } from "@supabase/config/internal";
 import { Effect, FileSystem, Path } from "effect";
 
 import { LegacyPlatformApi } from "../../../auth/legacy-platform-api.service.ts";

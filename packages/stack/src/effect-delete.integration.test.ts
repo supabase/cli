@@ -1,3 +1,5 @@
+// oxlint-disable effecttsgo/global-error-in-effect-catch, effecttsgo/global-error-in-effect-failure, effecttsgo/node-builtin-import -- Deletion tests intentionally inject native Error failures and use temporary filesystem paths to verify cleanup classification.
+
 import { mkdirSync, mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";

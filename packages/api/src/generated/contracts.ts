@@ -4137,30 +4137,33 @@ export const V1GetPerformanceAdvisorsOutput = Schema.Struct({
         detail: Schema.String,
         remediation: Schema.String,
         metadata: Schema.optionalKey(
-          Schema.Struct({
-            schema: Schema.optionalKey(Schema.String),
-            name: Schema.optionalKey(Schema.String),
-            entity: Schema.optionalKey(Schema.String),
-            type: Schema.optionalKey(
-              Schema.Literals([
-                "table",
-                "view",
-                "materialized view",
-                "foreign table",
-                "auth",
-                "function",
-                "extension",
-                "compliance",
-                "health",
-              ]),
-            ),
-            fkey_name: Schema.optionalKey(Schema.String),
-            fkey_columns: Schema.optionalKey(
-              Schema.Array(
-                Schema.Number.check(Schema.isFinite().annotate({ expected: "a finite number" })),
+          Schema.StructWithRest(
+            Schema.Struct({
+              schema: Schema.optionalKey(Schema.String),
+              name: Schema.optionalKey(Schema.String),
+              entity: Schema.optionalKey(Schema.String),
+              type: Schema.optionalKey(
+                Schema.Literals([
+                  "table",
+                  "view",
+                  "materialized view",
+                  "foreign table",
+                  "auth",
+                  "function",
+                  "extension",
+                  "compliance",
+                  "health",
+                ]),
               ),
-            ),
-          }),
+              fkey_name: Schema.optionalKey(Schema.String),
+              fkey_columns: Schema.optionalKey(
+                Schema.Array(
+                  Schema.Number.check(Schema.isFinite().annotate({ expected: "a finite number" })),
+                ),
+              ),
+            }),
+            [Schema.Record(Schema.String, Schema.Json.annotate({ expected: "JSON value" }))],
+          ),
         ),
         cache_key: Schema.String,
         observed_at: Schema.optionalKey(Schema.String.annotate({ format: "date-time" })),
@@ -5498,30 +5501,33 @@ export const V1GetSecurityAdvisorsOutput = Schema.Struct({
         detail: Schema.String,
         remediation: Schema.String,
         metadata: Schema.optionalKey(
-          Schema.Struct({
-            schema: Schema.optionalKey(Schema.String),
-            name: Schema.optionalKey(Schema.String),
-            entity: Schema.optionalKey(Schema.String),
-            type: Schema.optionalKey(
-              Schema.Literals([
-                "table",
-                "view",
-                "materialized view",
-                "foreign table",
-                "auth",
-                "function",
-                "extension",
-                "compliance",
-                "health",
-              ]),
-            ),
-            fkey_name: Schema.optionalKey(Schema.String),
-            fkey_columns: Schema.optionalKey(
-              Schema.Array(
-                Schema.Number.check(Schema.isFinite().annotate({ expected: "a finite number" })),
+          Schema.StructWithRest(
+            Schema.Struct({
+              schema: Schema.optionalKey(Schema.String),
+              name: Schema.optionalKey(Schema.String),
+              entity: Schema.optionalKey(Schema.String),
+              type: Schema.optionalKey(
+                Schema.Literals([
+                  "table",
+                  "view",
+                  "materialized view",
+                  "foreign table",
+                  "auth",
+                  "function",
+                  "extension",
+                  "compliance",
+                  "health",
+                ]),
               ),
-            ),
-          }),
+              fkey_name: Schema.optionalKey(Schema.String),
+              fkey_columns: Schema.optionalKey(
+                Schema.Array(
+                  Schema.Number.check(Schema.isFinite().annotate({ expected: "a finite number" })),
+                ),
+              ),
+            }),
+            [Schema.Record(Schema.String, Schema.Json.annotate({ expected: "JSON value" }))],
+          ),
         ),
         cache_key: Schema.String,
         observed_at: Schema.optionalKey(Schema.String.annotate({ format: "date-time" })),
@@ -10084,87 +10090,103 @@ export const V2CreateLogDrainInput = Schema.Struct({
     ),
   data: Schema.Struct({
     type: Schema.Literal("log_drain").annotate({ description: "Resource type." }),
-    attributes: Schema.Struct({
-      name: Schema.String,
-      description: Schema.optionalKey(Schema.String),
-      config: Schema.Union([
-        Schema.Struct({
-          url: Schema.optionalKey(Schema.Union([Schema.String, Schema.Null])),
-          schema: Schema.optionalKey(Schema.String),
-          username: Schema.optionalKey(Schema.Union([Schema.String, Schema.Null])),
-          password: Schema.optionalKey(Schema.Union([Schema.String, Schema.Null])),
-          port: Schema.optionalKey(
-            Schema.Union([
-              Schema.Number.check(Schema.isFinite().annotate({ expected: "a finite number" })),
-              Schema.Null,
-            ]),
-          ),
-          hostname: Schema.optionalKey(Schema.String),
-        }).annotate({ title: "postgres" }),
-        Schema.Struct({
-          url: Schema.optionalKey(Schema.String),
-          http: Schema.optionalKey(Schema.Literals(["http1", "http2"])),
-          gzip: Schema.optionalKey(Schema.Boolean),
-          headers: Schema.optionalKey(Schema.Record(Schema.String, Schema.String)),
-        }).annotate({ title: "webhook" }),
-        Schema.Struct({
-          project_id: Schema.optionalKey(Schema.String),
-          dataset_id: Schema.optionalKey(Schema.String),
-        }).annotate({ title: "bigquery" }),
-        Schema.Struct({
-          api_key: Schema.optionalKey(Schema.String),
-          region: Schema.optionalKey(Schema.String),
-        }).annotate({ title: "datadog" }),
-        Schema.Struct({
-          url: Schema.optionalKey(Schema.String),
-          username: Schema.optionalKey(Schema.Union([Schema.String, Schema.Null])),
-          password: Schema.optionalKey(Schema.Union([Schema.String, Schema.Null])),
-          headers: Schema.optionalKey(Schema.Record(Schema.String, Schema.String)),
-        }).annotate({ title: "loki" }),
-        Schema.Struct({ dsn: Schema.optionalKey(Schema.String) }).annotate({ title: "sentry" }),
-        Schema.Struct({
-          domain: Schema.optionalKey(Schema.String),
-          api_token: Schema.optionalKey(Schema.String),
-          dataset_name: Schema.optionalKey(Schema.String),
-        }).annotate({ title: "axiom" }),
-        Schema.Struct({
-          host: Schema.optionalKey(Schema.String),
-          port: Schema.optionalKey(
-            Schema.Number.check(Schema.isInt().annotate({ expected: "an integer" }))
-              .check(
-                Schema.isGreaterThanOrEqualTo(0).annotate({
-                  expected: "a value greater than or equal to 0",
-                }),
-              )
-              .check(
-                Schema.isLessThanOrEqualTo(65535).annotate({
-                  expected: "a value less than or equal to 65535",
-                }),
-              ),
-          ),
-          tls: Schema.optionalKey(Schema.Boolean),
-          structured_data: Schema.optionalKey(Schema.String),
-          cipher_key: Schema.optionalKey(Schema.String),
-          ca_cert: Schema.optionalKey(Schema.String),
-          client_cert: Schema.optionalKey(Schema.String),
-          client_key: Schema.optionalKey(Schema.String),
-        }).annotate({ title: "syslog" }),
-      ]),
-      backend_type: Schema.Literals([
-        "postgres",
-        "bigquery",
-        "clickhouse",
-        "webhook",
-        "datadog",
-        "loki",
-        "sentry",
-        "s3",
-        "axiom",
-        "last9",
-        "otlp",
-        "syslog",
-      ]),
-    }),
+    attributes: Schema.StructWithRest(
+      Schema.Struct({
+        name: Schema.String,
+        description: Schema.optionalKey(Schema.String),
+        config: Schema.Union([
+          Schema.Struct({
+            url: Schema.optionalKey(Schema.String),
+            http: Schema.optionalKey(Schema.Literals(["http1", "http2"])),
+            gzip: Schema.optionalKey(Schema.Boolean),
+            headers: Schema.optionalKey(Schema.Record(Schema.String, Schema.String)),
+          }).annotate({ title: "webhook" }),
+          Schema.Struct({
+            api_key: Schema.optionalKey(Schema.String),
+            region: Schema.optionalKey(Schema.String),
+          }).annotate({ title: "datadog" }),
+          Schema.Struct({
+            url: Schema.optionalKey(Schema.String),
+            username: Schema.optionalKey(Schema.Union([Schema.String, Schema.Null])),
+            password: Schema.optionalKey(Schema.Union([Schema.String, Schema.Null])),
+            headers: Schema.optionalKey(Schema.Record(Schema.String, Schema.String)),
+          }).annotate({ title: "loki" }),
+          Schema.Struct({ dsn: Schema.optionalKey(Schema.String) }).annotate({ title: "sentry" }),
+          Schema.Struct({
+            domain: Schema.optionalKey(Schema.String),
+            api_token: Schema.optionalKey(Schema.String),
+            dataset_name: Schema.optionalKey(Schema.String),
+          }).annotate({ title: "axiom" }),
+          Schema.Struct({
+            host: Schema.optionalKey(Schema.String),
+            port: Schema.optionalKey(
+              Schema.Number.check(Schema.isInt().annotate({ expected: "an integer" }))
+                .check(
+                  Schema.isGreaterThanOrEqualTo(0).annotate({
+                    expected: "a value greater than or equal to 0",
+                  }),
+                )
+                .check(
+                  Schema.isLessThanOrEqualTo(65535).annotate({
+                    expected: "a value less than or equal to 65535",
+                  }),
+                ),
+            ),
+            tls: Schema.optionalKey(Schema.Boolean),
+            structured_data: Schema.optionalKey(Schema.String),
+            cipher_key: Schema.optionalKey(Schema.String),
+            ca_cert: Schema.optionalKey(Schema.String),
+            client_cert: Schema.optionalKey(Schema.String),
+            client_key: Schema.optionalKey(Schema.String),
+          }).annotate({ title: "syslog" }),
+          Schema.Struct({
+            s3_bucket: Schema.optionalKey(Schema.String),
+            storage_region: Schema.optionalKey(Schema.String),
+            access_key_id: Schema.optionalKey(Schema.String),
+            secret_access_key: Schema.optionalKey(Schema.String),
+            batch_timeout: Schema.optionalKey(
+              Schema.Number.check(Schema.isInt().annotate({ expected: "an integer" }))
+                .check(
+                  Schema.isGreaterThanOrEqualTo(-9007199254740991).annotate({
+                    expected: "a value greater than or equal to -9007199254740991",
+                  }),
+                )
+                .check(
+                  Schema.isLessThanOrEqualTo(9007199254740991).annotate({
+                    expected: "a value less than or equal to 9007199254740991",
+                  }),
+                ),
+            ),
+          }).annotate({ title: "s3" }),
+          Schema.Struct({
+            region: Schema.optionalKey(Schema.String),
+            username: Schema.optionalKey(Schema.String),
+            password: Schema.optionalKey(Schema.String),
+          }).annotate({ title: "last9" }),
+          Schema.Struct({
+            endpoint: Schema.optionalKey(Schema.String),
+            protocol: Schema.optionalKey(Schema.String),
+            gzip: Schema.optionalKey(Schema.Boolean),
+            headers: Schema.optionalKey(Schema.Record(Schema.String, Schema.String)),
+          }).annotate({ title: "otlp" }),
+        ]),
+        backend_type: Schema.Literals([
+          "postgres",
+          "bigquery",
+          "clickhouse",
+          "webhook",
+          "datadog",
+          "loki",
+          "sentry",
+          "s3",
+          "axiom",
+          "last9",
+          "otlp",
+          "syslog",
+        ]),
+      }),
+      [Schema.Record(Schema.String, Schema.Json.annotate({ expected: "JSON value" }))],
+    ),
   }),
 });
 export const V2CreateLogDrainOutput = Schema.Struct({
@@ -10176,28 +10198,11 @@ export const V2CreateLogDrainOutput = Schema.Struct({
       description: Schema.optionalKey(Schema.String),
       config: Schema.Union([
         Schema.Struct({
-          url: Schema.optionalKey(Schema.Union([Schema.String, Schema.Null])),
-          schema: Schema.optionalKey(Schema.String),
-          username: Schema.optionalKey(Schema.Union([Schema.String, Schema.Null])),
-          password: Schema.optionalKey(Schema.Union([Schema.String, Schema.Null])),
-          port: Schema.optionalKey(
-            Schema.Union([
-              Schema.Number.check(Schema.isFinite().annotate({ expected: "a finite number" })),
-              Schema.Null,
-            ]),
-          ),
-          hostname: Schema.optionalKey(Schema.String),
-        }).annotate({ title: "postgres" }),
-        Schema.Struct({
           url: Schema.optionalKey(Schema.String),
           http: Schema.optionalKey(Schema.Literals(["http1", "http2"])),
           gzip: Schema.optionalKey(Schema.Boolean),
           headers: Schema.optionalKey(Schema.Record(Schema.String, Schema.String)),
         }).annotate({ title: "webhook" }),
-        Schema.Struct({
-          project_id: Schema.optionalKey(Schema.String),
-          dataset_id: Schema.optionalKey(Schema.String),
-        }).annotate({ title: "bigquery" }),
         Schema.Struct({
           api_key: Schema.optionalKey(Schema.String),
           region: Schema.optionalKey(Schema.String),
@@ -10236,6 +10241,36 @@ export const V2CreateLogDrainOutput = Schema.Struct({
           client_cert: Schema.optionalKey(Schema.String),
           client_key: Schema.optionalKey(Schema.String),
         }).annotate({ title: "syslog" }),
+        Schema.Struct({
+          s3_bucket: Schema.optionalKey(Schema.String),
+          storage_region: Schema.optionalKey(Schema.String),
+          access_key_id: Schema.optionalKey(Schema.String),
+          secret_access_key: Schema.optionalKey(Schema.String),
+          batch_timeout: Schema.optionalKey(
+            Schema.Number.check(Schema.isInt().annotate({ expected: "an integer" }))
+              .check(
+                Schema.isGreaterThanOrEqualTo(-9007199254740991).annotate({
+                  expected: "a value greater than or equal to -9007199254740991",
+                }),
+              )
+              .check(
+                Schema.isLessThanOrEqualTo(9007199254740991).annotate({
+                  expected: "a value less than or equal to 9007199254740991",
+                }),
+              ),
+          ),
+        }).annotate({ title: "s3" }),
+        Schema.Struct({
+          region: Schema.optionalKey(Schema.String),
+          username: Schema.optionalKey(Schema.String),
+          password: Schema.optionalKey(Schema.String),
+        }).annotate({ title: "last9" }),
+        Schema.Struct({
+          endpoint: Schema.optionalKey(Schema.String),
+          protocol: Schema.optionalKey(Schema.String),
+          gzip: Schema.optionalKey(Schema.Boolean),
+          headers: Schema.optionalKey(Schema.Record(Schema.String, Schema.String)),
+        }).annotate({ title: "otlp" }),
       ]),
       backend_type: Schema.Literals([
         "postgres",
@@ -10874,664 +10909,594 @@ export const V2GetProjectConfigOutput = Schema.Struct({
     type: Schema.Literal("project_config").annotate({ description: "Resource type." }),
     id: Schema.String.annotate({ description: "Project ref." }),
     attributes: Schema.Struct({
-      database: Schema.optionalKey(
-        Schema.Struct({
-          major_version: Schema.optionalKey(
-            Schema.Number.annotate({
-              description:
-                "The major Postgres version the database runs. `17` covers both Postgres 17 and Oriole on 17, since Oriole is a storage engine rather than a version.",
-            })
-              .check(Schema.isInt().annotate({ expected: "an integer" }))
-              .check(
-                Schema.isGreaterThanOrEqualTo(-9007199254740991).annotate({
-                  expected: "a value greater than or equal to -9007199254740991",
-                }),
-              )
-              .check(
-                Schema.isLessThanOrEqualTo(9007199254740991).annotate({
-                  expected: "a value less than or equal to 9007199254740991",
-                }),
-              ),
-          ),
-          ssl_enforced: Schema.optionalKey(
-            Schema.Boolean.annotate({
-              description: "Whether the database rejects plaintext connections",
-            }),
-          ),
-          network_restrictions: Schema.optionalKey(
-            Schema.Struct({
-              entitlement: Schema.optionalKey(Schema.Literals(["disallowed", "allowed"])),
-              status: Schema.optionalKey(
-                Schema.Literals(["stored", "applied"]).annotate({
-                  description:
-                    "Whether the allowlist below is applied to the project or only stored.",
-                }),
-              ),
-              allowed_cidrs: Schema.optionalKey(
-                Schema.Array(
-                  Schema.Struct({ address: Schema.String, type: Schema.Literals(["v4", "v6"]) }),
-                ),
-              ),
-              updated_at: Schema.optionalKey(Schema.String),
-              applied_at: Schema.optionalKey(Schema.String),
-            }),
-          ),
-          postgres_settings: Schema.optionalKey(
-            Schema.Struct({
-              effective_cache_size: Schema.optionalKey(Schema.String),
-              logical_decoding_work_mem: Schema.optionalKey(Schema.String),
-              log_autovacuum_min_duration: Schema.optionalKey(
-                Schema.String.annotate({ description: "Default unit: ms" }).check(
-                  Schema.isPattern(
-                    new RegExp("^(-?[0-9]+(?:\\.[0-9]+)?)(us|ms|s|min|h|d)?$"),
-                  ).annotate({
-                    expected:
-                      "a string matching the RegExp ^(-?[0-9]+(?:\\.[0-9]+)?)(us|ms|s|min|h|d)?$",
-                  }),
-                ),
-              ),
-              log_checkpoints: Schema.optionalKey(Schema.Boolean),
-              log_connections: Schema.optionalKey(Schema.Boolean),
-              log_disconnections: Schema.optionalKey(Schema.Boolean),
-              log_duration: Schema.optionalKey(Schema.Boolean),
-              log_lock_waits: Schema.optionalKey(Schema.Boolean),
-              log_recovery_conflict_waits: Schema.optionalKey(Schema.Boolean),
-              log_replication_commands: Schema.optionalKey(Schema.Boolean),
-              log_startup_progress_interval: Schema.optionalKey(
-                Schema.String.annotate({ description: "Default unit: ms" }).check(
-                  Schema.isPattern(
-                    new RegExp("^(-?[0-9]+(?:\\.[0-9]+)?)(us|ms|s|min|h|d)?$"),
-                  ).annotate({
-                    expected:
-                      "a string matching the RegExp ^(-?[0-9]+(?:\\.[0-9]+)?)(us|ms|s|min|h|d)?$",
-                  }),
-                ),
-              ),
-              log_temp_files: Schema.optionalKey(Schema.String),
-              maintenance_work_mem: Schema.optionalKey(Schema.String),
-              track_activity_query_size: Schema.optionalKey(Schema.String),
-              max_connections: Schema.optionalKey(
-                Schema.Number.check(Schema.isInt().annotate({ expected: "an integer" }))
-                  .check(
-                    Schema.isGreaterThanOrEqualTo(1).annotate({
-                      expected: "a value greater than or equal to 1",
-                    }),
-                  )
-                  .check(
-                    Schema.isLessThanOrEqualTo(262143).annotate({
-                      expected: "a value less than or equal to 262143",
-                    }),
-                  ),
-              ),
-              max_locks_per_transaction: Schema.optionalKey(
-                Schema.Number.check(Schema.isInt().annotate({ expected: "an integer" }))
-                  .check(
-                    Schema.isGreaterThanOrEqualTo(10).annotate({
-                      expected: "a value greater than or equal to 10",
-                    }),
-                  )
-                  .check(
-                    Schema.isLessThanOrEqualTo(2147483640).annotate({
-                      expected: "a value less than or equal to 2147483640",
-                    }),
-                  ),
-              ),
-              max_logical_replication_workers: Schema.optionalKey(
-                Schema.Number.check(Schema.isInt().annotate({ expected: "an integer" }))
-                  .check(
-                    Schema.isGreaterThanOrEqualTo(0).annotate({
-                      expected: "a value greater than or equal to 0",
-                    }),
-                  )
-                  .check(
-                    Schema.isLessThanOrEqualTo(262143).annotate({
-                      expected: "a value less than or equal to 262143",
-                    }),
-                  ),
-              ),
-              max_parallel_maintenance_workers: Schema.optionalKey(
-                Schema.Number.check(Schema.isInt().annotate({ expected: "an integer" }))
-                  .check(
-                    Schema.isGreaterThanOrEqualTo(0).annotate({
-                      expected: "a value greater than or equal to 0",
-                    }),
-                  )
-                  .check(
-                    Schema.isLessThanOrEqualTo(1024).annotate({
-                      expected: "a value less than or equal to 1024",
-                    }),
-                  ),
-              ),
-              max_parallel_workers: Schema.optionalKey(
-                Schema.Number.check(Schema.isInt().annotate({ expected: "an integer" }))
-                  .check(
-                    Schema.isGreaterThanOrEqualTo(0).annotate({
-                      expected: "a value greater than or equal to 0",
-                    }),
-                  )
-                  .check(
-                    Schema.isLessThanOrEqualTo(1024).annotate({
-                      expected: "a value less than or equal to 1024",
-                    }),
-                  ),
-              ),
-              max_parallel_workers_per_gather: Schema.optionalKey(
-                Schema.Number.check(Schema.isInt().annotate({ expected: "an integer" }))
-                  .check(
-                    Schema.isGreaterThanOrEqualTo(0).annotate({
-                      expected: "a value greater than or equal to 0",
-                    }),
-                  )
-                  .check(
-                    Schema.isLessThanOrEqualTo(1024).annotate({
-                      expected: "a value less than or equal to 1024",
-                    }),
-                  ),
-              ),
-              max_replication_slots: Schema.optionalKey(
-                Schema.Number.check(Schema.isInt().annotate({ expected: "an integer" }))
-                  .check(
-                    Schema.isGreaterThanOrEqualTo(-9007199254740991).annotate({
-                      expected: "a value greater than or equal to -9007199254740991",
-                    }),
-                  )
-                  .check(
-                    Schema.isLessThanOrEqualTo(9007199254740991).annotate({
-                      expected: "a value less than or equal to 9007199254740991",
-                    }),
-                  ),
-              ),
-              max_slot_wal_keep_size: Schema.optionalKey(Schema.String),
-              max_standby_archive_delay: Schema.optionalKey(Schema.String),
-              max_standby_streaming_delay: Schema.optionalKey(Schema.String),
-              max_sync_workers_per_subscription: Schema.optionalKey(
-                Schema.Number.check(Schema.isInt().annotate({ expected: "an integer" }))
-                  .check(
-                    Schema.isGreaterThanOrEqualTo(0).annotate({
-                      expected: "a value greater than or equal to 0",
-                    }),
-                  )
-                  .check(
-                    Schema.isLessThanOrEqualTo(262143).annotate({
-                      expected: "a value less than or equal to 262143",
-                    }),
-                  ),
-              ),
-              max_wal_size: Schema.optionalKey(Schema.String),
-              max_wal_senders: Schema.optionalKey(
-                Schema.Number.check(Schema.isInt().annotate({ expected: "an integer" }))
-                  .check(
-                    Schema.isGreaterThanOrEqualTo(-9007199254740991).annotate({
-                      expected: "a value greater than or equal to -9007199254740991",
-                    }),
-                  )
-                  .check(
-                    Schema.isLessThanOrEqualTo(9007199254740991).annotate({
-                      expected: "a value less than or equal to 9007199254740991",
-                    }),
-                  ),
-              ),
-              max_worker_processes: Schema.optionalKey(
-                Schema.Number.check(Schema.isInt().annotate({ expected: "an integer" }))
-                  .check(
-                    Schema.isGreaterThanOrEqualTo(0).annotate({
-                      expected: "a value greater than or equal to 0",
-                    }),
-                  )
-                  .check(
-                    Schema.isLessThanOrEqualTo(262143).annotate({
-                      expected: "a value less than or equal to 262143",
-                    }),
-                  ),
-              ),
-              session_replication_role: Schema.optionalKey(
-                Schema.Literals(["origin", "replica", "local"]),
-              ),
-              shared_buffers: Schema.optionalKey(Schema.String),
-              statement_timeout: Schema.optionalKey(
-                Schema.String.annotate({ description: "Default unit: ms" }).check(
-                  Schema.isPattern(
-                    new RegExp("^(-?[0-9]+(?:\\.[0-9]+)?)(us|ms|s|min|h|d)?$"),
-                  ).annotate({
-                    expected:
-                      "a string matching the RegExp ^(-?[0-9]+(?:\\.[0-9]+)?)(us|ms|s|min|h|d)?$",
-                  }),
-                ),
-              ),
-              track_commit_timestamp: Schema.optionalKey(Schema.Boolean),
-              wal_keep_size: Schema.optionalKey(Schema.String),
-              wal_sender_timeout: Schema.optionalKey(
-                Schema.String.annotate({ description: "Default unit: ms" }).check(
-                  Schema.isPattern(
-                    new RegExp("^(-?[0-9]+(?:\\.[0-9]+)?)(us|ms|s|min|h|d)?$"),
-                  ).annotate({
-                    expected:
-                      "a string matching the RegExp ^(-?[0-9]+(?:\\.[0-9]+)?)(us|ms|s|min|h|d)?$",
-                  }),
-                ),
-              ),
-              work_mem: Schema.optionalKey(Schema.String),
-              checkpoint_timeout: Schema.optionalKey(
-                Schema.String.annotate({ description: "Default unit: s" }).check(
-                  Schema.isPattern(
-                    new RegExp("^(-?[0-9]+(?:\\.[0-9]+)?)(us|ms|s|min|h|d)?$"),
-                  ).annotate({
-                    expected:
-                      "a string matching the RegExp ^(-?[0-9]+(?:\\.[0-9]+)?)(us|ms|s|min|h|d)?$",
-                  }),
-                ),
-              ),
-              hot_standby_feedback: Schema.optionalKey(Schema.Boolean),
-              cron_log_statement: Schema.optionalKey(Schema.Boolean),
-            }).annotate({
-              description:
-                "Postgres parameter overrides. Empty when the project runs entirely on defaults.",
-            }),
-          ),
-        }),
-      ),
-      pooler: Schema.optionalKey(
-        Schema.Struct({
-          pool_mode: Schema.optionalKey(Schema.Literals(["transaction", "session", "statement"])),
-          ignore_startup_parameters: Schema.optionalKey(Schema.String),
-          server_idle_timeout: Schema.optionalKey(
-            Schema.Number.check(Schema.isInt().annotate({ expected: "an integer" }))
-              .check(
-                Schema.isGreaterThanOrEqualTo(-9007199254740991).annotate({
-                  expected: "a value greater than or equal to -9007199254740991",
-                }),
-              )
-              .check(
-                Schema.isLessThanOrEqualTo(9007199254740991).annotate({
-                  expected: "a value less than or equal to 9007199254740991",
-                }),
-              ),
-          ),
-          server_lifetime: Schema.optionalKey(
-            Schema.Number.check(Schema.isInt().annotate({ expected: "an integer" }))
-              .check(
-                Schema.isGreaterThanOrEqualTo(-9007199254740991).annotate({
-                  expected: "a value greater than or equal to -9007199254740991",
-                }),
-              )
-              .check(
-                Schema.isLessThanOrEqualTo(9007199254740991).annotate({
-                  expected: "a value less than or equal to 9007199254740991",
-                }),
-              ),
-          ),
-          query_wait_timeout: Schema.optionalKey(
-            Schema.Number.check(Schema.isInt().annotate({ expected: "an integer" }))
-              .check(
-                Schema.isGreaterThanOrEqualTo(-9007199254740991).annotate({
-                  expected: "a value greater than or equal to -9007199254740991",
-                }),
-              )
-              .check(
-                Schema.isLessThanOrEqualTo(9007199254740991).annotate({
-                  expected: "a value less than or equal to 9007199254740991",
-                }),
-              ),
-          ),
-          reserve_pool_size: Schema.optionalKey(
-            Schema.Number.check(Schema.isInt().annotate({ expected: "an integer" }))
-              .check(
-                Schema.isGreaterThanOrEqualTo(-9007199254740991).annotate({
-                  expected: "a value greater than or equal to -9007199254740991",
-                }),
-              )
-              .check(
-                Schema.isLessThanOrEqualTo(9007199254740991).annotate({
-                  expected: "a value less than or equal to 9007199254740991",
-                }),
-              ),
-          ),
-          default_pool_size: Schema.optionalKey(
-            Schema.Number.annotate({
-              description:
-                "Defaults to the pooler's size for the project's compute when not overridden.",
-            })
-              .check(Schema.isInt().annotate({ expected: "an integer" }))
-              .check(
-                Schema.isGreaterThanOrEqualTo(-9007199254740991).annotate({
-                  expected: "a value greater than or equal to -9007199254740991",
-                }),
-              )
-              .check(
-                Schema.isLessThanOrEqualTo(9007199254740991).annotate({
-                  expected: "a value less than or equal to 9007199254740991",
-                }),
-              ),
-          ),
-          max_client_conn: Schema.optionalKey(
-            Schema.Number.annotate({
-              description:
-                "Defaults to the pooler's size for the project's compute when not overridden.",
-            })
-              .check(Schema.isInt().annotate({ expected: "an integer" }))
-              .check(
-                Schema.isGreaterThanOrEqualTo(-9007199254740991).annotate({
-                  expected: "a value greater than or equal to -9007199254740991",
-                }),
-              )
-              .check(
-                Schema.isLessThanOrEqualTo(9007199254740991).annotate({
-                  expected: "a value less than or equal to 9007199254740991",
-                }),
-              ),
-          ),
-        }),
-      ),
-      auth: Schema.optionalKey(
-        Schema.Record(Schema.String, Schema.Json.annotate({ expected: "JSON value" })).annotate({
+      database: Schema.Struct({
+        major_version: Schema.Number.annotate({
           description:
-            "Effective Auth config, keyed by lowercased GoTrue setting name and resolved through the `gotrue_config` view, so a setting the project has never overridden is reported at its platform default. Secrets are returned as an HMAC of their value, never in plaintext.",
-        }),
-      ),
-      api: Schema.optionalKey(
-        Schema.Struct({
-          db_schema: Schema.optionalKey(
-            Schema.String.annotate({ description: "Schemas exposed through the Data API" }),
-          ),
-          db_extra_search_path: Schema.optionalKey(Schema.String),
-          max_rows: Schema.optionalKey(
-            Schema.Number.check(Schema.isInt().annotate({ expected: "an integer" }))
-              .check(
-                Schema.isGreaterThanOrEqualTo(-9007199254740991).annotate({
-                  expected: "a value greater than or equal to -9007199254740991",
-                }),
-              )
-              .check(
-                Schema.isLessThanOrEqualTo(9007199254740991).annotate({
-                  expected: "a value less than or equal to 9007199254740991",
-                }),
-              ),
-          ),
-          db_pool_acquisition_timeout: Schema.optionalKey(
-            Schema.Number.check(Schema.isInt().annotate({ expected: "an integer" }))
-              .check(
-                Schema.isGreaterThanOrEqualTo(-9007199254740991).annotate({
-                  expected: "a value greater than or equal to -9007199254740991",
-                }),
-              )
-              .check(
-                Schema.isLessThanOrEqualTo(9007199254740991).annotate({
-                  expected: "a value less than or equal to 9007199254740991",
-                }),
-              ),
-          ),
-          db_pool: Schema.optionalKey(
-            Schema.Union([
-              Schema.Number.annotate({
-                description:
-                  "If `null`, no pool size is written to the project's PostgREST config and PostgREST's own default applies. The platform does not pick a value here.",
-              })
-                .check(Schema.isInt().annotate({ expected: "an integer" }))
-                .check(
-                  Schema.isGreaterThanOrEqualTo(-9007199254740991).annotate({
-                    expected: "a value greater than or equal to -9007199254740991",
-                  }),
-                )
-                .check(
-                  Schema.isLessThanOrEqualTo(9007199254740991).annotate({
-                    expected: "a value less than or equal to 9007199254740991",
-                  }),
-                ),
-              Schema.Null,
-            ]),
-          ),
-        }),
-      ),
-      realtime: Schema.optionalKey(
-        Schema.Struct({
-          private_only: Schema.optionalKey(Schema.Boolean),
-          max_concurrent_users: Schema.optionalKey(
-            Schema.Number.check(Schema.isInt().annotate({ expected: "an integer" }))
-              .check(
-                Schema.isGreaterThanOrEqualTo(-9007199254740991).annotate({
-                  expected: "a value greater than or equal to -9007199254740991",
-                }),
-              )
-              .check(
-                Schema.isLessThanOrEqualTo(9007199254740991).annotate({
-                  expected: "a value less than or equal to 9007199254740991",
-                }),
-              ),
-          ),
-          max_events_per_second: Schema.optionalKey(
-            Schema.Number.check(Schema.isInt().annotate({ expected: "an integer" }))
-              .check(
-                Schema.isGreaterThanOrEqualTo(-9007199254740991).annotate({
-                  expected: "a value greater than or equal to -9007199254740991",
-                }),
-              )
-              .check(
-                Schema.isLessThanOrEqualTo(9007199254740991).annotate({
-                  expected: "a value less than or equal to 9007199254740991",
-                }),
-              ),
-          ),
-          max_bytes_per_second: Schema.optionalKey(
-            Schema.Number.check(Schema.isInt().annotate({ expected: "an integer" }))
-              .check(
-                Schema.isGreaterThanOrEqualTo(-9007199254740991).annotate({
-                  expected: "a value greater than or equal to -9007199254740991",
-                }),
-              )
-              .check(
-                Schema.isLessThanOrEqualTo(9007199254740991).annotate({
-                  expected: "a value less than or equal to 9007199254740991",
-                }),
-              ),
-          ),
-          max_channels_per_client: Schema.optionalKey(
-            Schema.Number.check(Schema.isInt().annotate({ expected: "an integer" }))
-              .check(
-                Schema.isGreaterThanOrEqualTo(-9007199254740991).annotate({
-                  expected: "a value greater than or equal to -9007199254740991",
-                }),
-              )
-              .check(
-                Schema.isLessThanOrEqualTo(9007199254740991).annotate({
-                  expected: "a value less than or equal to 9007199254740991",
-                }),
-              ),
-          ),
-          max_joins_per_second: Schema.optionalKey(
-            Schema.Number.check(Schema.isInt().annotate({ expected: "an integer" }))
-              .check(
-                Schema.isGreaterThanOrEqualTo(-9007199254740991).annotate({
-                  expected: "a value greater than or equal to -9007199254740991",
-                }),
-              )
-              .check(
-                Schema.isLessThanOrEqualTo(9007199254740991).annotate({
-                  expected: "a value less than or equal to 9007199254740991",
-                }),
-              ),
-          ),
-          max_presence_events_per_second: Schema.optionalKey(
-            Schema.Number.check(Schema.isInt().annotate({ expected: "an integer" }))
-              .check(
-                Schema.isGreaterThanOrEqualTo(-9007199254740991).annotate({
-                  expected: "a value greater than or equal to -9007199254740991",
-                }),
-              )
-              .check(
-                Schema.isLessThanOrEqualTo(9007199254740991).annotate({
-                  expected: "a value less than or equal to 9007199254740991",
-                }),
-              ),
-          ),
-          max_payload_size_in_kb: Schema.optionalKey(
-            Schema.Number.check(Schema.isInt().annotate({ expected: "an integer" }))
-              .check(
-                Schema.isGreaterThanOrEqualTo(-9007199254740991).annotate({
-                  expected: "a value greater than or equal to -9007199254740991",
-                }),
-              )
-              .check(
-                Schema.isLessThanOrEqualTo(9007199254740991).annotate({
-                  expected: "a value less than or equal to 9007199254740991",
-                }),
-              ),
-          ),
-          presence_enabled: Schema.optionalKey(Schema.Boolean),
-          suspend: Schema.optionalKey(Schema.Boolean),
-          connection_pool: Schema.optionalKey(
-            Schema.Number.annotate({
-              description:
-                "Defaults to Realtime's pool size for the project's compute when not overridden.",
-            })
-              .check(Schema.isInt().annotate({ expected: "an integer" }))
-              .check(
-                Schema.isGreaterThanOrEqualTo(-9007199254740991).annotate({
-                  expected: "a value greater than or equal to -9007199254740991",
-                }),
-              )
-              .check(
-                Schema.isLessThanOrEqualTo(9007199254740991).annotate({
-                  expected: "a value less than or equal to 9007199254740991",
-                }),
-              ),
-          ),
-          postgres_changes_pool: Schema.optionalKey(
-            Schema.Union([
-              Schema.Number.annotate({
-                description:
-                  "If `null`, no override is stored and Realtime applies its own default.",
-              })
-                .check(Schema.isInt().annotate({ expected: "an integer" }))
-                .check(
-                  Schema.isGreaterThanOrEqualTo(-9007199254740991).annotate({
-                    expected: "a value greater than or equal to -9007199254740991",
-                  }),
-                )
-                .check(
-                  Schema.isLessThanOrEqualTo(9007199254740991).annotate({
-                    expected: "a value less than or equal to 9007199254740991",
-                  }),
-                ),
-              Schema.Null,
-            ]),
-          ),
-        }),
-      ),
-      storage: Schema.optionalKey(
-        Schema.Struct({
-          file_size_limit: Schema.optionalKey(
-            Schema.Number.annotate({ format: "int64" })
-              .check(Schema.isInt().annotate({ expected: "an integer" }))
-              .check(
-                Schema.isGreaterThanOrEqualTo(-9007199254740991).annotate({
-                  expected: "a value greater than or equal to -9007199254740991",
-                }),
-              )
-              .check(
-                Schema.isLessThanOrEqualTo(9007199254740991).annotate({
-                  expected: "a value less than or equal to 9007199254740991",
-                }),
-              ),
-          ),
-          features: Schema.optionalKey(
-            Schema.Struct({
-              image_transformation: Schema.optionalKey(
-                Schema.Struct({ enabled: Schema.optionalKey(Schema.Boolean) }),
-              ),
-              s3_protocol: Schema.optionalKey(
-                Schema.Struct({ enabled: Schema.optionalKey(Schema.Boolean) }),
-              ),
-              purge_cache: Schema.optionalKey(
-                Schema.Struct({ enabled: Schema.optionalKey(Schema.Boolean) }),
-              ),
-              iceberg_catalog: Schema.optionalKey(
-                Schema.Struct({
-                  enabled: Schema.optionalKey(Schema.Boolean),
-                  max_namespaces: Schema.optionalKey(
-                    Schema.Number.check(Schema.isInt().annotate({ expected: "an integer" }))
-                      .check(
-                        Schema.isGreaterThanOrEqualTo(-9007199254740991).annotate({
-                          expected: "a value greater than or equal to -9007199254740991",
-                        }),
-                      )
-                      .check(
-                        Schema.isLessThanOrEqualTo(9007199254740991).annotate({
-                          expected: "a value less than or equal to 9007199254740991",
-                        }),
-                      ),
-                  ),
-                  max_tables: Schema.optionalKey(
-                    Schema.Number.check(Schema.isInt().annotate({ expected: "an integer" }))
-                      .check(
-                        Schema.isGreaterThanOrEqualTo(-9007199254740991).annotate({
-                          expected: "a value greater than or equal to -9007199254740991",
-                        }),
-                      )
-                      .check(
-                        Schema.isLessThanOrEqualTo(9007199254740991).annotate({
-                          expected: "a value less than or equal to 9007199254740991",
-                        }),
-                      ),
-                  ),
-                  max_catalogs: Schema.optionalKey(
-                    Schema.Number.check(Schema.isInt().annotate({ expected: "an integer" }))
-                      .check(
-                        Schema.isGreaterThanOrEqualTo(-9007199254740991).annotate({
-                          expected: "a value greater than or equal to -9007199254740991",
-                        }),
-                      )
-                      .check(
-                        Schema.isLessThanOrEqualTo(9007199254740991).annotate({
-                          expected: "a value less than or equal to 9007199254740991",
-                        }),
-                      ),
-                  ),
-                }),
-              ),
-              vector_buckets: Schema.optionalKey(
-                Schema.Struct({
-                  enabled: Schema.optionalKey(Schema.Boolean),
-                  max_buckets: Schema.optionalKey(
-                    Schema.Number.check(Schema.isInt().annotate({ expected: "an integer" }))
-                      .check(
-                        Schema.isGreaterThanOrEqualTo(-9007199254740991).annotate({
-                          expected: "a value greater than or equal to -9007199254740991",
-                        }),
-                      )
-                      .check(
-                        Schema.isLessThanOrEqualTo(9007199254740991).annotate({
-                          expected: "a value less than or equal to 9007199254740991",
-                        }),
-                      ),
-                  ),
-                  max_indexes: Schema.optionalKey(
-                    Schema.Number.check(Schema.isInt().annotate({ expected: "an integer" }))
-                      .check(
-                        Schema.isGreaterThanOrEqualTo(-9007199254740991).annotate({
-                          expected: "a value greater than or equal to -9007199254740991",
-                        }),
-                      )
-                      .check(
-                        Schema.isLessThanOrEqualTo(9007199254740991).annotate({
-                          expected: "a value less than or equal to 9007199254740991",
-                        }),
-                      ),
-                  ),
-                }),
-              ),
+            "The major Postgres version the database runs. `17` covers both Postgres 17 and Oriole on 17, since Oriole is a storage engine rather than a version.",
+        })
+          .check(Schema.isInt().annotate({ expected: "an integer" }))
+          .check(
+            Schema.isGreaterThanOrEqualTo(-9007199254740991).annotate({
+              expected: "a value greater than or equal to -9007199254740991",
+            }),
+          )
+          .check(
+            Schema.isLessThanOrEqualTo(9007199254740991).annotate({
+              expected: "a value less than or equal to 9007199254740991",
             }),
           ),
-          capabilities: Schema.optionalKey(
-            Schema.Struct({ list_v2: Schema.Boolean, iceberg_catalog: Schema.Boolean }),
+        ssl_enforced: Schema.Boolean.annotate({
+          description: "Whether the database rejects plaintext connections",
+        }),
+        network_restrictions: Schema.Struct({
+          entitlement: Schema.Literals(["disallowed", "allowed"]),
+          status: Schema.Literals(["stored", "applied"]).annotate({
+            description: "Whether the allowlist below is applied to the project or only stored.",
+          }),
+          allowed_cidrs: Schema.Array(
+            Schema.Struct({ address: Schema.String, type: Schema.Literals(["v4", "v6"]) }),
           ),
-          upstream_target: Schema.optionalKey(Schema.Literals(["main", "canary"])),
-          migration_version: Schema.optionalKey(Schema.String),
-          database_pool_mode: Schema.optionalKey(Schema.String),
+          updated_at: Schema.optionalKey(Schema.String),
+          applied_at: Schema.optionalKey(Schema.String),
+        }),
+        postgres_settings: Schema.Struct({
+          effective_cache_size: Schema.optionalKey(Schema.String),
+          logical_decoding_work_mem: Schema.optionalKey(Schema.String),
+          log_autovacuum_min_duration: Schema.optionalKey(
+            Schema.String.annotate({ description: "Default unit: ms" }).check(
+              Schema.isPattern(new RegExp("^(-?[0-9]+(?:\\.[0-9]+)?)(us|ms|s|min|h|d)?$")).annotate(
+                {
+                  expected:
+                    "a string matching the RegExp ^(-?[0-9]+(?:\\.[0-9]+)?)(us|ms|s|min|h|d)?$",
+                },
+              ),
+            ),
+          ),
+          log_checkpoints: Schema.optionalKey(Schema.Boolean),
+          log_connections: Schema.optionalKey(Schema.Boolean),
+          log_disconnections: Schema.optionalKey(Schema.Boolean),
+          log_duration: Schema.optionalKey(Schema.Boolean),
+          log_lock_waits: Schema.optionalKey(Schema.Boolean),
+          log_recovery_conflict_waits: Schema.optionalKey(Schema.Boolean),
+          log_replication_commands: Schema.optionalKey(Schema.Boolean),
+          log_startup_progress_interval: Schema.optionalKey(
+            Schema.String.annotate({ description: "Default unit: ms" }).check(
+              Schema.isPattern(new RegExp("^(-?[0-9]+(?:\\.[0-9]+)?)(us|ms|s|min|h|d)?$")).annotate(
+                {
+                  expected:
+                    "a string matching the RegExp ^(-?[0-9]+(?:\\.[0-9]+)?)(us|ms|s|min|h|d)?$",
+                },
+              ),
+            ),
+          ),
+          log_temp_files: Schema.optionalKey(Schema.String),
+          maintenance_work_mem: Schema.optionalKey(Schema.String),
+          track_activity_query_size: Schema.optionalKey(Schema.String),
+          max_connections: Schema.optionalKey(
+            Schema.Number.check(Schema.isInt().annotate({ expected: "an integer" }))
+              .check(
+                Schema.isGreaterThanOrEqualTo(1).annotate({
+                  expected: "a value greater than or equal to 1",
+                }),
+              )
+              .check(
+                Schema.isLessThanOrEqualTo(262143).annotate({
+                  expected: "a value less than or equal to 262143",
+                }),
+              ),
+          ),
+          max_locks_per_transaction: Schema.optionalKey(
+            Schema.Number.check(Schema.isInt().annotate({ expected: "an integer" }))
+              .check(
+                Schema.isGreaterThanOrEqualTo(10).annotate({
+                  expected: "a value greater than or equal to 10",
+                }),
+              )
+              .check(
+                Schema.isLessThanOrEqualTo(2147483640).annotate({
+                  expected: "a value less than or equal to 2147483640",
+                }),
+              ),
+          ),
+          max_logical_replication_workers: Schema.optionalKey(
+            Schema.Number.check(Schema.isInt().annotate({ expected: "an integer" }))
+              .check(
+                Schema.isGreaterThanOrEqualTo(0).annotate({
+                  expected: "a value greater than or equal to 0",
+                }),
+              )
+              .check(
+                Schema.isLessThanOrEqualTo(262143).annotate({
+                  expected: "a value less than or equal to 262143",
+                }),
+              ),
+          ),
+          max_parallel_maintenance_workers: Schema.optionalKey(
+            Schema.Number.check(Schema.isInt().annotate({ expected: "an integer" }))
+              .check(
+                Schema.isGreaterThanOrEqualTo(0).annotate({
+                  expected: "a value greater than or equal to 0",
+                }),
+              )
+              .check(
+                Schema.isLessThanOrEqualTo(1024).annotate({
+                  expected: "a value less than or equal to 1024",
+                }),
+              ),
+          ),
+          max_parallel_workers: Schema.optionalKey(
+            Schema.Number.check(Schema.isInt().annotate({ expected: "an integer" }))
+              .check(
+                Schema.isGreaterThanOrEqualTo(0).annotate({
+                  expected: "a value greater than or equal to 0",
+                }),
+              )
+              .check(
+                Schema.isLessThanOrEqualTo(1024).annotate({
+                  expected: "a value less than or equal to 1024",
+                }),
+              ),
+          ),
+          max_parallel_workers_per_gather: Schema.optionalKey(
+            Schema.Number.check(Schema.isInt().annotate({ expected: "an integer" }))
+              .check(
+                Schema.isGreaterThanOrEqualTo(0).annotate({
+                  expected: "a value greater than or equal to 0",
+                }),
+              )
+              .check(
+                Schema.isLessThanOrEqualTo(1024).annotate({
+                  expected: "a value less than or equal to 1024",
+                }),
+              ),
+          ),
+          max_replication_slots: Schema.optionalKey(
+            Schema.Number.check(Schema.isInt().annotate({ expected: "an integer" }))
+              .check(
+                Schema.isGreaterThanOrEqualTo(-9007199254740991).annotate({
+                  expected: "a value greater than or equal to -9007199254740991",
+                }),
+              )
+              .check(
+                Schema.isLessThanOrEqualTo(9007199254740991).annotate({
+                  expected: "a value less than or equal to 9007199254740991",
+                }),
+              ),
+          ),
+          max_slot_wal_keep_size: Schema.optionalKey(Schema.String),
+          max_standby_archive_delay: Schema.optionalKey(Schema.String),
+          max_standby_streaming_delay: Schema.optionalKey(Schema.String),
+          max_sync_workers_per_subscription: Schema.optionalKey(
+            Schema.Number.check(Schema.isInt().annotate({ expected: "an integer" }))
+              .check(
+                Schema.isGreaterThanOrEqualTo(0).annotate({
+                  expected: "a value greater than or equal to 0",
+                }),
+              )
+              .check(
+                Schema.isLessThanOrEqualTo(262143).annotate({
+                  expected: "a value less than or equal to 262143",
+                }),
+              ),
+          ),
+          max_wal_size: Schema.optionalKey(Schema.String),
+          max_wal_senders: Schema.optionalKey(
+            Schema.Number.check(Schema.isInt().annotate({ expected: "an integer" }))
+              .check(
+                Schema.isGreaterThanOrEqualTo(-9007199254740991).annotate({
+                  expected: "a value greater than or equal to -9007199254740991",
+                }),
+              )
+              .check(
+                Schema.isLessThanOrEqualTo(9007199254740991).annotate({
+                  expected: "a value less than or equal to 9007199254740991",
+                }),
+              ),
+          ),
+          max_worker_processes: Schema.optionalKey(
+            Schema.Number.check(Schema.isInt().annotate({ expected: "an integer" }))
+              .check(
+                Schema.isGreaterThanOrEqualTo(0).annotate({
+                  expected: "a value greater than or equal to 0",
+                }),
+              )
+              .check(
+                Schema.isLessThanOrEqualTo(262143).annotate({
+                  expected: "a value less than or equal to 262143",
+                }),
+              ),
+          ),
+          session_replication_role: Schema.optionalKey(
+            Schema.Literals(["origin", "replica", "local"]),
+          ),
+          shared_buffers: Schema.optionalKey(Schema.String),
+          statement_timeout: Schema.optionalKey(
+            Schema.String.annotate({ description: "Default unit: ms" }).check(
+              Schema.isPattern(new RegExp("^(-?[0-9]+(?:\\.[0-9]+)?)(us|ms|s|min|h|d)?$")).annotate(
+                {
+                  expected:
+                    "a string matching the RegExp ^(-?[0-9]+(?:\\.[0-9]+)?)(us|ms|s|min|h|d)?$",
+                },
+              ),
+            ),
+          ),
+          track_commit_timestamp: Schema.optionalKey(Schema.Boolean),
+          wal_keep_size: Schema.optionalKey(Schema.String),
+          wal_sender_timeout: Schema.optionalKey(
+            Schema.String.annotate({ description: "Default unit: ms" }).check(
+              Schema.isPattern(new RegExp("^(-?[0-9]+(?:\\.[0-9]+)?)(us|ms|s|min|h|d)?$")).annotate(
+                {
+                  expected:
+                    "a string matching the RegExp ^(-?[0-9]+(?:\\.[0-9]+)?)(us|ms|s|min|h|d)?$",
+                },
+              ),
+            ),
+          ),
+          work_mem: Schema.optionalKey(Schema.String),
+          checkpoint_timeout: Schema.optionalKey(
+            Schema.String.annotate({ description: "Default unit: s" }).check(
+              Schema.isPattern(new RegExp("^(-?[0-9]+(?:\\.[0-9]+)?)(us|ms|s|min|h|d)?$")).annotate(
+                {
+                  expected:
+                    "a string matching the RegExp ^(-?[0-9]+(?:\\.[0-9]+)?)(us|ms|s|min|h|d)?$",
+                },
+              ),
+            ),
+          ),
+          hot_standby_feedback: Schema.optionalKey(Schema.Boolean),
+          cron_log_statement: Schema.optionalKey(Schema.Boolean),
         }).annotate({
           description:
-            "Read from the storage service's admin API rather than the middleware DB, so unlike the rest of this resource it reflects the tenant's live config.",
+            "Postgres parameter overrides. Empty when the project runs entirely on defaults.",
         }),
+      }),
+      pooler: Schema.Struct({
+        pool_mode: Schema.Literals(["transaction", "session", "statement"]),
+        ignore_startup_parameters: Schema.String,
+        server_idle_timeout: Schema.Number.check(
+          Schema.isInt().annotate({ expected: "an integer" }),
+        )
+          .check(
+            Schema.isGreaterThanOrEqualTo(-9007199254740991).annotate({
+              expected: "a value greater than or equal to -9007199254740991",
+            }),
+          )
+          .check(
+            Schema.isLessThanOrEqualTo(9007199254740991).annotate({
+              expected: "a value less than or equal to 9007199254740991",
+            }),
+          ),
+        server_lifetime: Schema.Number.check(Schema.isInt().annotate({ expected: "an integer" }))
+          .check(
+            Schema.isGreaterThanOrEqualTo(-9007199254740991).annotate({
+              expected: "a value greater than or equal to -9007199254740991",
+            }),
+          )
+          .check(
+            Schema.isLessThanOrEqualTo(9007199254740991).annotate({
+              expected: "a value less than or equal to 9007199254740991",
+            }),
+          ),
+        query_wait_timeout: Schema.Number.check(Schema.isInt().annotate({ expected: "an integer" }))
+          .check(
+            Schema.isGreaterThanOrEqualTo(-9007199254740991).annotate({
+              expected: "a value greater than or equal to -9007199254740991",
+            }),
+          )
+          .check(
+            Schema.isLessThanOrEqualTo(9007199254740991).annotate({
+              expected: "a value less than or equal to 9007199254740991",
+            }),
+          ),
+        reserve_pool_size: Schema.Number.check(Schema.isInt().annotate({ expected: "an integer" }))
+          .check(
+            Schema.isGreaterThanOrEqualTo(-9007199254740991).annotate({
+              expected: "a value greater than or equal to -9007199254740991",
+            }),
+          )
+          .check(
+            Schema.isLessThanOrEqualTo(9007199254740991).annotate({
+              expected: "a value less than or equal to 9007199254740991",
+            }),
+          ),
+        default_pool_size: Schema.Number.annotate({
+          description:
+            "Defaults to the pooler's size for the project's compute when not overridden.",
+        })
+          .check(Schema.isInt().annotate({ expected: "an integer" }))
+          .check(
+            Schema.isGreaterThanOrEqualTo(-9007199254740991).annotate({
+              expected: "a value greater than or equal to -9007199254740991",
+            }),
+          )
+          .check(
+            Schema.isLessThanOrEqualTo(9007199254740991).annotate({
+              expected: "a value less than or equal to 9007199254740991",
+            }),
+          ),
+        max_client_conn: Schema.Number.annotate({
+          description:
+            "Defaults to the pooler's size for the project's compute when not overridden.",
+        })
+          .check(Schema.isInt().annotate({ expected: "an integer" }))
+          .check(
+            Schema.isGreaterThanOrEqualTo(-9007199254740991).annotate({
+              expected: "a value greater than or equal to -9007199254740991",
+            }),
+          )
+          .check(
+            Schema.isLessThanOrEqualTo(9007199254740991).annotate({
+              expected: "a value less than or equal to 9007199254740991",
+            }),
+          ),
+      }),
+      auth: Schema.Record(Schema.String, Schema.Json.annotate({ expected: "JSON value" })).annotate(
+        {
+          description:
+            "Effective Auth config, keyed by lowercased GoTrue setting name and resolved through the `gotrue_config` view, so a setting the project has never overridden is reported at its platform default. Secrets are returned as an HMAC of their value, never in plaintext.",
+        },
       ),
+      api: Schema.Struct({
+        db_schema: Schema.String.annotate({ description: "Schemas exposed through the Data API" }),
+        db_extra_search_path: Schema.String,
+        max_rows: Schema.Number.check(Schema.isInt().annotate({ expected: "an integer" }))
+          .check(
+            Schema.isGreaterThanOrEqualTo(-9007199254740991).annotate({
+              expected: "a value greater than or equal to -9007199254740991",
+            }),
+          )
+          .check(
+            Schema.isLessThanOrEqualTo(9007199254740991).annotate({
+              expected: "a value less than or equal to 9007199254740991",
+            }),
+          ),
+        db_pool_acquisition_timeout: Schema.Number.check(
+          Schema.isInt().annotate({ expected: "an integer" }),
+        )
+          .check(
+            Schema.isGreaterThanOrEqualTo(-9007199254740991).annotate({
+              expected: "a value greater than or equal to -9007199254740991",
+            }),
+          )
+          .check(
+            Schema.isLessThanOrEqualTo(9007199254740991).annotate({
+              expected: "a value less than or equal to 9007199254740991",
+            }),
+          ),
+        db_pool: Schema.Union([
+          Schema.Number.annotate({
+            description:
+              "If `null`, no pool size is written to the project's PostgREST config and PostgREST's own default applies. The platform does not pick a value here.",
+          })
+            .check(Schema.isInt().annotate({ expected: "an integer" }))
+            .check(
+              Schema.isGreaterThanOrEqualTo(-9007199254740991).annotate({
+                expected: "a value greater than or equal to -9007199254740991",
+              }),
+            )
+            .check(
+              Schema.isLessThanOrEqualTo(9007199254740991).annotate({
+                expected: "a value less than or equal to 9007199254740991",
+              }),
+            ),
+          Schema.Null,
+        ]),
+      }),
+      realtime: Schema.Struct({
+        private_only: Schema.Boolean,
+        max_concurrent_users: Schema.Number.check(
+          Schema.isInt().annotate({ expected: "an integer" }),
+        )
+          .check(
+            Schema.isGreaterThanOrEqualTo(-9007199254740991).annotate({
+              expected: "a value greater than or equal to -9007199254740991",
+            }),
+          )
+          .check(
+            Schema.isLessThanOrEqualTo(9007199254740991).annotate({
+              expected: "a value less than or equal to 9007199254740991",
+            }),
+          ),
+        max_events_per_second: Schema.Number.check(
+          Schema.isInt().annotate({ expected: "an integer" }),
+        )
+          .check(
+            Schema.isGreaterThanOrEqualTo(-9007199254740991).annotate({
+              expected: "a value greater than or equal to -9007199254740991",
+            }),
+          )
+          .check(
+            Schema.isLessThanOrEqualTo(9007199254740991).annotate({
+              expected: "a value less than or equal to 9007199254740991",
+            }),
+          ),
+        max_bytes_per_second: Schema.Number.check(
+          Schema.isInt().annotate({ expected: "an integer" }),
+        )
+          .check(
+            Schema.isGreaterThanOrEqualTo(-9007199254740991).annotate({
+              expected: "a value greater than or equal to -9007199254740991",
+            }),
+          )
+          .check(
+            Schema.isLessThanOrEqualTo(9007199254740991).annotate({
+              expected: "a value less than or equal to 9007199254740991",
+            }),
+          ),
+        max_channels_per_client: Schema.Number.check(
+          Schema.isInt().annotate({ expected: "an integer" }),
+        )
+          .check(
+            Schema.isGreaterThanOrEqualTo(-9007199254740991).annotate({
+              expected: "a value greater than or equal to -9007199254740991",
+            }),
+          )
+          .check(
+            Schema.isLessThanOrEqualTo(9007199254740991).annotate({
+              expected: "a value less than or equal to 9007199254740991",
+            }),
+          ),
+        max_joins_per_second: Schema.Number.check(
+          Schema.isInt().annotate({ expected: "an integer" }),
+        )
+          .check(
+            Schema.isGreaterThanOrEqualTo(-9007199254740991).annotate({
+              expected: "a value greater than or equal to -9007199254740991",
+            }),
+          )
+          .check(
+            Schema.isLessThanOrEqualTo(9007199254740991).annotate({
+              expected: "a value less than or equal to 9007199254740991",
+            }),
+          ),
+        max_presence_events_per_second: Schema.Number.check(
+          Schema.isInt().annotate({ expected: "an integer" }),
+        )
+          .check(
+            Schema.isGreaterThanOrEqualTo(-9007199254740991).annotate({
+              expected: "a value greater than or equal to -9007199254740991",
+            }),
+          )
+          .check(
+            Schema.isLessThanOrEqualTo(9007199254740991).annotate({
+              expected: "a value less than or equal to 9007199254740991",
+            }),
+          ),
+        max_payload_size_in_kb: Schema.Number.check(
+          Schema.isInt().annotate({ expected: "an integer" }),
+        )
+          .check(
+            Schema.isGreaterThanOrEqualTo(-9007199254740991).annotate({
+              expected: "a value greater than or equal to -9007199254740991",
+            }),
+          )
+          .check(
+            Schema.isLessThanOrEqualTo(9007199254740991).annotate({
+              expected: "a value less than or equal to 9007199254740991",
+            }),
+          ),
+        presence_enabled: Schema.Boolean,
+        suspend: Schema.Boolean,
+        connection_pool: Schema.Number.annotate({
+          description:
+            "Defaults to Realtime's pool size for the project's compute when not overridden.",
+        })
+          .check(Schema.isInt().annotate({ expected: "an integer" }))
+          .check(
+            Schema.isGreaterThanOrEqualTo(-9007199254740991).annotate({
+              expected: "a value greater than or equal to -9007199254740991",
+            }),
+          )
+          .check(
+            Schema.isLessThanOrEqualTo(9007199254740991).annotate({
+              expected: "a value less than or equal to 9007199254740991",
+            }),
+          ),
+        postgres_changes_pool: Schema.Union([
+          Schema.Number.annotate({
+            description: "If `null`, no override is stored and Realtime applies its own default.",
+          })
+            .check(Schema.isInt().annotate({ expected: "an integer" }))
+            .check(
+              Schema.isGreaterThanOrEqualTo(-9007199254740991).annotate({
+                expected: "a value greater than or equal to -9007199254740991",
+              }),
+            )
+            .check(
+              Schema.isLessThanOrEqualTo(9007199254740991).annotate({
+                expected: "a value less than or equal to 9007199254740991",
+              }),
+            ),
+          Schema.Null,
+        ]),
+      }),
+      storage: Schema.Struct({
+        file_size_limit: Schema.Number.annotate({ format: "int64" })
+          .check(Schema.isInt().annotate({ expected: "an integer" }))
+          .check(
+            Schema.isGreaterThanOrEqualTo(-9007199254740991).annotate({
+              expected: "a value greater than or equal to -9007199254740991",
+            }),
+          )
+          .check(
+            Schema.isLessThanOrEqualTo(9007199254740991).annotate({
+              expected: "a value less than or equal to 9007199254740991",
+            }),
+          ),
+        features: Schema.Struct({
+          image_transformation: Schema.Struct({ enabled: Schema.Boolean }),
+          s3_protocol: Schema.Struct({ enabled: Schema.Boolean }),
+          purge_cache: Schema.Struct({ enabled: Schema.Boolean }),
+          iceberg_catalog: Schema.Struct({
+            enabled: Schema.Boolean,
+            max_namespaces: Schema.Number.check(Schema.isInt().annotate({ expected: "an integer" }))
+              .check(
+                Schema.isGreaterThanOrEqualTo(-9007199254740991).annotate({
+                  expected: "a value greater than or equal to -9007199254740991",
+                }),
+              )
+              .check(
+                Schema.isLessThanOrEqualTo(9007199254740991).annotate({
+                  expected: "a value less than or equal to 9007199254740991",
+                }),
+              ),
+            max_tables: Schema.Number.check(Schema.isInt().annotate({ expected: "an integer" }))
+              .check(
+                Schema.isGreaterThanOrEqualTo(-9007199254740991).annotate({
+                  expected: "a value greater than or equal to -9007199254740991",
+                }),
+              )
+              .check(
+                Schema.isLessThanOrEqualTo(9007199254740991).annotate({
+                  expected: "a value less than or equal to 9007199254740991",
+                }),
+              ),
+            max_catalogs: Schema.Number.check(Schema.isInt().annotate({ expected: "an integer" }))
+              .check(
+                Schema.isGreaterThanOrEqualTo(-9007199254740991).annotate({
+                  expected: "a value greater than or equal to -9007199254740991",
+                }),
+              )
+              .check(
+                Schema.isLessThanOrEqualTo(9007199254740991).annotate({
+                  expected: "a value less than or equal to 9007199254740991",
+                }),
+              ),
+          }),
+          vector_buckets: Schema.Struct({
+            enabled: Schema.Boolean,
+            max_buckets: Schema.Number.check(Schema.isInt().annotate({ expected: "an integer" }))
+              .check(
+                Schema.isGreaterThanOrEqualTo(-9007199254740991).annotate({
+                  expected: "a value greater than or equal to -9007199254740991",
+                }),
+              )
+              .check(
+                Schema.isLessThanOrEqualTo(9007199254740991).annotate({
+                  expected: "a value less than or equal to 9007199254740991",
+                }),
+              ),
+            max_indexes: Schema.Number.check(Schema.isInt().annotate({ expected: "an integer" }))
+              .check(
+                Schema.isGreaterThanOrEqualTo(-9007199254740991).annotate({
+                  expected: "a value greater than or equal to -9007199254740991",
+                }),
+              )
+              .check(
+                Schema.isLessThanOrEqualTo(9007199254740991).annotate({
+                  expected: "a value less than or equal to 9007199254740991",
+                }),
+              ),
+          }),
+        }),
+        capabilities: Schema.Struct({ list_v2: Schema.Boolean, iceberg_catalog: Schema.Boolean }),
+        upstream_target: Schema.Literals(["main", "canary"]),
+        migration_version: Schema.String,
+        database_pool_mode: Schema.String,
+      }).annotate({
+        description:
+          "Read from the storage service's admin API rather than the middleware DB, so unlike the rest of this resource it reflects the tenant's live config.",
+      }),
     }),
   }),
 });
@@ -11647,28 +11612,11 @@ export const V2ListLogDrainsOutput = Schema.Struct({
         description: Schema.optionalKey(Schema.String),
         config: Schema.Union([
           Schema.Struct({
-            url: Schema.optionalKey(Schema.Union([Schema.String, Schema.Null])),
-            schema: Schema.optionalKey(Schema.String),
-            username: Schema.optionalKey(Schema.Union([Schema.String, Schema.Null])),
-            password: Schema.optionalKey(Schema.Union([Schema.String, Schema.Null])),
-            port: Schema.optionalKey(
-              Schema.Union([
-                Schema.Number.check(Schema.isFinite().annotate({ expected: "a finite number" })),
-                Schema.Null,
-              ]),
-            ),
-            hostname: Schema.optionalKey(Schema.String),
-          }).annotate({ title: "postgres" }),
-          Schema.Struct({
             url: Schema.optionalKey(Schema.String),
             http: Schema.optionalKey(Schema.Literals(["http1", "http2"])),
             gzip: Schema.optionalKey(Schema.Boolean),
             headers: Schema.optionalKey(Schema.Record(Schema.String, Schema.String)),
           }).annotate({ title: "webhook" }),
-          Schema.Struct({
-            project_id: Schema.optionalKey(Schema.String),
-            dataset_id: Schema.optionalKey(Schema.String),
-          }).annotate({ title: "bigquery" }),
           Schema.Struct({
             api_key: Schema.optionalKey(Schema.String),
             region: Schema.optionalKey(Schema.String),
@@ -11707,6 +11655,36 @@ export const V2ListLogDrainsOutput = Schema.Struct({
             client_cert: Schema.optionalKey(Schema.String),
             client_key: Schema.optionalKey(Schema.String),
           }).annotate({ title: "syslog" }),
+          Schema.Struct({
+            s3_bucket: Schema.optionalKey(Schema.String),
+            storage_region: Schema.optionalKey(Schema.String),
+            access_key_id: Schema.optionalKey(Schema.String),
+            secret_access_key: Schema.optionalKey(Schema.String),
+            batch_timeout: Schema.optionalKey(
+              Schema.Number.check(Schema.isInt().annotate({ expected: "an integer" }))
+                .check(
+                  Schema.isGreaterThanOrEqualTo(-9007199254740991).annotate({
+                    expected: "a value greater than or equal to -9007199254740991",
+                  }),
+                )
+                .check(
+                  Schema.isLessThanOrEqualTo(9007199254740991).annotate({
+                    expected: "a value less than or equal to 9007199254740991",
+                  }),
+                ),
+            ),
+          }).annotate({ title: "s3" }),
+          Schema.Struct({
+            region: Schema.optionalKey(Schema.String),
+            username: Schema.optionalKey(Schema.String),
+            password: Schema.optionalKey(Schema.String),
+          }).annotate({ title: "last9" }),
+          Schema.Struct({
+            endpoint: Schema.optionalKey(Schema.String),
+            protocol: Schema.optionalKey(Schema.String),
+            gzip: Schema.optionalKey(Schema.Boolean),
+            headers: Schema.optionalKey(Schema.Record(Schema.String, Schema.String)),
+          }).annotate({ title: "otlp" }),
         ]),
         backend_type: Schema.Literals([
           "postgres",
@@ -12310,6 +12288,65 @@ export const V2RunProjectAdvisorsInput = Schema.Struct({
         expected: "a string matching the RegExp ^[a-z]+$",
       }),
     ),
+  data: Schema.StructWithRest(
+    Schema.Struct({
+      type: Schema.Literal("project_advisors").annotate({ description: "Resource type." }),
+      attributes: Schema.Struct({
+        lints: Schema.Array(
+          Schema.Struct({
+            name: Schema.Literals([
+              "unindexed_foreign_keys",
+              "auth_users_exposed",
+              "auth_rls_initplan",
+              "no_primary_key",
+              "unused_index",
+              "multiple_permissive_policies",
+              "policy_exists_rls_disabled",
+              "rls_enabled_no_policy",
+              "duplicate_index",
+              "security_definer_view",
+              "function_search_path_mutable",
+              "rls_disabled_in_public",
+              "extension_in_public",
+              "rls_references_user_metadata",
+              "materialized_view_in_api",
+              "foreign_table_in_api",
+              "unsupported_reg_types",
+              "auth_otp_long_expiry",
+              "auth_otp_short_length",
+              "ssl_not_enforced",
+              "log_connections_not_enabled",
+              "network_restrictions_not_set",
+              "password_requirements_min_length",
+              "pitr_not_enabled",
+              "auth_leaked_password_protection",
+              "auth_insufficient_mfa_options",
+              "auth_password_policy_missing",
+              "leaked_service_key",
+              "no_backup_admin",
+              "vulnerable_postgres_version",
+              "db_not_reachable",
+              "db_connection_failing",
+              "db_connection_limit_reached",
+              "instance_telemetry_lost",
+              "instance_db_down",
+              "instance_alert_firing",
+              "log_service_error_rate_high",
+            ]),
+          }),
+        )
+          .check(
+            Schema.isMinLength(1).annotate({ expected: "a value with a length of at least 1" }),
+          )
+          .check(
+            Schema.isMaxLength(10).annotate({ expected: "a value with a length of at most 10" }),
+          ),
+      }),
+    }),
+    [Schema.Record(Schema.String, Schema.Json.annotate({ expected: "JSON value" }))],
+  ),
+});
+export const V2RunProjectAdvisorsOutput = Schema.Struct({
   data: Schema.Struct({
     type: Schema.Literal("project_advisors").annotate({ description: "Resource type." }),
     attributes: Schema.Struct({
@@ -12353,109 +12390,47 @@ export const V2RunProjectAdvisorsInput = Schema.Struct({
             "instance_db_down",
             "instance_alert_firing",
             "log_service_error_rate_high",
+            "project_not_active",
+            "advisor_check_unavailable",
           ]),
-        }),
-      )
-        .check(Schema.isMinLength(1).annotate({ expected: "a value with a length of at least 1" }))
-        .check(
-          Schema.isMaxLength(10).annotate({ expected: "a value with a length of at most 10" }),
-        ),
-    }),
-  }),
-});
-export const V2RunProjectAdvisorsOutput = Schema.Struct({
-  data: Schema.Struct({
-    type: Schema.Literal("project_advisors").annotate({ description: "Resource type." }),
-    attributes: Schema.StructWithRest(
-      Schema.Struct({
-        lints: Schema.Array(
-          Schema.StructWithRest(
+          title: Schema.String,
+          level: Schema.Literals(["ERROR", "WARN", "INFO"]),
+          facing: Schema.Literal("EXTERNAL"),
+          categories: Schema.Array(Schema.Literals(["PERFORMANCE", "SECURITY", "HEALTH"])),
+          description: Schema.String,
+          detail: Schema.String,
+          remediation: Schema.String,
+          metadata: Schema.optionalKey(
             Schema.Struct({
-              name: Schema.Literals([
-                "unindexed_foreign_keys",
-                "auth_users_exposed",
-                "auth_rls_initplan",
-                "no_primary_key",
-                "unused_index",
-                "multiple_permissive_policies",
-                "policy_exists_rls_disabled",
-                "rls_enabled_no_policy",
-                "duplicate_index",
-                "security_definer_view",
-                "function_search_path_mutable",
-                "rls_disabled_in_public",
-                "extension_in_public",
-                "rls_references_user_metadata",
-                "materialized_view_in_api",
-                "foreign_table_in_api",
-                "unsupported_reg_types",
-                "auth_otp_long_expiry",
-                "auth_otp_short_length",
-                "ssl_not_enforced",
-                "log_connections_not_enabled",
-                "network_restrictions_not_set",
-                "password_requirements_min_length",
-                "pitr_not_enabled",
-                "auth_leaked_password_protection",
-                "auth_insufficient_mfa_options",
-                "auth_password_policy_missing",
-                "leaked_service_key",
-                "no_backup_admin",
-                "vulnerable_postgres_version",
-                "db_not_reachable",
-                "db_connection_failing",
-                "db_connection_limit_reached",
-                "instance_telemetry_lost",
-                "instance_db_down",
-                "instance_alert_firing",
-                "log_service_error_rate_high",
-                "project_not_active",
-                "advisor_check_unavailable",
-              ]),
-              title: Schema.String,
-              level: Schema.Literals(["ERROR", "WARN", "INFO"]),
-              facing: Schema.Literal("EXTERNAL"),
-              categories: Schema.Array(Schema.Literals(["PERFORMANCE", "SECURITY", "HEALTH"])),
-              description: Schema.String,
-              detail: Schema.String,
-              remediation: Schema.String,
-              metadata: Schema.optionalKey(
-                Schema.Struct({
-                  schema: Schema.optionalKey(Schema.String),
-                  name: Schema.optionalKey(Schema.String),
-                  entity: Schema.optionalKey(Schema.String),
-                  type: Schema.optionalKey(
-                    Schema.Literals([
-                      "table",
-                      "view",
-                      "materialized view",
-                      "foreign table",
-                      "auth",
-                      "function",
-                      "extension",
-                      "compliance",
-                      "health",
-                    ]),
-                  ),
-                  fkey_name: Schema.optionalKey(Schema.String),
-                  fkey_columns: Schema.optionalKey(
-                    Schema.Array(
-                      Schema.Number.check(
-                        Schema.isFinite().annotate({ expected: "a finite number" }),
-                      ),
-                    ),
-                  ),
-                }),
+              schema: Schema.optionalKey(Schema.String),
+              name: Schema.optionalKey(Schema.String),
+              entity: Schema.optionalKey(Schema.String),
+              type: Schema.optionalKey(
+                Schema.Literals([
+                  "table",
+                  "view",
+                  "materialized view",
+                  "foreign table",
+                  "auth",
+                  "function",
+                  "extension",
+                  "compliance",
+                  "health",
+                ]),
               ),
-              cache_key: Schema.String,
-              observed_at: Schema.optionalKey(Schema.String.annotate({ format: "date-time" })),
+              fkey_name: Schema.optionalKey(Schema.String),
+              fkey_columns: Schema.optionalKey(
+                Schema.Array(
+                  Schema.Number.check(Schema.isFinite().annotate({ expected: "a finite number" })),
+                ),
+              ),
             }),
-            [Schema.Record(Schema.String, Schema.Json.annotate({ expected: "JSON value" }))],
           ),
-        ),
-      }),
-      [Schema.Record(Schema.String, Schema.Json.annotate({ expected: "JSON value" }))],
-    ),
+          cache_key: Schema.String,
+          observed_at: Schema.optionalKey(Schema.String.annotate({ format: "date-time" })),
+        }),
+      ),
+    }),
   }),
 });
 export const V2TransferAProjectInput = Schema.Struct({
@@ -12495,89 +12470,105 @@ export const V2UpdateLogDrainInput = Schema.Struct({
   ),
   data: Schema.Struct({
     type: Schema.Literal("log_drain").annotate({ description: "Resource type." }),
-    attributes: Schema.Struct({
-      name: Schema.optionalKey(Schema.String),
-      description: Schema.optionalKey(Schema.String),
-      config: Schema.optionalKey(
-        Schema.Union([
-          Schema.Struct({
-            url: Schema.optionalKey(Schema.Union([Schema.String, Schema.Null])),
-            schema: Schema.optionalKey(Schema.String),
-            username: Schema.optionalKey(Schema.Union([Schema.String, Schema.Null])),
-            password: Schema.optionalKey(Schema.Union([Schema.String, Schema.Null])),
-            port: Schema.optionalKey(
-              Schema.Union([
-                Schema.Number.check(Schema.isFinite().annotate({ expected: "a finite number" })),
-                Schema.Null,
-              ]),
-            ),
-            hostname: Schema.optionalKey(Schema.String),
-          }).annotate({ title: "postgres" }),
-          Schema.Struct({
-            url: Schema.optionalKey(Schema.String),
-            http: Schema.optionalKey(Schema.Literals(["http1", "http2"])),
-            gzip: Schema.optionalKey(Schema.Boolean),
-            headers: Schema.optionalKey(Schema.Record(Schema.String, Schema.String)),
-          }).annotate({ title: "webhook" }),
-          Schema.Struct({
-            project_id: Schema.optionalKey(Schema.String),
-            dataset_id: Schema.optionalKey(Schema.String),
-          }).annotate({ title: "bigquery" }),
-          Schema.Struct({
-            api_key: Schema.optionalKey(Schema.String),
-            region: Schema.optionalKey(Schema.String),
-          }).annotate({ title: "datadog" }),
-          Schema.Struct({
-            url: Schema.optionalKey(Schema.String),
-            username: Schema.optionalKey(Schema.Union([Schema.String, Schema.Null])),
-            password: Schema.optionalKey(Schema.Union([Schema.String, Schema.Null])),
-            headers: Schema.optionalKey(Schema.Record(Schema.String, Schema.String)),
-          }).annotate({ title: "loki" }),
-          Schema.Struct({ dsn: Schema.optionalKey(Schema.String) }).annotate({ title: "sentry" }),
-          Schema.Struct({
-            domain: Schema.optionalKey(Schema.String),
-            api_token: Schema.optionalKey(Schema.String),
-            dataset_name: Schema.optionalKey(Schema.String),
-          }).annotate({ title: "axiom" }),
-          Schema.Struct({
-            host: Schema.optionalKey(Schema.String),
-            port: Schema.optionalKey(
-              Schema.Number.check(Schema.isInt().annotate({ expected: "an integer" }))
-                .check(
-                  Schema.isGreaterThanOrEqualTo(0).annotate({
-                    expected: "a value greater than or equal to 0",
-                  }),
-                )
-                .check(
-                  Schema.isLessThanOrEqualTo(65535).annotate({
-                    expected: "a value less than or equal to 65535",
-                  }),
-                ),
-            ),
-            tls: Schema.optionalKey(Schema.Boolean),
-            structured_data: Schema.optionalKey(Schema.String),
-            cipher_key: Schema.optionalKey(Schema.String),
-            ca_cert: Schema.optionalKey(Schema.String),
-            client_cert: Schema.optionalKey(Schema.String),
-            client_key: Schema.optionalKey(Schema.String),
-          }).annotate({ title: "syslog" }),
+    attributes: Schema.StructWithRest(
+      Schema.Struct({
+        name: Schema.optionalKey(Schema.String),
+        description: Schema.optionalKey(Schema.String),
+        config: Schema.optionalKey(
+          Schema.Union([
+            Schema.Struct({
+              url: Schema.optionalKey(Schema.String),
+              http: Schema.optionalKey(Schema.Literals(["http1", "http2"])),
+              gzip: Schema.optionalKey(Schema.Boolean),
+              headers: Schema.optionalKey(Schema.Record(Schema.String, Schema.String)),
+            }).annotate({ title: "webhook" }),
+            Schema.Struct({
+              api_key: Schema.optionalKey(Schema.String),
+              region: Schema.optionalKey(Schema.String),
+            }).annotate({ title: "datadog" }),
+            Schema.Struct({
+              url: Schema.optionalKey(Schema.String),
+              username: Schema.optionalKey(Schema.Union([Schema.String, Schema.Null])),
+              password: Schema.optionalKey(Schema.Union([Schema.String, Schema.Null])),
+              headers: Schema.optionalKey(Schema.Record(Schema.String, Schema.String)),
+            }).annotate({ title: "loki" }),
+            Schema.Struct({ dsn: Schema.optionalKey(Schema.String) }).annotate({ title: "sentry" }),
+            Schema.Struct({
+              domain: Schema.optionalKey(Schema.String),
+              api_token: Schema.optionalKey(Schema.String),
+              dataset_name: Schema.optionalKey(Schema.String),
+            }).annotate({ title: "axiom" }),
+            Schema.Struct({
+              host: Schema.optionalKey(Schema.String),
+              port: Schema.optionalKey(
+                Schema.Number.check(Schema.isInt().annotate({ expected: "an integer" }))
+                  .check(
+                    Schema.isGreaterThanOrEqualTo(0).annotate({
+                      expected: "a value greater than or equal to 0",
+                    }),
+                  )
+                  .check(
+                    Schema.isLessThanOrEqualTo(65535).annotate({
+                      expected: "a value less than or equal to 65535",
+                    }),
+                  ),
+              ),
+              tls: Schema.optionalKey(Schema.Boolean),
+              structured_data: Schema.optionalKey(Schema.String),
+              cipher_key: Schema.optionalKey(Schema.String),
+              ca_cert: Schema.optionalKey(Schema.String),
+              client_cert: Schema.optionalKey(Schema.String),
+              client_key: Schema.optionalKey(Schema.String),
+            }).annotate({ title: "syslog" }),
+            Schema.Struct({
+              s3_bucket: Schema.optionalKey(Schema.String),
+              storage_region: Schema.optionalKey(Schema.String),
+              access_key_id: Schema.optionalKey(Schema.String),
+              secret_access_key: Schema.optionalKey(Schema.String),
+              batch_timeout: Schema.optionalKey(
+                Schema.Number.check(Schema.isInt().annotate({ expected: "an integer" }))
+                  .check(
+                    Schema.isGreaterThanOrEqualTo(-9007199254740991).annotate({
+                      expected: "a value greater than or equal to -9007199254740991",
+                    }),
+                  )
+                  .check(
+                    Schema.isLessThanOrEqualTo(9007199254740991).annotate({
+                      expected: "a value less than or equal to 9007199254740991",
+                    }),
+                  ),
+              ),
+            }).annotate({ title: "s3" }),
+            Schema.Struct({
+              region: Schema.optionalKey(Schema.String),
+              username: Schema.optionalKey(Schema.String),
+              password: Schema.optionalKey(Schema.String),
+            }).annotate({ title: "last9" }),
+            Schema.Struct({
+              endpoint: Schema.optionalKey(Schema.String),
+              protocol: Schema.optionalKey(Schema.String),
+              gzip: Schema.optionalKey(Schema.Boolean),
+              headers: Schema.optionalKey(Schema.Record(Schema.String, Schema.String)),
+            }).annotate({ title: "otlp" }),
+          ]),
+        ),
+        backend_type: Schema.Literals([
+          "postgres",
+          "bigquery",
+          "clickhouse",
+          "webhook",
+          "datadog",
+          "loki",
+          "sentry",
+          "s3",
+          "axiom",
+          "last9",
+          "otlp",
+          "syslog",
         ]),
-      ),
-      backend_type: Schema.Literals([
-        "postgres",
-        "bigquery",
-        "clickhouse",
-        "webhook",
-        "datadog",
-        "loki",
-        "sentry",
-        "s3",
-        "axiom",
-        "last9",
-        "otlp",
-        "syslog",
-      ]),
-    }),
+      }),
+      [Schema.Record(Schema.String, Schema.Json.annotate({ expected: "JSON value" }))],
+    ),
   }),
 });
 export const V2UpdateLogDrainOutput = Schema.Struct({
@@ -12589,28 +12580,11 @@ export const V2UpdateLogDrainOutput = Schema.Struct({
       description: Schema.optionalKey(Schema.String),
       config: Schema.Union([
         Schema.Struct({
-          url: Schema.optionalKey(Schema.Union([Schema.String, Schema.Null])),
-          schema: Schema.optionalKey(Schema.String),
-          username: Schema.optionalKey(Schema.Union([Schema.String, Schema.Null])),
-          password: Schema.optionalKey(Schema.Union([Schema.String, Schema.Null])),
-          port: Schema.optionalKey(
-            Schema.Union([
-              Schema.Number.check(Schema.isFinite().annotate({ expected: "a finite number" })),
-              Schema.Null,
-            ]),
-          ),
-          hostname: Schema.optionalKey(Schema.String),
-        }).annotate({ title: "postgres" }),
-        Schema.Struct({
           url: Schema.optionalKey(Schema.String),
           http: Schema.optionalKey(Schema.Literals(["http1", "http2"])),
           gzip: Schema.optionalKey(Schema.Boolean),
           headers: Schema.optionalKey(Schema.Record(Schema.String, Schema.String)),
         }).annotate({ title: "webhook" }),
-        Schema.Struct({
-          project_id: Schema.optionalKey(Schema.String),
-          dataset_id: Schema.optionalKey(Schema.String),
-        }).annotate({ title: "bigquery" }),
         Schema.Struct({
           api_key: Schema.optionalKey(Schema.String),
           region: Schema.optionalKey(Schema.String),
@@ -12649,6 +12623,36 @@ export const V2UpdateLogDrainOutput = Schema.Struct({
           client_cert: Schema.optionalKey(Schema.String),
           client_key: Schema.optionalKey(Schema.String),
         }).annotate({ title: "syslog" }),
+        Schema.Struct({
+          s3_bucket: Schema.optionalKey(Schema.String),
+          storage_region: Schema.optionalKey(Schema.String),
+          access_key_id: Schema.optionalKey(Schema.String),
+          secret_access_key: Schema.optionalKey(Schema.String),
+          batch_timeout: Schema.optionalKey(
+            Schema.Number.check(Schema.isInt().annotate({ expected: "an integer" }))
+              .check(
+                Schema.isGreaterThanOrEqualTo(-9007199254740991).annotate({
+                  expected: "a value greater than or equal to -9007199254740991",
+                }),
+              )
+              .check(
+                Schema.isLessThanOrEqualTo(9007199254740991).annotate({
+                  expected: "a value less than or equal to 9007199254740991",
+                }),
+              ),
+          ),
+        }).annotate({ title: "s3" }),
+        Schema.Struct({
+          region: Schema.optionalKey(Schema.String),
+          username: Schema.optionalKey(Schema.String),
+          password: Schema.optionalKey(Schema.String),
+        }).annotate({ title: "last9" }),
+        Schema.Struct({
+          endpoint: Schema.optionalKey(Schema.String),
+          protocol: Schema.optionalKey(Schema.String),
+          gzip: Schema.optionalKey(Schema.Boolean),
+          headers: Schema.optionalKey(Schema.Record(Schema.String, Schema.String)),
+        }).annotate({ title: "otlp" }),
       ]),
       backend_type: Schema.Literals([
         "postgres",

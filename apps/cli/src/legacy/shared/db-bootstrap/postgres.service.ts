@@ -50,10 +50,30 @@ const LEGACY_POSTGRES_PASSWORD = "postgres";
  */
 const LEGACY_POSTGRES_PGSODIUM_ROOT_KEY_PATH = "/etc/postgresql-custom/pgsodium_root.key";
 
+/**
+ * The post-migration hook path: `supabase/postgres`'s bundled `migrate.sh` execs
+ * `psql -v ON_ERROR_STOP=1 -U supabase_admin -f /etc/postgresql.schema.sql` as
+ * its last step when the file exists. The docker.io entrypoint heredocs it
+ * (see {@link legacyPostgresEntrypointScriptPg15}).
+ */
+const LEGACY_POSTGRES_SCHEMA_SQL_PATH = "/etc/postgresql.schema.sql";
+
 /** Go's `container.HealthConfig` literals (`apps/cli-go/internal/db/start/start.go:85-90`). */
 const LEGACY_POSTGRES_HEALTHCHECK_INTERVAL_SECONDS = 10;
 const LEGACY_POSTGRES_HEALTHCHECK_TIMEOUT_SECONDS = 2;
 const LEGACY_POSTGRES_HEALTHCHECK_RETRIES = 3;
+
+/** The docker.io image's healthcheck: `pg_isready` alone is a sufficient readiness probe. */
+const LEGACY_POSTGRES_HEALTHCHECK_TEST: ReadonlyArray<string> = [
+  "CMD",
+  "pg_isready",
+  "-U",
+  "postgres",
+  "-h",
+  "127.0.0.1",
+  "-p",
+  "5432",
+];
 
 /** Go's `utils.DbAliases` (`apps/cli-go/internal/utils/config.go:36`). */
 const LEGACY_POSTGRES_NETWORK_ALIASES: ReadonlyArray<string> = ["db", "db.supabase.internal"];
@@ -138,7 +158,9 @@ export function legacyPostgresSettingsToPostgresConfig(
   settings: CliConfig["db"]["settings"],
 ): string {
   const defined = Object.fromEntries(
-    Object.entries(settings ?? {}).filter(([, value]) => value !== undefined),
+    Object.entries(settings ?? {}).filter(
+      (entry): entry is [string, string | number | boolean] => entry[1] !== undefined,
+    ),
   );
   if (Object.keys(defined).length === 0) {
     return LEGACY_POSTGRES_CONFIG_HEADER;
@@ -282,7 +304,7 @@ function legacyPostgresExtraEnv(
 function legacyPostgresEntrypointScriptPg15(postgresConfig: string, args = ""): string {
   return (
     "\n" +
-    "cat <<'EOF' > /etc/postgresql.schema.sql && \\\n" +
+    `cat <<'EOF' > ${LEGACY_POSTGRES_SCHEMA_SQL_PATH} && \\\n` +
     "cat <<'EOF' >> /etc/postgresql/postgresql.conf && \\\n" +
     `exec docker-entrypoint.sh postgres -D /etc/postgresql ${args}\n` +
     `${LEGACY_START_DB_SCHEMA_SQL}\n` +
@@ -333,7 +355,7 @@ function legacyPostgresEntrypointScriptPg14(postgresConfig: string, args = ""): 
 function legacyPostgresEntrypointScriptRestore(postgresConfig: string): string {
   return (
     "\n" +
-    "cat <<'EOF' > /etc/postgresql.schema.sql && \\\n" +
+    `cat <<'EOF' > ${LEGACY_POSTGRES_SCHEMA_SQL_PATH} && \\\n` +
     "cat <<'EOF' > /docker-entrypoint-initdb.d/migrate.sh && \\\n" +
     "cat <<'EOF' >> /etc/postgresql/postgresql.conf && \\\n" +
     "exec docker-entrypoint.sh postgres -D /etc/postgresql\n" +
@@ -389,6 +411,18 @@ export function legacyBuildPostgresStartContainerSpec(
     env,
     entrypoint: "sh",
     cmd: ["-c", script],
+    // The pgsodium root key heredoc/bind is present whenever the ACTUAL entrypoint in use
+    // embeds it: both `legacyPostgresEntrypointScriptPg15` and
+    // `legacyPostgresEntrypointScriptRestore` do (Go's `fromBackup` override always re-adds
+    // its own root-key heredoc, `start.go:147,155`, regardless of major version); only the
+    // PG<=14 script never references it.
+    ...(isPg14OrEarlier && !isRestore
+      ? {}
+      : {
+          secretFiles: [
+            { containerPath: LEGACY_POSTGRES_PGSODIUM_ROOT_KEY_PATH, content: rootKeyValue },
+          ],
+        }),
     binds: [
       `${containerName}:/var/lib/postgresql/data`,
       // Go's `StartDatabase` (`start.go:163`) appends this bind ONLY on the `fromBackup` branch —
@@ -401,20 +435,9 @@ export function legacyBuildPostgresStartContainerSpec(
     // check is NOT part of `StartDatabase`'s `fromBackup` override, so this stays keyed on
     // `isPg14OrEarlier` alone, independent of `isRestore`.
     ...(isPg14OrEarlier ? { tmpfs: { "/docker-entrypoint-initdb.d": "" } } : {}),
-    // The pgsodium root key heredoc/bind is present whenever the ACTUAL entrypoint in use embeds
-    // it: both `legacyPostgresEntrypointScriptPg15` and `legacyPostgresEntrypointScriptRestore` do
-    // (Go's `fromBackup` override always re-adds its own root-key heredoc, `start.go:147,155`,
-    // regardless of major version); only the PG<=14 script never references it.
-    ...(isPg14OrEarlier && !isRestore
-      ? {}
-      : {
-          secretFiles: [
-            { containerPath: LEGACY_POSTGRES_PGSODIUM_ROOT_KEY_PATH, content: rootKeyValue },
-          ],
-        }),
     ports: [{ hostPort: String(input.db.port), containerPort: "5432" }],
     healthcheck: {
-      test: ["CMD", "pg_isready", "-U", "postgres", "-h", "127.0.0.1", "-p", "5432"],
+      test: LEGACY_POSTGRES_HEALTHCHECK_TEST,
       intervalSeconds: LEGACY_POSTGRES_HEALTHCHECK_INTERVAL_SECONDS,
       timeoutSeconds: LEGACY_POSTGRES_HEALTHCHECK_TIMEOUT_SECONDS,
       retries: LEGACY_POSTGRES_HEALTHCHECK_RETRIES,
@@ -427,11 +450,8 @@ export function legacyBuildPostgresStartContainerSpec(
 }
 
 /**
- * Go's `NewContainerConfig("-c", "max_worker_processes=0")` (`CreateShadowDatabase`,
- * `apps/cli-go/internal/db/diff/diff.go:140`) — disables background workers in the
- * shadow database. Not a docker flag: it is spliced into the entrypoint script's own
- * `docker-entrypoint.sh postgres -D /etc/postgresql <args>` line, exactly like every
- * other `args` value {@link legacyPostgresEntrypointScriptPg15}/`Pg14` accept.
+ * Shadow `docker-entrypoint.sh postgres -D /etc/postgresql <args>` splice —
+ * disables background workers (`CreateShadowDatabase`).
  */
 export const LEGACY_SHADOW_ENTRYPOINT_ARGS = "-c max_worker_processes=0";
 
@@ -527,9 +547,6 @@ export function legacyBuildShadowPostgresContainerSpec(
     env,
     entrypoint: "sh",
     cmd: ["-c", script],
-    binds: [],
-    autoRemove: true,
-    ...(isPg14OrEarlier ? { tmpfs: { "/docker-entrypoint-initdb.d": "" } } : {}),
     ...(isPg14OrEarlier
       ? {}
       : {
@@ -537,9 +554,12 @@ export function legacyBuildShadowPostgresContainerSpec(
             { containerPath: LEGACY_POSTGRES_PGSODIUM_ROOT_KEY_PATH, content: rootKeyValue },
           ],
         }),
+    binds: [],
+    autoRemove: true,
+    ...(isPg14OrEarlier ? { tmpfs: { "/docker-entrypoint-initdb.d": "" } } : {}),
     ports: [{ hostPort: String(input.shadowPort), containerPort: "5432" }],
     healthcheck: {
-      test: ["CMD", "pg_isready", "-U", "postgres", "-h", "127.0.0.1", "-p", "5432"],
+      test: LEGACY_POSTGRES_HEALTHCHECK_TEST,
       intervalSeconds: LEGACY_POSTGRES_HEALTHCHECK_INTERVAL_SECONDS,
       timeoutSeconds: LEGACY_POSTGRES_HEALTHCHECK_TIMEOUT_SECONDS,
       retries: LEGACY_POSTGRES_HEALTHCHECK_RETRIES,

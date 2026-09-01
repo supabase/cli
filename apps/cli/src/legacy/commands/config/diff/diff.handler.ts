@@ -1,10 +1,9 @@
 import {
   CLI_CONFIG_SCHEMA_URL,
-  diffProjectConfig,
   fromApiProjectConfig,
   ProjectConfigParseError,
 } from "@supabase/config";
-import { loadCliConfig } from "@supabase/config/effect";
+import { diffProjectConfig, loadCliConfig } from "@supabase/config/internal";
 import { Effect, Option } from "effect";
 
 import { LegacyPlatformApi } from "../../../auth/legacy-platform-api.service.ts";

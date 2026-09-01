@@ -4,7 +4,7 @@ import {
   projectConfigMappingRows,
   unmappedSecretApiPaths,
   type ProjectConfigMappingRow,
-} from "@supabase/config";
+} from "@supabase/config/internal";
 
 /**
  * Contract-derived auth guard (CLI-2230's residual review): closes two gaps
@@ -27,9 +27,10 @@ import {
  * package must stay decoupled so it can publish to npm independently), so
  * this guard lives in `apps/cli`, which can import both. It needs `@supabase/
  * config`'s row data and orphan-secret list at runtime, which is why
- * `projectConfigMappingRows`/`unmappedSecretApiPaths` are exported from the
- * package root (`packages/config/src/index.ts`) — otherwise-internal registry
- * data, exposed solely so this cross-package guard can walk it.
+ * `projectConfigMappingRows`/`unmappedSecretApiPaths` are exported from
+ * `@supabase/config/internal` (`packages/config/src/internal.ts`) —
+ * otherwise-internal registry data, exposed solely so this cross-package
+ * guard (and `apps/cli`'s own contract tests) can walk it.
  *
  * `V1GetAuthServiceConfigOutput` (not the v2 project-config resource) is the
  * authority here: it is the generated schema whose field names are the real,

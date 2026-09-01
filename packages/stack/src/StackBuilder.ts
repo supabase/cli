@@ -1,3 +1,4 @@
+// oxlint-disable-next-line effecttsgo/node-builtin-import -- Native path joining is required for the temporary PostgreSQL alias boundary.
 import { join } from "node:path";
 import { buildGraph } from "@supabase/process-compose";
 import type { ResolvedGraph, ServiceDef } from "@supabase/process-compose";
@@ -124,12 +125,10 @@ const prepareNativePostgresAlias = (
     const aliasPath = join(aliasRoot, "bundle");
     if (/\s/.test(aliasPath) || (process.platform !== "darwin" && process.platform !== "linux")) {
       yield* fs.remove(aliasRoot, { recursive: true, force: true }).pipe(Effect.ignore);
-      return yield* Effect.fail(
-        new StackBuildError({
-          detail: "Native PostgreSQL requires a Unix temporary path without whitespace",
-          reason: "invalid_config",
-        }),
-      );
+      return yield* new StackBuildError({
+        detail: "Native PostgreSQL requires a Unix temporary path without whitespace",
+        reason: "invalid_config",
+      });
     }
 
     yield* fs.symlink(preparedPath, aliasPath).pipe(
@@ -149,12 +148,10 @@ export const validateResolvedConfig = (
 ): Effect.Effect<void, StackBuildError> =>
   Effect.gen(function* () {
     if (config.instanceId !== undefined && !INSTANCE_ID_PATTERN.test(config.instanceId)) {
-      return yield* Effect.fail(
-        new StackBuildError({
-          detail: `Invalid instanceId: must match ${INSTANCE_ID_PATTERN}`,
-          reason: "invalid_config",
-        }),
-      );
+      return yield* new StackBuildError({
+        detail: `Invalid instanceId: must match ${INSTANCE_ID_PATTERN}`,
+        reason: "invalid_config",
+      });
     }
 
     if (config.runtime.mode === "native") {
@@ -162,40 +159,32 @@ export const validateResolvedConfig = (
         (service) => resolvedConfigForService(config, service) !== false,
       );
       if (enabledDockerOnly.length > 0) {
-        return yield* Effect.fail(
-          new StackBuildError({
-            detail: `Native mode supports only ${nativeServices.join(", ")}. Disable ${enabledDockerOnly.join(", ")} or select Docker mode with a usable Docker or Podman runtime.`,
-            reason: "invalid_config",
-          }),
-        );
+        return yield* new StackBuildError({
+          detail: `Native mode supports only ${nativeServices.join(", ")}. Disable ${enabledDockerOnly.join(", ")} or select Docker mode with a usable Docker or Podman runtime.`,
+          reason: "invalid_config",
+        });
       }
     }
 
     if (config.imgproxy !== false && config.storage === false) {
-      return yield* Effect.fail(
-        new StackBuildError({
-          detail: "imgproxy requires storage to be enabled",
-          reason: "invalid_config",
-        }),
-      );
+      return yield* new StackBuildError({
+        detail: "imgproxy requires storage to be enabled",
+        reason: "invalid_config",
+      });
     }
 
     if (config.vector !== false && config.analytics === false) {
-      return yield* Effect.fail(
-        new StackBuildError({
-          detail: "vector requires analytics to be enabled",
-          reason: "invalid_config",
-        }),
-      );
+      return yield* new StackBuildError({
+        detail: "vector requires analytics to be enabled",
+        reason: "invalid_config",
+      });
     }
 
     if (config.studio !== false && config.pgmeta === false) {
-      return yield* Effect.fail(
-        new StackBuildError({
-          detail: "studio requires pgmeta to be enabled",
-          reason: "invalid_config",
-        }),
-      );
+      return yield* new StackBuildError({
+        detail: "studio requires pgmeta to be enabled",
+        reason: "invalid_config",
+      });
     }
   });
 

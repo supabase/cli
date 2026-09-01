@@ -2,6 +2,7 @@ import { Cause, Data } from "effect";
 import { CliError } from "effect/unstable/cli";
 import { describe, expect, it } from "vitest";
 import { markSupabaseApiInputErrorAsUserInput, SupabaseApiInputError } from "@supabase/api/effect";
+import { DockerPullError, StackError } from "@supabase/stack/effect";
 import { LegacyBootstrapHealthError } from "../../legacy/commands/bootstrap/bootstrap.errors.ts";
 import {
   actionability,
@@ -618,16 +619,45 @@ describe("classifyCliErrorActionability", () => {
   });
 
   it("classifies StackError port allocation failures", () => {
-    const error = new Error("no free port");
-    error.name = "StackError";
-    Object.defineProperty(error, "code", { value: "PORT_ALLOCATION" });
+    const error = new StackError({ code: "PORT_ALLOCATION", message: "no free port" });
     const result = classifyCliErrorActionability(error);
     expect(result.error_category).toBe("invalid_config");
-    expect(result.error_fingerprint).toBe("error:StackError:port_allocation");
+    expect(result.error_fingerprint).toBe("tag:StackError:port_allocation");
 
-    const other = new Error("other");
-    other.name = "StackError";
+    const other = new StackError({ code: "UNKNOWN", message: "other" });
     expect(classifyCliErrorActionability(other).error_kind).toBe("unknown");
+  });
+
+  it("classifies real tagged StackError causes before its wrapper adapter", () => {
+    const dockerPull = new DockerPullError({
+      image: "supabase/postgres",
+      detail: "docker daemon unavailable",
+      cause: new Error("connection refused"),
+      daemonDown: true,
+    });
+    const wrapped = new StackError({
+      code: "BUILD_ERROR",
+      message: "stack preparation failed",
+      cause: dockerPull,
+    });
+
+    const result = classifyCliErrorActionability(wrapped);
+    expect(result.error_kind).toBe("user_actionable");
+    expect(result.error_category).toBe("docker_not_running");
+    expect(result.error_fingerprint).toBe("tag:DockerPullError:docker_not_running");
+  });
+
+  it("classifies a native exception preserved by a real tagged StackError", () => {
+    const wrapped = new StackError({
+      code: "UNKNOWN",
+      message: "stack failed",
+      cause: new TypeError("native failure"),
+    });
+
+    const result = classifyCliErrorActionability(wrapped);
+    expect(result.error_kind).toBe("internal_bug");
+    expect(result.error_category).toBe("panic");
+    expect(result.error_fingerprint).toBe("error:TypeError");
   });
 
   // Managed errors are tagged errors that also declare a stable `code`: the
@@ -758,29 +788,6 @@ describe("classifyCliErrorActionability", () => {
     });
     expect(result.error_category).toBe("invalid_config");
     expect(result.error_fingerprint).toBe("tag:ManagedExactPortOccupiedError:port_conflict");
-  });
-
-  it("classifies the preserved tagged cause of a StackError wrapper", () => {
-    const wrapped = new Error("stack failure");
-    wrapped.name = "StackError";
-    Object.defineProperty(wrapped, "code", { value: "BUILD_ERROR" });
-    Object.defineProperty(wrapped, "cause", {
-      value: { _tag: "StackBuildError", detail: "x", reason: "invalid_config" },
-    });
-    const result = classifyCliErrorActionability(wrapped);
-    expect(result.error_category).toBe("invalid_config");
-    expect(result.error_fingerprint).toBe("tag:StackBuildError:invalid_config");
-  });
-
-  it("classifies a native exception wrapped by StackError as an internal bug", () => {
-    const wrapped = new Error("boom");
-    wrapped.name = "StackError";
-    Object.defineProperty(wrapped, "code", { value: "UNKNOWN" });
-    Object.defineProperty(wrapped, "cause", { value: new TypeError("x is not a function") });
-    const result = classifyCliErrorActionability(wrapped);
-    expect(result.error_kind).toBe("internal_bug");
-    expect(result.error_category).toBe("panic");
-    expect(result.error_fingerprint).toBe("error:TypeError");
   });
 
   it("treats forbidden API statuses as account permission failures", () => {

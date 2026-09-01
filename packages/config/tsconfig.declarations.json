@@ -1,0 +1,14 @@
+{
+  // Declaration-only companion to `tsconfig.build.json`, used by
+  // `tools/config-api-compare.ts` (repo root) to emit both the base and head
+  // `.d.ts` trees it diffs (CLI-2234). A second minimal config — rather than
+  // overriding `declarationMap` on the CLI — because `declarationMap` is a
+  // boolean compiler option with no dedicated CLI negation flag; `--outDir`
+  // is a plain string override and stays safe to pass on the command line at
+  // each call site.
+  "extends": "./tsconfig.build.json",
+  "compilerOptions": {
+    "emitDeclarationOnly": true,
+    "declarationMap": false
+  }
+}

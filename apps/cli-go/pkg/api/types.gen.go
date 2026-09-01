@@ -2789,6 +2789,21 @@ func (e ProjectUpgradeEligibilityResponseWarnings2Type) Valid() bool {
 	}
 }
 
+// Defines values for ProjectUpgradeEligibilityResponseWarnings3Type.
+const (
+	BtreeGistNanReindex ProjectUpgradeEligibilityResponseWarnings3Type = "btree_gist_nan_reindex"
+)
+
+// Valid indicates whether the value is a known member of the ProjectUpgradeEligibilityResponseWarnings3Type enum.
+func (e ProjectUpgradeEligibilityResponseWarnings3Type) Valid() bool {
+	switch e {
+	case BtreeGistNanReindex:
+		return true
+	default:
+		return false
+	}
+}
+
 // Defines values for RegionsInfoAllSmartGroupCode.
 const (
 	RegionsInfoAllSmartGroupCodeAmericas RegionsInfoAllSmartGroupCode = "americas"
@@ -4670,8 +4685,11 @@ const (
 	InstanceDbDown                V1ProjectAdvisorsResponseLintsName = "instance_db_down"
 	InstanceTelemetryLost         V1ProjectAdvisorsResponseLintsName = "instance_telemetry_lost"
 	LeakedServiceKey              V1ProjectAdvisorsResponseLintsName = "leaked_service_key"
+	LogAuthErrorRateHigh          V1ProjectAdvisorsResponseLintsName = "log_auth_error_rate_high"
 	LogConnectionsNotEnabled      V1ProjectAdvisorsResponseLintsName = "log_connections_not_enabled"
-	LogServiceErrorRateHigh       V1ProjectAdvisorsResponseLintsName = "log_service_error_rate_high"
+	LogDataApiErrorRateHigh       V1ProjectAdvisorsResponseLintsName = "log_data_api_error_rate_high"
+	LogEdgeFunctionErrorRateHigh  V1ProjectAdvisorsResponseLintsName = "log_edge_function_error_rate_high"
+	LogStorageErrorRateHigh       V1ProjectAdvisorsResponseLintsName = "log_storage_error_rate_high"
 	MaterializedViewInApi         V1ProjectAdvisorsResponseLintsName = "materialized_view_in_api"
 	MultiplePermissivePolicies    V1ProjectAdvisorsResponseLintsName = "multiple_permissive_policies"
 	NetworkRestrictionsNotSet     V1ProjectAdvisorsResponseLintsName = "network_restrictions_not_set"
@@ -4733,9 +4751,15 @@ func (e V1ProjectAdvisorsResponseLintsName) Valid() bool {
 		return true
 	case LeakedServiceKey:
 		return true
+	case LogAuthErrorRateHigh:
+		return true
 	case LogConnectionsNotEnabled:
 		return true
-	case LogServiceErrorRateHigh:
+	case LogDataApiErrorRateHigh:
+		return true
+	case LogEdgeFunctionErrorRateHigh:
+		return true
+	case LogStorageErrorRateHigh:
 		return true
 	case MaterializedViewInApi:
 		return true
@@ -7433,6 +7457,14 @@ type ProjectUpgradeEligibilityResponseWarnings2 struct {
 // ProjectUpgradeEligibilityResponseWarnings2Type defines model for ProjectUpgradeEligibilityResponse.Warnings.2.Type.
 type ProjectUpgradeEligibilityResponseWarnings2Type string
 
+// ProjectUpgradeEligibilityResponseWarnings3 defines model for .
+type ProjectUpgradeEligibilityResponseWarnings3 struct {
+	Type ProjectUpgradeEligibilityResponseWarnings3Type `json:"type"`
+}
+
+// ProjectUpgradeEligibilityResponseWarnings3Type defines model for ProjectUpgradeEligibilityResponse.Warnings.3.Type.
+type ProjectUpgradeEligibilityResponseWarnings3Type string
+
 // ProjectUpgradeEligibilityResponse_Warnings_Item defines model for ProjectUpgradeEligibilityResponse.warnings.Item.
 type ProjectUpgradeEligibilityResponse_Warnings_Item struct {
 	union json.RawMessage
@@ -7714,8 +7746,7 @@ type StorageConfigResponse struct {
 		IcebergCatalog bool `json:"iceberg_catalog"`
 		ListV2         bool `json:"list_v2"`
 	} `json:"capabilities"`
-	DatabasePoolMode string `json:"databasePoolMode"`
-	External         struct {
+	External struct {
 		UpstreamTarget StorageConfigResponseExternalUpstreamTarget `json:"upstreamTarget"`
 	} `json:"external"`
 	Features struct {
@@ -9012,6 +9043,9 @@ type VanitySubdomainConfigResponseStatus string
 
 // bearerContextKey is the context key for bearer security scheme
 type bearerContextKey string
+
+// oauth2ContextKey is the context key for oauth2 security scheme
+type oauth2ContextKey string
 
 // V1DeleteABranchParams defines parameters for V1DeleteABranch.
 type V1DeleteABranchParams struct {
@@ -11603,6 +11637,32 @@ func (t *ProjectUpgradeEligibilityResponse_Warnings_Item) FromProjectUpgradeElig
 
 // MergeProjectUpgradeEligibilityResponseWarnings2 performs a merge with any union data inside the ProjectUpgradeEligibilityResponse_Warnings_Item, using the provided ProjectUpgradeEligibilityResponseWarnings2
 func (t *ProjectUpgradeEligibilityResponse_Warnings_Item) MergeProjectUpgradeEligibilityResponseWarnings2(v ProjectUpgradeEligibilityResponseWarnings2) error {
+	b, err := json.Marshal(v)
+	if err != nil {
+		return err
+	}
+
+	merged, err := runtime.JSONMerge(t.union, b)
+	t.union = merged
+	return err
+}
+
+// AsProjectUpgradeEligibilityResponseWarnings3 returns the union data inside the ProjectUpgradeEligibilityResponse_Warnings_Item as a ProjectUpgradeEligibilityResponseWarnings3
+func (t ProjectUpgradeEligibilityResponse_Warnings_Item) AsProjectUpgradeEligibilityResponseWarnings3() (ProjectUpgradeEligibilityResponseWarnings3, error) {
+	var body ProjectUpgradeEligibilityResponseWarnings3
+	err := json.Unmarshal(t.union, &body)
+	return body, err
+}
+
+// FromProjectUpgradeEligibilityResponseWarnings3 overwrites any union data inside the ProjectUpgradeEligibilityResponse_Warnings_Item as the provided ProjectUpgradeEligibilityResponseWarnings3
+func (t *ProjectUpgradeEligibilityResponse_Warnings_Item) FromProjectUpgradeEligibilityResponseWarnings3(v ProjectUpgradeEligibilityResponseWarnings3) error {
+	b, err := json.Marshal(v)
+	t.union = b
+	return err
+}
+
+// MergeProjectUpgradeEligibilityResponseWarnings3 performs a merge with any union data inside the ProjectUpgradeEligibilityResponse_Warnings_Item, using the provided ProjectUpgradeEligibilityResponseWarnings3
+func (t *ProjectUpgradeEligibilityResponse_Warnings_Item) MergeProjectUpgradeEligibilityResponseWarnings3(v ProjectUpgradeEligibilityResponseWarnings3) error {
 	b, err := json.Marshal(v)
 	if err != nil {
 		return err

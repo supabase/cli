@@ -1,3 +1,5 @@
+// oxlint-disable effecttsgo/async-function -- Child termination tests await the public Promise facade from Vitest callbacks.
+
 import { describe, expect, it, vi } from "vitest";
 import { Effect, Fiber } from "effect";
 import { terminateChildProcess } from "./terminateChild.ts";

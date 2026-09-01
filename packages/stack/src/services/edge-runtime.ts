@@ -1,3 +1,4 @@
+// oxlint-disable-next-line effecttsgo/node-builtin-import -- Bootstrap source paths are resolved synchronously for the generated Docker mount boundary.
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import type { ServiceDef } from "@supabase/process-compose";
