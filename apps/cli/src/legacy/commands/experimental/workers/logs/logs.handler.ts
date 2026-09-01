@@ -208,6 +208,10 @@ export const legacyWorkersLogs = Effect.fn("legacy.experimental.workers.logs")(f
         ? [WORKER_LOG_STREAMS[flags.kind.value]]
         : ALL_WORKER_LOG_STREAMS;
 
+      // Before any request, so a slow history query or deployed-worker check
+      // cannot widen what `followFloorMs` below treats as "already there".
+      const startedAtMs = Date.now();
+
       // `--tail 0` is "no history". On its own that is a no-op, but it is the shape
       // `--follow` will want, and issuing a `limit 0` query would be a 400.
       const entries =
@@ -229,10 +233,19 @@ export const legacyWorkersLogs = Effect.fn("legacy.experimental.workers.logs")(f
       // a worker that is not deployed at all, and one that is deployed and quiet.
       // Only worth one extra request, and only in this branch.
       //
-      // Skipped when `--tail 0` asked for no history: no query was made, so zero
-      // rows says nothing about whether the worker exists.
-      if (entries.length === 0 && flags.tail > 0) {
-        const deployed = yield* getWorker(api, projectRef, name);
+      // `--tail 0` makes no history query, so zero rows says nothing either way —
+      // but a tail still has to know the worker exists, or a typo waits forever on
+      // logs that can never arrive. A bounded `--tail 0` run prints nothing by
+      // definition and is left alone.
+      if (entries.length === 0 && (flags.tail > 0 || flags.follow)) {
+        // Its own task: with `--tail 0` there is no "Fetching logs..." to inherit,
+        // and clearing that one before this request left text mode silent across
+        // a call that can take a moment.
+        const checking = yield* output.task("Checking worker...");
+        const deployed = yield* getWorker(api, projectRef, name).pipe(
+          Effect.tapError(() => checking.fail()),
+        );
+        yield* checking.clear();
         if (Option.isNone(deployed)) {
           return yield* Effect.fail(
             new WorkerNotDeployedError({
@@ -300,6 +313,12 @@ export const legacyWorkersLogs = Effect.fn("legacy.experimental.workers.logs")(f
         entries.length === 0 ? Date.now() : entries[entries.length - 1]!.timestampMs,
       );
 
+      // `--tail 0` asked for no history, and `followWindow` deliberately reaches
+      // a grace period behind the cursor so a line relayed late is still caught.
+      // Both are wanted, and together they let pre-invocation lines through — so
+      // keep the wide window and filter on when the line was actually written.
+      const followFloorMs = flags.tail === 0 ? startedAtMs : Number.NEGATIVE_INFINITY;
+
       const pollOnce = Effect.gen(function* () {
         const cursor = yield* Ref.get(newestSeenMs);
 
@@ -335,7 +354,7 @@ export const legacyWorkersLogs = Effect.fn("legacy.experimental.workers.logs")(f
         // rather than a source of repeats.
         const printed = yield* Ref.get(seenIds);
         const fresh = collected
-          .filter((row) => !printed.has(row.id))
+          .filter((row) => !printed.has(row.id) && row.timestampMs >= followFloorMs)
           // Each page is oldest-first but the pages themselves walk backwards, so
           // the concatenation is not ordered until this runs.
           .sort((left, right) => left.timestampMs - right.timestampMs);

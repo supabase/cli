@@ -676,7 +676,13 @@ describe("legacy workers logs", () => {
     const { layer, out, http } = setupLegacyWorkers({
       workdir: repo.dir,
       routes: {
-        [LOGS_ROUTE]: logsResponse([workerLogRow({ id: "new", tsMs: T2, message: "brand new" })]),
+        // A tail-zero follow still asks whether the worker exists: with no history
+        // query, zero rows would otherwise be indistinguishable from a typo.
+        [GET_WORKER_ROUTE]: { status: 200, body: { data: workerResource({ name: "api" }) } },
+        // After the run starts, since a tail-zero follow prints only what arrives.
+        [LOGS_ROUTE]: logsResponse([
+          workerLogRow({ id: "new", tsMs: Date.now() + 5_000, message: "brand new" }),
+        ]),
       },
     });
 
@@ -684,10 +690,12 @@ describe("legacy workers logs", () => {
       yield* legacyWorkersLogs(flags({ follow: true, tail: 0 }), followFor(1));
 
       expect(out.stdoutText).toContain("brand new");
-      // No history request; every request belongs to the poll loop, and none may
-      // ask for `limit 0`, which the endpoint rejects.
-      for (const request of http.requests) {
-        expect(sentQuery(request).sql).not.toContain("limit 0");
+      // No history request; every log request belongs to the poll loop, and none
+      // may ask for `limit 0`, which the endpoint rejects.
+      const sql = http.requests.map((request) => sentQuery(request).sql).filter(Boolean);
+      expect(sql).not.toHaveLength(0);
+      for (const query of sql) {
+        expect(query).not.toContain("limit 0");
       }
     }).pipe(Effect.provide(layer), Effect.ensuring(Effect.sync(repo.cleanup)));
   });
@@ -773,6 +781,54 @@ describe("legacy workers logs", () => {
         expect(setup.http.requests).toHaveLength(0);
       }
     }).pipe(Effect.ensuring(Effect.sync(repo.cleanup)));
+  });
+
+  // `--tail 0 --follow` is "skip history, print what arrives". The poll window
+  // still reaches a grace period behind the cursor so late relays are caught, so
+  // the floor has to be the line's own timestamp rather than a narrower window.
+  it.live("does not replay pre-invocation lines for --tail 0 --follow", () => {
+    const repo = project();
+    const { layer, out } = setupLegacyWorkers({
+      workdir: repo.dir,
+      routes: {
+        [GET_WORKER_ROUTE]: { status: 200, body: { data: workerResource({ name: "api" }) } },
+        [LOGS_ROUTE]: [
+          logsResponse([
+            workerLogRow({ id: "before", tsMs: Date.now() - 30_000, message: "written before" }),
+            workerLogRow({ id: "after", tsMs: Date.now() + 5_000, message: "written after" }),
+          ]),
+        ],
+      },
+    });
+
+    return Effect.gen(function* () {
+      yield* legacyWorkersLogs(flags({ tail: 0, follow: true }), followFor(0));
+
+      expect(out.stdoutText).toContain("written after");
+      expect(out.stdoutText).not.toContain("written before");
+    }).pipe(Effect.provide(layer), Effect.ensuring(Effect.sync(repo.cleanup)));
+  });
+
+  // No history query means zero rows proves nothing, so the tail has to ask
+  // directly — otherwise a typo waits forever on logs that cannot arrive.
+  it.live("still checks the worker exists for --tail 0 --follow", () => {
+    const repo = project();
+    const { layer, out } = setupLegacyWorkers({
+      workdir: repo.dir,
+      routes: { [GET_WORKER_ROUTE]: { status: 404 } },
+    });
+
+    return Effect.gen(function* () {
+      const error = yield* legacyWorkersLogs(flags({ tail: 0, follow: true }), followFor(0)).pipe(
+        Effect.flip,
+      );
+
+      expect(error).toBeInstanceOf(WorkerNotDeployedError);
+      // Text mode is not silent across that request.
+      expect(out.progressEvents).toContainEqual(
+        expect.objectContaining({ type: "start", message: "Checking worker..." }),
+      );
+    }).pipe(Effect.provide(layer), Effect.ensuring(Effect.sync(repo.cleanup)));
   });
 
   // `--tail` bounds the history a run opens with; reusing it as the poll size
