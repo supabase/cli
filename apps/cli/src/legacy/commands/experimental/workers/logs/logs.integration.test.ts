@@ -775,28 +775,25 @@ describe("legacy workers logs", () => {
     }).pipe(Effect.ensuring(Effect.sync(repo.cleanup)));
   });
 
-  it.live("exits 130 when interrupted with SIGINT", () => {
+  it.live("records exit 130 on SIGINT and still runs its finalizers", () => {
     const repo = project();
-    const { layer, processControl } = setupLegacyWorkers({
+    const { layer, processControl, telemetry } = setupLegacyWorkers({
       workdir: repo.dir,
       signal: "SIGINT",
       routes: { [LOGS_ROUTE]: logsResponse([workerLogRow({ id: "a", tsMs: T1 })]) },
     });
 
     return Effect.gen(function* () {
-      // `exit` never returns - in production the process is gone - so the handler
-      // cannot be awaited here. Fork it and synchronise on the exit itself, which
-      // is the observable condition, rather than on a delay.
-      yield* Effect.forkChild(
-        legacyWorkersLogs(flags({ follow: true }), {
-          pollSchedule: Schedule.forever,
-          retrySchedule: Schedule.recurs(0),
-        }).pipe(Effect.ignore),
-      );
+      yield* legacyWorkersLogs(flags({ follow: true }), {
+        pollSchedule: Schedule.forever,
+        retrySchedule: Schedule.recurs(0),
+      });
 
-      const code = yield* processControl.awaitExit;
-
-      expect(code).toBe(130);
+      expect(processControl.exitCode).toBe(130);
+      // The point of recording rather than exiting: `process.exit` from inside
+      // the race branch would have killed the runtime before this ran.
+      expect(telemetry.flushed).toBe(true);
+      expect(processControl.exitCalls).toEqual([]);
     }).pipe(Effect.provide(layer), Effect.ensuring(Effect.sync(repo.cleanup)));
   });
 });

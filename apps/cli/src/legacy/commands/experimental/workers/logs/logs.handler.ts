@@ -332,9 +332,17 @@ export const legacyWorkersLogs = Effect.fn("legacy.experimental.workers.logs")(f
       // of 10.
       yield* Effect.raceFirst(
         poll.pipe(Effect.repeat({ schedule: pollSchedule })),
+        // `setExitCode`, not `exit`: the production `exit` calls `process.exit`
+        // synchronously, which tears the runtime down from inside this race
+        // branch — before the linked-project cache is written, before telemetry
+        // is flushed, and before the instrumentation wrapper emits its post-run
+        // event. Recording the code lets the race complete normally so the
+        // finalizers run, and `runCli` exits with it once they have.
         processControl
           .awaitSignal()
-          .pipe(Effect.flatMap((signal) => processControl.exit(signal === "SIGINT" ? 130 : 0))),
+          .pipe(
+            Effect.flatMap((signal) => processControl.setExitCode(signal === "SIGINT" ? 130 : 0)),
+          ),
       );
     }).pipe(Effect.ensuring(linkedProjectCache.cache(projectRef)));
   }).pipe(Effect.ensuring(telemetryState.flush));
