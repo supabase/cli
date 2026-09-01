@@ -1283,3 +1283,11 @@ The final public Stack-package scenario is one `runWholeStackScenario(mode)` bod
 - Real native artifact builds were not available locally. PR CI remains responsible for building and running the
   three actual artifact smokes. Even after that proof, replacing published assets and running the final clean-host
   Stack E2E/no-EPMD gate remain separately approval-gated; neither action has been performed.
+- Fable convergence pass:
+  `/Users/jgoux/.codex/fable-reviews/cli/20260901T064559Z.md`. The review found no design or Stack-runtime defect.
+  Accepted hardening now extracts one unique marker from noisy release `eval` output, rejects missing/duplicate/wrong
+  values, handles empty environment arrays on the macOS Bash baseline, and reuses the existing scoped readiness
+  listener in the Stack integration fixture. The claim that Analytics' template shape was unconfirmed was refuted by
+  direct inspection: the pinned Realtime, Analytics, and Pooler templates each contain exactly one supported exported
+  assignment. Extra process fixtures, keep-in-sync comments, and unrelated state-fixture cleanup were rejected as
+  duplicate coverage or non-executable maintenance noise.
