@@ -13,7 +13,7 @@ import type { WorkerLogEntry } from "../../../../shared/workers/worker-logs-api.
  * one line each, with a different layout per stream.
  */
 
-export type WorkerLogLevel = "info" | "warn" | "error";
+export type LegacyWorkerLogLevel = "info" | "warn" | "error";
 
 /**
  * The level for one line, derived rather than read.
@@ -26,7 +26,7 @@ export type WorkerLogLevel = "info" | "warn" | "error";
  * Guest output has no level available without parsing tenant text, so it is
  * reported absent rather than guessed at.
  */
-export function legacyWorkerLogLevel(entry: WorkerLogEntry): WorkerLogLevel | undefined {
+export function legacyWorkerLogLevel(entry: WorkerLogEntry): LegacyWorkerLogLevel | undefined {
   if (entry.stream === WORKER_LOG_STREAMS.requests) {
     // `log_attributes` is a Map(String, String), so this is "200", not 200.
     const status = Number(entry.attributes.status);
@@ -59,8 +59,17 @@ const OSC_SEQUENCE = /\u001b\][^\u0007\u001b]*(?:\u0007|\u001b\\)?/gu;
 const CSI_SEQUENCE = /\u001b\[[0-9;?]*[ -/]*[@-~]/gu;
 /** Remaining two-character escape sequences. */
 const ESCAPE_SEQUENCE = /\u001b[@-Z\\-_]/gu;
-/** Leftover C0 controls and DEL, keeping tab, newline and carriage return. */
-const C0_CONTROLS = /[\u0000-\u0008\u000b\u000c\u000e-\u001f\u007f]/gu;
+/** CRLF pairs, folded to a bare newline before lone carriage returns go. */
+const CRLF_PAIR = /\u000d\u000a/gu;
+/**
+ * Leftover C0 controls and DEL, keeping only tab and newline.
+ *
+ * A carriage return is stripped rather than kept: it returns the cursor to
+ * column zero, so a line carrying one can overwrite the timestamp and stream tag
+ * already printed to its left and forge output that looks like the CLI's own.
+ * Real line breaks survive as the `CRLF_PAIR` fold above.
+ */
+const C0_CONTROLS = /[\u0000-\u0008\u000b-\u001f\u007f]/gu;
 /* oxlint-enable no-control-regex */
 
 /**
@@ -77,6 +86,7 @@ const C0_CONTROLS = /[\u0000-\u0008\u000b\u000c\u000e-\u001f\u007f]/gu;
  */
 function stripControlSequences(message: string): string {
   return message
+    .replaceAll(CRLF_PAIR, "\n")
     .replaceAll(OSC_SEQUENCE, "")
     .replaceAll(CSI_SEQUENCE, "")
     .replaceAll(ESCAPE_SEQUENCE, "")
@@ -99,7 +109,7 @@ function stripControlSequences(message: string): string {
  */
 function colourise(
   text: string,
-  level: WorkerLogLevel | undefined,
+  level: LegacyWorkerLogLevel | undefined,
   stream: LegacyColorStream,
 ): string {
   if (level === "error") {
@@ -140,7 +150,7 @@ function formatLogTime(timestampMs: number): string {
  *
  * Abbreviated because the wire names are internal and long - `worker_guest_logs`
  * would cost 19 columns to say "the worker's own output". The words match
- * `--source`, so what is printed is what the flag accepts.
+ * `--kind`, so what is printed is what the flag accepts.
  */
 const STREAM_TAGS: Readonly<Record<string, string>> = {
   [WORKER_LOG_STREAMS.app]: "app",
@@ -161,6 +171,49 @@ function streamTag(stream: string): string {
 }
 
 /**
+ * What one entry says, composed and sanitised but not coloured or prefixed.
+ *
+ * Split out from the renderer because `stream-json` needs the same sentence:
+ * emitting `event_message` there instead dropped the status and duration from a
+ * request line and the structured reason from a build failure, and `log-entry`
+ * has no attributes field for a consumer to recover them from.
+ *
+ * Per-stream layouts rather than one shared format, because `event_message`
+ * means something different in each. On the request stream it is only `"GET /"`
+ * — the status and duration live in `log_attributes` — so the useful line has to
+ * be *composed*.
+ */
+export function legacyWorkerLogText(entry: WorkerLogEntry): string {
+  if (entry.stream === WORKER_LOG_STREAMS.requests) {
+    const { status, method, path, duration_ms: duration } = entry.attributes;
+    const request = [status, method, path]
+      .filter((part) => part !== undefined)
+      .map(stripControlSequences)
+      .join(" ");
+    const suffix = duration === undefined ? "" : ` ${stripControlSequences(duration)}ms`;
+    return `${request}${suffix}`;
+  }
+
+  if (entry.stream === WORKER_LOG_STREAMS.builds) {
+    const { event, reason } = entry.attributes;
+    return [event ?? entry.message, reason]
+      .filter((part) => part !== undefined)
+      .map(stripControlSequences)
+      .join(" ");
+  }
+
+  // Guest output, and anything newer. The message is the payload.
+  //
+  // Every branch above sanitises too: a request `path` is chosen by whoever
+  // called the worker, and a build `reason` is relayed from the builder, so
+  // "the guest message is the only untrusted string" was never true. The
+  // `stream` the tag is derived from is not sanitised because it cannot carry
+  // anything: the query only returns rows whose stream is one of three
+  // literals.
+  return stripControlSequences(entry.message);
+}
+
+/**
  * One rendered line.
  *
  * Per-stream layouts rather than one shared format, because `event_message` means
@@ -176,7 +229,7 @@ export function legacyRenderWorkerLogLine(
   entry: WorkerLogEntry,
   options: {
     /**
-     * Whether to prefix the stream tag. False when `--source` has already pinned
+     * Whether to prefix the stream tag. False when `--kind` has already pinned
      * one stream, where every line would carry the same tag and it would be
      * width spent saying nothing.
      */
@@ -189,22 +242,5 @@ export function legacyRenderWorkerLogLine(
   const colorStream = options.colorStream ?? process.stdout;
   const prefix = options.showStream ? `${time}  ${streamTag(entry.stream)}` : time;
 
-  if (entry.stream === WORKER_LOG_STREAMS.requests) {
-    const { status, method, path, duration_ms: duration } = entry.attributes;
-    const request = [status, method, path].filter((part) => part !== undefined).join(" ");
-    const suffix = duration === undefined ? "" : ` ${duration}ms`;
-    return `${prefix}  ${colourise(`${request}${suffix}`, level, colorStream)}`;
-  }
-
-  if (entry.stream === WORKER_LOG_STREAMS.builds) {
-    const { event, reason } = entry.attributes;
-    const described = [event ?? entry.message, reason]
-      .filter((part) => part !== undefined)
-      .join(" ");
-    return `${prefix}  ${colourise(described, level, colorStream)}`;
-  }
-
-  // Guest output, and anything newer. The message is the payload, and it is the
-  // untrusted one.
-  return `${prefix}  ${colourise(stripControlSequences(entry.message), level, colorStream)}`;
+  return `${prefix}  ${colourise(legacyWorkerLogText(entry), level, colorStream)}`;
 }

@@ -73,14 +73,15 @@ guaranteed and is deduplicated on the Logflare-minted `id`.
 
 ## Exit Codes
 
-| Code | Condition                                                    |
-| ---- | ------------------------------------------------------------ |
-| `0`  | success, including "no logs in the last 24 hours"            |
-| `1`  | invalid worker name                                          |
-| `1`  | nothing deployed under that name                             |
-| `1`  | the log query failed (rejected, or the server's 30s timeout) |
-| `1`  | log usage exceeded (402), or rate limited (429)              |
-| `1`  | API error, or project not enrolled in the alpha              |
+| Code  | Condition                                                    |
+| ----- | ------------------------------------------------------------ |
+| `0`   | success, including "no logs in the last 24 hours"            |
+| `1`   | invalid worker name                                          |
+| `1`   | nothing deployed under that name                             |
+| `1`   | the log query failed (rejected, or the server's 30s timeout) |
+| `1`   | log usage exceeded (402), or rate limited (429)              |
+| `1`   | API error, or project not enrolled in the alpha              |
+| `130` | `--follow` interrupted with SIGINT                           |
 
 ## Environment Variables
 
@@ -98,7 +99,7 @@ guaranteed and is deduplicated on the Logflare-minted `id`.
 | ---------------------- | ------------------------------------------ | ----------------------------------- |
 | `cli_command_executed` | post-run, success or failure (via wrapper) | `exit_code`, `duration_ms`, `flags` |
 
-`--source` is a choice flag, so its value is logged verbatim (a closed enum carries
+`--kind` is a choice flag, so its value is logged verbatim (a closed enum carries
 no user data). `--project-ref` is not on this command's safe list, so its value is
 redacted. No custom events.
 
@@ -107,11 +108,17 @@ redacted. No custom events.
 | Mode                          | stdout                                                                                              | stderr                                                    |
 | ----------------------------- | --------------------------------------------------------------------------------------------------- | --------------------------------------------------------- |
 | text (default)                | one line per entry, oldest first, per-stream layout; `HH:MM:SS` local time; severity as colour      | the spinner, and the `status` hint when there are no logs |
-| `--output-format json`        | one structured result carrying every entry                                                          | as above                                                  |
-| `--output-format stream-json` | the same result as a single terminal event                                                          | as above                                                  |
-| `-o json` / `yaml` / `toml`   | the same payload in that encoding, and nothing else                                                 | as above                                                  |
-| `-o pretty` / `table` / `csv` | the text rendering — these fall through rather than encoding                                        | as above                                                  |
+| `--output-format json`        | one structured result carrying every entry                                                          | neither — both are text-only                              |
+| `--output-format stream-json` | the same result as a single terminal event                                                          | neither — both are text-only                              |
+| `-o json` / `yaml` / `toml`   | the same payload in that encoding, and nothing else                                                 | neither — both are text-only                              |
+| `-o pretty` / `table` / `csv` | the text rendering — these fall through rather than encoding                                        | both, as in text                                          |
 | `-o env`                      | refused before any request; the payload nests a `logs` array a flat `KEY=value` list cannot express | the error                                                 |
+
+A structured emission is the end of a bounded read: the handler returns at
+`legacyEmitWorkersMachineOutput` or at `output.success`, so the no-logs line and
+its `status` trailer below them are never reached, and `output.task` is a no-op
+in those modes. `-o pretty`, `table` and `csv` are the exception, since they
+encode nothing and fall through to the same text branch.
 
 With `--follow`, `stream-json` emits a `log-entry` event per line rather than one
 terminal `result` — a tail has no last element. Its `stream` field is `stderr` when
@@ -119,6 +126,11 @@ the derived level is error or warn and `stdout` otherwise, and `source` separate
 the initial backlog (`history`) from lines that arrived afterwards (`live`).
 `--tail 0 --follow` skips the backlog entirely and makes no history request, since
 the endpoint rejects `limit 0`.
+
+A bounded read echoes `--kind` back as a top-level `kind` key when the flag was
+given. That is a different axis from the per-line `source` above — `kind` is which
+stream was asked for, `source` is whether the line came from the backlog or the
+tail — so the two never mean the same thing.
 
 Text output prints the time in the reader's own timezone, matching the `--debug`
 HTTP logger. Machine payloads carry the unambiguous forms instead — each entry's

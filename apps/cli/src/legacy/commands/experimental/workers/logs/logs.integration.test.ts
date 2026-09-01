@@ -1,6 +1,6 @@
 import { rmSync } from "node:fs";
 import { describe, expect, it } from "@effect/vitest";
-import { Effect, Option, Schedule } from "effect";
+import { Effect, Exit, Option, Schedule } from "effect";
 import {
   makeWorkersProject,
   setupLegacyWorkers,
@@ -48,7 +48,7 @@ function flags(overrides: Record<string, unknown> = {}) {
   return {
     name: "api",
     projectRef: Option.none(),
-    source: Option.none(),
+    kind: Option.none(),
     tail: 100,
     ...overrides,
   } as Parameters<typeof legacyWorkersLogs>[0];
@@ -98,7 +98,7 @@ describe("legacy workers logs", () => {
     return Effect.gen(function* () {
       yield* legacyWorkersLogs(flags());
 
-      // `<time>  [app]    <message>` — the tag is present because no --source
+      // `<time>  [app]    <message>` — the tag is present because no --kind
       // pinned a stream.
       const messages = out.stdoutText
         .trimEnd()
@@ -193,7 +193,7 @@ describe("legacy workers logs", () => {
     }).pipe(Effect.provide(layer), Effect.ensuring(Effect.sync(repo.cleanup)));
   });
 
-  it.live("narrows to one stream for --source, and to all three without it", () => {
+  it.live("narrows to one stream for --kind, and to all three without it", () => {
     const repo = project();
     const { layer, http } = setupLegacyWorkers({
       workdir: repo.dir,
@@ -201,7 +201,7 @@ describe("legacy workers logs", () => {
     });
 
     return Effect.gen(function* () {
-      yield* legacyWorkersLogs(flags({ source: Option.some("requests") }));
+      yield* legacyWorkersLogs(flags({ kind: Option.some("requests") }));
       const narrowed = sentQuery(http.requests[0]!).sql ?? "";
       expect(narrowed).toContain("in ('worker_ingress_logs')");
 
@@ -551,6 +551,26 @@ describe("legacy workers logs", () => {
     }).pipe(Effect.provide(layer), Effect.ensuring(Effect.sync(repo.cleanup)));
   });
 
+  // The command has run by the time the ref fails to resolve, so its post-run
+  // event still has to be written. Resolution sits above the query, so the
+  // failing-query test above does not cover this path.
+  it.live("flushes telemetry when the project ref cannot be resolved", () => {
+    const repo = project();
+    const { layer, telemetry, http } = setupLegacyWorkers({
+      workdir: repo.dir,
+      linked: false,
+      routes: {},
+    });
+
+    return Effect.gen(function* () {
+      const exit = yield* legacyWorkersLogs(flags()).pipe(Effect.exit);
+
+      expect(Exit.isFailure(exit)).toBe(true);
+      expect(telemetry.flushed).toBe(true);
+      expect(http.requests).toHaveLength(0);
+    }).pipe(Effect.provide(layer), Effect.ensuring(Effect.sync(repo.cleanup)));
+  });
+
   it.live("uses the project ref from the flag and echoes it in suggestions", () => {
     const repo = project();
     const { layer } = setupLegacyWorkers({
@@ -656,7 +676,13 @@ describe("legacy workers logs", () => {
     const { layer, out, http } = setupLegacyWorkers({
       workdir: repo.dir,
       routes: {
-        [LOGS_ROUTE]: logsResponse([workerLogRow({ id: "new", tsMs: T2, message: "brand new" })]),
+        // A tail-zero follow still asks whether the worker exists: with no history
+        // query, zero rows would otherwise be indistinguishable from a typo.
+        [GET_WORKER_ROUTE]: { status: 200, body: { data: workerResource({ name: "api" }) } },
+        // After the run starts, since a tail-zero follow prints only what arrives.
+        [LOGS_ROUTE]: logsResponse([
+          workerLogRow({ id: "new", tsMs: Date.now() + 5_000, message: "brand new" }),
+        ]),
       },
     });
 
@@ -664,10 +690,12 @@ describe("legacy workers logs", () => {
       yield* legacyWorkersLogs(flags({ follow: true, tail: 0 }), followFor(1));
 
       expect(out.stdoutText).toContain("brand new");
-      // No history request; every request belongs to the poll loop, and none may
-      // ask for `limit 0`, which the endpoint rejects.
-      for (const request of http.requests) {
-        expect(sentQuery(request).sql).not.toContain("limit 0");
+      // No history request; every log request belongs to the poll loop, and none
+      // may ask for `limit 0`, which the endpoint rejects.
+      const sql = http.requests.map((request) => sentQuery(request).sql).filter(Boolean);
+      expect(sql).not.toHaveLength(0);
+      for (const query of sql) {
+        expect(query).not.toContain("limit 0");
       }
     }).pipe(Effect.provide(layer), Effect.ensuring(Effect.sync(repo.cleanup)));
   });
@@ -695,6 +723,47 @@ describe("legacy workers logs", () => {
       // An error line is routed to stderr so a consumer can split diagnostics.
       expect(entries[0]).toMatchObject({ stream: "stderr", source: "history" });
       expect(entries[1]).toMatchObject({ stream: "stdout", source: "live" });
+      // `line` carries the composed sentence, not the raw `event_message`: the
+      // status and duration live in `log_attributes`, and `log-entry` has no
+      // field a consumer could recover them from.
+      expect(entries[0]).toMatchObject({ line: "500 GET / 23ms" });
+    }).pipe(Effect.provide(layer), Effect.ensuring(Effect.sync(repo.cleanup)));
+  });
+
+  // `-o` outranks `--output-format` when both are set, and `-o pretty` encodes
+  // nothing — so this pair asks for the text rendering, not for JSON.
+  it.live("renders text when -o pretty overrides --output-format json", () => {
+    const repo = project();
+    const { layer, out } = setupLegacyWorkers({
+      workdir: repo.dir,
+      goOutput: "pretty",
+      format: "json",
+      routes: { [LOGS_ROUTE]: logsResponse([workerLogRow({ tsMs: T1 })]) },
+    });
+
+    return Effect.gen(function* () {
+      yield* legacyWorkersLogs(flags());
+
+      expect(out.stdoutText).not.toBe("");
+      expect(out.messages.filter((message) => message.type === "success")).toHaveLength(0);
+    }).pipe(Effect.provide(layer), Effect.ensuring(Effect.sync(repo.cleanup)));
+  });
+
+  // Same precedence, on the branch that refuses a tail: `-o pretty` means this
+  // run has no single-payload format to be incompatible with.
+  it.live("allows --follow when -o pretty overrides --output-format json", () => {
+    const repo = project();
+    const { layer, out } = setupLegacyWorkers({
+      workdir: repo.dir,
+      goOutput: "pretty",
+      format: "json",
+      routes: { [LOGS_ROUTE]: logsResponse([workerLogRow({ tsMs: T1 })]) },
+    });
+
+    return Effect.gen(function* () {
+      yield* legacyWorkersLogs(flags({ follow: true }), followFor(1));
+
+      expect(out.stdoutText).not.toBe("");
     }).pipe(Effect.provide(layer), Effect.ensuring(Effect.sync(repo.cleanup)));
   });
 
@@ -718,28 +787,193 @@ describe("legacy workers logs", () => {
     }).pipe(Effect.ensuring(Effect.sync(repo.cleanup)));
   });
 
-  it.live("exits 130 when interrupted with SIGINT", () => {
+  // `--tail 0 --follow` is "skip history, print what arrives". The poll window
+  // still reaches a grace period behind the cursor so late relays are caught, so
+  // the floor has to be the line's own timestamp rather than a narrower window.
+  it.live("does not replay pre-invocation lines for --tail 0 --follow", () => {
     const repo = project();
-    const { layer, processControl } = setupLegacyWorkers({
+    const { layer, out } = setupLegacyWorkers({
+      workdir: repo.dir,
+      routes: {
+        [GET_WORKER_ROUTE]: { status: 200, body: { data: workerResource({ name: "api" }) } },
+        [LOGS_ROUTE]: [
+          logsResponse([
+            workerLogRow({ id: "before", tsMs: Date.now() - 30_000, message: "written before" }),
+            workerLogRow({ id: "after", tsMs: Date.now() + 5_000, message: "written after" }),
+          ]),
+        ],
+      },
+    });
+
+    return Effect.gen(function* () {
+      yield* legacyWorkersLogs(flags({ tail: 0, follow: true }), followFor(0));
+
+      expect(out.stdoutText).toContain("written after");
+      expect(out.stdoutText).not.toContain("written before");
+    }).pipe(Effect.provide(layer), Effect.ensuring(Effect.sync(repo.cleanup)));
+  });
+
+  // No history query means zero rows proves nothing, so the tail has to ask
+  // directly — otherwise a typo waits forever on logs that cannot arrive.
+  it.live("still checks the worker exists for --tail 0 --follow", () => {
+    const repo = project();
+    const { layer, out } = setupLegacyWorkers({
+      workdir: repo.dir,
+      routes: { [GET_WORKER_ROUTE]: { status: 404 } },
+    });
+
+    return Effect.gen(function* () {
+      const error = yield* legacyWorkersLogs(flags({ tail: 0, follow: true }), followFor(0)).pipe(
+        Effect.flip,
+      );
+
+      expect(error).toBeInstanceOf(WorkerNotDeployedError);
+      // Text mode is not silent across that request.
+      expect(out.progressEvents).toContainEqual(
+        expect.objectContaining({ type: "start", message: "Checking worker..." }),
+      );
+    }).pipe(Effect.provide(layer), Effect.ensuring(Effect.sync(repo.cleanup)));
+  });
+
+  // `ts_ms` feeds `new Date(...).toISOString()` while the payload is built, which
+  // happens for text runs too. Out of Date range that throws `RangeError`, which
+  // is a defect rather than the typed unreadable-response failure.
+  it.live("fails typed rather than throwing on an out-of-range timestamp", () => {
+    const repo = project();
+    const { layer } = setupLegacyWorkers({
+      workdir: repo.dir,
+      routes: {
+        [LOGS_ROUTE]: logsResponse([workerLogRow({ id: "bad", tsMs: 8.7e15 })]),
+      },
+    });
+
+    return Effect.gen(function* () {
+      const error = yield* legacyWorkersLogs(flags()).pipe(Effect.flip);
+
+      expect(error).toBeInstanceOf(WorkersApiUnexpectedStatusError);
+    }).pipe(Effect.provide(layer), Effect.ensuring(Effect.sync(repo.cleanup)));
+  });
+
+  // A 404 answers the same way every time. Retrying it held the error back for a
+  // minute and spent the endpoint's ten-per-minute allowance getting nowhere.
+  it.live("surfaces a definitive poll failure without retrying it", () => {
+    const repo = project();
+    const { layer, http } = setupLegacyWorkers({
+      workdir: repo.dir,
+      routes: {
+        [LOGS_ROUTE]: [logsResponse([workerLogRow({ id: "a", tsMs: T1 })]), { status: 404 }],
+      },
+    });
+
+    return Effect.gen(function* () {
+      yield* legacyWorkersLogs(flags({ follow: true }), {
+        pollSchedule: Schedule.recurs(0),
+        // Would retry three times over if the failure were treated as transient.
+        retrySchedule: Schedule.recurs(3),
+      }).pipe(Effect.flip);
+
+      // History, then the one poll that failed — no second attempt at it.
+      expect(http.requests).toHaveLength(2);
+    }).pipe(Effect.provide(layer), Effect.ensuring(Effect.sync(repo.cleanup)));
+  });
+
+  // A rate limit is the server asking for exactly that, so it still rides out.
+  it.live("retries a rate-limited poll", () => {
+    const repo = project();
+    const { layer, http } = setupLegacyWorkers({
+      workdir: repo.dir,
+      routes: {
+        [LOGS_ROUTE]: [
+          logsResponse([workerLogRow({ id: "a", tsMs: T1 })]),
+          { status: 429 },
+          logsResponse([workerLogRow({ id: "b", tsMs: T2, message: "after the limit" })]),
+        ],
+      },
+    });
+
+    return Effect.gen(function* () {
+      yield* legacyWorkersLogs(flags({ follow: true }), {
+        pollSchedule: Schedule.recurs(0),
+        retrySchedule: Schedule.recurs(3),
+      });
+
+      expect(http.requests).toHaveLength(3);
+    }).pipe(Effect.provide(layer), Effect.ensuring(Effect.sync(repo.cleanup)));
+  });
+
+  // `--tail` bounds the history a run opens with; reusing it as the poll size
+  // meant `--tail 1 --follow` asked each poll for a single row.
+  it.live("polls with a page size independent of --tail", () => {
+    const repo = project();
+    const { layer, http } = setupLegacyWorkers({
+      workdir: repo.dir,
+      routes: {
+        [LOGS_ROUTE]: [
+          logsResponse([workerLogRow({ id: "a", tsMs: T1 })]),
+          logsResponse([workerLogRow({ id: "b", tsMs: T2 })]),
+        ],
+      },
+    });
+
+    return Effect.gen(function* () {
+      yield* legacyWorkersLogs(flags({ tail: 1, follow: true }), followFor(0));
+
+      expect(sentQuery(http.requests[0]!).sql ?? "").toContain("limit 1");
+      expect(sentQuery(http.requests[1]!).sql ?? "").toContain("limit 1000");
+    }).pipe(Effect.provide(layer), Effect.ensuring(Effect.sync(repo.cleanup)));
+  });
+
+  // The query orders newest-first, so a full page means there is more below it.
+  // Advancing the cursor on that page alone dropped the remainder for good.
+  it.live("drains a burst larger than one page before advancing the cursor", () => {
+    const repo = project();
+    const fullPage = Array.from({ length: 1000 }, (_, index) =>
+      workerLogRow({ id: `burst-${index}`, tsMs: T2 + index, message: `burst ${index}` }),
+    );
+    const { layer, out, http } = setupLegacyWorkers({
+      workdir: repo.dir,
+      routes: {
+        [LOGS_ROUTE]: [
+          // Non-empty, so the run does not spend its second request on the
+          // deployed-worker check that an empty history triggers.
+          logsResponse([workerLogRow({ id: "seed", tsMs: T1 - 100_000, message: "seed" })]),
+          logsResponse(fullPage),
+          logsResponse([workerLogRow({ id: "straggler", tsMs: T1, message: "older line" })]),
+        ],
+      },
+    });
+
+    return Effect.gen(function* () {
+      yield* legacyWorkersLogs(flags({ follow: true }), followFor(0));
+
+      // The second page is only requested because the first came back full.
+      expect(http.requests).toHaveLength(3);
+      expect(out.stdoutText).toContain("older line");
+      expect(out.stdoutText).toContain("burst 999");
+      // Oldest first across pages, not merely within each one.
+      expect(out.stdoutText.indexOf("older line")).toBeLessThan(out.stdoutText.indexOf("burst 0"));
+    }).pipe(Effect.provide(layer), Effect.ensuring(Effect.sync(repo.cleanup)));
+  });
+
+  it.live("records exit 130 on SIGINT and still runs its finalizers", () => {
+    const repo = project();
+    const { layer, processControl, telemetry } = setupLegacyWorkers({
       workdir: repo.dir,
       signal: "SIGINT",
       routes: { [LOGS_ROUTE]: logsResponse([workerLogRow({ id: "a", tsMs: T1 })]) },
     });
 
     return Effect.gen(function* () {
-      // `exit` never returns - in production the process is gone - so the handler
-      // cannot be awaited here. Fork it and synchronise on the exit itself, which
-      // is the observable condition, rather than on a delay.
-      yield* Effect.forkChild(
-        legacyWorkersLogs(flags({ follow: true }), {
-          pollSchedule: Schedule.forever,
-          retrySchedule: Schedule.recurs(0),
-        }).pipe(Effect.ignore),
-      );
+      yield* legacyWorkersLogs(flags({ follow: true }), {
+        pollSchedule: Schedule.forever,
+        retrySchedule: Schedule.recurs(0),
+      });
 
-      const code = yield* processControl.awaitExit;
-
-      expect(code).toBe(130);
+      expect(processControl.exitCode).toBe(130);
+      // The point of recording rather than exiting: `process.exit` from inside
+      // the race branch would have killed the runtime before this ran.
+      expect(telemetry.flushed).toBe(true);
+      expect(processControl.exitCalls).toEqual([]);
     }).pipe(Effect.provide(layer), Effect.ensuring(Effect.sync(repo.cleanup)));
   });
 });

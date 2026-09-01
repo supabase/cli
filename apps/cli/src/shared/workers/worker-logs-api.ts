@@ -48,9 +48,25 @@ export interface WorkerLogEntry {
  * not fail the whole read. A closed `Schema.Literal` union here would break the
  * command the next time a stream is added.
  */
+/**
+ * The widest instant a JavaScript `Date` can hold, either side of the epoch.
+ *
+ * `ts_ms` feeds `new Date(...).toISOString()` when a payload is built, which is
+ * unconditional — text runs construct it too. Outside this range that call
+ * throws `RangeError`, turning a recoverable bad row into a defect, so the bound
+ * belongs on the schema where it fails through `decodeBody` as an unreadable
+ * response instead.
+ */
+const MAX_DATE_MS = 8_640_000_000_000_000;
+
 const WorkerLogRow = Schema.Struct({
   id: Schema.String,
-  ts_ms: Schema.Number,
+  ts_ms: Schema.Number.pipe(
+    Schema.check(
+      Schema.isGreaterThanOrEqualTo(-MAX_DATE_MS),
+      Schema.isLessThanOrEqualTo(MAX_DATE_MS),
+    ),
+  ),
   stream: Schema.String,
   event_message: Schema.String,
   log_attributes: Schema.Record(Schema.String, Schema.String),

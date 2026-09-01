@@ -1,16 +1,33 @@
 import { describe, expect, it } from "@effect/vitest";
+import { afterEach, beforeEach, vi } from "vitest";
 import type { WorkerLogEntry } from "../../../../shared/workers/worker-logs-api.ts";
 import { legacyRenderWorkerLogLine, legacyWorkerLogLevel } from "./workers-logs.format.ts";
 
 const ESCAPE = "\u001b";
 
 /**
- * Colour is decided by the stream, so the tests supply one. This keeps them
- * independent of ambient NO_COLOR / CI / TTY state, and lets the coloured
- * rendering be asserted at all rather than only its absence.
+ * Colour is decided by the stream, so the tests supply one — and by the
+ * environment, so the tests pin that too. `legacySupportsColor` consults
+ * NO_COLOR / CLICOLOR / CLICOLOR_FORCE / CI *before* it ever asks the stream,
+ * so a fake stream alone does not make these deterministic: under CI, where
+ * `CI` is set, a `hasColors: () => true` stream still renders plain.
+ *
+ * Neutralised the same way `legacy-colors.unit.test.ts` does it — empty string
+ * reads as unset for every variable the gate consults.
  */
 const PLAIN = { hasColors: () => false };
 const COLOURED = { hasColors: () => true };
+
+beforeEach(() => {
+  vi.stubEnv("NO_COLOR", "");
+  vi.stubEnv("CLICOLOR", "");
+  vi.stubEnv("CLICOLOR_FORCE", "");
+  vi.stubEnv("CI", "");
+});
+
+afterEach(() => {
+  vi.unstubAllEnvs();
+});
 const AT = Date.parse("2026-08-31T14:45:32.576Z");
 
 /**
@@ -178,6 +195,61 @@ describe("legacyRenderWorkerLogLine", () => {
     expect(line).toBe(`${T}  kept`);
   });
 
+  // A carriage return returns the cursor to column zero, so a line carrying one
+  // can overwrite the timestamp and tag already printed to its left.
+  it("strips a carriage return so a line cannot overwrite its own prefix", () => {
+    const line = legacyRenderWorkerLogLine(entry({ message: "harmless\r00:00:00  forged" }), {
+      showStream: false,
+      colorStream: PLAIN,
+    });
+
+    expect(line).toBe(`${T}  harmless00:00:00  forged`);
+    expect(line).not.toContain("\r");
+  });
+
+  it("folds a CRLF to a newline rather than dropping the break", () => {
+    expect(
+      legacyRenderWorkerLogLine(entry({ message: "first\r\nsecond" }), {
+        showStream: false,
+        colorStream: PLAIN,
+      }),
+    ).toBe(`${T}  first\nsecond`);
+  });
+
+  // The request path is chosen by whoever called the worker, so it is as
+  // untrusted as anything the worker printed itself.
+  it("strips control sequences from request attributes", () => {
+    const line = legacyRenderWorkerLogLine(
+      entry({
+        stream: "worker_ingress_logs",
+        attributes: {
+          status: "200",
+          method: "GET",
+          path: `/${ESCAPE}[31m\rforged`,
+          duration_ms: `12${ESCAPE}[0m`,
+        },
+      }),
+      { showStream: false, colorStream: PLAIN },
+    );
+
+    expect(line).toBe(`${T}  200 GET /forged 12ms`);
+    expect(line).not.toContain(ESCAPE);
+  });
+
+  // A build reason is relayed from the builder, which reports what it was given.
+  it("strips control sequences from build attributes", () => {
+    const line = legacyRenderWorkerLogLine(
+      entry({
+        stream: "worker_api_logs",
+        attributes: { event: `build_failed${ESCAPE}[2A`, reason: "oom\rforged" },
+      }),
+      { showStream: false, colorStream: PLAIN },
+    );
+
+    expect(line).toBe(`${T}  build_failed oomforged`);
+    expect(line).not.toContain(ESCAPE);
+  });
+
   it("keeps a stack trace's newlines and indentation intact", () => {
     const trace = "TypeError: boom\n    at handler (index.js:3:11)\n\tat run (index.js:9:2)";
 
@@ -239,7 +311,7 @@ describe("legacyRenderWorkerLogLine", () => {
     expect(line).not.toContain(ESCAPE);
   });
 
-  it("tags each stream with the word --source accepts", () => {
+  it("tags each stream with the word --kind accepts", () => {
     const tagged = (stream: string, attributes: Record<string, string> = {}) =>
       legacyRenderWorkerLogLine(entry({ stream, attributes }), {
         showStream: true,

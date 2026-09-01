@@ -9,7 +9,7 @@
 
 /**
  * The three streams that share the Workers Logflare source, keyed by the word the
- * `--source` flag exposes.
+ * `--kind` flag exposes.
  *
  * `worker_guest_logs` is an internal name; `app` is what a user means. The
  * mapping lives here rather than in the command so the flag and the query cannot
@@ -21,7 +21,21 @@ export const WORKER_LOG_STREAMS = {
   builds: "worker_api_logs",
 } as const;
 
-export type WorkerLogSourceChoice = keyof typeof WORKER_LOG_STREAMS;
+export type WorkerLogKindChoice = keyof typeof WORKER_LOG_STREAMS;
+
+/**
+ * The `--kind` words, in the order help lists them.
+ *
+ * Lives beside {@link WORKER_LOG_STREAMS} and is checked against it, so the flag
+ * cannot offer a word the query has no stream for. Without that link an added
+ * choice would index the map as `undefined` and reach the SQL as an empty
+ * stream name rather than failing to compile.
+ */
+export const WORKER_LOG_KINDS = [
+  "app",
+  "requests",
+  "builds",
+] as const satisfies ReadonlyArray<WorkerLogKindChoice>;
 
 /** Every stream, for an invocation that named none. */
 export const ALL_WORKER_LOG_STREAMS: ReadonlyArray<string> = Object.values(WORKER_LOG_STREAMS);
@@ -69,7 +83,7 @@ export const WORKER_LOG_POLL_SECONDS = 10;
  * Wider than one poll interval, so a line delayed by a full cycle is still
  * inside the next window.
  */
-export const WORKER_LOG_CURSOR_GRACE_SECONDS = 60;
+const WORKER_LOG_CURSOR_GRACE_SECONDS = 60;
 
 /**
  * Timestamps for the endpoint's `iso_timestamp_start`/`iso_timestamp_end`.
