@@ -1,4 +1,17 @@
 {
   "extends": "@tsconfig/bun/tsconfig.json",
-  "exclude": ["supabase", "src/shared/workers/stacks"]
+  // Published packages that export `bun` → TypeScript source. tsc under that
+  // condition typechecks their src with our noUncheckedIndexedAccess.
+  "exclude": ["node_modules", "supabase", "src/shared/workers/stacks"],
+  "compilerOptions": {
+    "paths": {
+      "@supabase/postgrest-typegen/generation": [
+        "./node_modules/@supabase/postgrest-typegen/dist/generation/index.d.ts"
+      ],
+      "@supabase/postgrest-typegen/introspection": [
+        "./node_modules/@supabase/postgrest-typegen/dist/introspection/index.d.ts"
+      ],
+      "@supabase/pg-topo": ["./node_modules/@supabase/pg-topo/dist/index.d.ts"]
+    }
+  }
 }
