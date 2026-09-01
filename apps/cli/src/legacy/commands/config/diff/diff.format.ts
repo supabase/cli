@@ -4,7 +4,7 @@ import {
   projectConfigApiBlockKeys,
 } from "@supabase/config/internal";
 
-import { LEGACY_BRANCH_UUID_PATTERN } from "../../../shared/legacy-branch-ref.resolver.ts";
+import { LEGACY_BRANCH_UUID_PATTERN } from "../../../shared/legacy-ref-patterns.ts";
 import { legacySanitizeInlineName } from "../../../shared/legacy-http-errors.ts";
 
 /**
@@ -233,7 +233,9 @@ export function legacyConfigDiffPayload(
     config_schema: context.configSchema,
     target: {
       project_ref: context.projectRef,
-      ...valueEntry("branch", context.branch),
+      // Omitted (not null) when no branch was targeted — the documented
+      // contract says optional.
+      ...(context.branch === undefined ? {} : { branch: context.branch }),
       local_scope:
         context.appliedRemote === undefined ? "base" : `remotes.${context.appliedRemote}`,
     },

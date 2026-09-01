@@ -1,4 +1,4 @@
-import { mkdtemp } from "node:fs/promises";
+import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, test } from "vitest";
@@ -16,12 +16,16 @@ describe("config diff CLI surface", () => {
     // linked project in this hermetic cwd/HOME) — the assertion is only that
     // it gets past the parser.
     const cwd = await mkdtemp(join(tmpdir(), "supabase-config-diff-e2e-"));
-    const { stdout, stderr } = await runSupabase(["config", "diff"], {
-      entrypoint: "legacy",
-      cwd,
-    });
-    const combined = `${stdout}\n${stderr}`;
-    expect(combined).not.toContain("required flag");
-    expect(combined).not.toContain("exit-code");
+    try {
+      const { stdout, stderr } = await runSupabase(["config", "diff"], {
+        entrypoint: "legacy",
+        cwd,
+      });
+      const combined = `${stdout}\n${stderr}`;
+      expect(combined).not.toContain("required flag");
+      expect(combined).not.toContain("exit-code");
+    } finally {
+      await rm(cwd, { recursive: true, force: true });
+    }
   });
 });

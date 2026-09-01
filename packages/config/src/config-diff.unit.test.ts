@@ -435,7 +435,7 @@ describe("diffProjectConfig classification", () => {
       { api: { max_rows: 5 }, auth: { site_url: "https://local.example.com" } },
       { api: { max_rows: 6 }, auth: {}, database: { postgres_settings: { work_mem: "64MB" } } },
     );
-    const joined = result.changes.map((change) => change.path.join(" "));
+    const joined = result.changes.map((change) => change.path.join("\u0000"));
     expect(joined).toEqual([...joined].sort());
     expect(result.counts.update).toBe(1);
     expect(result.counts.remote_only).toBe(1);
@@ -452,9 +452,13 @@ describe("isEqualConfigValue", () => {
     expect(isEqualConfigValue(["a"], ["a", "a"])).toBe(false);
   });
 
-  test("set semantics on request", () => {
+  test("set semantics on request are membership-only", () => {
     expect(isEqualConfigValue(["a", "b"], ["b", "a"], "set")).toBe(true);
-    expect(isEqualConfigValue(["a", "a", "b"], ["a", "b", "b"], "set")).toBe(false);
+    // Duplicates carry no meaning for a set-mode field — identical
+    // membership with different duplicate counts is NOT drift.
+    expect(isEqualConfigValue(["a", "a", "b"], ["a", "b", "b"], "set")).toBe(true);
+    expect(isEqualConfigValue(["a", "a"], ["a", "b"], "set")).toBe(false);
+    expect(isEqualConfigValue(["a", "b"], ["a"], "set")).toBe(false);
   });
 
   test("type-aware scalars", () => {

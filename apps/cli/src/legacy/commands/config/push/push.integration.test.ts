@@ -94,6 +94,8 @@ function setup(opts: {
   readonly pipedAnswers?: ReadonlyArray<string>;
   /** Working directory the handler runs from; defaults to the temp project root. */
   readonly runtimeCwd?: string;
+  /** cliSettings.workdir override (what `--workdir` resolves to); defaults to the temp project root. */
+  readonly workdir?: string;
   /** Analytics mock for tests asserting on captured telemetry events. */
   readonly analytics?: ReturnType<typeof mockAnalytics>;
 }) {
@@ -149,7 +151,7 @@ function setup(opts: {
     buildLegacyTestRuntime({
       out,
       api,
-      cliSettings: mockLegacyCliSettings({ workdir: tempRoot.current }),
+      cliSettings: mockLegacyCliSettings({ workdir: opts.workdir ?? tempRoot.current }),
       runtimeInfo: mockRuntimeInfo({ cwd: opts.runtimeCwd ?? tempRoot.current }),
       telemetry: telemetry.layer,
       linkedProjectCache: linkedProjectCache.layer,
@@ -419,11 +421,11 @@ project_id = "abcdefghijklmnopqrst"
     );
   });
 
-  it.live("loads config-push env from the project root when run from a subdirectory", () => {
-    // The workdir change moves to the project root before config load, so a
-    // SUPABASE_YES in <root>/supabase/.env auto-confirms even when invoked
-    // from a subdir. The env load must walk up like loadCliConfig, not
-    // use the raw cwd.
+  it.live("loads config-push env from the project root when --workdir names a subdirectory", () => {
+    // The handler resolves against cliSettings.workdir, so a `--workdir`
+    // pointing INSIDE the project must still walk up to the project root for
+    // the env load (like loadCliConfig) — a SUPABASE_YES in
+    // <root>/supabase/.env auto-confirms even then.
     const prev = process.env["SUPABASE_YES"];
     delete process.env["SUPABASE_YES"];
     const sub = join(tempRoot.current, "nested", "dir");
@@ -432,7 +434,7 @@ project_id = "abcdefghijklmnopqrst"
       toml: API_ONLY_TOML,
       stdinIsTty: false,
       pipedAnswers: ["n"],
-      runtimeCwd: sub,
+      workdir: sub,
       routes: {
         postgrestGet: { status: 200, body: POSTGREST_DISABLED },
         postgresGet: { status: 200, body: {} },

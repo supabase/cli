@@ -172,12 +172,17 @@ export const legacyConfigDiff = Effect.fn("legacy.config.diff")(function* (
     resolvedRef = ref;
 
     // 3. Apply the matching `[remotes.*]` overlay (ADR 0018) now that the
-    // target ref is known. Only configs that declare remotes reload — the
-    // common remotes-free config keeps the step-1 load. A config that both
-    // declares remotes and triggers a deprecation warning prints that
-    // warning twice (once per load); the alternative is validating after the
-    // network call, which is worse.
-    if (isRecord(loaded.document?.["remotes"])) {
+    // target ref is known. Only a config whose remotes actually MATCH the
+    // resolved ref reloads (checked on the already-loaded, env-interpolated
+    // document) — every other config keeps the step-1 load, so load-time
+    // deprecation warnings don't repeat. The narrow remaining double-print
+    // (a matching remote AND a deprecated section) is the price of
+    // validating before the network call, which is worse to give up.
+    const remotes = loaded.document?.["remotes"];
+    const remoteMatchesRef =
+      isRecord(remotes) &&
+      Object.values(remotes).some((remote) => isRecord(remote) && remote["project_id"] === ref);
+    if (remoteMatchesRef) {
       loaded = yield* loadLocalConfig(ref);
     }
 

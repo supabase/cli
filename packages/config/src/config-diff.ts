@@ -236,15 +236,19 @@ export function isEqualConfigValue(
   arrayEquality: ConfigArrayEquality = "sequence",
 ): boolean {
   if (Array.isArray(a) && Array.isArray(b)) {
+    if (arrayEquality === "set") {
+      // TRUE set semantics: membership only. Duplicates carry no meaning for
+      // a set-mode field (a repeated redirect URL is the same allow list),
+      // so they must not register as drift.
+      const left = new Set(a.map(canonicalArrayElement));
+      const right = new Set(b.map(canonicalArrayElement));
+      return left.size === right.size && [...left].every((element) => right.has(element));
+    }
     if (a.length !== b.length) {
       return false;
     }
     const left = a.map(canonicalArrayElement);
     const right = b.map(canonicalArrayElement);
-    if (arrayEquality === "set") {
-      left.sort();
-      right.sort();
-    }
     return left.every((element, index) => element === right[index]);
   }
   return scalarEqual(a, b);

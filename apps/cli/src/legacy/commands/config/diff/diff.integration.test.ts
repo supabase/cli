@@ -19,6 +19,7 @@ import {
   mockLegacyTelemetryStateTracked,
   useLegacyTempWorkdir,
 } from "../../../../../tests/helpers/legacy-mocks.ts";
+import { LEGACY_CONFIG_DIFF_PAYLOAD_VERSION } from "./diff.format.ts";
 import { legacyConfigDiff } from "./diff.handler.ts";
 
 const tempRoot = useLegacyTempWorkdir("supabase-config-diff-int-");
@@ -752,6 +753,7 @@ describe("legacy config diff integration", () => {
       });
       // `schema_version` is the PAYLOAD contract's version; the user's
       // `$schema` document reference travels separately as `config_schema`.
+      expect(data["schema_version"]).toBe(LEGACY_CONFIG_DIFF_PAYLOAD_VERSION);
       expect(data["schema_version"]).toBe(1);
       expect(typeof data["config_schema"]).toBe("string");
       expect(data["scope"]).toEqual({
