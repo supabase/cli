@@ -76,3 +76,5 @@ supportedArchitectures:
 
 patchedDependencies:
   "@libpg-query/parser@17.6.10": patches/@libpg-query__parser@17.6.10.patch
+
+virtualStoreType: global
