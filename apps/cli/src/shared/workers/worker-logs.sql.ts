@@ -23,6 +23,20 @@ export const WORKER_LOG_STREAMS = {
 
 export type WorkerLogKindChoice = keyof typeof WORKER_LOG_STREAMS;
 
+/**
+ * The `--kind` words, in the order help lists them.
+ *
+ * Lives beside {@link WORKER_LOG_STREAMS} and is checked against it, so the flag
+ * cannot offer a word the query has no stream for. Without that link an added
+ * choice would index the map as `undefined` and reach the SQL as an empty
+ * stream name rather than failing to compile.
+ */
+export const WORKER_LOG_KINDS = [
+  "app",
+  "requests",
+  "builds",
+] as const satisfies ReadonlyArray<WorkerLogKindChoice>;
+
 /** Every stream, for an invocation that named none. */
 export const ALL_WORKER_LOG_STREAMS: ReadonlyArray<string> = Object.values(WORKER_LOG_STREAMS);
 

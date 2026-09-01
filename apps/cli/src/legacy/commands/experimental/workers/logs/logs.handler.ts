@@ -21,7 +21,6 @@ import {
   logWindow,
   WORKER_LOG_POLL_SECONDS,
   WORKER_LOG_STREAMS,
-  type WorkerLogKindChoice,
 } from "../../../../../shared/workers/worker-logs.sql.ts";
 import { getWorker } from "../../../../../shared/workers/workers-api.ts";
 import { WorkerNotDeployedError } from "../../../../../shared/workers/workers.errors.ts";
@@ -179,7 +178,7 @@ export const legacyWorkersLogs = Effect.fn("legacy.experimental.workers.logs")(f
       });
 
     const streams = Option.isSome(flags.kind)
-      ? [WORKER_LOG_STREAMS[flags.kind.value as WorkerLogKindChoice]]
+      ? [WORKER_LOG_STREAMS[flags.kind.value]]
       : ALL_WORKER_LOG_STREAMS;
 
     // `--tail 0` is "no history". On its own that is a no-op, but it is the shape

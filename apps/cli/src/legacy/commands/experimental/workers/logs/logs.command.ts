@@ -2,12 +2,12 @@ import { Argument, Command, Flag } from "effect/unstable/cli";
 import type * as CliCommand from "effect/unstable/cli/Command";
 import { withJsonErrorHandling } from "../../../../../shared/output/json-error-handling.ts";
 import { legacyManagementApiRuntimeLayer } from "../../../../shared/legacy-management-api-runtime.layer.ts";
-import { WORKER_LOG_POLL_SECONDS } from "../../../../../shared/workers/worker-logs.sql.ts";
+import {
+  WORKER_LOG_KINDS,
+  WORKER_LOG_POLL_SECONDS,
+} from "../../../../../shared/workers/worker-logs.sql.ts";
 import { withLegacyCommandInstrumentation } from "../../../../telemetry/legacy-command-instrumentation.ts";
 import { legacyWorkersLogs } from "./logs.handler.ts";
-
-/** The `--kind` words, mapped to stream names in `worker-logs.sql.ts`. */
-const KIND_VALUES = ["app", "requests", "builds"] as const;
 
 /**
  * The endpoint's own ceiling is the SQL `LIMIT`, so this bound is the CLI's
@@ -25,7 +25,7 @@ const config = {
     Flag.withDescription("Project ref of the Supabase project."),
     Flag.optional,
   ),
-  kind: Flag.choice("kind", KIND_VALUES).pipe(
+  kind: Flag.choice("kind", WORKER_LOG_KINDS).pipe(
     Flag.withDescription(
       "Limit to one log stream: app (the worker's own output), requests (HTTP access), " +
         "builds (deploy lifecycle). Defaults to all three.",
