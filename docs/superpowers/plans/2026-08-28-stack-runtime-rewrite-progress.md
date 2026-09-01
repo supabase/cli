@@ -1263,3 +1263,23 @@ The final public Stack-package scenario is one `runWholeStackScenario(mode)` bod
   fixup; the artifact rollout gate was already recorded above.
 - Resume from the committed Stack-side environment mapping and the pushed upstream PR. Do not replace published
   Realtime, Analytics, or Pooler assets until that separate destructive release action is explicitly confirmed.
+- Resume correction completed locally. Stack commit `499cd6c0e` adds an integration scenario through
+  `makeProductionRuntimeFactory` and `runtime.driver.start`; a real Realtime migration fixture observes
+  `RELEASE_DISTRIBUTION=none`, proving the shared startup-process merge rather than only the workload-spec mapping.
+  The native/container rationale is documented at the shared environment helper. Fresh focused verification passed
+  31 integration tests, Stack type-checking, both lint configurations, formatting, and `git diff --check`.
+- Upstream follow-up commits `4743f176` and `f5dfac9f` correct a build-context defect discovered after the first PR
+  commit: real local temporary exports and Docker-hosted Nix overlays do not contain repository-relative helper
+  scripts. Each of the three concrete Nix packages therefore owns the same small, fail-closed transform, requiring
+  exactly one generated `env.sh` and exactly one exported assignment. Native artifact smokes execute the actual
+  release launcher with complete service runtime settings and prove unset caller -> `name` plus explicit caller ->
+  `none`. The dead standalone transformer and native Analytics' ignored `--sname` argument were removed; image smoke
+  and entry paths remain unchanged.
+- A separate repository-check portability failure surfaced while validating the upstream change: this host kills a
+  heredoc-fed Python process when the same invocation carries larger JSON argv. The poller now passes those payloads
+  through environment variables without changing release-selection behavior. Its 16 focused tests and the complete
+  upstream repository-check sequence pass, together with ShellCheck, all three Nix parse/type checks, and the BEAM
+  behavior fixture.
+- Real native artifact builds were not available locally. PR CI remains responsible for building and running the
+  three actual artifact smokes. Even after that proof, replacing published assets and running the final clean-host
+  Stack E2E/no-EPMD gate remain separately approval-gated; neither action has been performed.
