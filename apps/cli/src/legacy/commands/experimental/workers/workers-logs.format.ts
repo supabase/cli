@@ -171,6 +171,49 @@ function streamTag(stream: string): string {
 }
 
 /**
+ * What one entry says, composed and sanitised but not coloured or prefixed.
+ *
+ * Split out from the renderer because `stream-json` needs the same sentence:
+ * emitting `event_message` there instead dropped the status and duration from a
+ * request line and the structured reason from a build failure, and `log-entry`
+ * has no attributes field for a consumer to recover them from.
+ *
+ * Per-stream layouts rather than one shared format, because `event_message`
+ * means something different in each. On the request stream it is only `"GET /"`
+ * — the status and duration live in `log_attributes` — so the useful line has to
+ * be *composed*.
+ */
+export function legacyWorkerLogText(entry: WorkerLogEntry): string {
+  if (entry.stream === WORKER_LOG_STREAMS.requests) {
+    const { status, method, path, duration_ms: duration } = entry.attributes;
+    const request = [status, method, path]
+      .filter((part) => part !== undefined)
+      .map(stripControlSequences)
+      .join(" ");
+    const suffix = duration === undefined ? "" : ` ${stripControlSequences(duration)}ms`;
+    return `${request}${suffix}`;
+  }
+
+  if (entry.stream === WORKER_LOG_STREAMS.builds) {
+    const { event, reason } = entry.attributes;
+    return [event ?? entry.message, reason]
+      .filter((part) => part !== undefined)
+      .map(stripControlSequences)
+      .join(" ");
+  }
+
+  // Guest output, and anything newer. The message is the payload.
+  //
+  // Every branch above sanitises too: a request `path` is chosen by whoever
+  // called the worker, and a build `reason` is relayed from the builder, so
+  // "the guest message is the only untrusted string" was never true. The
+  // `stream` the tag is derived from is not sanitised because it cannot carry
+  // anything: the query only returns rows whose stream is one of three
+  // literals.
+  return stripControlSequences(entry.message);
+}
+
+/**
  * One rendered line.
  *
  * Per-stream layouts rather than one shared format, because `event_message` means
@@ -199,32 +242,5 @@ export function legacyRenderWorkerLogLine(
   const colorStream = options.colorStream ?? process.stdout;
   const prefix = options.showStream ? `${time}  ${streamTag(entry.stream)}` : time;
 
-  if (entry.stream === WORKER_LOG_STREAMS.requests) {
-    const { status, method, path, duration_ms: duration } = entry.attributes;
-    const request = [status, method, path]
-      .filter((part) => part !== undefined)
-      .map(stripControlSequences)
-      .join(" ");
-    const suffix = duration === undefined ? "" : ` ${stripControlSequences(duration)}ms`;
-    return `${prefix}  ${colourise(`${request}${suffix}`, level, colorStream)}`;
-  }
-
-  if (entry.stream === WORKER_LOG_STREAMS.builds) {
-    const { event, reason } = entry.attributes;
-    const described = [event ?? entry.message, reason]
-      .filter((part) => part !== undefined)
-      .map(stripControlSequences)
-      .join(" ");
-    return `${prefix}  ${colourise(described, level, colorStream)}`;
-  }
-
-  // Guest output, and anything newer. The message is the payload.
-  //
-  // Every branch above sanitises too: a request `path` is chosen by whoever
-  // called the worker, and a build `reason` is relayed from the builder, so
-  // "the guest message is the only untrusted string" was never true. The
-  // `stream` the tag is derived from is not sanitised because it cannot carry
-  // anything: the query only returns rows whose stream is one of three
-  // literals.
-  return `${prefix}  ${colourise(stripControlSequences(entry.message), level, colorStream)}`;
+  return `${prefix}  ${colourise(legacyWorkerLogText(entry), level, colorStream)}`;
 }

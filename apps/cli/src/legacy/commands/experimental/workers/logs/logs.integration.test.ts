@@ -723,6 +723,10 @@ describe("legacy workers logs", () => {
       // An error line is routed to stderr so a consumer can split diagnostics.
       expect(entries[0]).toMatchObject({ stream: "stderr", source: "history" });
       expect(entries[1]).toMatchObject({ stream: "stdout", source: "live" });
+      // `line` carries the composed sentence, not the raw `event_message`: the
+      // status and duration live in `log_attributes`, and `log-entry` has no
+      // field a consumer could recover them from.
+      expect(entries[0]).toMatchObject({ line: "500 GET / 23ms" });
     }).pipe(Effect.provide(layer), Effect.ensuring(Effect.sync(repo.cleanup)));
   });
 

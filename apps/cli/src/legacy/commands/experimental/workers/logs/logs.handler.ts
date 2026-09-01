@@ -7,7 +7,11 @@ import {
   legacyRejectWorkersEnvOutput,
   legacyWorkersProjectRefSuffix,
 } from "../workers.output.ts";
-import { legacyRenderWorkerLogLine, legacyWorkerLogLevel } from "../workers-logs.format.ts";
+import {
+  legacyRenderWorkerLogLine,
+  legacyWorkerLogLevel,
+  legacyWorkerLogText,
+} from "../workers-logs.format.ts";
 import { ProcessControl } from "../../../../../shared/runtime/process-control.service.ts";
 import { LegacyWorkersFollowNotSupportedError } from "../workers.errors.ts";
 import { LegacyPlatformApi } from "../../../../auth/legacy-platform-api.service.ts";
@@ -225,7 +229,11 @@ export const legacyWorkersLogs = Effect.fn("legacy.experimental.workers.logs")(f
                 timestamp: new Date(entry.timestampMs).toISOString(),
                 service: name,
                 stream: level === "error" || level === "warn" ? "stderr" : "stdout",
-                line: entry.message,
+                // The composed sentence, the same one text mode renders: a
+                // request line's status and duration and a build's reason live
+                // in `log_attributes`, and `log-entry` has no field to carry
+                // them separately.
+                line: legacyWorkerLogText(entry),
                 source: origin,
               });
             }
