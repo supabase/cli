@@ -29,6 +29,11 @@ Three inputs are at absolute paths:
 - `/tmp/ai-review/claude-findings.json` — Claude's independent review.
 - `/tmp/ai-review/codex-findings.json` — Codex's independent review.
 
+If either findings file holds an empty `findings` array with a summary saying
+that review "did not complete for this run", that model's independent pass
+failed. Reconcile the review that IS present on its own, and note in your
+`summary` that only one independent review was available.
+
 ## Your task
 
 **This runs exactly once per PR. There is no later round.** Do not defer,

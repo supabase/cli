@@ -91,11 +91,11 @@ const workloadFor = (
   readiness: { mode: "tcp" },
   restart: { maxAttempts: 1, backoffMs: 0 },
   artifacts: {
-    native: { kind: "native", service: "postgres", release: "17.6.1.166" },
+    native: { kind: "native", service: "postgres", release: "17.6.1.167" },
     container: {
       kind: "container",
       service: "postgres",
-      image: "ghcr.io/supabase/cli/postgres:17.6.1.166",
+      image: "ghcr.io/supabase/cli/postgres:17.6.1.167",
     },
   },
   selected,
@@ -416,7 +416,7 @@ describe("production runtime composition", () => {
               Effect.succeed({
                 workloadId: "database:database",
                 capability: "database" as const,
-                version: "17.6.1.166",
+                version: "17.6.1.167",
                 outcome: "present" as const,
                 artifactRoot,
               }),
@@ -534,7 +534,7 @@ describe("production runtime composition", () => {
                 Effect.succeed({
                   workloadId: "database:database",
                   capability: "database" as const,
-                  version: "17.6.1.166",
+                  version: "17.6.1.167",
                   outcome: "present" as const,
                   artifactRoot,
                 }),
@@ -715,7 +715,7 @@ describe("production runtime composition", () => {
               return {
                 workloadId: workload.id,
                 capability: workload.capability,
-                version: "17.6.1.166",
+                version: "17.6.1.167",
                 outcome: workload.id.endsWith("download")
                   ? ("downloaded" as const)
                   : ("cached" as const),
@@ -744,12 +744,12 @@ describe("production runtime composition", () => {
           workloadFor("database:database", "database", {
             kind: "native",
             service: "postgres",
-            release: "17.6.1.166",
+            release: "17.6.1.167",
           }),
           workloadFor("rest:download", "rest", {
             kind: "native",
             service: "postgres",
-            release: "17.6.1.166",
+            release: "17.6.1.167",
           }),
         ]);
         expect(result.map(({ workloadId, outcome }) => [workloadId, outcome])).toEqual([

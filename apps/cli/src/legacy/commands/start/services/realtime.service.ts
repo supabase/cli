@@ -17,6 +17,10 @@ import {
   legacyBuildRealtimeEnv,
 } from "../../../shared/db-bootstrap/realtime-env.ts";
 import type { LegacyStartContainerSpec } from "../../../shared/db-bootstrap/docker-create-args.ts";
+import {
+  legacySlimWgetHealthcheck,
+  legacyUsesSlimRuntime,
+} from "../../../shared/db-bootstrap/slim-runtime.ts";
 import { legacyStartInternalDbPassword } from "../../../shared/db-bootstrap/internal-db-connection.ts";
 
 export interface LegacyRealtimeContainerSpecInput {
@@ -57,24 +61,28 @@ export function legacyBuildRealtimeContainerSpec(
     env,
     binds: [],
     exposedPorts: [{ containerPort: "4000" }],
-    healthcheck: {
-      // Podman splits command by spaces unless quoted, but curl's header can't be
-      // quoted, hence this exec-form `test` array.
-      test: [
-        "CMD",
-        "curl",
-        "-sSfL",
-        "--head",
-        "-o",
-        "/dev/null",
-        "-H",
-        `Host:${LEGACY_REALTIME_TENANT_ID}`,
-        "http://127.0.0.1:4000/api/ping",
-      ],
-      intervalSeconds: 10,
-      timeoutSeconds: 2,
-      retries: 3,
-    },
+    healthcheck: legacyUsesSlimRuntime(input.image)
+      ? legacySlimWgetHealthcheck("http://127.0.0.1:4000/api/ping", {
+          header: `Host:${LEGACY_REALTIME_TENANT_ID}`,
+        })
+      : {
+          // Podman splits command by spaces unless quoted, but curl's header can't be
+          // quoted, hence this exec-form `test` array.
+          test: [
+            "CMD",
+            "curl",
+            "-sSfL",
+            "--head",
+            "-o",
+            "/dev/null",
+            "-H",
+            `Host:${LEGACY_REALTIME_TENANT_ID}`,
+            "http://127.0.0.1:4000/api/ping",
+          ],
+          intervalSeconds: 10,
+          timeoutSeconds: 2,
+          retries: 3,
+        },
     restartPolicy: "unless-stopped",
     networkId: input.networkId,
     // Network aliases: `realtime` plus the tenant id.

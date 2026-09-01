@@ -71,8 +71,8 @@ export const WORKLOAD_CATALOG: Readonly<Record<string, WorkloadCatalogEntry>> = 
   "database:database": native(
     "database:database",
     "postgres",
-    "17.6.1.166",
-    "ghcr.io/supabase/cli/postgres:17.6.1.166",
+    "17.6.1.167",
+    "ghcr.io/supabase/cli/postgres:17.6.1.167",
     "share/supabase-cli/bin/supabase-postgres-init.sh",
     [
       "bin/postgres",
@@ -83,7 +83,7 @@ export const WORKLOAD_CATALOG: Readonly<Record<string, WorkloadCatalogEntry>> = 
       "share/supabase-cli/migrations",
       "lib",
     ],
-    ["17.6.1.166"],
+    ["17.6.1.167"],
     { containerAlias: "supabase-database" },
   ),
   "rest:rest": native(
@@ -117,11 +117,11 @@ export const WORKLOAD_CATALOG: Readonly<Record<string, WorkloadCatalogEntry>> = 
   "storage:storage": native(
     "storage:storage",
     "storage",
-    "v1.71.0",
-    "ghcr.io/supabase/cli/storage:v1.71.0",
+    "v1.72.1",
+    "ghcr.io/supabase/cli/storage:v1.72.1",
     "app/dist/start/server.js",
     ["node/bin/node", "app/dist/start/server.js", "app/dist/scripts/migrate-call.js"],
-    ["v1.71.0"],
+    ["v1.72.1"],
     {
       nativeProcess: {
         executablePath: "node/bin/node",
@@ -166,11 +166,11 @@ export const WORKLOAD_CATALOG: Readonly<Record<string, WorkloadCatalogEntry>> = 
   "studio:pgmeta": native(
     "studio:pgmeta",
     "pgmeta",
-    "v0.98.0",
-    "ghcr.io/supabase/cli/pgmeta:v0.98.0",
+    "v0.99.0",
+    "ghcr.io/supabase/cli/pgmeta:v0.99.0",
     "app/dist/server/server.js",
     ["node/bin/node", "app/dist/server/server.js"],
-    ["0.98.0", "v0.98.0"],
+    ["0.99.0", "v0.99.0"],
     {
       nativeProcess: {
         executablePath: "node/bin/node",
@@ -281,7 +281,7 @@ export const resolveNativeArtifactForWorkload = (
     );
   const normalizedVersion =
     workload.id === "studio:pgmeta"
-      ? "v0.98.0"
+      ? "v0.99.0"
       : workload.id === "analytics:vector"
         ? "0.53.0"
         : workload.artifacts.native.release;

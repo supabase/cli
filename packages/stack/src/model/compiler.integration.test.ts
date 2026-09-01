@@ -588,7 +588,7 @@ describe("closed capability compiler", () => {
   it.live("resolves the supported database major to its supported release", () =>
     Effect.gen(function* () {
       const expected = {
-        17: "17.6.1.166",
+        17: "17.6.1.167",
       } as const;
       for (const [major, release] of Object.entries(expected)) {
         const result = yield* compile({ capabilities: { database: { version: major } } });

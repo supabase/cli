@@ -47,7 +47,7 @@ These decisions are closed for this rewrite:
   and a container artifact. One stack identity can never mix them.
 - `supabase/slim-services` is the canonical workload release contract: a supported service version
   uses its portable archive in native mode and the image derived from that same archive in container
-  mode. The initial database catalog supports only PostgreSQL `17.6.1.166`; PostgreSQL 15 can be
+  mode. The initial database catalog supports only PostgreSQL `17.6.1.167`; PostgreSQL 15 can be
   added when its matching archive and image exist, while every other selector fails before mutation.
 - Functions have exactly one serving path: the stack-owned Edge Runtime. This applies to normal
   stack traffic and `supabase functions serve`; there is no separate Docker or standalone serving

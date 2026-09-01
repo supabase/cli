@@ -315,12 +315,17 @@ jobs:
           jq 'del(.["$schema"])' .github/ai-review/findings.schema.json > /tmp/ai-review/findings.schema.json
 
       # Safety strategy (drop-sudo + read-only), verified against the pinned
-      # openai/codex-action@86365089…'s action.yml + src/runCodexExec.ts — see
+      # openai/codex-action@52fe01ec…'s action.yml + src/runCodexExec.ts — see
       # the adjudicate job below for the full rationale. In short: Codex runs as
       # a non-sudo-capable user, in a sandbox with no filesystem writes and no
       # network, with no `codex-args`/`--sandbox` duplication.
       - name: Run Codex independent review
-        uses: openai/codex-action@86365089eb2b84e0a8fb0717b304f8bdcb13b20e # v1.12
+        # Pinned to v1.11, NOT v1.12: v1.12 has a confirmed regression where a
+        # heavy Linux run never returns after Codex finishes the turn and writes
+        # its output file — the step sits idle until the job timeout, discarding
+        # a completed review (openai/codex-action#150). v1.11 handles the same
+        # heavy workload cleanly. There is no released fix above v1.12 yet.
+        uses: openai/codex-action@52fe01ec70a42f454c9d2ebd47598f9fd6893d56 # v1.11
         with:
           openai-api-key: ${{ secrets.OPENAI_API_KEY }}
           prompt-file: .github/ai-review/codex-review-prompt.md
@@ -365,7 +370,11 @@ jobs:
       - resolve
       - claude-review
       - codex-review
-    if: ${{ !cancelled() && needs.resolve.outputs.should_run == 'true' && needs.claude-review.result == 'success' && needs.codex-review.result == 'success' }}
+    # Runs when AT LEAST ONE independent review succeeded — a single flaky model
+    # job must not sink the whole review. Each findings download below is guarded
+    # by its job's result, and the stage step substitutes an empty findings set
+    # for any review that didn't complete, so the adjudicator reconciles 1 or 2.
+    if: ${{ !cancelled() && needs.resolve.outputs.should_run == 'true' && (needs.claude-review.result == 'success' || needs.codex-review.result == 'success') }}
     # SECURITY-CRITICAL: this job checks out the PR head (untrusted subject
     # matter) so Codex can VERIFY findings by reading the real files. Codex runs
     # with its working directory at the workspace ROOT, which holds only the
@@ -404,12 +413,14 @@ jobs:
           no-cache: true
 
       - name: Download Claude findings
+        if: needs.claude-review.result == 'success'
         uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
         with:
           name: claude-findings
           path: ${{ runner.temp }}/claude-in
 
       - name: Download Codex findings
+        if: needs.codex-review.result == 'success'
         uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
         with:
           name: codex-findings
@@ -419,9 +430,24 @@ jobs:
         run: |
           mkdir -p /tmp/ai-review
           # Copy only the expected filenames rather than trusting the zips' own
-          # entry paths (artifacts are, in principle, upstream-influenced).
-          cp "${{ runner.temp }}/claude-in/claude-findings.json" /tmp/ai-review/claude-findings.json
-          cp "${{ runner.temp }}/codex-in/codex-findings.json" /tmp/ai-review/codex-findings.json
+          # entry paths (artifacts are, in principle, upstream-influenced). If a
+          # review job didn't complete, substitute an empty findings set so the
+          # adjudicator always has both files and simply reconciles the one that
+          # did run.
+          claude_src="${{ runner.temp }}/claude-in/claude-findings.json"
+          codex_src="${{ runner.temp }}/codex-in/codex-findings.json"
+          if [ -f "$claude_src" ]; then
+            cp "$claude_src" /tmp/ai-review/claude-findings.json
+          else
+            echo '{"summary":"Claude review did not complete for this run.","findings":[]}' \
+              > /tmp/ai-review/claude-findings.json
+          fi
+          if [ -f "$codex_src" ]; then
+            cp "$codex_src" /tmp/ai-review/codex-findings.json
+          else
+            echo '{"summary":"Codex review did not complete for this run.","findings":[]}' \
+              > /tmp/ai-review/codex-findings.json
+          fi
 
       - name: Fetch PR diff
         env:
@@ -438,7 +464,7 @@ jobs:
           jq 'del(.["$schema"])' .github/ai-review/merged-review.schema.json > /tmp/ai-review/merged-review.schema.json
 
       # Safety strategy, verified against the pinned
-      # openai/codex-action@86365089…'s action.yml + src/runCodexExec.ts:
+      # openai/codex-action@52fe01ec…'s action.yml + src/runCodexExec.ts:
       #   - `safety-strategy: read-only` forces codex-exec's legacy sandbox to
       #     read-only, but Codex still runs as the action's default,
       #     sudo-capable user — the action's own docs/security.md calls this
@@ -458,7 +484,12 @@ jobs:
       # untrusted AGENTS.md/config; it reads the PR from `pr/` and executes
       # nothing from it.
       - name: Run Codex adjudication
-        uses: openai/codex-action@86365089eb2b84e0a8fb0717b304f8bdcb13b20e # v1.12
+        # Pinned to v1.11, NOT v1.12: v1.12 has a confirmed regression where a
+        # heavy Linux run never returns after Codex finishes the turn and writes
+        # its output file — the step sits idle until the job timeout, discarding
+        # a completed review (openai/codex-action#150). v1.11 handles the same
+        # heavy workload cleanly. There is no released fix above v1.12 yet.
+        uses: openai/codex-action@52fe01ec70a42f454c9d2ebd47598f9fd6893d56 # v1.11
         with:
           openai-api-key: ${{ secrets.OPENAI_API_KEY }}
           prompt-file: trusted/.github/ai-review/adjudicate-prompt.md

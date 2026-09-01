@@ -24,9 +24,9 @@ const compileContainer = (config: Parameters<typeof compileStack>[0]["config"]) 
 describe("complete workload catalog", () => {
   it("keeps native releases paired with their canonical container images", () => {
     expect(WORKLOAD_CATALOG["database:database"]).toMatchObject({
-      nativeVersion: "17.6.1.166",
-      containerImage: "ghcr.io/supabase/cli/postgres:17.6.1.166",
-      supportedNativeVersions: ["17.6.1.166"],
+      nativeVersion: "17.6.1.167",
+      containerImage: "ghcr.io/supabase/cli/postgres:17.6.1.167",
+      supportedNativeVersions: ["17.6.1.167"],
     });
     expect(WORKLOAD_CATALOG["auth:auth"]?.containerImage).toBe(
       "ghcr.io/supabase/cli/auth:v2.196.0",
@@ -36,10 +36,10 @@ describe("complete workload catalog", () => {
       "ghcr.io/supabase/cli/realtime:v2.130.0",
     );
     expect(WORKLOAD_CATALOG["storage:storage"]?.containerImage).toBe(
-      "ghcr.io/supabase/cli/storage:v1.71.0",
+      "ghcr.io/supabase/cli/storage:v1.72.1",
     );
     expect(WORKLOAD_CATALOG["studio:pgmeta"]?.containerImage).toBe(
-      "ghcr.io/supabase/cli/pgmeta:v0.98.0",
+      "ghcr.io/supabase/cli/pgmeta:v0.99.0",
     );
     expect(WORKLOAD_CATALOG["analytics:analytics"]?.containerImage).toBe(
       "ghcr.io/supabase/cli/analytics:v1.50.6",
@@ -228,8 +228,8 @@ describe("complete workload catalog", () => {
         os: "linux",
         arch: "x64",
       });
-      expect(artifact.version).toBe("17.6.1.166");
-      expect(artifact.downloadUrl).toContain("postgres-17.6.1.166-linux-amd64.tar.zst");
+      expect(artifact.version).toBe("17.6.1.167");
+      expect(artifact.downloadUrl).toContain("postgres-17.6.1.167-linux-amd64.tar.zst");
     }),
   );
 

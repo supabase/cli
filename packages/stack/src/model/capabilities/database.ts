@@ -141,17 +141,17 @@ export const DatabaseModule: CapabilityModule<DatabaseSettings> = {
   defaultSettings: defaults,
   defaultEnabled: true,
   defaultActivation: "eager",
-  defaultVersion: "17.6.1.166",
+  defaultVersion: "17.6.1.167",
   dependencies: [],
   releases: {
-    "17": release("17.6.1.166", [
-      workload("database", "database", "17.6.1.166", "ghcr.io/supabase/cli/postgres:17.6.1.166", {
+    "17": release("17.6.1.167", [
+      workload("database", "database", "17.6.1.167", "ghcr.io/supabase/cli/postgres:17.6.1.167", {
         bootstrap: "database",
         readiness: { mode: "tcp", portField: "database" },
       }),
     ]),
-    "17.6.1.166": release("17.6.1.166", [
-      workload("database", "database", "17.6.1.166", "ghcr.io/supabase/cli/postgres:17.6.1.166", {
+    "17.6.1.167": release("17.6.1.167", [
+      workload("database", "database", "17.6.1.167", "ghcr.io/supabase/cli/postgres:17.6.1.167", {
         bootstrap: "database",
         readiness: { mode: "tcp", portField: "database" },
       }),

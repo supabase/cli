@@ -100,11 +100,11 @@ export const StorageModule: CapabilityModule<StorageSettings> = {
   },
   defaultEnabled: true,
   defaultActivation: "lazy",
-  defaultVersion: "v1.71.0",
+  defaultVersion: "v1.72.1",
   dependencies: ["database"],
   releases: {
-    "v1.71.0": release("v1.71.0", [
-      workload("storage", "storage", "v1.71.0", "ghcr.io/supabase/cli/storage:v1.71.0", {
+    "v1.72.1": release("v1.72.1", [
+      workload("storage", "storage", "v1.72.1", "ghcr.io/supabase/cli/storage:v1.72.1", {
         dependencies: ["database:database", "storage:imgproxy"],
         readiness: { mode: "http", portField: "api" },
       }),

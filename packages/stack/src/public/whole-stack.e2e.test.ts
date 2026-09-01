@@ -210,7 +210,7 @@ const onePixelPng = Uint8Array.from(
 
 const stackConfig = (functionSlug: string, analyticsApiKey: string): PromiseStackConfig => ({
   capabilities: {
-    database: { version: "17.6.1.166" },
+    database: { version: "17.6.1.167" },
     rest: { enabled: true, activation: "lazy" },
     auth: {
       enabled: true,

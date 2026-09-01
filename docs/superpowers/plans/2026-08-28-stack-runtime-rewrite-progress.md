@@ -93,7 +93,7 @@ updated in the same commit as each completed slice. Scratch review packages live
 
 > **Ruling:** `supabase/slim-services` is the canonical release contract for native and container
 > workloads: each supported version uses its portable archive and the GHCR image derived from that
-> archive. The initial database catalog supports only PostgreSQL `17.6.1.166`; PostgreSQL 15 is added
+> archive. The initial database catalog supports only PostgreSQL `17.6.1.167`; PostgreSQL 15 is added
 > only after both artifacts are published, and all other selectors fail before mutation — cost if
 > wrong: adding a version is a catalog change, while retaining unsupported historical selectors would
 > create runtime identities that cannot be prepared.
@@ -286,7 +286,7 @@ Implementation continues after recording a ruling; this file is not a question q
 #### Task 3 review fixes — round 2 — 2026-08-28
 
 - **Superseded release decision:** earlier selector-alias work was removed. The rewrite accepts only
-  PostgreSQL `17.6.1.166`; PostgreSQL 15 remains deferred until its matching native archive and
+  PostgreSQL `17.6.1.167`; PostgreSQL 15 remains deferred until its matching native archive and
   derived image are published, and every other selector fails before mutation.
 - Identical-fingerprint reuse now branches immediately after strict decode, Functions-root
   normalization, and fingerprint calculation. It collects only supplied Redacted slots, validates
@@ -594,7 +594,7 @@ Implementation continues after recording a ruling; this file is not a question q
 
 | Capability           | Native/container artifacts                                                             | Settings/dependencies                                                         | Ports/routes/probes                                                              | Secrets/logs/activation                                           | Evidence                                           |
 | -------------------- | -------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------- | -------------------------------------------------------------------------------- | ----------------------------------------------------------------- | -------------------------------------------------- |
-| database             | `postgres` slim release `17.6.1.166`; `ghcr.io/supabase/cli/postgres:17.6.1.166` image | database settings and bootstrap workload                                      | database TCP readiness                                                           | managed database password; eager                                  | compiler + runtime integration                     |
+| database             | `postgres` slim release `17.6.1.167`; `ghcr.io/supabase/cli/postgres:17.6.1.167` image | database settings and bootstrap workload                                      | database TCP readiness                                                           | managed database password; eager                                  | compiler + runtime integration                     |
 | rest                 | `postgrest`; `postgrest/postgrest`                                                     | REST settings/env; database dependency                                        | API HTTP route; private HTTP readiness                                           | passthrough settings; lazy activation                             | compiler + workload-runtime                        |
 | auth                 | `auth`; `supabase/auth`                                                                | Auth settings/env and managed key slots; database dependency                  | API HTTP route; private `/health` readiness                                      | managed JWT/key slots; lazy activation                            | compiler + workload-runtime                        |
 | realtime             | `realtime`; `supabase/realtime`                                                        | Realtime settings/env; database dependency                                    | API HTTP route; private `/api/ping` readiness                                    | passthrough settings; lazy activation                             | compiler + workload-runtime integration            |
@@ -976,7 +976,7 @@ private-port reservation plus gateway ownership atomic with accepted lifecycle g
 
 #### Task 14 — runtime-input and startup-contract corrections (2026-08-31)
 
-- Tightened persisted runtime inputs: PostgreSQL remains pinned to `17.6.1.166`; native/container Pooler
+- Tightened persisted runtime inputs: PostgreSQL remains pinned to `17.6.1.167`; native/container Pooler
   endpoints derive from persisted runtime state and private database assignments, tenant settings are persisted,
   and tenant bootstrap updates existing Supavisor tenants idempotently with Elixir interpolation escaped.
 - The owner now performs generation/state single-flight with owner-scoped Fibers, retries failed resolutions,
@@ -1135,7 +1135,7 @@ private-port reservation plus gateway ownership atomic with accepted lifecycle g
 This checkpoint supersedes only the incomplete-status statements in the pause checkpoint above; the pause remains
 as historical evidence of what was known at that time.
 
-- Native PostgreSQL first boot now runs the pinned `17.6.1.166` artifact's canonical
+- Native PostgreSQL first boot now runs the pinned `17.6.1.167` artifact's canonical
   `share/supabase-cli/migrations/migrate.sh` after readiness and before Stack bootstrap. An atomic
   `.supabase-stack-migration-complete` witness is published only after exit 0; `PG_VERSION` without the witness
   identifies an incomplete first boot, so the exact PGDATA is recreated before retry and is never published ready.

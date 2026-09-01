@@ -40,7 +40,7 @@ and Node, Effect RPC, Vitest with `@effect/vitest`, pnpm/Turbo, native subproces
 - Functions are served only through the stack Edge Runtime. `functionsRoot` is the sole host root and
   container mount; reject traversal, absolute, and symlink escapes.
 - Use the portable archive and image from the same qualified `supabase/slim-services` release for
-  each workload. Initially accept only PostgreSQL `17.6.1.166`; add PostgreSQL 15 only after its
+  each workload. Initially accept only PostgreSQL `17.6.1.167`; add PostgreSQL 15 only after its
   matching archive and image are published.
 - The caller owns migrations, declarative schemas, and seeds. Database reset is outside this rewrite;
   do not add a reset API, state, lifecycle variant, or compatibility placeholder.

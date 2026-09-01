@@ -1,4 +1,4 @@
-import { describe, expect, test } from "vitest";
+import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
 import { Effect, Redacted } from "effect";
 import { FetchHttpClient } from "effect/unstable/http";
 import serviceImagesDockerfile from "../../../../cli-go/pkg/config/templates/Dockerfile" with { type: "text" };
@@ -7,6 +7,7 @@ import {
   listLocalServiceVersions,
   localServiceImagesFromDockerfile,
   parseDockerfileServiceImages,
+  postgresImageForDbMajorVersion,
   renderServicesTable,
   renderServicesWarning,
 } from "./services.shared.ts";
@@ -20,6 +21,14 @@ const runLinkedFetch = (input: Parameters<typeof fetchLinkedServiceVersions>[0])
   Effect.runPromise(fetchLinkedServiceVersions(input).pipe(Effect.provide(FetchHttpClient.layer)));
 
 describe("services shared", () => {
+  beforeEach(() => {
+    vi.stubEnv("SUPABASE_USE_SLIM_IMAGES", undefined);
+  });
+
+  afterEach(() => {
+    vi.unstubAllEnvs();
+  });
+
   test("parses service images from Dockerfile FROM aliases", () => {
     expect(
       parseDockerfileServiceImages(`
@@ -66,6 +75,84 @@ describe("services shared", () => {
       "supabase/logflare",
       "supabase/supavisor",
     ]);
+  });
+
+  test("keeps the established PG13/15 fallback unless the slim flag is on", () => {
+    expect(postgresImageForDbMajorVersion(13)).toBe("supabase/postgres:15.8.1.085");
+    expect(postgresImageForDbMajorVersion(15)).toBe("supabase/postgres:15.8.1.085");
+    vi.stubEnv("SUPABASE_USE_SLIM_IMAGES", "true");
+    expect(postgresImageForDbMajorVersion(13)).toBe("supabase/postgres:15.14.1.167");
+    expect(postgresImageForDbMajorVersion(15)).toBe("supabase/postgres:15.14.1.167");
+  });
+
+  test("lists slim images when SUPABASE_USE_SLIM_IMAGES is set", () => {
+    vi.stubEnv("SUPABASE_USE_SLIM_IMAGES", "true");
+    expect(listLocalServiceVersions().map((row) => row.name)).toEqual([
+      "ghcr.io/supabase/cli/postgres",
+      "ghcr.io/supabase/cli/auth",
+      "ghcr.io/supabase/cli/postgrest",
+      "ghcr.io/supabase/cli/realtime",
+      "ghcr.io/supabase/cli/storage",
+      "ghcr.io/supabase/cli/edge-runtime",
+      "ghcr.io/supabase/cli/studio",
+      "ghcr.io/supabase/cli/pgmeta",
+      "ghcr.io/supabase/cli/analytics",
+      "ghcr.io/supabase/cli/pooler",
+    ]);
+  });
+
+  test("keeps historical pins on docker.io when slimCurrentPinOnly is set", () => {
+    vi.stubEnv("SUPABASE_USE_SLIM_IMAGES", "true");
+    expect(
+      listLocalServiceVersions({
+        slimCurrentPinOnly: true,
+        serviceVersions: { pooler: "2.0.0", analytics: "1.4.0" },
+      }),
+    ).toEqual(
+      expect.arrayContaining([
+        { name: "supabase/supavisor", local: "2.0.0", remote: "" },
+        { name: "supabase/logflare", local: "1.4.0", remote: "" },
+      ]),
+    );
+  });
+
+  test("normalizes historical pins before slimCurrentPinOnly", () => {
+    vi.stubEnv("SUPABASE_USE_SLIM_IMAGES", "true");
+    expect(
+      listLocalServiceVersions({
+        slimCurrentPinOnly: true,
+        serviceVersions: { auth: "2.151.0" },
+      }),
+    ).toContainEqual({ name: "supabase/gotrue", local: "v2.151.0", remote: "" });
+  });
+
+  test("slim-translates catalog version overrides that are not the Dockerfile pin", () => {
+    vi.stubEnv("SUPABASE_USE_SLIM_IMAGES", "true");
+    expect(listLocalServiceVersions({ serviceVersions: { storage: "v1.70.3" } })).toContainEqual({
+      name: "ghcr.io/supabase/cli/storage",
+      local: "v1.70.3",
+      remote: "",
+    });
+  });
+
+  // Explicit overrides keep their registry; a serviceVersions pin still rewrites the tag.
+  test("leaves explicit image overrides on docker.io when SUPABASE_USE_SLIM_IMAGES is set", () => {
+    vi.stubEnv("SUPABASE_USE_SLIM_IMAGES", "true");
+    const rows = listLocalServiceVersions({
+      imageOverrides: {
+        postgres: "supabase/postgres:15.8.1.085",
+        "edge-runtime": "supabase/edge-runtime:v1.68.4",
+      },
+      normalizeVersionTags: false,
+      serviceVersions: { postgres: "15.8.1.090" },
+    });
+
+    expect(rows).toEqual(
+      expect.arrayContaining([
+        { name: "supabase/postgres", local: "15.8.1.090", remote: "" },
+        { name: "supabase/edge-runtime", local: "v1.68.4", remote: "" },
+      ]),
+    );
   });
 
   test("can preserve raw local service version overrides", () => {
