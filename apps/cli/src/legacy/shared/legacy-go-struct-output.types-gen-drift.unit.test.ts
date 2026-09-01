@@ -46,22 +46,22 @@ const GO_PAYLOAD_SPEC_REGISTRY: ReadonlyArray<GoPayloadSpecEntry> = [
   {
     specName: "LEGACY_GO_BRANCH_RESPONSE",
     spec: LEGACY_GO_BRANCH_RESPONSE,
-    goTypeName: "BranchResponse",
+    goTypeName: "BranchResponseOutput",
   },
   {
     specName: "LEGACY_GO_ORGANIZATION_RESPONSE",
     spec: LEGACY_GO_ORGANIZATION_RESPONSE,
-    goTypeName: "OrganizationResponseV1",
+    goTypeName: "OrganizationResponseV1Output",
   },
   {
     specName: "LEGACY_GO_SSL_ENFORCEMENT_RESPONSE",
     spec: LEGACY_GO_SSL_ENFORCEMENT_RESPONSE,
-    goTypeName: "SslEnforcementResponse",
+    goTypeName: "SslEnforcementResponseOutput",
   },
   {
     specName: "LEGACY_GO_SSO_PROVIDER_RESPONSE",
     spec: LEGACY_GO_SSO_PROVIDER_RESPONSE,
-    goTypeName: "GetProviderResponse",
+    goTypeName: "GetProviderResponseOutput",
   },
 ];
 
