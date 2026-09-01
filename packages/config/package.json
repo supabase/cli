@@ -1,7 +1,7 @@
 {
   "name": "@supabase/config",
   "version": "0.1.0",
-  "private": true,
+  "private": false,
   "description": "Supabase project configuration schema, parsing, and validation, built on Effect Schema.",
   "keywords": [
     "config",
