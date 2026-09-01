@@ -672,6 +672,33 @@ describe("legacy config diff integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
+  it.live("an unknown enum value in the response degrades instead of failing", () => {
+    // ADR 0019 rule 2: the fetch goes through executeRaw, so the generated
+    // contract's closed enums (pooler.pool_mode is three literals there)
+    // never gate the response — a new platform enum member reaches the
+    // lenient config mirror, whose registry row omits the unrecognized value
+    // rather than failing the whole diff.
+    const { layer, out } = setup({
+      toml: 'project_id = "test"\n',
+      v2: {
+        status: 200,
+        body: v2Response({
+          attributes: (attributes) => ({
+            ...attributes,
+            pooler: {
+              ...(attributes["pooler"] as Record<string, unknown>),
+              pool_mode: "burst_v9",
+            },
+          }),
+        }),
+      },
+    });
+    return Effect.gen(function* () {
+      yield* legacyConfigDiff(noFlags);
+      expect(out.stdoutText).toContain("No config differences found.");
+    }).pipe(Effect.provide(layer));
+  });
+
   it.live("a remote config error status maps to the read status error", () => {
     const { layer } = setup({
       toml: 'project_id = "test"\n',

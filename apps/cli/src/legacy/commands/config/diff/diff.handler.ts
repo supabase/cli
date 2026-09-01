@@ -4,6 +4,7 @@ import {
   ProjectConfigParseError,
 } from "@supabase/config";
 import { diffProjectConfig, loadCliConfig } from "@supabase/config/internal";
+import { operationDefinitions } from "@supabase/api/effect";
 import { Effect, Option } from "effect";
 
 import { LegacyPlatformApi } from "../../../auth/legacy-platform-api.service.ts";
@@ -21,6 +22,7 @@ import {
 import {
   legacySanitizeInlineName,
   mapLegacyHttpError,
+  sanitizeLegacyErrorBody,
 } from "../../../shared/legacy-http-errors.ts";
 import {
   legacyConfigDiffComparisonLine,
@@ -179,18 +181,43 @@ export const legacyConfigDiff = Effect.fn("legacy.config.diff")(function* (
     };
     yield* output.raw(legacyConfigDiffComparisonLine(context), "stderr");
 
-    // 4. Fetch the effective remote config (single read-only call).
+    // 4. Fetch the effective remote config (single read-only call) — via
+    // `executeRaw`, per ADR 0019 rule 2 ("required, not incidental"): the
+    // generated client's strict Schema.Struct decode drops excess properties
+    // and rejects unknown enum members (e.g. a new `pool_mode` value), so
+    // by the time the lenient config mirror ran on its output there would be
+    // nothing left to be lenient about. The caller owns the status check;
+    // `fromApiProjectConfig`'s lenient decode owns the body.
     const fetching =
       output.format === "text" ? yield* output.task("Fetching remote config...") : undefined;
-    const response = yield* api.v2.getProjectConfig({ ref }).pipe(
+    const response = yield* api.executeRaw(operationDefinitions.v2GetProjectConfig, { ref }).pipe(
       Effect.tapError(() => fetching?.fail() ?? Effect.void),
-      Effect.catch(
-        mapLegacyHttpError({
-          networkError: LegacyConfigDiffReadNetworkError,
-          statusError: LegacyConfigDiffReadStatusError,
-          networkMessage: (cause) => `failed to read project config: ${cause}`,
-          statusMessage: readStatusMessage,
-        }),
+      Effect.mapError(
+        (cause) =>
+          new LegacyConfigDiffReadNetworkError({
+            message: `failed to read project config: ${cause}`,
+          }),
+      ),
+    );
+    if (response.status !== 200) {
+      const body = sanitizeLegacyErrorBody(
+        yield* response.text.pipe(Effect.orElseSucceed(() => "")),
+      );
+      yield* fetching?.fail() ?? Effect.void;
+      return yield* new LegacyConfigDiffReadStatusError({
+        status: response.status,
+        body,
+        message: readStatusMessage(response.status, body),
+      });
+    }
+    const responseJson = yield* response.json.pipe(
+      Effect.tapError(() => fetching?.fail() ?? Effect.void),
+      Effect.mapError(
+        (cause) =>
+          new LegacyConfigDiffReadNetworkError({
+            message: `failed to read project config: ${cause}`,
+            decode: true,
+          }),
       ),
     );
     yield* fetching?.clear() ?? Effect.void;
@@ -204,7 +231,7 @@ export const legacyConfigDiff = Effect.fn("legacy.config.diff")(function* (
     // response problems). Anything else escaping the normalizer would be a
     // bug in this package pairing, so it stays a defect.
     const remote = yield* Effect.try({
-      try: () => fromApiProjectConfig(response),
+      try: () => fromApiProjectConfig(responseJson),
       catch: (cause) => cause,
     }).pipe(
       Effect.catch((cause) =>
@@ -225,7 +252,10 @@ export const legacyConfigDiff = Effect.fn("legacy.config.diff")(function* (
       ),
     );
 
-    const scope = legacyConfigDiffScope(response.data.attributes);
+    const data = isRecord(responseJson) ? responseJson["data"] : undefined;
+    const scope = legacyConfigDiffScope(
+      isRecord(data) && isRecord(data["attributes"]) ? data["attributes"] : {},
+    );
     yield* output.raw(legacyConfigDiffScopeLine(scope), "stderr");
 
     // 7. Emit. Both output mechanisms are honored, `--output` first (Legacy
