@@ -13,7 +13,7 @@ import type { WorkerLogEntry } from "../../../../shared/workers/worker-logs-api.
  * one line each, with a different layout per stream.
  */
 
-export type WorkerLogLevel = "info" | "warn" | "error";
+export type LegacyWorkerLogLevel = "info" | "warn" | "error";
 
 /**
  * The level for one line, derived rather than read.
@@ -26,7 +26,7 @@ export type WorkerLogLevel = "info" | "warn" | "error";
  * Guest output has no level available without parsing tenant text, so it is
  * reported absent rather than guessed at.
  */
-export function legacyWorkerLogLevel(entry: WorkerLogEntry): WorkerLogLevel | undefined {
+export function legacyWorkerLogLevel(entry: WorkerLogEntry): LegacyWorkerLogLevel | undefined {
   if (entry.stream === WORKER_LOG_STREAMS.requests) {
     // `log_attributes` is a Map(String, String), so this is "200", not 200.
     const status = Number(entry.attributes.status);
@@ -109,7 +109,7 @@ function stripControlSequences(message: string): string {
  */
 function colourise(
   text: string,
-  level: WorkerLogLevel | undefined,
+  level: LegacyWorkerLogLevel | undefined,
   stream: LegacyColorStream,
 ): string {
   if (level === "error") {
