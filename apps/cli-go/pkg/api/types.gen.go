@@ -2789,6 +2789,21 @@ func (e ProjectUpgradeEligibilityResponseWarnings2Type) Valid() bool {
 	}
 }
 
+// Defines values for ProjectUpgradeEligibilityResponseWarnings3Type.
+const (
+	BtreeGistNanReindex ProjectUpgradeEligibilityResponseWarnings3Type = "btree_gist_nan_reindex"
+)
+
+// Valid indicates whether the value is a known member of the ProjectUpgradeEligibilityResponseWarnings3Type enum.
+func (e ProjectUpgradeEligibilityResponseWarnings3Type) Valid() bool {
+	switch e {
+	case BtreeGistNanReindex:
+		return true
+	default:
+		return false
+	}
+}
+
 // Defines values for RegionsInfoAllSmartGroupCode.
 const (
 	RegionsInfoAllSmartGroupCodeAmericas RegionsInfoAllSmartGroupCode = "americas"
@@ -7442,6 +7457,14 @@ type ProjectUpgradeEligibilityResponseWarnings2 struct {
 // ProjectUpgradeEligibilityResponseWarnings2Type defines model for ProjectUpgradeEligibilityResponse.Warnings.2.Type.
 type ProjectUpgradeEligibilityResponseWarnings2Type string
 
+// ProjectUpgradeEligibilityResponseWarnings3 defines model for .
+type ProjectUpgradeEligibilityResponseWarnings3 struct {
+	Type ProjectUpgradeEligibilityResponseWarnings3Type `json:"type"`
+}
+
+// ProjectUpgradeEligibilityResponseWarnings3Type defines model for ProjectUpgradeEligibilityResponse.Warnings.3.Type.
+type ProjectUpgradeEligibilityResponseWarnings3Type string
+
 // ProjectUpgradeEligibilityResponse_Warnings_Item defines model for ProjectUpgradeEligibilityResponse.warnings.Item.
 type ProjectUpgradeEligibilityResponse_Warnings_Item struct {
 	union json.RawMessage
@@ -11614,6 +11637,32 @@ func (t *ProjectUpgradeEligibilityResponse_Warnings_Item) FromProjectUpgradeElig
 
 // MergeProjectUpgradeEligibilityResponseWarnings2 performs a merge with any union data inside the ProjectUpgradeEligibilityResponse_Warnings_Item, using the provided ProjectUpgradeEligibilityResponseWarnings2
 func (t *ProjectUpgradeEligibilityResponse_Warnings_Item) MergeProjectUpgradeEligibilityResponseWarnings2(v ProjectUpgradeEligibilityResponseWarnings2) error {
+	b, err := json.Marshal(v)
+	if err != nil {
+		return err
+	}
+
+	merged, err := runtime.JSONMerge(t.union, b)
+	t.union = merged
+	return err
+}
+
+// AsProjectUpgradeEligibilityResponseWarnings3 returns the union data inside the ProjectUpgradeEligibilityResponse_Warnings_Item as a ProjectUpgradeEligibilityResponseWarnings3
+func (t ProjectUpgradeEligibilityResponse_Warnings_Item) AsProjectUpgradeEligibilityResponseWarnings3() (ProjectUpgradeEligibilityResponseWarnings3, error) {
+	var body ProjectUpgradeEligibilityResponseWarnings3
+	err := json.Unmarshal(t.union, &body)
+	return body, err
+}
+
+// FromProjectUpgradeEligibilityResponseWarnings3 overwrites any union data inside the ProjectUpgradeEligibilityResponse_Warnings_Item as the provided ProjectUpgradeEligibilityResponseWarnings3
+func (t *ProjectUpgradeEligibilityResponse_Warnings_Item) FromProjectUpgradeEligibilityResponseWarnings3(v ProjectUpgradeEligibilityResponseWarnings3) error {
+	b, err := json.Marshal(v)
+	t.union = b
+	return err
+}
+
+// MergeProjectUpgradeEligibilityResponseWarnings3 performs a merge with any union data inside the ProjectUpgradeEligibilityResponse_Warnings_Item, using the provided ProjectUpgradeEligibilityResponseWarnings3
+func (t *ProjectUpgradeEligibilityResponse_Warnings_Item) MergeProjectUpgradeEligibilityResponseWarnings3(v ProjectUpgradeEligibilityResponseWarnings3) error {
 	b, err := json.Marshal(v)
 	if err != nil {
 		return err
