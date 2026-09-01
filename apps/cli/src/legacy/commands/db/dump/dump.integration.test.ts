@@ -997,6 +997,20 @@ describe("legacy db dump integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
+  it.live("stays silent when a piped Windows dump writes to --file", () => {
+    const { layer, out } = setup({
+      isLocal: true,
+      stdout: UNICODE_SQL,
+      ...PIPED_WIN32,
+      workdir: tmp.current,
+    });
+    return Effect.gen(function* () {
+      yield* legacyDbDump(flags({ local: Option.some(true), file: Option.some("out.sql") }));
+      expect(readFileSync(join(tmp.current, "out.sql"), "utf8")).toBe(UNICODE_SQL);
+      expect(out.stderrText).not.toContain(NON_ASCII_WARNING);
+    }).pipe(Effect.provide(layer));
+  });
+
   const SILENT: ReadonlyArray<[string, Partial<SetupOpts>]> = [
     ["on non-Windows platforms", { stdoutIsPipe: true }],
     [

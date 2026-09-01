@@ -276,6 +276,7 @@ export const legacyDbDump = Effect.fn("legacy.db.dump")(function* (flags: Legacy
     const trackNonAscii =
       runtimeInfo.platform === "win32" &&
       tty.stdoutIsPipe &&
+      Option.isNone(resolvedFile) &&
       (process.env["MSYSTEM"] ?? "") === "" &&
       process.env["TERM_PROGRAM"] !== "mintty";
     let sawNonAscii = false;
