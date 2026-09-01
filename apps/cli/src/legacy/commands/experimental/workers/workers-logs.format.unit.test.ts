@@ -239,7 +239,7 @@ describe("legacyRenderWorkerLogLine", () => {
     expect(line).not.toContain(ESCAPE);
   });
 
-  it("tags each stream with the word --source accepts", () => {
+  it("tags each stream with the word --kind accepts", () => {
     const tagged = (stream: string, attributes: Record<string, string> = {}) =>
       legacyRenderWorkerLogLine(entry({ stream, attributes }), {
         showStream: true,

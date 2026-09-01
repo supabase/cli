@@ -98,7 +98,7 @@ guaranteed and is deduplicated on the Logflare-minted `id`.
 | ---------------------- | ------------------------------------------ | ----------------------------------- |
 | `cli_command_executed` | post-run, success or failure (via wrapper) | `exit_code`, `duration_ms`, `flags` |
 
-`--source` is a choice flag, so its value is logged verbatim (a closed enum carries
+`--kind` is a choice flag, so its value is logged verbatim (a closed enum carries
 no user data). `--project-ref` is not on this command's safe list, so its value is
 redacted. No custom events.
 
@@ -119,6 +119,11 @@ the derived level is error or warn and `stdout` otherwise, and `source` separate
 the initial backlog (`history`) from lines that arrived afterwards (`live`).
 `--tail 0 --follow` skips the backlog entirely and makes no history request, since
 the endpoint rejects `limit 0`.
+
+A bounded read echoes `--kind` back as a top-level `kind` key when the flag was
+given. That is a different axis from the per-line `source` above — `kind` is which
+stream was asked for, `source` is whether the line came from the backlog or the
+tail — so the two never mean the same thing.
 
 Text output prints the time in the reader's own timezone, matching the `--debug`
 HTTP logger. Machine payloads carry the unambiguous forms instead — each entry's

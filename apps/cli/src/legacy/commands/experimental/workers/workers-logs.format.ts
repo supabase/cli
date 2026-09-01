@@ -140,7 +140,7 @@ function formatLogTime(timestampMs: number): string {
  *
  * Abbreviated because the wire names are internal and long - `worker_guest_logs`
  * would cost 19 columns to say "the worker's own output". The words match
- * `--source`, so what is printed is what the flag accepts.
+ * `--kind`, so what is printed is what the flag accepts.
  */
 const STREAM_TAGS: Readonly<Record<string, string>> = {
   [WORKER_LOG_STREAMS.app]: "app",
@@ -176,7 +176,7 @@ export function legacyRenderWorkerLogLine(
   entry: WorkerLogEntry,
   options: {
     /**
-     * Whether to prefix the stream tag. False when `--source` has already pinned
+     * Whether to prefix the stream tag. False when `--kind` has already pinned
      * one stream, where every line would carry the same tag and it would be
      * width spent saying nothing.
      */

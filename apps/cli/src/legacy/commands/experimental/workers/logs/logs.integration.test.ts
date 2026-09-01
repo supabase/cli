@@ -48,7 +48,7 @@ function flags(overrides: Record<string, unknown> = {}) {
   return {
     name: "api",
     projectRef: Option.none(),
-    source: Option.none(),
+    kind: Option.none(),
     tail: 100,
     ...overrides,
   } as Parameters<typeof legacyWorkersLogs>[0];
@@ -98,7 +98,7 @@ describe("legacy workers logs", () => {
     return Effect.gen(function* () {
       yield* legacyWorkersLogs(flags());
 
-      // `<time>  [app]    <message>` — the tag is present because no --source
+      // `<time>  [app]    <message>` — the tag is present because no --kind
       // pinned a stream.
       const messages = out.stdoutText
         .trimEnd()
@@ -193,7 +193,7 @@ describe("legacy workers logs", () => {
     }).pipe(Effect.provide(layer), Effect.ensuring(Effect.sync(repo.cleanup)));
   });
 
-  it.live("narrows to one stream for --source, and to all three without it", () => {
+  it.live("narrows to one stream for --kind, and to all three without it", () => {
     const repo = project();
     const { layer, http } = setupLegacyWorkers({
       workdir: repo.dir,
@@ -201,7 +201,7 @@ describe("legacy workers logs", () => {
     });
 
     return Effect.gen(function* () {
-      yield* legacyWorkersLogs(flags({ source: Option.some("requests") }));
+      yield* legacyWorkersLogs(flags({ kind: Option.some("requests") }));
       const narrowed = sentQuery(http.requests[0]!).sql ?? "";
       expect(narrowed).toContain("in ('worker_ingress_logs')");
 

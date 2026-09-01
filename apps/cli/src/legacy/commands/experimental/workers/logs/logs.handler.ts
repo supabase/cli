@@ -21,7 +21,7 @@ import {
   logWindow,
   WORKER_LOG_POLL_SECONDS,
   WORKER_LOG_STREAMS,
-  type WorkerLogSourceChoice,
+  type WorkerLogKindChoice,
 } from "../../../../../shared/workers/worker-logs.sql.ts";
 import { getWorker } from "../../../../../shared/workers/workers-api.ts";
 import { WorkerNotDeployedError } from "../../../../../shared/workers/workers.errors.ts";
@@ -139,8 +139,8 @@ export const legacyWorkersLogs = Effect.fn("legacy.experimental.workers.logs")(f
     const pollTail = Math.max(flags.tail, 1);
 
     // The stream tag only earns its width when streams are actually mixed; with
-    // `--source` every line would carry the same one.
-    const showStream = Option.isNone(flags.source);
+    // `--kind` every line would carry the same one.
+    const showStream = Option.isNone(flags.kind);
 
     /**
      * Write a batch of lines out, in whichever form the format calls for.
@@ -178,8 +178,8 @@ export const legacyWorkersLogs = Effect.fn("legacy.experimental.workers.logs")(f
         );
       });
 
-    const streams = Option.isSome(flags.source)
-      ? [WORKER_LOG_STREAMS[flags.source.value as WorkerLogSourceChoice]]
+    const streams = Option.isSome(flags.kind)
+      ? [WORKER_LOG_STREAMS[flags.kind.value as WorkerLogKindChoice]]
       : ALL_WORKER_LOG_STREAMS;
 
     // `--tail 0` is "no history". On its own that is a no-op, but it is the shape
@@ -220,7 +220,7 @@ export const legacyWorkersLogs = Effect.fn("legacy.experimental.workers.logs")(f
     const payload = {
       worker_name: name,
       project_ref: projectRef,
-      ...(Option.isSome(flags.source) ? { source: flags.source.value } : {}),
+      ...(Option.isSome(flags.kind) ? { kind: flags.kind.value } : {}),
       logs: entries.map(toPayloadEntry),
     };
 

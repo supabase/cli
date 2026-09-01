@@ -6,8 +6,8 @@ import { WORKER_LOG_POLL_SECONDS } from "../../../../../shared/workers/worker-lo
 import { withLegacyCommandInstrumentation } from "../../../../telemetry/legacy-command-instrumentation.ts";
 import { legacyWorkersLogs } from "./logs.handler.ts";
 
-/** The `--source` words, mapped to stream names in `worker-logs.sql.ts`. */
-const SOURCE_VALUES = ["app", "requests", "builds"] as const;
+/** The `--kind` words, mapped to stream names in `worker-logs.sql.ts`. */
+const KIND_VALUES = ["app", "requests", "builds"] as const;
 
 /**
  * The endpoint's own ceiling is the SQL `LIMIT`, so this bound is the CLI's
@@ -25,7 +25,7 @@ const config = {
     Flag.withDescription("Project ref of the Supabase project."),
     Flag.optional,
   ),
-  source: Flag.choice("source", SOURCE_VALUES).pipe(
+  kind: Flag.choice("kind", KIND_VALUES).pipe(
     Flag.withDescription(
       "Limit to one log stream: app (the worker's own output), requests (HTTP access), " +
         "builds (deploy lifecycle). Defaults to all three.",
@@ -73,7 +73,7 @@ export const legacyWorkersLogsCommand = Command.make("logs", config).pipe(
       description: "Print the last 100 log lines across all streams",
     },
     {
-      command: "supabase experimental workers logs api --source requests --tail 20",
+      command: "supabase experimental workers logs api --kind requests --tail 20",
       description: "Print the 20 most recent HTTP requests the worker served",
     },
     {
@@ -87,7 +87,7 @@ export const legacyWorkersLogsCommand = Command.make("logs", config).pipe(
   ]),
   Command.withHandler((flags) =>
     legacyWorkersLogs(flags).pipe(
-      // `config` as well as `flags`: `--source` is a choice flag, and the wrapper
+      // `config` as well as `flags`: `--kind` is a choice flag, and the wrapper
       // treats a command's own declared choices as safe to log verbatim.
       withLegacyCommandInstrumentation({ flags, config }),
       withJsonErrorHandling,
