@@ -79,12 +79,12 @@ describe("createStack e2e", () => {
     "keeps worker env isolated for functions sharing a source directory",
     { timeout: 30_000 },
     async () => {
-      const [alpha, beta] = await Promise.all([
+      const [alpha, beta, nested] = await Promise.all([
         fetchFunctionWhenReady(`${stack.url}/functions/v1/shared-alpha`),
         fetchFunctionWhenReady(`${stack.url}/functions/v1/shared-beta`),
+        fetchFunctionWhenReady(`${stack.url}/functions/v1/nested-worker-path`),
       ]);
       const reusedAlpha = await fetchFunctionWhenReady(`${stack.url}/functions/v1/shared-alpha`);
-      const nested = await fetchFunctionWhenReady(`${stack.url}/functions/v1/nested-worker-path`);
 
       expect(alpha.status).toBe(200);
       expect(await alpha.text()).toBe("shared-alpha:shared-import-ok");

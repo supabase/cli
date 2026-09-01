@@ -146,22 +146,26 @@ function containerLogs(container: string): string {
   return `${result.stdout ?? ""}\n${result.stderr ?? ""}`;
 }
 
-async function fetchFunctionWhenReady(url: string, init?: RequestInit): Promise<Response> {
-  const deadline = Date.now() + SERVE_OFFLINE_STARTUP_TIMEOUT_MS;
-  let lastError: unknown;
-
-  while (Date.now() < deadline) {
-    try {
-      const response = await fetch(url, init);
-      if (response.status !== 502 && response.status !== 503) return response;
-      lastError = new Error(`Received ${response.status} from ${url}`);
-    } catch (error) {
-      lastError = error;
+async function fetchColdFunction(
+  url: string,
+  diagnosticContainers: readonly string[],
+  init?: RequestInit,
+): Promise<Response> {
+  try {
+    const response = await fetch(url, {
+      ...init,
+      signal: AbortSignal.timeout(SERVE_OFFLINE_STARTUP_TIMEOUT_MS),
+    });
+    if (response.status !== 200) {
+      throw new Error(`Received ${response.status} from ${url}`);
     }
-    await Bun.sleep(250);
+    return response;
+  } catch (cause) {
+    const diagnostics = diagnosticContainers
+      .map((container) => `${container} logs:\n${containerLogs(container)}`)
+      .join("\n");
+    throw new Error(`Function at ${url} did not become ready.\n${diagnostics}`, { cause });
   }
-
-  throw new Error(`Function at ${url} did not become ready`, { cause: lastError });
 }
 
 async function writeKongConfig(dir: string, edgeRuntimeContainer: string) {
@@ -456,11 +460,13 @@ describe("functions serve runtime template (offline)", () => {
           true,
         );
 
-        const [customResponse, aliasResponse] = await Promise.all([
-          fetchFunctionWhenReady(`${functionsUrl}/custom`, {
+        const diagnosticContainers = [kongContainer, runtimeContainer] as const;
+        const [customResponse, aliasResponse, nestedResponse] = await Promise.all([
+          fetchColdFunction(`${functionsUrl}/custom`, diagnosticContainers, {
             headers: { Origin: "http://localhost:3000" },
           }),
-          fetchFunctionWhenReady(`${functionsUrl}/custom-alias`),
+          fetchColdFunction(`${functionsUrl}/custom-alias`, diagnosticContainers),
+          fetchColdFunction(`${functionsUrl}/nested-worker-path`, diagnosticContainers),
         ]);
         expect(customResponse.status).toBe(200);
         expect(customResponse.headers.get("x-custom-id")).toBe("abc123");
@@ -475,7 +481,6 @@ describe("functions serve runtime template (offline)", () => {
         expect(aliasResponse.status).toBe(200);
         expect(aliasResponse.headers.get("x-function-slug")).toBe("custom-alias");
         expect(aliasResponse.headers.get("x-shared-import")).toBe("shared-import-ok");
-        const nestedResponse = await fetchFunctionWhenReady(`${functionsUrl}/nested-worker-path`);
         expect(nestedResponse.status).toBe(200);
         expect(nestedResponse.headers.get("x-function-slug")).toBe("nested-worker-path");
         const runtimeLogs = containerLogs(runtimeContainer);
