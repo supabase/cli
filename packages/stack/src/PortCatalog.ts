@@ -1,5 +1,6 @@
 import { Schema } from "effect";
 import type { ServiceName } from "./ServiceName.ts";
+import type { StackMode } from "./StackConfig.ts";
 
 export interface AllocatedPorts {
   readonly apiPort: number;
@@ -55,8 +56,8 @@ export interface PortCatalogEntry {
   readonly service?: ServiceName;
   /** The field is leased only by native runtime processes. */
   readonly nativeOnly?: boolean;
-  /** Number of contiguous TCP ports owned by this field, including its base port. */
-  readonly span?: number;
+  /** Number of contiguous TCP ports owned by this field, including its base port (or by mode). */
+  readonly span?: number | Readonly<Record<StackMode, number>>;
   readonly persistence: "runtime" | "sticky";
 }
 
@@ -91,7 +92,14 @@ const PORT_CATALOG_ENTRIES: {
     service: "edge-runtime",
     persistence: "sticky",
   },
-  realtimePort: { field: "realtimePort", service: "realtime", persistence: "runtime" },
+  // Realtime uses base for public HTTP, base + 1 for server gen_rpc,
+  // base + 2 for seed HTTP, and base + 3 for seed gen_rpc in native mode.
+  realtimePort: {
+    field: "realtimePort",
+    service: "realtime",
+    span: { native: 4, docker: 1 },
+    persistence: "runtime",
+  },
   storagePort: { field: "storagePort", service: "storage", persistence: "runtime" },
   imgproxyPort: { field: "imgproxyPort", service: "imgproxy", persistence: "runtime" },
   mailpitPort: {
@@ -116,7 +124,12 @@ const PORT_CATALOG_ENTRIES: {
     persistence: "sticky",
   },
   // postgres-meta binds its administrative listener at PG_META_PORT + 1.
-  pgmetaPort: { field: "pgmetaPort", service: "pgmeta", span: 2, persistence: "runtime" },
+  pgmetaPort: {
+    field: "pgmetaPort",
+    service: "pgmeta",
+    span: { native: 2, docker: 1 },
+    persistence: "runtime",
+  },
   studioPort: {
     field: "studioPort",
     configKey: "studio.port",

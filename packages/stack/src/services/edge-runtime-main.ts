@@ -210,8 +210,9 @@ async function serveFunction(req: Request, config: any, functionName: string, fu
   }
 }
 
-export function start(config: any) {
+export function start(config: any, hostname: "127.0.0.1" | "0.0.0.0") {
   Deno.serve({
+    hostname,
     handler: async (req: Request) => {
       const url = new URL(req.url);
 

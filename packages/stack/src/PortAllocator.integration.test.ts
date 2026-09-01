@@ -37,7 +37,10 @@ Server.prototype.listen = function (...args) {
 const { reservePortSet } = await import("./src/PortAllocator.ts");
 
 const fiber = Effect.runFork(
-  reservePortSet([{ field: "apiPort", selection: { kind: "automatic" } }]).pipe(
+  reservePortSet(
+    [{ field: "apiPort", selection: { kind: "automatic" } }],
+    { mode: "native" },
+  ).pipe(
     Effect.provide(NodeFileSystem.layer),
   ),
 );
@@ -192,9 +195,10 @@ const probePgMetaAdminCollision = (): Effect.Effect<
         } as const;
       }
       const basePort = adminPort - 1;
-      const exit = yield* reservePortSet([
-        { field: "pgmetaPort", selection: { kind: "exact", port: basePort } },
-      ]).pipe(Effect.exit);
+      const exit = yield* reservePortSet(
+        [{ field: "pgmetaPort", selection: { kind: "exact", port: basePort } }],
+        { mode: "native" },
+      ).pipe(Effect.exit);
       if (Exit.isSuccess(exit)) {
         yield* exit.value.releaseAll;
         return { kind: "unexpected-success", adminPort, basePort } as const;
@@ -237,21 +241,28 @@ describe("reservePortSet", () => {
         Effect.gen(function* () {
           const occupied = yield* occupyFreePort();
           occupiedPort = occupied.port;
-          return yield* reservePortSet([
-            { field: "apiPort", selection: { kind: "exact", port: occupied.port } },
-          ]).pipe(Effect.exit);
+          return yield* reservePortSet(
+            [{ field: "apiPort", selection: { kind: "exact", port: occupied.port } }],
+            { mode: "native" },
+          ).pipe(Effect.exit);
         }),
       ),
     );
     expect(Exit.isFailure(exit)).toBe(true);
     if (Exit.isFailure(exit)) {
       const error = Cause.squash(exit.cause);
-      expect(error).toMatchObject({ field: "apiPort", port: occupiedPort });
+      expect(error).toMatchObject({
+        field: "apiPort",
+        port: occupiedPort,
+        reason: "unavailable",
+      });
     }
   });
 
   it("reserves multiple automatic fields and re-reserves selected fields", async () => {
-    const lease = await run(reservePortSet([automatic("apiPort"), automatic("dbPort")]));
+    const lease = await run(
+      reservePortSet([automatic("apiPort"), automatic("dbPort")], { mode: "native" }),
+    );
     try {
       expect(lease.ports.apiPort).toBeGreaterThan(0);
       expect(lease.ports.dbPort).toBeGreaterThan(0);
@@ -263,8 +274,8 @@ describe("reservePortSet", () => {
   });
 
   it("keeps native Pooler shard listener spans disjoint across stacks", async () => {
-    const first = await run(reservePortSet([automatic("poolerInternalPort")]));
-    const second = await run(reservePortSet([automatic("poolerInternalPort")]));
+    const first = await run(reservePortSet([automatic("poolerInternalPort")], { mode: "native" }));
+    const second = await run(reservePortSet([automatic("poolerInternalPort")], { mode: "native" }));
     try {
       const firstBase = first.ports.poolerInternalPort;
       const secondBase = second.ports.poolerInternalPort;
@@ -281,7 +292,9 @@ describe("reservePortSet", () => {
   });
 
   it("keeps the PgMeta admin port out of other automatic allocations", async () => {
-    const lease = await run(reservePortSet([automatic("pgmetaPort"), automatic("apiPort")]));
+    const lease = await run(
+      reservePortSet([automatic("pgmetaPort"), automatic("apiPort")], { mode: "native" }),
+    );
     try {
       const pgmetaPort = lease.ports.pgmetaPort;
       const apiPort = lease.ports.apiPort;
@@ -327,8 +340,104 @@ describe("reservePortSet", () => {
     );
   });
 
+  it("allows a Docker PgMeta base when only its native admin port is occupied", async () => {
+    await run(
+      Effect.gen(function* () {
+        for (let attempt = 0; attempt < MAX_PG_META_COLLISION_ATTEMPTS; attempt += 1) {
+          const outcome = yield* Effect.scoped(
+            Effect.gen(function* () {
+              const occupied = yield* occupyFreePort();
+              if (occupied.port < 2 || occupied.port > 65_535) return "retry" as const;
+              const basePort = occupied.port - 1;
+              const exit = yield* reservePortSet(
+                [{ field: "pgmetaPort", selection: { kind: "exact", port: basePort } }],
+                { mode: "docker" },
+              ).pipe(Effect.exit);
+              if (Exit.isSuccess(exit)) {
+                yield* exit.value.releaseAll;
+                return "success" as const;
+              }
+              const error = Cause.squash(exit.cause);
+              if (
+                error instanceof PortAllocationError &&
+                error.field === "pgmetaPort" &&
+                error.port === basePort
+              ) {
+                return "retry" as const;
+              }
+              throw new Error(
+                `Docker PgMeta exact allocation failed unexpectedly for base ${basePort}: ${String(error)}`,
+              );
+            }),
+          );
+          if (outcome === "success") return;
+        }
+        throw new Error("Unable to obtain a free Docker PgMeta base after repeated attempts");
+      }),
+    );
+  });
+
+  it("keeps Realtime's full native gen_rpc span while Docker uses only its base port", async () => {
+    await run(
+      Effect.gen(function* () {
+        for (let attempt = 0; attempt < MAX_PG_META_COLLISION_ATTEMPTS; attempt += 1) {
+          const outcome = yield* Effect.scoped(
+            Effect.gen(function* () {
+              const occupied = yield* occupyFreePort();
+              if (occupied.port < 2 || occupied.port > 65_535) return "retry" as const;
+              const basePort = occupied.port - 3;
+              const native = yield* reservePortSet(
+                [{ field: "realtimePort", selection: { kind: "exact", port: basePort } }],
+                { mode: "native" },
+              ).pipe(Effect.exit);
+              if (Exit.isSuccess(native)) {
+                yield* native.value.releaseAll;
+                throw new Error(
+                  `Native Realtime exact allocation unexpectedly succeeded for base ${basePort} while gen_rpc ${occupied.port} was owned`,
+                );
+              }
+              const error = Cause.squash(native.cause);
+              if (
+                error instanceof PortAllocationError &&
+                error.field === "realtimePort" &&
+                error.port !== occupied.port
+              ) {
+                return "retry" as const;
+              }
+              if (
+                !(error instanceof PortAllocationError) ||
+                error.field !== "realtimePort" ||
+                error.port !== occupied.port
+              ) {
+                throw new Error(
+                  `Native Realtime exact allocation failed unexpectedly for base ${basePort}: ${String(error)}`,
+                );
+              }
+
+              const docker = yield* reservePortSet(
+                [{ field: "realtimePort", selection: { kind: "exact", port: basePort } }],
+                { mode: "docker" },
+              ).pipe(Effect.exit);
+              if (Exit.isFailure(docker)) {
+                throw new Error(
+                  `Docker Realtime exact allocation failed while only native span port ${occupied.port} was owned: ${String(Cause.squash(docker.cause))}`,
+                );
+              }
+              yield* docker.value.releaseAll;
+              return "success" as const;
+            }),
+          );
+          if (outcome === "success") return;
+        }
+        throw new Error(
+          `Unable to obtain a free Realtime base after repeated span collision attempts`,
+        );
+      }),
+    );
+  });
+
   it("releases every PgMeta listener when releasing its field", async () => {
-    const lease = await run(reservePortSet([automatic("pgmetaPort")]));
+    const lease = await run(reservePortSet([automatic("pgmetaPort")], { mode: "native" }));
     try {
       await run(lease.release(["pgmetaPort"]));
       // Reusing the same lease retains both ownership claims. Successful
@@ -340,15 +449,15 @@ describe("reservePortSet", () => {
   });
 
   it("retains claims after TCP release until releaseAll", async () => {
-    const lease = await run(reservePortSet([automatic("apiPort")]));
+    const lease = await run(reservePortSet([automatic("apiPort")], { mode: "native" }));
     const port = lease.ports.apiPort;
     if (port === undefined) throw new Error("Expected API port");
     try {
       await run(lease.release(["apiPort"]));
       const blocked = await run(
-        reservePortSet([{ field: "apiPort", selection: { kind: "exact", port } }]).pipe(
-          Effect.exit,
-        ),
+        reservePortSet([{ field: "apiPort", selection: { kind: "exact", port } }], {
+          mode: "native",
+        }).pipe(Effect.exit),
       );
       expect(Exit.isFailure(blocked)).toBe(true);
     } finally {
@@ -379,7 +488,9 @@ describe("reservePortSet", () => {
     child.child.kill("SIGKILL");
     await once(child.child, "close");
     const lease = await run(
-      reservePortSet([{ field: "apiPort", selection: { kind: "exact", port: ports.apiPort } }]),
+      reservePortSet([{ field: "apiPort", selection: { kind: "exact", port: ports.apiPort } }], {
+        mode: "native",
+      }),
     );
     await run(lease.releaseAll);
   }, 30_000);
@@ -389,15 +500,18 @@ describe("reservePortSet", () => {
       Effect.scoped(
         Effect.gen(function* () {
           const occupied = yield* occupyFreePort();
-          return yield* reservePortSet([
-            automatic("apiPort"),
-            { field: "dbPort", selection: { kind: "exact", port: occupied.port } },
-          ]).pipe(Effect.exit);
+          return yield* reservePortSet(
+            [
+              automatic("apiPort"),
+              { field: "dbPort", selection: { kind: "exact", port: occupied.port } },
+            ],
+            { mode: "native" },
+          ).pipe(Effect.exit);
         }),
       ),
     );
     expect(Exit.isFailure(failed)).toBe(true);
-    const retry = await run(reservePortSet([automatic("apiPort")]));
+    const retry = await run(reservePortSet([automatic("apiPort")], { mode: "native" }));
     await run(retry.releaseAll);
   });
 });

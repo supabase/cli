@@ -6,12 +6,14 @@ import { Buffer } from "node:buffer";
 import * as http from "node:http";
 import { Deferred, Effect, Layer, ManagedRuntime, Predicate } from "effect";
 import { FetchHttpClient } from "effect/unstable/http";
+import * as Socket from "effect/unstable/socket/Socket";
 import { createClient } from "@supabase/supabase-js";
 import { describe, expect, test } from "vitest";
-import { ApiProxy, type ProxyConfig } from "./ApiProxy.ts";
+import { ApiProxy, type ApiProxyOptions, type ProxyConfig } from "./ApiProxy.ts";
 import { StackServiceActivator } from "./ServiceActivation.ts";
 
 const PUBLISHABLE_KEY = "sb_publishable_testkey";
+const bunTest = typeof Bun === "undefined" ? test.skip : test;
 
 interface WebSocketBackend {
   readonly port: number;
@@ -81,8 +83,11 @@ function startWebSocketBackend(
   });
 }
 
-function buildProxyLayer(config: ProxyConfig): Layer.Layer<ApiProxy, never, never> {
-  return ApiProxy.layer(config).pipe(
+function buildProxyLayer(
+  config: ProxyConfig,
+  options: ApiProxyOptions = {},
+): Layer.Layer<ApiProxy, never, never> {
+  return ApiProxy.layer(config, options).pipe(
     Layer.provide(NodeHttpServer.layer(() => http.createServer(), { port: 0 }).pipe(Layer.orDie)),
     Layer.provide(FetchHttpClient.layer),
     Layer.provide(StackServiceActivator.noop),
@@ -136,9 +141,12 @@ const awaitClientClose = (
     client.once("error", reject);
   });
 
-async function openNodeProxyWebSocket(onMessage?: Parameters<typeof startWebSocketBackend>[0]) {
+async function openNodeProxyWebSocket(
+  onMessage?: Parameters<typeof startWebSocketBackend>[0],
+  options: ApiProxyOptions = {},
+) {
   const backend = await startWebSocketBackend(onMessage);
-  const runtime = ManagedRuntime.make(buildProxyLayer(proxyConfigFor(backend.port)));
+  const runtime = ManagedRuntime.make(buildProxyLayer(proxyConfigFor(backend.port), options));
   const proxy = await runtime.runPromise(ApiProxy);
   const address = proxy.address;
   if (!Predicate.isTagged(address, "TcpAddress")) throw new Error("Expected TCP proxy address");
@@ -158,7 +166,8 @@ async function openNodeProxyWebSocket(onMessage?: Parameters<typeof startWebSock
 describe("ApiProxy realtime websocket", () => {
   test("forwards frames with the backend path, tenant host, and projected query key", async () => {
     const fixture = await openNodeProxyWebSocket();
-    const payload = '["hello realtime"]';
+    const payload =
+      '{"topic":"realtime:public:messages","event":"phx_join","payload":{},"ref":"1"}';
     try {
       await awaitClientOpen(fixture.client);
       const echoed = new Promise<{ readonly text: string; readonly isBinary: boolean }>(
@@ -242,7 +251,113 @@ describe("ApiProxy realtime websocket", () => {
     },
   );
 
-  (typeof Bun === "undefined" ? test.skip : test)(
+  test(
+    "closes the client when the backend reports a non-close socket error",
+    { timeout: 5_000 },
+    async () => {
+      const backendError = new Error("backend read failure");
+      let fixture: Awaited<ReturnType<typeof openNodeProxyWebSocket>> | undefined;
+      try {
+        const currentFixture = await openNodeProxyWebSocket(undefined, {
+          realtimeWebSocketFactory: () =>
+            Effect.succeed(
+              Socket.make({
+                runRaw: () =>
+                  Effect.fail(
+                    new Socket.SocketError({
+                      reason: new Socket.SocketReadError({ cause: backendError }),
+                    }),
+                  ),
+                writer: Effect.succeed(() => Effect.void),
+              }),
+            ),
+        });
+        fixture = currentFixture;
+        const closed = awaitClientClose(currentFixture.client);
+        await awaitClientOpen(currentFixture.client);
+
+        await expect(closed).resolves.toEqual({
+          code: 1011,
+          reason: "realtime proxy error",
+        });
+      } finally {
+        if (fixture !== undefined) await fixture.dispose();
+      }
+    },
+  );
+
+  bunTest(
+    "writes frames buffered during activation in arrival order",
+    { timeout: 10_000 },
+    async () => {
+      const activationGate = Deferred.makeUnsafe<void>();
+      const frames = Array.from({ length: 32 }, (_, index) => `buffered-${index}`);
+      const received: Array<string> = [];
+      const receivedAll = Deferred.makeUnsafe<void>();
+      const backend = await startWebSocketBackend((_websocket, data) => {
+        received.push(rawDataToUtf8(data));
+        if (received.length === frames.length) Deferred.doneUnsafe(receivedAll, Effect.void);
+      });
+      const runtime = ManagedRuntime.make(
+        buildBunProxyLayer(
+          proxyConfigFor(backend.port),
+          Layer.succeed(StackServiceActivator, {
+            activate: () => Deferred.await(activationGate),
+          }),
+        ),
+      );
+      const proxy = await runtime.runPromise(ApiProxy);
+      const address = proxy.address;
+      if (!Predicate.isTagged(address, "TcpAddress")) throw new Error("Expected TCP proxy address");
+      const client = new NodeSocket.NodeWS.WebSocket(clientAddress(address.port), "realtime-v1");
+      try {
+        await awaitClientOpen(client);
+        for (const frame of frames) client.send(frame);
+        Deferred.doneUnsafe(activationGate, Effect.void);
+
+        await Effect.runPromise(Deferred.await(receivedAll));
+        expect(received).toEqual(frames);
+      } finally {
+        if (client.readyState !== NodeSocket.NodeWS.WebSocket.CLOSED) client.terminate();
+        await runtime.dispose();
+        await backend.stop();
+      }
+    },
+  );
+
+  bunTest(
+    "closes the client when activation buffering reaches its bound",
+    { timeout: 10_000 },
+    async () => {
+      const activationGate = Deferred.makeUnsafe<void>();
+      const backend = await startWebSocketBackend();
+      const runtime = ManagedRuntime.make(
+        buildBunProxyLayer(
+          proxyConfigFor(backend.port),
+          Layer.succeed(StackServiceActivator, {
+            activate: () => Deferred.await(activationGate),
+          }),
+        ),
+      );
+      const proxy = await runtime.runPromise(ApiProxy);
+      const address = proxy.address;
+      if (!Predicate.isTagged(address, "TcpAddress")) throw new Error("Expected TCP proxy address");
+      const client = new NodeSocket.NodeWS.WebSocket(clientAddress(address.port), "realtime-v1");
+      try {
+        const closed = awaitClientClose(client);
+        await awaitClientOpen(client);
+        for (let index = 0; index < 1_024; index += 1) client.send(`overflow-${index}`);
+
+        await expect(closed).resolves.toMatchObject({ code: 1011 });
+      } finally {
+        if (client.readyState !== NodeSocket.NodeWS.WebSocket.CLOSED) client.terminate();
+        await runtime.dispose();
+        await backend.stop();
+      }
+    },
+  );
+
+  bunTest(
     "forwards a Phoenix join from supabase-js after delayed Bun activation",
     { timeout: 15_000 },
     async () => {

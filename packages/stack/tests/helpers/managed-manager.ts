@@ -107,6 +107,7 @@ export const freePorts = (
         field,
         selection: { kind: "automatic" as const },
       })),
+      { mode: "native" },
     ).pipe(Effect.provide(NodeFileSystem.layer));
     const ports = FREE_PORT_FIELDS.slice(0, count).flatMap((field) => {
       const port = lease.ports[field];

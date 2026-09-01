@@ -263,6 +263,7 @@ const preflight = (
             (field) => PORT_CATALOG[field].persistence === "sticky" && !activeFieldSet.has(field),
           ),
         },
+        mode: persistedRuntime.mode,
         persisted: existing.ports,
         preservePersisted: true,
       })
@@ -282,7 +283,7 @@ const preflight = (
     );
     if (newlyActivatedExactPorts.length > 0) {
       yield* Effect.acquireUseRelease(
-        reservePortSet(newlyActivatedExactPorts),
+        reservePortSet(newlyActivatedExactPorts, { mode: persistedRuntime.mode }),
         () => Effect.void,
         (lease) => lease.releaseAll,
       ).pipe(Effect.mapError((cause) => preflightError(context, causeMessage(cause))));

@@ -343,9 +343,10 @@ describe("incompatible supervisor upgrade restart", () => {
       const context = setup();
       return Effect.scoped(
         Effect.gen(function* () {
-          const blocker = yield* reservePortSet([
-            { field: "studioPort", selection: { kind: "automatic" } },
-          ]);
+          const blocker = yield* reservePortSet(
+            [{ field: "studioPort", selection: { kind: "automatic" } }],
+            { mode: "native" },
+          );
           yield* Effect.addFinalizer(() => blocker.releaseAll);
           const occupiedPort = blocker.ports.studioPort;
           if (occupiedPort === undefined) return yield* Effect.die("expected an occupied port");

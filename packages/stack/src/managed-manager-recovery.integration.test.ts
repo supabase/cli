@@ -248,6 +248,7 @@ describe("managed stack recovery journeys", () => {
           .allocateManagedPorts(ownership, {
             stackId: collidingStackId,
             portDocument: automaticDocument(),
+            mode: "native",
           })
           .pipe(Effect.exit);
         expect(Exit.isFailure(rejected)).toBe(true);

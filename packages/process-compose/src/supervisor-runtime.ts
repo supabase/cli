@@ -251,6 +251,18 @@ const killProcessTree = (pid: number, signal: ChildProcess.Signal): void => {
   } catch {}
 };
 
+// Once the direct child has exited, only a POSIX process-group signal is safe:
+// the original PID could already belong to an unrelated process. Windows has
+// no equivalent group primitive, and its requested-shutdown taskkill already
+// sweeps the tree while the direct child is still owned.
+const killExitedProcessGroup = (pid: number): void => {
+  if (isWindows) return;
+
+  try {
+    process.kill(-pid, "SIGKILL");
+  } catch {}
+};
+
 const isWindows = process.platform === "win32";
 
 const waitForExit = (
@@ -403,6 +415,14 @@ const runSupervisorRuntimeEffect = (
         );
       });
 
+      // Orphan cleanup is owned by the detached supervisor only after its owner
+      // is gone. A live owner may intentionally stop and restart the child, so
+      // its paths must remain available for the owner's in-process cleanup.
+      // Supervisors without an owner are unowned and therefore clean up when
+      // they are asked to stop or when their child exits.
+      const runCleanupIfOwnerLost = () =>
+        ownerPid == null || !ownerAlive() ? runCleanup : Effect.void;
+
       const shutdown = (signal: ChildProcess.Signal) =>
         Effect.gen(function* () {
           yield* killChildTree(signal);
@@ -414,6 +434,12 @@ const runSupervisorRuntimeEffect = (
             yield* killChildTree("SIGKILL");
             yield* waitForExit(childExit, 2_000);
           }
+          // The direct child may have exited while descendants in its process
+          // group ignored the graceful signal. Sweep the POSIX group after
+          // observing the child's terminal state and before the supervisor exits.
+          yield* Effect.sync(() => {
+            if (child.pid != null) killExitedProcessGroup(child.pid);
+          });
         });
 
       const outcome = yield* Effect.race(
@@ -430,13 +456,18 @@ const runSupervisorRuntimeEffect = (
         ShutdownRequested: ({ signal }) =>
           Effect.gen(function* () {
             yield* shutdown(signal);
-            yield* runCleanup;
+            yield* runCleanupIfOwnerLost();
             return yield* Effect.sync(() => process.exit(0));
           }),
         ChildExited: ({ exit: { code, signal } }) =>
           Effect.gen(function* () {
-            if (!ownerAlive() || (config.cleanup?.length ?? 0) > 0) {
-              yield* runCleanup;
+            // process.exit bypasses Effect.scoped finalizers, so explicitly
+            // sweep any POSIX descendants that survived the direct child.
+            yield* Effect.sync(() => {
+              if (child.pid != null) killExitedProcessGroup(child.pid);
+            });
+            if (ownerPid == null || !ownerAlive()) {
+              yield* runCleanupIfOwnerLost();
               return yield* Effect.sync(() => process.exit(0));
             } else if (signal != null) {
               return yield* Effect.sync(() => process.exit(1));

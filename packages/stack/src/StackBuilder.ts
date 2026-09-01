@@ -435,7 +435,10 @@ export class StackBuilder extends Context.Service<
 
         if (configuredServiceEnabled(config, "edge-runtime")) {
           const edgeRuntimeResolution = yield* requirePreparedResolution(prepared, "edge-runtime");
-          const edgeRuntimeBootstrapDir = yield* prepareEdgeRuntimeBootstrap(config.runtimeRoot);
+          const edgeRuntimeBootstrapDir = yield* prepareEdgeRuntimeBootstrap(
+            config.runtimeRoot,
+            config.runtime.mode,
+          );
           defs.push({
             ...(edgeRuntimeResolution.type === "binary"
               ? makeEdgeRuntimeServiceNative({

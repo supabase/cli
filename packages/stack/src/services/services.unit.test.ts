@@ -416,7 +416,7 @@ describe("makeEdgeRuntimeServiceDocker", () => {
     const tempDir = mkdtempSync(path.join(tmpdir(), "stack-edge-runtime-bootstrap-"));
 
     return Effect.gen(function* () {
-      const bootstrapDir = yield* prepareEdgeRuntimeBootstrap(tempDir);
+      const bootstrapDir = yield* prepareEdgeRuntimeBootstrap(tempDir, "native");
       const source = yield* Effect.sync(() =>
         readFileSync(path.join(bootstrapDir, "index.ts"), "utf8"),
       );
@@ -424,7 +424,23 @@ describe("makeEdgeRuntimeServiceDocker", () => {
       expect(source).toContain(
         'import functionsRuntimeConfig from "./functions-runtime-config.json" with { type: "json" };',
       );
-      expect(source).toMatch(/start\(functionsRuntimeConfig\);\s*$/);
+      expect(source).toMatch(/start\(functionsRuntimeConfig, "127\.0\.0\.1"\);\s*$/);
+    }).pipe(
+      Effect.provide(NodeServices.layer),
+      Effect.ensuring(Effect.sync(() => rmSync(tempDir, { recursive: true, force: true }))),
+    );
+  });
+
+  it.effect("uses a container-local bind address for Docker bootstraps", () => {
+    const tempDir = mkdtempSync(path.join(tmpdir(), "stack-edge-runtime-bootstrap-docker-"));
+
+    return Effect.gen(function* () {
+      const bootstrapDir = yield* prepareEdgeRuntimeBootstrap(tempDir, "docker");
+      const source = yield* Effect.sync(() =>
+        readFileSync(path.join(bootstrapDir, "index.ts"), "utf8"),
+      );
+
+      expect(source).toMatch(/start\(functionsRuntimeConfig, "0\.0\.0\.0"\);\s*$/);
     }).pipe(
       Effect.provide(NodeServices.layer),
       Effect.ensuring(Effect.sync(() => rmSync(tempDir, { recursive: true, force: true }))),
@@ -512,13 +528,27 @@ describe("native auxiliary service definitions", () => {
       SECRET_KEY_BASE: "native-secret-key-base",
       MAX_HEADER_LENGTH: "4096",
       RELEASE_DISTRIBUTION: "none",
+      GEN_RPC_SOCKET_IP: "127.0.0.1",
+      GEN_RPC_TCP_SERVER_PORT: "54331",
+      GEN_RPC_TCP_CLIENT_PORT: "54331",
     });
     expect(bundle.server.env).not.toHaveProperty("ERL_EPMD_ADDRESS");
     expect(bundle.server.env).not.toHaveProperty("NODE_NAME");
     expect(bundle.server.env).not.toHaveProperty("NODE_IP");
     expect(bundle.server.env).not.toHaveProperty("RELEASE_NODE");
     expect(bundle.server.env).not.toHaveProperty("RELEASE_COOKIE");
-    expect(bundle.seed.env).toMatchObject({ PORT: "0" });
+    expect(bundle.seed.env).toMatchObject({
+      PORT: "54332",
+      GEN_RPC_SOCKET_IP: "127.0.0.1",
+      GEN_RPC_TCP_SERVER_PORT: "54333",
+      GEN_RPC_TCP_CLIENT_PORT: "54333",
+    });
+    expect(bundle.migrate.env).toMatchObject({
+      PORT: "54330",
+    });
+    expect(bundle.migrate.env).not.toHaveProperty("GEN_RPC_SOCKET_IP");
+    expect(bundle.migrate.env).not.toHaveProperty("GEN_RPC_TCP_SERVER_PORT");
+    expect(bundle.migrate.env).not.toHaveProperty("GEN_RPC_TCP_CLIENT_PORT");
     expect(bundle.server.healthCheck?.probe).toEqual({
       _tag: "Http",
       host: "127.0.0.1",
@@ -812,6 +842,9 @@ describe("docker-backed auxiliary services", () => {
     expect(def.args).toContain("54330:54330");
     expect(def.env?.DB_HOST).toBe("host.docker.internal");
     expect(def.env?.DB_USER).toBe("postgres");
+    expect(def.env).not.toHaveProperty("GEN_RPC_SOCKET_IP");
+    expect(def.env).not.toHaveProperty("GEN_RPC_TCP_SERVER_PORT");
+    expect(def.env).not.toHaveProperty("GEN_RPC_TCP_CLIENT_PORT");
     expect(def.dependencies).toEqual(dependencies);
     expect(def.healthCheck?.probe).toEqual(
       expect.objectContaining({ _tag: "Exec", command: "curl" }),

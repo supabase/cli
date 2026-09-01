@@ -193,7 +193,12 @@ const closeTestServer = (server: ReturnType<typeof createServer>, port: number) 
     });
   });
 
-const controllableSpawner = (options: { readonly bindPoolerBootstrapPort?: number } = {}) => {
+const controllableSpawner = (
+  options: {
+    readonly bindPoolerBootstrapPort?: number;
+    readonly bindRealtimeSeedPorts?: ReadonlyArray<number>;
+  } = {},
+) => {
   const spawned: SpawnRecord[] = [];
   const killed: string[] = [];
   let nextPid = 10_000;
@@ -214,6 +219,13 @@ const controllableSpawner = (options: { readonly bindPoolerBootstrapPort?: numbe
           const server = createServer();
           yield* listenTestServer(server, port);
           yield* closeTestServer(server, port);
+        }
+        if (options.bindRealtimeSeedPorts !== undefined && service === "realtime-seed") {
+          for (const port of options.bindRealtimeSeedPorts) {
+            const server = createServer();
+            yield* listenTestServer(server, port);
+            yield* closeTestServer(server, port);
+          }
         }
         const exitDeferred = yield* Deferred.make<ChildProcessSpawner.ExitCode>();
         let running = true;
@@ -508,9 +520,10 @@ describe("native service graph lifecycle", () => {
         directory: tmpdir(),
         prefix: "supabase-native-pooler-bootstrap-",
       });
-      const lease = yield* reservePortSet([
-        { field: "poolerInternalPort", selection: { kind: "automatic" } },
-      ]);
+      const lease = yield* reservePortSet(
+        [{ field: "poolerInternalPort", selection: { kind: "automatic" } }],
+        { mode: "native" },
+      );
       const internalPort = lease.ports.poolerInternalPort;
       if (internalPort === undefined) {
         yield* lease.releaseAll;
@@ -536,6 +549,48 @@ describe("native service graph lifecycle", () => {
           const stack = yield* Stack;
           yield* stack.start;
           expect((yield* stack.getState("pooler")).status).toBe("Healthy");
+          yield* stack.dispose;
+        }).pipe(Effect.provide(layer));
+      }).pipe(Effect.ensuring(lease.releaseAll));
+    }).pipe(Effect.provide(NodeServices.layer), Effect.scoped),
+  );
+
+  it.live("releases Realtime's native span before its seed binds private listeners", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const root = yield* fs.makeTempDirectoryScoped({
+        directory: tmpdir(),
+        prefix: "supabase-native-realtime-seed-",
+      });
+      const lease = yield* reservePortSet(
+        [{ field: "realtimePort", selection: { kind: "automatic" } }],
+        { mode: "native" },
+      );
+      yield* Effect.gen(function* () {
+        const realtimePort = lease.ports.realtimePort;
+        if (realtimePort === undefined) {
+          return yield* Effect.die(new Error("Expected Realtime port allocation"));
+        }
+        // makeConfig assigns Realtime to base + 7; derive its base from the
+        // lease instead of relying on a shared fixed port.
+        const config = yield* makeConfig(root, realtimePort - 7);
+        const spawner = controllableSpawner({
+          bindRealtimeSeedPorts: Array.from({ length: 4 }, (_, index) => realtimePort + index),
+        });
+        const realtimeLease: PortLease = {
+          ports: config.ports,
+          reserve: (fields) =>
+            fields.includes("realtimePort") ? lease.reserve(["realtimePort"]) : Effect.void,
+          release: (fields) =>
+            fields.includes("realtimePort") ? lease.release(["realtimePort"]) : Effect.void,
+          releaseAll: lease.releaseAll,
+        };
+        const { layer } = setup(config, spawner, undefined, realtimeLease);
+        yield* Effect.gen(function* () {
+          const stack = yield* Stack;
+          yield* stack.start;
+          expect((yield* stack.getState("realtime")).status).toBe("Healthy");
+          expect(spawner.spawned.some(({ service }) => service === "realtime-seed")).toBe(true);
           yield* stack.dispose;
         }).pipe(Effect.provide(layer));
       }).pipe(Effect.ensuring(lease.releaseAll));

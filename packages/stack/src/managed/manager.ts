@@ -18,6 +18,7 @@ import {
 import { isAbsolute, relative, resolve } from "node:path";
 import { PORT_CATALOG, type PortSet } from "../PortCatalog.ts";
 import { reservePortSet, type PortLease, type PortReservationRequest } from "../PortAllocator.ts";
+import type { StackMode } from "../StackConfig.ts";
 import {
   acquireControl,
   CONTROL_PORT_RANGE,
@@ -98,6 +99,7 @@ export interface StartStackRequest {
 export interface AllocateManagedPortsRequest {
   readonly stackId: string;
   readonly portDocument: ManagedPortIntentDocument;
+  readonly mode: StackMode;
   readonly persisted?: ReadonlyArray<ManagedPortAssignment>;
   /** During an upgrade restart, keep the target's sticky assignments. */
   readonly preservePersisted?: boolean;
@@ -656,7 +658,7 @@ const makeManager = (
 
           const requests = portRequests(plan, automaticExcluded);
           const allocation = yield* withManagedPortLease(
-            reservePortSet(requests, { reserved: exactReserved }).pipe(
+            reservePortSet(requests, { mode: request.mode, reserved: exactReserved }).pipe(
               Effect.provideService(FileSystem.FileSystem, fileSystem),
               Effect.mapError((cause) => {
                 const entry =
@@ -775,6 +777,7 @@ const makeManager = (
           const allocation = yield* allocateManagedPorts(request.ownership, {
             stackId: refreshedStackId,
             portDocument: request.portDocument,
+            mode: request.launch.mode,
             persisted: current?.ports,
             preservePersisted: request.preservePersistedPorts,
           });

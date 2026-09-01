@@ -25,10 +25,13 @@ const reserveEphemeralStackPorts = async (): Promise<EphemeralStackPorts> =>
   Effect.runPromise(
     Effect.scoped(
       Effect.acquireRelease(
-        reservePortSet([
-          { field: "apiPort", selection: { kind: "automatic" } },
-          { field: "dbPort", selection: { kind: "automatic" } },
-        ]),
+        reservePortSet(
+          [
+            { field: "apiPort", selection: { kind: "automatic" } },
+            { field: "dbPort", selection: { kind: "automatic" } },
+          ],
+          { mode: "native" },
+        ),
         (lease) => lease.releaseAll,
       ).pipe(
         Effect.map((lease) => {

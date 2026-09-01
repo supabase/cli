@@ -9,6 +9,7 @@ import {
   Latch,
   Option,
   Predicate,
+  Queue,
   Result,
   Schedule,
   Scope,
@@ -55,6 +56,24 @@ class RealtimeWebSocketProxyError extends Data.TaggedError("RealtimeWebSocketPro
 class RealtimeBackendSocketClosed extends Data.TaggedError("RealtimeBackendSocketClosed")<{
   readonly closeEvent: Socket.CloseEvent;
 }> {}
+
+class RealtimeClientFrameBufferOverflow extends Data.TaggedError(
+  "RealtimeClientFrameBufferOverflow",
+)<{
+  readonly message: string;
+}> {}
+
+const REALTIME_CLIENT_FRAME_BUFFER_CAPACITY = 256;
+
+type RealtimeWebSocketFactory = (
+  requestUrl: string,
+  config: ProxyConfig,
+  protocols: Array<string>,
+) => Effect.Effect<Socket.Socket, Socket.SocketError, Scope.Scope>;
+
+export interface ApiProxyOptions {
+  readonly realtimeWebSocketFactory?: RealtimeWebSocketFactory;
+}
 
 function transformRealtimeWebSocketUrl(requestUrl: string, config: ProxyConfig): string {
   const stripped = requestUrl.startsWith("/realtime/v1")
@@ -114,6 +133,8 @@ function websocketMessageChunk(
 }
 
 function realtimeClientFrame(chunk: string | Uint8Array): string | Uint8Array {
+  // The upgraded server socket boundary loses text/binary metadata. Realtime
+  // frames are JSON text, so sniffing arrays and objects restores JSON chunks as text.
   if (typeof chunk === "string") return chunk;
 
   let offset = 0;
@@ -127,7 +148,7 @@ function realtimeClientFrame(chunk: string | Uint8Array): string | Uint8Array {
     offset += 1;
   }
 
-  return chunk[offset] === 0x5b ? new TextDecoder().decode(chunk) : chunk;
+  return chunk[offset] === 0x5b || chunk[offset] === 0x7b ? new TextDecoder().decode(chunk) : chunk;
 }
 
 function makeNodeWebSocketSocket(
@@ -345,6 +366,7 @@ function makeRealtimeWebSocketHandler(
   activator: StackServiceActivator["Service"],
   signalTerminalFailure: Effect.Effect<void>,
   runBridge: (effect: Effect.Effect<void, never, never>) => Fiber.Fiber<void, never>,
+  realtimeWebSocketFactory: RealtimeWebSocketFactory = makeRealtimeWebSocket,
 ) {
   return (req: HttpServerRequest.HttpServerRequest) =>
     Effect.gen(function* () {
@@ -382,29 +404,57 @@ function makeRealtimeWebSocketHandler(
                 chunk: Uint8Array | string | Socket.CloseEvent,
               ) => Effect.Effect<void, Socket.SocketError>
             >();
+          const clientFrames = yield* Queue.bounded<string | Uint8Array>(
+            REALTIME_CLIENT_FRAME_BUFFER_CAPACITY,
+          );
+          const clientFrameBufferOverflow = yield* Deferred.make<
+            void,
+            RealtimeClientFrameBufferOverflow
+          >();
 
-          const clientToBackend = clientSocket
-            .runRaw((chunk) =>
-              Deferred.await(backendWriter).pipe(
-                Effect.flatMap((write) => write(realtimeClientFrame(chunk))),
-                Effect.catchTag("SocketError", (error) =>
+          const clientReader = clientSocket
+            .runRaw((chunk) => {
+              if (!Queue.offerUnsafe(clientFrames, realtimeClientFrame(chunk))) {
+                Deferred.doneUnsafe(
+                  clientFrameBufferOverflow,
                   Effect.fail(
-                    new RealtimeBackendSocketClosed({
-                      closeEvent: backendWriterCloseEvent(error),
+                    new RealtimeClientFrameBufferOverflow({
+                      message: "realtime client frame buffer exhausted",
                     }),
                   ),
-                ),
-              ),
-            )
+                );
+              }
+            })
             .pipe(
               Effect.catchTags({
-                RealtimeBackendSocketClosed: ({ closeEvent }) => Effect.succeed(closeEvent),
                 SocketError: (error) =>
                   Predicate.isTagged(error.reason, "SocketCloseError")
                     ? Effect.void
                     : Effect.fail(error),
               }),
             );
+          const clientFrameWriter = Effect.forever(
+            Effect.gen(function* () {
+              const chunk = yield* Queue.take(clientFrames);
+              const write = yield* Deferred.await(backendWriter);
+              yield* write(chunk);
+            }),
+          );
+          const clientToBackend = Effect.raceFirst(
+            clientReader,
+            Effect.raceFirst(clientFrameWriter, Deferred.await(clientFrameBufferOverflow)),
+          ).pipe(
+            Effect.catchTag("SocketError", (error) =>
+              Effect.fail(
+                new RealtimeBackendSocketClosed({
+                  closeEvent: backendWriterCloseEvent(error),
+                }),
+              ),
+            ),
+            Effect.catchTag("RealtimeBackendSocketClosed", ({ closeEvent }) =>
+              Effect.succeed(closeEvent),
+            ),
+          );
           const clientFiber = yield* clientToBackend.pipe(
             Effect.forkChild({ startImmediately: true }),
           );
@@ -424,7 +474,7 @@ function makeRealtimeWebSocketHandler(
             return;
           }
 
-          const backendResult = yield* makeRealtimeWebSocket(req.url, config, protocols).pipe(
+          const backendResult = yield* realtimeWebSocketFactory(req.url, config, protocols).pipe(
             Effect.mapError(
               (error) =>
                 new RealtimeWebSocketProxyError({
@@ -449,7 +499,7 @@ function makeRealtimeWebSocketHandler(
                 return closeEvent === undefined ? Effect.fail(error) : Effect.succeed(closeEvent);
               }),
             );
-          const bridge = Effect.race(Fiber.join(clientFiber), backendToClient).pipe(
+          const bridge = Effect.raceFirst(Fiber.join(clientFiber), backendToClient).pipe(
             Effect.mapError((error) =>
               error instanceof RealtimeWebSocketProxyError
                 ? error
@@ -673,6 +723,7 @@ export class ApiProxy extends Context.Service<
 >()("local/ApiProxy") {
   static layer = (
     config: ProxyConfig,
+    options: ApiProxyOptions = {},
   ): Layer.Layer<
     ApiProxy,
     never,
@@ -702,6 +753,7 @@ export class ApiProxy extends Context.Service<
           activator,
           signalTerminalFailure,
           realtimeBridges,
+          options.realtimeWebSocketFactory,
         );
 
         const routes = [

@@ -172,7 +172,7 @@ const createStackAttempt = (
           ? {}
           : { preferredPorts: { apiPort: preferredApiPort } }),
       });
-      const lease = yield* reservePortSet(requests);
+      const lease = yield* reservePortSet(requests, { mode: runtimeSelection.mode });
       portLease = lease;
       resolved = yield* resolveConfig(config, {
         runtime: runtimeSelection,

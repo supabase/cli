@@ -6,6 +6,7 @@ import { Effect, FileSystem } from "effect";
 import { dockerNetworkArgs } from "../Platform.ts";
 import { StackBuildError } from "../errors.ts";
 import type { StackIdentity } from "../StackIdentity.ts";
+import type { StackMode } from "../StackConfig.ts";
 import {
   dockerRunService,
   hostUserForLinuxDocker,
@@ -43,9 +44,15 @@ interface DockerEdgeRuntimeOptions extends EdgeRuntimeOptions, ContainerRuntimeO
 const bootstrapFileName = "index.ts";
 const bootstrapMountDir = "/workspace";
 const bootstrapSourcePath = fileURLToPath(new URL("./edge-runtime-main.ts", import.meta.url));
+type EdgeRuntimeHostnameLiteral = '"127.0.0.1"' | '"0.0.0.0"';
+const edgeRuntimeHostnameLiterals: Record<StackMode, EdgeRuntimeHostnameLiteral> = {
+  native: '"127.0.0.1"',
+  docker: '"0.0.0.0"',
+};
 
 export const prepareEdgeRuntimeBootstrap = (
   runtimeRoot: string,
+  mode: StackMode,
 ): Effect.Effect<string, StackBuildError, FileSystem.FileSystem> =>
   Effect.gen(function* () {
     const fs = yield* FileSystem.FileSystem;
@@ -71,10 +78,11 @@ export const prepareEdgeRuntimeBootstrap = (
             ),
           )
         : bootstrapSource;
+    const hostnameLiteral = edgeRuntimeHostnameLiterals[mode];
     const generatedSource = [
       'import functionsRuntimeConfig from "./functions-runtime-config.json" with { type: "json" };',
       source,
-      "start(functionsRuntimeConfig);",
+      `start(functionsRuntimeConfig, ${hostnameLiteral});`,
     ].join("\n");
     yield* fs.writeFileString(join(bootstrapDir, bootstrapFileName), generatedSource).pipe(
       Effect.mapError(

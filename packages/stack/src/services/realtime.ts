@@ -42,32 +42,50 @@ interface DockerRealtimeOptions extends RealtimeServiceOptions, ContainerRuntime
   readonly platformOs: string;
 }
 
-const realtimeEnv = (
-  opts: Omit<RealtimeServiceOptions, "dbHost"> & {
-    readonly dbHost?: string;
-    readonly dbUser?: string;
-    readonly native?: boolean;
-  },
+type RealtimeEnvOptions = Omit<RealtimeServiceOptions, "dbHost"> & {
+  readonly dbHost?: string;
+  readonly dbUser?: string;
+  readonly native?: boolean;
+};
+
+const realtimeEnv = (opts: RealtimeEnvOptions): Record<string, string> => {
+  return {
+    PORT: String(opts.port),
+    DB_HOST: opts.dbHost ?? "127.0.0.1",
+    DB_PORT: String(opts.dbPort),
+    DB_USER: opts.dbUser ?? "postgres",
+    DB_PASSWORD: "postgres",
+    DB_NAME: "postgres",
+    DB_AFTER_CONNECT_QUERY: "SET search_path TO _realtime",
+    DB_ENC_KEY: opts.encryptionKey,
+    API_JWT_SECRET: opts.jwtSecret,
+    API_JWT_JWKS: opts.jwtJwks,
+    METRICS_JWT_SECRET: opts.jwtSecret,
+    APP_NAME: "realtime",
+    SECRET_KEY_BASE: opts.secretKeyBase,
+    DNS_NODES: "",
+    RLIMIT_NOFILE: "",
+    SEED_SELF_HOST: "true",
+    RUN_JANITOR: "true",
+    MAX_HEADER_LENGTH: String(opts.maxHeaderLength),
+    ...(opts.native
+      ? {
+          RELEASE_DISTRIBUTION: "none",
+        }
+      : { ERL_AFLAGS: "-proto_dist inet_tcp" }),
+  };
+};
+
+const realtimeNativeEnv = (
+  opts: Omit<RealtimeEnvOptions, "native">,
+  genRpcPort: number,
 ): Record<string, string> => ({
-  PORT: String(opts.port),
-  DB_HOST: opts.dbHost ?? "127.0.0.1",
-  DB_PORT: String(opts.dbPort),
-  DB_USER: opts.dbUser ?? "postgres",
-  DB_PASSWORD: "postgres",
-  DB_NAME: "postgres",
-  DB_AFTER_CONNECT_QUERY: "SET search_path TO _realtime",
-  DB_ENC_KEY: opts.encryptionKey,
-  API_JWT_SECRET: opts.jwtSecret,
-  API_JWT_JWKS: opts.jwtJwks,
-  METRICS_JWT_SECRET: opts.jwtSecret,
-  APP_NAME: "realtime",
-  SECRET_KEY_BASE: opts.secretKeyBase,
-  DNS_NODES: "",
-  RLIMIT_NOFILE: "",
-  SEED_SELF_HOST: "true",
-  RUN_JANITOR: "true",
-  MAX_HEADER_LENGTH: String(opts.maxHeaderLength),
-  ...(opts.native ? { RELEASE_DISTRIBUTION: "none" } : { ERL_AFLAGS: "-proto_dist inet_tcp" }),
+  ...realtimeEnv({ ...opts, native: true }),
+  // The local stack has one Realtime node. Keep each helper's gen_rpc listener
+  // on loopback and give it a distinct port during sequential startup.
+  GEN_RPC_SOCKET_IP: "127.0.0.1",
+  GEN_RPC_TCP_SERVER_PORT: String(genRpcPort),
+  GEN_RPC_TCP_CLIENT_PORT: String(genRpcPort),
 });
 
 const realtimeDockerHealthCheck = (port: number, tenantId: string): ServiceDef["healthCheck"] => ({
@@ -108,11 +126,11 @@ export const makeRealtimeServiceDocker = (opts: DockerRealtimeOptions): ServiceD
 export const makeRealtimeServicesNative = (
   opts: NativeRealtimeOptions,
 ): NativeRealtimeServiceBundle => {
-  const env = realtimeEnv({ ...opts, dbUser: "supabase_admin", native: true });
+  const envOptions = { ...opts, dbUser: "supabase_admin" };
   const migrate = nativeRunService({
     name: "realtime-migrate",
     command: `${opts.binPath}/bin/migrate`,
-    env,
+    env: realtimeEnv({ ...envOptions, native: true }),
     dependencies: opts.dependencies,
     restart: "no",
   });
@@ -120,14 +138,14 @@ export const makeRealtimeServicesNative = (
     name: "realtime-seed",
     command: `${opts.binPath}/bin/realtime`,
     args: ["eval", "Realtime.Release.seeds(Realtime.Repo)"],
-    env: { ...env, PORT: "0" },
+    env: realtimeNativeEnv({ ...envOptions, port: opts.port + 2 }, opts.port + 3),
     dependencies: [{ service: migrate.name, condition: "completed" }],
     restart: "no",
   });
   const server = nativeRunService({
     name: "realtime",
     command: `${opts.binPath}/bin/server`,
-    env,
+    env: realtimeNativeEnv(envOptions, opts.port + 1),
     dependencies: [{ service: seed.name, condition: "completed" }],
     healthCheck: realtimeNativeHealthCheck(opts.port, opts.tenantId),
   });

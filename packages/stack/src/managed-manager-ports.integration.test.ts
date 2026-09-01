@@ -343,6 +343,7 @@ describe("managed stack ports journeys", () => {
           .allocateManagedPorts(ownership, {
             stackId,
             portDocument: automaticRuntimeDocument(),
+            mode: "native",
             persisted: [{ key: "api.port", port: stalePort, intent: "automatic" }],
           })
           .pipe(Effect.exit);
@@ -362,6 +363,7 @@ describe("managed stack ports journeys", () => {
               disabledFields: ["apiPort"],
               document: {},
             },
+            mode: "native",
             persisted: [{ key: "api.port", port: stalePort, intent: "automatic" }],
           })
           .pipe(Effect.exit);
@@ -375,9 +377,10 @@ describe("managed stack ports journeys", () => {
         }
         const firstPort = first.stack.ports[0]?.port;
         if (firstPort === undefined) throw new Error("expected automatic port");
-        const external = yield* reservePortSet([
-          { field: "apiPort", selection: { kind: "exact", port: firstPort } },
-        ]);
+        const external = yield* reservePortSet(
+          [{ field: "apiPort", selection: { kind: "exact", port: firstPort } }],
+          { mode: "native" },
+        );
         const restart = yield* startManagedStack(manager, {
           workspacePath: firstWorkspace,
           portDocument: automaticRuntimeDocument(),

@@ -75,14 +75,17 @@ type StackService = typeof Stack.Service;
 const READINESS_DIAGNOSTIC_LOG_LIMIT = 20;
 const READINESS_DIAGNOSTIC_LINE_LIMIT = 512;
 
-/** Pooler bootstrap briefly binds its private shard listeners before the public server starts. */
+/** Pooler bootstrap and Realtime seed briefly bind private listeners before their public servers start. */
 const portFieldsForDefinition = (
   name: string,
   mode: ResolvedStackConfig["runtime"]["mode"],
-): ReadonlyArray<PortField> =>
-  name === "pooler-bootstrap" && mode === "native"
-    ? ["poolerInternalPort"]
-    : portFieldsForService(name, mode);
+): ReadonlyArray<PortField> => {
+  if (mode === "native") {
+    if (name === "pooler-bootstrap") return ["poolerInternalPort"];
+    if (name === "realtime-seed") return ["realtimePort"];
+  }
+  return portFieldsForService(name, mode);
+};
 
 /** @internal Enriches a readiness timeout without changing diagnostic failure semantics. */
 export const attachReadinessDiagnostics = (

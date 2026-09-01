@@ -225,9 +225,9 @@ running reach terminal `Stopped` state with `pid: null` and exit code `143`; sto
 In-process cleanup and orphan supervision solve different failure modes:
 
 - `cleanup` runs while the owner Effect runtime is alive and can use its dependencies.
-- `supervision.orphanCleanup` is serializable work executed by a detached supervisor when the
-  owner's stdin closes, its PID disappears, the supervisor receives a termination signal, or the
-  managed child exits while cleanup is configured.
+- `supervision.orphanCleanup` is serializable work executed by a detached supervisor after its
+  configured owner is lost, or when an unowned supervisor exits. An ordinary requested shutdown
+  while the configured owner remains alive skips orphan cleanup so the owner can restart safely.
 
 `ExternalCleanupAction` supports a shell-free `RunCommand` with an executable, argument array, and
 optional timeout (default 5 seconds), plus `RemovePath` for filesystem cleanup. Cleanup commands
@@ -250,7 +250,7 @@ supervisor:
 - watches both owner stdin and owner PID;
 - kills the entire child tree on owner loss or a shutdown signal;
 - applies graceful-then-forceful termination;
-- runs serializable orphan cleanup before it exits.
+- runs serializable orphan cleanup after owner loss (or for an unowned supervisor) before it exits.
 
 Its coordination core is one scoped Effect program: child exit and owner-loss signals complete
 `Deferred`s, owner liveness is checked by a supervised fiber on a `Schedule`, and cleanup command
