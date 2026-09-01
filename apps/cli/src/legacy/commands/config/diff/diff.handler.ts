@@ -10,6 +10,7 @@ import { Effect, Option } from "effect";
 import { LegacyPlatformApi } from "../../../auth/legacy-platform-api.service.ts";
 import { LegacyCliSettings } from "../../../config/legacy-cli-settings.service.ts";
 import { LegacyProjectRefResolver } from "../../../config/legacy-project-ref.service.ts";
+import { legacyResolveParentScopedProjectRef } from "../../../shared/legacy-parent-project-ref.ts";
 import { LegacyLinkedProjectCache } from "../../../telemetry/legacy-linked-project-cache.service.ts";
 import { LegacyTelemetryState } from "../../../telemetry/legacy-telemetry-state.service.ts";
 import { LegacyOutputFlag } from "../../../../shared/legacy/global-flags.ts";
@@ -127,7 +128,10 @@ export const legacyConfigDiff = Effect.fn("legacy.config.diff")(function* (
     // lowercase letters) is always treated as a project ref; a UUID resolves
     // through `GET /v1/branches/{id}` directly, so it works in an unlinked
     // directory (the parent ref is passed lazily and only evaluated for a
-    // branch-NAME lookup).
+    // branch-NAME lookup). The parent comes from the PARENT-SCOPED resolver:
+    // after `link <branch>`, `.temp/project-ref` holds the branch's own ref,
+    // which the parent-scoped branches endpoint rejects — same rule as the
+    // `branches` command family.
     let ref: string;
     let branch: string | undefined;
     if (Option.isSome(requested) && !LEGACY_BRANCH_PROJECT_REF_PATTERN.test(requested.value)) {
@@ -135,10 +139,14 @@ export const legacyConfigDiff = Effect.fn("legacy.config.diff")(function* (
       branch = target;
       const resolving =
         output.format === "text" ? yield* output.task("Resolving branch...") : undefined;
-      ref = yield* legacyResolveBranchProjectRef(target, resolver.resolve(Option.none()), {
-        mapGetError: mapBranchResolveError,
-        mapFindError: mapBranchResolveError,
-      }).pipe(
+      ref = yield* legacyResolveBranchProjectRef(
+        target,
+        legacyResolveParentScopedProjectRef(Option.none()),
+        {
+          mapGetError: mapBranchResolveError,
+          mapFindError: mapBranchResolveError,
+        },
+      ).pipe(
         Effect.tapError(() => resolving?.fail() ?? Effect.void),
         Effect.catchTag(
           "LegacyConfigDiffBranchResolveStatusError",

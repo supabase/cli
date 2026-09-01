@@ -9,7 +9,6 @@ import {
   LegacyOutputFlag,
   LegacyWorkdirFlag,
 } from "../../shared/legacy/global-flags.ts";
-import { CurrentAnalyticsContext } from "../../shared/telemetry/analytics-context.ts";
 import { Analytics } from "../../shared/telemetry/analytics.service.ts";
 import {
   PropErrorCategory,
@@ -28,7 +27,11 @@ import {
   LEGACY_QUERY_OUTPUT_FORMATS,
   LegacyInvalidOutputFormatError,
 } from "../shared/legacy-go-output-flag.ts";
-import { mockOutput, mockProcessControl } from "../../../tests/helpers/mocks.ts";
+import {
+  mockContextualAnalytics,
+  mockOutput,
+  mockProcessControl,
+} from "../../../tests/helpers/mocks.ts";
 
 const FAILURE_PROPERTY_NAMES = [
   PropErrorKind,
@@ -50,35 +53,6 @@ function mockLegacyIdentityStitch(opts: { stitchedDistinctId?: string }) {
       }),
     ),
   };
-}
-
-function mockContextualAnalytics() {
-  const captured: Array<{
-    event: string;
-    properties: Record<string, unknown>;
-  }> = [];
-
-  const layer = Layer.succeed(
-    Analytics,
-    Analytics.of({
-      capture: (event: string, properties: Record<string, unknown> = {}) =>
-        Effect.gen(function* () {
-          const context = yield* CurrentAnalyticsContext;
-          captured.push({
-            event,
-            properties: {
-              ...context,
-              ...properties,
-            },
-          });
-        }),
-      identify: () => Effect.void,
-      alias: () => Effect.void,
-      groupIdentify: () => Effect.void,
-    }),
-  );
-
-  return { layer, captured };
 }
 
 function failingAnalytics(defect: unknown) {

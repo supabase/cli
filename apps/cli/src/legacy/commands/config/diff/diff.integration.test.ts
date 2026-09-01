@@ -502,6 +502,30 @@ describe("legacy config diff integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
+  it.live("branch-name resolution uses the linked PARENT, not a branch ref in project-ref", () => {
+    // After `link <branch>`, `.temp/project-ref` holds the BRANCH's own ref,
+    // and the parent-scoped branches endpoint rejects branch refs — the
+    // parent must come from the parent-scoped resolver (which prefers the
+    // linked-project.json parent recovery), never the file verbatim.
+    const temp = join(tempRoot.current, "supabase", ".temp");
+    mkdirSync(temp, { recursive: true });
+    writeFileSync(join(temp, "project-ref"), BRANCH_REF);
+    writeFileSync(join(temp, "linked-project.json"), JSON.stringify({ ref: LEGACY_VALID_REF }));
+    const { layer, api } = setup({
+      toml: 'project_id = "test"\n',
+      linked: false,
+      v2: { status: 200, body: v2Response({ ref: BRANCH_REF }) },
+    });
+    return Effect.gen(function* () {
+      yield* legacyConfigDiff({ ...noFlags, projectRef: Option.some("staging") });
+      const urls = api.requests.map((request) => request.url);
+      expect(
+        urls.some((url) => url.includes(`/v1/projects/${LEGACY_VALID_REF}/branches/staging`)),
+      ).toBe(true);
+      expect(urls.some((url) => url.includes(`/v1/projects/${BRANCH_REF}/`))).toBe(false);
+    }).pipe(Effect.provide(layer));
+  });
+
   it.live("a UUID --project-ref resolves directly, even in an unlinked directory", () => {
     // The UUID endpoint (`GET /v1/branches/{id}`) does not use a parent
     // project ref, so the lookup must not demand a linked directory — the
