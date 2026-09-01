@@ -49,7 +49,7 @@ func captureBody(out *[]byte) gock.MatchFunc {
 	}
 }
 
-func mockFunctionList(functions ...api.FunctionResponse) {
+func mockFunctionList(functions ...api.FunctionResponseOutput) {
 	gock.New(mockApiHost).
 		Get("/v1/projects/" + mockProject + "/functions").
 		Reply(http.StatusOK).
@@ -124,7 +124,7 @@ func TestDeployAll(t *testing.T) {
 			Post("/v1/projects/"+mockProject+"/functions/deploy").
 			MatchParam("slug", "demo").
 			Reply(http.StatusCreated).
-			JSON(api.DeployFunctionResponse{})
+			JSON(api.DeployFunctionResponseOutput{})
 		// Run test
 		err := client.Deploy(context.Background(), c, fsys)
 		// Check error
@@ -153,7 +153,7 @@ func TestDeployAll(t *testing.T) {
 			Post("/v1/projects/"+mockProject+"/functions/deploy").
 			MatchParam("slug", "demo").
 			Reply(http.StatusCreated).
-			JSON(api.DeployFunctionResponse{})
+			JSON(api.DeployFunctionResponseOutput{})
 		// Run test
 		err := client.Deploy(context.Background(), c, fsys)
 		// Check error
@@ -183,12 +183,12 @@ func TestDeployAll(t *testing.T) {
 				Post("/v1/projects/"+mockProject+"/functions/deploy").
 				MatchParam("slug", slug).
 				Reply(http.StatusCreated).
-				JSON(api.DeployFunctionResponse{Id: slug})
+				JSON(api.DeployFunctionResponseOutput{Id: slug})
 		}
 		gock.New(mockApiHost).
 			Put("/v1/projects/" + mockProject + "/functions").
 			Reply(http.StatusOK).
-			JSON(api.BulkUpdateFunctionResponse{})
+			JSON(api.BulkUpdateFunctionResponseOutput{})
 		// Run test
 		err := client.Deploy(context.Background(), c, fsys)
 		// Check error
@@ -218,7 +218,7 @@ func TestDeployAll(t *testing.T) {
 				Post("/v1/projects/"+mockProject+"/functions/deploy").
 				MatchParam("slug", slug).
 				Reply(http.StatusCreated).
-				JSON(api.DeployFunctionResponse{Id: slug})
+				JSON(api.DeployFunctionResponseOutput{Id: slug})
 		}
 		gock.New(mockApiHost).
 			Put("/v1/projects/"+mockProject+"/functions").
@@ -228,7 +228,7 @@ func TestDeployAll(t *testing.T) {
 		gock.New(mockApiHost).
 			Put("/v1/projects/" + mockProject + "/functions").
 			Reply(http.StatusOK).
-			JSON(api.BulkUpdateFunctionResponse{})
+			JSON(api.BulkUpdateFunctionResponseOutput{})
 		// Run test
 		err := client.Deploy(context.Background(), c, fsys)
 		// Check error
@@ -257,7 +257,7 @@ func TestDeployAll(t *testing.T) {
 			Post("/v1/projects/"+mockProject+"/functions/deploy").
 			MatchParam("slug", "test-ts").
 			Reply(http.StatusCreated).
-			JSON(api.DeployFunctionResponse{Id: "test-ts", Name: "test-ts", Slug: "test-ts"})
+			JSON(api.DeployFunctionResponseOutput{Id: "test-ts", Name: "test-ts", Slug: "test-ts"})
 		gock.New(mockApiHost).
 			Post("/v1/projects/"+mockProject+"/functions/deploy").
 			MatchParam("slug", "test-js").
@@ -265,10 +265,10 @@ func TestDeployAll(t *testing.T) {
 			JSON(map[string]string{"message": "deployment already exists"})
 		var bulkBody []byte
 		gock.New(mockApiHost).
-			Put("/v1/projects/"+mockProject+"/functions").
+			Put("/v1/projects/" + mockProject + "/functions").
 			AddMatcher(captureBody(&bulkBody)).
 			Reply(http.StatusOK).
-			JSON(api.BulkUpdateFunctionResponse{})
+			JSON(api.BulkUpdateFunctionResponseOutput{})
 		// Run test
 		err := client.Deploy(context.Background(), c, fsys)
 		// Check error
@@ -333,14 +333,14 @@ func TestDeployAll(t *testing.T) {
 			Post("/v1/projects/"+mockProject+"/functions/deploy").
 			MatchParam("slug", "test-ts").
 			Reply(http.StatusCreated).
-			JSON(api.DeployFunctionResponse{Id: "test-ts", Name: "test-ts", Slug: "test-ts"})
+			JSON(api.DeployFunctionResponseOutput{Id: "test-ts", Name: "test-ts", Slug: "test-ts"})
 		gock.New(mockApiHost).
 			Post("/v1/projects/"+mockProject+"/functions/deploy").
 			MatchParam("slug", "test-js").
 			Reply(http.StatusConflict).
 			JSON(map[string]string{"message": "deployment already exists"})
 		gock.New(mockApiHost).
-			Put("/v1/projects/"+mockProject+"/functions").
+			Put("/v1/projects/" + mockProject + "/functions").
 			Reply(http.StatusBadRequest).
 			JSON(map[string]string{"message": "bulk update rejected"})
 		// Run test
@@ -406,7 +406,7 @@ func TestDeployAll(t *testing.T) {
 		fsys := testImports
 		// Setup mock api
 		defer gock.OffAll()
-		mockFunctionList(api.FunctionResponse{
+		mockFunctionList(api.FunctionResponseOutput{
 			Id:        "demo",
 			Name:      "demo",
 			Slug:      "demo",
@@ -417,7 +417,7 @@ func TestDeployAll(t *testing.T) {
 			MatchParam("slug", "demo").
 			BodyString(`"verify_jwt":false`).
 			Reply(http.StatusCreated).
-			JSON(api.DeployFunctionResponse{})
+			JSON(api.DeployFunctionResponseOutput{})
 		// Run test
 		err := client.Deploy(context.Background(), c, fsys)
 		// Check error

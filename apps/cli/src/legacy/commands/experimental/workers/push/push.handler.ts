@@ -469,7 +469,7 @@ const reportUnattempted = Effect.fnUntraced(function* (skipped: ReadonlyArray<st
  * legs; the builds themselves then run concurrently on the platform, which is
  * what the caller asked for by not waiting.
  */
-export const legacyWorkersPush = Effect.fn("legacy.workers.push")(function* (
+export const legacyWorkersPush = Effect.fn("legacy.experimental.workers.push")(function* (
   flags: LegacyWorkersPushFlags,
   options: {
     readonly pollSchedule?: Schedule.Schedule<unknown>;
@@ -520,13 +520,19 @@ export const legacyWorkersPush = Effect.fn("legacy.workers.push")(function* (
     const refSuffix = legacyWorkersProjectRefSuffix(flags.projectRef);
     const deployed: Array<Record<string, unknown>> = [];
     for (const [index, name] of names.entries()) {
-      if (names.length > 1 && !machineOutput) {
+      if (names.length > 1 && !machineOutput && output.format === "text") {
         // stderr, unblanked and labelled, the way `functions deploy` announces
         // each function: a bare name with a leading blank line put a section
         // header into whatever was consuming stdout.
         //
         // Counted, because each worker's package/upload/build takes minutes and
         // the name alone says nothing about how much of the run is left.
+        //
+        // Text only, on both axes: `machineOutput` tracks `-o`, which leaves
+        // `output.format` as `text`, so neither check covers the other. This is
+        // progress rather than an outcome, and `--output-format json` asked for
+        // a stream of events — unlike the unattempted-workers report below,
+        // which every format gets because it says what still needs deploying.
         yield* output.raw(
           `Deploying Worker ${index + 1}/${names.length}: ${legacyAqua(name)}\n`,
           "stderr",

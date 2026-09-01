@@ -23,7 +23,7 @@ func linkedProjectPath() string {
 	return filepath.Join(utils.TempDir, "linked-project.json")
 }
 
-func SaveLinkedProject(project api.V1ProjectWithDatabaseResponse, fsys afero.Fs) error {
+func SaveLinkedProject(project api.V1ProjectWithDatabaseResponseOutput, fsys afero.Fs) error {
 	linked := LinkedProject{
 		Ref:              project.Ref,
 		Name:             project.Name,
@@ -63,7 +63,7 @@ func HasLinkedProject(fsys afero.Fs) bool {
 // auth — this function only handles caching and PostHog group identification.
 //
 // Best-effort: logs errors to debug output, never returns them.
-func CacheProjectAndIdentifyGroups(project api.V1ProjectWithDatabaseResponse, service *Service, fsys afero.Fs) {
+func CacheProjectAndIdentifyGroups(project api.V1ProjectWithDatabaseResponseOutput, service *Service, fsys afero.Fs) {
 	if err := SaveLinkedProject(project, fsys); err != nil {
 		fmt.Fprintln(utils.GetDebugLogger(), err)
 	}
