@@ -831,6 +831,25 @@ describe("legacy workers logs", () => {
     }).pipe(Effect.provide(layer), Effect.ensuring(Effect.sync(repo.cleanup)));
   });
 
+  // `ts_ms` feeds `new Date(...).toISOString()` while the payload is built, which
+  // happens for text runs too. Out of Date range that throws `RangeError`, which
+  // is a defect rather than the typed unreadable-response failure.
+  it.live("fails typed rather than throwing on an out-of-range timestamp", () => {
+    const repo = project();
+    const { layer } = setupLegacyWorkers({
+      workdir: repo.dir,
+      routes: {
+        [LOGS_ROUTE]: logsResponse([workerLogRow({ id: "bad", tsMs: 8.7e15 })]),
+      },
+    });
+
+    return Effect.gen(function* () {
+      const error = yield* legacyWorkersLogs(flags()).pipe(Effect.flip);
+
+      expect(error).toBeInstanceOf(WorkersApiUnexpectedStatusError);
+    }).pipe(Effect.provide(layer), Effect.ensuring(Effect.sync(repo.cleanup)));
+  });
+
   // `--tail` bounds the history a run opens with; reusing it as the poll size
   // meant `--tail 1 --follow` asked each poll for a single row.
   it.live("polls with a page size independent of --tail", () => {
