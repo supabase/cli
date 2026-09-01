@@ -44,8 +44,8 @@ interface RecoveredAnnotations {
  * empirically against `api.max_rows`, which carries both). A `.check()`ed
  * number (e.g. `workers.*.instances`'s `isInt()`) renders as a plain
  * `"type": "integer"` node instead of this union, so it never reaches this
- * map's consumer in the first place — collected here regardless, since nothing
- * downstream keys off `_tag` other than `"Number"`.
+ * map's consumer in the first place — collected here regardless, since this
+ * walk narrows number leaves only through `SchemaAST.isNumber`.
  */
 function collectNumberLeafAnnotations(
   ast: SchemaAST.AST,
@@ -70,7 +70,7 @@ function collectNumberLeafAnnotations(
     for (const member of ast.types) {
       collectNumberLeafAnnotations(member, prefix, into);
     }
-  } else if (ast._tag === "Number") {
+  } else if (SchemaAST.isNumber(ast)) {
     const description = ast.annotations?.["description"];
     const defaultValue = ast.annotations?.["default"];
     if (typeof description === "string" || defaultValue !== undefined) {
