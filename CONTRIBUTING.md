@@ -34,7 +34,7 @@ See the [`mise` installation docs](https://mise.jdx.dev/getting-started.html) fo
 
 `mise` needs to hook into your shell so it can inject the right tool versions into your `PATH` as you move between directories. Follow the `mise activate` instructions [in this section](https://mise.jdx.dev/getting-started.html#activate-mise) to add the activation line for your shell to its startup file.
 
-This repo relies on `mise` support for reading Node and pnpm versions from `package.json`, so use mise `2026.7.0` or newer.
+This repo relies on `mise` support for reading Node and pnpm versions from `package.json`, so use the `min_version` specified in `mise.toml` (or later).
 
 #### Installing the pinned tool versions
 
