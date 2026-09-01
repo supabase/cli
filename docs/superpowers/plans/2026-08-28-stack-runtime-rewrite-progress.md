@@ -1304,3 +1304,18 @@ The final public Stack-package scenario is one `runWholeStackScenario(mode)` bod
   the correction across the real local/Docker build and launcher paths but not replacing the exact Stack-selected
   releases (`v2.130.0`, `v1.50.6`, `v2.9.12`). Those exact releases still require approved rebuild/replacement before
   the final clean-host native Stack E2E can close the no-EPMD gate.
+- User authorized forced replacement of the published artifacts from `supabase/slim-services#293` at head `6732080a`;
+  the PR remains open and is not claimed as merged. Exact service-release runs succeeded for Realtime `v2.130.0`
+  (`33488596843`), Analytics `v1.50.6` (`33488596567`), and Pooler `v2.9.12` (`33488596827`). Each passed Linux
+  AMD64, Linux ARM64, and macOS ARM64 artifact build/audit/host smoke, derived-image checks, and GitHub release
+  publication. Fresh GHCR digests are Realtime `sha256:d2cb57c4ea72f48f926e780afd353251114844551e947037a356add8bac40385`,
+  Analytics `sha256:3e398c147b50eac8fb807960ef5f03035c975e442f79621c086096d80723928f`, and Pooler
+  `sha256:a4fa7e89764a0a70fb7f94d93597d960f73ca4022e129533901c83f2666e7d4c`.
+- The first native rerun failed before service startup because the intentionally shared test artifact cache under the
+  macOS tmpdir contained stale same-version checksums. Only the exact three test-owned cache entries were moved to the
+  recoverable quarantine `/private/tmp/supabase-stack-stale-beam-cache.Usz2AZ`; unrelated artifacts were untouched.
+- Final Stack package shared E2E from fresh exact artifacts: native `1 passed / 1 skipped`, 114.59s test time (115.35s
+  total), with post-run audit finding no EPMD process/listener, no owned ports 30000-30020, and no
+  Supervisor/launcher/BEAM workload. Docker, after pulling the exact new digests, had `1 passed / 1 skipped`, 71.21s
+  test time (71.99s total); post-run only the previously recorded Aug 31 stale Docker resources existed, with no new
+  resources from this run. The final no-EPMD gate is closed and both native and Docker modes are now proven.
