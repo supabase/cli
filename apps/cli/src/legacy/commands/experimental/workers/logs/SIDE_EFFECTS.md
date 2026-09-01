@@ -73,14 +73,15 @@ guaranteed and is deduplicated on the Logflare-minted `id`.
 
 ## Exit Codes
 
-| Code | Condition                                                    |
-| ---- | ------------------------------------------------------------ |
-| `0`  | success, including "no logs in the last 24 hours"            |
-| `1`  | invalid worker name                                          |
-| `1`  | nothing deployed under that name                             |
-| `1`  | the log query failed (rejected, or the server's 30s timeout) |
-| `1`  | log usage exceeded (402), or rate limited (429)              |
-| `1`  | API error, or project not enrolled in the alpha              |
+| Code  | Condition                                                    |
+| ----- | ------------------------------------------------------------ |
+| `0`   | success, including "no logs in the last 24 hours"            |
+| `1`   | invalid worker name                                          |
+| `1`   | nothing deployed under that name                             |
+| `1`   | the log query failed (rejected, or the server's 30s timeout) |
+| `1`   | log usage exceeded (402), or rate limited (429)              |
+| `1`   | API error, or project not enrolled in the alpha              |
+| `130` | `--follow` interrupted with SIGINT                           |
 
 ## Environment Variables
 
