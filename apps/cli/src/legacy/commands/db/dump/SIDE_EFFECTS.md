@@ -68,7 +68,9 @@ On Windows only, a **successful** stdout dump (no `--file`) whose stdout is a
 via `MSYSTEM`/`TERM_PROGRAM`) and whose bytes contain non-ASCII is followed by a
 stderr warning pointing at `--file` — PowerShell 5.1 re-encodes piped native
 stdout with the legacy console code page (issue #6397), which the CLI cannot
-prevent.
+prevent. The gate is a best-effort heuristic: a pipe to a byte-faithful reader
+(e.g. cmd.exe `a | b`) still warns, and a PowerShell launched from an MSYS
+shell inherits the suppressing variables and is missed.
 
 > **Credential warning:** `--dry-run` expands the pg_dump script with live env
 > values, so the resolved `PGPASSWORD` (for a remote/linked project, the database
