@@ -1291,3 +1291,16 @@ The final public Stack-package scenario is one `runWholeStackScenario(mode)` bod
   direct inspection: the pinned Realtime, Analytics, and Pooler templates each contain exactly one supported exported
   assignment. Extra process fixtures, keep-in-sync comments, and unrelated state-fixture cleanup were rejected as
   duplicate coverage or non-executable maintenance noise.
+- Fable convergence re-review:
+  `/Users/jgoux/.codex/fable-reviews/cli/20260901T071406Z.md`. It reached consensus that all accepted corrections are
+  correct, fail-closed, and minimal, with no introduced regression. Its remaining observations are explicitly
+  non-blocking: partial-line launcher noise would fail closed, the macOS empty-array branch is difficult to exercise
+  on newer CI Bash, and broader pre-existing test-listener deduplication is outside this correction.
+- Non-publishing artifact workflow
+  [run 33481429073](https://github.com/supabase/slim-services/actions/runs/33481429073) built, audited, packaged, and
+  smoke-tested Realtime, Analytics, and Pooler successfully on Linux AMD64, Linux ARM64, and macOS ARM64 from upstream
+  PR head `6732080a`. All nine service jobs passed and no cached artifact was reused. This workflow exercises the
+  repository's currently pinned source releases (`realtime-v2.123.5`, `analytics-v1.46.0`, `pooler-v2.9.10`), proving
+  the correction across the real local/Docker build and launcher paths but not replacing the exact Stack-selected
+  releases (`v2.130.0`, `v1.50.6`, `v2.9.12`). Those exact releases still require approved rebuild/replacement before
+  the final clean-host native Stack E2E can close the no-EPMD gate.
