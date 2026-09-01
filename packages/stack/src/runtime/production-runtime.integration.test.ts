@@ -201,10 +201,12 @@ printf 'realtime-migrate|RELEASE_DISTRIBUTION=%s\\n' "\${RELEASE_DISTRIBUTION:-m
     return { migrate, realtime, server };
   });
 
-const listenForNativeReadiness = (server: ReturnType<typeof createNetServer>) =>
+const listenForNativeReadiness = (
+  server: ReturnType<typeof createNetServer> | ReturnType<typeof createServer>,
+) =>
   Effect.acquireRelease(
     Effect.callback<void, Error>((resume) => {
-      server.once("error", (error) => resume(Effect.fail(error)));
+      server.once("error", (error: Error) => resume(Effect.fail(error)));
       server.listen(0, "127.0.0.1", () => resume(Effect.void));
     }),
     () =>
@@ -396,17 +398,7 @@ describe("production runtime composition", () => {
           response.setHeader("Connection", "close");
           response.end("ok");
         });
-        yield* Effect.acquireRelease(
-          Effect.callback<void, Error>((resume) => {
-            readinessServer.once("error", (error) => resume(Effect.fail(error)));
-            readinessServer.listen(0, "127.0.0.1", () => resume(Effect.void));
-          }),
-          () =>
-            Effect.callback<void>((resume) => {
-              if (!readinessServer.listening) return resume(Effect.void);
-              readinessServer.close(() => resume(Effect.void));
-            }),
-        );
+        yield* listenForNativeReadiness(readinessServer);
         const address = readinessServer.address();
         if (typeof address !== "object" || address === null)
           return yield* Effect.die("Realtime readiness server did not expose an address");
