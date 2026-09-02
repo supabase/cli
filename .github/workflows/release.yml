@@ -297,6 +297,7 @@ jobs:
       needs.plan.outputs.channel == 'stable'
     uses: ./.github/workflows/slack-notify.yml
     with:
+      package: Supabase CLI
       status: success
       version: ${{ needs.plan.outputs.version }}
       channel: ${{ needs.plan.outputs.channel }}
@@ -316,6 +317,7 @@ jobs:
     if: failure() && needs.plan.outputs.dry_run != 'true'
     uses: ./.github/workflows/slack-notify.yml
     with:
+      package: Supabase CLI
       status: failure
       version: ${{ needs.plan.outputs.version }}
       channel: ${{ needs.plan.outputs.channel }}
