@@ -1,6 +1,7 @@
 import { Effect, Option } from "effect";
 import { Output } from "../../../../../shared/output/output.service.ts";
 import { emitSuccessTrailer } from "../../../../../shared/cli/success-trailer.ts";
+import { legacyWorkersCommand, legacyWorkersPushCommand } from "../workers.commands.ts";
 import { legacyAqua } from "../../../../shared/legacy-colors.ts";
 import { legacyRenderWorkerDetails } from "../workers.format.ts";
 import {
@@ -102,7 +103,7 @@ export const legacyWorkersDelete = Effect.fn("legacy.experimental.workers.delete
             // `status`'s wording, inherited, pointed the wrong way here: somebody
             // deleting "api" and hearing "nothing is deployed" does not want to
             // deploy it — they want to see what *is* deployed.
-            suggestion: `See what is deployed with \`supabase experimental workers list${refSuffix}\`.`,
+            suggestion: `See what is deployed with \`${legacyWorkersCommand(`list${refSuffix}`)}\`.`,
           }),
         );
       }
@@ -122,7 +123,7 @@ export const legacyWorkersDelete = Effect.fn("legacy.experimental.workers.delete
           return yield* Effect.fail(
             new WorkerDeleteConfirmationRequiredError({
               detail: `Deleting "${name}" from project ${projectRef} needs confirmation, and there is no interactive terminal to ask on.`,
-              suggestion: `Re-run \`supabase experimental workers delete ${name} --yes${refSuffix}\` to confirm without a prompt.`,
+              suggestion: `Re-run \`${legacyWorkersCommand(`delete ${name} --yes${refSuffix}`)}\` to confirm without a prompt.`,
             }),
           );
         }
@@ -153,7 +154,7 @@ export const legacyWorkersDelete = Effect.fn("legacy.experimental.workers.delete
           return yield* Effect.fail(
             new WorkerDeleteNotConfirmedError({
               detail: `The confirmation did not match "${name}", so nothing was deleted.`,
-              suggestion: `Re-run \`supabase experimental workers delete ${name}${refSuffix}\` and type the name exactly, or pass --yes.`,
+              suggestion: `Re-run \`${legacyWorkersCommand(`delete ${name}${refSuffix}`)}\` and type the name exactly, or pass --yes.`,
             }),
           );
         }
@@ -216,7 +217,7 @@ export const legacyWorkersDelete = Effect.fn("legacy.experimental.workers.delete
           if (keptSource !== undefined) {
             // Trailer, like every other "what to run next" line in this shell.
             yield* emitSuccessTrailer(
-              `Redeploy it with ${legacyAqua(`supabase experimental workers push ${name}${refSuffix}`)}.\n`,
+              `Redeploy it with ${legacyAqua(legacyWorkersPushCommand(name, refSuffix))}.\n`,
             );
           }
         } else {

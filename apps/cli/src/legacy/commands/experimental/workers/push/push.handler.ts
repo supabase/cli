@@ -8,6 +8,11 @@ import {
   legacyRejectWorkersEnvOutput,
   legacyWorkersMachineOutputRequested,
 } from "../workers.output.ts";
+import {
+  legacyWorkersCommand,
+  legacyWorkersPushCommand,
+  legacyWorkersStatusCommand,
+} from "../workers.commands.ts";
 import { legacyAqua } from "../../../../shared/legacy-colors.ts";
 import { LegacyPlatformApi } from "../../../../auth/legacy-platform-api.service.ts";
 import { LegacyCliSettings } from "../../../../config/legacy-cli-settings.service.ts";
@@ -156,7 +161,7 @@ function missingSourceSuggestion(input: {
   readonly entry: WorkerEntry | undefined;
 }): string {
   if (input.entry === undefined) {
-    return `Scaffold it with \`supabase experimental workers new ${input.name}\`.`;
+    return `Scaffold it with \`${legacyWorkersCommand(`new ${input.name}`)}\`.`;
   }
   if (input.entry.source !== undefined) {
     return `Create ${input.sourceDisplay}, or correct \`source\` under [workers.${input.name}] in ${input.configPath}.`;
@@ -358,7 +363,7 @@ const deployOneWorker = Effect.fnUntraced(function* (input: {
         detail: `The build for "${name}" failed${
           settled.stateReason === undefined ? "" : `: ${settled.stateReason}`
         }.`,
-        suggestion: `Fix the issue, then re-run \`supabase experimental workers push ${name}${input.refSuffix}\`.`,
+        suggestion: `Fix the issue, then re-run \`${legacyWorkersPushCommand(name, input.refSuffix)}\`.`,
       }),
     );
   }
@@ -409,7 +414,7 @@ const deployOneWorker = Effect.fnUntraced(function* (input: {
       // width and buried both commands mid-sentence.
       yield* emitSuccessTrailer(
         `\nYour build was submitted successfully.\n` +
-          `Run ${legacyAqua(`supabase experimental workers status ${name}${input.refSuffix}`)} to check on it.\n` +
+          `Run ${legacyAqua(legacyWorkersStatusCommand(name, input.refSuffix))} to check on it.\n` +
           `Add ${legacyAqua("--wait")} to block on the build next time.\n`,
       );
     }
@@ -491,7 +496,7 @@ export const legacyWorkersPush = Effect.fn("legacy.experimental.workers.push")(f
               project.projectRoot,
               project.workersDir,
             )}.`,
-            suggestion: "Scaffold one with `supabase experimental workers new <name>`.",
+            suggestion: `Scaffold one with \`${legacyWorkersCommand("new <name>")}\`.`,
           }),
         );
       }

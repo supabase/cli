@@ -1,5 +1,6 @@
 import { Argument, Command, Flag } from "effect/unstable/cli";
 import type * as CliCommand from "effect/unstable/cli/Command";
+import { legacyWorkersCommand } from "../workers.commands.ts";
 import { withJsonErrorHandling } from "../../../../../shared/output/json-error-handling.ts";
 import { legacyManagementApiRuntimeLayer } from "../../../../shared/legacy-management-api-runtime.layer.ts";
 import { withLegacyCommandInstrumentation } from "../../../../telemetry/legacy-command-instrumentation.ts";
@@ -51,19 +52,19 @@ export const legacyWorkersPushCommand = Command.make("push", config).pipe(
   Command.withShortDescription("Build and deploy workers"),
   Command.withExamples([
     {
-      command: "supabase experimental workers push",
+      command: legacyWorkersCommand("push"),
       description: "Deploy every worker in the project",
     },
     {
-      command: "supabase experimental workers push api",
+      command: legacyWorkersCommand("push api"),
       description: "Deploy a single worker",
     },
     {
-      command: "supabase experimental workers push api web",
+      command: legacyWorkersCommand("push api web"),
       description: "Deploy several workers by name",
     },
     {
-      command: "supabase experimental workers push api --wait",
+      command: legacyWorkersCommand("push api --wait"),
       description: "Deploy and block until the build succeeds or fails",
     },
   ]),

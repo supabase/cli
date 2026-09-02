@@ -1,6 +1,7 @@
 import { Effect, Option } from "effect";
 import { Output } from "../../../../../shared/output/output.service.ts";
 import { emitSuccessTrailer } from "../../../../../shared/cli/success-trailer.ts";
+import { legacyWorkersPushCommand } from "../workers.commands.ts";
 import { legacyAqua } from "../../../../shared/legacy-colors.ts";
 import { legacyRenderWorkerDetails } from "../workers.format.ts";
 import { legacyEmitWorkersPayload, legacyRejectWorkersEnvOutput } from "../workers.output.ts";
@@ -53,7 +54,7 @@ export const legacyWorkersStatus = Effect.fn("legacy.experimental.workers.status
         return yield* Effect.fail(
           new WorkerNotDeployedError({
             detail: `Nothing is deployed for "${name}" in project ${projectRef}.`,
-            suggestion: `Deploy it with \`supabase experimental workers push ${name}${refSuffix}\`.`,
+            suggestion: `Deploy it with \`${legacyWorkersPushCommand(name, refSuffix)}\`.`,
           }),
         );
       }
@@ -135,7 +136,7 @@ export const legacyWorkersStatus = Effect.fn("legacy.experimental.workers.status
         // Trailer, like every other "what to run next" line in this shell: the
         // command reports a failed build but exits 0, so the trailer flushes.
         yield* emitSuccessTrailer(
-          `Fix the issue, then re-run ${legacyAqua(`supabase experimental workers push ${name}${refSuffix}`)}.\n`,
+          `Fix the issue, then re-run ${legacyAqua(legacyWorkersPushCommand(name, refSuffix))}.\n`,
         );
       }
     }),

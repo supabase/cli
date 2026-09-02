@@ -1,6 +1,7 @@
 import { Effect, Option, Ref, Schedule } from "effect";
 import { Output } from "../../../../../shared/output/output.service.ts";
 import { emitSuccessTrailer } from "../../../../../shared/cli/success-trailer.ts";
+import { legacyWorkersPushCommand, legacyWorkersStatusCommand } from "../workers.commands.ts";
 import { legacyAqua } from "../../../../shared/legacy-colors.ts";
 import { legacyEmitWorkersPayload, legacyRejectWorkersEnvOutput } from "../workers.output.ts";
 import {
@@ -274,7 +275,7 @@ export const legacyWorkersLogs = Effect.fn("legacy.experimental.workers.logs")(f
           return yield* Effect.fail(
             new WorkerNotDeployedError({
               detail: `Nothing is deployed for "${name}" in project ${projectRef}.`,
-              suggestion: `Deploy it with \`supabase experimental workers push ${name}${refSuffix}\`.`,
+              suggestion: `Deploy it with \`${legacyWorkersPushCommand(name, refSuffix)}\`.`,
             }),
           );
         }
@@ -297,7 +298,7 @@ export const legacyWorkersLogs = Effect.fn("legacy.experimental.workers.logs")(f
         // Deployed (the check above would have failed otherwise) and silent.
         yield* output.raw(`No logs for "${name}" in the last 24 hours.\n`);
         yield* emitSuccessTrailer(
-          `Check it is running with ${legacyAqua(`supabase experimental workers status ${name}${refSuffix}`)}.\n`,
+          `Check it is running with ${legacyAqua(legacyWorkersStatusCommand(name, refSuffix))}.\n`,
         );
         return;
       }

@@ -10,6 +10,7 @@ import { formatApiSize } from "../../../../../shared/workers/worker-runtimes.ts"
 import { workerUrl } from "../../../../../shared/workers/worker-url.ts";
 import { listWorkers, type WorkerRecord } from "../../../../../shared/workers/workers-api.ts";
 import { legacyDiscoverWorkerNames, legacyLoadWorkersProject } from "../workers.shared.ts";
+import { legacyWorkersCommand } from "../workers.commands.ts";
 import { legacyWorkersRun } from "../workers.run.ts";
 import type { LegacyWorkersListFlags } from "./list.command.ts";
 
@@ -167,7 +168,7 @@ export const legacyWorkersList = Effect.fn("legacy.experimental.workers.list")(f
 
       if (rows.length === 0) {
         yield* output.raw(
-          `No workers found. Scaffold one with ${legacyAqua("supabase experimental workers new <name>", process.stdout)}.\n`,
+          `No workers found. Scaffold one with ${legacyAqua(legacyWorkersCommand("new <name>"), process.stdout)}.\n`,
         );
         return;
       }
