@@ -297,7 +297,7 @@ Verify each applicable item when adding or reworking a command:
 
 5. **`Layer.provide` does not share to siblings inside `Layer.mergeAll`** — if two sibling layers each require `LegacyCliSettings`, provide it to both explicitly. Smoke-test the bundled binary (`bun run build && ./dist/supabase-legacy …`) when changing production layer wiring; in-process tests don't always catch the missing-service panic. Reference: commit `a816b12e`, `backups.layers.ts:32-46`.
 
-6. **Both `--output` (legacy machine formats) and `--output-format` must be honored** — `--output` (`pretty|json|yaml|toml|env`) takes priority when set. Pattern in `backups/list/list.handler.ts:85-113`: branch on the `--output` flag first, then fall through to `--output-format` text/json/stream-json.
+6. **Both `--output` (legacy machine formats) and `--output-format` must be honored** — `--output` (`pretty|json|yaml|toml|env`) takes priority when set. Pattern in `backups/list/list.handler.ts:85-113`: branch on the `--output` flag first, then fall through to `--output-format` text/json/stream-json. Exception: a net-new TS-only command with no Go-compat contract may instead reject `-o`/`--output` outright (every value, including `pretty`) with an error pointing at `--output-format` — decided on CLI-2156, with `config diff` as the precedent.
 
 7. **Telemetry follows the established catalog and payload shapes** — see the next section.
 

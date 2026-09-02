@@ -867,85 +867,33 @@ describe("legacy config diff integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("-o json emits the raw payload on a payload-pure stdout", () => {
-    // Legacy Shell Invariant #6: `--output` is honored and takes priority.
-    // No envelope — the payload object itself, parseable from stdout.
-    const { layer, out } = setup({
-      toml: 'project_id = "test"\n[api]\nmax_rows = 500\n',
-      goOutput: "json",
-    });
-    return Effect.gen(function* () {
-      yield* legacyConfigDiff(noFlags);
-      const payload = JSON.parse(out.stdoutText) as Record<string, unknown>;
-      expect(payload["changes"]).toEqual([
-        { path: ["api", "max_rows"], class: "update", declared: true, local: 500, remote: 1000 },
-      ]);
-      expect(payload["counts"]).toMatchObject({ total: 1 });
-      // The envelope fields of --output-format json must not leak in.
-      expect(payload["message"]).toBeUndefined();
-    }).pipe(Effect.provide(layer));
-  });
-
-  it.live("-o pretty falls through to the text renderer", () => {
-    const { layer, out } = setup({
-      toml: 'project_id = "test"\n[api]\nmax_rows = 500\n',
-      goOutput: "pretty",
-    });
-    return Effect.gen(function* () {
-      yield* legacyConfigDiff(noFlags);
-      expect(out.stdoutText).toContain("api.max_rows [update]");
-      expect(out.stdoutText).toContain("1 difference found");
-    }).pipe(Effect.provide(layer));
-  });
-
-  it.live("-o table falls through to the text renderer instead of env-encoding", () => {
-    // `table`/`csv` are meaningful only to `db query` — every other `--output`
-    // consumer (including `config diff`) must fall through exactly like
-    // `pretty`, never hit the trailing `env`-encode default.
-    const { layer, out } = setup({
-      toml: 'project_id = "test"\n[api]\nmax_rows = 500\n',
-      goOutput: "table",
-    });
-    return Effect.gen(function* () {
-      yield* legacyConfigDiff(noFlags);
-      expect(out.stdoutText).toContain("api.max_rows [update]");
-      expect(out.stdoutText).not.toContain("COUNTS_TOTAL=");
-    }).pipe(Effect.provide(layer));
-  });
-
-  it.live("-o csv falls through to the text renderer instead of env-encoding", () => {
-    const { layer, out } = setup({
-      toml: 'project_id = "test"\n[api]\nmax_rows = 500\n',
-      goOutput: "csv",
-    });
-    return Effect.gen(function* () {
-      yield* legacyConfigDiff(noFlags);
-      expect(out.stdoutText).toContain("api.max_rows [update]");
-      expect(out.stdoutText).not.toContain("COUNTS_TOTAL=");
-    }).pipe(Effect.provide(layer));
-  });
-
-  it.live("-o yaml/toml/env encode the payload through the shared encoders", () => {
-    const run = (goOutput: "yaml" | "toml" | "env", assert: (stdout: string) => void) => {
-      const { layer, out } = setup({
+  it.live("every -o/--output value is rejected outright before any work happens", () => {
+    // Net-new TS command, no Go parity contract: every value the shared
+    // global `-o`/`--output` flag can carry — the machine formats, `pretty`,
+    // and the `db query`-only `table`/`csv` values alike — is rejected with
+    // the exact message pointing at `--output-format` (CLI-2156, per Colum),
+    // before any config load, target resolution, or network call.
+    const values = ["json", "yaml", "toml", "env", "pretty", "table", "csv"] as const;
+    const run = (goOutput: (typeof values)[number]) => {
+      const { layer, api } = setup({
         toml: 'project_id = "test"\n[api]\nmax_rows = 500\n',
         goOutput,
       });
       return Effect.gen(function* () {
-        yield* legacyConfigDiff(noFlags);
-        assert(out.stdoutText);
+        const exit = yield* legacyConfigDiff(noFlags).pipe(Effect.exit);
+        expect(Exit.isFailure(exit)).toBe(true);
+        const rendered = JSON.stringify(exit);
+        expect(rendered).toContain("LegacyConfigDiffOutputFlagUnsupportedError");
+        expect(rendered).toContain(
+          "the -o/--output flag is not supported by config diff; use --output-format json|stream-json instead.",
+        );
+        expect(api.requests).toHaveLength(0);
       }).pipe(Effect.provide(layer));
     };
     return Effect.gen(function* () {
-      yield* run("yaml", (stdout) => {
-        expect(stdout).toContain("class: update");
-      });
-      yield* run("toml", (stdout) => {
-        expect(stdout).toContain('class = "update"');
-      });
-      yield* run("env", (stdout) => {
-        expect(stdout).toContain("COUNTS_TOTAL=1");
-      });
+      for (const value of values) {
+        yield* run(value);
+      }
     });
   });
 
@@ -1269,5 +1217,35 @@ describe("legacy config diff telemetry wiring", () => {
       const event = analytics.captured.find((c) => c.event === "cli_command_executed");
       expect(event?.properties["flags"]).toEqual({ "project-ref": "<redacted>" });
     }).pipe(Effect.provide(wiringLayer(analytics, "staging")));
+  });
+});
+
+describe("legacy config diff -o/--output wrapper wiring", () => {
+  // The wrapper's own per-command `-o` enum check (`withLegacyCommandInstrumentation`)
+  // defaults to the resource-command set (`env|pretty|json|toml|yaml`), which
+  // excludes `table`/`csv` — without `diff.command.ts`'s `outputFormats`
+  // override widening that set to the full global choice list, a `-o table`
+  // invocation would be rejected by the wrapper's generic pflag-style
+  // message before ever reaching this command's own, more specific
+  // rejection. Drives the real `legacyConfigDiffHandler` wiring (not the bare
+  // handler) so this actually exercises that override.
+  it.live("-o table reaches this command's own message, not the wrapper's generic one", () => {
+    const { layer, api } = setup({ toml: 'project_id = "test"\n', goOutput: "table" });
+    return Effect.gen(function* () {
+      const exit = yield* Effect.exit(legacyConfigDiffHandler(noFlags));
+      expect(Exit.isFailure(exit)).toBe(true);
+      const rendered = JSON.stringify(exit);
+      expect(rendered).toContain("LegacyConfigDiffOutputFlagUnsupportedError");
+      expect(rendered).not.toContain("LegacyInvalidOutputFormatError");
+      expect(api.requests).toHaveLength(0);
+    }).pipe(
+      Effect.provide(
+        Layer.mergeAll(
+          layer,
+          commandRuntimeLayer(["config", "diff"]),
+          Stdio.layerTest({ args: Effect.succeed(["config", "diff", "-o", "table"]) }),
+        ),
+      ),
+    );
   });
 });

@@ -54,18 +54,19 @@ expired" without parsing output (`terraform plan -detailed-exitcode`'s
 convention; `1` stays the CLI-wide failure code). In **text mode only**, exit
 2 is preceded by a stderr reason line, `Exiting 2: configuration differences
 found (--exit-code).`, so a CI log never shows a bare "exit code 2" with no
-explanation; machine modes (`--output-format json/stream-json`, or `-o
-json|yaml|toml|env`) never print it, keeping their bytes unchanged. The
-masked/unmanaged/not-returned-block caveats never flip the exit code by
-themselves — only `changeSet.counts.total > 0` (a real `update`/`remote_only`/
-`local_only` entry) does. Because `run.ts` only runs its `afterSuccess` hooks
-(e.g. the upgrade notice) on exit code `0`, a `--exit-code` run that exits `2`
-on drift suppresses that hook, same as any other non-zero exit.
+explanation; machine mode (`--output-format json/stream-json`) never prints
+it, keeping its bytes unchanged. The masked/unmanaged/not-returned-block
+caveats never flip the exit code by themselves — only `changeSet.counts.total
+> 0` (a real `update`/`remote_only`/`local_only` entry) does. Because
+`run.ts` only runs its `afterSuccess` hooks (e.g. the upgrade notice) on exit
+code `0`, a `--exit-code` run that exits `2` on drift suppresses that hook,
+same as any other non-zero exit.
 
 | Code | Condition                                                                       |
 | ---- | -------------------------------------------------------------------------------- |
 | `0`  | success — including when differences are found, unless `--exit-code` is passed  |
 | `2`  | `--exit-code` passed and at least one difference found                          |
+| `1`  | the `-o`/`--output` global flag passed (any value — not supported by this command) |
 | `1`  | missing or malformed `supabase/config.toml`/`config.json`                       |
 | `1`  | branch-name `--project-ref` with no linked parent project (`LegacyConfigDiffBranchNotLinkedError`) |
 | `1`  | branch-name `--project-ref` with a corrupt/invalid linked parent ref (`LegacyConfigDiffParentRefInvalidError`) |
@@ -112,20 +113,22 @@ contain a `.` — plus `class`, `declared`, `local`, `remote`, optional
 
 ### `-o/--output` (legacy machine formats)
 
-Honored, and takes priority over `--output-format` (Legacy Shell Invariant
-#6): `-o json|yaml|toml` encode the same structured payload the
-`--output-format json` envelope carries (TOML omits `null`-valued entries —
-TOML has no null). `-o env` encodes the same payload too, but is **lossy** —
-the established `godotenv`-shaped flattening (SCREAMING_SNAKE keys) collapses
-every array (`changes[]`, `masked[]`, `unmanaged[]`, `scope.present/missing`)
-to an empty leaf, leaving only `counts` and the top-level scalars usable;
-prefer `-o json` or `-o yaml` over `-o env` whenever the changes themselves
-matter, not just their count. stdout is payload-pure in every machine mode;
-diagnostics stay on stderr. `-o pretty` (and no `-o`) falls through to
-`--output-format` handling — as do `-o table` and `-o csv`, which are only
-meaningful to `db query`; every other consumer of the shared `--output` global
-(including this command) treats them exactly like `pretty`, never the
-`env`-encode default.
+**Not supported.** `config diff` is a net-new TS command with no Go parity
+contract (CLI-2156, per Colum). Any `-o`/`--output` value — every
+machine-format value AND `pretty` — is rejected outright
+(`LegacyConfigDiffOutputFlagUnsupportedError`, exit 1) with:
+
+```
+the -o/--output flag is not supported by config diff; use --output-format json|stream-json instead.
+```
+
+Checked FIRST, before any config load, target resolution, or network call —
+so a rejected invocation never burns a config read or an API round trip. The
+command's own `withLegacyCommandInstrumentation` wiring widens the wrapper's
+per-command `-o` enum to the full global choice set so every value (including
+`table`/`csv`, which are otherwise only meaningful to `db query`) reaches this
+handler-level rejection with its pointed message, rather than the wrapper's
+generic pflag-style "invalid argument" rejection.
 
 ## Notes
 

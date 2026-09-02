@@ -12,4 +12,4 @@ Local values are shown as the configuration your file would produce once pushed,
 
 With `--exit-code`, the command exits `2` when any difference is found, keeping exit `1` for errors — so scripts can distinguish drift from failure.
 
-Machine-readable output is available through `--output-format json|stream-json`, or the global `-o json|yaml|toml` flag — a versioned payload (`schema_version`, `config_schema`, `target`, `scope`, `changes[]`, `masked[]`, `unmanaged[]`, `counts`) with per-change `path`s as segment arrays. `-o env` also encodes this payload, but only the `counts` and top-level scalars survive its flattening — every array collapses to an empty leaf — so prefer `json` or `yaml` whenever the changes themselves matter.
+Machine-readable output is available through `--output-format json|stream-json` — a versioned payload (`schema_version`, `config_schema`, `target`, `scope`, `changes[]`, `masked[]`, `unmanaged[]`, `counts`) with per-change `path`s as segment arrays. The legacy global `-o`/`--output` flag is not supported by this command; use `--output-format json|stream-json` instead.

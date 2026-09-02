@@ -238,8 +238,9 @@ export function legacyRenderConfigDiffText(
 }
 
 /**
- * The structured result for `--output-format json|stream-json` and the `-o`
- * machine formats. Unset sides are explicit `null`s, distinguishable from
+ * The structured result for `--output-format json|stream-json` (the only
+ * machine-output mechanism this command honors — `-o/--output` is rejected
+ * outright, CLI-2156). Unset sides are explicit `null`s, distinguishable from
  * empty values. Paths are segment arrays — a record key (an `sms.test_otp`
  * phone number, a `[remotes.*]` name) may itself contain a `.`, so consumers
  * must never split a joined string.

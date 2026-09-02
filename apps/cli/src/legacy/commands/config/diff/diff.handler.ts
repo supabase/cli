@@ -41,18 +41,13 @@ import {
   type LegacyConfigDiffContext,
 } from "./diff.format.ts";
 import {
-  encodeEnv,
-  encodeGoJson,
-  encodeToml,
-  encodeYaml,
-} from "../../../shared/legacy-go-output.encoders.ts";
-import {
   LegacyConfigDiffBranchNotFoundError,
   LegacyConfigDiffBranchNotLinkedError,
   LegacyConfigDiffBranchNotReadyError,
   LegacyConfigDiffBranchResolveNetworkError,
   LegacyConfigDiffBranchResolveStatusError,
   LegacyConfigDiffLoadConfigError,
+  LegacyConfigDiffOutputFlagUnsupportedError,
   LegacyConfigDiffParentRefInvalidError,
   LegacyConfigDiffReadNetworkError,
   LegacyConfigDiffReadStatusError,
@@ -145,16 +140,31 @@ export const legacyConfigDiff = Effect.fn("legacy.config.diff")(function* (
   let resolvedRef: string | undefined;
 
   yield* Effect.gen(function* () {
-    // 1. Load and validate the local config BEFORE any network call or
+    // 1. Reject the Go-compat `-o/--output` flag outright, before anything
+    // else this block does. `config diff` is a net-new TS command with no
+    // Go parity contract, so machine output goes through `--output-format`
+    // only (every value, `pretty` included — CLI-2156, per Colum). Checked
+    // first, ahead of the config load below, so an invalid invocation never
+    // burns a config read or a network call; still inside this
+    // `Effect.ensuring`-wrapped block, so telemetry flushes on the rejection
+    // the same as every other failure here.
+    if (Option.isSome(goOutputFlag)) {
+      return yield* new LegacyConfigDiffOutputFlagUnsupportedError({
+        message:
+          "the -o/--output flag is not supported by config diff; use --output-format json|stream-json instead.",
+      });
+    }
+
+    // 2. Load and validate the local config BEFORE any network call or
     // target resolution (never writes — this command is read-only by
     // contract): a missing file must point at `supabase init` rather than
     // the resolver's not-linked error, and a malformed document must not
     // burn a branch-resolution round trip. This first load applies no
     // `[remotes.*]` overlay — the overlay is keyed by the RESOLVED target
-    // ref, so a config that declares remotes is reloaded in step 3.
+    // ref, so a config that declares remotes is reloaded in step 4.
     let loaded = yield* loadLocalConfig(undefined);
 
-    // 2. Resolve the comparison target. `--project-ref` accepts a project
+    // 3. Resolve the comparison target. `--project-ref` accepts a project
     // ref, or the name (or UUID) of a branch of the linked project —
     // `link`'s settled vocabulary (CLI-2167). A ref-shaped value (exactly 20
     // lowercase letters) is always treated as a project ref.
@@ -234,10 +244,10 @@ export const legacyConfigDiff = Effect.fn("legacy.config.diff")(function* (
     }
     resolvedRef = ref;
 
-    // 3. Apply the matching `[remotes.*]` overlay (ADR 0018) now that the
+    // 4. Apply the matching `[remotes.*]` overlay (ADR 0018) now that the
     // target ref is known. Only a config whose remotes actually MATCH the
     // resolved ref reloads (checked on the already-loaded, env-interpolated
-    // document) — every other config keeps the step-1 load, so load-time
+    // document) — every other config keeps the step-2 load, so load-time
     // deprecation warnings don't repeat. The narrow remaining double-print
     // (a matching remote AND a deprecated section) is the price of
     // validating before the network call, which is worse to give up.
@@ -257,7 +267,7 @@ export const legacyConfigDiff = Effect.fn("legacy.config.diff")(function* (
     };
     yield* output.raw(legacyConfigDiffComparisonLine(context), "stderr");
 
-    // 4. Fetch the effective remote config (single read-only call) — via
+    // 5. Fetch the effective remote config (single read-only call) — via
     // `executeRaw`, per ADR 0019 rule 2 ("required, not incidental"): the
     // generated client's strict Schema.Struct decode drops excess properties
     // and rejects unknown enum members (e.g. a new `pool_mode` value), so
@@ -298,7 +308,7 @@ export const legacyConfigDiff = Effect.fn("legacy.config.diff")(function* (
     );
     yield* fetching?.clear() ?? Effect.void;
 
-    // 5. Project the response through CLI-2230's convergence normalizer (ADR
+    // 6. Project the response through CLI-2230's convergence normalizer (ADR
     // 0021). A response the registry cannot narrow (out-of-domain mapped
     // values) is a response problem, not a transport one:
     // `ProjectConfigParseError` stays in the typed channel with its own
@@ -315,7 +325,7 @@ export const legacyConfigDiff = Effect.fn("legacy.config.diff")(function* (
       ),
     );
 
-    // 6. Classify. The loaded pair carries the raw merged document (declared
+    // 7. Classify. The loaded pair carries the raw merged document (declared
     // keys) and the env-var origins; `diffProjectConfig` derives the local
     // convergence projection from it, so the same `ProjectConfigParseError`
     // boundary applies here.
@@ -334,29 +344,10 @@ export const legacyConfigDiff = Effect.fn("legacy.config.diff")(function* (
     );
     yield* output.raw(legacyConfigDiffScopeLine(scope), "stderr");
 
-    // 7. Emit. Both output mechanisms are honored, `--output` first (Legacy
-    // Shell Invariant #6): only the machine-encoded formats (`json|yaml|toml|env`)
-    // take this branch; `pretty`, `table`, `csv`, and unset all fall through to
-    // `--output-format` handling exactly like `pretty` (the `-o table|csv`
-    // values only mean something to `db query`, per the shared `--output`
-    // global's contract comment) — never the trailing `env`-encode default,
-    // which would otherwise corrupt `-o table`/`-o csv` under a live spinner
-    // (root.ts's quiet-progress swap only applies to genuine machine
-    // formats). stdout stays payload-pure in every machine mode — diagnostics
-    // above went to stderr.
-    const goFmt = Option.getOrUndefined(goOutputFlag);
-    if (goFmt === "json" || goFmt === "yaml" || goFmt === "toml" || goFmt === "env") {
-      const payload = legacyConfigDiffPayload(changeSet, scope, context);
-      if (goFmt === "json") {
-        yield* output.raw(encodeGoJson(payload));
-      } else if (goFmt === "yaml") {
-        yield* output.raw(encodeYaml(payload));
-      } else if (goFmt === "toml") {
-        yield* output.raw(encodeToml(payload));
-      } else {
-        yield* output.raw(encodeEnv(payload) + "\n");
-      }
-    } else if (output.format !== "text") {
+    // 8. Emit: `--output-format json|stream-json` structured payload, or
+    // text. `-o/--output` never reaches here — step 1 rejects it outright,
+    // so this command has only the one machine-output mechanism.
+    if (output.format !== "text") {
       yield* output.success(
         legacyConfigDiffSummaryMessage(changeSet, scope),
         legacyConfigDiffPayload(changeSet, scope, context),
@@ -365,7 +356,7 @@ export const legacyConfigDiff = Effect.fn("legacy.config.diff")(function* (
       yield* output.raw(legacyRenderConfigDiffText(changeSet, scope));
     }
 
-    // 8. `--exit-code`: differences flip the exit status to 2 after the
+    // 9. `--exit-code`: differences flip the exit status to 2 after the
     // payload is out, without an error envelope corrupting machine output.
     // Drift gets its OWN code — every failure exits 1, and a script's
     // `config diff --exit-code || alert` must not fire on an expired token
