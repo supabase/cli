@@ -116,6 +116,17 @@ export interface ProjectConfigMappingRow {
    */
   readonly unconfiguredValue?: unknown;
   /**
+   * The platform authors/renders this value itself; there is no local
+   * default. When the local projection carries no value at this path, any
+   * remote value is the platform's own rendering — never `remote_only`
+   * drift. A locally DECLARED value still classifies normally. Unlike
+   * {@link unconfiguredValue}, which suppresses one pinned baseline value,
+   * this suppresses unconditionally — the right choice for a rendered string
+   * with no fixed spelling (e.g. a mailer subject line), where pinning a
+   * baseline breaks the moment the platform rewords its own default.
+   */
+  readonly platformRendered?: boolean;
+  /**
    * Unit/semantics note, e.g. `"csv → string[]"` or `"seconds → duration
    * string"`. Documentation-only — never read at runtime.
    */

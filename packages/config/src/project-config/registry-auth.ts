@@ -918,24 +918,6 @@ function smtpSiblingStringRow(
 
 // Email templates ×6 (auth.sync.ts:1439-1461; content_path has no API key)
 
-/**
- * The subject lines the platform provisions for a project that never touched
- * its email templates — what `mailer_subjects_*` reports on a fresh project.
- * The default config declares no subjects (there is no meaningful local
- * default for a platform-rendered string), so without these the diff would
- * flag every untouched project's subjects as `remote_only` drift. Pinned by
- * the recorded real responses in `apps/cli-e2e/fixtures/recorded/
- * GET_v1_projects___PROJECT_REF___config_auth/`.
- */
-const PLATFORM_DEFAULT_TEMPLATE_SUBJECTS = {
-  invite: "You have been invited",
-  confirmation: "Confirm Your Signup",
-  recovery: "Reset Your Password",
-  magic_link: "Your Magic Link",
-  email_change: "Confirm Email Change",
-  reauthentication: "Confirm Reauthentication",
-} as const;
-
 const EMAIL_TEMPLATE_NAMES = [
   "invite",
   "confirmation",
@@ -947,21 +929,15 @@ const EMAIL_TEMPLATE_NAMES = [
 
 const templateRows: ReadonlyArray<ProjectConfigMappingRow> = EMAIL_TEMPLATE_NAMES.map((name) => ({
   ...stringRow(["auth", "email", "template", name, "subject"], `mailer_subjects_${name}`),
-  unconfiguredValue: PLATFORM_DEFAULT_TEMPLATE_SUBJECTS[name],
+  // `mailer_subjects_*` is a platform-rendered string with no meaningful
+  // local default — a prior version of this row pinned the provisioning
+  // string recorded from a prod fixture as `unconfiguredValue`, which broke
+  // the moment the platform reworded its default (and can never be
+  // simultaneously correct for every environment platform-side).
+  platformRendered: true,
 }));
 
 // Email notifications ×7 (auth.sync.ts:1491-1525)
-
-/** Same provenance as {@link PLATFORM_DEFAULT_TEMPLATE_SUBJECTS}. */
-const PLATFORM_DEFAULT_NOTIFICATION_SUBJECTS = {
-  password_changed: "Your password has been changed",
-  email_changed: "Your email address has been changed",
-  phone_changed: "Your phone number has been changed",
-  identity_linked: "A new identity has been linked",
-  identity_unlinked: "An identity has been unlinked",
-  mfa_factor_enrolled: "A new MFA factor has been enrolled",
-  mfa_factor_unenrolled: "An MFA factor has been unenrolled",
-} as const;
 
 const EMAIL_NOTIFICATION_NAMES = [
   "password_changed",
@@ -991,7 +967,8 @@ const notificationRows: ReadonlyArray<ProjectConfigMappingRow> = EMAIL_NOTIFICAT
         ["auth", "email", "notification", name, "subject"],
         `mailer_subjects_${name}_notification`,
       ),
-      unconfiguredValue: PLATFORM_DEFAULT_NOTIFICATION_SUBJECTS[name],
+      // Same platform-rendered rationale as the template subjects above.
+      platformRendered: true,
     },
   ],
 );

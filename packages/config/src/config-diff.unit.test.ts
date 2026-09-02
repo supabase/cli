@@ -147,17 +147,18 @@ describe("diffProjectConfig classification", () => {
     });
   });
 
-  test("platform-default mailer subjects suppress via the row's unconfiguredValue", () => {
-    // A fresh project reports the provisioning-default subject lines (pinned
-    // by the recorded config_auth fixtures); the default config declares no
-    // subjects, so without the row-level baseline every untouched project
-    // would flag all 13 of them.
+  test("platform-rendered mailer subjects suppress regardless of the remote string", () => {
+    // Subject lines are rendered by the platform, so there is no fixed
+    // baseline string to pin — the row's `platformRendered` flag suppresses
+    // ANY remote string while the file stays silent, unlike
+    // `unconfiguredValue`'s exact-match baseline (still exercised here via
+    // the sibling notification `enabled` row).
     const clean = diffWith(
       {},
       {
         auth: {
-          mailer_subjects_confirmation: "Confirm Your Signup",
-          mailer_subjects_password_changed_notification: "Your password has been changed",
+          mailer_subjects_confirmation: "Confirm your email address",
+          mailer_subjects_password_changed_notification: "Your password was changed",
           mailer_notifications_password_changed_enabled: false,
         },
       },
@@ -168,17 +169,42 @@ describe("diffProjectConfig classification", () => {
       {},
       {
         auth: {
-          mailer_subjects_confirmation: "Welcome to ACME",
+          mailer_subjects_confirmation: "Whatever the platform renders today",
           mailer_notifications_password_changed_enabled: true,
         },
       },
     );
     expect(
       changeAt(drifted.changes, ["auth", "email", "template", "confirmation", "subject"]),
-    ).toMatchObject({ class: "remote_only", remote: "Welcome to ACME" });
+    ).toBeUndefined();
     expect(
       changeAt(drifted.changes, ["auth", "email", "notification", "password_changed", "enabled"]),
     ).toMatchObject({ class: "remote_only", remote: true });
+  });
+
+  test("a declared mailer subject still classifies normally against the remote", () => {
+    // `platformRendered` only suppresses while the local projection is
+    // silent — a locally DECLARED subject compares like any other field.
+    const differs = diffWith(
+      { auth: { email: { template: { confirmation: { subject: "Welcome to ACME" } } } } },
+      { auth: { mailer_subjects_confirmation: "Confirm your email address" } },
+    );
+    expect(
+      changeAt(differs.changes, ["auth", "email", "template", "confirmation", "subject"]),
+    ).toMatchObject({
+      class: "update",
+      local: "Welcome to ACME",
+      remote: "Confirm your email address",
+      declared: true,
+    });
+
+    const missing = diffWith(
+      { auth: { email: { template: { confirmation: { subject: "Welcome to ACME" } } } } },
+      { auth: {} },
+    );
+    expect(
+      changeAt(missing.changes, ["auth", "email", "template", "confirmation", "subject"]),
+    ).toMatchObject({ class: "local_only", local: "Welcome to ACME" });
   });
 
   test("every comparable path without a config-side baseline makes a deliberate choice", () => {
@@ -186,10 +212,12 @@ describe("diffProjectConfig classification", () => {
     // each comparable path the default config's projection AND the raw
     // default config are silent on, either its row declares the platform's
     // `unconfiguredValue` (and a remote report equal to it classifies clean),
-    // or the platform's unconfigured report is structural ABSENCE (sentinel-
-    // pruned SMTP/captcha/SMS/hook siblings, sparse postgres_settings) and a
-    // zero-form remote — which absence-class paths never receive — must
-    // REPORT rather than be silently swallowed by type-level zero inference.
+    // or its row is `platformRendered` (and ANY remote report classifies
+    // clean, unconditionally), or the platform's unconfigured report is
+    // structural ABSENCE (sentinel-pruned SMTP/captcha/SMS/hook siblings,
+    // sparse postgres_settings) and a zero-form remote — which absence-class
+    // paths never receive — must REPORT rather than be silently swallowed by
+    // type-level zero inference.
     const defaults = fromConfigDocument(getDefaultCliConfig());
     const raw = getDefaultCliConfig();
     const valueAt = (root: unknown, path: ReadonlyArray<string>): unknown => {
@@ -222,7 +250,7 @@ describe("diffProjectConfig classification", () => {
     for (const path of baselineless) {
       const row = rowFor(path);
       expect(row, path.join(".")).toBeDefined();
-      if (row !== undefined && Object.hasOwn(row, "unconfiguredValue")) {
+      if (row !== undefined && row.unconfiguredValue !== undefined) {
         // The declared unconfigured value classifies clean...
         const projected: Record<string, unknown> = {};
         let cursor = projected;
@@ -231,6 +259,22 @@ describe("diffProjectConfig classification", () => {
           cursor = cursor[segment] as Record<string, unknown>;
         }
         cursor[path[path.length - 1] as string] = row.unconfiguredValue;
+        const result = diffProjectConfig({
+          local: { config: decodeCliConfig({}), document: {} },
+          remote: projected,
+        });
+        expect(changeAt(result.changes, path), path.join(".")).toBeUndefined();
+      } else if (row !== undefined && row.platformRendered === true) {
+        // ...a platform-rendered row classifies clean for ANY remote value,
+        // since it has no local default to compare against — verify with an
+        // arbitrary string, not the one the platform happens to send today.
+        const projected: Record<string, unknown> = {};
+        let cursor = projected;
+        for (const segment of path.slice(0, -1)) {
+          cursor[segment] = {};
+          cursor = cursor[segment] as Record<string, unknown>;
+        }
+        cursor[path[path.length - 1] as string] = "an arbitrary platform-rendered value";
         const result = diffProjectConfig({
           local: { config: decodeCliConfig({}), document: {} },
           remote: projected,
@@ -314,6 +358,38 @@ describe("diffProjectConfig classification", () => {
     );
     expect(result.changes).toEqual([]);
     expect(result.unmanaged).toContainEqual(["auth", "oauth_server", "enabled"]);
+  });
+
+  test("an unmanaged path is excluded from classification even when the remote AGREES with it", () => {
+    // The disagreeing case above happened to pass even before the loop
+    // structurally excluded unmanaged paths, because the remote's `false`
+    // coincidentally matched the schema's own disabled-by-default baseline.
+    // `true`/`true` does not: it proves the exclusion itself, not an
+    // accidental baseline match — ADR 0022's "unmanaged paths can never
+    // classify either" applies even when local and remote agree.
+    const result = diffWith(
+      { auth: { oauth_server: { enabled: true } } },
+      { auth: { oauth_server_enabled: true } },
+    );
+    expect(result.changes).toEqual([]);
+    expect(result.unmanaged).toContainEqual(["auth", "oauth_server", "enabled"]);
+    expect(result.counts.total).toBe(0);
+  });
+
+  test("an unmanaged path is excluded from classification even when the remote DIFFERS from it", () => {
+    // Live repro: config.toml declares storage.analytics disabled with a
+    // max_namespaces value, the platform reports it enabled with a different
+    // value — `storage.analytics` is dropped from the document projection
+    // entirely while disabled, so neither path may become a `remote_only`
+    // change, only `unmanaged`.
+    const result = diffWith(
+      { storage: { analytics: { enabled: false, max_namespaces: 5 } } },
+      { storage: { features: { iceberg_catalog: { enabled: true, max_namespaces: 10 } } } },
+    );
+    expect(changeAt(result.changes, ["storage", "analytics", "enabled"])).toBeUndefined();
+    expect(changeAt(result.changes, ["storage", "analytics", "max_namespaces"])).toBeUndefined();
+    expect(result.unmanaged).toContainEqual(["storage", "analytics", "enabled"]);
+    expect(result.unmanaged).toContainEqual(["storage", "analytics", "max_namespaces"]);
   });
 
   test("declared siblings of a disabled container surface in unmanaged", () => {

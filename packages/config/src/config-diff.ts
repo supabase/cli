@@ -284,11 +284,26 @@ const arrayEqualityByPathKey: ReadonlyMap<string, ConfigArrayEquality> = (() => 
 const unconfiguredValueByPathKey: ReadonlyMap<string, unknown> = (() => {
   const map = new Map<string, unknown>();
   for (const row of projectConfigMappingRows) {
-    if (Object.hasOwn(row, "unconfiguredValue") && !map.has(pathKey(row.configPath))) {
+    if (row.unconfiguredValue !== undefined && !map.has(pathKey(row.configPath))) {
       map.set(pathKey(row.configPath), row.unconfiguredValue);
     }
   }
   return map;
+})();
+
+/**
+ * Paths whose row is `platformRendered` (`./project-config/registry-row.ts`):
+ * the platform authors the value itself, so a local-silent report at that
+ * path suppresses unconditionally rather than matching a pinned baseline.
+ */
+const platformRenderedPathKeys: ReadonlySet<string> = (() => {
+  const keys = new Set<string>();
+  for (const row of projectConfigMappingRows) {
+    if (row.platformRendered === true) {
+      keys.add(pathKey(row.configPath));
+    }
+  }
+  return keys;
 })();
 
 /**
@@ -304,6 +319,20 @@ function equalsAtPath(path: ReadonlyArray<string>, a: unknown, b: unknown): bool
     }
   }
   return isEqualConfigValue(a, b);
+}
+
+/**
+ * Nearest-ancestor prefix membership: true when `path` or any ancestor
+ * prefix is a key in `set` — mirrors {@link equalsAtPath}'s own ancestor walk
+ * so a mapped container's descendant leaves inherit its membership too.
+ */
+function hasAncestorPathKey(path: ReadonlyArray<string>, set: ReadonlySet<string>): boolean {
+  for (let length = path.length; length >= 1; length--) {
+    if (set.has(pathKey(path.slice(0, length)))) {
+      return true;
+    }
+  }
+  return false;
 }
 
 // The default config's own convergence projection — the first `remote_only`
@@ -337,8 +366,25 @@ export function diffProjectConfig(options: DiffProjectConfigOptions): ConfigChan
     paths.set(pathKey(path), path);
   }
 
+  // Declared comparable paths the local projection dropped: push cannot
+  // communicate them, so they were never compared on the local side.
+  // `comparableProjectConfigPaths` already excludes secret rows, so this
+  // never overlaps `masked`. Hoisted above the classification loop and
+  // excluded there before any classification branch runs — ADR 0022: an
+  // unmanaged path can never classify either, so it must never reach a
+  // branch that would compare it against the remote report.
+  const unmanaged = comparableProjectConfigPaths
+    .filter(
+      (path) => isDeclaredAtPath(declaredRoot, path) && valueAtPath(local, path) === undefined,
+    )
+    .toSorted(comparePaths);
+  const unmanagedPathKeys = new Set(unmanaged.map(pathKey));
+
   for (const path of paths.values()) {
     if (!isComparableProjectConfigPath(path)) {
+      continue;
+    }
+    if (hasAncestorPathKey(path, unmanagedPathKeys)) {
       continue;
     }
     const localValue = valueAtPath(local, path);
@@ -366,23 +412,27 @@ export function diffProjectConfig(options: DiffProjectConfigOptions): ConfigChan
     }
 
     if (remoteValue !== undefined) {
-      // The local projection is silent: the file doesn't declare it, or push
-      // cannot communicate the declared state (ADR 0021's unmanaged-by-push
-      // families — those paths additionally surface in `unmanaged` below).
-      // Suppress the remote value when it matches the unconfigured baseline:
-      // the default config's own projection, then the raw default config
+      // The local projection is silent because the file doesn't declare this
+      // path — a declared-but-unmanaged path never reaches this branch, since
+      // the loop above already excluded it (ADR 0022). Suppress the remote
+      // value unconditionally when the row is `platformRendered` (the
+      // platform authors this value itself; no local default exists to
+      // compare against), or when it matches the unconfigured baseline: the
+      // default config's own projection, then the raw default config
       // (push-gated containers, e.g. network restrictions' allow-all), then
       // the registry row's declared `unconfiguredValue` (the platform's
       // report of an unconfigured feature, e.g. `sessions_timebox: 0`
-      // canonicalized to `"0s"`, or the provisioning-default mailer
-      // subjects). With no baseline at any tier the value is reported —
-      // "unconfigured" is never inferred from type-level zero values, since
-      // canonicalization can turn a platform zero into a non-zero shape.
+      // canonicalized to `"0s"`). With no baseline at any tier the value is
+      // reported — "unconfigured" is never inferred from type-level zero
+      // values, since canonicalization can turn a platform zero into a
+      // non-zero shape.
       const baseline =
         valueAtPath(defaultProjection(), path) ??
         valueAtPath(getDefaultCliConfig(), path) ??
         unconfiguredValueByPathKey.get(pathKey(path));
-      const suppressed = baseline !== undefined && equalsAtPath(path, baseline, remoteValue);
+      const suppressed =
+        platformRenderedPathKeys.has(pathKey(path)) ||
+        (baseline !== undefined && equalsAtPath(path, baseline, remoteValue));
       if (!suppressed) {
         changes.push({
           path,
@@ -412,16 +462,6 @@ export function diffProjectConfig(options: DiffProjectConfigOptions): ConfigChan
 
   const masked = secretConfigPaths
     .filter((path) => isDeclaredAtPath(declaredRoot, path))
-    .toSorted(comparePaths);
-
-  // Declared comparable paths the local projection dropped: push cannot
-  // communicate them, so they were never compared on the local side.
-  // `comparableProjectConfigPaths` already excludes secret rows, so this
-  // never overlaps `masked`.
-  const unmanaged = comparableProjectConfigPaths
-    .filter(
-      (path) => isDeclaredAtPath(declaredRoot, path) && valueAtPath(local, path) === undefined,
-    )
     .toSorted(comparePaths);
 
   const update = changes.filter((change) => change.class === "update").length;
