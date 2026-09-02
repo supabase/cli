@@ -81,17 +81,11 @@ export const legacyWorkersMachineOutputRequested = Effect.fnUntraced(function* (
 });
 
 /**
- * The format a run actually renders in, with `-o` given priority over
- * `--output-format`.
+ * The format a run renders in, with `-o` given priority over `--output-format`.
+ * `-o pretty|table|csv` encode nothing and fall through to the text rendering.
  *
- * `-o pretty|table|csv` encode nothing and fall through to the text rendering,
- * and an explicit `-o` outranks `--output-format` when both are set. Branching
- * on `output.format` alone therefore emitted JSON for `-o pretty
- * --output-format json`, which asked for exactly the opposite.
- *
- * `-o json|yaml|toml|env` are absent from the result on purpose: those are
- * handled by `legacyEmitWorkersMachineOutput`, which runs before any of this and
- * owns its own stdout.
+ * `-o json|yaml|toml|env` are absent by design: `legacyEmitWorkersMachineOutput`
+ * runs first and owns its own stdout.
  */
 export const legacyWorkersRenderFormat = Effect.fnUntraced(function* () {
   const output = yield* Output;
@@ -115,6 +109,40 @@ export const legacyRejectWorkersEnvOutput = Effect.fnUntraced(function* () {
       message: "--output env flag is not supported",
     });
   }
+});
+
+/**
+ * Whether this run renders human text on stdout. Neither flag answers alone:
+ * `-o json|yaml|toml|env` leaves `output.format` as `text`, and
+ * `--output-format` says nothing about `-o`.
+ */
+export const legacyWorkersRendersText = Effect.fnUntraced(function* () {
+  if (yield* legacyWorkersMachineOutputRequested()) {
+    return false;
+  }
+  return (yield* legacyWorkersRenderFormat()) === "text";
+});
+
+/**
+ * Emit `payload` in whichever machine format the run asked for, returning
+ * whether it did — so a caller can skip its text rendering.
+ *
+ * Exactly one structured emission, and only in the structured branch: calling
+ * `output.success` ahead of the machine check emitted the payload twice, which
+ * broke `JSON.parse` and gave `stream-json` two terminal result events.
+ */
+export const legacyEmitWorkersPayload = Effect.fnUntraced(function* (
+  payload: Record<string, unknown>,
+) {
+  if (yield* legacyEmitWorkersMachineOutput(payload)) {
+    return true;
+  }
+  if ((yield* legacyWorkersRenderFormat()) === "text") {
+    return false;
+  }
+  const output = yield* Output;
+  yield* output.success("", payload);
+  return true;
 });
 
 /**

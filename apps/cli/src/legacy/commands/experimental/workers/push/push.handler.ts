@@ -4,11 +4,15 @@ import { Output } from "../../../../../shared/output/output.service.ts";
 import { emitSuccessTrailer } from "../../../../../shared/cli/success-trailer.ts";
 import { legacyRenderWorkerDetails } from "../workers.format.ts";
 import {
-  legacyEmitWorkersMachineOutput,
+  legacyEmitWorkersPayload,
   legacyRejectWorkersEnvOutput,
-  legacyWorkersMachineOutputRequested,
-  legacyWorkersProjectRefSuffix,
+  legacyWorkersRendersText,
 } from "../workers.output.ts";
+import {
+  legacyWorkersCommand,
+  legacyWorkersPushCommand,
+  legacyWorkersStatusCommand,
+} from "../workers.commands.ts";
 import { legacyAqua } from "../../../../shared/legacy-colors.ts";
 import { LegacyPlatformApi } from "../../../../auth/legacy-platform-api.service.ts";
 import { LegacyCliSettings } from "../../../../config/legacy-cli-settings.service.ts";
@@ -44,16 +48,15 @@ import {
   WorkerBuildFailedError,
   WorkerSourceMissingError,
 } from "../../../../../shared/workers/workers.errors.ts";
-import { LegacyProjectRefResolver } from "../../../../config/legacy-project-ref.service.ts";
-import { LegacyLinkedProjectCache } from "../../../../telemetry/legacy-linked-project-cache.service.ts";
-import { LegacyTelemetryState } from "../../../../telemetry/legacy-telemetry-state.service.ts";
 import {
   legacyDescribeWorker,
+  type LegacyResolvedWorker,
   legacyDiscoverWorkerNames,
   legacyLoadWorkersProject,
   legacyValidateWorkerName,
   type LegacyWorkersProject,
 } from "../workers.shared.ts";
+import { legacyWorkersRun } from "../workers.run.ts";
 import type { LegacyWorkersPushFlags } from "./push.command.ts";
 
 /**
@@ -159,7 +162,7 @@ function missingSourceSuggestion(input: {
   readonly entry: WorkerEntry | undefined;
 }): string {
   if (input.entry === undefined) {
-    return `Scaffold it with \`supabase experimental workers new ${input.name}\`.`;
+    return `Scaffold it with \`${legacyWorkersCommand(`new ${input.name}`)}\`.`;
   }
   if (input.entry.source !== undefined) {
     return `Create ${input.sourceDisplay}, or correct \`source\` under [workers.${input.name}] in ${input.configPath}.`;
@@ -181,6 +184,71 @@ function addYourCode(sourceDisplay: string): string {
   return `Add your worker's code to ${sourceDisplay}, then run this command again.`;
 }
 
+/**
+ * Refuse a source directory there is nothing to deploy from.
+ *
+ * Ahead of `resolveRuntime`, which classifies the directory and announces what
+ * it guessed — inferring a runtime for a path that does not exist reports on it
+ * and only then fails on it.
+ */
+const assertDeployableSource = Effect.fnUntraced(function* (input: {
+  readonly name: string;
+  readonly sourceDir: string;
+  readonly sourceDisplay: string;
+  readonly configPath: string;
+  readonly entry: LegacyResolvedWorker["entry"];
+}) {
+  const fs = yield* FileSystem.FileSystem;
+  const { sourceDisplay } = input;
+
+  const missing = new WorkerSourceMissingError({
+    detail: `There is no worker source at ${sourceDisplay}.`,
+    suggestion: missingSourceSuggestion({
+      name: input.name,
+      sourceDisplay,
+      configPath: input.configPath,
+      entry: input.entry,
+    }),
+  });
+
+  // Only "no such path" means it was never scaffolded. A permission or I/O error
+  // is a different problem with a different fix, so it propagates as itself.
+  const info = yield* fs
+    .stat(input.sourceDir)
+    .pipe(
+      Effect.catchTag("PlatformError", (error) =>
+        Predicate.isTagged(error.reason, "NotFound")
+          ? Effect.fail<WorkerSourceMissingError | PlatformError>(missing)
+          : Effect.fail(error),
+      ),
+    );
+
+  // Occupied but not a directory. "There is no worker source" is false twice
+  // over, and `workers new` refuses this destination too — so the scaffold
+  // suggestion would answer with a second error.
+  if (info.type !== "Directory") {
+    return yield* Effect.fail(
+      new WorkerSourceMissingError({
+        detail: `${sourceDisplay} is not a directory.`,
+        suggestion: `Replace it with a directory holding your worker's code, then run this command again.`,
+      }),
+    );
+  }
+
+  // An empty directory packages and deploys happily, producing an image with
+  // nothing in it. Read errors propagate rather than reading as empty: a
+  // directory the CLI cannot open is not one with nothing in it.
+  const contents = yield* fs.readDirectory(input.sourceDir);
+  if (contents.length === 0) {
+    return yield* Effect.fail(
+      new WorkerSourceMissingError({
+        detail: `${sourceDisplay} is empty, so there is nothing to deploy.`,
+        suggestion: addYourCode(sourceDisplay),
+      }),
+    );
+  }
+});
+
 const deployOneWorker = Effect.fnUntraced(function* (input: {
   readonly project: LegacyWorkersProject;
   readonly name: string;
@@ -197,9 +265,8 @@ const deployOneWorker = Effect.fnUntraced(function* (input: {
   readonly pollSchedule?: Schedule.Schedule<unknown>;
   readonly pollRetrySchedule?: Schedule.Schedule<unknown>;
   /** Suppresses this step's human output when `-o` owns stdout. */
-  readonly machineOutput: boolean;
+  readonly rendersText: boolean;
 }) {
-  const fs = yield* FileSystem.FileSystem;
   const output = yield* Output;
   const api = yield* LegacyPlatformApi;
   const settings = yield* LegacyCliSettings;
@@ -209,63 +276,13 @@ const deployOneWorker = Effect.fnUntraced(function* (input: {
 
   const sourceDisplay = displayPath(project.projectRoot, worker.sourceDir);
 
-  // Checked before the runtime is resolved, not after: with no recorded
-  // runtime, `resolveRuntime` classifies the directory and announces what it
-  // guessed. Doing that first meant reporting an inference about a path that
-  // does not exist, and only then failing on the path.
-  {
-    const sourceMissing = new WorkerSourceMissingError({
-      detail: `There is no worker source at ${sourceDisplay}.`,
-      suggestion: missingSourceSuggestion({
-        name,
-        sourceDisplay,
-        configPath: displayPath(project.projectRoot, project.configPath),
-        entry: worker.entry,
-      }),
-    });
-    // Only "no such path" means the worker was never scaffolded. A permission
-    // or I/O error on the directory is a different problem with a different
-    // fix, and answering it with "there is no worker source, run `workers new`"
-    // both misdiagnoses it and points at a directory that already exists — so
-    // every other reason propagates as itself.
-    const info = yield* fs
-      .stat(worker.sourceDir)
-      .pipe(
-        Effect.catchTag("PlatformError", (error) =>
-          Predicate.isTagged(error.reason, "NotFound")
-            ? Effect.fail<WorkerSourceMissingError | PlatformError>(sourceMissing)
-            : Effect.fail(error),
-        ),
-      );
-    // Something is there, it is just not a directory. Reporting that as "there
-    // is no worker source" is false twice over: the path is occupied, and
-    // `workers new` refuses a destination that exists and is not a directory,
-    // so the scaffold suggestion would answer with a second error.
-    if (info.type !== "Directory") {
-      return yield* Effect.fail(
-        new WorkerSourceMissingError({
-          detail: `${sourceDisplay} is not a directory.`,
-          suggestion: `Replace it with a directory holding your worker's code, then run this command again.`,
-        }),
-      );
-    }
-    // An empty directory packages and deploys perfectly happily, producing an
-    // image with nothing in it — a success message for a worker that cannot
-    // serve anything. Refuse before uploading rather than after.
-    //
-    // Read errors propagate rather than reading as empty: a directory the CLI
-    // cannot open is not a directory with nothing in it, and the two want
-    // opposite things from the user.
-    const contents = yield* fs.readDirectory(worker.sourceDir);
-    if (contents.length === 0) {
-      return yield* Effect.fail(
-        new WorkerSourceMissingError({
-          detail: `${sourceDisplay} is empty, so there is nothing to deploy.`,
-          suggestion: addYourCode(sourceDisplay),
-        }),
-      );
-    }
-  }
+  yield* assertDeployableSource({
+    name,
+    sourceDir: worker.sourceDir,
+    sourceDisplay,
+    configPath: displayPath(project.projectRoot, project.configPath),
+    entry: worker.entry,
+  });
 
   const runtime = yield* resolveRuntime({
     name,
@@ -361,7 +378,7 @@ const deployOneWorker = Effect.fnUntraced(function* (input: {
         detail: `The build for "${name}" failed${
           settled.stateReason === undefined ? "" : `: ${settled.stateReason}`
         }.`,
-        suggestion: `Fix the issue, then re-run \`supabase experimental workers push ${name}${input.refSuffix}\`.`,
+        suggestion: `Fix the issue, then re-run \`${legacyWorkersPushCommand(name, input.refSuffix)}\`.`,
       }),
     );
   }
@@ -375,7 +392,7 @@ const deployOneWorker = Effect.fnUntraced(function* (input: {
 
   // Suppressed when `-o` is in play: the payload owns stdout, and these lines
   // would land in the middle of it.
-  if (output.format === "text" && !input.machineOutput) {
+  if (input.rendersText) {
     // Declarative line first, then the details — the shape every other command
     // that reports a completed remote change uses. `legacyRenderWorkerDetails` drops
     // empty-valued rows, so optional fields need no conditional spreads.
@@ -412,7 +429,7 @@ const deployOneWorker = Effect.fnUntraced(function* (input: {
       // width and buried both commands mid-sentence.
       yield* emitSuccessTrailer(
         `\nYour build was submitted successfully.\n` +
-          `Run ${legacyAqua(`supabase experimental workers status ${name}${input.refSuffix}`)} to check on it.\n` +
+          `Run ${legacyAqua(legacyWorkersStatusCommand(name, input.refSuffix))} to check on it.\n` +
           `Add ${legacyAqua("--wait")} to block on the build next time.\n`,
       );
     }
@@ -477,107 +494,90 @@ export const legacyWorkersPush = Effect.fn("legacy.experimental.workers.push")(f
   } = {},
 ) {
   const output = yield* Output;
-  const resolver = yield* LegacyProjectRefResolver;
-  const linkedProjectCache = yield* LegacyLinkedProjectCache;
-  const telemetryState = yield* LegacyTelemetryState;
 
-  // The ref is resolved outside the finalizers because caching it is one of
-  // them; everything that can fail on its own — loading `config.toml`,
-  // validating names, discovering workers — belongs inside, so a malformed
-  // config still flushes telemetry. Same shape as `config/push`.
-  const projectRef = yield* resolver.resolve(flags.projectRef);
+  yield* legacyWorkersRun(flags.projectRef, ({ projectRef, refSuffix }) =>
+    Effect.gen(function* () {
+      const project = yield* legacyLoadWorkersProject();
 
-  yield* Effect.gen(function* () {
-    const project = yield* legacyLoadWorkersProject();
+      const requested =
+        flags.names.length > 0
+          ? yield* Effect.forEach(flags.names, legacyValidateWorkerName)
+          : yield* legacyDiscoverWorkerNames(project);
 
-    const requested =
-      flags.names.length > 0
-        ? yield* Effect.forEach(flags.names, legacyValidateWorkerName)
-        : yield* legacyDiscoverWorkerNames(project);
-
-    if (requested.length === 0) {
-      return yield* Effect.fail(
-        new NoWorkersToDeployError({
-          detail: `No workers were named, and none were found in ${displayPath(
-            project.projectRoot,
-            project.workersDir,
-          )}.`,
-          suggestion: "Scaffold one with `supabase experimental workers new <name>`.",
-        }),
-      );
-    }
-
-    const names = [...new Set(requested)];
-
-    // Before the first deploy, not after the last one: this payload always
-    // carries a `workers` array, so `-o env` can never encode it, and finding
-    // that out at the end means failing with the remote project already changed.
-    yield* legacyRejectWorkersEnvOutput();
-
-    const machineOutput = yield* legacyWorkersMachineOutputRequested();
-    // Computed once for the whole run, the way `status` and `delete` do: an
-    // explicit `--project-ref` has to survive into every hint this push emits.
-    const refSuffix = legacyWorkersProjectRefSuffix(flags.projectRef);
-    const deployed: Array<Record<string, unknown>> = [];
-    for (const [index, name] of names.entries()) {
-      if (names.length > 1 && !machineOutput && output.format === "text") {
-        // stderr, unblanked and labelled, the way `functions deploy` announces
-        // each function: a bare name with a leading blank line put a section
-        // header into whatever was consuming stdout.
-        //
-        // Counted, because each worker's package/upload/build takes minutes and
-        // the name alone says nothing about how much of the run is left.
-        //
-        // Text only, on both axes: `machineOutput` tracks `-o`, which leaves
-        // `output.format` as `text`, so neither check covers the other. This is
-        // progress rather than an outcome, and `--output-format json` asked for
-        // a stream of events — unlike the unattempted-workers report below,
-        // which every format gets because it says what still needs deploying.
-        yield* output.raw(
-          `Deploying Worker ${index + 1}/${names.length}: ${legacyAqua(name)}\n`,
-          "stderr",
+      if (requested.length === 0) {
+        return yield* Effect.fail(
+          new NoWorkersToDeployError({
+            detail: `No workers were named, and none were found in ${displayPath(
+              project.projectRoot,
+              project.workersDir,
+            )}.`,
+            suggestion: `Scaffold one with \`${legacyWorkersCommand("new <name>")}\`.`,
+          }),
         );
       }
-      deployed.push(
-        yield* deployOneWorker({
-          project,
-          name,
-          projectRef,
-          refSuffix,
-          instances: flags.instances,
-          wait: flags.wait,
-          machineOutput,
-          ...(options.pollSchedule === undefined ? {} : { pollSchedule: options.pollSchedule }),
-          ...(options.pollRetrySchedule === undefined
-            ? {}
-            : { pollRetrySchedule: options.pollRetrySchedule }),
-        }).pipe(Effect.tapError(() => reportUnattempted(names.slice(index + 1)))),
-      );
-    }
 
-    // Only for a run that deployed several: one worker already said so itself,
-    // and repeating it as a summary reads like a second deploy.
-    if (names.length > 1 && !machineOutput && output.format === "text") {
-      yield* output.raw(
-        `Deployed ${names.length} Workers to project ${projectRef}: ${names
-          .map((name) => legacyAqua(name, process.stdout))
-          .join(", ")}\n`,
-      );
-    }
+      const names = [...new Set(requested)];
 
-    const payload = { project_ref: projectRef, workers: deployed };
+      // Before the first deploy, not after the last one: this payload always
+      // carries a `workers` array, so `-o env` can never encode it, and finding
+      // that out at the end means failing with the remote project already changed.
+      yield* legacyRejectWorkersEnvOutput();
 
-    // `-o` asks for a machine-readable stdout, so nothing human may be written
-    // to it — `output.success` logs to stdout in text mode.
-    if (yield* legacyEmitWorkersMachineOutput(payload)) {
-      return;
-    }
+      const rendersText = yield* legacyWorkersRendersText();
+      const deployed: Array<Record<string, unknown>> = [];
+      for (const [index, name] of names.entries()) {
+        if (names.length > 1 && rendersText) {
+          // stderr, unblanked and labelled, the way `functions deploy` announces
+          // each function: a bare name with a leading blank line put a section
+          // header into whatever was consuming stdout.
+          //
+          // Counted, because each worker's package/upload/build takes minutes and
+          // the name alone says nothing about how much of the run is left.
+          //
+          // Text only, on both axes: `machineOutput` tracks `-o`, which leaves
+          // `output.format` as `text`, so neither check covers the other. This is
+          // progress rather than an outcome, and `--output-format json` asked for
+          // a stream of events — unlike the unattempted-workers report below,
+          // which every format gets because it says what still needs deploying.
+          yield* output.raw(
+            `Deploying Worker ${index + 1}/${names.length}: ${legacyAqua(name)}\n`,
+            "stderr",
+          );
+        }
+        deployed.push(
+          yield* deployOneWorker({
+            project,
+            name,
+            projectRef,
+            refSuffix,
+            instances: flags.instances,
+            wait: flags.wait,
+            rendersText,
+            ...(options.pollSchedule === undefined ? {} : { pollSchedule: options.pollSchedule }),
+            ...(options.pollRetrySchedule === undefined
+              ? {}
+              : { pollRetrySchedule: options.pollRetrySchedule }),
+          }).pipe(Effect.tapError(() => reportUnattempted(names.slice(index + 1)))),
+        );
+      }
 
-    if (output.format !== "text") {
-      yield* output.success("", payload);
-    }
-  }).pipe(
-    Effect.ensuring(linkedProjectCache.cache(projectRef)),
-    Effect.ensuring(telemetryState.flush),
+      // Only for a run that deployed several: one worker already said so itself,
+      // and repeating it as a summary reads like a second deploy.
+      if (names.length > 1 && rendersText) {
+        yield* output.raw(
+          `Deployed ${names.length} Workers to project ${projectRef}: ${names
+            .map((name) => legacyAqua(name, process.stdout))
+            .join(", ")}\n`,
+        );
+      }
+
+      const payload = { project_ref: projectRef, workers: deployed };
+
+      // `-o` asks for a machine-readable stdout, so nothing human may be written
+      // to it — `output.success` logs to stdout in text mode.
+      if (yield* legacyEmitWorkersPayload(payload)) {
+        return;
+      }
+    }),
   );
 });

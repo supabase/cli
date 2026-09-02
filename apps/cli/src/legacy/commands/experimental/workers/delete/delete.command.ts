@@ -1,5 +1,6 @@
 import { Argument, Command, Flag } from "effect/unstable/cli";
 import type * as CliCommand from "effect/unstable/cli/Command";
+import { legacyWorkersCommand } from "../workers.commands.ts";
 import { withJsonErrorHandling } from "../../../../../shared/output/json-error-handling.ts";
 import { legacyManagementApiRuntimeLayer } from "../../../../shared/legacy-management-api-runtime.layer.ts";
 import { withLegacyCommandInstrumentation } from "../../../../telemetry/legacy-command-instrumentation.ts";
@@ -25,11 +26,11 @@ export const legacyWorkersDeleteCommand = Command.make("delete", config).pipe(
   Command.withShortDescription("Delete a worker from Supabase"),
   Command.withExamples([
     {
-      command: "supabase experimental workers delete api",
+      command: legacyWorkersCommand("delete api"),
       description: "Delete a worker, confirming by typing its name",
     },
     {
-      command: "supabase experimental workers delete api --yes",
+      command: legacyWorkersCommand("delete api --yes"),
       description: "Skip the confirmation prompt (scripts and CI)",
     },
   ]),

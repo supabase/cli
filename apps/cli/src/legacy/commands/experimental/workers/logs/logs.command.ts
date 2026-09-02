@@ -1,5 +1,6 @@
 import { Argument, Command, Flag } from "effect/unstable/cli";
 import type * as CliCommand from "effect/unstable/cli/Command";
+import { legacyWorkersCommand } from "../workers.commands.ts";
 import { withJsonErrorHandling } from "../../../../../shared/output/json-error-handling.ts";
 import { legacyManagementApiRuntimeLayer } from "../../../../shared/legacy-management-api-runtime.layer.ts";
 import {
@@ -69,19 +70,19 @@ export const legacyWorkersLogsCommand = Command.make("logs", config).pipe(
   Command.withShortDescription("Show a worker's logs"),
   Command.withExamples([
     {
-      command: "supabase experimental workers logs api",
+      command: legacyWorkersCommand("logs api"),
       description: "Print the last 100 log lines across all streams",
     },
     {
-      command: "supabase experimental workers logs api --kind requests --tail 20",
+      command: legacyWorkersCommand("logs api --kind requests --tail 20"),
       description: "Print the 20 most recent HTTP requests the worker served",
     },
     {
-      command: "supabase experimental workers logs api --follow",
+      command: legacyWorkersCommand("logs api --follow"),
       description: "Print recent logs, then keep printing new lines until interrupted",
     },
     {
-      command: "supabase experimental workers logs api --tail 0 --follow",
+      command: legacyWorkersCommand("logs api --tail 0 --follow"),
       description: "Skip the backlog and print only lines that arrive from now on",
     },
   ]),

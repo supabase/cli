@@ -1,6 +1,7 @@
 import { Layer } from "effect";
 import { Argument, Command, Flag } from "effect/unstable/cli";
 import type * as CliCommand from "effect/unstable/cli/Command";
+import { legacyWorkersCommand } from "../workers.commands.ts";
 import { withJsonErrorHandling } from "../../../../../shared/output/json-error-handling.ts";
 import { commandRuntimeLayer } from "../../../../../shared/runtime/command-runtime.layer.ts";
 import { WORKER_RUNTIMES, WORKER_SIZES } from "../../../../../shared/workers/worker-runtimes.ts";
@@ -55,19 +56,19 @@ export const legacyWorkersNewCommand = Command.make("new", config).pipe(
   Command.withShortDescription("Scaffold a worker locally"),
   Command.withExamples([
     {
-      command: "supabase experimental workers new",
+      command: legacyWorkersCommand("new"),
       description: "Prompt for the name, then for runtime and size",
     },
     {
-      command: "supabase experimental workers new api",
+      command: legacyWorkersCommand("new api"),
       description: "Scaffold supabase/workers/api, prompting for runtime and size",
     },
     {
-      command: "supabase experimental workers new api --runtime node",
+      command: legacyWorkersCommand("new api --runtime node"),
       description: "Scaffold supabase/workers/api on the node runtime",
     },
     {
-      command: "supabase experimental workers new api --source packages/api",
+      command: legacyWorkersCommand("new api --source packages/api"),
       description: "Scaffold the worker outside the workers directory",
     },
   ]),

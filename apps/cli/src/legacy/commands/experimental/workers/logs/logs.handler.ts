@@ -1,12 +1,13 @@
 import { Effect, Option, Ref, Schedule } from "effect";
 import { Output } from "../../../../../shared/output/output.service.ts";
 import { emitSuccessTrailer } from "../../../../../shared/cli/success-trailer.ts";
-import { legacyAqua } from "../../../../shared/legacy-colors.ts";
 import {
-  legacyEmitWorkersMachineOutput,
-  legacyRejectWorkersEnvOutput,
-  legacyWorkersProjectRefSuffix,
-} from "../workers.output.ts";
+  legacyWorkerNotDeployed,
+  legacyWorkersPushCommand,
+  legacyWorkersStatusCommand,
+} from "../workers.commands.ts";
+import { legacyAqua } from "../../../../shared/legacy-colors.ts";
+import { legacyEmitWorkersPayload, legacyRejectWorkersEnvOutput } from "../workers.output.ts";
 import {
   legacyRenderWorkerLogLine,
   legacyWorkerLogLevel,
@@ -30,18 +31,15 @@ import { getWorker } from "../../../../../shared/workers/workers-api.ts";
 import {
   WorkerLogsQueryFailedError,
   WorkerLogsRateLimitedError,
-  WorkerNotDeployedError,
   WorkersApiNetworkError,
   WorkersApiUnexpectedStatusError,
 } from "../../../../../shared/workers/workers.errors.ts";
-import { LegacyProjectRefResolver } from "../../../../config/legacy-project-ref.service.ts";
-import { LegacyLinkedProjectCache } from "../../../../telemetry/legacy-linked-project-cache.service.ts";
-import { LegacyTelemetryState } from "../../../../telemetry/legacy-telemetry-state.service.ts";
 import { legacyValidateWorkerName } from "../workers.shared.ts";
 import {
   legacyWorkersMachineOutputRequested,
   legacyWorkersRenderFormat,
 } from "../workers.output.ts";
+import { legacyWorkersRun } from "../workers.run.ts";
 import type { LegacyWorkersLogsFlags } from "./logs.command.ts";
 
 /**
@@ -66,25 +64,10 @@ import type { LegacyWorkersLogsFlags } from "./logs.command.ts";
  */
 const SEEN_ID_LIMIT = 5000;
 
-/**
- * How many rows one poll asks for per request.
- *
- * Independent of `--tail`, which bounds only the history a run opens with.
- * Sharing them meant `--tail 1 --follow` polled with `limit 1`: the query orders
- * newest-first, so a burst came back as its newest row alone and the cursor then
- * advanced past the rest, dropping them for good. The default `--tail 100` had
- * the same hole above 100 rows in a polling interval.
- */
+/** Rows per poll request. Independent of `--tail`, which bounds history only. */
 const FOLLOW_PAGE_SIZE = 1000;
 
-/**
- * How many requests one poll may spend draining a burst.
- *
- * A bound rather than an open loop: the endpoint allows 10 requests a minute, so
- * an unbounded drain could spend a whole window's allowance on one poll. Rows
- * beyond it are not lost — the cursor only advances past what was emitted, so
- * the next poll re-asks for them.
- */
+/** Requests one poll may spend draining a burst, against a 10/minute budget. */
 const FOLLOW_MAX_PAGES = 5;
 
 /**
@@ -99,17 +82,12 @@ const FOLLOW_READ_RETRY = Schedule.spaced("5 seconds").pipe(
 );
 
 /**
- * Which poll failures are worth spending another request on.
+ * Which poll failures are worth another request.
  *
- * A tail should ride out a 429 or a momentary blip, but 401, 402 and 404 answer
- * the same way every time. Retrying those held the error back for a minute and
- * spent most of the endpoint's ten-requests-per-minute allowance getting nowhere,
- * so the reader waited longer and then hit a rate limit on top of the real cause.
- *
- * Server-side statuses are retried and client-side ones are not, with the
- * exception of 408 and 429, which are the server asking for exactly that. A
- * decode failure carries the response's own status, so a malformed 200 body is
- * correctly read as terminal: it will not parse any better on a second attempt.
+ * Server-side statuses, plus 408 and 429 — the server asking for a retry.
+ * Definitive answers (401, 402, 404) surface immediately rather than burning a
+ * minute and most of the rate limit first. A decode failure carries the
+ * response's own status, so a malformed 200 body reads as terminal.
  */
 function isRetryableFollowFailure(error: unknown): boolean {
   if (error instanceof WorkersApiUnexpectedStatusError) {
@@ -123,6 +101,71 @@ function isRetryableFollowFailure(error: unknown): boolean {
     error instanceof WorkerLogsQueryFailedError
   );
 }
+
+/** Where the tail has got to: the newest line printed, and the ids printed. */
+interface FollowCursor {
+  readonly newestMs: number;
+  readonly seen: ReadonlySet<string>;
+}
+
+/**
+ * Move the cursor past `fresh`. The timestamp and the id set are only correct
+ * together: advancing one without the other replays the overlap or loses it.
+ *
+ * The id set is bounded — only ids inside the grace window can be re-offered,
+ * so forgetting the oldest cannot resurrect them.
+ */
+function advanceCursor(cursor: FollowCursor, fresh: ReadonlyArray<WorkerLogEntry>): FollowCursor {
+  const seen = new Set(cursor.seen);
+  for (const row of fresh) {
+    seen.add(row.id);
+  }
+  return {
+    newestMs: fresh.reduce((newest, row) => Math.max(newest, row.timestampMs), cursor.newestMs),
+    seen: seen.size <= SEEN_ID_LIMIT ? seen : new Set([...seen].slice(seen.size - SEEN_ID_LIMIT)),
+  };
+}
+
+/**
+ * Every row since `cursorMs`, across as many requests as it takes.
+ *
+ * The query orders newest-first, so one request answers with only the newest
+ * page. Walk `end` backwards while pages come back full; a short page means the
+ * window is drained. Bounded by the endpoint's ten-per-minute allowance — rows
+ * past the bound are not lost, since the cursor only advances over what was
+ * emitted.
+ */
+const drainSince = Effect.fnUntraced(function* (input: {
+  readonly api: LegacyPlatformApi["Service"];
+  readonly projectRef: string;
+  readonly name: string;
+  readonly streams: ReadonlyArray<string>;
+  readonly cursorMs: number;
+}) {
+  const collected: Array<WorkerLogEntry> = [];
+  let end = new Date();
+  for (let page = 0; page < FOLLOW_MAX_PAGES; page += 1) {
+    const rows = yield* fetchWorkerLogs(input.api, input.projectRef, {
+      name: input.name,
+      streams: input.streams,
+      tail: FOLLOW_PAGE_SIZE,
+      window: followWindow(end, input.cursorMs),
+    });
+    collected.push(...rows);
+    if (rows.length < FOLLOW_PAGE_SIZE) {
+      break;
+    }
+    // Rows arrive oldest-first, so the next page ends where this one began. A
+    // full page sharing one timestamp cannot narrow the window: stop rather than
+    // re-request it, and let the next poll's grace window cover the remainder.
+    const nextEnd = new Date(rows[0]!.timestampMs);
+    if (nextEnd.getTime() >= end.getTime()) {
+      break;
+    }
+    end = nextEnd;
+  }
+  return collected;
+});
 
 /**
  * Test seams for the follow loop.
@@ -158,20 +201,10 @@ export const legacyWorkersLogs = Effect.fn("legacy.experimental.workers.logs")(f
 ) {
   const output = yield* Output;
   const api = yield* LegacyPlatformApi;
-  const resolver = yield* LegacyProjectRefResolver;
-  const linkedProjectCache = yield* LegacyLinkedProjectCache;
-  const telemetryState = yield* LegacyTelemetryState;
   const processControl = yield* ProcessControl;
 
-  // Telemetry wraps the ref resolution as well: an unlinked non-interactive
-  // checkout fails inside `resolve`, and by then the command has run. Only the
-  // linked-project cache stays under the ref, since it has nothing to write
-  // without one.
-  yield* Effect.gen(function* () {
-    const projectRef = yield* resolver.resolve(flags.projectRef);
-    const refSuffix = legacyWorkersProjectRefSuffix(flags.projectRef);
-
-    yield* Effect.gen(function* () {
+  yield* legacyWorkersRun(flags.projectRef, ({ projectRef, refSuffix }) =>
+    Effect.gen(function* () {
       const name = yield* legacyValidateWorkerName(flags.name);
 
       // Up front, like the rest of the family: this payload always carries a `logs`
@@ -248,8 +281,7 @@ export const legacyWorkersLogs = Effect.fn("legacy.experimental.workers.logs")(f
         ? [WORKER_LOG_STREAMS[flags.kind.value]]
         : ALL_WORKER_LOG_STREAMS;
 
-      // Before any request, so a slow history query or deployed-worker check
-      // cannot widen what `followFloorMs` below treats as "already there".
+      // Before any request, so a slow one cannot widen `followFloorMs` below.
       const startedAtMs = Date.now();
 
       // `--tail 0` is "no history". On its own that is a no-op, but it is the shape
@@ -269,18 +301,11 @@ export const legacyWorkersLogs = Effect.fn("legacy.experimental.workers.logs")(f
               return rows;
             });
 
-      // Nothing came back, which is two different situations wearing the same face:
-      // a worker that is not deployed at all, and one that is deployed and quiet.
-      // Only worth one extra request, and only in this branch.
-      //
-      // `--tail 0` makes no history query, so zero rows says nothing either way —
-      // but a tail still has to know the worker exists, or a typo waits forever on
-      // logs that can never arrive. A bounded `--tail 0` run prints nothing by
-      // definition and is left alone.
+      // Zero rows is two situations wearing one face: not deployed, or deployed
+      // and quiet. Worth one extra request to tell them apart. `--tail 0` queried
+      // nothing, so it only needs the check when it is going on to tail.
       if (entries.length === 0 && (flags.tail > 0 || flags.follow)) {
-        // Its own task: with `--tail 0` there is no "Fetching logs..." to inherit,
-        // and clearing that one before this request left text mode silent across
-        // a call that can take a moment.
+        // Its own task: `--tail 0` has no "Fetching logs..." to inherit.
         const checking = yield* output.task("Checking worker...");
         const deployed = yield* getWorker(api, projectRef, name).pipe(
           Effect.tapError(() => checking.fail()),
@@ -288,9 +313,10 @@ export const legacyWorkersLogs = Effect.fn("legacy.experimental.workers.logs")(f
         yield* checking.clear();
         if (Option.isNone(deployed)) {
           return yield* Effect.fail(
-            new WorkerNotDeployedError({
-              detail: `Nothing is deployed for "${name}" in project ${projectRef}.`,
-              suggestion: `Deploy it with \`supabase experimental workers push ${name}${refSuffix}\`.`,
+            legacyWorkerNotDeployed({
+              name,
+              projectRef,
+              suggestion: `Deploy it with \`${legacyWorkersPushCommand(name, refSuffix)}\`.`,
             }),
           );
         }
@@ -303,18 +329,9 @@ export const legacyWorkersLogs = Effect.fn("legacy.experimental.workers.logs")(f
         logs: entries.map(toPayloadEntry),
       };
 
-      // `-o` asks for a machine-readable stdout, so nothing human may be written to
-      // it — `output.success` logs to stdout in text mode. Unreachable while
-      // following, which refuses these formats up front.
-      if (!flags.follow && (yield* legacyEmitWorkersMachineOutput(payload))) {
-        return;
-      }
-
-      // One structured emission, in the structured branch only, and only for a
-      // bounded read. A tail has no terminal payload to put here — it emits a
-      // `log-entry` event per line through `emitLines` instead.
-      if (!flags.follow && renderFormat !== "text") {
-        yield* output.success("", payload);
+      // Only for a bounded read: a tail has no terminal payload to put here, and
+      // emits a `log-entry` event per line through `emitLines` instead.
+      if (!flags.follow && (yield* legacyEmitWorkersPayload(payload))) {
         return;
       }
 
@@ -322,7 +339,7 @@ export const legacyWorkersLogs = Effect.fn("legacy.experimental.workers.logs")(f
         // Deployed (the check above would have failed otherwise) and silent.
         yield* output.raw(`No logs for "${name}" in the last 24 hours.\n`);
         yield* emitSuccessTrailer(
-          `Check it is running with ${legacyAqua(`supabase experimental workers status ${name}${refSuffix}`)}.\n`,
+          `Check it is running with ${legacyAqua(legacyWorkersStatusCommand(name, refSuffix))}.\n`,
         );
         return;
       }
@@ -343,112 +360,63 @@ export const legacyWorkersLogs = Effect.fn("legacy.experimental.workers.logs")(f
       }
 
       // --- follow ---------------------------------------------------------------
-      //
-      // The cursor is the newest timestamp printed, and the set of ids already
-      // printed. Both live inside this generator rather than being captured while
-      // the Effect was built: an Effect is a reusable description and may run more
-      // than once, and shared cursor state across runs would drop lines.
-      const seenIds = yield* Ref.make(new Set(entries.map((entry) => entry.id)));
-      const newestSeenMs = yield* Ref.make(
-        entries.length === 0 ? Date.now() : entries[entries.length - 1]!.timestampMs,
-      );
+      // Inside the generator, not captured while the Effect was built: an Effect
+      // may run more than once, and shared cursor state would drop lines.
+      const cursorRef = yield* Ref.make<FollowCursor>({
+        newestMs: entries.at(-1)?.timestampMs ?? Date.now(),
+        seen: new Set(entries.map((entry) => entry.id)),
+      });
 
-      // `--tail 0` asked for no history, and `followWindow` deliberately reaches
-      // a grace period behind the cursor so a line relayed late is still caught.
-      // Both are wanted, and together they let pre-invocation lines through — so
-      // keep the wide window and filter on when the line was actually written.
+      // `followWindow` reaches a grace period behind the cursor so a late relay
+      // is still caught — which for `--tail 0` would reopen the history it was
+      // told to skip. Keep the wide window; filter on when the line was written.
       const followFloorMs = flags.tail === 0 ? startedAtMs : Number.NEGATIVE_INFINITY;
 
       const pollOnce = Effect.gen(function* () {
-        const cursor = yield* Ref.get(newestSeenMs);
+        const cursor = yield* Ref.get(cursorRef);
+        const rows = yield* drainSince({
+          api,
+          projectRef,
+          name,
+          streams,
+          cursorMs: cursor.newestMs,
+        });
 
-        // One request only ever answers with the newest page of its window, so a
-        // burst bigger than a page needs several. Walk `end` backwards while
-        // pages come back full; a short page means the window is drained.
-        const collected: Array<WorkerLogEntry> = [];
-        let end = new Date();
-        for (let page = 0; page < FOLLOW_MAX_PAGES; page += 1) {
-          const rows = yield* fetchWorkerLogs(api, projectRef, {
-            name,
-            streams,
-            tail: FOLLOW_PAGE_SIZE,
-            window: followWindow(end, cursor),
-          });
-          collected.push(...rows);
-          if (rows.length < FOLLOW_PAGE_SIZE) {
-            break;
-          }
-          // Rows arrive oldest-first, so the next page ends where this one began.
-          const nextEnd = new Date(rows[0]!.timestampMs);
-          // A full page whose rows all share one timestamp cannot narrow the
-          // window. Stop rather than re-request it; the cursor has not advanced
-          // past those rows, so the next poll's grace window still covers them.
-          if (nextEnd.getTime() >= end.getTime()) {
-            break;
-          }
-          end = nextEnd;
-        }
-
-        // Windows always overlap - the server rounds them to the minute and the
-        // cursor deliberately lags - so dedupe is what makes the overlap invisible
-        // rather than a source of repeats.
-        const printed = yield* Ref.get(seenIds);
-        const fresh = collected
-          .filter((row) => !printed.has(row.id) && row.timestampMs >= followFloorMs)
-          // Each page is oldest-first but the pages themselves walk backwards, so
-          // the concatenation is not ordered until this runs.
+        // Windows always overlap — the server rounds them to the minute and the
+        // cursor deliberately lags — so the dedupe is what makes the overlap
+        // invisible rather than a source of repeats. Pages walk backwards, so
+        // the concatenation is not in order until this sorts it.
+        const fresh = rows
+          .filter((row) => !cursor.seen.has(row.id) && row.timestampMs >= followFloorMs)
           .sort((left, right) => left.timestampMs - right.timestampMs);
         if (fresh.length === 0) {
           return;
         }
 
         yield* emitLines(fresh, "live");
-        yield* Ref.update(seenIds, (previous) => {
-          const next = new Set(previous);
-          for (const row of fresh) {
-            next.add(row.id);
-          }
-          // Bounded so a tail left running for hours does not grow it without
-          // limit. Only ids inside the grace window can still be re-offered, so
-          // forgetting the oldest cannot resurrect them.
-          if (next.size <= SEEN_ID_LIMIT) {
-            return next;
-          }
-          return new Set([...next].slice(next.size - SEEN_ID_LIMIT));
-        });
-        yield* Ref.set(
-          newestSeenMs,
-          fresh.reduce((newest, row) => Math.max(newest, row.timestampMs), cursor),
-        );
+        yield* Ref.set(cursorRef, advanceCursor(cursor, fresh));
       });
 
-      // A 429 or a blip should not end a tail the user is watching; the schedule is
-      // spaced in seconds, so retrying rides out a transient failure without
-      // spending the rate limit. Anything definitive surfaces on the first
-      // attempt — see `isRetryableFollowFailure`.
+      // A blip should not end a tail someone is watching. See
+      // `isRetryableFollowFailure` for what does not get a second attempt.
       const poll = pollOnce.pipe(
         Effect.retry({ schedule: readRetrySchedule, while: isRetryableFollowFailure }),
       );
 
-      // `repeat` runs the body before applying the schedule, so the first poll is
-      // immediate. That is wanted: it catches anything that landed while the history
-      // query was in flight, and the rows it repeats are discarded by the id dedupe.
-      // Measured cost is ~7 requests in the worst 60-second window, against a limit
-      // of 10.
+      // `repeat` runs the body first, so the opening poll is immediate — it
+      // catches whatever landed while the history query was in flight. ~7
+      // requests in the worst 60-second window, against a limit of 10.
       yield* Effect.raceFirst(
         poll.pipe(Effect.repeat({ schedule: pollSchedule })),
-        // `setExitCode`, not `exit`: the production `exit` calls `process.exit`
-        // synchronously, which tears the runtime down from inside this race
-        // branch — before the linked-project cache is written, before telemetry
-        // is flushed, and before the instrumentation wrapper emits its post-run
-        // event. Recording the code lets the race complete normally so the
-        // finalizers run, and `runCli` exits with it once they have.
+        // `setExitCode`, not `exit`: `exit` calls `process.exit` synchronously,
+        // tearing the runtime down before this command's finalizers run. Record
+        // the code and let the race complete; `runCli` exits with it.
         processControl
           .awaitSignal()
           .pipe(
             Effect.flatMap((signal) => processControl.setExitCode(signal === "SIGINT" ? 130 : 0)),
           ),
       );
-    }).pipe(Effect.ensuring(linkedProjectCache.cache(projectRef)));
-  }).pipe(Effect.ensuring(telemetryState.flush));
+    }),
+  );
 });
