@@ -512,7 +512,9 @@ describe("src/internal.ts export surface", () => {
       [
         "AUTH_HOOK_NAMES",
         "ENV_CAPTURE_REGEX",
+        "diffProjectConfig",
         "loadCliConfig",
+        "projectConfigApiBlockKeys",
         "projectConfigMappingRows",
         "resolveCliConfigSubtree",
         "resolveCliConfigValue",

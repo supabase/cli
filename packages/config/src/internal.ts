@@ -16,6 +16,15 @@
  * implementations.
  */
 export { ENV_CAPTURE_REGEX } from "./lib/env.ts";
+export {
+  type ConfigChange,
+  type ConfigChangeClass,
+  type ConfigChangeCounts,
+  type ConfigChangeSet,
+  type DiffProjectConfigOptions,
+  diffProjectConfig,
+} from "./config-diff.ts";
+export { projectConfigApiBlockKeys } from "./project-config/api-attributes.ts";
 export { AUTH_HOOK_NAMES, unmappedSecretApiPaths } from "./project-config/registry-auth.ts";
 export { projectConfigMappingRows } from "./project-config/registry.ts";
 export { type ProjectConfigMappingRow } from "./project-config/registry-row.ts";
