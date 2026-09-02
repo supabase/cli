@@ -11,11 +11,19 @@
  * shipped CLI target, so Bun embeds exactly the right `.node` binding, and
  * inject the resulting formatter through the generator's `format` option.
  *
+ * Source-run ESM has no `require` binding (`ReferenceError`); compiled Bun
+ * injects one that loads embedded `.node` addons. `createRequire` is only
+ * the source-run fallback — using it in the compiled binary resolves from
+ * `/$bunfs/root` and misses those addons. Per-platform `require("…")`
+ * literals stay so `bun build --compile` still embeds them.
+ *
  * The binding version in `package.json` must stay in lockstep with the
  * `oxfmt` version pinned by `@supabase/postgrest-typegen`, and the format
  * options below must mirror the package's own `defaultFormat` so injected and
  * default output stay identical.
  */
+
+import { createRequire } from "node:module";
 
 declare const SUPABASE_LIBC: string | undefined;
 
@@ -40,37 +48,77 @@ interface LegacyOxfmtBinding {
   }>;
 }
 
+const sourceRequire = createRequire(import.meta.url);
+
+function loadOxfmtBinding(
+  loadCompiled: () => LegacyOxfmtBinding,
+  specifier: string,
+): LegacyOxfmtBinding {
+  try {
+    return loadCompiled();
+  } catch (error) {
+    if (error instanceof ReferenceError) {
+      return sourceRequire(specifier);
+    }
+    throw error;
+  }
+}
+
 function legacyRequireOxfmtBinding(): LegacyOxfmtBinding {
   if (process.platform === "darwin") {
     if (process.arch === "arm64") {
-      return require("@oxfmt/binding-darwin-arm64");
+      return loadOxfmtBinding(
+        () => require("@oxfmt/binding-darwin-arm64"),
+        "@oxfmt/binding-darwin-arm64",
+      );
     }
     if (process.arch === "x64") {
-      return require("@oxfmt/binding-darwin-x64");
+      return loadOxfmtBinding(
+        () => require("@oxfmt/binding-darwin-x64"),
+        "@oxfmt/binding-darwin-x64",
+      );
     }
   }
 
   if (process.platform === "linux") {
     if (process.arch === "arm64") {
       if (typeof SUPABASE_LIBC !== "undefined" && SUPABASE_LIBC === "musl") {
-        return require("@oxfmt/binding-linux-arm64-musl");
+        return loadOxfmtBinding(
+          () => require("@oxfmt/binding-linux-arm64-musl"),
+          "@oxfmt/binding-linux-arm64-musl",
+        );
       }
-      return require("@oxfmt/binding-linux-arm64-gnu");
+      return loadOxfmtBinding(
+        () => require("@oxfmt/binding-linux-arm64-gnu"),
+        "@oxfmt/binding-linux-arm64-gnu",
+      );
     }
     if (process.arch === "x64") {
       if (typeof SUPABASE_LIBC !== "undefined" && SUPABASE_LIBC === "musl") {
-        return require("@oxfmt/binding-linux-x64-musl");
+        return loadOxfmtBinding(
+          () => require("@oxfmt/binding-linux-x64-musl"),
+          "@oxfmt/binding-linux-x64-musl",
+        );
       }
-      return require("@oxfmt/binding-linux-x64-gnu");
+      return loadOxfmtBinding(
+        () => require("@oxfmt/binding-linux-x64-gnu"),
+        "@oxfmt/binding-linux-x64-gnu",
+      );
     }
   }
 
   if (process.platform === "win32") {
     if (process.arch === "arm64") {
-      return require("@oxfmt/binding-win32-arm64-msvc");
+      return loadOxfmtBinding(
+        () => require("@oxfmt/binding-win32-arm64-msvc"),
+        "@oxfmt/binding-win32-arm64-msvc",
+      );
     }
     if (process.arch === "x64") {
-      return require("@oxfmt/binding-win32-x64-msvc");
+      return loadOxfmtBinding(
+        () => require("@oxfmt/binding-win32-x64-msvc"),
+        "@oxfmt/binding-win32-x64-msvc",
+      );
     }
   }
 

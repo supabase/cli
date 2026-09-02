@@ -45,7 +45,7 @@ import { LegacyGenTypesMetadataError } from "./types.errors.ts";
 import type { LegacyGenTypesGenerateInput } from "./types.generator.ts";
 import { LegacyGenTypesGenerator } from "./types.generator.ts";
 import { legacyGenTypes } from "./types.handler.ts";
-import { localDbContainerId, parseQueryTimeoutSeconds } from "./types.shared.ts";
+import { localDbContainerId } from "./types.shared.ts";
 
 function writeConfig(workdir: string, contents: string) {
   const supabaseDir = join(workdir, "supabase");
@@ -443,13 +443,6 @@ const nonTypescriptProjectRefScenarios = [
 }>;
 
 describe("legacy gen types", () => {
-  it.effect("accepts Go-style microsecond duration aliases", () =>
-    Effect.gen(function* () {
-      expect(yield* parseQueryTimeoutSeconds(`15${"µ"}s`)).toBe(0);
-      expect(yield* parseQueryTimeoutSeconds(`15${"μ"}s`)).toBe(0);
-    }),
-  );
-
   it.live("generates typescript types from a project ref", () => {
     const { layer, out, api, linkedProjectCache, telemetry } = setup({
       projectId: Option.some(LEGACY_VALID_REF),
@@ -1937,6 +1930,27 @@ describe("legacy gen types", () => {
       // The local/db-url paths have no project ref, so they must not
       // populate the linked-project cache.
       expect(linkedProjectCache.cached).toBe(false);
+    });
+  });
+
+  it.live("prints already-terminated native output with exactly one trailing newline", () => {
+    const workdir = mkdtempSync(join(tmpdir(), "supabase-gen-types-newline-"));
+    writeConfig(
+      workdir,
+      ['project_id = "demo"', "", "[api]", 'schemas = ["public"]', "", "[db]", "port = 54322"].join(
+        "\n",
+      ),
+    );
+
+    const { layer, out } = setup({
+      workdir,
+      generatorOutput: "export type Database = {};\n\n",
+    });
+
+    return Effect.gen(function* () {
+      yield* legacyGenTypes(defaultFlags({ local: true })).pipe(Effect.provide(layer));
+
+      expect(out.stdoutText).toBe("export type Database = {};\n");
     });
   });
 

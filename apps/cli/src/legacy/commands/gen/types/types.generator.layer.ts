@@ -44,15 +44,9 @@ const generate = (
   Effect.scoped(
     Effect.gen(function* () {
       let conn = applyQueryTimeouts(input.conn, input.queryTimeoutSeconds);
-      // The driver requires TLS for remote targets, but the retired pg-meta
-      // path adapted to the server: its SSLRequest probe decided whether the
-      // container connected with TLS at all, so a plain-TCP server (common
-      // for self-hosted databases) still worked. Keep that adaptivity: when
-      // the DSN carries no explicit `sslmode`, probe the server and disable
-      // TLS only when it does not speak SSL. A TLS server gets the same CA
-      // pin pg-meta received via `PG_META_DB_SSL_ROOT_CERT`. A probe failure
-      // keeps the driver's TLS default so the real connect error (and its
-      // IPv6 pooler classification) surfaces from the connection attempt.
+      // Remote DSNs without sslmode probe first (pg-meta did): no TLS →
+      // disable; TLS → require + the CA pin pg-meta got via
+      // PG_META_DB_SSL_ROOT_CERT. Probe failure keeps the driver default.
       if (!input.isLocal && conn.sslmode === undefined) {
         const probed = yield* sslProbe.requireSslForHost(conn.host, conn.port).pipe(Effect.result);
         if (Result.isSuccess(probed)) {

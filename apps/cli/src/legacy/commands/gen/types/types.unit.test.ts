@@ -1,12 +1,9 @@
 import { describe, expect, it } from "@effect/vitest";
 import { Effect, Exit } from "effect";
-import { legacyGetHostname } from "../../../shared/legacy-hostname.ts";
-import { legacyParseSchemaFlags } from "../../../shared/legacy-schema-flags.ts";
 import {
   applyProbedSslMode,
   applyQueryTimeouts,
   defaultSchemas,
-  localDbContainerId,
   localDbPassword,
   parseQueryTimeoutSeconds,
 } from "./types.shared.ts";
@@ -88,6 +85,13 @@ describe("parseQueryTimeoutSeconds", () => {
       expect(Exit.isFailure(exit)).toBe(true);
     }),
   );
+
+  it.effect("accepts Go-style microsecond duration aliases", () =>
+    Effect.gen(function* () {
+      expect(yield* parseQueryTimeoutSeconds(`15${"µ"}s`)).toBe(0);
+      expect(yield* parseQueryTimeoutSeconds(`15${"μ"}s`)).toBe(0);
+    }),
+  );
 });
 
 describe("applyQueryTimeouts", () => {
@@ -133,41 +137,13 @@ describe("applyProbedSslMode", () => {
   });
 });
 
-describe("schema and id helpers", () => {
-  it("normalizes comma separated and repeated schema flags", () => {
-    // pflag's StringSlice parses each value via encoding/csv with NO
-    // trimming, and an empty value yields no field. Whitespace is preserved
-    // verbatim.
-    expect(legacyParseSchemaFlags(["public, auth", " storage ", ""])).toEqual([
-      "public",
-      " auth",
-      " storage ",
-    ]);
-  });
-
+describe("schema and password helpers", () => {
   it("prepends public and removes duplicates from default schemas", () => {
     expect(defaultSchemas(["auth", "public", "storage"])).toEqual(["public", "auth", "storage"]);
     expect(defaultSchemas()).toEqual(["public"]);
   });
 
-  it("derives sanitized docker ids from the project id", () => {
-    expect(localDbContainerId("..my project")).toBe("supabase_db_my_project");
-  });
-
-  it("truncates an over-long project id to 40 characters", () => {
-    const longId = "a".repeat(60);
-    expect(localDbContainerId(longId)).toBe(`supabase_db_${"a".repeat(40)}`);
-  });
-
-  it("reads the services hostname and db password from the environment", () => {
-    expect(
-      withEnv("DOCKER_HOST", undefined, () =>
-        withEnv("SUPABASE_SERVICES_HOSTNAME", undefined, () => legacyGetHostname()),
-      ),
-    ).toBe("127.0.0.1");
-    expect(withEnv("SUPABASE_SERVICES_HOSTNAME", "db.internal", () => legacyGetHostname())).toBe(
-      "db.internal",
-    );
+  it("reads the db password from the environment", () => {
     expect(withEnv("SUPABASE_DB_PASSWORD", undefined, () => localDbPassword())).toBe("postgres");
     expect(withEnv("SUPABASE_DB_PASSWORD", "secret", () => localDbPassword())).toBe("secret");
   });

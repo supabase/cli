@@ -229,8 +229,6 @@ export const legacyGenTypes = Effect.fn("legacy.gen.types")(function* (flags: Le
   // followed by a telemetry flush.
   const queryTimeoutSeconds = yield* parseQueryTimeoutSeconds(flags.queryTimeout);
 
-  // flags.schema is already CSV-parsed and validated by `Flag.mapTryCatch(legacyParseSchemaFlags)`
-  // in types.command.ts — use it directly.
   const schemas = flags.schema;
   const lang = flags.lang;
   const swiftAccessControl = flags.swiftAccessControl;
@@ -389,10 +387,9 @@ export const legacyGenTypes = Effect.fn("legacy.gen.types")(function* (flags: Le
               classifyError: legacyIsIPv6ConnectivityErrorCause,
             });
 
-      // The retired pg-meta container printed the generated output through
-      // `console.log`, so a single trailing newline is part of the
-      // established stdout contract.
-      yield* output.raw(`${types}\n`);
+      // pg-meta's `console.log` contract: exactly one trailing newline.
+      // oxfmt (and some language templates) already terminate.
+      yield* output.raw(types.replace(/\n*$/, "\n"));
     });
 
   const assertLocalDbRunning = (projectId: string) =>

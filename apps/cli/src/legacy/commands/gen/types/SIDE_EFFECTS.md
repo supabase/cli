@@ -177,7 +177,8 @@ go`/`--lang swift`/`--lang python` — the defaults-only claim above holds only 
   linked TypeScript case, since that path never opens a database connection).
 - `--db-url` is parsed by the shared connection resolver (libpq keywords, `PG*` env
   fallbacks, `options=reference=<ref>` pooler tenants, `sslmode`), matching every
-  other `--db-url` command.
+  other `--db-url` command. An absent dbname follows libpq (`PGDATABASE`, then the
+  connection user) rather than forcing `postgres`.
 - The legacy positional language argument (`supabase gen types typescript`) is still accepted;
   any other positional language requires an explicit `--lang` flag.
 - Go and Python output now lists entities in the canonical sorted order

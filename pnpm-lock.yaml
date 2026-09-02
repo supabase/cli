@@ -208,8 +208,8 @@ importers:
         specifier: 1.0.0-alpha.5
         version: 1.0.0-alpha.5
       '@supabase/postgrest-typegen':
-        specifier: 0.2.0
-        version: 0.2.0
+        specifier: 0.2.1
+        version: 0.2.1
       '@supabase/process-compose':
         specifier: workspace:*
         version: link:../../packages/process-compose
@@ -2861,8 +2861,8 @@ packages:
     resolution: {integrity: sha512-+Mf6uCpzr00bqxwX8hTK2X2L9eAL/1vuOjdEjx6upz9ulb0RmQT16XeU/JkMUlVHw/B46ZnPa2busY4Kd9YCzw==}
     engines: {node: '>=22.0.0'}
 
-  '@supabase/postgrest-typegen@0.2.0':
-    resolution: {integrity: sha512-y+dQsjV0D9IVQ2wW0WBl48owyD/88X8dh78XE4rSo1s8MegCOc5/ZNAOkBVICwTySm/hIk2Iw+0zPqJiEh0XQg==}
+  '@supabase/postgrest-typegen@0.2.1':
+    resolution: {integrity: sha512-4lfKua/f3h6ssHiYwtyE5JF+msxh0bZA0HRzqGosmGE3N7wmFqtA0kD04cmhvlEZz86RfO2/Z7Epw8oK5JN+/A==}
     engines: {node: '>=20.0.0'}
 
   '@supabase/realtime-js@2.112.3':
@@ -5677,10 +5677,6 @@ packages:
     resolution: {integrity: sha512-knzXLKqarTjOvb3qDSW0JiGsazmxwEKXrqHfWRte7XUsOYccQRafn3BLnQobWwInkzFJSyOej8y8cQRh2z3kGw==}
     peerDependencies:
       pg: ^8
-
-  pg-format@1.0.4:
-    resolution: {integrity: sha512-YyKEF78pEA6wwTAqOUaHIN/rWpfzzIuMh9KdAhc3rSLQ/7zkRFcCgYBAEGatDstLyZw4g0s9SNICmaTGnBVeyw==}
-    engines: {node: '>=4.0'}
 
   pg-int8@1.0.1:
     resolution: {integrity: sha512-WCtabS6t3c8SkpDBUlb1kjOs7l66xsGdKpIPZsg4wR+B3+u9UAum2odSsF9tnvxg80h4ZxLWMy4pRjOsFIqQpw==}
@@ -8773,11 +8769,10 @@ snapshots:
     dependencies:
       tslib: 2.8.1
 
-  '@supabase/postgrest-typegen@0.2.0':
+  '@supabase/postgrest-typegen@0.2.1':
     dependencies:
       arktype: 2.2.3
       oxfmt: 0.65.0
-      pg-format: 1.0.4
     transitivePeerDependencies:
       - svelte
       - vite-plus
@@ -11915,8 +11910,6 @@ snapshots:
   pg-cursor@2.22.0(pg@8.23.0):
     dependencies:
       pg: 8.23.0
-
-  pg-format@1.0.4: {}
 
   pg-int8@1.0.1: {}
 
