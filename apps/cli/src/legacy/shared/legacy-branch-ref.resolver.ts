@@ -8,8 +8,6 @@ import {
   LEGACY_BRANCH_UUID_PATTERN,
 } from "./legacy-ref-patterns.ts";
 
-export { LEGACY_BRANCH_PROJECT_REF_PATTERN, LEGACY_BRANCH_UUID_PATTERN };
-
 /**
  * Per-family error mapping for {@link legacyResolveBranchProjectRef}: each
  * caller keeps its own tagged error classes (built with `mapLegacyHttpError`)

@@ -8,13 +8,13 @@ writes `config.toml` or any remote configuration.**
 
 ## Files Read
 
-| Path                                           | Format                    | When                                                                                                                                                                              |
-| ---------------------------------------------- | ------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `<workdir>/supabase/config.toml`               | TOML                      | always, before any network call (missing file or parse error aborts, exit 1); re-read after target resolution when the file declares `[remotes.*]`, to apply the matching overlay |
-| `<workdir>/supabase/.env`, `.env.local`        | dotenv                    | always, to resolve `env(VAR)` references inside `config.toml`                                                                                                                     |
-| `<workdir>/supabase/.temp/project-ref`         | plain text                | project-ref fallback (flag → `SUPABASE_PROJECT_ID` → this file); parent-ref for a branch-name `--project-ref`                                                                     |
-| `<workdir>/supabase/.temp/linked-project.json` | JSON                      | existence check only, for the telemetry cache write below                                                                                                                         |
-| `~/.supabase/access-token`                     | plain text (token string) | when `SUPABASE_ACCESS_TOKEN` unset and keyring unavailable                                                                                                                        |
+| Path                                           | Format                    | When                                                                                                                                                                                                        |
+| ----------------------------------------------- | ------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `<workdir>/supabase/config.toml` or `config.json` | TOML/JSON                 | always, before any network call (`loadCliConfig` probes `config.json` first, then `config.toml` — a missing file or parse error aborts, exit 1, naming whichever file actually failed); re-read after target resolution when the file declares `[remotes.*]`, to apply the matching overlay |
+| `<workdir>/supabase/.env`, `.env.local`        | dotenv                    | always, to resolve `env(VAR)` references inside `config.toml`                                                                                                                                             |
+| `<workdir>/supabase/.temp/project-ref`         | plain text                | project-ref fallback (flag → `SUPABASE_PROJECT_ID` → this file); parent-ref candidate for a branch-name `--project-ref` (checked eagerly, BEFORE any spinner or branch lookup)                            |
+| `<workdir>/supabase/.temp/linked-project.json` | JSON                      | parent-ref candidate for a branch-name `--project-ref` (same eager pre-check); existence-checked for the telemetry cache write below                                                                     |
+| `~/.supabase/access-token`                     | plain text (token string) | when `SUPABASE_ACCESS_TOKEN` unset and keyring unavailable                                                                                                                                                 |
 
 ## Files Written
 
@@ -31,11 +31,11 @@ that finds differences.
 
 All Bearer-authenticated, all read-only.
 
-| #   | Purpose                 | Method | Path                                 | Success | Notes                                                                 |
-| --- | ----------------------- | ------ | ------------------------------------ | ------- | --------------------------------------------------------------------- |
-| 0a  | branch by UUID          | GET    | `/v1/branches/{branch_id}`           | 200     | only when `--project-ref` is a UUID; needs no linked project          |
-| 0b  | branch by name          | GET    | `/v1/projects/{ref}/branches/{name}` | 200     | only when `--project-ref` is not a ref/UUID; 404 → "branch not found" |
-| 1   | effective remote config | GET    | `/v2/projects/{ref}/config`          | 200     | always (after target resolution)                                      |
+| #   | Purpose                 | Method | Path                                 | Success | Notes                                                                                                                                                                                              |
+| --- | ----------------------- | ------ | ------------------------------------- | ------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| 0a  | branch by UUID          | GET    | `/v1/branches/{branch_id}`           | 200     | only when `--project-ref` is a UUID; needs no linked project (no parent pre-check)                                                                                                                |
+| 0b  | branch by name          | GET    | `/v1/projects/{ref}/branches/{name}` | 200     | only when `--project-ref` is a NAME (not a ref/UUID); the parent ref is resolved from local state BEFORE this call — an absent/invalid parent fails without making this request; 404 → "branch not found" |
+| 1   | effective remote config | GET    | `/v2/projects/{ref}/config`          | 200     | always (after target resolution); 401/403/404 get purpose-written messages, other statuses the generic `unexpected status N: body` shape                                                          |
 
 ## Environment Variables
 
@@ -51,16 +51,28 @@ All Bearer-authenticated, all read-only.
 Drift has its own exit code (`2`), distinct from every failure (`1`), so
 `config diff --exit-code` scripts can tell "config drifted" from "token
 expired" without parsing output (`terraform plan -detailed-exitcode`'s
-convention; `1` stays the CLI-wide failure code).
+convention; `1` stays the CLI-wide failure code). In **text mode only**, exit
+2 is preceded by a stderr reason line, `Exiting 2: configuration differences
+found (--exit-code).`, so a CI log never shows a bare "exit code 2" with no
+explanation; machine modes (`--output-format json/stream-json`, or `-o
+json|yaml|toml|env`) never print it, keeping their bytes unchanged. The
+masked/unmanaged/not-returned-block caveats never flip the exit code by
+themselves — only `changeSet.counts.total > 0` (a real `update`/`remote_only`/
+`local_only` entry) does. Because `run.ts` only runs its `afterSuccess` hooks
+(e.g. the upgrade notice) on exit code `0`, a `--exit-code` run that exits `2`
+on drift suppresses that hook, same as any other non-zero exit.
 
-| Code | Condition                                                                      |
-| ---- | ------------------------------------------------------------------------------ |
-| `0`  | success — including when differences are found, unless `--exit-code` is passed |
-| `2`  | `--exit-code` passed and at least one difference found                         |
-| `1`  | missing or malformed `supabase/config.toml`                                    |
-| `1`  | unknown branch (branch-name `--project-ref` 404)                               |
-| `1`  | two `[remotes.*]` blocks declare the same `project_id` as the target ref       |
-| `1`  | remote config read failure (network or unexpected status)                      |
+| Code | Condition                                                                       |
+| ---- | -------------------------------------------------------------------------------- |
+| `0`  | success — including when differences are found, unless `--exit-code` is passed  |
+| `2`  | `--exit-code` passed and at least one difference found                          |
+| `1`  | missing or malformed `supabase/config.toml`/`config.json`                       |
+| `1`  | branch-name `--project-ref` with no linked parent project (`LegacyConfigDiffBranchNotLinkedError`) |
+| `1`  | branch-name `--project-ref` with a corrupt/invalid linked parent ref (`LegacyConfigDiffParentRefInvalidError`) |
+| `1`  | unknown branch (branch-name `--project-ref` 404, `LegacyConfigDiffBranchNotFoundError`) |
+| `1`  | resolved branch has no project ref yet — still provisioning (`LegacyConfigDiffBranchNotReadyError`) |
+| `1`  | two `[remotes.*]` blocks declare the same `project_id` as the target ref        |
+| `1`  | remote config read failure (network, 401/403/404, or other unexpected status)  |
 
 ## Output
 
@@ -76,20 +88,23 @@ One block per difference (`<path> [update|remote-only|local-only]` with
 undeclared path with a schema default renders `<value> (schema default — not
 declared in config.toml)`, env-resolved values append `(from env VAR, …)`),
 then a summary count line — `No config differences found.` when clean —
-followed by a `Note: … (masked by the API): …` line when the file sets masked
-secrets and a `Note: … cannot be pushed and … not compared: …` line for
-declared properties push cannot communicate. Every non-constant string
-(path segments, env-var names, remotes/branch names) is sanitized against
-control characters before rendering.
+followed by a `Note: N block(s) … not returned by the API and … not compared:
+…` line when the response omitted a block entirely, a `Note: … (masked by the
+API): …` line when the file sets masked secrets, and a `Note: … cannot be
+pushed and … not compared: …` line for declared properties push cannot
+communicate. Every non-constant string (path segments, env-var names,
+remotes/branch names) is sanitized against control characters before
+rendering.
 
 ### `--output-format json` / `stream-json`
 
-`output.success(message, payload)` — the message carries the masked/unmanaged
-caveats too, so echoing it never claims "in sync" while masked values may have
-drifted. The payload contains `schema_version` (integer version of THIS
-payload contract, currently `1`), `config_schema` (the file's `$schema` URL),
-`target` (`project_ref`, optional `branch`, `local_scope`), `scope`
-(`{present, missing}` block lists — the block set is owned by
+`output.success(message, payload)` — the message carries the not-returned/
+masked/unmanaged caveats too, so echoing it never claims "in sync" on a
+partial response (e.g. a scoped token returning `auth: {}`) or while masked
+values may have drifted. The payload contains `schema_version` (integer
+version of THIS payload contract, currently `1`), `config_schema` (the file's
+`$schema` URL), `target` (`project_ref`, optional `branch`, `local_scope`),
+`scope` (`{present, missing}` block lists — the block set is owned by
 `@supabase/config`), `changes[]` (`path` as a SEGMENT ARRAY — a record key may
 contain a `.` — plus `class`, `declared`, `local`, `remote`, optional
 `env_variables[]`; unset sides are `null`), `masked[]` and `unmanaged[]`
@@ -98,12 +113,19 @@ contain a `.` — plus `class`, `declared`, `local`, `remote`, optional
 ### `-o/--output` (legacy machine formats)
 
 Honored, and takes priority over `--output-format` (Legacy Shell Invariant
-#6): `-o json|yaml|toml|env` encodes the same structured payload the
+#6): `-o json|yaml|toml` encode the same structured payload the
 `--output-format json` envelope carries (TOML omits `null`-valued entries —
-TOML has no null; env flattens to SCREAMING_SNAKE keys with arrays collapsing
-to empty strings, the established `godotenv` shape). stdout is payload-pure in
-every machine mode; diagnostics stay on stderr. `-o pretty` (and no `-o`)
-falls through to `--output-format` handling.
+TOML has no null). `-o env` encodes the same payload too, but is **lossy** —
+the established `godotenv`-shaped flattening (SCREAMING_SNAKE keys) collapses
+every array (`changes[]`, `masked[]`, `unmanaged[]`, `scope.present/missing`)
+to an empty leaf, leaving only `counts` and the top-level scalars usable;
+prefer `-o json` or `-o yaml` over `-o env` whenever the changes themselves
+matter, not just their count. stdout is payload-pure in every machine mode;
+diagnostics stay on stderr. `-o pretty` (and no `-o`) falls through to
+`--output-format` handling — as do `-o table` and `-o csv`, which are only
+meaningful to `db query`; every other consumer of the shared `--output` global
+(including this command) treats them exactly like `pretty`, never the
+`env`-encode default.
 
 ## Notes
 
@@ -121,4 +143,5 @@ falls through to `--output-format` handling.
   push-gated omissions), not necessarily the file's literal spelling.
 - **Partial responses:** a managed property the response does not carry is `local_only`
   when the file declares it and silent otherwise; a missing block is called out on the
-  scope line rather than treated as an error.
+  scope line, AND as a `Note:`/message caveat alongside the masked/unmanaged ones, rather
+  than treated as an error.

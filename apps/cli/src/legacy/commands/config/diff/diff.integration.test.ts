@@ -1,9 +1,10 @@
 import { describe, expect, it } from "@effect/vitest";
-import { Effect, Exit, Layer, Option } from "effect";
+import { Effect, Exit, Layer, Option, Stdio } from "effect";
 import { mkdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 
 import {
+  mockContextualAnalytics,
   mockOutput,
   mockProcessControl,
   mockRuntimeInfo,
@@ -19,6 +20,8 @@ import {
   mockLegacyTelemetryStateTracked,
   useLegacyTempWorkdir,
 } from "../../../../../tests/helpers/legacy-mocks.ts";
+import { commandRuntimeLayer } from "../../../../shared/runtime/command-runtime.layer.ts";
+import { legacyConfigDiffHandler } from "./diff.command.ts";
 import { LEGACY_CONFIG_DIFF_PAYLOAD_VERSION } from "./diff.format.ts";
 import { legacyConfigDiff } from "./diff.handler.ts";
 
@@ -222,14 +225,17 @@ interface SetupOpts {
   readonly toml?: string;
   readonly dotenv?: string;
   readonly format?: "text" | "json" | "stream-json";
-  readonly goOutput?: "env" | "pretty" | "json" | "toml" | "yaml";
+  readonly goOutput?: "env" | "pretty" | "json" | "toml" | "yaml" | "table" | "csv";
   readonly v2?: { status: number; body: unknown } | "fail";
   readonly branchByName?: { status: number; body: unknown };
   readonly branchByUuid?: { status: number; body: unknown };
   /** `false` simulates a directory with no linked project. */
   readonly linked?: boolean;
+  /** Overrides `cliSettings.projectId` directly — takes precedence over `linked`. */
+  readonly projectId?: Option.Option<string>;
   /** Overrides the process cwd (defaults to the temp workdir). */
   readonly cwd?: string;
+  readonly analytics?: ReturnType<typeof mockContextualAnalytics>;
 }
 
 function setup(opts: SetupOpts = {}) {
@@ -270,13 +276,18 @@ function setup(opts: SetupOpts = {}) {
       api,
       cliSettings: mockLegacyCliSettings({
         workdir: tempRoot.current,
-        ...(opts.linked === false ? { projectId: Option.none<string>() } : {}),
+        ...(opts.projectId !== undefined
+          ? { projectId: opts.projectId }
+          : opts.linked === false
+            ? { projectId: Option.none<string>() }
+            : {}),
       }),
       runtimeInfo: mockRuntimeInfo({ cwd: opts.cwd ?? tempRoot.current }),
       telemetry: telemetry.layer,
       linkedProjectCache: linkedProjectCache.layer,
       processControl,
       goOutput: opts.goOutput === undefined ? Option.none() : Option.some(opts.goOutput),
+      ...(opts.analytics === undefined ? {} : { analytics: opts.analytics }),
     }),
   );
   return { layer, out, api, telemetry, linkedProjectCache, processControl };
@@ -341,6 +352,32 @@ describe("legacy config diff integration", () => {
     });
     return Effect.gen(function* () {
       yield* legacyConfigDiff({ ...noFlags, exitCode: true });
+      expect(processControl.exitCode).toBe(2);
+    }).pipe(Effect.provide(layer));
+  });
+
+  it.live("--exit-code in text mode prints a stderr reason line before exiting 2", () => {
+    // A CI log that shows only "exit code 2" with no explanation is a
+    // regression — the reason line makes the drift-vs-failure distinction
+    // visible in the log itself, without touching machine-format bytes.
+    const { layer, out, processControl } = setup({
+      toml: 'project_id = "test"\n[api]\nmax_rows = 500\n',
+    });
+    return Effect.gen(function* () {
+      yield* legacyConfigDiff({ ...noFlags, exitCode: true });
+      expect(out.stderrText).toContain("Exiting 2: configuration differences found (--exit-code).");
+      expect(processControl.exitCode).toBe(2);
+    }).pipe(Effect.provide(layer));
+  });
+
+  it.live("--exit-code in json mode exits 2 without the stderr reason line", () => {
+    const { layer, out, processControl } = setup({
+      toml: 'project_id = "test"\n[api]\nmax_rows = 500\n',
+      format: "json",
+    });
+    return Effect.gen(function* () {
+      yield* legacyConfigDiff({ ...noFlags, exitCode: true });
+      expect(out.stderrText).not.toContain("Exiting 2");
       expect(processControl.exitCode).toBe(2);
     }).pipe(Effect.provide(layer));
   });
@@ -603,7 +640,9 @@ describe("legacy config diff integration", () => {
       expect(Exit.isFailure(exit)).toBe(true);
       const rendered = JSON.stringify(exit);
       expect(rendered).toContain("LegacyConfigDiffLoadConfigError");
-      expect(rendered).toContain("supabase/config.toml: file not found");
+      // `loadCliConfig` probes both filenames (`findCliProjectPaths`), so the
+      // message must not claim only `config.toml` was checked.
+      expect(rendered).toContain("supabase/config.toml or supabase/config.json: file not found");
       expect(rendered).toContain("supabase init");
       // The load runs before any network call, and telemetry still flushes.
       expect(api.requests).toHaveLength(0);
@@ -620,7 +659,10 @@ describe("legacy config diff integration", () => {
         Effect.exit,
       );
       expect(Exit.isFailure(exit)).toBe(true);
-      expect(JSON.stringify(exit)).toContain("failed to parse supabase/config.toml");
+      // The message names the REAL file that failed to parse (`cause.path`),
+      // not a hardcoded `.toml` guess.
+      const configPath = join(tempRoot.current, "supabase", "config.toml");
+      expect(JSON.stringify(exit)).toContain(`failed to parse ${configPath}`);
       expect(api.requests).toHaveLength(0);
       expect(telemetry.flushed).toBe(true);
     }).pipe(Effect.provide(layer));
@@ -631,7 +673,8 @@ describe("legacy config diff integration", () => {
     return Effect.gen(function* () {
       const exit = yield* legacyConfigDiff(noFlags).pipe(Effect.exit);
       expect(Exit.isFailure(exit)).toBe(true);
-      expect(JSON.stringify(exit)).toContain("failed to parse supabase/config.toml");
+      const configPath = join(tempRoot.current, "supabase", "config.toml");
+      expect(JSON.stringify(exit)).toContain(`failed to parse ${configPath}`);
     }).pipe(Effect.provide(layer));
   });
 
@@ -732,7 +775,53 @@ describe("legacy config diff integration", () => {
     return Effect.gen(function* () {
       const exit = yield* legacyConfigDiff(noFlags).pipe(Effect.exit);
       expect(Exit.isFailure(exit)).toBe(true);
-      expect(JSON.stringify(exit)).toContain("LegacyConfigDiffReadStatusError");
+      const rendered = JSON.stringify(exit);
+      expect(rendered).toContain("LegacyConfigDiffReadStatusError");
+      // 403 gets a purpose-written message naming the project instead of the
+      // raw `unexpected status 403: {"message":"forbidden"}` body dump.
+      expect(rendered).toContain("Access denied");
+      expect(rendered).toContain(LEGACY_VALID_REF);
+    }).pipe(Effect.provide(layer));
+  });
+
+  it.live("a 401 on the config read points at re-authenticating", () => {
+    const { layer } = setup({
+      toml: 'project_id = "test"\n',
+      v2: { status: 401, body: { message: "unauthorized" } },
+    });
+    return Effect.gen(function* () {
+      const exit = yield* legacyConfigDiff(noFlags).pipe(Effect.exit);
+      expect(Exit.isFailure(exit)).toBe(true);
+      const rendered = JSON.stringify(exit);
+      expect(rendered).toContain("LegacyConfigDiffReadStatusError");
+      expect(rendered).toContain("supabase login");
+    }).pipe(Effect.provide(layer));
+  });
+
+  it.live("a 404 on the config read names the sanitized ref and suggests projects list", () => {
+    const { layer } = setup({
+      toml: 'project_id = "test"\n',
+      v2: { status: 404, body: { message: "not found" } },
+    });
+    return Effect.gen(function* () {
+      const exit = yield* legacyConfigDiff(noFlags).pipe(Effect.exit);
+      expect(Exit.isFailure(exit)).toBe(true);
+      const rendered = JSON.stringify(exit);
+      expect(rendered).toContain("LegacyConfigDiffReadStatusError");
+      expect(rendered).toContain(LEGACY_VALID_REF);
+      expect(rendered).toContain("supabase projects list");
+    }).pipe(Effect.provide(layer));
+  });
+
+  it.live("other config-read statuses keep the generic unexpected-status message", () => {
+    const { layer } = setup({
+      toml: 'project_id = "test"\n',
+      v2: { status: 500, body: { message: "boom" } },
+    });
+    return Effect.gen(function* () {
+      const exit = yield* legacyConfigDiff(noFlags).pipe(Effect.exit);
+      expect(Exit.isFailure(exit)).toBe(true);
+      expect(JSON.stringify(exit)).toContain('unexpected status 500: {\\"message\\":\\"boom\\"}');
     }).pipe(Effect.provide(layer));
   });
 
@@ -806,6 +895,33 @@ describe("legacy config diff integration", () => {
       yield* legacyConfigDiff(noFlags);
       expect(out.stdoutText).toContain("api.max_rows [update]");
       expect(out.stdoutText).toContain("1 difference found");
+    }).pipe(Effect.provide(layer));
+  });
+
+  it.live("-o table falls through to the text renderer instead of env-encoding", () => {
+    // `table`/`csv` are meaningful only to `db query` — every other `--output`
+    // consumer (including `config diff`) must fall through exactly like
+    // `pretty`, never hit the trailing `env`-encode default.
+    const { layer, out } = setup({
+      toml: 'project_id = "test"\n[api]\nmax_rows = 500\n',
+      goOutput: "table",
+    });
+    return Effect.gen(function* () {
+      yield* legacyConfigDiff(noFlags);
+      expect(out.stdoutText).toContain("api.max_rows [update]");
+      expect(out.stdoutText).not.toContain("COUNTS_TOTAL=");
+    }).pipe(Effect.provide(layer));
+  });
+
+  it.live("-o csv falls through to the text renderer instead of env-encoding", () => {
+    const { layer, out } = setup({
+      toml: 'project_id = "test"\n[api]\nmax_rows = 500\n',
+      goOutput: "csv",
+    });
+    return Effect.gen(function* () {
+      yield* legacyConfigDiff(noFlags);
+      expect(out.stdoutText).toContain("api.max_rows [update]");
+      expect(out.stdoutText).not.toContain("COUNTS_TOTAL=");
     }).pipe(Effect.provide(layer));
   });
 
@@ -985,6 +1101,44 @@ describe("legacy config diff integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
+  it.live("a missing block's not-compared caveat travels with the machine `.message`", () => {
+    // A partial API response (e.g. a scoped token returning `auth: {}`) must
+    // not report an unqualified "No config differences found." — an agent
+    // echoing just `.message` would otherwise wrongly claim a full compare.
+    const { layer, out } = setup({
+      toml: 'project_id = "test"\n',
+      format: "json",
+      v2: {
+        status: 200,
+        body: v2Response({ attributes: (attributes) => ({ ...attributes, auth: {} }) }),
+      },
+    });
+    return Effect.gen(function* () {
+      yield* legacyConfigDiff(noFlags);
+      const success = out.messages.find((message) => message.type === "success");
+      expect(success?.message).toBe(
+        "No config differences found. 1 block was not returned by the API and was not compared: auth.",
+      );
+    }).pipe(Effect.provide(layer));
+  });
+
+  it.live("the same missing-block caveat renders as a Note in text mode", () => {
+    const { layer, out } = setup({
+      toml: 'project_id = "test"\n',
+      v2: {
+        status: 200,
+        body: v2Response({ attributes: (attributes) => ({ ...attributes, auth: {} }) }),
+      },
+    });
+    return Effect.gen(function* () {
+      yield* legacyConfigDiff(noFlags);
+      expect(out.stdoutText).toContain("No config differences found.");
+      expect(out.stdoutText).toContain(
+        "Note: 1 block was not returned by the API and was not compared: auth",
+      );
+    }).pipe(Effect.provide(layer));
+  });
+
   it.live("a declared path push cannot communicate surfaces in the unmanaged note", () => {
     // auth.oauth_server is dropped from the local projection entirely (push
     // has no oauth_server handling), so a declared `enabled = true`
@@ -1009,5 +1163,111 @@ describe("legacy config diff integration", () => {
         "Note: 1 declared property cannot be pushed and was not compared: auth.oauth_server.enabled",
       );
     }).pipe(Effect.provide(layer));
+  });
+
+  it.live(
+    "a branch-NAME --project-ref in an unlinked dir fails immediately, naming the value",
+    () => {
+      // Before the fix this fell through to `resolver.resolve`'s interactive
+      // project picker under a live "Resolving branch..." spinner and, in a
+      // non-interactive environment, surfaced the generic "Cannot find
+      // project ref. Have you run supabase link?" instead of a link-grade
+      // error naming the value the user actually passed.
+      const { layer, api, telemetry, linkedProjectCache } = setup({
+        toml: 'project_id = "test"\n',
+        linked: false,
+      });
+      return Effect.gen(function* () {
+        const exit = yield* legacyConfigDiff({
+          ...noFlags,
+          projectRef: Option.some("somebranch"),
+        }).pipe(Effect.exit);
+        expect(Exit.isFailure(exit)).toBe(true);
+        const rendered = JSON.stringify(exit);
+        expect(rendered).toContain("LegacyConfigDiffBranchNotLinkedError");
+        expect(rendered).toContain('\\"somebranch\\"');
+        // Fails purely from local file/env state — no branches lookup, no
+        // project-picker prompt, no config-read call.
+        expect(api.requests).toHaveLength(0);
+        expect(telemetry.flushed).toBe(true);
+        expect(linkedProjectCache.cachedRef).toBeUndefined();
+      }).pipe(Effect.provide(layer));
+    },
+  );
+
+  it.live("a branch-NAME --project-ref with a corrupt linked ref reports it as invalid", () => {
+    const { layer, api } = setup({
+      toml: 'project_id = "test"\n',
+      projectId: Option.some("not-a-valid-ref"),
+    });
+    return Effect.gen(function* () {
+      const exit = yield* legacyConfigDiff({
+        ...noFlags,
+        projectRef: Option.some("somebranch"),
+      }).pipe(Effect.exit);
+      expect(Exit.isFailure(exit)).toBe(true);
+      const rendered = JSON.stringify(exit);
+      expect(rendered).toContain("LegacyConfigDiffParentRefInvalidError");
+      expect(rendered).toContain('\\"somebranch\\"');
+      expect(rendered).toContain("Relink the parent project");
+      expect(api.requests).toHaveLength(0);
+    }).pipe(Effect.provide(layer));
+  });
+
+  it.live("a resolved branch with no project ref yet fails with a not-ready error", () => {
+    const { layer, api } = setup({
+      toml: 'project_id = "test"\n',
+      branchByName: { status: 200, body: { ...BRANCH_BY_NAME, project_ref: "" } },
+    });
+    return Effect.gen(function* () {
+      const exit = yield* legacyConfigDiff({
+        ...noFlags,
+        projectRef: Option.some("staging"),
+      }).pipe(Effect.exit);
+      expect(Exit.isFailure(exit)).toBe(true);
+      const rendered = JSON.stringify(exit);
+      expect(rendered).toContain("LegacyConfigDiffBranchNotReadyError");
+      expect(rendered).toContain("has no project ref yet");
+      // The placeholder ref never reaches the config-read call.
+      expect(api.requests.some((request) => request.url.includes("/v2/projects/"))).toBe(false);
+    }).pipe(Effect.provide(layer));
+  });
+});
+
+describe("legacy config diff telemetry wiring", () => {
+  // Drives the exact `Command.withHandler` wiring (legacyConfigDiffHandler)
+  // rather than the bare handler: the safeFlags guard lives in the wiring,
+  // and nothing validates `--project-ref` before instrumentation fires.
+  const wiringLayer = (analytics: ReturnType<typeof mockContextualAnalytics>, projectRef: string) =>
+    Layer.mergeAll(
+      setup({ toml: 'project_id = "test"\n', analytics }).layer,
+      commandRuntimeLayer(["config", "diff"]),
+      Stdio.layerTest({
+        args: Effect.succeed(["config", "diff", "--project-ref", projectRef]),
+      }),
+    );
+
+  it.live("logs a ref-shaped --project-ref verbatim in cli_command_executed", () => {
+    const analytics = mockContextualAnalytics();
+    return Effect.gen(function* () {
+      yield* Effect.exit(
+        legacyConfigDiffHandler({ projectRef: Option.some(LEGACY_VALID_REF), exitCode: false }),
+      );
+      const event = analytics.captured.find((c) => c.event === "cli_command_executed");
+      expect(event?.properties["flags"]).toEqual({ "project-ref": LEGACY_VALID_REF });
+    }).pipe(Effect.provide(wiringLayer(analytics, LEGACY_VALID_REF)));
+  });
+
+  it.live("redacts a branch-name-shaped --project-ref", () => {
+    // `--project-ref` accepts branch names too (CLI-2167 vocabulary) — a
+    // user-created branch name must never reach PostHog verbatim.
+    const analytics = mockContextualAnalytics();
+    return Effect.gen(function* () {
+      yield* Effect.exit(
+        legacyConfigDiffHandler({ projectRef: Option.some("staging"), exitCode: false }),
+      );
+      const event = analytics.captured.find((c) => c.event === "cli_command_executed");
+      expect(event?.properties["flags"]).toEqual({ "project-ref": "<redacted>" });
+    }).pipe(Effect.provide(wiringLayer(analytics, "staging")));
   });
 });

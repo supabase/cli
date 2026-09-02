@@ -10,16 +10,22 @@ import { Effect, Option } from "effect";
 import { LegacyPlatformApi } from "../../../auth/legacy-platform-api.service.ts";
 import { LegacyCliSettings } from "../../../config/legacy-cli-settings.service.ts";
 import { LegacyProjectRefResolver } from "../../../config/legacy-project-ref.service.ts";
-import { legacyResolveParentScopedProjectRef } from "../../../shared/legacy-parent-project-ref.ts";
+import {
+  legacyParentNotLinkedMessage,
+  legacyParentRefInvalidMessage,
+  legacyResolveLinkedParentRef,
+  legacyResolveParentScopedProjectRef,
+} from "../../../shared/legacy-parent-project-ref.ts";
 import { LegacyLinkedProjectCache } from "../../../telemetry/legacy-linked-project-cache.service.ts";
 import { LegacyTelemetryState } from "../../../telemetry/legacy-telemetry-state.service.ts";
 import { LegacyOutputFlag } from "../../../../shared/legacy/global-flags.ts";
 import { Output } from "../../../../shared/output/output.service.ts";
 import { ProcessControl } from "../../../../shared/runtime/process-control.service.ts";
+import { legacyResolveBranchProjectRef } from "../../../shared/legacy-branch-ref.resolver.ts";
 import {
   LEGACY_BRANCH_PROJECT_REF_PATTERN,
-  legacyResolveBranchProjectRef,
-} from "../../../shared/legacy-branch-ref.resolver.ts";
+  LEGACY_BRANCH_UUID_PATTERN,
+} from "../../../shared/legacy-ref-patterns.ts";
 import {
   legacySanitizeInlineName,
   mapLegacyHttpError,
@@ -42,9 +48,12 @@ import {
 } from "../../../shared/legacy-go-output.encoders.ts";
 import {
   LegacyConfigDiffBranchNotFoundError,
+  LegacyConfigDiffBranchNotLinkedError,
+  LegacyConfigDiffBranchNotReadyError,
   LegacyConfigDiffBranchResolveNetworkError,
   LegacyConfigDiffBranchResolveStatusError,
   LegacyConfigDiffLoadConfigError,
+  LegacyConfigDiffParentRefInvalidError,
   LegacyConfigDiffReadNetworkError,
   LegacyConfigDiffReadStatusError,
 } from "./diff.errors.ts";
@@ -58,6 +67,25 @@ const mapBranchResolveError = mapLegacyHttpError({
   networkMessage: (cause) => `failed to resolve branch: ${cause}`,
   statusMessage: readStatusMessage,
 });
+
+/**
+ * Purpose-written messages for the config-read status codes a wrong or
+ * inaccessible ref most plausibly produces; every other status keeps the
+ * generic `unexpected status N: body` shape. TS-only surface (no Go
+ * counterpart for this endpoint).
+ */
+function configReadStatusMessage(status: number, body: string, ref: string): string {
+  if (status === 401) {
+    return "Authentication failed: your access token is invalid or has expired. Run `supabase login` to re-authenticate.";
+  }
+  if (status === 403) {
+    return `Access denied for project ${legacySanitizeInlineName(ref)}: your account does not have permission to view its configuration.`;
+  }
+  if (status === 404) {
+    return `Project ${legacySanitizeInlineName(ref)} not found. Check the project ref, or run \`supabase projects list\` to see the projects you have access to.`;
+  }
+  return readStatusMessage(status, body);
+}
 
 function isRecord(value: unknown): value is Readonly<Record<string, unknown>> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
@@ -84,11 +112,15 @@ export const legacyConfigDiff = Effect.fn("legacy.config.diff")(function* (
   // never the invoking directory's file against another root's project.
   const loadLocalConfig = (projectRef: string | undefined) =>
     loadCliConfig(cliSettings.workdir, { projectRef, goViperCompat: true }).pipe(
+      // `cause.path` names the file that actually failed to parse — `loadCliConfig`
+      // probes `supabase/config.json` before falling back to `supabase/config.toml`
+      // (`findCliProjectPaths`), so hardcoding the `.toml` name here would mislabel a
+      // broken `config.json`.
       Effect.catchTag(
         "CliConfigParseError",
         (cause) =>
           new LegacyConfigDiffLoadConfigError({
-            message: `failed to parse supabase/config.toml: ${String(cause.cause)}`,
+            message: `failed to parse ${cause.path}: ${String(cause.cause)}`,
           }),
       ),
       Effect.catchTag(
@@ -100,7 +132,7 @@ export const legacyConfigDiff = Effect.fn("legacy.config.diff")(function* (
           ? Effect.fail(
               new LegacyConfigDiffLoadConfigError({
                 message:
-                  "failed to read supabase/config.toml: file not found. Run `supabase init` to create one.",
+                  "failed to read supabase/config.toml or supabase/config.json: file not found. Run `supabase init` to create one.",
               }),
             )
           : Effect.succeed(loaded),
@@ -125,28 +157,50 @@ export const legacyConfigDiff = Effect.fn("legacy.config.diff")(function* (
     // 2. Resolve the comparison target. `--project-ref` accepts a project
     // ref, or the name (or UUID) of a branch of the linked project —
     // `link`'s settled vocabulary (CLI-2167). A ref-shaped value (exactly 20
-    // lowercase letters) is always treated as a project ref; a UUID resolves
-    // through `GET /v1/branches/{id}` directly, so it works in an unlinked
-    // directory (the parent ref is passed lazily and only evaluated for a
-    // branch-NAME lookup). The parent comes from the PARENT-SCOPED resolver:
-    // after `link <branch>`, `.temp/project-ref` holds the branch's own ref,
-    // which the parent-scoped branches endpoint rejects — same rule as the
-    // `branches` command family.
+    // lowercase letters) is always treated as a project ref.
+    //
+    // A UUID target resolves through `GET /v1/branches/{id}` directly, which
+    // needs no parent ref at all, so it keeps the fully lazy parent
+    // resolution below — the parent-scoped resolver is never evaluated for
+    // it, which is exactly what lets it work in an unlinked directory.
+    //
+    // A NAME target, by contrast, needs the parent project ref to search
+    // under, so it is resolved eagerly, BEFORE any spinner starts —
+    // mirroring `link` (link.handler.ts:198-213): an unlinked directory (or
+    // a corrupt/stale linked ref) must fail immediately with a link-grade
+    // error naming the value the user passed, rather than falling through to
+    // `resolver.resolve`'s interactive project picker rendering under a live
+    // "Resolving branch..." spinner.
     let ref: string;
     let branch: string | undefined;
     if (Option.isSome(requested) && !LEGACY_BRANCH_PROJECT_REF_PATTERN.test(requested.value)) {
       const target = requested.value;
       branch = target;
+
+      let parentRef: ReturnType<typeof legacyResolveParentScopedProjectRef>;
+      if (LEGACY_BRANCH_UUID_PATTERN.test(target)) {
+        parentRef = legacyResolveParentScopedProjectRef(Option.none());
+      } else {
+        const parent = yield* legacyResolveLinkedParentRef();
+        if (parent.kind === "absent") {
+          return yield* new LegacyConfigDiffBranchNotLinkedError({
+            message: legacyParentNotLinkedMessage(target),
+          });
+        }
+        if (parent.kind === "invalid") {
+          return yield* new LegacyConfigDiffParentRefInvalidError({
+            message: legacyParentRefInvalidMessage(target),
+          });
+        }
+        parentRef = Effect.succeed(parent.ref);
+      }
+
       const resolving =
         output.format === "text" ? yield* output.task("Resolving branch...") : undefined;
-      ref = yield* legacyResolveBranchProjectRef(
-        target,
-        legacyResolveParentScopedProjectRef(Option.none()),
-        {
-          mapGetError: mapBranchResolveError,
-          mapFindError: mapBranchResolveError,
-        },
-      ).pipe(
+      ref = yield* legacyResolveBranchProjectRef(target, parentRef, {
+        mapGetError: mapBranchResolveError,
+        mapFindError: mapBranchResolveError,
+      }).pipe(
         Effect.tapError(() => resolving?.fail() ?? Effect.void),
         Effect.catchTag(
           "LegacyConfigDiffBranchResolveStatusError",
@@ -166,6 +220,15 @@ export const legacyConfigDiff = Effect.fn("legacy.config.diff")(function* (
         ),
       );
       yield* resolving?.clear() ?? Effect.void;
+
+      // The resolved branch might not have a project ref yet (still
+      // provisioning) — never let an empty/placeholder ref reach
+      // `/v2/projects//config` (mirrors link.handler.ts:248-256's guard).
+      if (!LEGACY_BRANCH_PROJECT_REF_PATTERN.test(ref)) {
+        return yield* new LegacyConfigDiffBranchNotReadyError({
+          message: `Branch "${legacySanitizeInlineName(target)}" has no project ref yet. Wait for it to finish provisioning, then retry.`,
+        });
+      }
     } else {
       ref = yield* resolver.resolve(requested);
     }
@@ -220,7 +283,7 @@ export const legacyConfigDiff = Effect.fn("legacy.config.diff")(function* (
       return yield* new LegacyConfigDiffReadStatusError({
         status: response.status,
         body,
-        message: readStatusMessage(response.status, body),
+        message: configReadStatusMessage(response.status, body, ref),
       });
     }
     const responseJson = yield* response.json.pipe(
@@ -272,14 +335,17 @@ export const legacyConfigDiff = Effect.fn("legacy.config.diff")(function* (
     yield* output.raw(legacyConfigDiffScopeLine(scope), "stderr");
 
     // 7. Emit. Both output mechanisms are honored, `--output` first (Legacy
-    // Shell Invariant #6): the machine formats encode the same structured
-    // payload the `--output-format json` envelope carries; `pretty` (and
-    // unset) falls through to `--output-format` handling. stdout stays
-    // payload-pure in every machine mode — diagnostics above went to stderr,
-    // and root.ts swaps in the quiet-progress layer for `-o` machine formats
-    // (CLI-1546).
+    // Shell Invariant #6): only the machine-encoded formats (`json|yaml|toml|env`)
+    // take this branch; `pretty`, `table`, `csv`, and unset all fall through to
+    // `--output-format` handling exactly like `pretty` (the `-o table|csv`
+    // values only mean something to `db query`, per the shared `--output`
+    // global's contract comment) — never the trailing `env`-encode default,
+    // which would otherwise corrupt `-o table`/`-o csv` under a live spinner
+    // (root.ts's quiet-progress swap only applies to genuine machine
+    // formats). stdout stays payload-pure in every machine mode — diagnostics
+    // above went to stderr.
     const goFmt = Option.getOrUndefined(goOutputFlag);
-    if (goFmt !== undefined && goFmt !== "pretty") {
+    if (goFmt === "json" || goFmt === "yaml" || goFmt === "toml" || goFmt === "env") {
       const payload = legacyConfigDiffPayload(changeSet, scope, context);
       if (goFmt === "json") {
         yield* output.raw(encodeGoJson(payload));
@@ -292,11 +358,11 @@ export const legacyConfigDiff = Effect.fn("legacy.config.diff")(function* (
       }
     } else if (output.format !== "text") {
       yield* output.success(
-        legacyConfigDiffSummaryMessage(changeSet),
+        legacyConfigDiffSummaryMessage(changeSet, scope),
         legacyConfigDiffPayload(changeSet, scope, context),
       );
     } else {
-      yield* output.raw(legacyRenderConfigDiffText(changeSet));
+      yield* output.raw(legacyRenderConfigDiffText(changeSet, scope));
     }
 
     // 8. `--exit-code`: differences flip the exit status to 2 after the
@@ -304,8 +370,14 @@ export const legacyConfigDiff = Effect.fn("legacy.config.diff")(function* (
     // Drift gets its OWN code — every failure exits 1, and a script's
     // `config diff --exit-code || alert` must not fire on an expired token
     // (`terraform plan -detailed-exitcode`'s 0/1/2 convention, with 1 kept
-    // for errors to match the rest of the CLI).
+    // for errors to match the rest of the CLI). In TEXT mode only, a stderr
+    // reason line precedes the exit so a CI log doesn't show only "exit code
+    // 2" with no explanation (db lint's fail-on reason line is the same
+    // idea); machine modes stay byte-identical.
     if (flags.exitCode && changeSet.counts.total > 0) {
+      if (output.format === "text") {
+        yield* output.raw("Exiting 2: configuration differences found (--exit-code).\n", "stderr");
+      }
       yield* processControl.setExitCode(2);
     }
   }).pipe(

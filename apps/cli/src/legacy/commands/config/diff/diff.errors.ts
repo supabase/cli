@@ -35,6 +35,47 @@ export class LegacyConfigDiffBranchNotFoundError extends Data.TaggedError(
   }
 }
 
+/**
+ * `--project-ref` named a branch (by name), but no project is linked to
+ * search for branches under — none of `SUPABASE_PROJECT_ID`,
+ * `supabase/.temp/linked-project.json`, or `supabase/.temp/project-ref`
+ * yielded a candidate. Mirrors `LegacyLinkBranchNotLinkedError`'s
+ * classification (link.errors.ts).
+ */
+export class LegacyConfigDiffBranchNotLinkedError extends Data.TaggedError(
+  "LegacyConfigDiffBranchNotLinkedError",
+)<{ readonly message: string }> {
+  get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
+    return actionability.projectNotLinked;
+  }
+}
+
+/**
+ * `--project-ref` named a branch (by name), and a parent-project candidate
+ * exists but is not ref-shaped — corrupt or stale linked state. Mirrors
+ * `LegacyLinkParentRefInvalidError`'s classification (link.errors.ts).
+ */
+export class LegacyConfigDiffParentRefInvalidError extends Data.TaggedError(
+  "LegacyConfigDiffParentRefInvalidError",
+)<{ readonly message: string }> {
+  get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
+    return actionability.relinkProject;
+  }
+}
+
+/**
+ * The resolved branch has no project ref yet (still provisioning) — guards
+ * against an empty/placeholder ref reaching `/v2/projects//config`. Mirrors
+ * `LegacyLinkBranchNotReadyError`'s classification (link.errors.ts).
+ */
+export class LegacyConfigDiffBranchNotReadyError extends Data.TaggedError(
+  "LegacyConfigDiffBranchNotReadyError",
+)<{ readonly message: string }> {
+  get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
+    return { ...actionability.apiStatus, fingerprint_suffix: "branch_not_ready" };
+  }
+}
+
 export class LegacyConfigDiffBranchResolveNetworkError extends Data.TaggedError(
   "LegacyConfigDiffBranchResolveNetworkError",
 )<NetworkErrorArgs> {

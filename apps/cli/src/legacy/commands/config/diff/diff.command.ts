@@ -31,6 +31,24 @@ const config = {
 
 export type LegacyConfigDiffFlags = CliCommand.Command.Config.Infer<typeof config>;
 
+// Exported so integration tests can drive the exact wiring
+// `Command.withHandler` uses below (same precedent as `legacyConfigPushHandler`).
+export const legacyConfigDiffHandler = (flags: LegacyConfigDiffFlags) =>
+  legacyConfigDiff(flags).pipe(
+    // `--project-ref` accepts branch names here (CLI-2167 vocabulary), so
+    // its value is only safe to log verbatim when it is actually ref-shaped
+    // — a user-created branch name must never reach PostHog. Same guard as
+    // `link`.
+    withLegacyCommandInstrumentation({
+      flags,
+      safeFlags:
+        Option.isSome(flags.projectRef) && PROJECT_REF_PATTERN.test(flags.projectRef.value)
+          ? ["project-ref"]
+          : [],
+    }),
+    withJsonErrorHandling,
+  );
+
 export const legacyConfigDiffCommand = Command.make("diff", config).pipe(
   Command.withDescription(
     "Shows configuration differences between supabase/config.toml and a remote project or branch. Read-only: never modifies local or remote configuration.",
@@ -46,21 +64,6 @@ export const legacyConfigDiffCommand = Command.make("diff", config).pipe(
       description: "Diff against the 'staging' branch, exiting 2 on drift",
     },
   ]),
-  Command.withHandler((flags) =>
-    legacyConfigDiff(flags).pipe(
-      // `--project-ref` accepts branch names here (CLI-2167 vocabulary), so
-      // its value is only safe to log verbatim when it is actually ref-shaped
-      // — a user-created branch name must never reach PostHog. Same guard as
-      // `link`.
-      withLegacyCommandInstrumentation({
-        flags,
-        safeFlags:
-          Option.isSome(flags.projectRef) && PROJECT_REF_PATTERN.test(flags.projectRef.value)
-            ? ["project-ref"]
-            : [],
-      }),
-      withJsonErrorHandling,
-    ),
-  ),
+  Command.withHandler(legacyConfigDiffHandler),
   Command.provide(legacyManagementApiRuntimeLayer(["config", "diff"])),
 );

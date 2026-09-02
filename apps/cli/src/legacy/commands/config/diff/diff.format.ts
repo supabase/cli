@@ -145,18 +145,40 @@ function unmanagedCaveat(unmanaged: ReadonlyArray<ReadonlyArray<string>>): strin
 }
 
 /**
- * One-line summary including the masked/unmanaged caveats — the text-mode
- * count line's caveats also travel with the machine-mode `message`, so an
- * agent echoing `.message` never reports "in sync" on a project whose
- * masked SMTP password (or unpushable declared value) may have drifted.
+ * Block names come from `REMOTE_CONFIG_BLOCKS` (the schema-derived list), not
+ * from the response body, so — unlike the masked/unmanaged path lists — there
+ * is no sanitization concern here; still styled the same way as those two
+ * caveats for consistency.
  */
-export function legacyConfigDiffSummaryMessage(changeSet: ConfigChangeSet): string {
+function notReturnedCaveat(missing: ReadonlyArray<string>): string {
+  const phrase =
+    missing.length === 1
+      ? "1 block was not returned by the API and was not compared"
+      : `${missing.length} blocks were not returned by the API and were not compared`;
+  return `${phrase}: ${missing.join(", ")}`;
+}
+
+/**
+ * One-line summary including the not-returned/masked/unmanaged caveats — the
+ * text-mode count line's caveats also travel with the machine-mode
+ * `message`, so an agent echoing `.message` never reports "in sync" on a
+ * partial response (e.g. a scoped token returning `auth: {}`) or a project
+ * whose masked SMTP password (or unpushable declared value) may have
+ * drifted.
+ */
+export function legacyConfigDiffSummaryMessage(
+  changeSet: ConfigChangeSet,
+  scope: LegacyConfigDiffScope,
+): string {
   const total = changeSet.counts.total;
   const base =
     total === 0
       ? "No config differences found."
       : `${plural(total, "config difference", "config differences")} found.`;
   const parts = [base];
+  if (scope.missing.length > 0) {
+    parts.push(`${notReturnedCaveat(scope.missing)}.`);
+  }
   if (changeSet.masked.length > 0) {
     parts.push(`${maskedCaveat(changeSet.masked)}.`);
   }
@@ -179,7 +201,10 @@ function renderLocal(change: ConfigChange): string {
 }
 
 /** Human-readable diff body for text mode (stdout). */
-export function legacyRenderConfigDiffText(changeSet: ConfigChangeSet): string {
+export function legacyRenderConfigDiffText(
+  changeSet: ConfigChangeSet,
+  scope: LegacyConfigDiffScope,
+): string {
   const lines: Array<string> = [];
   for (const change of changeSet.changes) {
     lines.push(`${renderPath(change.path)} [${CLASS_LABELS[change.class]}]`);
@@ -199,6 +224,9 @@ export function legacyRenderConfigDiffText(changeSet: ConfigChangeSet): string {
     lines.push(
       `${plural(total, "difference", "differences")} found (${update} update, ${remote_only} remote-only, ${local_only} local-only).`,
     );
+  }
+  if (scope.missing.length > 0) {
+    lines.push(`Note: ${notReturnedCaveat(scope.missing)}`);
   }
   if (changeSet.masked.length > 0) {
     lines.push(`Note: ${maskedCaveat(changeSet.masked)}`);
