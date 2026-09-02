@@ -714,4 +714,87 @@ describe("legacyRenderConfigPullText", () => {
       "supabase/config.json has uncommitted or untracked changes. Commit or stash them (-u for untracked), or rerun with --force.",
     );
   });
+
+  test("a would_invalidate-skipped change renders the humanized reason inline", () => {
+    const change: ConfigChange = {
+      path: ["auth", "sms", "twilio", "enabled"],
+      class: "update",
+      local: false,
+      remote: true,
+      declared: true,
+    };
+    const changeSet: ConfigChangeSet = {
+      changes: [change],
+      masked: [],
+      unmanaged: [],
+      counts: { update: 1, remote_only: 0, local_only: 0, total: 1 },
+    };
+    const plan: LegacyConfigPullPlan = {
+      writes: [],
+      skipped: [{ change, reason: "would_invalidate" }],
+      warnings: [],
+      createdTable: undefined,
+    };
+    const text = legacyRenderConfigPullText(
+      changeSet,
+      { present: [], missing: [] },
+      plan,
+      PROJECT_REF,
+      "supabase/config.toml",
+    );
+    expect(text).toContain(
+      "auth.sms.twilio.enabled [update, skip: requires values pull cannot write]",
+    );
+  });
+
+  test("a would_invalidate warning names the missing field(s), with no env var mention when none applies", () => {
+    const plan: LegacyConfigPullPlan = {
+      ...emptyPlan(),
+      warnings: [
+        {
+          kind: "would_invalidate",
+          path: ["auth", "sms", "twilio"],
+          missingFields: [{ path: ["auth", "sms", "twilio", "message_service_sid"] }],
+        },
+      ],
+    };
+    const text = legacyRenderConfigPullText(
+      emptyChangeSet(),
+      { present: [], missing: [] },
+      plan,
+      PROJECT_REF,
+      "supabase/config.toml",
+    );
+    expect(text).toContain(
+      "auth.sms.twilio was not changed: it requires auth.sms.twilio.message_service_sid — configure it manually.",
+    );
+  });
+
+  test("a would_invalidate warning names the exact env var to set when a missing field is env()-sourced", () => {
+    const plan: LegacyConfigPullPlan = {
+      ...emptyPlan(),
+      warnings: [
+        {
+          kind: "would_invalidate",
+          path: ["auth", "sms", "twilio"],
+          missingFields: [
+            {
+              path: ["auth", "sms", "twilio", "auth_token"],
+              envVariable: "SUPABASE_AUTH_SMS_TWILIO_AUTH_TOKEN",
+            },
+          ],
+        },
+      ],
+    };
+    const text = legacyRenderConfigPullText(
+      emptyChangeSet(),
+      { present: [], missing: [] },
+      plan,
+      PROJECT_REF,
+      "supabase/config.toml",
+    );
+    expect(text).toContain(
+      "auth.sms.twilio was not changed: it requires auth.sms.twilio.auth_token — set SUPABASE_AUTH_SMS_TWILIO_AUTH_TOKEN and rerun, or configure it manually.",
+    );
+  });
 });

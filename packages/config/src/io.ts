@@ -517,6 +517,66 @@ function parseCliConfig(
   });
 }
 
+export interface DecodeCliConfigDocumentForValidationOptions {
+  /**
+   * The env map to resolve `env(VAR)` references against — ordinarily the
+   * current process's own `process.env` (filtered to defined string values),
+   * matching what a same-process, same-invocation follow-up `loadCliConfig`
+   * call would see. Unlike {@link loadCliConfigFile}, this does NOT search
+   * `.env`/`.env.local` itself (no `FileSystem` dependency, no re-read of
+   * files this package already read once for the caller's own original
+   * load) — a variable that resolves ONLY through a dotenv file, not the
+   * ambient process environment, is treated the same as unset here. That is
+   * a deliberate, conservative trade: the worst this can do is decide a
+   * write is unsafe when the real next load would in fact succeed (a
+   * missed opportunity, never a false "safe"), never the reverse.
+   */
+  readonly env: Readonly<Record<string, string>>;
+  readonly goViperCompat: boolean;
+  /** Attached to a decode failure's `CliConfigParseError.path`/`.format` —
+   * purely descriptive (this function never reads or writes `path`). */
+  readonly path: string;
+  readonly format: ConfigFormat;
+}
+
+/**
+ * Decodes `document` — a full, raw `CliConfig` document shape (`remotes`
+ * intact), the same shape {@link loadCliConfigFile} parses off disk — through
+ * exactly the env-interpolation + schema-decode pipeline that function runs,
+ * without touching the filesystem: no raw TOML/JSON parse (the caller already
+ * holds a parsed/assembled document), no `.env`/`.env.local` search (see
+ * {@link DecodeCliConfigDocumentForValidationOptions.env}), and no
+ * `[remotes.*]` override merge (the caller decides what `document` contains;
+ * `remotes` reaches {@link parseCliConfig} exactly as given, so a selected
+ * override must already be reflected there if the caller wants it validated
+ * as merged).
+ *
+ * Written for `config pull` (CLI-2064): before writing, it projects its own
+ * planned edits onto the base document and decodes the result here to
+ * confirm the file it is about to write still loads — a written file
+ * `loadCliConfig` cannot parse would brick every subsequent command until
+ * hand-edited. No new decode logic: this composes the same private
+ * `interpolateEnvReferencesAgainstSchema` → `normalizeDeprecatedExternalProviders`
+ * → `parseCliConfig` steps {@link loadCliConfigFile} itself runs, minus the
+ * two filesystem-dependent ones (raw parse, `.env` search) that don't apply
+ * to an already-in-memory document.
+ */
+export const decodeCliConfigDocumentForValidation = Effect.fnUntraced(function* (
+  document: Record<string, unknown>,
+  options: DecodeCliConfigDocumentForValidationOptions,
+) {
+  const interpolated = interpolateEnvReferencesAgainstSchema(
+    document,
+    options.env,
+    CliConfigSchema,
+    {
+      goViperCompat: options.goViperCompat,
+    },
+  );
+  const { document: normalizedForDecode } = normalizeDeprecatedExternalProviders(interpolated);
+  return yield* parseCliConfig(normalizedForDecode, options.format, options.path, undefined);
+});
+
 export const configJsonPath = Effect.fnUntraced(function* (cwd: string) {
   const path = yield* Path.Path;
   const project = yield* findCliProjectPaths(cwd);

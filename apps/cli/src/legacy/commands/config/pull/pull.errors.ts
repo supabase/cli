@@ -234,3 +234,23 @@ export class LegacyConfigPullPlanDefectError extends Data.TaggedError(
     return actionability.impossibleState;
   }
 }
+
+/**
+ * `pull.handler.ts`'s post-plan schema-validation gate (CLI-2064's live-bug
+ * fix) still finds the projected document unloadable after dropping every
+ * family it could identify as the cause (`legacyDropConfigPullUnvalidatableFamilies`,
+ * up to its own round cap) — never a user-facing condition: dropping a
+ * family's writes restores that part of the document to its PRE-pull state,
+ * which loaded successfully at the start of this very command, so reaching
+ * this error means either the drop heuristic failed to identify the right
+ * family or something else is structurally broken. Raised BEFORE any file
+ * write, so nothing was written when this fires. The constructed message must
+ * say so and ask the user to report the bug.
+ */
+export class LegacyConfigPullValidationFailedError extends Data.TaggedError(
+  "LegacyConfigPullValidationFailedError",
+)<{ readonly message: string }> {
+  get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
+    return actionability.impossibleState;
+  }
+}

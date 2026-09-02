@@ -36,7 +36,7 @@ import {
   LegacyYesFlag,
 } from "../../../../shared/legacy/global-flags.ts";
 import { Output } from "../../../../shared/output/output.service.ts";
-import { legacyConfigPull } from "./pull.handler.ts";
+import { legacyConfigPull, legacyOpenConfigPullSource } from "./pull.handler.ts";
 import type { LegacyConfigPullFlags } from "./pull.command.ts";
 
 /**
@@ -83,6 +83,31 @@ function writeProjectEnv(dotenv: string): void {
   const dir = join(tempRoot.current, "supabase");
   mkdirSync(dir, { recursive: true });
   writeFileSync(join(dir, ".env"), dotenv);
+}
+
+/** Save/restore a `process.env` var around an Effect — mirrors
+ * `push.integration.test.ts`'s `withDotenvPrivateKey` pattern. Set directly
+ * on `process.env` (not `supabase/.env`) so BOTH the initial load (which
+ * merges `.env` over `process.env`) and `pull.handler.ts`'s
+ * schema-validation gate (which reads bare `process.env` only, per
+ * `decodeCliConfigDocumentForValidation`'s own doc comment) see the same
+ * value. */
+function withProcessEnv<A, E, R>(
+  name: string,
+  value: string | undefined,
+  effect: Effect.Effect<A, E, R>,
+): Effect.Effect<A, E, R> {
+  const prev = process.env[name];
+  if (value === undefined) delete process.env[name];
+  else process.env[name] = value;
+  return effect.pipe(
+    Effect.ensuring(
+      Effect.sync(() => {
+        if (prev === undefined) delete process.env[name];
+        else process.env[name] = prev;
+      }),
+    ),
+  );
 }
 
 /** Schema-valid v2 project-config body whose managed values all sit at the
@@ -2012,4 +2037,257 @@ describe("legacy config pull integration", () => {
       expect(data["warnings"]).toEqual([{ kind: "dual_scope", path: ["auth", "site_url"] }]);
     }).pipe(Effect.provide(layer));
   });
+
+  // -------------------------------------------------------------------------
+  // Fixpoint expansion + schema-validation gate (CLI-2064's live-dogfooding
+  // bug: pulling a value that GATES declared-but-unpushable siblings used to
+  // write only the gate, leaving its now-required siblings stale and
+  // bricking the next config load — ADR 0023 "written file always
+  // re-loads").
+  // -------------------------------------------------------------------------
+
+  const TWILIO_AUTH_TOKEN_VAR = "SUPABASE_AUTH_SMS_TWILIO_AUTH_TOKEN";
+  const TWILIO_BEFORE =
+    'project_id = "test"\n' +
+    "[auth.sms.twilio]\n" +
+    "enabled = false\n" +
+    'account_sid = ""\n' +
+    'message_service_sid = ""\n' +
+    `auth_token = "env(${TWILIO_AUTH_TOKEN_VAR})"\n`;
+
+  function twilioV2(opts: { readonly withMessageServiceSid: boolean }) {
+    return {
+      status: 200,
+      body: v2Response({
+        attributes: (attributes) => ({
+          ...attributes,
+          auth: {
+            ...(attributes["auth"] as Record<string, unknown>),
+            sms_provider: "twilio",
+            sms_twilio_account_sid: "ACreal0000000000000000000000000",
+            ...(opts.withMessageServiceSid
+              ? { sms_twilio_message_service_sid: "MGreal0000000000000000000000000" }
+              : {}),
+          },
+        }),
+      }),
+    };
+  }
+
+  it.live(
+    "twilio scenario A: the fixpoint absorbs a disabled SMS provider's credentials once its own `enabled` toggle is written, and the written file reloads (CLI-2064 live-bug repro)",
+    () => {
+      const { layer, out } = setup({
+        toml: TWILIO_BEFORE,
+        yes: true,
+        v2: twilioV2({ withMessageServiceSid: true }),
+      });
+      return withProcessEnv(
+        TWILIO_AUTH_TOKEN_VAR,
+        "a-real-secret-value",
+        Effect.gen(function* () {
+          yield* legacyConfigPull(noFlags);
+          const after = readFileSync(configPath(), "utf8");
+          expect(after).toContain("enabled = true");
+          expect(after).toContain('account_sid = "ACreal0000000000000000000000000"');
+          expect(after).toContain('message_service_sid = "MGreal0000000000000000000000000"');
+          // `auth_token` is masked (secret) AND env-sourced — pull never
+          // touches it, written or not.
+          expect(after).toContain(`auth_token = "env(${TWILIO_AUTH_TOKEN_VAR})"`);
+          expect(out.stdoutText).not.toContain("would_invalidate");
+          expect(out.stdoutText).not.toContain("requires values pull cannot write");
+          expect(out.stdoutText).toContain("3 changes written.");
+
+          // The written file reloads cleanly (this is the actual CLI-2064 bug:
+          // before this fix, writing only `enabled` bricked the next load with
+          // "Missing required field in config: auth.sms.twilio.account_sid").
+          // A second `config pull` run against the SAME remote converges to
+          // nothing left to write for this family.
+          const second = setup({
+            toml: after,
+            yes: true,
+            v2: twilioV2({ withMessageServiceSid: true }),
+          });
+          yield* legacyConfigPull(noFlags).pipe(Effect.provide(second.layer));
+          expect(second.out.stdoutText).toContain("No config differences found.");
+          expect(readFileSync(configPath(), "utf8")).toBe(after);
+        }),
+      ).pipe(Effect.provide(layer));
+    },
+  );
+
+  it.live(
+    "twilio scenario B: the schema-validation gate drops the whole family when a sibling stays unwritable (remote silent on message_service_sid), and the written file still reloads",
+    () => {
+      const { layer, out } = setup({
+        toml: TWILIO_BEFORE,
+        yes: true,
+        v2: {
+          status: 200,
+          body: v2Response({
+            attributes: (attributes) => ({
+              ...attributes,
+              // An unrelated change so this run has something ELSE to write
+              // and confirm — proving the drop is scoped to the twilio
+              // family, not the whole run.
+              api: { ...(attributes["api"] as Record<string, unknown>), max_rows: 250 },
+              auth: {
+                ...(attributes["auth"] as Record<string, unknown>),
+                sms_provider: "twilio",
+                sms_twilio_account_sid: "ACreal0000000000000000000000000",
+                // `sms_twilio_message_service_sid` is deliberately absent —
+                // the remote never reports it, so it can never be written;
+                // `message_service_sid` stays `""` after the fixpoint
+                // absorbs `account_sid`, and the projected file would fail
+                // to decode ("Missing required field in config:
+                // auth.sms.twilio.message_service_sid") once `enabled` is
+                // written.
+              },
+            }),
+          }),
+        },
+      });
+      return Effect.gen(function* () {
+        yield* legacyConfigPull(noFlags);
+        const after = readFileSync(configPath(), "utf8");
+        // The unrelated change still wrote.
+        expect(after).toContain("max_rows = 250");
+        // The whole twilio family (including `account_sid`, which the
+        // fixpoint DID classify as writable) was dropped, not just the
+        // sibling that made the family unwritable.
+        expect(after).toContain("enabled = false");
+        expect(after).not.toContain("ACreal0000000000000000000000000");
+        expect(out.stdoutText).toContain(
+          "auth.sms.twilio.enabled [update, skip: requires values pull cannot write]",
+        );
+        expect(out.stdoutText).toContain(
+          "auth.sms.twilio.account_sid [update, skip: requires values pull cannot write]",
+        );
+        expect(out.stdoutText).toContain("auth.sms.twilio was not changed: it requires");
+        expect(out.stdoutText).toContain("auth.sms.twilio.message_service_sid");
+
+        // The written file reloads cleanly — it was never actually touched
+        // for the twilio family, and the rest of the file is still valid.
+        // (`legacyOpenConfigPullSource` re-reads and re-decodes the SAME
+        // config path this run just wrote; a failing decode would fail
+        // this `yield*`, failing the test.)
+        const configText = readFileSync(configPath(), "utf8");
+        const reloaded = yield* legacyOpenConfigPullSource();
+        expect(reloaded.loaded.config.auth.sms.twilio.enabled).toBe(false);
+
+        // A second run reports the SAME drift + the SAME skip (converged for
+        // the writable subset — the unrelated change has nothing left to
+        // write, the twilio family is drifting exactly as before).
+        const second = setup({
+          toml: configText,
+          yes: true,
+          v2: {
+            status: 200,
+            body: v2Response({
+              attributes: (attributes) => ({
+                ...attributes,
+                api: { ...(attributes["api"] as Record<string, unknown>), max_rows: 250 },
+                auth: {
+                  ...(attributes["auth"] as Record<string, unknown>),
+                  sms_provider: "twilio",
+                  sms_twilio_account_sid: "ACreal0000000000000000000000000",
+                },
+              }),
+            }),
+          },
+        });
+        yield* legacyConfigPull(noFlags).pipe(Effect.provide(second.layer));
+        expect(second.out.stdoutText).toContain(
+          "auth.sms.twilio.enabled [update, skip: requires values pull cannot write]",
+        );
+        expect(readFileSync(configPath(), "utf8")).toBe(configText);
+      }).pipe(Effect.provide(layer));
+    },
+  );
+
+  it.live(
+    "twilio scenario B's would_invalidate skip/note reach the machine payload (skipped_reason + warnings.missing_fields)",
+    () => {
+      const { layer, out } = setup({
+        toml: TWILIO_BEFORE,
+        format: "json",
+        yes: true,
+        v2: {
+          status: 200,
+          body: v2Response({
+            attributes: (attributes) => ({
+              ...attributes,
+              auth: {
+                ...(attributes["auth"] as Record<string, unknown>),
+                sms_provider: "twilio",
+                sms_twilio_account_sid: "ACreal0000000000000000000000000",
+              },
+            }),
+          }),
+        },
+      });
+      return Effect.gen(function* () {
+        yield* legacyConfigPull(noFlags);
+        const success = out.messages.find((message) => message.type === "success");
+        const data = success?.data as Record<string, unknown>;
+        const changes = data["changes"] as ReadonlyArray<Record<string, unknown>>;
+        const enabledChange = changes.find(
+          (change) =>
+            (change["path"] as ReadonlyArray<string>).join(".") === "auth.sms.twilio.enabled",
+        );
+        expect(enabledChange?.["written"]).toBe(false);
+        expect(enabledChange?.["skipped_reason"]).toBe("would_invalidate");
+        const warnings = data["warnings"] as ReadonlyArray<Record<string, unknown>>;
+        const warning = warnings.find((entry) => entry["kind"] === "would_invalidate");
+        expect(warning?.["path"]).toEqual(["auth", "sms", "twilio"]);
+        expect(warning?.["missing_fields"]).toEqual([
+          { path: ["auth", "sms", "twilio", "message_service_sid"] },
+        ]);
+      }).pipe(Effect.provide(layer));
+    },
+  );
+
+  it.live(
+    "fixpoint-only case: a gated non-secret sibling absorbed in round 2 lands in the SAME body/payload with warnings applied (auth.captcha, dual_scope)",
+    () => {
+      const before =
+        'project_id = "test"\n[auth.captcha]\nenabled = false\nprovider = "hcaptcha"\n';
+      const { layer, out } = setup({
+        toml: before,
+        format: "json",
+        yes: true,
+        v2: {
+          status: 200,
+          body: v2Response({
+            attributes: (attributes) => ({
+              ...attributes,
+              auth: {
+                ...(attributes["auth"] as Record<string, unknown>),
+                security_captcha_enabled: true,
+                security_captcha_provider: "turnstile",
+              },
+            }),
+          }),
+        },
+      });
+      return Effect.gen(function* () {
+        yield* legacyConfigPull(noFlags);
+        const after = readFileSync(configPath(), "utf8");
+        expect(after).toContain("enabled = true");
+        expect(after).toContain('provider = "turnstile"');
+
+        const success = out.messages.find((message) => message.type === "success");
+        const data = success?.data as Record<string, unknown>;
+        const changes = data["changes"] as ReadonlyArray<Record<string, unknown>>;
+        const providerChange = changes.find(
+          (change) =>
+            (change["path"] as ReadonlyArray<string>).join(".") === "auth.captcha.provider",
+        );
+        expect(providerChange?.["written"]).toBe(true);
+        expect(data["warnings"]).toEqual(
+          expect.arrayContaining([{ kind: "dual_scope", path: ["auth", "captcha", "provider"] }]),
+        );
+      }).pipe(Effect.provide(layer));
+    },
+  );
 });

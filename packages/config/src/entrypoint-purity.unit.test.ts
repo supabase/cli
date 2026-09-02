@@ -514,6 +514,7 @@ describe("src/internal.ts export surface", () => {
         "CliConfigWriteError",
         "ENV_CAPTURE_REGEX",
         "applyConfigEdits",
+        "decodeCliConfigDocumentForValidation",
         "diffProjectConfig",
         "dualScopeProjectConfigPaths",
         "loadCliConfig",

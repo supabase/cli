@@ -166,6 +166,19 @@ function warningMessage(warning: LegacyConfigPullWarning, configPath: string): s
       return `${configPath} has uncommitted or untracked changes. Commit or stash them (-u for untracked), or rerun with --force.`;
     case "unpushable":
       return `${path} was written here, but \`config push\` cannot send it back to the platform — it will keep showing as out of sync.`;
+    case "would_invalidate": {
+      const fields = warning.missingFields ?? [];
+      const fieldNames = fields.map((field) => legacyConfigRenderPath(field.path));
+      const envVariables = fields
+        .map((field) => field.envVariable)
+        .filter((name): name is string => name !== undefined)
+        .map((name) => legacySanitizeInlineName(name));
+      const remedy =
+        envVariables.length > 0
+          ? `set ${envVariables.join(", ")} and rerun, or configure it manually`
+          : "configure it manually";
+      return `${path} was not changed: it requires ${fieldNames.join(", ")} — ${remedy}.`;
+    }
   }
 }
 
@@ -185,6 +198,8 @@ function humanizeSkipReason(reason: LegacyConfigPullSkipReason): string {
       // directly (see `changeMarker` below), since the reason would only
       // restate the change's own class.
       return "local only";
+    case "would_invalidate":
+      return "requires values pull cannot write";
   }
 }
 
@@ -419,6 +434,14 @@ export function legacyConfigPullPayload(
     warnings: plan.warnings.map((warning) => ({
       kind: warning.kind,
       ...(warning.path === undefined ? {} : { path: warning.path }),
+      ...(warning.missingFields === undefined
+        ? {}
+        : {
+            missing_fields: warning.missingFields.map((field) => ({
+              path: field.path,
+              ...(field.envVariable === undefined ? {} : { env_variable: field.envVariable }),
+            })),
+          }),
     })),
     masked: changeSet.masked,
     unmanaged: changeSet.unmanaged,

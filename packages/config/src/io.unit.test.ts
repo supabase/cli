@@ -19,6 +19,7 @@ import {
 import {
   configJsonPath,
   configTomlPath,
+  decodeCliConfigDocumentForValidation,
   loadCliConfig,
   loadCliConfigFile,
   remoteNameForProjectRef,
@@ -2594,5 +2595,111 @@ describe("writeCliConfigDocumentText", () => {
     } finally {
       await rm(cwd, { recursive: true, force: true });
     }
+  });
+});
+
+describe("decodeCliConfigDocumentForValidation", () => {
+  test("decodes a valid document successfully", async () => {
+    const config = await Effect.runPromise(
+      decodeCliConfigDocumentForValidation(
+        { project_id: "abc123" },
+        { env: {}, goViperCompat: true, path: "supabase/config.toml", format: "toml" },
+      ),
+    );
+    expect(config.project_id).toBe("abc123");
+  });
+
+  test("fails with a typed CliConfigParseError (SchemaError cause) when a root business-rule check fails", async () => {
+    const document = {
+      project_id: "abc123",
+      auth: { sms: { twilio: { enabled: true, account_sid: "", message_service_sid: "" } } },
+    };
+    const exit = await Effect.runPromiseExit(
+      decodeCliConfigDocumentForValidation(document, {
+        env: {},
+        goViperCompat: true,
+        path: "supabase/config.toml",
+        format: "toml",
+      }),
+    );
+    expect(Exit.isFailure(exit)).toBe(true);
+    if (!Exit.isFailure(exit)) {
+      return;
+    }
+    const error = Cause.findErrorOption(exit.cause);
+    expect(Option.isSome(error)).toBe(true);
+    if (Option.isSome(error)) {
+      expect((error.value as { _tag: string })._tag).toBe("CliConfigParseError");
+      expect(Schema.isSchemaError((error.value as { cause: unknown }).cause)).toBe(true);
+    }
+  });
+
+  test("does not apply business-rule checks to a [remotes.*] block (checks disabled)", async () => {
+    // The SAME `enabled: true` + empty `account_sid`/`message_service_sid` shape that fails at
+    // the root above decodes fine inside a `[remotes.*]` block — `RemotesSchema` decodes with
+    // `disableChecks: true` (mirrors Go, which only applies these business rules to the merged
+    // effective config, never an unselected remote override).
+    const document = {
+      project_id: "abc123",
+      remotes: {
+        staging: {
+          project_id: "stagingrefaaaaaaaaaa",
+          auth: { sms: { twilio: { enabled: true, account_sid: "", message_service_sid: "" } } },
+        },
+      },
+    };
+    const config = await Effect.runPromise(
+      decodeCliConfigDocumentForValidation(document, {
+        env: {},
+        goViperCompat: true,
+        path: "supabase/config.toml",
+        format: "toml",
+      }),
+    );
+    expect(config.remotes["staging"]).toBeDefined();
+  });
+
+  test("resolves env(VAR) references against the given env map before decoding", async () => {
+    const config = await Effect.runPromise(
+      decodeCliConfigDocumentForValidation(
+        { project_id: "abc123", db: { major_version: "env(PG_VERSION)" } },
+        {
+          env: { PG_VERSION: "16" },
+          goViperCompat: true,
+          path: "supabase/config.toml",
+          format: "toml",
+        },
+      ),
+    );
+    expect(config.db.major_version).toBe(16);
+  });
+
+  test("leaves an unresolved env(VAR) literal in place rather than failing the field's own required-non-empty check", async () => {
+    // A required STRING field spelled as `env(VAR)` with `VAR` unset in the given env map
+    // decodes as the literal `env(VAR)` string, matching `loadCliConfigFile`'s own tolerance for
+    // an unset var (Go parity) — non-empty, so it still satisfies a bare
+    // `!== undefined && !== ""` required-field check even though it never actually resolved.
+    const document = {
+      project_id: "abc123",
+      auth: {
+        sms: {
+          twilio: {
+            enabled: true,
+            account_sid: "AC123",
+            message_service_sid: "MG123",
+            auth_token: "env(SUPABASE_AUTH_SMS_TWILIO_AUTH_TOKEN)",
+          },
+        },
+      },
+    };
+    const config = await Effect.runPromise(
+      decodeCliConfigDocumentForValidation(document, {
+        env: {},
+        goViperCompat: true,
+        path: "supabase/config.toml",
+        format: "toml",
+      }),
+    );
+    expect(config.auth.sms.twilio.auth_token).toBe("env(SUPABASE_AUTH_SMS_TWILIO_AUTH_TOKEN)");
   });
 });

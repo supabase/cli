@@ -2,11 +2,14 @@ import {
   CLI_CONFIG_SCHEMA_URL,
   fromApiProjectConfig,
   ProjectConfigParseError,
+  type CliConfigParseError,
+  type ConfigFormat,
   type LoadedCliConfig,
-  type ProjectConfig,
 } from "@supabase/config";
 import {
   applyConfigEdits,
+  decodeCliConfigDocumentForValidation,
+  type ConfigChangeSet,
   type ConfigEdit,
   type ConfigEditRefusalReason,
   diffProjectConfig,
@@ -14,7 +17,7 @@ import {
   writeCliConfigDocumentText,
 } from "@supabase/config/internal";
 import { operationDefinitions } from "@supabase/api/effect";
-import { Effect, FileSystem, Option } from "effect";
+import { Effect, FileSystem, Option, Result, Schema, SchemaIssue } from "effect";
 
 import { LegacyPlatformApi } from "../../../auth/legacy-platform-api.service.ts";
 import { LegacyCliSettings } from "../../../config/legacy-cli-settings.service.ts";
@@ -52,12 +55,19 @@ import {
   type LegacyConfigPullOutcome,
 } from "./pull.format.ts";
 import {
+  deepSetAtPath,
+  legacyConfigPullEnvVariableAtPath,
+  legacyConfigPullFamilyRootForPath,
+  legacyDropConfigPullUnvalidatableFamilies,
+  legacyExpandConfigPullChangeSet,
   legacyPlanConfigPull,
   type LegacyConfigPullPlan,
   type LegacyConfigPullWarning,
+  type LegacyConfigPullWouldInvalidateFamily,
 } from "./pull.plan.ts";
 import {
   legacyResolveConfigPullDestination,
+  type LegacyConfigPullDestination,
   type LegacyConfigPullScopeLabelCollision,
 } from "./pull.scope.ts";
 import {
@@ -75,6 +85,7 @@ import {
   LegacyConfigPullRemoteLabelCollisionError,
   LegacyConfigPullUncommittedChangesError,
   LegacyConfigPullUnsupportedLayoutError,
+  LegacyConfigPullValidationFailedError,
   LegacyConfigPullWriteError,
 } from "./pull.errors.ts";
 import type { LegacyConfigPullFlags } from "./pull.command.ts";
@@ -229,111 +240,258 @@ function pathKey(path: ReadonlyArray<string>): string {
 }
 
 /**
- * Deep-copies `root`, replacing the value at `path` — used ONLY by
- * {@link legacyConfigPullConvergenceCheck} to build the "projected next
- * document"/config in memory (plan §1.9); never to produce bytes written to
- * disk (`applyConfigEdits` owns that). The exported-shaped overload preserves
- * the input's own type (a deep-set never changes an object's shape, only a
- * leaf value); the implementation itself is intentionally untyped, mirroring
- * `@supabase/config`'s own split between a typed overload contract and a
- * structurally-unverifiable recursive implementation (e.g.
- * `fromConfigDocument`, `config-edit.ts`'s own `deepSetOne`).
- */
-function deepSetAtPath<T>(root: T, path: ReadonlyArray<string>, value: unknown): T;
-function deepSetAtPath(root: unknown, path: ReadonlyArray<string>, value: unknown): unknown {
-  if (path.length === 0) {
-    return value;
-  }
-  const head = path[0];
-  if (head === undefined) {
-    return value;
-  }
-  const rest = path.slice(1);
-  const base: Record<string, unknown> = isRecord(root) ? root : {};
-  return { ...base, [head]: deepSetAtPath(base[head], rest, value) };
-}
-
-/**
- * Plan §1.9's convergence check, run once planning is done and BEFORE
+ * Plan §1.9's convergence check — run once the fixpoint expansion
+ * (`legacyExpandConfigPullChangeSet`, `pull.plan.ts`) has settled, and BEFORE
  * `--dry-run` returns (a planner defect must be caught even in a preview
- * run): applies every planned write to a deep-copied projection of `loaded`
- * (config + document, never `applyConfigEdits`'s text span editor) and diffs
- * THAT again against `remote`.
+ * run) — against the fixpoint's OWN residual (the last round's re-diff, i.e.
+ * the state once every currently-planned write has been applied).
  *
  * A residual change at a path this run just planned to write means the write
  * didn't actually converge — a defect in THIS command's own planner, never a
  * user-facing condition, surfaced as a typed `LegacyConfigPullPlanDefectError`
  * (`impossibleState`) rather than a crash: nothing has been written yet at
- * this point (this check runs BEFORE the dry-run/prompt/write steps), so the
- * error can truthfully say so. A residual `unmanaged` path (ADR 0021's
- * unpushable families, e.g. `auth.oauth_server` on its first pull:
- * undeclared before this run, so it planned normally, but DECLARING it makes
- * `applyPushUnmanagedOmissions` drop it from every future comparison) is
- * expected, not a defect — `config push` has no code path for these fields,
- * so a written value there can never be sent back. Surfaced as a
+ * this point (this check runs BEFORE the dry-run/prompt/write/validation
+ * steps), so the error can truthfully say so. A residual `unmanaged` path
+ * (ADR 0021's unpushable families, e.g. `auth.oauth_server` on its first
+ * pull: undeclared before this run, so it planned normally, but DECLARING it
+ * makes `applyPushUnmanagedOmissions` drop it from every future comparison)
+ * is expected, not a defect — `config push` has no code path for these
+ * fields, so a written value there can never be sent back. Surfaced as a
  * `"unpushable"` warning, reusing the SAME `plan.warnings` /
  * `legacyRenderConfigPullText` "Warnings:" hook the planner's own
  * `dual_scope`/`duplicates_root`/`array_drift` warnings already render
  * through, rather than adding a new payload field.
- *
- * `diffProjectConfig` itself can also fail with a typed `ProjectConfigParseError`
- * (the SAME normalizer step 7 already runs against the live `remote`) — kept
- * typed here too, exactly like step 7, rather than dying unconditionally; any
- * OTHER thrown value is a genuine unknown and stays a defect.
  */
-function legacyConfigPullConvergenceCheck(
+function legacyConfigPullDefectAndUnpushableCheck(
   plan: LegacyConfigPullPlan,
-  loaded: LoadedCliConfig,
-  remote: ProjectConfig,
-): Effect.Effect<LegacyConfigPullPlan, ProjectConfigParseError | LegacyConfigPullPlanDefectError> {
+  residual: ConfigChangeSet,
+): Effect.Effect<LegacyConfigPullPlan, LegacyConfigPullPlanDefectError> {
   if (plan.writes.length === 0) {
     return Effect.succeed(plan);
   }
-  return Effect.gen(function* () {
-    const nextConfig = plan.writes.reduce(
-      (config, write) => deepSetAtPath(config, write.change.path, write.value),
-      loaded.config,
-    );
-    const nextDocument = plan.writes.reduce(
-      (document, write) => deepSetAtPath(document, write.change.path, write.value),
-      loaded.document ?? {},
-    );
-    const residual = yield* Effect.try({
-      try: () =>
-        diffProjectConfig({
-          local: { config: nextConfig, document: nextDocument, valueOrigins: loaded.valueOrigins },
-          remote,
-        }),
-      catch: (cause) => cause,
-    }).pipe(
-      Effect.catch((cause) =>
-        cause instanceof ProjectConfigParseError ? Effect.fail(cause) : Effect.die(cause),
-      ),
-    );
+  const writtenPathKeys = new Set(plan.writes.map((write) => pathKey(write.change.path)));
+  const stillDrifting = residual.changes.filter((change) =>
+    writtenPathKeys.has(pathKey(change.path)),
+  );
+  if (stillDrifting.length > 0) {
+    return new LegacyConfigPullPlanDefectError({
+      message: `config pull planner defect: ${stillDrifting
+        .map((change) => legacyConfigRenderPath(change.path))
+        .join(
+          ", ",
+        )} still differ from remote after applying the planned write; nothing was written. Please report this bug.`,
+    });
+  }
 
-    const writtenPathKeys = new Set(plan.writes.map((write) => pathKey(write.change.path)));
-    const stillDrifting = residual.changes.filter((change) =>
-      writtenPathKeys.has(pathKey(change.path)),
-    );
-    if (stillDrifting.length > 0) {
-      return yield* new LegacyConfigPullPlanDefectError({
-        message: `config pull planner defect: ${stillDrifting
-          .map((change) => legacyConfigRenderPath(change.path))
-          .join(
-            ", ",
-          )} still differ from remote after applying the planned write; nothing was written. Please report this bug.`,
-      });
-    }
+  const unpushableWarnings: ReadonlyArray<LegacyConfigPullWarning> = residual.unmanaged
+    .filter((path) => writtenPathKeys.has(pathKey(path)))
+    .map((path) => ({ kind: "unpushable", path }));
 
-    const unpushableWarnings: ReadonlyArray<LegacyConfigPullWarning> = residual.unmanaged
-      .filter((path) => writtenPathKeys.has(pathKey(path)))
-      .map((path) => ({ kind: "unpushable", path }));
-
-    return unpushableWarnings.length === 0
+  return Effect.succeed(
+    unpushableWarnings.length === 0
       ? plan
-      : { ...plan, warnings: [...plan.warnings, ...unpushableWarnings] };
-  });
+      : { ...plan, warnings: [...plan.warnings, ...unpushableWarnings] },
+  );
 }
+
+/**
+ * The env map `pull.handler.ts`'s schema-validation gate resolves `env(VAR)`
+ * references against — the current process's own environment (filtered to
+ * defined string values), matching what a same-process, same-invocation
+ * follow-up `loadCliConfig` would see. See
+ * `decodeCliConfigDocumentForValidation`'s own doc comment
+ * (`@supabase/config/internal`) for why this deliberately does not re-search
+ * `.env`/`.env.local`.
+ */
+function legacyCurrentProcessEnv(): Readonly<Record<string, string>> {
+  const env: Record<string, string> = {};
+  for (const [key, value] of Object.entries(process.env)) {
+    if (value !== undefined) {
+      env[key] = value;
+    }
+  }
+  return env;
+}
+
+/**
+ * Builds the FULL raw, on-disk-shaped document `pull.handler.ts`'s
+ * schema-validation gate decodes: `rawDocument` (`remotes` intact,
+ * pre-`env()`-interpolation — the same shape `applyConfigEdits` edits) with
+ * `writes`' `documentPath`s applied, plus the new block's `project_id` when
+ * this plan creates one — mirroring step 13's real `edits` array exactly, so
+ * what gets validated here is what would actually be written.
+ */
+function legacyConfigPullValidationDocument(
+  rawDocument: Readonly<Record<string, unknown>>,
+  writes: ReadonlyArray<LegacyConfigPullPlan["writes"][number]>,
+  createdTable: ReadonlyArray<string> | undefined,
+  projectRef: string,
+): Record<string, unknown> {
+  const withWrites = writes.reduce(
+    (document, write) => deepSetAtPath(document, write.documentPath, write.value),
+    rawDocument,
+  );
+  return createdTable === undefined
+    ? withWrites
+    : deepSetAtPath(withWrites, [...createdTable, "project_id"], projectRef);
+}
+
+/**
+ * Restricts a document to the subtree a `ConfigChange.path` (hosted-config,
+ * destination-agnostic) is relative to: itself for a root destination, or
+ * `document.remotes[label]` for a `[remotes.*]` destination — the inverse of
+ * `documentPathFor` (`pull.plan.ts`), needed because the schema-validation
+ * gate's failing paths (and the pre-write raw document it looks up an env()
+ * spelling in) must be read in the SAME namespace `ConfigChange.path`/the
+ * plan's family-root helpers already use.
+ */
+function legacyConfigPullChangeRelativeValue(
+  document: unknown,
+  destination: LegacyConfigPullDestination,
+): unknown {
+  if (destination.kind === "root") {
+    return document;
+  }
+  const remotes = isRecord(document) ? document["remotes"] : undefined;
+  return isRecord(remotes) ? remotes[destination.label] : undefined;
+}
+
+/**
+ * Extracts the family/family-root info the schema-validation gate needs from
+ * a failed {@link decodeCliConfigDocumentForValidation} attempt: every
+ * `SchemaIssue` the decode raised, grouped by
+ * `legacyConfigPullFamilyRootForPath`'s nearest-enclosing-table rule.
+ *
+ * A `SchemaError`'s reported path is relative to WHICHEVER schema actually
+ * failed — `CliConfigSchema` itself (root fields, unprefixed) or
+ * `RemotesSchema` (a `label`-prefixed map entry) — never both, and which one
+ * is determined entirely by `destination`: a root destination's writes only
+ * ever touch the root portion (the remotes map is untouched, and it already
+ * decoded successfully at THIS command's own initial load, so it cannot be
+ * the source of a NEW failure); a remote destination's writes only ever touch
+ * `remotes.<label>`, and root decode always zeroes `remotes` out before
+ * running, so it cannot see this destination's writes at all. Un-prefixing a
+ * remote destination's path is therefore just dropping its leading `label`
+ * segment, never a lookup that could get the wrong block. Not a `SchemaError`
+ * at all (should not happen — this function only ever runs against a
+ * `CliConfigParseError` this same module's own decode call produced) yields
+ * no families, which the caller treats as "could not attribute this failure",
+ * stopping the retry loop.
+ */
+function legacyConfigPullFailingFamilies(
+  cause: CliConfigParseError,
+  destination: LegacyConfigPullDestination,
+  validationDocument: Record<string, unknown>,
+  rawDocument: Readonly<Record<string, unknown>>,
+): ReadonlyArray<LegacyConfigPullWouldInvalidateFamily> {
+  if (!Schema.isSchemaError(cause.cause)) {
+    return [];
+  }
+  const relativeValidation = legacyConfigPullChangeRelativeValue(validationDocument, destination);
+  const relativeRaw = legacyConfigPullChangeRelativeValue(rawDocument, destination);
+  const { issues } = SchemaIssue.makeFormatterStandardSchemaV1()(cause.cause.issue);
+
+  const families = new Map<
+    string,
+    {
+      root: ReadonlyArray<string>;
+      missingFields: Array<{ path: ReadonlyArray<string>; envVariable?: string }>;
+    }
+  >();
+  for (const issue of issues) {
+    const rawPath = issue.path?.map((segment) =>
+      String(typeof segment === "object" ? segment.key : segment),
+    );
+    if (rawPath === undefined || rawPath.length === 0) {
+      continue;
+    }
+    const changePath = destination.kind === "root" ? rawPath : rawPath.slice(1);
+    if (changePath.length === 0) {
+      continue;
+    }
+    const root = legacyConfigPullFamilyRootForPath(changePath, relativeValidation);
+    const key = pathKey(root);
+    const envVariable = legacyConfigPullEnvVariableAtPath(changePath, relativeRaw);
+    const field = { path: changePath, ...(envVariable === undefined ? {} : { envVariable }) };
+    const existing = families.get(key);
+    families.set(
+      key,
+      existing === undefined
+        ? { root, missingFields: [field] }
+        : { root, missingFields: [...existing.missingFields, field] },
+    );
+  }
+  return [...families.values()];
+}
+
+/** Cap on how many times {@link legacyValidateConfigPullPlan} drops a family
+ * and re-validates — die-free: hitting the cap fails the whole command with a
+ * typed `LegacyConfigPullValidationFailedError` rather than writing (per that
+ * error's own doc comment, reaching the cap "shouldn't happen", since
+ * dropping a family always restores a state that loaded before this pull
+ * ran). */
+const LEGACY_CONFIG_PULL_VALIDATION_ROUND_CAP = 4;
+
+/**
+ * `pull.handler.ts`'s schema-validation gate (CLI-2064's live-bug fix, layer
+ * 2): pull must NEVER write a file the CLI itself cannot load. Before the
+ * TOCTOU re-read/write, decodes the projected FINAL document (every planned
+ * write, plus a new block's `project_id`, applied to the raw on-disk
+ * document) through the real `CliConfigSchema` decode, with the current
+ * process env and `goViperCompat` — the exact semantics the NEXT
+ * `loadCliConfig` call will apply. On failure, drops every write under the
+ * nearest enclosing family/provider table of each failing path
+ * (`legacyDropConfigPullUnvalidatableFamilies`), re-validates, and repeats up
+ * to {@link LEGACY_CONFIG_PULL_VALIDATION_ROUND_CAP} times; if validation
+ * still fails once nothing more can be dropped, fails the whole command
+ * (`LegacyConfigPullValidationFailedError`) rather than write.
+ */
+const legacyValidateConfigPullPlan = Effect.fnUntraced(function* (input: {
+  readonly plan: LegacyConfigPullPlan;
+  readonly rawDocument: Readonly<Record<string, unknown>>;
+  readonly destination: LegacyConfigPullDestination;
+  readonly projectRef: string;
+  readonly configPath: string;
+  readonly format: ConfigFormat;
+}) {
+  let plan = input.plan;
+  for (let round = 0; ; round++) {
+    const document = legacyConfigPullValidationDocument(
+      input.rawDocument,
+      plan.writes,
+      plan.createdTable,
+      input.projectRef,
+    );
+    const decoded = yield* decodeCliConfigDocumentForValidation(document, {
+      env: legacyCurrentProcessEnv(),
+      goViperCompat: true,
+      path: input.configPath,
+      format: input.format,
+    }).pipe(Effect.result);
+    if (Result.isSuccess(decoded)) {
+      return plan;
+    }
+    if (round >= LEGACY_CONFIG_PULL_VALIDATION_ROUND_CAP) {
+      break;
+    }
+    const families = legacyConfigPullFailingFamilies(
+      decoded.failure,
+      input.destination,
+      document,
+      input.rawDocument,
+    );
+    const next = legacyDropConfigPullUnvalidatableFamilies(plan, families);
+    if (next.writes.length === plan.writes.length) {
+      // Nothing could be dropped for the reported failure(s) — retrying
+      // would just repeat the same decode failure forever.
+      break;
+    }
+    plan = next;
+  }
+  return yield* new LegacyConfigPullValidationFailedError({
+    message: `config pull's planned writes would still leave ${input.configPath} unloadable after dropping every family the validator flagged; nothing was written. Please report this bug.`,
+  });
+});
 
 /** Builds the file-load helpers for one `cliSettings.workdir` — a small
  * factory rather than a shared closure so both `legacyOpenConfigPullSource`
@@ -546,7 +704,7 @@ export const legacyRunConfigPull = Effect.fnUntraced(function* (input: LegacyCon
       cause instanceof ProjectConfigParseError ? Effect.fail(cause) : Effect.die(cause),
     ),
   );
-  const changeSet = yield* Effect.try({
+  const initialChangeSet = yield* Effect.try({
     try: () => diffProjectConfig({ local: loaded, remote }),
     catch: (cause) => cause,
   }).pipe(
@@ -561,14 +719,49 @@ export const legacyRunConfigPull = Effect.fnUntraced(function* (input: LegacyCon
   );
   yield* output.raw(legacyConfigScopeLine(scope), "stderr");
 
-  // 8. Plan the writes, then run the convergence check (plan §1.9).
+  // 8. Fixpoint-expand the diff (plan §1.9, extended by CLI-2064's live-bug
+  // fix): projecting a round's writes can un-gate a sibling ADR 0021's
+  // disabled-provider gates would otherwise have excluded as unmanaged (e.g.
+  // flipping a disabled SMS provider's `enabled` on un-gates its credential
+  // siblings) — `legacyExpandConfigPullChangeSet` repeats until nothing new
+  // appears. Plan the fully-expanded writes, check for a planner defect /
+  // surface unpushable notes against the fixpoint's own residual (unchanged
+  // from before), then run the schema-validation gate (layer 2): pull must
+  // never write a file the CLI itself cannot load.
+  const fixpoint = yield* Effect.try({
+    try: () =>
+      legacyExpandConfigPullChangeSet({
+        initialChangeSet,
+        baseConfig: loaded.config,
+        baseDocument: loaded.document ?? {},
+        valueOrigins: loaded.valueOrigins,
+        remote,
+      }),
+    catch: (cause) => cause,
+  }).pipe(
+    Effect.catch((cause) =>
+      cause instanceof ProjectConfigParseError ? Effect.fail(cause) : Effect.die(cause),
+    ),
+  );
+  const changeSet = fixpoint.changeSet;
   const plan = legacyPlanConfigPull({
     changeSet,
     destination,
     rootDocument: input.source.loaded.document ?? {},
     projectRef: ref,
   });
-  const planWithUnpushable = yield* legacyConfigPullConvergenceCheck(plan, loaded, remote);
+  const planWithDefectCheck = yield* legacyConfigPullDefectAndUnpushableCheck(
+    plan,
+    fixpoint.residual,
+  );
+  const finalPlan = yield* legacyValidateConfigPullPlan({
+    plan: planWithDefectCheck,
+    rawDocument: input.source.loaded.rawDocument ?? {},
+    destination,
+    projectRef: ref,
+    configPath: loaded.path,
+    format: loaded.format,
+  });
 
   // The TEXT one-line disposition drops the caveats (`opts.withCaveats:
   // false`, item F.2 of CLI-2064's fix pass) — the change-by-change body
@@ -590,10 +783,10 @@ export const legacyRunConfigPull = Effect.fnUntraced(function* (input: LegacyCon
   if (input.dryRun) {
     if (output.format === "text") {
       yield* output.raw(
-        legacyRenderConfigPullText(changeSet, scope, planWithUnpushable, ref, context.configPath),
+        legacyRenderConfigPullText(changeSet, scope, finalPlan, ref, context.configPath),
       );
     }
-    yield* emitOutcome(planWithUnpushable, { dryRun: true, declined: false });
+    yield* emitOutcome(finalPlan, { dryRun: true, declined: false });
     return;
   }
 
@@ -606,15 +799,15 @@ export const legacyRunConfigPull = Effect.fnUntraced(function* (input: LegacyCon
   // what fixes bug A: a converged run never spawns `git status` at all, so an
   // uncommitted-but-otherwise-clean config file never aborts a pull that was
   // never going to touch it.
-  const hasBlockToCreate = planWithUnpushable.createdTable !== undefined;
-  const hasWork = planWithUnpushable.writes.length > 0 || hasBlockToCreate;
+  const hasBlockToCreate = finalPlan.createdTable !== undefined;
+  const hasWork = finalPlan.writes.length > 0 || hasBlockToCreate;
   if (!hasWork) {
     if (output.format === "text") {
       yield* output.raw(
-        legacyRenderConfigPullText(changeSet, scope, planWithUnpushable, ref, context.configPath),
+        legacyRenderConfigPullText(changeSet, scope, finalPlan, ref, context.configPath),
       );
     }
-    yield* emitOutcome(planWithUnpushable, { dryRun: false, declined: false });
+    yield* emitOutcome(finalPlan, { dryRun: false, declined: false });
     return;
   }
 
@@ -641,10 +834,10 @@ export const legacyRunConfigPull = Effect.fnUntraced(function* (input: LegacyCon
   // section) — a repository-level warning, no `path`.
   const planForRender: LegacyConfigPullPlan = dirty
     ? {
-        ...planWithUnpushable,
-        warnings: [...planWithUnpushable.warnings, { kind: "uncommitted_changes" }],
+        ...finalPlan,
+        warnings: [...finalPlan.warnings, { kind: "uncommitted_changes" }],
       }
-    : planWithUnpushable;
+    : finalPlan;
 
   if (output.format === "text") {
     yield* output.raw(
