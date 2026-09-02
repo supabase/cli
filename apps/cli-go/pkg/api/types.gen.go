@@ -8113,20 +8113,20 @@ type UpdateCustomHostnameResponseOutput struct {
 			CustomOriginServer    string `json:"custom_origin_server"`
 			Hostname              string `json:"hostname"`
 			Id                    string `json:"id"`
-			OwnershipVerification struct {
+			OwnershipVerification *struct {
 				Name  string `json:"name"`
 				Type  string `json:"type"`
 				Value string `json:"value"`
-			} `json:"ownership_verification"`
+			} `json:"ownership_verification,omitempty"`
 			Ssl struct {
 				Status           string `json:"status"`
 				ValidationErrors *[]struct {
 					Message string `json:"message"`
 				} `json:"validation_errors,omitempty"`
-				ValidationRecords []struct {
+				ValidationRecords *[]struct {
 					TxtName  string `json:"txt_name"`
 					TxtValue string `json:"txt_value"`
-				} `json:"validation_records"`
+				} `json:"validation_records,omitempty"`
 			} `json:"ssl"`
 			Status             string    `json:"status"`
 			VerificationErrors *[]string `json:"verification_errors,omitempty"`
