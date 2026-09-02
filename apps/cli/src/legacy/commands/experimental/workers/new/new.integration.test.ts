@@ -32,6 +32,7 @@ function flags(overrides: Partial<LegacyWorkersNewFlags> = {}): LegacyWorkersNew
     runtime: Option.none(),
     size: Option.none(),
     exposure: Option.none(),
+    instances: Option.none(),
     source: Option.none(),
     ...overrides,
   };
@@ -184,6 +185,76 @@ describe("legacy workers new", () => {
       yield* legacyWorkersNew(flags({ exposure: Option.some("private") }));
 
       expect(repo.config()).toContain('exposure = "private"');
+    }).pipe(Effect.provide(layer), Effect.ensuring(Effect.sync(repo.cleanup)));
+  });
+
+  // The count a scaffold cannot guess: `--instances` has no prompt, so it is
+  // recorded when given and left out when not.
+  it.live("records an instance count that differs from the default", () => {
+    const repo = project();
+    const { layer } = setupLegacyWorkers({ workdir: repo.dir });
+
+    return Effect.gen(function* () {
+      yield* legacyWorkersNew(flags({ instances: Option.some(3) }));
+
+      // Bare, not quoted: the config schema types `instances` as a number, so a
+      // quoted count would render a config.toml that no longer loads.
+      expect(repo.config()).toContain("instances = 3");
+      expect(repo.config()).not.toContain('instances = "3"');
+    }).pipe(Effect.provide(layer), Effect.ensuring(Effect.sync(repo.cleanup)));
+  });
+
+  // The end-to-end proof that the count is written as a number: the config
+  // schema types `instances` as one, so a quoted `"3"` renders a config.toml
+  // that no longer decodes — which only shows up on the *next* load, not on the
+  // write that caused it. Scaffolding a second worker is that next load.
+  it.live("writes a count the config loader can read back", () => {
+    const repo = project();
+    const { layer } = setupLegacyWorkers({ workdir: repo.dir });
+
+    return Effect.gen(function* () {
+      yield* legacyWorkersNew(flags({ name: Option.some("api"), instances: Option.some(3) }));
+      yield* legacyWorkersNew(flags({ name: Option.some("web") }));
+
+      expect(repo.config()).toContain("instances = 3");
+      expect(repo.config()).toContain("[workers.web]");
+    }).pipe(Effect.provide(layer), Effect.ensuring(Effect.sync(repo.cleanup)));
+  });
+
+  // Zero is an explicit count — it scales the worker to nothing — not an absent
+  // one, so it has to survive the "only record a non-default" rule.
+  it.live("records a zero instance count", () => {
+    const repo = project();
+    const { layer } = setupLegacyWorkers({ workdir: repo.dir });
+
+    return Effect.gen(function* () {
+      yield* legacyWorkersNew(flags({ instances: Option.some(0) }));
+
+      expect(repo.config()).toContain("instances = 0");
+    }).pipe(Effect.provide(layer), Effect.ensuring(Effect.sync(repo.cleanup)));
+  });
+
+  // An absent `instances` and `instances = 1` mean the same thing to `push`, so
+  // the scaffold does not commit a line that says nothing.
+  it.live("writes no instance count when nothing names one", () => {
+    const repo = project();
+    const { layer } = setupLegacyWorkers({ workdir: repo.dir });
+
+    return Effect.gen(function* () {
+      yield* legacyWorkersNew(flags());
+
+      expect(repo.config()).not.toContain("instances");
+    }).pipe(Effect.provide(layer), Effect.ensuring(Effect.sync(repo.cleanup)));
+  });
+
+  it.live("writes no instance count when the default is named explicitly", () => {
+    const repo = project();
+    const { layer } = setupLegacyWorkers({ workdir: repo.dir });
+
+    return Effect.gen(function* () {
+      yield* legacyWorkersNew(flags({ instances: Option.some(1) }));
+
+      expect(repo.config()).not.toContain("instances");
     }).pipe(Effect.provide(layer), Effect.ensuring(Effect.sync(repo.cleanup)));
   });
 
@@ -588,6 +659,7 @@ describe("legacy workers new", () => {
         runtime: Option.none(),
         size: Option.none(),
         exposure: Option.none(),
+        instances: Option.none(),
         source: Option.none(),
       });
 

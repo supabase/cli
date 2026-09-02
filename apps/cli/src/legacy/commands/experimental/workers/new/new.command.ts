@@ -39,6 +39,18 @@ const config = {
     ),
     Flag.optional,
   ),
+  instances: Flag.integer("instances").pipe(
+    // Bounded at the parser, the same way `push --instances` and the config
+    // schema's own `instances` are.
+    Flag.filter(
+      (instances) => instances >= 0,
+      (instances) => `--instances ${instances} is negative; pass zero or more.`,
+    ),
+    Flag.withDescription(
+      "Number of instances to record in supabase/config.toml. Not prompted for, and recorded only when it differs from the default of 1.",
+    ),
+    Flag.optional,
+  ),
   source: Flag.string("source").pipe(
     Flag.withDescription(
       "Scaffold the worker here instead of the default workers directory, recorded as `source` in supabase/config.toml.",
@@ -79,6 +91,10 @@ export const legacyWorkersNewCommand = Command.make("new", config).pipe(
     {
       command: "supabase experimental workers new api --exposure private",
       description: "Scaffold a worker with no internet-facing URL",
+    },
+    {
+      command: "supabase experimental workers new api --instances 3",
+      description: "Scaffold a worker that deploys at three instances",
     },
     {
       command: "supabase experimental workers new api --source packages/api",

@@ -23,6 +23,7 @@ import {
 } from "../../../../../shared/workers/worker-paths.ts";
 import {
   DEFAULT_WORKER_EXPOSURE,
+  DEFAULT_WORKER_INSTANCES,
   DEFAULT_WORKER_RUNTIME,
   DEFAULT_WORKER_SIZE,
   parseWorkerExposure,
@@ -58,6 +59,8 @@ import type { LegacyWorkersNewFlags } from "./new.command.ts";
  *
  * The name, runtime, size and exposure are all resolved *before* anything is
  * written, so a cancelled prompt leaves nothing behind for this worker at all.
+ * `--instances` is recorded rather than resolved: it has no prompt, and it only
+ * reaches `config.toml` when it differs from the default.
  */
 
 /** `values`, with `defaultValue` first, so a prompt pre-selects what it shows first. */
@@ -212,6 +215,23 @@ const resolveExposure = Effect.fnUntraced(function* (options: {
 });
 
 /**
+ * The instance count to record, and whether to record it at all.
+ *
+ * Not prompted for, unlike the other dials: how many instances a worker needs is
+ * an operational answer nobody has while scaffolding it, so the flag records
+ * one when it is given and the file stays quiet when it is not.
+ *
+ * `undefined` — meaning "write no key" — for the default count, because an
+ * absent `instances` and `instances = 1` mean the same thing to `push`, and a
+ * scaffold should not commit a line that says nothing. A `0` is not that: it
+ * scales the worker to nothing, so it is written like any other explicit count.
+ */
+function recordedInstances(explicit: Option.Option<number>): number | undefined {
+  const instances = Option.getOrUndefined(explicit);
+  return instances === undefined || instances === DEFAULT_WORKER_INSTANCES ? undefined : instances;
+}
+
+/**
  * Whether the destination is free for a scaffold: nothing there, or an empty
  * directory. A plain file counts as occupied, so it is refused by name rather
  * than by a bare `EEXIST` from `makeDirectory`.
@@ -269,6 +289,7 @@ export const legacyWorkersNew = Effect.fn("legacy.experimental.workers.new")(fun
     const runtime = yield* resolveRuntime({ explicit: flags.runtime, canPrompt });
     const size = yield* resolveSize({ explicit: flags.size, canPrompt });
     const exposure = yield* resolveExposure({ explicit: flags.exposure, canPrompt });
+    const instances = recordedInstances(flags.instances);
 
     // Validated before anything is written: this is the directory the starter
     // files land in, so a value naming the project root, `supabase/`, or
@@ -328,6 +349,7 @@ export const legacyWorkersNew = Effect.fn("legacy.experimental.workers.new")(fun
         runtime,
         size,
         exposure,
+        ...(instances === undefined ? {} : { instances }),
         ...(source === undefined ? {} : { source }),
       },
     });
@@ -350,6 +372,10 @@ export const legacyWorkersNew = Effect.fn("legacy.experimental.workers.new")(fun
       size,
       vcpu: vcpuForSize(size),
       exposure,
+      // The count a deploy will use, whether or not it was written down — a
+      // payload that omitted it for the default would read as "unknown" rather
+      // than "one".
+      instances: instances ?? DEFAULT_WORKER_INSTANCES,
       source: sourceDisplay,
       config_path: project.configPath,
     };
@@ -376,6 +402,9 @@ export const legacyWorkersNew = Effect.fn("legacy.experimental.workers.new")(fun
         ["Runtime", runtime],
         ["Size", `${size} (${vcpuForSize(size)} vCPU)`],
         ["Access", exposure],
+        // `declared`, the way `workers status` labels the same number: nothing
+        // is running yet, so a bare count would read as a live tally.
+        ["Instances", `${instances ?? DEFAULT_WORKER_INSTANCES} declared`],
       ]),
     );
     // On the success trailer rather than inline, the way `bootstrap` emits its

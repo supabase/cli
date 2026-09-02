@@ -136,7 +136,8 @@ export interface WorkerEntryWrite {
 export const planWorkerEntry = Effect.fnUntraced(function* (options: {
   readonly configPath: string;
   readonly name: string;
-  readonly patch: Readonly<Record<string, string>>;
+  /** Rendered as written: strings are quoted, numbers are not. */
+  readonly patch: Readonly<Record<string, string | number>>;
   /** The already-parsed config — the authority on whether an entry exists. */
   readonly existingWorkers: Readonly<Record<string, WorkerEntry>>;
 }) {
