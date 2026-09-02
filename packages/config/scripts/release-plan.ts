@@ -174,8 +174,8 @@ export function renderStepSummary(plan: ReleasePlan): string {
   if (plan.isPrivate) {
     lines.push(
       "> [!WARNING]",
-      "> `packages/config` is still `private: true`, so publishing is blocked — flip it under " +
-        "CLI-2169. This run validated the release pipeline only; nothing will be published.",
+      "> `packages/config` is `private: true`, so publishing is blocked. This run validated the " +
+        "release pipeline only; nothing will be published.",
       "",
     );
   }
@@ -204,7 +204,7 @@ function renderLocalPlan(plan: ReleasePlan): string {
       `${PACKAGE_PATH_PREFIX} since the last config-v* tag).`
     );
   }
-  const privateNote = plan.isPrivate ? " (blocked: packages/config is still private: true)" : "";
+  const privateNote = plan.isPrivate ? " (blocked: packages/config is private: true)" : "";
   return `[release-plan] @supabase/config would release ${plan.version} (${plan.bumpType})${privateNote}.`;
 }
 

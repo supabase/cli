@@ -1,7 +1,7 @@
 {
   "name": "@supabase/config",
   "version": "0.1.0",
-  "private": true,
+  "private": false,
   "description": "Supabase project configuration schema, parsing, and validation, built on Effect Schema.",
   "keywords": [
     "config",
@@ -87,7 +87,7 @@
     "effect": "catalog:",
     "semantic-release": "catalog:",
     "typescript": "catalog:",
-    "vite": "^6.0.0 || ^7.0.0 || ^8.0.0",
+    "vite": "^8.2.2",
     "vitest": "catalog:"
   },
   "peerDependencies": {
