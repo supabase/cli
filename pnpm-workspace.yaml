@@ -16,7 +16,7 @@ catalog:
   "@effect/platform-bun": "4.0.0-rc.111"
   "@effect/platform-node": "4.0.0-rc.111"
   "@effect/sql-pg": "4.0.0-rc.111"
-  "@effect/tsgo": "0.36.5"
+  "@effect/tsgo": &effect-tsgo-version "0.36.5"
   "@effect/vitest": "4.0.0-rc.111"
   "@tsconfig/bun": "^1.0.11"
   "@types/bun": "^1.4.0"
@@ -39,39 +39,31 @@ overrides:
   "@launchql/protobufjs>@types/node": "24.10.4"
 
 packageExtensions:
-  # The global virtual store (virtualStoreType: global) has no hidden hoist
-  # directory (node_modules/.pnpm/node_modules), so type packages these
-  # dependencies reach for without declaring them are no longer resolvable
-  # by tsc's node_modules walk-up. Declare them explicitly here.
+  # The global virtual store has no hidden hoist directory
+  # (node_modules/.pnpm/node_modules), so dependencies a package uses without
+  # declaring must be declared here for tsc to resolve their types.
   bun-types:
     dependencies:
-      # bun-types' fetch overrides do `import("undici-types")` but only
-      # declare @types/node; keep this range in sync with @types/node's own
-      # undici-types dependency so both resolve to the same copy.
+      # bun-types imports undici-types but declares only @types/node; keep
+      # this range matching @types/node's own so both resolve to one copy.
       undici-types: "~8.3.0"
   "@supabase/pg-delta":
     dependencies:
-      # pg-delta is consumed as raw TypeScript source (via the `bun` exports
-      # condition), which imports `pg` and `debug` without shipping their
-      # @types packages.
+      # Consumed as raw TypeScript source (`bun` exports condition), which
+      # imports pg and debug without shipping their @types packages.
       "@types/debug": "^4.1.12"
       "@types/pg": "^8.23.1"
   # The root `prepare` script (`effect-tsgo patch --oxlint`) replaces files
-  # INSIDE these installed packages: oxlint's dist/index.d.ts, the current
-  # platform's @oxlint/binding-* native module, and the @oxlint-tsgolint/*
-  # binary. Under `virtualStoreType: global`, each package's store directory
-  # is keyed only by the hash of its own dependency graph and shared with
-  # every checkout on the machine that resolves the same graph — so those
-  # in-place patches would leak into unrelated projects using the same
-  # oxlint version. Declaring @effect/tsgo (the patcher) as a dependency of
-  # every package it mutates folds the patcher's version into that hash,
-  # giving these packages store directories private to identically-patched
-  # checkouts and re-keyed whenever @effect/tsgo is bumped.
-  # (`catalog:` is not resolvable inside packageExtensions, so this version
-  # must be kept in sync with the `@effect/tsgo` catalog entry above.)
+  # inside these installed packages. Their global-store directories are keyed
+  # only by each package's own dependency graph and shared with every checkout
+  # on the machine that resolves the same graph, so the in-place patches would
+  # leak into unrelated projects. Declaring the patcher as a dependency of
+  # everything it mutates folds its version (aliased from the catalog entry
+  # above) into that key, keeping the patched directories private to
+  # identically-configured checkouts and re-keyed on every @effect/tsgo bump.
   oxlint: &effect-tsgo-patched
     dependencies:
-      "@effect/tsgo": "0.36.5"
+      "@effect/tsgo": *effect-tsgo-version
   "@oxlint/binding-darwin-arm64": *effect-tsgo-patched
   "@oxlint/binding-darwin-x64": *effect-tsgo-patched
   "@oxlint/binding-linux-arm64-gnu": *effect-tsgo-patched
