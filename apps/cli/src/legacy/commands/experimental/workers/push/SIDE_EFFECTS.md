@@ -7,13 +7,13 @@
 
 ## Files Read
 
-| Path                                     | Format     | When                                                                                                        |
-| ---------------------------------------- | ---------- | ----------------------------------------------------------------------------------------------------------- |
-| `<workdir>/supabase/config.json`         | JSON       | always when present — preferred over `config.toml`; each worker's runtime, size, instances, source          |
-| `<workdir>/supabase/config.toml`         | TOML       | always when no `config.json` exists — the same worker fields                                                |
-| `<worker source>/**`                     | any        | always — packaged into the build context                                                                    |
-| `<SUPABASE_HOME or ~/.supabase>/profile` | plain text | when neither `--profile` nor `SUPABASE_PROFILE` is set — names the profile, defaulting to `supabase`        |
-| `<SUPABASE_PROFILE>` (YAML)              | YAML       | when `SUPABASE_PROFILE` is a filesystem path rather than a built-in name; a read failure aborts the command |
+| Path                                     | Format     | When                                                                                                         |
+| ---------------------------------------- | ---------- | ------------------------------------------------------------------------------------------------------------ |
+| `<workdir>/supabase/config.json`         | JSON       | always when present — preferred over `config.toml`; each worker's runtime, size, exposure, instances, source |
+| `<workdir>/supabase/config.toml`         | TOML       | always when no `config.json` exists — the same worker fields                                                 |
+| `<worker source>/**`                     | any        | always — packaged into the build context                                                                     |
+| `<SUPABASE_HOME or ~/.supabase>/profile` | plain text | when neither `--profile` nor `SUPABASE_PROFILE` is set — names the profile, defaulting to `supabase`         |
+| `<SUPABASE_PROFILE>` (YAML)              | YAML       | when `SUPABASE_PROFILE` is a filesystem path rather than a built-in name; a read failure aborts the command  |
 
 ## Files Written
 
@@ -43,6 +43,7 @@ returns on the deploy response, which carries the accepted spec and a
 | ---- | ------------------------------------------------------------------- |
 | `0`  | success                                                             |
 | `1`  | no workers named and none found in the project                      |
+| `1`  | config records a runtime, size or exposure the CLI does not know    |
 | `1`  | a worker's source is missing, not a directory, or empty             |
 | `1`  | a worker's source directory cannot be read                          |
 | `1`  | a worker's source links to a path outside itself                    |

@@ -96,6 +96,15 @@ export class UnknownWorkerSizeError extends Data.TaggedError("UnknownWorkerSizeE
   }
 }
 
+export class UnknownWorkerExposureError extends Data.TaggedError("UnknownWorkerExposureError")<{
+  readonly detail: string;
+  readonly suggestion: string;
+}> {
+  get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
+    return actionability.provideFlags;
+  }
+}
+
 export class WorkerDirectoryExistsError extends Data.TaggedError("WorkerDirectoryExistsError")<{
   readonly detail: string;
   readonly suggestion: string;

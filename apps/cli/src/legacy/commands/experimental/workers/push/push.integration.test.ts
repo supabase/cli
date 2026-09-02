@@ -14,6 +14,7 @@ import { LegacyProjectNotLinkedError } from "../../../../config/legacy-project-r
 import { LegacyWorkersEnvNotSupportedError } from "../workers.errors.ts";
 import {
   NoWorkersToDeployError,
+  UnknownWorkerExposureError,
   UnknownWorkerRuntimeError,
   UnknownWorkerSizeError,
   WorkerBuildFailedError,
@@ -45,6 +46,7 @@ function flags(overrides: Partial<LegacyWorkersPushFlags> = {}): LegacyWorkersPu
   return {
     names: ["api"],
     instances: Option.none(),
+    exposure: Option.none(),
     // Mirrors the command default: the deploy returns once accepted, and only
     // the scenarios that are about the build itself opt into waiting.
     wait: false,
@@ -314,6 +316,88 @@ describe("legacy workers push", () => {
     }).pipe(Effect.provide(layer), Effect.ensuring(Effect.sync(repo.cleanup)));
   });
 
+  // The whole point of recording it: every deploy sends a complete spec, so a
+  // worker deliberately made private has to stay private across pushes rather
+  // than being re-exposed by the next one.
+  it.live("keeps a worker private when config records it that way", () => {
+    const repo = project({
+      "supabase/config.toml": `project_id = "demo"\n\n[workers.api]\nruntime = "node"\nsize = "2gb"\nexposure = "private"\n`,
+    });
+    const { layer, http } = setupLegacyWorkers({ workdir: repo.dir, routes: routes() });
+
+    return Effect.gen(function* () {
+      yield* push();
+
+      const deploy = http.requests.find((request) => request.url.endsWith("/deploy"));
+      expect(JSON.parse(deploy?.body ?? "{}").data.attributes.spec.exposure).toBe("private");
+    }).pipe(Effect.provide(layer), Effect.ensuring(Effect.sync(repo.cleanup)));
+  });
+
+  // Hand-written config, so the casing is the user's own — `PRIVATE` plainly
+  // means `private`, and the canonical form is what gets sent.
+  it.live("reads a recorded exposure case-insensitively", () => {
+    const repo = project({
+      "supabase/config.toml": `project_id = "demo"\n\n[workers.api]\nruntime = "node"\nexposure = "PRIVATE"\n`,
+    });
+    const { layer, http } = setupLegacyWorkers({ workdir: repo.dir, routes: routes() });
+
+    return Effect.gen(function* () {
+      yield* push();
+
+      const deploy = http.requests.find((request) => request.url.endsWith("/deploy"));
+      expect(JSON.parse(deploy?.body ?? "{}").data.attributes.spec.exposure).toBe("private");
+    }).pipe(Effect.provide(layer), Effect.ensuring(Effect.sync(repo.cleanup)));
+  });
+
+  it.live("lets --exposure override the recorded exposure for one deploy", () => {
+    const repo = project({
+      "supabase/config.toml": `project_id = "demo"\n\n[workers.api]\nruntime = "node"\nsize = "2gb"\nexposure = "private"\n`,
+    });
+    const { layer, http } = setupLegacyWorkers({ workdir: repo.dir, routes: routes() });
+
+    return Effect.gen(function* () {
+      yield* push({ exposure: Option.some("public") });
+
+      const deploy = http.requests.find((request) => request.url.endsWith("/deploy"));
+      expect(JSON.parse(deploy?.body ?? "{}").data.attributes.spec.exposure).toBe("public");
+    }).pipe(Effect.provide(layer), Effect.ensuring(Effect.sync(repo.cleanup)));
+  });
+
+  // `[workers.*] exposure` is a plain string in the config schema, so a typo
+  // reaches the handler. Coercing it to the default would deploy a `privat`
+  // worker to the whole internet — refused before anything is packaged instead.
+  it.live("names the exposures on offer when config records one it does not know", () => {
+    const repo = project({
+      "supabase/config.toml": `project_id = "demo"\n\n[workers.api]\nruntime = "node"\nexposure = "privat"\n`,
+    });
+    const { layer, http } = setupLegacyWorkers({ workdir: repo.dir, routes: routes() });
+
+    return Effect.gen(function* () {
+      const error = yield* push().pipe(Effect.flip);
+
+      expect(error).toBeInstanceOf(UnknownWorkerExposureError);
+      expect((error as UnknownWorkerExposureError).detail).toContain("privat");
+      expect((error as UnknownWorkerExposureError).suggestion).toContain("public, private");
+      expect(http.requests).toHaveLength(0);
+    }).pipe(Effect.provide(layer), Effect.ensuring(Effect.sync(repo.cleanup)));
+  });
+
+  // The flag is the authority for the deploy it runs, so an unrecognized
+  // recorded value it replaces is moot rather than fatal.
+  it.live("lets --exposure stand in for an exposure config records badly", () => {
+    const repo = project({
+      "supabase/config.toml": `project_id = "demo"\n\n[workers.api]\nruntime = "node"\nexposure = "privat"\n`,
+    });
+    const { layer, http } = setupLegacyWorkers({ workdir: repo.dir, routes: routes() });
+
+    return Effect.gen(function* () {
+      yield* push({ exposure: Option.some("private") });
+
+      const deploy = http.requests.find((request) => request.url.endsWith("/deploy"));
+      expect(JSON.parse(deploy?.body ?? "{}").data.attributes.spec.exposure).toBe("private");
+    }).pipe(Effect.provide(layer), Effect.ensuring(Effect.sync(repo.cleanup)));
+  });
+
   it.live("polls until the build leaves `building`", () => {
     const repo = project();
     const { layer, http } = setupLegacyWorkers({
@@ -397,10 +481,10 @@ describe("legacy workers push", () => {
     }).pipe(Effect.provide(layer), Effect.ensuring(Effect.sync(repo.cleanup)));
   });
 
-  // Every deploy this CLI sends asks for public exposure, but the accepted spec
-  // is the platform's answer, not the request echoed back. A worker it did not
-  // expose has no URL to print, and inventing one from the ref would name an
-  // address that does not resolve.
+  // The accepted spec is the platform's answer, not the request echoed back — so
+  // a worker the platform did not expose has no URL to print even when the deploy
+  // asked for `public`, and inventing one from the ref would name an address
+  // that does not resolve.
   it.live("omits the URL for a worker the platform did not expose publicly", () => {
     const repo = project();
     const { layer, out } = setupLegacyWorkers({

@@ -31,6 +31,7 @@ function flags(overrides: Partial<LegacyWorkersNewFlags> = {}): LegacyWorkersNew
     name: Option.some("api"),
     runtime: Option.none(),
     size: Option.none(),
+    exposure: Option.none(),
     source: Option.none(),
     ...overrides,
   };
@@ -60,7 +61,7 @@ describe("legacy workers new", () => {
       const workerDir = join(repo.dir, "supabase", "workers", "api");
       expect(existsSync(join(workerDir, "index.mjs"))).toBe(true);
       expect(repo.config()).toBe(
-        `${CONFIG_WITH_COMMENTS}\n[workers.api]\nruntime = "node"\nsize = "2gb"\n`,
+        `${CONFIG_WITH_COMMENTS}\n[workers.api]\nruntime = "node"\nsize = "2gb"\nexposure = "public"\n`,
       );
 
       // Declarative line first, then the detail rows, then the next step —
@@ -94,7 +95,7 @@ describe("legacy workers new", () => {
   // without ending the run, so it refuses both there rather than after asking.
   it.live("refuses a bad or already-recorded name at the name prompt", () => {
     const repo = project({
-      "supabase/config.toml": `${CONFIG_WITH_COMMENTS}\n[workers.api]\nruntime = "node"\nsize = "2gb"\n`,
+      "supabase/config.toml": `${CONFIG_WITH_COMMENTS}\n[workers.api]\nruntime = "node"\nsize = "2gb"\nexposure = "public"\n`,
     });
     const { layer, out } = setupLegacyWorkers({
       workdir: repo.dir,
@@ -150,11 +151,11 @@ describe("legacy workers new", () => {
     }).pipe(Effect.provide(layer), Effect.ensuring(Effect.sync(repo.cleanup)));
   });
 
-  it.live("prompts for runtime and size when neither is given", () => {
+  it.live("prompts for runtime, size and exposure when none is given", () => {
     const repo = project();
     const { layer, out } = setupLegacyWorkers({
       workdir: repo.dir,
-      promptSelectResponses: ["node", "4gb"],
+      promptSelectResponses: ["node", "4gb", "private"],
     });
 
     return Effect.gen(function* () {
@@ -163,10 +164,40 @@ describe("legacy workers new", () => {
       expect(out.promptSelectCalls.map((call) => call.message)).toEqual([
         "Which runtime should this worker use?",
         "Which instance size should this worker use?",
+        "Should this worker be reachable from the internet?",
       ]);
       expect(repo.config()).toContain('runtime = "node"');
       expect(repo.config()).toContain('size = "4gb"');
+      expect(repo.config()).toContain('exposure = "private"');
       expect(existsSync(join(repo.dir, "supabase", "workers", "api", "index.mjs"))).toBe(true);
+    }).pipe(Effect.provide(layer), Effect.ensuring(Effect.sync(repo.cleanup)));
+  });
+
+  // The whole reason `new` records it: `push` sends a complete spec every time,
+  // so an entry with no `exposure` is deployed public by the next bare `push`.
+  // Recording the answer is what makes a private worker stay private.
+  it.live("records the chosen exposure so a later push keeps it", () => {
+    const repo = project();
+    const { layer } = setupLegacyWorkers({ workdir: repo.dir });
+
+    return Effect.gen(function* () {
+      yield* legacyWorkersNew(flags({ exposure: Option.some("private") }));
+
+      expect(repo.config()).toContain('exposure = "private"');
+    }).pipe(Effect.provide(layer), Effect.ensuring(Effect.sync(repo.cleanup)));
+  });
+
+  // Written even when it is the default, the same way `runtime` and `size` are:
+  // an absent key and `public` mean the same thing to `push` today, but only the
+  // written one survives a change of default.
+  it.live("records the default exposure when nothing names one", () => {
+    const repo = project();
+    const { layer } = setupLegacyWorkers({ workdir: repo.dir, format: "json" });
+
+    return Effect.gen(function* () {
+      yield* legacyWorkersNew(flags({ name: Option.some("api") }));
+
+      expect(repo.config()).toContain('exposure = "public"');
     }).pipe(Effect.provide(layer), Effect.ensuring(Effect.sync(repo.cleanup)));
   });
 
@@ -177,7 +208,7 @@ describe("legacy workers new", () => {
     const { layer, out } = setupLegacyWorkers({
       workdir: repo.dir,
       stdinIsTty: false,
-      promptSelectResponses: ["node", "4gb"],
+      promptSelectResponses: ["node", "4gb", "private"],
     });
 
     return Effect.gen(function* () {
@@ -186,6 +217,7 @@ describe("legacy workers new", () => {
       expect(out.promptSelectCalls).toEqual([]);
       expect(repo.config()).toContain('runtime = "deno"');
       expect(repo.config()).toContain('size = "2gb"');
+      expect(repo.config()).toContain('exposure = "public"');
     }).pipe(Effect.provide(layer), Effect.ensuring(Effect.sync(repo.cleanup)));
   });
 
@@ -210,7 +242,12 @@ describe("legacy workers new", () => {
 
     return Effect.gen(function* () {
       yield* legacyWorkersNew(
-        flags({ name: Option.some("api"), runtime: Option.some("deno"), size: Option.some("4gb") }),
+        flags({
+          name: Option.some("api"),
+          runtime: Option.some("deno"),
+          size: Option.some("4gb"),
+          exposure: Option.some("public"),
+        }),
       );
       const recorded = repo.config();
 
@@ -298,7 +335,7 @@ describe("legacy workers new", () => {
 
       expect(existsSync(join(created.dir, "supabase", "workers", "api", "index.mjs"))).toBe(true);
       expect(readFileSync(join(created.dir, "supabase", "config.toml"), "utf8")).toBe(
-        `[workers.api]\nruntime = "node"\nsize = "2gb"\n`,
+        `[workers.api]\nruntime = "node"\nsize = "2gb"\nexposure = "public"\n`,
       );
     }).pipe(
       Effect.provide(layer),
@@ -417,7 +454,7 @@ describe("legacy workers new", () => {
 
       // The worker is recorded in config.toml, which is the TOML editor's file.
       expect(repo.config()).toBe(
-        `${CONFIG_WITH_COMMENTS}\n[workers.api]\nruntime = "node"\nsize = "2gb"\n`,
+        `${CONFIG_WITH_COMMENTS}\n[workers.api]\nruntime = "node"\nsize = "2gb"\nexposure = "public"\n`,
       );
     }).pipe(Effect.provide(layer), Effect.ensuring(Effect.sync(repo.cleanup)));
   });
@@ -442,7 +479,7 @@ describe("legacy workers new", () => {
 
       // The workdir got both the entry and the scaffold it points at.
       expect(readFileSync(join(workdir, "supabase", "config.toml"), "utf8")).toBe(
-        '[workers.api]\nruntime = "node"\nsize = "2gb"\n',
+        '[workers.api]\nruntime = "node"\nsize = "2gb"\nexposure = "public"\n',
       );
       expect(existsSync(join(workdir, "supabase", "workers", "api", "index.mjs"))).toBe(true);
     }).pipe(Effect.provide(layer), Effect.ensuring(Effect.sync(repo.cleanup)));
@@ -542,7 +579,7 @@ describe("legacy workers new", () => {
     const repo = project();
     const { layer } = setupLegacyWorkers({
       workdir: repo.dir,
-      promptSelectResponses: ["cobol", "colossal"],
+      promptSelectResponses: ["cobol", "colossal", "sideways"],
     });
 
     return Effect.gen(function* () {
@@ -550,11 +587,13 @@ describe("legacy workers new", () => {
         name: Option.some("api"),
         runtime: Option.none(),
         size: Option.none(),
+        exposure: Option.none(),
         source: Option.none(),
       });
 
       expect(repo.config()).toContain(`runtime = "deno"`);
       expect(repo.config()).toContain(`size = "2gb"`);
+      expect(repo.config()).toContain(`exposure = "public"`);
     }).pipe(Effect.provide(layer), Effect.ensuring(Effect.sync(repo.cleanup)));
   });
 

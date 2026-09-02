@@ -22,15 +22,20 @@ import {
   resolveWorkerSource,
 } from "../../../../../shared/workers/worker-paths.ts";
 import {
+  DEFAULT_WORKER_EXPOSURE,
   DEFAULT_WORKER_RUNTIME,
   DEFAULT_WORKER_SIZE,
+  parseWorkerExposure,
   parseWorkerRuntime,
   parseWorkerSize,
   validateWorkerNameMessage,
   vcpuForSize,
+  WORKER_EXPOSURE_DESCRIPTIONS,
+  WORKER_EXPOSURES,
   WORKER_RUNTIME_DESCRIPTIONS,
   WORKER_RUNTIMES,
   WORKER_SIZES,
+  type WorkerExposure,
   type WorkerRuntime,
   type WorkerSize,
 } from "../../../../../shared/workers/worker-runtimes.ts";
@@ -51,8 +56,8 @@ import type { LegacyWorkersNewFlags } from "./new.command.ts";
  * chosen runtime's starter files and record the choice in `config.toml`.
  * Nothing is deployed; this is entirely local-disk work.
  *
- * The name, runtime and size are all resolved *before* anything is written, so a
- * cancelled prompt leaves nothing behind for this worker at all.
+ * The name, runtime, size and exposure are all resolved *before* anything is
+ * written, so a cancelled prompt leaves nothing behind for this worker at all.
  */
 
 /** `values`, with `defaultValue` first, so a prompt pre-selects what it shows first. */
@@ -175,6 +180,38 @@ const resolveSize = Effect.fnUntraced(function* (options: {
 });
 
 /**
+ * Recorded on every scaffold, not just when it is asked for: `push` sends a
+ * complete spec each time, so a worker whose `exposure` is absent from
+ * `config.toml` is deployed public by the next bare `push`. Writing the value
+ * down — default included, the way `runtime` and `size` are — is what makes
+ * `--exposure private` stick past the deploy that chose it.
+ */
+const resolveExposure = Effect.fnUntraced(function* (options: {
+  readonly explicit: Option.Option<WorkerExposure>;
+  /** Whether there is a terminal to ask on — see `canPromptFor`. */
+  readonly canPrompt: boolean;
+}) {
+  if (Option.isSome(options.explicit)) {
+    return options.explicit.value;
+  }
+
+  if (options.canPrompt) {
+    const output = yield* Output;
+    const selected = yield* output.promptSelect(
+      "Should this worker be reachable from the internet?",
+      defaultFirst([...WORKER_EXPOSURES], DEFAULT_WORKER_EXPOSURE).map((exposure) => ({
+        value: exposure,
+        label: exposure,
+        hint: WORKER_EXPOSURE_DESCRIPTIONS[exposure],
+      })),
+    );
+    return parseWorkerExposure(selected) ?? DEFAULT_WORKER_EXPOSURE;
+  }
+
+  return DEFAULT_WORKER_EXPOSURE;
+});
+
+/**
  * Whether the destination is free for a scaffold: nothing there, or an empty
  * directory. A plain file counts as occupied, so it is refused by name rather
  * than by a bare `EEXIST` from `makeDirectory`.
@@ -226,11 +263,12 @@ export const legacyWorkersNew = Effect.fn("legacy.experimental.workers.new")(fun
       );
     }
 
-    // Resolved before anything is written, so cancelling either prompt leaves
+    // Resolved before anything is written, so cancelling any prompt leaves
     // nothing behind — the name included. With nowhere to ask, the defaults
     // stand; only the name has nothing to fall back to.
     const runtime = yield* resolveRuntime({ explicit: flags.runtime, canPrompt });
     const size = yield* resolveSize({ explicit: flags.size, canPrompt });
+    const exposure = yield* resolveExposure({ explicit: flags.exposure, canPrompt });
 
     // Validated before anything is written: this is the directory the starter
     // files land in, so a value naming the project root, `supabase/`, or
@@ -289,6 +327,7 @@ export const legacyWorkersNew = Effect.fn("legacy.experimental.workers.new")(fun
       patch: {
         runtime,
         size,
+        exposure,
         ...(source === undefined ? {} : { source }),
       },
     });
@@ -310,6 +349,7 @@ export const legacyWorkersNew = Effect.fn("legacy.experimental.workers.new")(fun
       runtime,
       size,
       vcpu: vcpuForSize(size),
+      exposure,
       source: sourceDisplay,
       config_path: project.configPath,
     };
@@ -335,7 +375,7 @@ export const legacyWorkersNew = Effect.fn("legacy.experimental.workers.new")(fun
       legacyRenderWorkerDetails([
         ["Runtime", runtime],
         ["Size", `${size} (${vcpuForSize(size)} vCPU)`],
-        ["Access", "public"],
+        ["Access", exposure],
       ]),
     );
     // On the success trailer rather than inline, the way `bootstrap` emits its

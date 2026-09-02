@@ -14,12 +14,12 @@
 
 ## Files Written
 
-| Path                                            | Format | When                                                                       |
-| ----------------------------------------------- | ------ | -------------------------------------------------------------------------- |
-| `<workdir>/supabase/config.toml`                | TOML   | on success — appends `[workers.<name>]`, preserving surrounding formatting |
-| `<workdir>/supabase/workers/<name>/*`           | varies | on success, unless `--source` names another directory                      |
-| `<workdir>/<source>/*`                          | varies | on success, when `--source` is given                                       |
-| `<SUPABASE_HOME or ~/.supabase>/telemetry.json` | JSON   | whenever the handler runs — flushed on success and on failure              |
+| Path                                            | Format | When                                                                                                                                                  |
+| ----------------------------------------------- | ------ | ----------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `<workdir>/supabase/config.toml`                | TOML   | on success — appends `[workers.<name>]` with `runtime`, `size`, `exposure` and (when `--source` is given) `source`, preserving surrounding formatting |
+| `<workdir>/supabase/workers/<name>/*`           | varies | on success, unless `--source` names another directory                                                                                                 |
+| `<workdir>/<source>/*`                          | varies | on success, when `--source` is given                                                                                                                  |
+| `<SUPABASE_HOME or ~/.supabase>/telemetry.json` | JSON   | whenever the handler runs — flushed on success and on failure                                                                                         |
 
 Workers are recorded in `config.toml` only. The project config loader prefers
 `supabase/config.json` when one exists, but the entry writer is a TOML text
@@ -40,13 +40,13 @@ prompt refuses a name that is not a DNS label or that `config.toml` already
 records — so nothing is asked, and nothing written, for a name the command was
 going to refuse. With `-o json|yaml|toml|env`, a redirected stdout, or a stdin
 that is not a terminal, there is nowhere to ask, and the command fails instead
-of defaulting: unlike the runtime and size, the name has no default to fall back
-on. Every prompt is gated on both streams, so
+of defaulting: unlike the runtime, size and exposure, the name has no default to
+fall back on. Every prompt is gated on both streams, so
 `printf 'api\n' | supabase experimental workers new` takes that failure path
 rather than reading the worker name off the pipe.
 
 Writes to `config.toml` are append-only. A worker already recorded under
-`[workers.<name>]` is refused outright — before the runtime and size prompts,
+`[workers.<name>]` is refused outright — before the dial prompts,
 and before anything reaches disk — because editing an entry the user owns is
 not this command's job.
 
@@ -95,7 +95,7 @@ No custom events — only the `cli_command_executed` that the instrumentation
 wrapper emits for every command.
 
 Nothing is emitted for a failure the parser catches, such as a
-`--runtime`/`--size` value outside the choice list. The wrapper is installed by
+`--runtime`/`--size`/`--exposure` value outside the choice list. The wrapper is installed by
 `Command.withHandler`, so a command that never reaches its handler never reaches
 the instrumentation either — and `telemetry.json` is not written. A missing name
 is _not_ one of those: the argument is optional, so a bare `workers new` reaches

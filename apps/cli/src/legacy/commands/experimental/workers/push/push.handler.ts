@@ -21,13 +21,17 @@ import { displayPath } from "../../../../../shared/workers/worker-paths.ts";
 import type { WorkerEntry } from "../../../../../shared/workers/worker-config.ts";
 import {
   apiSizeFor,
+  DEFAULT_WORKER_EXPOSURE,
   DEFAULT_WORKER_INSTANCES,
   DEFAULT_WORKER_SIZE,
   formatApiSize,
+  parseWorkerExposure,
   parseWorkerRuntime,
   parseWorkerSize,
+  WORKER_EXPOSURES,
   WORKER_RUNTIMES,
   WORKER_SIZES,
+  type WorkerExposure,
 } from "../../../../../shared/workers/worker-runtimes.ts";
 import { workerUrl } from "../../../../../shared/workers/worker-url.ts";
 import {
@@ -39,6 +43,7 @@ import {
 } from "../../../../../shared/workers/workers-api.ts";
 import {
   NoWorkersToDeployError,
+  UnknownWorkerExposureError,
   UnknownWorkerRuntimeError,
   UnknownWorkerSizeError,
   WorkerBuildFailedError,
@@ -61,8 +66,8 @@ import type { LegacyWorkersPushFlags } from "./push.command.ts";
  * deploy the worker into the linked project. Registered under `deploy` as an
  * alias, for anyone reaching for the `supabase functions` verb out of habit.
  *
- * The runtime, size and source directory come from `[workers.<name>]` in
- * `supabase/config.toml`. A directory pushed without ever running `new` gets
+ * The runtime, size, exposure and source directory come from `[workers.<name>]`
+ * in `supabase/config.toml`. A directory pushed without ever running `new` gets
  * its runtime guessed from marker files instead — reported, with a nudge to pin
  * it down rather than re-guess on every push.
  *
@@ -143,6 +148,40 @@ function resolveInstances(options: {
 }
 
 /**
+ * `--exposure` for one deploy, then the recorded exposure, then
+ * {@link DEFAULT_WORKER_EXPOSURE}. Never left unset, because every deploy sends a
+ * complete spec and an omitted exposure would re-expose a worker somebody had
+ * deliberately made private.
+ *
+ * `--exposure` is a `Flag.choice`, so only a recorded value can be unrecognized
+ * — and that is refused rather than coerced, the same way `resolveSize` treats a
+ * size it does not know: silently deploying a `private`-typo'd worker as public
+ * is the one outcome nobody asked for.
+ */
+const resolveExposure = Effect.fnUntraced(function* (options: {
+  readonly name: string;
+  readonly recorded: string | undefined;
+  readonly override: Option.Option<WorkerExposure>;
+}) {
+  if (Option.isSome(options.override)) {
+    return options.override.value;
+  }
+  if (options.recorded === undefined) {
+    return DEFAULT_WORKER_EXPOSURE;
+  }
+  const recorded = parseWorkerExposure(options.recorded);
+  if (recorded === undefined) {
+    return yield* Effect.fail(
+      new UnknownWorkerExposureError({
+        detail: `supabase/config.toml records an unknown exposure "${options.recorded}" for "${options.name}".`,
+        suggestion: `Set [workers.${options.name}] exposure to one of: ${WORKER_EXPOSURES.join(", ")}.`,
+      }),
+    );
+  }
+  return recorded;
+});
+
+/**
  * What to do about a worker whose source directory is not there at all.
  *
  * `supabase experimental workers new` is only an answer for a name the config has never
@@ -192,6 +231,7 @@ const deployOneWorker = Effect.fnUntraced(function* (input: {
    */
   readonly refSuffix: string;
   readonly instances: Option.Option<number>;
+  readonly exposure: Option.Option<WorkerExposure>;
   /** `--wait`: block on the server-side build instead of returning once it starts. */
   readonly wait: boolean;
   readonly pollSchedule?: Schedule.Schedule<unknown>;
@@ -284,6 +324,15 @@ const deployOneWorker = Effect.fnUntraced(function* (input: {
     override: input.instances,
   });
 
+  // Resolved before anything is packaged or uploaded, alongside the runtime and
+  // size, so a config that records an exposure this CLI does not know is refused
+  // while the refusal is still free.
+  const exposure = yield* resolveExposure({
+    name,
+    recorded: worker.entry?.exposure,
+    override: input.exposure,
+  });
+
   let contextUploadId: string;
   {
     const packaging = yield* output.task("Packaging worker...");
@@ -326,9 +375,7 @@ const deployOneWorker = Effect.fnUntraced(function* (input: {
     // context carries its own Dockerfile and is built as-is.
     ...(runtime === "dockerfile" ? {} : { runtime }),
     size: apiSizeFor(size),
-    // Every runtime offered today serves HTTP. A sandbox runtime would need a
-    // branch here.
-    exposure: "public",
+    exposure,
     instances,
   };
 
@@ -545,6 +592,7 @@ export const legacyWorkersPush = Effect.fn("legacy.experimental.workers.push")(f
           projectRef,
           refSuffix,
           instances: flags.instances,
+          exposure: flags.exposure,
           wait: flags.wait,
           machineOutput,
           ...(options.pollSchedule === undefined ? {} : { pollSchedule: options.pollSchedule }),
