@@ -410,7 +410,7 @@ enabled = true
 # Directory under \`supabase/\` where declarative files are written.
 # declarative_schema_path = "./schemas"
 # JSON string passed through to pg-delta SQL formatting.
-# format_options = "{\\"keywordCase\\":\\"upper\\",\\"indent\\":2,\\"maxWidth\\":80,\\"commaStyle\\":\\"trailing\\"}"
+# format_options = "{\\"keywordCase\\":\\"upper\\",\\"indent\\":2,\\"maxWidth\\":180,\\"commaStyle\\":\\"trailing\\"}"
 `;
 
 export const INIT_GITIGNORE_TEMPLATE = `# Supabase
