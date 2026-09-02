@@ -143,6 +143,47 @@ describe("legacyConfigPullSummaryMessage", () => {
     );
   });
 
+  test("a block-only plan (no value writes) gets its own wording, distinct from no-differences and from a value write", () => {
+    const blockOnlyPlan: LegacyConfigPullPlan = {
+      writes: [],
+      skipped: [],
+      warnings: [],
+      createdTable: ["remotes", "staging"],
+    };
+    const scope = { present: [], missing: [] };
+    expect(
+      legacyConfigPullSummaryMessage(emptyChangeSet(), scope, blockOnlyPlan, NOT_DECLINED),
+    ).toBe("Created [remotes.staging]; no config differences to apply.");
+    expect(
+      legacyConfigPullSummaryMessage(emptyChangeSet(), scope, blockOnlyPlan, {
+        dryRun: true,
+        declined: false,
+      }),
+    ).toBe("[remotes.staging] would be created (dry run); no config differences to apply.");
+    expect(
+      legacyConfigPullSummaryMessage(emptyChangeSet(), scope, blockOnlyPlan, {
+        dryRun: false,
+        declined: true,
+      }),
+    ).toBe("[remotes.staging] not created (declined).");
+  });
+
+  test("a hostile block label cannot forge additional output in the summary message", () => {
+    const blockOnlyPlan: LegacyConfigPullPlan = {
+      writes: [],
+      skipped: [],
+      warnings: [],
+      createdTable: ["remotes", "staging\nFAKE"],
+    };
+    const message = legacyConfigPullSummaryMessage(
+      emptyChangeSet(),
+      { present: [], missing: [] },
+      blockOnlyPlan,
+      NOT_DECLINED,
+    );
+    expect(message).toBe("Created [remotes.staging FAKE]; no config differences to apply.");
+  });
+
   test("caveats travel with the summary message", () => {
     const cs: ConfigChangeSet = {
       ...emptyChangeSet(),
@@ -389,6 +430,62 @@ describe("legacyConfigPullPayload", () => {
     });
   });
 
+  test("a block-only plan reports wrote:true and counts.written:0 once actually created, but wrote:false for dry-run/declined", () => {
+    const plan: LegacyConfigPullPlan = {
+      writes: [],
+      skipped: [],
+      warnings: [],
+      createdTable: ["remotes", "staging"],
+    };
+    const destination: LegacyConfigPullDestination = {
+      kind: "remote",
+      label: "staging",
+      created: true,
+    };
+    const context: LegacyConfigPullContext = {
+      projectRef: PROJECT_REF,
+      branch: "staging",
+      configSchema: "https://example.com/schema.json",
+      configPath: "supabase/config.toml",
+      format: "toml",
+      appliedRemote: undefined,
+      destination,
+    };
+
+    const created = legacyConfigPullPayload(
+      emptyChangeSet(),
+      { present: [], missing: [] },
+      plan,
+      context,
+      NOT_DECLINED,
+    );
+    expect(created["wrote"]).toBe(true);
+    expect(created["destination"]).toEqual({
+      scope: "remotes.staging",
+      label: "staging",
+      created: true,
+    });
+    expect((created["counts"] as Record<string, unknown>)["written"]).toBe(0);
+
+    const dryRun = legacyConfigPullPayload(
+      emptyChangeSet(),
+      { present: [], missing: [] },
+      plan,
+      context,
+      { dryRun: true, declined: false },
+    );
+    expect(dryRun["wrote"]).toBe(false);
+
+    const declined = legacyConfigPullPayload(
+      emptyChangeSet(),
+      { present: [], missing: [] },
+      plan,
+      context,
+      { dryRun: false, declined: true },
+    );
+    expect(declined["wrote"]).toBe(false);
+  });
+
   test("warnings carry their path", () => {
     const context: LegacyConfigPullContext = {
       projectRef: PROJECT_REF,
@@ -450,6 +547,7 @@ describe("legacyRenderConfigPullText", () => {
       changeSet,
       { present: ["api", "auth"], missing: [] },
       plan,
+      PROJECT_REF,
     );
     expect(text).toContain("api.max_rows [update, write]");
     expect(text).toContain("  local:  500");
@@ -478,9 +576,93 @@ describe("legacyRenderConfigPullText", () => {
       warnings: [],
       createdTable: undefined,
     };
-    const text = legacyRenderConfigPullText(changeSet, { present: [], missing: [] }, plan);
+    const text = legacyRenderConfigPullText(
+      changeSet,
+      { present: [], missing: [] },
+      plan,
+      PROJECT_REF,
+    );
     expect(text).toContain(
       "auth.sms.test_otp.hostile No config differences found. [remote_only, write]",
     );
+  });
+
+  test("a plan that also creates a block notes it, only when at least one value write is planned", () => {
+    const change: ConfigChange = {
+      path: ["api", "max_rows"],
+      class: "update",
+      local: 500,
+      remote: 1000,
+      declared: true,
+    };
+    const changeSet: ConfigChangeSet = {
+      changes: [change],
+      masked: [],
+      unmanaged: [],
+      counts: { update: 1, remote_only: 0, local_only: 0, total: 1 },
+    };
+    const plan: LegacyConfigPullPlan = {
+      writes: [{ change, documentPath: ["remotes", "staging", ...change.path], value: 1000 }],
+      skipped: [],
+      warnings: [],
+      createdTable: ["remotes", "staging"],
+    };
+    const text = legacyRenderConfigPullText(
+      changeSet,
+      { present: [], missing: [] },
+      plan,
+      PROJECT_REF,
+    );
+    expect(text).toContain(
+      `New block [remotes.staging] will be created (project_id = ${PROJECT_REF}).`,
+    );
+  });
+
+  test("a block-only plan (no value writes) carries no new-block note — its own confirmation prompt names the block instead", () => {
+    const plan: LegacyConfigPullPlan = {
+      writes: [],
+      skipped: [],
+      warnings: [],
+      createdTable: ["remotes", "staging"],
+    };
+    const text = legacyRenderConfigPullText(
+      emptyChangeSet(),
+      { present: [], missing: [] },
+      plan,
+      PROJECT_REF,
+    );
+    expect(text).not.toContain("New block");
+  });
+
+  test("a hostile block label cannot forge additional output lines", () => {
+    const change: ConfigChange = {
+      path: ["api", "max_rows"],
+      class: "update",
+      local: 500,
+      remote: 1000,
+      declared: true,
+    };
+    const changeSet: ConfigChangeSet = {
+      changes: [change],
+      masked: [],
+      unmanaged: [],
+      counts: { update: 1, remote_only: 0, local_only: 0, total: 1 },
+    };
+    const plan: LegacyConfigPullPlan = {
+      writes: [{ change, documentPath: ["remotes", "staging", ...change.path], value: 1000 }],
+      skipped: [],
+      warnings: [],
+      createdTable: ["remotes", "staging\nNo config differences found."],
+    };
+    const text = legacyRenderConfigPullText(
+      changeSet,
+      { present: [], missing: [] },
+      plan,
+      PROJECT_REF,
+    );
+    expect(text).toContain(
+      "New block [remotes.staging No config differences found.] will be created",
+    );
+    expect(text.split("New block").length).toBe(2);
   });
 });

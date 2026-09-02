@@ -42,6 +42,7 @@ import {
   legacyConfigScopeLine,
 } from "../config.format.ts";
 import {
+  legacyConfigPullCreatedBlockLabel,
   legacyConfigPullDestinationLine,
   legacyConfigPullPayload,
   legacyConfigPullSummaryMessage,
@@ -449,17 +450,38 @@ export const legacyRunConfigPull = Effect.fnUntraced(function* (input: LegacyCon
       : output.raw(`${legacyConfigPullSummaryMessage(changeSet, scope, planForOutput, outcome)}\n`);
 
   // 9. `--dry-run`: preview only. Never runs the git check, never prompts,
-  // never touches the file.
+  // never touches the file. Comes before the `hasWork` short-circuit below —
+  // a planner defect must be visible even on a run that would do nothing.
   if (input.dryRun) {
     if (output.format === "text") {
-      yield* output.raw(legacyRenderConfigPullText(changeSet, scope, planWithUnpushable));
+      yield* output.raw(legacyRenderConfigPullText(changeSet, scope, planWithUnpushable, ref));
     }
     yield* emitOutcome(planWithUnpushable, { dryRun: true, declined: false });
     return;
   }
 
-  // 10. Git dirty guard (plan §1.4). `--force` skips it entirely — no
-  // check, no warning, no prompt-default flip.
+  // 9.5. Nothing planned AT ALL — no value write, no `[remotes.*]` block to
+  // create — success, no git check, no prompt. `hasBlockToCreate` is why this
+  // is `hasWork`, not merely `writes.length === 0`: a zero-drift branch
+  // target still has WORK to do (creating the block), so it must reach the
+  // git guard/confirmation below like any other write (CLI-2064 bug B). Doing
+  // this check BEFORE the git guard (rather than after, as it used to run) is
+  // what fixes bug A: a converged run never spawns `git status` at all, so an
+  // uncommitted-but-otherwise-clean config file never aborts a pull that was
+  // never going to touch it.
+  const hasBlockToCreate = planWithUnpushable.createdTable !== undefined;
+  const hasWork = planWithUnpushable.writes.length > 0 || hasBlockToCreate;
+  if (!hasWork) {
+    if (output.format === "text") {
+      yield* output.raw(legacyRenderConfigPullText(changeSet, scope, planWithUnpushable, ref));
+    }
+    yield* emitOutcome(planWithUnpushable, { dryRun: false, declined: false });
+    return;
+  }
+
+  // 10. Git dirty guard (plan §1.4), reached only when there's work to do.
+  // `--force` skips it entirely — no check, no warning, no prompt-default
+  // flip.
   let dirty = false;
   if (!input.force) {
     const dirtyOption = yield* legacyConfigFileHasUncommittedChanges(loaded.path);
@@ -484,19 +506,32 @@ export const legacyRunConfigPull = Effect.fnUntraced(function* (input: LegacyCon
     : planWithUnpushable;
 
   if (output.format === "text") {
-    yield* output.raw(legacyRenderConfigPullText(changeSet, scope, planForRender));
+    yield* output.raw(legacyRenderConfigPullText(changeSet, scope, planForRender, ref));
   }
 
-  // 11. Nothing planned — success, no prompt.
-  if (planForRender.writes.length === 0) {
-    yield* emitOutcome(planForRender, { dryRun: false, declined: false });
-    return;
+  // 11. Confirm. A run with at least one value write keeps the established
+  // "Apply N change(s)..." message even when it ALSO creates a block (the
+  // rendered body above already called that out); a block-ONLY run (no value
+  // writes — bug B's zero-drift branch target) gets its own message naming
+  // the block directly, since there is no per-change body to convey it
+  // otherwise.
+  let confirmMessage: string;
+  if (planForRender.writes.length > 0) {
+    confirmMessage = `Apply ${planForRender.writes.length} change(s) to ${context.configPath}?`;
+  } else if (planForRender.createdTable !== undefined) {
+    confirmMessage = `Create [remotes.${legacyConfigPullCreatedBlockLabel(planForRender.createdTable)}] in ${context.configPath}?`;
+  } else {
+    // Unreachable: `writes.length === 0` only reaches this branch when
+    // `hasWork` was true, which (post the step-9.5 short-circuit above) means
+    // `createdTable` must be set.
+    return yield* Effect.die(
+      new Error("config pull: nothing to confirm — hasWork invariant violated"),
+    );
   }
-
   const confirmed = yield* legacyPromptYesNo(
     output,
     input.yes,
-    `Apply ${planForRender.writes.length} change(s) to ${context.configPath}?`,
+    confirmMessage,
     dirty ? false : true,
   );
   if (!confirmed) {

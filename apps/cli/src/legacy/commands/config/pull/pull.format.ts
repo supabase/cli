@@ -95,6 +95,18 @@ export function legacyConfigPullDestinationLine(
   return `Pulling config from ${legacyConfigTargetPhrase(target)} → ${scope}\n`;
 }
 
+/**
+ * The label segment of `plan.createdTable` (always `["remotes", label]`, see
+ * {@link LegacyConfigPullPlan.createdTable}'s own doc comment) — the only
+ * untrusted piece of that path, so every caller rendering it into TEXT output
+ * (the confirmation prompt, the render body's new-block note, the summary
+ * message's block-only wording) runs it through `legacySanitizeInlineName`
+ * here rather than re-deriving the indexing at each call site.
+ */
+export function legacyConfigPullCreatedBlockLabel(createdTable: ReadonlyArray<string>): string {
+  return legacySanitizeInlineName(createdTable[1] ?? "");
+}
+
 interface ChangeStatus {
   readonly written: boolean;
   readonly reason?: LegacyConfigPullChangeSkipReason;
@@ -162,11 +174,20 @@ function warningMessage(warning: LegacyConfigPullWarning): string {
  * so it reports what the plan WOULD do, independent of the run's eventual
  * outcome. The final one-line disposition (wrote / would write / declined)
  * is {@link legacyConfigPullSummaryMessage}'s job, not this renderer's.
+ *
+ * When `plan.createdTable` is set AND at least one value write is also
+ * planned, an extra line notes the new block by name — the generic
+ * "Apply N change(s)..." confirmation that follows never otherwise mentions
+ * it, so a TTY user would only learn about the new block after already
+ * confirming. A block-ONLY run (no value writes) has no such gap: its own
+ * confirmation prompt already names the block directly (`pull.handler.ts`
+ * step 11), so this line is scoped to the writes-also-planned case.
  */
 export function legacyRenderConfigPullText(
   changeSet: ConfigChangeSet,
   scope: LegacyConfigApiScope,
   plan: LegacyConfigPullPlan,
+  projectRef: string,
 ): string {
   const writePaths = new Set(plan.writes.map((write) => pathKey(write.change.path)));
   const skipReasonByPath = new Map(
@@ -204,6 +225,11 @@ export function legacyRenderConfigPullText(
       `${legacyConfigPlural(total, "difference", "differences")} found (${plan.writes.length} to write, ${plan.skipped.length} to skip).`,
     );
   }
+  if (plan.createdTable !== undefined && plan.writes.length > 0) {
+    lines.push(
+      `New block [remotes.${legacyConfigPullCreatedBlockLabel(plan.createdTable)}] will be created (project_id = ${legacySanitizeInlineName(projectRef)}).`,
+    );
+  }
   if (scope.missing.length > 0) {
     lines.push(`Note: ${legacyConfigNotReturnedCaveat(scope.missing)}`);
   }
@@ -221,9 +247,15 @@ export function legacyRenderConfigPullText(
  * with the machine-mode `message` field the same way `config diff`'s do, so
  * an agent echoing just `.message` never mistakes a partial/declined/dry-run
  * result for a completed write. Distinguishes "nothing to write" (no
- * differences at all) from "wrote nothing" (differences existed, but every
- * one was skipped/declined/dry-run) — the two read very differently to a
- * script deciding whether to alert.
+ * differences at all, no block to create) from "wrote nothing" (differences
+ * existed, but every one was skipped/declined/dry-run) — the two read very
+ * differently to a script deciding whether to alert.
+ *
+ * A BLOCK-ONLY run (`plan.createdTable` set, no value writes — a zero-drift
+ * branch target, CLI-2064's bug B) gets its own wording, distinguishable both
+ * from "nothing to write" (a block WAS created, or would be) and from a
+ * value-writing run (`counts.written` stays 0 either way, see
+ * `legacyConfigPullPayload`).
  */
 export function legacyConfigPullSummaryMessage(
   changeSet: ConfigChangeSet,
@@ -233,7 +265,16 @@ export function legacyConfigPullSummaryMessage(
 ): string {
   const total = changeSet.counts.total;
   let base: string;
-  if (total === 0) {
+  if (plan.createdTable !== undefined && plan.writes.length === 0) {
+    const scopeLabel = `[remotes.${legacyConfigPullCreatedBlockLabel(plan.createdTable)}]`;
+    if (outcome.dryRun) {
+      base = `${scopeLabel} would be created (dry run); no config differences to apply.`;
+    } else if (outcome.declined) {
+      base = `${scopeLabel} not created (declined).`;
+    } else {
+      base = `Created ${scopeLabel}; no config differences to apply.`;
+    }
+  } else if (total === 0) {
     base = "No config differences found.";
   } else if (outcome.dryRun) {
     base = `${legacyConfigPlural(plan.writes.length, "change", "changes")} would be written (dry run).`;
@@ -283,6 +324,12 @@ export function legacyConfigPullPayload(
 ): Record<string, unknown> {
   const status = buildChangeStatus(plan, outcome);
   const written = writtenCount(plan, outcome);
+  // A block-only run (`plan.createdTable` set, no value writes) still WROTE —
+  // the new block itself — even though `written` (a count of VALUE writes)
+  // stays 0; `dryRun`/`declined` mean the block was only ever a plan, never
+  // actually created.
+  const wrote =
+    written > 0 || (plan.createdTable !== undefined && !outcome.dryRun && !outcome.declined);
 
   return {
     schema_version: LEGACY_CONFIG_PULL_PAYLOAD_VERSION,
@@ -297,7 +344,7 @@ export function legacyConfigPullPayload(
     },
     destination: destinationPayload(context.destination),
     dry_run: outcome.dryRun,
-    wrote: written > 0,
+    wrote,
     scope: { present: scope.present, missing: scope.missing },
     changes: changeSet.changes.map((change) => {
       const entry = status.get(pathKey(change.path));
