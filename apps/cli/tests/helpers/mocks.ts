@@ -140,11 +140,13 @@ export function mockTty(
   opts: {
     stdinIsTty?: boolean;
     stdoutIsTty?: boolean;
+    stdoutIsPipe?: boolean;
   } = {},
 ): Layer.Layer<Tty> {
   return Layer.succeed(Tty, {
     stdinIsTty: opts.stdinIsTty ?? false,
     stdoutIsTty: opts.stdoutIsTty ?? false,
+    stdoutIsPipe: opts.stdoutIsPipe ?? false,
   });
 }
 

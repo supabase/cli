@@ -34,6 +34,8 @@ Generic linting (`oxlint`), formatting (`oxfmt`), and unused-code analysis (`kni
 Expected exceptions:
 
 - `apps/cli` is published, so it is not `private`
+- `packages/config` is published (on its own release train — see `packages/config/AGENTS.md`), so
+  it is not `private`
 - `apps/docs` is a Next.js app and does not follow the standard package template
 - `packages/cli-*` are binary wrapper packages and do not follow the standard TypeScript workspace template
 

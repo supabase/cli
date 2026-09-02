@@ -102,9 +102,9 @@ jobs:
           fi
 
       # The build, gate, and pack steps also run on private-blocked pushes
-      # (should_release=false, version set) — every config push rehearses the
-      # plan half of the release train while CLI-2169 hasn't flipped `private`
-      # yet. The publish half stays unexercised until then.
+      # (should_release=false, version set): if `private` were ever flipped
+      # back on, every config push would still rehearse the plan half of the
+      # release train while the publish half stays parked.
       - name: Build @supabase/config
         if: steps.plan.outputs.version != ''
         run: pnpm exec turbo run @supabase/config#build
@@ -159,8 +159,7 @@ jobs:
       # would run straight through unreviewed. Fail closed here — before a
       # real (non-dry) release can reach the publish job — if the rule is
       # missing or unreadable. Private-blocked rehearsals (should_release
-      # false) are unaffected, so this only bites once CLI-2169 flips
-      # `private`, which is exactly when it must.
+      # false) are unaffected — this only gates real releases.
       - name: Assert the release approval gate is armed
         if: steps.plan.outputs.should_release == 'true' && steps.plan.outputs.dry_run != 'true'
         env:
@@ -264,7 +263,7 @@ jobs:
           [[ "$(jq -r .name package/package.json)" == "@supabase/config" ]]
           [[ "$(jq -r .version package/package.json)" == "${VERSION}" ]]
           if [[ "$(jq -r .private package/package.json)" == "true" ]]; then
-            echo "packages/config is still private: true — flip it under CLI-2169 before publishing." >&2
+            echo "packages/config is private: true — refusing to publish a private manifest (was it flipped back deliberately?)." >&2
             exit 1
           fi
 

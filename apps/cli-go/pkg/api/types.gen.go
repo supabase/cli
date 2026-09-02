@@ -5,7 +5,6 @@ package api
 
 import (
 	"encoding/json"
-	"fmt"
 	"time"
 
 	"github.com/oapi-codegen/nullable"
@@ -17,90 +16,90 @@ const (
 	BearerScopes bearerContextKey = "bearer.Scopes"
 )
 
-// Defines values for ActionRunResponseRunStepsName.
+// Defines values for ActionRunResponseOutputRunStepsName.
 const (
-	ActionRunResponseRunStepsNameClone     ActionRunResponseRunStepsName = "clone"
-	ActionRunResponseRunStepsNameConfigure ActionRunResponseRunStepsName = "configure"
-	ActionRunResponseRunStepsNameDeploy    ActionRunResponseRunStepsName = "deploy"
-	ActionRunResponseRunStepsNameHealth    ActionRunResponseRunStepsName = "health"
-	ActionRunResponseRunStepsNameMigrate   ActionRunResponseRunStepsName = "migrate"
-	ActionRunResponseRunStepsNamePull      ActionRunResponseRunStepsName = "pull"
-	ActionRunResponseRunStepsNameSeed      ActionRunResponseRunStepsName = "seed"
+	ActionRunResponseOutputRunStepsNameClone     ActionRunResponseOutputRunStepsName = "clone"
+	ActionRunResponseOutputRunStepsNameConfigure ActionRunResponseOutputRunStepsName = "configure"
+	ActionRunResponseOutputRunStepsNameDeploy    ActionRunResponseOutputRunStepsName = "deploy"
+	ActionRunResponseOutputRunStepsNameHealth    ActionRunResponseOutputRunStepsName = "health"
+	ActionRunResponseOutputRunStepsNameMigrate   ActionRunResponseOutputRunStepsName = "migrate"
+	ActionRunResponseOutputRunStepsNamePull      ActionRunResponseOutputRunStepsName = "pull"
+	ActionRunResponseOutputRunStepsNameSeed      ActionRunResponseOutputRunStepsName = "seed"
 )
 
-// Valid indicates whether the value is a known member of the ActionRunResponseRunStepsName enum.
-func (e ActionRunResponseRunStepsName) Valid() bool {
+// Valid indicates whether the value is a known member of the ActionRunResponseOutputRunStepsName enum.
+func (e ActionRunResponseOutputRunStepsName) Valid() bool {
 	switch e {
-	case ActionRunResponseRunStepsNameClone:
+	case ActionRunResponseOutputRunStepsNameClone:
 		return true
-	case ActionRunResponseRunStepsNameConfigure:
+	case ActionRunResponseOutputRunStepsNameConfigure:
 		return true
-	case ActionRunResponseRunStepsNameDeploy:
+	case ActionRunResponseOutputRunStepsNameDeploy:
 		return true
-	case ActionRunResponseRunStepsNameHealth:
+	case ActionRunResponseOutputRunStepsNameHealth:
 		return true
-	case ActionRunResponseRunStepsNameMigrate:
+	case ActionRunResponseOutputRunStepsNameMigrate:
 		return true
-	case ActionRunResponseRunStepsNamePull:
+	case ActionRunResponseOutputRunStepsNamePull:
 		return true
-	case ActionRunResponseRunStepsNameSeed:
+	case ActionRunResponseOutputRunStepsNameSeed:
 		return true
 	default:
 		return false
 	}
 }
 
-// Defines values for ActionRunResponseRunStepsStatus.
+// Defines values for ActionRunResponseOutputRunStepsStatus.
 const (
-	ActionRunResponseRunStepsStatusCREATED    ActionRunResponseRunStepsStatus = "CREATED"
-	ActionRunResponseRunStepsStatusDEAD       ActionRunResponseRunStepsStatus = "DEAD"
-	ActionRunResponseRunStepsStatusEXITED     ActionRunResponseRunStepsStatus = "EXITED"
-	ActionRunResponseRunStepsStatusPAUSED     ActionRunResponseRunStepsStatus = "PAUSED"
-	ActionRunResponseRunStepsStatusREMOVING   ActionRunResponseRunStepsStatus = "REMOVING"
-	ActionRunResponseRunStepsStatusRESTARTING ActionRunResponseRunStepsStatus = "RESTARTING"
-	ActionRunResponseRunStepsStatusRUNNING    ActionRunResponseRunStepsStatus = "RUNNING"
+	ActionRunResponseOutputRunStepsStatusCREATED    ActionRunResponseOutputRunStepsStatus = "CREATED"
+	ActionRunResponseOutputRunStepsStatusDEAD       ActionRunResponseOutputRunStepsStatus = "DEAD"
+	ActionRunResponseOutputRunStepsStatusEXITED     ActionRunResponseOutputRunStepsStatus = "EXITED"
+	ActionRunResponseOutputRunStepsStatusPAUSED     ActionRunResponseOutputRunStepsStatus = "PAUSED"
+	ActionRunResponseOutputRunStepsStatusREMOVING   ActionRunResponseOutputRunStepsStatus = "REMOVING"
+	ActionRunResponseOutputRunStepsStatusRESTARTING ActionRunResponseOutputRunStepsStatus = "RESTARTING"
+	ActionRunResponseOutputRunStepsStatusRUNNING    ActionRunResponseOutputRunStepsStatus = "RUNNING"
 )
 
-// Valid indicates whether the value is a known member of the ActionRunResponseRunStepsStatus enum.
-func (e ActionRunResponseRunStepsStatus) Valid() bool {
+// Valid indicates whether the value is a known member of the ActionRunResponseOutputRunStepsStatus enum.
+func (e ActionRunResponseOutputRunStepsStatus) Valid() bool {
 	switch e {
-	case ActionRunResponseRunStepsStatusCREATED:
+	case ActionRunResponseOutputRunStepsStatusCREATED:
 		return true
-	case ActionRunResponseRunStepsStatusDEAD:
+	case ActionRunResponseOutputRunStepsStatusDEAD:
 		return true
-	case ActionRunResponseRunStepsStatusEXITED:
+	case ActionRunResponseOutputRunStepsStatusEXITED:
 		return true
-	case ActionRunResponseRunStepsStatusPAUSED:
+	case ActionRunResponseOutputRunStepsStatusPAUSED:
 		return true
-	case ActionRunResponseRunStepsStatusREMOVING:
+	case ActionRunResponseOutputRunStepsStatusREMOVING:
 		return true
-	case ActionRunResponseRunStepsStatusRESTARTING:
+	case ActionRunResponseOutputRunStepsStatusRESTARTING:
 		return true
-	case ActionRunResponseRunStepsStatusRUNNING:
+	case ActionRunResponseOutputRunStepsStatusRUNNING:
 		return true
 	default:
 		return false
 	}
 }
 
-// Defines values for ApiKeyResponseType.
+// Defines values for ApiKeyResponseOutputType.
 const (
-	ApiKeyResponseTypeLegacy      ApiKeyResponseType = "legacy"
-	ApiKeyResponseTypeLessThannil ApiKeyResponseType = "<nil>"
-	ApiKeyResponseTypePublishable ApiKeyResponseType = "publishable"
-	ApiKeyResponseTypeSecret      ApiKeyResponseType = "secret"
+	ApiKeyResponseOutputTypeLegacy      ApiKeyResponseOutputType = "legacy"
+	ApiKeyResponseOutputTypeLessThannil ApiKeyResponseOutputType = "<nil>"
+	ApiKeyResponseOutputTypePublishable ApiKeyResponseOutputType = "publishable"
+	ApiKeyResponseOutputTypeSecret      ApiKeyResponseOutputType = "secret"
 )
 
-// Valid indicates whether the value is a known member of the ApiKeyResponseType enum.
-func (e ApiKeyResponseType) Valid() bool {
+// Valid indicates whether the value is a known member of the ApiKeyResponseOutputType enum.
+func (e ApiKeyResponseOutputType) Valid() bool {
 	switch e {
-	case ApiKeyResponseTypeLegacy:
+	case ApiKeyResponseOutputTypeLegacy:
 		return true
-	case ApiKeyResponseTypeLessThannil:
+	case ApiKeyResponseOutputTypeLessThannil:
 		return true
-	case ApiKeyResponseTypePublishable:
+	case ApiKeyResponseOutputTypePublishable:
 		return true
-	case ApiKeyResponseTypeSecret:
+	case ApiKeyResponseOutputTypeSecret:
 		return true
 	default:
 		return false
@@ -260,268 +259,268 @@ func (e ApplyProjectAddonBodyAddonVariant3) Valid() bool {
 	}
 }
 
-// Defines values for AuthConfigResponseDbMaxPoolSizeUnit.
+// Defines values for AuthConfigResponseOutputDbMaxPoolSizeUnit.
 const (
-	AuthConfigResponseDbMaxPoolSizeUnitConnections AuthConfigResponseDbMaxPoolSizeUnit = "connections"
-	AuthConfigResponseDbMaxPoolSizeUnitLessThannil AuthConfigResponseDbMaxPoolSizeUnit = "<nil>"
-	AuthConfigResponseDbMaxPoolSizeUnitPercent     AuthConfigResponseDbMaxPoolSizeUnit = "percent"
+	AuthConfigResponseOutputDbMaxPoolSizeUnitConnections AuthConfigResponseOutputDbMaxPoolSizeUnit = "connections"
+	AuthConfigResponseOutputDbMaxPoolSizeUnitLessThannil AuthConfigResponseOutputDbMaxPoolSizeUnit = "<nil>"
+	AuthConfigResponseOutputDbMaxPoolSizeUnitPercent     AuthConfigResponseOutputDbMaxPoolSizeUnit = "percent"
 )
 
-// Valid indicates whether the value is a known member of the AuthConfigResponseDbMaxPoolSizeUnit enum.
-func (e AuthConfigResponseDbMaxPoolSizeUnit) Valid() bool {
+// Valid indicates whether the value is a known member of the AuthConfigResponseOutputDbMaxPoolSizeUnit enum.
+func (e AuthConfigResponseOutputDbMaxPoolSizeUnit) Valid() bool {
 	switch e {
-	case AuthConfigResponseDbMaxPoolSizeUnitConnections:
+	case AuthConfigResponseOutputDbMaxPoolSizeUnitConnections:
 		return true
-	case AuthConfigResponseDbMaxPoolSizeUnitLessThannil:
+	case AuthConfigResponseOutputDbMaxPoolSizeUnitLessThannil:
 		return true
-	case AuthConfigResponseDbMaxPoolSizeUnitPercent:
+	case AuthConfigResponseOutputDbMaxPoolSizeUnitPercent:
 		return true
 	default:
 		return false
 	}
 }
 
-// Defines values for AuthConfigResponsePasswordRequiredCharacters.
+// Defines values for AuthConfigResponseOutputPasswordRequiredCharacters.
 const (
-	AuthConfigResponsePasswordRequiredCharactersAbcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789  AuthConfigResponsePasswordRequiredCharacters = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ:0123456789"
-	AuthConfigResponsePasswordRequiredCharactersAbcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ01234567891 AuthConfigResponsePasswordRequiredCharacters = "abcdefghijklmnopqrstuvwxyz:ABCDEFGHIJKLMNOPQRSTUVWXYZ:0123456789"
-	AuthConfigResponsePasswordRequiredCharactersAbcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ01234567892 AuthConfigResponsePasswordRequiredCharacters = "abcdefghijklmnopqrstuvwxyz:ABCDEFGHIJKLMNOPQRSTUVWXYZ:0123456789:!@#$%^&*()_+-=[]{};'\\\\:\"|<>?,./`~"
-	AuthConfigResponsePasswordRequiredCharactersEmpty                                                           AuthConfigResponsePasswordRequiredCharacters = ""
+	AuthConfigResponseOutputPasswordRequiredCharactersAbcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789  AuthConfigResponseOutputPasswordRequiredCharacters = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ:0123456789"
+	AuthConfigResponseOutputPasswordRequiredCharactersAbcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ01234567891 AuthConfigResponseOutputPasswordRequiredCharacters = "abcdefghijklmnopqrstuvwxyz:ABCDEFGHIJKLMNOPQRSTUVWXYZ:0123456789"
+	AuthConfigResponseOutputPasswordRequiredCharactersAbcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ01234567892 AuthConfigResponseOutputPasswordRequiredCharacters = "abcdefghijklmnopqrstuvwxyz:ABCDEFGHIJKLMNOPQRSTUVWXYZ:0123456789:!@#$%^&*()_+-=[]{};'\\\\:\"|<>?,./`~"
+	AuthConfigResponseOutputPasswordRequiredCharactersEmpty                                                           AuthConfigResponseOutputPasswordRequiredCharacters = ""
 )
 
-// Valid indicates whether the value is a known member of the AuthConfigResponsePasswordRequiredCharacters enum.
-func (e AuthConfigResponsePasswordRequiredCharacters) Valid() bool {
+// Valid indicates whether the value is a known member of the AuthConfigResponseOutputPasswordRequiredCharacters enum.
+func (e AuthConfigResponseOutputPasswordRequiredCharacters) Valid() bool {
 	switch e {
-	case AuthConfigResponsePasswordRequiredCharactersAbcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789:
+	case AuthConfigResponseOutputPasswordRequiredCharactersAbcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789:
 		return true
-	case AuthConfigResponsePasswordRequiredCharactersAbcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ01234567891:
+	case AuthConfigResponseOutputPasswordRequiredCharactersAbcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ01234567891:
 		return true
-	case AuthConfigResponsePasswordRequiredCharactersAbcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ01234567892:
+	case AuthConfigResponseOutputPasswordRequiredCharactersAbcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ01234567892:
 		return true
-	case AuthConfigResponsePasswordRequiredCharactersEmpty:
+	case AuthConfigResponseOutputPasswordRequiredCharactersEmpty:
 		return true
 	default:
 		return false
 	}
 }
 
-// Defines values for AuthConfigResponseSecurityCaptchaProvider.
+// Defines values for AuthConfigResponseOutputSecurityCaptchaProvider.
 const (
-	AuthConfigResponseSecurityCaptchaProviderHcaptcha    AuthConfigResponseSecurityCaptchaProvider = "hcaptcha"
-	AuthConfigResponseSecurityCaptchaProviderLessThannil AuthConfigResponseSecurityCaptchaProvider = "<nil>"
-	AuthConfigResponseSecurityCaptchaProviderTurnstile   AuthConfigResponseSecurityCaptchaProvider = "turnstile"
+	AuthConfigResponseOutputSecurityCaptchaProviderHcaptcha    AuthConfigResponseOutputSecurityCaptchaProvider = "hcaptcha"
+	AuthConfigResponseOutputSecurityCaptchaProviderLessThannil AuthConfigResponseOutputSecurityCaptchaProvider = "<nil>"
+	AuthConfigResponseOutputSecurityCaptchaProviderTurnstile   AuthConfigResponseOutputSecurityCaptchaProvider = "turnstile"
 )
 
-// Valid indicates whether the value is a known member of the AuthConfigResponseSecurityCaptchaProvider enum.
-func (e AuthConfigResponseSecurityCaptchaProvider) Valid() bool {
+// Valid indicates whether the value is a known member of the AuthConfigResponseOutputSecurityCaptchaProvider enum.
+func (e AuthConfigResponseOutputSecurityCaptchaProvider) Valid() bool {
 	switch e {
-	case AuthConfigResponseSecurityCaptchaProviderHcaptcha:
+	case AuthConfigResponseOutputSecurityCaptchaProviderHcaptcha:
 		return true
-	case AuthConfigResponseSecurityCaptchaProviderLessThannil:
+	case AuthConfigResponseOutputSecurityCaptchaProviderLessThannil:
 		return true
-	case AuthConfigResponseSecurityCaptchaProviderTurnstile:
+	case AuthConfigResponseOutputSecurityCaptchaProviderTurnstile:
 		return true
 	default:
 		return false
 	}
 }
 
-// Defines values for AuthConfigResponseSmsProvider.
+// Defines values for AuthConfigResponseOutputSmsProvider.
 const (
-	AuthConfigResponseSmsProviderLessThannil  AuthConfigResponseSmsProvider = "<nil>"
-	AuthConfigResponseSmsProviderMessagebird  AuthConfigResponseSmsProvider = "messagebird"
-	AuthConfigResponseSmsProviderTextlocal    AuthConfigResponseSmsProvider = "textlocal"
-	AuthConfigResponseSmsProviderTwilio       AuthConfigResponseSmsProvider = "twilio"
-	AuthConfigResponseSmsProviderTwilioVerify AuthConfigResponseSmsProvider = "twilio_verify"
-	AuthConfigResponseSmsProviderVonage       AuthConfigResponseSmsProvider = "vonage"
+	AuthConfigResponseOutputSmsProviderLessThannil  AuthConfigResponseOutputSmsProvider = "<nil>"
+	AuthConfigResponseOutputSmsProviderMessagebird  AuthConfigResponseOutputSmsProvider = "messagebird"
+	AuthConfigResponseOutputSmsProviderTextlocal    AuthConfigResponseOutputSmsProvider = "textlocal"
+	AuthConfigResponseOutputSmsProviderTwilio       AuthConfigResponseOutputSmsProvider = "twilio"
+	AuthConfigResponseOutputSmsProviderTwilioVerify AuthConfigResponseOutputSmsProvider = "twilio_verify"
+	AuthConfigResponseOutputSmsProviderVonage       AuthConfigResponseOutputSmsProvider = "vonage"
 )
 
-// Valid indicates whether the value is a known member of the AuthConfigResponseSmsProvider enum.
-func (e AuthConfigResponseSmsProvider) Valid() bool {
+// Valid indicates whether the value is a known member of the AuthConfigResponseOutputSmsProvider enum.
+func (e AuthConfigResponseOutputSmsProvider) Valid() bool {
 	switch e {
-	case AuthConfigResponseSmsProviderLessThannil:
+	case AuthConfigResponseOutputSmsProviderLessThannil:
 		return true
-	case AuthConfigResponseSmsProviderMessagebird:
+	case AuthConfigResponseOutputSmsProviderMessagebird:
 		return true
-	case AuthConfigResponseSmsProviderTextlocal:
+	case AuthConfigResponseOutputSmsProviderTextlocal:
 		return true
-	case AuthConfigResponseSmsProviderTwilio:
+	case AuthConfigResponseOutputSmsProviderTwilio:
 		return true
-	case AuthConfigResponseSmsProviderTwilioVerify:
+	case AuthConfigResponseOutputSmsProviderTwilioVerify:
 		return true
-	case AuthConfigResponseSmsProviderVonage:
+	case AuthConfigResponseOutputSmsProviderVonage:
 		return true
 	default:
 		return false
 	}
 }
 
-// Defines values for BranchDeleteResponseMessage.
+// Defines values for BranchDeleteResponseOutputMessage.
 const (
-	BranchDeleteResponseMessageOk BranchDeleteResponseMessage = "ok"
+	BranchDeleteResponseOutputMessageOk BranchDeleteResponseOutputMessage = "ok"
 )
 
-// Valid indicates whether the value is a known member of the BranchDeleteResponseMessage enum.
-func (e BranchDeleteResponseMessage) Valid() bool {
+// Valid indicates whether the value is a known member of the BranchDeleteResponseOutputMessage enum.
+func (e BranchDeleteResponseOutputMessage) Valid() bool {
 	switch e {
-	case BranchDeleteResponseMessageOk:
+	case BranchDeleteResponseOutputMessageOk:
 		return true
 	default:
 		return false
 	}
 }
 
-// Defines values for BranchDetailResponseStatus.
+// Defines values for BranchDetailResponseOutputStatus.
 const (
-	BranchDetailResponseStatusACTIVEHEALTHY   BranchDetailResponseStatus = "ACTIVE_HEALTHY"
-	BranchDetailResponseStatusACTIVEUNHEALTHY BranchDetailResponseStatus = "ACTIVE_UNHEALTHY"
-	BranchDetailResponseStatusCOMINGUP        BranchDetailResponseStatus = "COMING_UP"
-	BranchDetailResponseStatusGOINGDOWN       BranchDetailResponseStatus = "GOING_DOWN"
-	BranchDetailResponseStatusINACTIVE        BranchDetailResponseStatus = "INACTIVE"
-	BranchDetailResponseStatusINITFAILED      BranchDetailResponseStatus = "INIT_FAILED"
-	BranchDetailResponseStatusPAUSEFAILED     BranchDetailResponseStatus = "PAUSE_FAILED"
-	BranchDetailResponseStatusPAUSING         BranchDetailResponseStatus = "PAUSING"
-	BranchDetailResponseStatusREMOVED         BranchDetailResponseStatus = "REMOVED"
-	BranchDetailResponseStatusRESIZING        BranchDetailResponseStatus = "RESIZING"
-	BranchDetailResponseStatusRESTARTING      BranchDetailResponseStatus = "RESTARTING"
-	BranchDetailResponseStatusRESTOREFAILED   BranchDetailResponseStatus = "RESTORE_FAILED"
-	BranchDetailResponseStatusRESTORING       BranchDetailResponseStatus = "RESTORING"
-	BranchDetailResponseStatusUNKNOWN         BranchDetailResponseStatus = "UNKNOWN"
-	BranchDetailResponseStatusUPGRADING       BranchDetailResponseStatus = "UPGRADING"
+	BranchDetailResponseOutputStatusACTIVEHEALTHY   BranchDetailResponseOutputStatus = "ACTIVE_HEALTHY"
+	BranchDetailResponseOutputStatusACTIVEUNHEALTHY BranchDetailResponseOutputStatus = "ACTIVE_UNHEALTHY"
+	BranchDetailResponseOutputStatusCOMINGUP        BranchDetailResponseOutputStatus = "COMING_UP"
+	BranchDetailResponseOutputStatusGOINGDOWN       BranchDetailResponseOutputStatus = "GOING_DOWN"
+	BranchDetailResponseOutputStatusINACTIVE        BranchDetailResponseOutputStatus = "INACTIVE"
+	BranchDetailResponseOutputStatusINITFAILED      BranchDetailResponseOutputStatus = "INIT_FAILED"
+	BranchDetailResponseOutputStatusPAUSEFAILED     BranchDetailResponseOutputStatus = "PAUSE_FAILED"
+	BranchDetailResponseOutputStatusPAUSING         BranchDetailResponseOutputStatus = "PAUSING"
+	BranchDetailResponseOutputStatusREMOVED         BranchDetailResponseOutputStatus = "REMOVED"
+	BranchDetailResponseOutputStatusRESIZING        BranchDetailResponseOutputStatus = "RESIZING"
+	BranchDetailResponseOutputStatusRESTARTING      BranchDetailResponseOutputStatus = "RESTARTING"
+	BranchDetailResponseOutputStatusRESTOREFAILED   BranchDetailResponseOutputStatus = "RESTORE_FAILED"
+	BranchDetailResponseOutputStatusRESTORING       BranchDetailResponseOutputStatus = "RESTORING"
+	BranchDetailResponseOutputStatusUNKNOWN         BranchDetailResponseOutputStatus = "UNKNOWN"
+	BranchDetailResponseOutputStatusUPGRADING       BranchDetailResponseOutputStatus = "UPGRADING"
 )
 
-// Valid indicates whether the value is a known member of the BranchDetailResponseStatus enum.
-func (e BranchDetailResponseStatus) Valid() bool {
+// Valid indicates whether the value is a known member of the BranchDetailResponseOutputStatus enum.
+func (e BranchDetailResponseOutputStatus) Valid() bool {
 	switch e {
-	case BranchDetailResponseStatusACTIVEHEALTHY:
+	case BranchDetailResponseOutputStatusACTIVEHEALTHY:
 		return true
-	case BranchDetailResponseStatusACTIVEUNHEALTHY:
+	case BranchDetailResponseOutputStatusACTIVEUNHEALTHY:
 		return true
-	case BranchDetailResponseStatusCOMINGUP:
+	case BranchDetailResponseOutputStatusCOMINGUP:
 		return true
-	case BranchDetailResponseStatusGOINGDOWN:
+	case BranchDetailResponseOutputStatusGOINGDOWN:
 		return true
-	case BranchDetailResponseStatusINACTIVE:
+	case BranchDetailResponseOutputStatusINACTIVE:
 		return true
-	case BranchDetailResponseStatusINITFAILED:
+	case BranchDetailResponseOutputStatusINITFAILED:
 		return true
-	case BranchDetailResponseStatusPAUSEFAILED:
+	case BranchDetailResponseOutputStatusPAUSEFAILED:
 		return true
-	case BranchDetailResponseStatusPAUSING:
+	case BranchDetailResponseOutputStatusPAUSING:
 		return true
-	case BranchDetailResponseStatusREMOVED:
+	case BranchDetailResponseOutputStatusREMOVED:
 		return true
-	case BranchDetailResponseStatusRESIZING:
+	case BranchDetailResponseOutputStatusRESIZING:
 		return true
-	case BranchDetailResponseStatusRESTARTING:
+	case BranchDetailResponseOutputStatusRESTARTING:
 		return true
-	case BranchDetailResponseStatusRESTOREFAILED:
+	case BranchDetailResponseOutputStatusRESTOREFAILED:
 		return true
-	case BranchDetailResponseStatusRESTORING:
+	case BranchDetailResponseOutputStatusRESTORING:
 		return true
-	case BranchDetailResponseStatusUNKNOWN:
+	case BranchDetailResponseOutputStatusUNKNOWN:
 		return true
-	case BranchDetailResponseStatusUPGRADING:
+	case BranchDetailResponseOutputStatusUPGRADING:
 		return true
 	default:
 		return false
 	}
 }
 
-// Defines values for BranchResponsePreviewProjectStatus.
+// Defines values for BranchResponseOutputPreviewProjectStatus.
 const (
-	BranchResponsePreviewProjectStatusACTIVEHEALTHY   BranchResponsePreviewProjectStatus = "ACTIVE_HEALTHY"
-	BranchResponsePreviewProjectStatusACTIVEUNHEALTHY BranchResponsePreviewProjectStatus = "ACTIVE_UNHEALTHY"
-	BranchResponsePreviewProjectStatusCOMINGUP        BranchResponsePreviewProjectStatus = "COMING_UP"
-	BranchResponsePreviewProjectStatusGOINGDOWN       BranchResponsePreviewProjectStatus = "GOING_DOWN"
-	BranchResponsePreviewProjectStatusINACTIVE        BranchResponsePreviewProjectStatus = "INACTIVE"
-	BranchResponsePreviewProjectStatusINITFAILED      BranchResponsePreviewProjectStatus = "INIT_FAILED"
-	BranchResponsePreviewProjectStatusPAUSEFAILED     BranchResponsePreviewProjectStatus = "PAUSE_FAILED"
-	BranchResponsePreviewProjectStatusPAUSING         BranchResponsePreviewProjectStatus = "PAUSING"
-	BranchResponsePreviewProjectStatusREMOVED         BranchResponsePreviewProjectStatus = "REMOVED"
-	BranchResponsePreviewProjectStatusRESIZING        BranchResponsePreviewProjectStatus = "RESIZING"
-	BranchResponsePreviewProjectStatusRESTARTING      BranchResponsePreviewProjectStatus = "RESTARTING"
-	BranchResponsePreviewProjectStatusRESTOREFAILED   BranchResponsePreviewProjectStatus = "RESTORE_FAILED"
-	BranchResponsePreviewProjectStatusRESTORING       BranchResponsePreviewProjectStatus = "RESTORING"
-	BranchResponsePreviewProjectStatusUNKNOWN         BranchResponsePreviewProjectStatus = "UNKNOWN"
-	BranchResponsePreviewProjectStatusUPGRADING       BranchResponsePreviewProjectStatus = "UPGRADING"
+	BranchResponseOutputPreviewProjectStatusACTIVEHEALTHY   BranchResponseOutputPreviewProjectStatus = "ACTIVE_HEALTHY"
+	BranchResponseOutputPreviewProjectStatusACTIVEUNHEALTHY BranchResponseOutputPreviewProjectStatus = "ACTIVE_UNHEALTHY"
+	BranchResponseOutputPreviewProjectStatusCOMINGUP        BranchResponseOutputPreviewProjectStatus = "COMING_UP"
+	BranchResponseOutputPreviewProjectStatusGOINGDOWN       BranchResponseOutputPreviewProjectStatus = "GOING_DOWN"
+	BranchResponseOutputPreviewProjectStatusINACTIVE        BranchResponseOutputPreviewProjectStatus = "INACTIVE"
+	BranchResponseOutputPreviewProjectStatusINITFAILED      BranchResponseOutputPreviewProjectStatus = "INIT_FAILED"
+	BranchResponseOutputPreviewProjectStatusPAUSEFAILED     BranchResponseOutputPreviewProjectStatus = "PAUSE_FAILED"
+	BranchResponseOutputPreviewProjectStatusPAUSING         BranchResponseOutputPreviewProjectStatus = "PAUSING"
+	BranchResponseOutputPreviewProjectStatusREMOVED         BranchResponseOutputPreviewProjectStatus = "REMOVED"
+	BranchResponseOutputPreviewProjectStatusRESIZING        BranchResponseOutputPreviewProjectStatus = "RESIZING"
+	BranchResponseOutputPreviewProjectStatusRESTARTING      BranchResponseOutputPreviewProjectStatus = "RESTARTING"
+	BranchResponseOutputPreviewProjectStatusRESTOREFAILED   BranchResponseOutputPreviewProjectStatus = "RESTORE_FAILED"
+	BranchResponseOutputPreviewProjectStatusRESTORING       BranchResponseOutputPreviewProjectStatus = "RESTORING"
+	BranchResponseOutputPreviewProjectStatusUNKNOWN         BranchResponseOutputPreviewProjectStatus = "UNKNOWN"
+	BranchResponseOutputPreviewProjectStatusUPGRADING       BranchResponseOutputPreviewProjectStatus = "UPGRADING"
 )
 
-// Valid indicates whether the value is a known member of the BranchResponsePreviewProjectStatus enum.
-func (e BranchResponsePreviewProjectStatus) Valid() bool {
+// Valid indicates whether the value is a known member of the BranchResponseOutputPreviewProjectStatus enum.
+func (e BranchResponseOutputPreviewProjectStatus) Valid() bool {
 	switch e {
-	case BranchResponsePreviewProjectStatusACTIVEHEALTHY:
+	case BranchResponseOutputPreviewProjectStatusACTIVEHEALTHY:
 		return true
-	case BranchResponsePreviewProjectStatusACTIVEUNHEALTHY:
+	case BranchResponseOutputPreviewProjectStatusACTIVEUNHEALTHY:
 		return true
-	case BranchResponsePreviewProjectStatusCOMINGUP:
+	case BranchResponseOutputPreviewProjectStatusCOMINGUP:
 		return true
-	case BranchResponsePreviewProjectStatusGOINGDOWN:
+	case BranchResponseOutputPreviewProjectStatusGOINGDOWN:
 		return true
-	case BranchResponsePreviewProjectStatusINACTIVE:
+	case BranchResponseOutputPreviewProjectStatusINACTIVE:
 		return true
-	case BranchResponsePreviewProjectStatusINITFAILED:
+	case BranchResponseOutputPreviewProjectStatusINITFAILED:
 		return true
-	case BranchResponsePreviewProjectStatusPAUSEFAILED:
+	case BranchResponseOutputPreviewProjectStatusPAUSEFAILED:
 		return true
-	case BranchResponsePreviewProjectStatusPAUSING:
+	case BranchResponseOutputPreviewProjectStatusPAUSING:
 		return true
-	case BranchResponsePreviewProjectStatusREMOVED:
+	case BranchResponseOutputPreviewProjectStatusREMOVED:
 		return true
-	case BranchResponsePreviewProjectStatusRESIZING:
+	case BranchResponseOutputPreviewProjectStatusRESIZING:
 		return true
-	case BranchResponsePreviewProjectStatusRESTARTING:
+	case BranchResponseOutputPreviewProjectStatusRESTARTING:
 		return true
-	case BranchResponsePreviewProjectStatusRESTOREFAILED:
+	case BranchResponseOutputPreviewProjectStatusRESTOREFAILED:
 		return true
-	case BranchResponsePreviewProjectStatusRESTORING:
+	case BranchResponseOutputPreviewProjectStatusRESTORING:
 		return true
-	case BranchResponsePreviewProjectStatusUNKNOWN:
+	case BranchResponseOutputPreviewProjectStatusUNKNOWN:
 		return true
-	case BranchResponsePreviewProjectStatusUPGRADING:
+	case BranchResponseOutputPreviewProjectStatusUPGRADING:
 		return true
 	default:
 		return false
 	}
 }
 
-// Defines values for BranchResponseStatus.
+// Defines values for BranchResponseOutputStatus.
 const (
-	BranchResponseStatusCREATINGPROJECT   BranchResponseStatus = "CREATING_PROJECT"
-	BranchResponseStatusFUNCTIONSDEPLOYED BranchResponseStatus = "FUNCTIONS_DEPLOYED"
-	BranchResponseStatusFUNCTIONSFAILED   BranchResponseStatus = "FUNCTIONS_FAILED"
-	BranchResponseStatusMIGRATIONSFAILED  BranchResponseStatus = "MIGRATIONS_FAILED"
-	BranchResponseStatusMIGRATIONSPASSED  BranchResponseStatus = "MIGRATIONS_PASSED"
-	BranchResponseStatusRUNNINGMIGRATIONS BranchResponseStatus = "RUNNING_MIGRATIONS"
+	BranchResponseOutputStatusCREATINGPROJECT   BranchResponseOutputStatus = "CREATING_PROJECT"
+	BranchResponseOutputStatusFUNCTIONSDEPLOYED BranchResponseOutputStatus = "FUNCTIONS_DEPLOYED"
+	BranchResponseOutputStatusFUNCTIONSFAILED   BranchResponseOutputStatus = "FUNCTIONS_FAILED"
+	BranchResponseOutputStatusMIGRATIONSFAILED  BranchResponseOutputStatus = "MIGRATIONS_FAILED"
+	BranchResponseOutputStatusMIGRATIONSPASSED  BranchResponseOutputStatus = "MIGRATIONS_PASSED"
+	BranchResponseOutputStatusRUNNINGMIGRATIONS BranchResponseOutputStatus = "RUNNING_MIGRATIONS"
 )
 
-// Valid indicates whether the value is a known member of the BranchResponseStatus enum.
-func (e BranchResponseStatus) Valid() bool {
+// Valid indicates whether the value is a known member of the BranchResponseOutputStatus enum.
+func (e BranchResponseOutputStatus) Valid() bool {
 	switch e {
-	case BranchResponseStatusCREATINGPROJECT:
+	case BranchResponseOutputStatusCREATINGPROJECT:
 		return true
-	case BranchResponseStatusFUNCTIONSDEPLOYED:
+	case BranchResponseOutputStatusFUNCTIONSDEPLOYED:
 		return true
-	case BranchResponseStatusFUNCTIONSFAILED:
+	case BranchResponseOutputStatusFUNCTIONSFAILED:
 		return true
-	case BranchResponseStatusMIGRATIONSFAILED:
+	case BranchResponseOutputStatusMIGRATIONSFAILED:
 		return true
-	case BranchResponseStatusMIGRATIONSPASSED:
+	case BranchResponseOutputStatusMIGRATIONSPASSED:
 		return true
-	case BranchResponseStatusRUNNINGMIGRATIONS:
+	case BranchResponseOutputStatusRUNNINGMIGRATIONS:
 		return true
 	default:
 		return false
 	}
 }
 
-// Defines values for BranchRestoreResponseMessage.
+// Defines values for BranchRestoreResponseOutputMessage.
 const (
-	BranchRestorationInitiated BranchRestoreResponseMessage = "Branch restoration initiated"
+	BranchRestorationInitiated BranchRestoreResponseOutputMessage = "Branch restoration initiated"
 )
 
-// Valid indicates whether the value is a known member of the BranchRestoreResponseMessage enum.
-func (e BranchRestoreResponseMessage) Valid() bool {
+// Valid indicates whether the value is a known member of the BranchRestoreResponseOutputMessage enum.
+func (e BranchRestoreResponseOutputMessage) Valid() bool {
 	switch e {
 	case BranchRestorationInitiated:
 		return true
@@ -530,15 +529,15 @@ func (e BranchRestoreResponseMessage) Valid() bool {
 	}
 }
 
-// Defines values for BranchUpdateResponseMessage.
+// Defines values for BranchUpdateResponseOutputMessage.
 const (
-	BranchUpdateResponseMessageOk BranchUpdateResponseMessage = "ok"
+	BranchUpdateResponseOutputMessageOk BranchUpdateResponseOutputMessage = "ok"
 )
 
-// Valid indicates whether the value is a known member of the BranchUpdateResponseMessage enum.
-func (e BranchUpdateResponseMessage) Valid() bool {
+// Valid indicates whether the value is a known member of the BranchUpdateResponseOutputMessage enum.
+func (e BranchUpdateResponseOutputMessage) Valid() bool {
 	switch e {
-	case BranchUpdateResponseMessageOk:
+	case BranchUpdateResponseOutputMessageOk:
 		return true
 	default:
 		return false
@@ -566,21 +565,21 @@ func (e BulkUpdateFunctionBodyStatus) Valid() bool {
 	}
 }
 
-// Defines values for BulkUpdateFunctionResponseFunctionsStatus.
+// Defines values for BulkUpdateFunctionResponseOutputFunctionsStatus.
 const (
-	BulkUpdateFunctionResponseFunctionsStatusACTIVE    BulkUpdateFunctionResponseFunctionsStatus = "ACTIVE"
-	BulkUpdateFunctionResponseFunctionsStatusREMOVED   BulkUpdateFunctionResponseFunctionsStatus = "REMOVED"
-	BulkUpdateFunctionResponseFunctionsStatusTHROTTLED BulkUpdateFunctionResponseFunctionsStatus = "THROTTLED"
+	BulkUpdateFunctionResponseOutputFunctionsStatusACTIVE    BulkUpdateFunctionResponseOutputFunctionsStatus = "ACTIVE"
+	BulkUpdateFunctionResponseOutputFunctionsStatusREMOVED   BulkUpdateFunctionResponseOutputFunctionsStatus = "REMOVED"
+	BulkUpdateFunctionResponseOutputFunctionsStatusTHROTTLED BulkUpdateFunctionResponseOutputFunctionsStatus = "THROTTLED"
 )
 
-// Valid indicates whether the value is a known member of the BulkUpdateFunctionResponseFunctionsStatus enum.
-func (e BulkUpdateFunctionResponseFunctionsStatus) Valid() bool {
+// Valid indicates whether the value is a known member of the BulkUpdateFunctionResponseOutputFunctionsStatus enum.
+func (e BulkUpdateFunctionResponseOutputFunctionsStatus) Valid() bool {
 	switch e {
-	case BulkUpdateFunctionResponseFunctionsStatusACTIVE:
+	case BulkUpdateFunctionResponseOutputFunctionsStatusACTIVE:
 		return true
-	case BulkUpdateFunctionResponseFunctionsStatusREMOVED:
+	case BulkUpdateFunctionResponseOutputFunctionsStatusREMOVED:
 		return true
-	case BulkUpdateFunctionResponseFunctionsStatusTHROTTLED:
+	case BulkUpdateFunctionResponseOutputFunctionsStatusTHROTTLED:
 		return true
 	default:
 		return false
@@ -1166,21 +1165,21 @@ func (e CreateSigningKeyBodyStatus) Valid() bool {
 	}
 }
 
-// Defines values for DatabaseUpgradeStatusResponseDatabaseUpgradeStatusError.
+// Defines values for DatabaseUpgradeStatusResponseOutputDatabaseUpgradeStatusError.
 const (
-	N1UpgradedInstanceLaunchFailed                 DatabaseUpgradeStatusResponseDatabaseUpgradeStatusError = "1_upgraded_instance_launch_failed"
-	N2VolumeDetachchmentFromUpgradedInstanceFailed DatabaseUpgradeStatusResponseDatabaseUpgradeStatusError = "2_volume_detachchment_from_upgraded_instance_failed"
-	N3VolumeAttachmentToOriginalInstanceFailed     DatabaseUpgradeStatusResponseDatabaseUpgradeStatusError = "3_volume_attachment_to_original_instance_failed"
-	N4DataUpgradeInitiationFailed                  DatabaseUpgradeStatusResponseDatabaseUpgradeStatusError = "4_data_upgrade_initiation_failed"
-	N5DataUpgradeCompletionFailed                  DatabaseUpgradeStatusResponseDatabaseUpgradeStatusError = "5_data_upgrade_completion_failed"
-	N6VolumeDetachchmentFromOriginalInstanceFailed DatabaseUpgradeStatusResponseDatabaseUpgradeStatusError = "6_volume_detachchment_from_original_instance_failed"
-	N7VolumeAttachmentToUpgradedInstanceFailed     DatabaseUpgradeStatusResponseDatabaseUpgradeStatusError = "7_volume_attachment_to_upgraded_instance_failed"
-	N8UpgradeCompletionFailed                      DatabaseUpgradeStatusResponseDatabaseUpgradeStatusError = "8_upgrade_completion_failed"
-	N9PostPhysicalBackupFailed                     DatabaseUpgradeStatusResponseDatabaseUpgradeStatusError = "9_post_physical_backup_failed"
+	N1UpgradedInstanceLaunchFailed                 DatabaseUpgradeStatusResponseOutputDatabaseUpgradeStatusError = "1_upgraded_instance_launch_failed"
+	N2VolumeDetachchmentFromUpgradedInstanceFailed DatabaseUpgradeStatusResponseOutputDatabaseUpgradeStatusError = "2_volume_detachchment_from_upgraded_instance_failed"
+	N3VolumeAttachmentToOriginalInstanceFailed     DatabaseUpgradeStatusResponseOutputDatabaseUpgradeStatusError = "3_volume_attachment_to_original_instance_failed"
+	N4DataUpgradeInitiationFailed                  DatabaseUpgradeStatusResponseOutputDatabaseUpgradeStatusError = "4_data_upgrade_initiation_failed"
+	N5DataUpgradeCompletionFailed                  DatabaseUpgradeStatusResponseOutputDatabaseUpgradeStatusError = "5_data_upgrade_completion_failed"
+	N6VolumeDetachchmentFromOriginalInstanceFailed DatabaseUpgradeStatusResponseOutputDatabaseUpgradeStatusError = "6_volume_detachchment_from_original_instance_failed"
+	N7VolumeAttachmentToUpgradedInstanceFailed     DatabaseUpgradeStatusResponseOutputDatabaseUpgradeStatusError = "7_volume_attachment_to_upgraded_instance_failed"
+	N8UpgradeCompletionFailed                      DatabaseUpgradeStatusResponseOutputDatabaseUpgradeStatusError = "8_upgrade_completion_failed"
+	N9PostPhysicalBackupFailed                     DatabaseUpgradeStatusResponseOutputDatabaseUpgradeStatusError = "9_post_physical_backup_failed"
 )
 
-// Valid indicates whether the value is a known member of the DatabaseUpgradeStatusResponseDatabaseUpgradeStatusError enum.
-func (e DatabaseUpgradeStatusResponseDatabaseUpgradeStatusError) Valid() bool {
+// Valid indicates whether the value is a known member of the DatabaseUpgradeStatusResponseOutputDatabaseUpgradeStatusError enum.
+func (e DatabaseUpgradeStatusResponseOutputDatabaseUpgradeStatusError) Valid() bool {
 	switch e {
 	case N1UpgradedInstanceLaunchFailed:
 		return true
@@ -1205,23 +1204,23 @@ func (e DatabaseUpgradeStatusResponseDatabaseUpgradeStatusError) Valid() bool {
 	}
 }
 
-// Defines values for DatabaseUpgradeStatusResponseDatabaseUpgradeStatusProgress.
+// Defines values for DatabaseUpgradeStatusResponseOutputDatabaseUpgradeStatusProgress.
 const (
-	N0Requested                          DatabaseUpgradeStatusResponseDatabaseUpgradeStatusProgress = "0_requested"
-	N10CompletedPostPhysicalBackup       DatabaseUpgradeStatusResponseDatabaseUpgradeStatusProgress = "10_completed_post_physical_backup"
-	N1Started                            DatabaseUpgradeStatusResponseDatabaseUpgradeStatusProgress = "1_started"
-	N2LaunchedUpgradedInstance           DatabaseUpgradeStatusResponseDatabaseUpgradeStatusProgress = "2_launched_upgraded_instance"
-	N3DetachedVolumeFromUpgradedInstance DatabaseUpgradeStatusResponseDatabaseUpgradeStatusProgress = "3_detached_volume_from_upgraded_instance"
-	N4AttachedVolumeToOriginalInstance   DatabaseUpgradeStatusResponseDatabaseUpgradeStatusProgress = "4_attached_volume_to_original_instance"
-	N5InitiatedDataUpgrade               DatabaseUpgradeStatusResponseDatabaseUpgradeStatusProgress = "5_initiated_data_upgrade"
-	N6CompletedDataUpgrade               DatabaseUpgradeStatusResponseDatabaseUpgradeStatusProgress = "6_completed_data_upgrade"
-	N7DetachedVolumeFromOriginalInstance DatabaseUpgradeStatusResponseDatabaseUpgradeStatusProgress = "7_detached_volume_from_original_instance"
-	N8AttachedVolumeToUpgradedInstance   DatabaseUpgradeStatusResponseDatabaseUpgradeStatusProgress = "8_attached_volume_to_upgraded_instance"
-	N9CompletedUpgrade                   DatabaseUpgradeStatusResponseDatabaseUpgradeStatusProgress = "9_completed_upgrade"
+	N0Requested                          DatabaseUpgradeStatusResponseOutputDatabaseUpgradeStatusProgress = "0_requested"
+	N10CompletedPostPhysicalBackup       DatabaseUpgradeStatusResponseOutputDatabaseUpgradeStatusProgress = "10_completed_post_physical_backup"
+	N1Started                            DatabaseUpgradeStatusResponseOutputDatabaseUpgradeStatusProgress = "1_started"
+	N2LaunchedUpgradedInstance           DatabaseUpgradeStatusResponseOutputDatabaseUpgradeStatusProgress = "2_launched_upgraded_instance"
+	N3DetachedVolumeFromUpgradedInstance DatabaseUpgradeStatusResponseOutputDatabaseUpgradeStatusProgress = "3_detached_volume_from_upgraded_instance"
+	N4AttachedVolumeToOriginalInstance   DatabaseUpgradeStatusResponseOutputDatabaseUpgradeStatusProgress = "4_attached_volume_to_original_instance"
+	N5InitiatedDataUpgrade               DatabaseUpgradeStatusResponseOutputDatabaseUpgradeStatusProgress = "5_initiated_data_upgrade"
+	N6CompletedDataUpgrade               DatabaseUpgradeStatusResponseOutputDatabaseUpgradeStatusProgress = "6_completed_data_upgrade"
+	N7DetachedVolumeFromOriginalInstance DatabaseUpgradeStatusResponseOutputDatabaseUpgradeStatusProgress = "7_detached_volume_from_original_instance"
+	N8AttachedVolumeToUpgradedInstance   DatabaseUpgradeStatusResponseOutputDatabaseUpgradeStatusProgress = "8_attached_volume_to_upgraded_instance"
+	N9CompletedUpgrade                   DatabaseUpgradeStatusResponseOutputDatabaseUpgradeStatusProgress = "9_completed_upgrade"
 )
 
-// Valid indicates whether the value is a known member of the DatabaseUpgradeStatusResponseDatabaseUpgradeStatusProgress enum.
-func (e DatabaseUpgradeStatusResponseDatabaseUpgradeStatusProgress) Valid() bool {
+// Valid indicates whether the value is a known member of the DatabaseUpgradeStatusResponseOutputDatabaseUpgradeStatusProgress enum.
+func (e DatabaseUpgradeStatusResponseOutputDatabaseUpgradeStatusProgress) Valid() bool {
 	switch e {
 	case N0Requested:
 		return true
@@ -1250,36 +1249,36 @@ func (e DatabaseUpgradeStatusResponseDatabaseUpgradeStatusProgress) Valid() bool
 	}
 }
 
-// Defines values for DeleteRolesResponseMessage.
+// Defines values for DeleteRolesResponseOutputMessage.
 const (
-	DeleteRolesResponseMessageOk DeleteRolesResponseMessage = "ok"
+	DeleteRolesResponseOutputMessageOk DeleteRolesResponseOutputMessage = "ok"
 )
 
-// Valid indicates whether the value is a known member of the DeleteRolesResponseMessage enum.
-func (e DeleteRolesResponseMessage) Valid() bool {
+// Valid indicates whether the value is a known member of the DeleteRolesResponseOutputMessage enum.
+func (e DeleteRolesResponseOutputMessage) Valid() bool {
 	switch e {
-	case DeleteRolesResponseMessageOk:
+	case DeleteRolesResponseOutputMessageOk:
 		return true
 	default:
 		return false
 	}
 }
 
-// Defines values for DeployFunctionResponseStatus.
+// Defines values for DeployFunctionResponseOutputStatus.
 const (
-	DeployFunctionResponseStatusACTIVE    DeployFunctionResponseStatus = "ACTIVE"
-	DeployFunctionResponseStatusREMOVED   DeployFunctionResponseStatus = "REMOVED"
-	DeployFunctionResponseStatusTHROTTLED DeployFunctionResponseStatus = "THROTTLED"
+	DeployFunctionResponseOutputStatusACTIVE    DeployFunctionResponseOutputStatus = "ACTIVE"
+	DeployFunctionResponseOutputStatusREMOVED   DeployFunctionResponseOutputStatus = "REMOVED"
+	DeployFunctionResponseOutputStatusTHROTTLED DeployFunctionResponseOutputStatus = "THROTTLED"
 )
 
-// Valid indicates whether the value is a known member of the DeployFunctionResponseStatus enum.
-func (e DeployFunctionResponseStatus) Valid() bool {
+// Valid indicates whether the value is a known member of the DeployFunctionResponseOutputStatus enum.
+func (e DeployFunctionResponseOutputStatus) Valid() bool {
 	switch e {
-	case DeployFunctionResponseStatusACTIVE:
+	case DeployFunctionResponseOutputStatusACTIVE:
 		return true
-	case DeployFunctionResponseStatusREMOVED:
+	case DeployFunctionResponseOutputStatusREMOVED:
 		return true
-	case DeployFunctionResponseStatusTHROTTLED:
+	case DeployFunctionResponseOutputStatusTHROTTLED:
 		return true
 	default:
 		return false
@@ -1316,129 +1315,129 @@ func (e DiskRequestBodyAttributes1Type) Valid() bool {
 	}
 }
 
-// Defines values for DiskResponseAttributes0Type.
+// Defines values for DiskResponseOutputAttributes0Type.
 const (
-	DiskResponseAttributes0TypeGp3 DiskResponseAttributes0Type = "gp3"
+	DiskResponseOutputAttributes0TypeGp3 DiskResponseOutputAttributes0Type = "gp3"
 )
 
-// Valid indicates whether the value is a known member of the DiskResponseAttributes0Type enum.
-func (e DiskResponseAttributes0Type) Valid() bool {
+// Valid indicates whether the value is a known member of the DiskResponseOutputAttributes0Type enum.
+func (e DiskResponseOutputAttributes0Type) Valid() bool {
 	switch e {
-	case DiskResponseAttributes0TypeGp3:
+	case DiskResponseOutputAttributes0TypeGp3:
 		return true
 	default:
 		return false
 	}
 }
 
-// Defines values for DiskResponseAttributes1Type.
+// Defines values for DiskResponseOutputAttributes1Type.
 const (
-	DiskResponseAttributes1TypeIo2 DiskResponseAttributes1Type = "io2"
+	DiskResponseOutputAttributes1TypeIo2 DiskResponseOutputAttributes1Type = "io2"
 )
 
-// Valid indicates whether the value is a known member of the DiskResponseAttributes1Type enum.
-func (e DiskResponseAttributes1Type) Valid() bool {
+// Valid indicates whether the value is a known member of the DiskResponseOutputAttributes1Type enum.
+func (e DiskResponseOutputAttributes1Type) Valid() bool {
 	switch e {
-	case DiskResponseAttributes1TypeIo2:
+	case DiskResponseOutputAttributes1TypeIo2:
 		return true
 	default:
 		return false
 	}
 }
 
-// Defines values for FunctionResponseStatus.
+// Defines values for FunctionResponseOutputStatus.
 const (
-	FunctionResponseStatusACTIVE    FunctionResponseStatus = "ACTIVE"
-	FunctionResponseStatusREMOVED   FunctionResponseStatus = "REMOVED"
-	FunctionResponseStatusTHROTTLED FunctionResponseStatus = "THROTTLED"
+	FunctionResponseOutputStatusACTIVE    FunctionResponseOutputStatus = "ACTIVE"
+	FunctionResponseOutputStatusREMOVED   FunctionResponseOutputStatus = "REMOVED"
+	FunctionResponseOutputStatusTHROTTLED FunctionResponseOutputStatus = "THROTTLED"
 )
 
-// Valid indicates whether the value is a known member of the FunctionResponseStatus enum.
-func (e FunctionResponseStatus) Valid() bool {
+// Valid indicates whether the value is a known member of the FunctionResponseOutputStatus enum.
+func (e FunctionResponseOutputStatus) Valid() bool {
 	switch e {
-	case FunctionResponseStatusACTIVE:
+	case FunctionResponseOutputStatusACTIVE:
 		return true
-	case FunctionResponseStatusREMOVED:
+	case FunctionResponseOutputStatusREMOVED:
 		return true
-	case FunctionResponseStatusTHROTTLED:
+	case FunctionResponseOutputStatusTHROTTLED:
 		return true
 	default:
 		return false
 	}
 }
 
-// Defines values for FunctionSlugResponseStatus.
+// Defines values for FunctionSlugResponseOutputStatus.
 const (
-	FunctionSlugResponseStatusACTIVE    FunctionSlugResponseStatus = "ACTIVE"
-	FunctionSlugResponseStatusREMOVED   FunctionSlugResponseStatus = "REMOVED"
-	FunctionSlugResponseStatusTHROTTLED FunctionSlugResponseStatus = "THROTTLED"
+	FunctionSlugResponseOutputStatusACTIVE    FunctionSlugResponseOutputStatus = "ACTIVE"
+	FunctionSlugResponseOutputStatusREMOVED   FunctionSlugResponseOutputStatus = "REMOVED"
+	FunctionSlugResponseOutputStatusTHROTTLED FunctionSlugResponseOutputStatus = "THROTTLED"
 )
 
-// Valid indicates whether the value is a known member of the FunctionSlugResponseStatus enum.
-func (e FunctionSlugResponseStatus) Valid() bool {
+// Valid indicates whether the value is a known member of the FunctionSlugResponseOutputStatus enum.
+func (e FunctionSlugResponseOutputStatus) Valid() bool {
 	switch e {
-	case FunctionSlugResponseStatusACTIVE:
+	case FunctionSlugResponseOutputStatusACTIVE:
 		return true
-	case FunctionSlugResponseStatusREMOVED:
+	case FunctionSlugResponseOutputStatusREMOVED:
 		return true
-	case FunctionSlugResponseStatusTHROTTLED:
+	case FunctionSlugResponseOutputStatusTHROTTLED:
 		return true
 	default:
 		return false
 	}
 }
 
-// Defines values for GetProjectAvailableRestoreVersionsResponseAvailableVersionsPostgresEngine.
+// Defines values for GetProjectAvailableRestoreVersionsResponseOutputAvailableVersionsPostgresEngine.
 const (
-	GetProjectAvailableRestoreVersionsResponseAvailableVersionsPostgresEngineN13       GetProjectAvailableRestoreVersionsResponseAvailableVersionsPostgresEngine = "13"
-	GetProjectAvailableRestoreVersionsResponseAvailableVersionsPostgresEngineN14       GetProjectAvailableRestoreVersionsResponseAvailableVersionsPostgresEngine = "14"
-	GetProjectAvailableRestoreVersionsResponseAvailableVersionsPostgresEngineN15       GetProjectAvailableRestoreVersionsResponseAvailableVersionsPostgresEngine = "15"
-	GetProjectAvailableRestoreVersionsResponseAvailableVersionsPostgresEngineN17       GetProjectAvailableRestoreVersionsResponseAvailableVersionsPostgresEngine = "17"
-	GetProjectAvailableRestoreVersionsResponseAvailableVersionsPostgresEngineN17Oriole GetProjectAvailableRestoreVersionsResponseAvailableVersionsPostgresEngine = "17-oriole"
+	GetProjectAvailableRestoreVersionsResponseOutputAvailableVersionsPostgresEngineN13       GetProjectAvailableRestoreVersionsResponseOutputAvailableVersionsPostgresEngine = "13"
+	GetProjectAvailableRestoreVersionsResponseOutputAvailableVersionsPostgresEngineN14       GetProjectAvailableRestoreVersionsResponseOutputAvailableVersionsPostgresEngine = "14"
+	GetProjectAvailableRestoreVersionsResponseOutputAvailableVersionsPostgresEngineN15       GetProjectAvailableRestoreVersionsResponseOutputAvailableVersionsPostgresEngine = "15"
+	GetProjectAvailableRestoreVersionsResponseOutputAvailableVersionsPostgresEngineN17       GetProjectAvailableRestoreVersionsResponseOutputAvailableVersionsPostgresEngine = "17"
+	GetProjectAvailableRestoreVersionsResponseOutputAvailableVersionsPostgresEngineN17Oriole GetProjectAvailableRestoreVersionsResponseOutputAvailableVersionsPostgresEngine = "17-oriole"
 )
 
-// Valid indicates whether the value is a known member of the GetProjectAvailableRestoreVersionsResponseAvailableVersionsPostgresEngine enum.
-func (e GetProjectAvailableRestoreVersionsResponseAvailableVersionsPostgresEngine) Valid() bool {
+// Valid indicates whether the value is a known member of the GetProjectAvailableRestoreVersionsResponseOutputAvailableVersionsPostgresEngine enum.
+func (e GetProjectAvailableRestoreVersionsResponseOutputAvailableVersionsPostgresEngine) Valid() bool {
 	switch e {
-	case GetProjectAvailableRestoreVersionsResponseAvailableVersionsPostgresEngineN13:
+	case GetProjectAvailableRestoreVersionsResponseOutputAvailableVersionsPostgresEngineN13:
 		return true
-	case GetProjectAvailableRestoreVersionsResponseAvailableVersionsPostgresEngineN14:
+	case GetProjectAvailableRestoreVersionsResponseOutputAvailableVersionsPostgresEngineN14:
 		return true
-	case GetProjectAvailableRestoreVersionsResponseAvailableVersionsPostgresEngineN15:
+	case GetProjectAvailableRestoreVersionsResponseOutputAvailableVersionsPostgresEngineN15:
 		return true
-	case GetProjectAvailableRestoreVersionsResponseAvailableVersionsPostgresEngineN17:
+	case GetProjectAvailableRestoreVersionsResponseOutputAvailableVersionsPostgresEngineN17:
 		return true
-	case GetProjectAvailableRestoreVersionsResponseAvailableVersionsPostgresEngineN17Oriole:
+	case GetProjectAvailableRestoreVersionsResponseOutputAvailableVersionsPostgresEngineN17Oriole:
 		return true
 	default:
 		return false
 	}
 }
 
-// Defines values for GetProjectAvailableRestoreVersionsResponseAvailableVersionsReleaseChannel.
+// Defines values for GetProjectAvailableRestoreVersionsResponseOutputAvailableVersionsReleaseChannel.
 const (
-	GetProjectAvailableRestoreVersionsResponseAvailableVersionsReleaseChannelAlpha     GetProjectAvailableRestoreVersionsResponseAvailableVersionsReleaseChannel = "alpha"
-	GetProjectAvailableRestoreVersionsResponseAvailableVersionsReleaseChannelBeta      GetProjectAvailableRestoreVersionsResponseAvailableVersionsReleaseChannel = "beta"
-	GetProjectAvailableRestoreVersionsResponseAvailableVersionsReleaseChannelGa        GetProjectAvailableRestoreVersionsResponseAvailableVersionsReleaseChannel = "ga"
-	GetProjectAvailableRestoreVersionsResponseAvailableVersionsReleaseChannelInternal  GetProjectAvailableRestoreVersionsResponseAvailableVersionsReleaseChannel = "internal"
-	GetProjectAvailableRestoreVersionsResponseAvailableVersionsReleaseChannelPreview   GetProjectAvailableRestoreVersionsResponseAvailableVersionsReleaseChannel = "preview"
-	GetProjectAvailableRestoreVersionsResponseAvailableVersionsReleaseChannelWithdrawn GetProjectAvailableRestoreVersionsResponseAvailableVersionsReleaseChannel = "withdrawn"
+	GetProjectAvailableRestoreVersionsResponseOutputAvailableVersionsReleaseChannelAlpha     GetProjectAvailableRestoreVersionsResponseOutputAvailableVersionsReleaseChannel = "alpha"
+	GetProjectAvailableRestoreVersionsResponseOutputAvailableVersionsReleaseChannelBeta      GetProjectAvailableRestoreVersionsResponseOutputAvailableVersionsReleaseChannel = "beta"
+	GetProjectAvailableRestoreVersionsResponseOutputAvailableVersionsReleaseChannelGa        GetProjectAvailableRestoreVersionsResponseOutputAvailableVersionsReleaseChannel = "ga"
+	GetProjectAvailableRestoreVersionsResponseOutputAvailableVersionsReleaseChannelInternal  GetProjectAvailableRestoreVersionsResponseOutputAvailableVersionsReleaseChannel = "internal"
+	GetProjectAvailableRestoreVersionsResponseOutputAvailableVersionsReleaseChannelPreview   GetProjectAvailableRestoreVersionsResponseOutputAvailableVersionsReleaseChannel = "preview"
+	GetProjectAvailableRestoreVersionsResponseOutputAvailableVersionsReleaseChannelWithdrawn GetProjectAvailableRestoreVersionsResponseOutputAvailableVersionsReleaseChannel = "withdrawn"
 )
 
-// Valid indicates whether the value is a known member of the GetProjectAvailableRestoreVersionsResponseAvailableVersionsReleaseChannel enum.
-func (e GetProjectAvailableRestoreVersionsResponseAvailableVersionsReleaseChannel) Valid() bool {
+// Valid indicates whether the value is a known member of the GetProjectAvailableRestoreVersionsResponseOutputAvailableVersionsReleaseChannel enum.
+func (e GetProjectAvailableRestoreVersionsResponseOutputAvailableVersionsReleaseChannel) Valid() bool {
 	switch e {
-	case GetProjectAvailableRestoreVersionsResponseAvailableVersionsReleaseChannelAlpha:
+	case GetProjectAvailableRestoreVersionsResponseOutputAvailableVersionsReleaseChannelAlpha:
 		return true
-	case GetProjectAvailableRestoreVersionsResponseAvailableVersionsReleaseChannelBeta:
+	case GetProjectAvailableRestoreVersionsResponseOutputAvailableVersionsReleaseChannelBeta:
 		return true
-	case GetProjectAvailableRestoreVersionsResponseAvailableVersionsReleaseChannelGa:
+	case GetProjectAvailableRestoreVersionsResponseOutputAvailableVersionsReleaseChannelGa:
 		return true
-	case GetProjectAvailableRestoreVersionsResponseAvailableVersionsReleaseChannelInternal:
+	case GetProjectAvailableRestoreVersionsResponseOutputAvailableVersionsReleaseChannelInternal:
 		return true
-	case GetProjectAvailableRestoreVersionsResponseAvailableVersionsReleaseChannelPreview:
+	case GetProjectAvailableRestoreVersionsResponseOutputAvailableVersionsReleaseChannelPreview:
 		return true
-	case GetProjectAvailableRestoreVersionsResponseAvailableVersionsReleaseChannelWithdrawn:
+	case GetProjectAvailableRestoreVersionsResponseOutputAvailableVersionsReleaseChannelWithdrawn:
 		return true
 	default:
 		return false
@@ -1463,672 +1462,672 @@ func (e JitAccessRequestRequestState) Valid() bool {
 	}
 }
 
-// Defines values for ListActionRunResponseRunStepsName.
+// Defines values for ListActionRunResponseOutputRunStepsName.
 const (
-	ListActionRunResponseRunStepsNameClone     ListActionRunResponseRunStepsName = "clone"
-	ListActionRunResponseRunStepsNameConfigure ListActionRunResponseRunStepsName = "configure"
-	ListActionRunResponseRunStepsNameDeploy    ListActionRunResponseRunStepsName = "deploy"
-	ListActionRunResponseRunStepsNameHealth    ListActionRunResponseRunStepsName = "health"
-	ListActionRunResponseRunStepsNameMigrate   ListActionRunResponseRunStepsName = "migrate"
-	ListActionRunResponseRunStepsNamePull      ListActionRunResponseRunStepsName = "pull"
-	ListActionRunResponseRunStepsNameSeed      ListActionRunResponseRunStepsName = "seed"
+	ListActionRunResponseOutputRunStepsNameClone     ListActionRunResponseOutputRunStepsName = "clone"
+	ListActionRunResponseOutputRunStepsNameConfigure ListActionRunResponseOutputRunStepsName = "configure"
+	ListActionRunResponseOutputRunStepsNameDeploy    ListActionRunResponseOutputRunStepsName = "deploy"
+	ListActionRunResponseOutputRunStepsNameHealth    ListActionRunResponseOutputRunStepsName = "health"
+	ListActionRunResponseOutputRunStepsNameMigrate   ListActionRunResponseOutputRunStepsName = "migrate"
+	ListActionRunResponseOutputRunStepsNamePull      ListActionRunResponseOutputRunStepsName = "pull"
+	ListActionRunResponseOutputRunStepsNameSeed      ListActionRunResponseOutputRunStepsName = "seed"
 )
 
-// Valid indicates whether the value is a known member of the ListActionRunResponseRunStepsName enum.
-func (e ListActionRunResponseRunStepsName) Valid() bool {
+// Valid indicates whether the value is a known member of the ListActionRunResponseOutputRunStepsName enum.
+func (e ListActionRunResponseOutputRunStepsName) Valid() bool {
 	switch e {
-	case ListActionRunResponseRunStepsNameClone:
+	case ListActionRunResponseOutputRunStepsNameClone:
 		return true
-	case ListActionRunResponseRunStepsNameConfigure:
+	case ListActionRunResponseOutputRunStepsNameConfigure:
 		return true
-	case ListActionRunResponseRunStepsNameDeploy:
+	case ListActionRunResponseOutputRunStepsNameDeploy:
 		return true
-	case ListActionRunResponseRunStepsNameHealth:
+	case ListActionRunResponseOutputRunStepsNameHealth:
 		return true
-	case ListActionRunResponseRunStepsNameMigrate:
+	case ListActionRunResponseOutputRunStepsNameMigrate:
 		return true
-	case ListActionRunResponseRunStepsNamePull:
+	case ListActionRunResponseOutputRunStepsNamePull:
 		return true
-	case ListActionRunResponseRunStepsNameSeed:
+	case ListActionRunResponseOutputRunStepsNameSeed:
 		return true
 	default:
 		return false
 	}
 }
 
-// Defines values for ListActionRunResponseRunStepsStatus.
+// Defines values for ListActionRunResponseOutputRunStepsStatus.
 const (
-	ListActionRunResponseRunStepsStatusCREATED    ListActionRunResponseRunStepsStatus = "CREATED"
-	ListActionRunResponseRunStepsStatusDEAD       ListActionRunResponseRunStepsStatus = "DEAD"
-	ListActionRunResponseRunStepsStatusEXITED     ListActionRunResponseRunStepsStatus = "EXITED"
-	ListActionRunResponseRunStepsStatusPAUSED     ListActionRunResponseRunStepsStatus = "PAUSED"
-	ListActionRunResponseRunStepsStatusREMOVING   ListActionRunResponseRunStepsStatus = "REMOVING"
-	ListActionRunResponseRunStepsStatusRESTARTING ListActionRunResponseRunStepsStatus = "RESTARTING"
-	ListActionRunResponseRunStepsStatusRUNNING    ListActionRunResponseRunStepsStatus = "RUNNING"
+	ListActionRunResponseOutputRunStepsStatusCREATED    ListActionRunResponseOutputRunStepsStatus = "CREATED"
+	ListActionRunResponseOutputRunStepsStatusDEAD       ListActionRunResponseOutputRunStepsStatus = "DEAD"
+	ListActionRunResponseOutputRunStepsStatusEXITED     ListActionRunResponseOutputRunStepsStatus = "EXITED"
+	ListActionRunResponseOutputRunStepsStatusPAUSED     ListActionRunResponseOutputRunStepsStatus = "PAUSED"
+	ListActionRunResponseOutputRunStepsStatusREMOVING   ListActionRunResponseOutputRunStepsStatus = "REMOVING"
+	ListActionRunResponseOutputRunStepsStatusRESTARTING ListActionRunResponseOutputRunStepsStatus = "RESTARTING"
+	ListActionRunResponseOutputRunStepsStatusRUNNING    ListActionRunResponseOutputRunStepsStatus = "RUNNING"
 )
 
-// Valid indicates whether the value is a known member of the ListActionRunResponseRunStepsStatus enum.
-func (e ListActionRunResponseRunStepsStatus) Valid() bool {
+// Valid indicates whether the value is a known member of the ListActionRunResponseOutputRunStepsStatus enum.
+func (e ListActionRunResponseOutputRunStepsStatus) Valid() bool {
 	switch e {
-	case ListActionRunResponseRunStepsStatusCREATED:
+	case ListActionRunResponseOutputRunStepsStatusCREATED:
 		return true
-	case ListActionRunResponseRunStepsStatusDEAD:
+	case ListActionRunResponseOutputRunStepsStatusDEAD:
 		return true
-	case ListActionRunResponseRunStepsStatusEXITED:
+	case ListActionRunResponseOutputRunStepsStatusEXITED:
 		return true
-	case ListActionRunResponseRunStepsStatusPAUSED:
+	case ListActionRunResponseOutputRunStepsStatusPAUSED:
 		return true
-	case ListActionRunResponseRunStepsStatusREMOVING:
+	case ListActionRunResponseOutputRunStepsStatusREMOVING:
 		return true
-	case ListActionRunResponseRunStepsStatusRESTARTING:
+	case ListActionRunResponseOutputRunStepsStatusRESTARTING:
 		return true
-	case ListActionRunResponseRunStepsStatusRUNNING:
+	case ListActionRunResponseOutputRunStepsStatusRUNNING:
 		return true
 	default:
 		return false
 	}
 }
 
-// Defines values for ListProjectAddonsResponseAvailableAddonsType.
+// Defines values for ListProjectAddonsResponseOutputAvailableAddonsType.
 const (
-	ListProjectAddonsResponseAvailableAddonsTypeAuthMfaPhone    ListProjectAddonsResponseAvailableAddonsType = "auth_mfa_phone"
-	ListProjectAddonsResponseAvailableAddonsTypeAuthMfaWebAuthn ListProjectAddonsResponseAvailableAddonsType = "auth_mfa_web_authn"
-	ListProjectAddonsResponseAvailableAddonsTypeComputeInstance ListProjectAddonsResponseAvailableAddonsType = "compute_instance"
-	ListProjectAddonsResponseAvailableAddonsTypeCustomDomain    ListProjectAddonsResponseAvailableAddonsType = "custom_domain"
-	ListProjectAddonsResponseAvailableAddonsTypeEtlPipeline     ListProjectAddonsResponseAvailableAddonsType = "etl_pipeline"
-	ListProjectAddonsResponseAvailableAddonsTypeIpv4            ListProjectAddonsResponseAvailableAddonsType = "ipv4"
-	ListProjectAddonsResponseAvailableAddonsTypeLogDrain        ListProjectAddonsResponseAvailableAddonsType = "log_drain"
-	ListProjectAddonsResponseAvailableAddonsTypePitr            ListProjectAddonsResponseAvailableAddonsType = "pitr"
+	ListProjectAddonsResponseOutputAvailableAddonsTypeAuthMfaPhone    ListProjectAddonsResponseOutputAvailableAddonsType = "auth_mfa_phone"
+	ListProjectAddonsResponseOutputAvailableAddonsTypeAuthMfaWebAuthn ListProjectAddonsResponseOutputAvailableAddonsType = "auth_mfa_web_authn"
+	ListProjectAddonsResponseOutputAvailableAddonsTypeComputeInstance ListProjectAddonsResponseOutputAvailableAddonsType = "compute_instance"
+	ListProjectAddonsResponseOutputAvailableAddonsTypeCustomDomain    ListProjectAddonsResponseOutputAvailableAddonsType = "custom_domain"
+	ListProjectAddonsResponseOutputAvailableAddonsTypeEtlPipeline     ListProjectAddonsResponseOutputAvailableAddonsType = "etl_pipeline"
+	ListProjectAddonsResponseOutputAvailableAddonsTypeIpv4            ListProjectAddonsResponseOutputAvailableAddonsType = "ipv4"
+	ListProjectAddonsResponseOutputAvailableAddonsTypeLogDrain        ListProjectAddonsResponseOutputAvailableAddonsType = "log_drain"
+	ListProjectAddonsResponseOutputAvailableAddonsTypePitr            ListProjectAddonsResponseOutputAvailableAddonsType = "pitr"
 )
 
-// Valid indicates whether the value is a known member of the ListProjectAddonsResponseAvailableAddonsType enum.
-func (e ListProjectAddonsResponseAvailableAddonsType) Valid() bool {
+// Valid indicates whether the value is a known member of the ListProjectAddonsResponseOutputAvailableAddonsType enum.
+func (e ListProjectAddonsResponseOutputAvailableAddonsType) Valid() bool {
 	switch e {
-	case ListProjectAddonsResponseAvailableAddonsTypeAuthMfaPhone:
+	case ListProjectAddonsResponseOutputAvailableAddonsTypeAuthMfaPhone:
 		return true
-	case ListProjectAddonsResponseAvailableAddonsTypeAuthMfaWebAuthn:
+	case ListProjectAddonsResponseOutputAvailableAddonsTypeAuthMfaWebAuthn:
 		return true
-	case ListProjectAddonsResponseAvailableAddonsTypeComputeInstance:
+	case ListProjectAddonsResponseOutputAvailableAddonsTypeComputeInstance:
 		return true
-	case ListProjectAddonsResponseAvailableAddonsTypeCustomDomain:
+	case ListProjectAddonsResponseOutputAvailableAddonsTypeCustomDomain:
 		return true
-	case ListProjectAddonsResponseAvailableAddonsTypeEtlPipeline:
+	case ListProjectAddonsResponseOutputAvailableAddonsTypeEtlPipeline:
 		return true
-	case ListProjectAddonsResponseAvailableAddonsTypeIpv4:
+	case ListProjectAddonsResponseOutputAvailableAddonsTypeIpv4:
 		return true
-	case ListProjectAddonsResponseAvailableAddonsTypeLogDrain:
+	case ListProjectAddonsResponseOutputAvailableAddonsTypeLogDrain:
 		return true
-	case ListProjectAddonsResponseAvailableAddonsTypePitr:
+	case ListProjectAddonsResponseOutputAvailableAddonsTypePitr:
 		return true
 	default:
 		return false
 	}
 }
 
-// Defines values for ListProjectAddonsResponseAvailableAddonsVariantsId0.
+// Defines values for ListProjectAddonsResponseOutputAvailableAddonsVariantsId0.
 const (
-	ListProjectAddonsResponseAvailableAddonsVariantsId0Ci12xlarge                ListProjectAddonsResponseAvailableAddonsVariantsId0 = "ci_12xlarge"
-	ListProjectAddonsResponseAvailableAddonsVariantsId0Ci16xlarge                ListProjectAddonsResponseAvailableAddonsVariantsId0 = "ci_16xlarge"
-	ListProjectAddonsResponseAvailableAddonsVariantsId0Ci24xlarge                ListProjectAddonsResponseAvailableAddonsVariantsId0 = "ci_24xlarge"
-	ListProjectAddonsResponseAvailableAddonsVariantsId0Ci24xlargeHighMemory      ListProjectAddonsResponseAvailableAddonsVariantsId0 = "ci_24xlarge_high_memory"
-	ListProjectAddonsResponseAvailableAddonsVariantsId0Ci24xlargeOptimizedCpu    ListProjectAddonsResponseAvailableAddonsVariantsId0 = "ci_24xlarge_optimized_cpu"
-	ListProjectAddonsResponseAvailableAddonsVariantsId0Ci24xlargeOptimizedMemory ListProjectAddonsResponseAvailableAddonsVariantsId0 = "ci_24xlarge_optimized_memory"
-	ListProjectAddonsResponseAvailableAddonsVariantsId0Ci2xlarge                 ListProjectAddonsResponseAvailableAddonsVariantsId0 = "ci_2xlarge"
-	ListProjectAddonsResponseAvailableAddonsVariantsId0Ci48xlarge                ListProjectAddonsResponseAvailableAddonsVariantsId0 = "ci_48xlarge"
-	ListProjectAddonsResponseAvailableAddonsVariantsId0Ci48xlargeHighMemory      ListProjectAddonsResponseAvailableAddonsVariantsId0 = "ci_48xlarge_high_memory"
-	ListProjectAddonsResponseAvailableAddonsVariantsId0Ci48xlargeOptimizedCpu    ListProjectAddonsResponseAvailableAddonsVariantsId0 = "ci_48xlarge_optimized_cpu"
-	ListProjectAddonsResponseAvailableAddonsVariantsId0Ci48xlargeOptimizedMemory ListProjectAddonsResponseAvailableAddonsVariantsId0 = "ci_48xlarge_optimized_memory"
-	ListProjectAddonsResponseAvailableAddonsVariantsId0Ci4xlarge                 ListProjectAddonsResponseAvailableAddonsVariantsId0 = "ci_4xlarge"
-	ListProjectAddonsResponseAvailableAddonsVariantsId0Ci8xlarge                 ListProjectAddonsResponseAvailableAddonsVariantsId0 = "ci_8xlarge"
-	ListProjectAddonsResponseAvailableAddonsVariantsId0CiLarge                   ListProjectAddonsResponseAvailableAddonsVariantsId0 = "ci_large"
-	ListProjectAddonsResponseAvailableAddonsVariantsId0CiMedium                  ListProjectAddonsResponseAvailableAddonsVariantsId0 = "ci_medium"
-	ListProjectAddonsResponseAvailableAddonsVariantsId0CiMicro                   ListProjectAddonsResponseAvailableAddonsVariantsId0 = "ci_micro"
-	ListProjectAddonsResponseAvailableAddonsVariantsId0CiSmall                   ListProjectAddonsResponseAvailableAddonsVariantsId0 = "ci_small"
-	ListProjectAddonsResponseAvailableAddonsVariantsId0CiXlarge                  ListProjectAddonsResponseAvailableAddonsVariantsId0 = "ci_xlarge"
+	ListProjectAddonsResponseOutputAvailableAddonsVariantsId0Ci12xlarge                ListProjectAddonsResponseOutputAvailableAddonsVariantsId0 = "ci_12xlarge"
+	ListProjectAddonsResponseOutputAvailableAddonsVariantsId0Ci16xlarge                ListProjectAddonsResponseOutputAvailableAddonsVariantsId0 = "ci_16xlarge"
+	ListProjectAddonsResponseOutputAvailableAddonsVariantsId0Ci24xlarge                ListProjectAddonsResponseOutputAvailableAddonsVariantsId0 = "ci_24xlarge"
+	ListProjectAddonsResponseOutputAvailableAddonsVariantsId0Ci24xlargeHighMemory      ListProjectAddonsResponseOutputAvailableAddonsVariantsId0 = "ci_24xlarge_high_memory"
+	ListProjectAddonsResponseOutputAvailableAddonsVariantsId0Ci24xlargeOptimizedCpu    ListProjectAddonsResponseOutputAvailableAddonsVariantsId0 = "ci_24xlarge_optimized_cpu"
+	ListProjectAddonsResponseOutputAvailableAddonsVariantsId0Ci24xlargeOptimizedMemory ListProjectAddonsResponseOutputAvailableAddonsVariantsId0 = "ci_24xlarge_optimized_memory"
+	ListProjectAddonsResponseOutputAvailableAddonsVariantsId0Ci2xlarge                 ListProjectAddonsResponseOutputAvailableAddonsVariantsId0 = "ci_2xlarge"
+	ListProjectAddonsResponseOutputAvailableAddonsVariantsId0Ci48xlarge                ListProjectAddonsResponseOutputAvailableAddonsVariantsId0 = "ci_48xlarge"
+	ListProjectAddonsResponseOutputAvailableAddonsVariantsId0Ci48xlargeHighMemory      ListProjectAddonsResponseOutputAvailableAddonsVariantsId0 = "ci_48xlarge_high_memory"
+	ListProjectAddonsResponseOutputAvailableAddonsVariantsId0Ci48xlargeOptimizedCpu    ListProjectAddonsResponseOutputAvailableAddonsVariantsId0 = "ci_48xlarge_optimized_cpu"
+	ListProjectAddonsResponseOutputAvailableAddonsVariantsId0Ci48xlargeOptimizedMemory ListProjectAddonsResponseOutputAvailableAddonsVariantsId0 = "ci_48xlarge_optimized_memory"
+	ListProjectAddonsResponseOutputAvailableAddonsVariantsId0Ci4xlarge                 ListProjectAddonsResponseOutputAvailableAddonsVariantsId0 = "ci_4xlarge"
+	ListProjectAddonsResponseOutputAvailableAddonsVariantsId0Ci8xlarge                 ListProjectAddonsResponseOutputAvailableAddonsVariantsId0 = "ci_8xlarge"
+	ListProjectAddonsResponseOutputAvailableAddonsVariantsId0CiLarge                   ListProjectAddonsResponseOutputAvailableAddonsVariantsId0 = "ci_large"
+	ListProjectAddonsResponseOutputAvailableAddonsVariantsId0CiMedium                  ListProjectAddonsResponseOutputAvailableAddonsVariantsId0 = "ci_medium"
+	ListProjectAddonsResponseOutputAvailableAddonsVariantsId0CiMicro                   ListProjectAddonsResponseOutputAvailableAddonsVariantsId0 = "ci_micro"
+	ListProjectAddonsResponseOutputAvailableAddonsVariantsId0CiSmall                   ListProjectAddonsResponseOutputAvailableAddonsVariantsId0 = "ci_small"
+	ListProjectAddonsResponseOutputAvailableAddonsVariantsId0CiXlarge                  ListProjectAddonsResponseOutputAvailableAddonsVariantsId0 = "ci_xlarge"
 )
 
-// Valid indicates whether the value is a known member of the ListProjectAddonsResponseAvailableAddonsVariantsId0 enum.
-func (e ListProjectAddonsResponseAvailableAddonsVariantsId0) Valid() bool {
+// Valid indicates whether the value is a known member of the ListProjectAddonsResponseOutputAvailableAddonsVariantsId0 enum.
+func (e ListProjectAddonsResponseOutputAvailableAddonsVariantsId0) Valid() bool {
 	switch e {
-	case ListProjectAddonsResponseAvailableAddonsVariantsId0Ci12xlarge:
+	case ListProjectAddonsResponseOutputAvailableAddonsVariantsId0Ci12xlarge:
 		return true
-	case ListProjectAddonsResponseAvailableAddonsVariantsId0Ci16xlarge:
+	case ListProjectAddonsResponseOutputAvailableAddonsVariantsId0Ci16xlarge:
 		return true
-	case ListProjectAddonsResponseAvailableAddonsVariantsId0Ci24xlarge:
+	case ListProjectAddonsResponseOutputAvailableAddonsVariantsId0Ci24xlarge:
 		return true
-	case ListProjectAddonsResponseAvailableAddonsVariantsId0Ci24xlargeHighMemory:
+	case ListProjectAddonsResponseOutputAvailableAddonsVariantsId0Ci24xlargeHighMemory:
 		return true
-	case ListProjectAddonsResponseAvailableAddonsVariantsId0Ci24xlargeOptimizedCpu:
+	case ListProjectAddonsResponseOutputAvailableAddonsVariantsId0Ci24xlargeOptimizedCpu:
 		return true
-	case ListProjectAddonsResponseAvailableAddonsVariantsId0Ci24xlargeOptimizedMemory:
+	case ListProjectAddonsResponseOutputAvailableAddonsVariantsId0Ci24xlargeOptimizedMemory:
 		return true
-	case ListProjectAddonsResponseAvailableAddonsVariantsId0Ci2xlarge:
+	case ListProjectAddonsResponseOutputAvailableAddonsVariantsId0Ci2xlarge:
 		return true
-	case ListProjectAddonsResponseAvailableAddonsVariantsId0Ci48xlarge:
+	case ListProjectAddonsResponseOutputAvailableAddonsVariantsId0Ci48xlarge:
 		return true
-	case ListProjectAddonsResponseAvailableAddonsVariantsId0Ci48xlargeHighMemory:
+	case ListProjectAddonsResponseOutputAvailableAddonsVariantsId0Ci48xlargeHighMemory:
 		return true
-	case ListProjectAddonsResponseAvailableAddonsVariantsId0Ci48xlargeOptimizedCpu:
+	case ListProjectAddonsResponseOutputAvailableAddonsVariantsId0Ci48xlargeOptimizedCpu:
 		return true
-	case ListProjectAddonsResponseAvailableAddonsVariantsId0Ci48xlargeOptimizedMemory:
+	case ListProjectAddonsResponseOutputAvailableAddonsVariantsId0Ci48xlargeOptimizedMemory:
 		return true
-	case ListProjectAddonsResponseAvailableAddonsVariantsId0Ci4xlarge:
+	case ListProjectAddonsResponseOutputAvailableAddonsVariantsId0Ci4xlarge:
 		return true
-	case ListProjectAddonsResponseAvailableAddonsVariantsId0Ci8xlarge:
+	case ListProjectAddonsResponseOutputAvailableAddonsVariantsId0Ci8xlarge:
 		return true
-	case ListProjectAddonsResponseAvailableAddonsVariantsId0CiLarge:
+	case ListProjectAddonsResponseOutputAvailableAddonsVariantsId0CiLarge:
 		return true
-	case ListProjectAddonsResponseAvailableAddonsVariantsId0CiMedium:
+	case ListProjectAddonsResponseOutputAvailableAddonsVariantsId0CiMedium:
 		return true
-	case ListProjectAddonsResponseAvailableAddonsVariantsId0CiMicro:
+	case ListProjectAddonsResponseOutputAvailableAddonsVariantsId0CiMicro:
 		return true
-	case ListProjectAddonsResponseAvailableAddonsVariantsId0CiSmall:
+	case ListProjectAddonsResponseOutputAvailableAddonsVariantsId0CiSmall:
 		return true
-	case ListProjectAddonsResponseAvailableAddonsVariantsId0CiXlarge:
+	case ListProjectAddonsResponseOutputAvailableAddonsVariantsId0CiXlarge:
 		return true
 	default:
 		return false
 	}
 }
 
-// Defines values for ListProjectAddonsResponseAvailableAddonsVariantsId1.
+// Defines values for ListProjectAddonsResponseOutputAvailableAddonsVariantsId1.
 const (
-	ListProjectAddonsResponseAvailableAddonsVariantsId1CdDefault ListProjectAddonsResponseAvailableAddonsVariantsId1 = "cd_default"
+	ListProjectAddonsResponseOutputAvailableAddonsVariantsId1CdDefault ListProjectAddonsResponseOutputAvailableAddonsVariantsId1 = "cd_default"
 )
 
-// Valid indicates whether the value is a known member of the ListProjectAddonsResponseAvailableAddonsVariantsId1 enum.
-func (e ListProjectAddonsResponseAvailableAddonsVariantsId1) Valid() bool {
+// Valid indicates whether the value is a known member of the ListProjectAddonsResponseOutputAvailableAddonsVariantsId1 enum.
+func (e ListProjectAddonsResponseOutputAvailableAddonsVariantsId1) Valid() bool {
 	switch e {
-	case ListProjectAddonsResponseAvailableAddonsVariantsId1CdDefault:
+	case ListProjectAddonsResponseOutputAvailableAddonsVariantsId1CdDefault:
 		return true
 	default:
 		return false
 	}
 }
 
-// Defines values for ListProjectAddonsResponseAvailableAddonsVariantsId2.
+// Defines values for ListProjectAddonsResponseOutputAvailableAddonsVariantsId2.
 const (
-	ListProjectAddonsResponseAvailableAddonsVariantsId2Pitr14 ListProjectAddonsResponseAvailableAddonsVariantsId2 = "pitr_14"
-	ListProjectAddonsResponseAvailableAddonsVariantsId2Pitr28 ListProjectAddonsResponseAvailableAddonsVariantsId2 = "pitr_28"
-	ListProjectAddonsResponseAvailableAddonsVariantsId2Pitr7  ListProjectAddonsResponseAvailableAddonsVariantsId2 = "pitr_7"
+	ListProjectAddonsResponseOutputAvailableAddonsVariantsId2Pitr14 ListProjectAddonsResponseOutputAvailableAddonsVariantsId2 = "pitr_14"
+	ListProjectAddonsResponseOutputAvailableAddonsVariantsId2Pitr28 ListProjectAddonsResponseOutputAvailableAddonsVariantsId2 = "pitr_28"
+	ListProjectAddonsResponseOutputAvailableAddonsVariantsId2Pitr7  ListProjectAddonsResponseOutputAvailableAddonsVariantsId2 = "pitr_7"
 )
 
-// Valid indicates whether the value is a known member of the ListProjectAddonsResponseAvailableAddonsVariantsId2 enum.
-func (e ListProjectAddonsResponseAvailableAddonsVariantsId2) Valid() bool {
+// Valid indicates whether the value is a known member of the ListProjectAddonsResponseOutputAvailableAddonsVariantsId2 enum.
+func (e ListProjectAddonsResponseOutputAvailableAddonsVariantsId2) Valid() bool {
 	switch e {
-	case ListProjectAddonsResponseAvailableAddonsVariantsId2Pitr14:
+	case ListProjectAddonsResponseOutputAvailableAddonsVariantsId2Pitr14:
 		return true
-	case ListProjectAddonsResponseAvailableAddonsVariantsId2Pitr28:
+	case ListProjectAddonsResponseOutputAvailableAddonsVariantsId2Pitr28:
 		return true
-	case ListProjectAddonsResponseAvailableAddonsVariantsId2Pitr7:
+	case ListProjectAddonsResponseOutputAvailableAddonsVariantsId2Pitr7:
 		return true
 	default:
 		return false
 	}
 }
 
-// Defines values for ListProjectAddonsResponseAvailableAddonsVariantsId3.
+// Defines values for ListProjectAddonsResponseOutputAvailableAddonsVariantsId3.
 const (
-	ListProjectAddonsResponseAvailableAddonsVariantsId3Ipv4Default ListProjectAddonsResponseAvailableAddonsVariantsId3 = "ipv4_default"
+	ListProjectAddonsResponseOutputAvailableAddonsVariantsId3Ipv4Default ListProjectAddonsResponseOutputAvailableAddonsVariantsId3 = "ipv4_default"
 )
 
-// Valid indicates whether the value is a known member of the ListProjectAddonsResponseAvailableAddonsVariantsId3 enum.
-func (e ListProjectAddonsResponseAvailableAddonsVariantsId3) Valid() bool {
+// Valid indicates whether the value is a known member of the ListProjectAddonsResponseOutputAvailableAddonsVariantsId3 enum.
+func (e ListProjectAddonsResponseOutputAvailableAddonsVariantsId3) Valid() bool {
 	switch e {
-	case ListProjectAddonsResponseAvailableAddonsVariantsId3Ipv4Default:
+	case ListProjectAddonsResponseOutputAvailableAddonsVariantsId3Ipv4Default:
 		return true
 	default:
 		return false
 	}
 }
 
-// Defines values for ListProjectAddonsResponseAvailableAddonsVariantsId4.
+// Defines values for ListProjectAddonsResponseOutputAvailableAddonsVariantsId4.
 const (
-	ListProjectAddonsResponseAvailableAddonsVariantsId4AuthMfaPhoneDefault ListProjectAddonsResponseAvailableAddonsVariantsId4 = "auth_mfa_phone_default"
+	ListProjectAddonsResponseOutputAvailableAddonsVariantsId4AuthMfaPhoneDefault ListProjectAddonsResponseOutputAvailableAddonsVariantsId4 = "auth_mfa_phone_default"
 )
 
-// Valid indicates whether the value is a known member of the ListProjectAddonsResponseAvailableAddonsVariantsId4 enum.
-func (e ListProjectAddonsResponseAvailableAddonsVariantsId4) Valid() bool {
+// Valid indicates whether the value is a known member of the ListProjectAddonsResponseOutputAvailableAddonsVariantsId4 enum.
+func (e ListProjectAddonsResponseOutputAvailableAddonsVariantsId4) Valid() bool {
 	switch e {
-	case ListProjectAddonsResponseAvailableAddonsVariantsId4AuthMfaPhoneDefault:
+	case ListProjectAddonsResponseOutputAvailableAddonsVariantsId4AuthMfaPhoneDefault:
 		return true
 	default:
 		return false
 	}
 }
 
-// Defines values for ListProjectAddonsResponseAvailableAddonsVariantsId5.
+// Defines values for ListProjectAddonsResponseOutputAvailableAddonsVariantsId5.
 const (
-	ListProjectAddonsResponseAvailableAddonsVariantsId5AuthMfaWebAuthnDefault ListProjectAddonsResponseAvailableAddonsVariantsId5 = "auth_mfa_web_authn_default"
+	ListProjectAddonsResponseOutputAvailableAddonsVariantsId5AuthMfaWebAuthnDefault ListProjectAddonsResponseOutputAvailableAddonsVariantsId5 = "auth_mfa_web_authn_default"
 )
 
-// Valid indicates whether the value is a known member of the ListProjectAddonsResponseAvailableAddonsVariantsId5 enum.
-func (e ListProjectAddonsResponseAvailableAddonsVariantsId5) Valid() bool {
+// Valid indicates whether the value is a known member of the ListProjectAddonsResponseOutputAvailableAddonsVariantsId5 enum.
+func (e ListProjectAddonsResponseOutputAvailableAddonsVariantsId5) Valid() bool {
 	switch e {
-	case ListProjectAddonsResponseAvailableAddonsVariantsId5AuthMfaWebAuthnDefault:
+	case ListProjectAddonsResponseOutputAvailableAddonsVariantsId5AuthMfaWebAuthnDefault:
 		return true
 	default:
 		return false
 	}
 }
 
-// Defines values for ListProjectAddonsResponseAvailableAddonsVariantsId6.
+// Defines values for ListProjectAddonsResponseOutputAvailableAddonsVariantsId6.
 const (
-	ListProjectAddonsResponseAvailableAddonsVariantsId6LogDrainDefault ListProjectAddonsResponseAvailableAddonsVariantsId6 = "log_drain_default"
+	ListProjectAddonsResponseOutputAvailableAddonsVariantsId6LogDrainDefault ListProjectAddonsResponseOutputAvailableAddonsVariantsId6 = "log_drain_default"
 )
 
-// Valid indicates whether the value is a known member of the ListProjectAddonsResponseAvailableAddonsVariantsId6 enum.
-func (e ListProjectAddonsResponseAvailableAddonsVariantsId6) Valid() bool {
+// Valid indicates whether the value is a known member of the ListProjectAddonsResponseOutputAvailableAddonsVariantsId6 enum.
+func (e ListProjectAddonsResponseOutputAvailableAddonsVariantsId6) Valid() bool {
 	switch e {
-	case ListProjectAddonsResponseAvailableAddonsVariantsId6LogDrainDefault:
+	case ListProjectAddonsResponseOutputAvailableAddonsVariantsId6LogDrainDefault:
 		return true
 	default:
 		return false
 	}
 }
 
-// Defines values for ListProjectAddonsResponseAvailableAddonsVariantsId7.
+// Defines values for ListProjectAddonsResponseOutputAvailableAddonsVariantsId7.
 const (
-	ListProjectAddonsResponseAvailableAddonsVariantsId7EtlPipelineDefault ListProjectAddonsResponseAvailableAddonsVariantsId7 = "etl_pipeline_default"
+	ListProjectAddonsResponseOutputAvailableAddonsVariantsId7EtlPipelineDefault ListProjectAddonsResponseOutputAvailableAddonsVariantsId7 = "etl_pipeline_default"
 )
 
-// Valid indicates whether the value is a known member of the ListProjectAddonsResponseAvailableAddonsVariantsId7 enum.
-func (e ListProjectAddonsResponseAvailableAddonsVariantsId7) Valid() bool {
+// Valid indicates whether the value is a known member of the ListProjectAddonsResponseOutputAvailableAddonsVariantsId7 enum.
+func (e ListProjectAddonsResponseOutputAvailableAddonsVariantsId7) Valid() bool {
 	switch e {
-	case ListProjectAddonsResponseAvailableAddonsVariantsId7EtlPipelineDefault:
+	case ListProjectAddonsResponseOutputAvailableAddonsVariantsId7EtlPipelineDefault:
 		return true
 	default:
 		return false
 	}
 }
 
-// Defines values for ListProjectAddonsResponseAvailableAddonsVariantsPriceInterval.
+// Defines values for ListProjectAddonsResponseOutputAvailableAddonsVariantsPriceInterval.
 const (
-	ListProjectAddonsResponseAvailableAddonsVariantsPriceIntervalHourly  ListProjectAddonsResponseAvailableAddonsVariantsPriceInterval = "hourly"
-	ListProjectAddonsResponseAvailableAddonsVariantsPriceIntervalMonthly ListProjectAddonsResponseAvailableAddonsVariantsPriceInterval = "monthly"
+	ListProjectAddonsResponseOutputAvailableAddonsVariantsPriceIntervalHourly  ListProjectAddonsResponseOutputAvailableAddonsVariantsPriceInterval = "hourly"
+	ListProjectAddonsResponseOutputAvailableAddonsVariantsPriceIntervalMonthly ListProjectAddonsResponseOutputAvailableAddonsVariantsPriceInterval = "monthly"
 )
 
-// Valid indicates whether the value is a known member of the ListProjectAddonsResponseAvailableAddonsVariantsPriceInterval enum.
-func (e ListProjectAddonsResponseAvailableAddonsVariantsPriceInterval) Valid() bool {
+// Valid indicates whether the value is a known member of the ListProjectAddonsResponseOutputAvailableAddonsVariantsPriceInterval enum.
+func (e ListProjectAddonsResponseOutputAvailableAddonsVariantsPriceInterval) Valid() bool {
 	switch e {
-	case ListProjectAddonsResponseAvailableAddonsVariantsPriceIntervalHourly:
+	case ListProjectAddonsResponseOutputAvailableAddonsVariantsPriceIntervalHourly:
 		return true
-	case ListProjectAddonsResponseAvailableAddonsVariantsPriceIntervalMonthly:
+	case ListProjectAddonsResponseOutputAvailableAddonsVariantsPriceIntervalMonthly:
 		return true
 	default:
 		return false
 	}
 }
 
-// Defines values for ListProjectAddonsResponseAvailableAddonsVariantsPriceType.
+// Defines values for ListProjectAddonsResponseOutputAvailableAddonsVariantsPriceType.
 const (
-	ListProjectAddonsResponseAvailableAddonsVariantsPriceTypeFixed ListProjectAddonsResponseAvailableAddonsVariantsPriceType = "fixed"
-	ListProjectAddonsResponseAvailableAddonsVariantsPriceTypeUsage ListProjectAddonsResponseAvailableAddonsVariantsPriceType = "usage"
+	ListProjectAddonsResponseOutputAvailableAddonsVariantsPriceTypeFixed ListProjectAddonsResponseOutputAvailableAddonsVariantsPriceType = "fixed"
+	ListProjectAddonsResponseOutputAvailableAddonsVariantsPriceTypeUsage ListProjectAddonsResponseOutputAvailableAddonsVariantsPriceType = "usage"
 )
 
-// Valid indicates whether the value is a known member of the ListProjectAddonsResponseAvailableAddonsVariantsPriceType enum.
-func (e ListProjectAddonsResponseAvailableAddonsVariantsPriceType) Valid() bool {
+// Valid indicates whether the value is a known member of the ListProjectAddonsResponseOutputAvailableAddonsVariantsPriceType enum.
+func (e ListProjectAddonsResponseOutputAvailableAddonsVariantsPriceType) Valid() bool {
 	switch e {
-	case ListProjectAddonsResponseAvailableAddonsVariantsPriceTypeFixed:
+	case ListProjectAddonsResponseOutputAvailableAddonsVariantsPriceTypeFixed:
 		return true
-	case ListProjectAddonsResponseAvailableAddonsVariantsPriceTypeUsage:
+	case ListProjectAddonsResponseOutputAvailableAddonsVariantsPriceTypeUsage:
 		return true
 	default:
 		return false
 	}
 }
 
-// Defines values for ListProjectAddonsResponseSelectedAddonsType.
+// Defines values for ListProjectAddonsResponseOutputSelectedAddonsType.
 const (
-	ListProjectAddonsResponseSelectedAddonsTypeAuthMfaPhone    ListProjectAddonsResponseSelectedAddonsType = "auth_mfa_phone"
-	ListProjectAddonsResponseSelectedAddonsTypeAuthMfaWebAuthn ListProjectAddonsResponseSelectedAddonsType = "auth_mfa_web_authn"
-	ListProjectAddonsResponseSelectedAddonsTypeComputeInstance ListProjectAddonsResponseSelectedAddonsType = "compute_instance"
-	ListProjectAddonsResponseSelectedAddonsTypeCustomDomain    ListProjectAddonsResponseSelectedAddonsType = "custom_domain"
-	ListProjectAddonsResponseSelectedAddonsTypeEtlPipeline     ListProjectAddonsResponseSelectedAddonsType = "etl_pipeline"
-	ListProjectAddonsResponseSelectedAddonsTypeIpv4            ListProjectAddonsResponseSelectedAddonsType = "ipv4"
-	ListProjectAddonsResponseSelectedAddonsTypeLogDrain        ListProjectAddonsResponseSelectedAddonsType = "log_drain"
-	ListProjectAddonsResponseSelectedAddonsTypePitr            ListProjectAddonsResponseSelectedAddonsType = "pitr"
+	ListProjectAddonsResponseOutputSelectedAddonsTypeAuthMfaPhone    ListProjectAddonsResponseOutputSelectedAddonsType = "auth_mfa_phone"
+	ListProjectAddonsResponseOutputSelectedAddonsTypeAuthMfaWebAuthn ListProjectAddonsResponseOutputSelectedAddonsType = "auth_mfa_web_authn"
+	ListProjectAddonsResponseOutputSelectedAddonsTypeComputeInstance ListProjectAddonsResponseOutputSelectedAddonsType = "compute_instance"
+	ListProjectAddonsResponseOutputSelectedAddonsTypeCustomDomain    ListProjectAddonsResponseOutputSelectedAddonsType = "custom_domain"
+	ListProjectAddonsResponseOutputSelectedAddonsTypeEtlPipeline     ListProjectAddonsResponseOutputSelectedAddonsType = "etl_pipeline"
+	ListProjectAddonsResponseOutputSelectedAddonsTypeIpv4            ListProjectAddonsResponseOutputSelectedAddonsType = "ipv4"
+	ListProjectAddonsResponseOutputSelectedAddonsTypeLogDrain        ListProjectAddonsResponseOutputSelectedAddonsType = "log_drain"
+	ListProjectAddonsResponseOutputSelectedAddonsTypePitr            ListProjectAddonsResponseOutputSelectedAddonsType = "pitr"
 )
 
-// Valid indicates whether the value is a known member of the ListProjectAddonsResponseSelectedAddonsType enum.
-func (e ListProjectAddonsResponseSelectedAddonsType) Valid() bool {
+// Valid indicates whether the value is a known member of the ListProjectAddonsResponseOutputSelectedAddonsType enum.
+func (e ListProjectAddonsResponseOutputSelectedAddonsType) Valid() bool {
 	switch e {
-	case ListProjectAddonsResponseSelectedAddonsTypeAuthMfaPhone:
+	case ListProjectAddonsResponseOutputSelectedAddonsTypeAuthMfaPhone:
 		return true
-	case ListProjectAddonsResponseSelectedAddonsTypeAuthMfaWebAuthn:
+	case ListProjectAddonsResponseOutputSelectedAddonsTypeAuthMfaWebAuthn:
 		return true
-	case ListProjectAddonsResponseSelectedAddonsTypeComputeInstance:
+	case ListProjectAddonsResponseOutputSelectedAddonsTypeComputeInstance:
 		return true
-	case ListProjectAddonsResponseSelectedAddonsTypeCustomDomain:
+	case ListProjectAddonsResponseOutputSelectedAddonsTypeCustomDomain:
 		return true
-	case ListProjectAddonsResponseSelectedAddonsTypeEtlPipeline:
+	case ListProjectAddonsResponseOutputSelectedAddonsTypeEtlPipeline:
 		return true
-	case ListProjectAddonsResponseSelectedAddonsTypeIpv4:
+	case ListProjectAddonsResponseOutputSelectedAddonsTypeIpv4:
 		return true
-	case ListProjectAddonsResponseSelectedAddonsTypeLogDrain:
+	case ListProjectAddonsResponseOutputSelectedAddonsTypeLogDrain:
 		return true
-	case ListProjectAddonsResponseSelectedAddonsTypePitr:
+	case ListProjectAddonsResponseOutputSelectedAddonsTypePitr:
 		return true
 	default:
 		return false
 	}
 }
 
-// Defines values for ListProjectAddonsResponseSelectedAddonsVariantId0.
+// Defines values for ListProjectAddonsResponseOutputSelectedAddonsVariantId0.
 const (
-	ListProjectAddonsResponseSelectedAddonsVariantId0Ci12xlarge                ListProjectAddonsResponseSelectedAddonsVariantId0 = "ci_12xlarge"
-	ListProjectAddonsResponseSelectedAddonsVariantId0Ci16xlarge                ListProjectAddonsResponseSelectedAddonsVariantId0 = "ci_16xlarge"
-	ListProjectAddonsResponseSelectedAddonsVariantId0Ci24xlarge                ListProjectAddonsResponseSelectedAddonsVariantId0 = "ci_24xlarge"
-	ListProjectAddonsResponseSelectedAddonsVariantId0Ci24xlargeHighMemory      ListProjectAddonsResponseSelectedAddonsVariantId0 = "ci_24xlarge_high_memory"
-	ListProjectAddonsResponseSelectedAddonsVariantId0Ci24xlargeOptimizedCpu    ListProjectAddonsResponseSelectedAddonsVariantId0 = "ci_24xlarge_optimized_cpu"
-	ListProjectAddonsResponseSelectedAddonsVariantId0Ci24xlargeOptimizedMemory ListProjectAddonsResponseSelectedAddonsVariantId0 = "ci_24xlarge_optimized_memory"
-	ListProjectAddonsResponseSelectedAddonsVariantId0Ci2xlarge                 ListProjectAddonsResponseSelectedAddonsVariantId0 = "ci_2xlarge"
-	ListProjectAddonsResponseSelectedAddonsVariantId0Ci48xlarge                ListProjectAddonsResponseSelectedAddonsVariantId0 = "ci_48xlarge"
-	ListProjectAddonsResponseSelectedAddonsVariantId0Ci48xlargeHighMemory      ListProjectAddonsResponseSelectedAddonsVariantId0 = "ci_48xlarge_high_memory"
-	ListProjectAddonsResponseSelectedAddonsVariantId0Ci48xlargeOptimizedCpu    ListProjectAddonsResponseSelectedAddonsVariantId0 = "ci_48xlarge_optimized_cpu"
-	ListProjectAddonsResponseSelectedAddonsVariantId0Ci48xlargeOptimizedMemory ListProjectAddonsResponseSelectedAddonsVariantId0 = "ci_48xlarge_optimized_memory"
-	ListProjectAddonsResponseSelectedAddonsVariantId0Ci4xlarge                 ListProjectAddonsResponseSelectedAddonsVariantId0 = "ci_4xlarge"
-	ListProjectAddonsResponseSelectedAddonsVariantId0Ci8xlarge                 ListProjectAddonsResponseSelectedAddonsVariantId0 = "ci_8xlarge"
-	ListProjectAddonsResponseSelectedAddonsVariantId0CiLarge                   ListProjectAddonsResponseSelectedAddonsVariantId0 = "ci_large"
-	ListProjectAddonsResponseSelectedAddonsVariantId0CiMedium                  ListProjectAddonsResponseSelectedAddonsVariantId0 = "ci_medium"
-	ListProjectAddonsResponseSelectedAddonsVariantId0CiMicro                   ListProjectAddonsResponseSelectedAddonsVariantId0 = "ci_micro"
-	ListProjectAddonsResponseSelectedAddonsVariantId0CiSmall                   ListProjectAddonsResponseSelectedAddonsVariantId0 = "ci_small"
-	ListProjectAddonsResponseSelectedAddonsVariantId0CiXlarge                  ListProjectAddonsResponseSelectedAddonsVariantId0 = "ci_xlarge"
+	ListProjectAddonsResponseOutputSelectedAddonsVariantId0Ci12xlarge                ListProjectAddonsResponseOutputSelectedAddonsVariantId0 = "ci_12xlarge"
+	ListProjectAddonsResponseOutputSelectedAddonsVariantId0Ci16xlarge                ListProjectAddonsResponseOutputSelectedAddonsVariantId0 = "ci_16xlarge"
+	ListProjectAddonsResponseOutputSelectedAddonsVariantId0Ci24xlarge                ListProjectAddonsResponseOutputSelectedAddonsVariantId0 = "ci_24xlarge"
+	ListProjectAddonsResponseOutputSelectedAddonsVariantId0Ci24xlargeHighMemory      ListProjectAddonsResponseOutputSelectedAddonsVariantId0 = "ci_24xlarge_high_memory"
+	ListProjectAddonsResponseOutputSelectedAddonsVariantId0Ci24xlargeOptimizedCpu    ListProjectAddonsResponseOutputSelectedAddonsVariantId0 = "ci_24xlarge_optimized_cpu"
+	ListProjectAddonsResponseOutputSelectedAddonsVariantId0Ci24xlargeOptimizedMemory ListProjectAddonsResponseOutputSelectedAddonsVariantId0 = "ci_24xlarge_optimized_memory"
+	ListProjectAddonsResponseOutputSelectedAddonsVariantId0Ci2xlarge                 ListProjectAddonsResponseOutputSelectedAddonsVariantId0 = "ci_2xlarge"
+	ListProjectAddonsResponseOutputSelectedAddonsVariantId0Ci48xlarge                ListProjectAddonsResponseOutputSelectedAddonsVariantId0 = "ci_48xlarge"
+	ListProjectAddonsResponseOutputSelectedAddonsVariantId0Ci48xlargeHighMemory      ListProjectAddonsResponseOutputSelectedAddonsVariantId0 = "ci_48xlarge_high_memory"
+	ListProjectAddonsResponseOutputSelectedAddonsVariantId0Ci48xlargeOptimizedCpu    ListProjectAddonsResponseOutputSelectedAddonsVariantId0 = "ci_48xlarge_optimized_cpu"
+	ListProjectAddonsResponseOutputSelectedAddonsVariantId0Ci48xlargeOptimizedMemory ListProjectAddonsResponseOutputSelectedAddonsVariantId0 = "ci_48xlarge_optimized_memory"
+	ListProjectAddonsResponseOutputSelectedAddonsVariantId0Ci4xlarge                 ListProjectAddonsResponseOutputSelectedAddonsVariantId0 = "ci_4xlarge"
+	ListProjectAddonsResponseOutputSelectedAddonsVariantId0Ci8xlarge                 ListProjectAddonsResponseOutputSelectedAddonsVariantId0 = "ci_8xlarge"
+	ListProjectAddonsResponseOutputSelectedAddonsVariantId0CiLarge                   ListProjectAddonsResponseOutputSelectedAddonsVariantId0 = "ci_large"
+	ListProjectAddonsResponseOutputSelectedAddonsVariantId0CiMedium                  ListProjectAddonsResponseOutputSelectedAddonsVariantId0 = "ci_medium"
+	ListProjectAddonsResponseOutputSelectedAddonsVariantId0CiMicro                   ListProjectAddonsResponseOutputSelectedAddonsVariantId0 = "ci_micro"
+	ListProjectAddonsResponseOutputSelectedAddonsVariantId0CiSmall                   ListProjectAddonsResponseOutputSelectedAddonsVariantId0 = "ci_small"
+	ListProjectAddonsResponseOutputSelectedAddonsVariantId0CiXlarge                  ListProjectAddonsResponseOutputSelectedAddonsVariantId0 = "ci_xlarge"
 )
 
-// Valid indicates whether the value is a known member of the ListProjectAddonsResponseSelectedAddonsVariantId0 enum.
-func (e ListProjectAddonsResponseSelectedAddonsVariantId0) Valid() bool {
+// Valid indicates whether the value is a known member of the ListProjectAddonsResponseOutputSelectedAddonsVariantId0 enum.
+func (e ListProjectAddonsResponseOutputSelectedAddonsVariantId0) Valid() bool {
 	switch e {
-	case ListProjectAddonsResponseSelectedAddonsVariantId0Ci12xlarge:
+	case ListProjectAddonsResponseOutputSelectedAddonsVariantId0Ci12xlarge:
 		return true
-	case ListProjectAddonsResponseSelectedAddonsVariantId0Ci16xlarge:
+	case ListProjectAddonsResponseOutputSelectedAddonsVariantId0Ci16xlarge:
 		return true
-	case ListProjectAddonsResponseSelectedAddonsVariantId0Ci24xlarge:
+	case ListProjectAddonsResponseOutputSelectedAddonsVariantId0Ci24xlarge:
 		return true
-	case ListProjectAddonsResponseSelectedAddonsVariantId0Ci24xlargeHighMemory:
+	case ListProjectAddonsResponseOutputSelectedAddonsVariantId0Ci24xlargeHighMemory:
 		return true
-	case ListProjectAddonsResponseSelectedAddonsVariantId0Ci24xlargeOptimizedCpu:
+	case ListProjectAddonsResponseOutputSelectedAddonsVariantId0Ci24xlargeOptimizedCpu:
 		return true
-	case ListProjectAddonsResponseSelectedAddonsVariantId0Ci24xlargeOptimizedMemory:
+	case ListProjectAddonsResponseOutputSelectedAddonsVariantId0Ci24xlargeOptimizedMemory:
 		return true
-	case ListProjectAddonsResponseSelectedAddonsVariantId0Ci2xlarge:
+	case ListProjectAddonsResponseOutputSelectedAddonsVariantId0Ci2xlarge:
 		return true
-	case ListProjectAddonsResponseSelectedAddonsVariantId0Ci48xlarge:
+	case ListProjectAddonsResponseOutputSelectedAddonsVariantId0Ci48xlarge:
 		return true
-	case ListProjectAddonsResponseSelectedAddonsVariantId0Ci48xlargeHighMemory:
+	case ListProjectAddonsResponseOutputSelectedAddonsVariantId0Ci48xlargeHighMemory:
 		return true
-	case ListProjectAddonsResponseSelectedAddonsVariantId0Ci48xlargeOptimizedCpu:
+	case ListProjectAddonsResponseOutputSelectedAddonsVariantId0Ci48xlargeOptimizedCpu:
 		return true
-	case ListProjectAddonsResponseSelectedAddonsVariantId0Ci48xlargeOptimizedMemory:
+	case ListProjectAddonsResponseOutputSelectedAddonsVariantId0Ci48xlargeOptimizedMemory:
 		return true
-	case ListProjectAddonsResponseSelectedAddonsVariantId0Ci4xlarge:
+	case ListProjectAddonsResponseOutputSelectedAddonsVariantId0Ci4xlarge:
 		return true
-	case ListProjectAddonsResponseSelectedAddonsVariantId0Ci8xlarge:
+	case ListProjectAddonsResponseOutputSelectedAddonsVariantId0Ci8xlarge:
 		return true
-	case ListProjectAddonsResponseSelectedAddonsVariantId0CiLarge:
+	case ListProjectAddonsResponseOutputSelectedAddonsVariantId0CiLarge:
 		return true
-	case ListProjectAddonsResponseSelectedAddonsVariantId0CiMedium:
+	case ListProjectAddonsResponseOutputSelectedAddonsVariantId0CiMedium:
 		return true
-	case ListProjectAddonsResponseSelectedAddonsVariantId0CiMicro:
+	case ListProjectAddonsResponseOutputSelectedAddonsVariantId0CiMicro:
 		return true
-	case ListProjectAddonsResponseSelectedAddonsVariantId0CiSmall:
+	case ListProjectAddonsResponseOutputSelectedAddonsVariantId0CiSmall:
 		return true
-	case ListProjectAddonsResponseSelectedAddonsVariantId0CiXlarge:
+	case ListProjectAddonsResponseOutputSelectedAddonsVariantId0CiXlarge:
 		return true
 	default:
 		return false
 	}
 }
 
-// Defines values for ListProjectAddonsResponseSelectedAddonsVariantId1.
+// Defines values for ListProjectAddonsResponseOutputSelectedAddonsVariantId1.
 const (
-	ListProjectAddonsResponseSelectedAddonsVariantId1CdDefault ListProjectAddonsResponseSelectedAddonsVariantId1 = "cd_default"
+	ListProjectAddonsResponseOutputSelectedAddonsVariantId1CdDefault ListProjectAddonsResponseOutputSelectedAddonsVariantId1 = "cd_default"
 )
 
-// Valid indicates whether the value is a known member of the ListProjectAddonsResponseSelectedAddonsVariantId1 enum.
-func (e ListProjectAddonsResponseSelectedAddonsVariantId1) Valid() bool {
+// Valid indicates whether the value is a known member of the ListProjectAddonsResponseOutputSelectedAddonsVariantId1 enum.
+func (e ListProjectAddonsResponseOutputSelectedAddonsVariantId1) Valid() bool {
 	switch e {
-	case ListProjectAddonsResponseSelectedAddonsVariantId1CdDefault:
+	case ListProjectAddonsResponseOutputSelectedAddonsVariantId1CdDefault:
 		return true
 	default:
 		return false
 	}
 }
 
-// Defines values for ListProjectAddonsResponseSelectedAddonsVariantId2.
+// Defines values for ListProjectAddonsResponseOutputSelectedAddonsVariantId2.
 const (
-	ListProjectAddonsResponseSelectedAddonsVariantId2Pitr14 ListProjectAddonsResponseSelectedAddonsVariantId2 = "pitr_14"
-	ListProjectAddonsResponseSelectedAddonsVariantId2Pitr28 ListProjectAddonsResponseSelectedAddonsVariantId2 = "pitr_28"
-	ListProjectAddonsResponseSelectedAddonsVariantId2Pitr7  ListProjectAddonsResponseSelectedAddonsVariantId2 = "pitr_7"
+	ListProjectAddonsResponseOutputSelectedAddonsVariantId2Pitr14 ListProjectAddonsResponseOutputSelectedAddonsVariantId2 = "pitr_14"
+	ListProjectAddonsResponseOutputSelectedAddonsVariantId2Pitr28 ListProjectAddonsResponseOutputSelectedAddonsVariantId2 = "pitr_28"
+	ListProjectAddonsResponseOutputSelectedAddonsVariantId2Pitr7  ListProjectAddonsResponseOutputSelectedAddonsVariantId2 = "pitr_7"
 )
 
-// Valid indicates whether the value is a known member of the ListProjectAddonsResponseSelectedAddonsVariantId2 enum.
-func (e ListProjectAddonsResponseSelectedAddonsVariantId2) Valid() bool {
+// Valid indicates whether the value is a known member of the ListProjectAddonsResponseOutputSelectedAddonsVariantId2 enum.
+func (e ListProjectAddonsResponseOutputSelectedAddonsVariantId2) Valid() bool {
 	switch e {
-	case ListProjectAddonsResponseSelectedAddonsVariantId2Pitr14:
+	case ListProjectAddonsResponseOutputSelectedAddonsVariantId2Pitr14:
 		return true
-	case ListProjectAddonsResponseSelectedAddonsVariantId2Pitr28:
+	case ListProjectAddonsResponseOutputSelectedAddonsVariantId2Pitr28:
 		return true
-	case ListProjectAddonsResponseSelectedAddonsVariantId2Pitr7:
+	case ListProjectAddonsResponseOutputSelectedAddonsVariantId2Pitr7:
 		return true
 	default:
 		return false
 	}
 }
 
-// Defines values for ListProjectAddonsResponseSelectedAddonsVariantId3.
+// Defines values for ListProjectAddonsResponseOutputSelectedAddonsVariantId3.
 const (
-	ListProjectAddonsResponseSelectedAddonsVariantId3Ipv4Default ListProjectAddonsResponseSelectedAddonsVariantId3 = "ipv4_default"
+	ListProjectAddonsResponseOutputSelectedAddonsVariantId3Ipv4Default ListProjectAddonsResponseOutputSelectedAddonsVariantId3 = "ipv4_default"
 )
 
-// Valid indicates whether the value is a known member of the ListProjectAddonsResponseSelectedAddonsVariantId3 enum.
-func (e ListProjectAddonsResponseSelectedAddonsVariantId3) Valid() bool {
+// Valid indicates whether the value is a known member of the ListProjectAddonsResponseOutputSelectedAddonsVariantId3 enum.
+func (e ListProjectAddonsResponseOutputSelectedAddonsVariantId3) Valid() bool {
 	switch e {
-	case ListProjectAddonsResponseSelectedAddonsVariantId3Ipv4Default:
+	case ListProjectAddonsResponseOutputSelectedAddonsVariantId3Ipv4Default:
 		return true
 	default:
 		return false
 	}
 }
 
-// Defines values for ListProjectAddonsResponseSelectedAddonsVariantId4.
+// Defines values for ListProjectAddonsResponseOutputSelectedAddonsVariantId4.
 const (
-	ListProjectAddonsResponseSelectedAddonsVariantId4AuthMfaPhoneDefault ListProjectAddonsResponseSelectedAddonsVariantId4 = "auth_mfa_phone_default"
+	ListProjectAddonsResponseOutputSelectedAddonsVariantId4AuthMfaPhoneDefault ListProjectAddonsResponseOutputSelectedAddonsVariantId4 = "auth_mfa_phone_default"
 )
 
-// Valid indicates whether the value is a known member of the ListProjectAddonsResponseSelectedAddonsVariantId4 enum.
-func (e ListProjectAddonsResponseSelectedAddonsVariantId4) Valid() bool {
+// Valid indicates whether the value is a known member of the ListProjectAddonsResponseOutputSelectedAddonsVariantId4 enum.
+func (e ListProjectAddonsResponseOutputSelectedAddonsVariantId4) Valid() bool {
 	switch e {
-	case ListProjectAddonsResponseSelectedAddonsVariantId4AuthMfaPhoneDefault:
+	case ListProjectAddonsResponseOutputSelectedAddonsVariantId4AuthMfaPhoneDefault:
 		return true
 	default:
 		return false
 	}
 }
 
-// Defines values for ListProjectAddonsResponseSelectedAddonsVariantId5.
+// Defines values for ListProjectAddonsResponseOutputSelectedAddonsVariantId5.
 const (
-	ListProjectAddonsResponseSelectedAddonsVariantId5AuthMfaWebAuthnDefault ListProjectAddonsResponseSelectedAddonsVariantId5 = "auth_mfa_web_authn_default"
+	ListProjectAddonsResponseOutputSelectedAddonsVariantId5AuthMfaWebAuthnDefault ListProjectAddonsResponseOutputSelectedAddonsVariantId5 = "auth_mfa_web_authn_default"
 )
 
-// Valid indicates whether the value is a known member of the ListProjectAddonsResponseSelectedAddonsVariantId5 enum.
-func (e ListProjectAddonsResponseSelectedAddonsVariantId5) Valid() bool {
+// Valid indicates whether the value is a known member of the ListProjectAddonsResponseOutputSelectedAddonsVariantId5 enum.
+func (e ListProjectAddonsResponseOutputSelectedAddonsVariantId5) Valid() bool {
 	switch e {
-	case ListProjectAddonsResponseSelectedAddonsVariantId5AuthMfaWebAuthnDefault:
+	case ListProjectAddonsResponseOutputSelectedAddonsVariantId5AuthMfaWebAuthnDefault:
 		return true
 	default:
 		return false
 	}
 }
 
-// Defines values for ListProjectAddonsResponseSelectedAddonsVariantId6.
+// Defines values for ListProjectAddonsResponseOutputSelectedAddonsVariantId6.
 const (
-	ListProjectAddonsResponseSelectedAddonsVariantId6LogDrainDefault ListProjectAddonsResponseSelectedAddonsVariantId6 = "log_drain_default"
+	ListProjectAddonsResponseOutputSelectedAddonsVariantId6LogDrainDefault ListProjectAddonsResponseOutputSelectedAddonsVariantId6 = "log_drain_default"
 )
 
-// Valid indicates whether the value is a known member of the ListProjectAddonsResponseSelectedAddonsVariantId6 enum.
-func (e ListProjectAddonsResponseSelectedAddonsVariantId6) Valid() bool {
+// Valid indicates whether the value is a known member of the ListProjectAddonsResponseOutputSelectedAddonsVariantId6 enum.
+func (e ListProjectAddonsResponseOutputSelectedAddonsVariantId6) Valid() bool {
 	switch e {
-	case ListProjectAddonsResponseSelectedAddonsVariantId6LogDrainDefault:
+	case ListProjectAddonsResponseOutputSelectedAddonsVariantId6LogDrainDefault:
 		return true
 	default:
 		return false
 	}
 }
 
-// Defines values for ListProjectAddonsResponseSelectedAddonsVariantId7.
+// Defines values for ListProjectAddonsResponseOutputSelectedAddonsVariantId7.
 const (
-	ListProjectAddonsResponseSelectedAddonsVariantId7EtlPipelineDefault ListProjectAddonsResponseSelectedAddonsVariantId7 = "etl_pipeline_default"
+	ListProjectAddonsResponseOutputSelectedAddonsVariantId7EtlPipelineDefault ListProjectAddonsResponseOutputSelectedAddonsVariantId7 = "etl_pipeline_default"
 )
 
-// Valid indicates whether the value is a known member of the ListProjectAddonsResponseSelectedAddonsVariantId7 enum.
-func (e ListProjectAddonsResponseSelectedAddonsVariantId7) Valid() bool {
+// Valid indicates whether the value is a known member of the ListProjectAddonsResponseOutputSelectedAddonsVariantId7 enum.
+func (e ListProjectAddonsResponseOutputSelectedAddonsVariantId7) Valid() bool {
 	switch e {
-	case ListProjectAddonsResponseSelectedAddonsVariantId7EtlPipelineDefault:
+	case ListProjectAddonsResponseOutputSelectedAddonsVariantId7EtlPipelineDefault:
 		return true
 	default:
 		return false
 	}
 }
 
-// Defines values for ListProjectAddonsResponseSelectedAddonsVariantPriceInterval.
+// Defines values for ListProjectAddonsResponseOutputSelectedAddonsVariantPriceInterval.
 const (
-	ListProjectAddonsResponseSelectedAddonsVariantPriceIntervalHourly  ListProjectAddonsResponseSelectedAddonsVariantPriceInterval = "hourly"
-	ListProjectAddonsResponseSelectedAddonsVariantPriceIntervalMonthly ListProjectAddonsResponseSelectedAddonsVariantPriceInterval = "monthly"
+	ListProjectAddonsResponseOutputSelectedAddonsVariantPriceIntervalHourly  ListProjectAddonsResponseOutputSelectedAddonsVariantPriceInterval = "hourly"
+	ListProjectAddonsResponseOutputSelectedAddonsVariantPriceIntervalMonthly ListProjectAddonsResponseOutputSelectedAddonsVariantPriceInterval = "monthly"
 )
 
-// Valid indicates whether the value is a known member of the ListProjectAddonsResponseSelectedAddonsVariantPriceInterval enum.
-func (e ListProjectAddonsResponseSelectedAddonsVariantPriceInterval) Valid() bool {
+// Valid indicates whether the value is a known member of the ListProjectAddonsResponseOutputSelectedAddonsVariantPriceInterval enum.
+func (e ListProjectAddonsResponseOutputSelectedAddonsVariantPriceInterval) Valid() bool {
 	switch e {
-	case ListProjectAddonsResponseSelectedAddonsVariantPriceIntervalHourly:
+	case ListProjectAddonsResponseOutputSelectedAddonsVariantPriceIntervalHourly:
 		return true
-	case ListProjectAddonsResponseSelectedAddonsVariantPriceIntervalMonthly:
+	case ListProjectAddonsResponseOutputSelectedAddonsVariantPriceIntervalMonthly:
 		return true
 	default:
 		return false
 	}
 }
 
-// Defines values for ListProjectAddonsResponseSelectedAddonsVariantPriceType.
+// Defines values for ListProjectAddonsResponseOutputSelectedAddonsVariantPriceType.
 const (
-	ListProjectAddonsResponseSelectedAddonsVariantPriceTypeFixed ListProjectAddonsResponseSelectedAddonsVariantPriceType = "fixed"
-	ListProjectAddonsResponseSelectedAddonsVariantPriceTypeUsage ListProjectAddonsResponseSelectedAddonsVariantPriceType = "usage"
+	ListProjectAddonsResponseOutputSelectedAddonsVariantPriceTypeFixed ListProjectAddonsResponseOutputSelectedAddonsVariantPriceType = "fixed"
+	ListProjectAddonsResponseOutputSelectedAddonsVariantPriceTypeUsage ListProjectAddonsResponseOutputSelectedAddonsVariantPriceType = "usage"
 )
 
-// Valid indicates whether the value is a known member of the ListProjectAddonsResponseSelectedAddonsVariantPriceType enum.
-func (e ListProjectAddonsResponseSelectedAddonsVariantPriceType) Valid() bool {
+// Valid indicates whether the value is a known member of the ListProjectAddonsResponseOutputSelectedAddonsVariantPriceType enum.
+func (e ListProjectAddonsResponseOutputSelectedAddonsVariantPriceType) Valid() bool {
 	switch e {
-	case ListProjectAddonsResponseSelectedAddonsVariantPriceTypeFixed:
+	case ListProjectAddonsResponseOutputSelectedAddonsVariantPriceTypeFixed:
 		return true
-	case ListProjectAddonsResponseSelectedAddonsVariantPriceTypeUsage:
+	case ListProjectAddonsResponseOutputSelectedAddonsVariantPriceTypeUsage:
 		return true
 	default:
 		return false
 	}
 }
 
-// Defines values for NetworkRestrictionsResponseEntitlement.
+// Defines values for NetworkRestrictionsResponseOutputEntitlement.
 const (
-	NetworkRestrictionsResponseEntitlementAllowed    NetworkRestrictionsResponseEntitlement = "allowed"
-	NetworkRestrictionsResponseEntitlementDisallowed NetworkRestrictionsResponseEntitlement = "disallowed"
+	NetworkRestrictionsResponseOutputEntitlementAllowed    NetworkRestrictionsResponseOutputEntitlement = "allowed"
+	NetworkRestrictionsResponseOutputEntitlementDisallowed NetworkRestrictionsResponseOutputEntitlement = "disallowed"
 )
 
-// Valid indicates whether the value is a known member of the NetworkRestrictionsResponseEntitlement enum.
-func (e NetworkRestrictionsResponseEntitlement) Valid() bool {
+// Valid indicates whether the value is a known member of the NetworkRestrictionsResponseOutputEntitlement enum.
+func (e NetworkRestrictionsResponseOutputEntitlement) Valid() bool {
 	switch e {
-	case NetworkRestrictionsResponseEntitlementAllowed:
+	case NetworkRestrictionsResponseOutputEntitlementAllowed:
 		return true
-	case NetworkRestrictionsResponseEntitlementDisallowed:
+	case NetworkRestrictionsResponseOutputEntitlementDisallowed:
 		return true
 	default:
 		return false
 	}
 }
 
-// Defines values for NetworkRestrictionsResponseStatus.
+// Defines values for NetworkRestrictionsResponseOutputStatus.
 const (
-	NetworkRestrictionsResponseStatusApplied NetworkRestrictionsResponseStatus = "applied"
-	NetworkRestrictionsResponseStatusStored  NetworkRestrictionsResponseStatus = "stored"
+	NetworkRestrictionsResponseOutputStatusApplied NetworkRestrictionsResponseOutputStatus = "applied"
+	NetworkRestrictionsResponseOutputStatusStored  NetworkRestrictionsResponseOutputStatus = "stored"
 )
 
-// Valid indicates whether the value is a known member of the NetworkRestrictionsResponseStatus enum.
-func (e NetworkRestrictionsResponseStatus) Valid() bool {
+// Valid indicates whether the value is a known member of the NetworkRestrictionsResponseOutputStatus enum.
+func (e NetworkRestrictionsResponseOutputStatus) Valid() bool {
 	switch e {
-	case NetworkRestrictionsResponseStatusApplied:
+	case NetworkRestrictionsResponseOutputStatusApplied:
 		return true
-	case NetworkRestrictionsResponseStatusStored:
+	case NetworkRestrictionsResponseOutputStatusStored:
 		return true
 	default:
 		return false
 	}
 }
 
-// Defines values for NetworkRestrictionsV2ResponseConfigDbAllowedCidrsType.
+// Defines values for NetworkRestrictionsV2ResponseOutputConfigDbAllowedCidrsType.
 const (
-	NetworkRestrictionsV2ResponseConfigDbAllowedCidrsTypeV4 NetworkRestrictionsV2ResponseConfigDbAllowedCidrsType = "v4"
-	NetworkRestrictionsV2ResponseConfigDbAllowedCidrsTypeV6 NetworkRestrictionsV2ResponseConfigDbAllowedCidrsType = "v6"
+	NetworkRestrictionsV2ResponseOutputConfigDbAllowedCidrsTypeV4 NetworkRestrictionsV2ResponseOutputConfigDbAllowedCidrsType = "v4"
+	NetworkRestrictionsV2ResponseOutputConfigDbAllowedCidrsTypeV6 NetworkRestrictionsV2ResponseOutputConfigDbAllowedCidrsType = "v6"
 )
 
-// Valid indicates whether the value is a known member of the NetworkRestrictionsV2ResponseConfigDbAllowedCidrsType enum.
-func (e NetworkRestrictionsV2ResponseConfigDbAllowedCidrsType) Valid() bool {
+// Valid indicates whether the value is a known member of the NetworkRestrictionsV2ResponseOutputConfigDbAllowedCidrsType enum.
+func (e NetworkRestrictionsV2ResponseOutputConfigDbAllowedCidrsType) Valid() bool {
 	switch e {
-	case NetworkRestrictionsV2ResponseConfigDbAllowedCidrsTypeV4:
+	case NetworkRestrictionsV2ResponseOutputConfigDbAllowedCidrsTypeV4:
 		return true
-	case NetworkRestrictionsV2ResponseConfigDbAllowedCidrsTypeV6:
+	case NetworkRestrictionsV2ResponseOutputConfigDbAllowedCidrsTypeV6:
 		return true
 	default:
 		return false
 	}
 }
 
-// Defines values for NetworkRestrictionsV2ResponseEntitlement.
+// Defines values for NetworkRestrictionsV2ResponseOutputEntitlement.
 const (
-	NetworkRestrictionsV2ResponseEntitlementAllowed    NetworkRestrictionsV2ResponseEntitlement = "allowed"
-	NetworkRestrictionsV2ResponseEntitlementDisallowed NetworkRestrictionsV2ResponseEntitlement = "disallowed"
+	NetworkRestrictionsV2ResponseOutputEntitlementAllowed    NetworkRestrictionsV2ResponseOutputEntitlement = "allowed"
+	NetworkRestrictionsV2ResponseOutputEntitlementDisallowed NetworkRestrictionsV2ResponseOutputEntitlement = "disallowed"
 )
 
-// Valid indicates whether the value is a known member of the NetworkRestrictionsV2ResponseEntitlement enum.
-func (e NetworkRestrictionsV2ResponseEntitlement) Valid() bool {
+// Valid indicates whether the value is a known member of the NetworkRestrictionsV2ResponseOutputEntitlement enum.
+func (e NetworkRestrictionsV2ResponseOutputEntitlement) Valid() bool {
 	switch e {
-	case NetworkRestrictionsV2ResponseEntitlementAllowed:
+	case NetworkRestrictionsV2ResponseOutputEntitlementAllowed:
 		return true
-	case NetworkRestrictionsV2ResponseEntitlementDisallowed:
+	case NetworkRestrictionsV2ResponseOutputEntitlementDisallowed:
 		return true
 	default:
 		return false
 	}
 }
 
-// Defines values for NetworkRestrictionsV2ResponseOldConfigDbAllowedCidrsType.
+// Defines values for NetworkRestrictionsV2ResponseOutputOldConfigDbAllowedCidrsType.
 const (
-	NetworkRestrictionsV2ResponseOldConfigDbAllowedCidrsTypeV4 NetworkRestrictionsV2ResponseOldConfigDbAllowedCidrsType = "v4"
-	NetworkRestrictionsV2ResponseOldConfigDbAllowedCidrsTypeV6 NetworkRestrictionsV2ResponseOldConfigDbAllowedCidrsType = "v6"
+	NetworkRestrictionsV2ResponseOutputOldConfigDbAllowedCidrsTypeV4 NetworkRestrictionsV2ResponseOutputOldConfigDbAllowedCidrsType = "v4"
+	NetworkRestrictionsV2ResponseOutputOldConfigDbAllowedCidrsTypeV6 NetworkRestrictionsV2ResponseOutputOldConfigDbAllowedCidrsType = "v6"
 )
 
-// Valid indicates whether the value is a known member of the NetworkRestrictionsV2ResponseOldConfigDbAllowedCidrsType enum.
-func (e NetworkRestrictionsV2ResponseOldConfigDbAllowedCidrsType) Valid() bool {
+// Valid indicates whether the value is a known member of the NetworkRestrictionsV2ResponseOutputOldConfigDbAllowedCidrsType enum.
+func (e NetworkRestrictionsV2ResponseOutputOldConfigDbAllowedCidrsType) Valid() bool {
 	switch e {
-	case NetworkRestrictionsV2ResponseOldConfigDbAllowedCidrsTypeV4:
+	case NetworkRestrictionsV2ResponseOutputOldConfigDbAllowedCidrsTypeV4:
 		return true
-	case NetworkRestrictionsV2ResponseOldConfigDbAllowedCidrsTypeV6:
+	case NetworkRestrictionsV2ResponseOutputOldConfigDbAllowedCidrsTypeV6:
 		return true
 	default:
 		return false
 	}
 }
 
-// Defines values for NetworkRestrictionsV2ResponseStatus.
+// Defines values for NetworkRestrictionsV2ResponseOutputStatus.
 const (
-	NetworkRestrictionsV2ResponseStatusApplied NetworkRestrictionsV2ResponseStatus = "applied"
-	NetworkRestrictionsV2ResponseStatusStored  NetworkRestrictionsV2ResponseStatus = "stored"
+	NetworkRestrictionsV2ResponseOutputStatusApplied NetworkRestrictionsV2ResponseOutputStatus = "applied"
+	NetworkRestrictionsV2ResponseOutputStatusStored  NetworkRestrictionsV2ResponseOutputStatus = "stored"
 )
 
-// Valid indicates whether the value is a known member of the NetworkRestrictionsV2ResponseStatus enum.
-func (e NetworkRestrictionsV2ResponseStatus) Valid() bool {
+// Valid indicates whether the value is a known member of the NetworkRestrictionsV2ResponseOutputStatus enum.
+func (e NetworkRestrictionsV2ResponseOutputStatus) Valid() bool {
 	switch e {
-	case NetworkRestrictionsV2ResponseStatusApplied:
+	case NetworkRestrictionsV2ResponseOutputStatusApplied:
 		return true
-	case NetworkRestrictionsV2ResponseStatusStored:
+	case NetworkRestrictionsV2ResponseOutputStatusStored:
 		return true
 	default:
 		return false
@@ -2156,13 +2155,13 @@ func (e OAuthTokenBodyGrantType) Valid() bool {
 	}
 }
 
-// Defines values for OAuthTokenResponseTokenType.
+// Defines values for OAuthTokenResponseOutputTokenType.
 const (
-	Bearer OAuthTokenResponseTokenType = "Bearer"
+	Bearer OAuthTokenResponseOutputTokenType = "Bearer"
 )
 
-// Valid indicates whether the value is a known member of the OAuthTokenResponseTokenType enum.
-func (e OAuthTokenResponseTokenType) Valid() bool {
+// Valid indicates whether the value is a known member of the OAuthTokenResponseOutputTokenType enum.
+func (e OAuthTokenResponseOutputTokenType) Valid() bool {
 	switch e {
 	case Bearer:
 		return true
@@ -2171,71 +2170,71 @@ func (e OAuthTokenResponseTokenType) Valid() bool {
 	}
 }
 
-// Defines values for OrganizationProjectClaimResponsePreviewSourceSubscriptionPlan.
+// Defines values for OrganizationProjectClaimResponseOutputPreviewSourceSubscriptionPlan.
 const (
-	OrganizationProjectClaimResponsePreviewSourceSubscriptionPlanEnterprise OrganizationProjectClaimResponsePreviewSourceSubscriptionPlan = "enterprise"
-	OrganizationProjectClaimResponsePreviewSourceSubscriptionPlanFree       OrganizationProjectClaimResponsePreviewSourceSubscriptionPlan = "free"
-	OrganizationProjectClaimResponsePreviewSourceSubscriptionPlanPlatform   OrganizationProjectClaimResponsePreviewSourceSubscriptionPlan = "platform"
-	OrganizationProjectClaimResponsePreviewSourceSubscriptionPlanPro        OrganizationProjectClaimResponsePreviewSourceSubscriptionPlan = "pro"
-	OrganizationProjectClaimResponsePreviewSourceSubscriptionPlanTeam       OrganizationProjectClaimResponsePreviewSourceSubscriptionPlan = "team"
+	OrganizationProjectClaimResponseOutputPreviewSourceSubscriptionPlanEnterprise OrganizationProjectClaimResponseOutputPreviewSourceSubscriptionPlan = "enterprise"
+	OrganizationProjectClaimResponseOutputPreviewSourceSubscriptionPlanFree       OrganizationProjectClaimResponseOutputPreviewSourceSubscriptionPlan = "free"
+	OrganizationProjectClaimResponseOutputPreviewSourceSubscriptionPlanPlatform   OrganizationProjectClaimResponseOutputPreviewSourceSubscriptionPlan = "platform"
+	OrganizationProjectClaimResponseOutputPreviewSourceSubscriptionPlanPro        OrganizationProjectClaimResponseOutputPreviewSourceSubscriptionPlan = "pro"
+	OrganizationProjectClaimResponseOutputPreviewSourceSubscriptionPlanTeam       OrganizationProjectClaimResponseOutputPreviewSourceSubscriptionPlan = "team"
 )
 
-// Valid indicates whether the value is a known member of the OrganizationProjectClaimResponsePreviewSourceSubscriptionPlan enum.
-func (e OrganizationProjectClaimResponsePreviewSourceSubscriptionPlan) Valid() bool {
+// Valid indicates whether the value is a known member of the OrganizationProjectClaimResponseOutputPreviewSourceSubscriptionPlan enum.
+func (e OrganizationProjectClaimResponseOutputPreviewSourceSubscriptionPlan) Valid() bool {
 	switch e {
-	case OrganizationProjectClaimResponsePreviewSourceSubscriptionPlanEnterprise:
+	case OrganizationProjectClaimResponseOutputPreviewSourceSubscriptionPlanEnterprise:
 		return true
-	case OrganizationProjectClaimResponsePreviewSourceSubscriptionPlanFree:
+	case OrganizationProjectClaimResponseOutputPreviewSourceSubscriptionPlanFree:
 		return true
-	case OrganizationProjectClaimResponsePreviewSourceSubscriptionPlanPlatform:
+	case OrganizationProjectClaimResponseOutputPreviewSourceSubscriptionPlanPlatform:
 		return true
-	case OrganizationProjectClaimResponsePreviewSourceSubscriptionPlanPro:
+	case OrganizationProjectClaimResponseOutputPreviewSourceSubscriptionPlanPro:
 		return true
-	case OrganizationProjectClaimResponsePreviewSourceSubscriptionPlanTeam:
+	case OrganizationProjectClaimResponseOutputPreviewSourceSubscriptionPlanTeam:
 		return true
 	default:
 		return false
 	}
 }
 
-// Defines values for OrganizationProjectClaimResponsePreviewTargetSubscriptionPlan.
+// Defines values for OrganizationProjectClaimResponseOutputPreviewTargetSubscriptionPlan.
 const (
-	OrganizationProjectClaimResponsePreviewTargetSubscriptionPlanEnterprise  OrganizationProjectClaimResponsePreviewTargetSubscriptionPlan = "enterprise"
-	OrganizationProjectClaimResponsePreviewTargetSubscriptionPlanFree        OrganizationProjectClaimResponsePreviewTargetSubscriptionPlan = "free"
-	OrganizationProjectClaimResponsePreviewTargetSubscriptionPlanLessThannil OrganizationProjectClaimResponsePreviewTargetSubscriptionPlan = "<nil>"
-	OrganizationProjectClaimResponsePreviewTargetSubscriptionPlanPlatform    OrganizationProjectClaimResponsePreviewTargetSubscriptionPlan = "platform"
-	OrganizationProjectClaimResponsePreviewTargetSubscriptionPlanPro         OrganizationProjectClaimResponsePreviewTargetSubscriptionPlan = "pro"
-	OrganizationProjectClaimResponsePreviewTargetSubscriptionPlanTeam        OrganizationProjectClaimResponsePreviewTargetSubscriptionPlan = "team"
+	OrganizationProjectClaimResponseOutputPreviewTargetSubscriptionPlanEnterprise  OrganizationProjectClaimResponseOutputPreviewTargetSubscriptionPlan = "enterprise"
+	OrganizationProjectClaimResponseOutputPreviewTargetSubscriptionPlanFree        OrganizationProjectClaimResponseOutputPreviewTargetSubscriptionPlan = "free"
+	OrganizationProjectClaimResponseOutputPreviewTargetSubscriptionPlanLessThannil OrganizationProjectClaimResponseOutputPreviewTargetSubscriptionPlan = "<nil>"
+	OrganizationProjectClaimResponseOutputPreviewTargetSubscriptionPlanPlatform    OrganizationProjectClaimResponseOutputPreviewTargetSubscriptionPlan = "platform"
+	OrganizationProjectClaimResponseOutputPreviewTargetSubscriptionPlanPro         OrganizationProjectClaimResponseOutputPreviewTargetSubscriptionPlan = "pro"
+	OrganizationProjectClaimResponseOutputPreviewTargetSubscriptionPlanTeam        OrganizationProjectClaimResponseOutputPreviewTargetSubscriptionPlan = "team"
 )
 
-// Valid indicates whether the value is a known member of the OrganizationProjectClaimResponsePreviewTargetSubscriptionPlan enum.
-func (e OrganizationProjectClaimResponsePreviewTargetSubscriptionPlan) Valid() bool {
+// Valid indicates whether the value is a known member of the OrganizationProjectClaimResponseOutputPreviewTargetSubscriptionPlan enum.
+func (e OrganizationProjectClaimResponseOutputPreviewTargetSubscriptionPlan) Valid() bool {
 	switch e {
-	case OrganizationProjectClaimResponsePreviewTargetSubscriptionPlanEnterprise:
+	case OrganizationProjectClaimResponseOutputPreviewTargetSubscriptionPlanEnterprise:
 		return true
-	case OrganizationProjectClaimResponsePreviewTargetSubscriptionPlanFree:
+	case OrganizationProjectClaimResponseOutputPreviewTargetSubscriptionPlanFree:
 		return true
-	case OrganizationProjectClaimResponsePreviewTargetSubscriptionPlanLessThannil:
+	case OrganizationProjectClaimResponseOutputPreviewTargetSubscriptionPlanLessThannil:
 		return true
-	case OrganizationProjectClaimResponsePreviewTargetSubscriptionPlanPlatform:
+	case OrganizationProjectClaimResponseOutputPreviewTargetSubscriptionPlanPlatform:
 		return true
-	case OrganizationProjectClaimResponsePreviewTargetSubscriptionPlanPro:
+	case OrganizationProjectClaimResponseOutputPreviewTargetSubscriptionPlanPro:
 		return true
-	case OrganizationProjectClaimResponsePreviewTargetSubscriptionPlanTeam:
+	case OrganizationProjectClaimResponseOutputPreviewTargetSubscriptionPlanTeam:
 		return true
 	default:
 		return false
 	}
 }
 
-// Defines values for OrganizationProjectsResponseProjectsDatabasesDiskType.
+// Defines values for OrganizationProjectsResponseOutputProjectsDatabasesDiskType.
 const (
-	Gp3 OrganizationProjectsResponseProjectsDatabasesDiskType = "gp3"
-	Io2 OrganizationProjectsResponseProjectsDatabasesDiskType = "io2"
+	Gp3 OrganizationProjectsResponseOutputProjectsDatabasesDiskType = "gp3"
+	Io2 OrganizationProjectsResponseOutputProjectsDatabasesDiskType = "io2"
 )
 
-// Valid indicates whether the value is a known member of the OrganizationProjectsResponseProjectsDatabasesDiskType enum.
-func (e OrganizationProjectsResponseProjectsDatabasesDiskType) Valid() bool {
+// Valid indicates whether the value is a known member of the OrganizationProjectsResponseOutputProjectsDatabasesDiskType enum.
+func (e OrganizationProjectsResponseOutputProjectsDatabasesDiskType) Valid() bool {
 	switch e {
 	case Gp3:
 		return true
@@ -2246,195 +2245,195 @@ func (e OrganizationProjectsResponseProjectsDatabasesDiskType) Valid() bool {
 	}
 }
 
-// Defines values for OrganizationProjectsResponseProjectsDatabasesInfraComputeSize.
+// Defines values for OrganizationProjectsResponseOutputProjectsDatabasesInfraComputeSize.
 const (
-	OrganizationProjectsResponseProjectsDatabasesInfraComputeSizeLarge                    OrganizationProjectsResponseProjectsDatabasesInfraComputeSize = "large"
-	OrganizationProjectsResponseProjectsDatabasesInfraComputeSizeMedium                   OrganizationProjectsResponseProjectsDatabasesInfraComputeSize = "medium"
-	OrganizationProjectsResponseProjectsDatabasesInfraComputeSizeMicro                    OrganizationProjectsResponseProjectsDatabasesInfraComputeSize = "micro"
-	OrganizationProjectsResponseProjectsDatabasesInfraComputeSizeN12xlarge                OrganizationProjectsResponseProjectsDatabasesInfraComputeSize = "12xlarge"
-	OrganizationProjectsResponseProjectsDatabasesInfraComputeSizeN16xlarge                OrganizationProjectsResponseProjectsDatabasesInfraComputeSize = "16xlarge"
-	OrganizationProjectsResponseProjectsDatabasesInfraComputeSizeN24xlarge                OrganizationProjectsResponseProjectsDatabasesInfraComputeSize = "24xlarge"
-	OrganizationProjectsResponseProjectsDatabasesInfraComputeSizeN24xlargeHighMemory      OrganizationProjectsResponseProjectsDatabasesInfraComputeSize = "24xlarge_high_memory"
-	OrganizationProjectsResponseProjectsDatabasesInfraComputeSizeN24xlargeOptimizedCpu    OrganizationProjectsResponseProjectsDatabasesInfraComputeSize = "24xlarge_optimized_cpu"
-	OrganizationProjectsResponseProjectsDatabasesInfraComputeSizeN24xlargeOptimizedMemory OrganizationProjectsResponseProjectsDatabasesInfraComputeSize = "24xlarge_optimized_memory"
-	OrganizationProjectsResponseProjectsDatabasesInfraComputeSizeN2xlarge                 OrganizationProjectsResponseProjectsDatabasesInfraComputeSize = "2xlarge"
-	OrganizationProjectsResponseProjectsDatabasesInfraComputeSizeN48xlarge                OrganizationProjectsResponseProjectsDatabasesInfraComputeSize = "48xlarge"
-	OrganizationProjectsResponseProjectsDatabasesInfraComputeSizeN48xlargeHighMemory      OrganizationProjectsResponseProjectsDatabasesInfraComputeSize = "48xlarge_high_memory"
-	OrganizationProjectsResponseProjectsDatabasesInfraComputeSizeN48xlargeOptimizedCpu    OrganizationProjectsResponseProjectsDatabasesInfraComputeSize = "48xlarge_optimized_cpu"
-	OrganizationProjectsResponseProjectsDatabasesInfraComputeSizeN48xlargeOptimizedMemory OrganizationProjectsResponseProjectsDatabasesInfraComputeSize = "48xlarge_optimized_memory"
-	OrganizationProjectsResponseProjectsDatabasesInfraComputeSizeN4xlarge                 OrganizationProjectsResponseProjectsDatabasesInfraComputeSize = "4xlarge"
-	OrganizationProjectsResponseProjectsDatabasesInfraComputeSizeN8xlarge                 OrganizationProjectsResponseProjectsDatabasesInfraComputeSize = "8xlarge"
-	OrganizationProjectsResponseProjectsDatabasesInfraComputeSizeNano                     OrganizationProjectsResponseProjectsDatabasesInfraComputeSize = "nano"
-	OrganizationProjectsResponseProjectsDatabasesInfraComputeSizePico                     OrganizationProjectsResponseProjectsDatabasesInfraComputeSize = "pico"
-	OrganizationProjectsResponseProjectsDatabasesInfraComputeSizeSmall                    OrganizationProjectsResponseProjectsDatabasesInfraComputeSize = "small"
-	OrganizationProjectsResponseProjectsDatabasesInfraComputeSizeXlarge                   OrganizationProjectsResponseProjectsDatabasesInfraComputeSize = "xlarge"
+	OrganizationProjectsResponseOutputProjectsDatabasesInfraComputeSizeLarge                    OrganizationProjectsResponseOutputProjectsDatabasesInfraComputeSize = "large"
+	OrganizationProjectsResponseOutputProjectsDatabasesInfraComputeSizeMedium                   OrganizationProjectsResponseOutputProjectsDatabasesInfraComputeSize = "medium"
+	OrganizationProjectsResponseOutputProjectsDatabasesInfraComputeSizeMicro                    OrganizationProjectsResponseOutputProjectsDatabasesInfraComputeSize = "micro"
+	OrganizationProjectsResponseOutputProjectsDatabasesInfraComputeSizeN12xlarge                OrganizationProjectsResponseOutputProjectsDatabasesInfraComputeSize = "12xlarge"
+	OrganizationProjectsResponseOutputProjectsDatabasesInfraComputeSizeN16xlarge                OrganizationProjectsResponseOutputProjectsDatabasesInfraComputeSize = "16xlarge"
+	OrganizationProjectsResponseOutputProjectsDatabasesInfraComputeSizeN24xlarge                OrganizationProjectsResponseOutputProjectsDatabasesInfraComputeSize = "24xlarge"
+	OrganizationProjectsResponseOutputProjectsDatabasesInfraComputeSizeN24xlargeHighMemory      OrganizationProjectsResponseOutputProjectsDatabasesInfraComputeSize = "24xlarge_high_memory"
+	OrganizationProjectsResponseOutputProjectsDatabasesInfraComputeSizeN24xlargeOptimizedCpu    OrganizationProjectsResponseOutputProjectsDatabasesInfraComputeSize = "24xlarge_optimized_cpu"
+	OrganizationProjectsResponseOutputProjectsDatabasesInfraComputeSizeN24xlargeOptimizedMemory OrganizationProjectsResponseOutputProjectsDatabasesInfraComputeSize = "24xlarge_optimized_memory"
+	OrganizationProjectsResponseOutputProjectsDatabasesInfraComputeSizeN2xlarge                 OrganizationProjectsResponseOutputProjectsDatabasesInfraComputeSize = "2xlarge"
+	OrganizationProjectsResponseOutputProjectsDatabasesInfraComputeSizeN48xlarge                OrganizationProjectsResponseOutputProjectsDatabasesInfraComputeSize = "48xlarge"
+	OrganizationProjectsResponseOutputProjectsDatabasesInfraComputeSizeN48xlargeHighMemory      OrganizationProjectsResponseOutputProjectsDatabasesInfraComputeSize = "48xlarge_high_memory"
+	OrganizationProjectsResponseOutputProjectsDatabasesInfraComputeSizeN48xlargeOptimizedCpu    OrganizationProjectsResponseOutputProjectsDatabasesInfraComputeSize = "48xlarge_optimized_cpu"
+	OrganizationProjectsResponseOutputProjectsDatabasesInfraComputeSizeN48xlargeOptimizedMemory OrganizationProjectsResponseOutputProjectsDatabasesInfraComputeSize = "48xlarge_optimized_memory"
+	OrganizationProjectsResponseOutputProjectsDatabasesInfraComputeSizeN4xlarge                 OrganizationProjectsResponseOutputProjectsDatabasesInfraComputeSize = "4xlarge"
+	OrganizationProjectsResponseOutputProjectsDatabasesInfraComputeSizeN8xlarge                 OrganizationProjectsResponseOutputProjectsDatabasesInfraComputeSize = "8xlarge"
+	OrganizationProjectsResponseOutputProjectsDatabasesInfraComputeSizeNano                     OrganizationProjectsResponseOutputProjectsDatabasesInfraComputeSize = "nano"
+	OrganizationProjectsResponseOutputProjectsDatabasesInfraComputeSizePico                     OrganizationProjectsResponseOutputProjectsDatabasesInfraComputeSize = "pico"
+	OrganizationProjectsResponseOutputProjectsDatabasesInfraComputeSizeSmall                    OrganizationProjectsResponseOutputProjectsDatabasesInfraComputeSize = "small"
+	OrganizationProjectsResponseOutputProjectsDatabasesInfraComputeSizeXlarge                   OrganizationProjectsResponseOutputProjectsDatabasesInfraComputeSize = "xlarge"
 )
 
-// Valid indicates whether the value is a known member of the OrganizationProjectsResponseProjectsDatabasesInfraComputeSize enum.
-func (e OrganizationProjectsResponseProjectsDatabasesInfraComputeSize) Valid() bool {
+// Valid indicates whether the value is a known member of the OrganizationProjectsResponseOutputProjectsDatabasesInfraComputeSize enum.
+func (e OrganizationProjectsResponseOutputProjectsDatabasesInfraComputeSize) Valid() bool {
 	switch e {
-	case OrganizationProjectsResponseProjectsDatabasesInfraComputeSizeLarge:
+	case OrganizationProjectsResponseOutputProjectsDatabasesInfraComputeSizeLarge:
 		return true
-	case OrganizationProjectsResponseProjectsDatabasesInfraComputeSizeMedium:
+	case OrganizationProjectsResponseOutputProjectsDatabasesInfraComputeSizeMedium:
 		return true
-	case OrganizationProjectsResponseProjectsDatabasesInfraComputeSizeMicro:
+	case OrganizationProjectsResponseOutputProjectsDatabasesInfraComputeSizeMicro:
 		return true
-	case OrganizationProjectsResponseProjectsDatabasesInfraComputeSizeN12xlarge:
+	case OrganizationProjectsResponseOutputProjectsDatabasesInfraComputeSizeN12xlarge:
 		return true
-	case OrganizationProjectsResponseProjectsDatabasesInfraComputeSizeN16xlarge:
+	case OrganizationProjectsResponseOutputProjectsDatabasesInfraComputeSizeN16xlarge:
 		return true
-	case OrganizationProjectsResponseProjectsDatabasesInfraComputeSizeN24xlarge:
+	case OrganizationProjectsResponseOutputProjectsDatabasesInfraComputeSizeN24xlarge:
 		return true
-	case OrganizationProjectsResponseProjectsDatabasesInfraComputeSizeN24xlargeHighMemory:
+	case OrganizationProjectsResponseOutputProjectsDatabasesInfraComputeSizeN24xlargeHighMemory:
 		return true
-	case OrganizationProjectsResponseProjectsDatabasesInfraComputeSizeN24xlargeOptimizedCpu:
+	case OrganizationProjectsResponseOutputProjectsDatabasesInfraComputeSizeN24xlargeOptimizedCpu:
 		return true
-	case OrganizationProjectsResponseProjectsDatabasesInfraComputeSizeN24xlargeOptimizedMemory:
+	case OrganizationProjectsResponseOutputProjectsDatabasesInfraComputeSizeN24xlargeOptimizedMemory:
 		return true
-	case OrganizationProjectsResponseProjectsDatabasesInfraComputeSizeN2xlarge:
+	case OrganizationProjectsResponseOutputProjectsDatabasesInfraComputeSizeN2xlarge:
 		return true
-	case OrganizationProjectsResponseProjectsDatabasesInfraComputeSizeN48xlarge:
+	case OrganizationProjectsResponseOutputProjectsDatabasesInfraComputeSizeN48xlarge:
 		return true
-	case OrganizationProjectsResponseProjectsDatabasesInfraComputeSizeN48xlargeHighMemory:
+	case OrganizationProjectsResponseOutputProjectsDatabasesInfraComputeSizeN48xlargeHighMemory:
 		return true
-	case OrganizationProjectsResponseProjectsDatabasesInfraComputeSizeN48xlargeOptimizedCpu:
+	case OrganizationProjectsResponseOutputProjectsDatabasesInfraComputeSizeN48xlargeOptimizedCpu:
 		return true
-	case OrganizationProjectsResponseProjectsDatabasesInfraComputeSizeN48xlargeOptimizedMemory:
+	case OrganizationProjectsResponseOutputProjectsDatabasesInfraComputeSizeN48xlargeOptimizedMemory:
 		return true
-	case OrganizationProjectsResponseProjectsDatabasesInfraComputeSizeN4xlarge:
+	case OrganizationProjectsResponseOutputProjectsDatabasesInfraComputeSizeN4xlarge:
 		return true
-	case OrganizationProjectsResponseProjectsDatabasesInfraComputeSizeN8xlarge:
+	case OrganizationProjectsResponseOutputProjectsDatabasesInfraComputeSizeN8xlarge:
 		return true
-	case OrganizationProjectsResponseProjectsDatabasesInfraComputeSizeNano:
+	case OrganizationProjectsResponseOutputProjectsDatabasesInfraComputeSizeNano:
 		return true
-	case OrganizationProjectsResponseProjectsDatabasesInfraComputeSizePico:
+	case OrganizationProjectsResponseOutputProjectsDatabasesInfraComputeSizePico:
 		return true
-	case OrganizationProjectsResponseProjectsDatabasesInfraComputeSizeSmall:
+	case OrganizationProjectsResponseOutputProjectsDatabasesInfraComputeSizeSmall:
 		return true
-	case OrganizationProjectsResponseProjectsDatabasesInfraComputeSizeXlarge:
+	case OrganizationProjectsResponseOutputProjectsDatabasesInfraComputeSizeXlarge:
 		return true
 	default:
 		return false
 	}
 }
 
-// Defines values for OrganizationProjectsResponseProjectsDatabasesStatus.
+// Defines values for OrganizationProjectsResponseOutputProjectsDatabasesStatus.
 const (
-	OrganizationProjectsResponseProjectsDatabasesStatusACTIVEHEALTHY         OrganizationProjectsResponseProjectsDatabasesStatus = "ACTIVE_HEALTHY"
-	OrganizationProjectsResponseProjectsDatabasesStatusACTIVEUNHEALTHY       OrganizationProjectsResponseProjectsDatabasesStatus = "ACTIVE_UNHEALTHY"
-	OrganizationProjectsResponseProjectsDatabasesStatusCOMINGUP              OrganizationProjectsResponseProjectsDatabasesStatus = "COMING_UP"
-	OrganizationProjectsResponseProjectsDatabasesStatusGOINGDOWN             OrganizationProjectsResponseProjectsDatabasesStatus = "GOING_DOWN"
-	OrganizationProjectsResponseProjectsDatabasesStatusINITFAILED            OrganizationProjectsResponseProjectsDatabasesStatus = "INIT_FAILED"
-	OrganizationProjectsResponseProjectsDatabasesStatusINITREADREPLICA       OrganizationProjectsResponseProjectsDatabasesStatus = "INIT_READ_REPLICA"
-	OrganizationProjectsResponseProjectsDatabasesStatusINITREADREPLICAFAILED OrganizationProjectsResponseProjectsDatabasesStatus = "INIT_READ_REPLICA_FAILED"
-	OrganizationProjectsResponseProjectsDatabasesStatusREMOVED               OrganizationProjectsResponseProjectsDatabasesStatus = "REMOVED"
-	OrganizationProjectsResponseProjectsDatabasesStatusRESIZING              OrganizationProjectsResponseProjectsDatabasesStatus = "RESIZING"
-	OrganizationProjectsResponseProjectsDatabasesStatusRESTARTING            OrganizationProjectsResponseProjectsDatabasesStatus = "RESTARTING"
-	OrganizationProjectsResponseProjectsDatabasesStatusRESTORING             OrganizationProjectsResponseProjectsDatabasesStatus = "RESTORING"
-	OrganizationProjectsResponseProjectsDatabasesStatusUNKNOWN               OrganizationProjectsResponseProjectsDatabasesStatus = "UNKNOWN"
+	OrganizationProjectsResponseOutputProjectsDatabasesStatusACTIVEHEALTHY         OrganizationProjectsResponseOutputProjectsDatabasesStatus = "ACTIVE_HEALTHY"
+	OrganizationProjectsResponseOutputProjectsDatabasesStatusACTIVEUNHEALTHY       OrganizationProjectsResponseOutputProjectsDatabasesStatus = "ACTIVE_UNHEALTHY"
+	OrganizationProjectsResponseOutputProjectsDatabasesStatusCOMINGUP              OrganizationProjectsResponseOutputProjectsDatabasesStatus = "COMING_UP"
+	OrganizationProjectsResponseOutputProjectsDatabasesStatusGOINGDOWN             OrganizationProjectsResponseOutputProjectsDatabasesStatus = "GOING_DOWN"
+	OrganizationProjectsResponseOutputProjectsDatabasesStatusINITFAILED            OrganizationProjectsResponseOutputProjectsDatabasesStatus = "INIT_FAILED"
+	OrganizationProjectsResponseOutputProjectsDatabasesStatusINITREADREPLICA       OrganizationProjectsResponseOutputProjectsDatabasesStatus = "INIT_READ_REPLICA"
+	OrganizationProjectsResponseOutputProjectsDatabasesStatusINITREADREPLICAFAILED OrganizationProjectsResponseOutputProjectsDatabasesStatus = "INIT_READ_REPLICA_FAILED"
+	OrganizationProjectsResponseOutputProjectsDatabasesStatusREMOVED               OrganizationProjectsResponseOutputProjectsDatabasesStatus = "REMOVED"
+	OrganizationProjectsResponseOutputProjectsDatabasesStatusRESIZING              OrganizationProjectsResponseOutputProjectsDatabasesStatus = "RESIZING"
+	OrganizationProjectsResponseOutputProjectsDatabasesStatusRESTARTING            OrganizationProjectsResponseOutputProjectsDatabasesStatus = "RESTARTING"
+	OrganizationProjectsResponseOutputProjectsDatabasesStatusRESTORING             OrganizationProjectsResponseOutputProjectsDatabasesStatus = "RESTORING"
+	OrganizationProjectsResponseOutputProjectsDatabasesStatusUNKNOWN               OrganizationProjectsResponseOutputProjectsDatabasesStatus = "UNKNOWN"
 )
 
-// Valid indicates whether the value is a known member of the OrganizationProjectsResponseProjectsDatabasesStatus enum.
-func (e OrganizationProjectsResponseProjectsDatabasesStatus) Valid() bool {
+// Valid indicates whether the value is a known member of the OrganizationProjectsResponseOutputProjectsDatabasesStatus enum.
+func (e OrganizationProjectsResponseOutputProjectsDatabasesStatus) Valid() bool {
 	switch e {
-	case OrganizationProjectsResponseProjectsDatabasesStatusACTIVEHEALTHY:
+	case OrganizationProjectsResponseOutputProjectsDatabasesStatusACTIVEHEALTHY:
 		return true
-	case OrganizationProjectsResponseProjectsDatabasesStatusACTIVEUNHEALTHY:
+	case OrganizationProjectsResponseOutputProjectsDatabasesStatusACTIVEUNHEALTHY:
 		return true
-	case OrganizationProjectsResponseProjectsDatabasesStatusCOMINGUP:
+	case OrganizationProjectsResponseOutputProjectsDatabasesStatusCOMINGUP:
 		return true
-	case OrganizationProjectsResponseProjectsDatabasesStatusGOINGDOWN:
+	case OrganizationProjectsResponseOutputProjectsDatabasesStatusGOINGDOWN:
 		return true
-	case OrganizationProjectsResponseProjectsDatabasesStatusINITFAILED:
+	case OrganizationProjectsResponseOutputProjectsDatabasesStatusINITFAILED:
 		return true
-	case OrganizationProjectsResponseProjectsDatabasesStatusINITREADREPLICA:
+	case OrganizationProjectsResponseOutputProjectsDatabasesStatusINITREADREPLICA:
 		return true
-	case OrganizationProjectsResponseProjectsDatabasesStatusINITREADREPLICAFAILED:
+	case OrganizationProjectsResponseOutputProjectsDatabasesStatusINITREADREPLICAFAILED:
 		return true
-	case OrganizationProjectsResponseProjectsDatabasesStatusREMOVED:
+	case OrganizationProjectsResponseOutputProjectsDatabasesStatusREMOVED:
 		return true
-	case OrganizationProjectsResponseProjectsDatabasesStatusRESIZING:
+	case OrganizationProjectsResponseOutputProjectsDatabasesStatusRESIZING:
 		return true
-	case OrganizationProjectsResponseProjectsDatabasesStatusRESTARTING:
+	case OrganizationProjectsResponseOutputProjectsDatabasesStatusRESTARTING:
 		return true
-	case OrganizationProjectsResponseProjectsDatabasesStatusRESTORING:
+	case OrganizationProjectsResponseOutputProjectsDatabasesStatusRESTORING:
 		return true
-	case OrganizationProjectsResponseProjectsDatabasesStatusUNKNOWN:
+	case OrganizationProjectsResponseOutputProjectsDatabasesStatusUNKNOWN:
 		return true
 	default:
 		return false
 	}
 }
 
-// Defines values for OrganizationProjectsResponseProjectsDatabasesType.
+// Defines values for OrganizationProjectsResponseOutputProjectsDatabasesType.
 const (
-	OrganizationProjectsResponseProjectsDatabasesTypePRIMARY     OrganizationProjectsResponseProjectsDatabasesType = "PRIMARY"
-	OrganizationProjectsResponseProjectsDatabasesTypeREADREPLICA OrganizationProjectsResponseProjectsDatabasesType = "READ_REPLICA"
+	OrganizationProjectsResponseOutputProjectsDatabasesTypePRIMARY     OrganizationProjectsResponseOutputProjectsDatabasesType = "PRIMARY"
+	OrganizationProjectsResponseOutputProjectsDatabasesTypeREADREPLICA OrganizationProjectsResponseOutputProjectsDatabasesType = "READ_REPLICA"
 )
 
-// Valid indicates whether the value is a known member of the OrganizationProjectsResponseProjectsDatabasesType enum.
-func (e OrganizationProjectsResponseProjectsDatabasesType) Valid() bool {
+// Valid indicates whether the value is a known member of the OrganizationProjectsResponseOutputProjectsDatabasesType enum.
+func (e OrganizationProjectsResponseOutputProjectsDatabasesType) Valid() bool {
 	switch e {
-	case OrganizationProjectsResponseProjectsDatabasesTypePRIMARY:
+	case OrganizationProjectsResponseOutputProjectsDatabasesTypePRIMARY:
 		return true
-	case OrganizationProjectsResponseProjectsDatabasesTypeREADREPLICA:
+	case OrganizationProjectsResponseOutputProjectsDatabasesTypeREADREPLICA:
 		return true
 	default:
 		return false
 	}
 }
 
-// Defines values for OrganizationProjectsResponseProjectsStatus.
+// Defines values for OrganizationProjectsResponseOutputProjectsStatus.
 const (
-	OrganizationProjectsResponseProjectsStatusACTIVEHEALTHY   OrganizationProjectsResponseProjectsStatus = "ACTIVE_HEALTHY"
-	OrganizationProjectsResponseProjectsStatusACTIVEUNHEALTHY OrganizationProjectsResponseProjectsStatus = "ACTIVE_UNHEALTHY"
-	OrganizationProjectsResponseProjectsStatusCOMINGUP        OrganizationProjectsResponseProjectsStatus = "COMING_UP"
-	OrganizationProjectsResponseProjectsStatusGOINGDOWN       OrganizationProjectsResponseProjectsStatus = "GOING_DOWN"
-	OrganizationProjectsResponseProjectsStatusINACTIVE        OrganizationProjectsResponseProjectsStatus = "INACTIVE"
-	OrganizationProjectsResponseProjectsStatusINITFAILED      OrganizationProjectsResponseProjectsStatus = "INIT_FAILED"
-	OrganizationProjectsResponseProjectsStatusPAUSEFAILED     OrganizationProjectsResponseProjectsStatus = "PAUSE_FAILED"
-	OrganizationProjectsResponseProjectsStatusPAUSING         OrganizationProjectsResponseProjectsStatus = "PAUSING"
-	OrganizationProjectsResponseProjectsStatusREMOVED         OrganizationProjectsResponseProjectsStatus = "REMOVED"
-	OrganizationProjectsResponseProjectsStatusRESIZING        OrganizationProjectsResponseProjectsStatus = "RESIZING"
-	OrganizationProjectsResponseProjectsStatusRESTARTING      OrganizationProjectsResponseProjectsStatus = "RESTARTING"
-	OrganizationProjectsResponseProjectsStatusRESTOREFAILED   OrganizationProjectsResponseProjectsStatus = "RESTORE_FAILED"
-	OrganizationProjectsResponseProjectsStatusRESTORING       OrganizationProjectsResponseProjectsStatus = "RESTORING"
-	OrganizationProjectsResponseProjectsStatusUNKNOWN         OrganizationProjectsResponseProjectsStatus = "UNKNOWN"
-	OrganizationProjectsResponseProjectsStatusUPGRADING       OrganizationProjectsResponseProjectsStatus = "UPGRADING"
+	OrganizationProjectsResponseOutputProjectsStatusACTIVEHEALTHY   OrganizationProjectsResponseOutputProjectsStatus = "ACTIVE_HEALTHY"
+	OrganizationProjectsResponseOutputProjectsStatusACTIVEUNHEALTHY OrganizationProjectsResponseOutputProjectsStatus = "ACTIVE_UNHEALTHY"
+	OrganizationProjectsResponseOutputProjectsStatusCOMINGUP        OrganizationProjectsResponseOutputProjectsStatus = "COMING_UP"
+	OrganizationProjectsResponseOutputProjectsStatusGOINGDOWN       OrganizationProjectsResponseOutputProjectsStatus = "GOING_DOWN"
+	OrganizationProjectsResponseOutputProjectsStatusINACTIVE        OrganizationProjectsResponseOutputProjectsStatus = "INACTIVE"
+	OrganizationProjectsResponseOutputProjectsStatusINITFAILED      OrganizationProjectsResponseOutputProjectsStatus = "INIT_FAILED"
+	OrganizationProjectsResponseOutputProjectsStatusPAUSEFAILED     OrganizationProjectsResponseOutputProjectsStatus = "PAUSE_FAILED"
+	OrganizationProjectsResponseOutputProjectsStatusPAUSING         OrganizationProjectsResponseOutputProjectsStatus = "PAUSING"
+	OrganizationProjectsResponseOutputProjectsStatusREMOVED         OrganizationProjectsResponseOutputProjectsStatus = "REMOVED"
+	OrganizationProjectsResponseOutputProjectsStatusRESIZING        OrganizationProjectsResponseOutputProjectsStatus = "RESIZING"
+	OrganizationProjectsResponseOutputProjectsStatusRESTARTING      OrganizationProjectsResponseOutputProjectsStatus = "RESTARTING"
+	OrganizationProjectsResponseOutputProjectsStatusRESTOREFAILED   OrganizationProjectsResponseOutputProjectsStatus = "RESTORE_FAILED"
+	OrganizationProjectsResponseOutputProjectsStatusRESTORING       OrganizationProjectsResponseOutputProjectsStatus = "RESTORING"
+	OrganizationProjectsResponseOutputProjectsStatusUNKNOWN         OrganizationProjectsResponseOutputProjectsStatus = "UNKNOWN"
+	OrganizationProjectsResponseOutputProjectsStatusUPGRADING       OrganizationProjectsResponseOutputProjectsStatus = "UPGRADING"
 )
 
-// Valid indicates whether the value is a known member of the OrganizationProjectsResponseProjectsStatus enum.
-func (e OrganizationProjectsResponseProjectsStatus) Valid() bool {
+// Valid indicates whether the value is a known member of the OrganizationProjectsResponseOutputProjectsStatus enum.
+func (e OrganizationProjectsResponseOutputProjectsStatus) Valid() bool {
 	switch e {
-	case OrganizationProjectsResponseProjectsStatusACTIVEHEALTHY:
+	case OrganizationProjectsResponseOutputProjectsStatusACTIVEHEALTHY:
 		return true
-	case OrganizationProjectsResponseProjectsStatusACTIVEUNHEALTHY:
+	case OrganizationProjectsResponseOutputProjectsStatusACTIVEUNHEALTHY:
 		return true
-	case OrganizationProjectsResponseProjectsStatusCOMINGUP:
+	case OrganizationProjectsResponseOutputProjectsStatusCOMINGUP:
 		return true
-	case OrganizationProjectsResponseProjectsStatusGOINGDOWN:
+	case OrganizationProjectsResponseOutputProjectsStatusGOINGDOWN:
 		return true
-	case OrganizationProjectsResponseProjectsStatusINACTIVE:
+	case OrganizationProjectsResponseOutputProjectsStatusINACTIVE:
 		return true
-	case OrganizationProjectsResponseProjectsStatusINITFAILED:
+	case OrganizationProjectsResponseOutputProjectsStatusINITFAILED:
 		return true
-	case OrganizationProjectsResponseProjectsStatusPAUSEFAILED:
+	case OrganizationProjectsResponseOutputProjectsStatusPAUSEFAILED:
 		return true
-	case OrganizationProjectsResponseProjectsStatusPAUSING:
+	case OrganizationProjectsResponseOutputProjectsStatusPAUSING:
 		return true
-	case OrganizationProjectsResponseProjectsStatusREMOVED:
+	case OrganizationProjectsResponseOutputProjectsStatusREMOVED:
 		return true
-	case OrganizationProjectsResponseProjectsStatusRESIZING:
+	case OrganizationProjectsResponseOutputProjectsStatusRESIZING:
 		return true
-	case OrganizationProjectsResponseProjectsStatusRESTARTING:
+	case OrganizationProjectsResponseOutputProjectsStatusRESTARTING:
 		return true
-	case OrganizationProjectsResponseProjectsStatusRESTOREFAILED:
+	case OrganizationProjectsResponseOutputProjectsStatusRESTOREFAILED:
 		return true
-	case OrganizationProjectsResponseProjectsStatusRESTORING:
+	case OrganizationProjectsResponseOutputProjectsStatusRESTORING:
 		return true
-	case OrganizationProjectsResponseProjectsStatusUNKNOWN:
+	case OrganizationProjectsResponseOutputProjectsStatusUNKNOWN:
 		return true
-	case OrganizationProjectsResponseProjectsStatusUPGRADING:
+	case OrganizationProjectsResponseOutputProjectsStatusUPGRADING:
 		return true
 	default:
 		return false
@@ -2456,68 +2455,68 @@ func (e PlanGateErrorBodyErrorCode) Valid() bool {
 	}
 }
 
-// Defines values for PostgresConfigResponseSessionReplicationRole.
+// Defines values for PostgresConfigResponseOutputSessionReplicationRole.
 const (
-	PostgresConfigResponseSessionReplicationRoleLocal   PostgresConfigResponseSessionReplicationRole = "local"
-	PostgresConfigResponseSessionReplicationRoleOrigin  PostgresConfigResponseSessionReplicationRole = "origin"
-	PostgresConfigResponseSessionReplicationRoleReplica PostgresConfigResponseSessionReplicationRole = "replica"
+	PostgresConfigResponseOutputSessionReplicationRoleLocal   PostgresConfigResponseOutputSessionReplicationRole = "local"
+	PostgresConfigResponseOutputSessionReplicationRoleOrigin  PostgresConfigResponseOutputSessionReplicationRole = "origin"
+	PostgresConfigResponseOutputSessionReplicationRoleReplica PostgresConfigResponseOutputSessionReplicationRole = "replica"
 )
 
-// Valid indicates whether the value is a known member of the PostgresConfigResponseSessionReplicationRole enum.
-func (e PostgresConfigResponseSessionReplicationRole) Valid() bool {
+// Valid indicates whether the value is a known member of the PostgresConfigResponseOutputSessionReplicationRole enum.
+func (e PostgresConfigResponseOutputSessionReplicationRole) Valid() bool {
 	switch e {
-	case PostgresConfigResponseSessionReplicationRoleLocal:
+	case PostgresConfigResponseOutputSessionReplicationRoleLocal:
 		return true
-	case PostgresConfigResponseSessionReplicationRoleOrigin:
+	case PostgresConfigResponseOutputSessionReplicationRoleOrigin:
 		return true
-	case PostgresConfigResponseSessionReplicationRoleReplica:
+	case PostgresConfigResponseOutputSessionReplicationRoleReplica:
 		return true
 	default:
 		return false
 	}
 }
 
-// Defines values for ProjectUpgradeEligibilityResponseCurrentAppVersionReleaseChannel.
+// Defines values for ProjectUpgradeEligibilityResponseOutputCurrentAppVersionReleaseChannel.
 const (
-	ProjectUpgradeEligibilityResponseCurrentAppVersionReleaseChannelAlpha     ProjectUpgradeEligibilityResponseCurrentAppVersionReleaseChannel = "alpha"
-	ProjectUpgradeEligibilityResponseCurrentAppVersionReleaseChannelBeta      ProjectUpgradeEligibilityResponseCurrentAppVersionReleaseChannel = "beta"
-	ProjectUpgradeEligibilityResponseCurrentAppVersionReleaseChannelGa        ProjectUpgradeEligibilityResponseCurrentAppVersionReleaseChannel = "ga"
-	ProjectUpgradeEligibilityResponseCurrentAppVersionReleaseChannelInternal  ProjectUpgradeEligibilityResponseCurrentAppVersionReleaseChannel = "internal"
-	ProjectUpgradeEligibilityResponseCurrentAppVersionReleaseChannelPreview   ProjectUpgradeEligibilityResponseCurrentAppVersionReleaseChannel = "preview"
-	ProjectUpgradeEligibilityResponseCurrentAppVersionReleaseChannelWithdrawn ProjectUpgradeEligibilityResponseCurrentAppVersionReleaseChannel = "withdrawn"
+	ProjectUpgradeEligibilityResponseOutputCurrentAppVersionReleaseChannelAlpha     ProjectUpgradeEligibilityResponseOutputCurrentAppVersionReleaseChannel = "alpha"
+	ProjectUpgradeEligibilityResponseOutputCurrentAppVersionReleaseChannelBeta      ProjectUpgradeEligibilityResponseOutputCurrentAppVersionReleaseChannel = "beta"
+	ProjectUpgradeEligibilityResponseOutputCurrentAppVersionReleaseChannelGa        ProjectUpgradeEligibilityResponseOutputCurrentAppVersionReleaseChannel = "ga"
+	ProjectUpgradeEligibilityResponseOutputCurrentAppVersionReleaseChannelInternal  ProjectUpgradeEligibilityResponseOutputCurrentAppVersionReleaseChannel = "internal"
+	ProjectUpgradeEligibilityResponseOutputCurrentAppVersionReleaseChannelPreview   ProjectUpgradeEligibilityResponseOutputCurrentAppVersionReleaseChannel = "preview"
+	ProjectUpgradeEligibilityResponseOutputCurrentAppVersionReleaseChannelWithdrawn ProjectUpgradeEligibilityResponseOutputCurrentAppVersionReleaseChannel = "withdrawn"
 )
 
-// Valid indicates whether the value is a known member of the ProjectUpgradeEligibilityResponseCurrentAppVersionReleaseChannel enum.
-func (e ProjectUpgradeEligibilityResponseCurrentAppVersionReleaseChannel) Valid() bool {
+// Valid indicates whether the value is a known member of the ProjectUpgradeEligibilityResponseOutputCurrentAppVersionReleaseChannel enum.
+func (e ProjectUpgradeEligibilityResponseOutputCurrentAppVersionReleaseChannel) Valid() bool {
 	switch e {
-	case ProjectUpgradeEligibilityResponseCurrentAppVersionReleaseChannelAlpha:
+	case ProjectUpgradeEligibilityResponseOutputCurrentAppVersionReleaseChannelAlpha:
 		return true
-	case ProjectUpgradeEligibilityResponseCurrentAppVersionReleaseChannelBeta:
+	case ProjectUpgradeEligibilityResponseOutputCurrentAppVersionReleaseChannelBeta:
 		return true
-	case ProjectUpgradeEligibilityResponseCurrentAppVersionReleaseChannelGa:
+	case ProjectUpgradeEligibilityResponseOutputCurrentAppVersionReleaseChannelGa:
 		return true
-	case ProjectUpgradeEligibilityResponseCurrentAppVersionReleaseChannelInternal:
+	case ProjectUpgradeEligibilityResponseOutputCurrentAppVersionReleaseChannelInternal:
 		return true
-	case ProjectUpgradeEligibilityResponseCurrentAppVersionReleaseChannelPreview:
+	case ProjectUpgradeEligibilityResponseOutputCurrentAppVersionReleaseChannelPreview:
 		return true
-	case ProjectUpgradeEligibilityResponseCurrentAppVersionReleaseChannelWithdrawn:
+	case ProjectUpgradeEligibilityResponseOutputCurrentAppVersionReleaseChannelWithdrawn:
 		return true
 	default:
 		return false
 	}
 }
 
-// Defines values for ProjectUpgradeEligibilityResponseTargetUpgradeVersionsPostgresVersion.
+// Defines values for ProjectUpgradeEligibilityResponseOutputTargetUpgradeVersionsPostgresVersion.
 const (
-	N13       ProjectUpgradeEligibilityResponseTargetUpgradeVersionsPostgresVersion = "13"
-	N14       ProjectUpgradeEligibilityResponseTargetUpgradeVersionsPostgresVersion = "14"
-	N15       ProjectUpgradeEligibilityResponseTargetUpgradeVersionsPostgresVersion = "15"
-	N17       ProjectUpgradeEligibilityResponseTargetUpgradeVersionsPostgresVersion = "17"
-	N17Oriole ProjectUpgradeEligibilityResponseTargetUpgradeVersionsPostgresVersion = "17-oriole"
+	N13       ProjectUpgradeEligibilityResponseOutputTargetUpgradeVersionsPostgresVersion = "13"
+	N14       ProjectUpgradeEligibilityResponseOutputTargetUpgradeVersionsPostgresVersion = "14"
+	N15       ProjectUpgradeEligibilityResponseOutputTargetUpgradeVersionsPostgresVersion = "15"
+	N17       ProjectUpgradeEligibilityResponseOutputTargetUpgradeVersionsPostgresVersion = "17"
+	N17Oriole ProjectUpgradeEligibilityResponseOutputTargetUpgradeVersionsPostgresVersion = "17-oriole"
 )
 
-// Valid indicates whether the value is a known member of the ProjectUpgradeEligibilityResponseTargetUpgradeVersionsPostgresVersion enum.
-func (e ProjectUpgradeEligibilityResponseTargetUpgradeVersionsPostgresVersion) Valid() bool {
+// Valid indicates whether the value is a known member of the ProjectUpgradeEligibilityResponseOutputTargetUpgradeVersionsPostgresVersion enum.
+func (e ProjectUpgradeEligibilityResponseOutputTargetUpgradeVersionsPostgresVersion) Valid() bool {
 	switch e {
 	case N13:
 		return true
@@ -2534,43 +2533,43 @@ func (e ProjectUpgradeEligibilityResponseTargetUpgradeVersionsPostgresVersion) V
 	}
 }
 
-// Defines values for ProjectUpgradeEligibilityResponseTargetUpgradeVersionsReleaseChannel.
+// Defines values for ProjectUpgradeEligibilityResponseOutputTargetUpgradeVersionsReleaseChannel.
 const (
-	ProjectUpgradeEligibilityResponseTargetUpgradeVersionsReleaseChannelAlpha     ProjectUpgradeEligibilityResponseTargetUpgradeVersionsReleaseChannel = "alpha"
-	ProjectUpgradeEligibilityResponseTargetUpgradeVersionsReleaseChannelBeta      ProjectUpgradeEligibilityResponseTargetUpgradeVersionsReleaseChannel = "beta"
-	ProjectUpgradeEligibilityResponseTargetUpgradeVersionsReleaseChannelGa        ProjectUpgradeEligibilityResponseTargetUpgradeVersionsReleaseChannel = "ga"
-	ProjectUpgradeEligibilityResponseTargetUpgradeVersionsReleaseChannelInternal  ProjectUpgradeEligibilityResponseTargetUpgradeVersionsReleaseChannel = "internal"
-	ProjectUpgradeEligibilityResponseTargetUpgradeVersionsReleaseChannelPreview   ProjectUpgradeEligibilityResponseTargetUpgradeVersionsReleaseChannel = "preview"
-	ProjectUpgradeEligibilityResponseTargetUpgradeVersionsReleaseChannelWithdrawn ProjectUpgradeEligibilityResponseTargetUpgradeVersionsReleaseChannel = "withdrawn"
+	ProjectUpgradeEligibilityResponseOutputTargetUpgradeVersionsReleaseChannelAlpha     ProjectUpgradeEligibilityResponseOutputTargetUpgradeVersionsReleaseChannel = "alpha"
+	ProjectUpgradeEligibilityResponseOutputTargetUpgradeVersionsReleaseChannelBeta      ProjectUpgradeEligibilityResponseOutputTargetUpgradeVersionsReleaseChannel = "beta"
+	ProjectUpgradeEligibilityResponseOutputTargetUpgradeVersionsReleaseChannelGa        ProjectUpgradeEligibilityResponseOutputTargetUpgradeVersionsReleaseChannel = "ga"
+	ProjectUpgradeEligibilityResponseOutputTargetUpgradeVersionsReleaseChannelInternal  ProjectUpgradeEligibilityResponseOutputTargetUpgradeVersionsReleaseChannel = "internal"
+	ProjectUpgradeEligibilityResponseOutputTargetUpgradeVersionsReleaseChannelPreview   ProjectUpgradeEligibilityResponseOutputTargetUpgradeVersionsReleaseChannel = "preview"
+	ProjectUpgradeEligibilityResponseOutputTargetUpgradeVersionsReleaseChannelWithdrawn ProjectUpgradeEligibilityResponseOutputTargetUpgradeVersionsReleaseChannel = "withdrawn"
 )
 
-// Valid indicates whether the value is a known member of the ProjectUpgradeEligibilityResponseTargetUpgradeVersionsReleaseChannel enum.
-func (e ProjectUpgradeEligibilityResponseTargetUpgradeVersionsReleaseChannel) Valid() bool {
+// Valid indicates whether the value is a known member of the ProjectUpgradeEligibilityResponseOutputTargetUpgradeVersionsReleaseChannel enum.
+func (e ProjectUpgradeEligibilityResponseOutputTargetUpgradeVersionsReleaseChannel) Valid() bool {
 	switch e {
-	case ProjectUpgradeEligibilityResponseTargetUpgradeVersionsReleaseChannelAlpha:
+	case ProjectUpgradeEligibilityResponseOutputTargetUpgradeVersionsReleaseChannelAlpha:
 		return true
-	case ProjectUpgradeEligibilityResponseTargetUpgradeVersionsReleaseChannelBeta:
+	case ProjectUpgradeEligibilityResponseOutputTargetUpgradeVersionsReleaseChannelBeta:
 		return true
-	case ProjectUpgradeEligibilityResponseTargetUpgradeVersionsReleaseChannelGa:
+	case ProjectUpgradeEligibilityResponseOutputTargetUpgradeVersionsReleaseChannelGa:
 		return true
-	case ProjectUpgradeEligibilityResponseTargetUpgradeVersionsReleaseChannelInternal:
+	case ProjectUpgradeEligibilityResponseOutputTargetUpgradeVersionsReleaseChannelInternal:
 		return true
-	case ProjectUpgradeEligibilityResponseTargetUpgradeVersionsReleaseChannelPreview:
+	case ProjectUpgradeEligibilityResponseOutputTargetUpgradeVersionsReleaseChannelPreview:
 		return true
-	case ProjectUpgradeEligibilityResponseTargetUpgradeVersionsReleaseChannelWithdrawn:
+	case ProjectUpgradeEligibilityResponseOutputTargetUpgradeVersionsReleaseChannelWithdrawn:
 		return true
 	default:
 		return false
 	}
 }
 
-// Defines values for ProjectUpgradeEligibilityResponseValidationErrors0Type.
+// Defines values for ProjectUpgradeEligibilityResponseOutputValidationErrors0Type.
 const (
-	ObjectsDependingOnPgCron ProjectUpgradeEligibilityResponseValidationErrors0Type = "objects_depending_on_pg_cron"
+	ObjectsDependingOnPgCron ProjectUpgradeEligibilityResponseOutputValidationErrors0Type = "objects_depending_on_pg_cron"
 )
 
-// Valid indicates whether the value is a known member of the ProjectUpgradeEligibilityResponseValidationErrors0Type enum.
-func (e ProjectUpgradeEligibilityResponseValidationErrors0Type) Valid() bool {
+// Valid indicates whether the value is a known member of the ProjectUpgradeEligibilityResponseOutputValidationErrors0Type enum.
+func (e ProjectUpgradeEligibilityResponseOutputValidationErrors0Type) Valid() bool {
 	switch e {
 	case ObjectsDependingOnPgCron:
 		return true
@@ -2579,13 +2578,13 @@ func (e ProjectUpgradeEligibilityResponseValidationErrors0Type) Valid() bool {
 	}
 }
 
-// Defines values for ProjectUpgradeEligibilityResponseValidationErrors1Type.
+// Defines values for ProjectUpgradeEligibilityResponseOutputValidationErrors1Type.
 const (
-	IndexesReferencingLlToEarth ProjectUpgradeEligibilityResponseValidationErrors1Type = "indexes_referencing_ll_to_earth"
+	IndexesReferencingLlToEarth ProjectUpgradeEligibilityResponseOutputValidationErrors1Type = "indexes_referencing_ll_to_earth"
 )
 
-// Valid indicates whether the value is a known member of the ProjectUpgradeEligibilityResponseValidationErrors1Type enum.
-func (e ProjectUpgradeEligibilityResponseValidationErrors1Type) Valid() bool {
+// Valid indicates whether the value is a known member of the ProjectUpgradeEligibilityResponseOutputValidationErrors1Type enum.
+func (e ProjectUpgradeEligibilityResponseOutputValidationErrors1Type) Valid() bool {
 	switch e {
 	case IndexesReferencingLlToEarth:
 		return true
@@ -2594,13 +2593,13 @@ func (e ProjectUpgradeEligibilityResponseValidationErrors1Type) Valid() bool {
 	}
 }
 
-// Defines values for ProjectUpgradeEligibilityResponseValidationErrors2Type.
+// Defines values for ProjectUpgradeEligibilityResponseOutputValidationErrors2Type.
 const (
-	FunctionUsingObsoleteLang ProjectUpgradeEligibilityResponseValidationErrors2Type = "function_using_obsolete_lang"
+	FunctionUsingObsoleteLang ProjectUpgradeEligibilityResponseOutputValidationErrors2Type = "function_using_obsolete_lang"
 )
 
-// Valid indicates whether the value is a known member of the ProjectUpgradeEligibilityResponseValidationErrors2Type enum.
-func (e ProjectUpgradeEligibilityResponseValidationErrors2Type) Valid() bool {
+// Valid indicates whether the value is a known member of the ProjectUpgradeEligibilityResponseOutputValidationErrors2Type enum.
+func (e ProjectUpgradeEligibilityResponseOutputValidationErrors2Type) Valid() bool {
 	switch e {
 	case FunctionUsingObsoleteLang:
 		return true
@@ -2609,13 +2608,13 @@ func (e ProjectUpgradeEligibilityResponseValidationErrors2Type) Valid() bool {
 	}
 }
 
-// Defines values for ProjectUpgradeEligibilityResponseValidationErrors3Type.
+// Defines values for ProjectUpgradeEligibilityResponseOutputValidationErrors3Type.
 const (
-	UnsupportedExtension ProjectUpgradeEligibilityResponseValidationErrors3Type = "unsupported_extension"
+	UnsupportedExtension ProjectUpgradeEligibilityResponseOutputValidationErrors3Type = "unsupported_extension"
 )
 
-// Valid indicates whether the value is a known member of the ProjectUpgradeEligibilityResponseValidationErrors3Type enum.
-func (e ProjectUpgradeEligibilityResponseValidationErrors3Type) Valid() bool {
+// Valid indicates whether the value is a known member of the ProjectUpgradeEligibilityResponseOutputValidationErrors3Type enum.
+func (e ProjectUpgradeEligibilityResponseOutputValidationErrors3Type) Valid() bool {
 	switch e {
 	case UnsupportedExtension:
 		return true
@@ -2624,13 +2623,13 @@ func (e ProjectUpgradeEligibilityResponseValidationErrors3Type) Valid() bool {
 	}
 }
 
-// Defines values for ProjectUpgradeEligibilityResponseValidationErrors4Type.
+// Defines values for ProjectUpgradeEligibilityResponseOutputValidationErrors4Type.
 const (
-	UnsupportedFdwHandler ProjectUpgradeEligibilityResponseValidationErrors4Type = "unsupported_fdw_handler"
+	UnsupportedFdwHandler ProjectUpgradeEligibilityResponseOutputValidationErrors4Type = "unsupported_fdw_handler"
 )
 
-// Valid indicates whether the value is a known member of the ProjectUpgradeEligibilityResponseValidationErrors4Type enum.
-func (e ProjectUpgradeEligibilityResponseValidationErrors4Type) Valid() bool {
+// Valid indicates whether the value is a known member of the ProjectUpgradeEligibilityResponseOutputValidationErrors4Type enum.
+func (e ProjectUpgradeEligibilityResponseOutputValidationErrors4Type) Valid() bool {
 	switch e {
 	case UnsupportedFdwHandler:
 		return true
@@ -2639,13 +2638,13 @@ func (e ProjectUpgradeEligibilityResponseValidationErrors4Type) Valid() bool {
 	}
 }
 
-// Defines values for ProjectUpgradeEligibilityResponseValidationErrors5Type.
+// Defines values for ProjectUpgradeEligibilityResponseOutputValidationErrors5Type.
 const (
-	UnloggedTableWithPersistentSequence ProjectUpgradeEligibilityResponseValidationErrors5Type = "unlogged_table_with_persistent_sequence"
+	UnloggedTableWithPersistentSequence ProjectUpgradeEligibilityResponseOutputValidationErrors5Type = "unlogged_table_with_persistent_sequence"
 )
 
-// Valid indicates whether the value is a known member of the ProjectUpgradeEligibilityResponseValidationErrors5Type enum.
-func (e ProjectUpgradeEligibilityResponseValidationErrors5Type) Valid() bool {
+// Valid indicates whether the value is a known member of the ProjectUpgradeEligibilityResponseOutputValidationErrors5Type enum.
+func (e ProjectUpgradeEligibilityResponseOutputValidationErrors5Type) Valid() bool {
 	switch e {
 	case UnloggedTableWithPersistentSequence:
 		return true
@@ -2654,28 +2653,28 @@ func (e ProjectUpgradeEligibilityResponseValidationErrors5Type) Valid() bool {
 	}
 }
 
-// Defines values for ProjectUpgradeEligibilityResponseValidationErrors6ObjType0.
+// Defines values for ProjectUpgradeEligibilityResponseOutputValidationErrors6ObjType0.
 const (
-	ProjectUpgradeEligibilityResponseValidationErrors6ObjType0Table ProjectUpgradeEligibilityResponseValidationErrors6ObjType0 = "table"
+	ProjectUpgradeEligibilityResponseOutputValidationErrors6ObjType0Table ProjectUpgradeEligibilityResponseOutputValidationErrors6ObjType0 = "table"
 )
 
-// Valid indicates whether the value is a known member of the ProjectUpgradeEligibilityResponseValidationErrors6ObjType0 enum.
-func (e ProjectUpgradeEligibilityResponseValidationErrors6ObjType0) Valid() bool {
+// Valid indicates whether the value is a known member of the ProjectUpgradeEligibilityResponseOutputValidationErrors6ObjType0 enum.
+func (e ProjectUpgradeEligibilityResponseOutputValidationErrors6ObjType0) Valid() bool {
 	switch e {
-	case ProjectUpgradeEligibilityResponseValidationErrors6ObjType0Table:
+	case ProjectUpgradeEligibilityResponseOutputValidationErrors6ObjType0Table:
 		return true
 	default:
 		return false
 	}
 }
 
-// Defines values for ProjectUpgradeEligibilityResponseValidationErrors6ObjType1.
+// Defines values for ProjectUpgradeEligibilityResponseOutputValidationErrors6ObjType1.
 const (
-	Function ProjectUpgradeEligibilityResponseValidationErrors6ObjType1 = "function"
+	Function ProjectUpgradeEligibilityResponseOutputValidationErrors6ObjType1 = "function"
 )
 
-// Valid indicates whether the value is a known member of the ProjectUpgradeEligibilityResponseValidationErrors6ObjType1 enum.
-func (e ProjectUpgradeEligibilityResponseValidationErrors6ObjType1) Valid() bool {
+// Valid indicates whether the value is a known member of the ProjectUpgradeEligibilityResponseOutputValidationErrors6ObjType1 enum.
+func (e ProjectUpgradeEligibilityResponseOutputValidationErrors6ObjType1) Valid() bool {
 	switch e {
 	case Function:
 		return true
@@ -2684,13 +2683,13 @@ func (e ProjectUpgradeEligibilityResponseValidationErrors6ObjType1) Valid() bool
 	}
 }
 
-// Defines values for ProjectUpgradeEligibilityResponseValidationErrors6Type.
+// Defines values for ProjectUpgradeEligibilityResponseOutputValidationErrors6Type.
 const (
-	UserDefinedObjectsInInternalSchemas ProjectUpgradeEligibilityResponseValidationErrors6Type = "user_defined_objects_in_internal_schemas"
+	UserDefinedObjectsInInternalSchemas ProjectUpgradeEligibilityResponseOutputValidationErrors6Type = "user_defined_objects_in_internal_schemas"
 )
 
-// Valid indicates whether the value is a known member of the ProjectUpgradeEligibilityResponseValidationErrors6Type enum.
-func (e ProjectUpgradeEligibilityResponseValidationErrors6Type) Valid() bool {
+// Valid indicates whether the value is a known member of the ProjectUpgradeEligibilityResponseOutputValidationErrors6Type enum.
+func (e ProjectUpgradeEligibilityResponseOutputValidationErrors6Type) Valid() bool {
 	switch e {
 	case UserDefinedObjectsInInternalSchemas:
 		return true
@@ -2699,13 +2698,13 @@ func (e ProjectUpgradeEligibilityResponseValidationErrors6Type) Valid() bool {
 	}
 }
 
-// Defines values for ProjectUpgradeEligibilityResponseValidationErrors7Type.
+// Defines values for ProjectUpgradeEligibilityResponseOutputValidationErrors7Type.
 const (
-	ActiveReplicationSlot ProjectUpgradeEligibilityResponseValidationErrors7Type = "active_replication_slot"
+	ActiveReplicationSlot ProjectUpgradeEligibilityResponseOutputValidationErrors7Type = "active_replication_slot"
 )
 
-// Valid indicates whether the value is a known member of the ProjectUpgradeEligibilityResponseValidationErrors7Type enum.
-func (e ProjectUpgradeEligibilityResponseValidationErrors7Type) Valid() bool {
+// Valid indicates whether the value is a known member of the ProjectUpgradeEligibilityResponseOutputValidationErrors7Type enum.
+func (e ProjectUpgradeEligibilityResponseOutputValidationErrors7Type) Valid() bool {
 	switch e {
 	case ActiveReplicationSlot:
 		return true
@@ -2714,13 +2713,13 @@ func (e ProjectUpgradeEligibilityResponseValidationErrors7Type) Valid() bool {
 	}
 }
 
-// Defines values for ProjectUpgradeEligibilityResponseValidationErrors8Type.
+// Defines values for ProjectUpgradeEligibilityResponseOutputValidationErrors8Type.
 const (
-	X86Architecture ProjectUpgradeEligibilityResponseValidationErrors8Type = "x86_architecture"
+	X86Architecture ProjectUpgradeEligibilityResponseOutputValidationErrors8Type = "x86_architecture"
 )
 
-// Valid indicates whether the value is a known member of the ProjectUpgradeEligibilityResponseValidationErrors8Type enum.
-func (e ProjectUpgradeEligibilityResponseValidationErrors8Type) Valid() bool {
+// Valid indicates whether the value is a known member of the ProjectUpgradeEligibilityResponseOutputValidationErrors8Type enum.
+func (e ProjectUpgradeEligibilityResponseOutputValidationErrors8Type) Valid() bool {
 	switch e {
 	case X86Architecture:
 		return true
@@ -2729,13 +2728,13 @@ func (e ProjectUpgradeEligibilityResponseValidationErrors8Type) Valid() bool {
 	}
 }
 
-// Defines values for ProjectUpgradeEligibilityResponseValidationErrors9Type.
+// Defines values for ProjectUpgradeEligibilityResponseOutputValidationErrors9Type.
 const (
-	ProjectHibernating ProjectUpgradeEligibilityResponseValidationErrors9Type = "project_hibernating"
+	ProjectHibernating ProjectUpgradeEligibilityResponseOutputValidationErrors9Type = "project_hibernating"
 )
 
-// Valid indicates whether the value is a known member of the ProjectUpgradeEligibilityResponseValidationErrors9Type enum.
-func (e ProjectUpgradeEligibilityResponseValidationErrors9Type) Valid() bool {
+// Valid indicates whether the value is a known member of the ProjectUpgradeEligibilityResponseOutputValidationErrors9Type enum.
+func (e ProjectUpgradeEligibilityResponseOutputValidationErrors9Type) Valid() bool {
 	switch e {
 	case ProjectHibernating:
 		return true
@@ -2744,13 +2743,13 @@ func (e ProjectUpgradeEligibilityResponseValidationErrors9Type) Valid() bool {
 	}
 }
 
-// Defines values for ProjectUpgradeEligibilityResponseWarnings0Type.
+// Defines values for ProjectUpgradeEligibilityResponseOutputWarnings0Type.
 const (
-	PgGraphqlIntrospectionChange ProjectUpgradeEligibilityResponseWarnings0Type = "pg_graphql_introspection_change"
+	PgGraphqlIntrospectionChange ProjectUpgradeEligibilityResponseOutputWarnings0Type = "pg_graphql_introspection_change"
 )
 
-// Valid indicates whether the value is a known member of the ProjectUpgradeEligibilityResponseWarnings0Type enum.
-func (e ProjectUpgradeEligibilityResponseWarnings0Type) Valid() bool {
+// Valid indicates whether the value is a known member of the ProjectUpgradeEligibilityResponseOutputWarnings0Type enum.
+func (e ProjectUpgradeEligibilityResponseOutputWarnings0Type) Valid() bool {
 	switch e {
 	case PgGraphqlIntrospectionChange:
 		return true
@@ -2759,13 +2758,13 @@ func (e ProjectUpgradeEligibilityResponseWarnings0Type) Valid() bool {
 	}
 }
 
-// Defines values for ProjectUpgradeEligibilityResponseWarnings1Type.
+// Defines values for ProjectUpgradeEligibilityResponseOutputWarnings1Type.
 const (
-	LtreeReindexRequired ProjectUpgradeEligibilityResponseWarnings1Type = "ltree_reindex_required"
+	LtreeReindexRequired ProjectUpgradeEligibilityResponseOutputWarnings1Type = "ltree_reindex_required"
 )
 
-// Valid indicates whether the value is a known member of the ProjectUpgradeEligibilityResponseWarnings1Type enum.
-func (e ProjectUpgradeEligibilityResponseWarnings1Type) Valid() bool {
+// Valid indicates whether the value is a known member of the ProjectUpgradeEligibilityResponseOutputWarnings1Type enum.
+func (e ProjectUpgradeEligibilityResponseOutputWarnings1Type) Valid() bool {
 	switch e {
 	case LtreeReindexRequired:
 		return true
@@ -2774,13 +2773,13 @@ func (e ProjectUpgradeEligibilityResponseWarnings1Type) Valid() bool {
 	}
 }
 
-// Defines values for ProjectUpgradeEligibilityResponseWarnings2Type.
+// Defines values for ProjectUpgradeEligibilityResponseOutputWarnings2Type.
 const (
-	OperatorEstimatorGate ProjectUpgradeEligibilityResponseWarnings2Type = "operator_estimator_gate"
+	OperatorEstimatorGate ProjectUpgradeEligibilityResponseOutputWarnings2Type = "operator_estimator_gate"
 )
 
-// Valid indicates whether the value is a known member of the ProjectUpgradeEligibilityResponseWarnings2Type enum.
-func (e ProjectUpgradeEligibilityResponseWarnings2Type) Valid() bool {
+// Valid indicates whether the value is a known member of the ProjectUpgradeEligibilityResponseOutputWarnings2Type enum.
+func (e ProjectUpgradeEligibilityResponseOutputWarnings2Type) Valid() bool {
 	switch e {
 	case OperatorEstimatorGate:
 		return true
@@ -2789,13 +2788,13 @@ func (e ProjectUpgradeEligibilityResponseWarnings2Type) Valid() bool {
 	}
 }
 
-// Defines values for ProjectUpgradeEligibilityResponseWarnings3Type.
+// Defines values for ProjectUpgradeEligibilityResponseOutputWarnings3Type.
 const (
-	BtreeGistNanReindex ProjectUpgradeEligibilityResponseWarnings3Type = "btree_gist_nan_reindex"
+	BtreeGistNanReindex ProjectUpgradeEligibilityResponseOutputWarnings3Type = "btree_gist_nan_reindex"
 )
 
-// Valid indicates whether the value is a known member of the ProjectUpgradeEligibilityResponseWarnings3Type enum.
-func (e ProjectUpgradeEligibilityResponseWarnings3Type) Valid() bool {
+// Valid indicates whether the value is a known member of the ProjectUpgradeEligibilityResponseOutputWarnings3Type enum.
+func (e ProjectUpgradeEligibilityResponseOutputWarnings3Type) Valid() bool {
 	switch e {
 	case BtreeGistNanReindex:
 		return true
@@ -2804,312 +2803,312 @@ func (e ProjectUpgradeEligibilityResponseWarnings3Type) Valid() bool {
 	}
 }
 
-// Defines values for RegionsInfoAllSmartGroupCode.
+// Defines values for RegionsInfoOutputAllSmartGroupCode.
 const (
-	RegionsInfoAllSmartGroupCodeAmericas RegionsInfoAllSmartGroupCode = "americas"
-	RegionsInfoAllSmartGroupCodeApac     RegionsInfoAllSmartGroupCode = "apac"
-	RegionsInfoAllSmartGroupCodeEmea     RegionsInfoAllSmartGroupCode = "emea"
+	RegionsInfoOutputAllSmartGroupCodeAmericas RegionsInfoOutputAllSmartGroupCode = "americas"
+	RegionsInfoOutputAllSmartGroupCodeApac     RegionsInfoOutputAllSmartGroupCode = "apac"
+	RegionsInfoOutputAllSmartGroupCodeEmea     RegionsInfoOutputAllSmartGroupCode = "emea"
 )
 
-// Valid indicates whether the value is a known member of the RegionsInfoAllSmartGroupCode enum.
-func (e RegionsInfoAllSmartGroupCode) Valid() bool {
+// Valid indicates whether the value is a known member of the RegionsInfoOutputAllSmartGroupCode enum.
+func (e RegionsInfoOutputAllSmartGroupCode) Valid() bool {
 	switch e {
-	case RegionsInfoAllSmartGroupCodeAmericas:
+	case RegionsInfoOutputAllSmartGroupCodeAmericas:
 		return true
-	case RegionsInfoAllSmartGroupCodeApac:
+	case RegionsInfoOutputAllSmartGroupCodeApac:
 		return true
-	case RegionsInfoAllSmartGroupCodeEmea:
+	case RegionsInfoOutputAllSmartGroupCodeEmea:
 		return true
 	default:
 		return false
 	}
 }
 
-// Defines values for RegionsInfoAllSmartGroupType.
+// Defines values for RegionsInfoOutputAllSmartGroupType.
 const (
-	RegionsInfoAllSmartGroupTypeSmartGroup RegionsInfoAllSmartGroupType = "smartGroup"
+	RegionsInfoOutputAllSmartGroupTypeSmartGroup RegionsInfoOutputAllSmartGroupType = "smartGroup"
 )
 
-// Valid indicates whether the value is a known member of the RegionsInfoAllSmartGroupType enum.
-func (e RegionsInfoAllSmartGroupType) Valid() bool {
+// Valid indicates whether the value is a known member of the RegionsInfoOutputAllSmartGroupType enum.
+func (e RegionsInfoOutputAllSmartGroupType) Valid() bool {
 	switch e {
-	case RegionsInfoAllSmartGroupTypeSmartGroup:
+	case RegionsInfoOutputAllSmartGroupTypeSmartGroup:
 		return true
 	default:
 		return false
 	}
 }
 
-// Defines values for RegionsInfoAllSpecificCode.
+// Defines values for RegionsInfoOutputAllSpecificCode.
 const (
-	RegionsInfoAllSpecificCodeApEast1      RegionsInfoAllSpecificCode = "ap-east-1"
-	RegionsInfoAllSpecificCodeApNortheast1 RegionsInfoAllSpecificCode = "ap-northeast-1"
-	RegionsInfoAllSpecificCodeApNortheast2 RegionsInfoAllSpecificCode = "ap-northeast-2"
-	RegionsInfoAllSpecificCodeApSouth1     RegionsInfoAllSpecificCode = "ap-south-1"
-	RegionsInfoAllSpecificCodeApSoutheast1 RegionsInfoAllSpecificCode = "ap-southeast-1"
-	RegionsInfoAllSpecificCodeApSoutheast2 RegionsInfoAllSpecificCode = "ap-southeast-2"
-	RegionsInfoAllSpecificCodeCaCentral1   RegionsInfoAllSpecificCode = "ca-central-1"
-	RegionsInfoAllSpecificCodeEuCentral1   RegionsInfoAllSpecificCode = "eu-central-1"
-	RegionsInfoAllSpecificCodeEuCentral2   RegionsInfoAllSpecificCode = "eu-central-2"
-	RegionsInfoAllSpecificCodeEuNorth1     RegionsInfoAllSpecificCode = "eu-north-1"
-	RegionsInfoAllSpecificCodeEuWest1      RegionsInfoAllSpecificCode = "eu-west-1"
-	RegionsInfoAllSpecificCodeEuWest2      RegionsInfoAllSpecificCode = "eu-west-2"
-	RegionsInfoAllSpecificCodeEuWest3      RegionsInfoAllSpecificCode = "eu-west-3"
-	RegionsInfoAllSpecificCodeSaEast1      RegionsInfoAllSpecificCode = "sa-east-1"
-	RegionsInfoAllSpecificCodeUsEast1      RegionsInfoAllSpecificCode = "us-east-1"
-	RegionsInfoAllSpecificCodeUsEast2      RegionsInfoAllSpecificCode = "us-east-2"
-	RegionsInfoAllSpecificCodeUsWest1      RegionsInfoAllSpecificCode = "us-west-1"
-	RegionsInfoAllSpecificCodeUsWest2      RegionsInfoAllSpecificCode = "us-west-2"
+	RegionsInfoOutputAllSpecificCodeApEast1      RegionsInfoOutputAllSpecificCode = "ap-east-1"
+	RegionsInfoOutputAllSpecificCodeApNortheast1 RegionsInfoOutputAllSpecificCode = "ap-northeast-1"
+	RegionsInfoOutputAllSpecificCodeApNortheast2 RegionsInfoOutputAllSpecificCode = "ap-northeast-2"
+	RegionsInfoOutputAllSpecificCodeApSouth1     RegionsInfoOutputAllSpecificCode = "ap-south-1"
+	RegionsInfoOutputAllSpecificCodeApSoutheast1 RegionsInfoOutputAllSpecificCode = "ap-southeast-1"
+	RegionsInfoOutputAllSpecificCodeApSoutheast2 RegionsInfoOutputAllSpecificCode = "ap-southeast-2"
+	RegionsInfoOutputAllSpecificCodeCaCentral1   RegionsInfoOutputAllSpecificCode = "ca-central-1"
+	RegionsInfoOutputAllSpecificCodeEuCentral1   RegionsInfoOutputAllSpecificCode = "eu-central-1"
+	RegionsInfoOutputAllSpecificCodeEuCentral2   RegionsInfoOutputAllSpecificCode = "eu-central-2"
+	RegionsInfoOutputAllSpecificCodeEuNorth1     RegionsInfoOutputAllSpecificCode = "eu-north-1"
+	RegionsInfoOutputAllSpecificCodeEuWest1      RegionsInfoOutputAllSpecificCode = "eu-west-1"
+	RegionsInfoOutputAllSpecificCodeEuWest2      RegionsInfoOutputAllSpecificCode = "eu-west-2"
+	RegionsInfoOutputAllSpecificCodeEuWest3      RegionsInfoOutputAllSpecificCode = "eu-west-3"
+	RegionsInfoOutputAllSpecificCodeSaEast1      RegionsInfoOutputAllSpecificCode = "sa-east-1"
+	RegionsInfoOutputAllSpecificCodeUsEast1      RegionsInfoOutputAllSpecificCode = "us-east-1"
+	RegionsInfoOutputAllSpecificCodeUsEast2      RegionsInfoOutputAllSpecificCode = "us-east-2"
+	RegionsInfoOutputAllSpecificCodeUsWest1      RegionsInfoOutputAllSpecificCode = "us-west-1"
+	RegionsInfoOutputAllSpecificCodeUsWest2      RegionsInfoOutputAllSpecificCode = "us-west-2"
 )
 
-// Valid indicates whether the value is a known member of the RegionsInfoAllSpecificCode enum.
-func (e RegionsInfoAllSpecificCode) Valid() bool {
+// Valid indicates whether the value is a known member of the RegionsInfoOutputAllSpecificCode enum.
+func (e RegionsInfoOutputAllSpecificCode) Valid() bool {
 	switch e {
-	case RegionsInfoAllSpecificCodeApEast1:
+	case RegionsInfoOutputAllSpecificCodeApEast1:
 		return true
-	case RegionsInfoAllSpecificCodeApNortheast1:
+	case RegionsInfoOutputAllSpecificCodeApNortheast1:
 		return true
-	case RegionsInfoAllSpecificCodeApNortheast2:
+	case RegionsInfoOutputAllSpecificCodeApNortheast2:
 		return true
-	case RegionsInfoAllSpecificCodeApSouth1:
+	case RegionsInfoOutputAllSpecificCodeApSouth1:
 		return true
-	case RegionsInfoAllSpecificCodeApSoutheast1:
+	case RegionsInfoOutputAllSpecificCodeApSoutheast1:
 		return true
-	case RegionsInfoAllSpecificCodeApSoutheast2:
+	case RegionsInfoOutputAllSpecificCodeApSoutheast2:
 		return true
-	case RegionsInfoAllSpecificCodeCaCentral1:
+	case RegionsInfoOutputAllSpecificCodeCaCentral1:
 		return true
-	case RegionsInfoAllSpecificCodeEuCentral1:
+	case RegionsInfoOutputAllSpecificCodeEuCentral1:
 		return true
-	case RegionsInfoAllSpecificCodeEuCentral2:
+	case RegionsInfoOutputAllSpecificCodeEuCentral2:
 		return true
-	case RegionsInfoAllSpecificCodeEuNorth1:
+	case RegionsInfoOutputAllSpecificCodeEuNorth1:
 		return true
-	case RegionsInfoAllSpecificCodeEuWest1:
+	case RegionsInfoOutputAllSpecificCodeEuWest1:
 		return true
-	case RegionsInfoAllSpecificCodeEuWest2:
+	case RegionsInfoOutputAllSpecificCodeEuWest2:
 		return true
-	case RegionsInfoAllSpecificCodeEuWest3:
+	case RegionsInfoOutputAllSpecificCodeEuWest3:
 		return true
-	case RegionsInfoAllSpecificCodeSaEast1:
+	case RegionsInfoOutputAllSpecificCodeSaEast1:
 		return true
-	case RegionsInfoAllSpecificCodeUsEast1:
+	case RegionsInfoOutputAllSpecificCodeUsEast1:
 		return true
-	case RegionsInfoAllSpecificCodeUsEast2:
+	case RegionsInfoOutputAllSpecificCodeUsEast2:
 		return true
-	case RegionsInfoAllSpecificCodeUsWest1:
+	case RegionsInfoOutputAllSpecificCodeUsWest1:
 		return true
-	case RegionsInfoAllSpecificCodeUsWest2:
+	case RegionsInfoOutputAllSpecificCodeUsWest2:
 		return true
 	default:
 		return false
 	}
 }
 
-// Defines values for RegionsInfoAllSpecificProvider.
+// Defines values for RegionsInfoOutputAllSpecificProvider.
 const (
-	RegionsInfoAllSpecificProviderAWS       RegionsInfoAllSpecificProvider = "AWS"
-	RegionsInfoAllSpecificProviderAWSK8S    RegionsInfoAllSpecificProvider = "AWS_K8S"
-	RegionsInfoAllSpecificProviderAWSNIMBUS RegionsInfoAllSpecificProvider = "AWS_NIMBUS"
+	RegionsInfoOutputAllSpecificProviderAWS       RegionsInfoOutputAllSpecificProvider = "AWS"
+	RegionsInfoOutputAllSpecificProviderAWSK8S    RegionsInfoOutputAllSpecificProvider = "AWS_K8S"
+	RegionsInfoOutputAllSpecificProviderAWSNIMBUS RegionsInfoOutputAllSpecificProvider = "AWS_NIMBUS"
 )
 
-// Valid indicates whether the value is a known member of the RegionsInfoAllSpecificProvider enum.
-func (e RegionsInfoAllSpecificProvider) Valid() bool {
+// Valid indicates whether the value is a known member of the RegionsInfoOutputAllSpecificProvider enum.
+func (e RegionsInfoOutputAllSpecificProvider) Valid() bool {
 	switch e {
-	case RegionsInfoAllSpecificProviderAWS:
+	case RegionsInfoOutputAllSpecificProviderAWS:
 		return true
-	case RegionsInfoAllSpecificProviderAWSK8S:
+	case RegionsInfoOutputAllSpecificProviderAWSK8S:
 		return true
-	case RegionsInfoAllSpecificProviderAWSNIMBUS:
+	case RegionsInfoOutputAllSpecificProviderAWSNIMBUS:
 		return true
 	default:
 		return false
 	}
 }
 
-// Defines values for RegionsInfoAllSpecificStatus.
+// Defines values for RegionsInfoOutputAllSpecificStatus.
 const (
-	RegionsInfoAllSpecificStatusCapacity RegionsInfoAllSpecificStatus = "capacity"
-	RegionsInfoAllSpecificStatusOther    RegionsInfoAllSpecificStatus = "other"
+	RegionsInfoOutputAllSpecificStatusCapacity RegionsInfoOutputAllSpecificStatus = "capacity"
+	RegionsInfoOutputAllSpecificStatusOther    RegionsInfoOutputAllSpecificStatus = "other"
 )
 
-// Valid indicates whether the value is a known member of the RegionsInfoAllSpecificStatus enum.
-func (e RegionsInfoAllSpecificStatus) Valid() bool {
+// Valid indicates whether the value is a known member of the RegionsInfoOutputAllSpecificStatus enum.
+func (e RegionsInfoOutputAllSpecificStatus) Valid() bool {
 	switch e {
-	case RegionsInfoAllSpecificStatusCapacity:
+	case RegionsInfoOutputAllSpecificStatusCapacity:
 		return true
-	case RegionsInfoAllSpecificStatusOther:
+	case RegionsInfoOutputAllSpecificStatusOther:
 		return true
 	default:
 		return false
 	}
 }
 
-// Defines values for RegionsInfoAllSpecificType.
+// Defines values for RegionsInfoOutputAllSpecificType.
 const (
-	RegionsInfoAllSpecificTypeSpecific RegionsInfoAllSpecificType = "specific"
+	RegionsInfoOutputAllSpecificTypeSpecific RegionsInfoOutputAllSpecificType = "specific"
 )
 
-// Valid indicates whether the value is a known member of the RegionsInfoAllSpecificType enum.
-func (e RegionsInfoAllSpecificType) Valid() bool {
+// Valid indicates whether the value is a known member of the RegionsInfoOutputAllSpecificType enum.
+func (e RegionsInfoOutputAllSpecificType) Valid() bool {
 	switch e {
-	case RegionsInfoAllSpecificTypeSpecific:
+	case RegionsInfoOutputAllSpecificTypeSpecific:
 		return true
 	default:
 		return false
 	}
 }
 
-// Defines values for RegionsInfoRecommendationsSmartGroupCode.
+// Defines values for RegionsInfoOutputRecommendationsSmartGroupCode.
 const (
-	RegionsInfoRecommendationsSmartGroupCodeAmericas RegionsInfoRecommendationsSmartGroupCode = "americas"
-	RegionsInfoRecommendationsSmartGroupCodeApac     RegionsInfoRecommendationsSmartGroupCode = "apac"
-	RegionsInfoRecommendationsSmartGroupCodeEmea     RegionsInfoRecommendationsSmartGroupCode = "emea"
+	RegionsInfoOutputRecommendationsSmartGroupCodeAmericas RegionsInfoOutputRecommendationsSmartGroupCode = "americas"
+	RegionsInfoOutputRecommendationsSmartGroupCodeApac     RegionsInfoOutputRecommendationsSmartGroupCode = "apac"
+	RegionsInfoOutputRecommendationsSmartGroupCodeEmea     RegionsInfoOutputRecommendationsSmartGroupCode = "emea"
 )
 
-// Valid indicates whether the value is a known member of the RegionsInfoRecommendationsSmartGroupCode enum.
-func (e RegionsInfoRecommendationsSmartGroupCode) Valid() bool {
+// Valid indicates whether the value is a known member of the RegionsInfoOutputRecommendationsSmartGroupCode enum.
+func (e RegionsInfoOutputRecommendationsSmartGroupCode) Valid() bool {
 	switch e {
-	case RegionsInfoRecommendationsSmartGroupCodeAmericas:
+	case RegionsInfoOutputRecommendationsSmartGroupCodeAmericas:
 		return true
-	case RegionsInfoRecommendationsSmartGroupCodeApac:
+	case RegionsInfoOutputRecommendationsSmartGroupCodeApac:
 		return true
-	case RegionsInfoRecommendationsSmartGroupCodeEmea:
+	case RegionsInfoOutputRecommendationsSmartGroupCodeEmea:
 		return true
 	default:
 		return false
 	}
 }
 
-// Defines values for RegionsInfoRecommendationsSmartGroupType.
+// Defines values for RegionsInfoOutputRecommendationsSmartGroupType.
 const (
-	RegionsInfoRecommendationsSmartGroupTypeSmartGroup RegionsInfoRecommendationsSmartGroupType = "smartGroup"
+	RegionsInfoOutputRecommendationsSmartGroupTypeSmartGroup RegionsInfoOutputRecommendationsSmartGroupType = "smartGroup"
 )
 
-// Valid indicates whether the value is a known member of the RegionsInfoRecommendationsSmartGroupType enum.
-func (e RegionsInfoRecommendationsSmartGroupType) Valid() bool {
+// Valid indicates whether the value is a known member of the RegionsInfoOutputRecommendationsSmartGroupType enum.
+func (e RegionsInfoOutputRecommendationsSmartGroupType) Valid() bool {
 	switch e {
-	case RegionsInfoRecommendationsSmartGroupTypeSmartGroup:
+	case RegionsInfoOutputRecommendationsSmartGroupTypeSmartGroup:
 		return true
 	default:
 		return false
 	}
 }
 
-// Defines values for RegionsInfoRecommendationsSpecificCode.
+// Defines values for RegionsInfoOutputRecommendationsSpecificCode.
 const (
-	RegionsInfoRecommendationsSpecificCodeApEast1      RegionsInfoRecommendationsSpecificCode = "ap-east-1"
-	RegionsInfoRecommendationsSpecificCodeApNortheast1 RegionsInfoRecommendationsSpecificCode = "ap-northeast-1"
-	RegionsInfoRecommendationsSpecificCodeApNortheast2 RegionsInfoRecommendationsSpecificCode = "ap-northeast-2"
-	RegionsInfoRecommendationsSpecificCodeApSouth1     RegionsInfoRecommendationsSpecificCode = "ap-south-1"
-	RegionsInfoRecommendationsSpecificCodeApSoutheast1 RegionsInfoRecommendationsSpecificCode = "ap-southeast-1"
-	RegionsInfoRecommendationsSpecificCodeApSoutheast2 RegionsInfoRecommendationsSpecificCode = "ap-southeast-2"
-	RegionsInfoRecommendationsSpecificCodeCaCentral1   RegionsInfoRecommendationsSpecificCode = "ca-central-1"
-	RegionsInfoRecommendationsSpecificCodeEuCentral1   RegionsInfoRecommendationsSpecificCode = "eu-central-1"
-	RegionsInfoRecommendationsSpecificCodeEuCentral2   RegionsInfoRecommendationsSpecificCode = "eu-central-2"
-	RegionsInfoRecommendationsSpecificCodeEuNorth1     RegionsInfoRecommendationsSpecificCode = "eu-north-1"
-	RegionsInfoRecommendationsSpecificCodeEuWest1      RegionsInfoRecommendationsSpecificCode = "eu-west-1"
-	RegionsInfoRecommendationsSpecificCodeEuWest2      RegionsInfoRecommendationsSpecificCode = "eu-west-2"
-	RegionsInfoRecommendationsSpecificCodeEuWest3      RegionsInfoRecommendationsSpecificCode = "eu-west-3"
-	RegionsInfoRecommendationsSpecificCodeSaEast1      RegionsInfoRecommendationsSpecificCode = "sa-east-1"
-	RegionsInfoRecommendationsSpecificCodeUsEast1      RegionsInfoRecommendationsSpecificCode = "us-east-1"
-	RegionsInfoRecommendationsSpecificCodeUsEast2      RegionsInfoRecommendationsSpecificCode = "us-east-2"
-	RegionsInfoRecommendationsSpecificCodeUsWest1      RegionsInfoRecommendationsSpecificCode = "us-west-1"
-	RegionsInfoRecommendationsSpecificCodeUsWest2      RegionsInfoRecommendationsSpecificCode = "us-west-2"
+	RegionsInfoOutputRecommendationsSpecificCodeApEast1      RegionsInfoOutputRecommendationsSpecificCode = "ap-east-1"
+	RegionsInfoOutputRecommendationsSpecificCodeApNortheast1 RegionsInfoOutputRecommendationsSpecificCode = "ap-northeast-1"
+	RegionsInfoOutputRecommendationsSpecificCodeApNortheast2 RegionsInfoOutputRecommendationsSpecificCode = "ap-northeast-2"
+	RegionsInfoOutputRecommendationsSpecificCodeApSouth1     RegionsInfoOutputRecommendationsSpecificCode = "ap-south-1"
+	RegionsInfoOutputRecommendationsSpecificCodeApSoutheast1 RegionsInfoOutputRecommendationsSpecificCode = "ap-southeast-1"
+	RegionsInfoOutputRecommendationsSpecificCodeApSoutheast2 RegionsInfoOutputRecommendationsSpecificCode = "ap-southeast-2"
+	RegionsInfoOutputRecommendationsSpecificCodeCaCentral1   RegionsInfoOutputRecommendationsSpecificCode = "ca-central-1"
+	RegionsInfoOutputRecommendationsSpecificCodeEuCentral1   RegionsInfoOutputRecommendationsSpecificCode = "eu-central-1"
+	RegionsInfoOutputRecommendationsSpecificCodeEuCentral2   RegionsInfoOutputRecommendationsSpecificCode = "eu-central-2"
+	RegionsInfoOutputRecommendationsSpecificCodeEuNorth1     RegionsInfoOutputRecommendationsSpecificCode = "eu-north-1"
+	RegionsInfoOutputRecommendationsSpecificCodeEuWest1      RegionsInfoOutputRecommendationsSpecificCode = "eu-west-1"
+	RegionsInfoOutputRecommendationsSpecificCodeEuWest2      RegionsInfoOutputRecommendationsSpecificCode = "eu-west-2"
+	RegionsInfoOutputRecommendationsSpecificCodeEuWest3      RegionsInfoOutputRecommendationsSpecificCode = "eu-west-3"
+	RegionsInfoOutputRecommendationsSpecificCodeSaEast1      RegionsInfoOutputRecommendationsSpecificCode = "sa-east-1"
+	RegionsInfoOutputRecommendationsSpecificCodeUsEast1      RegionsInfoOutputRecommendationsSpecificCode = "us-east-1"
+	RegionsInfoOutputRecommendationsSpecificCodeUsEast2      RegionsInfoOutputRecommendationsSpecificCode = "us-east-2"
+	RegionsInfoOutputRecommendationsSpecificCodeUsWest1      RegionsInfoOutputRecommendationsSpecificCode = "us-west-1"
+	RegionsInfoOutputRecommendationsSpecificCodeUsWest2      RegionsInfoOutputRecommendationsSpecificCode = "us-west-2"
 )
 
-// Valid indicates whether the value is a known member of the RegionsInfoRecommendationsSpecificCode enum.
-func (e RegionsInfoRecommendationsSpecificCode) Valid() bool {
+// Valid indicates whether the value is a known member of the RegionsInfoOutputRecommendationsSpecificCode enum.
+func (e RegionsInfoOutputRecommendationsSpecificCode) Valid() bool {
 	switch e {
-	case RegionsInfoRecommendationsSpecificCodeApEast1:
+	case RegionsInfoOutputRecommendationsSpecificCodeApEast1:
 		return true
-	case RegionsInfoRecommendationsSpecificCodeApNortheast1:
+	case RegionsInfoOutputRecommendationsSpecificCodeApNortheast1:
 		return true
-	case RegionsInfoRecommendationsSpecificCodeApNortheast2:
+	case RegionsInfoOutputRecommendationsSpecificCodeApNortheast2:
 		return true
-	case RegionsInfoRecommendationsSpecificCodeApSouth1:
+	case RegionsInfoOutputRecommendationsSpecificCodeApSouth1:
 		return true
-	case RegionsInfoRecommendationsSpecificCodeApSoutheast1:
+	case RegionsInfoOutputRecommendationsSpecificCodeApSoutheast1:
 		return true
-	case RegionsInfoRecommendationsSpecificCodeApSoutheast2:
+	case RegionsInfoOutputRecommendationsSpecificCodeApSoutheast2:
 		return true
-	case RegionsInfoRecommendationsSpecificCodeCaCentral1:
+	case RegionsInfoOutputRecommendationsSpecificCodeCaCentral1:
 		return true
-	case RegionsInfoRecommendationsSpecificCodeEuCentral1:
+	case RegionsInfoOutputRecommendationsSpecificCodeEuCentral1:
 		return true
-	case RegionsInfoRecommendationsSpecificCodeEuCentral2:
+	case RegionsInfoOutputRecommendationsSpecificCodeEuCentral2:
 		return true
-	case RegionsInfoRecommendationsSpecificCodeEuNorth1:
+	case RegionsInfoOutputRecommendationsSpecificCodeEuNorth1:
 		return true
-	case RegionsInfoRecommendationsSpecificCodeEuWest1:
+	case RegionsInfoOutputRecommendationsSpecificCodeEuWest1:
 		return true
-	case RegionsInfoRecommendationsSpecificCodeEuWest2:
+	case RegionsInfoOutputRecommendationsSpecificCodeEuWest2:
 		return true
-	case RegionsInfoRecommendationsSpecificCodeEuWest3:
+	case RegionsInfoOutputRecommendationsSpecificCodeEuWest3:
 		return true
-	case RegionsInfoRecommendationsSpecificCodeSaEast1:
+	case RegionsInfoOutputRecommendationsSpecificCodeSaEast1:
 		return true
-	case RegionsInfoRecommendationsSpecificCodeUsEast1:
+	case RegionsInfoOutputRecommendationsSpecificCodeUsEast1:
 		return true
-	case RegionsInfoRecommendationsSpecificCodeUsEast2:
+	case RegionsInfoOutputRecommendationsSpecificCodeUsEast2:
 		return true
-	case RegionsInfoRecommendationsSpecificCodeUsWest1:
+	case RegionsInfoOutputRecommendationsSpecificCodeUsWest1:
 		return true
-	case RegionsInfoRecommendationsSpecificCodeUsWest2:
+	case RegionsInfoOutputRecommendationsSpecificCodeUsWest2:
 		return true
 	default:
 		return false
 	}
 }
 
-// Defines values for RegionsInfoRecommendationsSpecificProvider.
+// Defines values for RegionsInfoOutputRecommendationsSpecificProvider.
 const (
-	RegionsInfoRecommendationsSpecificProviderAWS       RegionsInfoRecommendationsSpecificProvider = "AWS"
-	RegionsInfoRecommendationsSpecificProviderAWSK8S    RegionsInfoRecommendationsSpecificProvider = "AWS_K8S"
-	RegionsInfoRecommendationsSpecificProviderAWSNIMBUS RegionsInfoRecommendationsSpecificProvider = "AWS_NIMBUS"
+	RegionsInfoOutputRecommendationsSpecificProviderAWS       RegionsInfoOutputRecommendationsSpecificProvider = "AWS"
+	RegionsInfoOutputRecommendationsSpecificProviderAWSK8S    RegionsInfoOutputRecommendationsSpecificProvider = "AWS_K8S"
+	RegionsInfoOutputRecommendationsSpecificProviderAWSNIMBUS RegionsInfoOutputRecommendationsSpecificProvider = "AWS_NIMBUS"
 )
 
-// Valid indicates whether the value is a known member of the RegionsInfoRecommendationsSpecificProvider enum.
-func (e RegionsInfoRecommendationsSpecificProvider) Valid() bool {
+// Valid indicates whether the value is a known member of the RegionsInfoOutputRecommendationsSpecificProvider enum.
+func (e RegionsInfoOutputRecommendationsSpecificProvider) Valid() bool {
 	switch e {
-	case RegionsInfoRecommendationsSpecificProviderAWS:
+	case RegionsInfoOutputRecommendationsSpecificProviderAWS:
 		return true
-	case RegionsInfoRecommendationsSpecificProviderAWSK8S:
+	case RegionsInfoOutputRecommendationsSpecificProviderAWSK8S:
 		return true
-	case RegionsInfoRecommendationsSpecificProviderAWSNIMBUS:
+	case RegionsInfoOutputRecommendationsSpecificProviderAWSNIMBUS:
 		return true
 	default:
 		return false
 	}
 }
 
-// Defines values for RegionsInfoRecommendationsSpecificStatus.
+// Defines values for RegionsInfoOutputRecommendationsSpecificStatus.
 const (
-	RegionsInfoRecommendationsSpecificStatusCapacity RegionsInfoRecommendationsSpecificStatus = "capacity"
-	RegionsInfoRecommendationsSpecificStatusOther    RegionsInfoRecommendationsSpecificStatus = "other"
+	RegionsInfoOutputRecommendationsSpecificStatusCapacity RegionsInfoOutputRecommendationsSpecificStatus = "capacity"
+	RegionsInfoOutputRecommendationsSpecificStatusOther    RegionsInfoOutputRecommendationsSpecificStatus = "other"
 )
 
-// Valid indicates whether the value is a known member of the RegionsInfoRecommendationsSpecificStatus enum.
-func (e RegionsInfoRecommendationsSpecificStatus) Valid() bool {
+// Valid indicates whether the value is a known member of the RegionsInfoOutputRecommendationsSpecificStatus enum.
+func (e RegionsInfoOutputRecommendationsSpecificStatus) Valid() bool {
 	switch e {
-	case RegionsInfoRecommendationsSpecificStatusCapacity:
+	case RegionsInfoOutputRecommendationsSpecificStatusCapacity:
 		return true
-	case RegionsInfoRecommendationsSpecificStatusOther:
+	case RegionsInfoOutputRecommendationsSpecificStatusOther:
 		return true
 	default:
 		return false
 	}
 }
 
-// Defines values for RegionsInfoRecommendationsSpecificType.
+// Defines values for RegionsInfoOutputRecommendationsSpecificType.
 const (
-	RegionsInfoRecommendationsSpecificTypeSpecific RegionsInfoRecommendationsSpecificType = "specific"
+	RegionsInfoOutputRecommendationsSpecificTypeSpecific RegionsInfoOutputRecommendationsSpecificType = "specific"
 )
 
-// Valid indicates whether the value is a known member of the RegionsInfoRecommendationsSpecificType enum.
-func (e RegionsInfoRecommendationsSpecificType) Valid() bool {
+// Valid indicates whether the value is a known member of the RegionsInfoOutputRecommendationsSpecificType enum.
+func (e RegionsInfoOutputRecommendationsSpecificType) Valid() bool {
 	switch e {
-	case RegionsInfoRecommendationsSpecificTypeSpecific:
+	case RegionsInfoOutputRecommendationsSpecificTypeSpecific:
 		return true
 	default:
 		return false
@@ -3182,228 +3181,228 @@ func (e SetUpReadReplicaBodyReadReplicaRegion) Valid() bool {
 	}
 }
 
-// Defines values for SigningKeyResponseAlgorithm.
+// Defines values for SigningKeyResponseOutputAlgorithm.
 const (
-	SigningKeyResponseAlgorithmES256 SigningKeyResponseAlgorithm = "ES256"
-	SigningKeyResponseAlgorithmEdDSA SigningKeyResponseAlgorithm = "EdDSA"
-	SigningKeyResponseAlgorithmHS256 SigningKeyResponseAlgorithm = "HS256"
-	SigningKeyResponseAlgorithmRS256 SigningKeyResponseAlgorithm = "RS256"
+	SigningKeyResponseOutputAlgorithmES256 SigningKeyResponseOutputAlgorithm = "ES256"
+	SigningKeyResponseOutputAlgorithmEdDSA SigningKeyResponseOutputAlgorithm = "EdDSA"
+	SigningKeyResponseOutputAlgorithmHS256 SigningKeyResponseOutputAlgorithm = "HS256"
+	SigningKeyResponseOutputAlgorithmRS256 SigningKeyResponseOutputAlgorithm = "RS256"
 )
 
-// Valid indicates whether the value is a known member of the SigningKeyResponseAlgorithm enum.
-func (e SigningKeyResponseAlgorithm) Valid() bool {
+// Valid indicates whether the value is a known member of the SigningKeyResponseOutputAlgorithm enum.
+func (e SigningKeyResponseOutputAlgorithm) Valid() bool {
 	switch e {
-	case SigningKeyResponseAlgorithmES256:
+	case SigningKeyResponseOutputAlgorithmES256:
 		return true
-	case SigningKeyResponseAlgorithmEdDSA:
+	case SigningKeyResponseOutputAlgorithmEdDSA:
 		return true
-	case SigningKeyResponseAlgorithmHS256:
+	case SigningKeyResponseOutputAlgorithmHS256:
 		return true
-	case SigningKeyResponseAlgorithmRS256:
+	case SigningKeyResponseOutputAlgorithmRS256:
 		return true
 	default:
 		return false
 	}
 }
 
-// Defines values for SigningKeyResponseStatus.
+// Defines values for SigningKeyResponseOutputStatus.
 const (
-	SigningKeyResponseStatusInUse          SigningKeyResponseStatus = "in_use"
-	SigningKeyResponseStatusPreviouslyUsed SigningKeyResponseStatus = "previously_used"
-	SigningKeyResponseStatusRevoked        SigningKeyResponseStatus = "revoked"
-	SigningKeyResponseStatusStandby        SigningKeyResponseStatus = "standby"
+	SigningKeyResponseOutputStatusInUse          SigningKeyResponseOutputStatus = "in_use"
+	SigningKeyResponseOutputStatusPreviouslyUsed SigningKeyResponseOutputStatus = "previously_used"
+	SigningKeyResponseOutputStatusRevoked        SigningKeyResponseOutputStatus = "revoked"
+	SigningKeyResponseOutputStatusStandby        SigningKeyResponseOutputStatus = "standby"
 )
 
-// Valid indicates whether the value is a known member of the SigningKeyResponseStatus enum.
-func (e SigningKeyResponseStatus) Valid() bool {
+// Valid indicates whether the value is a known member of the SigningKeyResponseOutputStatus enum.
+func (e SigningKeyResponseOutputStatus) Valid() bool {
 	switch e {
-	case SigningKeyResponseStatusInUse:
+	case SigningKeyResponseOutputStatusInUse:
 		return true
-	case SigningKeyResponseStatusPreviouslyUsed:
+	case SigningKeyResponseOutputStatusPreviouslyUsed:
 		return true
-	case SigningKeyResponseStatusRevoked:
+	case SigningKeyResponseOutputStatusRevoked:
 		return true
-	case SigningKeyResponseStatusStandby:
+	case SigningKeyResponseOutputStatusStandby:
 		return true
 	default:
 		return false
 	}
 }
 
-// Defines values for SigningKeysResponseKeysAlgorithm.
+// Defines values for SigningKeysResponseOutputKeysAlgorithm.
 const (
-	SigningKeysResponseKeysAlgorithmES256 SigningKeysResponseKeysAlgorithm = "ES256"
-	SigningKeysResponseKeysAlgorithmEdDSA SigningKeysResponseKeysAlgorithm = "EdDSA"
-	SigningKeysResponseKeysAlgorithmHS256 SigningKeysResponseKeysAlgorithm = "HS256"
-	SigningKeysResponseKeysAlgorithmRS256 SigningKeysResponseKeysAlgorithm = "RS256"
+	SigningKeysResponseOutputKeysAlgorithmES256 SigningKeysResponseOutputKeysAlgorithm = "ES256"
+	SigningKeysResponseOutputKeysAlgorithmEdDSA SigningKeysResponseOutputKeysAlgorithm = "EdDSA"
+	SigningKeysResponseOutputKeysAlgorithmHS256 SigningKeysResponseOutputKeysAlgorithm = "HS256"
+	SigningKeysResponseOutputKeysAlgorithmRS256 SigningKeysResponseOutputKeysAlgorithm = "RS256"
 )
 
-// Valid indicates whether the value is a known member of the SigningKeysResponseKeysAlgorithm enum.
-func (e SigningKeysResponseKeysAlgorithm) Valid() bool {
+// Valid indicates whether the value is a known member of the SigningKeysResponseOutputKeysAlgorithm enum.
+func (e SigningKeysResponseOutputKeysAlgorithm) Valid() bool {
 	switch e {
-	case SigningKeysResponseKeysAlgorithmES256:
+	case SigningKeysResponseOutputKeysAlgorithmES256:
 		return true
-	case SigningKeysResponseKeysAlgorithmEdDSA:
+	case SigningKeysResponseOutputKeysAlgorithmEdDSA:
 		return true
-	case SigningKeysResponseKeysAlgorithmHS256:
+	case SigningKeysResponseOutputKeysAlgorithmHS256:
 		return true
-	case SigningKeysResponseKeysAlgorithmRS256:
+	case SigningKeysResponseOutputKeysAlgorithmRS256:
 		return true
 	default:
 		return false
 	}
 }
 
-// Defines values for SigningKeysResponseKeysStatus.
+// Defines values for SigningKeysResponseOutputKeysStatus.
 const (
-	SigningKeysResponseKeysStatusInUse          SigningKeysResponseKeysStatus = "in_use"
-	SigningKeysResponseKeysStatusPreviouslyUsed SigningKeysResponseKeysStatus = "previously_used"
-	SigningKeysResponseKeysStatusRevoked        SigningKeysResponseKeysStatus = "revoked"
-	SigningKeysResponseKeysStatusStandby        SigningKeysResponseKeysStatus = "standby"
+	SigningKeysResponseOutputKeysStatusInUse          SigningKeysResponseOutputKeysStatus = "in_use"
+	SigningKeysResponseOutputKeysStatusPreviouslyUsed SigningKeysResponseOutputKeysStatus = "previously_used"
+	SigningKeysResponseOutputKeysStatusRevoked        SigningKeysResponseOutputKeysStatus = "revoked"
+	SigningKeysResponseOutputKeysStatusStandby        SigningKeysResponseOutputKeysStatus = "standby"
 )
 
-// Valid indicates whether the value is a known member of the SigningKeysResponseKeysStatus enum.
-func (e SigningKeysResponseKeysStatus) Valid() bool {
+// Valid indicates whether the value is a known member of the SigningKeysResponseOutputKeysStatus enum.
+func (e SigningKeysResponseOutputKeysStatus) Valid() bool {
 	switch e {
-	case SigningKeysResponseKeysStatusInUse:
+	case SigningKeysResponseOutputKeysStatusInUse:
 		return true
-	case SigningKeysResponseKeysStatusPreviouslyUsed:
+	case SigningKeysResponseOutputKeysStatusPreviouslyUsed:
 		return true
-	case SigningKeysResponseKeysStatusRevoked:
+	case SigningKeysResponseOutputKeysStatusRevoked:
 		return true
-	case SigningKeysResponseKeysStatusStandby:
+	case SigningKeysResponseOutputKeysStatusStandby:
 		return true
 	default:
 		return false
 	}
 }
 
-// Defines values for SnippetListDataType.
+// Defines values for SnippetListOutputDataType.
 const (
-	SnippetListDataTypeSql SnippetListDataType = "sql"
+	SnippetListOutputDataTypeSql SnippetListOutputDataType = "sql"
 )
 
-// Valid indicates whether the value is a known member of the SnippetListDataType enum.
-func (e SnippetListDataType) Valid() bool {
+// Valid indicates whether the value is a known member of the SnippetListOutputDataType enum.
+func (e SnippetListOutputDataType) Valid() bool {
 	switch e {
-	case SnippetListDataTypeSql:
+	case SnippetListOutputDataTypeSql:
 		return true
 	default:
 		return false
 	}
 }
 
-// Defines values for SnippetListDataVisibility.
+// Defines values for SnippetListOutputDataVisibility.
 const (
-	SnippetListDataVisibilityOrg     SnippetListDataVisibility = "org"
-	SnippetListDataVisibilityProject SnippetListDataVisibility = "project"
-	SnippetListDataVisibilityPublic  SnippetListDataVisibility = "public"
-	SnippetListDataVisibilityUser    SnippetListDataVisibility = "user"
+	SnippetListOutputDataVisibilityOrg     SnippetListOutputDataVisibility = "org"
+	SnippetListOutputDataVisibilityProject SnippetListOutputDataVisibility = "project"
+	SnippetListOutputDataVisibilityPublic  SnippetListOutputDataVisibility = "public"
+	SnippetListOutputDataVisibilityUser    SnippetListOutputDataVisibility = "user"
 )
 
-// Valid indicates whether the value is a known member of the SnippetListDataVisibility enum.
-func (e SnippetListDataVisibility) Valid() bool {
+// Valid indicates whether the value is a known member of the SnippetListOutputDataVisibility enum.
+func (e SnippetListOutputDataVisibility) Valid() bool {
 	switch e {
-	case SnippetListDataVisibilityOrg:
+	case SnippetListOutputDataVisibilityOrg:
 		return true
-	case SnippetListDataVisibilityProject:
+	case SnippetListOutputDataVisibilityProject:
 		return true
-	case SnippetListDataVisibilityPublic:
+	case SnippetListOutputDataVisibilityPublic:
 		return true
-	case SnippetListDataVisibilityUser:
+	case SnippetListOutputDataVisibilityUser:
 		return true
 	default:
 		return false
 	}
 }
 
-// Defines values for SnippetResponseType.
+// Defines values for SnippetResponseOutputType.
 const (
-	SnippetResponseTypeSql SnippetResponseType = "sql"
+	SnippetResponseOutputTypeSql SnippetResponseOutputType = "sql"
 )
 
-// Valid indicates whether the value is a known member of the SnippetResponseType enum.
-func (e SnippetResponseType) Valid() bool {
+// Valid indicates whether the value is a known member of the SnippetResponseOutputType enum.
+func (e SnippetResponseOutputType) Valid() bool {
 	switch e {
-	case SnippetResponseTypeSql:
+	case SnippetResponseOutputTypeSql:
 		return true
 	default:
 		return false
 	}
 }
 
-// Defines values for SnippetResponseVisibility.
+// Defines values for SnippetResponseOutputVisibility.
 const (
-	SnippetResponseVisibilityOrg     SnippetResponseVisibility = "org"
-	SnippetResponseVisibilityProject SnippetResponseVisibility = "project"
-	SnippetResponseVisibilityPublic  SnippetResponseVisibility = "public"
-	SnippetResponseVisibilityUser    SnippetResponseVisibility = "user"
+	SnippetResponseOutputVisibilityOrg     SnippetResponseOutputVisibility = "org"
+	SnippetResponseOutputVisibilityProject SnippetResponseOutputVisibility = "project"
+	SnippetResponseOutputVisibilityPublic  SnippetResponseOutputVisibility = "public"
+	SnippetResponseOutputVisibilityUser    SnippetResponseOutputVisibility = "user"
 )
 
-// Valid indicates whether the value is a known member of the SnippetResponseVisibility enum.
-func (e SnippetResponseVisibility) Valid() bool {
+// Valid indicates whether the value is a known member of the SnippetResponseOutputVisibility enum.
+func (e SnippetResponseOutputVisibility) Valid() bool {
 	switch e {
-	case SnippetResponseVisibilityOrg:
+	case SnippetResponseOutputVisibilityOrg:
 		return true
-	case SnippetResponseVisibilityProject:
+	case SnippetResponseOutputVisibilityProject:
 		return true
-	case SnippetResponseVisibilityPublic:
+	case SnippetResponseOutputVisibilityPublic:
 		return true
-	case SnippetResponseVisibilityUser:
+	case SnippetResponseOutputVisibilityUser:
 		return true
 	default:
 		return false
 	}
 }
 
-// Defines values for StorageConfigResponseExternalUpstreamTarget.
+// Defines values for StorageConfigResponseOutputExternalUpstreamTarget.
 const (
-	StorageConfigResponseExternalUpstreamTargetCanary StorageConfigResponseExternalUpstreamTarget = "canary"
-	StorageConfigResponseExternalUpstreamTargetMain   StorageConfigResponseExternalUpstreamTarget = "main"
+	StorageConfigResponseOutputExternalUpstreamTargetCanary StorageConfigResponseOutputExternalUpstreamTarget = "canary"
+	StorageConfigResponseOutputExternalUpstreamTargetMain   StorageConfigResponseOutputExternalUpstreamTarget = "main"
 )
 
-// Valid indicates whether the value is a known member of the StorageConfigResponseExternalUpstreamTarget enum.
-func (e StorageConfigResponseExternalUpstreamTarget) Valid() bool {
+// Valid indicates whether the value is a known member of the StorageConfigResponseOutputExternalUpstreamTarget enum.
+func (e StorageConfigResponseOutputExternalUpstreamTarget) Valid() bool {
 	switch e {
-	case StorageConfigResponseExternalUpstreamTargetCanary:
+	case StorageConfigResponseOutputExternalUpstreamTargetCanary:
 		return true
-	case StorageConfigResponseExternalUpstreamTargetMain:
+	case StorageConfigResponseOutputExternalUpstreamTargetMain:
 		return true
 	default:
 		return false
 	}
 }
 
-// Defines values for SupavisorConfigResponseDatabaseType.
+// Defines values for SupavisorConfigResponseOutputDatabaseType.
 const (
-	SupavisorConfigResponseDatabaseTypePRIMARY     SupavisorConfigResponseDatabaseType = "PRIMARY"
-	SupavisorConfigResponseDatabaseTypeREADREPLICA SupavisorConfigResponseDatabaseType = "READ_REPLICA"
+	SupavisorConfigResponseOutputDatabaseTypePRIMARY     SupavisorConfigResponseOutputDatabaseType = "PRIMARY"
+	SupavisorConfigResponseOutputDatabaseTypeREADREPLICA SupavisorConfigResponseOutputDatabaseType = "READ_REPLICA"
 )
 
-// Valid indicates whether the value is a known member of the SupavisorConfigResponseDatabaseType enum.
-func (e SupavisorConfigResponseDatabaseType) Valid() bool {
+// Valid indicates whether the value is a known member of the SupavisorConfigResponseOutputDatabaseType enum.
+func (e SupavisorConfigResponseOutputDatabaseType) Valid() bool {
 	switch e {
-	case SupavisorConfigResponseDatabaseTypePRIMARY:
+	case SupavisorConfigResponseOutputDatabaseTypePRIMARY:
 		return true
-	case SupavisorConfigResponseDatabaseTypeREADREPLICA:
+	case SupavisorConfigResponseOutputDatabaseTypeREADREPLICA:
 		return true
 	default:
 		return false
 	}
 }
 
-// Defines values for SupavisorConfigResponsePoolMode.
+// Defines values for SupavisorConfigResponseOutputPoolMode.
 const (
-	SupavisorConfigResponsePoolModeSession     SupavisorConfigResponsePoolMode = "session"
-	SupavisorConfigResponsePoolModeTransaction SupavisorConfigResponsePoolMode = "transaction"
+	SupavisorConfigResponseOutputPoolModeSession     SupavisorConfigResponseOutputPoolMode = "session"
+	SupavisorConfigResponseOutputPoolModeTransaction SupavisorConfigResponseOutputPoolMode = "transaction"
 )
 
-// Valid indicates whether the value is a known member of the SupavisorConfigResponsePoolMode enum.
-func (e SupavisorConfigResponsePoolMode) Valid() bool {
+// Valid indicates whether the value is a known member of the SupavisorConfigResponseOutputPoolMode enum.
+func (e SupavisorConfigResponseOutputPoolMode) Valid() bool {
 	switch e {
-	case SupavisorConfigResponsePoolModeSession:
+	case SupavisorConfigResponseOutputPoolModeSession:
 		return true
-	case SupavisorConfigResponsePoolModeTransaction:
+	case SupavisorConfigResponseOutputPoolModeTransaction:
 		return true
 	default:
 		return false
@@ -3536,17 +3535,17 @@ func (e UpdateBranchBodyStatus) Valid() bool {
 	}
 }
 
-// Defines values for UpdateCustomHostnameResponseStatus.
+// Defines values for UpdateCustomHostnameResponseOutputStatus.
 const (
-	N1NotStarted           UpdateCustomHostnameResponseStatus = "1_not_started"
-	N2Initiated            UpdateCustomHostnameResponseStatus = "2_initiated"
-	N3ChallengeVerified    UpdateCustomHostnameResponseStatus = "3_challenge_verified"
-	N4OriginSetupCompleted UpdateCustomHostnameResponseStatus = "4_origin_setup_completed"
-	N5ServicesReconfigured UpdateCustomHostnameResponseStatus = "5_services_reconfigured"
+	N1NotStarted           UpdateCustomHostnameResponseOutputStatus = "1_not_started"
+	N2Initiated            UpdateCustomHostnameResponseOutputStatus = "2_initiated"
+	N3ChallengeVerified    UpdateCustomHostnameResponseOutputStatus = "3_challenge_verified"
+	N4OriginSetupCompleted UpdateCustomHostnameResponseOutputStatus = "4_origin_setup_completed"
+	N5ServicesReconfigured UpdateCustomHostnameResponseOutputStatus = "5_services_reconfigured"
 )
 
-// Valid indicates whether the value is a known member of the UpdateCustomHostnameResponseStatus enum.
-func (e UpdateCustomHostnameResponseStatus) Valid() bool {
+// Valid indicates whether the value is a known member of the UpdateCustomHostnameResponseOutputStatus enum.
+func (e UpdateCustomHostnameResponseOutputStatus) Valid() bool {
 	switch e {
 	case N1NotStarted:
 		return true
@@ -3839,15 +3838,15 @@ func (e UpdateRunStatusBodySeed) Valid() bool {
 	}
 }
 
-// Defines values for UpdateRunStatusResponseMessage.
+// Defines values for UpdateRunStatusResponseOutputMessage.
 const (
-	UpdateRunStatusResponseMessageOk UpdateRunStatusResponseMessage = "ok"
+	UpdateRunStatusResponseOutputMessageOk UpdateRunStatusResponseOutputMessage = "ok"
 )
 
-// Valid indicates whether the value is a known member of the UpdateRunStatusResponseMessage enum.
-func (e UpdateRunStatusResponseMessage) Valid() bool {
+// Valid indicates whether the value is a known member of the UpdateRunStatusResponseOutputMessage enum.
+func (e UpdateRunStatusResponseOutputMessage) Valid() bool {
 	switch e {
-	case UpdateRunStatusResponseMessageOk:
+	case UpdateRunStatusResponseOutputMessageOk:
 		return true
 	default:
 		return false
@@ -3944,30 +3943,30 @@ func (e UpgradeDatabaseBodyReleaseChannel) Valid() bool {
 	}
 }
 
-// Defines values for V1BackupsResponseBackupsStatus.
+// Defines values for V1BackupsResponseOutputBackupsStatus.
 const (
-	V1BackupsResponseBackupsStatusARCHIVED  V1BackupsResponseBackupsStatus = "ARCHIVED"
-	V1BackupsResponseBackupsStatusCANCELLED V1BackupsResponseBackupsStatus = "CANCELLED"
-	V1BackupsResponseBackupsStatusCOMPLETED V1BackupsResponseBackupsStatus = "COMPLETED"
-	V1BackupsResponseBackupsStatusFAILED    V1BackupsResponseBackupsStatus = "FAILED"
-	V1BackupsResponseBackupsStatusPENDING   V1BackupsResponseBackupsStatus = "PENDING"
-	V1BackupsResponseBackupsStatusREMOVED   V1BackupsResponseBackupsStatus = "REMOVED"
+	V1BackupsResponseOutputBackupsStatusARCHIVED  V1BackupsResponseOutputBackupsStatus = "ARCHIVED"
+	V1BackupsResponseOutputBackupsStatusCANCELLED V1BackupsResponseOutputBackupsStatus = "CANCELLED"
+	V1BackupsResponseOutputBackupsStatusCOMPLETED V1BackupsResponseOutputBackupsStatus = "COMPLETED"
+	V1BackupsResponseOutputBackupsStatusFAILED    V1BackupsResponseOutputBackupsStatus = "FAILED"
+	V1BackupsResponseOutputBackupsStatusPENDING   V1BackupsResponseOutputBackupsStatus = "PENDING"
+	V1BackupsResponseOutputBackupsStatusREMOVED   V1BackupsResponseOutputBackupsStatus = "REMOVED"
 )
 
-// Valid indicates whether the value is a known member of the V1BackupsResponseBackupsStatus enum.
-func (e V1BackupsResponseBackupsStatus) Valid() bool {
+// Valid indicates whether the value is a known member of the V1BackupsResponseOutputBackupsStatus enum.
+func (e V1BackupsResponseOutputBackupsStatus) Valid() bool {
 	switch e {
-	case V1BackupsResponseBackupsStatusARCHIVED:
+	case V1BackupsResponseOutputBackupsStatusARCHIVED:
 		return true
-	case V1BackupsResponseBackupsStatusCANCELLED:
+	case V1BackupsResponseOutputBackupsStatusCANCELLED:
 		return true
-	case V1BackupsResponseBackupsStatusCOMPLETED:
+	case V1BackupsResponseOutputBackupsStatusCOMPLETED:
 		return true
-	case V1BackupsResponseBackupsStatusFAILED:
+	case V1BackupsResponseOutputBackupsStatusFAILED:
 		return true
-	case V1BackupsResponseBackupsStatusPENDING:
+	case V1BackupsResponseOutputBackupsStatusPENDING:
 		return true
-	case V1BackupsResponseBackupsStatusREMOVED:
+	case V1BackupsResponseOutputBackupsStatusREMOVED:
 		return true
 	default:
 		return false
@@ -4244,318 +4243,318 @@ func (e V1CreateProjectBodyRegionSelection1Type) Valid() bool {
 	}
 }
 
-// Defines values for V1ListEntitlementsResponseEntitlementsFeatureKey.
+// Defines values for V1ListEntitlementsResponseOutputEntitlementsFeatureKey.
 const (
-	V1ListEntitlementsResponseEntitlementsFeatureKeyApiMembersInvitations                 V1ListEntitlementsResponseEntitlementsFeatureKey = "api.members.invitations"
-	V1ListEntitlementsResponseEntitlementsFeatureKeyApiMembersRoles                       V1ListEntitlementsResponseEntitlementsFeatureKey = "api.members.roles"
-	V1ListEntitlementsResponseEntitlementsFeatureKeyAssistantAdvanceModel                 V1ListEntitlementsResponseEntitlementsFeatureKey = "assistant.advance_model"
-	V1ListEntitlementsResponseEntitlementsFeatureKeyAuditLogDrains                        V1ListEntitlementsResponseEntitlementsFeatureKey = "audit_log_drains"
-	V1ListEntitlementsResponseEntitlementsFeatureKeyAuthAdvancedAuthSettings              V1ListEntitlementsResponseEntitlementsFeatureKey = "auth.advanced_auth_settings"
-	V1ListEntitlementsResponseEntitlementsFeatureKeyAuthCustomJwtTemplate                 V1ListEntitlementsResponseEntitlementsFeatureKey = "auth.custom_jwt_template"
-	V1ListEntitlementsResponseEntitlementsFeatureKeyAuthCustomOauthMaxProviders           V1ListEntitlementsResponseEntitlementsFeatureKey = "auth.custom_oauth.max_providers"
-	V1ListEntitlementsResponseEntitlementsFeatureKeyAuthHooks                             V1ListEntitlementsResponseEntitlementsFeatureKey = "auth.hooks"
-	V1ListEntitlementsResponseEntitlementsFeatureKeyAuthLeakedPasswordProtection          V1ListEntitlementsResponseEntitlementsFeatureKey = "auth.leaked_password_protection"
-	V1ListEntitlementsResponseEntitlementsFeatureKeyAuthMfaEnhancedSecurity               V1ListEntitlementsResponseEntitlementsFeatureKey = "auth.mfa_enhanced_security"
-	V1ListEntitlementsResponseEntitlementsFeatureKeyAuthMfaPhone                          V1ListEntitlementsResponseEntitlementsFeatureKey = "auth.mfa_phone"
-	V1ListEntitlementsResponseEntitlementsFeatureKeyAuthMfaWebAuthn                       V1ListEntitlementsResponseEntitlementsFeatureKey = "auth.mfa_web_authn"
-	V1ListEntitlementsResponseEntitlementsFeatureKeyAuthPasswordHibp                      V1ListEntitlementsResponseEntitlementsFeatureKey = "auth.password_hibp"
-	V1ListEntitlementsResponseEntitlementsFeatureKeyAuthPerformanceSettings               V1ListEntitlementsResponseEntitlementsFeatureKey = "auth.performance_settings"
-	V1ListEntitlementsResponseEntitlementsFeatureKeyAuthPlatformSso                       V1ListEntitlementsResponseEntitlementsFeatureKey = "auth.platform.sso"
-	V1ListEntitlementsResponseEntitlementsFeatureKeyAuthSaml2                             V1ListEntitlementsResponseEntitlementsFeatureKey = "auth.saml_2"
-	V1ListEntitlementsResponseEntitlementsFeatureKeyAuthUserSessions                      V1ListEntitlementsResponseEntitlementsFeatureKey = "auth.user_sessions"
-	V1ListEntitlementsResponseEntitlementsFeatureKeyBackupRestoreToNewProject             V1ListEntitlementsResponseEntitlementsFeatureKey = "backup.restore_to_new_project"
-	V1ListEntitlementsResponseEntitlementsFeatureKeyBackupRetentionDays                   V1ListEntitlementsResponseEntitlementsFeatureKey = "backup.retention_days"
-	V1ListEntitlementsResponseEntitlementsFeatureKeyBackupSchedule                        V1ListEntitlementsResponseEntitlementsFeatureKey = "backup.schedule"
-	V1ListEntitlementsResponseEntitlementsFeatureKeyBranchingLimit                        V1ListEntitlementsResponseEntitlementsFeatureKey = "branching_limit"
-	V1ListEntitlementsResponseEntitlementsFeatureKeyBranchingPersistent                   V1ListEntitlementsResponseEntitlementsFeatureKey = "branching_persistent"
-	V1ListEntitlementsResponseEntitlementsFeatureKeyCustomDomain                          V1ListEntitlementsResponseEntitlementsFeatureKey = "custom_domain"
-	V1ListEntitlementsResponseEntitlementsFeatureKeyDedicatedPooler                       V1ListEntitlementsResponseEntitlementsFeatureKey = "dedicated_pooler"
-	V1ListEntitlementsResponseEntitlementsFeatureKeyFunctionMaxCount                      V1ListEntitlementsResponseEntitlementsFeatureKey = "function.max_count"
-	V1ListEntitlementsResponseEntitlementsFeatureKeyFunctionSizeLimitMb                   V1ListEntitlementsResponseEntitlementsFeatureKey = "function.size_limit_mb"
-	V1ListEntitlementsResponseEntitlementsFeatureKeyInstancesComputeUpdateAvailableSizes  V1ListEntitlementsResponseEntitlementsFeatureKey = "instances.compute_update_available_sizes"
-	V1ListEntitlementsResponseEntitlementsFeatureKeyInstancesDiskModifications            V1ListEntitlementsResponseEntitlementsFeatureKey = "instances.disk_modifications"
-	V1ListEntitlementsResponseEntitlementsFeatureKeyInstancesHighAvailability             V1ListEntitlementsResponseEntitlementsFeatureKey = "instances.high_availability"
-	V1ListEntitlementsResponseEntitlementsFeatureKeyInstancesOrioledb                     V1ListEntitlementsResponseEntitlementsFeatureKey = "instances.orioledb"
-	V1ListEntitlementsResponseEntitlementsFeatureKeyInstancesReadReplicas                 V1ListEntitlementsResponseEntitlementsFeatureKey = "instances.read_replicas"
-	V1ListEntitlementsResponseEntitlementsFeatureKeyIntegrationsGithubConnections         V1ListEntitlementsResponseEntitlementsFeatureKey = "integrations.github_connections"
-	V1ListEntitlementsResponseEntitlementsFeatureKeyIntegrationsGithubPushWebhooksLimit   V1ListEntitlementsResponseEntitlementsFeatureKey = "integrations.github_push_webhooks_limit"
-	V1ListEntitlementsResponseEntitlementsFeatureKeyIpv4                                  V1ListEntitlementsResponseEntitlementsFeatureKey = "ipv4"
-	V1ListEntitlementsResponseEntitlementsFeatureKeyLogDrains                             V1ListEntitlementsResponseEntitlementsFeatureKey = "log_drains"
-	V1ListEntitlementsResponseEntitlementsFeatureKeyLogRetentionDays                      V1ListEntitlementsResponseEntitlementsFeatureKey = "log.retention_days"
-	V1ListEntitlementsResponseEntitlementsFeatureKeyObservabilityDashboardAdvancedMetrics V1ListEntitlementsResponseEntitlementsFeatureKey = "observability.dashboard_advanced_metrics"
-	V1ListEntitlementsResponseEntitlementsFeatureKeyPitrAvailableVariants                 V1ListEntitlementsResponseEntitlementsFeatureKey = "pitr.available_variants"
-	V1ListEntitlementsResponseEntitlementsFeatureKeyProjectCloning                        V1ListEntitlementsResponseEntitlementsFeatureKey = "project_cloning"
-	V1ListEntitlementsResponseEntitlementsFeatureKeyProjectPausing                        V1ListEntitlementsResponseEntitlementsFeatureKey = "project_pausing"
-	V1ListEntitlementsResponseEntitlementsFeatureKeyProjectRestoreAfterExpiry             V1ListEntitlementsResponseEntitlementsFeatureKey = "project_restore_after_expiry"
-	V1ListEntitlementsResponseEntitlementsFeatureKeyProjectScopedRoles                    V1ListEntitlementsResponseEntitlementsFeatureKey = "project_scoped_roles"
-	V1ListEntitlementsResponseEntitlementsFeatureKeyRealtimeMaxBytesPerSecond             V1ListEntitlementsResponseEntitlementsFeatureKey = "realtime.max_bytes_per_second"
-	V1ListEntitlementsResponseEntitlementsFeatureKeyRealtimeMaxChannelsPerClient          V1ListEntitlementsResponseEntitlementsFeatureKey = "realtime.max_channels_per_client"
-	V1ListEntitlementsResponseEntitlementsFeatureKeyRealtimeMaxConcurrentUsers            V1ListEntitlementsResponseEntitlementsFeatureKey = "realtime.max_concurrent_users"
-	V1ListEntitlementsResponseEntitlementsFeatureKeyRealtimeMaxEventsPerSecond            V1ListEntitlementsResponseEntitlementsFeatureKey = "realtime.max_events_per_second"
-	V1ListEntitlementsResponseEntitlementsFeatureKeyRealtimeMaxJoinsPerSecond             V1ListEntitlementsResponseEntitlementsFeatureKey = "realtime.max_joins_per_second"
-	V1ListEntitlementsResponseEntitlementsFeatureKeyRealtimeMaxPayloadSizeInKb            V1ListEntitlementsResponseEntitlementsFeatureKey = "realtime.max_payload_size_in_kb"
-	V1ListEntitlementsResponseEntitlementsFeatureKeyRealtimeMaxPresenceEventsPerSecond    V1ListEntitlementsResponseEntitlementsFeatureKey = "realtime.max_presence_events_per_second"
-	V1ListEntitlementsResponseEntitlementsFeatureKeyReplicationEtl                        V1ListEntitlementsResponseEntitlementsFeatureKey = "replication.etl"
-	V1ListEntitlementsResponseEntitlementsFeatureKeySecurityAuditLogsDays                 V1ListEntitlementsResponseEntitlementsFeatureKey = "security.audit_logs_days"
-	V1ListEntitlementsResponseEntitlementsFeatureKeySecurityEnforceMfa                    V1ListEntitlementsResponseEntitlementsFeatureKey = "security.enforce_mfa"
-	V1ListEntitlementsResponseEntitlementsFeatureKeySecurityIso27001Certificate           V1ListEntitlementsResponseEntitlementsFeatureKey = "security.iso27001_certificate"
-	V1ListEntitlementsResponseEntitlementsFeatureKeySecurityMemberRoles                   V1ListEntitlementsResponseEntitlementsFeatureKey = "security.member_roles"
-	V1ListEntitlementsResponseEntitlementsFeatureKeySecurityPrivateLink                   V1ListEntitlementsResponseEntitlementsFeatureKey = "security.private_link"
-	V1ListEntitlementsResponseEntitlementsFeatureKeySecurityQuestionnaire                 V1ListEntitlementsResponseEntitlementsFeatureKey = "security.questionnaire"
-	V1ListEntitlementsResponseEntitlementsFeatureKeySecuritySoc2Report                    V1ListEntitlementsResponseEntitlementsFeatureKey = "security.soc2_report"
-	V1ListEntitlementsResponseEntitlementsFeatureKeyStorageIcebergCatalog                 V1ListEntitlementsResponseEntitlementsFeatureKey = "storage.iceberg_catalog"
-	V1ListEntitlementsResponseEntitlementsFeatureKeyStorageImageTransformations           V1ListEntitlementsResponseEntitlementsFeatureKey = "storage.image_transformations"
-	V1ListEntitlementsResponseEntitlementsFeatureKeyStorageMaxFileSize                    V1ListEntitlementsResponseEntitlementsFeatureKey = "storage.max_file_size"
-	V1ListEntitlementsResponseEntitlementsFeatureKeyStorageMaxFileSizeConfigurable        V1ListEntitlementsResponseEntitlementsFeatureKey = "storage.max_file_size.configurable"
-	V1ListEntitlementsResponseEntitlementsFeatureKeyStoragePurgeCache                     V1ListEntitlementsResponseEntitlementsFeatureKey = "storage.purge_cache"
-	V1ListEntitlementsResponseEntitlementsFeatureKeyStorageVectorBuckets                  V1ListEntitlementsResponseEntitlementsFeatureKey = "storage.vector_buckets"
-	V1ListEntitlementsResponseEntitlementsFeatureKeyVanitySubdomain                       V1ListEntitlementsResponseEntitlementsFeatureKey = "vanity_subdomain"
+	V1ListEntitlementsResponseOutputEntitlementsFeatureKeyApiMembersInvitations                 V1ListEntitlementsResponseOutputEntitlementsFeatureKey = "api.members.invitations"
+	V1ListEntitlementsResponseOutputEntitlementsFeatureKeyApiMembersRoles                       V1ListEntitlementsResponseOutputEntitlementsFeatureKey = "api.members.roles"
+	V1ListEntitlementsResponseOutputEntitlementsFeatureKeyAssistantAdvanceModel                 V1ListEntitlementsResponseOutputEntitlementsFeatureKey = "assistant.advance_model"
+	V1ListEntitlementsResponseOutputEntitlementsFeatureKeyAuditLogDrains                        V1ListEntitlementsResponseOutputEntitlementsFeatureKey = "audit_log_drains"
+	V1ListEntitlementsResponseOutputEntitlementsFeatureKeyAuthAdvancedAuthSettings              V1ListEntitlementsResponseOutputEntitlementsFeatureKey = "auth.advanced_auth_settings"
+	V1ListEntitlementsResponseOutputEntitlementsFeatureKeyAuthCustomJwtTemplate                 V1ListEntitlementsResponseOutputEntitlementsFeatureKey = "auth.custom_jwt_template"
+	V1ListEntitlementsResponseOutputEntitlementsFeatureKeyAuthCustomOauthMaxProviders           V1ListEntitlementsResponseOutputEntitlementsFeatureKey = "auth.custom_oauth.max_providers"
+	V1ListEntitlementsResponseOutputEntitlementsFeatureKeyAuthHooks                             V1ListEntitlementsResponseOutputEntitlementsFeatureKey = "auth.hooks"
+	V1ListEntitlementsResponseOutputEntitlementsFeatureKeyAuthLeakedPasswordProtection          V1ListEntitlementsResponseOutputEntitlementsFeatureKey = "auth.leaked_password_protection"
+	V1ListEntitlementsResponseOutputEntitlementsFeatureKeyAuthMfaEnhancedSecurity               V1ListEntitlementsResponseOutputEntitlementsFeatureKey = "auth.mfa_enhanced_security"
+	V1ListEntitlementsResponseOutputEntitlementsFeatureKeyAuthMfaPhone                          V1ListEntitlementsResponseOutputEntitlementsFeatureKey = "auth.mfa_phone"
+	V1ListEntitlementsResponseOutputEntitlementsFeatureKeyAuthMfaWebAuthn                       V1ListEntitlementsResponseOutputEntitlementsFeatureKey = "auth.mfa_web_authn"
+	V1ListEntitlementsResponseOutputEntitlementsFeatureKeyAuthPasswordHibp                      V1ListEntitlementsResponseOutputEntitlementsFeatureKey = "auth.password_hibp"
+	V1ListEntitlementsResponseOutputEntitlementsFeatureKeyAuthPerformanceSettings               V1ListEntitlementsResponseOutputEntitlementsFeatureKey = "auth.performance_settings"
+	V1ListEntitlementsResponseOutputEntitlementsFeatureKeyAuthPlatformSso                       V1ListEntitlementsResponseOutputEntitlementsFeatureKey = "auth.platform.sso"
+	V1ListEntitlementsResponseOutputEntitlementsFeatureKeyAuthSaml2                             V1ListEntitlementsResponseOutputEntitlementsFeatureKey = "auth.saml_2"
+	V1ListEntitlementsResponseOutputEntitlementsFeatureKeyAuthUserSessions                      V1ListEntitlementsResponseOutputEntitlementsFeatureKey = "auth.user_sessions"
+	V1ListEntitlementsResponseOutputEntitlementsFeatureKeyBackupRestoreToNewProject             V1ListEntitlementsResponseOutputEntitlementsFeatureKey = "backup.restore_to_new_project"
+	V1ListEntitlementsResponseOutputEntitlementsFeatureKeyBackupRetentionDays                   V1ListEntitlementsResponseOutputEntitlementsFeatureKey = "backup.retention_days"
+	V1ListEntitlementsResponseOutputEntitlementsFeatureKeyBackupSchedule                        V1ListEntitlementsResponseOutputEntitlementsFeatureKey = "backup.schedule"
+	V1ListEntitlementsResponseOutputEntitlementsFeatureKeyBranchingLimit                        V1ListEntitlementsResponseOutputEntitlementsFeatureKey = "branching_limit"
+	V1ListEntitlementsResponseOutputEntitlementsFeatureKeyBranchingPersistent                   V1ListEntitlementsResponseOutputEntitlementsFeatureKey = "branching_persistent"
+	V1ListEntitlementsResponseOutputEntitlementsFeatureKeyCustomDomain                          V1ListEntitlementsResponseOutputEntitlementsFeatureKey = "custom_domain"
+	V1ListEntitlementsResponseOutputEntitlementsFeatureKeyDedicatedPooler                       V1ListEntitlementsResponseOutputEntitlementsFeatureKey = "dedicated_pooler"
+	V1ListEntitlementsResponseOutputEntitlementsFeatureKeyFunctionMaxCount                      V1ListEntitlementsResponseOutputEntitlementsFeatureKey = "function.max_count"
+	V1ListEntitlementsResponseOutputEntitlementsFeatureKeyFunctionSizeLimitMb                   V1ListEntitlementsResponseOutputEntitlementsFeatureKey = "function.size_limit_mb"
+	V1ListEntitlementsResponseOutputEntitlementsFeatureKeyInstancesComputeUpdateAvailableSizes  V1ListEntitlementsResponseOutputEntitlementsFeatureKey = "instances.compute_update_available_sizes"
+	V1ListEntitlementsResponseOutputEntitlementsFeatureKeyInstancesDiskModifications            V1ListEntitlementsResponseOutputEntitlementsFeatureKey = "instances.disk_modifications"
+	V1ListEntitlementsResponseOutputEntitlementsFeatureKeyInstancesHighAvailability             V1ListEntitlementsResponseOutputEntitlementsFeatureKey = "instances.high_availability"
+	V1ListEntitlementsResponseOutputEntitlementsFeatureKeyInstancesOrioledb                     V1ListEntitlementsResponseOutputEntitlementsFeatureKey = "instances.orioledb"
+	V1ListEntitlementsResponseOutputEntitlementsFeatureKeyInstancesReadReplicas                 V1ListEntitlementsResponseOutputEntitlementsFeatureKey = "instances.read_replicas"
+	V1ListEntitlementsResponseOutputEntitlementsFeatureKeyIntegrationsGithubConnections         V1ListEntitlementsResponseOutputEntitlementsFeatureKey = "integrations.github_connections"
+	V1ListEntitlementsResponseOutputEntitlementsFeatureKeyIntegrationsGithubPushWebhooksLimit   V1ListEntitlementsResponseOutputEntitlementsFeatureKey = "integrations.github_push_webhooks_limit"
+	V1ListEntitlementsResponseOutputEntitlementsFeatureKeyIpv4                                  V1ListEntitlementsResponseOutputEntitlementsFeatureKey = "ipv4"
+	V1ListEntitlementsResponseOutputEntitlementsFeatureKeyLogDrains                             V1ListEntitlementsResponseOutputEntitlementsFeatureKey = "log_drains"
+	V1ListEntitlementsResponseOutputEntitlementsFeatureKeyLogRetentionDays                      V1ListEntitlementsResponseOutputEntitlementsFeatureKey = "log.retention_days"
+	V1ListEntitlementsResponseOutputEntitlementsFeatureKeyObservabilityDashboardAdvancedMetrics V1ListEntitlementsResponseOutputEntitlementsFeatureKey = "observability.dashboard_advanced_metrics"
+	V1ListEntitlementsResponseOutputEntitlementsFeatureKeyPitrAvailableVariants                 V1ListEntitlementsResponseOutputEntitlementsFeatureKey = "pitr.available_variants"
+	V1ListEntitlementsResponseOutputEntitlementsFeatureKeyProjectCloning                        V1ListEntitlementsResponseOutputEntitlementsFeatureKey = "project_cloning"
+	V1ListEntitlementsResponseOutputEntitlementsFeatureKeyProjectPausing                        V1ListEntitlementsResponseOutputEntitlementsFeatureKey = "project_pausing"
+	V1ListEntitlementsResponseOutputEntitlementsFeatureKeyProjectRestoreAfterExpiry             V1ListEntitlementsResponseOutputEntitlementsFeatureKey = "project_restore_after_expiry"
+	V1ListEntitlementsResponseOutputEntitlementsFeatureKeyProjectScopedRoles                    V1ListEntitlementsResponseOutputEntitlementsFeatureKey = "project_scoped_roles"
+	V1ListEntitlementsResponseOutputEntitlementsFeatureKeyRealtimeMaxBytesPerSecond             V1ListEntitlementsResponseOutputEntitlementsFeatureKey = "realtime.max_bytes_per_second"
+	V1ListEntitlementsResponseOutputEntitlementsFeatureKeyRealtimeMaxChannelsPerClient          V1ListEntitlementsResponseOutputEntitlementsFeatureKey = "realtime.max_channels_per_client"
+	V1ListEntitlementsResponseOutputEntitlementsFeatureKeyRealtimeMaxConcurrentUsers            V1ListEntitlementsResponseOutputEntitlementsFeatureKey = "realtime.max_concurrent_users"
+	V1ListEntitlementsResponseOutputEntitlementsFeatureKeyRealtimeMaxEventsPerSecond            V1ListEntitlementsResponseOutputEntitlementsFeatureKey = "realtime.max_events_per_second"
+	V1ListEntitlementsResponseOutputEntitlementsFeatureKeyRealtimeMaxJoinsPerSecond             V1ListEntitlementsResponseOutputEntitlementsFeatureKey = "realtime.max_joins_per_second"
+	V1ListEntitlementsResponseOutputEntitlementsFeatureKeyRealtimeMaxPayloadSizeInKb            V1ListEntitlementsResponseOutputEntitlementsFeatureKey = "realtime.max_payload_size_in_kb"
+	V1ListEntitlementsResponseOutputEntitlementsFeatureKeyRealtimeMaxPresenceEventsPerSecond    V1ListEntitlementsResponseOutputEntitlementsFeatureKey = "realtime.max_presence_events_per_second"
+	V1ListEntitlementsResponseOutputEntitlementsFeatureKeyReplicationEtl                        V1ListEntitlementsResponseOutputEntitlementsFeatureKey = "replication.etl"
+	V1ListEntitlementsResponseOutputEntitlementsFeatureKeySecurityAuditLogsDays                 V1ListEntitlementsResponseOutputEntitlementsFeatureKey = "security.audit_logs_days"
+	V1ListEntitlementsResponseOutputEntitlementsFeatureKeySecurityEnforceMfa                    V1ListEntitlementsResponseOutputEntitlementsFeatureKey = "security.enforce_mfa"
+	V1ListEntitlementsResponseOutputEntitlementsFeatureKeySecurityIso27001Certificate           V1ListEntitlementsResponseOutputEntitlementsFeatureKey = "security.iso27001_certificate"
+	V1ListEntitlementsResponseOutputEntitlementsFeatureKeySecurityMemberRoles                   V1ListEntitlementsResponseOutputEntitlementsFeatureKey = "security.member_roles"
+	V1ListEntitlementsResponseOutputEntitlementsFeatureKeySecurityPrivateLink                   V1ListEntitlementsResponseOutputEntitlementsFeatureKey = "security.private_link"
+	V1ListEntitlementsResponseOutputEntitlementsFeatureKeySecurityQuestionnaire                 V1ListEntitlementsResponseOutputEntitlementsFeatureKey = "security.questionnaire"
+	V1ListEntitlementsResponseOutputEntitlementsFeatureKeySecuritySoc2Report                    V1ListEntitlementsResponseOutputEntitlementsFeatureKey = "security.soc2_report"
+	V1ListEntitlementsResponseOutputEntitlementsFeatureKeyStorageIcebergCatalog                 V1ListEntitlementsResponseOutputEntitlementsFeatureKey = "storage.iceberg_catalog"
+	V1ListEntitlementsResponseOutputEntitlementsFeatureKeyStorageImageTransformations           V1ListEntitlementsResponseOutputEntitlementsFeatureKey = "storage.image_transformations"
+	V1ListEntitlementsResponseOutputEntitlementsFeatureKeyStorageMaxFileSize                    V1ListEntitlementsResponseOutputEntitlementsFeatureKey = "storage.max_file_size"
+	V1ListEntitlementsResponseOutputEntitlementsFeatureKeyStorageMaxFileSizeConfigurable        V1ListEntitlementsResponseOutputEntitlementsFeatureKey = "storage.max_file_size.configurable"
+	V1ListEntitlementsResponseOutputEntitlementsFeatureKeyStoragePurgeCache                     V1ListEntitlementsResponseOutputEntitlementsFeatureKey = "storage.purge_cache"
+	V1ListEntitlementsResponseOutputEntitlementsFeatureKeyStorageVectorBuckets                  V1ListEntitlementsResponseOutputEntitlementsFeatureKey = "storage.vector_buckets"
+	V1ListEntitlementsResponseOutputEntitlementsFeatureKeyVanitySubdomain                       V1ListEntitlementsResponseOutputEntitlementsFeatureKey = "vanity_subdomain"
 )
 
-// Valid indicates whether the value is a known member of the V1ListEntitlementsResponseEntitlementsFeatureKey enum.
-func (e V1ListEntitlementsResponseEntitlementsFeatureKey) Valid() bool {
+// Valid indicates whether the value is a known member of the V1ListEntitlementsResponseOutputEntitlementsFeatureKey enum.
+func (e V1ListEntitlementsResponseOutputEntitlementsFeatureKey) Valid() bool {
 	switch e {
-	case V1ListEntitlementsResponseEntitlementsFeatureKeyApiMembersInvitations:
+	case V1ListEntitlementsResponseOutputEntitlementsFeatureKeyApiMembersInvitations:
 		return true
-	case V1ListEntitlementsResponseEntitlementsFeatureKeyApiMembersRoles:
+	case V1ListEntitlementsResponseOutputEntitlementsFeatureKeyApiMembersRoles:
 		return true
-	case V1ListEntitlementsResponseEntitlementsFeatureKeyAssistantAdvanceModel:
+	case V1ListEntitlementsResponseOutputEntitlementsFeatureKeyAssistantAdvanceModel:
 		return true
-	case V1ListEntitlementsResponseEntitlementsFeatureKeyAuditLogDrains:
+	case V1ListEntitlementsResponseOutputEntitlementsFeatureKeyAuditLogDrains:
 		return true
-	case V1ListEntitlementsResponseEntitlementsFeatureKeyAuthAdvancedAuthSettings:
+	case V1ListEntitlementsResponseOutputEntitlementsFeatureKeyAuthAdvancedAuthSettings:
 		return true
-	case V1ListEntitlementsResponseEntitlementsFeatureKeyAuthCustomJwtTemplate:
+	case V1ListEntitlementsResponseOutputEntitlementsFeatureKeyAuthCustomJwtTemplate:
 		return true
-	case V1ListEntitlementsResponseEntitlementsFeatureKeyAuthCustomOauthMaxProviders:
+	case V1ListEntitlementsResponseOutputEntitlementsFeatureKeyAuthCustomOauthMaxProviders:
 		return true
-	case V1ListEntitlementsResponseEntitlementsFeatureKeyAuthHooks:
+	case V1ListEntitlementsResponseOutputEntitlementsFeatureKeyAuthHooks:
 		return true
-	case V1ListEntitlementsResponseEntitlementsFeatureKeyAuthLeakedPasswordProtection:
+	case V1ListEntitlementsResponseOutputEntitlementsFeatureKeyAuthLeakedPasswordProtection:
 		return true
-	case V1ListEntitlementsResponseEntitlementsFeatureKeyAuthMfaEnhancedSecurity:
+	case V1ListEntitlementsResponseOutputEntitlementsFeatureKeyAuthMfaEnhancedSecurity:
 		return true
-	case V1ListEntitlementsResponseEntitlementsFeatureKeyAuthMfaPhone:
+	case V1ListEntitlementsResponseOutputEntitlementsFeatureKeyAuthMfaPhone:
 		return true
-	case V1ListEntitlementsResponseEntitlementsFeatureKeyAuthMfaWebAuthn:
+	case V1ListEntitlementsResponseOutputEntitlementsFeatureKeyAuthMfaWebAuthn:
 		return true
-	case V1ListEntitlementsResponseEntitlementsFeatureKeyAuthPasswordHibp:
+	case V1ListEntitlementsResponseOutputEntitlementsFeatureKeyAuthPasswordHibp:
 		return true
-	case V1ListEntitlementsResponseEntitlementsFeatureKeyAuthPerformanceSettings:
+	case V1ListEntitlementsResponseOutputEntitlementsFeatureKeyAuthPerformanceSettings:
 		return true
-	case V1ListEntitlementsResponseEntitlementsFeatureKeyAuthPlatformSso:
+	case V1ListEntitlementsResponseOutputEntitlementsFeatureKeyAuthPlatformSso:
 		return true
-	case V1ListEntitlementsResponseEntitlementsFeatureKeyAuthSaml2:
+	case V1ListEntitlementsResponseOutputEntitlementsFeatureKeyAuthSaml2:
 		return true
-	case V1ListEntitlementsResponseEntitlementsFeatureKeyAuthUserSessions:
+	case V1ListEntitlementsResponseOutputEntitlementsFeatureKeyAuthUserSessions:
 		return true
-	case V1ListEntitlementsResponseEntitlementsFeatureKeyBackupRestoreToNewProject:
+	case V1ListEntitlementsResponseOutputEntitlementsFeatureKeyBackupRestoreToNewProject:
 		return true
-	case V1ListEntitlementsResponseEntitlementsFeatureKeyBackupRetentionDays:
+	case V1ListEntitlementsResponseOutputEntitlementsFeatureKeyBackupRetentionDays:
 		return true
-	case V1ListEntitlementsResponseEntitlementsFeatureKeyBackupSchedule:
+	case V1ListEntitlementsResponseOutputEntitlementsFeatureKeyBackupSchedule:
 		return true
-	case V1ListEntitlementsResponseEntitlementsFeatureKeyBranchingLimit:
+	case V1ListEntitlementsResponseOutputEntitlementsFeatureKeyBranchingLimit:
 		return true
-	case V1ListEntitlementsResponseEntitlementsFeatureKeyBranchingPersistent:
+	case V1ListEntitlementsResponseOutputEntitlementsFeatureKeyBranchingPersistent:
 		return true
-	case V1ListEntitlementsResponseEntitlementsFeatureKeyCustomDomain:
+	case V1ListEntitlementsResponseOutputEntitlementsFeatureKeyCustomDomain:
 		return true
-	case V1ListEntitlementsResponseEntitlementsFeatureKeyDedicatedPooler:
+	case V1ListEntitlementsResponseOutputEntitlementsFeatureKeyDedicatedPooler:
 		return true
-	case V1ListEntitlementsResponseEntitlementsFeatureKeyFunctionMaxCount:
+	case V1ListEntitlementsResponseOutputEntitlementsFeatureKeyFunctionMaxCount:
 		return true
-	case V1ListEntitlementsResponseEntitlementsFeatureKeyFunctionSizeLimitMb:
+	case V1ListEntitlementsResponseOutputEntitlementsFeatureKeyFunctionSizeLimitMb:
 		return true
-	case V1ListEntitlementsResponseEntitlementsFeatureKeyInstancesComputeUpdateAvailableSizes:
+	case V1ListEntitlementsResponseOutputEntitlementsFeatureKeyInstancesComputeUpdateAvailableSizes:
 		return true
-	case V1ListEntitlementsResponseEntitlementsFeatureKeyInstancesDiskModifications:
+	case V1ListEntitlementsResponseOutputEntitlementsFeatureKeyInstancesDiskModifications:
 		return true
-	case V1ListEntitlementsResponseEntitlementsFeatureKeyInstancesHighAvailability:
+	case V1ListEntitlementsResponseOutputEntitlementsFeatureKeyInstancesHighAvailability:
 		return true
-	case V1ListEntitlementsResponseEntitlementsFeatureKeyInstancesOrioledb:
+	case V1ListEntitlementsResponseOutputEntitlementsFeatureKeyInstancesOrioledb:
 		return true
-	case V1ListEntitlementsResponseEntitlementsFeatureKeyInstancesReadReplicas:
+	case V1ListEntitlementsResponseOutputEntitlementsFeatureKeyInstancesReadReplicas:
 		return true
-	case V1ListEntitlementsResponseEntitlementsFeatureKeyIntegrationsGithubConnections:
+	case V1ListEntitlementsResponseOutputEntitlementsFeatureKeyIntegrationsGithubConnections:
 		return true
-	case V1ListEntitlementsResponseEntitlementsFeatureKeyIntegrationsGithubPushWebhooksLimit:
+	case V1ListEntitlementsResponseOutputEntitlementsFeatureKeyIntegrationsGithubPushWebhooksLimit:
 		return true
-	case V1ListEntitlementsResponseEntitlementsFeatureKeyIpv4:
+	case V1ListEntitlementsResponseOutputEntitlementsFeatureKeyIpv4:
 		return true
-	case V1ListEntitlementsResponseEntitlementsFeatureKeyLogDrains:
+	case V1ListEntitlementsResponseOutputEntitlementsFeatureKeyLogDrains:
 		return true
-	case V1ListEntitlementsResponseEntitlementsFeatureKeyLogRetentionDays:
+	case V1ListEntitlementsResponseOutputEntitlementsFeatureKeyLogRetentionDays:
 		return true
-	case V1ListEntitlementsResponseEntitlementsFeatureKeyObservabilityDashboardAdvancedMetrics:
+	case V1ListEntitlementsResponseOutputEntitlementsFeatureKeyObservabilityDashboardAdvancedMetrics:
 		return true
-	case V1ListEntitlementsResponseEntitlementsFeatureKeyPitrAvailableVariants:
+	case V1ListEntitlementsResponseOutputEntitlementsFeatureKeyPitrAvailableVariants:
 		return true
-	case V1ListEntitlementsResponseEntitlementsFeatureKeyProjectCloning:
+	case V1ListEntitlementsResponseOutputEntitlementsFeatureKeyProjectCloning:
 		return true
-	case V1ListEntitlementsResponseEntitlementsFeatureKeyProjectPausing:
+	case V1ListEntitlementsResponseOutputEntitlementsFeatureKeyProjectPausing:
 		return true
-	case V1ListEntitlementsResponseEntitlementsFeatureKeyProjectRestoreAfterExpiry:
+	case V1ListEntitlementsResponseOutputEntitlementsFeatureKeyProjectRestoreAfterExpiry:
 		return true
-	case V1ListEntitlementsResponseEntitlementsFeatureKeyProjectScopedRoles:
+	case V1ListEntitlementsResponseOutputEntitlementsFeatureKeyProjectScopedRoles:
 		return true
-	case V1ListEntitlementsResponseEntitlementsFeatureKeyRealtimeMaxBytesPerSecond:
+	case V1ListEntitlementsResponseOutputEntitlementsFeatureKeyRealtimeMaxBytesPerSecond:
 		return true
-	case V1ListEntitlementsResponseEntitlementsFeatureKeyRealtimeMaxChannelsPerClient:
+	case V1ListEntitlementsResponseOutputEntitlementsFeatureKeyRealtimeMaxChannelsPerClient:
 		return true
-	case V1ListEntitlementsResponseEntitlementsFeatureKeyRealtimeMaxConcurrentUsers:
+	case V1ListEntitlementsResponseOutputEntitlementsFeatureKeyRealtimeMaxConcurrentUsers:
 		return true
-	case V1ListEntitlementsResponseEntitlementsFeatureKeyRealtimeMaxEventsPerSecond:
+	case V1ListEntitlementsResponseOutputEntitlementsFeatureKeyRealtimeMaxEventsPerSecond:
 		return true
-	case V1ListEntitlementsResponseEntitlementsFeatureKeyRealtimeMaxJoinsPerSecond:
+	case V1ListEntitlementsResponseOutputEntitlementsFeatureKeyRealtimeMaxJoinsPerSecond:
 		return true
-	case V1ListEntitlementsResponseEntitlementsFeatureKeyRealtimeMaxPayloadSizeInKb:
+	case V1ListEntitlementsResponseOutputEntitlementsFeatureKeyRealtimeMaxPayloadSizeInKb:
 		return true
-	case V1ListEntitlementsResponseEntitlementsFeatureKeyRealtimeMaxPresenceEventsPerSecond:
+	case V1ListEntitlementsResponseOutputEntitlementsFeatureKeyRealtimeMaxPresenceEventsPerSecond:
 		return true
-	case V1ListEntitlementsResponseEntitlementsFeatureKeyReplicationEtl:
+	case V1ListEntitlementsResponseOutputEntitlementsFeatureKeyReplicationEtl:
 		return true
-	case V1ListEntitlementsResponseEntitlementsFeatureKeySecurityAuditLogsDays:
+	case V1ListEntitlementsResponseOutputEntitlementsFeatureKeySecurityAuditLogsDays:
 		return true
-	case V1ListEntitlementsResponseEntitlementsFeatureKeySecurityEnforceMfa:
+	case V1ListEntitlementsResponseOutputEntitlementsFeatureKeySecurityEnforceMfa:
 		return true
-	case V1ListEntitlementsResponseEntitlementsFeatureKeySecurityIso27001Certificate:
+	case V1ListEntitlementsResponseOutputEntitlementsFeatureKeySecurityIso27001Certificate:
 		return true
-	case V1ListEntitlementsResponseEntitlementsFeatureKeySecurityMemberRoles:
+	case V1ListEntitlementsResponseOutputEntitlementsFeatureKeySecurityMemberRoles:
 		return true
-	case V1ListEntitlementsResponseEntitlementsFeatureKeySecurityPrivateLink:
+	case V1ListEntitlementsResponseOutputEntitlementsFeatureKeySecurityPrivateLink:
 		return true
-	case V1ListEntitlementsResponseEntitlementsFeatureKeySecurityQuestionnaire:
+	case V1ListEntitlementsResponseOutputEntitlementsFeatureKeySecurityQuestionnaire:
 		return true
-	case V1ListEntitlementsResponseEntitlementsFeatureKeySecuritySoc2Report:
+	case V1ListEntitlementsResponseOutputEntitlementsFeatureKeySecuritySoc2Report:
 		return true
-	case V1ListEntitlementsResponseEntitlementsFeatureKeyStorageIcebergCatalog:
+	case V1ListEntitlementsResponseOutputEntitlementsFeatureKeyStorageIcebergCatalog:
 		return true
-	case V1ListEntitlementsResponseEntitlementsFeatureKeyStorageImageTransformations:
+	case V1ListEntitlementsResponseOutputEntitlementsFeatureKeyStorageImageTransformations:
 		return true
-	case V1ListEntitlementsResponseEntitlementsFeatureKeyStorageMaxFileSize:
+	case V1ListEntitlementsResponseOutputEntitlementsFeatureKeyStorageMaxFileSize:
 		return true
-	case V1ListEntitlementsResponseEntitlementsFeatureKeyStorageMaxFileSizeConfigurable:
+	case V1ListEntitlementsResponseOutputEntitlementsFeatureKeyStorageMaxFileSizeConfigurable:
 		return true
-	case V1ListEntitlementsResponseEntitlementsFeatureKeyStoragePurgeCache:
+	case V1ListEntitlementsResponseOutputEntitlementsFeatureKeyStoragePurgeCache:
 		return true
-	case V1ListEntitlementsResponseEntitlementsFeatureKeyStorageVectorBuckets:
+	case V1ListEntitlementsResponseOutputEntitlementsFeatureKeyStorageVectorBuckets:
 		return true
-	case V1ListEntitlementsResponseEntitlementsFeatureKeyVanitySubdomain:
+	case V1ListEntitlementsResponseOutputEntitlementsFeatureKeyVanitySubdomain:
 		return true
 	default:
 		return false
 	}
 }
 
-// Defines values for V1ListEntitlementsResponseEntitlementsFeatureType.
+// Defines values for V1ListEntitlementsResponseOutputEntitlementsFeatureType.
 const (
-	V1ListEntitlementsResponseEntitlementsFeatureTypeBoolean V1ListEntitlementsResponseEntitlementsFeatureType = "boolean"
-	V1ListEntitlementsResponseEntitlementsFeatureTypeNumeric V1ListEntitlementsResponseEntitlementsFeatureType = "numeric"
-	V1ListEntitlementsResponseEntitlementsFeatureTypeSet     V1ListEntitlementsResponseEntitlementsFeatureType = "set"
+	V1ListEntitlementsResponseOutputEntitlementsFeatureTypeBoolean V1ListEntitlementsResponseOutputEntitlementsFeatureType = "boolean"
+	V1ListEntitlementsResponseOutputEntitlementsFeatureTypeNumeric V1ListEntitlementsResponseOutputEntitlementsFeatureType = "numeric"
+	V1ListEntitlementsResponseOutputEntitlementsFeatureTypeSet     V1ListEntitlementsResponseOutputEntitlementsFeatureType = "set"
 )
 
-// Valid indicates whether the value is a known member of the V1ListEntitlementsResponseEntitlementsFeatureType enum.
-func (e V1ListEntitlementsResponseEntitlementsFeatureType) Valid() bool {
+// Valid indicates whether the value is a known member of the V1ListEntitlementsResponseOutputEntitlementsFeatureType enum.
+func (e V1ListEntitlementsResponseOutputEntitlementsFeatureType) Valid() bool {
 	switch e {
-	case V1ListEntitlementsResponseEntitlementsFeatureTypeBoolean:
+	case V1ListEntitlementsResponseOutputEntitlementsFeatureTypeBoolean:
 		return true
-	case V1ListEntitlementsResponseEntitlementsFeatureTypeNumeric:
+	case V1ListEntitlementsResponseOutputEntitlementsFeatureTypeNumeric:
 		return true
-	case V1ListEntitlementsResponseEntitlementsFeatureTypeSet:
+	case V1ListEntitlementsResponseOutputEntitlementsFeatureTypeSet:
 		return true
 	default:
 		return false
 	}
 }
 
-// Defines values for V1ListEntitlementsResponseEntitlementsType.
+// Defines values for V1ListEntitlementsResponseOutputEntitlementsType.
 const (
-	V1ListEntitlementsResponseEntitlementsTypeBoolean V1ListEntitlementsResponseEntitlementsType = "boolean"
-	V1ListEntitlementsResponseEntitlementsTypeNumeric V1ListEntitlementsResponseEntitlementsType = "numeric"
-	V1ListEntitlementsResponseEntitlementsTypeSet     V1ListEntitlementsResponseEntitlementsType = "set"
+	V1ListEntitlementsResponseOutputEntitlementsTypeBoolean V1ListEntitlementsResponseOutputEntitlementsType = "boolean"
+	V1ListEntitlementsResponseOutputEntitlementsTypeNumeric V1ListEntitlementsResponseOutputEntitlementsType = "numeric"
+	V1ListEntitlementsResponseOutputEntitlementsTypeSet     V1ListEntitlementsResponseOutputEntitlementsType = "set"
 )
 
-// Valid indicates whether the value is a known member of the V1ListEntitlementsResponseEntitlementsType enum.
-func (e V1ListEntitlementsResponseEntitlementsType) Valid() bool {
+// Valid indicates whether the value is a known member of the V1ListEntitlementsResponseOutputEntitlementsType enum.
+func (e V1ListEntitlementsResponseOutputEntitlementsType) Valid() bool {
 	switch e {
-	case V1ListEntitlementsResponseEntitlementsTypeBoolean:
+	case V1ListEntitlementsResponseOutputEntitlementsTypeBoolean:
 		return true
-	case V1ListEntitlementsResponseEntitlementsTypeNumeric:
+	case V1ListEntitlementsResponseOutputEntitlementsTypeNumeric:
 		return true
-	case V1ListEntitlementsResponseEntitlementsTypeSet:
+	case V1ListEntitlementsResponseOutputEntitlementsTypeSet:
 		return true
 	default:
 		return false
 	}
 }
 
-// Defines values for V1OrganizationSlugResponseAllowedReleaseChannels.
+// Defines values for V1OrganizationSlugResponseOutputAllowedReleaseChannels.
 const (
-	V1OrganizationSlugResponseAllowedReleaseChannelsAlpha     V1OrganizationSlugResponseAllowedReleaseChannels = "alpha"
-	V1OrganizationSlugResponseAllowedReleaseChannelsBeta      V1OrganizationSlugResponseAllowedReleaseChannels = "beta"
-	V1OrganizationSlugResponseAllowedReleaseChannelsGa        V1OrganizationSlugResponseAllowedReleaseChannels = "ga"
-	V1OrganizationSlugResponseAllowedReleaseChannelsInternal  V1OrganizationSlugResponseAllowedReleaseChannels = "internal"
-	V1OrganizationSlugResponseAllowedReleaseChannelsPreview   V1OrganizationSlugResponseAllowedReleaseChannels = "preview"
-	V1OrganizationSlugResponseAllowedReleaseChannelsWithdrawn V1OrganizationSlugResponseAllowedReleaseChannels = "withdrawn"
+	V1OrganizationSlugResponseOutputAllowedReleaseChannelsAlpha     V1OrganizationSlugResponseOutputAllowedReleaseChannels = "alpha"
+	V1OrganizationSlugResponseOutputAllowedReleaseChannelsBeta      V1OrganizationSlugResponseOutputAllowedReleaseChannels = "beta"
+	V1OrganizationSlugResponseOutputAllowedReleaseChannelsGa        V1OrganizationSlugResponseOutputAllowedReleaseChannels = "ga"
+	V1OrganizationSlugResponseOutputAllowedReleaseChannelsInternal  V1OrganizationSlugResponseOutputAllowedReleaseChannels = "internal"
+	V1OrganizationSlugResponseOutputAllowedReleaseChannelsPreview   V1OrganizationSlugResponseOutputAllowedReleaseChannels = "preview"
+	V1OrganizationSlugResponseOutputAllowedReleaseChannelsWithdrawn V1OrganizationSlugResponseOutputAllowedReleaseChannels = "withdrawn"
 )
 
-// Valid indicates whether the value is a known member of the V1OrganizationSlugResponseAllowedReleaseChannels enum.
-func (e V1OrganizationSlugResponseAllowedReleaseChannels) Valid() bool {
+// Valid indicates whether the value is a known member of the V1OrganizationSlugResponseOutputAllowedReleaseChannels enum.
+func (e V1OrganizationSlugResponseOutputAllowedReleaseChannels) Valid() bool {
 	switch e {
-	case V1OrganizationSlugResponseAllowedReleaseChannelsAlpha:
+	case V1OrganizationSlugResponseOutputAllowedReleaseChannelsAlpha:
 		return true
-	case V1OrganizationSlugResponseAllowedReleaseChannelsBeta:
+	case V1OrganizationSlugResponseOutputAllowedReleaseChannelsBeta:
 		return true
-	case V1OrganizationSlugResponseAllowedReleaseChannelsGa:
+	case V1OrganizationSlugResponseOutputAllowedReleaseChannelsGa:
 		return true
-	case V1OrganizationSlugResponseAllowedReleaseChannelsInternal:
+	case V1OrganizationSlugResponseOutputAllowedReleaseChannelsInternal:
 		return true
-	case V1OrganizationSlugResponseAllowedReleaseChannelsPreview:
+	case V1OrganizationSlugResponseOutputAllowedReleaseChannelsPreview:
 		return true
-	case V1OrganizationSlugResponseAllowedReleaseChannelsWithdrawn:
+	case V1OrganizationSlugResponseOutputAllowedReleaseChannelsWithdrawn:
 		return true
 	default:
 		return false
 	}
 }
 
-// Defines values for V1OrganizationSlugResponsePlan.
+// Defines values for V1OrganizationSlugResponseOutputPlan.
 const (
-	V1OrganizationSlugResponsePlanEnterprise V1OrganizationSlugResponsePlan = "enterprise"
-	V1OrganizationSlugResponsePlanFree       V1OrganizationSlugResponsePlan = "free"
-	V1OrganizationSlugResponsePlanPlatform   V1OrganizationSlugResponsePlan = "platform"
-	V1OrganizationSlugResponsePlanPro        V1OrganizationSlugResponsePlan = "pro"
-	V1OrganizationSlugResponsePlanTeam       V1OrganizationSlugResponsePlan = "team"
+	V1OrganizationSlugResponseOutputPlanEnterprise V1OrganizationSlugResponseOutputPlan = "enterprise"
+	V1OrganizationSlugResponseOutputPlanFree       V1OrganizationSlugResponseOutputPlan = "free"
+	V1OrganizationSlugResponseOutputPlanPlatform   V1OrganizationSlugResponseOutputPlan = "platform"
+	V1OrganizationSlugResponseOutputPlanPro        V1OrganizationSlugResponseOutputPlan = "pro"
+	V1OrganizationSlugResponseOutputPlanTeam       V1OrganizationSlugResponseOutputPlan = "team"
 )
 
-// Valid indicates whether the value is a known member of the V1OrganizationSlugResponsePlan enum.
-func (e V1OrganizationSlugResponsePlan) Valid() bool {
+// Valid indicates whether the value is a known member of the V1OrganizationSlugResponseOutputPlan enum.
+func (e V1OrganizationSlugResponseOutputPlan) Valid() bool {
 	switch e {
-	case V1OrganizationSlugResponsePlanEnterprise:
+	case V1OrganizationSlugResponseOutputPlanEnterprise:
 		return true
-	case V1OrganizationSlugResponsePlanFree:
+	case V1OrganizationSlugResponseOutputPlanFree:
 		return true
-	case V1OrganizationSlugResponsePlanPlatform:
+	case V1OrganizationSlugResponseOutputPlanPlatform:
 		return true
-	case V1OrganizationSlugResponsePlanPro:
+	case V1OrganizationSlugResponseOutputPlanPro:
 		return true
-	case V1OrganizationSlugResponsePlanTeam:
+	case V1OrganizationSlugResponseOutputPlanTeam:
 		return true
 	default:
 		return false
 	}
 }
 
-// Defines values for V1PgbouncerConfigResponsePoolMode.
+// Defines values for V1PgbouncerConfigResponseOutputPoolMode.
 const (
-	Session     V1PgbouncerConfigResponsePoolMode = "session"
-	Statement   V1PgbouncerConfigResponsePoolMode = "statement"
-	Transaction V1PgbouncerConfigResponsePoolMode = "transaction"
+	Session     V1PgbouncerConfigResponseOutputPoolMode = "session"
+	Statement   V1PgbouncerConfigResponseOutputPoolMode = "statement"
+	Transaction V1PgbouncerConfigResponseOutputPoolMode = "transaction"
 )
 
-// Valid indicates whether the value is a known member of the V1PgbouncerConfigResponsePoolMode enum.
-func (e V1PgbouncerConfigResponsePoolMode) Valid() bool {
+// Valid indicates whether the value is a known member of the V1PgbouncerConfigResponseOutputPoolMode enum.
+func (e V1PgbouncerConfigResponseOutputPoolMode) Valid() bool {
 	switch e {
 	case Session:
 		return true
@@ -4568,15 +4567,15 @@ func (e V1PgbouncerConfigResponsePoolMode) Valid() bool {
 	}
 }
 
-// Defines values for V1ProjectAdvisorsResponseLintsCategories.
+// Defines values for V1ProjectAdvisorsResponseOutputLintsCategories.
 const (
-	HEALTH      V1ProjectAdvisorsResponseLintsCategories = "HEALTH"
-	PERFORMANCE V1ProjectAdvisorsResponseLintsCategories = "PERFORMANCE"
-	SECURITY    V1ProjectAdvisorsResponseLintsCategories = "SECURITY"
+	HEALTH      V1ProjectAdvisorsResponseOutputLintsCategories = "HEALTH"
+	PERFORMANCE V1ProjectAdvisorsResponseOutputLintsCategories = "PERFORMANCE"
+	SECURITY    V1ProjectAdvisorsResponseOutputLintsCategories = "SECURITY"
 )
 
-// Valid indicates whether the value is a known member of the V1ProjectAdvisorsResponseLintsCategories enum.
-func (e V1ProjectAdvisorsResponseLintsCategories) Valid() bool {
+// Valid indicates whether the value is a known member of the V1ProjectAdvisorsResponseOutputLintsCategories enum.
+func (e V1ProjectAdvisorsResponseOutputLintsCategories) Valid() bool {
 	switch e {
 	case HEALTH:
 		return true
@@ -4589,13 +4588,13 @@ func (e V1ProjectAdvisorsResponseLintsCategories) Valid() bool {
 	}
 }
 
-// Defines values for V1ProjectAdvisorsResponseLintsFacing.
+// Defines values for V1ProjectAdvisorsResponseOutputLintsFacing.
 const (
-	EXTERNAL V1ProjectAdvisorsResponseLintsFacing = "EXTERNAL"
+	EXTERNAL V1ProjectAdvisorsResponseOutputLintsFacing = "EXTERNAL"
 )
 
-// Valid indicates whether the value is a known member of the V1ProjectAdvisorsResponseLintsFacing enum.
-func (e V1ProjectAdvisorsResponseLintsFacing) Valid() bool {
+// Valid indicates whether the value is a known member of the V1ProjectAdvisorsResponseOutputLintsFacing enum.
+func (e V1ProjectAdvisorsResponseOutputLintsFacing) Valid() bool {
 	switch e {
 	case EXTERNAL:
 		return true
@@ -4604,15 +4603,15 @@ func (e V1ProjectAdvisorsResponseLintsFacing) Valid() bool {
 	}
 }
 
-// Defines values for V1ProjectAdvisorsResponseLintsLevel.
+// Defines values for V1ProjectAdvisorsResponseOutputLintsLevel.
 const (
-	ERROR V1ProjectAdvisorsResponseLintsLevel = "ERROR"
-	INFO  V1ProjectAdvisorsResponseLintsLevel = "INFO"
-	WARN  V1ProjectAdvisorsResponseLintsLevel = "WARN"
+	ERROR V1ProjectAdvisorsResponseOutputLintsLevel = "ERROR"
+	INFO  V1ProjectAdvisorsResponseOutputLintsLevel = "INFO"
+	WARN  V1ProjectAdvisorsResponseOutputLintsLevel = "WARN"
 )
 
-// Valid indicates whether the value is a known member of the V1ProjectAdvisorsResponseLintsLevel enum.
-func (e V1ProjectAdvisorsResponseLintsLevel) Valid() bool {
+// Valid indicates whether the value is a known member of the V1ProjectAdvisorsResponseOutputLintsLevel enum.
+func (e V1ProjectAdvisorsResponseOutputLintsLevel) Valid() bool {
 	switch e {
 	case ERROR:
 		return true
@@ -4625,93 +4624,93 @@ func (e V1ProjectAdvisorsResponseLintsLevel) Valid() bool {
 	}
 }
 
-// Defines values for V1ProjectAdvisorsResponseLintsMetadataType.
+// Defines values for V1ProjectAdvisorsResponseOutputLintsMetadataType.
 const (
-	V1ProjectAdvisorsResponseLintsMetadataTypeAuth             V1ProjectAdvisorsResponseLintsMetadataType = "auth"
-	V1ProjectAdvisorsResponseLintsMetadataTypeCompliance       V1ProjectAdvisorsResponseLintsMetadataType = "compliance"
-	V1ProjectAdvisorsResponseLintsMetadataTypeExtension        V1ProjectAdvisorsResponseLintsMetadataType = "extension"
-	V1ProjectAdvisorsResponseLintsMetadataTypeForeignTable     V1ProjectAdvisorsResponseLintsMetadataType = "foreign table"
-	V1ProjectAdvisorsResponseLintsMetadataTypeFunction         V1ProjectAdvisorsResponseLintsMetadataType = "function"
-	V1ProjectAdvisorsResponseLintsMetadataTypeHealth           V1ProjectAdvisorsResponseLintsMetadataType = "health"
-	V1ProjectAdvisorsResponseLintsMetadataTypeMaterializedView V1ProjectAdvisorsResponseLintsMetadataType = "materialized view"
-	V1ProjectAdvisorsResponseLintsMetadataTypeTable            V1ProjectAdvisorsResponseLintsMetadataType = "table"
-	V1ProjectAdvisorsResponseLintsMetadataTypeView             V1ProjectAdvisorsResponseLintsMetadataType = "view"
+	V1ProjectAdvisorsResponseOutputLintsMetadataTypeAuth             V1ProjectAdvisorsResponseOutputLintsMetadataType = "auth"
+	V1ProjectAdvisorsResponseOutputLintsMetadataTypeCompliance       V1ProjectAdvisorsResponseOutputLintsMetadataType = "compliance"
+	V1ProjectAdvisorsResponseOutputLintsMetadataTypeExtension        V1ProjectAdvisorsResponseOutputLintsMetadataType = "extension"
+	V1ProjectAdvisorsResponseOutputLintsMetadataTypeForeignTable     V1ProjectAdvisorsResponseOutputLintsMetadataType = "foreign table"
+	V1ProjectAdvisorsResponseOutputLintsMetadataTypeFunction         V1ProjectAdvisorsResponseOutputLintsMetadataType = "function"
+	V1ProjectAdvisorsResponseOutputLintsMetadataTypeHealth           V1ProjectAdvisorsResponseOutputLintsMetadataType = "health"
+	V1ProjectAdvisorsResponseOutputLintsMetadataTypeMaterializedView V1ProjectAdvisorsResponseOutputLintsMetadataType = "materialized view"
+	V1ProjectAdvisorsResponseOutputLintsMetadataTypeTable            V1ProjectAdvisorsResponseOutputLintsMetadataType = "table"
+	V1ProjectAdvisorsResponseOutputLintsMetadataTypeView             V1ProjectAdvisorsResponseOutputLintsMetadataType = "view"
 )
 
-// Valid indicates whether the value is a known member of the V1ProjectAdvisorsResponseLintsMetadataType enum.
-func (e V1ProjectAdvisorsResponseLintsMetadataType) Valid() bool {
+// Valid indicates whether the value is a known member of the V1ProjectAdvisorsResponseOutputLintsMetadataType enum.
+func (e V1ProjectAdvisorsResponseOutputLintsMetadataType) Valid() bool {
 	switch e {
-	case V1ProjectAdvisorsResponseLintsMetadataTypeAuth:
+	case V1ProjectAdvisorsResponseOutputLintsMetadataTypeAuth:
 		return true
-	case V1ProjectAdvisorsResponseLintsMetadataTypeCompliance:
+	case V1ProjectAdvisorsResponseOutputLintsMetadataTypeCompliance:
 		return true
-	case V1ProjectAdvisorsResponseLintsMetadataTypeExtension:
+	case V1ProjectAdvisorsResponseOutputLintsMetadataTypeExtension:
 		return true
-	case V1ProjectAdvisorsResponseLintsMetadataTypeForeignTable:
+	case V1ProjectAdvisorsResponseOutputLintsMetadataTypeForeignTable:
 		return true
-	case V1ProjectAdvisorsResponseLintsMetadataTypeFunction:
+	case V1ProjectAdvisorsResponseOutputLintsMetadataTypeFunction:
 		return true
-	case V1ProjectAdvisorsResponseLintsMetadataTypeHealth:
+	case V1ProjectAdvisorsResponseOutputLintsMetadataTypeHealth:
 		return true
-	case V1ProjectAdvisorsResponseLintsMetadataTypeMaterializedView:
+	case V1ProjectAdvisorsResponseOutputLintsMetadataTypeMaterializedView:
 		return true
-	case V1ProjectAdvisorsResponseLintsMetadataTypeTable:
+	case V1ProjectAdvisorsResponseOutputLintsMetadataTypeTable:
 		return true
-	case V1ProjectAdvisorsResponseLintsMetadataTypeView:
+	case V1ProjectAdvisorsResponseOutputLintsMetadataTypeView:
 		return true
 	default:
 		return false
 	}
 }
 
-// Defines values for V1ProjectAdvisorsResponseLintsName.
+// Defines values for V1ProjectAdvisorsResponseOutputLintsName.
 const (
-	AdvisorCheckUnavailable       V1ProjectAdvisorsResponseLintsName = "advisor_check_unavailable"
-	AuthInsufficientMfaOptions    V1ProjectAdvisorsResponseLintsName = "auth_insufficient_mfa_options"
-	AuthLeakedPasswordProtection  V1ProjectAdvisorsResponseLintsName = "auth_leaked_password_protection"
-	AuthOtpLongExpiry             V1ProjectAdvisorsResponseLintsName = "auth_otp_long_expiry"
-	AuthOtpShortLength            V1ProjectAdvisorsResponseLintsName = "auth_otp_short_length"
-	AuthPasswordPolicyMissing     V1ProjectAdvisorsResponseLintsName = "auth_password_policy_missing"
-	AuthRlsInitplan               V1ProjectAdvisorsResponseLintsName = "auth_rls_initplan"
-	AuthUsersExposed              V1ProjectAdvisorsResponseLintsName = "auth_users_exposed"
-	DbConnectionFailing           V1ProjectAdvisorsResponseLintsName = "db_connection_failing"
-	DbConnectionLimitReached      V1ProjectAdvisorsResponseLintsName = "db_connection_limit_reached"
-	DbNotReachable                V1ProjectAdvisorsResponseLintsName = "db_not_reachable"
-	DuplicateIndex                V1ProjectAdvisorsResponseLintsName = "duplicate_index"
-	ExtensionInPublic             V1ProjectAdvisorsResponseLintsName = "extension_in_public"
-	ForeignTableInApi             V1ProjectAdvisorsResponseLintsName = "foreign_table_in_api"
-	FunctionSearchPathMutable     V1ProjectAdvisorsResponseLintsName = "function_search_path_mutable"
-	InstanceAlertFiring           V1ProjectAdvisorsResponseLintsName = "instance_alert_firing"
-	InstanceDbDown                V1ProjectAdvisorsResponseLintsName = "instance_db_down"
-	InstanceTelemetryLost         V1ProjectAdvisorsResponseLintsName = "instance_telemetry_lost"
-	LeakedServiceKey              V1ProjectAdvisorsResponseLintsName = "leaked_service_key"
-	LogAuthErrorRateHigh          V1ProjectAdvisorsResponseLintsName = "log_auth_error_rate_high"
-	LogConnectionsNotEnabled      V1ProjectAdvisorsResponseLintsName = "log_connections_not_enabled"
-	LogDataApiErrorRateHigh       V1ProjectAdvisorsResponseLintsName = "log_data_api_error_rate_high"
-	LogEdgeFunctionErrorRateHigh  V1ProjectAdvisorsResponseLintsName = "log_edge_function_error_rate_high"
-	LogStorageErrorRateHigh       V1ProjectAdvisorsResponseLintsName = "log_storage_error_rate_high"
-	MaterializedViewInApi         V1ProjectAdvisorsResponseLintsName = "materialized_view_in_api"
-	MultiplePermissivePolicies    V1ProjectAdvisorsResponseLintsName = "multiple_permissive_policies"
-	NetworkRestrictionsNotSet     V1ProjectAdvisorsResponseLintsName = "network_restrictions_not_set"
-	NoBackupAdmin                 V1ProjectAdvisorsResponseLintsName = "no_backup_admin"
-	NoPrimaryKey                  V1ProjectAdvisorsResponseLintsName = "no_primary_key"
-	PasswordRequirementsMinLength V1ProjectAdvisorsResponseLintsName = "password_requirements_min_length"
-	PitrNotEnabled                V1ProjectAdvisorsResponseLintsName = "pitr_not_enabled"
-	PolicyExistsRlsDisabled       V1ProjectAdvisorsResponseLintsName = "policy_exists_rls_disabled"
-	ProjectNotActive              V1ProjectAdvisorsResponseLintsName = "project_not_active"
-	RlsDisabledInPublic           V1ProjectAdvisorsResponseLintsName = "rls_disabled_in_public"
-	RlsEnabledNoPolicy            V1ProjectAdvisorsResponseLintsName = "rls_enabled_no_policy"
-	RlsReferencesUserMetadata     V1ProjectAdvisorsResponseLintsName = "rls_references_user_metadata"
-	SecurityDefinerView           V1ProjectAdvisorsResponseLintsName = "security_definer_view"
-	SslNotEnforced                V1ProjectAdvisorsResponseLintsName = "ssl_not_enforced"
-	UnindexedForeignKeys          V1ProjectAdvisorsResponseLintsName = "unindexed_foreign_keys"
-	UnsupportedRegTypes           V1ProjectAdvisorsResponseLintsName = "unsupported_reg_types"
-	UnusedIndex                   V1ProjectAdvisorsResponseLintsName = "unused_index"
-	VulnerablePostgresVersion     V1ProjectAdvisorsResponseLintsName = "vulnerable_postgres_version"
+	AdvisorCheckUnavailable       V1ProjectAdvisorsResponseOutputLintsName = "advisor_check_unavailable"
+	AuthInsufficientMfaOptions    V1ProjectAdvisorsResponseOutputLintsName = "auth_insufficient_mfa_options"
+	AuthLeakedPasswordProtection  V1ProjectAdvisorsResponseOutputLintsName = "auth_leaked_password_protection"
+	AuthOtpLongExpiry             V1ProjectAdvisorsResponseOutputLintsName = "auth_otp_long_expiry"
+	AuthOtpShortLength            V1ProjectAdvisorsResponseOutputLintsName = "auth_otp_short_length"
+	AuthPasswordPolicyMissing     V1ProjectAdvisorsResponseOutputLintsName = "auth_password_policy_missing"
+	AuthRlsInitplan               V1ProjectAdvisorsResponseOutputLintsName = "auth_rls_initplan"
+	AuthUsersExposed              V1ProjectAdvisorsResponseOutputLintsName = "auth_users_exposed"
+	DbConnectionFailing           V1ProjectAdvisorsResponseOutputLintsName = "db_connection_failing"
+	DbConnectionLimitReached      V1ProjectAdvisorsResponseOutputLintsName = "db_connection_limit_reached"
+	DbNotReachable                V1ProjectAdvisorsResponseOutputLintsName = "db_not_reachable"
+	DuplicateIndex                V1ProjectAdvisorsResponseOutputLintsName = "duplicate_index"
+	ExtensionInPublic             V1ProjectAdvisorsResponseOutputLintsName = "extension_in_public"
+	ForeignTableInApi             V1ProjectAdvisorsResponseOutputLintsName = "foreign_table_in_api"
+	FunctionSearchPathMutable     V1ProjectAdvisorsResponseOutputLintsName = "function_search_path_mutable"
+	InstanceAlertFiring           V1ProjectAdvisorsResponseOutputLintsName = "instance_alert_firing"
+	InstanceDbDown                V1ProjectAdvisorsResponseOutputLintsName = "instance_db_down"
+	InstanceTelemetryLost         V1ProjectAdvisorsResponseOutputLintsName = "instance_telemetry_lost"
+	LeakedServiceKey              V1ProjectAdvisorsResponseOutputLintsName = "leaked_service_key"
+	LogAuthErrorRateHigh          V1ProjectAdvisorsResponseOutputLintsName = "log_auth_error_rate_high"
+	LogConnectionsNotEnabled      V1ProjectAdvisorsResponseOutputLintsName = "log_connections_not_enabled"
+	LogDataApiErrorRateHigh       V1ProjectAdvisorsResponseOutputLintsName = "log_data_api_error_rate_high"
+	LogEdgeFunctionErrorRateHigh  V1ProjectAdvisorsResponseOutputLintsName = "log_edge_function_error_rate_high"
+	LogStorageErrorRateHigh       V1ProjectAdvisorsResponseOutputLintsName = "log_storage_error_rate_high"
+	MaterializedViewInApi         V1ProjectAdvisorsResponseOutputLintsName = "materialized_view_in_api"
+	MultiplePermissivePolicies    V1ProjectAdvisorsResponseOutputLintsName = "multiple_permissive_policies"
+	NetworkRestrictionsNotSet     V1ProjectAdvisorsResponseOutputLintsName = "network_restrictions_not_set"
+	NoBackupAdmin                 V1ProjectAdvisorsResponseOutputLintsName = "no_backup_admin"
+	NoPrimaryKey                  V1ProjectAdvisorsResponseOutputLintsName = "no_primary_key"
+	PasswordRequirementsMinLength V1ProjectAdvisorsResponseOutputLintsName = "password_requirements_min_length"
+	PitrNotEnabled                V1ProjectAdvisorsResponseOutputLintsName = "pitr_not_enabled"
+	PolicyExistsRlsDisabled       V1ProjectAdvisorsResponseOutputLintsName = "policy_exists_rls_disabled"
+	ProjectNotActive              V1ProjectAdvisorsResponseOutputLintsName = "project_not_active"
+	RlsDisabledInPublic           V1ProjectAdvisorsResponseOutputLintsName = "rls_disabled_in_public"
+	RlsEnabledNoPolicy            V1ProjectAdvisorsResponseOutputLintsName = "rls_enabled_no_policy"
+	RlsReferencesUserMetadata     V1ProjectAdvisorsResponseOutputLintsName = "rls_references_user_metadata"
+	SecurityDefinerView           V1ProjectAdvisorsResponseOutputLintsName = "security_definer_view"
+	SslNotEnforced                V1ProjectAdvisorsResponseOutputLintsName = "ssl_not_enforced"
+	UnindexedForeignKeys          V1ProjectAdvisorsResponseOutputLintsName = "unindexed_foreign_keys"
+	UnsupportedRegTypes           V1ProjectAdvisorsResponseOutputLintsName = "unsupported_reg_types"
+	UnusedIndex                   V1ProjectAdvisorsResponseOutputLintsName = "unused_index"
+	VulnerablePostgresVersion     V1ProjectAdvisorsResponseOutputLintsName = "vulnerable_postgres_version"
 )
 
-// Valid indicates whether the value is a known member of the V1ProjectAdvisorsResponseLintsName enum.
-func (e V1ProjectAdvisorsResponseLintsName) Valid() bool {
+// Valid indicates whether the value is a known member of the V1ProjectAdvisorsResponseOutputLintsName enum.
+func (e V1ProjectAdvisorsResponseOutputLintsName) Valid() bool {
 	switch e {
 	case AdvisorCheckUnavailable:
 		return true
@@ -4802,114 +4801,114 @@ func (e V1ProjectAdvisorsResponseLintsName) Valid() bool {
 	}
 }
 
-// Defines values for V1ProjectResponseStatus.
+// Defines values for V1ProjectResponseOutputStatus.
 const (
-	V1ProjectResponseStatusACTIVEHEALTHY   V1ProjectResponseStatus = "ACTIVE_HEALTHY"
-	V1ProjectResponseStatusACTIVEUNHEALTHY V1ProjectResponseStatus = "ACTIVE_UNHEALTHY"
-	V1ProjectResponseStatusCOMINGUP        V1ProjectResponseStatus = "COMING_UP"
-	V1ProjectResponseStatusGOINGDOWN       V1ProjectResponseStatus = "GOING_DOWN"
-	V1ProjectResponseStatusINACTIVE        V1ProjectResponseStatus = "INACTIVE"
-	V1ProjectResponseStatusINITFAILED      V1ProjectResponseStatus = "INIT_FAILED"
-	V1ProjectResponseStatusPAUSEFAILED     V1ProjectResponseStatus = "PAUSE_FAILED"
-	V1ProjectResponseStatusPAUSING         V1ProjectResponseStatus = "PAUSING"
-	V1ProjectResponseStatusREMOVED         V1ProjectResponseStatus = "REMOVED"
-	V1ProjectResponseStatusRESIZING        V1ProjectResponseStatus = "RESIZING"
-	V1ProjectResponseStatusRESTARTING      V1ProjectResponseStatus = "RESTARTING"
-	V1ProjectResponseStatusRESTOREFAILED   V1ProjectResponseStatus = "RESTORE_FAILED"
-	V1ProjectResponseStatusRESTORING       V1ProjectResponseStatus = "RESTORING"
-	V1ProjectResponseStatusUNKNOWN         V1ProjectResponseStatus = "UNKNOWN"
-	V1ProjectResponseStatusUPGRADING       V1ProjectResponseStatus = "UPGRADING"
+	V1ProjectResponseOutputStatusACTIVEHEALTHY   V1ProjectResponseOutputStatus = "ACTIVE_HEALTHY"
+	V1ProjectResponseOutputStatusACTIVEUNHEALTHY V1ProjectResponseOutputStatus = "ACTIVE_UNHEALTHY"
+	V1ProjectResponseOutputStatusCOMINGUP        V1ProjectResponseOutputStatus = "COMING_UP"
+	V1ProjectResponseOutputStatusGOINGDOWN       V1ProjectResponseOutputStatus = "GOING_DOWN"
+	V1ProjectResponseOutputStatusINACTIVE        V1ProjectResponseOutputStatus = "INACTIVE"
+	V1ProjectResponseOutputStatusINITFAILED      V1ProjectResponseOutputStatus = "INIT_FAILED"
+	V1ProjectResponseOutputStatusPAUSEFAILED     V1ProjectResponseOutputStatus = "PAUSE_FAILED"
+	V1ProjectResponseOutputStatusPAUSING         V1ProjectResponseOutputStatus = "PAUSING"
+	V1ProjectResponseOutputStatusREMOVED         V1ProjectResponseOutputStatus = "REMOVED"
+	V1ProjectResponseOutputStatusRESIZING        V1ProjectResponseOutputStatus = "RESIZING"
+	V1ProjectResponseOutputStatusRESTARTING      V1ProjectResponseOutputStatus = "RESTARTING"
+	V1ProjectResponseOutputStatusRESTOREFAILED   V1ProjectResponseOutputStatus = "RESTORE_FAILED"
+	V1ProjectResponseOutputStatusRESTORING       V1ProjectResponseOutputStatus = "RESTORING"
+	V1ProjectResponseOutputStatusUNKNOWN         V1ProjectResponseOutputStatus = "UNKNOWN"
+	V1ProjectResponseOutputStatusUPGRADING       V1ProjectResponseOutputStatus = "UPGRADING"
 )
 
-// Valid indicates whether the value is a known member of the V1ProjectResponseStatus enum.
-func (e V1ProjectResponseStatus) Valid() bool {
+// Valid indicates whether the value is a known member of the V1ProjectResponseOutputStatus enum.
+func (e V1ProjectResponseOutputStatus) Valid() bool {
 	switch e {
-	case V1ProjectResponseStatusACTIVEHEALTHY:
+	case V1ProjectResponseOutputStatusACTIVEHEALTHY:
 		return true
-	case V1ProjectResponseStatusACTIVEUNHEALTHY:
+	case V1ProjectResponseOutputStatusACTIVEUNHEALTHY:
 		return true
-	case V1ProjectResponseStatusCOMINGUP:
+	case V1ProjectResponseOutputStatusCOMINGUP:
 		return true
-	case V1ProjectResponseStatusGOINGDOWN:
+	case V1ProjectResponseOutputStatusGOINGDOWN:
 		return true
-	case V1ProjectResponseStatusINACTIVE:
+	case V1ProjectResponseOutputStatusINACTIVE:
 		return true
-	case V1ProjectResponseStatusINITFAILED:
+	case V1ProjectResponseOutputStatusINITFAILED:
 		return true
-	case V1ProjectResponseStatusPAUSEFAILED:
+	case V1ProjectResponseOutputStatusPAUSEFAILED:
 		return true
-	case V1ProjectResponseStatusPAUSING:
+	case V1ProjectResponseOutputStatusPAUSING:
 		return true
-	case V1ProjectResponseStatusREMOVED:
+	case V1ProjectResponseOutputStatusREMOVED:
 		return true
-	case V1ProjectResponseStatusRESIZING:
+	case V1ProjectResponseOutputStatusRESIZING:
 		return true
-	case V1ProjectResponseStatusRESTARTING:
+	case V1ProjectResponseOutputStatusRESTARTING:
 		return true
-	case V1ProjectResponseStatusRESTOREFAILED:
+	case V1ProjectResponseOutputStatusRESTOREFAILED:
 		return true
-	case V1ProjectResponseStatusRESTORING:
+	case V1ProjectResponseOutputStatusRESTORING:
 		return true
-	case V1ProjectResponseStatusUNKNOWN:
+	case V1ProjectResponseOutputStatusUNKNOWN:
 		return true
-	case V1ProjectResponseStatusUPGRADING:
+	case V1ProjectResponseOutputStatusUPGRADING:
 		return true
 	default:
 		return false
 	}
 }
 
-// Defines values for V1ProjectWithDatabaseResponseStatus.
+// Defines values for V1ProjectWithDatabaseResponseOutputStatus.
 const (
-	V1ProjectWithDatabaseResponseStatusACTIVEHEALTHY   V1ProjectWithDatabaseResponseStatus = "ACTIVE_HEALTHY"
-	V1ProjectWithDatabaseResponseStatusACTIVEUNHEALTHY V1ProjectWithDatabaseResponseStatus = "ACTIVE_UNHEALTHY"
-	V1ProjectWithDatabaseResponseStatusCOMINGUP        V1ProjectWithDatabaseResponseStatus = "COMING_UP"
-	V1ProjectWithDatabaseResponseStatusGOINGDOWN       V1ProjectWithDatabaseResponseStatus = "GOING_DOWN"
-	V1ProjectWithDatabaseResponseStatusINACTIVE        V1ProjectWithDatabaseResponseStatus = "INACTIVE"
-	V1ProjectWithDatabaseResponseStatusINITFAILED      V1ProjectWithDatabaseResponseStatus = "INIT_FAILED"
-	V1ProjectWithDatabaseResponseStatusPAUSEFAILED     V1ProjectWithDatabaseResponseStatus = "PAUSE_FAILED"
-	V1ProjectWithDatabaseResponseStatusPAUSING         V1ProjectWithDatabaseResponseStatus = "PAUSING"
-	V1ProjectWithDatabaseResponseStatusREMOVED         V1ProjectWithDatabaseResponseStatus = "REMOVED"
-	V1ProjectWithDatabaseResponseStatusRESIZING        V1ProjectWithDatabaseResponseStatus = "RESIZING"
-	V1ProjectWithDatabaseResponseStatusRESTARTING      V1ProjectWithDatabaseResponseStatus = "RESTARTING"
-	V1ProjectWithDatabaseResponseStatusRESTOREFAILED   V1ProjectWithDatabaseResponseStatus = "RESTORE_FAILED"
-	V1ProjectWithDatabaseResponseStatusRESTORING       V1ProjectWithDatabaseResponseStatus = "RESTORING"
-	V1ProjectWithDatabaseResponseStatusUNKNOWN         V1ProjectWithDatabaseResponseStatus = "UNKNOWN"
-	V1ProjectWithDatabaseResponseStatusUPGRADING       V1ProjectWithDatabaseResponseStatus = "UPGRADING"
+	V1ProjectWithDatabaseResponseOutputStatusACTIVEHEALTHY   V1ProjectWithDatabaseResponseOutputStatus = "ACTIVE_HEALTHY"
+	V1ProjectWithDatabaseResponseOutputStatusACTIVEUNHEALTHY V1ProjectWithDatabaseResponseOutputStatus = "ACTIVE_UNHEALTHY"
+	V1ProjectWithDatabaseResponseOutputStatusCOMINGUP        V1ProjectWithDatabaseResponseOutputStatus = "COMING_UP"
+	V1ProjectWithDatabaseResponseOutputStatusGOINGDOWN       V1ProjectWithDatabaseResponseOutputStatus = "GOING_DOWN"
+	V1ProjectWithDatabaseResponseOutputStatusINACTIVE        V1ProjectWithDatabaseResponseOutputStatus = "INACTIVE"
+	V1ProjectWithDatabaseResponseOutputStatusINITFAILED      V1ProjectWithDatabaseResponseOutputStatus = "INIT_FAILED"
+	V1ProjectWithDatabaseResponseOutputStatusPAUSEFAILED     V1ProjectWithDatabaseResponseOutputStatus = "PAUSE_FAILED"
+	V1ProjectWithDatabaseResponseOutputStatusPAUSING         V1ProjectWithDatabaseResponseOutputStatus = "PAUSING"
+	V1ProjectWithDatabaseResponseOutputStatusREMOVED         V1ProjectWithDatabaseResponseOutputStatus = "REMOVED"
+	V1ProjectWithDatabaseResponseOutputStatusRESIZING        V1ProjectWithDatabaseResponseOutputStatus = "RESIZING"
+	V1ProjectWithDatabaseResponseOutputStatusRESTARTING      V1ProjectWithDatabaseResponseOutputStatus = "RESTARTING"
+	V1ProjectWithDatabaseResponseOutputStatusRESTOREFAILED   V1ProjectWithDatabaseResponseOutputStatus = "RESTORE_FAILED"
+	V1ProjectWithDatabaseResponseOutputStatusRESTORING       V1ProjectWithDatabaseResponseOutputStatus = "RESTORING"
+	V1ProjectWithDatabaseResponseOutputStatusUNKNOWN         V1ProjectWithDatabaseResponseOutputStatus = "UNKNOWN"
+	V1ProjectWithDatabaseResponseOutputStatusUPGRADING       V1ProjectWithDatabaseResponseOutputStatus = "UPGRADING"
 )
 
-// Valid indicates whether the value is a known member of the V1ProjectWithDatabaseResponseStatus enum.
-func (e V1ProjectWithDatabaseResponseStatus) Valid() bool {
+// Valid indicates whether the value is a known member of the V1ProjectWithDatabaseResponseOutputStatus enum.
+func (e V1ProjectWithDatabaseResponseOutputStatus) Valid() bool {
 	switch e {
-	case V1ProjectWithDatabaseResponseStatusACTIVEHEALTHY:
+	case V1ProjectWithDatabaseResponseOutputStatusACTIVEHEALTHY:
 		return true
-	case V1ProjectWithDatabaseResponseStatusACTIVEUNHEALTHY:
+	case V1ProjectWithDatabaseResponseOutputStatusACTIVEUNHEALTHY:
 		return true
-	case V1ProjectWithDatabaseResponseStatusCOMINGUP:
+	case V1ProjectWithDatabaseResponseOutputStatusCOMINGUP:
 		return true
-	case V1ProjectWithDatabaseResponseStatusGOINGDOWN:
+	case V1ProjectWithDatabaseResponseOutputStatusGOINGDOWN:
 		return true
-	case V1ProjectWithDatabaseResponseStatusINACTIVE:
+	case V1ProjectWithDatabaseResponseOutputStatusINACTIVE:
 		return true
-	case V1ProjectWithDatabaseResponseStatusINITFAILED:
+	case V1ProjectWithDatabaseResponseOutputStatusINITFAILED:
 		return true
-	case V1ProjectWithDatabaseResponseStatusPAUSEFAILED:
+	case V1ProjectWithDatabaseResponseOutputStatusPAUSEFAILED:
 		return true
-	case V1ProjectWithDatabaseResponseStatusPAUSING:
+	case V1ProjectWithDatabaseResponseOutputStatusPAUSING:
 		return true
-	case V1ProjectWithDatabaseResponseStatusREMOVED:
+	case V1ProjectWithDatabaseResponseOutputStatusREMOVED:
 		return true
-	case V1ProjectWithDatabaseResponseStatusRESIZING:
+	case V1ProjectWithDatabaseResponseOutputStatusRESIZING:
 		return true
-	case V1ProjectWithDatabaseResponseStatusRESTARTING:
+	case V1ProjectWithDatabaseResponseOutputStatusRESTARTING:
 		return true
-	case V1ProjectWithDatabaseResponseStatusRESTOREFAILED:
+	case V1ProjectWithDatabaseResponseOutputStatusRESTOREFAILED:
 		return true
-	case V1ProjectWithDatabaseResponseStatusRESTORING:
+	case V1ProjectWithDatabaseResponseOutputStatusRESTORING:
 		return true
-	case V1ProjectWithDatabaseResponseStatusUNKNOWN:
+	case V1ProjectWithDatabaseResponseOutputStatusUNKNOWN:
 		return true
-	case V1ProjectWithDatabaseResponseStatusUPGRADING:
+	case V1ProjectWithDatabaseResponseOutputStatusUPGRADING:
 		return true
 	default:
 		return false
@@ -4940,13 +4939,13 @@ func (e V1RestorePointResponseStatus) Valid() bool {
 	}
 }
 
-// Defines values for V1ServiceHealthResponseInfo0Name.
+// Defines values for V1ServiceHealthResponseOutputInfo0Name.
 const (
-	GoTrue V1ServiceHealthResponseInfo0Name = "GoTrue"
+	GoTrue V1ServiceHealthResponseOutputInfo0Name = "GoTrue"
 )
 
-// Valid indicates whether the value is a known member of the V1ServiceHealthResponseInfo0Name enum.
-func (e V1ServiceHealthResponseInfo0Name) Valid() bool {
+// Valid indicates whether the value is a known member of the V1ServiceHealthResponseOutputInfo0Name enum.
+func (e V1ServiceHealthResponseOutputInfo0Name) Valid() bool {
 	switch e {
 	case GoTrue:
 		return true
@@ -4955,51 +4954,51 @@ func (e V1ServiceHealthResponseInfo0Name) Valid() bool {
 	}
 }
 
-// Defines values for V1ServiceHealthResponseName.
+// Defines values for V1ServiceHealthResponseOutputName.
 const (
-	V1ServiceHealthResponseNameAuth           V1ServiceHealthResponseName = "auth"
-	V1ServiceHealthResponseNameDb             V1ServiceHealthResponseName = "db"
-	V1ServiceHealthResponseNameDbPostgresUser V1ServiceHealthResponseName = "db_postgres_user"
-	V1ServiceHealthResponseNamePgBouncer      V1ServiceHealthResponseName = "pg_bouncer"
-	V1ServiceHealthResponseNamePooler         V1ServiceHealthResponseName = "pooler"
-	V1ServiceHealthResponseNameRealtime       V1ServiceHealthResponseName = "realtime"
-	V1ServiceHealthResponseNameRest           V1ServiceHealthResponseName = "rest"
-	V1ServiceHealthResponseNameStorage        V1ServiceHealthResponseName = "storage"
+	V1ServiceHealthResponseOutputNameAuth           V1ServiceHealthResponseOutputName = "auth"
+	V1ServiceHealthResponseOutputNameDb             V1ServiceHealthResponseOutputName = "db"
+	V1ServiceHealthResponseOutputNameDbPostgresUser V1ServiceHealthResponseOutputName = "db_postgres_user"
+	V1ServiceHealthResponseOutputNamePgBouncer      V1ServiceHealthResponseOutputName = "pg_bouncer"
+	V1ServiceHealthResponseOutputNamePooler         V1ServiceHealthResponseOutputName = "pooler"
+	V1ServiceHealthResponseOutputNameRealtime       V1ServiceHealthResponseOutputName = "realtime"
+	V1ServiceHealthResponseOutputNameRest           V1ServiceHealthResponseOutputName = "rest"
+	V1ServiceHealthResponseOutputNameStorage        V1ServiceHealthResponseOutputName = "storage"
 )
 
-// Valid indicates whether the value is a known member of the V1ServiceHealthResponseName enum.
-func (e V1ServiceHealthResponseName) Valid() bool {
+// Valid indicates whether the value is a known member of the V1ServiceHealthResponseOutputName enum.
+func (e V1ServiceHealthResponseOutputName) Valid() bool {
 	switch e {
-	case V1ServiceHealthResponseNameAuth:
+	case V1ServiceHealthResponseOutputNameAuth:
 		return true
-	case V1ServiceHealthResponseNameDb:
+	case V1ServiceHealthResponseOutputNameDb:
 		return true
-	case V1ServiceHealthResponseNameDbPostgresUser:
+	case V1ServiceHealthResponseOutputNameDbPostgresUser:
 		return true
-	case V1ServiceHealthResponseNamePgBouncer:
+	case V1ServiceHealthResponseOutputNamePgBouncer:
 		return true
-	case V1ServiceHealthResponseNamePooler:
+	case V1ServiceHealthResponseOutputNamePooler:
 		return true
-	case V1ServiceHealthResponseNameRealtime:
+	case V1ServiceHealthResponseOutputNameRealtime:
 		return true
-	case V1ServiceHealthResponseNameRest:
+	case V1ServiceHealthResponseOutputNameRest:
 		return true
-	case V1ServiceHealthResponseNameStorage:
+	case V1ServiceHealthResponseOutputNameStorage:
 		return true
 	default:
 		return false
 	}
 }
 
-// Defines values for V1ServiceHealthResponseStatus.
+// Defines values for V1ServiceHealthResponseOutputStatus.
 const (
-	ACTIVEHEALTHY V1ServiceHealthResponseStatus = "ACTIVE_HEALTHY"
-	COMINGUP      V1ServiceHealthResponseStatus = "COMING_UP"
-	UNHEALTHY     V1ServiceHealthResponseStatus = "UNHEALTHY"
+	ACTIVEHEALTHY V1ServiceHealthResponseOutputStatus = "ACTIVE_HEALTHY"
+	COMINGUP      V1ServiceHealthResponseOutputStatus = "COMING_UP"
+	UNHEALTHY     V1ServiceHealthResponseOutputStatus = "UNHEALTHY"
 )
 
-// Valid indicates whether the value is a known member of the V1ServiceHealthResponseStatus enum.
-func (e V1ServiceHealthResponseStatus) Valid() bool {
+// Valid indicates whether the value is a known member of the V1ServiceHealthResponseOutputStatus enum.
+func (e V1ServiceHealthResponseOutputStatus) Valid() bool {
 	switch e {
 	case ACTIVEHEALTHY:
 		return true
@@ -5012,15 +5011,15 @@ func (e V1ServiceHealthResponseStatus) Valid() bool {
 	}
 }
 
-// Defines values for VanitySubdomainConfigResponseStatus.
+// Defines values for VanitySubdomainConfigResponseOutputStatus.
 const (
-	Active           VanitySubdomainConfigResponseStatus = "active"
-	CustomDomainUsed VanitySubdomainConfigResponseStatus = "custom-domain-used"
-	NotUsed          VanitySubdomainConfigResponseStatus = "not-used"
+	Active           VanitySubdomainConfigResponseOutputStatus = "active"
+	CustomDomainUsed VanitySubdomainConfigResponseOutputStatus = "custom-domain-used"
+	NotUsed          VanitySubdomainConfigResponseOutputStatus = "not-used"
 )
 
-// Valid indicates whether the value is a known member of the VanitySubdomainConfigResponseStatus enum.
-func (e VanitySubdomainConfigResponseStatus) Valid() bool {
+// Valid indicates whether the value is a known member of the VanitySubdomainConfigResponseOutputStatus enum.
+func (e VanitySubdomainConfigResponseOutputStatus) Valid() bool {
 	switch e {
 	case Active:
 		return true
@@ -5588,45 +5587,45 @@ type AcceptInviteExternalUserJitAccessBody struct {
 	Token string              `json:"token"`
 }
 
-// ActionRunResponse defines model for ActionRunResponse.
-type ActionRunResponse struct {
+// ActionRunResponseOutput defines model for ActionRunResponse_Output.
+type ActionRunResponseOutput struct {
 	BranchId   string                         `json:"branch_id"`
 	CheckRunId nullable.Nullable[float32]     `json:"check_run_id"`
 	CreatedAt  string                         `json:"created_at"`
 	GitConfig  nullable.Nullable[interface{}] `json:"git_config,omitempty"`
 	Id         string                         `json:"id"`
 	RunSteps   []struct {
-		CreatedAt string                          `json:"created_at"`
-		Name      ActionRunResponseRunStepsName   `json:"name"`
-		Status    ActionRunResponseRunStepsStatus `json:"status"`
-		UpdatedAt string                          `json:"updated_at"`
+		CreatedAt string                                `json:"created_at"`
+		Name      ActionRunResponseOutputRunStepsName   `json:"name"`
+		Status    ActionRunResponseOutputRunStepsStatus `json:"status"`
+		UpdatedAt string                                `json:"updated_at"`
 	} `json:"run_steps"`
 	UpdatedAt string                    `json:"updated_at"`
 	Workdir   nullable.Nullable[string] `json:"workdir"`
 }
 
-// ActionRunResponseRunStepsName defines model for ActionRunResponse.RunSteps.Name.
-type ActionRunResponseRunStepsName string
+// ActionRunResponseOutputRunStepsName defines model for ActionRunResponseOutput.RunSteps.Name.
+type ActionRunResponseOutputRunStepsName string
 
-// ActionRunResponseRunStepsStatus defines model for ActionRunResponse.RunSteps.Status.
-type ActionRunResponseRunStepsStatus string
+// ActionRunResponseOutputRunStepsStatus defines model for ActionRunResponseOutput.RunSteps.Status.
+type ActionRunResponseOutputRunStepsStatus string
 
-// ActivateVanitySubdomainResponse defines model for ActivateVanitySubdomainResponse.
-type ActivateVanitySubdomainResponse struct {
+// ActivateVanitySubdomainResponseOutput defines model for ActivateVanitySubdomainResponse_Output.
+type ActivateVanitySubdomainResponseOutput struct {
 	CustomDomain string `json:"custom_domain"`
 }
 
-// AnalyticsResponse defines model for AnalyticsResponse.
-type AnalyticsResponse struct {
-	Error  *AnalyticsResponse_Error `json:"error,omitempty"`
-	Result *[]interface{}           `json:"result,omitempty"`
+// AnalyticsResponseOutput defines model for AnalyticsResponse_Output.
+type AnalyticsResponseOutput struct {
+	Error  *AnalyticsResponseOutput_Error `json:"error,omitempty"`
+	Result *[]interface{}                 `json:"result,omitempty"`
 }
 
-// AnalyticsResponseError0 defines model for .
-type AnalyticsResponseError0 = string
+// AnalyticsResponseOutputError0 defines model for .
+type AnalyticsResponseOutputError0 = string
 
-// AnalyticsResponseError1 defines model for .
-type AnalyticsResponseError1 struct {
+// AnalyticsResponseOutputError1 defines model for .
+type AnalyticsResponseOutputError1 struct {
 	Code   float32 `json:"code"`
 	Errors []struct {
 		Domain       string `json:"domain"`
@@ -5639,27 +5638,27 @@ type AnalyticsResponseError1 struct {
 	Status  string `json:"status"`
 }
 
-// AnalyticsResponse_Error defines model for AnalyticsResponse.Error.
-type AnalyticsResponse_Error struct {
+// AnalyticsResponseOutput_Error defines model for AnalyticsResponseOutput.Error.
+type AnalyticsResponseOutput_Error struct {
 	union json.RawMessage
 }
 
-// ApiKeyResponse defines model for ApiKeyResponse.
-type ApiKeyResponse struct {
-	ApiKey            nullable.Nullable[string]                 `json:"api_key,omitempty"`
-	Description       nullable.Nullable[string]                 `json:"description,omitempty"`
-	Hash              nullable.Nullable[string]                 `json:"hash,omitempty"`
-	Id                nullable.Nullable[string]                 `json:"id,omitempty"`
-	InsertedAt        nullable.Nullable[time.Time]              `json:"inserted_at,omitempty"`
-	Name              string                                    `json:"name"`
-	Prefix            nullable.Nullable[string]                 `json:"prefix,omitempty"`
-	SecretJwtTemplate nullable.Nullable[map[string]interface{}] `json:"secret_jwt_template,omitempty"`
-	Type              nullable.Nullable[ApiKeyResponseType]     `json:"type,omitempty"`
-	UpdatedAt         nullable.Nullable[time.Time]              `json:"updated_at,omitempty"`
+// ApiKeyResponseOutput defines model for ApiKeyResponse_Output.
+type ApiKeyResponseOutput struct {
+	ApiKey            nullable.Nullable[string]                   `json:"api_key,omitempty"`
+	Description       nullable.Nullable[string]                   `json:"description,omitempty"`
+	Hash              nullable.Nullable[string]                   `json:"hash,omitempty"`
+	Id                nullable.Nullable[string]                   `json:"id,omitempty"`
+	InsertedAt        nullable.Nullable[time.Time]                `json:"inserted_at,omitempty"`
+	Name              string                                      `json:"name"`
+	Prefix            nullable.Nullable[string]                   `json:"prefix,omitempty"`
+	SecretJwtTemplate nullable.Nullable[map[string]interface{}]   `json:"secret_jwt_template,omitempty"`
+	Type              nullable.Nullable[ApiKeyResponseOutputType] `json:"type,omitempty"`
+	UpdatedAt         nullable.Nullable[time.Time]                `json:"updated_at,omitempty"`
 }
 
-// ApiKeyResponseType defines model for ApiKeyResponse.Type.
-type ApiKeyResponseType string
+// ApiKeyResponseOutputType defines model for ApiKeyResponseOutput.Type.
+type ApiKeyResponseOutputType string
 
 // ApplyProjectAddonBody defines model for ApplyProjectAddonBody.
 type ApplyProjectAddonBody struct {
@@ -5687,258 +5686,258 @@ type ApplyProjectAddonBody_AddonVariant struct {
 	union json.RawMessage
 }
 
-// AuthConfigResponse defines model for AuthConfigResponse.
-type AuthConfigResponse struct {
-	ApiMaxRequestDuration                                 nullable.Nullable[int]                                          `json:"api_max_request_duration"`
-	CustomOauthEnabled                                    bool                                                            `json:"custom_oauth_enabled"`
-	CustomOauthMaxProviders                               int                                                             `json:"custom_oauth_max_providers"`
-	DbMaxPoolSize                                         nullable.Nullable[int]                                          `json:"db_max_pool_size"`
-	DbMaxPoolSizeUnit                                     nullable.Nullable[AuthConfigResponseDbMaxPoolSizeUnit]          `json:"db_max_pool_size_unit"`
-	DisableSignup                                         nullable.Nullable[bool]                                         `json:"disable_signup"`
-	ExternalAnonymousUsersEnabled                         nullable.Nullable[bool]                                         `json:"external_anonymous_users_enabled"`
-	ExternalAppleAdditionalClientIds                      nullable.Nullable[string]                                       `json:"external_apple_additional_client_ids"`
-	ExternalAppleClientId                                 nullable.Nullable[string]                                       `json:"external_apple_client_id"`
-	ExternalAppleEmailOptional                            nullable.Nullable[bool]                                         `json:"external_apple_email_optional"`
-	ExternalAppleEnabled                                  nullable.Nullable[bool]                                         `json:"external_apple_enabled"`
-	ExternalAppleSecret                                   nullable.Nullable[string]                                       `json:"external_apple_secret"`
-	ExternalAzureClientId                                 nullable.Nullable[string]                                       `json:"external_azure_client_id"`
-	ExternalAzureEmailOptional                            nullable.Nullable[bool]                                         `json:"external_azure_email_optional"`
-	ExternalAzureEnabled                                  nullable.Nullable[bool]                                         `json:"external_azure_enabled"`
-	ExternalAzureSecret                                   nullable.Nullable[string]                                       `json:"external_azure_secret"`
-	ExternalAzureUrl                                      nullable.Nullable[string]                                       `json:"external_azure_url"`
-	ExternalBitbucketClientId                             nullable.Nullable[string]                                       `json:"external_bitbucket_client_id"`
-	ExternalBitbucketEmailOptional                        nullable.Nullable[bool]                                         `json:"external_bitbucket_email_optional"`
-	ExternalBitbucketEnabled                              nullable.Nullable[bool]                                         `json:"external_bitbucket_enabled"`
-	ExternalBitbucketSecret                               nullable.Nullable[string]                                       `json:"external_bitbucket_secret"`
-	ExternalDiscordClientId                               nullable.Nullable[string]                                       `json:"external_discord_client_id"`
-	ExternalDiscordEmailOptional                          nullable.Nullable[bool]                                         `json:"external_discord_email_optional"`
-	ExternalDiscordEnabled                                nullable.Nullable[bool]                                         `json:"external_discord_enabled"`
-	ExternalDiscordSecret                                 nullable.Nullable[string]                                       `json:"external_discord_secret"`
-	ExternalEmailEnabled                                  nullable.Nullable[bool]                                         `json:"external_email_enabled"`
-	ExternalFacebookClientId                              nullable.Nullable[string]                                       `json:"external_facebook_client_id"`
-	ExternalFacebookEmailOptional                         nullable.Nullable[bool]                                         `json:"external_facebook_email_optional"`
-	ExternalFacebookEnabled                               nullable.Nullable[bool]                                         `json:"external_facebook_enabled"`
-	ExternalFacebookSecret                                nullable.Nullable[string]                                       `json:"external_facebook_secret"`
-	ExternalFigmaClientId                                 nullable.Nullable[string]                                       `json:"external_figma_client_id"`
-	ExternalFigmaEmailOptional                            nullable.Nullable[bool]                                         `json:"external_figma_email_optional"`
-	ExternalFigmaEnabled                                  nullable.Nullable[bool]                                         `json:"external_figma_enabled"`
-	ExternalFigmaSecret                                   nullable.Nullable[string]                                       `json:"external_figma_secret"`
-	ExternalGithubClientId                                nullable.Nullable[string]                                       `json:"external_github_client_id"`
-	ExternalGithubEmailOptional                           nullable.Nullable[bool]                                         `json:"external_github_email_optional"`
-	ExternalGithubEnabled                                 nullable.Nullable[bool]                                         `json:"external_github_enabled"`
-	ExternalGithubSecret                                  nullable.Nullable[string]                                       `json:"external_github_secret"`
-	ExternalGitlabClientId                                nullable.Nullable[string]                                       `json:"external_gitlab_client_id"`
-	ExternalGitlabEmailOptional                           nullable.Nullable[bool]                                         `json:"external_gitlab_email_optional"`
-	ExternalGitlabEnabled                                 nullable.Nullable[bool]                                         `json:"external_gitlab_enabled"`
-	ExternalGitlabSecret                                  nullable.Nullable[string]                                       `json:"external_gitlab_secret"`
-	ExternalGitlabUrl                                     nullable.Nullable[string]                                       `json:"external_gitlab_url"`
-	ExternalGoogleAdditionalClientIds                     nullable.Nullable[string]                                       `json:"external_google_additional_client_ids"`
-	ExternalGoogleClientId                                nullable.Nullable[string]                                       `json:"external_google_client_id"`
-	ExternalGoogleEmailOptional                           nullable.Nullable[bool]                                         `json:"external_google_email_optional"`
-	ExternalGoogleEnabled                                 nullable.Nullable[bool]                                         `json:"external_google_enabled"`
-	ExternalGoogleSecret                                  nullable.Nullable[string]                                       `json:"external_google_secret"`
-	ExternalGoogleSkipNonceCheck                          nullable.Nullable[bool]                                         `json:"external_google_skip_nonce_check"`
-	ExternalKakaoClientId                                 nullable.Nullable[string]                                       `json:"external_kakao_client_id"`
-	ExternalKakaoEmailOptional                            nullable.Nullable[bool]                                         `json:"external_kakao_email_optional"`
-	ExternalKakaoEnabled                                  nullable.Nullable[bool]                                         `json:"external_kakao_enabled"`
-	ExternalKakaoSecret                                   nullable.Nullable[string]                                       `json:"external_kakao_secret"`
-	ExternalKeycloakClientId                              nullable.Nullable[string]                                       `json:"external_keycloak_client_id"`
-	ExternalKeycloakEmailOptional                         nullable.Nullable[bool]                                         `json:"external_keycloak_email_optional"`
-	ExternalKeycloakEnabled                               nullable.Nullable[bool]                                         `json:"external_keycloak_enabled"`
-	ExternalKeycloakSecret                                nullable.Nullable[string]                                       `json:"external_keycloak_secret"`
-	ExternalKeycloakUrl                                   nullable.Nullable[string]                                       `json:"external_keycloak_url"`
-	ExternalLinkedinOidcClientId                          nullable.Nullable[string]                                       `json:"external_linkedin_oidc_client_id"`
-	ExternalLinkedinOidcEmailOptional                     nullable.Nullable[bool]                                         `json:"external_linkedin_oidc_email_optional"`
-	ExternalLinkedinOidcEnabled                           nullable.Nullable[bool]                                         `json:"external_linkedin_oidc_enabled"`
-	ExternalLinkedinOidcSecret                            nullable.Nullable[string]                                       `json:"external_linkedin_oidc_secret"`
-	ExternalNotionClientId                                nullable.Nullable[string]                                       `json:"external_notion_client_id"`
-	ExternalNotionEmailOptional                           nullable.Nullable[bool]                                         `json:"external_notion_email_optional"`
-	ExternalNotionEnabled                                 nullable.Nullable[bool]                                         `json:"external_notion_enabled"`
-	ExternalNotionSecret                                  nullable.Nullable[string]                                       `json:"external_notion_secret"`
-	ExternalPhoneEnabled                                  nullable.Nullable[bool]                                         `json:"external_phone_enabled"`
-	ExternalSlackClientId                                 nullable.Nullable[string]                                       `json:"external_slack_client_id"`
-	ExternalSlackEmailOptional                            nullable.Nullable[bool]                                         `json:"external_slack_email_optional"`
-	ExternalSlackEnabled                                  nullable.Nullable[bool]                                         `json:"external_slack_enabled"`
-	ExternalSlackOidcClientId                             nullable.Nullable[string]                                       `json:"external_slack_oidc_client_id"`
-	ExternalSlackOidcEmailOptional                        nullable.Nullable[bool]                                         `json:"external_slack_oidc_email_optional"`
-	ExternalSlackOidcEnabled                              nullable.Nullable[bool]                                         `json:"external_slack_oidc_enabled"`
-	ExternalSlackOidcSecret                               nullable.Nullable[string]                                       `json:"external_slack_oidc_secret"`
-	ExternalSlackSecret                                   nullable.Nullable[string]                                       `json:"external_slack_secret"`
-	ExternalSpotifyClientId                               nullable.Nullable[string]                                       `json:"external_spotify_client_id"`
-	ExternalSpotifyEmailOptional                          nullable.Nullable[bool]                                         `json:"external_spotify_email_optional"`
-	ExternalSpotifyEnabled                                nullable.Nullable[bool]                                         `json:"external_spotify_enabled"`
-	ExternalSpotifySecret                                 nullable.Nullable[string]                                       `json:"external_spotify_secret"`
-	ExternalTwitchClientId                                nullable.Nullable[string]                                       `json:"external_twitch_client_id"`
-	ExternalTwitchEmailOptional                           nullable.Nullable[bool]                                         `json:"external_twitch_email_optional"`
-	ExternalTwitchEnabled                                 nullable.Nullable[bool]                                         `json:"external_twitch_enabled"`
-	ExternalTwitchSecret                                  nullable.Nullable[string]                                       `json:"external_twitch_secret"`
-	ExternalTwitterClientId                               nullable.Nullable[string]                                       `json:"external_twitter_client_id"`
-	ExternalTwitterEmailOptional                          nullable.Nullable[bool]                                         `json:"external_twitter_email_optional"`
-	ExternalTwitterEnabled                                nullable.Nullable[bool]                                         `json:"external_twitter_enabled"`
-	ExternalTwitterSecret                                 nullable.Nullable[string]                                       `json:"external_twitter_secret"`
-	ExternalWeb3EthereumEnabled                           nullable.Nullable[bool]                                         `json:"external_web3_ethereum_enabled"`
-	ExternalWeb3SolanaEnabled                             nullable.Nullable[bool]                                         `json:"external_web3_solana_enabled"`
-	ExternalWorkosClientId                                nullable.Nullable[string]                                       `json:"external_workos_client_id"`
-	ExternalWorkosEnabled                                 nullable.Nullable[bool]                                         `json:"external_workos_enabled"`
-	ExternalWorkosSecret                                  nullable.Nullable[string]                                       `json:"external_workos_secret"`
-	ExternalWorkosUrl                                     nullable.Nullable[string]                                       `json:"external_workos_url"`
-	ExternalXClientId                                     nullable.Nullable[string]                                       `json:"external_x_client_id"`
-	ExternalXEmailOptional                                nullable.Nullable[bool]                                         `json:"external_x_email_optional"`
-	ExternalXEnabled                                      nullable.Nullable[bool]                                         `json:"external_x_enabled"`
-	ExternalXSecret                                       nullable.Nullable[string]                                       `json:"external_x_secret"`
-	ExternalZoomClientId                                  nullable.Nullable[string]                                       `json:"external_zoom_client_id"`
-	ExternalZoomEmailOptional                             nullable.Nullable[bool]                                         `json:"external_zoom_email_optional"`
-	ExternalZoomEnabled                                   nullable.Nullable[bool]                                         `json:"external_zoom_enabled"`
-	ExternalZoomSecret                                    nullable.Nullable[string]                                       `json:"external_zoom_secret"`
-	HookAfterUserCreatedEnabled                           nullable.Nullable[bool]                                         `json:"hook_after_user_created_enabled"`
-	HookAfterUserCreatedSecrets                           nullable.Nullable[string]                                       `json:"hook_after_user_created_secrets"`
-	HookAfterUserCreatedUri                               nullable.Nullable[string]                                       `json:"hook_after_user_created_uri"`
-	HookBeforeUserCreatedEnabled                          nullable.Nullable[bool]                                         `json:"hook_before_user_created_enabled"`
-	HookBeforeUserCreatedSecrets                          nullable.Nullable[string]                                       `json:"hook_before_user_created_secrets"`
-	HookBeforeUserCreatedUri                              nullable.Nullable[string]                                       `json:"hook_before_user_created_uri"`
-	HookCustomAccessTokenEnabled                          nullable.Nullable[bool]                                         `json:"hook_custom_access_token_enabled"`
-	HookCustomAccessTokenSecrets                          nullable.Nullable[string]                                       `json:"hook_custom_access_token_secrets"`
-	HookCustomAccessTokenUri                              nullable.Nullable[string]                                       `json:"hook_custom_access_token_uri"`
-	HookMfaVerificationAttemptEnabled                     nullable.Nullable[bool]                                         `json:"hook_mfa_verification_attempt_enabled"`
-	HookMfaVerificationAttemptSecrets                     nullable.Nullable[string]                                       `json:"hook_mfa_verification_attempt_secrets"`
-	HookMfaVerificationAttemptUri                         nullable.Nullable[string]                                       `json:"hook_mfa_verification_attempt_uri"`
-	HookPasswordVerificationAttemptEnabled                nullable.Nullable[bool]                                         `json:"hook_password_verification_attempt_enabled"`
-	HookPasswordVerificationAttemptSecrets                nullable.Nullable[string]                                       `json:"hook_password_verification_attempt_secrets"`
-	HookPasswordVerificationAttemptUri                    nullable.Nullable[string]                                       `json:"hook_password_verification_attempt_uri"`
-	HookSendEmailEnabled                                  nullable.Nullable[bool]                                         `json:"hook_send_email_enabled"`
-	HookSendEmailSecrets                                  nullable.Nullable[string]                                       `json:"hook_send_email_secrets"`
-	HookSendEmailUri                                      nullable.Nullable[string]                                       `json:"hook_send_email_uri"`
-	HookSendSmsEnabled                                    nullable.Nullable[bool]                                         `json:"hook_send_sms_enabled"`
-	HookSendSmsSecrets                                    nullable.Nullable[string]                                       `json:"hook_send_sms_secrets"`
-	HookSendSmsUri                                        nullable.Nullable[string]                                       `json:"hook_send_sms_uri"`
-	JwtExp                                                nullable.Nullable[int]                                          `json:"jwt_exp"`
-	MailerAllowUnverifiedEmailSignIns                     nullable.Nullable[bool]                                         `json:"mailer_allow_unverified_email_sign_ins"`
-	MailerAutoconfirm                                     nullable.Nullable[bool]                                         `json:"mailer_autoconfirm"`
-	MailerNotificationsEmailChangedEnabled                nullable.Nullable[bool]                                         `json:"mailer_notifications_email_changed_enabled"`
-	MailerNotificationsIdentityLinkedEnabled              nullable.Nullable[bool]                                         `json:"mailer_notifications_identity_linked_enabled"`
-	MailerNotificationsIdentityUnlinkedEnabled            nullable.Nullable[bool]                                         `json:"mailer_notifications_identity_unlinked_enabled"`
-	MailerNotificationsMfaFactorEnrolledEnabled           nullable.Nullable[bool]                                         `json:"mailer_notifications_mfa_factor_enrolled_enabled"`
-	MailerNotificationsMfaFactorUnenrolledEnabled         nullable.Nullable[bool]                                         `json:"mailer_notifications_mfa_factor_unenrolled_enabled"`
-	MailerNotificationsPasswordChangedEnabled             nullable.Nullable[bool]                                         `json:"mailer_notifications_password_changed_enabled"`
-	MailerNotificationsPhoneChangedEnabled                nullable.Nullable[bool]                                         `json:"mailer_notifications_phone_changed_enabled"`
-	MailerOtpExp                                          int                                                             `json:"mailer_otp_exp"`
-	MailerOtpLength                                       nullable.Nullable[int]                                          `json:"mailer_otp_length"`
-	MailerSecureEmailChangeEnabled                        nullable.Nullable[bool]                                         `json:"mailer_secure_email_change_enabled"`
-	MailerSubjectsConfirmation                            nullable.Nullable[string]                                       `json:"mailer_subjects_confirmation"`
-	MailerSubjectsEmailChange                             nullable.Nullable[string]                                       `json:"mailer_subjects_email_change"`
-	MailerSubjectsEmailChangedNotification                nullable.Nullable[string]                                       `json:"mailer_subjects_email_changed_notification"`
-	MailerSubjectsIdentityLinkedNotification              nullable.Nullable[string]                                       `json:"mailer_subjects_identity_linked_notification"`
-	MailerSubjectsIdentityUnlinkedNotification            nullable.Nullable[string]                                       `json:"mailer_subjects_identity_unlinked_notification"`
-	MailerSubjectsInvite                                  nullable.Nullable[string]                                       `json:"mailer_subjects_invite"`
-	MailerSubjectsMagicLink                               nullable.Nullable[string]                                       `json:"mailer_subjects_magic_link"`
-	MailerSubjectsMfaFactorEnrolledNotification           nullable.Nullable[string]                                       `json:"mailer_subjects_mfa_factor_enrolled_notification"`
-	MailerSubjectsMfaFactorUnenrolledNotification         nullable.Nullable[string]                                       `json:"mailer_subjects_mfa_factor_unenrolled_notification"`
-	MailerSubjectsPasswordChangedNotification             nullable.Nullable[string]                                       `json:"mailer_subjects_password_changed_notification"`
-	MailerSubjectsPhoneChangedNotification                nullable.Nullable[string]                                       `json:"mailer_subjects_phone_changed_notification"`
-	MailerSubjectsReauthentication                        nullable.Nullable[string]                                       `json:"mailer_subjects_reauthentication"`
-	MailerSubjectsRecovery                                nullable.Nullable[string]                                       `json:"mailer_subjects_recovery"`
-	MailerTemplatesConfirmationContent                    nullable.Nullable[string]                                       `json:"mailer_templates_confirmation_content"`
-	MailerTemplatesEmailChangeContent                     nullable.Nullable[string]                                       `json:"mailer_templates_email_change_content"`
-	MailerTemplatesEmailChangedNotificationContent        nullable.Nullable[string]                                       `json:"mailer_templates_email_changed_notification_content"`
-	MailerTemplatesIdentityLinkedNotificationContent      nullable.Nullable[string]                                       `json:"mailer_templates_identity_linked_notification_content"`
-	MailerTemplatesIdentityUnlinkedNotificationContent    nullable.Nullable[string]                                       `json:"mailer_templates_identity_unlinked_notification_content"`
-	MailerTemplatesInviteContent                          nullable.Nullable[string]                                       `json:"mailer_templates_invite_content"`
-	MailerTemplatesMagicLinkContent                       nullable.Nullable[string]                                       `json:"mailer_templates_magic_link_content"`
-	MailerTemplatesMfaFactorEnrolledNotificationContent   nullable.Nullable[string]                                       `json:"mailer_templates_mfa_factor_enrolled_notification_content"`
-	MailerTemplatesMfaFactorUnenrolledNotificationContent nullable.Nullable[string]                                       `json:"mailer_templates_mfa_factor_unenrolled_notification_content"`
-	MailerTemplatesPasswordChangedNotificationContent     nullable.Nullable[string]                                       `json:"mailer_templates_password_changed_notification_content"`
-	MailerTemplatesPhoneChangedNotificationContent        nullable.Nullable[string]                                       `json:"mailer_templates_phone_changed_notification_content"`
-	MailerTemplatesReauthenticationContent                nullable.Nullable[string]                                       `json:"mailer_templates_reauthentication_content"`
-	MailerTemplatesRecoveryContent                        nullable.Nullable[string]                                       `json:"mailer_templates_recovery_content"`
-	MfaMaxEnrolledFactors                                 nullable.Nullable[int]                                          `json:"mfa_max_enrolled_factors"`
-	MfaPhoneEnrollEnabled                                 nullable.Nullable[bool]                                         `json:"mfa_phone_enroll_enabled"`
-	MfaPhoneMaxFrequency                                  nullable.Nullable[int]                                          `json:"mfa_phone_max_frequency"`
-	MfaPhoneOtpLength                                     int                                                             `json:"mfa_phone_otp_length"`
-	MfaPhoneTemplate                                      nullable.Nullable[string]                                       `json:"mfa_phone_template"`
-	MfaPhoneVerifyEnabled                                 nullable.Nullable[bool]                                         `json:"mfa_phone_verify_enabled"`
-	MfaTotpEnrollEnabled                                  nullable.Nullable[bool]                                         `json:"mfa_totp_enroll_enabled"`
-	MfaTotpVerifyEnabled                                  nullable.Nullable[bool]                                         `json:"mfa_totp_verify_enabled"`
-	MfaWebAuthnEnrollEnabled                              nullable.Nullable[bool]                                         `json:"mfa_web_authn_enroll_enabled"`
-	MfaWebAuthnVerifyEnabled                              nullable.Nullable[bool]                                         `json:"mfa_web_authn_verify_enabled"`
-	NimbusOauthClientId                                   nullable.Nullable[string]                                       `json:"nimbus_oauth_client_id"`
-	NimbusOauthClientSecret                               nullable.Nullable[string]                                       `json:"nimbus_oauth_client_secret"`
-	NimbusOauthEmailOptional                              nullable.Nullable[bool]                                         `json:"nimbus_oauth_email_optional"`
-	OauthServerAllowDynamicRegistration                   bool                                                            `json:"oauth_server_allow_dynamic_registration"`
-	OauthServerAuthorizationPath                          nullable.Nullable[string]                                       `json:"oauth_server_authorization_path"`
-	OauthServerEnabled                                    bool                                                            `json:"oauth_server_enabled"`
-	PasskeyEnabled                                        bool                                                            `json:"passkey_enabled"`
-	PasswordHibpEnabled                                   nullable.Nullable[bool]                                         `json:"password_hibp_enabled"`
-	PasswordMinLength                                     nullable.Nullable[int]                                          `json:"password_min_length"`
-	PasswordRequiredCharacters                            nullable.Nullable[AuthConfigResponsePasswordRequiredCharacters] `json:"password_required_characters"`
-	RateLimitAnonymousUsers                               nullable.Nullable[int]                                          `json:"rate_limit_anonymous_users"`
-	RateLimitEmailSent                                    nullable.Nullable[int]                                          `json:"rate_limit_email_sent"`
-	RateLimitOtp                                          nullable.Nullable[int]                                          `json:"rate_limit_otp"`
-	RateLimitSmsSent                                      nullable.Nullable[int]                                          `json:"rate_limit_sms_sent"`
-	RateLimitTokenRefresh                                 nullable.Nullable[int]                                          `json:"rate_limit_token_refresh"`
-	RateLimitVerify                                       nullable.Nullable[int]                                          `json:"rate_limit_verify"`
-	RateLimitWeb3                                         nullable.Nullable[int]                                          `json:"rate_limit_web3"`
-	RefreshTokenRotationEnabled                           nullable.Nullable[bool]                                         `json:"refresh_token_rotation_enabled"`
-	SamlAllowEncryptedAssertions                          nullable.Nullable[bool]                                         `json:"saml_allow_encrypted_assertions"`
-	SamlEnabled                                           nullable.Nullable[bool]                                         `json:"saml_enabled"`
-	SamlExternalUrl                                       nullable.Nullable[string]                                       `json:"saml_external_url"`
-	SecurityCaptchaEnabled                                nullable.Nullable[bool]                                         `json:"security_captcha_enabled"`
-	SecurityCaptchaProvider                               nullable.Nullable[AuthConfigResponseSecurityCaptchaProvider]    `json:"security_captcha_provider"`
-	SecurityCaptchaSecret                                 nullable.Nullable[string]                                       `json:"security_captcha_secret"`
-	SecurityManualLinkingEnabled                          nullable.Nullable[bool]                                         `json:"security_manual_linking_enabled"`
-	SecurityRefreshTokenReuseInterval                     nullable.Nullable[int]                                          `json:"security_refresh_token_reuse_interval"`
-	SecuritySbForwardedForEnabled                         nullable.Nullable[bool]                                         `json:"security_sb_forwarded_for_enabled"`
-	SecurityUpdatePasswordRequireReauthentication         nullable.Nullable[bool]                                         `json:"security_update_password_require_reauthentication"`
-	SessionsInactivityTimeout                             nullable.Nullable[float32]                                      `json:"sessions_inactivity_timeout"`
-	SessionsSinglePerUser                                 nullable.Nullable[bool]                                         `json:"sessions_single_per_user"`
-	SessionsTags                                          nullable.Nullable[string]                                       `json:"sessions_tags"`
-	SessionsTimebox                                       nullable.Nullable[float32]                                      `json:"sessions_timebox"`
-	SiteUrl                                               nullable.Nullable[string]                                       `json:"site_url"`
-	SmsAutoconfirm                                        nullable.Nullable[bool]                                         `json:"sms_autoconfirm"`
-	SmsMaxFrequency                                       nullable.Nullable[int]                                          `json:"sms_max_frequency"`
-	SmsMessagebirdAccessKey                               nullable.Nullable[string]                                       `json:"sms_messagebird_access_key"`
-	SmsMessagebirdOriginator                              nullable.Nullable[string]                                       `json:"sms_messagebird_originator"`
-	SmsOtpExp                                             nullable.Nullable[int]                                          `json:"sms_otp_exp"`
-	SmsOtpLength                                          int                                                             `json:"sms_otp_length"`
-	SmsProvider                                           nullable.Nullable[AuthConfigResponseSmsProvider]                `json:"sms_provider"`
-	SmsTemplate                                           nullable.Nullable[string]                                       `json:"sms_template"`
-	SmsTestOtp                                            nullable.Nullable[string]                                       `json:"sms_test_otp"`
-	SmsTestOtpValidUntil                                  nullable.Nullable[time.Time]                                    `json:"sms_test_otp_valid_until"`
-	SmsTextlocalApiKey                                    nullable.Nullable[string]                                       `json:"sms_textlocal_api_key"`
-	SmsTextlocalSender                                    nullable.Nullable[string]                                       `json:"sms_textlocal_sender"`
-	SmsTwilioAccountSid                                   nullable.Nullable[string]                                       `json:"sms_twilio_account_sid"`
-	SmsTwilioAuthToken                                    nullable.Nullable[string]                                       `json:"sms_twilio_auth_token"`
-	SmsTwilioContentSid                                   nullable.Nullable[string]                                       `json:"sms_twilio_content_sid"`
-	SmsTwilioMessageServiceSid                            nullable.Nullable[string]                                       `json:"sms_twilio_message_service_sid"`
-	SmsTwilioVerifyAccountSid                             nullable.Nullable[string]                                       `json:"sms_twilio_verify_account_sid"`
-	SmsTwilioVerifyAuthToken                              nullable.Nullable[string]                                       `json:"sms_twilio_verify_auth_token"`
-	SmsTwilioVerifyMessageServiceSid                      nullable.Nullable[string]                                       `json:"sms_twilio_verify_message_service_sid"`
-	SmsVonageApiKey                                       nullable.Nullable[string]                                       `json:"sms_vonage_api_key"`
-	SmsVonageApiSecret                                    nullable.Nullable[string]                                       `json:"sms_vonage_api_secret"`
-	SmsVonageFrom                                         nullable.Nullable[string]                                       `json:"sms_vonage_from"`
-	SmtpAdminEmail                                        nullable.Nullable[openapi_types.Email]                          `json:"smtp_admin_email"`
-	SmtpHost                                              nullable.Nullable[string]                                       `json:"smtp_host"`
-	SmtpMaxFrequency                                      nullable.Nullable[int]                                          `json:"smtp_max_frequency"`
-	SmtpPass                                              nullable.Nullable[string]                                       `json:"smtp_pass"`
-	SmtpPort                                              nullable.Nullable[string]                                       `json:"smtp_port"`
-	SmtpSenderName                                        nullable.Nullable[string]                                       `json:"smtp_sender_name"`
-	SmtpUser                                              nullable.Nullable[string]                                       `json:"smtp_user"`
-	UriAllowList                                          nullable.Nullable[string]                                       `json:"uri_allow_list"`
-	WebauthnRpDisplayName                                 nullable.Nullable[string]                                       `json:"webauthn_rp_display_name"`
-	WebauthnRpId                                          nullable.Nullable[string]                                       `json:"webauthn_rp_id"`
-	WebauthnRpOrigins                                     nullable.Nullable[string]                                       `json:"webauthn_rp_origins"`
+// AuthConfigResponseOutput defines model for AuthConfigResponse_Output.
+type AuthConfigResponseOutput struct {
+	ApiMaxRequestDuration                                 nullable.Nullable[int]                                                `json:"api_max_request_duration"`
+	CustomOauthEnabled                                    bool                                                                  `json:"custom_oauth_enabled"`
+	CustomOauthMaxProviders                               int                                                                   `json:"custom_oauth_max_providers"`
+	DbMaxPoolSize                                         nullable.Nullable[int]                                                `json:"db_max_pool_size"`
+	DbMaxPoolSizeUnit                                     nullable.Nullable[AuthConfigResponseOutputDbMaxPoolSizeUnit]          `json:"db_max_pool_size_unit"`
+	DisableSignup                                         nullable.Nullable[bool]                                               `json:"disable_signup"`
+	ExternalAnonymousUsersEnabled                         nullable.Nullable[bool]                                               `json:"external_anonymous_users_enabled"`
+	ExternalAppleAdditionalClientIds                      nullable.Nullable[string]                                             `json:"external_apple_additional_client_ids"`
+	ExternalAppleClientId                                 nullable.Nullable[string]                                             `json:"external_apple_client_id"`
+	ExternalAppleEmailOptional                            nullable.Nullable[bool]                                               `json:"external_apple_email_optional"`
+	ExternalAppleEnabled                                  nullable.Nullable[bool]                                               `json:"external_apple_enabled"`
+	ExternalAppleSecret                                   nullable.Nullable[string]                                             `json:"external_apple_secret"`
+	ExternalAzureClientId                                 nullable.Nullable[string]                                             `json:"external_azure_client_id"`
+	ExternalAzureEmailOptional                            nullable.Nullable[bool]                                               `json:"external_azure_email_optional"`
+	ExternalAzureEnabled                                  nullable.Nullable[bool]                                               `json:"external_azure_enabled"`
+	ExternalAzureSecret                                   nullable.Nullable[string]                                             `json:"external_azure_secret"`
+	ExternalAzureUrl                                      nullable.Nullable[string]                                             `json:"external_azure_url"`
+	ExternalBitbucketClientId                             nullable.Nullable[string]                                             `json:"external_bitbucket_client_id"`
+	ExternalBitbucketEmailOptional                        nullable.Nullable[bool]                                               `json:"external_bitbucket_email_optional"`
+	ExternalBitbucketEnabled                              nullable.Nullable[bool]                                               `json:"external_bitbucket_enabled"`
+	ExternalBitbucketSecret                               nullable.Nullable[string]                                             `json:"external_bitbucket_secret"`
+	ExternalDiscordClientId                               nullable.Nullable[string]                                             `json:"external_discord_client_id"`
+	ExternalDiscordEmailOptional                          nullable.Nullable[bool]                                               `json:"external_discord_email_optional"`
+	ExternalDiscordEnabled                                nullable.Nullable[bool]                                               `json:"external_discord_enabled"`
+	ExternalDiscordSecret                                 nullable.Nullable[string]                                             `json:"external_discord_secret"`
+	ExternalEmailEnabled                                  nullable.Nullable[bool]                                               `json:"external_email_enabled"`
+	ExternalFacebookClientId                              nullable.Nullable[string]                                             `json:"external_facebook_client_id"`
+	ExternalFacebookEmailOptional                         nullable.Nullable[bool]                                               `json:"external_facebook_email_optional"`
+	ExternalFacebookEnabled                               nullable.Nullable[bool]                                               `json:"external_facebook_enabled"`
+	ExternalFacebookSecret                                nullable.Nullable[string]                                             `json:"external_facebook_secret"`
+	ExternalFigmaClientId                                 nullable.Nullable[string]                                             `json:"external_figma_client_id"`
+	ExternalFigmaEmailOptional                            nullable.Nullable[bool]                                               `json:"external_figma_email_optional"`
+	ExternalFigmaEnabled                                  nullable.Nullable[bool]                                               `json:"external_figma_enabled"`
+	ExternalFigmaSecret                                   nullable.Nullable[string]                                             `json:"external_figma_secret"`
+	ExternalGithubClientId                                nullable.Nullable[string]                                             `json:"external_github_client_id"`
+	ExternalGithubEmailOptional                           nullable.Nullable[bool]                                               `json:"external_github_email_optional"`
+	ExternalGithubEnabled                                 nullable.Nullable[bool]                                               `json:"external_github_enabled"`
+	ExternalGithubSecret                                  nullable.Nullable[string]                                             `json:"external_github_secret"`
+	ExternalGitlabClientId                                nullable.Nullable[string]                                             `json:"external_gitlab_client_id"`
+	ExternalGitlabEmailOptional                           nullable.Nullable[bool]                                               `json:"external_gitlab_email_optional"`
+	ExternalGitlabEnabled                                 nullable.Nullable[bool]                                               `json:"external_gitlab_enabled"`
+	ExternalGitlabSecret                                  nullable.Nullable[string]                                             `json:"external_gitlab_secret"`
+	ExternalGitlabUrl                                     nullable.Nullable[string]                                             `json:"external_gitlab_url"`
+	ExternalGoogleAdditionalClientIds                     nullable.Nullable[string]                                             `json:"external_google_additional_client_ids"`
+	ExternalGoogleClientId                                nullable.Nullable[string]                                             `json:"external_google_client_id"`
+	ExternalGoogleEmailOptional                           nullable.Nullable[bool]                                               `json:"external_google_email_optional"`
+	ExternalGoogleEnabled                                 nullable.Nullable[bool]                                               `json:"external_google_enabled"`
+	ExternalGoogleSecret                                  nullable.Nullable[string]                                             `json:"external_google_secret"`
+	ExternalGoogleSkipNonceCheck                          nullable.Nullable[bool]                                               `json:"external_google_skip_nonce_check"`
+	ExternalKakaoClientId                                 nullable.Nullable[string]                                             `json:"external_kakao_client_id"`
+	ExternalKakaoEmailOptional                            nullable.Nullable[bool]                                               `json:"external_kakao_email_optional"`
+	ExternalKakaoEnabled                                  nullable.Nullable[bool]                                               `json:"external_kakao_enabled"`
+	ExternalKakaoSecret                                   nullable.Nullable[string]                                             `json:"external_kakao_secret"`
+	ExternalKeycloakClientId                              nullable.Nullable[string]                                             `json:"external_keycloak_client_id"`
+	ExternalKeycloakEmailOptional                         nullable.Nullable[bool]                                               `json:"external_keycloak_email_optional"`
+	ExternalKeycloakEnabled                               nullable.Nullable[bool]                                               `json:"external_keycloak_enabled"`
+	ExternalKeycloakSecret                                nullable.Nullable[string]                                             `json:"external_keycloak_secret"`
+	ExternalKeycloakUrl                                   nullable.Nullable[string]                                             `json:"external_keycloak_url"`
+	ExternalLinkedinOidcClientId                          nullable.Nullable[string]                                             `json:"external_linkedin_oidc_client_id"`
+	ExternalLinkedinOidcEmailOptional                     nullable.Nullable[bool]                                               `json:"external_linkedin_oidc_email_optional"`
+	ExternalLinkedinOidcEnabled                           nullable.Nullable[bool]                                               `json:"external_linkedin_oidc_enabled"`
+	ExternalLinkedinOidcSecret                            nullable.Nullable[string]                                             `json:"external_linkedin_oidc_secret"`
+	ExternalNotionClientId                                nullable.Nullable[string]                                             `json:"external_notion_client_id"`
+	ExternalNotionEmailOptional                           nullable.Nullable[bool]                                               `json:"external_notion_email_optional"`
+	ExternalNotionEnabled                                 nullable.Nullable[bool]                                               `json:"external_notion_enabled"`
+	ExternalNotionSecret                                  nullable.Nullable[string]                                             `json:"external_notion_secret"`
+	ExternalPhoneEnabled                                  nullable.Nullable[bool]                                               `json:"external_phone_enabled"`
+	ExternalSlackClientId                                 nullable.Nullable[string]                                             `json:"external_slack_client_id"`
+	ExternalSlackEmailOptional                            nullable.Nullable[bool]                                               `json:"external_slack_email_optional"`
+	ExternalSlackEnabled                                  nullable.Nullable[bool]                                               `json:"external_slack_enabled"`
+	ExternalSlackOidcClientId                             nullable.Nullable[string]                                             `json:"external_slack_oidc_client_id"`
+	ExternalSlackOidcEmailOptional                        nullable.Nullable[bool]                                               `json:"external_slack_oidc_email_optional"`
+	ExternalSlackOidcEnabled                              nullable.Nullable[bool]                                               `json:"external_slack_oidc_enabled"`
+	ExternalSlackOidcSecret                               nullable.Nullable[string]                                             `json:"external_slack_oidc_secret"`
+	ExternalSlackSecret                                   nullable.Nullable[string]                                             `json:"external_slack_secret"`
+	ExternalSpotifyClientId                               nullable.Nullable[string]                                             `json:"external_spotify_client_id"`
+	ExternalSpotifyEmailOptional                          nullable.Nullable[bool]                                               `json:"external_spotify_email_optional"`
+	ExternalSpotifyEnabled                                nullable.Nullable[bool]                                               `json:"external_spotify_enabled"`
+	ExternalSpotifySecret                                 nullable.Nullable[string]                                             `json:"external_spotify_secret"`
+	ExternalTwitchClientId                                nullable.Nullable[string]                                             `json:"external_twitch_client_id"`
+	ExternalTwitchEmailOptional                           nullable.Nullable[bool]                                               `json:"external_twitch_email_optional"`
+	ExternalTwitchEnabled                                 nullable.Nullable[bool]                                               `json:"external_twitch_enabled"`
+	ExternalTwitchSecret                                  nullable.Nullable[string]                                             `json:"external_twitch_secret"`
+	ExternalTwitterClientId                               nullable.Nullable[string]                                             `json:"external_twitter_client_id"`
+	ExternalTwitterEmailOptional                          nullable.Nullable[bool]                                               `json:"external_twitter_email_optional"`
+	ExternalTwitterEnabled                                nullable.Nullable[bool]                                               `json:"external_twitter_enabled"`
+	ExternalTwitterSecret                                 nullable.Nullable[string]                                             `json:"external_twitter_secret"`
+	ExternalWeb3EthereumEnabled                           nullable.Nullable[bool]                                               `json:"external_web3_ethereum_enabled"`
+	ExternalWeb3SolanaEnabled                             nullable.Nullable[bool]                                               `json:"external_web3_solana_enabled"`
+	ExternalWorkosClientId                                nullable.Nullable[string]                                             `json:"external_workos_client_id"`
+	ExternalWorkosEnabled                                 nullable.Nullable[bool]                                               `json:"external_workos_enabled"`
+	ExternalWorkosSecret                                  nullable.Nullable[string]                                             `json:"external_workos_secret"`
+	ExternalWorkosUrl                                     nullable.Nullable[string]                                             `json:"external_workos_url"`
+	ExternalXClientId                                     nullable.Nullable[string]                                             `json:"external_x_client_id"`
+	ExternalXEmailOptional                                nullable.Nullable[bool]                                               `json:"external_x_email_optional"`
+	ExternalXEnabled                                      nullable.Nullable[bool]                                               `json:"external_x_enabled"`
+	ExternalXSecret                                       nullable.Nullable[string]                                             `json:"external_x_secret"`
+	ExternalZoomClientId                                  nullable.Nullable[string]                                             `json:"external_zoom_client_id"`
+	ExternalZoomEmailOptional                             nullable.Nullable[bool]                                               `json:"external_zoom_email_optional"`
+	ExternalZoomEnabled                                   nullable.Nullable[bool]                                               `json:"external_zoom_enabled"`
+	ExternalZoomSecret                                    nullable.Nullable[string]                                             `json:"external_zoom_secret"`
+	HookAfterUserCreatedEnabled                           nullable.Nullable[bool]                                               `json:"hook_after_user_created_enabled"`
+	HookAfterUserCreatedSecrets                           nullable.Nullable[string]                                             `json:"hook_after_user_created_secrets"`
+	HookAfterUserCreatedUri                               nullable.Nullable[string]                                             `json:"hook_after_user_created_uri"`
+	HookBeforeUserCreatedEnabled                          nullable.Nullable[bool]                                               `json:"hook_before_user_created_enabled"`
+	HookBeforeUserCreatedSecrets                          nullable.Nullable[string]                                             `json:"hook_before_user_created_secrets"`
+	HookBeforeUserCreatedUri                              nullable.Nullable[string]                                             `json:"hook_before_user_created_uri"`
+	HookCustomAccessTokenEnabled                          nullable.Nullable[bool]                                               `json:"hook_custom_access_token_enabled"`
+	HookCustomAccessTokenSecrets                          nullable.Nullable[string]                                             `json:"hook_custom_access_token_secrets"`
+	HookCustomAccessTokenUri                              nullable.Nullable[string]                                             `json:"hook_custom_access_token_uri"`
+	HookMfaVerificationAttemptEnabled                     nullable.Nullable[bool]                                               `json:"hook_mfa_verification_attempt_enabled"`
+	HookMfaVerificationAttemptSecrets                     nullable.Nullable[string]                                             `json:"hook_mfa_verification_attempt_secrets"`
+	HookMfaVerificationAttemptUri                         nullable.Nullable[string]                                             `json:"hook_mfa_verification_attempt_uri"`
+	HookPasswordVerificationAttemptEnabled                nullable.Nullable[bool]                                               `json:"hook_password_verification_attempt_enabled"`
+	HookPasswordVerificationAttemptSecrets                nullable.Nullable[string]                                             `json:"hook_password_verification_attempt_secrets"`
+	HookPasswordVerificationAttemptUri                    nullable.Nullable[string]                                             `json:"hook_password_verification_attempt_uri"`
+	HookSendEmailEnabled                                  nullable.Nullable[bool]                                               `json:"hook_send_email_enabled"`
+	HookSendEmailSecrets                                  nullable.Nullable[string]                                             `json:"hook_send_email_secrets"`
+	HookSendEmailUri                                      nullable.Nullable[string]                                             `json:"hook_send_email_uri"`
+	HookSendSmsEnabled                                    nullable.Nullable[bool]                                               `json:"hook_send_sms_enabled"`
+	HookSendSmsSecrets                                    nullable.Nullable[string]                                             `json:"hook_send_sms_secrets"`
+	HookSendSmsUri                                        nullable.Nullable[string]                                             `json:"hook_send_sms_uri"`
+	JwtExp                                                nullable.Nullable[int]                                                `json:"jwt_exp"`
+	MailerAllowUnverifiedEmailSignIns                     nullable.Nullable[bool]                                               `json:"mailer_allow_unverified_email_sign_ins"`
+	MailerAutoconfirm                                     nullable.Nullable[bool]                                               `json:"mailer_autoconfirm"`
+	MailerNotificationsEmailChangedEnabled                nullable.Nullable[bool]                                               `json:"mailer_notifications_email_changed_enabled"`
+	MailerNotificationsIdentityLinkedEnabled              nullable.Nullable[bool]                                               `json:"mailer_notifications_identity_linked_enabled"`
+	MailerNotificationsIdentityUnlinkedEnabled            nullable.Nullable[bool]                                               `json:"mailer_notifications_identity_unlinked_enabled"`
+	MailerNotificationsMfaFactorEnrolledEnabled           nullable.Nullable[bool]                                               `json:"mailer_notifications_mfa_factor_enrolled_enabled"`
+	MailerNotificationsMfaFactorUnenrolledEnabled         nullable.Nullable[bool]                                               `json:"mailer_notifications_mfa_factor_unenrolled_enabled"`
+	MailerNotificationsPasswordChangedEnabled             nullable.Nullable[bool]                                               `json:"mailer_notifications_password_changed_enabled"`
+	MailerNotificationsPhoneChangedEnabled                nullable.Nullable[bool]                                               `json:"mailer_notifications_phone_changed_enabled"`
+	MailerOtpExp                                          int                                                                   `json:"mailer_otp_exp"`
+	MailerOtpLength                                       nullable.Nullable[int]                                                `json:"mailer_otp_length"`
+	MailerSecureEmailChangeEnabled                        nullable.Nullable[bool]                                               `json:"mailer_secure_email_change_enabled"`
+	MailerSubjectsConfirmation                            nullable.Nullable[string]                                             `json:"mailer_subjects_confirmation"`
+	MailerSubjectsEmailChange                             nullable.Nullable[string]                                             `json:"mailer_subjects_email_change"`
+	MailerSubjectsEmailChangedNotification                nullable.Nullable[string]                                             `json:"mailer_subjects_email_changed_notification"`
+	MailerSubjectsIdentityLinkedNotification              nullable.Nullable[string]                                             `json:"mailer_subjects_identity_linked_notification"`
+	MailerSubjectsIdentityUnlinkedNotification            nullable.Nullable[string]                                             `json:"mailer_subjects_identity_unlinked_notification"`
+	MailerSubjectsInvite                                  nullable.Nullable[string]                                             `json:"mailer_subjects_invite"`
+	MailerSubjectsMagicLink                               nullable.Nullable[string]                                             `json:"mailer_subjects_magic_link"`
+	MailerSubjectsMfaFactorEnrolledNotification           nullable.Nullable[string]                                             `json:"mailer_subjects_mfa_factor_enrolled_notification"`
+	MailerSubjectsMfaFactorUnenrolledNotification         nullable.Nullable[string]                                             `json:"mailer_subjects_mfa_factor_unenrolled_notification"`
+	MailerSubjectsPasswordChangedNotification             nullable.Nullable[string]                                             `json:"mailer_subjects_password_changed_notification"`
+	MailerSubjectsPhoneChangedNotification                nullable.Nullable[string]                                             `json:"mailer_subjects_phone_changed_notification"`
+	MailerSubjectsReauthentication                        nullable.Nullable[string]                                             `json:"mailer_subjects_reauthentication"`
+	MailerSubjectsRecovery                                nullable.Nullable[string]                                             `json:"mailer_subjects_recovery"`
+	MailerTemplatesConfirmationContent                    nullable.Nullable[string]                                             `json:"mailer_templates_confirmation_content"`
+	MailerTemplatesEmailChangeContent                     nullable.Nullable[string]                                             `json:"mailer_templates_email_change_content"`
+	MailerTemplatesEmailChangedNotificationContent        nullable.Nullable[string]                                             `json:"mailer_templates_email_changed_notification_content"`
+	MailerTemplatesIdentityLinkedNotificationContent      nullable.Nullable[string]                                             `json:"mailer_templates_identity_linked_notification_content"`
+	MailerTemplatesIdentityUnlinkedNotificationContent    nullable.Nullable[string]                                             `json:"mailer_templates_identity_unlinked_notification_content"`
+	MailerTemplatesInviteContent                          nullable.Nullable[string]                                             `json:"mailer_templates_invite_content"`
+	MailerTemplatesMagicLinkContent                       nullable.Nullable[string]                                             `json:"mailer_templates_magic_link_content"`
+	MailerTemplatesMfaFactorEnrolledNotificationContent   nullable.Nullable[string]                                             `json:"mailer_templates_mfa_factor_enrolled_notification_content"`
+	MailerTemplatesMfaFactorUnenrolledNotificationContent nullable.Nullable[string]                                             `json:"mailer_templates_mfa_factor_unenrolled_notification_content"`
+	MailerTemplatesPasswordChangedNotificationContent     nullable.Nullable[string]                                             `json:"mailer_templates_password_changed_notification_content"`
+	MailerTemplatesPhoneChangedNotificationContent        nullable.Nullable[string]                                             `json:"mailer_templates_phone_changed_notification_content"`
+	MailerTemplatesReauthenticationContent                nullable.Nullable[string]                                             `json:"mailer_templates_reauthentication_content"`
+	MailerTemplatesRecoveryContent                        nullable.Nullable[string]                                             `json:"mailer_templates_recovery_content"`
+	MfaMaxEnrolledFactors                                 nullable.Nullable[int]                                                `json:"mfa_max_enrolled_factors"`
+	MfaPhoneEnrollEnabled                                 nullable.Nullable[bool]                                               `json:"mfa_phone_enroll_enabled"`
+	MfaPhoneMaxFrequency                                  nullable.Nullable[int]                                                `json:"mfa_phone_max_frequency"`
+	MfaPhoneOtpLength                                     int                                                                   `json:"mfa_phone_otp_length"`
+	MfaPhoneTemplate                                      nullable.Nullable[string]                                             `json:"mfa_phone_template"`
+	MfaPhoneVerifyEnabled                                 nullable.Nullable[bool]                                               `json:"mfa_phone_verify_enabled"`
+	MfaTotpEnrollEnabled                                  nullable.Nullable[bool]                                               `json:"mfa_totp_enroll_enabled"`
+	MfaTotpVerifyEnabled                                  nullable.Nullable[bool]                                               `json:"mfa_totp_verify_enabled"`
+	MfaWebAuthnEnrollEnabled                              nullable.Nullable[bool]                                               `json:"mfa_web_authn_enroll_enabled"`
+	MfaWebAuthnVerifyEnabled                              nullable.Nullable[bool]                                               `json:"mfa_web_authn_verify_enabled"`
+	NimbusOauthClientId                                   nullable.Nullable[string]                                             `json:"nimbus_oauth_client_id"`
+	NimbusOauthClientSecret                               nullable.Nullable[string]                                             `json:"nimbus_oauth_client_secret"`
+	NimbusOauthEmailOptional                              nullable.Nullable[bool]                                               `json:"nimbus_oauth_email_optional"`
+	OauthServerAllowDynamicRegistration                   bool                                                                  `json:"oauth_server_allow_dynamic_registration"`
+	OauthServerAuthorizationPath                          nullable.Nullable[string]                                             `json:"oauth_server_authorization_path"`
+	OauthServerEnabled                                    bool                                                                  `json:"oauth_server_enabled"`
+	PasskeyEnabled                                        bool                                                                  `json:"passkey_enabled"`
+	PasswordHibpEnabled                                   nullable.Nullable[bool]                                               `json:"password_hibp_enabled"`
+	PasswordMinLength                                     nullable.Nullable[int]                                                `json:"password_min_length"`
+	PasswordRequiredCharacters                            nullable.Nullable[AuthConfigResponseOutputPasswordRequiredCharacters] `json:"password_required_characters"`
+	RateLimitAnonymousUsers                               nullable.Nullable[int]                                                `json:"rate_limit_anonymous_users"`
+	RateLimitEmailSent                                    nullable.Nullable[int]                                                `json:"rate_limit_email_sent"`
+	RateLimitOtp                                          nullable.Nullable[int]                                                `json:"rate_limit_otp"`
+	RateLimitSmsSent                                      nullable.Nullable[int]                                                `json:"rate_limit_sms_sent"`
+	RateLimitTokenRefresh                                 nullable.Nullable[int]                                                `json:"rate_limit_token_refresh"`
+	RateLimitVerify                                       nullable.Nullable[int]                                                `json:"rate_limit_verify"`
+	RateLimitWeb3                                         nullable.Nullable[int]                                                `json:"rate_limit_web3"`
+	RefreshTokenRotationEnabled                           nullable.Nullable[bool]                                               `json:"refresh_token_rotation_enabled"`
+	SamlAllowEncryptedAssertions                          nullable.Nullable[bool]                                               `json:"saml_allow_encrypted_assertions"`
+	SamlEnabled                                           nullable.Nullable[bool]                                               `json:"saml_enabled"`
+	SamlExternalUrl                                       nullable.Nullable[string]                                             `json:"saml_external_url"`
+	SecurityCaptchaEnabled                                nullable.Nullable[bool]                                               `json:"security_captcha_enabled"`
+	SecurityCaptchaProvider                               nullable.Nullable[AuthConfigResponseOutputSecurityCaptchaProvider]    `json:"security_captcha_provider"`
+	SecurityCaptchaSecret                                 nullable.Nullable[string]                                             `json:"security_captcha_secret"`
+	SecurityManualLinkingEnabled                          nullable.Nullable[bool]                                               `json:"security_manual_linking_enabled"`
+	SecurityRefreshTokenReuseInterval                     nullable.Nullable[int]                                                `json:"security_refresh_token_reuse_interval"`
+	SecuritySbForwardedForEnabled                         nullable.Nullable[bool]                                               `json:"security_sb_forwarded_for_enabled"`
+	SecurityUpdatePasswordRequireReauthentication         nullable.Nullable[bool]                                               `json:"security_update_password_require_reauthentication"`
+	SessionsInactivityTimeout                             nullable.Nullable[float32]                                            `json:"sessions_inactivity_timeout"`
+	SessionsSinglePerUser                                 nullable.Nullable[bool]                                               `json:"sessions_single_per_user"`
+	SessionsTags                                          nullable.Nullable[string]                                             `json:"sessions_tags"`
+	SessionsTimebox                                       nullable.Nullable[float32]                                            `json:"sessions_timebox"`
+	SiteUrl                                               nullable.Nullable[string]                                             `json:"site_url"`
+	SmsAutoconfirm                                        nullable.Nullable[bool]                                               `json:"sms_autoconfirm"`
+	SmsMaxFrequency                                       nullable.Nullable[int]                                                `json:"sms_max_frequency"`
+	SmsMessagebirdAccessKey                               nullable.Nullable[string]                                             `json:"sms_messagebird_access_key"`
+	SmsMessagebirdOriginator                              nullable.Nullable[string]                                             `json:"sms_messagebird_originator"`
+	SmsOtpExp                                             nullable.Nullable[int]                                                `json:"sms_otp_exp"`
+	SmsOtpLength                                          int                                                                   `json:"sms_otp_length"`
+	SmsProvider                                           nullable.Nullable[AuthConfigResponseOutputSmsProvider]                `json:"sms_provider"`
+	SmsTemplate                                           nullable.Nullable[string]                                             `json:"sms_template"`
+	SmsTestOtp                                            nullable.Nullable[string]                                             `json:"sms_test_otp"`
+	SmsTestOtpValidUntil                                  nullable.Nullable[time.Time]                                          `json:"sms_test_otp_valid_until"`
+	SmsTextlocalApiKey                                    nullable.Nullable[string]                                             `json:"sms_textlocal_api_key"`
+	SmsTextlocalSender                                    nullable.Nullable[string]                                             `json:"sms_textlocal_sender"`
+	SmsTwilioAccountSid                                   nullable.Nullable[string]                                             `json:"sms_twilio_account_sid"`
+	SmsTwilioAuthToken                                    nullable.Nullable[string]                                             `json:"sms_twilio_auth_token"`
+	SmsTwilioContentSid                                   nullable.Nullable[string]                                             `json:"sms_twilio_content_sid"`
+	SmsTwilioMessageServiceSid                            nullable.Nullable[string]                                             `json:"sms_twilio_message_service_sid"`
+	SmsTwilioVerifyAccountSid                             nullable.Nullable[string]                                             `json:"sms_twilio_verify_account_sid"`
+	SmsTwilioVerifyAuthToken                              nullable.Nullable[string]                                             `json:"sms_twilio_verify_auth_token"`
+	SmsTwilioVerifyMessageServiceSid                      nullable.Nullable[string]                                             `json:"sms_twilio_verify_message_service_sid"`
+	SmsVonageApiKey                                       nullable.Nullable[string]                                             `json:"sms_vonage_api_key"`
+	SmsVonageApiSecret                                    nullable.Nullable[string]                                             `json:"sms_vonage_api_secret"`
+	SmsVonageFrom                                         nullable.Nullable[string]                                             `json:"sms_vonage_from"`
+	SmtpAdminEmail                                        nullable.Nullable[openapi_types.Email]                                `json:"smtp_admin_email"`
+	SmtpHost                                              nullable.Nullable[string]                                             `json:"smtp_host"`
+	SmtpMaxFrequency                                      nullable.Nullable[int]                                                `json:"smtp_max_frequency"`
+	SmtpPass                                              nullable.Nullable[string]                                             `json:"smtp_pass"`
+	SmtpPort                                              nullable.Nullable[string]                                             `json:"smtp_port"`
+	SmtpSenderName                                        nullable.Nullable[string]                                             `json:"smtp_sender_name"`
+	SmtpUser                                              nullable.Nullable[string]                                             `json:"smtp_user"`
+	UriAllowList                                          nullable.Nullable[string]                                             `json:"uri_allow_list"`
+	WebauthnRpDisplayName                                 nullable.Nullable[string]                                             `json:"webauthn_rp_display_name"`
+	WebauthnRpId                                          nullable.Nullable[string]                                             `json:"webauthn_rp_id"`
+	WebauthnRpOrigins                                     nullable.Nullable[string]                                             `json:"webauthn_rp_origins"`
 }
 
-// AuthConfigResponseDbMaxPoolSizeUnit defines model for AuthConfigResponse.DbMaxPoolSizeUnit.
-type AuthConfigResponseDbMaxPoolSizeUnit string
+// AuthConfigResponseOutputDbMaxPoolSizeUnit defines model for AuthConfigResponseOutput.DbMaxPoolSizeUnit.
+type AuthConfigResponseOutputDbMaxPoolSizeUnit string
 
-// AuthConfigResponsePasswordRequiredCharacters defines model for AuthConfigResponse.PasswordRequiredCharacters.
-type AuthConfigResponsePasswordRequiredCharacters string
+// AuthConfigResponseOutputPasswordRequiredCharacters defines model for AuthConfigResponseOutput.PasswordRequiredCharacters.
+type AuthConfigResponseOutputPasswordRequiredCharacters string
 
-// AuthConfigResponseSecurityCaptchaProvider defines model for AuthConfigResponse.SecurityCaptchaProvider.
-type AuthConfigResponseSecurityCaptchaProvider string
+// AuthConfigResponseOutputSecurityCaptchaProvider defines model for AuthConfigResponseOutput.SecurityCaptchaProvider.
+type AuthConfigResponseOutputSecurityCaptchaProvider string
 
-// AuthConfigResponseSmsProvider defines model for AuthConfigResponse.SmsProvider.
-type AuthConfigResponseSmsProvider string
+// AuthConfigResponseOutputSmsProvider defines model for AuthConfigResponseOutput.SmsProvider.
+type AuthConfigResponseOutputSmsProvider string
 
 // AuthorizeJitAccessBody defines model for AuthorizeJitAccessBody.
 type AuthorizeJitAccessBody struct {
@@ -5962,33 +5961,33 @@ type BranchActionBody struct {
 	MigrationVersion *string `json:"migration_version,omitempty"`
 }
 
-// BranchDeleteResponse defines model for BranchDeleteResponse.
-type BranchDeleteResponse struct {
-	Message BranchDeleteResponseMessage `json:"message"`
+// BranchDeleteResponseOutput defines model for BranchDeleteResponse_Output.
+type BranchDeleteResponseOutput struct {
+	Message BranchDeleteResponseOutputMessage `json:"message"`
 }
 
-// BranchDeleteResponseMessage defines model for BranchDeleteResponse.Message.
-type BranchDeleteResponseMessage string
+// BranchDeleteResponseOutputMessage defines model for BranchDeleteResponseOutput.Message.
+type BranchDeleteResponseOutputMessage string
 
-// BranchDetailResponse defines model for BranchDetailResponse.
-type BranchDetailResponse struct {
-	DbHost          string                     `json:"db_host"`
-	DbPass          *string                    `json:"db_pass,omitempty"`
-	DbPort          int                        `json:"db_port"`
-	DbUser          *string                    `json:"db_user,omitempty"`
-	JwtSecret       *string                    `json:"jwt_secret,omitempty"`
-	PostgresEngine  string                     `json:"postgres_engine"`
-	PostgresVersion string                     `json:"postgres_version"`
-	Ref             string                     `json:"ref"`
-	ReleaseChannel  string                     `json:"release_channel"`
-	Status          BranchDetailResponseStatus `json:"status"`
+// BranchDetailResponseOutput defines model for BranchDetailResponse_Output.
+type BranchDetailResponseOutput struct {
+	DbHost          string                           `json:"db_host"`
+	DbPass          *string                          `json:"db_pass,omitempty"`
+	DbPort          int                              `json:"db_port"`
+	DbUser          *string                          `json:"db_user,omitempty"`
+	JwtSecret       *string                          `json:"jwt_secret,omitempty"`
+	PostgresEngine  string                           `json:"postgres_engine"`
+	PostgresVersion string                           `json:"postgres_version"`
+	Ref             string                           `json:"ref"`
+	ReleaseChannel  string                           `json:"release_channel"`
+	Status          BranchDetailResponseOutputStatus `json:"status"`
 }
 
-// BranchDetailResponseStatus defines model for BranchDetailResponse.Status.
-type BranchDetailResponseStatus string
+// BranchDetailResponseOutputStatus defines model for BranchDetailResponseOutput.Status.
+type BranchDetailResponseOutputStatus string
 
-// BranchResponse defines model for BranchResponse.
-type BranchResponse struct {
+// BranchResponseOutput defines model for BranchResponse_Output.
+type BranchResponseOutput struct {
 	CreatedAt           time.Time          `json:"created_at"`
 	DeletionScheduledAt *time.Time         `json:"deletion_scheduled_at,omitempty"`
 	GitBranch           *string            `json:"git_branch,omitempty"`
@@ -5997,45 +5996,45 @@ type BranchResponse struct {
 
 	// LatestCheckRunId This field is deprecated and will not be populated.
 	// Deprecated: this property has been marked as deprecated upstream, but no `x-deprecated-reason` was set
-	LatestCheckRunId     *float32                            `json:"latest_check_run_id,omitempty"`
-	Name                 string                              `json:"name"`
-	NotifyUrl            *string                             `json:"notify_url,omitempty"`
-	ParentProjectRef     string                              `json:"parent_project_ref"`
-	Persistent           bool                                `json:"persistent"`
-	PrNumber             *int32                              `json:"pr_number,omitempty"`
-	PreviewProjectStatus *BranchResponsePreviewProjectStatus `json:"preview_project_status,omitempty"`
-	ProjectRef           string                              `json:"project_ref"`
-	ReviewRequestedAt    *time.Time                          `json:"review_requested_at,omitempty"`
+	LatestCheckRunId     *float32                                  `json:"latest_check_run_id,omitempty"`
+	Name                 string                                    `json:"name"`
+	NotifyUrl            *string                                   `json:"notify_url,omitempty"`
+	ParentProjectRef     string                                    `json:"parent_project_ref"`
+	Persistent           bool                                      `json:"persistent"`
+	PrNumber             *int32                                    `json:"pr_number,omitempty"`
+	PreviewProjectStatus *BranchResponseOutputPreviewProjectStatus `json:"preview_project_status,omitempty"`
+	ProjectRef           string                                    `json:"project_ref"`
+	ReviewRequestedAt    *time.Time                                `json:"review_requested_at,omitempty"`
 
 	// Status This field is deprecated. List action runs to get branch status instead.
 	// Deprecated: this property has been marked as deprecated upstream, but no `x-deprecated-reason` was set
-	Status    BranchResponseStatus `json:"status"`
-	UpdatedAt time.Time            `json:"updated_at"`
-	WithData  bool                 `json:"with_data"`
+	Status    BranchResponseOutputStatus `json:"status"`
+	UpdatedAt time.Time                  `json:"updated_at"`
+	WithData  bool                       `json:"with_data"`
 }
 
-// BranchResponsePreviewProjectStatus defines model for BranchResponse.PreviewProjectStatus.
-type BranchResponsePreviewProjectStatus string
+// BranchResponseOutputPreviewProjectStatus defines model for BranchResponseOutput.PreviewProjectStatus.
+type BranchResponseOutputPreviewProjectStatus string
 
-// BranchResponseStatus This field is deprecated. List action runs to get branch status instead.
-type BranchResponseStatus string
+// BranchResponseOutputStatus This field is deprecated. List action runs to get branch status instead.
+type BranchResponseOutputStatus string
 
-// BranchRestoreResponse defines model for BranchRestoreResponse.
-type BranchRestoreResponse struct {
-	Message BranchRestoreResponseMessage `json:"message"`
+// BranchRestoreResponseOutput defines model for BranchRestoreResponse_Output.
+type BranchRestoreResponseOutput struct {
+	Message BranchRestoreResponseOutputMessage `json:"message"`
 }
 
-// BranchRestoreResponseMessage defines model for BranchRestoreResponse.Message.
-type BranchRestoreResponseMessage string
+// BranchRestoreResponseOutputMessage defines model for BranchRestoreResponseOutput.Message.
+type BranchRestoreResponseOutputMessage string
 
-// BranchUpdateResponse defines model for BranchUpdateResponse.
-type BranchUpdateResponse struct {
-	Message       BranchUpdateResponseMessage `json:"message"`
-	WorkflowRunId string                      `json:"workflow_run_id"`
+// BranchUpdateResponseOutput defines model for BranchUpdateResponse_Output.
+type BranchUpdateResponseOutput struct {
+	Message       BranchUpdateResponseOutputMessage `json:"message"`
+	WorkflowRunId string                            `json:"workflow_run_id"`
 }
 
-// BranchUpdateResponseMessage defines model for BranchUpdateResponse.Message.
-type BranchUpdateResponseMessage string
+// BranchUpdateResponseOutputMessage defines model for BranchUpdateResponseOutput.Message.
+type BranchUpdateResponseOutputMessage string
 
 // BulkUpdateFunctionBody defines model for BulkUpdateFunctionBody.
 type BulkUpdateFunctionBody = []struct {
@@ -6055,26 +6054,26 @@ type BulkUpdateFunctionBody = []struct {
 // BulkUpdateFunctionBodyStatus defines model for BulkUpdateFunctionBody.Status.
 type BulkUpdateFunctionBodyStatus string
 
-// BulkUpdateFunctionResponse defines model for BulkUpdateFunctionResponse.
-type BulkUpdateFunctionResponse struct {
+// BulkUpdateFunctionResponseOutput defines model for BulkUpdateFunctionResponse_Output.
+type BulkUpdateFunctionResponseOutput struct {
 	Functions []struct {
-		CreatedAt      int64                                     `json:"created_at"`
-		EntrypointPath *string                                   `json:"entrypoint_path,omitempty"`
-		EzbrSha256     *string                                   `json:"ezbr_sha256,omitempty"`
-		Id             string                                    `json:"id"`
-		ImportMap      *bool                                     `json:"import_map,omitempty"`
-		ImportMapPath  *string                                   `json:"import_map_path,omitempty"`
-		Name           string                                    `json:"name"`
-		Slug           string                                    `json:"slug"`
-		Status         BulkUpdateFunctionResponseFunctionsStatus `json:"status"`
-		UpdatedAt      int64                                     `json:"updated_at"`
-		VerifyJwt      *bool                                     `json:"verify_jwt,omitempty"`
-		Version        int                                       `json:"version"`
+		CreatedAt      int64                                           `json:"created_at"`
+		EntrypointPath *string                                         `json:"entrypoint_path,omitempty"`
+		EzbrSha256     *string                                         `json:"ezbr_sha256,omitempty"`
+		Id             string                                          `json:"id"`
+		ImportMap      *bool                                           `json:"import_map,omitempty"`
+		ImportMapPath  *string                                         `json:"import_map_path,omitempty"`
+		Name           string                                          `json:"name"`
+		Slug           string                                          `json:"slug"`
+		Status         BulkUpdateFunctionResponseOutputFunctionsStatus `json:"status"`
+		UpdatedAt      int64                                           `json:"updated_at"`
+		VerifyJwt      *bool                                           `json:"verify_jwt,omitempty"`
+		Version        int                                             `json:"version"`
 	} `json:"functions"`
 }
 
-// BulkUpdateFunctionResponseFunctionsStatus defines model for BulkUpdateFunctionResponse.Functions.Status.
-type BulkUpdateFunctionResponseFunctionsStatus string
+// BulkUpdateFunctionResponseOutputFunctionsStatus defines model for BulkUpdateFunctionResponseOutput.Functions.Status.
+type BulkUpdateFunctionResponseOutputFunctionsStatus string
 
 // CreateApiKeyBody defines model for CreateApiKeyBody.
 type CreateApiKeyBody struct {
@@ -6122,8 +6121,8 @@ type CreateOrganizationV1 struct {
 	Name string `json:"name"`
 }
 
-// CreateProjectClaimTokenResponse defines model for CreateProjectClaimTokenResponse.
-type CreateProjectClaimTokenResponse struct {
+// CreateProjectClaimTokenResponseOutput defines model for CreateProjectClaimTokenResponse_Output.
+type CreateProjectClaimTokenResponseOutput struct {
 	CreatedAt  string             `json:"created_at"`
 	CreatedBy  openapi_types.UUID `json:"created_by"`
 	ExpiresAt  string             `json:"expires_at"`
@@ -6156,8 +6155,8 @@ type CreateProviderBodyNameIdFormat string
 // CreateProviderBodyType What type of provider will be created
 type CreateProviderBodyType string
 
-// CreateProviderResponse defines model for CreateProviderResponse.
-type CreateProviderResponse struct {
+// CreateProviderResponseOutput defines model for CreateProviderResponse_Output.
+type CreateProviderResponseOutput struct {
 	CreatedAt *string `json:"created_at,omitempty"`
 	Domains   *[]struct {
 		CreatedAt *string `json:"created_at,omitempty"`
@@ -6187,8 +6186,8 @@ type CreateRoleBody struct {
 	ReadOnly bool `json:"read_only"`
 }
 
-// CreateRoleResponse defines model for CreateRoleResponse.
-type CreateRoleResponse struct {
+// CreateRoleResponseOutput defines model for CreateRoleResponse_Output.
+type CreateRoleResponseOutput struct {
 	Password   string `json:"password"`
 	Role       string `json:"role"`
 	TtlSeconds int64  `json:"ttl_seconds"`
@@ -6351,26 +6350,26 @@ type CreateThirdPartyAuthBody struct {
 	OidcIssuerUrl *string     `json:"oidc_issuer_url,omitempty"`
 }
 
-// DatabaseUpgradeStatusResponse defines model for DatabaseUpgradeStatusResponse.
-type DatabaseUpgradeStatusResponse struct {
+// DatabaseUpgradeStatusResponseOutput defines model for DatabaseUpgradeStatusResponse_Output.
+type DatabaseUpgradeStatusResponseOutput struct {
 	DatabaseUpgradeStatus nullable.Nullable[struct {
-		Error          *DatabaseUpgradeStatusResponseDatabaseUpgradeStatusError    `json:"error,omitempty"`
-		InitiatedAt    string                                                      `json:"initiated_at"`
-		LatestStatusAt string                                                      `json:"latest_status_at"`
-		Progress       *DatabaseUpgradeStatusResponseDatabaseUpgradeStatusProgress `json:"progress,omitempty"`
-		Status         float32                                                     `json:"status"`
-		TargetVersion  float32                                                     `json:"target_version"`
+		Error          *DatabaseUpgradeStatusResponseOutputDatabaseUpgradeStatusError    `json:"error,omitempty"`
+		InitiatedAt    string                                                            `json:"initiated_at"`
+		LatestStatusAt string                                                            `json:"latest_status_at"`
+		Progress       *DatabaseUpgradeStatusResponseOutputDatabaseUpgradeStatusProgress `json:"progress,omitempty"`
+		Status         float32                                                           `json:"status"`
+		TargetVersion  string                                                            `json:"target_version"`
 	}] `json:"databaseUpgradeStatus"`
 }
 
-// DatabaseUpgradeStatusResponseDatabaseUpgradeStatusError defines model for DatabaseUpgradeStatusResponse.DatabaseUpgradeStatus.Error.
-type DatabaseUpgradeStatusResponseDatabaseUpgradeStatusError string
+// DatabaseUpgradeStatusResponseOutputDatabaseUpgradeStatusError defines model for DatabaseUpgradeStatusResponseOutput.DatabaseUpgradeStatus.Error.
+type DatabaseUpgradeStatusResponseOutputDatabaseUpgradeStatusError string
 
-// DatabaseUpgradeStatusResponseDatabaseUpgradeStatusProgress defines model for DatabaseUpgradeStatusResponse.DatabaseUpgradeStatus.Progress.
-type DatabaseUpgradeStatusResponseDatabaseUpgradeStatusProgress string
+// DatabaseUpgradeStatusResponseOutputDatabaseUpgradeStatusProgress defines model for DatabaseUpgradeStatusResponseOutput.DatabaseUpgradeStatus.Progress.
+type DatabaseUpgradeStatusResponseOutputDatabaseUpgradeStatusProgress string
 
-// DeleteProviderResponse defines model for DeleteProviderResponse.
-type DeleteProviderResponse struct {
+// DeleteProviderResponseOutput defines model for DeleteProviderResponse_Output.
+type DeleteProviderResponseOutput struct {
 	CreatedAt *string `json:"created_at,omitempty"`
 	Domains   *[]struct {
 		CreatedAt *string `json:"created_at,omitempty"`
@@ -6395,38 +6394,38 @@ type DeleteProviderResponse struct {
 	UpdatedAt *string `json:"updated_at,omitempty"`
 }
 
-// DeleteRolesResponse defines model for DeleteRolesResponse.
-type DeleteRolesResponse struct {
-	Message DeleteRolesResponseMessage `json:"message"`
+// DeleteRolesResponseOutput defines model for DeleteRolesResponse_Output.
+type DeleteRolesResponseOutput struct {
+	Message DeleteRolesResponseOutputMessage `json:"message"`
 }
 
-// DeleteRolesResponseMessage defines model for DeleteRolesResponse.Message.
-type DeleteRolesResponseMessage string
+// DeleteRolesResponseOutputMessage defines model for DeleteRolesResponseOutput.Message.
+type DeleteRolesResponseOutputMessage string
 
 // DeleteSecretsBody defines model for DeleteSecretsBody.
 type DeleteSecretsBody = []string
 
-// DeployFunctionResponse defines model for DeployFunctionResponse.
-type DeployFunctionResponse struct {
-	CreatedAt      *int64                       `json:"created_at,omitempty"`
-	EntrypointPath *string                      `json:"entrypoint_path,omitempty"`
-	EzbrSha256     *string                      `json:"ezbr_sha256,omitempty"`
-	Id             string                       `json:"id"`
-	ImportMap      *bool                        `json:"import_map,omitempty"`
-	ImportMapPath  *string                      `json:"import_map_path,omitempty"`
-	Name           string                       `json:"name"`
-	Slug           string                       `json:"slug"`
-	Status         DeployFunctionResponseStatus `json:"status"`
-	UpdatedAt      *int64                       `json:"updated_at,omitempty"`
-	VerifyJwt      *bool                        `json:"verify_jwt,omitempty"`
-	Version        int                          `json:"version"`
+// DeployFunctionResponseOutput defines model for DeployFunctionResponse_Output.
+type DeployFunctionResponseOutput struct {
+	CreatedAt      *int64                             `json:"created_at,omitempty"`
+	EntrypointPath *string                            `json:"entrypoint_path,omitempty"`
+	EzbrSha256     *string                            `json:"ezbr_sha256,omitempty"`
+	Id             string                             `json:"id"`
+	ImportMap      *bool                              `json:"import_map,omitempty"`
+	ImportMapPath  *string                            `json:"import_map_path,omitempty"`
+	Name           string                             `json:"name"`
+	Slug           string                             `json:"slug"`
+	Status         DeployFunctionResponseOutputStatus `json:"status"`
+	UpdatedAt      *int64                             `json:"updated_at,omitempty"`
+	VerifyJwt      *bool                              `json:"verify_jwt,omitempty"`
+	Version        int                                `json:"version"`
 }
 
-// DeployFunctionResponseStatus defines model for DeployFunctionResponse.Status.
-type DeployFunctionResponseStatus string
+// DeployFunctionResponseOutputStatus defines model for DeployFunctionResponseOutput.Status.
+type DeployFunctionResponseOutputStatus string
 
-// DiskAutoscaleConfig defines model for DiskAutoscaleConfig.
-type DiskAutoscaleConfig struct {
+// DiskAutoscaleConfigOutput defines model for DiskAutoscaleConfig_Output.
+type DiskAutoscaleConfigOutput struct {
 	// GrowthPercent Growth percentage for disk autoscaling
 	GrowthPercent nullable.Nullable[int] `json:"growth_percent"`
 
@@ -6468,40 +6467,40 @@ type DiskRequestBody_Attributes struct {
 	union json.RawMessage
 }
 
-// DiskResponse defines model for DiskResponse.
-type DiskResponse struct {
-	Attributes     DiskResponse_Attributes `json:"attributes"`
-	LastModifiedAt *string                 `json:"last_modified_at,omitempty"`
+// DiskResponseOutput defines model for DiskResponse_Output.
+type DiskResponseOutput struct {
+	Attributes     DiskResponseOutput_Attributes `json:"attributes"`
+	LastModifiedAt *string                       `json:"last_modified_at,omitempty"`
 }
 
-// DiskResponseAttributes0 defines model for .
-type DiskResponseAttributes0 struct {
-	Iops            int                         `json:"iops"`
-	SizeGb          int                         `json:"size_gb"`
-	ThroughputMibps *int                        `json:"throughput_mibps,omitempty"`
-	Type            DiskResponseAttributes0Type `json:"type"`
+// DiskResponseOutputAttributes0 defines model for .
+type DiskResponseOutputAttributes0 struct {
+	Iops            int                               `json:"iops"`
+	SizeGb          int                               `json:"size_gb"`
+	ThroughputMibps *int                              `json:"throughput_mibps,omitempty"`
+	Type            DiskResponseOutputAttributes0Type `json:"type"`
 }
 
-// DiskResponseAttributes0Type defines model for DiskResponse.Attributes.0.Type.
-type DiskResponseAttributes0Type string
+// DiskResponseOutputAttributes0Type defines model for DiskResponseOutput.Attributes.0.Type.
+type DiskResponseOutputAttributes0Type string
 
-// DiskResponseAttributes1 defines model for .
-type DiskResponseAttributes1 struct {
-	Iops   int                         `json:"iops"`
-	SizeGb int                         `json:"size_gb"`
-	Type   DiskResponseAttributes1Type `json:"type"`
+// DiskResponseOutputAttributes1 defines model for .
+type DiskResponseOutputAttributes1 struct {
+	Iops   int                               `json:"iops"`
+	SizeGb int                               `json:"size_gb"`
+	Type   DiskResponseOutputAttributes1Type `json:"type"`
 }
 
-// DiskResponseAttributes1Type defines model for DiskResponse.Attributes.1.Type.
-type DiskResponseAttributes1Type string
+// DiskResponseOutputAttributes1Type defines model for DiskResponseOutput.Attributes.1.Type.
+type DiskResponseOutputAttributes1Type string
 
-// DiskResponse_Attributes defines model for DiskResponse.Attributes.
-type DiskResponse_Attributes struct {
+// DiskResponseOutput_Attributes defines model for DiskResponseOutput.Attributes.
+type DiskResponseOutput_Attributes struct {
 	union json.RawMessage
 }
 
-// DiskUtilMetricsResponse defines model for DiskUtilMetricsResponse.
-type DiskUtilMetricsResponse struct {
+// DiskUtilMetricsResponseOutput defines model for DiskUtilMetricsResponse_Output.
+type DiskUtilMetricsResponseOutput struct {
 	Metrics struct {
 		FsAvailBytes float32 `json:"fs_avail_bytes"`
 		FsSizeBytes  float32 `json:"fs_size_bytes"`
@@ -6522,79 +6521,71 @@ type FunctionDeployBody struct {
 	} `json:"metadata"`
 }
 
-// FunctionResponse defines model for FunctionResponse.
-type FunctionResponse struct {
-	CreatedAt      int64                  `json:"created_at"`
-	EntrypointPath *string                `json:"entrypoint_path,omitempty"`
-	EzbrSha256     *string                `json:"ezbr_sha256,omitempty"`
-	Id             string                 `json:"id"`
-	ImportMap      *bool                  `json:"import_map,omitempty"`
-	ImportMapPath  *string                `json:"import_map_path,omitempty"`
-	Name           string                 `json:"name"`
-	Slug           string                 `json:"slug"`
-	Status         FunctionResponseStatus `json:"status"`
-	UpdatedAt      int64                  `json:"updated_at"`
-	VerifyJwt      *bool                  `json:"verify_jwt,omitempty"`
-	Version        int                    `json:"version"`
+// FunctionResponseOutput defines model for FunctionResponse_Output.
+type FunctionResponseOutput struct {
+	CreatedAt      int64                        `json:"created_at"`
+	EntrypointPath *string                      `json:"entrypoint_path,omitempty"`
+	EzbrSha256     *string                      `json:"ezbr_sha256,omitempty"`
+	Id             string                       `json:"id"`
+	ImportMap      *bool                        `json:"import_map,omitempty"`
+	ImportMapPath  *string                      `json:"import_map_path,omitempty"`
+	Name           string                       `json:"name"`
+	Slug           string                       `json:"slug"`
+	Status         FunctionResponseOutputStatus `json:"status"`
+	UpdatedAt      int64                        `json:"updated_at"`
+	VerifyJwt      *bool                        `json:"verify_jwt,omitempty"`
+	Version        int                          `json:"version"`
 }
 
-// FunctionResponseStatus defines model for FunctionResponse.Status.
-type FunctionResponseStatus string
+// FunctionResponseOutputStatus defines model for FunctionResponseOutput.Status.
+type FunctionResponseOutputStatus string
 
-// FunctionSlugResponse defines model for FunctionSlugResponse.
-type FunctionSlugResponse struct {
-	CreatedAt      int64                      `json:"created_at"`
-	EntrypointPath *string                    `json:"entrypoint_path,omitempty"`
-	EzbrSha256     *string                    `json:"ezbr_sha256,omitempty"`
-	Id             string                     `json:"id"`
-	ImportMap      *bool                      `json:"import_map,omitempty"`
-	ImportMapPath  *string                    `json:"import_map_path,omitempty"`
-	Name           string                     `json:"name"`
-	Slug           string                     `json:"slug"`
-	Status         FunctionSlugResponseStatus `json:"status"`
-	UpdatedAt      int64                      `json:"updated_at"`
-	VerifyJwt      *bool                      `json:"verify_jwt,omitempty"`
-	Version        int                        `json:"version"`
+// FunctionSlugResponseOutput defines model for FunctionSlugResponse_Output.
+type FunctionSlugResponseOutput struct {
+	CreatedAt      int64                            `json:"created_at"`
+	EntrypointPath *string                          `json:"entrypoint_path,omitempty"`
+	EzbrSha256     *string                          `json:"ezbr_sha256,omitempty"`
+	Id             string                           `json:"id"`
+	ImportMap      *bool                            `json:"import_map,omitempty"`
+	ImportMapPath  *string                          `json:"import_map_path,omitempty"`
+	Name           string                           `json:"name"`
+	Slug           string                           `json:"slug"`
+	Status         FunctionSlugResponseOutputStatus `json:"status"`
+	UpdatedAt      int64                            `json:"updated_at"`
+	VerifyJwt      *bool                            `json:"verify_jwt,omitempty"`
+	Version        int                              `json:"version"`
 }
 
-// FunctionSlugResponseStatus defines model for FunctionSlugResponse.Status.
-type FunctionSlugResponseStatus string
+// FunctionSlugResponseOutputStatus defines model for FunctionSlugResponseOutput.Status.
+type FunctionSlugResponseOutputStatus string
 
-// GetProjectAvailableRestoreVersionsResponse defines model for GetProjectAvailableRestoreVersionsResponse.
-type GetProjectAvailableRestoreVersionsResponse struct {
+// GetProjectAvailableRestoreVersionsResponseOutput defines model for GetProjectAvailableRestoreVersionsResponse_Output.
+type GetProjectAvailableRestoreVersionsResponseOutput struct {
 	AvailableVersions []struct {
-		PostgresEngine GetProjectAvailableRestoreVersionsResponseAvailableVersionsPostgresEngine `json:"postgres_engine"`
-		ReleaseChannel GetProjectAvailableRestoreVersionsResponseAvailableVersionsReleaseChannel `json:"release_channel"`
-		Version        string                                                                    `json:"version"`
+		PostgresEngine GetProjectAvailableRestoreVersionsResponseOutputAvailableVersionsPostgresEngine `json:"postgres_engine"`
+		ReleaseChannel GetProjectAvailableRestoreVersionsResponseOutputAvailableVersionsReleaseChannel `json:"release_channel"`
+		Version        string                                                                          `json:"version"`
 	} `json:"available_versions"`
 }
 
-// GetProjectAvailableRestoreVersionsResponseAvailableVersionsPostgresEngine defines model for GetProjectAvailableRestoreVersionsResponse.AvailableVersions.PostgresEngine.
-type GetProjectAvailableRestoreVersionsResponseAvailableVersionsPostgresEngine string
+// GetProjectAvailableRestoreVersionsResponseOutputAvailableVersionsPostgresEngine defines model for GetProjectAvailableRestoreVersionsResponseOutput.AvailableVersions.PostgresEngine.
+type GetProjectAvailableRestoreVersionsResponseOutputAvailableVersionsPostgresEngine string
 
-// GetProjectAvailableRestoreVersionsResponseAvailableVersionsReleaseChannel defines model for GetProjectAvailableRestoreVersionsResponse.AvailableVersions.ReleaseChannel.
-type GetProjectAvailableRestoreVersionsResponseAvailableVersionsReleaseChannel string
+// GetProjectAvailableRestoreVersionsResponseOutputAvailableVersionsReleaseChannel defines model for GetProjectAvailableRestoreVersionsResponseOutput.AvailableVersions.ReleaseChannel.
+type GetProjectAvailableRestoreVersionsResponseOutputAvailableVersionsReleaseChannel string
 
-// GetProjectDbMetadataResponse defines model for GetProjectDbMetadataResponse.
-type GetProjectDbMetadataResponse struct {
-	Databases []GetProjectDbMetadataResponse_Databases_Item `json:"databases"`
+// GetProjectDbMetadataResponseOutput defines model for GetProjectDbMetadataResponse_Output.
+type GetProjectDbMetadataResponseOutput struct {
+	Databases []struct {
+		Name    string `json:"name"`
+		Schemas []struct {
+			Name string `json:"name"`
+		} `json:"schemas"`
+	} `json:"databases"`
 }
 
-// GetProjectDbMetadataResponse_Databases_Schemas_Item defines model for GetProjectDbMetadataResponse.Databases.Schemas.Item.
-type GetProjectDbMetadataResponse_Databases_Schemas_Item struct {
-	Name                 string                 `json:"name"`
-	AdditionalProperties map[string]interface{} `json:"-"`
-}
-
-// GetProjectDbMetadataResponse_Databases_Item defines model for GetProjectDbMetadataResponse.databases.Item.
-type GetProjectDbMetadataResponse_Databases_Item struct {
-	Name                 string                                                `json:"name"`
-	Schemas              []GetProjectDbMetadataResponse_Databases_Schemas_Item `json:"schemas"`
-	AdditionalProperties map[string]interface{}                                `json:"-"`
-}
-
-// GetProviderResponse defines model for GetProviderResponse.
-type GetProviderResponse struct {
+// GetProviderResponseOutput defines model for GetProviderResponse_Output.
+type GetProviderResponseOutput struct {
 	CreatedAt *string `json:"created_at,omitempty"`
 	Domains   *[]struct {
 		CreatedAt *string `json:"created_at,omitempty"`
@@ -6637,8 +6628,8 @@ type InviteExternalUserJitAccessBody struct {
 	} `json:"roles"`
 }
 
-// InviteExternalUserJitResponse defines model for InviteExternalUserJitResponse.
-type InviteExternalUserJitResponse struct {
+// InviteExternalUserJitResponseOutput defines model for InviteExternalUserJitResponse_Output.
+type InviteExternalUserJitResponseOutput struct {
 	Email     openapi_types.Email `json:"email"`
 	InviteId  openapi_types.UUID  `json:"invite_id"`
 	UserRoles []struct {
@@ -6664,8 +6655,8 @@ type JitAccessRequestRequest struct {
 // JitAccessRequestRequestState defines model for JitAccessRequestRequest.State.
 type JitAccessRequestRequestState string
 
-// JitAccessResponse defines model for JitAccessResponse.
-type JitAccessResponse struct {
+// JitAccessResponseOutput defines model for JitAccessResponse_Output.
+type JitAccessResponseOutput struct {
 	UserId    *openapi_types.UUID `json:"user_id,omitempty"`
 	UserRoles []struct {
 		AllowedNetworks *struct {
@@ -6682,8 +6673,8 @@ type JitAccessResponse struct {
 	} `json:"user_roles"`
 }
 
-// JitAuthorizeAccessResponse defines model for JitAuthorizeAccessResponse.
-type JitAuthorizeAccessResponse struct {
+// JitAuthorizeAccessResponseOutput defines model for JitAuthorizeAccessResponse_Output.
+type JitAuthorizeAccessResponseOutput struct {
 	UserId   openapi_types.UUID `json:"user_id"`
 	UserRole struct {
 		AllowedNetworks *struct {
@@ -6700,13 +6691,13 @@ type JitAuthorizeAccessResponse struct {
 	} `json:"user_role"`
 }
 
-// JitListAccessResponse defines model for JitListAccessResponse.
-type JitListAccessResponse struct {
-	Items []JitListAccessResponse_Items_Item `json:"items"`
+// JitListAccessResponseOutput defines model for JitListAccessResponse_Output.
+type JitListAccessResponseOutput struct {
+	Items []JitListAccessResponseOutput_Items_Item `json:"items"`
 }
 
-// JitListAccessResponseItems0 defines model for .
-type JitListAccessResponseItems0 struct {
+// JitListAccessResponseOutputItems0 defines model for .
+type JitListAccessResponseOutputItems0 struct {
 	ExpiresAt    nullable.Nullable[string]             `json:"expires_at"`
 	InviteId     nullable.Nullable[openapi_types.UUID] `json:"invite_id"`
 	PrimaryEmail nullable.Nullable[string]             `json:"primary_email"`
@@ -6726,8 +6717,8 @@ type JitListAccessResponseItems0 struct {
 	} `json:"user_roles"`
 }
 
-// JitListAccessResponseItems1 defines model for .
-type JitListAccessResponseItems1 struct {
+// JitListAccessResponseOutputItems1 defines model for .
+type JitListAccessResponseOutputItems1 struct {
 	ExpiresAt    string                                `json:"expires_at"`
 	InviteId     openapi_types.UUID                    `json:"invite_id"`
 	PrimaryEmail string                                `json:"primary_email"`
@@ -6747,179 +6738,179 @@ type JitListAccessResponseItems1 struct {
 	} `json:"user_roles"`
 }
 
-// JitListAccessResponse_Items_Item defines model for JitListAccessResponse.items.Item.
-type JitListAccessResponse_Items_Item struct {
+// JitListAccessResponseOutput_Items_Item defines model for JitListAccessResponse_Output.items.Item.
+type JitListAccessResponseOutput_Items_Item struct {
 	union json.RawMessage
 }
 
-// LegacyApiKeysResponse defines model for LegacyApiKeysResponse.
-type LegacyApiKeysResponse struct {
+// JsonValueOutput Any JSON-serializable value
+type JsonValueOutput struct {
+	union json.RawMessage
+}
+
+// JsonValueOutput0 defines model for .
+type JsonValueOutput0 struct {
+	union json.RawMessage
+}
+
+// JsonValueOutput00 defines model for .
+type JsonValueOutput00 = string
+
+// JsonValueOutput01 defines model for .
+type JsonValueOutput01 = float32
+
+// JsonValueOutput02 defines model for .
+type JsonValueOutput02 = bool
+
+// JsonValueOutput1 defines model for .
+type JsonValueOutput1 = []JsonValueOutput
+
+// JsonValueOutput2 defines model for .
+type JsonValueOutput2 map[string]JsonValueOutput
+
+// LegacyApiKeysResponseOutput defines model for LegacyApiKeysResponse_Output.
+type LegacyApiKeysResponseOutput struct {
 	Enabled bool `json:"enabled"`
 }
 
-// ListActionRunResponse defines model for ListActionRunResponse.
-type ListActionRunResponse = []struct {
+// ListActionRunResponseOutput defines model for ListActionRunResponse_Output.
+type ListActionRunResponseOutput = []struct {
 	BranchId   string                         `json:"branch_id"`
 	CheckRunId nullable.Nullable[float32]     `json:"check_run_id"`
 	CreatedAt  string                         `json:"created_at"`
 	GitConfig  nullable.Nullable[interface{}] `json:"git_config,omitempty"`
 	Id         string                         `json:"id"`
 	RunSteps   []struct {
-		CreatedAt string                              `json:"created_at"`
-		Name      ListActionRunResponseRunStepsName   `json:"name"`
-		Status    ListActionRunResponseRunStepsStatus `json:"status"`
-		UpdatedAt string                              `json:"updated_at"`
+		CreatedAt string                                    `json:"created_at"`
+		Name      ListActionRunResponseOutputRunStepsName   `json:"name"`
+		Status    ListActionRunResponseOutputRunStepsStatus `json:"status"`
+		UpdatedAt string                                    `json:"updated_at"`
 	} `json:"run_steps"`
 	UpdatedAt string                    `json:"updated_at"`
 	Workdir   nullable.Nullable[string] `json:"workdir"`
 }
 
-// ListActionRunResponseRunStepsName defines model for ListActionRunResponse.RunSteps.Name.
-type ListActionRunResponseRunStepsName string
+// ListActionRunResponseOutputRunStepsName defines model for ListActionRunResponseOutput.RunSteps.Name.
+type ListActionRunResponseOutputRunStepsName string
 
-// ListActionRunResponseRunStepsStatus defines model for ListActionRunResponse.RunSteps.Status.
-type ListActionRunResponseRunStepsStatus string
+// ListActionRunResponseOutputRunStepsStatus defines model for ListActionRunResponseOutput.RunSteps.Status.
+type ListActionRunResponseOutputRunStepsStatus string
 
-// ListProjectAddonsResponse defines model for ListProjectAddonsResponse.
-type ListProjectAddonsResponse struct {
+// ListProjectAddonsResponseOutput defines model for ListProjectAddonsResponse_Output.
+type ListProjectAddonsResponseOutput struct {
 	AvailableAddons []struct {
-		Name     string                                       `json:"name"`
-		Type     ListProjectAddonsResponseAvailableAddonsType `json:"type"`
+		Name     string                                             `json:"name"`
+		Type     ListProjectAddonsResponseOutputAvailableAddonsType `json:"type"`
 		Variants []struct {
-			Id ListProjectAddonsResponse_AvailableAddons_Variants_Id `json:"id"`
+			Id ListProjectAddonsResponseOutput_AvailableAddons_Variants_Id `json:"id"`
 
 			// Meta Any JSON-serializable value
-			Meta  *ListProjectAddonsResponseJsonValue `json:"meta,omitempty"`
-			Name  string                              `json:"name"`
+			Meta  *JsonValueOutput `json:"meta,omitempty"`
+			Name  string           `json:"name"`
 			Price struct {
-				Amount      float32                                                       `json:"amount"`
-				Description string                                                        `json:"description"`
-				Interval    ListProjectAddonsResponseAvailableAddonsVariantsPriceInterval `json:"interval"`
-				Type        ListProjectAddonsResponseAvailableAddonsVariantsPriceType     `json:"type"`
+				Amount      float32                                                             `json:"amount"`
+				Description string                                                              `json:"description"`
+				Interval    ListProjectAddonsResponseOutputAvailableAddonsVariantsPriceInterval `json:"interval"`
+				Type        ListProjectAddonsResponseOutputAvailableAddonsVariantsPriceType     `json:"type"`
 			} `json:"price"`
 		} `json:"variants"`
 	} `json:"available_addons"`
 	SelectedAddons []struct {
-		Type    ListProjectAddonsResponseSelectedAddonsType `json:"type"`
+		Type    ListProjectAddonsResponseOutputSelectedAddonsType `json:"type"`
 		Variant struct {
-			Id ListProjectAddonsResponse_SelectedAddons_Variant_Id `json:"id"`
+			Id ListProjectAddonsResponseOutput_SelectedAddons_Variant_Id `json:"id"`
 
 			// Meta Any JSON-serializable value
-			Meta  *ListProjectAddonsResponseJsonValue `json:"meta,omitempty"`
-			Name  string                              `json:"name"`
+			Meta  *JsonValueOutput `json:"meta,omitempty"`
+			Name  string           `json:"name"`
 			Price struct {
-				Amount      float32                                                     `json:"amount"`
-				Description string                                                      `json:"description"`
-				Interval    ListProjectAddonsResponseSelectedAddonsVariantPriceInterval `json:"interval"`
-				Type        ListProjectAddonsResponseSelectedAddonsVariantPriceType     `json:"type"`
+				Amount      float32                                                           `json:"amount"`
+				Description string                                                            `json:"description"`
+				Interval    ListProjectAddonsResponseOutputSelectedAddonsVariantPriceInterval `json:"interval"`
+				Type        ListProjectAddonsResponseOutputSelectedAddonsVariantPriceType     `json:"type"`
 			} `json:"price"`
 		} `json:"variant"`
 	} `json:"selected_addons"`
 }
 
-// ListProjectAddonsResponseAvailableAddonsType defines model for ListProjectAddonsResponse.AvailableAddons.Type.
-type ListProjectAddonsResponseAvailableAddonsType string
+// ListProjectAddonsResponseOutputAvailableAddonsType defines model for ListProjectAddonsResponseOutput.AvailableAddons.Type.
+type ListProjectAddonsResponseOutputAvailableAddonsType string
 
-// ListProjectAddonsResponseAvailableAddonsVariantsId0 defines model for ListProjectAddonsResponse.AvailableAddons.Variants.Id.0.
-type ListProjectAddonsResponseAvailableAddonsVariantsId0 string
+// ListProjectAddonsResponseOutputAvailableAddonsVariantsId0 defines model for ListProjectAddonsResponseOutput.AvailableAddons.Variants.Id.0.
+type ListProjectAddonsResponseOutputAvailableAddonsVariantsId0 string
 
-// ListProjectAddonsResponseAvailableAddonsVariantsId1 defines model for ListProjectAddonsResponse.AvailableAddons.Variants.Id.1.
-type ListProjectAddonsResponseAvailableAddonsVariantsId1 string
+// ListProjectAddonsResponseOutputAvailableAddonsVariantsId1 defines model for ListProjectAddonsResponseOutput.AvailableAddons.Variants.Id.1.
+type ListProjectAddonsResponseOutputAvailableAddonsVariantsId1 string
 
-// ListProjectAddonsResponseAvailableAddonsVariantsId2 defines model for ListProjectAddonsResponse.AvailableAddons.Variants.Id.2.
-type ListProjectAddonsResponseAvailableAddonsVariantsId2 string
+// ListProjectAddonsResponseOutputAvailableAddonsVariantsId2 defines model for ListProjectAddonsResponseOutput.AvailableAddons.Variants.Id.2.
+type ListProjectAddonsResponseOutputAvailableAddonsVariantsId2 string
 
-// ListProjectAddonsResponseAvailableAddonsVariantsId3 defines model for ListProjectAddonsResponse.AvailableAddons.Variants.Id.3.
-type ListProjectAddonsResponseAvailableAddonsVariantsId3 string
+// ListProjectAddonsResponseOutputAvailableAddonsVariantsId3 defines model for ListProjectAddonsResponseOutput.AvailableAddons.Variants.Id.3.
+type ListProjectAddonsResponseOutputAvailableAddonsVariantsId3 string
 
-// ListProjectAddonsResponseAvailableAddonsVariantsId4 defines model for ListProjectAddonsResponse.AvailableAddons.Variants.Id.4.
-type ListProjectAddonsResponseAvailableAddonsVariantsId4 string
+// ListProjectAddonsResponseOutputAvailableAddonsVariantsId4 defines model for ListProjectAddonsResponseOutput.AvailableAddons.Variants.Id.4.
+type ListProjectAddonsResponseOutputAvailableAddonsVariantsId4 string
 
-// ListProjectAddonsResponseAvailableAddonsVariantsId5 defines model for ListProjectAddonsResponse.AvailableAddons.Variants.Id.5.
-type ListProjectAddonsResponseAvailableAddonsVariantsId5 string
+// ListProjectAddonsResponseOutputAvailableAddonsVariantsId5 defines model for ListProjectAddonsResponseOutput.AvailableAddons.Variants.Id.5.
+type ListProjectAddonsResponseOutputAvailableAddonsVariantsId5 string
 
-// ListProjectAddonsResponseAvailableAddonsVariantsId6 defines model for ListProjectAddonsResponse.AvailableAddons.Variants.Id.6.
-type ListProjectAddonsResponseAvailableAddonsVariantsId6 string
+// ListProjectAddonsResponseOutputAvailableAddonsVariantsId6 defines model for ListProjectAddonsResponseOutput.AvailableAddons.Variants.Id.6.
+type ListProjectAddonsResponseOutputAvailableAddonsVariantsId6 string
 
-// ListProjectAddonsResponseAvailableAddonsVariantsId7 defines model for ListProjectAddonsResponse.AvailableAddons.Variants.Id.7.
-type ListProjectAddonsResponseAvailableAddonsVariantsId7 string
+// ListProjectAddonsResponseOutputAvailableAddonsVariantsId7 defines model for ListProjectAddonsResponseOutput.AvailableAddons.Variants.Id.7.
+type ListProjectAddonsResponseOutputAvailableAddonsVariantsId7 string
 
-// ListProjectAddonsResponse_AvailableAddons_Variants_Id defines model for ListProjectAddonsResponse.AvailableAddons.Variants.Id.
-type ListProjectAddonsResponse_AvailableAddons_Variants_Id struct {
+// ListProjectAddonsResponseOutput_AvailableAddons_Variants_Id defines model for ListProjectAddonsResponseOutput.AvailableAddons.Variants.Id.
+type ListProjectAddonsResponseOutput_AvailableAddons_Variants_Id struct {
 	union json.RawMessage
 }
 
-// ListProjectAddonsResponseAvailableAddonsVariantsPriceInterval defines model for ListProjectAddonsResponse.AvailableAddons.Variants.Price.Interval.
-type ListProjectAddonsResponseAvailableAddonsVariantsPriceInterval string
+// ListProjectAddonsResponseOutputAvailableAddonsVariantsPriceInterval defines model for ListProjectAddonsResponseOutput.AvailableAddons.Variants.Price.Interval.
+type ListProjectAddonsResponseOutputAvailableAddonsVariantsPriceInterval string
 
-// ListProjectAddonsResponseAvailableAddonsVariantsPriceType defines model for ListProjectAddonsResponse.AvailableAddons.Variants.Price.Type.
-type ListProjectAddonsResponseAvailableAddonsVariantsPriceType string
+// ListProjectAddonsResponseOutputAvailableAddonsVariantsPriceType defines model for ListProjectAddonsResponseOutput.AvailableAddons.Variants.Price.Type.
+type ListProjectAddonsResponseOutputAvailableAddonsVariantsPriceType string
 
-// ListProjectAddonsResponseSelectedAddonsType defines model for ListProjectAddonsResponse.SelectedAddons.Type.
-type ListProjectAddonsResponseSelectedAddonsType string
+// ListProjectAddonsResponseOutputSelectedAddonsType defines model for ListProjectAddonsResponseOutput.SelectedAddons.Type.
+type ListProjectAddonsResponseOutputSelectedAddonsType string
 
-// ListProjectAddonsResponseSelectedAddonsVariantId0 defines model for ListProjectAddonsResponse.SelectedAddons.Variant.Id.0.
-type ListProjectAddonsResponseSelectedAddonsVariantId0 string
+// ListProjectAddonsResponseOutputSelectedAddonsVariantId0 defines model for ListProjectAddonsResponseOutput.SelectedAddons.Variant.Id.0.
+type ListProjectAddonsResponseOutputSelectedAddonsVariantId0 string
 
-// ListProjectAddonsResponseSelectedAddonsVariantId1 defines model for ListProjectAddonsResponse.SelectedAddons.Variant.Id.1.
-type ListProjectAddonsResponseSelectedAddonsVariantId1 string
+// ListProjectAddonsResponseOutputSelectedAddonsVariantId1 defines model for ListProjectAddonsResponseOutput.SelectedAddons.Variant.Id.1.
+type ListProjectAddonsResponseOutputSelectedAddonsVariantId1 string
 
-// ListProjectAddonsResponseSelectedAddonsVariantId2 defines model for ListProjectAddonsResponse.SelectedAddons.Variant.Id.2.
-type ListProjectAddonsResponseSelectedAddonsVariantId2 string
+// ListProjectAddonsResponseOutputSelectedAddonsVariantId2 defines model for ListProjectAddonsResponseOutput.SelectedAddons.Variant.Id.2.
+type ListProjectAddonsResponseOutputSelectedAddonsVariantId2 string
 
-// ListProjectAddonsResponseSelectedAddonsVariantId3 defines model for ListProjectAddonsResponse.SelectedAddons.Variant.Id.3.
-type ListProjectAddonsResponseSelectedAddonsVariantId3 string
+// ListProjectAddonsResponseOutputSelectedAddonsVariantId3 defines model for ListProjectAddonsResponseOutput.SelectedAddons.Variant.Id.3.
+type ListProjectAddonsResponseOutputSelectedAddonsVariantId3 string
 
-// ListProjectAddonsResponseSelectedAddonsVariantId4 defines model for ListProjectAddonsResponse.SelectedAddons.Variant.Id.4.
-type ListProjectAddonsResponseSelectedAddonsVariantId4 string
+// ListProjectAddonsResponseOutputSelectedAddonsVariantId4 defines model for ListProjectAddonsResponseOutput.SelectedAddons.Variant.Id.4.
+type ListProjectAddonsResponseOutputSelectedAddonsVariantId4 string
 
-// ListProjectAddonsResponseSelectedAddonsVariantId5 defines model for ListProjectAddonsResponse.SelectedAddons.Variant.Id.5.
-type ListProjectAddonsResponseSelectedAddonsVariantId5 string
+// ListProjectAddonsResponseOutputSelectedAddonsVariantId5 defines model for ListProjectAddonsResponseOutput.SelectedAddons.Variant.Id.5.
+type ListProjectAddonsResponseOutputSelectedAddonsVariantId5 string
 
-// ListProjectAddonsResponseSelectedAddonsVariantId6 defines model for ListProjectAddonsResponse.SelectedAddons.Variant.Id.6.
-type ListProjectAddonsResponseSelectedAddonsVariantId6 string
+// ListProjectAddonsResponseOutputSelectedAddonsVariantId6 defines model for ListProjectAddonsResponseOutput.SelectedAddons.Variant.Id.6.
+type ListProjectAddonsResponseOutputSelectedAddonsVariantId6 string
 
-// ListProjectAddonsResponseSelectedAddonsVariantId7 defines model for ListProjectAddonsResponse.SelectedAddons.Variant.Id.7.
-type ListProjectAddonsResponseSelectedAddonsVariantId7 string
+// ListProjectAddonsResponseOutputSelectedAddonsVariantId7 defines model for ListProjectAddonsResponseOutput.SelectedAddons.Variant.Id.7.
+type ListProjectAddonsResponseOutputSelectedAddonsVariantId7 string
 
-// ListProjectAddonsResponse_SelectedAddons_Variant_Id defines model for ListProjectAddonsResponse.SelectedAddons.Variant.Id.
-type ListProjectAddonsResponse_SelectedAddons_Variant_Id struct {
+// ListProjectAddonsResponseOutput_SelectedAddons_Variant_Id defines model for ListProjectAddonsResponseOutput.SelectedAddons.Variant.Id.
+type ListProjectAddonsResponseOutput_SelectedAddons_Variant_Id struct {
 	union json.RawMessage
 }
 
-// ListProjectAddonsResponseSelectedAddonsVariantPriceInterval defines model for ListProjectAddonsResponse.SelectedAddons.Variant.Price.Interval.
-type ListProjectAddonsResponseSelectedAddonsVariantPriceInterval string
+// ListProjectAddonsResponseOutputSelectedAddonsVariantPriceInterval defines model for ListProjectAddonsResponseOutput.SelectedAddons.Variant.Price.Interval.
+type ListProjectAddonsResponseOutputSelectedAddonsVariantPriceInterval string
 
-// ListProjectAddonsResponseSelectedAddonsVariantPriceType defines model for ListProjectAddonsResponse.SelectedAddons.Variant.Price.Type.
-type ListProjectAddonsResponseSelectedAddonsVariantPriceType string
+// ListProjectAddonsResponseOutputSelectedAddonsVariantPriceType defines model for ListProjectAddonsResponseOutput.SelectedAddons.Variant.Price.Type.
+type ListProjectAddonsResponseOutputSelectedAddonsVariantPriceType string
 
-// ListProjectAddonsResponseJsonValue Any JSON-serializable value
-type ListProjectAddonsResponseJsonValue struct {
-	union json.RawMessage
-}
-
-// ListProjectAddonsResponseJsonValue0 defines model for .
-type ListProjectAddonsResponseJsonValue0 struct {
-	union json.RawMessage
-}
-
-// ListProjectAddonsResponseJsonValue00 defines model for .
-type ListProjectAddonsResponseJsonValue00 = string
-
-// ListProjectAddonsResponseJsonValue01 defines model for .
-type ListProjectAddonsResponseJsonValue01 = float32
-
-// ListProjectAddonsResponseJsonValue02 defines model for .
-type ListProjectAddonsResponseJsonValue02 = bool
-
-// ListProjectAddonsResponseJsonValue1 defines model for .
-type ListProjectAddonsResponseJsonValue1 = []ListProjectAddonsResponseJsonValue
-
-// ListProjectAddonsResponseJsonValue2 defines model for .
-type ListProjectAddonsResponseJsonValue2 map[string]ListProjectAddonsResponseJsonValue
-
-// ListProvidersResponse defines model for ListProvidersResponse.
-type ListProvidersResponse struct {
+// ListProvidersResponseOutput defines model for ListProvidersResponse_Output.
+type ListProvidersResponseOutput struct {
 	Items []struct {
 		CreatedAt *string `json:"created_at,omitempty"`
 		Domains   *[]struct {
@@ -6946,18 +6937,18 @@ type ListProvidersResponse struct {
 	} `json:"items"`
 }
 
-// NetworkBanResponse defines model for NetworkBanResponse.
-type NetworkBanResponse struct {
-	BannedIpv4Addresses []string `json:"banned_ipv4_addresses"`
-}
-
-// NetworkBanResponseEnriched defines model for NetworkBanResponseEnriched.
-type NetworkBanResponseEnriched struct {
+// NetworkBanResponseEnrichedOutput defines model for NetworkBanResponseEnriched_Output.
+type NetworkBanResponseEnrichedOutput struct {
 	BannedIpv4Addresses []struct {
 		BannedAddress string `json:"banned_address"`
 		Identifier    string `json:"identifier"`
 		Type          string `json:"type"`
 	} `json:"banned_ipv4_addresses"`
+}
+
+// NetworkBanResponseOutput defines model for NetworkBanResponse_Output.
+type NetworkBanResponseOutput struct {
+	BannedIpv4Addresses []string `json:"banned_ipv4_addresses"`
 }
 
 // NetworkRestrictionsPatchRequest defines model for NetworkRestrictionsPatchRequest.
@@ -6978,8 +6969,8 @@ type NetworkRestrictionsRequest struct {
 	DbAllowedCidrsV6 *[]string `json:"dbAllowedCidrsV6,omitempty"`
 }
 
-// NetworkRestrictionsResponse defines model for NetworkRestrictionsResponse.
-type NetworkRestrictionsResponse struct {
+// NetworkRestrictionsResponseOutput defines model for NetworkRestrictionsResponse_Output.
+type NetworkRestrictionsResponseOutput struct {
 	AppliedAt *time.Time `json:"applied_at,omitempty"`
 
 	// Config At any given point in time, this is the config that the user has requested be applied to their project. The `status` field indicates if it has been applied to the project, or is pending. When an updated config is received, the applied config is moved to `old_config`.
@@ -6987,58 +6978,58 @@ type NetworkRestrictionsResponse struct {
 		DbAllowedCidrs   *[]string `json:"dbAllowedCidrs,omitempty"`
 		DbAllowedCidrsV6 *[]string `json:"dbAllowedCidrsV6,omitempty"`
 	} `json:"config"`
-	Entitlement NetworkRestrictionsResponseEntitlement `json:"entitlement"`
+	Entitlement NetworkRestrictionsResponseOutputEntitlement `json:"entitlement"`
 
 	// OldConfig Populated when a new config has been received, but not registered as successfully applied to a project.
 	OldConfig *struct {
 		DbAllowedCidrs   *[]string `json:"dbAllowedCidrs,omitempty"`
 		DbAllowedCidrsV6 *[]string `json:"dbAllowedCidrsV6,omitempty"`
 	} `json:"old_config,omitempty"`
-	Status    NetworkRestrictionsResponseStatus `json:"status"`
-	UpdatedAt *time.Time                        `json:"updated_at,omitempty"`
+	Status    NetworkRestrictionsResponseOutputStatus `json:"status"`
+	UpdatedAt *time.Time                              `json:"updated_at,omitempty"`
 }
 
-// NetworkRestrictionsResponseEntitlement defines model for NetworkRestrictionsResponse.Entitlement.
-type NetworkRestrictionsResponseEntitlement string
+// NetworkRestrictionsResponseOutputEntitlement defines model for NetworkRestrictionsResponseOutput.Entitlement.
+type NetworkRestrictionsResponseOutputEntitlement string
 
-// NetworkRestrictionsResponseStatus defines model for NetworkRestrictionsResponse.Status.
-type NetworkRestrictionsResponseStatus string
+// NetworkRestrictionsResponseOutputStatus defines model for NetworkRestrictionsResponseOutput.Status.
+type NetworkRestrictionsResponseOutputStatus string
 
-// NetworkRestrictionsV2Response defines model for NetworkRestrictionsV2Response.
-type NetworkRestrictionsV2Response struct {
+// NetworkRestrictionsV2ResponseOutput defines model for NetworkRestrictionsV2Response_Output.
+type NetworkRestrictionsV2ResponseOutput struct {
 	AppliedAt *time.Time `json:"applied_at,omitempty"`
 
 	// Config At any given point in time, this is the config that the user has requested be applied to their project. The `status` field indicates if it has been applied to the project, or is pending. When an updated config is received, the applied config is moved to `old_config`.
 	Config struct {
 		DbAllowedCidrs *[]struct {
-			Address string                                                `json:"address"`
-			Type    NetworkRestrictionsV2ResponseConfigDbAllowedCidrsType `json:"type"`
+			Address string                                                      `json:"address"`
+			Type    NetworkRestrictionsV2ResponseOutputConfigDbAllowedCidrsType `json:"type"`
 		} `json:"dbAllowedCidrs,omitempty"`
 	} `json:"config"`
-	Entitlement NetworkRestrictionsV2ResponseEntitlement `json:"entitlement"`
+	Entitlement NetworkRestrictionsV2ResponseOutputEntitlement `json:"entitlement"`
 
 	// OldConfig Populated when a new config has been received, but not registered as successfully applied to a project.
 	OldConfig *struct {
 		DbAllowedCidrs *[]struct {
-			Address string                                                   `json:"address"`
-			Type    NetworkRestrictionsV2ResponseOldConfigDbAllowedCidrsType `json:"type"`
+			Address string                                                         `json:"address"`
+			Type    NetworkRestrictionsV2ResponseOutputOldConfigDbAllowedCidrsType `json:"type"`
 		} `json:"dbAllowedCidrs,omitempty"`
 	} `json:"old_config,omitempty"`
-	Status    NetworkRestrictionsV2ResponseStatus `json:"status"`
-	UpdatedAt *time.Time                          `json:"updated_at,omitempty"`
+	Status    NetworkRestrictionsV2ResponseOutputStatus `json:"status"`
+	UpdatedAt *time.Time                                `json:"updated_at,omitempty"`
 }
 
-// NetworkRestrictionsV2ResponseConfigDbAllowedCidrsType defines model for NetworkRestrictionsV2Response.Config.DbAllowedCidrs.Type.
-type NetworkRestrictionsV2ResponseConfigDbAllowedCidrsType string
+// NetworkRestrictionsV2ResponseOutputConfigDbAllowedCidrsType defines model for NetworkRestrictionsV2ResponseOutput.Config.DbAllowedCidrs.Type.
+type NetworkRestrictionsV2ResponseOutputConfigDbAllowedCidrsType string
 
-// NetworkRestrictionsV2ResponseEntitlement defines model for NetworkRestrictionsV2Response.Entitlement.
-type NetworkRestrictionsV2ResponseEntitlement string
+// NetworkRestrictionsV2ResponseOutputEntitlement defines model for NetworkRestrictionsV2ResponseOutput.Entitlement.
+type NetworkRestrictionsV2ResponseOutputEntitlement string
 
-// NetworkRestrictionsV2ResponseOldConfigDbAllowedCidrsType defines model for NetworkRestrictionsV2Response.OldConfig.DbAllowedCidrs.Type.
-type NetworkRestrictionsV2ResponseOldConfigDbAllowedCidrsType string
+// NetworkRestrictionsV2ResponseOutputOldConfigDbAllowedCidrsType defines model for NetworkRestrictionsV2ResponseOutput.OldConfig.DbAllowedCidrs.Type.
+type NetworkRestrictionsV2ResponseOutputOldConfigDbAllowedCidrsType string
 
-// NetworkRestrictionsV2ResponseStatus defines model for NetworkRestrictionsV2Response.Status.
-type NetworkRestrictionsV2ResponseStatus string
+// NetworkRestrictionsV2ResponseOutputStatus defines model for NetworkRestrictionsV2ResponseOutput.Status.
+type NetworkRestrictionsV2ResponseOutputStatus string
 
 // OAuthRevokeTokenBody defines model for OAuthRevokeTokenBody.
 type OAuthRevokeTokenBody struct {
@@ -7067,21 +7058,21 @@ type OAuthTokenBody struct {
 // OAuthTokenBodyGrantType defines model for OAuthTokenBody.GrantType.
 type OAuthTokenBodyGrantType string
 
-// OAuthTokenResponse defines model for OAuthTokenResponse.
-type OAuthTokenResponse struct {
+// OAuthTokenResponseOutput defines model for OAuthTokenResponse_Output.
+type OAuthTokenResponseOutput struct {
 	AccessToken string `json:"access_token"`
 	ExpiresIn   int    `json:"expires_in"`
 
 	// RefreshToken The `urn:ietf:params:oauth:grant-type:jwt-bearer` grant type issues access tokens only, no refresh token is returned and the token cannot be revoked via `/v1/oauth/revoke`.
-	RefreshToken *string                     `json:"refresh_token,omitempty"`
-	TokenType    OAuthTokenResponseTokenType `json:"token_type"`
+	RefreshToken *string                           `json:"refresh_token,omitempty"`
+	TokenType    OAuthTokenResponseOutputTokenType `json:"token_type"`
 }
 
-// OAuthTokenResponseTokenType defines model for OAuthTokenResponse.TokenType.
-type OAuthTokenResponseTokenType string
+// OAuthTokenResponseOutputTokenType defines model for OAuthTokenResponseOutput.TokenType.
+type OAuthTokenResponseOutputTokenType string
 
-// OrganizationProjectClaimResponse defines model for OrganizationProjectClaimResponse.
-type OrganizationProjectClaimResponse struct {
+// OrganizationProjectClaimResponseOutput defines model for OrganizationProjectClaimResponse_Output.
+type OrganizationProjectClaimResponseOutput struct {
 	CreatedAt string             `json:"created_at"`
 	CreatedBy openapi_types.UUID `json:"created_by"`
 	ExpiresAt string             `json:"expires_at"`
@@ -7098,9 +7089,9 @@ type OrganizationProjectClaimResponse struct {
 			Limit float32 `json:"limit"`
 			Name  string  `json:"name"`
 		} `json:"members_exceeding_free_project_limit"`
-		SourceSubscriptionPlan OrganizationProjectClaimResponsePreviewSourceSubscriptionPlan                    `json:"source_subscription_plan"`
-		TargetSubscriptionPlan nullable.Nullable[OrganizationProjectClaimResponsePreviewTargetSubscriptionPlan] `json:"target_subscription_plan"`
-		Valid                  bool                                                                             `json:"valid"`
+		SourceSubscriptionPlan OrganizationProjectClaimResponseOutputPreviewSourceSubscriptionPlan                    `json:"source_subscription_plan"`
+		TargetSubscriptionPlan nullable.Nullable[OrganizationProjectClaimResponseOutputPreviewTargetSubscriptionPlan] `json:"target_subscription_plan"`
+		Valid                  bool                                                                                   `json:"valid"`
 		Warnings               []struct {
 			Key     string `json:"key"`
 			Message string `json:"message"`
@@ -7112,14 +7103,14 @@ type OrganizationProjectClaimResponse struct {
 	} `json:"project"`
 }
 
-// OrganizationProjectClaimResponsePreviewSourceSubscriptionPlan defines model for OrganizationProjectClaimResponse.Preview.SourceSubscriptionPlan.
-type OrganizationProjectClaimResponsePreviewSourceSubscriptionPlan string
+// OrganizationProjectClaimResponseOutputPreviewSourceSubscriptionPlan defines model for OrganizationProjectClaimResponseOutput.Preview.SourceSubscriptionPlan.
+type OrganizationProjectClaimResponseOutputPreviewSourceSubscriptionPlan string
 
-// OrganizationProjectClaimResponsePreviewTargetSubscriptionPlan defines model for OrganizationProjectClaimResponse.Preview.TargetSubscriptionPlan.
-type OrganizationProjectClaimResponsePreviewTargetSubscriptionPlan string
+// OrganizationProjectClaimResponseOutputPreviewTargetSubscriptionPlan defines model for OrganizationProjectClaimResponseOutput.Preview.TargetSubscriptionPlan.
+type OrganizationProjectClaimResponseOutputPreviewTargetSubscriptionPlan string
 
-// OrganizationProjectsResponse defines model for OrganizationProjectsResponse.
-type OrganizationProjectsResponse struct {
+// OrganizationProjectsResponseOutput defines model for OrganizationProjectsResponse_Output.
+type OrganizationProjectsResponseOutput struct {
 	Pagination struct {
 		// Count Total number of projects. Use this to calculate the total number of pages.
 		Count float32 `json:"count"`
@@ -7133,43 +7124,43 @@ type OrganizationProjectsResponse struct {
 	Projects []struct {
 		CloudProvider string `json:"cloud_provider"`
 		Databases     []struct {
-			CloudProvider      string                                                         `json:"cloud_provider"`
-			DiskLastModifiedAt *string                                                        `json:"disk_last_modified_at,omitempty"`
-			DiskThroughputMbps *float32                                                       `json:"disk_throughput_mbps,omitempty"`
-			DiskType           *OrganizationProjectsResponseProjectsDatabasesDiskType         `json:"disk_type,omitempty"`
-			DiskVolumeSizeGb   *float32                                                       `json:"disk_volume_size_gb,omitempty"`
-			Identifier         string                                                         `json:"identifier"`
-			InfraComputeSize   *OrganizationProjectsResponseProjectsDatabasesInfraComputeSize `json:"infra_compute_size,omitempty"`
-			Region             string                                                         `json:"region"`
-			Status             OrganizationProjectsResponseProjectsDatabasesStatus            `json:"status"`
-			Type               OrganizationProjectsResponseProjectsDatabasesType              `json:"type"`
+			CloudProvider      string                                                               `json:"cloud_provider"`
+			DiskLastModifiedAt *string                                                              `json:"disk_last_modified_at,omitempty"`
+			DiskThroughputMbps *float32                                                             `json:"disk_throughput_mbps,omitempty"`
+			DiskType           *OrganizationProjectsResponseOutputProjectsDatabasesDiskType         `json:"disk_type,omitempty"`
+			DiskVolumeSizeGb   *float32                                                             `json:"disk_volume_size_gb,omitempty"`
+			Identifier         string                                                               `json:"identifier"`
+			InfraComputeSize   *OrganizationProjectsResponseOutputProjectsDatabasesInfraComputeSize `json:"infra_compute_size,omitempty"`
+			Region             string                                                               `json:"region"`
+			Status             OrganizationProjectsResponseOutputProjectsDatabasesStatus            `json:"status"`
+			Type               OrganizationProjectsResponseOutputProjectsDatabasesType              `json:"type"`
 		} `json:"databases"`
-		InsertedAt string                                     `json:"inserted_at"`
-		IsBranch   bool                                       `json:"is_branch"`
-		Name       string                                     `json:"name"`
-		Ref        string                                     `json:"ref"`
-		Region     string                                     `json:"region"`
-		Status     OrganizationProjectsResponseProjectsStatus `json:"status"`
+		InsertedAt string                                           `json:"inserted_at"`
+		IsBranch   bool                                             `json:"is_branch"`
+		Name       string                                           `json:"name"`
+		Ref        string                                           `json:"ref"`
+		Region     string                                           `json:"region"`
+		Status     OrganizationProjectsResponseOutputProjectsStatus `json:"status"`
 	} `json:"projects"`
 }
 
-// OrganizationProjectsResponseProjectsDatabasesDiskType defines model for OrganizationProjectsResponse.Projects.Databases.DiskType.
-type OrganizationProjectsResponseProjectsDatabasesDiskType string
+// OrganizationProjectsResponseOutputProjectsDatabasesDiskType defines model for OrganizationProjectsResponseOutput.Projects.Databases.DiskType.
+type OrganizationProjectsResponseOutputProjectsDatabasesDiskType string
 
-// OrganizationProjectsResponseProjectsDatabasesInfraComputeSize defines model for OrganizationProjectsResponse.Projects.Databases.InfraComputeSize.
-type OrganizationProjectsResponseProjectsDatabasesInfraComputeSize string
+// OrganizationProjectsResponseOutputProjectsDatabasesInfraComputeSize defines model for OrganizationProjectsResponseOutput.Projects.Databases.InfraComputeSize.
+type OrganizationProjectsResponseOutputProjectsDatabasesInfraComputeSize string
 
-// OrganizationProjectsResponseProjectsDatabasesStatus defines model for OrganizationProjectsResponse.Projects.Databases.Status.
-type OrganizationProjectsResponseProjectsDatabasesStatus string
+// OrganizationProjectsResponseOutputProjectsDatabasesStatus defines model for OrganizationProjectsResponseOutput.Projects.Databases.Status.
+type OrganizationProjectsResponseOutputProjectsDatabasesStatus string
 
-// OrganizationProjectsResponseProjectsDatabasesType defines model for OrganizationProjectsResponse.Projects.Databases.Type.
-type OrganizationProjectsResponseProjectsDatabasesType string
+// OrganizationProjectsResponseOutputProjectsDatabasesType defines model for OrganizationProjectsResponseOutput.Projects.Databases.Type.
+type OrganizationProjectsResponseOutputProjectsDatabasesType string
 
-// OrganizationProjectsResponseProjectsStatus defines model for OrganizationProjectsResponse.Projects.Status.
-type OrganizationProjectsResponseProjectsStatus string
+// OrganizationProjectsResponseOutputProjectsStatus defines model for OrganizationProjectsResponseOutput.Projects.Status.
+type OrganizationProjectsResponseOutputProjectsStatus string
 
-// OrganizationResponseV1 defines model for OrganizationResponseV1.
-type OrganizationResponseV1 struct {
+// OrganizationResponseV1Output defines model for OrganizationResponseV1_Output.
+type OrganizationResponseV1Output struct {
 	// Id Deprecated: Use `slug` instead.
 	// Deprecated: this property has been marked as deprecated upstream, but no `x-deprecated-reason` was set
 	Id   string `json:"id"`
@@ -7179,8 +7170,8 @@ type OrganizationResponseV1 struct {
 	Slug string `json:"slug"`
 }
 
-// PgsodiumConfigResponse defines model for PgsodiumConfigResponse.
-type PgsodiumConfigResponse struct {
+// PgsodiumConfigResponseOutput defines model for PgsodiumConfigResponse_Output.
+type PgsodiumConfigResponseOutput struct {
 	// RootKey The pgsodium root key: 32 bytes, hex-encoded (64 characters).
 	RootKey string `json:"root_key"`
 }
@@ -7206,8 +7197,8 @@ type PlanGateErrorBody struct {
 // PlanGateErrorBodyErrorCode Machine-readable marker for plan-gated denials
 type PlanGateErrorBodyErrorCode string
 
-// PostgresConfigResponse defines model for PostgresConfigResponse.
-type PostgresConfigResponse struct {
+// PostgresConfigResponseOutput defines model for PostgresConfigResponse_Output.
+type PostgresConfigResponseOutput struct {
 	// CheckpointTimeout Default unit: s
 	CheckpointTimeout  *string `json:"checkpoint_timeout,omitempty"`
 	CronLogStatement   *bool   `json:"cron.log_statement,omitempty"`
@@ -7225,26 +7216,26 @@ type PostgresConfigResponse struct {
 	LogReplicationCommands   *bool   `json:"log_replication_commands,omitempty"`
 
 	// LogStartupProgressInterval Default unit: ms
-	LogStartupProgressInterval    *string                                       `json:"log_startup_progress_interval,omitempty"`
-	LogTempFiles                  *string                                       `json:"log_temp_files,omitempty"`
-	LogicalDecodingWorkMem        *string                                       `json:"logical_decoding_work_mem,omitempty"`
-	MaintenanceWorkMem            *string                                       `json:"maintenance_work_mem,omitempty"`
-	MaxConnections                *int                                          `json:"max_connections,omitempty"`
-	MaxLocksPerTransaction        *int                                          `json:"max_locks_per_transaction,omitempty"`
-	MaxLogicalReplicationWorkers  *int                                          `json:"max_logical_replication_workers,omitempty"`
-	MaxParallelMaintenanceWorkers *int                                          `json:"max_parallel_maintenance_workers,omitempty"`
-	MaxParallelWorkers            *int                                          `json:"max_parallel_workers,omitempty"`
-	MaxParallelWorkersPerGather   *int                                          `json:"max_parallel_workers_per_gather,omitempty"`
-	MaxReplicationSlots           *int                                          `json:"max_replication_slots,omitempty"`
-	MaxSlotWalKeepSize            *string                                       `json:"max_slot_wal_keep_size,omitempty"`
-	MaxStandbyArchiveDelay        *string                                       `json:"max_standby_archive_delay,omitempty"`
-	MaxStandbyStreamingDelay      *string                                       `json:"max_standby_streaming_delay,omitempty"`
-	MaxSyncWorkersPerSubscription *int                                          `json:"max_sync_workers_per_subscription,omitempty"`
-	MaxWalSenders                 *int                                          `json:"max_wal_senders,omitempty"`
-	MaxWalSize                    *string                                       `json:"max_wal_size,omitempty"`
-	MaxWorkerProcesses            *int                                          `json:"max_worker_processes,omitempty"`
-	SessionReplicationRole        *PostgresConfigResponseSessionReplicationRole `json:"session_replication_role,omitempty"`
-	SharedBuffers                 *string                                       `json:"shared_buffers,omitempty"`
+	LogStartupProgressInterval    *string                                             `json:"log_startup_progress_interval,omitempty"`
+	LogTempFiles                  *string                                             `json:"log_temp_files,omitempty"`
+	LogicalDecodingWorkMem        *string                                             `json:"logical_decoding_work_mem,omitempty"`
+	MaintenanceWorkMem            *string                                             `json:"maintenance_work_mem,omitempty"`
+	MaxConnections                *int                                                `json:"max_connections,omitempty"`
+	MaxLocksPerTransaction        *int                                                `json:"max_locks_per_transaction,omitempty"`
+	MaxLogicalReplicationWorkers  *int                                                `json:"max_logical_replication_workers,omitempty"`
+	MaxParallelMaintenanceWorkers *int                                                `json:"max_parallel_maintenance_workers,omitempty"`
+	MaxParallelWorkers            *int                                                `json:"max_parallel_workers,omitempty"`
+	MaxParallelWorkersPerGather   *int                                                `json:"max_parallel_workers_per_gather,omitempty"`
+	MaxReplicationSlots           *int                                                `json:"max_replication_slots,omitempty"`
+	MaxSlotWalKeepSize            *string                                             `json:"max_slot_wal_keep_size,omitempty"`
+	MaxStandbyArchiveDelay        *string                                             `json:"max_standby_archive_delay,omitempty"`
+	MaxStandbyStreamingDelay      *string                                             `json:"max_standby_streaming_delay,omitempty"`
+	MaxSyncWorkersPerSubscription *int                                                `json:"max_sync_workers_per_subscription,omitempty"`
+	MaxWalSenders                 *int                                                `json:"max_wal_senders,omitempty"`
+	MaxWalSize                    *string                                             `json:"max_wal_size,omitempty"`
+	MaxWorkerProcesses            *int                                                `json:"max_worker_processes,omitempty"`
+	SessionReplicationRole        *PostgresConfigResponseOutputSessionReplicationRole `json:"session_replication_role,omitempty"`
+	SharedBuffers                 *string                                             `json:"shared_buffers,omitempty"`
 
 	// StatementTimeout Default unit: ms
 	StatementTimeout       *string `json:"statement_timeout,omitempty"`
@@ -7257,11 +7248,11 @@ type PostgresConfigResponse struct {
 	WorkMem          *string `json:"work_mem,omitempty"`
 }
 
-// PostgresConfigResponseSessionReplicationRole defines model for PostgresConfigResponse.SessionReplicationRole.
-type PostgresConfigResponseSessionReplicationRole string
+// PostgresConfigResponseOutputSessionReplicationRole defines model for PostgresConfigResponseOutput.SessionReplicationRole.
+type PostgresConfigResponseOutputSessionReplicationRole string
 
-// PostgrestConfigWithJWTSecretResponse defines model for PostgrestConfigWithJWTSecretResponse.
-type PostgrestConfigWithJWTSecretResponse struct {
+// PostgrestConfigWithJWTSecretResponseOutput defines model for PostgrestConfigWithJWTSecretResponse_Output.
+type PostgrestConfigWithJWTSecretResponseOutput struct {
 	DbExtraSearchPath string `json:"db_extra_search_path"`
 
 	// DbPool If `null`, the value is automatically configured based on compute size.
@@ -7274,30 +7265,30 @@ type PostgrestConfigWithJWTSecretResponse struct {
 	MaxRows                  int                    `json:"max_rows"`
 }
 
-// ProjectClaimTokenResponse defines model for ProjectClaimTokenResponse.
-type ProjectClaimTokenResponse struct {
+// ProjectClaimTokenResponseOutput defines model for ProjectClaimTokenResponse_Output.
+type ProjectClaimTokenResponseOutput struct {
 	CreatedAt  string             `json:"created_at"`
 	CreatedBy  openapi_types.UUID `json:"created_by"`
 	ExpiresAt  string             `json:"expires_at"`
 	TokenAlias string             `json:"token_alias"`
 }
 
-// ProjectUpgradeEligibilityResponse defines model for ProjectUpgradeEligibilityResponse.
-type ProjectUpgradeEligibilityResponse struct {
-	CurrentAppVersion               string                                                           `json:"current_app_version"`
-	CurrentAppVersionReleaseChannel ProjectUpgradeEligibilityResponseCurrentAppVersionReleaseChannel `json:"current_app_version_release_channel"`
-	DurationEstimateHours           float32                                                          `json:"duration_estimate_hours"`
-	Eligible                        bool                                                             `json:"eligible"`
-	LatestAppVersion                string                                                           `json:"latest_app_version"`
-	LegacyAuthCustomRoles           []string                                                         `json:"legacy_auth_custom_roles"`
+// ProjectUpgradeEligibilityResponseOutput defines model for ProjectUpgradeEligibilityResponse_Output.
+type ProjectUpgradeEligibilityResponseOutput struct {
+	CurrentAppVersion               string                                                                 `json:"current_app_version"`
+	CurrentAppVersionReleaseChannel ProjectUpgradeEligibilityResponseOutputCurrentAppVersionReleaseChannel `json:"current_app_version_release_channel"`
+	DurationEstimateHours           float32                                                                `json:"duration_estimate_hours"`
+	Eligible                        bool                                                                   `json:"eligible"`
+	LatestAppVersion                string                                                                 `json:"latest_app_version"`
+	LegacyAuthCustomRoles           []string                                                               `json:"legacy_auth_custom_roles"`
 
 	// ObjectsToBeDropped Use validation_errors instead.
 	// Deprecated: this property has been marked as deprecated upstream, but no `x-deprecated-reason` was set
 	ObjectsToBeDropped    []string `json:"objects_to_be_dropped"`
 	TargetUpgradeVersions []struct {
-		AppVersion      string                                                                `json:"app_version"`
-		PostgresVersion ProjectUpgradeEligibilityResponseTargetUpgradeVersionsPostgresVersion `json:"postgres_version"`
-		ReleaseChannel  ProjectUpgradeEligibilityResponseTargetUpgradeVersionsReleaseChannel  `json:"release_channel"`
+		AppVersion      string                                                                      `json:"app_version"`
+		PostgresVersion ProjectUpgradeEligibilityResponseOutputTargetUpgradeVersionsPostgresVersion `json:"postgres_version"`
+		ReleaseChannel  ProjectUpgradeEligibilityResponseOutputTargetUpgradeVersionsReleaseChannel  `json:"release_channel"`
 	} `json:"target_upgrade_versions"`
 
 	// UnsupportedExtensions Use validation_errors instead.
@@ -7306,184 +7297,184 @@ type ProjectUpgradeEligibilityResponse struct {
 
 	// UserDefinedObjectsInInternalSchemas Use validation_errors instead.
 	// Deprecated: this property has been marked as deprecated upstream, but no `x-deprecated-reason` was set
-	UserDefinedObjectsInInternalSchemas []string                                                  `json:"user_defined_objects_in_internal_schemas"`
-	ValidationErrors                    []ProjectUpgradeEligibilityResponse_ValidationErrors_Item `json:"validation_errors"`
-	Warnings                            []ProjectUpgradeEligibilityResponse_Warnings_Item         `json:"warnings"`
+	UserDefinedObjectsInInternalSchemas []string                                                        `json:"user_defined_objects_in_internal_schemas"`
+	ValidationErrors                    []ProjectUpgradeEligibilityResponseOutput_ValidationErrors_Item `json:"validation_errors"`
+	Warnings                            []ProjectUpgradeEligibilityResponseOutput_Warnings_Item         `json:"warnings"`
 }
 
-// ProjectUpgradeEligibilityResponseCurrentAppVersionReleaseChannel defines model for ProjectUpgradeEligibilityResponse.CurrentAppVersionReleaseChannel.
-type ProjectUpgradeEligibilityResponseCurrentAppVersionReleaseChannel string
+// ProjectUpgradeEligibilityResponseOutputCurrentAppVersionReleaseChannel defines model for ProjectUpgradeEligibilityResponseOutput.CurrentAppVersionReleaseChannel.
+type ProjectUpgradeEligibilityResponseOutputCurrentAppVersionReleaseChannel string
 
-// ProjectUpgradeEligibilityResponseTargetUpgradeVersionsPostgresVersion defines model for ProjectUpgradeEligibilityResponse.TargetUpgradeVersions.PostgresVersion.
-type ProjectUpgradeEligibilityResponseTargetUpgradeVersionsPostgresVersion string
+// ProjectUpgradeEligibilityResponseOutputTargetUpgradeVersionsPostgresVersion defines model for ProjectUpgradeEligibilityResponseOutput.TargetUpgradeVersions.PostgresVersion.
+type ProjectUpgradeEligibilityResponseOutputTargetUpgradeVersionsPostgresVersion string
 
-// ProjectUpgradeEligibilityResponseTargetUpgradeVersionsReleaseChannel defines model for ProjectUpgradeEligibilityResponse.TargetUpgradeVersions.ReleaseChannel.
-type ProjectUpgradeEligibilityResponseTargetUpgradeVersionsReleaseChannel string
+// ProjectUpgradeEligibilityResponseOutputTargetUpgradeVersionsReleaseChannel defines model for ProjectUpgradeEligibilityResponseOutput.TargetUpgradeVersions.ReleaseChannel.
+type ProjectUpgradeEligibilityResponseOutputTargetUpgradeVersionsReleaseChannel string
 
-// ProjectUpgradeEligibilityResponseValidationErrors0 defines model for .
-type ProjectUpgradeEligibilityResponseValidationErrors0 struct {
-	Dependents []string                                               `json:"dependents"`
-	Type       ProjectUpgradeEligibilityResponseValidationErrors0Type `json:"type"`
+// ProjectUpgradeEligibilityResponseOutputValidationErrors0 defines model for .
+type ProjectUpgradeEligibilityResponseOutputValidationErrors0 struct {
+	Dependents []string                                                     `json:"dependents"`
+	Type       ProjectUpgradeEligibilityResponseOutputValidationErrors0Type `json:"type"`
 }
 
-// ProjectUpgradeEligibilityResponseValidationErrors0Type defines model for ProjectUpgradeEligibilityResponse.ValidationErrors.0.Type.
-type ProjectUpgradeEligibilityResponseValidationErrors0Type string
+// ProjectUpgradeEligibilityResponseOutputValidationErrors0Type defines model for ProjectUpgradeEligibilityResponseOutput.ValidationErrors.0.Type.
+type ProjectUpgradeEligibilityResponseOutputValidationErrors0Type string
 
-// ProjectUpgradeEligibilityResponseValidationErrors1 defines model for .
-type ProjectUpgradeEligibilityResponseValidationErrors1 struct {
-	IndexName  string                                                 `json:"index_name"`
-	SchemaName string                                                 `json:"schema_name"`
-	TableName  string                                                 `json:"table_name"`
-	Type       ProjectUpgradeEligibilityResponseValidationErrors1Type `json:"type"`
-}
-
-// ProjectUpgradeEligibilityResponseValidationErrors1Type defines model for ProjectUpgradeEligibilityResponse.ValidationErrors.1.Type.
-type ProjectUpgradeEligibilityResponseValidationErrors1Type string
-
-// ProjectUpgradeEligibilityResponseValidationErrors2 defines model for .
-type ProjectUpgradeEligibilityResponseValidationErrors2 struct {
-	FunctionName string                                                 `json:"function_name"`
-	LangName     string                                                 `json:"lang_name"`
-	SchemaName   string                                                 `json:"schema_name"`
-	Type         ProjectUpgradeEligibilityResponseValidationErrors2Type `json:"type"`
-}
-
-// ProjectUpgradeEligibilityResponseValidationErrors2Type defines model for ProjectUpgradeEligibilityResponse.ValidationErrors.2.Type.
-type ProjectUpgradeEligibilityResponseValidationErrors2Type string
-
-// ProjectUpgradeEligibilityResponseValidationErrors3 defines model for .
-type ProjectUpgradeEligibilityResponseValidationErrors3 struct {
-	ExtensionName string                                                 `json:"extension_name"`
-	Type          ProjectUpgradeEligibilityResponseValidationErrors3Type `json:"type"`
-}
-
-// ProjectUpgradeEligibilityResponseValidationErrors3Type defines model for ProjectUpgradeEligibilityResponse.ValidationErrors.3.Type.
-type ProjectUpgradeEligibilityResponseValidationErrors3Type string
-
-// ProjectUpgradeEligibilityResponseValidationErrors4 defines model for .
-type ProjectUpgradeEligibilityResponseValidationErrors4 struct {
-	FdwHandlerName string                                                 `json:"fdw_handler_name"`
-	FdwName        string                                                 `json:"fdw_name"`
-	Type           ProjectUpgradeEligibilityResponseValidationErrors4Type `json:"type"`
-}
-
-// ProjectUpgradeEligibilityResponseValidationErrors4Type defines model for ProjectUpgradeEligibilityResponse.ValidationErrors.4.Type.
-type ProjectUpgradeEligibilityResponseValidationErrors4Type string
-
-// ProjectUpgradeEligibilityResponseValidationErrors5 defines model for .
-type ProjectUpgradeEligibilityResponseValidationErrors5 struct {
-	SchemaName   string                                                 `json:"schema_name"`
-	SequenceName string                                                 `json:"sequence_name"`
-	TableName    string                                                 `json:"table_name"`
-	Type         ProjectUpgradeEligibilityResponseValidationErrors5Type `json:"type"`
-}
-
-// ProjectUpgradeEligibilityResponseValidationErrors5Type defines model for ProjectUpgradeEligibilityResponse.ValidationErrors.5.Type.
-type ProjectUpgradeEligibilityResponseValidationErrors5Type string
-
-// ProjectUpgradeEligibilityResponseValidationErrors6 defines model for .
-type ProjectUpgradeEligibilityResponseValidationErrors6 struct {
-	ObjName    string                                                       `json:"obj_name"`
-	ObjType    ProjectUpgradeEligibilityResponse_ValidationErrors_6_ObjType `json:"obj_type"`
+// ProjectUpgradeEligibilityResponseOutputValidationErrors1 defines model for .
+type ProjectUpgradeEligibilityResponseOutputValidationErrors1 struct {
+	IndexName  string                                                       `json:"index_name"`
 	SchemaName string                                                       `json:"schema_name"`
-	Type       ProjectUpgradeEligibilityResponseValidationErrors6Type       `json:"type"`
+	TableName  string                                                       `json:"table_name"`
+	Type       ProjectUpgradeEligibilityResponseOutputValidationErrors1Type `json:"type"`
 }
 
-// ProjectUpgradeEligibilityResponseValidationErrors6ObjType0 defines model for ProjectUpgradeEligibilityResponse.ValidationErrors.6.ObjType.0.
-type ProjectUpgradeEligibilityResponseValidationErrors6ObjType0 string
+// ProjectUpgradeEligibilityResponseOutputValidationErrors1Type defines model for ProjectUpgradeEligibilityResponseOutput.ValidationErrors.1.Type.
+type ProjectUpgradeEligibilityResponseOutputValidationErrors1Type string
 
-// ProjectUpgradeEligibilityResponseValidationErrors6ObjType1 defines model for ProjectUpgradeEligibilityResponse.ValidationErrors.6.ObjType.1.
-type ProjectUpgradeEligibilityResponseValidationErrors6ObjType1 string
+// ProjectUpgradeEligibilityResponseOutputValidationErrors2 defines model for .
+type ProjectUpgradeEligibilityResponseOutputValidationErrors2 struct {
+	FunctionName string                                                       `json:"function_name"`
+	LangName     string                                                       `json:"lang_name"`
+	SchemaName   string                                                       `json:"schema_name"`
+	Type         ProjectUpgradeEligibilityResponseOutputValidationErrors2Type `json:"type"`
+}
 
-// ProjectUpgradeEligibilityResponse_ValidationErrors_6_ObjType defines model for ProjectUpgradeEligibilityResponse.ValidationErrors.6.ObjType.
-type ProjectUpgradeEligibilityResponse_ValidationErrors_6_ObjType struct {
+// ProjectUpgradeEligibilityResponseOutputValidationErrors2Type defines model for ProjectUpgradeEligibilityResponseOutput.ValidationErrors.2.Type.
+type ProjectUpgradeEligibilityResponseOutputValidationErrors2Type string
+
+// ProjectUpgradeEligibilityResponseOutputValidationErrors3 defines model for .
+type ProjectUpgradeEligibilityResponseOutputValidationErrors3 struct {
+	ExtensionName string                                                       `json:"extension_name"`
+	Type          ProjectUpgradeEligibilityResponseOutputValidationErrors3Type `json:"type"`
+}
+
+// ProjectUpgradeEligibilityResponseOutputValidationErrors3Type defines model for ProjectUpgradeEligibilityResponseOutput.ValidationErrors.3.Type.
+type ProjectUpgradeEligibilityResponseOutputValidationErrors3Type string
+
+// ProjectUpgradeEligibilityResponseOutputValidationErrors4 defines model for .
+type ProjectUpgradeEligibilityResponseOutputValidationErrors4 struct {
+	FdwHandlerName string                                                       `json:"fdw_handler_name"`
+	FdwName        string                                                       `json:"fdw_name"`
+	Type           ProjectUpgradeEligibilityResponseOutputValidationErrors4Type `json:"type"`
+}
+
+// ProjectUpgradeEligibilityResponseOutputValidationErrors4Type defines model for ProjectUpgradeEligibilityResponseOutput.ValidationErrors.4.Type.
+type ProjectUpgradeEligibilityResponseOutputValidationErrors4Type string
+
+// ProjectUpgradeEligibilityResponseOutputValidationErrors5 defines model for .
+type ProjectUpgradeEligibilityResponseOutputValidationErrors5 struct {
+	SchemaName   string                                                       `json:"schema_name"`
+	SequenceName string                                                       `json:"sequence_name"`
+	TableName    string                                                       `json:"table_name"`
+	Type         ProjectUpgradeEligibilityResponseOutputValidationErrors5Type `json:"type"`
+}
+
+// ProjectUpgradeEligibilityResponseOutputValidationErrors5Type defines model for ProjectUpgradeEligibilityResponseOutput.ValidationErrors.5.Type.
+type ProjectUpgradeEligibilityResponseOutputValidationErrors5Type string
+
+// ProjectUpgradeEligibilityResponseOutputValidationErrors6 defines model for .
+type ProjectUpgradeEligibilityResponseOutputValidationErrors6 struct {
+	ObjName    string                                                             `json:"obj_name"`
+	ObjType    ProjectUpgradeEligibilityResponseOutput_ValidationErrors_6_ObjType `json:"obj_type"`
+	SchemaName string                                                             `json:"schema_name"`
+	Type       ProjectUpgradeEligibilityResponseOutputValidationErrors6Type       `json:"type"`
+}
+
+// ProjectUpgradeEligibilityResponseOutputValidationErrors6ObjType0 defines model for ProjectUpgradeEligibilityResponseOutput.ValidationErrors.6.ObjType.0.
+type ProjectUpgradeEligibilityResponseOutputValidationErrors6ObjType0 string
+
+// ProjectUpgradeEligibilityResponseOutputValidationErrors6ObjType1 defines model for ProjectUpgradeEligibilityResponseOutput.ValidationErrors.6.ObjType.1.
+type ProjectUpgradeEligibilityResponseOutputValidationErrors6ObjType1 string
+
+// ProjectUpgradeEligibilityResponseOutput_ValidationErrors_6_ObjType defines model for ProjectUpgradeEligibilityResponseOutput.ValidationErrors.6.ObjType.
+type ProjectUpgradeEligibilityResponseOutput_ValidationErrors_6_ObjType struct {
 	union json.RawMessage
 }
 
-// ProjectUpgradeEligibilityResponseValidationErrors6Type defines model for ProjectUpgradeEligibilityResponse.ValidationErrors.6.Type.
-type ProjectUpgradeEligibilityResponseValidationErrors6Type string
+// ProjectUpgradeEligibilityResponseOutputValidationErrors6Type defines model for ProjectUpgradeEligibilityResponseOutput.ValidationErrors.6.Type.
+type ProjectUpgradeEligibilityResponseOutputValidationErrors6Type string
 
-// ProjectUpgradeEligibilityResponseValidationErrors7 defines model for .
-type ProjectUpgradeEligibilityResponseValidationErrors7 struct {
-	SlotName string                                                 `json:"slot_name"`
-	Type     ProjectUpgradeEligibilityResponseValidationErrors7Type `json:"type"`
+// ProjectUpgradeEligibilityResponseOutputValidationErrors7 defines model for .
+type ProjectUpgradeEligibilityResponseOutputValidationErrors7 struct {
+	SlotName string                                                       `json:"slot_name"`
+	Type     ProjectUpgradeEligibilityResponseOutputValidationErrors7Type `json:"type"`
 }
 
-// ProjectUpgradeEligibilityResponseValidationErrors7Type defines model for ProjectUpgradeEligibilityResponse.ValidationErrors.7.Type.
-type ProjectUpgradeEligibilityResponseValidationErrors7Type string
+// ProjectUpgradeEligibilityResponseOutputValidationErrors7Type defines model for ProjectUpgradeEligibilityResponseOutput.ValidationErrors.7.Type.
+type ProjectUpgradeEligibilityResponseOutputValidationErrors7Type string
 
-// ProjectUpgradeEligibilityResponseValidationErrors8 defines model for .
-type ProjectUpgradeEligibilityResponseValidationErrors8 struct {
-	Type ProjectUpgradeEligibilityResponseValidationErrors8Type `json:"type"`
+// ProjectUpgradeEligibilityResponseOutputValidationErrors8 defines model for .
+type ProjectUpgradeEligibilityResponseOutputValidationErrors8 struct {
+	Type ProjectUpgradeEligibilityResponseOutputValidationErrors8Type `json:"type"`
 }
 
-// ProjectUpgradeEligibilityResponseValidationErrors8Type defines model for ProjectUpgradeEligibilityResponse.ValidationErrors.8.Type.
-type ProjectUpgradeEligibilityResponseValidationErrors8Type string
+// ProjectUpgradeEligibilityResponseOutputValidationErrors8Type defines model for ProjectUpgradeEligibilityResponseOutput.ValidationErrors.8.Type.
+type ProjectUpgradeEligibilityResponseOutputValidationErrors8Type string
 
-// ProjectUpgradeEligibilityResponseValidationErrors9 defines model for .
-type ProjectUpgradeEligibilityResponseValidationErrors9 struct {
-	Type ProjectUpgradeEligibilityResponseValidationErrors9Type `json:"type"`
+// ProjectUpgradeEligibilityResponseOutputValidationErrors9 defines model for .
+type ProjectUpgradeEligibilityResponseOutputValidationErrors9 struct {
+	Type ProjectUpgradeEligibilityResponseOutputValidationErrors9Type `json:"type"`
 }
 
-// ProjectUpgradeEligibilityResponseValidationErrors9Type defines model for ProjectUpgradeEligibilityResponse.ValidationErrors.9.Type.
-type ProjectUpgradeEligibilityResponseValidationErrors9Type string
+// ProjectUpgradeEligibilityResponseOutputValidationErrors9Type defines model for ProjectUpgradeEligibilityResponseOutput.ValidationErrors.9.Type.
+type ProjectUpgradeEligibilityResponseOutputValidationErrors9Type string
 
-// ProjectUpgradeEligibilityResponse_ValidationErrors_Item defines model for ProjectUpgradeEligibilityResponse.validation_errors.Item.
-type ProjectUpgradeEligibilityResponse_ValidationErrors_Item struct {
+// ProjectUpgradeEligibilityResponseOutput_ValidationErrors_Item defines model for ProjectUpgradeEligibilityResponse_Output.validation_errors.Item.
+type ProjectUpgradeEligibilityResponseOutput_ValidationErrors_Item struct {
 	union json.RawMessage
 }
 
-// ProjectUpgradeEligibilityResponseWarnings0 defines model for .
-type ProjectUpgradeEligibilityResponseWarnings0 struct {
-	Type ProjectUpgradeEligibilityResponseWarnings0Type `json:"type"`
+// ProjectUpgradeEligibilityResponseOutputWarnings0 defines model for .
+type ProjectUpgradeEligibilityResponseOutputWarnings0 struct {
+	Type ProjectUpgradeEligibilityResponseOutputWarnings0Type `json:"type"`
 }
 
-// ProjectUpgradeEligibilityResponseWarnings0Type defines model for ProjectUpgradeEligibilityResponse.Warnings.0.Type.
-type ProjectUpgradeEligibilityResponseWarnings0Type string
+// ProjectUpgradeEligibilityResponseOutputWarnings0Type defines model for ProjectUpgradeEligibilityResponseOutput.Warnings.0.Type.
+type ProjectUpgradeEligibilityResponseOutputWarnings0Type string
 
-// ProjectUpgradeEligibilityResponseWarnings1 defines model for .
-type ProjectUpgradeEligibilityResponseWarnings1 struct {
-	Type ProjectUpgradeEligibilityResponseWarnings1Type `json:"type"`
+// ProjectUpgradeEligibilityResponseOutputWarnings1 defines model for .
+type ProjectUpgradeEligibilityResponseOutputWarnings1 struct {
+	Type ProjectUpgradeEligibilityResponseOutputWarnings1Type `json:"type"`
 }
 
-// ProjectUpgradeEligibilityResponseWarnings1Type defines model for ProjectUpgradeEligibilityResponse.Warnings.1.Type.
-type ProjectUpgradeEligibilityResponseWarnings1Type string
+// ProjectUpgradeEligibilityResponseOutputWarnings1Type defines model for ProjectUpgradeEligibilityResponseOutput.Warnings.1.Type.
+type ProjectUpgradeEligibilityResponseOutputWarnings1Type string
 
-// ProjectUpgradeEligibilityResponseWarnings2 defines model for .
-type ProjectUpgradeEligibilityResponseWarnings2 struct {
-	Type ProjectUpgradeEligibilityResponseWarnings2Type `json:"type"`
+// ProjectUpgradeEligibilityResponseOutputWarnings2 defines model for .
+type ProjectUpgradeEligibilityResponseOutputWarnings2 struct {
+	Type ProjectUpgradeEligibilityResponseOutputWarnings2Type `json:"type"`
 }
 
-// ProjectUpgradeEligibilityResponseWarnings2Type defines model for ProjectUpgradeEligibilityResponse.Warnings.2.Type.
-type ProjectUpgradeEligibilityResponseWarnings2Type string
+// ProjectUpgradeEligibilityResponseOutputWarnings2Type defines model for ProjectUpgradeEligibilityResponseOutput.Warnings.2.Type.
+type ProjectUpgradeEligibilityResponseOutputWarnings2Type string
 
-// ProjectUpgradeEligibilityResponseWarnings3 defines model for .
-type ProjectUpgradeEligibilityResponseWarnings3 struct {
-	Type ProjectUpgradeEligibilityResponseWarnings3Type `json:"type"`
+// ProjectUpgradeEligibilityResponseOutputWarnings3 defines model for .
+type ProjectUpgradeEligibilityResponseOutputWarnings3 struct {
+	Type ProjectUpgradeEligibilityResponseOutputWarnings3Type `json:"type"`
 }
 
-// ProjectUpgradeEligibilityResponseWarnings3Type defines model for ProjectUpgradeEligibilityResponse.Warnings.3.Type.
-type ProjectUpgradeEligibilityResponseWarnings3Type string
+// ProjectUpgradeEligibilityResponseOutputWarnings3Type defines model for ProjectUpgradeEligibilityResponseOutput.Warnings.3.Type.
+type ProjectUpgradeEligibilityResponseOutputWarnings3Type string
 
-// ProjectUpgradeEligibilityResponse_Warnings_Item defines model for ProjectUpgradeEligibilityResponse.warnings.Item.
-type ProjectUpgradeEligibilityResponse_Warnings_Item struct {
+// ProjectUpgradeEligibilityResponseOutput_Warnings_Item defines model for ProjectUpgradeEligibilityResponse_Output.warnings.Item.
+type ProjectUpgradeEligibilityResponseOutput_Warnings_Item struct {
 	union json.RawMessage
 }
 
-// ProjectUpgradeInitiateResponse defines model for ProjectUpgradeInitiateResponse.
-type ProjectUpgradeInitiateResponse struct {
+// ProjectUpgradeInitiateResponseOutput defines model for ProjectUpgradeInitiateResponse_Output.
+type ProjectUpgradeInitiateResponseOutput struct {
 	TrackingId string `json:"tracking_id"`
 }
 
-// ReadOnlyStatusResponse defines model for ReadOnlyStatusResponse.
-type ReadOnlyStatusResponse struct {
+// ReadOnlyStatusResponseOutput defines model for ReadOnlyStatusResponse_Output.
+type ReadOnlyStatusResponseOutput struct {
 	Enabled             bool   `json:"enabled"`
 	OverrideActiveUntil string `json:"override_active_until"`
 	OverrideEnabled     bool   `json:"override_enabled"`
 }
 
-// RealtimeConfigResponse defines model for RealtimeConfigResponse.
-type RealtimeConfigResponse struct {
+// RealtimeConfigResponseOutput defines model for RealtimeConfigResponse_Output.
+type RealtimeConfigResponseOutput struct {
 	// ConnectionPool Sets connection pool size for Realtime Authorization
 	ConnectionPool nullable.Nullable[int] `json:"connection_pool"`
 
@@ -7521,73 +7512,73 @@ type RealtimeConfigResponse struct {
 	Suspend nullable.Nullable[bool] `json:"suspend"`
 }
 
-// RegionsInfo defines model for RegionsInfo.
-type RegionsInfo struct {
+// RegionsInfoOutput defines model for RegionsInfo_Output.
+type RegionsInfoOutput struct {
 	All struct {
 		SmartGroup []struct {
-			Code RegionsInfoAllSmartGroupCode `json:"code"`
-			Name string                       `json:"name"`
-			Type RegionsInfoAllSmartGroupType `json:"type"`
+			Code RegionsInfoOutputAllSmartGroupCode `json:"code"`
+			Name string                             `json:"name"`
+			Type RegionsInfoOutputAllSmartGroupType `json:"type"`
 		} `json:"smartGroup"`
 		Specific []struct {
-			Code     RegionsInfoAllSpecificCode     `json:"code"`
-			Name     string                         `json:"name"`
-			Provider RegionsInfoAllSpecificProvider `json:"provider"`
-			Status   *RegionsInfoAllSpecificStatus  `json:"status,omitempty"`
-			Type     RegionsInfoAllSpecificType     `json:"type"`
+			Code     RegionsInfoOutputAllSpecificCode     `json:"code"`
+			Name     string                               `json:"name"`
+			Provider RegionsInfoOutputAllSpecificProvider `json:"provider"`
+			Status   *RegionsInfoOutputAllSpecificStatus  `json:"status,omitempty"`
+			Type     RegionsInfoOutputAllSpecificType     `json:"type"`
 		} `json:"specific"`
 	} `json:"all"`
 	Recommendations struct {
 		SmartGroup struct {
-			Code RegionsInfoRecommendationsSmartGroupCode `json:"code"`
-			Name string                                   `json:"name"`
-			Type RegionsInfoRecommendationsSmartGroupType `json:"type"`
+			Code RegionsInfoOutputRecommendationsSmartGroupCode `json:"code"`
+			Name string                                         `json:"name"`
+			Type RegionsInfoOutputRecommendationsSmartGroupType `json:"type"`
 		} `json:"smartGroup"`
 		Specific []struct {
-			Code     RegionsInfoRecommendationsSpecificCode     `json:"code"`
-			Name     string                                     `json:"name"`
-			Provider RegionsInfoRecommendationsSpecificProvider `json:"provider"`
-			Status   *RegionsInfoRecommendationsSpecificStatus  `json:"status,omitempty"`
-			Type     RegionsInfoRecommendationsSpecificType     `json:"type"`
+			Code     RegionsInfoOutputRecommendationsSpecificCode     `json:"code"`
+			Name     string                                           `json:"name"`
+			Provider RegionsInfoOutputRecommendationsSpecificProvider `json:"provider"`
+			Status   *RegionsInfoOutputRecommendationsSpecificStatus  `json:"status,omitempty"`
+			Type     RegionsInfoOutputRecommendationsSpecificType     `json:"type"`
 		} `json:"specific"`
 	} `json:"recommendations"`
 }
 
-// RegionsInfoAllSmartGroupCode defines model for RegionsInfo.All.SmartGroup.Code.
-type RegionsInfoAllSmartGroupCode string
+// RegionsInfoOutputAllSmartGroupCode defines model for RegionsInfoOutput.All.SmartGroup.Code.
+type RegionsInfoOutputAllSmartGroupCode string
 
-// RegionsInfoAllSmartGroupType defines model for RegionsInfo.All.SmartGroup.Type.
-type RegionsInfoAllSmartGroupType string
+// RegionsInfoOutputAllSmartGroupType defines model for RegionsInfoOutput.All.SmartGroup.Type.
+type RegionsInfoOutputAllSmartGroupType string
 
-// RegionsInfoAllSpecificCode defines model for RegionsInfo.All.Specific.Code.
-type RegionsInfoAllSpecificCode string
+// RegionsInfoOutputAllSpecificCode defines model for RegionsInfoOutput.All.Specific.Code.
+type RegionsInfoOutputAllSpecificCode string
 
-// RegionsInfoAllSpecificProvider defines model for RegionsInfo.All.Specific.Provider.
-type RegionsInfoAllSpecificProvider string
+// RegionsInfoOutputAllSpecificProvider defines model for RegionsInfoOutput.All.Specific.Provider.
+type RegionsInfoOutputAllSpecificProvider string
 
-// RegionsInfoAllSpecificStatus defines model for RegionsInfo.All.Specific.Status.
-type RegionsInfoAllSpecificStatus string
+// RegionsInfoOutputAllSpecificStatus defines model for RegionsInfoOutput.All.Specific.Status.
+type RegionsInfoOutputAllSpecificStatus string
 
-// RegionsInfoAllSpecificType defines model for RegionsInfo.All.Specific.Type.
-type RegionsInfoAllSpecificType string
+// RegionsInfoOutputAllSpecificType defines model for RegionsInfoOutput.All.Specific.Type.
+type RegionsInfoOutputAllSpecificType string
 
-// RegionsInfoRecommendationsSmartGroupCode defines model for RegionsInfo.Recommendations.SmartGroup.Code.
-type RegionsInfoRecommendationsSmartGroupCode string
+// RegionsInfoOutputRecommendationsSmartGroupCode defines model for RegionsInfoOutput.Recommendations.SmartGroup.Code.
+type RegionsInfoOutputRecommendationsSmartGroupCode string
 
-// RegionsInfoRecommendationsSmartGroupType defines model for RegionsInfo.Recommendations.SmartGroup.Type.
-type RegionsInfoRecommendationsSmartGroupType string
+// RegionsInfoOutputRecommendationsSmartGroupType defines model for RegionsInfoOutput.Recommendations.SmartGroup.Type.
+type RegionsInfoOutputRecommendationsSmartGroupType string
 
-// RegionsInfoRecommendationsSpecificCode defines model for RegionsInfo.Recommendations.Specific.Code.
-type RegionsInfoRecommendationsSpecificCode string
+// RegionsInfoOutputRecommendationsSpecificCode defines model for RegionsInfoOutput.Recommendations.Specific.Code.
+type RegionsInfoOutputRecommendationsSpecificCode string
 
-// RegionsInfoRecommendationsSpecificProvider defines model for RegionsInfo.Recommendations.Specific.Provider.
-type RegionsInfoRecommendationsSpecificProvider string
+// RegionsInfoOutputRecommendationsSpecificProvider defines model for RegionsInfoOutput.Recommendations.Specific.Provider.
+type RegionsInfoOutputRecommendationsSpecificProvider string
 
-// RegionsInfoRecommendationsSpecificStatus defines model for RegionsInfo.Recommendations.Specific.Status.
-type RegionsInfoRecommendationsSpecificStatus string
+// RegionsInfoOutputRecommendationsSpecificStatus defines model for RegionsInfoOutput.Recommendations.Specific.Status.
+type RegionsInfoOutputRecommendationsSpecificStatus string
 
-// RegionsInfoRecommendationsSpecificType defines model for RegionsInfo.Recommendations.Specific.Type.
-type RegionsInfoRecommendationsSpecificType string
+// RegionsInfoOutputRecommendationsSpecificType defines model for RegionsInfoOutput.Recommendations.Specific.Type.
+type RegionsInfoOutputRecommendationsSpecificType string
 
 // RemoveNetworkBanRequest defines model for RemoveNetworkBanRequest.
 type RemoveNetworkBanRequest struct {
@@ -7605,8 +7596,8 @@ type RemoveReadReplicaBody struct {
 	DatabaseIdentifier string `json:"database_identifier"`
 }
 
-// SecretResponse defines model for SecretResponse.
-type SecretResponse struct {
+// SecretResponseOutput defines model for SecretResponse_Output.
+type SecretResponseOutput struct {
 	Name      string  `json:"name"`
 	UpdatedAt *string `json:"updated_at,omitempty"`
 	Value     string  `json:"value"`
@@ -7621,42 +7612,42 @@ type SetUpReadReplicaBody struct {
 // SetUpReadReplicaBodyReadReplicaRegion Region you want your read replica to reside in
 type SetUpReadReplicaBodyReadReplicaRegion string
 
-// SigningKeyResponse defines model for SigningKeyResponse.
-type SigningKeyResponse struct {
-	Algorithm SigningKeyResponseAlgorithm    `json:"algorithm"`
-	CreatedAt time.Time                      `json:"created_at"`
-	Id        openapi_types.UUID             `json:"id"`
-	PublicJwk nullable.Nullable[interface{}] `json:"public_jwk"`
-	Status    SigningKeyResponseStatus       `json:"status"`
-	UpdatedAt time.Time                      `json:"updated_at"`
+// SigningKeyResponseOutput defines model for SigningKeyResponse_Output.
+type SigningKeyResponseOutput struct {
+	Algorithm SigningKeyResponseOutputAlgorithm `json:"algorithm"`
+	CreatedAt time.Time                         `json:"created_at"`
+	Id        openapi_types.UUID                `json:"id"`
+	PublicJwk nullable.Nullable[interface{}]    `json:"public_jwk"`
+	Status    SigningKeyResponseOutputStatus    `json:"status"`
+	UpdatedAt time.Time                         `json:"updated_at"`
 }
 
-// SigningKeyResponseAlgorithm defines model for SigningKeyResponse.Algorithm.
-type SigningKeyResponseAlgorithm string
+// SigningKeyResponseOutputAlgorithm defines model for SigningKeyResponseOutput.Algorithm.
+type SigningKeyResponseOutputAlgorithm string
 
-// SigningKeyResponseStatus defines model for SigningKeyResponse.Status.
-type SigningKeyResponseStatus string
+// SigningKeyResponseOutputStatus defines model for SigningKeyResponseOutput.Status.
+type SigningKeyResponseOutputStatus string
 
-// SigningKeysResponse defines model for SigningKeysResponse.
-type SigningKeysResponse struct {
+// SigningKeysResponseOutput defines model for SigningKeysResponse_Output.
+type SigningKeysResponseOutput struct {
 	Keys []struct {
-		Algorithm SigningKeysResponseKeysAlgorithm `json:"algorithm"`
-		CreatedAt time.Time                        `json:"created_at"`
-		Id        openapi_types.UUID               `json:"id"`
-		PublicJwk nullable.Nullable[interface{}]   `json:"public_jwk"`
-		Status    SigningKeysResponseKeysStatus    `json:"status"`
-		UpdatedAt time.Time                        `json:"updated_at"`
+		Algorithm SigningKeysResponseOutputKeysAlgorithm `json:"algorithm"`
+		CreatedAt time.Time                              `json:"created_at"`
+		Id        openapi_types.UUID                     `json:"id"`
+		PublicJwk nullable.Nullable[interface{}]         `json:"public_jwk"`
+		Status    SigningKeysResponseOutputKeysStatus    `json:"status"`
+		UpdatedAt time.Time                              `json:"updated_at"`
 	} `json:"keys"`
 }
 
-// SigningKeysResponseKeysAlgorithm defines model for SigningKeysResponse.Keys.Algorithm.
-type SigningKeysResponseKeysAlgorithm string
+// SigningKeysResponseOutputKeysAlgorithm defines model for SigningKeysResponseOutput.Keys.Algorithm.
+type SigningKeysResponseOutputKeysAlgorithm string
 
-// SigningKeysResponseKeysStatus defines model for SigningKeysResponse.Keys.Status.
-type SigningKeysResponseKeysStatus string
+// SigningKeysResponseOutputKeysStatus defines model for SigningKeysResponseOutput.Keys.Status.
+type SigningKeysResponseOutputKeysStatus string
 
-// SnippetList defines model for SnippetList.
-type SnippetList struct {
+// SnippetListOutput defines model for SnippetList_Output.
+type SnippetListOutput struct {
 	Cursor *string `json:"cursor,omitempty"`
 	Data   []struct {
 		Description nullable.Nullable[string] `json:"description"`
@@ -7672,24 +7663,24 @@ type SnippetList struct {
 			Id   float32 `json:"id"`
 			Name string  `json:"name"`
 		} `json:"project"`
-		Type      SnippetListDataType `json:"type"`
-		UpdatedAt string              `json:"updated_at"`
+		Type      SnippetListOutputDataType `json:"type"`
+		UpdatedAt string                    `json:"updated_at"`
 		UpdatedBy struct {
 			Id       float32 `json:"id"`
 			Username string  `json:"username"`
 		} `json:"updated_by"`
-		Visibility SnippetListDataVisibility `json:"visibility"`
+		Visibility SnippetListOutputDataVisibility `json:"visibility"`
 	} `json:"data"`
 }
 
-// SnippetListDataType defines model for SnippetList.Data.Type.
-type SnippetListDataType string
+// SnippetListOutputDataType defines model for SnippetListOutput.Data.Type.
+type SnippetListOutputDataType string
 
-// SnippetListDataVisibility defines model for SnippetList.Data.Visibility.
-type SnippetListDataVisibility string
+// SnippetListOutputDataVisibility defines model for SnippetListOutput.Data.Visibility.
+type SnippetListOutputDataVisibility string
 
-// SnippetResponse defines model for SnippetResponse.
-type SnippetResponse struct {
+// SnippetResponseOutput defines model for SnippetResponse_Output.
+type SnippetResponseOutput struct {
 	Content struct {
 		// Favorite Deprecated: Rely on root-level favorite property instead.
 		// Deprecated: this property has been marked as deprecated upstream, but no `x-deprecated-reason` was set
@@ -7710,20 +7701,20 @@ type SnippetResponse struct {
 		Id   float32 `json:"id"`
 		Name string  `json:"name"`
 	} `json:"project"`
-	Type      SnippetResponseType `json:"type"`
-	UpdatedAt string              `json:"updated_at"`
+	Type      SnippetResponseOutputType `json:"type"`
+	UpdatedAt string                    `json:"updated_at"`
 	UpdatedBy struct {
 		Id       float32 `json:"id"`
 		Username string  `json:"username"`
 	} `json:"updated_by"`
-	Visibility SnippetResponseVisibility `json:"visibility"`
+	Visibility SnippetResponseOutputVisibility `json:"visibility"`
 }
 
-// SnippetResponseType defines model for SnippetResponse.Type.
-type SnippetResponseType string
+// SnippetResponseOutputType defines model for SnippetResponseOutput.Type.
+type SnippetResponseOutputType string
 
-// SnippetResponseVisibility defines model for SnippetResponse.Visibility.
-type SnippetResponseVisibility string
+// SnippetResponseOutputVisibility defines model for SnippetResponseOutput.Visibility.
+type SnippetResponseOutputVisibility string
 
 // SslEnforcementRequest defines model for SslEnforcementRequest.
 type SslEnforcementRequest struct {
@@ -7732,22 +7723,22 @@ type SslEnforcementRequest struct {
 	} `json:"requestedConfig"`
 }
 
-// SslEnforcementResponse defines model for SslEnforcementResponse.
-type SslEnforcementResponse struct {
+// SslEnforcementResponseOutput defines model for SslEnforcementResponse_Output.
+type SslEnforcementResponseOutput struct {
 	AppliedSuccessfully bool `json:"appliedSuccessfully"`
 	CurrentConfig       struct {
 		Database bool `json:"database"`
 	} `json:"currentConfig"`
 }
 
-// StorageConfigResponse defines model for StorageConfigResponse.
-type StorageConfigResponse struct {
+// StorageConfigResponseOutput defines model for StorageConfigResponse_Output.
+type StorageConfigResponseOutput struct {
 	Capabilities struct {
 		IcebergCatalog bool `json:"iceberg_catalog"`
 		ListV2         bool `json:"list_v2"`
 	} `json:"capabilities"`
 	External struct {
-		UpstreamTarget StorageConfigResponseExternalUpstreamTarget `json:"upstreamTarget"`
+		UpstreamTarget StorageConfigResponseOutputExternalUpstreamTarget `json:"upstreamTarget"`
 	} `json:"external"`
 	Features struct {
 		IcebergCatalog struct {
@@ -7775,40 +7766,40 @@ type StorageConfigResponse struct {
 	MigrationVersion string `json:"migrationVersion"`
 }
 
-// StorageConfigResponseExternalUpstreamTarget defines model for StorageConfigResponse.External.UpstreamTarget.
-type StorageConfigResponseExternalUpstreamTarget string
+// StorageConfigResponseOutputExternalUpstreamTarget defines model for StorageConfigResponseOutput.External.UpstreamTarget.
+type StorageConfigResponseOutputExternalUpstreamTarget string
 
 // StreamableFile defines model for StreamableFile.
 type StreamableFile = map[string]interface{}
 
-// SubdomainAvailabilityResponse defines model for SubdomainAvailabilityResponse.
-type SubdomainAvailabilityResponse struct {
+// SubdomainAvailabilityResponseOutput defines model for SubdomainAvailabilityResponse_Output.
+type SubdomainAvailabilityResponseOutput struct {
 	Available bool `json:"available"`
 }
 
-// SupavisorConfigResponse defines model for SupavisorConfigResponse.
-type SupavisorConfigResponse struct {
-	ConnectionString string                              `json:"connection_string"`
-	DatabaseType     SupavisorConfigResponseDatabaseType `json:"database_type"`
-	DbHost           string                              `json:"db_host"`
-	DbName           string                              `json:"db_name"`
-	DbPort           int                                 `json:"db_port"`
-	DbUser           string                              `json:"db_user"`
-	DefaultPoolSize  nullable.Nullable[int]              `json:"default_pool_size"`
-	Identifier       string                              `json:"identifier"`
-	IsUsingScramAuth bool                                `json:"is_using_scram_auth"`
-	MaxClientConn    nullable.Nullable[int]              `json:"max_client_conn"`
-	PoolMode         SupavisorConfigResponsePoolMode     `json:"pool_mode"`
+// SupavisorConfigResponseOutput defines model for SupavisorConfigResponse_Output.
+type SupavisorConfigResponseOutput struct {
+	ConnectionString string                                    `json:"connection_string"`
+	DatabaseType     SupavisorConfigResponseOutputDatabaseType `json:"database_type"`
+	DbHost           string                                    `json:"db_host"`
+	DbName           string                                    `json:"db_name"`
+	DbPort           int                                       `json:"db_port"`
+	DbUser           string                                    `json:"db_user"`
+	DefaultPoolSize  nullable.Nullable[int]                    `json:"default_pool_size"`
+	Identifier       string                                    `json:"identifier"`
+	IsUsingScramAuth bool                                      `json:"is_using_scram_auth"`
+	MaxClientConn    nullable.Nullable[int]                    `json:"max_client_conn"`
+	PoolMode         SupavisorConfigResponseOutputPoolMode     `json:"pool_mode"`
 }
 
-// SupavisorConfigResponseDatabaseType defines model for SupavisorConfigResponse.DatabaseType.
-type SupavisorConfigResponseDatabaseType string
+// SupavisorConfigResponseOutputDatabaseType defines model for SupavisorConfigResponseOutput.DatabaseType.
+type SupavisorConfigResponseOutputDatabaseType string
 
-// SupavisorConfigResponsePoolMode defines model for SupavisorConfigResponse.PoolMode.
-type SupavisorConfigResponsePoolMode string
+// SupavisorConfigResponseOutputPoolMode defines model for SupavisorConfigResponseOutput.PoolMode.
+type SupavisorConfigResponseOutputPoolMode string
 
-// ThirdPartyAuth defines model for ThirdPartyAuth.
-type ThirdPartyAuth struct {
+// ThirdPartyAuthOutput defines model for ThirdPartyAuth_Output.
+type ThirdPartyAuthOutput struct {
 	CustomJwks    nullable.Nullable[interface{}] `json:"custom_jwks,omitempty"`
 	Id            openapi_types.UUID             `json:"id"`
 	InsertedAt    string                         `json:"inserted_at"`
@@ -7820,8 +7811,8 @@ type ThirdPartyAuth struct {
 	UpdatedAt     string                         `json:"updated_at"`
 }
 
-// TypescriptResponse defines model for TypescriptResponse.
-type TypescriptResponse struct {
+// TypescriptResponseOutput defines model for TypescriptResponse_Output.
+type TypescriptResponseOutput struct {
 	Types string `json:"types"`
 }
 
@@ -8027,47 +8018,53 @@ type UpdateAuthConfigBody struct {
 	SecurityCaptchaProvider                               nullable.Nullable[UpdateAuthConfigBodySecurityCaptchaProvider]    `json:"security_captcha_provider,omitempty"`
 	SecurityCaptchaSecret                                 nullable.Nullable[string]                                         `json:"security_captcha_secret,omitempty"`
 	SecurityManualLinkingEnabled                          nullable.Nullable[bool]                                           `json:"security_manual_linking_enabled,omitempty"`
-	SecurityRefreshTokenReuseInterval                     nullable.Nullable[int]                                            `json:"security_refresh_token_reuse_interval,omitempty"`
-	SecuritySbForwardedForEnabled                         nullable.Nullable[bool]                                           `json:"security_sb_forwarded_for_enabled,omitempty"`
-	SecurityUpdatePasswordRequireReauthentication         nullable.Nullable[bool]                                           `json:"security_update_password_require_reauthentication,omitempty"`
-	SessionsInactivityTimeout                             nullable.Nullable[float32]                                        `json:"sessions_inactivity_timeout,omitempty"`
-	SessionsSinglePerUser                                 nullable.Nullable[bool]                                           `json:"sessions_single_per_user,omitempty"`
-	SessionsTags                                          nullable.Nullable[string]                                         `json:"sessions_tags,omitempty"`
-	SessionsTimebox                                       nullable.Nullable[float32]                                        `json:"sessions_timebox,omitempty"`
-	SiteUrl                                               nullable.Nullable[string]                                         `json:"site_url,omitempty"`
-	SmsAutoconfirm                                        nullable.Nullable[bool]                                           `json:"sms_autoconfirm,omitempty"`
-	SmsMaxFrequency                                       nullable.Nullable[int]                                            `json:"sms_max_frequency,omitempty"`
-	SmsMessagebirdAccessKey                               nullable.Nullable[string]                                         `json:"sms_messagebird_access_key,omitempty"`
-	SmsMessagebirdOriginator                              nullable.Nullable[string]                                         `json:"sms_messagebird_originator,omitempty"`
-	SmsOtpExp                                             nullable.Nullable[int]                                            `json:"sms_otp_exp,omitempty"`
-	SmsOtpLength                                          *int                                                              `json:"sms_otp_length,omitempty"`
-	SmsProvider                                           nullable.Nullable[UpdateAuthConfigBodySmsProvider]                `json:"sms_provider,omitempty"`
-	SmsTemplate                                           nullable.Nullable[string]                                         `json:"sms_template,omitempty"`
-	SmsTestOtp                                            nullable.Nullable[string]                                         `json:"sms_test_otp,omitempty"`
-	SmsTestOtpValidUntil                                  nullable.Nullable[time.Time]                                      `json:"sms_test_otp_valid_until,omitempty"`
-	SmsTextlocalApiKey                                    nullable.Nullable[string]                                         `json:"sms_textlocal_api_key,omitempty"`
-	SmsTextlocalSender                                    nullable.Nullable[string]                                         `json:"sms_textlocal_sender,omitempty"`
-	SmsTwilioAccountSid                                   nullable.Nullable[string]                                         `json:"sms_twilio_account_sid,omitempty"`
-	SmsTwilioAuthToken                                    nullable.Nullable[string]                                         `json:"sms_twilio_auth_token,omitempty"`
-	SmsTwilioContentSid                                   nullable.Nullable[string]                                         `json:"sms_twilio_content_sid,omitempty"`
-	SmsTwilioMessageServiceSid                            nullable.Nullable[string]                                         `json:"sms_twilio_message_service_sid,omitempty"`
-	SmsTwilioVerifyAccountSid                             nullable.Nullable[string]                                         `json:"sms_twilio_verify_account_sid,omitempty"`
-	SmsTwilioVerifyAuthToken                              nullable.Nullable[string]                                         `json:"sms_twilio_verify_auth_token,omitempty"`
-	SmsTwilioVerifyMessageServiceSid                      nullable.Nullable[string]                                         `json:"sms_twilio_verify_message_service_sid,omitempty"`
-	SmsVonageApiKey                                       nullable.Nullable[string]                                         `json:"sms_vonage_api_key,omitempty"`
-	SmsVonageApiSecret                                    nullable.Nullable[string]                                         `json:"sms_vonage_api_secret,omitempty"`
-	SmsVonageFrom                                         nullable.Nullable[string]                                         `json:"sms_vonage_from,omitempty"`
-	SmtpAdminEmail                                        nullable.Nullable[openapi_types.Email]                            `json:"smtp_admin_email,omitempty"`
-	SmtpHost                                              nullable.Nullable[string]                                         `json:"smtp_host,omitempty"`
-	SmtpMaxFrequency                                      nullable.Nullable[int]                                            `json:"smtp_max_frequency,omitempty"`
-	SmtpPass                                              nullable.Nullable[string]                                         `json:"smtp_pass,omitempty"`
-	SmtpPort                                              nullable.Nullable[string]                                         `json:"smtp_port,omitempty"`
-	SmtpSenderName                                        nullable.Nullable[string]                                         `json:"smtp_sender_name,omitempty"`
-	SmtpUser                                              nullable.Nullable[string]                                         `json:"smtp_user,omitempty"`
-	UriAllowList                                          nullable.Nullable[string]                                         `json:"uri_allow_list,omitempty"`
-	WebauthnRpDisplayName                                 nullable.Nullable[string]                                         `json:"webauthn_rp_display_name,omitempty"`
-	WebauthnRpId                                          nullable.Nullable[string]                                         `json:"webauthn_rp_id,omitempty"`
-	WebauthnRpOrigins                                     nullable.Nullable[string]                                         `json:"webauthn_rp_origins,omitempty"`
+
+	// SecurityRefreshTokenReuseInterval Refresh token reuse interval in seconds. Maximum 300 seconds (5 minutes).
+	SecurityRefreshTokenReuseInterval             nullable.Nullable[int]  `json:"security_refresh_token_reuse_interval,omitempty"`
+	SecuritySbForwardedForEnabled                 nullable.Nullable[bool] `json:"security_sb_forwarded_for_enabled,omitempty"`
+	SecurityUpdatePasswordRequireReauthentication nullable.Nullable[bool] `json:"security_update_password_require_reauthentication,omitempty"`
+
+	// SessionsInactivityTimeout Session inactivity timeout in hours. Maximum 8760 hours (1 year).
+	SessionsInactivityTimeout nullable.Nullable[float32] `json:"sessions_inactivity_timeout,omitempty"`
+	SessionsSinglePerUser     nullable.Nullable[bool]    `json:"sessions_single_per_user,omitempty"`
+	SessionsTags              nullable.Nullable[string]  `json:"sessions_tags,omitempty"`
+
+	// SessionsTimebox Session timebox in hours. Maximum 8760 hours (1 year).
+	SessionsTimebox                  nullable.Nullable[float32]                         `json:"sessions_timebox,omitempty"`
+	SiteUrl                          nullable.Nullable[string]                          `json:"site_url,omitempty"`
+	SmsAutoconfirm                   nullable.Nullable[bool]                            `json:"sms_autoconfirm,omitempty"`
+	SmsMaxFrequency                  nullable.Nullable[int]                             `json:"sms_max_frequency,omitempty"`
+	SmsMessagebirdAccessKey          nullable.Nullable[string]                          `json:"sms_messagebird_access_key,omitempty"`
+	SmsMessagebirdOriginator         nullable.Nullable[string]                          `json:"sms_messagebird_originator,omitempty"`
+	SmsOtpExp                        nullable.Nullable[int]                             `json:"sms_otp_exp,omitempty"`
+	SmsOtpLength                     *int                                               `json:"sms_otp_length,omitempty"`
+	SmsProvider                      nullable.Nullable[UpdateAuthConfigBodySmsProvider] `json:"sms_provider,omitempty"`
+	SmsTemplate                      nullable.Nullable[string]                          `json:"sms_template,omitempty"`
+	SmsTestOtp                       nullable.Nullable[string]                          `json:"sms_test_otp,omitempty"`
+	SmsTestOtpValidUntil             nullable.Nullable[time.Time]                       `json:"sms_test_otp_valid_until,omitempty"`
+	SmsTextlocalApiKey               nullable.Nullable[string]                          `json:"sms_textlocal_api_key,omitempty"`
+	SmsTextlocalSender               nullable.Nullable[string]                          `json:"sms_textlocal_sender,omitempty"`
+	SmsTwilioAccountSid              nullable.Nullable[string]                          `json:"sms_twilio_account_sid,omitempty"`
+	SmsTwilioAuthToken               nullable.Nullable[string]                          `json:"sms_twilio_auth_token,omitempty"`
+	SmsTwilioContentSid              nullable.Nullable[string]                          `json:"sms_twilio_content_sid,omitempty"`
+	SmsTwilioMessageServiceSid       nullable.Nullable[string]                          `json:"sms_twilio_message_service_sid,omitempty"`
+	SmsTwilioVerifyAccountSid        nullable.Nullable[string]                          `json:"sms_twilio_verify_account_sid,omitempty"`
+	SmsTwilioVerifyAuthToken         nullable.Nullable[string]                          `json:"sms_twilio_verify_auth_token,omitempty"`
+	SmsTwilioVerifyMessageServiceSid nullable.Nullable[string]                          `json:"sms_twilio_verify_message_service_sid,omitempty"`
+	SmsVonageApiKey                  nullable.Nullable[string]                          `json:"sms_vonage_api_key,omitempty"`
+	SmsVonageApiSecret               nullable.Nullable[string]                          `json:"sms_vonage_api_secret,omitempty"`
+	SmsVonageFrom                    nullable.Nullable[string]                          `json:"sms_vonage_from,omitempty"`
+	SmtpAdminEmail                   nullable.Nullable[openapi_types.Email]             `json:"smtp_admin_email,omitempty"`
+	SmtpHost                         nullable.Nullable[string]                          `json:"smtp_host,omitempty"`
+	SmtpMaxFrequency                 nullable.Nullable[int]                             `json:"smtp_max_frequency,omitempty"`
+	SmtpPass                         nullable.Nullable[string]                          `json:"smtp_pass,omitempty"`
+	SmtpPort                         nullable.Nullable[string]                          `json:"smtp_port,omitempty"`
+	SmtpSenderName                   nullable.Nullable[string]                          `json:"smtp_sender_name,omitempty"`
+	SmtpUser                         nullable.Nullable[string]                          `json:"smtp_user,omitempty"`
+	UriAllowList                     nullable.Nullable[string]                          `json:"uri_allow_list,omitempty"`
+	WebauthnRpDisplayName            nullable.Nullable[string]                          `json:"webauthn_rp_display_name,omitempty"`
+	WebauthnRpId                     nullable.Nullable[string]                          `json:"webauthn_rp_id,omitempty"`
+	WebauthnRpOrigins                nullable.Nullable[string]                          `json:"webauthn_rp_origins,omitempty"`
 }
 
 // UpdateAuthConfigBodyDbMaxPoolSizeUnit defines model for UpdateAuthConfigBody.DbMaxPoolSizeUnit.
@@ -8106,12 +8103,12 @@ type UpdateCustomHostnameBody struct {
 	CustomHostname string `json:"custom_hostname"`
 }
 
-// UpdateCustomHostnameResponse defines model for UpdateCustomHostnameResponse.
-type UpdateCustomHostnameResponse struct {
+// UpdateCustomHostnameResponseOutput defines model for UpdateCustomHostnameResponse_Output.
+type UpdateCustomHostnameResponseOutput struct {
 	CustomHostname string `json:"custom_hostname"`
 	Data           struct {
-		Errors   []UpdateCustomHostnameResponseJsonValue `json:"errors"`
-		Messages []UpdateCustomHostnameResponseJsonValue `json:"messages"`
+		Errors   []JsonValueOutput `json:"errors"`
+		Messages []JsonValueOutput `json:"messages"`
 		Result   struct {
 			CustomOriginServer    string `json:"custom_origin_server"`
 			Hostname              string `json:"hostname"`
@@ -8136,36 +8133,11 @@ type UpdateCustomHostnameResponse struct {
 		} `json:"result"`
 		Success bool `json:"success"`
 	} `json:"data"`
-	Status UpdateCustomHostnameResponseStatus `json:"status"`
+	Status UpdateCustomHostnameResponseOutputStatus `json:"status"`
 }
 
-// UpdateCustomHostnameResponseStatus defines model for UpdateCustomHostnameResponse.Status.
-type UpdateCustomHostnameResponseStatus string
-
-// UpdateCustomHostnameResponseJsonValue Any JSON-serializable value
-type UpdateCustomHostnameResponseJsonValue struct {
-	union json.RawMessage
-}
-
-// UpdateCustomHostnameResponseJsonValue0 defines model for .
-type UpdateCustomHostnameResponseJsonValue0 struct {
-	union json.RawMessage
-}
-
-// UpdateCustomHostnameResponseJsonValue00 defines model for .
-type UpdateCustomHostnameResponseJsonValue00 = string
-
-// UpdateCustomHostnameResponseJsonValue01 defines model for .
-type UpdateCustomHostnameResponseJsonValue01 = float32
-
-// UpdateCustomHostnameResponseJsonValue02 defines model for .
-type UpdateCustomHostnameResponseJsonValue02 = bool
-
-// UpdateCustomHostnameResponseJsonValue1 defines model for .
-type UpdateCustomHostnameResponseJsonValue1 = []UpdateCustomHostnameResponseJsonValue
-
-// UpdateCustomHostnameResponseJsonValue2 defines model for .
-type UpdateCustomHostnameResponseJsonValue2 map[string]UpdateCustomHostnameResponseJsonValue
+// UpdateCustomHostnameResponseOutputStatus defines model for UpdateCustomHostnameResponseOutput.Status.
+type UpdateCustomHostnameResponseOutputStatus string
 
 // UpdateJitAccessBody defines model for UpdateJitAccessBody.
 type UpdateJitAccessBody struct {
@@ -8265,8 +8237,8 @@ type UpdateProviderBody struct {
 // UpdateProviderBodyNameIdFormat defines model for UpdateProviderBody.NameIdFormat.
 type UpdateProviderBodyNameIdFormat string
 
-// UpdateProviderResponse defines model for UpdateProviderResponse.
-type UpdateProviderResponse struct {
+// UpdateProviderResponseOutput defines model for UpdateProviderResponse_Output.
+type UpdateProviderResponseOutput struct {
 	CreatedAt *string `json:"created_at,omitempty"`
 	Domains   *[]struct {
 		CreatedAt *string `json:"created_at,omitempty"`
@@ -8362,13 +8334,13 @@ type UpdateRunStatusBodyPull string
 // UpdateRunStatusBodySeed defines model for UpdateRunStatusBody.Seed.
 type UpdateRunStatusBodySeed string
 
-// UpdateRunStatusResponse defines model for UpdateRunStatusResponse.
-type UpdateRunStatusResponse struct {
-	Message UpdateRunStatusResponseMessage `json:"message"`
+// UpdateRunStatusResponseOutput defines model for UpdateRunStatusResponse_Output.
+type UpdateRunStatusResponseOutput struct {
+	Message UpdateRunStatusResponseOutputMessage `json:"message"`
 }
 
-// UpdateRunStatusResponseMessage defines model for UpdateRunStatusResponse.Message.
-type UpdateRunStatusResponseMessage string
+// UpdateRunStatusResponseOutputMessage defines model for UpdateRunStatusResponseOutput.Message.
+type UpdateRunStatusResponseOutputMessage string
 
 // UpdateSigningKeyBody defines model for UpdateSigningKeyBody.
 type UpdateSigningKeyBody struct {
@@ -8422,8 +8394,8 @@ type UpdateSupavisorConfigBody struct {
 // UpdateSupavisorConfigBodyPoolMode Dedicated pooler mode for the project
 type UpdateSupavisorConfigBodyPoolMode string
 
-// UpdateSupavisorConfigResponse defines model for UpdateSupavisorConfigResponse.
-type UpdateSupavisorConfigResponse struct {
+// UpdateSupavisorConfigResponseOutput defines model for UpdateSupavisorConfigResponse_Output.
+type UpdateSupavisorConfigResponseOutput struct {
 	DefaultPoolSize nullable.Nullable[int] `json:"default_pool_size"`
 	PoolMode        string                 `json:"pool_mode"`
 }
@@ -8437,8 +8409,8 @@ type UpgradeDatabaseBody struct {
 // UpgradeDatabaseBodyReleaseChannel defines model for UpgradeDatabaseBody.ReleaseChannel.
 type UpgradeDatabaseBodyReleaseChannel string
 
-// V1BackupScheduleResponse defines model for V1BackupScheduleResponse.
-type V1BackupScheduleResponse struct {
+// V1BackupScheduleResponseOutput defines model for V1BackupScheduleResponse_Output.
+type V1BackupScheduleResponseOutput struct {
 	// ScheduleFor Time of day to schedule daily backups, in UTC. Format: HH:MM:SS.
 	ScheduleFor string `json:"schedule_for"`
 
@@ -8446,13 +8418,13 @@ type V1BackupScheduleResponse struct {
 	UpdatedAt time.Time `json:"updated_at"`
 }
 
-// V1BackupsResponse defines model for V1BackupsResponse.
-type V1BackupsResponse struct {
+// V1BackupsResponseOutput defines model for V1BackupsResponse_Output.
+type V1BackupsResponseOutput struct {
 	Backups []struct {
-		Id               int                            `json:"id"`
-		InsertedAt       string                         `json:"inserted_at"`
-		IsPhysicalBackup bool                           `json:"is_physical_backup"`
-		Status           V1BackupsResponseBackupsStatus `json:"status"`
+		Id               int                                  `json:"id"`
+		InsertedAt       string                               `json:"inserted_at"`
+		IsPhysicalBackup bool                                 `json:"is_physical_backup"`
+		Status           V1BackupsResponseOutputBackupsStatus `json:"status"`
 	} `json:"backups"`
 	PhysicalBackupData struct {
 		EarliestPhysicalBackupDateUnix *int `json:"earliest_physical_backup_date_unix,omitempty"`
@@ -8463,8 +8435,8 @@ type V1BackupsResponse struct {
 	WalgEnabled bool   `json:"walg_enabled"`
 }
 
-// V1BackupsResponseBackupsStatus defines model for V1BackupsResponse.Backups.Status.
-type V1BackupsResponseBackupsStatus string
+// V1BackupsResponseOutputBackupsStatus defines model for V1BackupsResponseOutput.Backups.Status.
+type V1BackupsResponseOutputBackupsStatus string
 
 // V1CreateFunctionBody defines model for V1CreateFunctionBody.
 type V1CreateFunctionBody struct {
@@ -8561,8 +8533,8 @@ type V1CreateProjectBody_RegionSelection struct {
 	union json.RawMessage
 }
 
-// V1GetMigrationResponse defines model for V1GetMigrationResponse.
-type V1GetMigrationResponse struct {
+// V1GetMigrationResponseOutput defines model for V1GetMigrationResponse_Output.
+type V1GetMigrationResponseOutput struct {
 	CreatedBy      *string   `json:"created_by,omitempty"`
 	IdempotencyKey *string   `json:"idempotency_key,omitempty"`
 	Name           *string   `json:"name,omitempty"`
@@ -8571,9 +8543,9 @@ type V1GetMigrationResponse struct {
 	Version        string    `json:"version"`
 }
 
-// V1GetUsageApiCountResponse defines model for V1GetUsageApiCountResponse.
-type V1GetUsageApiCountResponse struct {
-	Error  *V1GetUsageApiCountResponse_Error `json:"error,omitempty"`
+// V1GetUsageApiCountResponseOutput defines model for V1GetUsageApiCountResponse_Output.
+type V1GetUsageApiCountResponseOutput struct {
+	Error  *V1GetUsageApiCountResponseOutput_Error `json:"error,omitempty"`
 	Result *[]struct {
 		Timestamp             time.Time `json:"timestamp"`
 		TotalAuthRequests     float32   `json:"total_auth_requests"`
@@ -8583,11 +8555,11 @@ type V1GetUsageApiCountResponse struct {
 	} `json:"result,omitempty"`
 }
 
-// V1GetUsageApiCountResponseError0 defines model for .
-type V1GetUsageApiCountResponseError0 = string
+// V1GetUsageApiCountResponseOutputError0 defines model for .
+type V1GetUsageApiCountResponseOutputError0 = string
 
-// V1GetUsageApiCountResponseError1 defines model for .
-type V1GetUsageApiCountResponseError1 struct {
+// V1GetUsageApiCountResponseOutputError1 defines model for .
+type V1GetUsageApiCountResponseOutputError1 struct {
 	Code   float32 `json:"code"`
 	Errors []struct {
 		Domain       string `json:"domain"`
@@ -8600,24 +8572,24 @@ type V1GetUsageApiCountResponseError1 struct {
 	Status  string `json:"status"`
 }
 
-// V1GetUsageApiCountResponse_Error defines model for V1GetUsageApiCountResponse.Error.
-type V1GetUsageApiCountResponse_Error struct {
+// V1GetUsageApiCountResponseOutput_Error defines model for V1GetUsageApiCountResponseOutput.Error.
+type V1GetUsageApiCountResponseOutput_Error struct {
 	union json.RawMessage
 }
 
-// V1GetUsageApiRequestsCountResponse defines model for V1GetUsageApiRequestsCountResponse.
-type V1GetUsageApiRequestsCountResponse struct {
-	Error  *V1GetUsageApiRequestsCountResponse_Error `json:"error,omitempty"`
+// V1GetUsageApiRequestsCountResponseOutput defines model for V1GetUsageApiRequestsCountResponse_Output.
+type V1GetUsageApiRequestsCountResponseOutput struct {
+	Error  *V1GetUsageApiRequestsCountResponseOutput_Error `json:"error,omitempty"`
 	Result *[]struct {
 		Count float32 `json:"count"`
 	} `json:"result,omitempty"`
 }
 
-// V1GetUsageApiRequestsCountResponseError0 defines model for .
-type V1GetUsageApiRequestsCountResponseError0 = string
+// V1GetUsageApiRequestsCountResponseOutputError0 defines model for .
+type V1GetUsageApiRequestsCountResponseOutputError0 = string
 
-// V1GetUsageApiRequestsCountResponseError1 defines model for .
-type V1GetUsageApiRequestsCountResponseError1 struct {
+// V1GetUsageApiRequestsCountResponseOutputError1 defines model for .
+type V1GetUsageApiRequestsCountResponseOutputError1 struct {
 	Code   float32 `json:"code"`
 	Errors []struct {
 		Domain       string `json:"domain"`
@@ -8630,87 +8602,87 @@ type V1GetUsageApiRequestsCountResponseError1 struct {
 	Status  string `json:"status"`
 }
 
-// V1GetUsageApiRequestsCountResponse_Error defines model for V1GetUsageApiRequestsCountResponse.Error.
-type V1GetUsageApiRequestsCountResponse_Error struct {
+// V1GetUsageApiRequestsCountResponseOutput_Error defines model for V1GetUsageApiRequestsCountResponseOutput.Error.
+type V1GetUsageApiRequestsCountResponseOutput_Error struct {
 	union json.RawMessage
 }
 
-// V1ListEntitlementsResponse defines model for V1ListEntitlementsResponse.
-type V1ListEntitlementsResponse struct {
+// V1ListEntitlementsResponseOutput defines model for V1ListEntitlementsResponse_Output.
+type V1ListEntitlementsResponseOutput struct {
 	Entitlements []struct {
-		Config  V1ListEntitlementsResponse_Entitlements_Config `json:"config"`
+		Config  V1ListEntitlementsResponseOutput_Entitlements_Config `json:"config"`
 		Feature struct {
-			Key  V1ListEntitlementsResponseEntitlementsFeatureKey  `json:"key"`
-			Type V1ListEntitlementsResponseEntitlementsFeatureType `json:"type"`
+			Key  V1ListEntitlementsResponseOutputEntitlementsFeatureKey  `json:"key"`
+			Type V1ListEntitlementsResponseOutputEntitlementsFeatureType `json:"type"`
 		} `json:"feature"`
-		HasAccess bool                                       `json:"hasAccess"`
-		Type      V1ListEntitlementsResponseEntitlementsType `json:"type"`
+		HasAccess bool                                             `json:"hasAccess"`
+		Type      V1ListEntitlementsResponseOutputEntitlementsType `json:"type"`
 	} `json:"entitlements"`
 }
 
-// V1ListEntitlementsResponseEntitlementsConfig0 defines model for .
-type V1ListEntitlementsResponseEntitlementsConfig0 struct {
+// V1ListEntitlementsResponseOutputEntitlementsConfig0 defines model for .
+type V1ListEntitlementsResponseOutputEntitlementsConfig0 struct {
 	Enabled bool `json:"enabled"`
 }
 
-// V1ListEntitlementsResponseEntitlementsConfig1 defines model for .
-type V1ListEntitlementsResponseEntitlementsConfig1 struct {
+// V1ListEntitlementsResponseOutputEntitlementsConfig1 defines model for .
+type V1ListEntitlementsResponseOutputEntitlementsConfig1 struct {
 	Enabled   bool    `json:"enabled"`
 	Unit      string  `json:"unit"`
 	Unlimited bool    `json:"unlimited"`
 	Value     float32 `json:"value"`
 }
 
-// V1ListEntitlementsResponseEntitlementsConfig2 defines model for .
-type V1ListEntitlementsResponseEntitlementsConfig2 struct {
+// V1ListEntitlementsResponseOutputEntitlementsConfig2 defines model for .
+type V1ListEntitlementsResponseOutputEntitlementsConfig2 struct {
 	Enabled bool     `json:"enabled"`
 	Set     []string `json:"set"`
 }
 
-// V1ListEntitlementsResponse_Entitlements_Config defines model for V1ListEntitlementsResponse.Entitlements.Config.
-type V1ListEntitlementsResponse_Entitlements_Config struct {
+// V1ListEntitlementsResponseOutput_Entitlements_Config defines model for V1ListEntitlementsResponseOutput.Entitlements.Config.
+type V1ListEntitlementsResponseOutput_Entitlements_Config struct {
 	union json.RawMessage
 }
 
-// V1ListEntitlementsResponseEntitlementsFeatureKey defines model for V1ListEntitlementsResponse.Entitlements.Feature.Key.
-type V1ListEntitlementsResponseEntitlementsFeatureKey string
+// V1ListEntitlementsResponseOutputEntitlementsFeatureKey defines model for V1ListEntitlementsResponseOutput.Entitlements.Feature.Key.
+type V1ListEntitlementsResponseOutputEntitlementsFeatureKey string
 
-// V1ListEntitlementsResponseEntitlementsFeatureType defines model for V1ListEntitlementsResponse.Entitlements.Feature.Type.
-type V1ListEntitlementsResponseEntitlementsFeatureType string
+// V1ListEntitlementsResponseOutputEntitlementsFeatureType defines model for V1ListEntitlementsResponseOutput.Entitlements.Feature.Type.
+type V1ListEntitlementsResponseOutputEntitlementsFeatureType string
 
-// V1ListEntitlementsResponseEntitlementsType defines model for V1ListEntitlementsResponse.Entitlements.Type.
-type V1ListEntitlementsResponseEntitlementsType string
+// V1ListEntitlementsResponseOutputEntitlementsType defines model for V1ListEntitlementsResponseOutput.Entitlements.Type.
+type V1ListEntitlementsResponseOutputEntitlementsType string
 
-// V1ListMigrationsResponse defines model for V1ListMigrationsResponse.
-type V1ListMigrationsResponse = []struct {
+// V1ListMigrationsResponseOutput defines model for V1ListMigrationsResponse_Output.
+type V1ListMigrationsResponseOutput = []struct {
 	Name    *string `json:"name,omitempty"`
 	Version string  `json:"version"`
 }
 
-// V1OrganizationMemberResponse defines model for V1OrganizationMemberResponse.
-type V1OrganizationMemberResponse struct {
+// V1OrganizationMemberResponseOutput defines model for V1OrganizationMemberResponse_Output.
+type V1OrganizationMemberResponseOutput struct {
 	AvatarUrl  nullable.Nullable[string] `json:"avatar_url"`
 	Email      *string                   `json:"email,omitempty"`
 	MfaEnabled bool                      `json:"mfa_enabled"`
-	RoleName   string                    `json:"role_name"`
+	RoleName   *string                   `json:"role_name,omitempty"`
 	UserId     string                    `json:"user_id"`
 	UserName   string                    `json:"user_name"`
 }
 
-// V1OrganizationSlugResponse defines model for V1OrganizationSlugResponse.
-type V1OrganizationSlugResponse struct {
-	AllowedReleaseChannels []V1OrganizationSlugResponseAllowedReleaseChannels `json:"allowed_release_channels"`
-	Id                     string                                             `json:"id"`
-	Name                   string                                             `json:"name"`
-	OptInTags              []interface{}                                      `json:"opt_in_tags"`
-	Plan                   *V1OrganizationSlugResponsePlan                    `json:"plan,omitempty"`
+// V1OrganizationSlugResponseOutput defines model for V1OrganizationSlugResponse_Output.
+type V1OrganizationSlugResponseOutput struct {
+	AllowedReleaseChannels []V1OrganizationSlugResponseOutputAllowedReleaseChannels `json:"allowed_release_channels"`
+	Id                     string                                                   `json:"id"`
+	Name                   string                                                   `json:"name"`
+	OptInTags              []interface{}                                            `json:"opt_in_tags"`
+	Plan                   *V1OrganizationSlugResponseOutputPlan                    `json:"plan,omitempty"`
 }
 
-// V1OrganizationSlugResponseAllowedReleaseChannels defines model for V1OrganizationSlugResponse.AllowedReleaseChannels.
-type V1OrganizationSlugResponseAllowedReleaseChannels string
+// V1OrganizationSlugResponseOutputAllowedReleaseChannels defines model for V1OrganizationSlugResponseOutput.AllowedReleaseChannels.
+type V1OrganizationSlugResponseOutputAllowedReleaseChannels string
 
-// V1OrganizationSlugResponsePlan defines model for V1OrganizationSlugResponse.Plan.
-type V1OrganizationSlugResponsePlan string
+// V1OrganizationSlugResponseOutputPlan defines model for V1OrganizationSlugResponseOutput.Plan.
+type V1OrganizationSlugResponseOutputPlan string
 
 // V1PatchMigrationBody defines model for V1PatchMigrationBody.
 type V1PatchMigrationBody struct {
@@ -8718,24 +8690,24 @@ type V1PatchMigrationBody struct {
 	Rollback *string `json:"rollback,omitempty"`
 }
 
-// V1PgbouncerConfigResponse defines model for V1PgbouncerConfigResponse.
-type V1PgbouncerConfigResponse struct {
-	ConnectionString        *string                            `json:"connection_string,omitempty"`
-	DefaultPoolSize         *int                               `json:"default_pool_size,omitempty"`
-	IgnoreStartupParameters *string                            `json:"ignore_startup_parameters,omitempty"`
-	MaxClientConn           *int                               `json:"max_client_conn,omitempty"`
-	PoolMode                *V1PgbouncerConfigResponsePoolMode `json:"pool_mode,omitempty"`
-	QueryWaitTimeout        *int                               `json:"query_wait_timeout,omitempty"`
-	ReservePoolSize         *int                               `json:"reserve_pool_size,omitempty"`
-	ServerIdleTimeout       *int                               `json:"server_idle_timeout,omitempty"`
-	ServerLifetime          *int                               `json:"server_lifetime,omitempty"`
+// V1PgbouncerConfigResponseOutput defines model for V1PgbouncerConfigResponse_Output.
+type V1PgbouncerConfigResponseOutput struct {
+	ConnectionString        *string                                  `json:"connection_string,omitempty"`
+	DefaultPoolSize         *int                                     `json:"default_pool_size,omitempty"`
+	IgnoreStartupParameters *string                                  `json:"ignore_startup_parameters,omitempty"`
+	MaxClientConn           *int                                     `json:"max_client_conn,omitempty"`
+	PoolMode                *V1PgbouncerConfigResponseOutputPoolMode `json:"pool_mode,omitempty"`
+	QueryWaitTimeout        *int                                     `json:"query_wait_timeout,omitempty"`
+	ReservePoolSize         *int                                     `json:"reserve_pool_size,omitempty"`
+	ServerIdleTimeout       *int                                     `json:"server_idle_timeout,omitempty"`
+	ServerLifetime          *int                                     `json:"server_lifetime,omitempty"`
 }
 
-// V1PgbouncerConfigResponsePoolMode defines model for V1PgbouncerConfigResponse.PoolMode.
-type V1PgbouncerConfigResponsePoolMode string
+// V1PgbouncerConfigResponseOutputPoolMode defines model for V1PgbouncerConfigResponseOutput.PoolMode.
+type V1PgbouncerConfigResponseOutputPoolMode string
 
-// V1PostgrestConfigResponse defines model for V1PostgrestConfigResponse.
-type V1PostgrestConfigResponse struct {
+// V1PostgrestConfigResponseOutput defines model for V1PostgrestConfigResponse_Output.
+type V1PostgrestConfigResponseOutput struct {
 	DbExtraSearchPath string `json:"db_extra_search_path"`
 
 	// DbPool If `null`, the value is automatically configured based on compute size.
@@ -8747,69 +8719,61 @@ type V1PostgrestConfigResponse struct {
 	MaxRows                  int                    `json:"max_rows"`
 }
 
-// V1ProfileResponse defines model for V1ProfileResponse.
-type V1ProfileResponse struct {
+// V1ProfileResponseOutput defines model for V1ProfileResponse_Output.
+type V1ProfileResponseOutput struct {
 	GotrueId     string `json:"gotrue_id"`
 	PrimaryEmail string `json:"primary_email"`
 	Username     string `json:"username"`
 }
 
-// V1ProjectAdvisorsResponse defines model for V1ProjectAdvisorsResponse.
-type V1ProjectAdvisorsResponse struct {
-	Lints []V1ProjectAdvisorsResponse_Lints_Item `json:"lints"`
+// V1ProjectAdvisorsResponseOutput defines model for V1ProjectAdvisorsResponse_Output.
+type V1ProjectAdvisorsResponseOutput struct {
+	Lints []struct {
+		CacheKey    string                                           `json:"cache_key"`
+		Categories  []V1ProjectAdvisorsResponseOutputLintsCategories `json:"categories"`
+		Description string                                           `json:"description"`
+		Detail      string                                           `json:"detail"`
+		Facing      V1ProjectAdvisorsResponseOutputLintsFacing       `json:"facing"`
+		Level       V1ProjectAdvisorsResponseOutputLintsLevel        `json:"level"`
+		Metadata    *struct {
+			Entity      *string                                           `json:"entity,omitempty"`
+			FkeyColumns *[]float32                                        `json:"fkey_columns,omitempty"`
+			FkeyName    *string                                           `json:"fkey_name,omitempty"`
+			Name        *string                                           `json:"name,omitempty"`
+			Schema      *string                                           `json:"schema,omitempty"`
+			Type        *V1ProjectAdvisorsResponseOutputLintsMetadataType `json:"type,omitempty"`
+		} `json:"metadata,omitempty"`
+		Name        V1ProjectAdvisorsResponseOutputLintsName `json:"name"`
+		ObservedAt  *time.Time                               `json:"observed_at,omitempty"`
+		Remediation string                                   `json:"remediation"`
+		Title       string                                   `json:"title"`
+	} `json:"lints"`
 }
 
-// V1ProjectAdvisorsResponseLintsCategories defines model for V1ProjectAdvisorsResponse.Lints.Categories.
-type V1ProjectAdvisorsResponseLintsCategories string
+// V1ProjectAdvisorsResponseOutputLintsCategories defines model for V1ProjectAdvisorsResponseOutput.Lints.Categories.
+type V1ProjectAdvisorsResponseOutputLintsCategories string
 
-// V1ProjectAdvisorsResponseLintsFacing defines model for V1ProjectAdvisorsResponse.Lints.Facing.
-type V1ProjectAdvisorsResponseLintsFacing string
+// V1ProjectAdvisorsResponseOutputLintsFacing defines model for V1ProjectAdvisorsResponseOutput.Lints.Facing.
+type V1ProjectAdvisorsResponseOutputLintsFacing string
 
-// V1ProjectAdvisorsResponseLintsLevel defines model for V1ProjectAdvisorsResponse.Lints.Level.
-type V1ProjectAdvisorsResponseLintsLevel string
+// V1ProjectAdvisorsResponseOutputLintsLevel defines model for V1ProjectAdvisorsResponseOutput.Lints.Level.
+type V1ProjectAdvisorsResponseOutputLintsLevel string
 
-// V1ProjectAdvisorsResponseLintsMetadataType defines model for V1ProjectAdvisorsResponse.Lints.Metadata.Type.
-type V1ProjectAdvisorsResponseLintsMetadataType string
+// V1ProjectAdvisorsResponseOutputLintsMetadataType defines model for V1ProjectAdvisorsResponseOutput.Lints.Metadata.Type.
+type V1ProjectAdvisorsResponseOutputLintsMetadataType string
 
-// V1ProjectAdvisorsResponse_Lints_Metadata defines model for V1ProjectAdvisorsResponse.Lints.Metadata.
-type V1ProjectAdvisorsResponse_Lints_Metadata struct {
-	Entity               *string                                     `json:"entity,omitempty"`
-	FkeyColumns          *[]float32                                  `json:"fkey_columns,omitempty"`
-	FkeyName             *string                                     `json:"fkey_name,omitempty"`
-	Name                 *string                                     `json:"name,omitempty"`
-	Schema               *string                                     `json:"schema,omitempty"`
-	Type                 *V1ProjectAdvisorsResponseLintsMetadataType `json:"type,omitempty"`
-	AdditionalProperties map[string]interface{}                      `json:"-"`
-}
+// V1ProjectAdvisorsResponseOutputLintsName defines model for V1ProjectAdvisorsResponseOutput.Lints.Name.
+type V1ProjectAdvisorsResponseOutputLintsName string
 
-// V1ProjectAdvisorsResponseLintsName defines model for V1ProjectAdvisorsResponse.Lints.Name.
-type V1ProjectAdvisorsResponseLintsName string
-
-// V1ProjectAdvisorsResponse_Lints_Item defines model for V1ProjectAdvisorsResponse.lints.Item.
-type V1ProjectAdvisorsResponse_Lints_Item struct {
-	CacheKey             string                                     `json:"cache_key"`
-	Categories           []V1ProjectAdvisorsResponseLintsCategories `json:"categories"`
-	Description          string                                     `json:"description"`
-	Detail               string                                     `json:"detail"`
-	Facing               V1ProjectAdvisorsResponseLintsFacing       `json:"facing"`
-	Level                V1ProjectAdvisorsResponseLintsLevel        `json:"level"`
-	Metadata             *V1ProjectAdvisorsResponse_Lints_Metadata  `json:"metadata,omitempty"`
-	Name                 V1ProjectAdvisorsResponseLintsName         `json:"name"`
-	ObservedAt           *time.Time                                 `json:"observed_at,omitempty"`
-	Remediation          string                                     `json:"remediation"`
-	Title                string                                     `json:"title"`
-	AdditionalProperties map[string]interface{}                     `json:"-"`
-}
-
-// V1ProjectRefResponse defines model for V1ProjectRefResponse.
-type V1ProjectRefResponse struct {
+// V1ProjectRefResponseOutput defines model for V1ProjectRefResponse_Output.
+type V1ProjectRefResponseOutput struct {
 	Id   int    `json:"id"`
 	Name string `json:"name"`
 	Ref  string `json:"ref"`
 }
 
-// V1ProjectResponse defines model for V1ProjectResponse.
-type V1ProjectResponse struct {
+// V1ProjectResponseOutput defines model for V1ProjectResponse_Output.
+type V1ProjectResponseOutput struct {
 	// CreatedAt Creation timestamp
 	CreatedAt string `json:"created_at"`
 
@@ -8831,15 +8795,15 @@ type V1ProjectResponse struct {
 	Ref string `json:"ref"`
 
 	// Region Region of your project
-	Region string                  `json:"region"`
-	Status V1ProjectResponseStatus `json:"status"`
+	Region string                        `json:"region"`
+	Status V1ProjectResponseOutputStatus `json:"status"`
 }
 
-// V1ProjectResponseStatus defines model for V1ProjectResponse.Status.
-type V1ProjectResponseStatus string
+// V1ProjectResponseOutputStatus defines model for V1ProjectResponseOutput.Status.
+type V1ProjectResponseOutputStatus string
 
-// V1ProjectWithDatabaseResponse defines model for V1ProjectWithDatabaseResponse.
-type V1ProjectWithDatabaseResponse struct {
+// V1ProjectWithDatabaseResponseOutput defines model for V1ProjectWithDatabaseResponse_Output.
+type V1ProjectWithDatabaseResponseOutput struct {
 	// CreatedAt Creation timestamp
 	CreatedAt string `json:"created_at"`
 	Database  struct {
@@ -8874,12 +8838,12 @@ type V1ProjectWithDatabaseResponse struct {
 	Ref string `json:"ref"`
 
 	// Region Region of your project
-	Region string                              `json:"region"`
-	Status V1ProjectWithDatabaseResponseStatus `json:"status"`
+	Region string                                    `json:"region"`
+	Status V1ProjectWithDatabaseResponseOutputStatus `json:"status"`
 }
 
-// V1ProjectWithDatabaseResponseStatus defines model for V1ProjectWithDatabaseResponse.Status.
-type V1ProjectWithDatabaseResponseStatus string
+// V1ProjectWithDatabaseResponseOutputStatus defines model for V1ProjectWithDatabaseResponseOutput.Status.
+type V1ProjectWithDatabaseResponseOutputStatus string
 
 // V1ReadOnlyQueryBody defines model for V1ReadOnlyQueryBody.
 type V1ReadOnlyQueryBody struct {
@@ -8919,30 +8883,30 @@ type V1RunQueryBody struct {
 	ReadOnly   *bool          `json:"read_only,omitempty"`
 }
 
-// V1ServiceHealthResponse defines model for V1ServiceHealthResponse.
-type V1ServiceHealthResponse struct {
+// V1ServiceHealthResponseOutput defines model for V1ServiceHealthResponse_Output.
+type V1ServiceHealthResponseOutput struct {
 	Error *string `json:"error,omitempty"`
 
 	// Healthy Deprecated. Use `status` instead.
 	// Deprecated: this property has been marked as deprecated upstream, but no `x-deprecated-reason` was set
-	Healthy bool                          `json:"healthy"`
-	Info    *V1ServiceHealthResponse_Info `json:"info,omitempty"`
-	Name    V1ServiceHealthResponseName   `json:"name"`
-	Status  V1ServiceHealthResponseStatus `json:"status"`
+	Healthy bool                                `json:"healthy"`
+	Info    *V1ServiceHealthResponseOutput_Info `json:"info,omitempty"`
+	Name    V1ServiceHealthResponseOutputName   `json:"name"`
+	Status  V1ServiceHealthResponseOutputStatus `json:"status"`
 }
 
-// V1ServiceHealthResponseInfo0 defines model for .
-type V1ServiceHealthResponseInfo0 struct {
-	Description string                           `json:"description"`
-	Name        V1ServiceHealthResponseInfo0Name `json:"name"`
-	Version     string                           `json:"version"`
+// V1ServiceHealthResponseOutputInfo0 defines model for .
+type V1ServiceHealthResponseOutputInfo0 struct {
+	Description string                                 `json:"description"`
+	Name        V1ServiceHealthResponseOutputInfo0Name `json:"name"`
+	Version     string                                 `json:"version"`
 }
 
-// V1ServiceHealthResponseInfo0Name defines model for V1ServiceHealthResponse.Info.0.Name.
-type V1ServiceHealthResponseInfo0Name string
+// V1ServiceHealthResponseOutputInfo0Name defines model for V1ServiceHealthResponseOutput.Info.0.Name.
+type V1ServiceHealthResponseOutputInfo0Name string
 
-// V1ServiceHealthResponseInfo1 defines model for .
-type V1ServiceHealthResponseInfo1 struct {
+// V1ServiceHealthResponseOutputInfo1 defines model for .
+type V1ServiceHealthResponseOutputInfo1 struct {
 	ConnectedCluster int  `json:"connected_cluster"`
 	DbConnected      bool `json:"db_connected"`
 
@@ -8952,24 +8916,24 @@ type V1ServiceHealthResponseInfo1 struct {
 	ReplicationConnected bool `json:"replication_connected"`
 }
 
-// V1ServiceHealthResponseInfo2 defines model for .
-type V1ServiceHealthResponseInfo2 struct {
+// V1ServiceHealthResponseOutputInfo2 defines model for .
+type V1ServiceHealthResponseOutputInfo2 struct {
 	DbSchema string `json:"db_schema"`
 }
 
-// V1ServiceHealthResponse_Info defines model for V1ServiceHealthResponse.Info.
-type V1ServiceHealthResponse_Info struct {
+// V1ServiceHealthResponseOutput_Info defines model for V1ServiceHealthResponseOutput.Info.
+type V1ServiceHealthResponseOutput_Info struct {
 	union json.RawMessage
 }
 
-// V1ServiceHealthResponseName defines model for V1ServiceHealthResponse.Name.
-type V1ServiceHealthResponseName string
+// V1ServiceHealthResponseOutputName defines model for V1ServiceHealthResponseOutput.Name.
+type V1ServiceHealthResponseOutputName string
 
-// V1ServiceHealthResponseStatus defines model for V1ServiceHealthResponse.Status.
-type V1ServiceHealthResponseStatus string
+// V1ServiceHealthResponseOutputStatus defines model for V1ServiceHealthResponseOutput.Status.
+type V1ServiceHealthResponseOutputStatus string
 
-// V1StorageBucketResponse defines model for V1StorageBucketResponse.
-type V1StorageBucketResponse struct {
+// V1StorageBucketResponseOutput defines model for V1StorageBucketResponse_Output.
+type V1StorageBucketResponseOutput struct {
 	CreatedAt string `json:"created_at"`
 	Id        string `json:"id"`
 	Name      string `json:"name"`
@@ -9001,8 +8965,8 @@ type V1UpdatePasswordBody struct {
 	Password string `json:"password"`
 }
 
-// V1UpdatePasswordResponse defines model for V1UpdatePasswordResponse.
-type V1UpdatePasswordResponse struct {
+// V1UpdatePasswordResponseOutput defines model for V1UpdatePasswordResponse_Output.
+type V1UpdatePasswordResponseOutput struct {
 	Message string `json:"message"`
 }
 
@@ -9032,14 +8996,14 @@ type VanitySubdomainBody struct {
 	VanitySubdomain string `json:"vanity_subdomain"`
 }
 
-// VanitySubdomainConfigResponse defines model for VanitySubdomainConfigResponse.
-type VanitySubdomainConfigResponse struct {
-	CustomDomain *string                             `json:"custom_domain,omitempty"`
-	Status       VanitySubdomainConfigResponseStatus `json:"status"`
+// VanitySubdomainConfigResponseOutput defines model for VanitySubdomainConfigResponse_Output.
+type VanitySubdomainConfigResponseOutput struct {
+	CustomDomain *string                                   `json:"custom_domain,omitempty"`
+	Status       VanitySubdomainConfigResponseOutputStatus `json:"status"`
 }
 
-// VanitySubdomainConfigResponseStatus defines model for VanitySubdomainConfigResponse.Status.
-type VanitySubdomainConfigResponseStatus string
+// VanitySubdomainConfigResponseOutputStatus defines model for VanitySubdomainConfigResponseOutput.Status.
+type VanitySubdomainConfigResponseOutputStatus string
 
 // bearerContextKey is the context key for bearer security scheme
 type bearerContextKey string
@@ -9595,514 +9559,22 @@ type V1ActivateVanitySubdomainConfigJSONRequestBody = VanitySubdomainBody
 // V1CheckVanitySubdomainAvailabilityJSONRequestBody defines body for V1CheckVanitySubdomainAvailability for application/json ContentType.
 type V1CheckVanitySubdomainAvailabilityJSONRequestBody = VanitySubdomainBody
 
-// Getter for additional properties for GetProjectDbMetadataResponse_Databases_Schemas_Item. Returns the specified
-// element and whether it was found
-func (a GetProjectDbMetadataResponse_Databases_Schemas_Item) Get(fieldName string) (value interface{}, found bool) {
-	if a.AdditionalProperties != nil {
-		value, found = a.AdditionalProperties[fieldName]
-	}
-	return
-}
-
-// Setter for additional properties for GetProjectDbMetadataResponse_Databases_Schemas_Item
-func (a *GetProjectDbMetadataResponse_Databases_Schemas_Item) Set(fieldName string, value interface{}) {
-	if a.AdditionalProperties == nil {
-		a.AdditionalProperties = make(map[string]interface{})
-	}
-	a.AdditionalProperties[fieldName] = value
-}
-
-// Override default JSON handling for GetProjectDbMetadataResponse_Databases_Schemas_Item to handle AdditionalProperties
-func (a *GetProjectDbMetadataResponse_Databases_Schemas_Item) UnmarshalJSON(b []byte) error {
-	object := make(map[string]json.RawMessage)
-	err := json.Unmarshal(b, &object)
-	if err != nil {
-		return err
-	}
-
-	if raw, found := object["name"]; found {
-		err = json.Unmarshal(raw, &a.Name)
-		if err != nil {
-			return fmt.Errorf("error reading 'name': %w", err)
-		}
-		delete(object, "name")
-	}
-
-	if len(object) != 0 {
-		a.AdditionalProperties = make(map[string]interface{})
-		for fieldName, fieldBuf := range object {
-			var fieldVal interface{}
-			err := json.Unmarshal(fieldBuf, &fieldVal)
-			if err != nil {
-				return fmt.Errorf("error unmarshaling field %s: %w", fieldName, err)
-			}
-			a.AdditionalProperties[fieldName] = fieldVal
-		}
-	}
-	return nil
-}
-
-// Override default JSON handling for GetProjectDbMetadataResponse_Databases_Schemas_Item to handle AdditionalProperties
-func (a GetProjectDbMetadataResponse_Databases_Schemas_Item) MarshalJSON() ([]byte, error) {
-	var err error
-	object := make(map[string]json.RawMessage)
-
-	object["name"], err = json.Marshal(a.Name)
-	if err != nil {
-		return nil, fmt.Errorf("error marshaling 'name': %w", err)
-	}
-
-	for fieldName, field := range a.AdditionalProperties {
-		object[fieldName], err = json.Marshal(field)
-		if err != nil {
-			return nil, fmt.Errorf("error marshaling '%s': %w", fieldName, err)
-		}
-	}
-	return json.Marshal(object)
-}
-
-// Getter for additional properties for GetProjectDbMetadataResponse_Databases_Item. Returns the specified
-// element and whether it was found
-func (a GetProjectDbMetadataResponse_Databases_Item) Get(fieldName string) (value interface{}, found bool) {
-	if a.AdditionalProperties != nil {
-		value, found = a.AdditionalProperties[fieldName]
-	}
-	return
-}
-
-// Setter for additional properties for GetProjectDbMetadataResponse_Databases_Item
-func (a *GetProjectDbMetadataResponse_Databases_Item) Set(fieldName string, value interface{}) {
-	if a.AdditionalProperties == nil {
-		a.AdditionalProperties = make(map[string]interface{})
-	}
-	a.AdditionalProperties[fieldName] = value
-}
-
-// Override default JSON handling for GetProjectDbMetadataResponse_Databases_Item to handle AdditionalProperties
-func (a *GetProjectDbMetadataResponse_Databases_Item) UnmarshalJSON(b []byte) error {
-	object := make(map[string]json.RawMessage)
-	err := json.Unmarshal(b, &object)
-	if err != nil {
-		return err
-	}
-
-	if raw, found := object["name"]; found {
-		err = json.Unmarshal(raw, &a.Name)
-		if err != nil {
-			return fmt.Errorf("error reading 'name': %w", err)
-		}
-		delete(object, "name")
-	}
-
-	if raw, found := object["schemas"]; found {
-		err = json.Unmarshal(raw, &a.Schemas)
-		if err != nil {
-			return fmt.Errorf("error reading 'schemas': %w", err)
-		}
-		delete(object, "schemas")
-	}
-
-	if len(object) != 0 {
-		a.AdditionalProperties = make(map[string]interface{})
-		for fieldName, fieldBuf := range object {
-			var fieldVal interface{}
-			err := json.Unmarshal(fieldBuf, &fieldVal)
-			if err != nil {
-				return fmt.Errorf("error unmarshaling field %s: %w", fieldName, err)
-			}
-			a.AdditionalProperties[fieldName] = fieldVal
-		}
-	}
-	return nil
-}
-
-// Override default JSON handling for GetProjectDbMetadataResponse_Databases_Item to handle AdditionalProperties
-func (a GetProjectDbMetadataResponse_Databases_Item) MarshalJSON() ([]byte, error) {
-	var err error
-	object := make(map[string]json.RawMessage)
-
-	object["name"], err = json.Marshal(a.Name)
-	if err != nil {
-		return nil, fmt.Errorf("error marshaling 'name': %w", err)
-	}
-
-	if a.Schemas != nil {
-		object["schemas"], err = json.Marshal(a.Schemas)
-		if err != nil {
-			return nil, fmt.Errorf("error marshaling 'schemas': %w", err)
-		}
-	}
-
-	for fieldName, field := range a.AdditionalProperties {
-		object[fieldName], err = json.Marshal(field)
-		if err != nil {
-			return nil, fmt.Errorf("error marshaling '%s': %w", fieldName, err)
-		}
-	}
-	return json.Marshal(object)
-}
-
-// Getter for additional properties for V1ProjectAdvisorsResponse_Lints_Metadata. Returns the specified
-// element and whether it was found
-func (a V1ProjectAdvisorsResponse_Lints_Metadata) Get(fieldName string) (value interface{}, found bool) {
-	if a.AdditionalProperties != nil {
-		value, found = a.AdditionalProperties[fieldName]
-	}
-	return
-}
-
-// Setter for additional properties for V1ProjectAdvisorsResponse_Lints_Metadata
-func (a *V1ProjectAdvisorsResponse_Lints_Metadata) Set(fieldName string, value interface{}) {
-	if a.AdditionalProperties == nil {
-		a.AdditionalProperties = make(map[string]interface{})
-	}
-	a.AdditionalProperties[fieldName] = value
-}
-
-// Override default JSON handling for V1ProjectAdvisorsResponse_Lints_Metadata to handle AdditionalProperties
-func (a *V1ProjectAdvisorsResponse_Lints_Metadata) UnmarshalJSON(b []byte) error {
-	object := make(map[string]json.RawMessage)
-	err := json.Unmarshal(b, &object)
-	if err != nil {
-		return err
-	}
-
-	if raw, found := object["entity"]; found {
-		err = json.Unmarshal(raw, &a.Entity)
-		if err != nil {
-			return fmt.Errorf("error reading 'entity': %w", err)
-		}
-		delete(object, "entity")
-	}
-
-	if raw, found := object["fkey_columns"]; found {
-		err = json.Unmarshal(raw, &a.FkeyColumns)
-		if err != nil {
-			return fmt.Errorf("error reading 'fkey_columns': %w", err)
-		}
-		delete(object, "fkey_columns")
-	}
-
-	if raw, found := object["fkey_name"]; found {
-		err = json.Unmarshal(raw, &a.FkeyName)
-		if err != nil {
-			return fmt.Errorf("error reading 'fkey_name': %w", err)
-		}
-		delete(object, "fkey_name")
-	}
-
-	if raw, found := object["name"]; found {
-		err = json.Unmarshal(raw, &a.Name)
-		if err != nil {
-			return fmt.Errorf("error reading 'name': %w", err)
-		}
-		delete(object, "name")
-	}
-
-	if raw, found := object["schema"]; found {
-		err = json.Unmarshal(raw, &a.Schema)
-		if err != nil {
-			return fmt.Errorf("error reading 'schema': %w", err)
-		}
-		delete(object, "schema")
-	}
-
-	if raw, found := object["type"]; found {
-		err = json.Unmarshal(raw, &a.Type)
-		if err != nil {
-			return fmt.Errorf("error reading 'type': %w", err)
-		}
-		delete(object, "type")
-	}
-
-	if len(object) != 0 {
-		a.AdditionalProperties = make(map[string]interface{})
-		for fieldName, fieldBuf := range object {
-			var fieldVal interface{}
-			err := json.Unmarshal(fieldBuf, &fieldVal)
-			if err != nil {
-				return fmt.Errorf("error unmarshaling field %s: %w", fieldName, err)
-			}
-			a.AdditionalProperties[fieldName] = fieldVal
-		}
-	}
-	return nil
-}
-
-// Override default JSON handling for V1ProjectAdvisorsResponse_Lints_Metadata to handle AdditionalProperties
-func (a V1ProjectAdvisorsResponse_Lints_Metadata) MarshalJSON() ([]byte, error) {
-	var err error
-	object := make(map[string]json.RawMessage)
-
-	if a.Entity != nil {
-		object["entity"], err = json.Marshal(a.Entity)
-		if err != nil {
-			return nil, fmt.Errorf("error marshaling 'entity': %w", err)
-		}
-	}
-
-	if a.FkeyColumns != nil {
-		object["fkey_columns"], err = json.Marshal(a.FkeyColumns)
-		if err != nil {
-			return nil, fmt.Errorf("error marshaling 'fkey_columns': %w", err)
-		}
-	}
-
-	if a.FkeyName != nil {
-		object["fkey_name"], err = json.Marshal(a.FkeyName)
-		if err != nil {
-			return nil, fmt.Errorf("error marshaling 'fkey_name': %w", err)
-		}
-	}
-
-	if a.Name != nil {
-		object["name"], err = json.Marshal(a.Name)
-		if err != nil {
-			return nil, fmt.Errorf("error marshaling 'name': %w", err)
-		}
-	}
-
-	if a.Schema != nil {
-		object["schema"], err = json.Marshal(a.Schema)
-		if err != nil {
-			return nil, fmt.Errorf("error marshaling 'schema': %w", err)
-		}
-	}
-
-	if a.Type != nil {
-		object["type"], err = json.Marshal(a.Type)
-		if err != nil {
-			return nil, fmt.Errorf("error marshaling 'type': %w", err)
-		}
-	}
-
-	for fieldName, field := range a.AdditionalProperties {
-		object[fieldName], err = json.Marshal(field)
-		if err != nil {
-			return nil, fmt.Errorf("error marshaling '%s': %w", fieldName, err)
-		}
-	}
-	return json.Marshal(object)
-}
-
-// Getter for additional properties for V1ProjectAdvisorsResponse_Lints_Item. Returns the specified
-// element and whether it was found
-func (a V1ProjectAdvisorsResponse_Lints_Item) Get(fieldName string) (value interface{}, found bool) {
-	if a.AdditionalProperties != nil {
-		value, found = a.AdditionalProperties[fieldName]
-	}
-	return
-}
-
-// Setter for additional properties for V1ProjectAdvisorsResponse_Lints_Item
-func (a *V1ProjectAdvisorsResponse_Lints_Item) Set(fieldName string, value interface{}) {
-	if a.AdditionalProperties == nil {
-		a.AdditionalProperties = make(map[string]interface{})
-	}
-	a.AdditionalProperties[fieldName] = value
-}
-
-// Override default JSON handling for V1ProjectAdvisorsResponse_Lints_Item to handle AdditionalProperties
-func (a *V1ProjectAdvisorsResponse_Lints_Item) UnmarshalJSON(b []byte) error {
-	object := make(map[string]json.RawMessage)
-	err := json.Unmarshal(b, &object)
-	if err != nil {
-		return err
-	}
-
-	if raw, found := object["cache_key"]; found {
-		err = json.Unmarshal(raw, &a.CacheKey)
-		if err != nil {
-			return fmt.Errorf("error reading 'cache_key': %w", err)
-		}
-		delete(object, "cache_key")
-	}
-
-	if raw, found := object["categories"]; found {
-		err = json.Unmarshal(raw, &a.Categories)
-		if err != nil {
-			return fmt.Errorf("error reading 'categories': %w", err)
-		}
-		delete(object, "categories")
-	}
-
-	if raw, found := object["description"]; found {
-		err = json.Unmarshal(raw, &a.Description)
-		if err != nil {
-			return fmt.Errorf("error reading 'description': %w", err)
-		}
-		delete(object, "description")
-	}
-
-	if raw, found := object["detail"]; found {
-		err = json.Unmarshal(raw, &a.Detail)
-		if err != nil {
-			return fmt.Errorf("error reading 'detail': %w", err)
-		}
-		delete(object, "detail")
-	}
-
-	if raw, found := object["facing"]; found {
-		err = json.Unmarshal(raw, &a.Facing)
-		if err != nil {
-			return fmt.Errorf("error reading 'facing': %w", err)
-		}
-		delete(object, "facing")
-	}
-
-	if raw, found := object["level"]; found {
-		err = json.Unmarshal(raw, &a.Level)
-		if err != nil {
-			return fmt.Errorf("error reading 'level': %w", err)
-		}
-		delete(object, "level")
-	}
-
-	if raw, found := object["metadata"]; found {
-		err = json.Unmarshal(raw, &a.Metadata)
-		if err != nil {
-			return fmt.Errorf("error reading 'metadata': %w", err)
-		}
-		delete(object, "metadata")
-	}
-
-	if raw, found := object["name"]; found {
-		err = json.Unmarshal(raw, &a.Name)
-		if err != nil {
-			return fmt.Errorf("error reading 'name': %w", err)
-		}
-		delete(object, "name")
-	}
-
-	if raw, found := object["observed_at"]; found {
-		err = json.Unmarshal(raw, &a.ObservedAt)
-		if err != nil {
-			return fmt.Errorf("error reading 'observed_at': %w", err)
-		}
-		delete(object, "observed_at")
-	}
-
-	if raw, found := object["remediation"]; found {
-		err = json.Unmarshal(raw, &a.Remediation)
-		if err != nil {
-			return fmt.Errorf("error reading 'remediation': %w", err)
-		}
-		delete(object, "remediation")
-	}
-
-	if raw, found := object["title"]; found {
-		err = json.Unmarshal(raw, &a.Title)
-		if err != nil {
-			return fmt.Errorf("error reading 'title': %w", err)
-		}
-		delete(object, "title")
-	}
-
-	if len(object) != 0 {
-		a.AdditionalProperties = make(map[string]interface{})
-		for fieldName, fieldBuf := range object {
-			var fieldVal interface{}
-			err := json.Unmarshal(fieldBuf, &fieldVal)
-			if err != nil {
-				return fmt.Errorf("error unmarshaling field %s: %w", fieldName, err)
-			}
-			a.AdditionalProperties[fieldName] = fieldVal
-		}
-	}
-	return nil
-}
-
-// Override default JSON handling for V1ProjectAdvisorsResponse_Lints_Item to handle AdditionalProperties
-func (a V1ProjectAdvisorsResponse_Lints_Item) MarshalJSON() ([]byte, error) {
-	var err error
-	object := make(map[string]json.RawMessage)
-
-	object["cache_key"], err = json.Marshal(a.CacheKey)
-	if err != nil {
-		return nil, fmt.Errorf("error marshaling 'cache_key': %w", err)
-	}
-
-	if a.Categories != nil {
-		object["categories"], err = json.Marshal(a.Categories)
-		if err != nil {
-			return nil, fmt.Errorf("error marshaling 'categories': %w", err)
-		}
-	}
-
-	object["description"], err = json.Marshal(a.Description)
-	if err != nil {
-		return nil, fmt.Errorf("error marshaling 'description': %w", err)
-	}
-
-	object["detail"], err = json.Marshal(a.Detail)
-	if err != nil {
-		return nil, fmt.Errorf("error marshaling 'detail': %w", err)
-	}
-
-	object["facing"], err = json.Marshal(a.Facing)
-	if err != nil {
-		return nil, fmt.Errorf("error marshaling 'facing': %w", err)
-	}
-
-	object["level"], err = json.Marshal(a.Level)
-	if err != nil {
-		return nil, fmt.Errorf("error marshaling 'level': %w", err)
-	}
-
-	if a.Metadata != nil {
-		object["metadata"], err = json.Marshal(a.Metadata)
-		if err != nil {
-			return nil, fmt.Errorf("error marshaling 'metadata': %w", err)
-		}
-	}
-
-	object["name"], err = json.Marshal(a.Name)
-	if err != nil {
-		return nil, fmt.Errorf("error marshaling 'name': %w", err)
-	}
-
-	if a.ObservedAt != nil {
-		object["observed_at"], err = json.Marshal(a.ObservedAt)
-		if err != nil {
-			return nil, fmt.Errorf("error marshaling 'observed_at': %w", err)
-		}
-	}
-
-	object["remediation"], err = json.Marshal(a.Remediation)
-	if err != nil {
-		return nil, fmt.Errorf("error marshaling 'remediation': %w", err)
-	}
-
-	object["title"], err = json.Marshal(a.Title)
-	if err != nil {
-		return nil, fmt.Errorf("error marshaling 'title': %w", err)
-	}
-
-	for fieldName, field := range a.AdditionalProperties {
-		object[fieldName], err = json.Marshal(field)
-		if err != nil {
-			return nil, fmt.Errorf("error marshaling '%s': %w", fieldName, err)
-		}
-	}
-	return json.Marshal(object)
-}
-
-// AsAnalyticsResponseError0 returns the union data inside the AnalyticsResponse_Error as a AnalyticsResponseError0
-func (t AnalyticsResponse_Error) AsAnalyticsResponseError0() (AnalyticsResponseError0, error) {
-	var body AnalyticsResponseError0
+// AsAnalyticsResponseOutputError0 returns the union data inside the AnalyticsResponseOutput_Error as a AnalyticsResponseOutputError0
+func (t AnalyticsResponseOutput_Error) AsAnalyticsResponseOutputError0() (AnalyticsResponseOutputError0, error) {
+	var body AnalyticsResponseOutputError0
 	err := json.Unmarshal(t.union, &body)
 	return body, err
 }
 
-// FromAnalyticsResponseError0 overwrites any union data inside the AnalyticsResponse_Error as the provided AnalyticsResponseError0
-func (t *AnalyticsResponse_Error) FromAnalyticsResponseError0(v AnalyticsResponseError0) error {
+// FromAnalyticsResponseOutputError0 overwrites any union data inside the AnalyticsResponseOutput_Error as the provided AnalyticsResponseOutputError0
+func (t *AnalyticsResponseOutput_Error) FromAnalyticsResponseOutputError0(v AnalyticsResponseOutputError0) error {
 	b, err := json.Marshal(v)
 	t.union = b
 	return err
 }
 
-// MergeAnalyticsResponseError0 performs a merge with any union data inside the AnalyticsResponse_Error, using the provided AnalyticsResponseError0
-func (t *AnalyticsResponse_Error) MergeAnalyticsResponseError0(v AnalyticsResponseError0) error {
+// MergeAnalyticsResponseOutputError0 performs a merge with any union data inside the AnalyticsResponseOutput_Error, using the provided AnalyticsResponseOutputError0
+func (t *AnalyticsResponseOutput_Error) MergeAnalyticsResponseOutputError0(v AnalyticsResponseOutputError0) error {
 	b, err := json.Marshal(v)
 	if err != nil {
 		return err
@@ -10113,22 +9585,22 @@ func (t *AnalyticsResponse_Error) MergeAnalyticsResponseError0(v AnalyticsRespon
 	return err
 }
 
-// AsAnalyticsResponseError1 returns the union data inside the AnalyticsResponse_Error as a AnalyticsResponseError1
-func (t AnalyticsResponse_Error) AsAnalyticsResponseError1() (AnalyticsResponseError1, error) {
-	var body AnalyticsResponseError1
+// AsAnalyticsResponseOutputError1 returns the union data inside the AnalyticsResponseOutput_Error as a AnalyticsResponseOutputError1
+func (t AnalyticsResponseOutput_Error) AsAnalyticsResponseOutputError1() (AnalyticsResponseOutputError1, error) {
+	var body AnalyticsResponseOutputError1
 	err := json.Unmarshal(t.union, &body)
 	return body, err
 }
 
-// FromAnalyticsResponseError1 overwrites any union data inside the AnalyticsResponse_Error as the provided AnalyticsResponseError1
-func (t *AnalyticsResponse_Error) FromAnalyticsResponseError1(v AnalyticsResponseError1) error {
+// FromAnalyticsResponseOutputError1 overwrites any union data inside the AnalyticsResponseOutput_Error as the provided AnalyticsResponseOutputError1
+func (t *AnalyticsResponseOutput_Error) FromAnalyticsResponseOutputError1(v AnalyticsResponseOutputError1) error {
 	b, err := json.Marshal(v)
 	t.union = b
 	return err
 }
 
-// MergeAnalyticsResponseError1 performs a merge with any union data inside the AnalyticsResponse_Error, using the provided AnalyticsResponseError1
-func (t *AnalyticsResponse_Error) MergeAnalyticsResponseError1(v AnalyticsResponseError1) error {
+// MergeAnalyticsResponseOutputError1 performs a merge with any union data inside the AnalyticsResponseOutput_Error, using the provided AnalyticsResponseOutputError1
+func (t *AnalyticsResponseOutput_Error) MergeAnalyticsResponseOutputError1(v AnalyticsResponseOutputError1) error {
 	b, err := json.Marshal(v)
 	if err != nil {
 		return err
@@ -10139,12 +9611,12 @@ func (t *AnalyticsResponse_Error) MergeAnalyticsResponseError1(v AnalyticsRespon
 	return err
 }
 
-func (t AnalyticsResponse_Error) MarshalJSON() ([]byte, error) {
+func (t AnalyticsResponseOutput_Error) MarshalJSON() ([]byte, error) {
 	b, err := t.union.MarshalJSON()
 	return b, err
 }
 
-func (t *AnalyticsResponse_Error) UnmarshalJSON(b []byte) error {
+func (t *AnalyticsResponseOutput_Error) UnmarshalJSON(b []byte) error {
 	err := t.union.UnmarshalJSON(b)
 	return err
 }
@@ -10501,22 +9973,22 @@ func (t *DiskRequestBody_Attributes) UnmarshalJSON(b []byte) error {
 	return err
 }
 
-// AsDiskResponseAttributes0 returns the union data inside the DiskResponse_Attributes as a DiskResponseAttributes0
-func (t DiskResponse_Attributes) AsDiskResponseAttributes0() (DiskResponseAttributes0, error) {
-	var body DiskResponseAttributes0
+// AsDiskResponseOutputAttributes0 returns the union data inside the DiskResponseOutput_Attributes as a DiskResponseOutputAttributes0
+func (t DiskResponseOutput_Attributes) AsDiskResponseOutputAttributes0() (DiskResponseOutputAttributes0, error) {
+	var body DiskResponseOutputAttributes0
 	err := json.Unmarshal(t.union, &body)
 	return body, err
 }
 
-// FromDiskResponseAttributes0 overwrites any union data inside the DiskResponse_Attributes as the provided DiskResponseAttributes0
-func (t *DiskResponse_Attributes) FromDiskResponseAttributes0(v DiskResponseAttributes0) error {
+// FromDiskResponseOutputAttributes0 overwrites any union data inside the DiskResponseOutput_Attributes as the provided DiskResponseOutputAttributes0
+func (t *DiskResponseOutput_Attributes) FromDiskResponseOutputAttributes0(v DiskResponseOutputAttributes0) error {
 	b, err := json.Marshal(v)
 	t.union = b
 	return err
 }
 
-// MergeDiskResponseAttributes0 performs a merge with any union data inside the DiskResponse_Attributes, using the provided DiskResponseAttributes0
-func (t *DiskResponse_Attributes) MergeDiskResponseAttributes0(v DiskResponseAttributes0) error {
+// MergeDiskResponseOutputAttributes0 performs a merge with any union data inside the DiskResponseOutput_Attributes, using the provided DiskResponseOutputAttributes0
+func (t *DiskResponseOutput_Attributes) MergeDiskResponseOutputAttributes0(v DiskResponseOutputAttributes0) error {
 	b, err := json.Marshal(v)
 	if err != nil {
 		return err
@@ -10527,22 +9999,22 @@ func (t *DiskResponse_Attributes) MergeDiskResponseAttributes0(v DiskResponseAtt
 	return err
 }
 
-// AsDiskResponseAttributes1 returns the union data inside the DiskResponse_Attributes as a DiskResponseAttributes1
-func (t DiskResponse_Attributes) AsDiskResponseAttributes1() (DiskResponseAttributes1, error) {
-	var body DiskResponseAttributes1
+// AsDiskResponseOutputAttributes1 returns the union data inside the DiskResponseOutput_Attributes as a DiskResponseOutputAttributes1
+func (t DiskResponseOutput_Attributes) AsDiskResponseOutputAttributes1() (DiskResponseOutputAttributes1, error) {
+	var body DiskResponseOutputAttributes1
 	err := json.Unmarshal(t.union, &body)
 	return body, err
 }
 
-// FromDiskResponseAttributes1 overwrites any union data inside the DiskResponse_Attributes as the provided DiskResponseAttributes1
-func (t *DiskResponse_Attributes) FromDiskResponseAttributes1(v DiskResponseAttributes1) error {
+// FromDiskResponseOutputAttributes1 overwrites any union data inside the DiskResponseOutput_Attributes as the provided DiskResponseOutputAttributes1
+func (t *DiskResponseOutput_Attributes) FromDiskResponseOutputAttributes1(v DiskResponseOutputAttributes1) error {
 	b, err := json.Marshal(v)
 	t.union = b
 	return err
 }
 
-// MergeDiskResponseAttributes1 performs a merge with any union data inside the DiskResponse_Attributes, using the provided DiskResponseAttributes1
-func (t *DiskResponse_Attributes) MergeDiskResponseAttributes1(v DiskResponseAttributes1) error {
+// MergeDiskResponseOutputAttributes1 performs a merge with any union data inside the DiskResponseOutput_Attributes, using the provided DiskResponseOutputAttributes1
+func (t *DiskResponseOutput_Attributes) MergeDiskResponseOutputAttributes1(v DiskResponseOutputAttributes1) error {
 	b, err := json.Marshal(v)
 	if err != nil {
 		return err
@@ -10553,32 +10025,32 @@ func (t *DiskResponse_Attributes) MergeDiskResponseAttributes1(v DiskResponseAtt
 	return err
 }
 
-func (t DiskResponse_Attributes) MarshalJSON() ([]byte, error) {
+func (t DiskResponseOutput_Attributes) MarshalJSON() ([]byte, error) {
 	b, err := t.union.MarshalJSON()
 	return b, err
 }
 
-func (t *DiskResponse_Attributes) UnmarshalJSON(b []byte) error {
+func (t *DiskResponseOutput_Attributes) UnmarshalJSON(b []byte) error {
 	err := t.union.UnmarshalJSON(b)
 	return err
 }
 
-// AsJitListAccessResponseItems0 returns the union data inside the JitListAccessResponse_Items_Item as a JitListAccessResponseItems0
-func (t JitListAccessResponse_Items_Item) AsJitListAccessResponseItems0() (JitListAccessResponseItems0, error) {
-	var body JitListAccessResponseItems0
+// AsJitListAccessResponseOutputItems0 returns the union data inside the JitListAccessResponseOutput_Items_Item as a JitListAccessResponseOutputItems0
+func (t JitListAccessResponseOutput_Items_Item) AsJitListAccessResponseOutputItems0() (JitListAccessResponseOutputItems0, error) {
+	var body JitListAccessResponseOutputItems0
 	err := json.Unmarshal(t.union, &body)
 	return body, err
 }
 
-// FromJitListAccessResponseItems0 overwrites any union data inside the JitListAccessResponse_Items_Item as the provided JitListAccessResponseItems0
-func (t *JitListAccessResponse_Items_Item) FromJitListAccessResponseItems0(v JitListAccessResponseItems0) error {
+// FromJitListAccessResponseOutputItems0 overwrites any union data inside the JitListAccessResponseOutput_Items_Item as the provided JitListAccessResponseOutputItems0
+func (t *JitListAccessResponseOutput_Items_Item) FromJitListAccessResponseOutputItems0(v JitListAccessResponseOutputItems0) error {
 	b, err := json.Marshal(v)
 	t.union = b
 	return err
 }
 
-// MergeJitListAccessResponseItems0 performs a merge with any union data inside the JitListAccessResponse_Items_Item, using the provided JitListAccessResponseItems0
-func (t *JitListAccessResponse_Items_Item) MergeJitListAccessResponseItems0(v JitListAccessResponseItems0) error {
+// MergeJitListAccessResponseOutputItems0 performs a merge with any union data inside the JitListAccessResponseOutput_Items_Item, using the provided JitListAccessResponseOutputItems0
+func (t *JitListAccessResponseOutput_Items_Item) MergeJitListAccessResponseOutputItems0(v JitListAccessResponseOutputItems0) error {
 	b, err := json.Marshal(v)
 	if err != nil {
 		return err
@@ -10589,22 +10061,22 @@ func (t *JitListAccessResponse_Items_Item) MergeJitListAccessResponseItems0(v Ji
 	return err
 }
 
-// AsJitListAccessResponseItems1 returns the union data inside the JitListAccessResponse_Items_Item as a JitListAccessResponseItems1
-func (t JitListAccessResponse_Items_Item) AsJitListAccessResponseItems1() (JitListAccessResponseItems1, error) {
-	var body JitListAccessResponseItems1
+// AsJitListAccessResponseOutputItems1 returns the union data inside the JitListAccessResponseOutput_Items_Item as a JitListAccessResponseOutputItems1
+func (t JitListAccessResponseOutput_Items_Item) AsJitListAccessResponseOutputItems1() (JitListAccessResponseOutputItems1, error) {
+	var body JitListAccessResponseOutputItems1
 	err := json.Unmarshal(t.union, &body)
 	return body, err
 }
 
-// FromJitListAccessResponseItems1 overwrites any union data inside the JitListAccessResponse_Items_Item as the provided JitListAccessResponseItems1
-func (t *JitListAccessResponse_Items_Item) FromJitListAccessResponseItems1(v JitListAccessResponseItems1) error {
+// FromJitListAccessResponseOutputItems1 overwrites any union data inside the JitListAccessResponseOutput_Items_Item as the provided JitListAccessResponseOutputItems1
+func (t *JitListAccessResponseOutput_Items_Item) FromJitListAccessResponseOutputItems1(v JitListAccessResponseOutputItems1) error {
 	b, err := json.Marshal(v)
 	t.union = b
 	return err
 }
 
-// MergeJitListAccessResponseItems1 performs a merge with any union data inside the JitListAccessResponse_Items_Item, using the provided JitListAccessResponseItems1
-func (t *JitListAccessResponse_Items_Item) MergeJitListAccessResponseItems1(v JitListAccessResponseItems1) error {
+// MergeJitListAccessResponseOutputItems1 performs a merge with any union data inside the JitListAccessResponseOutput_Items_Item, using the provided JitListAccessResponseOutputItems1
+func (t *JitListAccessResponseOutput_Items_Item) MergeJitListAccessResponseOutputItems1(v JitListAccessResponseOutputItems1) error {
 	b, err := json.Marshal(v)
 	if err != nil {
 		return err
@@ -10615,32 +10087,32 @@ func (t *JitListAccessResponse_Items_Item) MergeJitListAccessResponseItems1(v Ji
 	return err
 }
 
-func (t JitListAccessResponse_Items_Item) MarshalJSON() ([]byte, error) {
+func (t JitListAccessResponseOutput_Items_Item) MarshalJSON() ([]byte, error) {
 	b, err := t.union.MarshalJSON()
 	return b, err
 }
 
-func (t *JitListAccessResponse_Items_Item) UnmarshalJSON(b []byte) error {
+func (t *JitListAccessResponseOutput_Items_Item) UnmarshalJSON(b []byte) error {
 	err := t.union.UnmarshalJSON(b)
 	return err
 }
 
-// AsListProjectAddonsResponseAvailableAddonsVariantsId0 returns the union data inside the ListProjectAddonsResponse_AvailableAddons_Variants_Id as a ListProjectAddonsResponseAvailableAddonsVariantsId0
-func (t ListProjectAddonsResponse_AvailableAddons_Variants_Id) AsListProjectAddonsResponseAvailableAddonsVariantsId0() (ListProjectAddonsResponseAvailableAddonsVariantsId0, error) {
-	var body ListProjectAddonsResponseAvailableAddonsVariantsId0
+// AsJsonValueOutput0 returns the union data inside the JsonValueOutput as a JsonValueOutput0
+func (t JsonValueOutput) AsJsonValueOutput0() (JsonValueOutput0, error) {
+	var body JsonValueOutput0
 	err := json.Unmarshal(t.union, &body)
 	return body, err
 }
 
-// FromListProjectAddonsResponseAvailableAddonsVariantsId0 overwrites any union data inside the ListProjectAddonsResponse_AvailableAddons_Variants_Id as the provided ListProjectAddonsResponseAvailableAddonsVariantsId0
-func (t *ListProjectAddonsResponse_AvailableAddons_Variants_Id) FromListProjectAddonsResponseAvailableAddonsVariantsId0(v ListProjectAddonsResponseAvailableAddonsVariantsId0) error {
+// FromJsonValueOutput0 overwrites any union data inside the JsonValueOutput as the provided JsonValueOutput0
+func (t *JsonValueOutput) FromJsonValueOutput0(v JsonValueOutput0) error {
 	b, err := json.Marshal(v)
 	t.union = b
 	return err
 }
 
-// MergeListProjectAddonsResponseAvailableAddonsVariantsId0 performs a merge with any union data inside the ListProjectAddonsResponse_AvailableAddons_Variants_Id, using the provided ListProjectAddonsResponseAvailableAddonsVariantsId0
-func (t *ListProjectAddonsResponse_AvailableAddons_Variants_Id) MergeListProjectAddonsResponseAvailableAddonsVariantsId0(v ListProjectAddonsResponseAvailableAddonsVariantsId0) error {
+// MergeJsonValueOutput0 performs a merge with any union data inside the JsonValueOutput, using the provided JsonValueOutput0
+func (t *JsonValueOutput) MergeJsonValueOutput0(v JsonValueOutput0) error {
 	b, err := json.Marshal(v)
 	if err != nil {
 		return err
@@ -10651,22 +10123,22 @@ func (t *ListProjectAddonsResponse_AvailableAddons_Variants_Id) MergeListProject
 	return err
 }
 
-// AsListProjectAddonsResponseAvailableAddonsVariantsId1 returns the union data inside the ListProjectAddonsResponse_AvailableAddons_Variants_Id as a ListProjectAddonsResponseAvailableAddonsVariantsId1
-func (t ListProjectAddonsResponse_AvailableAddons_Variants_Id) AsListProjectAddonsResponseAvailableAddonsVariantsId1() (ListProjectAddonsResponseAvailableAddonsVariantsId1, error) {
-	var body ListProjectAddonsResponseAvailableAddonsVariantsId1
+// AsJsonValueOutput1 returns the union data inside the JsonValueOutput as a JsonValueOutput1
+func (t JsonValueOutput) AsJsonValueOutput1() (JsonValueOutput1, error) {
+	var body JsonValueOutput1
 	err := json.Unmarshal(t.union, &body)
 	return body, err
 }
 
-// FromListProjectAddonsResponseAvailableAddonsVariantsId1 overwrites any union data inside the ListProjectAddonsResponse_AvailableAddons_Variants_Id as the provided ListProjectAddonsResponseAvailableAddonsVariantsId1
-func (t *ListProjectAddonsResponse_AvailableAddons_Variants_Id) FromListProjectAddonsResponseAvailableAddonsVariantsId1(v ListProjectAddonsResponseAvailableAddonsVariantsId1) error {
+// FromJsonValueOutput1 overwrites any union data inside the JsonValueOutput as the provided JsonValueOutput1
+func (t *JsonValueOutput) FromJsonValueOutput1(v JsonValueOutput1) error {
 	b, err := json.Marshal(v)
 	t.union = b
 	return err
 }
 
-// MergeListProjectAddonsResponseAvailableAddonsVariantsId1 performs a merge with any union data inside the ListProjectAddonsResponse_AvailableAddons_Variants_Id, using the provided ListProjectAddonsResponseAvailableAddonsVariantsId1
-func (t *ListProjectAddonsResponse_AvailableAddons_Variants_Id) MergeListProjectAddonsResponseAvailableAddonsVariantsId1(v ListProjectAddonsResponseAvailableAddonsVariantsId1) error {
+// MergeJsonValueOutput1 performs a merge with any union data inside the JsonValueOutput, using the provided JsonValueOutput1
+func (t *JsonValueOutput) MergeJsonValueOutput1(v JsonValueOutput1) error {
 	b, err := json.Marshal(v)
 	if err != nil {
 		return err
@@ -10677,22 +10149,22 @@ func (t *ListProjectAddonsResponse_AvailableAddons_Variants_Id) MergeListProject
 	return err
 }
 
-// AsListProjectAddonsResponseAvailableAddonsVariantsId2 returns the union data inside the ListProjectAddonsResponse_AvailableAddons_Variants_Id as a ListProjectAddonsResponseAvailableAddonsVariantsId2
-func (t ListProjectAddonsResponse_AvailableAddons_Variants_Id) AsListProjectAddonsResponseAvailableAddonsVariantsId2() (ListProjectAddonsResponseAvailableAddonsVariantsId2, error) {
-	var body ListProjectAddonsResponseAvailableAddonsVariantsId2
+// AsJsonValueOutput2 returns the union data inside the JsonValueOutput as a JsonValueOutput2
+func (t JsonValueOutput) AsJsonValueOutput2() (JsonValueOutput2, error) {
+	var body JsonValueOutput2
 	err := json.Unmarshal(t.union, &body)
 	return body, err
 }
 
-// FromListProjectAddonsResponseAvailableAddonsVariantsId2 overwrites any union data inside the ListProjectAddonsResponse_AvailableAddons_Variants_Id as the provided ListProjectAddonsResponseAvailableAddonsVariantsId2
-func (t *ListProjectAddonsResponse_AvailableAddons_Variants_Id) FromListProjectAddonsResponseAvailableAddonsVariantsId2(v ListProjectAddonsResponseAvailableAddonsVariantsId2) error {
+// FromJsonValueOutput2 overwrites any union data inside the JsonValueOutput as the provided JsonValueOutput2
+func (t *JsonValueOutput) FromJsonValueOutput2(v JsonValueOutput2) error {
 	b, err := json.Marshal(v)
 	t.union = b
 	return err
 }
 
-// MergeListProjectAddonsResponseAvailableAddonsVariantsId2 performs a merge with any union data inside the ListProjectAddonsResponse_AvailableAddons_Variants_Id, using the provided ListProjectAddonsResponseAvailableAddonsVariantsId2
-func (t *ListProjectAddonsResponse_AvailableAddons_Variants_Id) MergeListProjectAddonsResponseAvailableAddonsVariantsId2(v ListProjectAddonsResponseAvailableAddonsVariantsId2) error {
+// MergeJsonValueOutput2 performs a merge with any union data inside the JsonValueOutput, using the provided JsonValueOutput2
+func (t *JsonValueOutput) MergeJsonValueOutput2(v JsonValueOutput2) error {
 	b, err := json.Marshal(v)
 	if err != nil {
 		return err
@@ -10703,162 +10175,32 @@ func (t *ListProjectAddonsResponse_AvailableAddons_Variants_Id) MergeListProject
 	return err
 }
 
-// AsListProjectAddonsResponseAvailableAddonsVariantsId3 returns the union data inside the ListProjectAddonsResponse_AvailableAddons_Variants_Id as a ListProjectAddonsResponseAvailableAddonsVariantsId3
-func (t ListProjectAddonsResponse_AvailableAddons_Variants_Id) AsListProjectAddonsResponseAvailableAddonsVariantsId3() (ListProjectAddonsResponseAvailableAddonsVariantsId3, error) {
-	var body ListProjectAddonsResponseAvailableAddonsVariantsId3
-	err := json.Unmarshal(t.union, &body)
-	return body, err
-}
-
-// FromListProjectAddonsResponseAvailableAddonsVariantsId3 overwrites any union data inside the ListProjectAddonsResponse_AvailableAddons_Variants_Id as the provided ListProjectAddonsResponseAvailableAddonsVariantsId3
-func (t *ListProjectAddonsResponse_AvailableAddons_Variants_Id) FromListProjectAddonsResponseAvailableAddonsVariantsId3(v ListProjectAddonsResponseAvailableAddonsVariantsId3) error {
-	b, err := json.Marshal(v)
-	t.union = b
-	return err
-}
-
-// MergeListProjectAddonsResponseAvailableAddonsVariantsId3 performs a merge with any union data inside the ListProjectAddonsResponse_AvailableAddons_Variants_Id, using the provided ListProjectAddonsResponseAvailableAddonsVariantsId3
-func (t *ListProjectAddonsResponse_AvailableAddons_Variants_Id) MergeListProjectAddonsResponseAvailableAddonsVariantsId3(v ListProjectAddonsResponseAvailableAddonsVariantsId3) error {
-	b, err := json.Marshal(v)
-	if err != nil {
-		return err
-	}
-
-	merged, err := runtime.JSONMerge(t.union, b)
-	t.union = merged
-	return err
-}
-
-// AsListProjectAddonsResponseAvailableAddonsVariantsId4 returns the union data inside the ListProjectAddonsResponse_AvailableAddons_Variants_Id as a ListProjectAddonsResponseAvailableAddonsVariantsId4
-func (t ListProjectAddonsResponse_AvailableAddons_Variants_Id) AsListProjectAddonsResponseAvailableAddonsVariantsId4() (ListProjectAddonsResponseAvailableAddonsVariantsId4, error) {
-	var body ListProjectAddonsResponseAvailableAddonsVariantsId4
-	err := json.Unmarshal(t.union, &body)
-	return body, err
-}
-
-// FromListProjectAddonsResponseAvailableAddonsVariantsId4 overwrites any union data inside the ListProjectAddonsResponse_AvailableAddons_Variants_Id as the provided ListProjectAddonsResponseAvailableAddonsVariantsId4
-func (t *ListProjectAddonsResponse_AvailableAddons_Variants_Id) FromListProjectAddonsResponseAvailableAddonsVariantsId4(v ListProjectAddonsResponseAvailableAddonsVariantsId4) error {
-	b, err := json.Marshal(v)
-	t.union = b
-	return err
-}
-
-// MergeListProjectAddonsResponseAvailableAddonsVariantsId4 performs a merge with any union data inside the ListProjectAddonsResponse_AvailableAddons_Variants_Id, using the provided ListProjectAddonsResponseAvailableAddonsVariantsId4
-func (t *ListProjectAddonsResponse_AvailableAddons_Variants_Id) MergeListProjectAddonsResponseAvailableAddonsVariantsId4(v ListProjectAddonsResponseAvailableAddonsVariantsId4) error {
-	b, err := json.Marshal(v)
-	if err != nil {
-		return err
-	}
-
-	merged, err := runtime.JSONMerge(t.union, b)
-	t.union = merged
-	return err
-}
-
-// AsListProjectAddonsResponseAvailableAddonsVariantsId5 returns the union data inside the ListProjectAddonsResponse_AvailableAddons_Variants_Id as a ListProjectAddonsResponseAvailableAddonsVariantsId5
-func (t ListProjectAddonsResponse_AvailableAddons_Variants_Id) AsListProjectAddonsResponseAvailableAddonsVariantsId5() (ListProjectAddonsResponseAvailableAddonsVariantsId5, error) {
-	var body ListProjectAddonsResponseAvailableAddonsVariantsId5
-	err := json.Unmarshal(t.union, &body)
-	return body, err
-}
-
-// FromListProjectAddonsResponseAvailableAddonsVariantsId5 overwrites any union data inside the ListProjectAddonsResponse_AvailableAddons_Variants_Id as the provided ListProjectAddonsResponseAvailableAddonsVariantsId5
-func (t *ListProjectAddonsResponse_AvailableAddons_Variants_Id) FromListProjectAddonsResponseAvailableAddonsVariantsId5(v ListProjectAddonsResponseAvailableAddonsVariantsId5) error {
-	b, err := json.Marshal(v)
-	t.union = b
-	return err
-}
-
-// MergeListProjectAddonsResponseAvailableAddonsVariantsId5 performs a merge with any union data inside the ListProjectAddonsResponse_AvailableAddons_Variants_Id, using the provided ListProjectAddonsResponseAvailableAddonsVariantsId5
-func (t *ListProjectAddonsResponse_AvailableAddons_Variants_Id) MergeListProjectAddonsResponseAvailableAddonsVariantsId5(v ListProjectAddonsResponseAvailableAddonsVariantsId5) error {
-	b, err := json.Marshal(v)
-	if err != nil {
-		return err
-	}
-
-	merged, err := runtime.JSONMerge(t.union, b)
-	t.union = merged
-	return err
-}
-
-// AsListProjectAddonsResponseAvailableAddonsVariantsId6 returns the union data inside the ListProjectAddonsResponse_AvailableAddons_Variants_Id as a ListProjectAddonsResponseAvailableAddonsVariantsId6
-func (t ListProjectAddonsResponse_AvailableAddons_Variants_Id) AsListProjectAddonsResponseAvailableAddonsVariantsId6() (ListProjectAddonsResponseAvailableAddonsVariantsId6, error) {
-	var body ListProjectAddonsResponseAvailableAddonsVariantsId6
-	err := json.Unmarshal(t.union, &body)
-	return body, err
-}
-
-// FromListProjectAddonsResponseAvailableAddonsVariantsId6 overwrites any union data inside the ListProjectAddonsResponse_AvailableAddons_Variants_Id as the provided ListProjectAddonsResponseAvailableAddonsVariantsId6
-func (t *ListProjectAddonsResponse_AvailableAddons_Variants_Id) FromListProjectAddonsResponseAvailableAddonsVariantsId6(v ListProjectAddonsResponseAvailableAddonsVariantsId6) error {
-	b, err := json.Marshal(v)
-	t.union = b
-	return err
-}
-
-// MergeListProjectAddonsResponseAvailableAddonsVariantsId6 performs a merge with any union data inside the ListProjectAddonsResponse_AvailableAddons_Variants_Id, using the provided ListProjectAddonsResponseAvailableAddonsVariantsId6
-func (t *ListProjectAddonsResponse_AvailableAddons_Variants_Id) MergeListProjectAddonsResponseAvailableAddonsVariantsId6(v ListProjectAddonsResponseAvailableAddonsVariantsId6) error {
-	b, err := json.Marshal(v)
-	if err != nil {
-		return err
-	}
-
-	merged, err := runtime.JSONMerge(t.union, b)
-	t.union = merged
-	return err
-}
-
-// AsListProjectAddonsResponseAvailableAddonsVariantsId7 returns the union data inside the ListProjectAddonsResponse_AvailableAddons_Variants_Id as a ListProjectAddonsResponseAvailableAddonsVariantsId7
-func (t ListProjectAddonsResponse_AvailableAddons_Variants_Id) AsListProjectAddonsResponseAvailableAddonsVariantsId7() (ListProjectAddonsResponseAvailableAddonsVariantsId7, error) {
-	var body ListProjectAddonsResponseAvailableAddonsVariantsId7
-	err := json.Unmarshal(t.union, &body)
-	return body, err
-}
-
-// FromListProjectAddonsResponseAvailableAddonsVariantsId7 overwrites any union data inside the ListProjectAddonsResponse_AvailableAddons_Variants_Id as the provided ListProjectAddonsResponseAvailableAddonsVariantsId7
-func (t *ListProjectAddonsResponse_AvailableAddons_Variants_Id) FromListProjectAddonsResponseAvailableAddonsVariantsId7(v ListProjectAddonsResponseAvailableAddonsVariantsId7) error {
-	b, err := json.Marshal(v)
-	t.union = b
-	return err
-}
-
-// MergeListProjectAddonsResponseAvailableAddonsVariantsId7 performs a merge with any union data inside the ListProjectAddonsResponse_AvailableAddons_Variants_Id, using the provided ListProjectAddonsResponseAvailableAddonsVariantsId7
-func (t *ListProjectAddonsResponse_AvailableAddons_Variants_Id) MergeListProjectAddonsResponseAvailableAddonsVariantsId7(v ListProjectAddonsResponseAvailableAddonsVariantsId7) error {
-	b, err := json.Marshal(v)
-	if err != nil {
-		return err
-	}
-
-	merged, err := runtime.JSONMerge(t.union, b)
-	t.union = merged
-	return err
-}
-
-func (t ListProjectAddonsResponse_AvailableAddons_Variants_Id) MarshalJSON() ([]byte, error) {
+func (t JsonValueOutput) MarshalJSON() ([]byte, error) {
 	b, err := t.union.MarshalJSON()
 	return b, err
 }
 
-func (t *ListProjectAddonsResponse_AvailableAddons_Variants_Id) UnmarshalJSON(b []byte) error {
+func (t *JsonValueOutput) UnmarshalJSON(b []byte) error {
 	err := t.union.UnmarshalJSON(b)
 	return err
 }
 
-// AsListProjectAddonsResponseSelectedAddonsVariantId0 returns the union data inside the ListProjectAddonsResponse_SelectedAddons_Variant_Id as a ListProjectAddonsResponseSelectedAddonsVariantId0
-func (t ListProjectAddonsResponse_SelectedAddons_Variant_Id) AsListProjectAddonsResponseSelectedAddonsVariantId0() (ListProjectAddonsResponseSelectedAddonsVariantId0, error) {
-	var body ListProjectAddonsResponseSelectedAddonsVariantId0
+// AsJsonValueOutput00 returns the union data inside the JsonValueOutput0 as a JsonValueOutput00
+func (t JsonValueOutput0) AsJsonValueOutput00() (JsonValueOutput00, error) {
+	var body JsonValueOutput00
 	err := json.Unmarshal(t.union, &body)
 	return body, err
 }
 
-// FromListProjectAddonsResponseSelectedAddonsVariantId0 overwrites any union data inside the ListProjectAddonsResponse_SelectedAddons_Variant_Id as the provided ListProjectAddonsResponseSelectedAddonsVariantId0
-func (t *ListProjectAddonsResponse_SelectedAddons_Variant_Id) FromListProjectAddonsResponseSelectedAddonsVariantId0(v ListProjectAddonsResponseSelectedAddonsVariantId0) error {
+// FromJsonValueOutput00 overwrites any union data inside the JsonValueOutput0 as the provided JsonValueOutput00
+func (t *JsonValueOutput0) FromJsonValueOutput00(v JsonValueOutput00) error {
 	b, err := json.Marshal(v)
 	t.union = b
 	return err
 }
 
-// MergeListProjectAddonsResponseSelectedAddonsVariantId0 performs a merge with any union data inside the ListProjectAddonsResponse_SelectedAddons_Variant_Id, using the provided ListProjectAddonsResponseSelectedAddonsVariantId0
-func (t *ListProjectAddonsResponse_SelectedAddons_Variant_Id) MergeListProjectAddonsResponseSelectedAddonsVariantId0(v ListProjectAddonsResponseSelectedAddonsVariantId0) error {
+// MergeJsonValueOutput00 performs a merge with any union data inside the JsonValueOutput0, using the provided JsonValueOutput00
+func (t *JsonValueOutput0) MergeJsonValueOutput00(v JsonValueOutput00) error {
 	b, err := json.Marshal(v)
 	if err != nil {
 		return err
@@ -10869,22 +10211,22 @@ func (t *ListProjectAddonsResponse_SelectedAddons_Variant_Id) MergeListProjectAd
 	return err
 }
 
-// AsListProjectAddonsResponseSelectedAddonsVariantId1 returns the union data inside the ListProjectAddonsResponse_SelectedAddons_Variant_Id as a ListProjectAddonsResponseSelectedAddonsVariantId1
-func (t ListProjectAddonsResponse_SelectedAddons_Variant_Id) AsListProjectAddonsResponseSelectedAddonsVariantId1() (ListProjectAddonsResponseSelectedAddonsVariantId1, error) {
-	var body ListProjectAddonsResponseSelectedAddonsVariantId1
+// AsJsonValueOutput01 returns the union data inside the JsonValueOutput0 as a JsonValueOutput01
+func (t JsonValueOutput0) AsJsonValueOutput01() (JsonValueOutput01, error) {
+	var body JsonValueOutput01
 	err := json.Unmarshal(t.union, &body)
 	return body, err
 }
 
-// FromListProjectAddonsResponseSelectedAddonsVariantId1 overwrites any union data inside the ListProjectAddonsResponse_SelectedAddons_Variant_Id as the provided ListProjectAddonsResponseSelectedAddonsVariantId1
-func (t *ListProjectAddonsResponse_SelectedAddons_Variant_Id) FromListProjectAddonsResponseSelectedAddonsVariantId1(v ListProjectAddonsResponseSelectedAddonsVariantId1) error {
+// FromJsonValueOutput01 overwrites any union data inside the JsonValueOutput0 as the provided JsonValueOutput01
+func (t *JsonValueOutput0) FromJsonValueOutput01(v JsonValueOutput01) error {
 	b, err := json.Marshal(v)
 	t.union = b
 	return err
 }
 
-// MergeListProjectAddonsResponseSelectedAddonsVariantId1 performs a merge with any union data inside the ListProjectAddonsResponse_SelectedAddons_Variant_Id, using the provided ListProjectAddonsResponseSelectedAddonsVariantId1
-func (t *ListProjectAddonsResponse_SelectedAddons_Variant_Id) MergeListProjectAddonsResponseSelectedAddonsVariantId1(v ListProjectAddonsResponseSelectedAddonsVariantId1) error {
+// MergeJsonValueOutput01 performs a merge with any union data inside the JsonValueOutput0, using the provided JsonValueOutput01
+func (t *JsonValueOutput0) MergeJsonValueOutput01(v JsonValueOutput01) error {
 	b, err := json.Marshal(v)
 	if err != nil {
 		return err
@@ -10895,22 +10237,22 @@ func (t *ListProjectAddonsResponse_SelectedAddons_Variant_Id) MergeListProjectAd
 	return err
 }
 
-// AsListProjectAddonsResponseSelectedAddonsVariantId2 returns the union data inside the ListProjectAddonsResponse_SelectedAddons_Variant_Id as a ListProjectAddonsResponseSelectedAddonsVariantId2
-func (t ListProjectAddonsResponse_SelectedAddons_Variant_Id) AsListProjectAddonsResponseSelectedAddonsVariantId2() (ListProjectAddonsResponseSelectedAddonsVariantId2, error) {
-	var body ListProjectAddonsResponseSelectedAddonsVariantId2
+// AsJsonValueOutput02 returns the union data inside the JsonValueOutput0 as a JsonValueOutput02
+func (t JsonValueOutput0) AsJsonValueOutput02() (JsonValueOutput02, error) {
+	var body JsonValueOutput02
 	err := json.Unmarshal(t.union, &body)
 	return body, err
 }
 
-// FromListProjectAddonsResponseSelectedAddonsVariantId2 overwrites any union data inside the ListProjectAddonsResponse_SelectedAddons_Variant_Id as the provided ListProjectAddonsResponseSelectedAddonsVariantId2
-func (t *ListProjectAddonsResponse_SelectedAddons_Variant_Id) FromListProjectAddonsResponseSelectedAddonsVariantId2(v ListProjectAddonsResponseSelectedAddonsVariantId2) error {
+// FromJsonValueOutput02 overwrites any union data inside the JsonValueOutput0 as the provided JsonValueOutput02
+func (t *JsonValueOutput0) FromJsonValueOutput02(v JsonValueOutput02) error {
 	b, err := json.Marshal(v)
 	t.union = b
 	return err
 }
 
-// MergeListProjectAddonsResponseSelectedAddonsVariantId2 performs a merge with any union data inside the ListProjectAddonsResponse_SelectedAddons_Variant_Id, using the provided ListProjectAddonsResponseSelectedAddonsVariantId2
-func (t *ListProjectAddonsResponse_SelectedAddons_Variant_Id) MergeListProjectAddonsResponseSelectedAddonsVariantId2(v ListProjectAddonsResponseSelectedAddonsVariantId2) error {
+// MergeJsonValueOutput02 performs a merge with any union data inside the JsonValueOutput0, using the provided JsonValueOutput02
+func (t *JsonValueOutput0) MergeJsonValueOutput02(v JsonValueOutput02) error {
 	b, err := json.Marshal(v)
 	if err != nil {
 		return err
@@ -10921,162 +10263,32 @@ func (t *ListProjectAddonsResponse_SelectedAddons_Variant_Id) MergeListProjectAd
 	return err
 }
 
-// AsListProjectAddonsResponseSelectedAddonsVariantId3 returns the union data inside the ListProjectAddonsResponse_SelectedAddons_Variant_Id as a ListProjectAddonsResponseSelectedAddonsVariantId3
-func (t ListProjectAddonsResponse_SelectedAddons_Variant_Id) AsListProjectAddonsResponseSelectedAddonsVariantId3() (ListProjectAddonsResponseSelectedAddonsVariantId3, error) {
-	var body ListProjectAddonsResponseSelectedAddonsVariantId3
-	err := json.Unmarshal(t.union, &body)
-	return body, err
-}
-
-// FromListProjectAddonsResponseSelectedAddonsVariantId3 overwrites any union data inside the ListProjectAddonsResponse_SelectedAddons_Variant_Id as the provided ListProjectAddonsResponseSelectedAddonsVariantId3
-func (t *ListProjectAddonsResponse_SelectedAddons_Variant_Id) FromListProjectAddonsResponseSelectedAddonsVariantId3(v ListProjectAddonsResponseSelectedAddonsVariantId3) error {
-	b, err := json.Marshal(v)
-	t.union = b
-	return err
-}
-
-// MergeListProjectAddonsResponseSelectedAddonsVariantId3 performs a merge with any union data inside the ListProjectAddonsResponse_SelectedAddons_Variant_Id, using the provided ListProjectAddonsResponseSelectedAddonsVariantId3
-func (t *ListProjectAddonsResponse_SelectedAddons_Variant_Id) MergeListProjectAddonsResponseSelectedAddonsVariantId3(v ListProjectAddonsResponseSelectedAddonsVariantId3) error {
-	b, err := json.Marshal(v)
-	if err != nil {
-		return err
-	}
-
-	merged, err := runtime.JSONMerge(t.union, b)
-	t.union = merged
-	return err
-}
-
-// AsListProjectAddonsResponseSelectedAddonsVariantId4 returns the union data inside the ListProjectAddonsResponse_SelectedAddons_Variant_Id as a ListProjectAddonsResponseSelectedAddonsVariantId4
-func (t ListProjectAddonsResponse_SelectedAddons_Variant_Id) AsListProjectAddonsResponseSelectedAddonsVariantId4() (ListProjectAddonsResponseSelectedAddonsVariantId4, error) {
-	var body ListProjectAddonsResponseSelectedAddonsVariantId4
-	err := json.Unmarshal(t.union, &body)
-	return body, err
-}
-
-// FromListProjectAddonsResponseSelectedAddonsVariantId4 overwrites any union data inside the ListProjectAddonsResponse_SelectedAddons_Variant_Id as the provided ListProjectAddonsResponseSelectedAddonsVariantId4
-func (t *ListProjectAddonsResponse_SelectedAddons_Variant_Id) FromListProjectAddonsResponseSelectedAddonsVariantId4(v ListProjectAddonsResponseSelectedAddonsVariantId4) error {
-	b, err := json.Marshal(v)
-	t.union = b
-	return err
-}
-
-// MergeListProjectAddonsResponseSelectedAddonsVariantId4 performs a merge with any union data inside the ListProjectAddonsResponse_SelectedAddons_Variant_Id, using the provided ListProjectAddonsResponseSelectedAddonsVariantId4
-func (t *ListProjectAddonsResponse_SelectedAddons_Variant_Id) MergeListProjectAddonsResponseSelectedAddonsVariantId4(v ListProjectAddonsResponseSelectedAddonsVariantId4) error {
-	b, err := json.Marshal(v)
-	if err != nil {
-		return err
-	}
-
-	merged, err := runtime.JSONMerge(t.union, b)
-	t.union = merged
-	return err
-}
-
-// AsListProjectAddonsResponseSelectedAddonsVariantId5 returns the union data inside the ListProjectAddonsResponse_SelectedAddons_Variant_Id as a ListProjectAddonsResponseSelectedAddonsVariantId5
-func (t ListProjectAddonsResponse_SelectedAddons_Variant_Id) AsListProjectAddonsResponseSelectedAddonsVariantId5() (ListProjectAddonsResponseSelectedAddonsVariantId5, error) {
-	var body ListProjectAddonsResponseSelectedAddonsVariantId5
-	err := json.Unmarshal(t.union, &body)
-	return body, err
-}
-
-// FromListProjectAddonsResponseSelectedAddonsVariantId5 overwrites any union data inside the ListProjectAddonsResponse_SelectedAddons_Variant_Id as the provided ListProjectAddonsResponseSelectedAddonsVariantId5
-func (t *ListProjectAddonsResponse_SelectedAddons_Variant_Id) FromListProjectAddonsResponseSelectedAddonsVariantId5(v ListProjectAddonsResponseSelectedAddonsVariantId5) error {
-	b, err := json.Marshal(v)
-	t.union = b
-	return err
-}
-
-// MergeListProjectAddonsResponseSelectedAddonsVariantId5 performs a merge with any union data inside the ListProjectAddonsResponse_SelectedAddons_Variant_Id, using the provided ListProjectAddonsResponseSelectedAddonsVariantId5
-func (t *ListProjectAddonsResponse_SelectedAddons_Variant_Id) MergeListProjectAddonsResponseSelectedAddonsVariantId5(v ListProjectAddonsResponseSelectedAddonsVariantId5) error {
-	b, err := json.Marshal(v)
-	if err != nil {
-		return err
-	}
-
-	merged, err := runtime.JSONMerge(t.union, b)
-	t.union = merged
-	return err
-}
-
-// AsListProjectAddonsResponseSelectedAddonsVariantId6 returns the union data inside the ListProjectAddonsResponse_SelectedAddons_Variant_Id as a ListProjectAddonsResponseSelectedAddonsVariantId6
-func (t ListProjectAddonsResponse_SelectedAddons_Variant_Id) AsListProjectAddonsResponseSelectedAddonsVariantId6() (ListProjectAddonsResponseSelectedAddonsVariantId6, error) {
-	var body ListProjectAddonsResponseSelectedAddonsVariantId6
-	err := json.Unmarshal(t.union, &body)
-	return body, err
-}
-
-// FromListProjectAddonsResponseSelectedAddonsVariantId6 overwrites any union data inside the ListProjectAddonsResponse_SelectedAddons_Variant_Id as the provided ListProjectAddonsResponseSelectedAddonsVariantId6
-func (t *ListProjectAddonsResponse_SelectedAddons_Variant_Id) FromListProjectAddonsResponseSelectedAddonsVariantId6(v ListProjectAddonsResponseSelectedAddonsVariantId6) error {
-	b, err := json.Marshal(v)
-	t.union = b
-	return err
-}
-
-// MergeListProjectAddonsResponseSelectedAddonsVariantId6 performs a merge with any union data inside the ListProjectAddonsResponse_SelectedAddons_Variant_Id, using the provided ListProjectAddonsResponseSelectedAddonsVariantId6
-func (t *ListProjectAddonsResponse_SelectedAddons_Variant_Id) MergeListProjectAddonsResponseSelectedAddonsVariantId6(v ListProjectAddonsResponseSelectedAddonsVariantId6) error {
-	b, err := json.Marshal(v)
-	if err != nil {
-		return err
-	}
-
-	merged, err := runtime.JSONMerge(t.union, b)
-	t.union = merged
-	return err
-}
-
-// AsListProjectAddonsResponseSelectedAddonsVariantId7 returns the union data inside the ListProjectAddonsResponse_SelectedAddons_Variant_Id as a ListProjectAddonsResponseSelectedAddonsVariantId7
-func (t ListProjectAddonsResponse_SelectedAddons_Variant_Id) AsListProjectAddonsResponseSelectedAddonsVariantId7() (ListProjectAddonsResponseSelectedAddonsVariantId7, error) {
-	var body ListProjectAddonsResponseSelectedAddonsVariantId7
-	err := json.Unmarshal(t.union, &body)
-	return body, err
-}
-
-// FromListProjectAddonsResponseSelectedAddonsVariantId7 overwrites any union data inside the ListProjectAddonsResponse_SelectedAddons_Variant_Id as the provided ListProjectAddonsResponseSelectedAddonsVariantId7
-func (t *ListProjectAddonsResponse_SelectedAddons_Variant_Id) FromListProjectAddonsResponseSelectedAddonsVariantId7(v ListProjectAddonsResponseSelectedAddonsVariantId7) error {
-	b, err := json.Marshal(v)
-	t.union = b
-	return err
-}
-
-// MergeListProjectAddonsResponseSelectedAddonsVariantId7 performs a merge with any union data inside the ListProjectAddonsResponse_SelectedAddons_Variant_Id, using the provided ListProjectAddonsResponseSelectedAddonsVariantId7
-func (t *ListProjectAddonsResponse_SelectedAddons_Variant_Id) MergeListProjectAddonsResponseSelectedAddonsVariantId7(v ListProjectAddonsResponseSelectedAddonsVariantId7) error {
-	b, err := json.Marshal(v)
-	if err != nil {
-		return err
-	}
-
-	merged, err := runtime.JSONMerge(t.union, b)
-	t.union = merged
-	return err
-}
-
-func (t ListProjectAddonsResponse_SelectedAddons_Variant_Id) MarshalJSON() ([]byte, error) {
+func (t JsonValueOutput0) MarshalJSON() ([]byte, error) {
 	b, err := t.union.MarshalJSON()
 	return b, err
 }
 
-func (t *ListProjectAddonsResponse_SelectedAddons_Variant_Id) UnmarshalJSON(b []byte) error {
+func (t *JsonValueOutput0) UnmarshalJSON(b []byte) error {
 	err := t.union.UnmarshalJSON(b)
 	return err
 }
 
-// AsListProjectAddonsResponseJsonValue0 returns the union data inside the ListProjectAddonsResponseJsonValue as a ListProjectAddonsResponseJsonValue0
-func (t ListProjectAddonsResponseJsonValue) AsListProjectAddonsResponseJsonValue0() (ListProjectAddonsResponseJsonValue0, error) {
-	var body ListProjectAddonsResponseJsonValue0
+// AsListProjectAddonsResponseOutputAvailableAddonsVariantsId0 returns the union data inside the ListProjectAddonsResponseOutput_AvailableAddons_Variants_Id as a ListProjectAddonsResponseOutputAvailableAddonsVariantsId0
+func (t ListProjectAddonsResponseOutput_AvailableAddons_Variants_Id) AsListProjectAddonsResponseOutputAvailableAddonsVariantsId0() (ListProjectAddonsResponseOutputAvailableAddonsVariantsId0, error) {
+	var body ListProjectAddonsResponseOutputAvailableAddonsVariantsId0
 	err := json.Unmarshal(t.union, &body)
 	return body, err
 }
 
-// FromListProjectAddonsResponseJsonValue0 overwrites any union data inside the ListProjectAddonsResponseJsonValue as the provided ListProjectAddonsResponseJsonValue0
-func (t *ListProjectAddonsResponseJsonValue) FromListProjectAddonsResponseJsonValue0(v ListProjectAddonsResponseJsonValue0) error {
+// FromListProjectAddonsResponseOutputAvailableAddonsVariantsId0 overwrites any union data inside the ListProjectAddonsResponseOutput_AvailableAddons_Variants_Id as the provided ListProjectAddonsResponseOutputAvailableAddonsVariantsId0
+func (t *ListProjectAddonsResponseOutput_AvailableAddons_Variants_Id) FromListProjectAddonsResponseOutputAvailableAddonsVariantsId0(v ListProjectAddonsResponseOutputAvailableAddonsVariantsId0) error {
 	b, err := json.Marshal(v)
 	t.union = b
 	return err
 }
 
-// MergeListProjectAddonsResponseJsonValue0 performs a merge with any union data inside the ListProjectAddonsResponseJsonValue, using the provided ListProjectAddonsResponseJsonValue0
-func (t *ListProjectAddonsResponseJsonValue) MergeListProjectAddonsResponseJsonValue0(v ListProjectAddonsResponseJsonValue0) error {
+// MergeListProjectAddonsResponseOutputAvailableAddonsVariantsId0 performs a merge with any union data inside the ListProjectAddonsResponseOutput_AvailableAddons_Variants_Id, using the provided ListProjectAddonsResponseOutputAvailableAddonsVariantsId0
+func (t *ListProjectAddonsResponseOutput_AvailableAddons_Variants_Id) MergeListProjectAddonsResponseOutputAvailableAddonsVariantsId0(v ListProjectAddonsResponseOutputAvailableAddonsVariantsId0) error {
 	b, err := json.Marshal(v)
 	if err != nil {
 		return err
@@ -11087,22 +10299,22 @@ func (t *ListProjectAddonsResponseJsonValue) MergeListProjectAddonsResponseJsonV
 	return err
 }
 
-// AsListProjectAddonsResponseJsonValue1 returns the union data inside the ListProjectAddonsResponseJsonValue as a ListProjectAddonsResponseJsonValue1
-func (t ListProjectAddonsResponseJsonValue) AsListProjectAddonsResponseJsonValue1() (ListProjectAddonsResponseJsonValue1, error) {
-	var body ListProjectAddonsResponseJsonValue1
+// AsListProjectAddonsResponseOutputAvailableAddonsVariantsId1 returns the union data inside the ListProjectAddonsResponseOutput_AvailableAddons_Variants_Id as a ListProjectAddonsResponseOutputAvailableAddonsVariantsId1
+func (t ListProjectAddonsResponseOutput_AvailableAddons_Variants_Id) AsListProjectAddonsResponseOutputAvailableAddonsVariantsId1() (ListProjectAddonsResponseOutputAvailableAddonsVariantsId1, error) {
+	var body ListProjectAddonsResponseOutputAvailableAddonsVariantsId1
 	err := json.Unmarshal(t.union, &body)
 	return body, err
 }
 
-// FromListProjectAddonsResponseJsonValue1 overwrites any union data inside the ListProjectAddonsResponseJsonValue as the provided ListProjectAddonsResponseJsonValue1
-func (t *ListProjectAddonsResponseJsonValue) FromListProjectAddonsResponseJsonValue1(v ListProjectAddonsResponseJsonValue1) error {
+// FromListProjectAddonsResponseOutputAvailableAddonsVariantsId1 overwrites any union data inside the ListProjectAddonsResponseOutput_AvailableAddons_Variants_Id as the provided ListProjectAddonsResponseOutputAvailableAddonsVariantsId1
+func (t *ListProjectAddonsResponseOutput_AvailableAddons_Variants_Id) FromListProjectAddonsResponseOutputAvailableAddonsVariantsId1(v ListProjectAddonsResponseOutputAvailableAddonsVariantsId1) error {
 	b, err := json.Marshal(v)
 	t.union = b
 	return err
 }
 
-// MergeListProjectAddonsResponseJsonValue1 performs a merge with any union data inside the ListProjectAddonsResponseJsonValue, using the provided ListProjectAddonsResponseJsonValue1
-func (t *ListProjectAddonsResponseJsonValue) MergeListProjectAddonsResponseJsonValue1(v ListProjectAddonsResponseJsonValue1) error {
+// MergeListProjectAddonsResponseOutputAvailableAddonsVariantsId1 performs a merge with any union data inside the ListProjectAddonsResponseOutput_AvailableAddons_Variants_Id, using the provided ListProjectAddonsResponseOutputAvailableAddonsVariantsId1
+func (t *ListProjectAddonsResponseOutput_AvailableAddons_Variants_Id) MergeListProjectAddonsResponseOutputAvailableAddonsVariantsId1(v ListProjectAddonsResponseOutputAvailableAddonsVariantsId1) error {
 	b, err := json.Marshal(v)
 	if err != nil {
 		return err
@@ -11113,22 +10325,22 @@ func (t *ListProjectAddonsResponseJsonValue) MergeListProjectAddonsResponseJsonV
 	return err
 }
 
-// AsListProjectAddonsResponseJsonValue2 returns the union data inside the ListProjectAddonsResponseJsonValue as a ListProjectAddonsResponseJsonValue2
-func (t ListProjectAddonsResponseJsonValue) AsListProjectAddonsResponseJsonValue2() (ListProjectAddonsResponseJsonValue2, error) {
-	var body ListProjectAddonsResponseJsonValue2
+// AsListProjectAddonsResponseOutputAvailableAddonsVariantsId2 returns the union data inside the ListProjectAddonsResponseOutput_AvailableAddons_Variants_Id as a ListProjectAddonsResponseOutputAvailableAddonsVariantsId2
+func (t ListProjectAddonsResponseOutput_AvailableAddons_Variants_Id) AsListProjectAddonsResponseOutputAvailableAddonsVariantsId2() (ListProjectAddonsResponseOutputAvailableAddonsVariantsId2, error) {
+	var body ListProjectAddonsResponseOutputAvailableAddonsVariantsId2
 	err := json.Unmarshal(t.union, &body)
 	return body, err
 }
 
-// FromListProjectAddonsResponseJsonValue2 overwrites any union data inside the ListProjectAddonsResponseJsonValue as the provided ListProjectAddonsResponseJsonValue2
-func (t *ListProjectAddonsResponseJsonValue) FromListProjectAddonsResponseJsonValue2(v ListProjectAddonsResponseJsonValue2) error {
+// FromListProjectAddonsResponseOutputAvailableAddonsVariantsId2 overwrites any union data inside the ListProjectAddonsResponseOutput_AvailableAddons_Variants_Id as the provided ListProjectAddonsResponseOutputAvailableAddonsVariantsId2
+func (t *ListProjectAddonsResponseOutput_AvailableAddons_Variants_Id) FromListProjectAddonsResponseOutputAvailableAddonsVariantsId2(v ListProjectAddonsResponseOutputAvailableAddonsVariantsId2) error {
 	b, err := json.Marshal(v)
 	t.union = b
 	return err
 }
 
-// MergeListProjectAddonsResponseJsonValue2 performs a merge with any union data inside the ListProjectAddonsResponseJsonValue, using the provided ListProjectAddonsResponseJsonValue2
-func (t *ListProjectAddonsResponseJsonValue) MergeListProjectAddonsResponseJsonValue2(v ListProjectAddonsResponseJsonValue2) error {
+// MergeListProjectAddonsResponseOutputAvailableAddonsVariantsId2 performs a merge with any union data inside the ListProjectAddonsResponseOutput_AvailableAddons_Variants_Id, using the provided ListProjectAddonsResponseOutputAvailableAddonsVariantsId2
+func (t *ListProjectAddonsResponseOutput_AvailableAddons_Variants_Id) MergeListProjectAddonsResponseOutputAvailableAddonsVariantsId2(v ListProjectAddonsResponseOutputAvailableAddonsVariantsId2) error {
 	b, err := json.Marshal(v)
 	if err != nil {
 		return err
@@ -11139,32 +10351,162 @@ func (t *ListProjectAddonsResponseJsonValue) MergeListProjectAddonsResponseJsonV
 	return err
 }
 
-func (t ListProjectAddonsResponseJsonValue) MarshalJSON() ([]byte, error) {
+// AsListProjectAddonsResponseOutputAvailableAddonsVariantsId3 returns the union data inside the ListProjectAddonsResponseOutput_AvailableAddons_Variants_Id as a ListProjectAddonsResponseOutputAvailableAddonsVariantsId3
+func (t ListProjectAddonsResponseOutput_AvailableAddons_Variants_Id) AsListProjectAddonsResponseOutputAvailableAddonsVariantsId3() (ListProjectAddonsResponseOutputAvailableAddonsVariantsId3, error) {
+	var body ListProjectAddonsResponseOutputAvailableAddonsVariantsId3
+	err := json.Unmarshal(t.union, &body)
+	return body, err
+}
+
+// FromListProjectAddonsResponseOutputAvailableAddonsVariantsId3 overwrites any union data inside the ListProjectAddonsResponseOutput_AvailableAddons_Variants_Id as the provided ListProjectAddonsResponseOutputAvailableAddonsVariantsId3
+func (t *ListProjectAddonsResponseOutput_AvailableAddons_Variants_Id) FromListProjectAddonsResponseOutputAvailableAddonsVariantsId3(v ListProjectAddonsResponseOutputAvailableAddonsVariantsId3) error {
+	b, err := json.Marshal(v)
+	t.union = b
+	return err
+}
+
+// MergeListProjectAddonsResponseOutputAvailableAddonsVariantsId3 performs a merge with any union data inside the ListProjectAddonsResponseOutput_AvailableAddons_Variants_Id, using the provided ListProjectAddonsResponseOutputAvailableAddonsVariantsId3
+func (t *ListProjectAddonsResponseOutput_AvailableAddons_Variants_Id) MergeListProjectAddonsResponseOutputAvailableAddonsVariantsId3(v ListProjectAddonsResponseOutputAvailableAddonsVariantsId3) error {
+	b, err := json.Marshal(v)
+	if err != nil {
+		return err
+	}
+
+	merged, err := runtime.JSONMerge(t.union, b)
+	t.union = merged
+	return err
+}
+
+// AsListProjectAddonsResponseOutputAvailableAddonsVariantsId4 returns the union data inside the ListProjectAddonsResponseOutput_AvailableAddons_Variants_Id as a ListProjectAddonsResponseOutputAvailableAddonsVariantsId4
+func (t ListProjectAddonsResponseOutput_AvailableAddons_Variants_Id) AsListProjectAddonsResponseOutputAvailableAddonsVariantsId4() (ListProjectAddonsResponseOutputAvailableAddonsVariantsId4, error) {
+	var body ListProjectAddonsResponseOutputAvailableAddonsVariantsId4
+	err := json.Unmarshal(t.union, &body)
+	return body, err
+}
+
+// FromListProjectAddonsResponseOutputAvailableAddonsVariantsId4 overwrites any union data inside the ListProjectAddonsResponseOutput_AvailableAddons_Variants_Id as the provided ListProjectAddonsResponseOutputAvailableAddonsVariantsId4
+func (t *ListProjectAddonsResponseOutput_AvailableAddons_Variants_Id) FromListProjectAddonsResponseOutputAvailableAddonsVariantsId4(v ListProjectAddonsResponseOutputAvailableAddonsVariantsId4) error {
+	b, err := json.Marshal(v)
+	t.union = b
+	return err
+}
+
+// MergeListProjectAddonsResponseOutputAvailableAddonsVariantsId4 performs a merge with any union data inside the ListProjectAddonsResponseOutput_AvailableAddons_Variants_Id, using the provided ListProjectAddonsResponseOutputAvailableAddonsVariantsId4
+func (t *ListProjectAddonsResponseOutput_AvailableAddons_Variants_Id) MergeListProjectAddonsResponseOutputAvailableAddonsVariantsId4(v ListProjectAddonsResponseOutputAvailableAddonsVariantsId4) error {
+	b, err := json.Marshal(v)
+	if err != nil {
+		return err
+	}
+
+	merged, err := runtime.JSONMerge(t.union, b)
+	t.union = merged
+	return err
+}
+
+// AsListProjectAddonsResponseOutputAvailableAddonsVariantsId5 returns the union data inside the ListProjectAddonsResponseOutput_AvailableAddons_Variants_Id as a ListProjectAddonsResponseOutputAvailableAddonsVariantsId5
+func (t ListProjectAddonsResponseOutput_AvailableAddons_Variants_Id) AsListProjectAddonsResponseOutputAvailableAddonsVariantsId5() (ListProjectAddonsResponseOutputAvailableAddonsVariantsId5, error) {
+	var body ListProjectAddonsResponseOutputAvailableAddonsVariantsId5
+	err := json.Unmarshal(t.union, &body)
+	return body, err
+}
+
+// FromListProjectAddonsResponseOutputAvailableAddonsVariantsId5 overwrites any union data inside the ListProjectAddonsResponseOutput_AvailableAddons_Variants_Id as the provided ListProjectAddonsResponseOutputAvailableAddonsVariantsId5
+func (t *ListProjectAddonsResponseOutput_AvailableAddons_Variants_Id) FromListProjectAddonsResponseOutputAvailableAddonsVariantsId5(v ListProjectAddonsResponseOutputAvailableAddonsVariantsId5) error {
+	b, err := json.Marshal(v)
+	t.union = b
+	return err
+}
+
+// MergeListProjectAddonsResponseOutputAvailableAddonsVariantsId5 performs a merge with any union data inside the ListProjectAddonsResponseOutput_AvailableAddons_Variants_Id, using the provided ListProjectAddonsResponseOutputAvailableAddonsVariantsId5
+func (t *ListProjectAddonsResponseOutput_AvailableAddons_Variants_Id) MergeListProjectAddonsResponseOutputAvailableAddonsVariantsId5(v ListProjectAddonsResponseOutputAvailableAddonsVariantsId5) error {
+	b, err := json.Marshal(v)
+	if err != nil {
+		return err
+	}
+
+	merged, err := runtime.JSONMerge(t.union, b)
+	t.union = merged
+	return err
+}
+
+// AsListProjectAddonsResponseOutputAvailableAddonsVariantsId6 returns the union data inside the ListProjectAddonsResponseOutput_AvailableAddons_Variants_Id as a ListProjectAddonsResponseOutputAvailableAddonsVariantsId6
+func (t ListProjectAddonsResponseOutput_AvailableAddons_Variants_Id) AsListProjectAddonsResponseOutputAvailableAddonsVariantsId6() (ListProjectAddonsResponseOutputAvailableAddonsVariantsId6, error) {
+	var body ListProjectAddonsResponseOutputAvailableAddonsVariantsId6
+	err := json.Unmarshal(t.union, &body)
+	return body, err
+}
+
+// FromListProjectAddonsResponseOutputAvailableAddonsVariantsId6 overwrites any union data inside the ListProjectAddonsResponseOutput_AvailableAddons_Variants_Id as the provided ListProjectAddonsResponseOutputAvailableAddonsVariantsId6
+func (t *ListProjectAddonsResponseOutput_AvailableAddons_Variants_Id) FromListProjectAddonsResponseOutputAvailableAddonsVariantsId6(v ListProjectAddonsResponseOutputAvailableAddonsVariantsId6) error {
+	b, err := json.Marshal(v)
+	t.union = b
+	return err
+}
+
+// MergeListProjectAddonsResponseOutputAvailableAddonsVariantsId6 performs a merge with any union data inside the ListProjectAddonsResponseOutput_AvailableAddons_Variants_Id, using the provided ListProjectAddonsResponseOutputAvailableAddonsVariantsId6
+func (t *ListProjectAddonsResponseOutput_AvailableAddons_Variants_Id) MergeListProjectAddonsResponseOutputAvailableAddonsVariantsId6(v ListProjectAddonsResponseOutputAvailableAddonsVariantsId6) error {
+	b, err := json.Marshal(v)
+	if err != nil {
+		return err
+	}
+
+	merged, err := runtime.JSONMerge(t.union, b)
+	t.union = merged
+	return err
+}
+
+// AsListProjectAddonsResponseOutputAvailableAddonsVariantsId7 returns the union data inside the ListProjectAddonsResponseOutput_AvailableAddons_Variants_Id as a ListProjectAddonsResponseOutputAvailableAddonsVariantsId7
+func (t ListProjectAddonsResponseOutput_AvailableAddons_Variants_Id) AsListProjectAddonsResponseOutputAvailableAddonsVariantsId7() (ListProjectAddonsResponseOutputAvailableAddonsVariantsId7, error) {
+	var body ListProjectAddonsResponseOutputAvailableAddonsVariantsId7
+	err := json.Unmarshal(t.union, &body)
+	return body, err
+}
+
+// FromListProjectAddonsResponseOutputAvailableAddonsVariantsId7 overwrites any union data inside the ListProjectAddonsResponseOutput_AvailableAddons_Variants_Id as the provided ListProjectAddonsResponseOutputAvailableAddonsVariantsId7
+func (t *ListProjectAddonsResponseOutput_AvailableAddons_Variants_Id) FromListProjectAddonsResponseOutputAvailableAddonsVariantsId7(v ListProjectAddonsResponseOutputAvailableAddonsVariantsId7) error {
+	b, err := json.Marshal(v)
+	t.union = b
+	return err
+}
+
+// MergeListProjectAddonsResponseOutputAvailableAddonsVariantsId7 performs a merge with any union data inside the ListProjectAddonsResponseOutput_AvailableAddons_Variants_Id, using the provided ListProjectAddonsResponseOutputAvailableAddonsVariantsId7
+func (t *ListProjectAddonsResponseOutput_AvailableAddons_Variants_Id) MergeListProjectAddonsResponseOutputAvailableAddonsVariantsId7(v ListProjectAddonsResponseOutputAvailableAddonsVariantsId7) error {
+	b, err := json.Marshal(v)
+	if err != nil {
+		return err
+	}
+
+	merged, err := runtime.JSONMerge(t.union, b)
+	t.union = merged
+	return err
+}
+
+func (t ListProjectAddonsResponseOutput_AvailableAddons_Variants_Id) MarshalJSON() ([]byte, error) {
 	b, err := t.union.MarshalJSON()
 	return b, err
 }
 
-func (t *ListProjectAddonsResponseJsonValue) UnmarshalJSON(b []byte) error {
+func (t *ListProjectAddonsResponseOutput_AvailableAddons_Variants_Id) UnmarshalJSON(b []byte) error {
 	err := t.union.UnmarshalJSON(b)
 	return err
 }
 
-// AsListProjectAddonsResponseJsonValue00 returns the union data inside the ListProjectAddonsResponseJsonValue0 as a ListProjectAddonsResponseJsonValue00
-func (t ListProjectAddonsResponseJsonValue0) AsListProjectAddonsResponseJsonValue00() (ListProjectAddonsResponseJsonValue00, error) {
-	var body ListProjectAddonsResponseJsonValue00
+// AsListProjectAddonsResponseOutputSelectedAddonsVariantId0 returns the union data inside the ListProjectAddonsResponseOutput_SelectedAddons_Variant_Id as a ListProjectAddonsResponseOutputSelectedAddonsVariantId0
+func (t ListProjectAddonsResponseOutput_SelectedAddons_Variant_Id) AsListProjectAddonsResponseOutputSelectedAddonsVariantId0() (ListProjectAddonsResponseOutputSelectedAddonsVariantId0, error) {
+	var body ListProjectAddonsResponseOutputSelectedAddonsVariantId0
 	err := json.Unmarshal(t.union, &body)
 	return body, err
 }
 
-// FromListProjectAddonsResponseJsonValue00 overwrites any union data inside the ListProjectAddonsResponseJsonValue0 as the provided ListProjectAddonsResponseJsonValue00
-func (t *ListProjectAddonsResponseJsonValue0) FromListProjectAddonsResponseJsonValue00(v ListProjectAddonsResponseJsonValue00) error {
+// FromListProjectAddonsResponseOutputSelectedAddonsVariantId0 overwrites any union data inside the ListProjectAddonsResponseOutput_SelectedAddons_Variant_Id as the provided ListProjectAddonsResponseOutputSelectedAddonsVariantId0
+func (t *ListProjectAddonsResponseOutput_SelectedAddons_Variant_Id) FromListProjectAddonsResponseOutputSelectedAddonsVariantId0(v ListProjectAddonsResponseOutputSelectedAddonsVariantId0) error {
 	b, err := json.Marshal(v)
 	t.union = b
 	return err
 }
 
-// MergeListProjectAddonsResponseJsonValue00 performs a merge with any union data inside the ListProjectAddonsResponseJsonValue0, using the provided ListProjectAddonsResponseJsonValue00
-func (t *ListProjectAddonsResponseJsonValue0) MergeListProjectAddonsResponseJsonValue00(v ListProjectAddonsResponseJsonValue00) error {
+// MergeListProjectAddonsResponseOutputSelectedAddonsVariantId0 performs a merge with any union data inside the ListProjectAddonsResponseOutput_SelectedAddons_Variant_Id, using the provided ListProjectAddonsResponseOutputSelectedAddonsVariantId0
+func (t *ListProjectAddonsResponseOutput_SelectedAddons_Variant_Id) MergeListProjectAddonsResponseOutputSelectedAddonsVariantId0(v ListProjectAddonsResponseOutputSelectedAddonsVariantId0) error {
 	b, err := json.Marshal(v)
 	if err != nil {
 		return err
@@ -11175,22 +10517,22 @@ func (t *ListProjectAddonsResponseJsonValue0) MergeListProjectAddonsResponseJson
 	return err
 }
 
-// AsListProjectAddonsResponseJsonValue01 returns the union data inside the ListProjectAddonsResponseJsonValue0 as a ListProjectAddonsResponseJsonValue01
-func (t ListProjectAddonsResponseJsonValue0) AsListProjectAddonsResponseJsonValue01() (ListProjectAddonsResponseJsonValue01, error) {
-	var body ListProjectAddonsResponseJsonValue01
+// AsListProjectAddonsResponseOutputSelectedAddonsVariantId1 returns the union data inside the ListProjectAddonsResponseOutput_SelectedAddons_Variant_Id as a ListProjectAddonsResponseOutputSelectedAddonsVariantId1
+func (t ListProjectAddonsResponseOutput_SelectedAddons_Variant_Id) AsListProjectAddonsResponseOutputSelectedAddonsVariantId1() (ListProjectAddonsResponseOutputSelectedAddonsVariantId1, error) {
+	var body ListProjectAddonsResponseOutputSelectedAddonsVariantId1
 	err := json.Unmarshal(t.union, &body)
 	return body, err
 }
 
-// FromListProjectAddonsResponseJsonValue01 overwrites any union data inside the ListProjectAddonsResponseJsonValue0 as the provided ListProjectAddonsResponseJsonValue01
-func (t *ListProjectAddonsResponseJsonValue0) FromListProjectAddonsResponseJsonValue01(v ListProjectAddonsResponseJsonValue01) error {
+// FromListProjectAddonsResponseOutputSelectedAddonsVariantId1 overwrites any union data inside the ListProjectAddonsResponseOutput_SelectedAddons_Variant_Id as the provided ListProjectAddonsResponseOutputSelectedAddonsVariantId1
+func (t *ListProjectAddonsResponseOutput_SelectedAddons_Variant_Id) FromListProjectAddonsResponseOutputSelectedAddonsVariantId1(v ListProjectAddonsResponseOutputSelectedAddonsVariantId1) error {
 	b, err := json.Marshal(v)
 	t.union = b
 	return err
 }
 
-// MergeListProjectAddonsResponseJsonValue01 performs a merge with any union data inside the ListProjectAddonsResponseJsonValue0, using the provided ListProjectAddonsResponseJsonValue01
-func (t *ListProjectAddonsResponseJsonValue0) MergeListProjectAddonsResponseJsonValue01(v ListProjectAddonsResponseJsonValue01) error {
+// MergeListProjectAddonsResponseOutputSelectedAddonsVariantId1 performs a merge with any union data inside the ListProjectAddonsResponseOutput_SelectedAddons_Variant_Id, using the provided ListProjectAddonsResponseOutputSelectedAddonsVariantId1
+func (t *ListProjectAddonsResponseOutput_SelectedAddons_Variant_Id) MergeListProjectAddonsResponseOutputSelectedAddonsVariantId1(v ListProjectAddonsResponseOutputSelectedAddonsVariantId1) error {
 	b, err := json.Marshal(v)
 	if err != nil {
 		return err
@@ -11201,22 +10543,22 @@ func (t *ListProjectAddonsResponseJsonValue0) MergeListProjectAddonsResponseJson
 	return err
 }
 
-// AsListProjectAddonsResponseJsonValue02 returns the union data inside the ListProjectAddonsResponseJsonValue0 as a ListProjectAddonsResponseJsonValue02
-func (t ListProjectAddonsResponseJsonValue0) AsListProjectAddonsResponseJsonValue02() (ListProjectAddonsResponseJsonValue02, error) {
-	var body ListProjectAddonsResponseJsonValue02
+// AsListProjectAddonsResponseOutputSelectedAddonsVariantId2 returns the union data inside the ListProjectAddonsResponseOutput_SelectedAddons_Variant_Id as a ListProjectAddonsResponseOutputSelectedAddonsVariantId2
+func (t ListProjectAddonsResponseOutput_SelectedAddons_Variant_Id) AsListProjectAddonsResponseOutputSelectedAddonsVariantId2() (ListProjectAddonsResponseOutputSelectedAddonsVariantId2, error) {
+	var body ListProjectAddonsResponseOutputSelectedAddonsVariantId2
 	err := json.Unmarshal(t.union, &body)
 	return body, err
 }
 
-// FromListProjectAddonsResponseJsonValue02 overwrites any union data inside the ListProjectAddonsResponseJsonValue0 as the provided ListProjectAddonsResponseJsonValue02
-func (t *ListProjectAddonsResponseJsonValue0) FromListProjectAddonsResponseJsonValue02(v ListProjectAddonsResponseJsonValue02) error {
+// FromListProjectAddonsResponseOutputSelectedAddonsVariantId2 overwrites any union data inside the ListProjectAddonsResponseOutput_SelectedAddons_Variant_Id as the provided ListProjectAddonsResponseOutputSelectedAddonsVariantId2
+func (t *ListProjectAddonsResponseOutput_SelectedAddons_Variant_Id) FromListProjectAddonsResponseOutputSelectedAddonsVariantId2(v ListProjectAddonsResponseOutputSelectedAddonsVariantId2) error {
 	b, err := json.Marshal(v)
 	t.union = b
 	return err
 }
 
-// MergeListProjectAddonsResponseJsonValue02 performs a merge with any union data inside the ListProjectAddonsResponseJsonValue0, using the provided ListProjectAddonsResponseJsonValue02
-func (t *ListProjectAddonsResponseJsonValue0) MergeListProjectAddonsResponseJsonValue02(v ListProjectAddonsResponseJsonValue02) error {
+// MergeListProjectAddonsResponseOutputSelectedAddonsVariantId2 performs a merge with any union data inside the ListProjectAddonsResponseOutput_SelectedAddons_Variant_Id, using the provided ListProjectAddonsResponseOutputSelectedAddonsVariantId2
+func (t *ListProjectAddonsResponseOutput_SelectedAddons_Variant_Id) MergeListProjectAddonsResponseOutputSelectedAddonsVariantId2(v ListProjectAddonsResponseOutputSelectedAddonsVariantId2) error {
 	b, err := json.Marshal(v)
 	if err != nil {
 		return err
@@ -11227,32 +10569,162 @@ func (t *ListProjectAddonsResponseJsonValue0) MergeListProjectAddonsResponseJson
 	return err
 }
 
-func (t ListProjectAddonsResponseJsonValue0) MarshalJSON() ([]byte, error) {
+// AsListProjectAddonsResponseOutputSelectedAddonsVariantId3 returns the union data inside the ListProjectAddonsResponseOutput_SelectedAddons_Variant_Id as a ListProjectAddonsResponseOutputSelectedAddonsVariantId3
+func (t ListProjectAddonsResponseOutput_SelectedAddons_Variant_Id) AsListProjectAddonsResponseOutputSelectedAddonsVariantId3() (ListProjectAddonsResponseOutputSelectedAddonsVariantId3, error) {
+	var body ListProjectAddonsResponseOutputSelectedAddonsVariantId3
+	err := json.Unmarshal(t.union, &body)
+	return body, err
+}
+
+// FromListProjectAddonsResponseOutputSelectedAddonsVariantId3 overwrites any union data inside the ListProjectAddonsResponseOutput_SelectedAddons_Variant_Id as the provided ListProjectAddonsResponseOutputSelectedAddonsVariantId3
+func (t *ListProjectAddonsResponseOutput_SelectedAddons_Variant_Id) FromListProjectAddonsResponseOutputSelectedAddonsVariantId3(v ListProjectAddonsResponseOutputSelectedAddonsVariantId3) error {
+	b, err := json.Marshal(v)
+	t.union = b
+	return err
+}
+
+// MergeListProjectAddonsResponseOutputSelectedAddonsVariantId3 performs a merge with any union data inside the ListProjectAddonsResponseOutput_SelectedAddons_Variant_Id, using the provided ListProjectAddonsResponseOutputSelectedAddonsVariantId3
+func (t *ListProjectAddonsResponseOutput_SelectedAddons_Variant_Id) MergeListProjectAddonsResponseOutputSelectedAddonsVariantId3(v ListProjectAddonsResponseOutputSelectedAddonsVariantId3) error {
+	b, err := json.Marshal(v)
+	if err != nil {
+		return err
+	}
+
+	merged, err := runtime.JSONMerge(t.union, b)
+	t.union = merged
+	return err
+}
+
+// AsListProjectAddonsResponseOutputSelectedAddonsVariantId4 returns the union data inside the ListProjectAddonsResponseOutput_SelectedAddons_Variant_Id as a ListProjectAddonsResponseOutputSelectedAddonsVariantId4
+func (t ListProjectAddonsResponseOutput_SelectedAddons_Variant_Id) AsListProjectAddonsResponseOutputSelectedAddonsVariantId4() (ListProjectAddonsResponseOutputSelectedAddonsVariantId4, error) {
+	var body ListProjectAddonsResponseOutputSelectedAddonsVariantId4
+	err := json.Unmarshal(t.union, &body)
+	return body, err
+}
+
+// FromListProjectAddonsResponseOutputSelectedAddonsVariantId4 overwrites any union data inside the ListProjectAddonsResponseOutput_SelectedAddons_Variant_Id as the provided ListProjectAddonsResponseOutputSelectedAddonsVariantId4
+func (t *ListProjectAddonsResponseOutput_SelectedAddons_Variant_Id) FromListProjectAddonsResponseOutputSelectedAddonsVariantId4(v ListProjectAddonsResponseOutputSelectedAddonsVariantId4) error {
+	b, err := json.Marshal(v)
+	t.union = b
+	return err
+}
+
+// MergeListProjectAddonsResponseOutputSelectedAddonsVariantId4 performs a merge with any union data inside the ListProjectAddonsResponseOutput_SelectedAddons_Variant_Id, using the provided ListProjectAddonsResponseOutputSelectedAddonsVariantId4
+func (t *ListProjectAddonsResponseOutput_SelectedAddons_Variant_Id) MergeListProjectAddonsResponseOutputSelectedAddonsVariantId4(v ListProjectAddonsResponseOutputSelectedAddonsVariantId4) error {
+	b, err := json.Marshal(v)
+	if err != nil {
+		return err
+	}
+
+	merged, err := runtime.JSONMerge(t.union, b)
+	t.union = merged
+	return err
+}
+
+// AsListProjectAddonsResponseOutputSelectedAddonsVariantId5 returns the union data inside the ListProjectAddonsResponseOutput_SelectedAddons_Variant_Id as a ListProjectAddonsResponseOutputSelectedAddonsVariantId5
+func (t ListProjectAddonsResponseOutput_SelectedAddons_Variant_Id) AsListProjectAddonsResponseOutputSelectedAddonsVariantId5() (ListProjectAddonsResponseOutputSelectedAddonsVariantId5, error) {
+	var body ListProjectAddonsResponseOutputSelectedAddonsVariantId5
+	err := json.Unmarshal(t.union, &body)
+	return body, err
+}
+
+// FromListProjectAddonsResponseOutputSelectedAddonsVariantId5 overwrites any union data inside the ListProjectAddonsResponseOutput_SelectedAddons_Variant_Id as the provided ListProjectAddonsResponseOutputSelectedAddonsVariantId5
+func (t *ListProjectAddonsResponseOutput_SelectedAddons_Variant_Id) FromListProjectAddonsResponseOutputSelectedAddonsVariantId5(v ListProjectAddonsResponseOutputSelectedAddonsVariantId5) error {
+	b, err := json.Marshal(v)
+	t.union = b
+	return err
+}
+
+// MergeListProjectAddonsResponseOutputSelectedAddonsVariantId5 performs a merge with any union data inside the ListProjectAddonsResponseOutput_SelectedAddons_Variant_Id, using the provided ListProjectAddonsResponseOutputSelectedAddonsVariantId5
+func (t *ListProjectAddonsResponseOutput_SelectedAddons_Variant_Id) MergeListProjectAddonsResponseOutputSelectedAddonsVariantId5(v ListProjectAddonsResponseOutputSelectedAddonsVariantId5) error {
+	b, err := json.Marshal(v)
+	if err != nil {
+		return err
+	}
+
+	merged, err := runtime.JSONMerge(t.union, b)
+	t.union = merged
+	return err
+}
+
+// AsListProjectAddonsResponseOutputSelectedAddonsVariantId6 returns the union data inside the ListProjectAddonsResponseOutput_SelectedAddons_Variant_Id as a ListProjectAddonsResponseOutputSelectedAddonsVariantId6
+func (t ListProjectAddonsResponseOutput_SelectedAddons_Variant_Id) AsListProjectAddonsResponseOutputSelectedAddonsVariantId6() (ListProjectAddonsResponseOutputSelectedAddonsVariantId6, error) {
+	var body ListProjectAddonsResponseOutputSelectedAddonsVariantId6
+	err := json.Unmarshal(t.union, &body)
+	return body, err
+}
+
+// FromListProjectAddonsResponseOutputSelectedAddonsVariantId6 overwrites any union data inside the ListProjectAddonsResponseOutput_SelectedAddons_Variant_Id as the provided ListProjectAddonsResponseOutputSelectedAddonsVariantId6
+func (t *ListProjectAddonsResponseOutput_SelectedAddons_Variant_Id) FromListProjectAddonsResponseOutputSelectedAddonsVariantId6(v ListProjectAddonsResponseOutputSelectedAddonsVariantId6) error {
+	b, err := json.Marshal(v)
+	t.union = b
+	return err
+}
+
+// MergeListProjectAddonsResponseOutputSelectedAddonsVariantId6 performs a merge with any union data inside the ListProjectAddonsResponseOutput_SelectedAddons_Variant_Id, using the provided ListProjectAddonsResponseOutputSelectedAddonsVariantId6
+func (t *ListProjectAddonsResponseOutput_SelectedAddons_Variant_Id) MergeListProjectAddonsResponseOutputSelectedAddonsVariantId6(v ListProjectAddonsResponseOutputSelectedAddonsVariantId6) error {
+	b, err := json.Marshal(v)
+	if err != nil {
+		return err
+	}
+
+	merged, err := runtime.JSONMerge(t.union, b)
+	t.union = merged
+	return err
+}
+
+// AsListProjectAddonsResponseOutputSelectedAddonsVariantId7 returns the union data inside the ListProjectAddonsResponseOutput_SelectedAddons_Variant_Id as a ListProjectAddonsResponseOutputSelectedAddonsVariantId7
+func (t ListProjectAddonsResponseOutput_SelectedAddons_Variant_Id) AsListProjectAddonsResponseOutputSelectedAddonsVariantId7() (ListProjectAddonsResponseOutputSelectedAddonsVariantId7, error) {
+	var body ListProjectAddonsResponseOutputSelectedAddonsVariantId7
+	err := json.Unmarshal(t.union, &body)
+	return body, err
+}
+
+// FromListProjectAddonsResponseOutputSelectedAddonsVariantId7 overwrites any union data inside the ListProjectAddonsResponseOutput_SelectedAddons_Variant_Id as the provided ListProjectAddonsResponseOutputSelectedAddonsVariantId7
+func (t *ListProjectAddonsResponseOutput_SelectedAddons_Variant_Id) FromListProjectAddonsResponseOutputSelectedAddonsVariantId7(v ListProjectAddonsResponseOutputSelectedAddonsVariantId7) error {
+	b, err := json.Marshal(v)
+	t.union = b
+	return err
+}
+
+// MergeListProjectAddonsResponseOutputSelectedAddonsVariantId7 performs a merge with any union data inside the ListProjectAddonsResponseOutput_SelectedAddons_Variant_Id, using the provided ListProjectAddonsResponseOutputSelectedAddonsVariantId7
+func (t *ListProjectAddonsResponseOutput_SelectedAddons_Variant_Id) MergeListProjectAddonsResponseOutputSelectedAddonsVariantId7(v ListProjectAddonsResponseOutputSelectedAddonsVariantId7) error {
+	b, err := json.Marshal(v)
+	if err != nil {
+		return err
+	}
+
+	merged, err := runtime.JSONMerge(t.union, b)
+	t.union = merged
+	return err
+}
+
+func (t ListProjectAddonsResponseOutput_SelectedAddons_Variant_Id) MarshalJSON() ([]byte, error) {
 	b, err := t.union.MarshalJSON()
 	return b, err
 }
 
-func (t *ListProjectAddonsResponseJsonValue0) UnmarshalJSON(b []byte) error {
+func (t *ListProjectAddonsResponseOutput_SelectedAddons_Variant_Id) UnmarshalJSON(b []byte) error {
 	err := t.union.UnmarshalJSON(b)
 	return err
 }
 
-// AsProjectUpgradeEligibilityResponseValidationErrors6ObjType0 returns the union data inside the ProjectUpgradeEligibilityResponse_ValidationErrors_6_ObjType as a ProjectUpgradeEligibilityResponseValidationErrors6ObjType0
-func (t ProjectUpgradeEligibilityResponse_ValidationErrors_6_ObjType) AsProjectUpgradeEligibilityResponseValidationErrors6ObjType0() (ProjectUpgradeEligibilityResponseValidationErrors6ObjType0, error) {
-	var body ProjectUpgradeEligibilityResponseValidationErrors6ObjType0
+// AsProjectUpgradeEligibilityResponseOutputValidationErrors6ObjType0 returns the union data inside the ProjectUpgradeEligibilityResponseOutput_ValidationErrors_6_ObjType as a ProjectUpgradeEligibilityResponseOutputValidationErrors6ObjType0
+func (t ProjectUpgradeEligibilityResponseOutput_ValidationErrors_6_ObjType) AsProjectUpgradeEligibilityResponseOutputValidationErrors6ObjType0() (ProjectUpgradeEligibilityResponseOutputValidationErrors6ObjType0, error) {
+	var body ProjectUpgradeEligibilityResponseOutputValidationErrors6ObjType0
 	err := json.Unmarshal(t.union, &body)
 	return body, err
 }
 
-// FromProjectUpgradeEligibilityResponseValidationErrors6ObjType0 overwrites any union data inside the ProjectUpgradeEligibilityResponse_ValidationErrors_6_ObjType as the provided ProjectUpgradeEligibilityResponseValidationErrors6ObjType0
-func (t *ProjectUpgradeEligibilityResponse_ValidationErrors_6_ObjType) FromProjectUpgradeEligibilityResponseValidationErrors6ObjType0(v ProjectUpgradeEligibilityResponseValidationErrors6ObjType0) error {
+// FromProjectUpgradeEligibilityResponseOutputValidationErrors6ObjType0 overwrites any union data inside the ProjectUpgradeEligibilityResponseOutput_ValidationErrors_6_ObjType as the provided ProjectUpgradeEligibilityResponseOutputValidationErrors6ObjType0
+func (t *ProjectUpgradeEligibilityResponseOutput_ValidationErrors_6_ObjType) FromProjectUpgradeEligibilityResponseOutputValidationErrors6ObjType0(v ProjectUpgradeEligibilityResponseOutputValidationErrors6ObjType0) error {
 	b, err := json.Marshal(v)
 	t.union = b
 	return err
 }
 
-// MergeProjectUpgradeEligibilityResponseValidationErrors6ObjType0 performs a merge with any union data inside the ProjectUpgradeEligibilityResponse_ValidationErrors_6_ObjType, using the provided ProjectUpgradeEligibilityResponseValidationErrors6ObjType0
-func (t *ProjectUpgradeEligibilityResponse_ValidationErrors_6_ObjType) MergeProjectUpgradeEligibilityResponseValidationErrors6ObjType0(v ProjectUpgradeEligibilityResponseValidationErrors6ObjType0) error {
+// MergeProjectUpgradeEligibilityResponseOutputValidationErrors6ObjType0 performs a merge with any union data inside the ProjectUpgradeEligibilityResponseOutput_ValidationErrors_6_ObjType, using the provided ProjectUpgradeEligibilityResponseOutputValidationErrors6ObjType0
+func (t *ProjectUpgradeEligibilityResponseOutput_ValidationErrors_6_ObjType) MergeProjectUpgradeEligibilityResponseOutputValidationErrors6ObjType0(v ProjectUpgradeEligibilityResponseOutputValidationErrors6ObjType0) error {
 	b, err := json.Marshal(v)
 	if err != nil {
 		return err
@@ -11263,22 +10735,22 @@ func (t *ProjectUpgradeEligibilityResponse_ValidationErrors_6_ObjType) MergeProj
 	return err
 }
 
-// AsProjectUpgradeEligibilityResponseValidationErrors6ObjType1 returns the union data inside the ProjectUpgradeEligibilityResponse_ValidationErrors_6_ObjType as a ProjectUpgradeEligibilityResponseValidationErrors6ObjType1
-func (t ProjectUpgradeEligibilityResponse_ValidationErrors_6_ObjType) AsProjectUpgradeEligibilityResponseValidationErrors6ObjType1() (ProjectUpgradeEligibilityResponseValidationErrors6ObjType1, error) {
-	var body ProjectUpgradeEligibilityResponseValidationErrors6ObjType1
+// AsProjectUpgradeEligibilityResponseOutputValidationErrors6ObjType1 returns the union data inside the ProjectUpgradeEligibilityResponseOutput_ValidationErrors_6_ObjType as a ProjectUpgradeEligibilityResponseOutputValidationErrors6ObjType1
+func (t ProjectUpgradeEligibilityResponseOutput_ValidationErrors_6_ObjType) AsProjectUpgradeEligibilityResponseOutputValidationErrors6ObjType1() (ProjectUpgradeEligibilityResponseOutputValidationErrors6ObjType1, error) {
+	var body ProjectUpgradeEligibilityResponseOutputValidationErrors6ObjType1
 	err := json.Unmarshal(t.union, &body)
 	return body, err
 }
 
-// FromProjectUpgradeEligibilityResponseValidationErrors6ObjType1 overwrites any union data inside the ProjectUpgradeEligibilityResponse_ValidationErrors_6_ObjType as the provided ProjectUpgradeEligibilityResponseValidationErrors6ObjType1
-func (t *ProjectUpgradeEligibilityResponse_ValidationErrors_6_ObjType) FromProjectUpgradeEligibilityResponseValidationErrors6ObjType1(v ProjectUpgradeEligibilityResponseValidationErrors6ObjType1) error {
+// FromProjectUpgradeEligibilityResponseOutputValidationErrors6ObjType1 overwrites any union data inside the ProjectUpgradeEligibilityResponseOutput_ValidationErrors_6_ObjType as the provided ProjectUpgradeEligibilityResponseOutputValidationErrors6ObjType1
+func (t *ProjectUpgradeEligibilityResponseOutput_ValidationErrors_6_ObjType) FromProjectUpgradeEligibilityResponseOutputValidationErrors6ObjType1(v ProjectUpgradeEligibilityResponseOutputValidationErrors6ObjType1) error {
 	b, err := json.Marshal(v)
 	t.union = b
 	return err
 }
 
-// MergeProjectUpgradeEligibilityResponseValidationErrors6ObjType1 performs a merge with any union data inside the ProjectUpgradeEligibilityResponse_ValidationErrors_6_ObjType, using the provided ProjectUpgradeEligibilityResponseValidationErrors6ObjType1
-func (t *ProjectUpgradeEligibilityResponse_ValidationErrors_6_ObjType) MergeProjectUpgradeEligibilityResponseValidationErrors6ObjType1(v ProjectUpgradeEligibilityResponseValidationErrors6ObjType1) error {
+// MergeProjectUpgradeEligibilityResponseOutputValidationErrors6ObjType1 performs a merge with any union data inside the ProjectUpgradeEligibilityResponseOutput_ValidationErrors_6_ObjType, using the provided ProjectUpgradeEligibilityResponseOutputValidationErrors6ObjType1
+func (t *ProjectUpgradeEligibilityResponseOutput_ValidationErrors_6_ObjType) MergeProjectUpgradeEligibilityResponseOutputValidationErrors6ObjType1(v ProjectUpgradeEligibilityResponseOutputValidationErrors6ObjType1) error {
 	b, err := json.Marshal(v)
 	if err != nil {
 		return err
@@ -11289,32 +10761,32 @@ func (t *ProjectUpgradeEligibilityResponse_ValidationErrors_6_ObjType) MergeProj
 	return err
 }
 
-func (t ProjectUpgradeEligibilityResponse_ValidationErrors_6_ObjType) MarshalJSON() ([]byte, error) {
+func (t ProjectUpgradeEligibilityResponseOutput_ValidationErrors_6_ObjType) MarshalJSON() ([]byte, error) {
 	b, err := t.union.MarshalJSON()
 	return b, err
 }
 
-func (t *ProjectUpgradeEligibilityResponse_ValidationErrors_6_ObjType) UnmarshalJSON(b []byte) error {
+func (t *ProjectUpgradeEligibilityResponseOutput_ValidationErrors_6_ObjType) UnmarshalJSON(b []byte) error {
 	err := t.union.UnmarshalJSON(b)
 	return err
 }
 
-// AsProjectUpgradeEligibilityResponseValidationErrors0 returns the union data inside the ProjectUpgradeEligibilityResponse_ValidationErrors_Item as a ProjectUpgradeEligibilityResponseValidationErrors0
-func (t ProjectUpgradeEligibilityResponse_ValidationErrors_Item) AsProjectUpgradeEligibilityResponseValidationErrors0() (ProjectUpgradeEligibilityResponseValidationErrors0, error) {
-	var body ProjectUpgradeEligibilityResponseValidationErrors0
+// AsProjectUpgradeEligibilityResponseOutputValidationErrors0 returns the union data inside the ProjectUpgradeEligibilityResponseOutput_ValidationErrors_Item as a ProjectUpgradeEligibilityResponseOutputValidationErrors0
+func (t ProjectUpgradeEligibilityResponseOutput_ValidationErrors_Item) AsProjectUpgradeEligibilityResponseOutputValidationErrors0() (ProjectUpgradeEligibilityResponseOutputValidationErrors0, error) {
+	var body ProjectUpgradeEligibilityResponseOutputValidationErrors0
 	err := json.Unmarshal(t.union, &body)
 	return body, err
 }
 
-// FromProjectUpgradeEligibilityResponseValidationErrors0 overwrites any union data inside the ProjectUpgradeEligibilityResponse_ValidationErrors_Item as the provided ProjectUpgradeEligibilityResponseValidationErrors0
-func (t *ProjectUpgradeEligibilityResponse_ValidationErrors_Item) FromProjectUpgradeEligibilityResponseValidationErrors0(v ProjectUpgradeEligibilityResponseValidationErrors0) error {
+// FromProjectUpgradeEligibilityResponseOutputValidationErrors0 overwrites any union data inside the ProjectUpgradeEligibilityResponseOutput_ValidationErrors_Item as the provided ProjectUpgradeEligibilityResponseOutputValidationErrors0
+func (t *ProjectUpgradeEligibilityResponseOutput_ValidationErrors_Item) FromProjectUpgradeEligibilityResponseOutputValidationErrors0(v ProjectUpgradeEligibilityResponseOutputValidationErrors0) error {
 	b, err := json.Marshal(v)
 	t.union = b
 	return err
 }
 
-// MergeProjectUpgradeEligibilityResponseValidationErrors0 performs a merge with any union data inside the ProjectUpgradeEligibilityResponse_ValidationErrors_Item, using the provided ProjectUpgradeEligibilityResponseValidationErrors0
-func (t *ProjectUpgradeEligibilityResponse_ValidationErrors_Item) MergeProjectUpgradeEligibilityResponseValidationErrors0(v ProjectUpgradeEligibilityResponseValidationErrors0) error {
+// MergeProjectUpgradeEligibilityResponseOutputValidationErrors0 performs a merge with any union data inside the ProjectUpgradeEligibilityResponseOutput_ValidationErrors_Item, using the provided ProjectUpgradeEligibilityResponseOutputValidationErrors0
+func (t *ProjectUpgradeEligibilityResponseOutput_ValidationErrors_Item) MergeProjectUpgradeEligibilityResponseOutputValidationErrors0(v ProjectUpgradeEligibilityResponseOutputValidationErrors0) error {
 	b, err := json.Marshal(v)
 	if err != nil {
 		return err
@@ -11325,22 +10797,22 @@ func (t *ProjectUpgradeEligibilityResponse_ValidationErrors_Item) MergeProjectUp
 	return err
 }
 
-// AsProjectUpgradeEligibilityResponseValidationErrors1 returns the union data inside the ProjectUpgradeEligibilityResponse_ValidationErrors_Item as a ProjectUpgradeEligibilityResponseValidationErrors1
-func (t ProjectUpgradeEligibilityResponse_ValidationErrors_Item) AsProjectUpgradeEligibilityResponseValidationErrors1() (ProjectUpgradeEligibilityResponseValidationErrors1, error) {
-	var body ProjectUpgradeEligibilityResponseValidationErrors1
+// AsProjectUpgradeEligibilityResponseOutputValidationErrors1 returns the union data inside the ProjectUpgradeEligibilityResponseOutput_ValidationErrors_Item as a ProjectUpgradeEligibilityResponseOutputValidationErrors1
+func (t ProjectUpgradeEligibilityResponseOutput_ValidationErrors_Item) AsProjectUpgradeEligibilityResponseOutputValidationErrors1() (ProjectUpgradeEligibilityResponseOutputValidationErrors1, error) {
+	var body ProjectUpgradeEligibilityResponseOutputValidationErrors1
 	err := json.Unmarshal(t.union, &body)
 	return body, err
 }
 
-// FromProjectUpgradeEligibilityResponseValidationErrors1 overwrites any union data inside the ProjectUpgradeEligibilityResponse_ValidationErrors_Item as the provided ProjectUpgradeEligibilityResponseValidationErrors1
-func (t *ProjectUpgradeEligibilityResponse_ValidationErrors_Item) FromProjectUpgradeEligibilityResponseValidationErrors1(v ProjectUpgradeEligibilityResponseValidationErrors1) error {
+// FromProjectUpgradeEligibilityResponseOutputValidationErrors1 overwrites any union data inside the ProjectUpgradeEligibilityResponseOutput_ValidationErrors_Item as the provided ProjectUpgradeEligibilityResponseOutputValidationErrors1
+func (t *ProjectUpgradeEligibilityResponseOutput_ValidationErrors_Item) FromProjectUpgradeEligibilityResponseOutputValidationErrors1(v ProjectUpgradeEligibilityResponseOutputValidationErrors1) error {
 	b, err := json.Marshal(v)
 	t.union = b
 	return err
 }
 
-// MergeProjectUpgradeEligibilityResponseValidationErrors1 performs a merge with any union data inside the ProjectUpgradeEligibilityResponse_ValidationErrors_Item, using the provided ProjectUpgradeEligibilityResponseValidationErrors1
-func (t *ProjectUpgradeEligibilityResponse_ValidationErrors_Item) MergeProjectUpgradeEligibilityResponseValidationErrors1(v ProjectUpgradeEligibilityResponseValidationErrors1) error {
+// MergeProjectUpgradeEligibilityResponseOutputValidationErrors1 performs a merge with any union data inside the ProjectUpgradeEligibilityResponseOutput_ValidationErrors_Item, using the provided ProjectUpgradeEligibilityResponseOutputValidationErrors1
+func (t *ProjectUpgradeEligibilityResponseOutput_ValidationErrors_Item) MergeProjectUpgradeEligibilityResponseOutputValidationErrors1(v ProjectUpgradeEligibilityResponseOutputValidationErrors1) error {
 	b, err := json.Marshal(v)
 	if err != nil {
 		return err
@@ -11351,22 +10823,22 @@ func (t *ProjectUpgradeEligibilityResponse_ValidationErrors_Item) MergeProjectUp
 	return err
 }
 
-// AsProjectUpgradeEligibilityResponseValidationErrors2 returns the union data inside the ProjectUpgradeEligibilityResponse_ValidationErrors_Item as a ProjectUpgradeEligibilityResponseValidationErrors2
-func (t ProjectUpgradeEligibilityResponse_ValidationErrors_Item) AsProjectUpgradeEligibilityResponseValidationErrors2() (ProjectUpgradeEligibilityResponseValidationErrors2, error) {
-	var body ProjectUpgradeEligibilityResponseValidationErrors2
+// AsProjectUpgradeEligibilityResponseOutputValidationErrors2 returns the union data inside the ProjectUpgradeEligibilityResponseOutput_ValidationErrors_Item as a ProjectUpgradeEligibilityResponseOutputValidationErrors2
+func (t ProjectUpgradeEligibilityResponseOutput_ValidationErrors_Item) AsProjectUpgradeEligibilityResponseOutputValidationErrors2() (ProjectUpgradeEligibilityResponseOutputValidationErrors2, error) {
+	var body ProjectUpgradeEligibilityResponseOutputValidationErrors2
 	err := json.Unmarshal(t.union, &body)
 	return body, err
 }
 
-// FromProjectUpgradeEligibilityResponseValidationErrors2 overwrites any union data inside the ProjectUpgradeEligibilityResponse_ValidationErrors_Item as the provided ProjectUpgradeEligibilityResponseValidationErrors2
-func (t *ProjectUpgradeEligibilityResponse_ValidationErrors_Item) FromProjectUpgradeEligibilityResponseValidationErrors2(v ProjectUpgradeEligibilityResponseValidationErrors2) error {
+// FromProjectUpgradeEligibilityResponseOutputValidationErrors2 overwrites any union data inside the ProjectUpgradeEligibilityResponseOutput_ValidationErrors_Item as the provided ProjectUpgradeEligibilityResponseOutputValidationErrors2
+func (t *ProjectUpgradeEligibilityResponseOutput_ValidationErrors_Item) FromProjectUpgradeEligibilityResponseOutputValidationErrors2(v ProjectUpgradeEligibilityResponseOutputValidationErrors2) error {
 	b, err := json.Marshal(v)
 	t.union = b
 	return err
 }
 
-// MergeProjectUpgradeEligibilityResponseValidationErrors2 performs a merge with any union data inside the ProjectUpgradeEligibilityResponse_ValidationErrors_Item, using the provided ProjectUpgradeEligibilityResponseValidationErrors2
-func (t *ProjectUpgradeEligibilityResponse_ValidationErrors_Item) MergeProjectUpgradeEligibilityResponseValidationErrors2(v ProjectUpgradeEligibilityResponseValidationErrors2) error {
+// MergeProjectUpgradeEligibilityResponseOutputValidationErrors2 performs a merge with any union data inside the ProjectUpgradeEligibilityResponseOutput_ValidationErrors_Item, using the provided ProjectUpgradeEligibilityResponseOutputValidationErrors2
+func (t *ProjectUpgradeEligibilityResponseOutput_ValidationErrors_Item) MergeProjectUpgradeEligibilityResponseOutputValidationErrors2(v ProjectUpgradeEligibilityResponseOutputValidationErrors2) error {
 	b, err := json.Marshal(v)
 	if err != nil {
 		return err
@@ -11377,22 +10849,22 @@ func (t *ProjectUpgradeEligibilityResponse_ValidationErrors_Item) MergeProjectUp
 	return err
 }
 
-// AsProjectUpgradeEligibilityResponseValidationErrors3 returns the union data inside the ProjectUpgradeEligibilityResponse_ValidationErrors_Item as a ProjectUpgradeEligibilityResponseValidationErrors3
-func (t ProjectUpgradeEligibilityResponse_ValidationErrors_Item) AsProjectUpgradeEligibilityResponseValidationErrors3() (ProjectUpgradeEligibilityResponseValidationErrors3, error) {
-	var body ProjectUpgradeEligibilityResponseValidationErrors3
+// AsProjectUpgradeEligibilityResponseOutputValidationErrors3 returns the union data inside the ProjectUpgradeEligibilityResponseOutput_ValidationErrors_Item as a ProjectUpgradeEligibilityResponseOutputValidationErrors3
+func (t ProjectUpgradeEligibilityResponseOutput_ValidationErrors_Item) AsProjectUpgradeEligibilityResponseOutputValidationErrors3() (ProjectUpgradeEligibilityResponseOutputValidationErrors3, error) {
+	var body ProjectUpgradeEligibilityResponseOutputValidationErrors3
 	err := json.Unmarshal(t.union, &body)
 	return body, err
 }
 
-// FromProjectUpgradeEligibilityResponseValidationErrors3 overwrites any union data inside the ProjectUpgradeEligibilityResponse_ValidationErrors_Item as the provided ProjectUpgradeEligibilityResponseValidationErrors3
-func (t *ProjectUpgradeEligibilityResponse_ValidationErrors_Item) FromProjectUpgradeEligibilityResponseValidationErrors3(v ProjectUpgradeEligibilityResponseValidationErrors3) error {
+// FromProjectUpgradeEligibilityResponseOutputValidationErrors3 overwrites any union data inside the ProjectUpgradeEligibilityResponseOutput_ValidationErrors_Item as the provided ProjectUpgradeEligibilityResponseOutputValidationErrors3
+func (t *ProjectUpgradeEligibilityResponseOutput_ValidationErrors_Item) FromProjectUpgradeEligibilityResponseOutputValidationErrors3(v ProjectUpgradeEligibilityResponseOutputValidationErrors3) error {
 	b, err := json.Marshal(v)
 	t.union = b
 	return err
 }
 
-// MergeProjectUpgradeEligibilityResponseValidationErrors3 performs a merge with any union data inside the ProjectUpgradeEligibilityResponse_ValidationErrors_Item, using the provided ProjectUpgradeEligibilityResponseValidationErrors3
-func (t *ProjectUpgradeEligibilityResponse_ValidationErrors_Item) MergeProjectUpgradeEligibilityResponseValidationErrors3(v ProjectUpgradeEligibilityResponseValidationErrors3) error {
+// MergeProjectUpgradeEligibilityResponseOutputValidationErrors3 performs a merge with any union data inside the ProjectUpgradeEligibilityResponseOutput_ValidationErrors_Item, using the provided ProjectUpgradeEligibilityResponseOutputValidationErrors3
+func (t *ProjectUpgradeEligibilityResponseOutput_ValidationErrors_Item) MergeProjectUpgradeEligibilityResponseOutputValidationErrors3(v ProjectUpgradeEligibilityResponseOutputValidationErrors3) error {
 	b, err := json.Marshal(v)
 	if err != nil {
 		return err
@@ -11403,22 +10875,22 @@ func (t *ProjectUpgradeEligibilityResponse_ValidationErrors_Item) MergeProjectUp
 	return err
 }
 
-// AsProjectUpgradeEligibilityResponseValidationErrors4 returns the union data inside the ProjectUpgradeEligibilityResponse_ValidationErrors_Item as a ProjectUpgradeEligibilityResponseValidationErrors4
-func (t ProjectUpgradeEligibilityResponse_ValidationErrors_Item) AsProjectUpgradeEligibilityResponseValidationErrors4() (ProjectUpgradeEligibilityResponseValidationErrors4, error) {
-	var body ProjectUpgradeEligibilityResponseValidationErrors4
+// AsProjectUpgradeEligibilityResponseOutputValidationErrors4 returns the union data inside the ProjectUpgradeEligibilityResponseOutput_ValidationErrors_Item as a ProjectUpgradeEligibilityResponseOutputValidationErrors4
+func (t ProjectUpgradeEligibilityResponseOutput_ValidationErrors_Item) AsProjectUpgradeEligibilityResponseOutputValidationErrors4() (ProjectUpgradeEligibilityResponseOutputValidationErrors4, error) {
+	var body ProjectUpgradeEligibilityResponseOutputValidationErrors4
 	err := json.Unmarshal(t.union, &body)
 	return body, err
 }
 
-// FromProjectUpgradeEligibilityResponseValidationErrors4 overwrites any union data inside the ProjectUpgradeEligibilityResponse_ValidationErrors_Item as the provided ProjectUpgradeEligibilityResponseValidationErrors4
-func (t *ProjectUpgradeEligibilityResponse_ValidationErrors_Item) FromProjectUpgradeEligibilityResponseValidationErrors4(v ProjectUpgradeEligibilityResponseValidationErrors4) error {
+// FromProjectUpgradeEligibilityResponseOutputValidationErrors4 overwrites any union data inside the ProjectUpgradeEligibilityResponseOutput_ValidationErrors_Item as the provided ProjectUpgradeEligibilityResponseOutputValidationErrors4
+func (t *ProjectUpgradeEligibilityResponseOutput_ValidationErrors_Item) FromProjectUpgradeEligibilityResponseOutputValidationErrors4(v ProjectUpgradeEligibilityResponseOutputValidationErrors4) error {
 	b, err := json.Marshal(v)
 	t.union = b
 	return err
 }
 
-// MergeProjectUpgradeEligibilityResponseValidationErrors4 performs a merge with any union data inside the ProjectUpgradeEligibilityResponse_ValidationErrors_Item, using the provided ProjectUpgradeEligibilityResponseValidationErrors4
-func (t *ProjectUpgradeEligibilityResponse_ValidationErrors_Item) MergeProjectUpgradeEligibilityResponseValidationErrors4(v ProjectUpgradeEligibilityResponseValidationErrors4) error {
+// MergeProjectUpgradeEligibilityResponseOutputValidationErrors4 performs a merge with any union data inside the ProjectUpgradeEligibilityResponseOutput_ValidationErrors_Item, using the provided ProjectUpgradeEligibilityResponseOutputValidationErrors4
+func (t *ProjectUpgradeEligibilityResponseOutput_ValidationErrors_Item) MergeProjectUpgradeEligibilityResponseOutputValidationErrors4(v ProjectUpgradeEligibilityResponseOutputValidationErrors4) error {
 	b, err := json.Marshal(v)
 	if err != nil {
 		return err
@@ -11429,22 +10901,22 @@ func (t *ProjectUpgradeEligibilityResponse_ValidationErrors_Item) MergeProjectUp
 	return err
 }
 
-// AsProjectUpgradeEligibilityResponseValidationErrors5 returns the union data inside the ProjectUpgradeEligibilityResponse_ValidationErrors_Item as a ProjectUpgradeEligibilityResponseValidationErrors5
-func (t ProjectUpgradeEligibilityResponse_ValidationErrors_Item) AsProjectUpgradeEligibilityResponseValidationErrors5() (ProjectUpgradeEligibilityResponseValidationErrors5, error) {
-	var body ProjectUpgradeEligibilityResponseValidationErrors5
+// AsProjectUpgradeEligibilityResponseOutputValidationErrors5 returns the union data inside the ProjectUpgradeEligibilityResponseOutput_ValidationErrors_Item as a ProjectUpgradeEligibilityResponseOutputValidationErrors5
+func (t ProjectUpgradeEligibilityResponseOutput_ValidationErrors_Item) AsProjectUpgradeEligibilityResponseOutputValidationErrors5() (ProjectUpgradeEligibilityResponseOutputValidationErrors5, error) {
+	var body ProjectUpgradeEligibilityResponseOutputValidationErrors5
 	err := json.Unmarshal(t.union, &body)
 	return body, err
 }
 
-// FromProjectUpgradeEligibilityResponseValidationErrors5 overwrites any union data inside the ProjectUpgradeEligibilityResponse_ValidationErrors_Item as the provided ProjectUpgradeEligibilityResponseValidationErrors5
-func (t *ProjectUpgradeEligibilityResponse_ValidationErrors_Item) FromProjectUpgradeEligibilityResponseValidationErrors5(v ProjectUpgradeEligibilityResponseValidationErrors5) error {
+// FromProjectUpgradeEligibilityResponseOutputValidationErrors5 overwrites any union data inside the ProjectUpgradeEligibilityResponseOutput_ValidationErrors_Item as the provided ProjectUpgradeEligibilityResponseOutputValidationErrors5
+func (t *ProjectUpgradeEligibilityResponseOutput_ValidationErrors_Item) FromProjectUpgradeEligibilityResponseOutputValidationErrors5(v ProjectUpgradeEligibilityResponseOutputValidationErrors5) error {
 	b, err := json.Marshal(v)
 	t.union = b
 	return err
 }
 
-// MergeProjectUpgradeEligibilityResponseValidationErrors5 performs a merge with any union data inside the ProjectUpgradeEligibilityResponse_ValidationErrors_Item, using the provided ProjectUpgradeEligibilityResponseValidationErrors5
-func (t *ProjectUpgradeEligibilityResponse_ValidationErrors_Item) MergeProjectUpgradeEligibilityResponseValidationErrors5(v ProjectUpgradeEligibilityResponseValidationErrors5) error {
+// MergeProjectUpgradeEligibilityResponseOutputValidationErrors5 performs a merge with any union data inside the ProjectUpgradeEligibilityResponseOutput_ValidationErrors_Item, using the provided ProjectUpgradeEligibilityResponseOutputValidationErrors5
+func (t *ProjectUpgradeEligibilityResponseOutput_ValidationErrors_Item) MergeProjectUpgradeEligibilityResponseOutputValidationErrors5(v ProjectUpgradeEligibilityResponseOutputValidationErrors5) error {
 	b, err := json.Marshal(v)
 	if err != nil {
 		return err
@@ -11455,22 +10927,22 @@ func (t *ProjectUpgradeEligibilityResponse_ValidationErrors_Item) MergeProjectUp
 	return err
 }
 
-// AsProjectUpgradeEligibilityResponseValidationErrors6 returns the union data inside the ProjectUpgradeEligibilityResponse_ValidationErrors_Item as a ProjectUpgradeEligibilityResponseValidationErrors6
-func (t ProjectUpgradeEligibilityResponse_ValidationErrors_Item) AsProjectUpgradeEligibilityResponseValidationErrors6() (ProjectUpgradeEligibilityResponseValidationErrors6, error) {
-	var body ProjectUpgradeEligibilityResponseValidationErrors6
+// AsProjectUpgradeEligibilityResponseOutputValidationErrors6 returns the union data inside the ProjectUpgradeEligibilityResponseOutput_ValidationErrors_Item as a ProjectUpgradeEligibilityResponseOutputValidationErrors6
+func (t ProjectUpgradeEligibilityResponseOutput_ValidationErrors_Item) AsProjectUpgradeEligibilityResponseOutputValidationErrors6() (ProjectUpgradeEligibilityResponseOutputValidationErrors6, error) {
+	var body ProjectUpgradeEligibilityResponseOutputValidationErrors6
 	err := json.Unmarshal(t.union, &body)
 	return body, err
 }
 
-// FromProjectUpgradeEligibilityResponseValidationErrors6 overwrites any union data inside the ProjectUpgradeEligibilityResponse_ValidationErrors_Item as the provided ProjectUpgradeEligibilityResponseValidationErrors6
-func (t *ProjectUpgradeEligibilityResponse_ValidationErrors_Item) FromProjectUpgradeEligibilityResponseValidationErrors6(v ProjectUpgradeEligibilityResponseValidationErrors6) error {
+// FromProjectUpgradeEligibilityResponseOutputValidationErrors6 overwrites any union data inside the ProjectUpgradeEligibilityResponseOutput_ValidationErrors_Item as the provided ProjectUpgradeEligibilityResponseOutputValidationErrors6
+func (t *ProjectUpgradeEligibilityResponseOutput_ValidationErrors_Item) FromProjectUpgradeEligibilityResponseOutputValidationErrors6(v ProjectUpgradeEligibilityResponseOutputValidationErrors6) error {
 	b, err := json.Marshal(v)
 	t.union = b
 	return err
 }
 
-// MergeProjectUpgradeEligibilityResponseValidationErrors6 performs a merge with any union data inside the ProjectUpgradeEligibilityResponse_ValidationErrors_Item, using the provided ProjectUpgradeEligibilityResponseValidationErrors6
-func (t *ProjectUpgradeEligibilityResponse_ValidationErrors_Item) MergeProjectUpgradeEligibilityResponseValidationErrors6(v ProjectUpgradeEligibilityResponseValidationErrors6) error {
+// MergeProjectUpgradeEligibilityResponseOutputValidationErrors6 performs a merge with any union data inside the ProjectUpgradeEligibilityResponseOutput_ValidationErrors_Item, using the provided ProjectUpgradeEligibilityResponseOutputValidationErrors6
+func (t *ProjectUpgradeEligibilityResponseOutput_ValidationErrors_Item) MergeProjectUpgradeEligibilityResponseOutputValidationErrors6(v ProjectUpgradeEligibilityResponseOutputValidationErrors6) error {
 	b, err := json.Marshal(v)
 	if err != nil {
 		return err
@@ -11481,22 +10953,22 @@ func (t *ProjectUpgradeEligibilityResponse_ValidationErrors_Item) MergeProjectUp
 	return err
 }
 
-// AsProjectUpgradeEligibilityResponseValidationErrors7 returns the union data inside the ProjectUpgradeEligibilityResponse_ValidationErrors_Item as a ProjectUpgradeEligibilityResponseValidationErrors7
-func (t ProjectUpgradeEligibilityResponse_ValidationErrors_Item) AsProjectUpgradeEligibilityResponseValidationErrors7() (ProjectUpgradeEligibilityResponseValidationErrors7, error) {
-	var body ProjectUpgradeEligibilityResponseValidationErrors7
+// AsProjectUpgradeEligibilityResponseOutputValidationErrors7 returns the union data inside the ProjectUpgradeEligibilityResponseOutput_ValidationErrors_Item as a ProjectUpgradeEligibilityResponseOutputValidationErrors7
+func (t ProjectUpgradeEligibilityResponseOutput_ValidationErrors_Item) AsProjectUpgradeEligibilityResponseOutputValidationErrors7() (ProjectUpgradeEligibilityResponseOutputValidationErrors7, error) {
+	var body ProjectUpgradeEligibilityResponseOutputValidationErrors7
 	err := json.Unmarshal(t.union, &body)
 	return body, err
 }
 
-// FromProjectUpgradeEligibilityResponseValidationErrors7 overwrites any union data inside the ProjectUpgradeEligibilityResponse_ValidationErrors_Item as the provided ProjectUpgradeEligibilityResponseValidationErrors7
-func (t *ProjectUpgradeEligibilityResponse_ValidationErrors_Item) FromProjectUpgradeEligibilityResponseValidationErrors7(v ProjectUpgradeEligibilityResponseValidationErrors7) error {
+// FromProjectUpgradeEligibilityResponseOutputValidationErrors7 overwrites any union data inside the ProjectUpgradeEligibilityResponseOutput_ValidationErrors_Item as the provided ProjectUpgradeEligibilityResponseOutputValidationErrors7
+func (t *ProjectUpgradeEligibilityResponseOutput_ValidationErrors_Item) FromProjectUpgradeEligibilityResponseOutputValidationErrors7(v ProjectUpgradeEligibilityResponseOutputValidationErrors7) error {
 	b, err := json.Marshal(v)
 	t.union = b
 	return err
 }
 
-// MergeProjectUpgradeEligibilityResponseValidationErrors7 performs a merge with any union data inside the ProjectUpgradeEligibilityResponse_ValidationErrors_Item, using the provided ProjectUpgradeEligibilityResponseValidationErrors7
-func (t *ProjectUpgradeEligibilityResponse_ValidationErrors_Item) MergeProjectUpgradeEligibilityResponseValidationErrors7(v ProjectUpgradeEligibilityResponseValidationErrors7) error {
+// MergeProjectUpgradeEligibilityResponseOutputValidationErrors7 performs a merge with any union data inside the ProjectUpgradeEligibilityResponseOutput_ValidationErrors_Item, using the provided ProjectUpgradeEligibilityResponseOutputValidationErrors7
+func (t *ProjectUpgradeEligibilityResponseOutput_ValidationErrors_Item) MergeProjectUpgradeEligibilityResponseOutputValidationErrors7(v ProjectUpgradeEligibilityResponseOutputValidationErrors7) error {
 	b, err := json.Marshal(v)
 	if err != nil {
 		return err
@@ -11507,22 +10979,22 @@ func (t *ProjectUpgradeEligibilityResponse_ValidationErrors_Item) MergeProjectUp
 	return err
 }
 
-// AsProjectUpgradeEligibilityResponseValidationErrors8 returns the union data inside the ProjectUpgradeEligibilityResponse_ValidationErrors_Item as a ProjectUpgradeEligibilityResponseValidationErrors8
-func (t ProjectUpgradeEligibilityResponse_ValidationErrors_Item) AsProjectUpgradeEligibilityResponseValidationErrors8() (ProjectUpgradeEligibilityResponseValidationErrors8, error) {
-	var body ProjectUpgradeEligibilityResponseValidationErrors8
+// AsProjectUpgradeEligibilityResponseOutputValidationErrors8 returns the union data inside the ProjectUpgradeEligibilityResponseOutput_ValidationErrors_Item as a ProjectUpgradeEligibilityResponseOutputValidationErrors8
+func (t ProjectUpgradeEligibilityResponseOutput_ValidationErrors_Item) AsProjectUpgradeEligibilityResponseOutputValidationErrors8() (ProjectUpgradeEligibilityResponseOutputValidationErrors8, error) {
+	var body ProjectUpgradeEligibilityResponseOutputValidationErrors8
 	err := json.Unmarshal(t.union, &body)
 	return body, err
 }
 
-// FromProjectUpgradeEligibilityResponseValidationErrors8 overwrites any union data inside the ProjectUpgradeEligibilityResponse_ValidationErrors_Item as the provided ProjectUpgradeEligibilityResponseValidationErrors8
-func (t *ProjectUpgradeEligibilityResponse_ValidationErrors_Item) FromProjectUpgradeEligibilityResponseValidationErrors8(v ProjectUpgradeEligibilityResponseValidationErrors8) error {
+// FromProjectUpgradeEligibilityResponseOutputValidationErrors8 overwrites any union data inside the ProjectUpgradeEligibilityResponseOutput_ValidationErrors_Item as the provided ProjectUpgradeEligibilityResponseOutputValidationErrors8
+func (t *ProjectUpgradeEligibilityResponseOutput_ValidationErrors_Item) FromProjectUpgradeEligibilityResponseOutputValidationErrors8(v ProjectUpgradeEligibilityResponseOutputValidationErrors8) error {
 	b, err := json.Marshal(v)
 	t.union = b
 	return err
 }
 
-// MergeProjectUpgradeEligibilityResponseValidationErrors8 performs a merge with any union data inside the ProjectUpgradeEligibilityResponse_ValidationErrors_Item, using the provided ProjectUpgradeEligibilityResponseValidationErrors8
-func (t *ProjectUpgradeEligibilityResponse_ValidationErrors_Item) MergeProjectUpgradeEligibilityResponseValidationErrors8(v ProjectUpgradeEligibilityResponseValidationErrors8) error {
+// MergeProjectUpgradeEligibilityResponseOutputValidationErrors8 performs a merge with any union data inside the ProjectUpgradeEligibilityResponseOutput_ValidationErrors_Item, using the provided ProjectUpgradeEligibilityResponseOutputValidationErrors8
+func (t *ProjectUpgradeEligibilityResponseOutput_ValidationErrors_Item) MergeProjectUpgradeEligibilityResponseOutputValidationErrors8(v ProjectUpgradeEligibilityResponseOutputValidationErrors8) error {
 	b, err := json.Marshal(v)
 	if err != nil {
 		return err
@@ -11533,22 +11005,22 @@ func (t *ProjectUpgradeEligibilityResponse_ValidationErrors_Item) MergeProjectUp
 	return err
 }
 
-// AsProjectUpgradeEligibilityResponseValidationErrors9 returns the union data inside the ProjectUpgradeEligibilityResponse_ValidationErrors_Item as a ProjectUpgradeEligibilityResponseValidationErrors9
-func (t ProjectUpgradeEligibilityResponse_ValidationErrors_Item) AsProjectUpgradeEligibilityResponseValidationErrors9() (ProjectUpgradeEligibilityResponseValidationErrors9, error) {
-	var body ProjectUpgradeEligibilityResponseValidationErrors9
+// AsProjectUpgradeEligibilityResponseOutputValidationErrors9 returns the union data inside the ProjectUpgradeEligibilityResponseOutput_ValidationErrors_Item as a ProjectUpgradeEligibilityResponseOutputValidationErrors9
+func (t ProjectUpgradeEligibilityResponseOutput_ValidationErrors_Item) AsProjectUpgradeEligibilityResponseOutputValidationErrors9() (ProjectUpgradeEligibilityResponseOutputValidationErrors9, error) {
+	var body ProjectUpgradeEligibilityResponseOutputValidationErrors9
 	err := json.Unmarshal(t.union, &body)
 	return body, err
 }
 
-// FromProjectUpgradeEligibilityResponseValidationErrors9 overwrites any union data inside the ProjectUpgradeEligibilityResponse_ValidationErrors_Item as the provided ProjectUpgradeEligibilityResponseValidationErrors9
-func (t *ProjectUpgradeEligibilityResponse_ValidationErrors_Item) FromProjectUpgradeEligibilityResponseValidationErrors9(v ProjectUpgradeEligibilityResponseValidationErrors9) error {
+// FromProjectUpgradeEligibilityResponseOutputValidationErrors9 overwrites any union data inside the ProjectUpgradeEligibilityResponseOutput_ValidationErrors_Item as the provided ProjectUpgradeEligibilityResponseOutputValidationErrors9
+func (t *ProjectUpgradeEligibilityResponseOutput_ValidationErrors_Item) FromProjectUpgradeEligibilityResponseOutputValidationErrors9(v ProjectUpgradeEligibilityResponseOutputValidationErrors9) error {
 	b, err := json.Marshal(v)
 	t.union = b
 	return err
 }
 
-// MergeProjectUpgradeEligibilityResponseValidationErrors9 performs a merge with any union data inside the ProjectUpgradeEligibilityResponse_ValidationErrors_Item, using the provided ProjectUpgradeEligibilityResponseValidationErrors9
-func (t *ProjectUpgradeEligibilityResponse_ValidationErrors_Item) MergeProjectUpgradeEligibilityResponseValidationErrors9(v ProjectUpgradeEligibilityResponseValidationErrors9) error {
+// MergeProjectUpgradeEligibilityResponseOutputValidationErrors9 performs a merge with any union data inside the ProjectUpgradeEligibilityResponseOutput_ValidationErrors_Item, using the provided ProjectUpgradeEligibilityResponseOutputValidationErrors9
+func (t *ProjectUpgradeEligibilityResponseOutput_ValidationErrors_Item) MergeProjectUpgradeEligibilityResponseOutputValidationErrors9(v ProjectUpgradeEligibilityResponseOutputValidationErrors9) error {
 	b, err := json.Marshal(v)
 	if err != nil {
 		return err
@@ -11559,32 +11031,32 @@ func (t *ProjectUpgradeEligibilityResponse_ValidationErrors_Item) MergeProjectUp
 	return err
 }
 
-func (t ProjectUpgradeEligibilityResponse_ValidationErrors_Item) MarshalJSON() ([]byte, error) {
+func (t ProjectUpgradeEligibilityResponseOutput_ValidationErrors_Item) MarshalJSON() ([]byte, error) {
 	b, err := t.union.MarshalJSON()
 	return b, err
 }
 
-func (t *ProjectUpgradeEligibilityResponse_ValidationErrors_Item) UnmarshalJSON(b []byte) error {
+func (t *ProjectUpgradeEligibilityResponseOutput_ValidationErrors_Item) UnmarshalJSON(b []byte) error {
 	err := t.union.UnmarshalJSON(b)
 	return err
 }
 
-// AsProjectUpgradeEligibilityResponseWarnings0 returns the union data inside the ProjectUpgradeEligibilityResponse_Warnings_Item as a ProjectUpgradeEligibilityResponseWarnings0
-func (t ProjectUpgradeEligibilityResponse_Warnings_Item) AsProjectUpgradeEligibilityResponseWarnings0() (ProjectUpgradeEligibilityResponseWarnings0, error) {
-	var body ProjectUpgradeEligibilityResponseWarnings0
+// AsProjectUpgradeEligibilityResponseOutputWarnings0 returns the union data inside the ProjectUpgradeEligibilityResponseOutput_Warnings_Item as a ProjectUpgradeEligibilityResponseOutputWarnings0
+func (t ProjectUpgradeEligibilityResponseOutput_Warnings_Item) AsProjectUpgradeEligibilityResponseOutputWarnings0() (ProjectUpgradeEligibilityResponseOutputWarnings0, error) {
+	var body ProjectUpgradeEligibilityResponseOutputWarnings0
 	err := json.Unmarshal(t.union, &body)
 	return body, err
 }
 
-// FromProjectUpgradeEligibilityResponseWarnings0 overwrites any union data inside the ProjectUpgradeEligibilityResponse_Warnings_Item as the provided ProjectUpgradeEligibilityResponseWarnings0
-func (t *ProjectUpgradeEligibilityResponse_Warnings_Item) FromProjectUpgradeEligibilityResponseWarnings0(v ProjectUpgradeEligibilityResponseWarnings0) error {
+// FromProjectUpgradeEligibilityResponseOutputWarnings0 overwrites any union data inside the ProjectUpgradeEligibilityResponseOutput_Warnings_Item as the provided ProjectUpgradeEligibilityResponseOutputWarnings0
+func (t *ProjectUpgradeEligibilityResponseOutput_Warnings_Item) FromProjectUpgradeEligibilityResponseOutputWarnings0(v ProjectUpgradeEligibilityResponseOutputWarnings0) error {
 	b, err := json.Marshal(v)
 	t.union = b
 	return err
 }
 
-// MergeProjectUpgradeEligibilityResponseWarnings0 performs a merge with any union data inside the ProjectUpgradeEligibilityResponse_Warnings_Item, using the provided ProjectUpgradeEligibilityResponseWarnings0
-func (t *ProjectUpgradeEligibilityResponse_Warnings_Item) MergeProjectUpgradeEligibilityResponseWarnings0(v ProjectUpgradeEligibilityResponseWarnings0) error {
+// MergeProjectUpgradeEligibilityResponseOutputWarnings0 performs a merge with any union data inside the ProjectUpgradeEligibilityResponseOutput_Warnings_Item, using the provided ProjectUpgradeEligibilityResponseOutputWarnings0
+func (t *ProjectUpgradeEligibilityResponseOutput_Warnings_Item) MergeProjectUpgradeEligibilityResponseOutputWarnings0(v ProjectUpgradeEligibilityResponseOutputWarnings0) error {
 	b, err := json.Marshal(v)
 	if err != nil {
 		return err
@@ -11595,22 +11067,22 @@ func (t *ProjectUpgradeEligibilityResponse_Warnings_Item) MergeProjectUpgradeEli
 	return err
 }
 
-// AsProjectUpgradeEligibilityResponseWarnings1 returns the union data inside the ProjectUpgradeEligibilityResponse_Warnings_Item as a ProjectUpgradeEligibilityResponseWarnings1
-func (t ProjectUpgradeEligibilityResponse_Warnings_Item) AsProjectUpgradeEligibilityResponseWarnings1() (ProjectUpgradeEligibilityResponseWarnings1, error) {
-	var body ProjectUpgradeEligibilityResponseWarnings1
+// AsProjectUpgradeEligibilityResponseOutputWarnings1 returns the union data inside the ProjectUpgradeEligibilityResponseOutput_Warnings_Item as a ProjectUpgradeEligibilityResponseOutputWarnings1
+func (t ProjectUpgradeEligibilityResponseOutput_Warnings_Item) AsProjectUpgradeEligibilityResponseOutputWarnings1() (ProjectUpgradeEligibilityResponseOutputWarnings1, error) {
+	var body ProjectUpgradeEligibilityResponseOutputWarnings1
 	err := json.Unmarshal(t.union, &body)
 	return body, err
 }
 
-// FromProjectUpgradeEligibilityResponseWarnings1 overwrites any union data inside the ProjectUpgradeEligibilityResponse_Warnings_Item as the provided ProjectUpgradeEligibilityResponseWarnings1
-func (t *ProjectUpgradeEligibilityResponse_Warnings_Item) FromProjectUpgradeEligibilityResponseWarnings1(v ProjectUpgradeEligibilityResponseWarnings1) error {
+// FromProjectUpgradeEligibilityResponseOutputWarnings1 overwrites any union data inside the ProjectUpgradeEligibilityResponseOutput_Warnings_Item as the provided ProjectUpgradeEligibilityResponseOutputWarnings1
+func (t *ProjectUpgradeEligibilityResponseOutput_Warnings_Item) FromProjectUpgradeEligibilityResponseOutputWarnings1(v ProjectUpgradeEligibilityResponseOutputWarnings1) error {
 	b, err := json.Marshal(v)
 	t.union = b
 	return err
 }
 
-// MergeProjectUpgradeEligibilityResponseWarnings1 performs a merge with any union data inside the ProjectUpgradeEligibilityResponse_Warnings_Item, using the provided ProjectUpgradeEligibilityResponseWarnings1
-func (t *ProjectUpgradeEligibilityResponse_Warnings_Item) MergeProjectUpgradeEligibilityResponseWarnings1(v ProjectUpgradeEligibilityResponseWarnings1) error {
+// MergeProjectUpgradeEligibilityResponseOutputWarnings1 performs a merge with any union data inside the ProjectUpgradeEligibilityResponseOutput_Warnings_Item, using the provided ProjectUpgradeEligibilityResponseOutputWarnings1
+func (t *ProjectUpgradeEligibilityResponseOutput_Warnings_Item) MergeProjectUpgradeEligibilityResponseOutputWarnings1(v ProjectUpgradeEligibilityResponseOutputWarnings1) error {
 	b, err := json.Marshal(v)
 	if err != nil {
 		return err
@@ -11621,22 +11093,22 @@ func (t *ProjectUpgradeEligibilityResponse_Warnings_Item) MergeProjectUpgradeEli
 	return err
 }
 
-// AsProjectUpgradeEligibilityResponseWarnings2 returns the union data inside the ProjectUpgradeEligibilityResponse_Warnings_Item as a ProjectUpgradeEligibilityResponseWarnings2
-func (t ProjectUpgradeEligibilityResponse_Warnings_Item) AsProjectUpgradeEligibilityResponseWarnings2() (ProjectUpgradeEligibilityResponseWarnings2, error) {
-	var body ProjectUpgradeEligibilityResponseWarnings2
+// AsProjectUpgradeEligibilityResponseOutputWarnings2 returns the union data inside the ProjectUpgradeEligibilityResponseOutput_Warnings_Item as a ProjectUpgradeEligibilityResponseOutputWarnings2
+func (t ProjectUpgradeEligibilityResponseOutput_Warnings_Item) AsProjectUpgradeEligibilityResponseOutputWarnings2() (ProjectUpgradeEligibilityResponseOutputWarnings2, error) {
+	var body ProjectUpgradeEligibilityResponseOutputWarnings2
 	err := json.Unmarshal(t.union, &body)
 	return body, err
 }
 
-// FromProjectUpgradeEligibilityResponseWarnings2 overwrites any union data inside the ProjectUpgradeEligibilityResponse_Warnings_Item as the provided ProjectUpgradeEligibilityResponseWarnings2
-func (t *ProjectUpgradeEligibilityResponse_Warnings_Item) FromProjectUpgradeEligibilityResponseWarnings2(v ProjectUpgradeEligibilityResponseWarnings2) error {
+// FromProjectUpgradeEligibilityResponseOutputWarnings2 overwrites any union data inside the ProjectUpgradeEligibilityResponseOutput_Warnings_Item as the provided ProjectUpgradeEligibilityResponseOutputWarnings2
+func (t *ProjectUpgradeEligibilityResponseOutput_Warnings_Item) FromProjectUpgradeEligibilityResponseOutputWarnings2(v ProjectUpgradeEligibilityResponseOutputWarnings2) error {
 	b, err := json.Marshal(v)
 	t.union = b
 	return err
 }
 
-// MergeProjectUpgradeEligibilityResponseWarnings2 performs a merge with any union data inside the ProjectUpgradeEligibilityResponse_Warnings_Item, using the provided ProjectUpgradeEligibilityResponseWarnings2
-func (t *ProjectUpgradeEligibilityResponse_Warnings_Item) MergeProjectUpgradeEligibilityResponseWarnings2(v ProjectUpgradeEligibilityResponseWarnings2) error {
+// MergeProjectUpgradeEligibilityResponseOutputWarnings2 performs a merge with any union data inside the ProjectUpgradeEligibilityResponseOutput_Warnings_Item, using the provided ProjectUpgradeEligibilityResponseOutputWarnings2
+func (t *ProjectUpgradeEligibilityResponseOutput_Warnings_Item) MergeProjectUpgradeEligibilityResponseOutputWarnings2(v ProjectUpgradeEligibilityResponseOutputWarnings2) error {
 	b, err := json.Marshal(v)
 	if err != nil {
 		return err
@@ -11647,22 +11119,22 @@ func (t *ProjectUpgradeEligibilityResponse_Warnings_Item) MergeProjectUpgradeEli
 	return err
 }
 
-// AsProjectUpgradeEligibilityResponseWarnings3 returns the union data inside the ProjectUpgradeEligibilityResponse_Warnings_Item as a ProjectUpgradeEligibilityResponseWarnings3
-func (t ProjectUpgradeEligibilityResponse_Warnings_Item) AsProjectUpgradeEligibilityResponseWarnings3() (ProjectUpgradeEligibilityResponseWarnings3, error) {
-	var body ProjectUpgradeEligibilityResponseWarnings3
+// AsProjectUpgradeEligibilityResponseOutputWarnings3 returns the union data inside the ProjectUpgradeEligibilityResponseOutput_Warnings_Item as a ProjectUpgradeEligibilityResponseOutputWarnings3
+func (t ProjectUpgradeEligibilityResponseOutput_Warnings_Item) AsProjectUpgradeEligibilityResponseOutputWarnings3() (ProjectUpgradeEligibilityResponseOutputWarnings3, error) {
+	var body ProjectUpgradeEligibilityResponseOutputWarnings3
 	err := json.Unmarshal(t.union, &body)
 	return body, err
 }
 
-// FromProjectUpgradeEligibilityResponseWarnings3 overwrites any union data inside the ProjectUpgradeEligibilityResponse_Warnings_Item as the provided ProjectUpgradeEligibilityResponseWarnings3
-func (t *ProjectUpgradeEligibilityResponse_Warnings_Item) FromProjectUpgradeEligibilityResponseWarnings3(v ProjectUpgradeEligibilityResponseWarnings3) error {
+// FromProjectUpgradeEligibilityResponseOutputWarnings3 overwrites any union data inside the ProjectUpgradeEligibilityResponseOutput_Warnings_Item as the provided ProjectUpgradeEligibilityResponseOutputWarnings3
+func (t *ProjectUpgradeEligibilityResponseOutput_Warnings_Item) FromProjectUpgradeEligibilityResponseOutputWarnings3(v ProjectUpgradeEligibilityResponseOutputWarnings3) error {
 	b, err := json.Marshal(v)
 	t.union = b
 	return err
 }
 
-// MergeProjectUpgradeEligibilityResponseWarnings3 performs a merge with any union data inside the ProjectUpgradeEligibilityResponse_Warnings_Item, using the provided ProjectUpgradeEligibilityResponseWarnings3
-func (t *ProjectUpgradeEligibilityResponse_Warnings_Item) MergeProjectUpgradeEligibilityResponseWarnings3(v ProjectUpgradeEligibilityResponseWarnings3) error {
+// MergeProjectUpgradeEligibilityResponseOutputWarnings3 performs a merge with any union data inside the ProjectUpgradeEligibilityResponseOutput_Warnings_Item, using the provided ProjectUpgradeEligibilityResponseOutputWarnings3
+func (t *ProjectUpgradeEligibilityResponseOutput_Warnings_Item) MergeProjectUpgradeEligibilityResponseOutputWarnings3(v ProjectUpgradeEligibilityResponseOutputWarnings3) error {
 	b, err := json.Marshal(v)
 	if err != nil {
 		return err
@@ -11673,188 +11145,12 @@ func (t *ProjectUpgradeEligibilityResponse_Warnings_Item) MergeProjectUpgradeEli
 	return err
 }
 
-func (t ProjectUpgradeEligibilityResponse_Warnings_Item) MarshalJSON() ([]byte, error) {
+func (t ProjectUpgradeEligibilityResponseOutput_Warnings_Item) MarshalJSON() ([]byte, error) {
 	b, err := t.union.MarshalJSON()
 	return b, err
 }
 
-func (t *ProjectUpgradeEligibilityResponse_Warnings_Item) UnmarshalJSON(b []byte) error {
-	err := t.union.UnmarshalJSON(b)
-	return err
-}
-
-// AsUpdateCustomHostnameResponseJsonValue0 returns the union data inside the UpdateCustomHostnameResponseJsonValue as a UpdateCustomHostnameResponseJsonValue0
-func (t UpdateCustomHostnameResponseJsonValue) AsUpdateCustomHostnameResponseJsonValue0() (UpdateCustomHostnameResponseJsonValue0, error) {
-	var body UpdateCustomHostnameResponseJsonValue0
-	err := json.Unmarshal(t.union, &body)
-	return body, err
-}
-
-// FromUpdateCustomHostnameResponseJsonValue0 overwrites any union data inside the UpdateCustomHostnameResponseJsonValue as the provided UpdateCustomHostnameResponseJsonValue0
-func (t *UpdateCustomHostnameResponseJsonValue) FromUpdateCustomHostnameResponseJsonValue0(v UpdateCustomHostnameResponseJsonValue0) error {
-	b, err := json.Marshal(v)
-	t.union = b
-	return err
-}
-
-// MergeUpdateCustomHostnameResponseJsonValue0 performs a merge with any union data inside the UpdateCustomHostnameResponseJsonValue, using the provided UpdateCustomHostnameResponseJsonValue0
-func (t *UpdateCustomHostnameResponseJsonValue) MergeUpdateCustomHostnameResponseJsonValue0(v UpdateCustomHostnameResponseJsonValue0) error {
-	b, err := json.Marshal(v)
-	if err != nil {
-		return err
-	}
-
-	merged, err := runtime.JSONMerge(t.union, b)
-	t.union = merged
-	return err
-}
-
-// AsUpdateCustomHostnameResponseJsonValue1 returns the union data inside the UpdateCustomHostnameResponseJsonValue as a UpdateCustomHostnameResponseJsonValue1
-func (t UpdateCustomHostnameResponseJsonValue) AsUpdateCustomHostnameResponseJsonValue1() (UpdateCustomHostnameResponseJsonValue1, error) {
-	var body UpdateCustomHostnameResponseJsonValue1
-	err := json.Unmarshal(t.union, &body)
-	return body, err
-}
-
-// FromUpdateCustomHostnameResponseJsonValue1 overwrites any union data inside the UpdateCustomHostnameResponseJsonValue as the provided UpdateCustomHostnameResponseJsonValue1
-func (t *UpdateCustomHostnameResponseJsonValue) FromUpdateCustomHostnameResponseJsonValue1(v UpdateCustomHostnameResponseJsonValue1) error {
-	b, err := json.Marshal(v)
-	t.union = b
-	return err
-}
-
-// MergeUpdateCustomHostnameResponseJsonValue1 performs a merge with any union data inside the UpdateCustomHostnameResponseJsonValue, using the provided UpdateCustomHostnameResponseJsonValue1
-func (t *UpdateCustomHostnameResponseJsonValue) MergeUpdateCustomHostnameResponseJsonValue1(v UpdateCustomHostnameResponseJsonValue1) error {
-	b, err := json.Marshal(v)
-	if err != nil {
-		return err
-	}
-
-	merged, err := runtime.JSONMerge(t.union, b)
-	t.union = merged
-	return err
-}
-
-// AsUpdateCustomHostnameResponseJsonValue2 returns the union data inside the UpdateCustomHostnameResponseJsonValue as a UpdateCustomHostnameResponseJsonValue2
-func (t UpdateCustomHostnameResponseJsonValue) AsUpdateCustomHostnameResponseJsonValue2() (UpdateCustomHostnameResponseJsonValue2, error) {
-	var body UpdateCustomHostnameResponseJsonValue2
-	err := json.Unmarshal(t.union, &body)
-	return body, err
-}
-
-// FromUpdateCustomHostnameResponseJsonValue2 overwrites any union data inside the UpdateCustomHostnameResponseJsonValue as the provided UpdateCustomHostnameResponseJsonValue2
-func (t *UpdateCustomHostnameResponseJsonValue) FromUpdateCustomHostnameResponseJsonValue2(v UpdateCustomHostnameResponseJsonValue2) error {
-	b, err := json.Marshal(v)
-	t.union = b
-	return err
-}
-
-// MergeUpdateCustomHostnameResponseJsonValue2 performs a merge with any union data inside the UpdateCustomHostnameResponseJsonValue, using the provided UpdateCustomHostnameResponseJsonValue2
-func (t *UpdateCustomHostnameResponseJsonValue) MergeUpdateCustomHostnameResponseJsonValue2(v UpdateCustomHostnameResponseJsonValue2) error {
-	b, err := json.Marshal(v)
-	if err != nil {
-		return err
-	}
-
-	merged, err := runtime.JSONMerge(t.union, b)
-	t.union = merged
-	return err
-}
-
-func (t UpdateCustomHostnameResponseJsonValue) MarshalJSON() ([]byte, error) {
-	b, err := t.union.MarshalJSON()
-	return b, err
-}
-
-func (t *UpdateCustomHostnameResponseJsonValue) UnmarshalJSON(b []byte) error {
-	err := t.union.UnmarshalJSON(b)
-	return err
-}
-
-// AsUpdateCustomHostnameResponseJsonValue00 returns the union data inside the UpdateCustomHostnameResponseJsonValue0 as a UpdateCustomHostnameResponseJsonValue00
-func (t UpdateCustomHostnameResponseJsonValue0) AsUpdateCustomHostnameResponseJsonValue00() (UpdateCustomHostnameResponseJsonValue00, error) {
-	var body UpdateCustomHostnameResponseJsonValue00
-	err := json.Unmarshal(t.union, &body)
-	return body, err
-}
-
-// FromUpdateCustomHostnameResponseJsonValue00 overwrites any union data inside the UpdateCustomHostnameResponseJsonValue0 as the provided UpdateCustomHostnameResponseJsonValue00
-func (t *UpdateCustomHostnameResponseJsonValue0) FromUpdateCustomHostnameResponseJsonValue00(v UpdateCustomHostnameResponseJsonValue00) error {
-	b, err := json.Marshal(v)
-	t.union = b
-	return err
-}
-
-// MergeUpdateCustomHostnameResponseJsonValue00 performs a merge with any union data inside the UpdateCustomHostnameResponseJsonValue0, using the provided UpdateCustomHostnameResponseJsonValue00
-func (t *UpdateCustomHostnameResponseJsonValue0) MergeUpdateCustomHostnameResponseJsonValue00(v UpdateCustomHostnameResponseJsonValue00) error {
-	b, err := json.Marshal(v)
-	if err != nil {
-		return err
-	}
-
-	merged, err := runtime.JSONMerge(t.union, b)
-	t.union = merged
-	return err
-}
-
-// AsUpdateCustomHostnameResponseJsonValue01 returns the union data inside the UpdateCustomHostnameResponseJsonValue0 as a UpdateCustomHostnameResponseJsonValue01
-func (t UpdateCustomHostnameResponseJsonValue0) AsUpdateCustomHostnameResponseJsonValue01() (UpdateCustomHostnameResponseJsonValue01, error) {
-	var body UpdateCustomHostnameResponseJsonValue01
-	err := json.Unmarshal(t.union, &body)
-	return body, err
-}
-
-// FromUpdateCustomHostnameResponseJsonValue01 overwrites any union data inside the UpdateCustomHostnameResponseJsonValue0 as the provided UpdateCustomHostnameResponseJsonValue01
-func (t *UpdateCustomHostnameResponseJsonValue0) FromUpdateCustomHostnameResponseJsonValue01(v UpdateCustomHostnameResponseJsonValue01) error {
-	b, err := json.Marshal(v)
-	t.union = b
-	return err
-}
-
-// MergeUpdateCustomHostnameResponseJsonValue01 performs a merge with any union data inside the UpdateCustomHostnameResponseJsonValue0, using the provided UpdateCustomHostnameResponseJsonValue01
-func (t *UpdateCustomHostnameResponseJsonValue0) MergeUpdateCustomHostnameResponseJsonValue01(v UpdateCustomHostnameResponseJsonValue01) error {
-	b, err := json.Marshal(v)
-	if err != nil {
-		return err
-	}
-
-	merged, err := runtime.JSONMerge(t.union, b)
-	t.union = merged
-	return err
-}
-
-// AsUpdateCustomHostnameResponseJsonValue02 returns the union data inside the UpdateCustomHostnameResponseJsonValue0 as a UpdateCustomHostnameResponseJsonValue02
-func (t UpdateCustomHostnameResponseJsonValue0) AsUpdateCustomHostnameResponseJsonValue02() (UpdateCustomHostnameResponseJsonValue02, error) {
-	var body UpdateCustomHostnameResponseJsonValue02
-	err := json.Unmarshal(t.union, &body)
-	return body, err
-}
-
-// FromUpdateCustomHostnameResponseJsonValue02 overwrites any union data inside the UpdateCustomHostnameResponseJsonValue0 as the provided UpdateCustomHostnameResponseJsonValue02
-func (t *UpdateCustomHostnameResponseJsonValue0) FromUpdateCustomHostnameResponseJsonValue02(v UpdateCustomHostnameResponseJsonValue02) error {
-	b, err := json.Marshal(v)
-	t.union = b
-	return err
-}
-
-// MergeUpdateCustomHostnameResponseJsonValue02 performs a merge with any union data inside the UpdateCustomHostnameResponseJsonValue0, using the provided UpdateCustomHostnameResponseJsonValue02
-func (t *UpdateCustomHostnameResponseJsonValue0) MergeUpdateCustomHostnameResponseJsonValue02(v UpdateCustomHostnameResponseJsonValue02) error {
-	b, err := json.Marshal(v)
-	if err != nil {
-		return err
-	}
-
-	merged, err := runtime.JSONMerge(t.union, b)
-	t.union = merged
-	return err
-}
-
-func (t UpdateCustomHostnameResponseJsonValue0) MarshalJSON() ([]byte, error) {
-	b, err := t.union.MarshalJSON()
-	return b, err
-}
-
-func (t *UpdateCustomHostnameResponseJsonValue0) UnmarshalJSON(b []byte) error {
+func (t *ProjectUpgradeEligibilityResponseOutput_Warnings_Item) UnmarshalJSON(b []byte) error {
 	err := t.union.UnmarshalJSON(b)
 	return err
 }
@@ -11921,22 +11217,22 @@ func (t *V1CreateProjectBody_RegionSelection) UnmarshalJSON(b []byte) error {
 	return err
 }
 
-// AsV1GetUsageApiCountResponseError0 returns the union data inside the V1GetUsageApiCountResponse_Error as a V1GetUsageApiCountResponseError0
-func (t V1GetUsageApiCountResponse_Error) AsV1GetUsageApiCountResponseError0() (V1GetUsageApiCountResponseError0, error) {
-	var body V1GetUsageApiCountResponseError0
+// AsV1GetUsageApiCountResponseOutputError0 returns the union data inside the V1GetUsageApiCountResponseOutput_Error as a V1GetUsageApiCountResponseOutputError0
+func (t V1GetUsageApiCountResponseOutput_Error) AsV1GetUsageApiCountResponseOutputError0() (V1GetUsageApiCountResponseOutputError0, error) {
+	var body V1GetUsageApiCountResponseOutputError0
 	err := json.Unmarshal(t.union, &body)
 	return body, err
 }
 
-// FromV1GetUsageApiCountResponseError0 overwrites any union data inside the V1GetUsageApiCountResponse_Error as the provided V1GetUsageApiCountResponseError0
-func (t *V1GetUsageApiCountResponse_Error) FromV1GetUsageApiCountResponseError0(v V1GetUsageApiCountResponseError0) error {
+// FromV1GetUsageApiCountResponseOutputError0 overwrites any union data inside the V1GetUsageApiCountResponseOutput_Error as the provided V1GetUsageApiCountResponseOutputError0
+func (t *V1GetUsageApiCountResponseOutput_Error) FromV1GetUsageApiCountResponseOutputError0(v V1GetUsageApiCountResponseOutputError0) error {
 	b, err := json.Marshal(v)
 	t.union = b
 	return err
 }
 
-// MergeV1GetUsageApiCountResponseError0 performs a merge with any union data inside the V1GetUsageApiCountResponse_Error, using the provided V1GetUsageApiCountResponseError0
-func (t *V1GetUsageApiCountResponse_Error) MergeV1GetUsageApiCountResponseError0(v V1GetUsageApiCountResponseError0) error {
+// MergeV1GetUsageApiCountResponseOutputError0 performs a merge with any union data inside the V1GetUsageApiCountResponseOutput_Error, using the provided V1GetUsageApiCountResponseOutputError0
+func (t *V1GetUsageApiCountResponseOutput_Error) MergeV1GetUsageApiCountResponseOutputError0(v V1GetUsageApiCountResponseOutputError0) error {
 	b, err := json.Marshal(v)
 	if err != nil {
 		return err
@@ -11947,22 +11243,22 @@ func (t *V1GetUsageApiCountResponse_Error) MergeV1GetUsageApiCountResponseError0
 	return err
 }
 
-// AsV1GetUsageApiCountResponseError1 returns the union data inside the V1GetUsageApiCountResponse_Error as a V1GetUsageApiCountResponseError1
-func (t V1GetUsageApiCountResponse_Error) AsV1GetUsageApiCountResponseError1() (V1GetUsageApiCountResponseError1, error) {
-	var body V1GetUsageApiCountResponseError1
+// AsV1GetUsageApiCountResponseOutputError1 returns the union data inside the V1GetUsageApiCountResponseOutput_Error as a V1GetUsageApiCountResponseOutputError1
+func (t V1GetUsageApiCountResponseOutput_Error) AsV1GetUsageApiCountResponseOutputError1() (V1GetUsageApiCountResponseOutputError1, error) {
+	var body V1GetUsageApiCountResponseOutputError1
 	err := json.Unmarshal(t.union, &body)
 	return body, err
 }
 
-// FromV1GetUsageApiCountResponseError1 overwrites any union data inside the V1GetUsageApiCountResponse_Error as the provided V1GetUsageApiCountResponseError1
-func (t *V1GetUsageApiCountResponse_Error) FromV1GetUsageApiCountResponseError1(v V1GetUsageApiCountResponseError1) error {
+// FromV1GetUsageApiCountResponseOutputError1 overwrites any union data inside the V1GetUsageApiCountResponseOutput_Error as the provided V1GetUsageApiCountResponseOutputError1
+func (t *V1GetUsageApiCountResponseOutput_Error) FromV1GetUsageApiCountResponseOutputError1(v V1GetUsageApiCountResponseOutputError1) error {
 	b, err := json.Marshal(v)
 	t.union = b
 	return err
 }
 
-// MergeV1GetUsageApiCountResponseError1 performs a merge with any union data inside the V1GetUsageApiCountResponse_Error, using the provided V1GetUsageApiCountResponseError1
-func (t *V1GetUsageApiCountResponse_Error) MergeV1GetUsageApiCountResponseError1(v V1GetUsageApiCountResponseError1) error {
+// MergeV1GetUsageApiCountResponseOutputError1 performs a merge with any union data inside the V1GetUsageApiCountResponseOutput_Error, using the provided V1GetUsageApiCountResponseOutputError1
+func (t *V1GetUsageApiCountResponseOutput_Error) MergeV1GetUsageApiCountResponseOutputError1(v V1GetUsageApiCountResponseOutputError1) error {
 	b, err := json.Marshal(v)
 	if err != nil {
 		return err
@@ -11973,32 +11269,32 @@ func (t *V1GetUsageApiCountResponse_Error) MergeV1GetUsageApiCountResponseError1
 	return err
 }
 
-func (t V1GetUsageApiCountResponse_Error) MarshalJSON() ([]byte, error) {
+func (t V1GetUsageApiCountResponseOutput_Error) MarshalJSON() ([]byte, error) {
 	b, err := t.union.MarshalJSON()
 	return b, err
 }
 
-func (t *V1GetUsageApiCountResponse_Error) UnmarshalJSON(b []byte) error {
+func (t *V1GetUsageApiCountResponseOutput_Error) UnmarshalJSON(b []byte) error {
 	err := t.union.UnmarshalJSON(b)
 	return err
 }
 
-// AsV1GetUsageApiRequestsCountResponseError0 returns the union data inside the V1GetUsageApiRequestsCountResponse_Error as a V1GetUsageApiRequestsCountResponseError0
-func (t V1GetUsageApiRequestsCountResponse_Error) AsV1GetUsageApiRequestsCountResponseError0() (V1GetUsageApiRequestsCountResponseError0, error) {
-	var body V1GetUsageApiRequestsCountResponseError0
+// AsV1GetUsageApiRequestsCountResponseOutputError0 returns the union data inside the V1GetUsageApiRequestsCountResponseOutput_Error as a V1GetUsageApiRequestsCountResponseOutputError0
+func (t V1GetUsageApiRequestsCountResponseOutput_Error) AsV1GetUsageApiRequestsCountResponseOutputError0() (V1GetUsageApiRequestsCountResponseOutputError0, error) {
+	var body V1GetUsageApiRequestsCountResponseOutputError0
 	err := json.Unmarshal(t.union, &body)
 	return body, err
 }
 
-// FromV1GetUsageApiRequestsCountResponseError0 overwrites any union data inside the V1GetUsageApiRequestsCountResponse_Error as the provided V1GetUsageApiRequestsCountResponseError0
-func (t *V1GetUsageApiRequestsCountResponse_Error) FromV1GetUsageApiRequestsCountResponseError0(v V1GetUsageApiRequestsCountResponseError0) error {
+// FromV1GetUsageApiRequestsCountResponseOutputError0 overwrites any union data inside the V1GetUsageApiRequestsCountResponseOutput_Error as the provided V1GetUsageApiRequestsCountResponseOutputError0
+func (t *V1GetUsageApiRequestsCountResponseOutput_Error) FromV1GetUsageApiRequestsCountResponseOutputError0(v V1GetUsageApiRequestsCountResponseOutputError0) error {
 	b, err := json.Marshal(v)
 	t.union = b
 	return err
 }
 
-// MergeV1GetUsageApiRequestsCountResponseError0 performs a merge with any union data inside the V1GetUsageApiRequestsCountResponse_Error, using the provided V1GetUsageApiRequestsCountResponseError0
-func (t *V1GetUsageApiRequestsCountResponse_Error) MergeV1GetUsageApiRequestsCountResponseError0(v V1GetUsageApiRequestsCountResponseError0) error {
+// MergeV1GetUsageApiRequestsCountResponseOutputError0 performs a merge with any union data inside the V1GetUsageApiRequestsCountResponseOutput_Error, using the provided V1GetUsageApiRequestsCountResponseOutputError0
+func (t *V1GetUsageApiRequestsCountResponseOutput_Error) MergeV1GetUsageApiRequestsCountResponseOutputError0(v V1GetUsageApiRequestsCountResponseOutputError0) error {
 	b, err := json.Marshal(v)
 	if err != nil {
 		return err
@@ -12009,22 +11305,22 @@ func (t *V1GetUsageApiRequestsCountResponse_Error) MergeV1GetUsageApiRequestsCou
 	return err
 }
 
-// AsV1GetUsageApiRequestsCountResponseError1 returns the union data inside the V1GetUsageApiRequestsCountResponse_Error as a V1GetUsageApiRequestsCountResponseError1
-func (t V1GetUsageApiRequestsCountResponse_Error) AsV1GetUsageApiRequestsCountResponseError1() (V1GetUsageApiRequestsCountResponseError1, error) {
-	var body V1GetUsageApiRequestsCountResponseError1
+// AsV1GetUsageApiRequestsCountResponseOutputError1 returns the union data inside the V1GetUsageApiRequestsCountResponseOutput_Error as a V1GetUsageApiRequestsCountResponseOutputError1
+func (t V1GetUsageApiRequestsCountResponseOutput_Error) AsV1GetUsageApiRequestsCountResponseOutputError1() (V1GetUsageApiRequestsCountResponseOutputError1, error) {
+	var body V1GetUsageApiRequestsCountResponseOutputError1
 	err := json.Unmarshal(t.union, &body)
 	return body, err
 }
 
-// FromV1GetUsageApiRequestsCountResponseError1 overwrites any union data inside the V1GetUsageApiRequestsCountResponse_Error as the provided V1GetUsageApiRequestsCountResponseError1
-func (t *V1GetUsageApiRequestsCountResponse_Error) FromV1GetUsageApiRequestsCountResponseError1(v V1GetUsageApiRequestsCountResponseError1) error {
+// FromV1GetUsageApiRequestsCountResponseOutputError1 overwrites any union data inside the V1GetUsageApiRequestsCountResponseOutput_Error as the provided V1GetUsageApiRequestsCountResponseOutputError1
+func (t *V1GetUsageApiRequestsCountResponseOutput_Error) FromV1GetUsageApiRequestsCountResponseOutputError1(v V1GetUsageApiRequestsCountResponseOutputError1) error {
 	b, err := json.Marshal(v)
 	t.union = b
 	return err
 }
 
-// MergeV1GetUsageApiRequestsCountResponseError1 performs a merge with any union data inside the V1GetUsageApiRequestsCountResponse_Error, using the provided V1GetUsageApiRequestsCountResponseError1
-func (t *V1GetUsageApiRequestsCountResponse_Error) MergeV1GetUsageApiRequestsCountResponseError1(v V1GetUsageApiRequestsCountResponseError1) error {
+// MergeV1GetUsageApiRequestsCountResponseOutputError1 performs a merge with any union data inside the V1GetUsageApiRequestsCountResponseOutput_Error, using the provided V1GetUsageApiRequestsCountResponseOutputError1
+func (t *V1GetUsageApiRequestsCountResponseOutput_Error) MergeV1GetUsageApiRequestsCountResponseOutputError1(v V1GetUsageApiRequestsCountResponseOutputError1) error {
 	b, err := json.Marshal(v)
 	if err != nil {
 		return err
@@ -12035,32 +11331,32 @@ func (t *V1GetUsageApiRequestsCountResponse_Error) MergeV1GetUsageApiRequestsCou
 	return err
 }
 
-func (t V1GetUsageApiRequestsCountResponse_Error) MarshalJSON() ([]byte, error) {
+func (t V1GetUsageApiRequestsCountResponseOutput_Error) MarshalJSON() ([]byte, error) {
 	b, err := t.union.MarshalJSON()
 	return b, err
 }
 
-func (t *V1GetUsageApiRequestsCountResponse_Error) UnmarshalJSON(b []byte) error {
+func (t *V1GetUsageApiRequestsCountResponseOutput_Error) UnmarshalJSON(b []byte) error {
 	err := t.union.UnmarshalJSON(b)
 	return err
 }
 
-// AsV1ListEntitlementsResponseEntitlementsConfig0 returns the union data inside the V1ListEntitlementsResponse_Entitlements_Config as a V1ListEntitlementsResponseEntitlementsConfig0
-func (t V1ListEntitlementsResponse_Entitlements_Config) AsV1ListEntitlementsResponseEntitlementsConfig0() (V1ListEntitlementsResponseEntitlementsConfig0, error) {
-	var body V1ListEntitlementsResponseEntitlementsConfig0
+// AsV1ListEntitlementsResponseOutputEntitlementsConfig0 returns the union data inside the V1ListEntitlementsResponseOutput_Entitlements_Config as a V1ListEntitlementsResponseOutputEntitlementsConfig0
+func (t V1ListEntitlementsResponseOutput_Entitlements_Config) AsV1ListEntitlementsResponseOutputEntitlementsConfig0() (V1ListEntitlementsResponseOutputEntitlementsConfig0, error) {
+	var body V1ListEntitlementsResponseOutputEntitlementsConfig0
 	err := json.Unmarshal(t.union, &body)
 	return body, err
 }
 
-// FromV1ListEntitlementsResponseEntitlementsConfig0 overwrites any union data inside the V1ListEntitlementsResponse_Entitlements_Config as the provided V1ListEntitlementsResponseEntitlementsConfig0
-func (t *V1ListEntitlementsResponse_Entitlements_Config) FromV1ListEntitlementsResponseEntitlementsConfig0(v V1ListEntitlementsResponseEntitlementsConfig0) error {
+// FromV1ListEntitlementsResponseOutputEntitlementsConfig0 overwrites any union data inside the V1ListEntitlementsResponseOutput_Entitlements_Config as the provided V1ListEntitlementsResponseOutputEntitlementsConfig0
+func (t *V1ListEntitlementsResponseOutput_Entitlements_Config) FromV1ListEntitlementsResponseOutputEntitlementsConfig0(v V1ListEntitlementsResponseOutputEntitlementsConfig0) error {
 	b, err := json.Marshal(v)
 	t.union = b
 	return err
 }
 
-// MergeV1ListEntitlementsResponseEntitlementsConfig0 performs a merge with any union data inside the V1ListEntitlementsResponse_Entitlements_Config, using the provided V1ListEntitlementsResponseEntitlementsConfig0
-func (t *V1ListEntitlementsResponse_Entitlements_Config) MergeV1ListEntitlementsResponseEntitlementsConfig0(v V1ListEntitlementsResponseEntitlementsConfig0) error {
+// MergeV1ListEntitlementsResponseOutputEntitlementsConfig0 performs a merge with any union data inside the V1ListEntitlementsResponseOutput_Entitlements_Config, using the provided V1ListEntitlementsResponseOutputEntitlementsConfig0
+func (t *V1ListEntitlementsResponseOutput_Entitlements_Config) MergeV1ListEntitlementsResponseOutputEntitlementsConfig0(v V1ListEntitlementsResponseOutputEntitlementsConfig0) error {
 	b, err := json.Marshal(v)
 	if err != nil {
 		return err
@@ -12071,22 +11367,22 @@ func (t *V1ListEntitlementsResponse_Entitlements_Config) MergeV1ListEntitlements
 	return err
 }
 
-// AsV1ListEntitlementsResponseEntitlementsConfig1 returns the union data inside the V1ListEntitlementsResponse_Entitlements_Config as a V1ListEntitlementsResponseEntitlementsConfig1
-func (t V1ListEntitlementsResponse_Entitlements_Config) AsV1ListEntitlementsResponseEntitlementsConfig1() (V1ListEntitlementsResponseEntitlementsConfig1, error) {
-	var body V1ListEntitlementsResponseEntitlementsConfig1
+// AsV1ListEntitlementsResponseOutputEntitlementsConfig1 returns the union data inside the V1ListEntitlementsResponseOutput_Entitlements_Config as a V1ListEntitlementsResponseOutputEntitlementsConfig1
+func (t V1ListEntitlementsResponseOutput_Entitlements_Config) AsV1ListEntitlementsResponseOutputEntitlementsConfig1() (V1ListEntitlementsResponseOutputEntitlementsConfig1, error) {
+	var body V1ListEntitlementsResponseOutputEntitlementsConfig1
 	err := json.Unmarshal(t.union, &body)
 	return body, err
 }
 
-// FromV1ListEntitlementsResponseEntitlementsConfig1 overwrites any union data inside the V1ListEntitlementsResponse_Entitlements_Config as the provided V1ListEntitlementsResponseEntitlementsConfig1
-func (t *V1ListEntitlementsResponse_Entitlements_Config) FromV1ListEntitlementsResponseEntitlementsConfig1(v V1ListEntitlementsResponseEntitlementsConfig1) error {
+// FromV1ListEntitlementsResponseOutputEntitlementsConfig1 overwrites any union data inside the V1ListEntitlementsResponseOutput_Entitlements_Config as the provided V1ListEntitlementsResponseOutputEntitlementsConfig1
+func (t *V1ListEntitlementsResponseOutput_Entitlements_Config) FromV1ListEntitlementsResponseOutputEntitlementsConfig1(v V1ListEntitlementsResponseOutputEntitlementsConfig1) error {
 	b, err := json.Marshal(v)
 	t.union = b
 	return err
 }
 
-// MergeV1ListEntitlementsResponseEntitlementsConfig1 performs a merge with any union data inside the V1ListEntitlementsResponse_Entitlements_Config, using the provided V1ListEntitlementsResponseEntitlementsConfig1
-func (t *V1ListEntitlementsResponse_Entitlements_Config) MergeV1ListEntitlementsResponseEntitlementsConfig1(v V1ListEntitlementsResponseEntitlementsConfig1) error {
+// MergeV1ListEntitlementsResponseOutputEntitlementsConfig1 performs a merge with any union data inside the V1ListEntitlementsResponseOutput_Entitlements_Config, using the provided V1ListEntitlementsResponseOutputEntitlementsConfig1
+func (t *V1ListEntitlementsResponseOutput_Entitlements_Config) MergeV1ListEntitlementsResponseOutputEntitlementsConfig1(v V1ListEntitlementsResponseOutputEntitlementsConfig1) error {
 	b, err := json.Marshal(v)
 	if err != nil {
 		return err
@@ -12097,22 +11393,22 @@ func (t *V1ListEntitlementsResponse_Entitlements_Config) MergeV1ListEntitlements
 	return err
 }
 
-// AsV1ListEntitlementsResponseEntitlementsConfig2 returns the union data inside the V1ListEntitlementsResponse_Entitlements_Config as a V1ListEntitlementsResponseEntitlementsConfig2
-func (t V1ListEntitlementsResponse_Entitlements_Config) AsV1ListEntitlementsResponseEntitlementsConfig2() (V1ListEntitlementsResponseEntitlementsConfig2, error) {
-	var body V1ListEntitlementsResponseEntitlementsConfig2
+// AsV1ListEntitlementsResponseOutputEntitlementsConfig2 returns the union data inside the V1ListEntitlementsResponseOutput_Entitlements_Config as a V1ListEntitlementsResponseOutputEntitlementsConfig2
+func (t V1ListEntitlementsResponseOutput_Entitlements_Config) AsV1ListEntitlementsResponseOutputEntitlementsConfig2() (V1ListEntitlementsResponseOutputEntitlementsConfig2, error) {
+	var body V1ListEntitlementsResponseOutputEntitlementsConfig2
 	err := json.Unmarshal(t.union, &body)
 	return body, err
 }
 
-// FromV1ListEntitlementsResponseEntitlementsConfig2 overwrites any union data inside the V1ListEntitlementsResponse_Entitlements_Config as the provided V1ListEntitlementsResponseEntitlementsConfig2
-func (t *V1ListEntitlementsResponse_Entitlements_Config) FromV1ListEntitlementsResponseEntitlementsConfig2(v V1ListEntitlementsResponseEntitlementsConfig2) error {
+// FromV1ListEntitlementsResponseOutputEntitlementsConfig2 overwrites any union data inside the V1ListEntitlementsResponseOutput_Entitlements_Config as the provided V1ListEntitlementsResponseOutputEntitlementsConfig2
+func (t *V1ListEntitlementsResponseOutput_Entitlements_Config) FromV1ListEntitlementsResponseOutputEntitlementsConfig2(v V1ListEntitlementsResponseOutputEntitlementsConfig2) error {
 	b, err := json.Marshal(v)
 	t.union = b
 	return err
 }
 
-// MergeV1ListEntitlementsResponseEntitlementsConfig2 performs a merge with any union data inside the V1ListEntitlementsResponse_Entitlements_Config, using the provided V1ListEntitlementsResponseEntitlementsConfig2
-func (t *V1ListEntitlementsResponse_Entitlements_Config) MergeV1ListEntitlementsResponseEntitlementsConfig2(v V1ListEntitlementsResponseEntitlementsConfig2) error {
+// MergeV1ListEntitlementsResponseOutputEntitlementsConfig2 performs a merge with any union data inside the V1ListEntitlementsResponseOutput_Entitlements_Config, using the provided V1ListEntitlementsResponseOutputEntitlementsConfig2
+func (t *V1ListEntitlementsResponseOutput_Entitlements_Config) MergeV1ListEntitlementsResponseOutputEntitlementsConfig2(v V1ListEntitlementsResponseOutputEntitlementsConfig2) error {
 	b, err := json.Marshal(v)
 	if err != nil {
 		return err
@@ -12123,32 +11419,32 @@ func (t *V1ListEntitlementsResponse_Entitlements_Config) MergeV1ListEntitlements
 	return err
 }
 
-func (t V1ListEntitlementsResponse_Entitlements_Config) MarshalJSON() ([]byte, error) {
+func (t V1ListEntitlementsResponseOutput_Entitlements_Config) MarshalJSON() ([]byte, error) {
 	b, err := t.union.MarshalJSON()
 	return b, err
 }
 
-func (t *V1ListEntitlementsResponse_Entitlements_Config) UnmarshalJSON(b []byte) error {
+func (t *V1ListEntitlementsResponseOutput_Entitlements_Config) UnmarshalJSON(b []byte) error {
 	err := t.union.UnmarshalJSON(b)
 	return err
 }
 
-// AsV1ServiceHealthResponseInfo0 returns the union data inside the V1ServiceHealthResponse_Info as a V1ServiceHealthResponseInfo0
-func (t V1ServiceHealthResponse_Info) AsV1ServiceHealthResponseInfo0() (V1ServiceHealthResponseInfo0, error) {
-	var body V1ServiceHealthResponseInfo0
+// AsV1ServiceHealthResponseOutputInfo0 returns the union data inside the V1ServiceHealthResponseOutput_Info as a V1ServiceHealthResponseOutputInfo0
+func (t V1ServiceHealthResponseOutput_Info) AsV1ServiceHealthResponseOutputInfo0() (V1ServiceHealthResponseOutputInfo0, error) {
+	var body V1ServiceHealthResponseOutputInfo0
 	err := json.Unmarshal(t.union, &body)
 	return body, err
 }
 
-// FromV1ServiceHealthResponseInfo0 overwrites any union data inside the V1ServiceHealthResponse_Info as the provided V1ServiceHealthResponseInfo0
-func (t *V1ServiceHealthResponse_Info) FromV1ServiceHealthResponseInfo0(v V1ServiceHealthResponseInfo0) error {
+// FromV1ServiceHealthResponseOutputInfo0 overwrites any union data inside the V1ServiceHealthResponseOutput_Info as the provided V1ServiceHealthResponseOutputInfo0
+func (t *V1ServiceHealthResponseOutput_Info) FromV1ServiceHealthResponseOutputInfo0(v V1ServiceHealthResponseOutputInfo0) error {
 	b, err := json.Marshal(v)
 	t.union = b
 	return err
 }
 
-// MergeV1ServiceHealthResponseInfo0 performs a merge with any union data inside the V1ServiceHealthResponse_Info, using the provided V1ServiceHealthResponseInfo0
-func (t *V1ServiceHealthResponse_Info) MergeV1ServiceHealthResponseInfo0(v V1ServiceHealthResponseInfo0) error {
+// MergeV1ServiceHealthResponseOutputInfo0 performs a merge with any union data inside the V1ServiceHealthResponseOutput_Info, using the provided V1ServiceHealthResponseOutputInfo0
+func (t *V1ServiceHealthResponseOutput_Info) MergeV1ServiceHealthResponseOutputInfo0(v V1ServiceHealthResponseOutputInfo0) error {
 	b, err := json.Marshal(v)
 	if err != nil {
 		return err
@@ -12159,22 +11455,22 @@ func (t *V1ServiceHealthResponse_Info) MergeV1ServiceHealthResponseInfo0(v V1Ser
 	return err
 }
 
-// AsV1ServiceHealthResponseInfo1 returns the union data inside the V1ServiceHealthResponse_Info as a V1ServiceHealthResponseInfo1
-func (t V1ServiceHealthResponse_Info) AsV1ServiceHealthResponseInfo1() (V1ServiceHealthResponseInfo1, error) {
-	var body V1ServiceHealthResponseInfo1
+// AsV1ServiceHealthResponseOutputInfo1 returns the union data inside the V1ServiceHealthResponseOutput_Info as a V1ServiceHealthResponseOutputInfo1
+func (t V1ServiceHealthResponseOutput_Info) AsV1ServiceHealthResponseOutputInfo1() (V1ServiceHealthResponseOutputInfo1, error) {
+	var body V1ServiceHealthResponseOutputInfo1
 	err := json.Unmarshal(t.union, &body)
 	return body, err
 }
 
-// FromV1ServiceHealthResponseInfo1 overwrites any union data inside the V1ServiceHealthResponse_Info as the provided V1ServiceHealthResponseInfo1
-func (t *V1ServiceHealthResponse_Info) FromV1ServiceHealthResponseInfo1(v V1ServiceHealthResponseInfo1) error {
+// FromV1ServiceHealthResponseOutputInfo1 overwrites any union data inside the V1ServiceHealthResponseOutput_Info as the provided V1ServiceHealthResponseOutputInfo1
+func (t *V1ServiceHealthResponseOutput_Info) FromV1ServiceHealthResponseOutputInfo1(v V1ServiceHealthResponseOutputInfo1) error {
 	b, err := json.Marshal(v)
 	t.union = b
 	return err
 }
 
-// MergeV1ServiceHealthResponseInfo1 performs a merge with any union data inside the V1ServiceHealthResponse_Info, using the provided V1ServiceHealthResponseInfo1
-func (t *V1ServiceHealthResponse_Info) MergeV1ServiceHealthResponseInfo1(v V1ServiceHealthResponseInfo1) error {
+// MergeV1ServiceHealthResponseOutputInfo1 performs a merge with any union data inside the V1ServiceHealthResponseOutput_Info, using the provided V1ServiceHealthResponseOutputInfo1
+func (t *V1ServiceHealthResponseOutput_Info) MergeV1ServiceHealthResponseOutputInfo1(v V1ServiceHealthResponseOutputInfo1) error {
 	b, err := json.Marshal(v)
 	if err != nil {
 		return err
@@ -12185,22 +11481,22 @@ func (t *V1ServiceHealthResponse_Info) MergeV1ServiceHealthResponseInfo1(v V1Ser
 	return err
 }
 
-// AsV1ServiceHealthResponseInfo2 returns the union data inside the V1ServiceHealthResponse_Info as a V1ServiceHealthResponseInfo2
-func (t V1ServiceHealthResponse_Info) AsV1ServiceHealthResponseInfo2() (V1ServiceHealthResponseInfo2, error) {
-	var body V1ServiceHealthResponseInfo2
+// AsV1ServiceHealthResponseOutputInfo2 returns the union data inside the V1ServiceHealthResponseOutput_Info as a V1ServiceHealthResponseOutputInfo2
+func (t V1ServiceHealthResponseOutput_Info) AsV1ServiceHealthResponseOutputInfo2() (V1ServiceHealthResponseOutputInfo2, error) {
+	var body V1ServiceHealthResponseOutputInfo2
 	err := json.Unmarshal(t.union, &body)
 	return body, err
 }
 
-// FromV1ServiceHealthResponseInfo2 overwrites any union data inside the V1ServiceHealthResponse_Info as the provided V1ServiceHealthResponseInfo2
-func (t *V1ServiceHealthResponse_Info) FromV1ServiceHealthResponseInfo2(v V1ServiceHealthResponseInfo2) error {
+// FromV1ServiceHealthResponseOutputInfo2 overwrites any union data inside the V1ServiceHealthResponseOutput_Info as the provided V1ServiceHealthResponseOutputInfo2
+func (t *V1ServiceHealthResponseOutput_Info) FromV1ServiceHealthResponseOutputInfo2(v V1ServiceHealthResponseOutputInfo2) error {
 	b, err := json.Marshal(v)
 	t.union = b
 	return err
 }
 
-// MergeV1ServiceHealthResponseInfo2 performs a merge with any union data inside the V1ServiceHealthResponse_Info, using the provided V1ServiceHealthResponseInfo2
-func (t *V1ServiceHealthResponse_Info) MergeV1ServiceHealthResponseInfo2(v V1ServiceHealthResponseInfo2) error {
+// MergeV1ServiceHealthResponseOutputInfo2 performs a merge with any union data inside the V1ServiceHealthResponseOutput_Info, using the provided V1ServiceHealthResponseOutputInfo2
+func (t *V1ServiceHealthResponseOutput_Info) MergeV1ServiceHealthResponseOutputInfo2(v V1ServiceHealthResponseOutputInfo2) error {
 	b, err := json.Marshal(v)
 	if err != nil {
 		return err
@@ -12211,12 +11507,12 @@ func (t *V1ServiceHealthResponse_Info) MergeV1ServiceHealthResponseInfo2(v V1Ser
 	return err
 }
 
-func (t V1ServiceHealthResponse_Info) MarshalJSON() ([]byte, error) {
+func (t V1ServiceHealthResponseOutput_Info) MarshalJSON() ([]byte, error) {
 	b, err := t.union.MarshalJSON()
 	return b, err
 }
 
-func (t *V1ServiceHealthResponse_Info) UnmarshalJSON(b []byte) error {
+func (t *V1ServiceHealthResponseOutput_Info) UnmarshalJSON(b []byte) error {
 	err := t.union.UnmarshalJSON(b)
 	return err
 }

@@ -30,8 +30,7 @@ import { getDefaultCliConfig, toProjectConfig } from "@supabase/config";
 const projectConfig = toProjectConfig({ cliConfig: getDefaultCliConfig() });
 ```
 
-This package is not yet published (`private: true`; publishing is tracked separately). Once it
-is, install it alongside the peers your runtime needs.
+Install it alongside the peers your runtime needs.
 
 This package requires Effect 4.x, currently only published under the `rc` dist-tag — `effect@latest`
 still resolves to 3.x, which will not satisfy this package's peer range.
