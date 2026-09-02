@@ -37,15 +37,21 @@ export type LegacyConfigPullWarningKind =
   | "dual_scope"
   | "duplicates_root"
   | "array_drift"
-  | "uncommitted_changes";
+  | "uncommitted_changes"
+  | "unpushable";
 
 export interface LegacyConfigPullWarning {
   readonly kind: LegacyConfigPullWarningKind;
   /**
    * Absent for `uncommitted_changes` — a repository-level warning, not a
    * per-path one, constructed by `pull.handler.ts`'s own git dirty check
-   * (`§1.4`). This module only ever produces the three path-bearing kinds
-   * below, always with `path` set.
+   * (`§1.4`). Also absent from anything THIS module produces (the three
+   * path-bearing kinds below); `unpushable` is likewise constructed by
+   * `pull.handler.ts`, from its post-plan convergence check (plan §1.9,
+   * ADR 0021 decision 4) — a planned write that the convergence check finds
+   * reclassifies as `unmanaged` once applied (e.g. `auth.oauth_server`'s
+   * first pull): `config push` has no code path for it, so it can never be
+   * sent back. Always carries `path`.
    */
   readonly path?: ReadonlyArray<string>;
 }

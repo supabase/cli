@@ -151,6 +151,8 @@ function warningMessage(warning: LegacyConfigPullWarning): string {
       return `${path} is an array also declared at the config root — the two copies will not stay in sync.`;
     case "uncommitted_changes":
       return "supabase/config.toml has uncommitted changes.";
+    case "unpushable":
+      return `${path} was written here, but \`config push\` cannot send it back to the platform — it will keep showing as out of sync.`;
   }
 }
 
