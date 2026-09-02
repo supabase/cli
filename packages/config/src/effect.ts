@@ -7,8 +7,7 @@ import * as io from "./io.ts";
 import type { CliProjectEnvironment } from "./project.ts";
 import * as project from "./project.ts";
 
-export { configJsonPath, configTomlPath, saveCliConfig, writeCliConfigDocumentText } from "./io.ts";
-export { CliConfigWriteError } from "./errors.ts";
+export { configJsonPath, configTomlPath, saveCliConfig } from "./io.ts";
 
 /**
  * Narrowed to the public `LoadCliConfigOptions` (no `goViperCompat`). The

@@ -65,7 +65,7 @@ export const legacyConfigPullHandler = (flags: LegacyConfigPullFlags) =>
 
 export const legacyConfigPullCommand = Command.make("pull", config).pipe(
   Command.withDescription(
-    "Writes configuration from a remote project or branch into supabase/config.toml. Prompts for confirmation before writing, unless --yes is set.",
+    "Writes configuration from a remote project or branch into supabase/config.toml. Prompts for confirmation before writing on an interactive TTY, unless --yes is set; a non-interactive run (no TTY, or --output-format json|stream-json) never prompts and proceeds as if confirmed — use --dry-run to preview first.",
   ),
   Command.withShortDescription("Pull remote config into supabase/config.toml"),
   Command.withExamples([

@@ -96,6 +96,51 @@ allowed_cidrs = ["1.2.3.4/32"]
     expect(text).toBe('[a]\nx = 1\ny = "back\\\\slash and \\"quote\\""\n');
     expect(SmolToml.parse(text)).toEqual({ a: { x: 1, y: 'back\\slash and "quote"' } });
   });
+
+  // Regression coverage for CLI-2064 review finding 1: `scanBareValue` used to include
+  // trailing inline whitespace before a `#` comment in the replaced value span, so replacing
+  // `port = 54321 # comment` silently ate the space and produced `port = 54322# comment`. The
+  // mandatory re-parse can't catch this — TOML parses the value identically either way.
+  test("replacing a bare number keeps exactly the original single space before a trailing comment", () => {
+    const source = "[db]\nport = 54321 # default port\n";
+    const outcome = applyConfigEdits(source, "toml", [{ path: ["db", "port"], value: 54322 }]);
+    expect(applied(outcome).text).toBe("[db]\nport = 54322 # default port\n");
+  });
+
+  test("replacing a bare boolean preserves multiple spaces of original spacing before a trailing comment", () => {
+    const source = "[api]\nenabled = true    # toggle me\n";
+    const outcome = applyConfigEdits(source, "toml", [{ path: ["api", "enabled"], value: false }]);
+    expect(applied(outcome).text).toBe("[api]\nenabled = false    # toggle me\n");
+  });
+
+  test("replacing a bare number preserves a tab before a trailing comment", () => {
+    const source = "[db]\nport = 54321\t# tab before comment\n";
+    const outcome = applyConfigEdits(source, "toml", [{ path: ["db", "port"], value: 54322 }]);
+    expect(applied(outcome).text).toBe("[db]\nport = 54322\t# tab before comment\n");
+  });
+
+  test("replacing a bare value with no space before its trailing comment stays that way", () => {
+    const source = "[db]\nport = 54321# no space\n";
+    const outcome = applyConfigEdits(source, "toml", [{ path: ["db", "port"], value: 54322 }]);
+    expect(applied(outcome).text).toBe("[db]\nport = 54322# no space\n");
+  });
+
+  // Pin test: a string value is already terminated by its closing quote, so the trailing
+  // whitespace before `#` was never part of `scanBasicString`'s span — unaffected by this bug
+  // or its fix either way.
+  test("replacing a string value with a trailing comment is unaffected (already quote-terminated)", () => {
+    const source = '[a]\nname = "old" # a name\n';
+    const outcome = applyConfigEdits(source, "toml", [{ path: ["a", "name"], value: "new" }]);
+    expect(applied(outcome).text).toBe('[a]\nname = "new" # a name\n');
+  });
+
+  // Pin test: replacing an EXISTING root-level (single-segment) key must keep working —
+  // finding 6's new refusal only targets an INSERT at that same shape (no exact key match).
+  test("replaces an existing root-level single-segment key in place", () => {
+    const source = 'project_id = "demo"\n\n[api]\nenabled = true\n';
+    const outcome = applyConfigEdits(source, "toml", [{ path: ["project_id"], value: "updated" }]);
+    expect(applied(outcome).text).toBe('project_id = "updated"\n\n[api]\nenabled = true\n');
+  });
 });
 
 describe("applyConfigEdits (toml): insert", () => {
@@ -253,6 +298,34 @@ max_rows = 900
     ]);
     expect(applied(otpOutcome).text).toContain('"+15551234" = "123456"');
   });
+
+  // Regression coverage for CLI-2064 review finding 5: inserting a new key into a table whose
+  // existing keys are indented used to write the new line flush-left instead of matching.
+  test("inserts a new key into an indented table matching the indentation of the key it follows", () => {
+    const source = `[a]
+  x = 1
+`;
+    const outcome = applyConfigEdits(source, "toml", [{ path: ["a", "y"], value: 2 }]);
+    expect(applied(outcome).text).toBe(`[a]
+  x = 1
+  y = 2
+`);
+  });
+
+  test("a key inserted into a currently-empty table stays flush-left (no sibling to copy indentation from)", () => {
+    const source = `[a]
+
+[b]
+  x = 1
+`;
+    const outcome = applyConfigEdits(source, "toml", [{ path: ["a", "z"], value: 9 }]);
+    expect(applied(outcome).text).toBe(`[a]
+z = 9
+
+[b]
+  x = 1
+`);
+  });
 });
 
 describe("applyConfigEdits (toml): refusals", () => {
@@ -305,6 +378,30 @@ auth_token = "env(SUPABASE_AUTH_SMS_TWILIO_AUTH_TOKEN)"
     const outcome = applyConfigEdits('x = "unterminated\n', "toml", [{ path: ["x"], value: "y" }]);
     expect(refusalReason(outcome)).toBe("parse_error");
   });
+
+  // Regression coverage for CLI-2064 review finding 6: a root-level single-segment path with
+  // no existing exact key (an INSERT, not a replace) used to fall into the "dotted sibling"
+  // placement branch — trivially true for every key in the document, since an empty path is a
+  // prefix of everything — and splice in a keyless ` = value` line that only the mandatory
+  // re-parse caught. This is now refused up front instead.
+  test("refuses inserting a brand-new root-level (single-segment) key", () => {
+    const source = 'project_id = "demo"\n\n[api]\nenabled = true\n';
+    const outcome = applyConfigEdits(source, "toml", [{ path: ["new_top_level_key"], value: 1 }]);
+    expect(refusalReason(outcome)).toBe("verification_mismatch");
+  });
+
+  // Regression/documentation coverage for CLI-2064 review finding 7: `deepSet` (the mandatory
+  // verification oracle) REPLACES a destination table wholesale with an object-valued edit's
+  // value, while the actual written text only ever touches the leaves the object mentions —
+  // so an object edit that omits an existing sibling key verify-mismatches instead of merging.
+  test("refuses an object-valued edit that omits an existing sibling key of the destination table", () => {
+    const source = `[a]
+x = 1
+y = 2
+`;
+    const outcome = applyConfigEdits(source, "toml", [{ path: ["a"], value: { x: 99 } }]);
+    expect(refusalReason(outcome)).toBe("verification_mismatch");
+  });
 });
 
 describe("applyConfigEdits (toml): newline and idempotence", () => {
@@ -315,6 +412,21 @@ describe("applyConfigEdits (toml): newline and idempotence", () => {
     ]);
     expect(applied(outcome).text).toBe(
       '[api]\r\nmax_rows = 1000\r\n\r\n[remotes.staging]\r\nproject_id = "bbbbbbbbbbbbbbbbbbbb"\r\n',
+    );
+  });
+
+  // Regression coverage for CLI-2064 review finding 3: `endsWithNewline` used to check
+  // `source.endsWith(newline)`, where `newline` is CRLF as soon as the file contains one
+  // anywhere. A mixed-EOL file whose LAST line ends in a bare `\n` (not preceded by `\r`)
+  // doesn't end with `"\r\n"`, so this read as "no trailing newline" and doubled the EOF
+  // terminator ahead of an EOF-inserted block.
+  test("a mixed-EOL file whose last line ends in a bare LF gets exactly one blank line before EOF-inserted content, not two", () => {
+    const source = "[api]\r\nmax_rows = 1000\n";
+    const outcome = applyConfigEdits(source, "toml", [
+      { path: ["remotes", "staging", "project_id"], value: "bbbbbbbbbbbbbbbbbbbb" },
+    ]);
+    expect(applied(outcome).text).toBe(
+      '[api]\r\nmax_rows = 1000\n\r\n[remotes.staging]\r\nproject_id = "bbbbbbbbbbbbbbbbbbbb"\r\n',
     );
   });
 
@@ -497,6 +609,20 @@ describe("applyConfigEdits (json)", () => {
     ]);
   });
 
+  // Regression coverage for CLI-2064 review finding 4: `JSON.stringify` always renders `\n`, so
+  // this used to silently flip a CRLF-flavored JSON config to LF on every edit.
+  test("preserves CRLF line endings and a trailing newline", () => {
+    const source = '{\r\n  "api": {\r\n    "max_rows": 1000\r\n  }\r\n}\r\n';
+    const outcome = applyConfigEdits(source, "json", [{ path: ["api", "max_rows"], value: 2 }]);
+    expect(applied(outcome).text).toBe('{\r\n  "api": {\r\n    "max_rows": 2\r\n  }\r\n}\r\n');
+  });
+
+  test("preserves CRLF line endings with no trailing newline", () => {
+    const source = '{\r\n  "api": {\r\n    "max_rows": 1000\r\n  }\r\n}';
+    const outcome = applyConfigEdits(source, "json", [{ path: ["api", "max_rows"], value: 2 }]);
+    expect(applied(outcome).text).toBe('{\r\n  "api": {\r\n    "max_rows": 2\r\n  }\r\n}');
+  });
+
   test("refuses replacing a destination that already holds an env() reference", () => {
     const source = `{"studio": {"openai_api_key": "env(OPENAI_API_KEY)"}}\n`;
     const outcome = applyConfigEdits(source, "json", [
@@ -525,11 +651,27 @@ max_rows = 1000
 });
 
 // ---------------------------------------------------------------------------
-// Randomized property test: `SmolToml.parse(apply(source, edits).text)` must deep-equal an
-// independently computed `deepSet(SmolToml.parse(source), edits)` whenever the outcome is
-// "applied" (a "refused" outcome is accepted as-is — it's `applyConfigEdits`'s own internal
-// verification declining rather than shipping something unverified). Seeded PRNG so a failure
-// reproduces: the seed is printed in the thrown error.
+// Randomized property test. For every random edit set that `applyConfigEdits` accepts, asserts:
+//
+//  (a) BYTE PRESERVATION — every source line whose span doesn't intersect an edited key's own
+//      line appears verbatim, in order, in the output; a REPLACED key's line is held to a
+//      narrower standard (its `key = ` prefix and any trailing `#comment` — including the
+//      whitespace right before it — must survive unchanged, only the value between them may
+//      differ), since that's the one span the editor is actually allowed to touch. This is the
+//      check that would have caught finding 1 (comment-eating): the ORIGINAL, tautological
+//      version of this test only compared PARSED values, which are identical either way.
+//  (b) IDEMPOTENCE — re-applying the same edits to the already-edited text is a no-op
+//      (byte-identical to the first result).
+//  (c) ZERO REFUSALS — these fixtures/edits never hit a refusal-triggering construct (no
+//      duplicate headers, arrays-of-tables, inline tables, or existing `env()` values), so an
+//      "applied" outcome is required, not merely accepted; a refusal here means either a fixture
+//      accidentally exercises one of those constructs, or a real regression.
+//  (d) the original PARSE-EQUIVALENCE oracle — `SmolToml.parse(apply(source, edits).text)` must
+//      deep-equal an independently computed `deepSet(SmolToml.parse(source), edits)`. Still a
+//      valid oracle (it does catch structural mistakes), just not a SUFFICIENT one on its own —
+//      see (a) above.
+//
+// Seeded PRNG so a failure reproduces: the seed is printed in every thrown error.
 // ---------------------------------------------------------------------------
 
 function mulberry32(seed: number): () => number {
@@ -545,6 +687,10 @@ function mulberry32(seed: number): () => number {
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+function pathKey(path: ReadonlyArray<string>): string {
+  return JSON.stringify(path);
 }
 
 /** Independent (from `config-edit.ts`'s own `deepSet`) recursive path-set, used only to build
@@ -643,20 +789,113 @@ backend = "postgres"
 [experimental.pgdelta]
 enabled = true
 `,
+  // Rich in trailing inline comments on bare (non-string) values, deliberately varying the
+  // whitespace before `#` (single space / multiple spaces / none) — this is the fixture shape
+  // that would have caught finding 1, via the byte-preservation check below.
+  `[db]
+port = 54322 # default port, don't change carelessly
+major_version = 17   # postgres version
+
+[db.pooler]
+enabled = false  # pooler toggle
+max_client_conn = 100# no space before this comment
+`,
 ];
 
+/** A line, as read off one of `PROPERTY_FIXTURES` verbatim, and — for a key-value line — the
+ * fully qualified path it declares. Deliberately INDEPENDENT of `config-edit.ts`'s own scanner:
+ * these fixtures never contain indented keys, dotted-key assignments, quoted keys/headers, or
+ * multi-line values, so a full TOML scanner isn't needed to know which physical line each
+ * key-value pair lives on — only used to build the byte-preservation oracle below. */
+interface FixtureLine {
+  readonly text: string;
+  readonly path?: ReadonlyArray<string>;
+}
+
+function describeFixtureLines(source: string): ReadonlyArray<FixtureLine> {
+  let currentTablePath: ReadonlyArray<string> = [];
+  return source.split("\n").map((line) => {
+    const headerMatch = /^\[([^[\]]+)\]$/.exec(line);
+    if (headerMatch?.[1] !== undefined) {
+      currentTablePath = headerMatch[1].split(".");
+      return { text: line };
+    }
+    const keyMatch = /^([A-Za-z0-9_-]+)\s*=/.exec(line);
+    if (keyMatch?.[1] === undefined) {
+      return { text: line };
+    }
+    return { text: line, path: [...currentTablePath, keyMatch[1]] };
+  });
+}
+
+/** Splits a key-value line into its `key = ` prefix and, if present, its trailing comment —
+ * INCLUDING whichever run of spaces/tabs immediately precedes the `#`, since that's exactly the
+ * span finding 1's bug used to eat. */
+function splitKvLineSuffix(line: string): { prefix: string; commentSuffix: string | undefined } {
+  const prefixMatch = /^([A-Za-z0-9_-]+\s*=\s*)/.exec(line);
+  const prefix = prefixMatch?.[1] ?? "";
+  const rest = line.slice(prefix.length);
+  const hashIndex = rest.indexOf("#");
+  if (hashIndex === -1) {
+    return { prefix, commentSuffix: undefined };
+  }
+  let start = hashIndex;
+  while (start > 0 && (rest[start - 1] === " " || rest[start - 1] === "\t")) {
+    start--;
+  }
+  return { prefix, commentSuffix: rest.slice(start) };
+}
+
+/** Asserts property (a): every `sourceLines` entry appears, in order, in `outputText` — exactly
+ * (for a line whose path isn't in `replacedPathKeys`) or matching just its `key = ` prefix and
+ * trailing comment (for a line whose path IS in `replacedPathKeys`, since only its value may
+ * differ). Throws with a descriptive message on the first violation. */
+function assertLinePreservation(
+  sourceLines: ReadonlyArray<FixtureLine>,
+  replacedPathKeys: ReadonlySet<string>,
+  outputText: string,
+): void {
+  const outputLines = outputText.split("\n");
+  let pointer = 0;
+  for (const line of sourceLines) {
+    if (line.path !== undefined && replacedPathKeys.has(pathKey(line.path))) {
+      const { prefix, commentSuffix } = splitKvLineSuffix(line.text);
+      const foundIndex = outputLines.findIndex(
+        (candidate, index) =>
+          index >= pointer &&
+          candidate.startsWith(prefix) &&
+          (commentSuffix === undefined || candidate.endsWith(commentSuffix)),
+      );
+      if (foundIndex === -1) {
+        throw new Error(
+          `expected a replaced line matching prefix ${JSON.stringify(prefix)}` +
+            (commentSuffix === undefined
+              ? ""
+              : ` and trailing comment ${JSON.stringify(commentSuffix)}`) +
+            ` at or after output line ${pointer}, found none in ${JSON.stringify(outputLines)}`,
+        );
+      }
+      pointer = foundIndex + 1;
+      continue;
+    }
+    const foundIndex = outputLines.findIndex(
+      (candidate, index) => index >= pointer && candidate === line.text,
+    );
+    if (foundIndex === -1) {
+      throw new Error(
+        `expected untouched source line ${JSON.stringify(line.text)} to survive verbatim, in ` +
+          `order, at or after output line ${pointer} — byte preservation violated (output: ` +
+          `${JSON.stringify(outputLines)})`,
+      );
+    }
+    pointer = foundIndex + 1;
+  }
+}
+
 describe("applyConfigEdits (toml): randomized property test", () => {
-  test("SmolToml.parse(apply(source, edits).text) deep-equals deepSet(parse(source), edits) over 200 random edit sets", () => {
+  test("byte preservation, idempotence, zero refusals, and parse-equivalence hold over 200 random edit sets", () => {
     const seed = 0x5eed_2064;
     const rand = mulberry32(seed);
-    const knownRefusalReasons = new Set([
-      "duplicate_table_header",
-      "array_of_tables_on_path",
-      "inline_table_on_path",
-      "env_reference_target",
-      "verification_mismatch",
-      "parse_error",
-    ]);
 
     for (let iteration = 0; iteration < 200; iteration++) {
       const fixtureIndex = Math.floor(rand() * PROPERTY_FIXTURES.length);
@@ -669,37 +908,75 @@ describe("applyConfigEdits (toml): randomized property test", () => {
       if (leaves.length === 0) {
         continue;
       }
+      const existingLeafPathKeys = new Set(leaves.map((leaf) => pathKey(leaf.path)));
 
       const editCount = 1 + Math.floor(rand() * 3);
-      const edits: Array<ConfigEdit> = [];
+      const rawEdits: Array<ConfigEdit> = [];
       for (let e = 0; e < editCount; e++) {
         const leaf = leaves[Math.floor(rand() * leaves.length)];
         if (leaf === undefined) {
           continue;
         }
-        const isInsert = rand() > 0.7;
-        const path = isInsert ? [...leaf.path, `extra_${Math.floor(rand() * 1000)}`] : leaf.path;
+        // A root-level (single-segment) leaf has no enclosing table to insert a new sibling
+        // key into (see finding 6's dedicated refusal test) — only ever replace it here.
+        // Nesting the new key one level UNDER the leaf itself (rather than alongside it, in
+        // its own enclosing table) is deliberately avoided too: a scalar leaf isn't a table,
+        // so `SmolToml.parse` rejects the resulting document as redeclaring the same key as
+        // both a value and a table — an unrelated, out-of-scope corner case this test isn't
+        // meant to exercise.
+        const canInsert = leaf.path.length > 1;
+        const isInsert = canInsert && rand() > 0.7;
+        const path = isInsert
+          ? [...leaf.path.slice(0, -1), `extra_${Math.floor(rand() * 1000)}`]
+          : leaf.path;
         const value = isInsert
           ? `inserted-${Math.floor(rand() * 1000)}`
           : randomValueLike(leaf.value, rand);
-        edits.push({ path, value });
+        rawEdits.push({ path, value });
       }
-      if (edits.length === 0) {
+      if (rawEdits.length === 0) {
         continue;
       }
+
+      // De-duplicate by path, last edit wins (matching `deepSet`'s own reduce semantics): two
+      // edits at the exact same path in one call hits an unrelated, out-of-scope corner case
+      // (`applySplices` applying two same-span replacements sequentially, the second using a
+      // now-stale offset) that isn't one of this review's findings — avoided here so the zero-
+      // refusals property stays meaningful.
+      const dedupedByPath = new Map<string, ConfigEdit>();
+      for (const edit of rawEdits) {
+        dedupedByPath.set(pathKey(edit.path), edit);
+      }
+      const edits = [...dedupedByPath.values()];
+      const replacedPathKeys = new Set(
+        edits.map((edit) => pathKey(edit.path)).filter((key) => existingLeafPathKeys.has(key)),
+      );
 
       try {
         const outcome = applyConfigEdits(fixture, "toml", edits);
         if (outcome.kind === "refused") {
-          expect(knownRefusalReasons.has(outcome.refusal.reason)).toBe(true);
-          continue;
+          throw new Error(
+            `expected zero refusals, got "${outcome.refusal.reason}" at path ` +
+              `${JSON.stringify(outcome.refusal.path)}: ${outcome.refusal.detail}`,
+          );
         }
+
         const reparsed = SmolToml.parse(outcome.text);
         const expected = edits.reduce<unknown>(
           (acc, edit) => applyPathSet(acc, edit.path, edit.value),
           parsed,
         );
         expect(reparsed).toEqual(expected);
+
+        assertLinePreservation(describeFixtureLines(fixture), replacedPathKeys, outcome.text);
+
+        const second = applyConfigEdits(outcome.text, "toml", edits);
+        if (second.kind === "refused") {
+          throw new Error(
+            `idempotence check: re-applying the same edits refused with "${second.refusal.reason}"`,
+          );
+        }
+        expect(second.text).toBe(outcome.text);
       } catch (error) {
         throw new Error(
           `property test failed at iteration ${iteration} (seed ${seed}, fixtureIndex ${fixtureIndex}, edits ${JSON.stringify(edits)}): ${String(error)}`,

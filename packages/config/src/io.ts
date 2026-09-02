@@ -807,9 +807,13 @@ const DEFAULT_CLI_CONFIG_FILE_MODE = 0o644;
 
 /**
  * Atomically replaces `filePath`'s content with `content`: writes a fresh
- * temp file in the SAME directory, copies the target's current mode onto it
- * (falling back to {@link DEFAULT_CLI_CONFIG_FILE_MODE} when the target
- * doesn't exist yet), then `rename`s over the target. Unlike
+ * temp file in the SAME directory, CREATED with the target's current mode
+ * already applied (falling back to {@link DEFAULT_CLI_CONFIG_FILE_MODE} when
+ * the target doesn't exist yet), then `rename`s over the target. The mode is
+ * passed straight to `writeFileString`'s own `open()` rather than applied via
+ * a separate `chmod` afterward, so a restrictively-permissioned file (e.g.
+ * `0600`) is never briefly world/group-visible at whatever the process umask
+ * would otherwise leave behind between the write and the chmod. Unlike
  * {@link writeFileAtomic} (used by `saveCliConfig`'s full-document
  * regeneration, which dies on any platform failure), this surfaces a typed
  * {@link CliConfigWriteError} — `config pull`'s surgical edit
@@ -835,8 +839,7 @@ export const writeCliConfigDocumentText = Effect.fnUntraced(function* (
           : Effect.fail(error),
       ),
     );
-    yield* fs.writeFileString(tmpPath, content);
-    yield* fs.chmod(tmpPath, mode);
+    yield* fs.writeFileString(tmpPath, content, { mode });
     yield* fs.rename(tmpPath, filePath);
   }).pipe(
     Effect.ensuring(fs.remove(tmpPath).pipe(Effect.ignore)),

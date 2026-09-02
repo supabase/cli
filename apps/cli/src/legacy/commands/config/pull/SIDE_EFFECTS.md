@@ -2,9 +2,10 @@
 
 Writes the effective configuration of a remote project or branch back into the local
 `supabase/config.toml`/`config.json` — the write side of `supabase config diff` (same target
-resolution, fetch, and classification, `../diff/`). Prompts for confirmation before writing unless
-`--yes`/a machine output format is set; never writes on `--dry-run`, on a declined prompt, or on
-any error.
+resolution, fetch, and classification, `../diff/`). Prompts for confirmation before writing on an
+interactive TTY, unless `--yes` is set; a non-interactive run — no TTY, or `--output-format
+json|stream-json` — never prompts at all and proceeds as though confirmed. Never writes on
+`--dry-run`, on a declined prompt, or on any error.
 
 ## Files Read
 
@@ -23,7 +24,7 @@ any error.
 
 | Path                                              | Format    | When                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                             |
 | ------------------------------------------------- | --------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `<workdir>/supabase/config.toml` or `config.json` | TOML/JSON | ONLY after the confirmation prompt answers "yes" — `--yes`/`SUPABASE_YES` always answer yes; otherwise the prompt's default is yes, UNLESS the git dirty guard downgraded it to no (only possible in an interactive TTY text run; every other dirty case already aborted before reaching the prompt) — AND there is at least one value change planned OR a new `[remotes.*]` block would be created (a zero-drift branch/`--remote-label` target still writes the block's own `project_id`, even with no value changes to apply — see Notes). **Never** on `--dry-run`; **never** on a declined prompt; **never** on any error path (including the TOCTOU mismatch above). Written atomically: a temp file in the SAME directory (`<file>.tmp.<Date.now()>.<6-hex-chars>`), the original file's mode copied onto it, then `rename`d over the original; the temp file is removed if anything fails before the rename |
+| `<workdir>/supabase/config.toml` or `config.json` | TOML/JSON | ONLY after the confirmation prompt answers "yes" — `--yes`/`SUPABASE_YES` always answer yes, UNLESS the git dirty guard already aborted first (see Git below — `--yes` never bypasses that guard, on any TTY); otherwise the prompt's default is yes, UNLESS the git dirty guard downgraded it to no (only possible in an interactive TTY text run with no `--yes`) — AND there is at least one value change planned OR a new `[remotes.*]` block would be created (a zero-drift branch/`--remote-label` target still writes the block's own `project_id`, even with no value changes to apply — see Notes). **Never** on `--dry-run`; **never** on a declined prompt; **never** on any error path (including the TOCTOU mismatch above). Written atomically: a temp file in the SAME directory (`<file>.tmp.<Date.now()>.<6-hex-chars>`), the original file's mode copied onto it, then `rename`d over the original; the temp file is removed if anything fails before the rename |
 | `<workdir>/supabase/.temp/linked-project.json`    | JSON      | `Effect.ensuring` after run (success **and** failure), if a target ref resolved                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                  |
 | `~/.supabase/telemetry.json`                      | JSON      | `Effect.ensuring` after run (success **and** failure)                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                            |
 
@@ -38,11 +39,13 @@ any error.
 - A non-zero exit, a spawn failure (`git` not installed or not on `PATH`), or the directory not
   being a git working tree all degrade silently to "clean" — same degrade-on-uncertainty policy as
   `detectGitBranch`. No error, no warning.
-- A dirty result changes behavior by output mode: in an interactive TTY text run it downgrades the
-  confirmation prompt's default answer from yes to no and adds a
-  "supabase/config.toml has uncommitted changes." warning to the rendered output; in a
-  non-interactive or machine-format run it aborts before any prompt
-  (`LegacyConfigPullUncommittedChangesError`, exit 1).
+- A dirty (or untracked, `??`) result changes behavior by output mode: in an interactive TTY text
+  run WITHOUT `--yes` it downgrades the confirmation prompt's default answer from yes to no and
+  adds a "supabase/config.toml has uncommitted or untracked changes. Commit or stash them (-u for
+  untracked), or rerun with --force." warning to the rendered output; every other case — a
+  non-interactive or machine-format run, OR `--yes` passed on any TTY — aborts before any prompt
+  (`LegacyConfigPullUncommittedChangesError`, exit 1): `--yes` answers a prompt no one asked, it
+  never bypasses this guard, since no human is on hand to read the warning either way.
 
 ## API Routes
 
@@ -81,13 +84,14 @@ exit `0`: neither is a failure.
 | `1`  | branch-name `--project-ref` with a corrupt/invalid linked parent ref (`LegacyConfigPullParentRefInvalidError`)                                                                                                                                     |
 | `1`  | unknown branch (branch-name `--project-ref` 404, `LegacyConfigPullBranchNotFoundError`)                                                                                                                                                            |
 | `1`  | resolved branch has no project ref yet — still provisioning (`LegacyConfigPullBranchNotReadyError`)                                                                                                                                                |
-| `1`  | `--remote-label` names a block tracking a different project, or names nothing while a different block already tracks the target ref (`LegacyConfigPullRemoteLabelCollisionError`)                                                                  |
+| `1`  | `--remote-label`, or a branch-derived label, names an existing block tracking a different project, or a `--remote-label` names nothing while a different block already tracks the target ref (`LegacyConfigPullRemoteLabelCollisionError`)          |
 | `1`  | the target ref only matches a `[remotes.*]` block's `project_id` via `env(...)` resolution, never its raw literal (`LegacyConfigPullRemoteEnvRefError`)                                                                                            |
 | `1`  | remote config read failure — network, 401/403/404, or other unexpected status (`LegacyConfigPullReadNetworkError`/`LegacyConfigPullReadStatusError`)                                                                                               |
-| `1`  | `supabase/config.toml` has uncommitted changes and the run is non-interactive/machine-format without `--force` (`LegacyConfigPullUncommittedChangesError`) — checked ONLY when this run has something to write (a value change, a new `[remotes.*]` block, or both); a converged run with nothing to do never spawns `git` and never reaches this check, regardless of the working tree's state |
+| `1`  | `supabase/config.toml` has uncommitted or untracked changes and no human will read the warning — the run is non-interactive/machine-format, OR `--yes` was passed on any TTY — with no `--force` (`LegacyConfigPullUncommittedChangesError`) — checked ONLY when this run has something to write (a value change, a new `[remotes.*]` block, or both); a converged run with nothing to do never spawns `git` and never reaches this check, regardless of the working tree's state |
 | `1`  | the config file changed on disk between the pre-prompt read and the write (`LegacyConfigPullFileChangedError`)                                                                                                                                     |
 | `1`  | `applyConfigEdits` refused the edit — duplicate table header, an array-of-tables/inline table on the write path, an existing `env(...)` literal at the destination, or a re-parse verification mismatch (`LegacyConfigPullUnsupportedLayoutError`) |
 | `1`  | the atomic write itself failed — a filesystem permission problem (`LegacyConfigPullWriteError`)                                                                                                                                                    |
+| `1`  | the post-plan convergence check found a written path still differs from the remote — a defect in this command's own planner, never user-facing; nothing was written (`LegacyConfigPullPlanDefectError`)                                          |
 
 ## Telemetry Events Fired
 
@@ -102,28 +106,33 @@ BEFORE any network call — `config root` or `[remotes.<label>]`), then
 `Comparison scope: <blocks>` once the response arrives (same line `config diff` prints). The
 confirmation prompt and the change-set body are on **stdout**, followed by the payload.
 
-The confirmation prompt itself reads `Apply N change(s) to <path>?` whenever at least one value
-change is planned — even when the run ALSO creates a new `[remotes.*]` block — or
+The confirmation prompt itself reads `Apply N change(s) to <path> [remotes.<label>]?` whenever at
+least one value change is planned — even when the run ALSO creates a new `[remotes.*]` block —
+naming the destination block when writing into one (omitted for the config root), or
 `Create [remotes.<label>] in <path>?` for a block-only run (no value changes, just the new block —
 a zero-drift branch/`--remote-label` target).
 
 ### `--output-format text`
 
-The same per-difference blocks `config diff` renders (`<path> [class, write|skip: reason]` with
-`local:`/`remote:` lines), followed by a `Warnings:` section when the plan carries any
-(`dual_scope`, `duplicates_root`, `array_drift`, `uncommitted_changes`, `unpushable`), a summary
-count line (`No config differences found.` when clean, otherwise
-`N difference(s) found (W to write, S to skip).`), a `New block [remotes.<label>] will be created
-(project_id = <ref>).` line when the plan both writes at least one value AND creates a new block
-(so a TTY user sees the block creation before the generic "Apply N change(s)..." prompt above), and
-the same masked/unmanaged/not-returned `Note:` lines as `config diff`. This body is shown BEFORE the
+The same per-difference blocks `config diff` renders, now labeled `<path> [class-label,
+write|not pulled|skip: reason]` (`class-label` hyphenated — `update`/`remote-only`/`local-only` —
+and the skip reason humanized for prose, e.g. `env() reference`; a `local-only` change always
+renders `not pulled` rather than repeating its own class as a skip reason) with `local:`/`remote:`
+lines, followed by a `Warnings:` section when the plan carries any (`dual_scope`,
+`duplicates_root`, `array_drift`, `uncommitted_changes`, `unpushable`), a summary count line (`No
+config differences found.` when clean, otherwise `N difference(s) found (W to write, S to
+skip).`), a `New block [remotes.<label>] will be created (project_id = <ref>).` line whenever the
+plan creates a new block — REGARDLESS of whether any value write is also planned, so a block-only
+run states its one action in the body too, not only in its own confirmation prompt — and the same
+masked/unmanaged/not-returned `Note:` lines as `config diff`. This body is shown BEFORE the
 confirmation prompt (and reused unchanged for `--dry-run`). A final one-line disposition follows
-once the outcome is known: `No config differences found.` (no changes at all, no block to create),
-`No changes written.` (differences existed, but every one was skipped), `N change(s) written.`,
-`N change(s) would be written (dry run).`, or `N change(s) not written (declined).` — or, for a
-BLOCK-ONLY run (no value changes, just the new block): `Created [remotes.<label>]; no config
-differences to apply.`, `[remotes.<label>] would be created (dry run); no config differences to
-apply.`, or `[remotes.<label>] not created (declined).`
+once the outcome is known (WITHOUT repeating the body's own `Note:` caveats — those already showed
+once): `No config differences found.` (no changes at all, no block to create), `No changes
+written.` (differences existed, but every one was skipped), `N change(s) written.`, `N change(s)
+would be written (dry run).`, or `N change(s) not written (declined).` — or, for a BLOCK-ONLY run
+(no value changes, just the new block): `Created [remotes.<label>]; no config differences to
+apply.`, `[remotes.<label>] would be created (dry run); no config differences to apply.`, or
+`[remotes.<label>] not created (declined).`
 
 ### `--output-format json` / `stream-json`
 
@@ -135,11 +144,17 @@ brand-new `[remotes.*]` block since there is nothing to overlay yet), `destinati
 optional `label`, `created` — WHERE this run writes, independent of `target.local_scope`),
 `dry_run`, `wrote`, `scope` (`{present, missing}`), `changes[]` (`config diff`'s own change shape
 plus `written` and, when unwritten, `skipped_reason`: `env_reference | local_only | unwritable |
-declined | dry_run`), `warnings[]` (`{kind, path?}`), `masked[]`, `unmanaged[]`, and `counts` (per
-class + `total`, plus `written`/`skipped`). `wrote` is `true` whenever the run actually changed the
-file — including a BLOCK-ONLY run that created a `[remotes.*]` block but had no value changes to
-apply, where `counts.written` stays `0` even though `wrote` is `true` (the count is of VALUE writes
-only); `wrote` is `false` for both `--dry-run` and a declined confirmation, block-only or not.
+declined | dry_run`; a change with `written: true` ALSO carries `document_path` — the exact
+destination-prefixed segment path `applyConfigEdits` wrote to, e.g. `["remotes", "staging", "api",
+"max_rows"]` — absent from every unwritten entry, since nothing landed anywhere for those),
+`warnings[]` (`{kind, path?}`), `masked[]`, `unmanaged[]`, and `counts` (per class + `total`, plus
+`written`/`skipped`). `destination.created` means "a `[remotes.*]` block was (or, on `--dry-run` /
+a declined prompt, WOULD be) created this run" — it does not by itself say whether anything was
+actually written; `wrote` disambiguates that: `wrote` is `true` whenever the run actually changed
+the file — including a BLOCK-ONLY run that created a `[remotes.*]` block but had no value changes
+to apply, where `counts.written` stays `0` even though `wrote` is `true` (the count is of VALUE
+writes only); `wrote` is `false` for both `--dry-run` and a declined confirmation, block-only or
+not, regardless of `destination.created`.
 
 ### `-o/--output` (legacy machine formats)
 
@@ -156,12 +171,16 @@ the -o/--output flag is not supported by config pull; use --output-format json|s
 
 - Run from the project root (or pass `--workdir`); `config.toml`/`config.json` is read and written
   relative to it.
-- **Scope resolution (ADR 0023) is pure and precedes any network call**: an existing `[remotes.*]`
-  block whose RAW `project_id` literal matches the resolved ref is always reused, regardless of
-  `--remote-label` or how the target was named; failing that, a branch-named target creates a new
-  `[remotes.<label>]`; otherwise the write lands at the config root. A block whose `project_id` is
-  an `env(...)` reference that merely RESOLVES to the target ref is never reused or rewritten — hard
-  error instead (see the exit-code table).
+- **Scope resolution (ADR 0023) is pure and precedes any network call**: `--remote-label`, when
+  passed, is resolved FIRST — even for a ref-shaped target — so its own remedy is never dead;
+  failing that, an existing `[remotes.*]` block whose RAW `project_id` literal matches the resolved
+  ref is always reused, regardless of how the target was named; failing that, a branch-named target
+  creates a new `[remotes.<label>]`; otherwise the write lands at the config root. Either a
+  `--remote-label` or a branch-derived label that names an EXISTING block tracking a DIFFERENT
+  project is a collision, never a silent overwrite of that block's `project_id`. A block whose
+  `project_id` is an `env(...)` reference that merely RESOLVES to the target ref is never reused or
+  rewritten — hard error instead (see the exit-code table) — unless an explicit `--remote-label`
+  already settled the destination some other way.
 - **The write is never a full-document regeneration.** `packages/config/src/config-edit.ts`'s
   `applyConfigEdits` is a character-level scanner that splices only the spans that changed —
   comments, key ordering, and quoting elsewhere in the file are untouched — verified by re-parsing

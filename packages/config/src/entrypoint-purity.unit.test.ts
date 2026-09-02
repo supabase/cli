@@ -433,7 +433,6 @@ describe("src/effect.ts is a superset of src/index.ts", () => {
         "CliConfigParseError",
         "CliConfigSchema",
         "CliConfigStore",
-        "CliConfigWriteError",
         "CliProjectEnvParseError",
         "DuplicateRemoteProjectIdError",
         "InvalidRemoteProjectIdError",
@@ -471,7 +470,6 @@ describe("src/effect.ts is a superset of src/index.ts", () => {
         "toProjectConfig",
         "toProjectConfigJsonSchema",
         "unmappedApiFields",
-        "writeCliConfigDocumentText",
       ]
     `);
   });

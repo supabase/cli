@@ -583,7 +583,10 @@ describe("legacy config pull integration", () => {
       yield* legacyConfigPull(noFlags);
       expect(readFileSync(configPath(), "utf8")).toBe(before);
       expect(out.promptConfirmCalls).toHaveLength(1);
-      expect(out.promptConfirmCalls[0]?.message).toContain("Apply 1 change(s) to");
+      // No `[remotes.*]` suffix for a root-bound write (CLI-2064 item F.5).
+      expect(out.promptConfirmCalls[0]?.message).toBe(
+        `Apply 1 change(s) to ${join("supabase", "config.toml")}?`,
+      );
       expect(out.stdoutText).toContain("not written (declined)");
     }).pipe(Effect.provide(layer));
   });
@@ -607,6 +610,7 @@ describe("legacy config pull integration", () => {
           local: 500,
           remote: 1000,
           written: true,
+          document_path: ["api", "max_rows"],
         },
       ]);
     }).pipe(Effect.provide(layer));
@@ -676,6 +680,27 @@ describe("legacy config pull integration", () => {
   });
 
   it.live(
+    "the confirmation prompt names the destination block when writing into a [remotes.*] block (CLI-2064 item F.5)",
+    () => {
+      const before = [
+        'project_id = "test"',
+        "[remotes.prod]",
+        `project_id = "${BRANCH_REF}"`,
+        "[remotes.prod.api]",
+        "max_rows = 500",
+        "",
+      ].join("\n");
+      const { layer, out } = setup({ toml: before, stdinIsTty: true, confirm: [true] });
+      return Effect.gen(function* () {
+        yield* legacyConfigPull({ ...noFlags, projectRef: Option.some("staging") });
+        expect(out.promptConfirmCalls[0]?.message).toBe(
+          `Apply 1 change(s) to ${join("supabase", "config.toml")} [remotes.prod]?`,
+        );
+      }).pipe(Effect.provide(layer));
+    },
+  );
+
+  it.live(
     "--remote-label naming a block that already tracks a different project fails with a collision error",
     () => {
       const before = [
@@ -718,7 +743,9 @@ describe("legacy config pull integration", () => {
         expect(Exit.isFailure(exit)).toBe(true);
         const rendered = JSON.stringify(exit);
         expect(rendered).toContain("LegacyConfigPullRemoteLabelCollisionError");
-        expect(rendered).toContain('--remote-label \\"newname\\"');
+        // CLI-2064 item E: names the ACTUALLY conflicting block (`other`),
+        // not the requested-but-unused label.
+        expect(rendered).toContain("[remotes.other] already tracks project");
         expect(rendered).toContain(LEGACY_VALID_REF);
         expect(readFileSync(configPath(), "utf8")).toBe(before);
       }).pipe(Effect.provide(layer));
@@ -748,6 +775,85 @@ describe("legacy config pull integration", () => {
         expect(readFileSync(configPath(), "utf8")).toBe(before);
         // Fails purely from the scope resolver — never even reaches the fetch.
         expect(api.requests.some((request) => request.url.includes("/v2/projects/"))).toBe(false);
+      }).pipe(Effect.provide(layer));
+    },
+  );
+
+  it.live(
+    "--remote-label alongside an env-spelled match creates the requested block instead of refusing (CLI-2064 item B)",
+    () => {
+      const before = [
+        'project_id = "test"',
+        "[remotes.x]",
+        'project_id = "env(REMOTE_REF)"',
+        "",
+      ].join("\n");
+      const { layer } = setup({
+        toml: before,
+        dotenv: `REMOTE_REF=${LEGACY_VALID_REF}\n`,
+        yes: true,
+      });
+      return Effect.gen(function* () {
+        yield* legacyConfigPull({ ...noFlags, remoteLabel: Option.some("y") });
+        const after = readFileSync(configPath(), "utf8");
+        expect(after).toContain("[remotes.y]");
+        expect(after).toContain(`project_id = "${LEGACY_VALID_REF}"`);
+        // The unrelated env()-spelled block is left exactly as it was.
+        expect(after).toContain('project_id = "env(REMOTE_REF)"');
+      }).pipe(Effect.provide(layer));
+    },
+  );
+
+  it.live(
+    "a branch-named target that collides with an existing, differently-tracked block fails with a collision error, and the file stays untouched (CLI-2064 item A)",
+    () => {
+      // Before item A's fix, a branch named "staging" landing on an
+      // unrelated `[remotes.staging]` block returned `created: true` and the
+      // handler REPLACED that block's own `project_id`, stranding its stale
+      // overrides.
+      const before = [
+        'project_id = "test"',
+        "[remotes.staging]",
+        'project_id = "dddddddddddddddddddd"',
+        "[remotes.staging.api]",
+        "max_rows = 999",
+        "",
+      ].join("\n");
+      const { layer } = setup({ toml: before, yes: true });
+      return Effect.gen(function* () {
+        const exit = yield* legacyConfigPull({
+          ...noFlags,
+          projectRef: Option.some("staging"),
+        }).pipe(Effect.exit);
+        expect(Exit.isFailure(exit)).toBe(true);
+        const rendered = JSON.stringify(exit);
+        expect(rendered).toContain("LegacyConfigPullRemoteLabelCollisionError");
+        expect(rendered).toContain("dddddddddddddddddddd");
+        expect(readFileSync(configPath(), "utf8")).toBe(before);
+      }).pipe(Effect.provide(layer));
+    },
+  );
+
+  it.live(
+    "a --remote-label collision is still caught when the raw value differs from the existing block's name only by control characters (CLI-2064 item A, sanitization bypass)",
+    () => {
+      const before = [
+        'project_id = "test"',
+        "[remotes.staging]",
+        'project_id = "dddddddddddddddddddd"',
+        "",
+      ].join("\n");
+      const { layer } = setup({ toml: before, yes: true });
+      return Effect.gen(function* () {
+        const exit = yield* legacyConfigPull({
+          ...noFlags,
+          remoteLabel: Option.some(`stag${String.fromCharCode(1)}ing`),
+        }).pipe(Effect.exit);
+        expect(Exit.isFailure(exit)).toBe(true);
+        const rendered = JSON.stringify(exit);
+        expect(rendered).toContain("LegacyConfigPullRemoteLabelCollisionError");
+        expect(rendered).toContain("dddddddddddddddddddd");
+        expect(readFileSync(configPath(), "utf8")).toBe(before);
       }).pipe(Effect.provide(layer));
     },
   );
@@ -799,7 +905,13 @@ describe("legacy config pull integration", () => {
       return Effect.gen(function* () {
         const exit = yield* legacyConfigPull(noFlags).pipe(Effect.exit);
         expect(Exit.isFailure(exit)).toBe(true);
-        expect(JSON.stringify(exit)).toContain("LegacyConfigPullUnsupportedLayoutError");
+        const rendered = JSON.stringify(exit);
+        expect(rendered).toContain("LegacyConfigPullUnsupportedLayoutError");
+        // CLI-2064 item F.3: prose, not the raw reason token, plus a
+        // remediation sentence.
+        expect(rendered).toContain("an inline table on this path");
+        expect(rendered).toContain("Rewrite it as a standard [table] section, then rerun.");
+        expect(rendered).not.toContain("inline_table_on_path");
         expect(readFileSync(configPath(), "utf8")).toBe(before);
       }).pipe(Effect.provide(layer));
     },
@@ -1024,6 +1136,20 @@ describe("legacy config pull integration", () => {
   });
 
   it.live(
+    "on a TTY in text mode, --yes does NOT bypass the uncommitted-changes guard — it aborts instead of silently overwriting (CLI-2064 item C)",
+    () => {
+      const before = 'project_id = "test"\n[api]\nmax_rows = 500\n';
+      const { layer } = setup({ toml: before, gitDirty: true, yes: true, stdinIsTty: true });
+      return Effect.gen(function* () {
+        const exit = yield* legacyConfigPull(noFlags).pipe(Effect.exit);
+        expect(Exit.isFailure(exit)).toBe(true);
+        expect(JSON.stringify(exit)).toContain("LegacyConfigPullUncommittedChangesError");
+        expect(readFileSync(configPath(), "utf8")).toBe(before);
+      }).pipe(Effect.provide(layer));
+    },
+  );
+
+  it.live(
     "--force writes despite uncommitted changes, with no warning or prompt-default flip",
     () => {
       const before = 'project_id = "test"\n[api]\nmax_rows = 500\n';
@@ -1048,7 +1174,9 @@ describe("legacy config pull integration", () => {
       });
       return Effect.gen(function* () {
         yield* legacyConfigPull(noFlags);
-        expect(out.stdoutText).toContain("supabase/config.toml has uncommitted changes.");
+        expect(out.stdoutText).toContain(
+          "supabase/config.toml has uncommitted or untracked changes. Commit or stash them (-u for untracked), or rerun with --force.",
+        );
         expect(out.promptConfirmCalls[0]?.opts).toEqual({ defaultValue: false });
         expect(readFileSync(configPath(), "utf8")).toBe(before);
       }).pipe(Effect.provide(layer));
@@ -1130,6 +1258,11 @@ describe("legacy config pull integration", () => {
         expect(first.out.promptConfirmCalls).toHaveLength(1);
         expect(first.out.promptConfirmCalls[0]?.message).toContain("Create [remotes.staging] in");
         expect(first.out.promptConfirmCalls[0]?.message).toContain(join("supabase", "config.toml"));
+        // The block-only body states its one action too (CLI-2064 item F.6),
+        // not only the confirmation prompt above.
+        expect(first.out.stdoutText).toContain(
+          `New block [remotes.staging] will be created (project_id = ${BRANCH_REF}).`,
+        );
         expect(first.out.stdoutText).toContain(
           "Created [remotes.staging]; no config differences to apply.",
         );
@@ -1862,7 +1995,7 @@ describe("legacy config pull integration", () => {
       });
       return Effect.gen(function* () {
         yield* legacyConfigPull(noFlags);
-        expect(out.stdoutText).toContain("auth.site_url [update, skip: env_reference]");
+        expect(out.stdoutText).toContain("auth.site_url [update, skip: env() reference]");
         expect(out.stdoutText).toContain("No changes written.");
         expect(readFileSync(configPath(), "utf8")).toBe(before);
       }).pipe(Effect.provide(layer));

@@ -2561,4 +2561,38 @@ describe("writeCliConfigDocumentText", () => {
       await rm(cwd, { recursive: true, force: true });
     }
   });
+
+  // The directory-missing case above fails at the `writeFileString` step, before any temp file
+  // ever exists — so it never actually exercises `Effect.ensuring`'s cleanup removing a real
+  // survivor. Making the destination an existing directory instead lets the temp file get
+  // created successfully, so the RENAME step is what fails (`fs.rename` refuses to replace a
+  // directory with a file), which is the one path that does exercise that cleanup.
+  test("fails with a typed CliConfigWriteError when rename fails, and still cleans up the temp file it already created", async () => {
+    const { cwd, filePath } = await tempFileTargets();
+
+    try {
+      await mkdir(filePath);
+
+      const exit = await Effect.runPromiseExit(
+        writeCliConfigDocumentText(filePath, 'project_id = "new"\n').pipe(
+          Effect.provide(BunServices.layer),
+        ),
+      );
+
+      expect(Exit.isFailure(exit)).toBe(true);
+      if (!Exit.isFailure(exit)) {
+        return;
+      }
+      const error = Cause.findErrorOption(exit.cause);
+      expect(Option.isSome(error)).toBe(true);
+      if (Option.isSome(error)) {
+        expect((error.value as { _tag: string })._tag).toBe("CliConfigWriteError");
+        expect((error.value as { path: string }).path).toBe(filePath);
+      }
+
+      expect(await tmpSurvivors(join(cwd, "supabase"), "config.toml")).toEqual([]);
+    } finally {
+      await rm(cwd, { recursive: true, force: true });
+    }
+  });
 });

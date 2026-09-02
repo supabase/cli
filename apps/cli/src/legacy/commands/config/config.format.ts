@@ -37,6 +37,20 @@ export interface LegacyConfigApiScope {
   readonly missing: ReadonlyArray<string>;
 }
 
+/**
+ * Human-readable labels for `ConfigChange.class`, hyphenated for prose
+ * (`remote_only` reads as "this key exists only remotely", but the raw enum
+ * token is not itself prose). Owned here so `diff`/`pull` never disagree on
+ * how a class renders; `diff.format.ts` still keeps its own private copy
+ * (unifying it onto this export is a follow-up, CLI-2064 — the two are
+ * identical today).
+ */
+export const LEGACY_CONFIG_CLASS_LABELS: Record<ConfigChange["class"], string> = {
+  update: "update",
+  remote_only: "remote-only",
+  local_only: "local-only",
+};
+
 function isPopulatedBlockRecord(value: unknown): value is Readonly<Record<string, unknown>> {
   return (
     typeof value === "object" &&

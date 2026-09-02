@@ -117,13 +117,17 @@ export class LegacyConfigPullReadStatusError extends Data.TaggedError(
 }
 
 /**
- * `--remote-label` named a block already tracking a different project —
- * either an existing `[remotes.<label>]` whose own `project_id` differs from
- * the target ref, or a nonexistent label while another block already tracks
- * this exact ref under a different name (`legacyResolveConfigPullDestination`,
- * `label_collision`). The constructed message must ask the user to pass a
- * different `--remote-label` (or drop the flag to reuse the block that
- * block reuse already selected).
+ * A label that would govern this pull — either `--remote-label` or a
+ * branch-derived name — names a block already tracking a different project
+ * (`legacyResolveConfigPullDestination`, `label_collision`): either the
+ * SAME-named `[remotes.<label>]` whose own `project_id` differs from the
+ * target ref (or, for a branch-derived label, would have its `project_id`
+ * silently REPLACED, stranding its own overrides), or a nonexistent
+ * `--remote-label` while a DIFFERENT block already tracks this exact ref
+ * under another name. The constructed message must name the actually
+ * conflicting block (`conflictingBlock`) and its real `project_id`, and
+ * offer the matching remedy — a different `--remote-label`/rename, or
+ * dropping the flag to reuse the block that already tracks this ref.
  */
 export class LegacyConfigPullRemoteLabelCollisionError extends Data.TaggedError(
   "LegacyConfigPullRemoteLabelCollisionError",
@@ -137,10 +141,16 @@ export class LegacyConfigPullRemoteLabelCollisionError extends Data.TaggedError(
  * No `[remotes.*]` block's RAW `project_id` literal matches the target ref,
  * but one block's `env(...)`-spelled `project_id` RESOLVES to it
  * (`legacyResolveConfigPullDestination`, `env_project_id`) — plan of record
- * Decision 1: hard error, never reused, never rewritten. The constructed
- * message must name the offending env var(s) and suggest either replacing
- * the `env(...)` literal with the literal project ref, or passing
- * `--remote-label` to target a different (or new) block instead.
+ * Decision 1: hard error, never reused, never rewritten, because the config
+ * LOADER matches `project_id` literally too — an `env()`-spelled block that
+ * merely resolves to a ref has never actually applied to any project
+ * (`supabase start`/`config push` have both been ignoring it). The
+ * constructed message must name the offending env var(s), explain that, and
+ * offer the two remedies: replace the `env(...)` literal with the literal
+ * project ref to make the block real, or pass `--remote-label` to write a
+ * new block instead. Only reached when no `--remote-label` was given — see
+ * `LegacyConfigPullRemoteLabelCollisionError`'s own doc comment for why an
+ * explicit `--remote-label` is resolved first.
  */
 export class LegacyConfigPullRemoteEnvRefError extends Data.TaggedError(
   "LegacyConfigPullRemoteEnvRefError",
@@ -151,11 +161,13 @@ export class LegacyConfigPullRemoteEnvRefError extends Data.TaggedError(
 }
 
 /**
- * The config file has uncommitted changes (§1.4's git dirty guard) and the
- * run is non-interactive/machine-format with no `--force` — abort rather
- * than silently overwrite work the user hasn't committed. `--force`
- * overrides this guard; `--yes` does not (it only answers the confirmation
- * prompt, a distinct gate).
+ * The config file has uncommitted (or untracked) changes (§1.4's git dirty
+ * guard) and there is no human on hand to read the warning and answer the
+ * prompt honestly: either the run is non-interactive/machine-format, or
+ * `--yes` was passed (a TTY's own confirmation default flipping to "no" is
+ * not a safeguard once `--yes` answers it automatically) — abort rather than
+ * silently overwrite work the user hasn't committed. Only `--force`
+ * overrides this guard; `--yes` never does, on any TTY.
  */
 export class LegacyConfigPullUncommittedChangesError extends Data.TaggedError(
   "LegacyConfigPullUncommittedChangesError",
@@ -201,5 +213,24 @@ export class LegacyConfigPullWriteError extends Data.TaggedError("LegacyConfigPu
 }> {
   get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
     return { ...actionability.permission, fingerprint_suffix: "filesystem" };
+  }
+}
+
+/**
+ * The post-plan convergence check (plan §1.9) found that one or more paths
+ * this run just planned to write STILL differ from the remote once the
+ * planned writes are applied to an in-memory projection — a defect in this
+ * command's own planner, never a user-facing condition (a genuine
+ * unpushable-family residual is a `warnings[]` entry, not this error; see
+ * `legacyConfigPullConvergenceCheck`). Raised BEFORE any file write, so
+ * nothing was written when this fires. The constructed message must name the
+ * still-drifting paths and state that nothing was written and the bug should
+ * be reported.
+ */
+export class LegacyConfigPullPlanDefectError extends Data.TaggedError(
+  "LegacyConfigPullPlanDefectError",
+)<{ readonly message: string }> {
+  get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
+    return actionability.impossibleState;
   }
 }

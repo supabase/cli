@@ -137,6 +137,7 @@ describe("legacyResolveConfigPullDestination", () => {
       reason: "label_collision",
       label: "prod",
       conflictingProjectId: OTHER_REF,
+      conflictingBlock: "prod",
     });
   });
 
@@ -156,6 +157,80 @@ describe("legacyResolveConfigPullDestination", () => {
       reason: "label_collision",
       label: "newlabel",
       conflictingProjectId: TARGET_REF,
+      conflictingBlock: "staging",
+    });
+  });
+
+  test("a branch-derived label naming an existing block for a different project is a collision (CLI-2064 item A)", () => {
+    // Before this rule existed, a branch named like an EXISTING block (here,
+    // a branch called "staging" landing on an unrelated `[remotes.staging]`)
+    // returned `created: true` and the handler REPLACED that block's own
+    // `project_id`, stranding its stale overrides.
+    const rawRemotes = { staging: { project_id: OTHER_REF } };
+    expect(
+      legacyResolveConfigPullDestination({
+        rawRemotes,
+        interpolatedRemotes: rawRemotes,
+        projectRef: TARGET_REF,
+        branchLabelCandidate: "staging",
+        targetWasBranch: true,
+        requestedLabel: undefined,
+      }),
+    ).toEqual({
+      ok: false,
+      reason: "label_collision",
+      label: "staging",
+      conflictingProjectId: OTHER_REF,
+      conflictingBlock: "staging",
+    });
+  });
+
+  test("a --remote-label collision is caught even when the raw flag value differs from the block's name only by control characters", () => {
+    // The collision check compares the FINAL SANITIZED label against
+    // existing block names, not the raw flag value — otherwise
+    // `--remote-label $'stag\x01ing'` (sanitizing to "staging") would slip
+    // past an existing `[remotes.staging]` block tracking a different
+    // project instead of colliding with it.
+    const rawRemotes = { staging: { project_id: OTHER_REF } };
+    const hostileLabel = `stag${String.fromCharCode(1)}ing`;
+    expect(
+      legacyResolveConfigPullDestination({
+        rawRemotes,
+        interpolatedRemotes: rawRemotes,
+        projectRef: TARGET_REF,
+        branchLabelCandidate: undefined,
+        targetWasBranch: false,
+        requestedLabel: hostileLabel,
+      }),
+    ).toEqual({
+      ok: false,
+      reason: "label_collision",
+      label: "staging",
+      conflictingProjectId: OTHER_REF,
+      conflictingBlock: "staging",
+    });
+  });
+
+  test("--remote-label naming the same block as an env-spelled match is still a hard error", () => {
+    // The unified named-label rule's own env sub-case, exercised through
+    // `--remote-label` rather than the general env scan (the general scan
+    // only runs when no `--remote-label` was given).
+    const rawRemotes = { staging: { project_id: "env(SUPABASE_STAGING_REF)" } };
+    const interpolatedRemotes = { staging: { project_id: TARGET_REF } };
+    expect(
+      legacyResolveConfigPullDestination({
+        rawRemotes,
+        interpolatedRemotes,
+        projectRef: TARGET_REF,
+        branchLabelCandidate: undefined,
+        targetWasBranch: false,
+        requestedLabel: "staging",
+      }),
+    ).toEqual({
+      ok: false,
+      reason: "env_project_id",
+      label: "staging",
+      envVariables: ["SUPABASE_STAGING_REF"],
     });
   });
 
@@ -179,7 +254,13 @@ describe("legacyResolveConfigPullDestination", () => {
     });
   });
 
-  test("an env()-resolving remote is reported even when a --remote-label was also requested", () => {
+  test("--remote-label alongside an unrelated env-spelled match creates/uses the requested block instead of refusing", () => {
+    // CLI-2064 item B: `--remote-label` is honored ABOVE the env_project_id
+    // refusal — otherwise the refusal's own remedy ("pass --remote-label")
+    // would be dead. `custom` names nothing existing, and no OTHER block's
+    // RAW literal tracks the target ref, so this creates a fresh block; the
+    // env()-spelled "staging" block (which never applied to this project
+    // anyway) is left untouched.
     const rawRemotes = { staging: { project_id: "env(SUPABASE_STAGING_REF)" } };
     const interpolatedRemotes = { staging: { project_id: TARGET_REF } };
     expect(
@@ -192,10 +273,8 @@ describe("legacyResolveConfigPullDestination", () => {
         requestedLabel: "custom",
       }),
     ).toEqual({
-      ok: false,
-      reason: "env_project_id",
-      label: "staging",
-      envVariables: ["SUPABASE_STAGING_REF"],
+      ok: true,
+      destination: { kind: "remote", label: "custom", created: true },
     });
   });
 

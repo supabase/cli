@@ -8,6 +8,7 @@ import {
 import {
   applyConfigEdits,
   type ConfigEdit,
+  type ConfigEditRefusalReason,
   diffProjectConfig,
   loadCliConfig,
   writeCliConfigDocumentText,
@@ -55,7 +56,10 @@ import {
   type LegacyConfigPullPlan,
   type LegacyConfigPullWarning,
 } from "./pull.plan.ts";
-import { legacyResolveConfigPullDestination } from "./pull.scope.ts";
+import {
+  legacyResolveConfigPullDestination,
+  type LegacyConfigPullScopeLabelCollision,
+} from "./pull.scope.ts";
 import {
   LegacyConfigPullBranchNotFoundError,
   LegacyConfigPullBranchNotLinkedError,
@@ -64,6 +68,7 @@ import {
   LegacyConfigPullLoadConfigError,
   LegacyConfigPullOutputFlagUnsupportedError,
   LegacyConfigPullParentRefInvalidError,
+  LegacyConfigPullPlanDefectError,
   LegacyConfigPullReadNetworkError,
   LegacyConfigPullReadStatusError,
   LegacyConfigPullRemoteEnvRefError,
@@ -82,14 +87,20 @@ import type { LegacyConfigPullFlags } from "./pull.command.ts";
  * step-for-step through the point where the two commands diverge (CLI-2064).
  *
  * Library seam (plan §1.6, adapted): `legacyConfigPull` (steps 1-4) rejects
- * `-o/--output`, loads and validates the local config BEFORE any network
- * call or target resolution, snapshots the file's on-disk text once, then
- * resolves the target and delegates to `legacyRunConfigPull` (steps 5-15) —
- * the reusable, target-agnostic body. The plan's own `LegacyConfigPullInput`
- * sketch omits the loaded config/file text; this implementation carries them
- * through explicitly instead of reloading/re-reading inside
+ * `-o/--output`, then opens the base config source via
+ * `legacyOpenConfigPullSource` — a load with NO `[remotes.*]` overlay,
+ * paired with the file's on-disk text read immediately after — BEFORE any
+ * network call or target resolution, then resolves the target and delegates
+ * to `legacyRunConfigPull` (steps 5-15) — the reusable, target-agnostic
+ * body. The plan's own `LegacyConfigPullInput` sketch omits the loaded
+ * config/file text; this implementation carries them through explicitly (as
+ * a single `LegacyConfigPullSource`) instead of reloading/re-reading inside
  * `legacyRunConfigPull`, since `legacyConfigPull` already holds both by the
- * time it delegates (see {@link LegacyConfigPullInput}'s own doc comments).
+ * time it delegates. Pairing them behind one exported constructor — rather
+ * than two independently-assembled fields on `LegacyConfigPullInput` — is
+ * what makes "loaded without overlay, text read from the same path
+ * immediately after" true BY CONSTRUCTION rather than by caller convention
+ * (see {@link LegacyConfigPullSource}'s own doc comment).
  */
 
 const readStatusMessage = (status: number, body: string) => `unexpected status ${status}: ${body}`;
@@ -139,6 +150,76 @@ function configReadStatusMessage(status: number, body: string, ref: string): str
   return readStatusMessage(status, body);
 }
 
+/**
+ * The collision message (`LegacyConfigPullRemoteLabelCollisionError`) —
+ * worded differently depending on WHICH of `pull.scope.ts`'s two
+ * `label_collision` situations applies, and whether the label came from an
+ * explicit `--remote-label` or was derived from a branch name (only
+ * `--remote-label` can ever reach the "a DIFFERENT block already tracks this
+ * ref" situation — see `legacyResolveConfigPullDestination`'s own doc
+ * comment for why a branch-derived label never does).
+ */
+function legacyConfigPullLabelCollisionMessage(
+  scopeResult: LegacyConfigPullScopeLabelCollision,
+  fromRemoteLabelFlag: boolean,
+): string {
+  const label = legacySanitizeInlineName(scopeResult.label);
+  const conflictingProjectId = legacySanitizeInlineName(scopeResult.conflictingProjectId);
+  const conflictingBlock = legacySanitizeInlineName(scopeResult.conflictingBlock);
+  if (!fromRemoteLabelFlag) {
+    return `branch "${label}" would create [remotes.${label}], but that block already tracks project ${conflictingProjectId}; pass --remote-label to write under a different name, or rename/remove the existing block first.`;
+  }
+  if (conflictingBlock !== label) {
+    return `[remotes.${conflictingBlock}] already tracks project ${conflictingProjectId}. Drop --remote-label to write there, or rename that block first.`;
+  }
+  return `--remote-label "${label}" already tracks project ${conflictingProjectId}; pass a different --remote-label, or drop the flag to reuse the block that already tracks this project.`;
+}
+
+/**
+ * Human-readable phrase for a `ConfigEditRefusal.reason` — the raw enum
+ * token (`duplicate_table_header`, ...) never appears in the constructed
+ * `LegacyConfigPullUnsupportedLayoutError` message, only prose.
+ */
+function legacyConfigPullRefusalPhrase(reason: ConfigEditRefusalReason): string {
+  switch (reason) {
+    case "duplicate_table_header":
+      return "a duplicate table header";
+    case "array_of_tables_on_path":
+      return "an array of tables on this path";
+    case "inline_table_on_path":
+      return "an inline table on this path";
+    case "env_reference_target":
+      return "an existing env() reference at this path";
+    case "verification_mismatch":
+      return "a verification mismatch after editing";
+    case "parse_error":
+      return "a parse error";
+  }
+}
+
+/**
+ * One remediation sentence per `ConfigEditRefusal.reason` — `env_reference_target`
+ * stays generic (the planner already skips every `env()`-declared change
+ * before it ever reaches `applyConfigEdits`, so this reason should not occur
+ * in practice); `verification_mismatch`/`parse_error` both mean the editor
+ * itself misjudged the document, not something the user can fix by hand.
+ */
+function legacyConfigPullRefusalRemediation(reason: ConfigEditRefusalReason): string {
+  switch (reason) {
+    case "duplicate_table_header":
+      return "Merge the duplicate table headers into one, then rerun.";
+    case "inline_table_on_path":
+      return "Rewrite it as a standard [table] section, then rerun.";
+    case "array_of_tables_on_path":
+      return "config pull does not support writing through an array of tables ([[...]]); restructure it by hand, then rerun.";
+    case "env_reference_target":
+      return "Replace the env(...) reference with a literal value, then rerun.";
+    case "verification_mismatch":
+    case "parse_error":
+      return "This is a CLI bug; nothing was written. Please report it.";
+  }
+}
+
 function isRecord(value: unknown): value is Readonly<Record<string, unknown>> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
@@ -180,10 +261,13 @@ function deepSetAtPath(root: unknown, path: ReadonlyArray<string>, value: unknow
  * THAT again against `remote`.
  *
  * A residual change at a path this run just planned to write means the write
- * didn't actually converge — a bug in this planner, not a user-facing
- * failure, so it dies. A residual `unmanaged` path (ADR 0021's unpushable
- * families, e.g. `auth.oauth_server` on its first pull: undeclared before
- * this run, so it planned normally, but DECLARING it makes
+ * didn't actually converge — a defect in THIS command's own planner, never a
+ * user-facing condition, surfaced as a typed `LegacyConfigPullPlanDefectError`
+ * (`impossibleState`) rather than a crash: nothing has been written yet at
+ * this point (this check runs BEFORE the dry-run/prompt/write steps), so the
+ * error can truthfully say so. A residual `unmanaged` path (ADR 0021's
+ * unpushable families, e.g. `auth.oauth_server` on its first pull:
+ * undeclared before this run, so it planned normally, but DECLARING it makes
  * `applyPushUnmanagedOmissions` drop it from every future comparison) is
  * expected, not a defect — `config push` has no code path for these fields,
  * so a written value there can never be sent back. Surfaced as a
@@ -191,12 +275,17 @@ function deepSetAtPath(root: unknown, path: ReadonlyArray<string>, value: unknow
  * `legacyRenderConfigPullText` "Warnings:" hook the planner's own
  * `dual_scope`/`duplicates_root`/`array_drift` warnings already render
  * through, rather than adding a new payload field.
+ *
+ * `diffProjectConfig` itself can also fail with a typed `ProjectConfigParseError`
+ * (the SAME normalizer step 7 already runs against the live `remote`) — kept
+ * typed here too, exactly like step 7, rather than dying unconditionally; any
+ * OTHER thrown value is a genuine unknown and stays a defect.
  */
 function legacyConfigPullConvergenceCheck(
   plan: LegacyConfigPullPlan,
   loaded: LoadedCliConfig,
   remote: ProjectConfig,
-): Effect.Effect<LegacyConfigPullPlan> {
+): Effect.Effect<LegacyConfigPullPlan, ProjectConfigParseError | LegacyConfigPullPlanDefectError> {
   if (plan.writes.length === 0) {
     return Effect.succeed(plan);
   }
@@ -216,20 +305,24 @@ function legacyConfigPullConvergenceCheck(
           remote,
         }),
       catch: (cause) => cause,
-    }).pipe(Effect.orDie);
+    }).pipe(
+      Effect.catch((cause) =>
+        cause instanceof ProjectConfigParseError ? Effect.fail(cause) : Effect.die(cause),
+      ),
+    );
 
     const writtenPathKeys = new Set(plan.writes.map((write) => pathKey(write.change.path)));
     const stillDrifting = residual.changes.filter((change) =>
       writtenPathKeys.has(pathKey(change.path)),
     );
     if (stillDrifting.length > 0) {
-      return yield* Effect.die(
-        new Error(
-          `config pull planner defect: still differs from remote after applying the planned write: ${stillDrifting
-            .map((change) => legacyConfigRenderPath(change.path))
-            .join(", ")}`,
-        ),
-      );
+      return yield* new LegacyConfigPullPlanDefectError({
+        message: `config pull planner defect: ${stillDrifting
+          .map((change) => legacyConfigRenderPath(change.path))
+          .join(
+            ", ",
+          )} still differ from remote after applying the planned write; nothing was written. Please report this bug.`,
+      });
     }
 
     const unpushableWarnings: ReadonlyArray<LegacyConfigPullWarning> = residual.unmanaged
@@ -243,10 +336,10 @@ function legacyConfigPullConvergenceCheck(
 }
 
 /** Builds the file-load helpers for one `cliSettings.workdir` — a small
- * factory rather than a shared closure so both `legacyConfigPull` (step 2)
- * and `legacyRunConfigPull` (step 6's conditional reload) get their own,
- * independently testable copy without threading `cliSettings` through
- * {@link LegacyConfigPullInput}. */
+ * factory rather than a shared closure so both `legacyOpenConfigPullSource`
+ * (steps 2-3) and `legacyRunConfigPull` (step 6's conditional reload) get
+ * their own, independently testable copy without threading `cliSettings`
+ * through {@link LegacyConfigPullInput}. */
 function makeConfigLoader(cliSettings: { readonly workdir: string }) {
   // `cause.path` is anchored under the workdir; render it relative so the
   // message reads `supabase/config.json` like the family's other messages,
@@ -285,6 +378,48 @@ function makeConfigLoader(cliSettings: { readonly workdir: string }) {
 }
 
 /**
+ * The paired base config load + its exact on-disk text, produced ONLY by
+ * {@link legacyOpenConfigPullSource} — never assembled by hand elsewhere, so
+ * "loaded with NO `[remotes.*]` overlay" and "text read from the SAME path
+ * immediately after that load" are true by construction, not by caller
+ * convention.
+ */
+export interface LegacyConfigPullSource {
+  readonly loaded: LoadedCliConfig;
+  readonly text: string;
+}
+
+/**
+ * Opens `config pull`'s base config source (`legacyConfigPull` steps 2-3):
+ * loads the local config with NO `[remotes.*]` overlay applied — the overlay
+ * is keyed by the RESOLVED target ref, applied later inside
+ * `legacyRunConfigPull` step 6 only when block reuse selects it — then reads
+ * the file's exact on-disk text immediately after. The SAME bytes
+ * `applyConfigEdits` edits later (step 13), and the baseline
+ * `legacyRunConfigPull` re-reads before writing to detect a concurrent edit
+ * (step 12).
+ */
+export const legacyOpenConfigPullSource = Effect.fnUntraced(function* () {
+  const cliSettings = yield* LegacyCliSettings;
+  const fs = yield* FileSystem.FileSystem;
+  const { loadLocalConfig, relativeConfigPath } = makeConfigLoader(cliSettings);
+
+  const loaded = yield* loadLocalConfig(undefined);
+
+  const text = yield* fs.readFileString(loaded.path).pipe(
+    Effect.catchTag(
+      "PlatformError",
+      (cause) =>
+        new LegacyConfigPullLoadConfigError({
+          message: `failed to read ${relativeConfigPath(loaded.path)}: ${cause.message}`,
+        }),
+    ),
+  );
+
+  return { loaded, text };
+});
+
+/**
  * Steps 5-15 of `config pull`, reusable independently of the CLI flag
  * surface (plan §1.6's library seam) — everything AFTER the target is known.
  */
@@ -299,22 +434,13 @@ export interface LegacyConfigPullInput {
    * one). */
   readonly yes: boolean;
   /**
-   * The BASE config load (`legacyConfigPull` step 2) — no `[remotes.*]`
-   * overlay applied, regardless of `target`. Deviates from the plan §1.6
-   * sketch (`{target, remoteLabel, dryRun, force, yes}`): the load must
-   * happen BEFORE target resolution (a malformed config must not burn a
-   * branch-resolution round trip), so `legacyConfigPull` already holds it by
-   * the time it delegates here — passed through rather than reloaded.
+   * The base config load + its on-disk text (`legacyConfigPull` steps 2-3),
+   * produced by {@link legacyOpenConfigPullSource} BEFORE target resolution
+   * (a malformed config must not burn a branch-resolution round trip) — so
+   * `legacyConfigPull` already holds it by the time it delegates here,
+   * passed through rather than reopened.
    */
-  readonly baseLoaded: LoadedCliConfig;
-  /**
-   * The config file's exact on-disk text, read once immediately after the
-   * base load (`legacyConfigPull` step 3) — the same bytes `applyConfigEdits`
-   * edits (step 13), and the baseline this function re-reads before writing,
-   * to detect a concurrent edit (step 12). Same deviation rationale as
-   * {@link baseLoaded}.
-   */
-  readonly originalText: string;
+  readonly source: LegacyConfigPullSource;
 }
 
 export const legacyRunConfigPull = Effect.fnUntraced(function* (input: LegacyConfigPullInput) {
@@ -331,8 +457,8 @@ export const legacyRunConfigPull = Effect.fnUntraced(function* (input: LegacyCon
   const branchLabelCandidate =
     branch !== undefined && !LEGACY_BRANCH_UUID_PATTERN.test(branch) ? branch : undefined;
   const scopeResult = legacyResolveConfigPullDestination({
-    rawRemotes: input.baseLoaded.rawDocument?.["remotes"],
-    interpolatedRemotes: input.baseLoaded.interpolatedRemotes,
+    rawRemotes: input.source.loaded.rawDocument?.["remotes"],
+    interpolatedRemotes: input.source.loaded.interpolatedRemotes,
     projectRef: ref,
     branchLabelCandidate,
     targetWasBranch: branch !== undefined,
@@ -341,11 +467,14 @@ export const legacyRunConfigPull = Effect.fnUntraced(function* (input: LegacyCon
   if (!scopeResult.ok) {
     if (scopeResult.reason === "label_collision") {
       return yield* new LegacyConfigPullRemoteLabelCollisionError({
-        message: `--remote-label "${legacySanitizeInlineName(scopeResult.label)}" already tracks project ${legacySanitizeInlineName(scopeResult.conflictingProjectId)}; pass a different --remote-label, or drop the flag to reuse the block that already tracks this project.`,
+        message: legacyConfigPullLabelCollisionMessage(
+          scopeResult,
+          input.remoteLabel !== undefined,
+        ),
       });
     }
     return yield* new LegacyConfigPullRemoteEnvRefError({
-      message: `[remotes.${legacySanitizeInlineName(scopeResult.label)}].project_id resolves to this project via env(${scopeResult.envVariables.map((name) => legacySanitizeInlineName(name)).join(", ")}), but config pull never reuses or rewrites an env()-spelled match. Replace it with the literal project ref, or pass --remote-label to target a different block.`,
+      message: `[remotes.${legacySanitizeInlineName(scopeResult.label)}].project_id is spelled as env(${scopeResult.envVariables.map((name) => legacySanitizeInlineName(name)).join(", ")}), but the config loader matches project_id literally — this block has never applied to any project (supabase start and config push have both been ignoring it). Replace it with the literal ref ${legacySanitizeInlineName(ref)} to make the block real, or pass --remote-label <name> to write a new block instead.`,
     });
   }
   const destination = scopeResult.destination;
@@ -356,7 +485,7 @@ export const legacyRunConfigPull = Effect.fnUntraced(function* (input: LegacyCon
 
   // 6. Reload WITH the `[remotes.*]` overlay only when block reuse selected
   // an EXISTING block — a brand-new block has nothing to overlay yet.
-  let loaded = input.baseLoaded;
+  let loaded = input.source.loaded;
   if (destination.kind === "remote" && !destination.created) {
     loaded = yield* loadLocalConfig(ref);
   }
@@ -436,25 +565,33 @@ export const legacyRunConfigPull = Effect.fnUntraced(function* (input: LegacyCon
   const plan = legacyPlanConfigPull({
     changeSet,
     destination,
-    rootDocument: input.baseLoaded.document ?? {},
+    rootDocument: input.source.loaded.document ?? {},
     projectRef: ref,
   });
   const planWithUnpushable = yield* legacyConfigPullConvergenceCheck(plan, loaded, remote);
 
+  // The TEXT one-line disposition drops the caveats (`opts.withCaveats:
+  // false`, item F.2 of CLI-2064's fix pass) — the change-by-change body
+  // above already rendered the same `Note:` lines once; the machine-mode
+  // `message` keeps them, since it is the only place an agent reads them.
   const emitOutcome = (planForOutput: LegacyConfigPullPlan, outcome: LegacyConfigPullOutcome) =>
     output.format !== "text"
       ? output.success(
           legacyConfigPullSummaryMessage(changeSet, scope, planForOutput, outcome),
           legacyConfigPullPayload(changeSet, scope, planForOutput, context, outcome),
         )
-      : output.raw(`${legacyConfigPullSummaryMessage(changeSet, scope, planForOutput, outcome)}\n`);
+      : output.raw(
+          `${legacyConfigPullSummaryMessage(changeSet, scope, planForOutput, outcome, { withCaveats: false })}\n`,
+        );
 
   // 9. `--dry-run`: preview only. Never runs the git check, never prompts,
   // never touches the file. Comes before the `hasWork` short-circuit below —
   // a planner defect must be visible even on a run that would do nothing.
   if (input.dryRun) {
     if (output.format === "text") {
-      yield* output.raw(legacyRenderConfigPullText(changeSet, scope, planWithUnpushable, ref));
+      yield* output.raw(
+        legacyRenderConfigPullText(changeSet, scope, planWithUnpushable, ref, context.configPath),
+      );
     }
     yield* emitOutcome(planWithUnpushable, { dryRun: true, declined: false });
     return;
@@ -473,7 +610,9 @@ export const legacyRunConfigPull = Effect.fnUntraced(function* (input: LegacyCon
   const hasWork = planWithUnpushable.writes.length > 0 || hasBlockToCreate;
   if (!hasWork) {
     if (output.format === "text") {
-      yield* output.raw(legacyRenderConfigPullText(changeSet, scope, planWithUnpushable, ref));
+      yield* output.raw(
+        legacyRenderConfigPullText(changeSet, scope, planWithUnpushable, ref, context.configPath),
+      );
     }
     yield* emitOutcome(planWithUnpushable, { dryRun: false, declined: false });
     return;
@@ -481,16 +620,18 @@ export const legacyRunConfigPull = Effect.fnUntraced(function* (input: LegacyCon
 
   // 10. Git dirty guard (plan §1.4), reached only when there's work to do.
   // `--force` skips it entirely — no check, no warning, no prompt-default
-  // flip.
+  // flip. `--yes` aborts rather than bypasses (CLI-2064 item C): no human is
+  // on hand to read the warning and answer the prompt honestly once `--yes`
+  // answers it automatically, on any TTY.
   let dirty = false;
   if (!input.force) {
     const dirtyOption = yield* legacyConfigFileHasUncommittedChanges(loaded.path);
     dirty = Option.getOrElse(dirtyOption, () => false);
     if (dirty) {
       const tty = yield* Tty;
-      if (output.format !== "text" || !tty.stdinIsTty) {
+      if (input.yes || output.format !== "text" || !tty.stdinIsTty) {
         return yield* new LegacyConfigPullUncommittedChangesError({
-          message: `${context.configPath} has uncommitted changes. Commit or stash them first, or rerun with --force to write anyway.`,
+          message: `${context.configPath} has uncommitted or untracked changes. Commit or stash them (-u for untracked), or rerun with --force to write anyway.`,
         });
       }
     }
@@ -506,18 +647,26 @@ export const legacyRunConfigPull = Effect.fnUntraced(function* (input: LegacyCon
     : planWithUnpushable;
 
   if (output.format === "text") {
-    yield* output.raw(legacyRenderConfigPullText(changeSet, scope, planForRender, ref));
+    yield* output.raw(
+      legacyRenderConfigPullText(changeSet, scope, planForRender, ref, context.configPath),
+    );
   }
 
   // 11. Confirm. A run with at least one value write keeps the established
   // "Apply N change(s)..." message even when it ALSO creates a block (the
-  // rendered body above already called that out); a block-ONLY run (no value
+  // rendered body above already called that out) — naming the destination
+  // block too, when writing into one, so the prompt itself is unambiguous
+  // about WHERE (omitted for the config root); a block-ONLY run (no value
   // writes — bug B's zero-drift branch target) gets its own message naming
   // the block directly, since there is no per-change body to convey it
   // otherwise.
   let confirmMessage: string;
   if (planForRender.writes.length > 0) {
-    confirmMessage = `Apply ${planForRender.writes.length} change(s) to ${context.configPath}?`;
+    const destinationSuffix =
+      destination.kind === "remote"
+        ? ` [remotes.${legacySanitizeInlineName(destination.label)}]`
+        : "";
+    confirmMessage = `Apply ${planForRender.writes.length} change(s) to ${context.configPath}${destinationSuffix}?`;
   } else if (planForRender.createdTable !== undefined) {
     confirmMessage = `Create [remotes.${legacyConfigPullCreatedBlockLabel(planForRender.createdTable)}] in ${context.configPath}?`;
   } else {
@@ -554,7 +703,7 @@ export const legacyRunConfigPull = Effect.fnUntraced(function* (input: LegacyCon
         }),
     ),
   );
-  if (currentText !== input.originalText) {
+  if (currentText !== input.source.text) {
     return yield* new LegacyConfigPullFileChangedError({
       message: `${context.configPath} changed on disk while config pull was running; rerun the command to pick up the current file.`,
     });
@@ -578,8 +727,10 @@ export const legacyRunConfigPull = Effect.fnUntraced(function* (input: LegacyCon
   ];
   const editOutcome = applyConfigEdits(currentText, loaded.format, edits);
   if (editOutcome.kind === "refused") {
+    const { reason, path, detail } = editOutcome.refusal;
+    const location = path.length === 0 ? "" : ` at ${legacyConfigRenderPath(path)}`;
     return yield* new LegacyConfigPullUnsupportedLayoutError({
-      message: `cannot write ${context.configPath}: ${editOutcome.refusal.reason} at ${legacyConfigRenderPath(editOutcome.refusal.path)} — ${editOutcome.refusal.detail}`,
+      message: `cannot write ${context.configPath}: ${legacyConfigPullRefusalPhrase(reason)}${location} — ${detail}. ${legacyConfigPullRefusalRemediation(reason)}`,
     });
   }
   yield* writeCliConfigDocumentText(loaded.path, editOutcome.text).pipe(
@@ -595,21 +746,17 @@ export const legacyRunConfigPull = Effect.fnUntraced(function* (input: LegacyCon
 
 /**
  * `legacyConfigPull` — the command-facing entry point (steps 1-4): rejects
- * `-o/--output`, loads/validates the local config and snapshots its on-disk
- * text BEFORE any network call or target resolution, resolves the target,
- * then delegates to {@link legacyRunConfigPull} for the rest.
+ * `-o/--output`, opens the base config source (`legacyOpenConfigPullSource`)
+ * BEFORE any network call or target resolution, resolves the target, then
+ * delegates to {@link legacyRunConfigPull} for the rest.
  */
 export const legacyConfigPull = Effect.fn("legacy.config.pull")(function* (
   flags: LegacyConfigPullFlags,
 ) {
-  const cliSettings = yield* LegacyCliSettings;
-  const fs = yield* FileSystem.FileSystem;
   const goOutputFlag = yield* LegacyOutputFlag;
   const yes = yield* legacyResolveYes;
   const linkedProjectCache = yield* LegacyLinkedProjectCache;
   const telemetryState = yield* LegacyTelemetryState;
-
-  const { loadLocalConfig } = makeConfigLoader(cliSettings);
 
   // An empty `--project-ref`/`--remote-label` value is absent, mirroring the
   // target resolver's own rule.
@@ -634,27 +781,12 @@ export const legacyConfigPull = Effect.fn("legacy.config.pull")(function* (
       });
     }
 
-    // 2. Load and validate the local config BEFORE any network call or
-    // target resolution — a missing file must point at `supabase init`
-    // rather than the resolver's not-linked error, and a malformed document
-    // must not burn a branch-resolution round trip. No `[remotes.*]` overlay
-    // yet: the overlay is keyed by the RESOLVED target ref, applied inside
-    // `legacyRunConfigPull` (step 6) only when block reuse selects it.
-    const baseLoaded = yield* loadLocalConfig(undefined);
-
-    // 3. Read the file's exact on-disk text ONCE — the same bytes
-    // `applyConfigEdits` edits later (step 13), and the baseline
-    // `legacyRunConfigPull` re-reads before writing to detect a concurrent
-    // edit (step 12).
-    const originalText = yield* fs.readFileString(baseLoaded.path).pipe(
-      Effect.catchTag(
-        "PlatformError",
-        (cause) =>
-          new LegacyConfigPullLoadConfigError({
-            message: `failed to read ${baseLoaded.path}: ${cause.message}`,
-          }),
-      ),
-    );
+    // 2-3. Open the base config source (load with NO `[remotes.*]` overlay,
+    // paired with its on-disk text) BEFORE any network call or target
+    // resolution — a missing file must point at `supabase init` rather than
+    // the resolver's not-linked error, and a malformed document must not
+    // burn a branch-resolution round trip.
+    const source = yield* legacyOpenConfigPullSource();
 
     // 4. Resolve the pull target — hoisted into `legacyResolveConfigTarget`
     // (`../config.target.ts`, shared with `config diff`, CLI-2064).
@@ -667,8 +799,7 @@ export const legacyConfigPull = Effect.fn("legacy.config.pull")(function* (
       dryRun: flags.dryRun,
       force: flags.force,
       yes,
-      baseLoaded,
-      originalText,
+      source,
     });
   }).pipe(
     // Legacy Shell Invariant #1: telemetry flushes on EVERY invocation —

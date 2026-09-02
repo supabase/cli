@@ -201,6 +201,22 @@ describe("legacyConfigPullSummaryMessage", () => {
         "1 credential value not compared (masked by the API): auth.external.github.secret.",
     );
   });
+
+  test("withCaveats: false drops the caveats — for the TEXT one-line disposition, which already showed them in the body", () => {
+    const cs: ConfigChangeSet = {
+      ...emptyChangeSet(),
+      masked: [["auth", "external", "github", "secret"]],
+    };
+    expect(
+      legacyConfigPullSummaryMessage(
+        cs,
+        { present: ["api"], missing: ["storage"] },
+        emptyPlan(),
+        NOT_DECLINED,
+        { withCaveats: false },
+      ),
+    ).toBe("No config differences found.");
+  });
 });
 
 describe("legacyConfigPullPayload", () => {
@@ -265,6 +281,7 @@ describe("legacyConfigPullPayload", () => {
           local: 500,
           remote: 1000,
           written: true,
+          document_path: ["remotes", "staging", "api", "max_rows"],
         },
       ],
       warnings: [],
@@ -381,6 +398,12 @@ describe("legacyConfigPullPayload", () => {
       written: false,
       skipped_reason: "dry_run",
     });
+    // A dry-run change was only ever PLANNED to write, never actually
+    // written — `document_path` is reserved for entries the payload also
+    // marks `written: true`.
+    expect((payload["changes"] as Array<Record<string, unknown>>)[0]).not.toHaveProperty(
+      "document_path",
+    );
   });
 
   test("a declined outcome reports every planned write as skipped_reason declined", () => {
@@ -548,11 +571,12 @@ describe("legacyRenderConfigPullText", () => {
       { present: ["api", "auth"], missing: [] },
       plan,
       PROJECT_REF,
+      "supabase/config.toml",
     );
     expect(text).toContain("api.max_rows [update, write]");
     expect(text).toContain("  local:  500");
     expect(text).toContain("  remote: 1000");
-    expect(text).toContain("auth.enable_signup [local_only, skip: local_only]");
+    expect(text).toContain("auth.enable_signup [local-only, not pulled]");
     expect(text).toContain("2 differences found (1 to write, 1 to skip).");
   });
 
@@ -581,13 +605,14 @@ describe("legacyRenderConfigPullText", () => {
       { present: [], missing: [] },
       plan,
       PROJECT_REF,
+      "supabase/config.toml",
     );
     expect(text).toContain(
-      "auth.sms.test_otp.hostile No config differences found. [remote_only, write]",
+      "auth.sms.test_otp.hostile No config differences found. [remote-only, write]",
     );
   });
 
-  test("a plan that also creates a block notes it, only when at least one value write is planned", () => {
+  test("a plan that also creates a block notes it", () => {
     const change: ConfigChange = {
       path: ["api", "max_rows"],
       class: "update",
@@ -612,13 +637,14 @@ describe("legacyRenderConfigPullText", () => {
       { present: [], missing: [] },
       plan,
       PROJECT_REF,
+      "supabase/config.toml",
     );
     expect(text).toContain(
       `New block [remotes.staging] will be created (project_id = ${PROJECT_REF}).`,
     );
   });
 
-  test("a block-only plan (no value writes) carries no new-block note — its own confirmation prompt names the block instead", () => {
+  test("a block-only plan (no value writes) ALSO carries the new-block note in the body, not just its own confirmation prompt", () => {
     const plan: LegacyConfigPullPlan = {
       writes: [],
       skipped: [],
@@ -630,8 +656,11 @@ describe("legacyRenderConfigPullText", () => {
       { present: [], missing: [] },
       plan,
       PROJECT_REF,
+      "supabase/config.toml",
     );
-    expect(text).not.toContain("New block");
+    expect(text).toContain(
+      `New block [remotes.staging] will be created (project_id = ${PROJECT_REF}).`,
+    );
   });
 
   test("a hostile block label cannot forge additional output lines", () => {
@@ -659,10 +688,30 @@ describe("legacyRenderConfigPullText", () => {
       { present: [], missing: [] },
       plan,
       PROJECT_REF,
+      "supabase/config.toml",
     );
     expect(text).toContain(
       "New block [remotes.staging No config differences found.] will be created",
     );
     expect(text.split("New block").length).toBe(2);
+  });
+
+  test("the uncommitted-changes warning names the REAL config path and offers the same remediation as the abort error", () => {
+    const plan: LegacyConfigPullPlan = {
+      writes: [],
+      skipped: [],
+      warnings: [{ kind: "uncommitted_changes" }],
+      createdTable: undefined,
+    };
+    const text = legacyRenderConfigPullText(
+      emptyChangeSet(),
+      { present: [], missing: [] },
+      plan,
+      PROJECT_REF,
+      "supabase/config.json",
+    );
+    expect(text).toContain(
+      "supabase/config.json has uncommitted or untracked changes. Commit or stash them (-u for untracked), or rerun with --force.",
+    );
   });
 });

@@ -1,8 +1,9 @@
 import type { ConfigFormat } from "@supabase/config";
-import type { ConfigChangeSet } from "@supabase/config/internal";
+import type { ConfigChange, ConfigChangeSet } from "@supabase/config/internal";
 
 import { legacySanitizeInlineName } from "../../../shared/legacy-http-errors.ts";
 import {
+  LEGACY_CONFIG_CLASS_LABELS,
   legacyConfigChangePayloadEntry,
   type LegacyConfigApiScope,
   legacyConfigMaskedCaveat,
@@ -152,7 +153,7 @@ function renderLocal(local: unknown, declared: boolean): string {
     : value;
 }
 
-function warningMessage(warning: LegacyConfigPullWarning): string {
+function warningMessage(warning: LegacyConfigPullWarning, configPath: string): string {
   const path = warning.path === undefined ? undefined : legacyConfigRenderPath(warning.path);
   switch (warning.kind) {
     case "dual_scope":
@@ -162,10 +163,51 @@ function warningMessage(warning: LegacyConfigPullWarning): string {
     case "array_drift":
       return `${path} is an array also declared at the config root — the two copies will not stay in sync.`;
     case "uncommitted_changes":
-      return "supabase/config.toml has uncommitted changes.";
+      return `${configPath} has uncommitted or untracked changes. Commit or stash them (-u for untracked), or rerun with --force.`;
     case "unpushable":
       return `${path} was written here, but \`config push\` cannot send it back to the platform — it will keep showing as out of sync.`;
   }
+}
+
+/**
+ * Text-mode-only rewording of {@link LegacyConfigPullSkipReason} for the
+ * per-change marker (`legacyRenderConfigPullText`) — the machine payload's
+ * own `skipped_reason` token (`legacyConfigPullPayload`) is untouched.
+ */
+function humanizeSkipReason(reason: LegacyConfigPullSkipReason): string {
+  switch (reason) {
+    case "env_reference":
+      return "env() reference";
+    case "unwritable":
+      return "not representable";
+    case "local_only":
+      // Never actually reached: a `local_only` skip's own marker is built
+      // directly (see `changeMarker` below), since the reason would only
+      // restate the change's own class.
+      return "local only";
+  }
+}
+
+/**
+ * The per-change marker (`write`/`skip: ...`) — suppresses the skip reason
+ * when it would merely restate the change's own class (`local_only`
+ * changes are ALWAYS skipped for reason `local_only`, so `[local-only, skip:
+ * local_only]` says nothing a reader doesn't already know from the class
+ * alone); every other skip reason is humanized for text-mode prose.
+ */
+function changeMarker(
+  change: ConfigChange,
+  writePaths: ReadonlySet<string>,
+  skipReasonByPath: ReadonlyMap<string, LegacyConfigPullSkipReason>,
+): string {
+  if (writePaths.has(pathKey(change.path))) {
+    return "write";
+  }
+  const reason = skipReasonByPath.get(pathKey(change.path));
+  if (reason === undefined || reason === change.class) {
+    return "not pulled";
+  }
+  return `skip: ${humanizeSkipReason(reason)}`;
 }
 
 /**
@@ -175,19 +217,18 @@ function warningMessage(warning: LegacyConfigPullWarning): string {
  * outcome. The final one-line disposition (wrote / would write / declined)
  * is {@link legacyConfigPullSummaryMessage}'s job, not this renderer's.
  *
- * When `plan.createdTable` is set AND at least one value write is also
- * planned, an extra line notes the new block by name — the generic
- * "Apply N change(s)..." confirmation that follows never otherwise mentions
- * it, so a TTY user would only learn about the new block after already
- * confirming. A block-ONLY run (no value writes) has no such gap: its own
- * confirmation prompt already names the block directly (`pull.handler.ts`
- * step 11), so this line is scoped to the writes-also-planned case.
+ * A `plan.createdTable` always gets its own line naming the new block —
+ * regardless of whether any value write is ALSO planned — so a block-only
+ * run (a zero-drift branch/`--remote-label` target, CLI-2064 bug B) states
+ * its one action in the body too, not only in its own confirmation prompt
+ * (`pull.handler.ts` step 11).
  */
 export function legacyRenderConfigPullText(
   changeSet: ConfigChangeSet,
   scope: LegacyConfigApiScope,
   plan: LegacyConfigPullPlan,
   projectRef: string,
+  configPath: string,
 ): string {
   const writePaths = new Set(plan.writes.map((write) => pathKey(write.change.path)));
   const skipReasonByPath = new Map(
@@ -196,10 +237,10 @@ export function legacyRenderConfigPullText(
 
   const lines: Array<string> = [];
   for (const change of changeSet.changes) {
-    const marker = writePaths.has(pathKey(change.path))
-      ? "write"
-      : `skip: ${skipReasonByPath.get(pathKey(change.path))}`;
-    lines.push(`${legacyConfigRenderPath(change.path)} [${change.class}, ${marker}]`);
+    const marker = changeMarker(change, writePaths, skipReasonByPath);
+    lines.push(
+      `${legacyConfigRenderPath(change.path)} [${LEGACY_CONFIG_CLASS_LABELS[change.class]}, ${marker}]`,
+    );
     const env =
       change.envVariables === undefined
         ? ""
@@ -212,7 +253,7 @@ export function legacyRenderConfigPullText(
   if (plan.warnings.length > 0) {
     lines.push("Warnings:");
     for (const warning of plan.warnings) {
-      lines.push(`  ${warningMessage(warning)}`);
+      lines.push(`  ${warningMessage(warning, configPath)}`);
     }
     lines.push("");
   }
@@ -225,7 +266,7 @@ export function legacyRenderConfigPullText(
       `${legacyConfigPlural(total, "difference", "differences")} found (${plan.writes.length} to write, ${plan.skipped.length} to skip).`,
     );
   }
-  if (plan.createdTable !== undefined && plan.writes.length > 0) {
+  if (plan.createdTable !== undefined) {
     lines.push(
       `New block [remotes.${legacyConfigPullCreatedBlockLabel(plan.createdTable)}] will be created (project_id = ${legacySanitizeInlineName(projectRef)}).`,
     );
@@ -256,12 +297,20 @@ export function legacyRenderConfigPullText(
  * from "nothing to write" (a block WAS created, or would be) and from a
  * value-writing run (`counts.written` stays 0 either way, see
  * `legacyConfigPullPayload`).
+ *
+ * `opts.withCaveats` (default `true`) governs whether the masked/unmanaged/
+ * not-returned `Note:`s are appended: the machine-mode `message` keeps them
+ * (an agent reading only `.message` must never miss a caveat), but the TEXT
+ * one-line disposition printed AFTER the change-by-change body omits them —
+ * that body already rendered the same `Note:` lines once, and repeating them
+ * verbatim in the final summary line said nothing new.
  */
 export function legacyConfigPullSummaryMessage(
   changeSet: ConfigChangeSet,
   scope: LegacyConfigApiScope,
   plan: LegacyConfigPullPlan,
   outcome: LegacyConfigPullOutcome,
+  opts: { readonly withCaveats?: boolean } = {},
 ): string {
   const total = changeSet.counts.total;
   let base: string;
@@ -284,6 +333,9 @@ export function legacyConfigPullSummaryMessage(
     base = "No changes written.";
   } else {
     base = `${legacyConfigPlural(plan.writes.length, "change", "changes")} written.`;
+  }
+  if (opts.withCaveats === false) {
+    return base;
   }
   const parts = [base];
   if (scope.missing.length > 0) {
@@ -324,6 +376,9 @@ export function legacyConfigPullPayload(
 ): Record<string, unknown> {
   const status = buildChangeStatus(plan, outcome);
   const written = writtenCount(plan, outcome);
+  const documentPathByKey = new Map(
+    plan.writes.map((write) => [pathKey(write.change.path), write.documentPath] as const),
+  );
   // A block-only run (`plan.createdTable` set, no value writes) still WROTE —
   // the new block itself — even though `written` (a count of VALUE writes)
   // stays 0; `dryRun`/`declined` mean the block was only ever a plan, never
@@ -348,10 +403,17 @@ export function legacyConfigPullPayload(
     scope: { present: scope.present, missing: scope.missing },
     changes: changeSet.changes.map((change) => {
       const entry = status.get(pathKey(change.path));
+      const changeWritten = entry?.written ?? false;
+      const documentPath = documentPathByKey.get(pathKey(change.path));
       return {
         ...legacyConfigChangePayloadEntry(change),
-        written: entry?.written ?? false,
+        written: changeWritten,
         ...(entry?.reason === undefined ? {} : { skipped_reason: entry.reason }),
+        // Only an ACTUALLY written entry carries `document_path` — a
+        // dry-run/declined outcome still has a planned `documentPath`, but
+        // nothing landed there, so surfacing it would overstate what
+        // happened.
+        ...(changeWritten && documentPath !== undefined ? { document_path: documentPath } : {}),
       };
     }),
     warnings: plan.warnings.map((warning) => ({

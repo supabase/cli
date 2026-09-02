@@ -42,9 +42,15 @@ import type { ConfigFormat } from "./config-format.ts";
  * `ConfigEditValue` intentionally allows nested-object values (e.g. rewriting an entire
  * `auth.sms.test_otp` map in one call): such an edit is flattened into one leaf edit per
  * scalar/array field before planning, so it composes with every rule above without a special
- * "replace a whole table" code path. Flattening only ever ADDS keys under the object's own
- * path — it merges into an existing table rather than deleting sibling keys the object didn't
- * mention, matching this module's "never delete" invariant.
+ * "replace a whole table" code path. The WRITTEN text only ever touches the leaves the object
+ * actually mentions — it never deletes a sibling key the object left out, matching this
+ * module's "never delete" invariant. Mandatory verification (rule 1) holds that written result
+ * to a stricter standard, though: it's compared against `deepSet`, which — unlike the
+ * flattened write — REPLACES the whole destination subtree with the given object. So an
+ * object-valued edit that omits an existing sibling key `verification_mismatch`-refuses (the
+ * sibling the write left untouched disagrees with the replaced-away expectation) unless the
+ * object already covers every key the destination table currently declares, or the
+ * destination doesn't exist yet.
  */
 
 export type ConfigEditValue =
@@ -505,6 +511,13 @@ function scanBareValue(source: string, pos: number): number {
     }
     cursor++;
   }
+  // Trailing inline whitespace before a `#` comment (or EOL) belongs to the
+  // comment/line-ending, not the value: without this, replacing `port = 54321
+  // # comment` would fold that space into the replaced span and yield
+  // `port = 54322# comment`, silently eating it (CLI-2064 review finding 1).
+  while (cursor > pos && (source[cursor - 1] === " " || source[cursor - 1] === "\t")) {
+    cursor--;
+  }
   return cursor;
 }
 
@@ -773,7 +786,14 @@ function scanTomlDocument(source: string): TomlScanResult | TomlScanError {
   }
 
   const newline = source.includes("\r\n") ? "\r\n" : "\n";
-  return { source, tokens, headers, newline, endsWithNewline: source.endsWith(newline) };
+  // Checking `source.endsWith(newline)` breaks on a mixed-EOL file whose
+  // detected flavor is CRLF (because SOME earlier line uses it) but whose
+  // final line ends in a bare `\n` — that string doesn't end with `"\r\n"`,
+  // so this used to read as "no trailing newline" and doubled the EOF
+  // terminator on an EOF-inserted block (CLI-2064 review finding 3). A
+  // string ending in `"\r\n"` always also ends in `"\n"`, so checking for
+  // `"\n"` alone covers both terminators.
+  return { source, tokens, headers, newline, endsWithNewline: source.endsWith("\n") };
 }
 
 // ---------------------------------------------------------------------------
@@ -837,22 +857,37 @@ function findInlineTableOnPath(
   return undefined;
 }
 
-function lastKvEndForTableIndex(
+function lastKvTokenForTableIndex(
   tokens: ReadonlyArray<TomlToken>,
   tableIndex: number,
-): number | undefined {
-  let last: number | undefined;
+): TomlKeyToken | undefined {
+  let last: TomlKeyToken | undefined;
   for (const token of tokens) {
     if (token.kind === "kv" && token.tableIndex === tableIndex) {
-      last = token.end;
+      last = token;
     }
   }
   return last;
 }
 
+function lastKvEndForTableIndex(
+  tokens: ReadonlyArray<TomlToken>,
+  tableIndex: number,
+): number | undefined {
+  return lastKvTokenForTableIndex(tokens, tableIndex)?.end;
+}
+
 function headerEndAt(headers: ReadonlyArray<TomlHeaderToken>, index: number): number {
   const header = headers[index];
   return header === undefined ? 0 : header.end;
+}
+
+/** The line's own leading run of spaces/tabs, read straight off `source` rather than the
+ * token's own fields (no token carries its indentation directly). Used to copy an inserted
+ * key's indentation from the sibling line it's inserted after (see `planTomlSplices`'s
+ * "insert into an existing table" branch) rather than always writing flush-left. */
+function indentOfLineAt(source: string, lineStart: number): string {
+  return source.slice(lineStart, skipInlineWhitespace(source, lineStart));
 }
 
 /**
@@ -968,11 +1003,16 @@ function planTomlSplices(scan: TomlScanResult, leaves: ReadonlyArray<LeafEdit>):
       (header) => !header.isArrayOfTables && pathsEqual(header.path, parent),
     );
     if (tableIndex !== -1) {
-      const offset =
-        lastKvEndForTableIndex(scan.tokens, tableIndex) ?? headerEndAt(scan.headers, tableIndex);
+      const lastKvToken = lastKvTokenForTableIndex(scan.tokens, tableIndex);
+      const offset = lastKvToken?.end ?? headerEndAt(scan.headers, tableIndex);
+      // Copy the indentation of the sibling key line this insertion follows (the table's
+      // last existing key — the new line goes right after it); an empty table has no such
+      // sibling to copy, so it stays flush-left, matching prior behavior for that case.
+      const indent =
+        lastKvToken === undefined ? "" : indentOfLineAt(scan.source, lastKvToken.start);
       pushInsertPiece(insertPieces, offset, {
         needsBlankLineBefore: false,
-        text: `${renderKeySegment(lastSegmentOf(leaf.path))} = ${renderLeafValue(leaf.value)}${scan.newline}`,
+        text: `${indent}${renderKeySegment(lastSegmentOf(leaf.path))} = ${renderLeafValue(leaf.value)}${scan.newline}`,
       });
       continue;
     }
@@ -1135,6 +1175,18 @@ function applyTomlEdits(source: string, edits: ReadonlyArray<ConfigEdit>): Confi
         `${renderKeyPath(leaf.path)} already holds an env() reference`,
       );
     }
+    // A root-level single-segment path with no existing exact key has no table to insert a
+    // dotted sibling into and no table header to append after — `planTomlSplices`'s "dotted
+    // sibling" branch would otherwise treat every unrelated key in the document as a sibling
+    // (an empty path is trivially a prefix of everything) and splice in a keyless ` = value`
+    // line that only the mandatory re-parse would catch. Refuse up front instead.
+    if (exactKey === undefined && leaf.path.length <= 1) {
+      return refused(
+        "verification_mismatch",
+        leaf.path,
+        `${renderKeyPath(leaf.path)} would insert a new root-level key; this editor only supports inserting into an existing or newly created table`,
+      );
+    }
   }
 
   const { splices, createdTablesByLeaf } = planTomlSplices(scan, leaves);
@@ -1180,6 +1232,10 @@ function applyTomlEdits(source: string, edits: ReadonlyArray<ConfigEdit>): Confi
 // JSON arm.
 // ---------------------------------------------------------------------------
 
+function detectJsonNewline(source: string): "\n" | "\r\n" {
+  return source.includes("\r\n") ? "\r\n" : "\n";
+}
+
 function detectJsonIndent(source: string): string | number {
   const match = /\n([ \t]+)\S/.exec(source);
   if (match === null) {
@@ -1214,7 +1270,11 @@ function applyJsonEdits(source: string, edits: ReadonlyArray<ConfigEdit>): Confi
   const indent = detectJsonIndent(source);
   const nextValue = deepSet(parsed, edits);
   const rendered = JSON.stringify(nextValue, null, indent);
-  const nextText = source.endsWith("\n") ? `${rendered}\n` : rendered;
+  // `JSON.stringify` always renders `\n`, so a CRLF source needs its newline flavor restored
+  // post-render — otherwise every edit to a CRLF JSON config would silently flip it to LF.
+  const newline = detectJsonNewline(source);
+  const withNewlineFlavor = newline === "\r\n" ? rendered.replaceAll("\n", "\r\n") : rendered;
+  const nextText = source.endsWith("\n") ? `${withNewlineFlavor}${newline}` : withNewlineFlavor;
 
   let reparsed: unknown;
   try {
