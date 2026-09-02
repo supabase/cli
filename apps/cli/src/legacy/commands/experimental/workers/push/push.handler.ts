@@ -4,7 +4,7 @@ import { Output } from "../../../../../shared/output/output.service.ts";
 import { emitSuccessTrailer } from "../../../../../shared/cli/success-trailer.ts";
 import { legacyRenderWorkerDetails } from "../workers.format.ts";
 import {
-  legacyEmitWorkersMachineOutput,
+  legacyEmitWorkersPayload,
   legacyRejectWorkersEnvOutput,
   legacyWorkersMachineOutputRequested,
 } from "../workers.output.ts";
@@ -555,12 +555,8 @@ export const legacyWorkersPush = Effect.fn("legacy.experimental.workers.push")(f
 
       // `-o` asks for a machine-readable stdout, so nothing human may be written
       // to it — `output.success` logs to stdout in text mode.
-      if (yield* legacyEmitWorkersMachineOutput(payload)) {
+      if (yield* legacyEmitWorkersPayload(payload)) {
         return;
-      }
-
-      if (output.format !== "text") {
-        yield* output.success("", payload);
       }
     }),
   );

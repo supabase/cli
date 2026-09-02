@@ -4,7 +4,7 @@ import { emitSuccessTrailer } from "../../../../../shared/cli/success-trailer.ts
 import { legacyAqua } from "../../../../shared/legacy-colors.ts";
 import { legacyRenderWorkerDetails } from "../workers.format.ts";
 import {
-  legacyEmitWorkersMachineOutput,
+  legacyEmitWorkersPayload,
   legacyRejectWorkersEnvOutput,
   legacyWorkersMachineOutputRequested,
 } from "../workers.output.ts";
@@ -184,12 +184,7 @@ export const legacyWorkersDelete = Effect.fn("legacy.experimental.workers.delete
 
       // `-o` asks for a machine-readable stdout, so nothing human may be written
       // to it — `output.success` logs to stdout in text mode.
-      if (yield* legacyEmitWorkersMachineOutput(payload)) {
-        return;
-      }
-
-      if (output.format !== "text") {
-        yield* output.success("", payload);
+      if (yield* legacyEmitWorkersPayload(payload)) {
         return;
       }
 

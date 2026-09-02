@@ -2,7 +2,7 @@ import { Effect, Option, Ref, Schedule } from "effect";
 import { Output } from "../../../../../shared/output/output.service.ts";
 import { emitSuccessTrailer } from "../../../../../shared/cli/success-trailer.ts";
 import { legacyAqua } from "../../../../shared/legacy-colors.ts";
-import { legacyEmitWorkersMachineOutput, legacyRejectWorkersEnvOutput } from "../workers.output.ts";
+import { legacyEmitWorkersPayload, legacyRejectWorkersEnvOutput } from "../workers.output.ts";
 import {
   legacyRenderWorkerLogLine,
   legacyWorkerLogLevel,
@@ -287,18 +287,9 @@ export const legacyWorkersLogs = Effect.fn("legacy.experimental.workers.logs")(f
         logs: entries.map(toPayloadEntry),
       };
 
-      // `-o` asks for a machine-readable stdout, so nothing human may be written to
-      // it — `output.success` logs to stdout in text mode. Unreachable while
-      // following, which refuses these formats up front.
-      if (!flags.follow && (yield* legacyEmitWorkersMachineOutput(payload))) {
-        return;
-      }
-
-      // One structured emission, in the structured branch only, and only for a
-      // bounded read. A tail has no terminal payload to put here — it emits a
-      // `log-entry` event per line through `emitLines` instead.
-      if (!flags.follow && renderFormat !== "text") {
-        yield* output.success("", payload);
+      // Only for a bounded read: a tail has no terminal payload to put here, and
+      // emits a `log-entry` event per line through `emitLines` instead.
+      if (!flags.follow && (yield* legacyEmitWorkersPayload(payload))) {
         return;
       }
 

@@ -118,6 +118,35 @@ export const legacyRejectWorkersEnvOutput = Effect.fnUntraced(function* () {
 });
 
 /**
+ * Emit `payload` in whichever machine format the run asked for.
+ *
+ * Returns whether it emitted, so a caller can skip its text rendering — the
+ * same contract as {@link legacyEmitWorkersMachineOutput}, which this wraps.
+ *
+ * The two format flags are resolved here rather than at each call site.
+ * Branching on `output.format` alone ignored `-o`'s priority, so
+ * `-o pretty --output-format json` emitted JSON from a run that asked for text.
+ *
+ * The structured emission happens exactly once, and only in the structured
+ * branch: calling `output.success` ahead of the machine check emitted the
+ * payload twice, which broke `JSON.parse` and gave `stream-json` two terminal
+ * result events.
+ */
+export const legacyEmitWorkersPayload = Effect.fnUntraced(function* (
+  payload: Record<string, unknown>,
+) {
+  if (yield* legacyEmitWorkersMachineOutput(payload)) {
+    return true;
+  }
+  if ((yield* legacyWorkersRenderFormat()) === "text") {
+    return false;
+  }
+  const output = yield* Output;
+  yield* output.success("", payload);
+  return true;
+});
+
+/**
  * The `--project-ref` a retry suggestion has to carry, or `""` when the ref came
  * from the link.
  *

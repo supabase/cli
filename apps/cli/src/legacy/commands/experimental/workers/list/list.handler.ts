@@ -3,7 +3,7 @@ import { Output } from "../../../../../shared/output/output.service.ts";
 import { legacyAqua, legacyYellow } from "../../../../shared/legacy-colors.ts";
 import { displayPath } from "../../../../../shared/workers/worker-paths.ts";
 import { renderGlamourTable } from "../../../../output/legacy-glamour-table.ts";
-import { legacyEmitWorkersMachineOutput, legacyRejectWorkersEnvOutput } from "../workers.output.ts";
+import { legacyEmitWorkersPayload, legacyRejectWorkersEnvOutput } from "../workers.output.ts";
 import { LegacyPlatformApi } from "../../../../auth/legacy-platform-api.service.ts";
 import { LegacyCliSettings } from "../../../../config/legacy-cli-settings.service.ts";
 import { formatApiSize } from "../../../../../shared/workers/worker-runtimes.ts";
@@ -161,12 +161,7 @@ export const legacyWorkersList = Effect.fn("legacy.experimental.workers.list")(f
       // `-o` is independent of `--output-format`: it leaves `output.format` as
       // `text`, so this has to be checked before the text branch below, not
       // inside the structured one.
-      if (yield* legacyEmitWorkersMachineOutput(payload)) {
-        return;
-      }
-
-      if (output.format !== "text") {
-        yield* output.success("", payload);
+      if (yield* legacyEmitWorkersPayload(payload)) {
         return;
       }
 

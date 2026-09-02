@@ -3,7 +3,7 @@ import { Output } from "../../../../../shared/output/output.service.ts";
 import { emitSuccessTrailer } from "../../../../../shared/cli/success-trailer.ts";
 import { legacyAqua } from "../../../../shared/legacy-colors.ts";
 import { legacyRenderWorkerDetails } from "../workers.format.ts";
-import { legacyEmitWorkersMachineOutput, legacyRejectWorkersEnvOutput } from "../workers.output.ts";
+import { legacyEmitWorkersPayload, legacyRejectWorkersEnvOutput } from "../workers.output.ts";
 import { LegacyPlatformApi } from "../../../../auth/legacy-platform-api.service.ts";
 import { LegacyCliSettings } from "../../../../config/legacy-cli-settings.service.ts";
 import { displayPath } from "../../../../../shared/workers/worker-paths.ts";
@@ -94,16 +94,7 @@ export const legacyWorkersStatus = Effect.fn("legacy.experimental.workers.status
 
       // `-o` asks for a machine-readable stdout, so nothing human may be written
       // to it — `output.success` logs to stdout in text mode.
-      if (yield* legacyEmitWorkersMachineOutput(payload)) {
-        return;
-      }
-
-      // One structured emission, in the structured branch only. Calling
-      // `output.success` before this check emitted the payload twice: the JSON
-      // layer appends each success to stdout, so `JSON.parse` failed, and
-      // `stream-json` saw two terminal result events.
-      if (output.format !== "text") {
-        yield* output.success("", payload);
+      if (yield* legacyEmitWorkersPayload(payload)) {
         return;
       }
 
