@@ -20,6 +20,7 @@ import {
   PropWorkflow,
 } from "../../shared/telemetry/event-catalog.ts";
 import { ProcessControl } from "../../shared/runtime/process-control.service.ts";
+import { LegacyConfigDiffLoadConfigError } from "../commands/config/diff/diff.errors.ts";
 import { LegacyDbDumpRunError } from "../commands/db/dump/dump.errors.ts";
 import { LegacyIdentityStitch } from "../shared/legacy-identity-stitch.ts";
 import { withLegacyCommandInstrumentation } from "./legacy-command-instrumentation.ts";
@@ -847,6 +848,113 @@ describe("withLegacyCommandInstrumentation", () => {
       ),
     );
   });
+
+  it.live(
+    "records config diff --exit-code drift (exit 2) truthfully, without failure metadata",
+    () => {
+      // `config diff --exit-code` sets ProcessControl's exit code to 2 to signal
+      // drift WITHOUT failing the Effect (diff.handler.ts's own 0/1/2 convention:
+      // 2 means "drift found", not "command failed"). That is the command's own
+      // successful outcome, not a process-controlled failure — it must not
+      // collapse to 1 or attach db lint/db advisors-style failure classification.
+      const analytics = mockContextualAnalytics();
+      const processControl = mockProcessControl();
+
+      return Effect.gen(function* () {
+        const pc = yield* ProcessControl;
+        yield* pc.setExitCode(2);
+      }).pipe(
+        withLegacyCommandInstrumentation(),
+        Effect.provide(analytics.layer),
+        Effect.provide(processControl.layer),
+        Effect.provide(mockOutput({ format: "json" }).layer),
+        Effect.provide(
+          Stdio.layerTest({ args: Effect.succeed(["config", "diff", "--exit-code"]) }),
+        ),
+        Effect.provide(commandRuntimeLayer(["config", "diff"])),
+        Effect.tap(() =>
+          Effect.sync(() => {
+            expect(analytics.captured).toHaveLength(1);
+            const event = analytics.captured[0];
+            expect(event?.properties.exit_code).toBe(2);
+            for (const property of FAILURE_PROPERTY_NAMES) {
+              expect(event?.properties).not.toHaveProperty(property);
+            }
+          }),
+        ),
+      );
+    },
+  );
+
+  it.live(
+    "still collapses another command's process-controlled exit 2 to 1 (unknown classification)",
+    () => {
+      // Only `config diff` gets the drift-signal exception above — any other
+      // command setting exit code 2 without failing the Effect keeps today's
+      // behavior: collapse to 1 and fall back to the unknown classification.
+      const analytics = mockContextualAnalytics();
+      const processControl = mockProcessControl();
+
+      return Effect.gen(function* () {
+        const pc = yield* ProcessControl;
+        yield* pc.setExitCode(2);
+      }).pipe(
+        withLegacyCommandInstrumentation(),
+        Effect.provide(analytics.layer),
+        Effect.provide(processControl.layer),
+        Effect.provide(mockOutput({ format: "text" }).layer),
+        Effect.provide(Stdio.layerTest({ args: Effect.succeed(["backups", "list"]) })),
+        Effect.provide(commandRuntimeLayer(["backups", "list"])),
+        Effect.tap(() =>
+          Effect.sync(() => {
+            expect(analytics.captured[0]?.properties).toMatchObject({
+              exit_code: 1,
+              error_kind: "unknown",
+              error_category: "unknown",
+              error_fingerprint: "error:ProcessControlledFailure",
+              has_suggestion: false,
+              suggestion_type: "none",
+            });
+          }),
+        ),
+      );
+    },
+  );
+
+  it.live(
+    "classifies a config diff load failure normally (exit 1, cause-derived metadata)",
+    () => {
+      // A real command failure on `config diff` (e.g. an unparseable config
+      // file) must not be swept into the drift-signal exception above — it
+      // still fails the Effect, so recordedExitCode stays 1 with the usual
+      // cause-derived classification.
+      const analytics = mockContextualAnalytics();
+      const failure = new LegacyConfigDiffLoadConfigError({ message: "invalid config" });
+
+      return Effect.fail(failure).pipe(
+        withLegacyCommandInstrumentation(),
+        Effect.provide(analytics.layer),
+        Effect.provide(mockProcessControl().layer),
+        Effect.provide(mockOutput({ format: "text" }).layer),
+        Effect.provide(Stdio.layerTest({ args: Effect.succeed(["config", "diff"]) })),
+        Effect.provide(commandRuntimeLayer(["config", "diff"])),
+        Effect.exit,
+        Effect.tap(() =>
+          Effect.sync(() => {
+            expect(analytics.captured[0]?.properties).toMatchObject({
+              exit_code: 1,
+              error_kind: "user_actionable",
+              error_category: "invalid_config",
+              error_fingerprint: "tag:LegacyConfigDiffLoadConfigError",
+              has_suggestion: true,
+              suggestion_type: "update_config",
+            });
+          }),
+        ),
+        Effect.asVoid,
+      );
+    },
+  );
 
   it.live("skips analytics capture when analytics are disabled", () => {
     const analytics = mockContextualAnalytics();
