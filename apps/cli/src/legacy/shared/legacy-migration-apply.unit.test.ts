@@ -31,6 +31,7 @@ class FakeExecError extends Data.TaggedError("LegacyDbExecError")<{
   readonly detail?: string;
   readonly position?: number;
   readonly statementIndex?: number;
+  readonly transactionPhase?: "begin" | "commit";
 }> {
   get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
     return actionability.dbFinding;
@@ -41,7 +42,13 @@ function fakeSession(
   opts: {
     failOn?: string;
     failAfterBatch?: boolean;
-    failWith?: { message: string; code?: string; detail?: string; position?: number };
+    failWith?: {
+      message: string;
+      code?: string;
+      detail?: string;
+      position?: number;
+      transactionPhase?: "begin" | "commit";
+    };
     restoreRoleSql?: string;
     batchConnectionLost?: string;
   } = {},
@@ -284,7 +291,58 @@ describe("legacyApplyMigrationFile", () => {
     );
   });
 
-  it.effect("defaults a deferred batch failure to the migration history statement", () => {
+  it.effect("reports a begin failure without blaming the first statement", () => {
+    const dir = mkdtempSync(join(tmpdir(), "legacy-apply-"));
+    const file = join(dir, "20240101120000_begin.sql");
+    writeFileSync(file, "SELECT 1;");
+    const { session } = fakeSession({
+      failOn: "SELECT 1",
+      failWith: {
+        message: "failed to begin the batch transaction: ERROR: canceling statement",
+        transactionPhase: "begin",
+      },
+    });
+    return run(session, file).pipe(
+      Effect.flip,
+      Effect.tap((error) =>
+        Effect.sync(() => {
+          expect(error.message).toContain("failed to begin the batch transaction");
+          expect(error.message).not.toContain("At statement");
+          expect(error.message).not.toContain("SELECT 1");
+        }),
+      ),
+      Effect.ensuring(Effect.sync(() => rmSync(dir, { recursive: true, force: true }))),
+    );
+  });
+
+  it.effect("reports a connection lost at BEGIN without blaming the first statement", () => {
+    // The driver marks the begin phase without relabeling the message when the
+    // connection died before BEGIN completed; the caller's statement never ran,
+    // so the formatter must surface the loss verbatim with no statement echo.
+    const dir = mkdtempSync(join(tmpdir(), "legacy-apply-"));
+    const file = join(dir, "20240101120000_begin_lost.sql");
+    writeFileSync(file, "SELECT 1;");
+    const { session } = fakeSession({
+      failOn: "SELECT 1",
+      failWith: {
+        message: "Error: Connection terminated unexpectedly",
+        transactionPhase: "begin",
+      },
+    });
+    return run(session, file).pipe(
+      Effect.flip,
+      Effect.tap((error) =>
+        Effect.sync(() => {
+          expect(error.message).toContain("Connection terminated unexpectedly");
+          expect(error.message).not.toContain("At statement");
+          expect(error.message).not.toContain("SELECT 1");
+        }),
+      ),
+      Effect.ensuring(Effect.sync(() => rmSync(dir, { recursive: true, force: true }))),
+    );
+  });
+
+  it.effect("reports a deferred commit failure without blaming a statement", () => {
     const dir = mkdtempSync(join(tmpdir(), "legacy-apply-"));
     const file = join(dir, "20240101120000_deferred.sql");
     writeFileSync(file, "SELECT 1;");
@@ -293,8 +351,8 @@ describe("legacyApplyMigrationFile", () => {
       Effect.flip,
       Effect.tap((error) =>
         Effect.sync(() => {
-          expect(error.message).toContain("At statement: 2");
-          expect(error.message).toContain("INSERT INTO supabase_migrations.schema_migrations");
+          expect(error.message).not.toContain("At statement");
+          expect(error.message).not.toContain("INSERT INTO supabase_migrations.schema_migrations");
         }),
       ),
       Effect.ensuring(Effect.sync(() => rmSync(dir, { recursive: true, force: true }))),
@@ -656,10 +714,9 @@ describe("legacyApplyMigrationFile", () => {
     );
   });
 
-  it.effect("keeps the deferred-failure index when a restore op is appended", () => {
-    // Mirrors "defaults a deferred batch failure to the migration history
-    // statement": the restore op between the statements and the insert must not
-    // shift the deferred (post-Sync) index either.
+  it.effect("reports a deferred commit failure cleanly when a restore op is appended", () => {
+    // The restore op between the statements and the insert must not resurrect a
+    // statement tail for a commit-phase failure.
     const dir = mkdtempSync(join(tmpdir(), "legacy-apply-"));
     const file = join(dir, "20240101120000_deferred.sql");
     writeFileSync(file, "SELECT 1;");
@@ -671,8 +728,8 @@ describe("legacyApplyMigrationFile", () => {
       Effect.flip,
       Effect.tap((error) =>
         Effect.sync(() => {
-          expect(error.message).toContain("At statement: 2");
-          expect(error.message).toContain("INSERT INTO supabase_migrations.schema_migrations");
+          expect(error.message).not.toContain("At statement");
+          expect(error.message).not.toContain("INSERT INTO supabase_migrations.schema_migrations");
           rmSync(dir, { recursive: true, force: true });
         }),
       ),
@@ -808,7 +865,7 @@ describe("legacyApplyMigrationFile", () => {
     );
   });
 
-  it.effect("keeps the deferred-failure index when mid-file restores were injected", () => {
+  it.effect("reports a deferred commit failure cleanly with mid-file restores injected", () => {
     // The `injectedBefore[raw] ?? injected` fallback only matters when the
     // deferred (post-Sync) index lands past the ops array AND injections exist.
     const dir = mkdtempSync(join(tmpdir(), "legacy-apply-"));
@@ -822,8 +879,8 @@ describe("legacyApplyMigrationFile", () => {
       Effect.flip,
       Effect.tap((error) =>
         Effect.sync(() => {
-          expect(error.message).toContain("At statement: 4");
-          expect(error.message).toContain("INSERT INTO supabase_migrations.schema_migrations");
+          expect(error.message).not.toContain("At statement");
+          expect(error.message).not.toContain("INSERT INTO supabase_migrations.schema_migrations");
           rmSync(dir, { recursive: true, force: true });
         }),
       ),
@@ -846,6 +903,49 @@ describe("legacyApplyMigrationFile", () => {
           expect(batches[1]?.statements?.map(({ sql }) => sql)).toEqual([
             "select 2",
             "SET SESSION ROLE postgres",
+            expect.stringContaining("supabase_migrations.schema_migrations"),
+          ]);
+          rmSync(dir, { recursive: true, force: true });
+        }),
+      ),
+    );
+  });
+
+  it.effect("re-asserts postgres right after a standalone role-reverting statement", () => {
+    const dir = mkdtempSync(join(tmpdir(), "legacy-apply-"));
+    const file = join(dir, "20240101120000_discard.sql");
+    writeFileSync(file, "select 1;\nDISCARD ALL;\nselect 2;");
+    const { session, calls } = fakeSession({ restoreRoleSql: "SET SESSION ROLE postgres" });
+    return run(session, file).pipe(
+      Effect.tap(() =>
+        Effect.sync(() => {
+          const execs = calls.filter((call) => call.kind === "exec").map((call) => call.sql);
+          expect(execs.slice(-2)).toEqual(["DISCARD ALL", "SET SESSION ROLE postgres"]);
+          const batches = calls.filter((call) => call.kind === "batch");
+          expect(batches[0]?.statements?.map(({ sql }) => sql)).toEqual(["select 1"]);
+          expect(batches[1]?.statements?.map(({ sql }) => sql)).toEqual([
+            "select 2",
+            "SET SESSION ROLE postgres",
+            expect.stringContaining("supabase_migrations.schema_migrations"),
+          ]);
+          rmSync(dir, { recursive: true, force: true });
+        }),
+      ),
+    );
+  });
+
+  it.effect("sends no trailing restore when the file ends on a restored standalone", () => {
+    const dir = mkdtempSync(join(tmpdir(), "legacy-apply-"));
+    const file = join(dir, "20240101120000_discard_last.sql");
+    writeFileSync(file, "select 1;\nDISCARD ALL;");
+    const { session, calls } = fakeSession({ restoreRoleSql: "SET SESSION ROLE postgres" });
+    return run(session, file).pipe(
+      Effect.tap(() =>
+        Effect.sync(() => {
+          const execs = calls.filter((call) => call.kind === "exec").map((call) => call.sql);
+          expect(execs.slice(-2)).toEqual(["DISCARD ALL", "SET SESSION ROLE postgres"]);
+          const batches = calls.filter((call) => call.kind === "batch");
+          expect(batches.at(-1)?.statements?.map(({ sql }) => sql)).toEqual([
             expect.stringContaining("supabase_migrations.schema_migrations"),
           ]);
           rmSync(dir, { recursive: true, force: true });
@@ -1116,6 +1216,85 @@ describe("legacyIsPipelineIncompatible", () => {
     ["vacuum with options", "VACUUM (FULL, ANALYZE) public.widgets", true],
     ["alter system", "ALTER SYSTEM SET wal_level = 'logical'", true],
     ["cluster", "CLUSTER public.widgets USING widgets_id_idx", true],
+    ["create database", "CREATE DATABASE demo", true],
+    ["drop database", "DROP DATABASE IF EXISTS demo", true],
+    ["create tablespace", "CREATE TABLESPACE ts LOCATION '/tmp/ts'", true],
+    ["drop tablespace", "DROP TABLESPACE ts", true],
+    ["reindex database", "REINDEX DATABASE postgres", true],
+    ["reindex system with options", "REINDEX (VERBOSE) SYSTEM postgres", true],
+    ["reindex database adjacent options", "REINDEX(VERBOSE) DATABASE postgres", true],
+    ["reindex concurrently as option", "REINDEX (CONCURRENTLY) INDEX widgets_id_idx", true],
+    ["reindex mixed option list", "REINDEX (VERBOSE, CONCURRENTLY) TABLE public.widgets", true],
+    [
+      "reindex concurrently false over-routes conservatively",
+      "REINDEX (CONCURRENTLY FALSE) INDEX widgets_id_idx",
+      true,
+    ],
+    ["reindex verbose option only", "REINDEX (VERBOSE) INDEX widgets_id_idx", false],
+    ["reindex schema", "REINDEX SCHEMA public", true],
+    ["reindex table non-concurrent", "REINDEX TABLE public.widgets", false],
+    ["alter database", "ALTER DATABASE demo SET search_path = public", false],
+    ["alter database set tablespace", "ALTER DATABASE demo SET TABLESPACE fast", true],
+    [
+      "alter table all in tablespace",
+      "ALTER TABLE ALL IN TABLESPACE old_ts SET TABLESPACE fast",
+      true,
+    ],
+    [
+      "alter index all in tablespace",
+      "ALTER INDEX ALL IN TABLESPACE old_ts SET TABLESPACE fast",
+      true,
+    ],
+    [
+      "alter materialized view all in tablespace",
+      "ALTER MATERIALIZED VIEW ALL IN TABLESPACE old_ts SET TABLESPACE fast",
+      true,
+    ],
+    ["alter table set tablespace single", "ALTER TABLE t SET TABLESPACE fast", false],
+    ["alter database set tablespace multiline", "ALTER DATABASE demo\n SET TABLESPACE fast", true],
+    [
+      "alter database with tablespace inside a literal over-routes conservatively",
+      "ALTER DATABASE demo SET application_name TO 'foo SET TABLESPACE bar'",
+      true,
+    ],
+    ["detach partition concurrently", "ALTER TABLE m DETACH PARTITION p CONCURRENTLY", true],
+    ["detach partition finalize stays batched", "ALTER TABLE m DETACH PARTITION p FINALIZE", false],
+    ["detach partition plain", "ALTER TABLE m DETACH PARTITION p", false],
+    [
+      "detach inside a comment over-routes conservatively",
+      "ALTER TABLE m ADD COLUMN x int /* DETACH PARTITION p CONCURRENTLY */",
+      true,
+    ],
+    [
+      "detach partition qualified concurrently",
+      "ALTER TABLE IF EXISTS ONLY s.m\n DETACH PARTITION p CONCURRENTLY",
+      true,
+    ],
+    [
+      "detach partition quoted qualified concurrently",
+      'ALTER TABLE "tenant schema".events DETACH PARTITION "p 1" CONCURRENTLY',
+      true,
+    ],
+    [
+      "detach partition spaced qualification",
+      'ALTER TABLE "tenant schema" . events DETACH PARTITION p CONCURRENTLY',
+      true,
+    ],
+    ["create subscription", "CREATE SUBSCRIPTION sub CONNECTION 'host=h' PUBLICATION pub", true],
+    ["drop subscription", "DROP SUBSCRIPTION IF EXISTS sub", true],
+    ["alter subscription", "ALTER SUBSCRIPTION sub DISABLE", false],
+    ["alter subscription refresh", "ALTER SUBSCRIPTION sub REFRESH PUBLICATION", true],
+    ["alter subscription set publication", "ALTER SUBSCRIPTION sub SET PUBLICATION p", true],
+    ["alter subscription refresh multiline", "ALTER SUBSCRIPTION sub\n REFRESH PUBLICATION", true],
+    ["alter subscription set options", "ALTER SUBSCRIPTION sub SET (slot_name = 's')", false],
+    ["discard all", "DISCARD ALL", true],
+    ["discard temp", "DISCARD TEMP", false],
+    [
+      "refresh materialized view concurrently",
+      "REFRESH MATERIALIZED VIEW CONCURRENTLY public.mv",
+      true,
+    ],
+    ["plain refresh materialized view", "REFRESH MATERIALIZED VIEW public.mv", false],
     [
       "lower-case create index concurrently",
       "create index concurrently widgets_id_idx on public.widgets(id)",

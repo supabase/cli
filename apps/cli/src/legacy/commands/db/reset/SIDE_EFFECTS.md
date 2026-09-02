@@ -153,7 +153,10 @@ reported as a lost connection (with the driver's own reason and, locally, the hi
 stack) rather than against a statement that never ran. Once any part of the batch has been written,
 and for the pipeline-incompatible statements the same loop runs on their own (`CREATE INDEX
 CONCURRENTLY`, `VACUUM`, ...), a failure still reports as `At statement: N` with the statement
-echoed, because those may genuinely have reached the server.
+echoed, because those may genuinely have reached the server. The one exception is a failure of the
+batch's own transaction wrapper — a rejected `BEGIN`, or a deferred constraint surfacing at
+`COMMIT` — which reports the phase-labeled driver message with no statement context, since no
+caller statement is to blame.
 
 ## Exit Codes
 

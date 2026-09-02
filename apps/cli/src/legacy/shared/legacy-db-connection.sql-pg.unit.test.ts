@@ -5,6 +5,7 @@ import type * as Pg from "pg";
 import { describe, expect, it } from "vitest";
 
 import { ErrorActionabilityId } from "../../shared/telemetry/error-actionability.ts";
+import { LegacyDbExecError } from "./legacy-db-connection.errors.ts";
 import { LEGACY_SUGGEST_LOCAL_STACK } from "./legacy-connect-errors.ts";
 import {
   legacyAcquireProbedPool,
@@ -608,7 +609,9 @@ describe("LegacyPgBatchQuery.submit", () => {
       frames,
       connection: {
         stream,
-        parse: record("parse"),
+        parse: (query: { text: string }) => {
+          frames.push(`parse(${query.text})`);
+        },
         bind: record("bind"),
         describe: record("describe"),
         execute: record("execute"),
@@ -638,10 +641,26 @@ describe("LegacyPgBatchQuery.submit", () => {
       "the connection's socket became unwritable while the batch was flushing",
     );
     expect(batch.outcome).toBe("unsent");
-    expect(frames).toEqual(["cork", "parse", "bind", "describe", "execute", "sync", "uncork"]);
+    expect(frames).toEqual([
+      "cork",
+      "parse(BEGIN)",
+      "bind",
+      "describe",
+      "execute",
+      "parse(select 1)",
+      "bind",
+      "describe",
+      "execute",
+      "parse(COMMIT)",
+      "bind",
+      "describe",
+      "execute",
+      "sync",
+      "uncork",
+    ]);
   });
 
-  it("writes parse/bind/describe/execute per statement and one sync while writable", () => {
+  it("brackets the statements in BEGIN/COMMIT and writes one sync while writable", () => {
     const { connection, frames } = fakeConnection(true);
     const batch = new LegacyPgBatchQuery([{ sql: "select 1" }, { sql: "select 2" }], () => {});
 
@@ -649,11 +668,19 @@ describe("LegacyPgBatchQuery.submit", () => {
 
     expect(frames).toEqual([
       "cork",
-      "parse",
+      "parse(BEGIN)",
       "bind",
       "describe",
       "execute",
-      "parse",
+      "parse(select 1)",
+      "bind",
+      "describe",
+      "execute",
+      "parse(select 2)",
+      "bind",
+      "describe",
+      "execute",
+      "parse(COMMIT)",
       "bind",
       "describe",
       "execute",
@@ -661,6 +688,18 @@ describe("LegacyPgBatchQuery.submit", () => {
       "uncork",
     ]);
     expect(batch.outcome).toBe("submitted");
+  });
+
+  it("counts neither BEGIN's nor COMMIT's completion toward the statement index", () => {
+    const batch = new LegacyPgBatchQuery([{ sql: "select 1" }, { sql: "select 2" }], () => {});
+
+    batch.handleCommandComplete();
+    expect(batch.completed).toBe(0);
+    batch.handleCommandComplete();
+    batch.handleEmptyQuery();
+    expect(batch.completed).toBe(2);
+    batch.handleCommandComplete();
+    expect(batch.completed).toBe(2);
   });
 });
 
@@ -737,6 +776,124 @@ describe("legacyBatchFailureError", () => {
     expect(error).toMatchObject({ message: "Error: serialization blew up", statementIndex: 0 });
   });
 
+  it("names the transaction start when the server rejected the batch before BEGIN completed", () => {
+    const beginRejected = new SqlError({
+      reason: new SqlSyntaxError({
+        cause: Object.assign(new Error("canceling statement due to statement timeout"), {
+          severity: "ERROR",
+          code: "57014",
+        }),
+        message: "Failed to execute statement",
+        operation: "execute",
+      }),
+    });
+    const error = legacyBatchFailureError(
+      beginRejected,
+      { completed: 0, outcome: "submitted", began: false },
+      true,
+    );
+
+    expect(error).toBeInstanceOf(LegacyDbExecError);
+    expect(error).toMatchObject({
+      message:
+        "failed to begin the batch transaction: " +
+        "ERROR: canceling statement due to statement timeout (SQLSTATE 57014)",
+      statementIndex: 0,
+      transactionPhase: "begin",
+    });
+
+    const lost = legacyBatchFailureError(
+      new Error("Connection terminated unexpectedly"),
+      { completed: 0, outcome: "submitted", began: false },
+      true,
+    );
+    expect(lost).toBeInstanceOf(LegacyDbExecError);
+    // A connection lost at BEGIN keeps its own reason, but still marks the phase:
+    // no caller statement ran, so nothing downstream may render `At statement: 0`.
+    expect(lost).toMatchObject({
+      message: "Error: Connection terminated unexpectedly",
+      statementIndex: 0,
+      transactionPhase: "begin",
+    });
+
+    const terminated = legacyBatchFailureError(
+      new SqlError({
+        reason: new SqlSyntaxError({
+          cause: Object.assign(new Error("terminating connection due to idle-session timeout"), {
+            severity: "FATAL",
+            code: "57P05",
+          }),
+          message: "Failed to execute statement",
+          operation: "execute",
+        }),
+      }),
+      { completed: 0, outcome: "submitted", began: false },
+      true,
+    );
+    expect(terminated).toBeInstanceOf(LegacyDbExecError);
+    expect(terminated).toMatchObject({
+      message: "FATAL: terminating connection due to idle-session timeout (SQLSTATE 57P05)",
+      transactionPhase: "begin",
+    });
+
+    const poisoned = legacyBatchFailureError(
+      beginRejected,
+      { completed: 0, outcome: "poisoned", began: false },
+      true,
+    );
+    expect(poisoned).toBeInstanceOf(LegacyDbExecError);
+    expect(poisoned.message).toBe(
+      "ERROR: canceling statement due to statement timeout (SQLSTATE 57014)",
+    );
+    // A poisoned batch never reached the server, so it stays on the statement path.
+    expect(poisoned).not.toHaveProperty("transactionPhase");
+  });
+
+  it("names the transaction commit when a deferred failure lands on COMMIT", () => {
+    const deferred = new SqlError({
+      reason: new SqlSyntaxError({
+        cause: Object.assign(new Error("deferred constraint failed"), {
+          severity: "ERROR",
+          code: "23514",
+        }),
+        message: "Failed to execute statement",
+        operation: "execute",
+      }),
+    });
+    const error = legacyBatchFailureError(
+      deferred,
+      { completed: 2, outcome: "submitted", began: true, atCommit: true },
+      true,
+    );
+    expect(error).toBeInstanceOf(LegacyDbExecError);
+    expect(error).toMatchObject({
+      message:
+        "failed to commit the batch transaction: ERROR: deferred constraint failed (SQLSTATE 23514)",
+      statementIndex: 2,
+      transactionPhase: "commit",
+    });
+
+    const dropped = legacyBatchFailureError(
+      new SqlError({
+        reason: new SqlSyntaxError({
+          cause: Object.assign(new Error("terminating connection: database dropped"), {
+            severity: "FATAL",
+            code: "57P04",
+          }),
+          message: "Failed to execute statement",
+          operation: "execute",
+        }),
+      }),
+      { completed: 2, outcome: "submitted", began: true, atCommit: true },
+      true,
+    );
+    expect(dropped).toBeInstanceOf(LegacyDbExecError);
+    expect(dropped).toMatchObject({
+      message: "FATAL: terminating connection: database dropped (SQLSTATE 57P04)",
+      transactionPhase: "commit",
+    });
+  });
+
   it("keeps server-error mapping and the completed count for a statement failure", () => {
     const error = legacyBatchFailureError(
       new SqlError({
@@ -768,27 +925,42 @@ describe("legacyBatchFailureError", () => {
 
 describe("legacyShouldDiscardBatchClient", () => {
   it("discards a client whose batch never reached the wire", () => {
-    expect(legacyShouldDiscardBatchClient({ outcome: "unsent" }, Exit.succeed(undefined))).toBe(
-      true,
-    );
+    expect(
+      legacyShouldDiscardBatchClient({ outcome: "unsent" }, Exit.succeed(undefined), false),
+    ).toBe(true);
   });
 
-  it("returns a client to the pool once its batch was written, error or not", () => {
-    expect(legacyShouldDiscardBatchClient({ outcome: "submitted" }, Exit.succeed(undefined))).toBe(
-      false,
-    );
+  it("keeps a written batch's client on success or once its failure rolled back", () => {
+    expect(
+      legacyShouldDiscardBatchClient({ outcome: "submitted" }, Exit.succeed(undefined), false),
+    ).toBe(false);
     expect(
       legacyShouldDiscardBatchClient(
         { outcome: "submitted" },
         Exit.fail(new Error("server said no")),
+        true,
       ),
     ).toBe(false);
   });
 
+  it("discards a written batch's client when its failure was not rolled back", () => {
+    expect(
+      legacyShouldDiscardBatchClient(
+        { outcome: "submitted" },
+        Exit.fail(new Error("server said no")),
+        false,
+      ),
+    ).toBe(true);
+  });
+
   it("discards a client whose batch was interrupted or died mid-flight", () => {
-    expect(legacyShouldDiscardBatchClient({ outcome: "submitted" }, Exit.interrupt(1))).toBe(true);
-    expect(legacyShouldDiscardBatchClient({ outcome: "submitted" }, Exit.die("boom"))).toBe(true);
+    expect(legacyShouldDiscardBatchClient({ outcome: "submitted" }, Exit.interrupt(1), true)).toBe(
+      true,
+    );
+    expect(legacyShouldDiscardBatchClient({ outcome: "submitted" }, Exit.die("boom"), true)).toBe(
+      true,
+    );
     // Interrupted before the batch was even constructed: no batch, still discard.
-    expect(legacyShouldDiscardBatchClient(undefined, Exit.interrupt(1))).toBe(true);
+    expect(legacyShouldDiscardBatchClient(undefined, Exit.interrupt(1), false)).toBe(true);
   });
 });

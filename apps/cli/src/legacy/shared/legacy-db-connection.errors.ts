@@ -37,6 +37,12 @@ export class LegacyDbExecError extends Data.TaggedError("LegacyDbExecError")<{
    */
   readonly statementIndex?: number;
   /**
+   * Which CLI-injected transaction wrapper was in flight when the batch failed —
+   * whether the server rejected BEGIN/COMMIT or the connection was lost while one
+   * was pending — rather than a caller statement. Absent otherwise.
+   */
+  readonly transactionPhase?: "begin" | "commit";
+  /**
    * Postgres SQLSTATE (e.g. `42P01` undefined_table), extracted from the driver
    * error's `cause` chain when present. Lets callers match Go's error-code checks
    * (`pgerrcode.*`) instead of fuzzy message matching — e.g. suppressing only a

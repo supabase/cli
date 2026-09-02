@@ -61,9 +61,24 @@ const BOM_CODE_POINT = 0xfeff;
 const CREATE_INDEX_CONCURRENTLY_PATTERN = /^CREATE\s+(?:UNIQUE\s+)?INDEX\s+CONCURRENTLY(?:\s|$)/u;
 const DROP_INDEX_CONCURRENTLY_PATTERN = /^DROP\s+INDEX\s+CONCURRENTLY(?:\s|$)/u;
 const REINDEX_CONCURRENTLY_PATTERN = /^REINDEX(?:\s|\().*\sCONCURRENTLY(?:\s|$)/u;
+const REINDEX_OPTION_CONCURRENTLY_PATTERN = /^REINDEX\s*\([^)]*\bCONCURRENTLY\b[^)]*\)/u;
 const VACUUM_PATTERN = /^VACUUM(?:\s|\(|$)/u;
 const ALTER_SYSTEM_PATTERN = /^ALTER\s+SYSTEM(?:\s|$)/u;
 const CLUSTER_PATTERN = /^CLUSTER(?:\s|$)/u;
+const DATABASE_DDL_PATTERN = /^(?:CREATE|DROP)\s+DATABASE(?:\s|$)/u;
+const TABLESPACE_DDL_PATTERN = /^(?:CREATE|DROP)\s+TABLESPACE(?:\s|$)/u;
+const REINDEX_DATABASE_PATTERN = /^REINDEX(?:\s*\([^)]*\))?\s+(?:DATABASE|SYSTEM|SCHEMA)(?:\s|$)/u;
+const SUBSCRIPTION_DDL_PATTERN = /^(?:CREATE|DROP)\s+SUBSCRIPTION(?:\s|$)/u;
+const DISCARD_ALL_PATTERN = /^DISCARD\s+ALL(?:\s|$)/u;
+const ALTER_DATABASE_TABLESPACE_PATTERN = /^ALTER\s+DATABASE\s[\s\S]*\sSET\s+TABLESPACE(?:\s|$)/u;
+const ALTER_SUBSCRIPTION_REFRESH_PATTERN =
+  /^ALTER\s+SUBSCRIPTION\s[\s\S]*\s(?:REFRESH\s+PUBLICATION|(?:SET|ADD|DROP)\s+PUBLICATION)(?:\s|$)/u;
+const ALL_IN_TABLESPACE_PATTERN =
+  /^ALTER\s+(?:TABLE|INDEX|MATERIALIZED\s+VIEW)\s+ALL\s+IN\s+TABLESPACE(?:\s|$)/u;
+const DETACH_PARTITION_PATTERN =
+  /^ALTER\s+TABLE\s[\s\S]*\sDETACH\s+PARTITION\s[\s\S]*\sCONCURRENTLY(?:\s|$)/u;
+const REFRESH_MATERIALIZED_VIEW_CONCURRENTLY_PATTERN =
+  /^REFRESH\s+MATERIALIZED\s+VIEW\s+CONCURRENTLY(?:\s|$)/u;
 const TRANSACTION_CONTROL_PATTERN =
   /^(?:BEGIN|START\s+TRANSACTION|COMMIT|END|ABORT|PREPARE\s+TRANSACTION)(?:\s|$)/u;
 
@@ -97,10 +112,26 @@ const legacyTrimLeadingSqlComments = (sql: string): string => {
 /**
  * Whether a migration statement cannot run inside a transaction block — `CREATE
  * [UNIQUE] INDEX CONCURRENTLY`, `DROP INDEX CONCURRENTLY`, `REINDEX … CONCURRENTLY`,
- * `VACUUM`, `ALTER SYSTEM`, `CLUSTER`. Such statements fail with SQLSTATE 25001
- * inside the implicit transaction
+ * `VACUUM`, `ALTER SYSTEM`, `CLUSTER`, `CREATE`/`DROP DATABASE`,
+ * `CREATE`/`DROP TABLESPACE`, `REINDEX DATABASE`/`SYSTEM`/`SCHEMA`,
+ * `CREATE`/`DROP SUBSCRIPTION`, `DISCARD ALL`,
+ * `ALTER DATABASE … SET TABLESPACE`,
+ * `ALTER SUBSCRIPTION … REFRESH`/`SET`/`ADD`/`DROP PUBLICATION`,
+ * `ALTER TABLE … DETACH PARTITION … CONCURRENTLY`,
+ * `ALTER TABLE`/`INDEX`/`MATERIALIZED VIEW ALL IN TABLESPACE`,
+ * `REFRESH MATERIALIZED VIEW CONCURRENTLY`. Such statements (in
+ * their default forms) fail with
+ * SQLSTATE 25001 inside the transaction
  * created by a migration batch, so `execMigrationBatch` runs them standalone.
- * Port of `isPipelineIncompatible` (`pkg/migration/file.go`, supabase/cli#5156).
+ * Port of `isPipelineIncompatible` (`pkg/migration/file.go`, supabase/cli#5156),
+ * extended with the remaining statement kinds PostgreSQL refuses inside the
+ * explicit transaction the batch runs in since supabase/cli#6347.
+ *
+ * Deliberately loose, keyword-anchored matching — never identifier-aware: a match
+ * inside a comment or literal over-routes the statement standalone, which is always
+ * valid SQL placement and at worst adds a documented flush boundary, while an
+ * under-match is a hard SQLSTATE 25001 failure. Do not tighten these into
+ * identifier parsing.
  */
 export const legacyIsPipelineIncompatible = (sql: string): boolean => {
   const upper = legacyTrimLeadingSqlComments(sql).toUpperCase();
@@ -108,9 +139,20 @@ export const legacyIsPipelineIncompatible = (sql: string): boolean => {
     CREATE_INDEX_CONCURRENTLY_PATTERN.test(upper) ||
     DROP_INDEX_CONCURRENTLY_PATTERN.test(upper) ||
     REINDEX_CONCURRENTLY_PATTERN.test(upper) ||
+    REINDEX_OPTION_CONCURRENTLY_PATTERN.test(upper) ||
     VACUUM_PATTERN.test(upper) ||
     ALTER_SYSTEM_PATTERN.test(upper) ||
-    CLUSTER_PATTERN.test(upper)
+    CLUSTER_PATTERN.test(upper) ||
+    DATABASE_DDL_PATTERN.test(upper) ||
+    TABLESPACE_DDL_PATTERN.test(upper) ||
+    REINDEX_DATABASE_PATTERN.test(upper) ||
+    SUBSCRIPTION_DDL_PATTERN.test(upper) ||
+    DISCARD_ALL_PATTERN.test(upper) ||
+    ALTER_DATABASE_TABLESPACE_PATTERN.test(upper) ||
+    ALTER_SUBSCRIPTION_REFRESH_PATTERN.test(upper) ||
+    DETACH_PARTITION_PATTERN.test(upper) ||
+    ALL_IN_TABLESPACE_PATTERN.test(upper) ||
+    REFRESH_MATERIALIZED_VIEW_CONCURRENTLY_PATTERN.test(upper)
   );
 };
 
@@ -531,8 +573,8 @@ const formattedExecBatchDbError = (error: unknown): LegacyDbExecError | undefine
 
 /**
  * Runs a single migration/seed file's statements (plus the optional history insert).
- * Statements run inside an implicitly transactional extended-protocol batch,
- * except pipeline-incompatible ones
+ * Statements run inside an explicitly transactional extended-protocol batch
+ * (supabase/cli#6347), except pipeline-incompatible ones
  * (`legacyIsPipelineIncompatible` — `CREATE INDEX CONCURRENTLY`, `VACUUM`, …) which
  * cannot run in a transaction block: the open batch is flushed (committed), the
  * statement runs standalone, then batching resumes (supabase/cli#5156). The history
@@ -706,11 +748,14 @@ const execMigrationBatch = <E>(
       // (Go threads the same counter through `ExecBatch`).
       let pending: Array<string> = [];
       let executed = 0;
+      let standaloneRestored = false;
 
       const flushBatch = (final: boolean) =>
         Effect.gen(function* () {
           const recordVersion = final && version.length > 0;
-          const trailingRestore = final ? restoreRole : undefined;
+          // A standalone statement that just restored the role needs no trailing repeat.
+          const trailingRestore =
+            final && !(pending.length === 0 && standaloneRestored) ? restoreRole : undefined;
           if (pending.length === 0 && !recordVersion && trailingRestore === undefined) return;
           const batchStatements = pending;
           const operations: Array<LegacyDbBatchStatement> = [];
@@ -754,6 +799,16 @@ const execMigrationBatch = <E>(
               // `statementIndex` is set by every batch failure the driver raises; a
               // session that omits it can only have failed before the first statement.
               const raw = cause.statementIndex ?? 0;
+              // A wrapper (BEGIN/COMMIT) failure, or one past every operation
+              // (e.g. a deferred constraint), blames no statement: keep the
+              // driver's phase-labeled message without an `At statement` tail.
+              if (cause.transactionPhase !== undefined || raw >= operations.length) {
+                const msg = [legacyErrorMessage(cause)];
+                if (cause.detail !== undefined && cause.detail.length > 0) {
+                  msg.push(cause.detail);
+                }
+                return formattedExecBatchFailure(msg.join("\n"), cause);
+              }
               const globalIndex = base + raw - (injectedBefore[raw] ?? injected);
               return legacyFormatExecBatchError(
                 cause,
@@ -775,9 +830,19 @@ const execMigrationBatch = <E>(
           yield* session
             .exec(statement)
             .pipe(Effect.mapError((cause) => legacyFormatExecBatchError(cause, index, statement)));
+          standaloneRestored = false;
+          if (restoreRole !== undefined && legacyRevertsToLoginRole(statement)) {
+            yield* session
+              .exec(restoreRole)
+              .pipe(
+                Effect.mapError((cause) => legacyFormatExecBatchError(cause, index, restoreRole)),
+              );
+            standaloneRestored = true;
+          }
           executed += 1;
         } else {
           pending.push(statement);
+          standaloneRestored = false;
         }
       }
       yield* flushBatch(true);

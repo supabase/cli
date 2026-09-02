@@ -65,10 +65,18 @@ Same structured `applied` result delivered as an NDJSON `result` event.
   a non-linked target).
 - `--include-all` applies all migrations not found on the remote history table.
 - Pipeline-incompatible statements (`CREATE [UNIQUE] INDEX CONCURRENTLY`,
-  `REINDEX … CONCURRENTLY`, `VACUUM`, `ALTER SYSTEM`, `CLUSTER`) run standalone outside
+  `DROP INDEX CONCURRENTLY`, `REINDEX … CONCURRENTLY`, `VACUUM`, `ALTER SYSTEM`,
+  `CLUSTER`, `CREATE`/`DROP DATABASE`, `CREATE`/`DROP TABLESPACE`,
+  `REINDEX DATABASE`/`SYSTEM`/`SCHEMA`, `CREATE`/`DROP SUBSCRIPTION`, `DISCARD ALL`,
+  `ALTER DATABASE … SET TABLESPACE`,
+  `ALTER SUBSCRIPTION … REFRESH`/`SET`/`ADD`/`DROP PUBLICATION`,
+  `ALTER TABLE … DETACH PARTITION … CONCURRENTLY`,
+  `ALTER TABLE`/`INDEX`/`MATERIALIZED VIEW ALL IN TABLESPACE`, and
+  `REFRESH MATERIALIZED VIEW CONCURRENTLY`) run standalone outside
   the migration's transaction batch — they fail with SQLSTATE 25001 inside one. The
   history insert stays in the final batch, so a mid-file failure leaves earlier,
   already-committed batches applied with **no history row**; a re-run replays the file
-  from the top. Prefer idempotent forms (`… IF NOT EXISTS`) for such statements.
+  from the top. A failed batch's transaction is rolled back (bounded) before its
+  connection is reused. Prefer idempotent forms (`… IF NOT EXISTS`) for such statements.
   Intentional fix for supabase/cli#5139, adopted into TS in PR supabase/cli#5671
   (landed on develop as `b48fad60`).
