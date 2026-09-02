@@ -43,7 +43,7 @@
 export const AI_REVIEW_MARKER = "<!-- supabase-ai-review -->";
 const SUPERSEDED_SUMMARY = "Superseded by a newer AI review";
 /** Hidden marker `isSuperseded` looks for. Kept out of the human-readable
- * `SUPERSEDED_SUMMARY` text and escaped by `sanitizeModelText` so a model
+ * `SUPERSEDED_SUMMARY` text and broken by `sanitizeModelText` so a model
  * can't forge or evade a supersede by echoing the visible text into a
  * `claim`/`summary` field. */
 const SUPERSEDED_MARKER = "<!-- supabase-ai-review:superseded -->";
@@ -564,7 +564,7 @@ export function redactSecretsDeep(value: unknown): unknown {
 
 /**
  * Neutralizes a model-provided string before it's rendered into a
- * `github-actions[bot]` review: redacts secret-shaped substrings first, escapes
+ * `github-actions[bot]` review: redacts secret-shaped substrings first, breaks
  * HTML comment openers (so injected diff content can't forge the hidden
  * `AI_REVIEW_MARKER`/`SUPERSEDED_MARKER` comments), then breaks
  * `@mention`/`#123` syntax with a zero-width HTML comment so GitHub never
@@ -574,7 +574,7 @@ export function redactSecretsDeep(value: unknown): unknown {
  */
 export function sanitizeModelText(text: string): string {
   return redactSecrets(text)
-    .replace(HTML_COMMENT_OPENER_PATTERN, "&lt;!--")
+    .replace(HTML_COMMENT_OPENER_PATTERN, "<\u200B!--")
     .replace(MENTION_PATTERN, "@<!---->")
     .replace(ISSUE_REF_PATTERN, "#<!---->");
 }

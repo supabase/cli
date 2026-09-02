@@ -180,7 +180,7 @@ run 400s on the output schema because of this, drop `pattern`/`minItems` from
   PRs run with a read-only token and no secrets. `issue_comment` and
   `workflow_dispatch` runs always use the default branch's workflow file.
 - **Model text is sanitized before it's rendered.** `sanitizeModelText()`
-  redacts secret-shaped substrings (`redactSecrets()`; see below), escapes
+  redacts secret-shaped substrings (`redactSecrets()`; see below), breaks
   every HTML comment opener (so injected diff content can't forge the hidden
   dedup/supersede markers), and neutralizes `@mentions`/`#issue-refs` in
   every model-provided string (`summary`, `claim`, `evidence`, `suggested_fix`,

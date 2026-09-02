@@ -467,11 +467,11 @@ Deno.serve({
   },
 
   onError: (e) => {
+    console.error(e);
     return getResponse(
       {
         code: STATUS_TEXT[STATUS_CODE.InternalServerError],
         message: "Request failed due to an internal server error",
-        trace: JSON.stringify(e.stack),
       },
       STATUS_CODE.InternalServerError,
     );
