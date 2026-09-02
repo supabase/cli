@@ -1,7 +1,11 @@
 import { Effect, Option, Ref, Schedule } from "effect";
 import { Output } from "../../../../../shared/output/output.service.ts";
 import { emitSuccessTrailer } from "../../../../../shared/cli/success-trailer.ts";
-import { legacyWorkersPushCommand, legacyWorkersStatusCommand } from "../workers.commands.ts";
+import {
+  legacyWorkerNotDeployed,
+  legacyWorkersPushCommand,
+  legacyWorkersStatusCommand,
+} from "../workers.commands.ts";
 import { legacyAqua } from "../../../../shared/legacy-colors.ts";
 import { legacyEmitWorkersPayload, legacyRejectWorkersEnvOutput } from "../workers.output.ts";
 import {
@@ -27,7 +31,6 @@ import { getWorker } from "../../../../../shared/workers/workers-api.ts";
 import {
   WorkerLogsQueryFailedError,
   WorkerLogsRateLimitedError,
-  WorkerNotDeployedError,
   WorkersApiNetworkError,
   WorkersApiUnexpectedStatusError,
 } from "../../../../../shared/workers/workers.errors.ts";
@@ -273,8 +276,9 @@ export const legacyWorkersLogs = Effect.fn("legacy.experimental.workers.logs")(f
         yield* checking.clear();
         if (Option.isNone(deployed)) {
           return yield* Effect.fail(
-            new WorkerNotDeployedError({
-              detail: `Nothing is deployed for "${name}" in project ${projectRef}.`,
+            legacyWorkerNotDeployed({
+              name,
+              projectRef,
               suggestion: `Deploy it with \`${legacyWorkersPushCommand(name, refSuffix)}\`.`,
             }),
           );

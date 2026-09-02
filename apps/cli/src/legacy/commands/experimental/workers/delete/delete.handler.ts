@@ -1,7 +1,11 @@
 import { Effect, Option } from "effect";
 import { Output } from "../../../../../shared/output/output.service.ts";
 import { emitSuccessTrailer } from "../../../../../shared/cli/success-trailer.ts";
-import { legacyWorkersCommand, legacyWorkersPushCommand } from "../workers.commands.ts";
+import {
+  legacyWorkerNotDeployed,
+  legacyWorkersCommand,
+  legacyWorkersPushCommand,
+} from "../workers.commands.ts";
 import { legacyAqua } from "../../../../shared/legacy-colors.ts";
 import { legacyRenderWorkerDetails } from "../workers.format.ts";
 import {
@@ -15,7 +19,6 @@ import { deleteWorker, getWorker } from "../../../../../shared/workers/workers-a
 import {
   WorkerDeleteConfirmationRequiredError,
   WorkerDeleteNotConfirmedError,
-  WorkerNotDeployedError,
   WorkersApiUnexpectedStatusError,
 } from "../../../../../shared/workers/workers.errors.ts";
 import { legacyResolveYes } from "../../../../../shared/legacy/global-flags.ts";
@@ -98,11 +101,9 @@ export const legacyWorkersDelete = Effect.fn("legacy.experimental.workers.delete
       // and wants to hear the worker was not there.
       if (lookup.readable && deployed === undefined && !yes) {
         return yield* Effect.fail(
-          new WorkerNotDeployedError({
-            detail: `Nothing is deployed for "${name}" in project ${projectRef}.`,
-            // `status`'s wording, inherited, pointed the wrong way here: somebody
-            // deleting "api" and hearing "nothing is deployed" does not want to
-            // deploy it — they want to see what *is* deployed.
+          legacyWorkerNotDeployed({
+            name,
+            projectRef,
             suggestion: `See what is deployed with \`${legacyWorkersCommand(`list${refSuffix}`)}\`.`,
           }),
         );

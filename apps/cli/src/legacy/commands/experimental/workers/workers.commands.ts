@@ -1,3 +1,5 @@
+import { WorkerNotDeployedError } from "../../../../shared/workers/workers.errors.ts";
+
 /**
  * How this family is invoked, in one place.
  *
@@ -25,3 +27,21 @@ export const legacyWorkersPushCommand = (name: string, refSuffix = "") =>
 /** The `status` that reports on `name`. */
 export const legacyWorkersStatusCommand = (name: string, refSuffix = "") =>
   legacyWorkersCommand(`status ${name}${refSuffix}`);
+
+/**
+ * "There is no such deployment", with the caller's own way out.
+ *
+ * The detail is the same wherever it is raised; the suggestion is not. `status`
+ * and `logs` point at `push`, but `delete` deliberately does not — somebody
+ * removing "api" and hearing "nothing is deployed" wants to see what *is*
+ * deployed, not to deploy it.
+ */
+export const legacyWorkerNotDeployed = (options: {
+  readonly name: string;
+  readonly projectRef: string;
+  readonly suggestion: string;
+}) =>
+  new WorkerNotDeployedError({
+    detail: `Nothing is deployed for "${options.name}" in project ${options.projectRef}.`,
+    suggestion: options.suggestion,
+  });
