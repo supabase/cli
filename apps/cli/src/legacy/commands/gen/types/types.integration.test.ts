@@ -806,6 +806,28 @@ describe("legacy gen types", () => {
     });
   });
 
+  it.live("rejects a sub-second --query-timeout that would disable the bound", () => {
+    const { layer, telemetry } = setup({
+      args: ["gen", "types", "--db-url", "postgresql://postgres@127.0.0.1:5432/postgres"],
+    });
+
+    return Effect.gen(function* () {
+      const exit = yield* legacyGenTypes(
+        defaultFlags({
+          dbUrl: Option.some("postgresql://postgres@127.0.0.1:5432/postgres"),
+          queryTimeout: "1ms",
+        }),
+      ).pipe(Effect.provide(layer), Effect.exit);
+
+      expect(Exit.isFailure(exit)).toBe(true);
+      if (Exit.isFailure(exit)) {
+        expect(String(exit.cause)).toContain('invalid duration "1ms"');
+        expect(String(exit.cause)).toContain("use 0 to disable, or at least 500ms");
+      }
+      expect(telemetry.flushed).toBe(false);
+    });
+  });
+
   it.live("silently ignores --query-timeout for implicit linked TypeScript generation", () => {
     const { layer, out, api } = setup({
       args: ["gen", "types", "--query-timeout", "20s"],

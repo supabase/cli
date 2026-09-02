@@ -1,81 +1,47 @@
 import { Effect } from "effect";
 
 import type { LegacyPgConnInput } from "../../../shared/legacy-db-connection.service.ts";
+import { legacyParseGoDuration } from "../../../shared/legacy-go-duration.ts";
 import { LegacyInvalidGenTypesDurationError } from "./types.errors.ts";
 
 // The local Docker container id is hoisted to `legacy/shared` so the declarative
 // seam can derive the same `supabase_db_<id>` name when checking the local stack.
 export { localDbContainerId } from "../../../shared/legacy-docker-ids.ts";
 
-const DURATION_UNITS_TO_MILLIS = {
-  ns: 1 / 1_000_000,
-  us: 1 / 1_000,
-  "\u00b5s": 1 / 1_000,
-  "\u03bcs": 1 / 1_000,
-  ms: 1,
-  s: 1_000,
-  m: 60_000,
-  h: 3_600_000,
-} as const;
-
-const DURATION_PART_PATTERN = new RegExp(
-  String.raw`([+-]?(?:\d+\.?\d*|\.\d+))(ns|us|\u00b5s|\u03bcs|ms|s|m|h)`,
-  "g",
-);
-
 export function defaultSchemas(extraSchemas: ReadonlyArray<string> = []) {
   return [...new Set(["public", ...extraSchemas])];
+}
+
+function invalidQueryTimeout(raw: string, detail?: string) {
+  return new LegacyInvalidGenTypesDurationError({
+    message:
+      detail === undefined
+        ? `invalid duration ${JSON.stringify(raw)}`
+        : `invalid duration ${JSON.stringify(raw)}: ${detail}`,
+  });
 }
 
 export function parseQueryTimeoutSeconds(
   raw: string,
 ): Effect.Effect<number, LegacyInvalidGenTypesDurationError> {
-  return Effect.gen(function* () {
-    const input = raw.trim();
-    if (input.length === 0) {
-      return yield* Effect.fail(
-        new LegacyInvalidGenTypesDurationError({
-          message: `invalid duration ${JSON.stringify(raw)}`,
-        }),
-      );
-    }
-
-    let totalMillis = 0;
-    let consumed = 0;
-    DURATION_PART_PATTERN.lastIndex = 0;
-    for (const match of input.matchAll(DURATION_PART_PATTERN)) {
-      const [token, rawNumber, rawUnit] = match;
-      if (
-        token === undefined ||
-        rawNumber === undefined ||
-        rawUnit === undefined ||
-        match.index === undefined
-      ) {
-        continue;
+  return Effect.try({
+    try: () => legacyParseGoDuration(raw),
+    catch: () => invalidQueryTimeout(raw),
+  }).pipe(
+    Effect.flatMap((nanos) => {
+      if (nanos < 0) {
+        return Effect.fail(invalidQueryTimeout(raw));
       }
-      if (match.index !== consumed) {
-        return yield* Effect.fail(
-          new LegacyInvalidGenTypesDurationError({
-            message: `invalid duration ${JSON.stringify(raw)}`,
-          }),
-        );
+      // Whole-second `statement_timeout` / client bound. `0` is the disable
+      // sentinel — a positive duration that rounds into it would silently
+      // drop the user's requested cap.
+      const seconds = Math.round(nanos / 1_000_000_000);
+      if (seconds === 0 && nanos !== 0) {
+        return Effect.fail(invalidQueryTimeout(raw, "use 0 to disable, or at least 500ms"));
       }
-      const amount = Number.parseFloat(rawNumber);
-      const unitMillis = DURATION_UNITS_TO_MILLIS[rawUnit as keyof typeof DURATION_UNITS_TO_MILLIS];
-      totalMillis += amount * unitMillis;
-      consumed += token.length;
-    }
-
-    if (!Number.isFinite(totalMillis) || consumed !== input.length || totalMillis < 0) {
-      return yield* Effect.fail(
-        new LegacyInvalidGenTypesDurationError({
-          message: `invalid duration ${JSON.stringify(raw)}`,
-        }),
-      );
-    }
-
-    return Math.round(totalMillis / 1_000);
-  });
+      return Effect.succeed(seconds);
+    }),
+  );
 }
 
 export function localDbPassword() {

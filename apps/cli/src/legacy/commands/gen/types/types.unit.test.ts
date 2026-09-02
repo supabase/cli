@@ -1,3 +1,6 @@
+import { createRequire } from "node:module";
+import { readFileSync } from "node:fs";
+import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "@effect/vitest";
 import { Effect, Exit } from "effect";
 import {
@@ -7,6 +10,13 @@ import {
   localDbPassword,
   parseQueryTimeoutSeconds,
 } from "./types.shared.ts";
+
+function expectInvalidDuration(exit: Exit.Exit<unknown, unknown>, raw: string) {
+  expect(Exit.isFailure(exit)).toBe(true);
+  if (Exit.isFailure(exit)) {
+    expect(String(exit.cause)).toContain(`invalid duration ${JSON.stringify(raw)}`);
+  }
+}
 
 const BASE_CONN = {
   host: "db.example.com",
@@ -44,52 +54,55 @@ describe("parseQueryTimeoutSeconds", () => {
     }),
   );
 
-  it.effect("rounds sub-second durations to whole seconds", () =>
+  it.effect("accepts Go's bare 0 as disable", () =>
+    Effect.gen(function* () {
+      expect(yield* parseQueryTimeoutSeconds("0")).toBe(0);
+      expect(yield* parseQueryTimeoutSeconds("0s")).toBe(0);
+      expect(yield* parseQueryTimeoutSeconds("0ms")).toBe(0);
+    }),
+  );
+
+  it.effect("rounds 500ms up to a still-applied 1s bound", () =>
     Effect.gen(function* () {
       expect(yield* parseQueryTimeoutSeconds("500ms")).toBe(1);
-      expect(yield* parseQueryTimeoutSeconds("400ms")).toBe(0);
+    }),
+  );
+
+  it.effect("rejects a positive duration that would disable the timeout", () =>
+    Effect.gen(function* () {
+      for (const raw of ["1ms", "400ms", `15${"µ"}s`, `15${"μ"}s`]) {
+        expectInvalidDuration(yield* parseQueryTimeoutSeconds(raw).pipe(Effect.exit), raw);
+      }
     }),
   );
 
   it.effect("rejects an empty duration", () =>
     Effect.gen(function* () {
-      const exit = yield* parseQueryTimeoutSeconds("  ").pipe(Effect.exit);
-      expect(Exit.isFailure(exit)).toBe(true);
+      expectInvalidDuration(yield* parseQueryTimeoutSeconds("  ").pipe(Effect.exit), "  ");
     }),
   );
 
   it.effect("rejects a duration with a leading non-duration prefix", () =>
     Effect.gen(function* () {
-      const exit = yield* parseQueryTimeoutSeconds("x15s").pipe(Effect.exit);
-      expect(Exit.isFailure(exit)).toBe(true);
+      expectInvalidDuration(yield* parseQueryTimeoutSeconds("x15s").pipe(Effect.exit), "x15s");
     }),
   );
 
   it.effect("rejects a duration with trailing junk", () =>
     Effect.gen(function* () {
-      const exit = yield* parseQueryTimeoutSeconds("15s30").pipe(Effect.exit);
-      expect(Exit.isFailure(exit)).toBe(true);
+      expectInvalidDuration(yield* parseQueryTimeoutSeconds("15s30").pipe(Effect.exit), "15s30");
     }),
   );
 
   it.effect("rejects a string with no recognizable units", () =>
     Effect.gen(function* () {
-      const exit = yield* parseQueryTimeoutSeconds("abc").pipe(Effect.exit);
-      expect(Exit.isFailure(exit)).toBe(true);
+      expectInvalidDuration(yield* parseQueryTimeoutSeconds("abc").pipe(Effect.exit), "abc");
     }),
   );
 
   it.effect("rejects a negative duration", () =>
     Effect.gen(function* () {
-      const exit = yield* parseQueryTimeoutSeconds("-5s").pipe(Effect.exit);
-      expect(Exit.isFailure(exit)).toBe(true);
-    }),
-  );
-
-  it.effect("accepts Go-style microsecond duration aliases", () =>
-    Effect.gen(function* () {
-      expect(yield* parseQueryTimeoutSeconds(`15${"µ"}s`)).toBe(0);
-      expect(yield* parseQueryTimeoutSeconds(`15${"μ"}s`)).toBe(0);
+      expectInvalidDuration(yield* parseQueryTimeoutSeconds("-5s").pipe(Effect.exit), "-5s");
     }),
   );
 });
@@ -146,5 +159,27 @@ describe("schema and password helpers", () => {
   it("reads the db password from the environment", () => {
     expect(withEnv("SUPABASE_DB_PASSWORD", undefined, () => localDbPassword())).toBe("postgres");
     expect(withEnv("SUPABASE_DB_PASSWORD", "secret", () => localDbPassword())).toBe("secret");
+  });
+});
+
+describe("oxfmt binding pin", () => {
+  it("stays on the oxfmt version postgrest-typegen resolves", () => {
+    const cliPackageJson = fileURLToPath(new URL("../../../../../package.json", import.meta.url));
+    const cliPkg = JSON.parse(readFileSync(cliPackageJson, "utf8")) as {
+      readonly devDependencies: Readonly<Record<string, string>>;
+    };
+    const typegenReq = createRequire(cliPackageJson);
+    const typegenPkg = typegenReq("@supabase/postgrest-typegen/package.json") as {
+      readonly dependencies: Readonly<Record<string, string>>;
+    };
+    const oxfmtVersion = typegenPkg.dependencies["oxfmt"];
+    expect(oxfmtVersion).toEqual(expect.stringMatching(/^\d+\.\d+\.\d+/));
+    const bindingPins = Object.entries(cliPkg.devDependencies).filter(([name]) =>
+      name.startsWith("@oxfmt/binding-"),
+    );
+    expect(bindingPins.length).toBeGreaterThan(0);
+    for (const [, version] of bindingPins) {
+      expect(version).toBe(oxfmtVersion);
+    }
   });
 });

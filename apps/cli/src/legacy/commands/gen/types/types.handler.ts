@@ -1,6 +1,6 @@
 import { loadCliConfig } from "@supabase/config/internal";
 import { ChildProcessSpawner } from "effect/unstable/process";
-import { Effect, FileSystem, Option, Path, Stdio, Stream } from "effect";
+import { Effect, FileSystem, Option, Path, Stdio } from "effect";
 import { LegacyDnsResolverFlag } from "../../../../shared/legacy/global-flags.ts";
 import { Output } from "../../../../shared/output/output.service.ts";
 import {
@@ -15,7 +15,7 @@ import {
   LegacyProjectRefResolver,
   PROJECT_NOT_LINKED_MESSAGE,
 } from "../../../config/legacy-project-ref.service.ts";
-import { spawnContainerCli } from "../../../shared/legacy-container-cli.ts";
+import { legacyCollectText, spawnContainerCli } from "../../../shared/legacy-container-cli.ts";
 import { legacyIsIPv6ConnectivityErrorCause } from "../../../shared/legacy-connect-errors.ts";
 import { mapLegacyHttpError } from "../../../shared/legacy-http-errors.ts";
 import { LegacyDbConfigResolver } from "../../../shared/legacy-db-config.service.ts";
@@ -123,38 +123,10 @@ const GEN_TYPES_SCAN_SPEC = {
   valueFlagShorthands: new Map([["s", "schema"], ...PERSISTENT_VALUE_FLAG_SHORTHANDS]),
 } as const;
 
-function collectByteStream(stream: Stream.Stream<Uint8Array, unknown>) {
-  const decoder = new TextDecoder();
-  return Stream.runFold(
-    stream,
-    () => "",
-    (text, chunk) => text + decoder.decode(chunk, { stream: true }),
-  ).pipe(Effect.map((text) => text + decoder.decode()));
-}
-
-// Keep these two sets in sync with the value-bearing flags on the root command
-// (shared/legacy/global-flags.ts) and the `gen types` command (types.command.ts).
-// They let `findLegacyPositionalLanguage` skip a flag's value so it is not
-// mistaken for the legacy positional language argument (e.g. `gen types typescript`).
-const LONG_FLAGS_WITH_VALUES = new Set([
-  "db-url",
-  "project-id",
-  "lang",
-  "schema",
-  "swift-access-control",
-  "query-timeout",
-  "profile",
-  "workdir",
-  "network-id",
-  "dns-resolver",
-  "output",
-  "output-format",
-  "log-level",
-  "completions",
-  "agent",
-]);
-
-const SHORT_FLAGS_WITH_VALUES = new Set(["s", "o"]);
+// Positional `typescript` scanning must skip the same value tokens pflag
+// consumes — derive from the scan spec so a new value flag cannot drift.
+const LONG_FLAGS_WITH_VALUES = GEN_TYPES_SCAN_SPEC.valueFlagNames;
+const SHORT_FLAGS_WITH_VALUES = new Set(GEN_TYPES_SCAN_SPEC.valueFlagShorthands.keys());
 
 function findLegacyPositionalLanguage(rawArgs: ReadonlyArray<string>): Option.Option<string> {
   const commandIndex = rawArgs.findIndex(
@@ -409,7 +381,7 @@ export const legacyGenTypes = Effect.fn("legacy.gen.types")(function* (flags: Le
         );
         const [exitCode, stderr] = yield* Effect.all([
           child.exitCode.pipe(Effect.map(Number)),
-          collectByteStream(child.stderr),
+          legacyCollectText(child.stderr),
         ]);
         if (exitCode !== 0) {
           const message = stderr.trim();

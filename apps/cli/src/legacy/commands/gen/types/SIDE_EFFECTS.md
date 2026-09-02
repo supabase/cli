@@ -54,11 +54,13 @@ remote targets and the `--dns-resolver` DoH mode), runs the package's
 introspection queries against `pg_catalog`/`information_schema`, and renders the
 requested language locally. `--query-timeout` is applied as the session's
 `statement_timeout` (the flag wins over a DSN `statement_timeout`) and as a
-client-side bound around `introspect()`; `0` disables both. When the connection
-string carries no explicit `connect_timeout`, a positive `--query-timeout` is
-also used as the connect timeout — `0` leaves the driver's default (10s remote,
-2s local). `--local` connects to the host-mapped database port from
-`supabase/config.toml` (`db.port`).
+client-side bound around `introspect()`; `0` / `0s` / `0ms` disable both. A
+positive duration that rounds below 1s (`1ms`, `400ms`) is rejected rather than
+treated as disable. When the connection string carries no explicit
+`connect_timeout`, a positive `--query-timeout` is also used as the connect
+timeout — `0` leaves the driver's default (10s remote, 2s local). `--local`
+connects to the host-mapped database port from `supabase/config.toml`
+(`db.port`).
 
 For a remote target whose DSN carries no explicit `sslmode`, a raw TCP
 `SSLRequest` probe (the shared pg-delta probe, default 10s timeout) is opened
@@ -171,21 +173,32 @@ go`/`--lang swift`/`--lang python` — the defaults-only claim above holds only 
   intentionally). `--local` still forces v9 compat when the local PostgREST image tag
   contains `v9`.
 - `--query-timeout` sets the maximum timeout for the introspection queries (default
-  15s). It is mutually exclusive with an _explicit_ `--linked`/`--project-id`; on
-  the implicit linked fallback it is accepted, and honored for
-  `--lang go`/`--lang swift`/`--lang python` (silently unused only for the implicit
-  linked TypeScript case, since that path never opens a database connection).
+  15s). Parsed as a Go `time.Duration` (bare `0` is valid and disables). A
+  positive value that rounds to 0 seconds is rejected — use `0` to disable, or
+  at least `500ms`. It is mutually exclusive with an _explicit_ `--linked`/
+  `--project-id`; on the implicit linked fallback it is accepted, and honored
+  for `--lang go`/`--lang swift`/`--lang python` (silently unused only for the
+  implicit linked TypeScript case, since that path never opens a database
+  connection).
 - `--db-url` is parsed by the shared connection resolver (libpq keywords, `PG*` env
   fallbacks, `options=reference=<ref>` pooler tenants, `sslmode`), matching every
   other `--db-url` command. An absent dbname follows libpq (`PGDATABASE`, then the
   connection user) rather than forcing `postgres`.
 - The legacy positional language argument (`supabase gen types typescript`) is still accepted;
   any other positional language requires an explicit `--lang` flag.
-- Go and Python output now lists entities in the canonical sorted order
+- Go output lists entities in the canonical sorted order
   (`sortGeneratorMetadata`) instead of pg-meta's environment-dependent SQL row
-  order; the rendered content is otherwise identical (Swift verified
-  byte-identical — its template sorts internally). TypeScript is formatted by
-  oxfmt (postgrest-typegen ≥ 0.2.0) instead of pg-meta's prettier: content is
-  identical, with minor whitespace differences in how long union types wrap.
+  order; the rendered structs are otherwise the same. Swift is byte-identical
+  (its template sorts internally). Python is not a drop-in of pg-meta: it emits
+  `JsonValue` instead of pydantic `Json`, and imports `NotRequired`/`TypeAlias`
+  from `typing` rather than `typing_extensions`. TypeScript is formatted by
+  oxfmt (postgrest-typegen ≥ 0.2.0) instead of pg-meta's prettier, and native
+  generation differs in shape from both pg-meta and the Management API
+  `--linked`/`--project-id` TypeScript path: empty-arg RPCs are
+  `Args: Record<PropertyKey, never>` rather than `never`; some `Json` fields
+  become `NonNullable<Json>`; generated `path_tokens` is `never` rather than
+  `string[] | null`. The Management API payload also injects
+  `__InternalSupabase.PostgrestVersion`, which native `--local`/`--db-url`
+  generation omits.
 - The linked-project telemetry cache is written only when a project ref is resolved
   (`--linked`/`--project-id`/fallback) — it's skipped when no ref is available.
