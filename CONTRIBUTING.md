@@ -34,8 +34,6 @@ See the [`mise` installation docs](https://mise.jdx.dev/getting-started.html) fo
 
 `mise` needs to hook into your shell so it can inject the right tool versions into your `PATH` as you move between directories. Follow the `mise activate` instructions [in this section](https://mise.jdx.dev/getting-started.html#activate-mise) to add the activation line for your shell to its startup file.
 
-This repo relies on `mise` reading the pnpm version from the `devEngines.packageManager` field in `package.json`, so use at least the `min_version` declared in `mise.toml`.
-
 #### Installing the pinned tool versions
 
 Trust this repo's `mise.toml` once from the repo root so `mise` can read the project setting that enables idiomatic version files:
@@ -66,7 +64,7 @@ Once installed, `mise` activates these versions automatically whenever your shel
 
 #### Without mise
 
-`mise` is not required. If you already have Bun, Node, pnpm, and Go installed and managed some other way, just make sure your versions match the ones pinned in `.bun-version`, `mise.toml`, `package.json`, and `apps/cli-go/go.mod`.
+`mise` is not required. If you already have Bun, Node, pnpm, and Go installed and managed some other way, just make sure your versions match the ones pinned in `.bun-version`, `.node-version`, `mise.toml`, `package.json`, and `apps/cli-go/go.mod`.
 
 ### Install dependencies
 
