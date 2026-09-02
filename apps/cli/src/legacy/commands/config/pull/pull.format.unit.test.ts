@@ -168,6 +168,73 @@ describe("legacyConfigPullSummaryMessage", () => {
     ).toBe("[remotes.staging] not created (declined).");
   });
 
+  test("a block-only plan whose differences were ALL skipped is distinguished from 'no differences' (CLI-2064 review, T2)", () => {
+    const change: ConfigChange = {
+      path: ["auth", "site_url"],
+      class: "update",
+      local: "env(SITE_URL)",
+      remote: "https://staging.example.com",
+      declared: true,
+      envVariables: ["SITE_URL"],
+    };
+    const cs: ConfigChangeSet = {
+      changes: [change],
+      masked: [],
+      unmanaged: [],
+      counts: { update: 1, remote_only: 0, local_only: 0, total: 1 },
+    };
+    const blockOnlyPlan: LegacyConfigPullPlan = {
+      writes: [],
+      skipped: [{ change, reason: "env_reference" }],
+      warnings: [],
+      createdTable: ["remotes", "staging"],
+    };
+    const scope = { present: [], missing: [] };
+    expect(legacyConfigPullSummaryMessage(cs, scope, blockOnlyPlan, NOT_DECLINED)).toBe(
+      "Created [remotes.staging]; 1 difference found but not written (skipped).",
+    );
+    expect(
+      legacyConfigPullSummaryMessage(cs, scope, blockOnlyPlan, { dryRun: true, declined: false }),
+    ).toBe(
+      "[remotes.staging] would be created (dry run); 1 difference found but not written (skipped).",
+    );
+  });
+
+  test("a block-only plan's ALL-skipped wording pluralizes with more than one difference", () => {
+    const changeA: ConfigChange = {
+      path: ["auth", "site_url"],
+      class: "local_only",
+      local: "https://local.example.com",
+      remote: undefined,
+      declared: true,
+    };
+    const changeB: ConfigChange = {
+      path: ["api", "max_rows"],
+      class: "local_only",
+      local: 500,
+      remote: undefined,
+      declared: true,
+    };
+    const cs: ConfigChangeSet = {
+      changes: [changeA, changeB],
+      masked: [],
+      unmanaged: [],
+      counts: { update: 0, remote_only: 0, local_only: 2, total: 2 },
+    };
+    const blockOnlyPlan: LegacyConfigPullPlan = {
+      writes: [],
+      skipped: [
+        { change: changeA, reason: "local_only" },
+        { change: changeB, reason: "local_only" },
+      ],
+      warnings: [],
+      createdTable: ["remotes", "staging"],
+    };
+    expect(
+      legacyConfigPullSummaryMessage(cs, { present: [], missing: [] }, blockOnlyPlan, NOT_DECLINED),
+    ).toBe("Created [remotes.staging]; 2 differences found but not written (skipped).");
+  });
+
   test("a hostile block label cannot forge additional output in the summary message", () => {
     const blockOnlyPlan: LegacyConfigPullPlan = {
       writes: [],

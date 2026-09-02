@@ -175,6 +175,61 @@ b.d = 2
 `);
   });
 
+  // Regression coverage for CLI-2064 review finding: the dotted-sibling search used to accept
+  // ANY key-value declared below the insert's parent, including one living inside a genuine
+  // DESCENDANT table header (not a dotted-key-only parent) — here `host` inside
+  // `[auth.email.smtp]` when inserting under `auth.email`. That produced an enclosing length
+  // longer than the leaf path itself and spliced in an empty, keyless ` = true` line, refused
+  // only by mandatory re-parse verification. The fix requires the candidate's ENCLOSING TABLE to
+  // be a prefix of the insert's parent (an ancestor, reached via dotted-key assignment) — a
+  // descendant table like `[auth.email.smtp]` no longer qualifies, so this falls through to
+  // ordinary missing-table placement instead, creating `[auth.email]` right after the table it
+  // shares the longest path prefix with (TOML permits declaring a super-table after its
+  // sub-table).
+  test("creates the missing parent table instead of a bogus dotted sibling when only a descendant table exists", () => {
+    const source = `[auth.email.smtp]
+host = "smtp.example.com"
+`;
+    const outcome = applyConfigEdits(source, "toml", [
+      { path: ["auth", "email", "enable_confirmations"], value: true },
+    ]);
+    expect(applied(outcome).text).toBe(`[auth.email.smtp]
+host = "smtp.example.com"
+
+[auth.email]
+enable_confirmations = true
+`);
+    expect(applied(outcome).applied).toEqual([
+      {
+        path: ["auth", "email", "enable_confirmations"],
+        action: "inserted",
+        createdTables: [["auth", "email"]],
+      },
+    ]);
+  });
+
+  test("prefers a dotted-sibling insert over a descendant table when the parent has both", () => {
+    const source = `[auth]
+email.something = 1
+
+[auth.email.smtp]
+host = "smtp.example.com"
+`;
+    const outcome = applyConfigEdits(source, "toml", [
+      { path: ["auth", "email", "enable_confirmations"], value: true },
+    ]);
+    expect(applied(outcome).text).toBe(`[auth]
+email.something = 1
+email.enable_confirmations = true
+
+[auth.email.smtp]
+host = "smtp.example.com"
+`);
+    expect(applied(outcome).applied).toEqual([
+      { path: ["auth", "email", "enable_confirmations"], action: "inserted", createdTables: [] },
+    ]);
+  });
+
   test("creates a missing table after the last table sharing the longest path prefix", () => {
     const source = `[auth]
 enabled = true

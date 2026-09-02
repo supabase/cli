@@ -46,7 +46,7 @@ export {
   remoteNameForProjectRef,
   remoteProjectIdEntries,
   writeCliConfigDocumentText,
-  decodeCliConfigDocumentForValidation,
-  type DecodeCliConfigDocumentForValidationOptions,
+  decodeCliConfigDocumentForValidationEffect,
+  type DecodeCliConfigDocumentForValidationEffectOptions,
 } from "./io.ts";
 export { CliConfigWriteError } from "./errors.ts";

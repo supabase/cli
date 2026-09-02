@@ -3,16 +3,17 @@
 Writes the effective configuration of a remote project or branch back into the local
 `supabase/config.toml`/`config.json` — the write side of `supabase config diff` (same target
 resolution, fetch, and classification, `../diff/`). Prompts for confirmation before writing on an
-interactive TTY, unless `--yes` is set; a non-interactive run — no TTY, or `--output-format
-json|stream-json` — never prompts at all and proceeds as though confirmed. Never writes on
+interactive TTY, unless `--yes` is set; `--output-format json|stream-json` never prompts at all and
+returns the confirmation's default value without reading anything. A non-interactive TEXT run (no
+TTY on stdin) still prints the confirmation to stderr and reads a single line from piped stdin,
+honoring an explicit `y`/`n` answer and falling back to the default otherwise. Never writes on
 `--dry-run`, on a declined prompt, or on any error.
 
 ## Files Read
 
 | Path                                              | Format                    | When                                                                                                                                                                                                                                                                                                                               |
 | ------------------------------------------------- | ------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `<workdir>/supabase/config.toml` or `config.json` | TOML/JSON                 | always, before any network call (`loadCliConfig` probes `config.json` first, then `config.toml` — a missing file or parse error aborts, exit 1, naming whichever file actually failed); this first load applies NO `[remotes.*]` overlay, regardless of the eventual target                                                        |
-| same file, raw on-disk text                       | TOML/JSON                 | read ONCE, immediately after the load above and before target resolution — the exact bytes `applyConfigEdits` edits later, and the baseline the pre-write re-read below compares against                                                                                                                                           |
+| `<workdir>/supabase/config.toml` or `config.json` | TOML/JSON                 | always, before any network call (`loadCliConfig` probes `config.json` first, then `config.toml` — a missing file or parse error aborts, exit 1, naming whichever file actually failed); this first load applies NO `[remotes.*]` overlay, regardless of the eventual target. Its own `LoadedCliConfig.rawText` (the exact bytes the loader itself parsed) is taken as this pull's baseline — never re-read separately, so a concurrent edit landing between the parse and a second read can no longer become the accepted baseline out from under the plan |
 | `<workdir>/supabase/config.toml` or `config.json` | TOML/JSON                 | re-loaded WITH the `[remotes.*]` overlay applied, only when the resolved target ref matches an EXISTING block (block reuse selects it as the destination, `remoteNameForProjectRef`) — a brand-new block has nothing to overlay yet, so this second load is skipped in that case                                                   |
 | same file, raw on-disk text (TOCTOU re-read)      | TOML/JSON                 | immediately before writing, once the confirmation prompt has been answered — only reached when at least one change is planned and the run is not `--dry-run`; bytes differing from the earlier read abort the write (`LegacyConfigPullFileChangedError`) instead of overwriting a file that changed while the prompt was on screen |
 | `<workdir>/supabase/.env`, `.env.local`           | dotenv                    | always, to resolve `env(VAR)` references inside `config.toml`                                                                                                                                                                                                                                                                      |
@@ -218,8 +219,17 @@ the -o/--output flag is not supported by config pull; use --output-format json|s
   state a subsequent `loadCliConfig` call can't parse. Before writing, planned writes are expanded
   to a fixpoint (a value that GATES other declared fields — e.g. flipping a disabled SMS provider's
   `enabled` on — pulls its now-required siblings into the SAME write, not just the gate) and the
-  projected result is decoded through the real config schema first; if it still wouldn't load, every
-  write under the offending family/provider table is dropped (`skipped_reason: "would_invalidate"`,
-  plus a `would_invalidate` warning naming the missing field(s) and, when applicable, the exact
-  `env(VAR)` to set) rather than writing an unloadable file. A toggle whose required credentials
-  pull cannot supply is therefore skipped, not written half-configured.
+  projected result is decoded through the real config schema first, resolving `env(VAR)` references
+  EXACTLY as the next `loadCliConfig` call will (process env layered with the project's own
+  `.env`/`.env.local`, never bare `process.env`); if it still wouldn't load, every write under the
+  offending family/provider table is dropped (`skipped_reason: "would_invalidate"`, plus a
+  `would_invalidate` warning naming the missing field(s) and, when applicable, the exact `env(VAR)`
+  to set) rather than writing an unloadable file. A toggle whose required credentials pull cannot
+  supply is therefore skipped, not written half-configured. For a `[remotes.*]` destination, the
+  gate ALSO decodes the write projected onto the overlay-merged document — the same merge a future
+  `config pull`/`config push` targeting that project ref applies before its own checks-enabled
+  decode — since a block can decode fine unmerged (a `[remotes.*]` block's business-rule checks are
+  disabled until it is actually selected) yet still fail once merged. A decode failure that ALREADY
+  existed in the file before this run's own writes were projected onto it is never attributed to the
+  plan, never dropped, and never fails the command — pulling only ever needs to leave the file no
+  worse than it already was.

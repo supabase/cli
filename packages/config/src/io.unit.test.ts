@@ -19,7 +19,7 @@ import {
 import {
   configJsonPath,
   configTomlPath,
-  decodeCliConfigDocumentForValidation,
+  decodeCliConfigDocumentForValidationEffect,
   loadCliConfig,
   loadCliConfigFile,
   remoteNameForProjectRef,
@@ -115,6 +115,38 @@ describe("config io", () => {
 
       const loaded = await runConfigEffect(loadCliConfigFile(path));
       expect(loaded.rawDocument).toEqual({ project_id: "abc123", db: { major_version: 16 } });
+    } finally {
+      await rm(cwd, { recursive: true, force: true });
+    }
+  });
+
+  test("populates rawText with the exact on-disk bytes for a .json config", async () => {
+    const cwd = makeTempProject();
+    const path = await runConfigEffect(configJsonPath(cwd));
+
+    try {
+      await mkdir(join(cwd, "supabase"), { recursive: true });
+      const text = JSON.stringify({ project_id: "abc123", db: { major_version: 16 } });
+      await writeFile(path, text);
+
+      const loaded = await runConfigEffect(loadCliConfigFile(path));
+      expect(loaded.rawText).toBe(text);
+    } finally {
+      await rm(cwd, { recursive: true, force: true });
+    }
+  });
+
+  test("populates rawText with the exact on-disk bytes for a .toml config", async () => {
+    const cwd = makeTempProject();
+    const path = await runConfigEffect(configTomlPath(cwd));
+
+    try {
+      await mkdir(join(cwd, "supabase"), { recursive: true });
+      const text = 'project_id = "abc123"\n\n[db]\nmajor_version = 16\n';
+      await writeFile(path, text);
+
+      const loaded = await runConfigEffect(loadCliConfigFile(path));
+      expect(loaded.rawText).toBe(text);
     } finally {
       await rm(cwd, { recursive: true, force: true });
     }
@@ -2598,12 +2630,12 @@ describe("writeCliConfigDocumentText", () => {
   });
 });
 
-describe("decodeCliConfigDocumentForValidation", () => {
+describe("decodeCliConfigDocumentForValidationEffect", () => {
   test("decodes a valid document successfully", async () => {
-    const config = await Effect.runPromise(
-      decodeCliConfigDocumentForValidation(
+    const config = await runConfigEffect(
+      decodeCliConfigDocumentForValidationEffect(
         { project_id: "abc123" },
-        { env: {}, goViperCompat: true, path: "supabase/config.toml", format: "toml" },
+        { goViperCompat: true, path: "supabase/config.toml", format: "toml" },
       ),
     );
     expect(config.project_id).toBe("abc123");
@@ -2615,12 +2647,11 @@ describe("decodeCliConfigDocumentForValidation", () => {
       auth: { sms: { twilio: { enabled: true, account_sid: "", message_service_sid: "" } } },
     };
     const exit = await Effect.runPromiseExit(
-      decodeCliConfigDocumentForValidation(document, {
-        env: {},
+      decodeCliConfigDocumentForValidationEffect(document, {
         goViperCompat: true,
         path: "supabase/config.toml",
         format: "toml",
-      }),
+      }).pipe(Effect.provide(BunServices.layer)),
     );
     expect(Exit.isFailure(exit)).toBe(true);
     if (!Exit.isFailure(exit)) {
@@ -2634,7 +2665,7 @@ describe("decodeCliConfigDocumentForValidation", () => {
     }
   });
 
-  test("does not apply business-rule checks to a [remotes.*] block (checks disabled)", async () => {
+  test("does not apply business-rule checks to a [remotes.*] block when no remoteName is given (checks disabled)", async () => {
     // The SAME `enabled: true` + empty `account_sid`/`message_service_sid` shape that fails at
     // the root above decodes fine inside a `[remotes.*]` block — `RemotesSchema` decodes with
     // `disableChecks: true` (mirrors Go, which only applies these business rules to the merged
@@ -2648,9 +2679,8 @@ describe("decodeCliConfigDocumentForValidation", () => {
         },
       },
     };
-    const config = await Effect.runPromise(
-      decodeCliConfigDocumentForValidation(document, {
-        env: {},
+    const config = await runConfigEffect(
+      decodeCliConfigDocumentForValidationEffect(document, {
         goViperCompat: true,
         path: "supabase/config.toml",
         format: "toml",
@@ -2659,26 +2689,39 @@ describe("decodeCliConfigDocumentForValidation", () => {
     expect(config.remotes["staging"]).toBeDefined();
   });
 
-  test("resolves env(VAR) references against the given env map before decoding", async () => {
-    const config = await Effect.runPromise(
-      decodeCliConfigDocumentForValidation(
-        { project_id: "abc123", db: { major_version: "env(PG_VERSION)" } },
-        {
-          env: { PG_VERSION: "16" },
-          goViperCompat: true,
-          path: "supabase/config.toml",
-          format: "toml",
-        },
-      ),
-    );
-    expect(config.db.major_version).toBe(16);
+  test("resolves env(VAR) from the project's own .env file, not just the ambient process environment", async () => {
+    // Unlike the deleted pure `decodeCliConfigDocumentForValidation` (which only ever resolved
+    // against a caller-supplied env map, never `.env`/`.env.local`), this Effect variant resolves
+    // `env(VAR)` exactly like `loadCliConfigFile` — including a var that ONLY exists in the
+    // project's own `.env` file, never in `process.env`.
+    const cwd = makeTempProject();
+    const path = await runConfigEffect(configTomlPath(cwd));
+
+    try {
+      await mkdir(join(cwd, "supabase"), { recursive: true });
+      await writeFile(path, 'project_id = "demo"\n');
+      await writeFile(join(cwd, "supabase", ".env"), "SUPABASE_VALIDATION_PG_VERSION_TEST=16\n");
+
+      const config = await runConfigEffect(
+        decodeCliConfigDocumentForValidationEffect(
+          {
+            project_id: "abc123",
+            db: { major_version: "env(SUPABASE_VALIDATION_PG_VERSION_TEST)" },
+          },
+          { goViperCompat: true, path, format: "toml" },
+        ),
+      );
+      expect(config.db.major_version).toBe(16);
+    } finally {
+      await rm(cwd, { recursive: true, force: true });
+    }
   });
 
   test("leaves an unresolved env(VAR) literal in place rather than failing the field's own required-non-empty check", async () => {
-    // A required STRING field spelled as `env(VAR)` with `VAR` unset in the given env map
-    // decodes as the literal `env(VAR)` string, matching `loadCliConfigFile`'s own tolerance for
-    // an unset var (Go parity) — non-empty, so it still satisfies a bare
-    // `!== undefined && !== ""` required-field check even though it never actually resolved.
+    // A required STRING field spelled as `env(VAR)` with `VAR` unset decodes as the literal
+    // `env(VAR)` string, matching `loadCliConfigFile`'s own tolerance for an unset var — non-empty,
+    // so it still satisfies a bare `!== undefined && !== ""` required-field check even though it
+    // never actually resolved.
     const document = {
       project_id: "abc123",
       auth: {
@@ -2692,14 +2735,64 @@ describe("decodeCliConfigDocumentForValidation", () => {
         },
       },
     };
-    const config = await Effect.runPromise(
-      decodeCliConfigDocumentForValidation(document, {
-        env: {},
+    const config = await runConfigEffect(
+      decodeCliConfigDocumentForValidationEffect(document, {
         goViperCompat: true,
         path: "supabase/config.toml",
         format: "toml",
       }),
     );
     expect(config.auth.sms.twilio.auth_token).toBe("env(SUPABASE_AUTH_SMS_TWILIO_AUTH_TOKEN)");
+  });
+
+  test("remoteName merges the [remotes.*] block over the root and validates the merged projection: a rule violation only visible after the merge fails", async () => {
+    const document = {
+      project_id: "abc123",
+      remotes: {
+        staging: {
+          project_id: "stagingrefaaaaaaaaaa",
+          auth: { sms: { twilio: { enabled: true, account_sid: "", message_service_sid: "" } } },
+        },
+      },
+    };
+    const exit = await Effect.runPromiseExit(
+      decodeCliConfigDocumentForValidationEffect(document, {
+        goViperCompat: true,
+        path: "supabase/config.toml",
+        format: "toml",
+        remoteName: "staging",
+      }).pipe(Effect.provide(BunServices.layer)),
+    );
+    expect(Exit.isFailure(exit)).toBe(true);
+    if (!Exit.isFailure(exit)) {
+      return;
+    }
+    const error = Cause.findErrorOption(exit.cause);
+    expect(Option.isSome(error)).toBe(true);
+    if (Option.isSome(error)) {
+      expect((error.value as { _tag: string })._tag).toBe("CliConfigParseError");
+      expect(Schema.isSchemaError((error.value as { cause: unknown }).cause)).toBe(true);
+      expect((error.value as { appliedRemote?: string }).appliedRemote).toBe("staging");
+    }
+  });
+
+  test("the same document passes when remoteName is omitted — the remote's own rule violation is invisible before the merge", async () => {
+    const document = {
+      project_id: "abc123",
+      remotes: {
+        staging: {
+          project_id: "stagingrefaaaaaaaaaa",
+          auth: { sms: { twilio: { enabled: true, account_sid: "", message_service_sid: "" } } },
+        },
+      },
+    };
+    const config = await runConfigEffect(
+      decodeCliConfigDocumentForValidationEffect(document, {
+        goViperCompat: true,
+        path: "supabase/config.toml",
+        format: "toml",
+      }),
+    );
+    expect(config.remotes["staging"]).toBeDefined();
   });
 });

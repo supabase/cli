@@ -23,7 +23,7 @@ import type { ConfigFormat } from "./config-format.ts";
  *    touch, so untouched comments, spacing, and quoting style survive byte-for-byte. An edit
  *    whose value already matches the destination is a no-op: the source is returned
  *    unchanged rather than reformatted.
- * 4. TOML placement (see `resolveTomlPlacement`'s doc comment): an existing `[a.b]` table
+ * 4. TOML placement (see `planTomlSplices`/`placementOffsetForNewTable`'s doc comments): an existing `[a.b]` table
  *    gets the new key appended after its last declared key; a table only reachable through
  *    dotted-key assignment (no explicit header) gets a sibling dotted key next to the
  *    existing one — never a synthesized header over dotted keys; otherwise a brand new
@@ -1020,11 +1020,24 @@ function planTomlSplices(scan: TomlScanResult, leaves: ReadonlyArray<LeafEdit>):
     let dottedSiblingOffset: number | undefined;
     let dottedSiblingEnclosingLength = 0;
     for (const key of keyTokens) {
-      if (key.path.length > parent.length && startsWithPath(key.path, parent)) {
-        dottedSiblingOffset = key.end;
-        dottedSiblingEnclosingLength =
-          key.tableIndex === -1 ? 0 : (scan.headers[key.tableIndex]?.path.length ?? 0);
+      if (key.path.length <= parent.length || !startsWithPath(key.path, parent)) {
+        continue;
       }
+      // A dotted-sibling candidate must be declared under an ANCESTOR of `parent` (a table
+      // header whose path is a prefix of `parent`, root included) via dotted-key assignment —
+      // never a key living inside a genuine DESCENDANT table (e.g. `host` in
+      // `[auth.email.smtp]` when inserting `auth.email.enable_confirmations`). That descendant
+      // case used to match too (its path is also below `parent`), computing an enclosing length
+      // longer than `leaf.path` itself and splicing in an empty, keyless dotted key — refused
+      // only by mandatory re-parse verification, never actually inserted (CLI-2064 review
+      // finding: dotted-sibling search over-matches descendant tables).
+      const enclosingTablePath =
+        key.tableIndex === -1 ? [] : (scan.headers[key.tableIndex]?.path ?? []);
+      if (!startsWithPath(parent, enclosingTablePath)) {
+        continue;
+      }
+      dottedSiblingOffset = key.end;
+      dottedSiblingEnclosingLength = enclosingTablePath.length;
     }
     if (dottedSiblingOffset !== undefined) {
       const relative = leaf.path.slice(dottedSiblingEnclosingLength);

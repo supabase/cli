@@ -8,10 +8,11 @@ import {
 } from "@supabase/config";
 import {
   applyConfigEdits,
-  decodeCliConfigDocumentForValidation,
+  decodeCliConfigDocumentForValidationEffect,
   type ConfigChangeSet,
   type ConfigEdit,
   type ConfigEditRefusalReason,
+  type DecodeCliConfigDocumentForValidationEffectOptions,
   diffProjectConfig,
   loadCliConfig,
   writeCliConfigDocumentText,
@@ -61,6 +62,7 @@ import {
   legacyDropConfigPullUnvalidatableFamilies,
   legacyExpandConfigPullChangeSet,
   legacyPlanConfigPull,
+  type LegacyConfigPullMissingField,
   type LegacyConfigPullPlan,
   type LegacyConfigPullWarning,
   type LegacyConfigPullWouldInvalidateFamily,
@@ -100,17 +102,17 @@ import type { LegacyConfigPullFlags } from "./pull.command.ts";
  * Library seam (plan §1.6, adapted): `legacyConfigPull` (steps 1-4) rejects
  * `-o/--output`, then opens the base config source via
  * `legacyOpenConfigPullSource` — a load with NO `[remotes.*]` overlay,
- * paired with the file's on-disk text read immediately after — BEFORE any
- * network call or target resolution, then resolves the target and delegates
- * to `legacyRunConfigPull` (steps 5-15) — the reusable, target-agnostic
- * body. The plan's own `LegacyConfigPullInput` sketch omits the loaded
- * config/file text; this implementation carries them through explicitly (as
- * a single `LegacyConfigPullSource`) instead of reloading/re-reading inside
- * `legacyRunConfigPull`, since `legacyConfigPull` already holds both by the
- * time it delegates. Pairing them behind one exported constructor — rather
- * than two independently-assembled fields on `LegacyConfigPullInput` — is
- * what makes "loaded without overlay, text read from the same path
- * immediately after" true BY CONSTRUCTION rather than by caller convention
+ * paired with that SAME load's own captured on-disk text (`LoadedCliConfig.rawText`)
+ * — BEFORE any network call or target resolution, then resolves the target
+ * and delegates to `legacyRunConfigPull` (steps 5-15) — the reusable,
+ * target-agnostic body. The plan's own `LegacyConfigPullInput` sketch omits
+ * the loaded config/file text; this implementation carries them through
+ * explicitly (as a single `LegacyConfigPullSource`) instead of
+ * reloading/re-reading inside `legacyRunConfigPull`, since `legacyConfigPull`
+ * already holds both by the time it delegates. Pairing them behind one
+ * exported constructor — rather than two independently-assembled fields on
+ * `LegacyConfigPullInput` — is what makes "loaded without overlay, text taken
+ * from that SAME load" true BY CONSTRUCTION rather than by caller convention
  * (see {@link LegacyConfigPullSource}'s own doc comment).
  */
 
@@ -295,25 +297,6 @@ function legacyConfigPullDefectAndUnpushableCheck(
 }
 
 /**
- * The env map `pull.handler.ts`'s schema-validation gate resolves `env(VAR)`
- * references against — the current process's own environment (filtered to
- * defined string values), matching what a same-process, same-invocation
- * follow-up `loadCliConfig` would see. See
- * `decodeCliConfigDocumentForValidation`'s own doc comment
- * (`@supabase/config/internal`) for why this deliberately does not re-search
- * `.env`/`.env.local`.
- */
-function legacyCurrentProcessEnv(): Readonly<Record<string, string>> {
-  const env: Record<string, string> = {};
-  for (const [key, value] of Object.entries(process.env)) {
-    if (value !== undefined) {
-      env[key] = value;
-    }
-  }
-  return env;
-}
-
-/**
  * Builds the FULL raw, on-disk-shaped document `pull.handler.ts`'s
  * schema-validation gate decodes: `rawDocument` (`remotes` intact,
  * pre-`env()`-interpolation — the same shape `applyConfigEdits` edits) with
@@ -357,47 +340,37 @@ function legacyConfigPullChangeRelativeValue(
 }
 
 /**
- * Extracts the family/family-root info the schema-validation gate needs from
- * a failed {@link decodeCliConfigDocumentForValidation} attempt: every
- * `SchemaIssue` the decode raised, grouped by
- * `legacyConfigPullFamilyRootForPath`'s nearest-enclosing-table rule.
+ * A failed {@link decodeCliConfigDocumentForValidationEffect} attempt's own
+ * `SchemaIssue` paths, converted to `ConfigChange.path`-relative ("change
+ * path") segments — the SAME destination-agnostic namespace `write.change.path`
+ * already lives in, regardless of where a write physically lands in the
+ * document.
  *
- * A `SchemaError`'s reported path is relative to WHICHEVER schema actually
- * failed — `CliConfigSchema` itself (root fields, unprefixed) or
- * `RemotesSchema` (a `label`-prefixed map entry) — never both, and which one
- * is determined entirely by `destination`: a root destination's writes only
- * ever touch the root portion (the remotes map is untouched, and it already
- * decoded successfully at THIS command's own initial load, so it cannot be
- * the source of a NEW failure); a remote destination's writes only ever touch
- * `remotes.<label>`, and root decode always zeroes `remotes` out before
- * running, so it cannot see this destination's writes at all. Un-prefixing a
- * remote destination's path is therefore just dropping its leading `label`
- * segment, never a lookup that could get the wrong block. Not a `SchemaError`
- * at all (should not happen — this function only ever runs against a
- * `CliConfigParseError` this same module's own decode call produced) yields
- * no families, which the caller treats as "could not attribute this failure",
- * stopping the retry loop.
+ * `isLabelPrefixed` picks between the TWO shapes a decode's own issue paths
+ * can take — entirely independent of `destination.kind`, since it is the
+ * PROJECTION (raw vs. `remoteName`-merged; see
+ * {@link legacyValidateConfigPullPlan}) that determines this, not the
+ * destination: the RAW/unmerged projection of a REMOTE destination decodes
+ * the whole `remotes` map through `RemotesSchema` (`disableChecks: true`),
+ * whose own issue paths start with the map's OWN key — the label itself, not
+ * the literal word `remotes` — so dropping that one leading segment recovers
+ * the change-path form; every OTHER case (a root destination's raw
+ * projection, or ANY destination's `remoteName`-merged projection, which
+ * decodes the merged document at the schema ROOT) already reports
+ * change-path-relative paths, nothing to strip. Not a `SchemaError` at all
+ * (should not happen — this only ever runs against a `CliConfigParseError`
+ * this same module's own decode calls produced) yields no paths, which
+ * callers treat as "could not attribute this failure".
  */
-function legacyConfigPullFailingFamilies(
+function legacyConfigPullSchemaIssueChangePaths(
   cause: CliConfigParseError,
-  destination: LegacyConfigPullDestination,
-  validationDocument: Record<string, unknown>,
-  rawDocument: Readonly<Record<string, unknown>>,
-): ReadonlyArray<LegacyConfigPullWouldInvalidateFamily> {
+  isLabelPrefixed: boolean,
+): ReadonlyArray<ReadonlyArray<string>> {
   if (!Schema.isSchemaError(cause.cause)) {
     return [];
   }
-  const relativeValidation = legacyConfigPullChangeRelativeValue(validationDocument, destination);
-  const relativeRaw = legacyConfigPullChangeRelativeValue(rawDocument, destination);
   const { issues } = SchemaIssue.makeFormatterStandardSchemaV1()(cause.cause.issue);
-
-  const families = new Map<
-    string,
-    {
-      root: ReadonlyArray<string>;
-      missingFields: Array<{ path: ReadonlyArray<string>; envVariable?: string }>;
-    }
-  >();
+  const changePaths: Array<ReadonlyArray<string>> = [];
   for (const issue of issues) {
     const rawPath = issue.path?.map((segment) =>
       String(typeof segment === "object" ? segment.key : segment),
@@ -405,24 +378,128 @@ function legacyConfigPullFailingFamilies(
     if (rawPath === undefined || rawPath.length === 0) {
       continue;
     }
-    const changePath = destination.kind === "root" ? rawPath : rawPath.slice(1);
+    const changePath = isLabelPrefixed ? rawPath.slice(1) : rawPath;
     if (changePath.length === 0) {
       continue;
     }
+    changePaths.push(changePath);
+  }
+  return changePaths;
+}
+
+/**
+ * Groups already-resolved change-paths (`legacyConfigPullSchemaIssueChangePaths`,
+ * already filtered by the caller to exclude every PRE-EXISTING failure) by
+ * `legacyConfigPullFamilyRootForPath`'s nearest-enclosing-table rule,
+ * enriching each with its local `env(VAR)` spelling when it has one.
+ * `relativeValidation`/`relativeRaw` are always the DESTINATION-relative view
+ * (`legacyConfigPullChangeRelativeValue`) — the subtree a change-path is
+ * actually relative to on disk — regardless of which projection (raw or
+ * `remoteName`-merged) reported the failure: a merged projection's own issue
+ * paths already arrive change-path-relative (see the sibling function
+ * above), but the SHAPE this function reads off `document` (an enclosing
+ * "family" table, a field's local raw spelling) lives at the same
+ * destination-relative location either way.
+ */
+function legacyConfigPullFamiliesForChangePaths(
+  changePaths: ReadonlyArray<ReadonlyArray<string>>,
+  relativeValidation: unknown,
+  relativeRaw: unknown,
+): ReadonlyArray<LegacyConfigPullWouldInvalidateFamily> {
+  const families = new Map<
+    string,
+    { root: ReadonlyArray<string>; missingFields: Map<string, LegacyConfigPullMissingField> }
+  >();
+  for (const changePath of changePaths) {
     const root = legacyConfigPullFamilyRootForPath(changePath, relativeValidation);
     const key = pathKey(root);
     const envVariable = legacyConfigPullEnvVariableAtPath(changePath, relativeRaw);
-    const field = { path: changePath, ...(envVariable === undefined ? {} : { envVariable }) };
+    const field: LegacyConfigPullMissingField = {
+      path: changePath,
+      ...(envVariable === undefined ? {} : { envVariable }),
+    };
     const existing = families.get(key);
-    families.set(
-      key,
-      existing === undefined
-        ? { root, missingFields: [field] }
-        : { root, missingFields: [...existing.missingFields, field] },
-    );
+    if (existing === undefined) {
+      families.set(key, { root, missingFields: new Map([[pathKey(changePath), field]]) });
+    } else {
+      existing.missingFields.set(pathKey(changePath), field);
+    }
   }
-  return [...families.values()];
+  return [...families.values()].map((family) => ({
+    root: family.root,
+    missingFields: [...family.missingFields.values()],
+  }));
 }
+
+/**
+ * Runs {@link decodeCliConfigDocumentForValidationEffect}, capturing only ITS
+ * OWN `CliConfigParseError` failure into a `Result` the caller inspects (the
+ * schema-validation gate's "did this decode" check) — `CliProjectEnvParseError`/
+ * `PlatformError` (a genuinely malformed `.env`/`.env.local`, or a filesystem
+ * failure reading one) are not decode-ATTRIBUTION failures at all, so they are
+ * left in the returned Effect's error channel to propagate uncaught, exactly
+ * like the SAME two failures already do from the real `loadCliConfig` call
+ * this command's own initial load makes (`makeConfigLoader` only ever catches
+ * `CliConfigParseError`/`DuplicateRemoteProjectIdError` there too).
+ */
+function decodeConfigPullValidation(
+  document: Record<string, unknown>,
+  options: DecodeCliConfigDocumentForValidationEffectOptions,
+) {
+  return decodeCliConfigDocumentForValidationEffect(document, options).pipe(
+    Effect.map(Result.succeed),
+    Effect.catchTag("CliConfigParseError", (cause) => Effect.succeed(Result.fail(cause))),
+  );
+}
+
+/**
+ * The change-path keys ({@link pathKey}) that already fail
+ * {@link decodeCliConfigDocumentForValidationEffect} in `rawDocument` AS IT
+ * SITS ON DISK RIGHT NOW — before this pull's own writes are projected onto
+ * it. {@link legacyValidateConfigPullPlan} excludes every one of these from
+ * the families it forms: the file was already in that state, so pull
+ * attributing the failure to its own plan, dropping a write over it, or
+ * failing the whole command over it would all be wrong — pulling only ever
+ * needs to leave the file NO WORSE than it already was. Runs the SAME two
+ * projections the round-by-round gate below runs (raw, plus
+ * `remoteName`-merged for a remote destination), so a pre-existing failure
+ * that only surfaces once a `[remotes.*]` block is SELECTED is exempted too.
+ */
+const legacyConfigPullPreExistingFailingChangePathKeys = Effect.fnUntraced(function* (input: {
+  readonly rawDocument: Readonly<Record<string, unknown>>;
+  readonly destination: LegacyConfigPullDestination;
+  readonly configPath: string;
+  readonly format: ConfigFormat;
+}) {
+  const keys = new Set<string>();
+  const rawDecoded = yield* decodeConfigPullValidation(input.rawDocument, {
+    path: input.configPath,
+    format: input.format,
+    goViperCompat: true,
+  });
+  if (Result.isFailure(rawDecoded)) {
+    for (const path of legacyConfigPullSchemaIssueChangePaths(
+      rawDecoded.failure,
+      input.destination.kind === "remote",
+    )) {
+      keys.add(pathKey(path));
+    }
+  }
+  if (input.destination.kind === "remote") {
+    const mergedDecoded = yield* decodeConfigPullValidation(input.rawDocument, {
+      path: input.configPath,
+      format: input.format,
+      goViperCompat: true,
+      remoteName: input.destination.label,
+    });
+    if (Result.isFailure(mergedDecoded)) {
+      for (const path of legacyConfigPullSchemaIssueChangePaths(mergedDecoded.failure, false)) {
+        keys.add(pathKey(path));
+      }
+    }
+  }
+  return keys;
+});
 
 /** Cap on how many times {@link legacyValidateConfigPullPlan} drops a family
  * and re-validates — die-free: hitting the cap fails the whole command with a
@@ -437,14 +514,25 @@ const LEGACY_CONFIG_PULL_VALIDATION_ROUND_CAP = 4;
  * 2): pull must NEVER write a file the CLI itself cannot load. Before the
  * TOCTOU re-read/write, decodes the projected FINAL document (every planned
  * write, plus a new block's `project_id`, applied to the raw on-disk
- * document) through the real `CliConfigSchema` decode, with the current
- * process env and `goViperCompat` — the exact semantics the NEXT
- * `loadCliConfig` call will apply. On failure, drops every write under the
- * nearest enclosing family/provider table of each failing path
- * (`legacyDropConfigPullUnvalidatableFamilies`), re-validates, and repeats up
+ * document) through the real `CliConfigSchema` decode, resolving `env(VAR)`
+ * EXACTLY as the next `loadCliConfig` call will (`decodeCliConfigDocumentForValidationEffect`
+ * — process env layered with the project's own `.env`/`.env.local`, not bare
+ * `process.env`). A `[remotes.*]` destination additionally validates the
+ * `remoteName`-merged projection — the same overlay a future `loadCliConfig`
+ * targeting THIS project ref applies before its own checks-enabled decode —
+ * since a written block can pass the raw/unmerged check (remotes decode with
+ * business-rule checks disabled) yet still fail once actually selected.
+ *
+ * A decode failure whose change-path already failed in `rawDocument` BEFORE
+ * this pull touched it ({@link legacyConfigPullPreExistingFailingChangePathKeys})
+ * is PRE-EXISTING: never attributed to this plan, never dropped, never a
+ * reason to fail the command — the file was already in that state, and pull
+ * leaves it no worse. Only a NEW failing change-path drives the drop below:
+ * every write under its nearest enclosing family/provider table
+ * (`legacyDropConfigPullUnvalidatableFamilies`), re-validated, repeating up
  * to {@link LEGACY_CONFIG_PULL_VALIDATION_ROUND_CAP} times; if validation
- * still fails once nothing more can be dropped, fails the whole command
- * (`LegacyConfigPullValidationFailedError`) rather than write.
+ * still fails on a NEW path once nothing more can be dropped, fails the whole
+ * command (`LegacyConfigPullValidationFailedError`) rather than write.
  */
 const legacyValidateConfigPullPlan = Effect.fnUntraced(function* (input: {
   readonly plan: LegacyConfigPullPlan;
@@ -454,6 +542,14 @@ const legacyValidateConfigPullPlan = Effect.fnUntraced(function* (input: {
   readonly configPath: string;
   readonly format: ConfigFormat;
 }) {
+  const destination = input.destination;
+  const preExisting = yield* legacyConfigPullPreExistingFailingChangePathKeys({
+    rawDocument: input.rawDocument,
+    destination,
+    configPath: input.configPath,
+    format: input.format,
+  });
+
   let plan = input.plan;
   for (let round = 0; ; round++) {
     const document = legacyConfigPullValidationDocument(
@@ -462,23 +558,55 @@ const legacyValidateConfigPullPlan = Effect.fnUntraced(function* (input: {
       plan.createdTable,
       input.projectRef,
     );
-    const decoded = yield* decodeCliConfigDocumentForValidation(document, {
-      env: legacyCurrentProcessEnv(),
+    const rawDecoded = yield* decodeConfigPullValidation(document, {
       goViperCompat: true,
       path: input.configPath,
       format: input.format,
-    }).pipe(Effect.result);
-    if (Result.isSuccess(decoded)) {
+    });
+    const mergedDecoded =
+      destination.kind === "remote"
+        ? yield* decodeConfigPullValidation(document, {
+            goViperCompat: true,
+            path: input.configPath,
+            format: input.format,
+            remoteName: destination.label,
+          })
+        : undefined;
+
+    if (
+      Result.isSuccess(rawDecoded) &&
+      (mergedDecoded === undefined || Result.isSuccess(mergedDecoded))
+    ) {
       return plan;
     }
+
+    const rawChangePaths = Result.isFailure(rawDecoded)
+      ? legacyConfigPullSchemaIssueChangePaths(rawDecoded.failure, destination.kind === "remote")
+      : [];
+    const mergedChangePaths =
+      mergedDecoded !== undefined && Result.isFailure(mergedDecoded)
+        ? legacyConfigPullSchemaIssueChangePaths(mergedDecoded.failure, false)
+        : [];
+    const allChangePaths = [...rawChangePaths, ...mergedChangePaths];
+    const newChangePaths = allChangePaths.filter((path) => !preExisting.has(pathKey(path)));
+
+    if (allChangePaths.length > 0 && newChangePaths.length === 0) {
+      // Every attributable failure traces back to a problem that already
+      // existed before this run touched the file — accept the plan as-is
+      // rather than drop or fail over it (see
+      // `legacyConfigPullPreExistingFailingChangePathKeys`'s doc comment).
+      return plan;
+    }
+
     if (round >= LEGACY_CONFIG_PULL_VALIDATION_ROUND_CAP) {
       break;
     }
-    const families = legacyConfigPullFailingFamilies(
-      decoded.failure,
-      input.destination,
-      document,
-      input.rawDocument,
+    const relativeValidation = legacyConfigPullChangeRelativeValue(document, destination);
+    const relativeRaw = legacyConfigPullChangeRelativeValue(input.rawDocument, destination);
+    const families = legacyConfigPullFamiliesForChangePaths(
+      newChangePaths,
+      relativeValidation,
+      relativeRaw,
     );
     const next = legacyDropConfigPullUnvalidatableFamilies(plan, families);
     if (next.writes.length === plan.writes.length) {
@@ -551,30 +679,34 @@ export interface LegacyConfigPullSource {
  * Opens `config pull`'s base config source (`legacyConfigPull` steps 2-3):
  * loads the local config with NO `[remotes.*]` overlay applied — the overlay
  * is keyed by the RESOLVED target ref, applied later inside
- * `legacyRunConfigPull` step 6 only when block reuse selects it — then reads
- * the file's exact on-disk text immediately after. The SAME bytes
- * `applyConfigEdits` edits later (step 13), and the baseline
- * `legacyRunConfigPull` re-reads before writing to detect a concurrent edit
- * (step 12).
+ * `legacyRunConfigPull` step 6 only when block reuse selects it — then takes
+ * `loaded.rawText` (`@supabase/config`'s own capture of the exact bytes it
+ * parsed) as this pull's baseline text, rather than reading the file a
+ * second time: a separate read here would reopen a window for a concurrent
+ * edit to land BETWEEN the parsed load and that read, silently becoming the
+ * accepted baseline while the plan below is computed against the (now
+ * stale) parsed values. The SAME bytes `applyConfigEdits` edits later
+ * (step 13), and the baseline `legacyRunConfigPull` re-reads before writing
+ * to detect a concurrent edit (step 12).
  */
 export const legacyOpenConfigPullSource = Effect.fnUntraced(function* () {
   const cliSettings = yield* LegacyCliSettings;
-  const fs = yield* FileSystem.FileSystem;
   const { loadLocalConfig, relativeConfigPath } = makeConfigLoader(cliSettings);
 
   const loaded = yield* loadLocalConfig(undefined);
 
-  const text = yield* fs.readFileString(loaded.path).pipe(
-    Effect.catchTag(
-      "PlatformError",
-      (cause) =>
-        new LegacyConfigPullLoadConfigError({
-          message: `failed to read ${relativeConfigPath(loaded.path)}: ${cause.message}`,
-        }),
-    ),
-  );
+  if (loaded.rawText === undefined) {
+    // The loader contract guarantees `rawText` for any file it actually
+    // parsed off disk — reaching this would mean that contract broke. Fail
+    // the same way a genuine concurrent edit does, rather than falling back
+    // to a second read that would reopen the exact race this baseline
+    // exists to close.
+    return yield* new LegacyConfigPullFileChangedError({
+      message: `${relativeConfigPath(loaded.path)} could not be read: the config loader returned no on-disk text. Rerun the command.`,
+    });
+  }
 
-  return { loaded, text };
+  return { loaded, text: loaded.rawText };
 });
 
 /**

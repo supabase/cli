@@ -337,8 +337,14 @@ function isWritableChange(change: ConfigChange): boolean {
 function comparePaths(a: ReadonlyArray<string>, b: ReadonlyArray<string>): number {
   const length = Math.min(a.length, b.length);
   for (let index = 0; index < length; index++) {
-    const left = a[index] as string;
-    const right = b[index] as string;
+    const left = a[index];
+    const right = b[index];
+    // Both are always defined here (`index < length`, `length` the shorter
+    // array's own bound) — the `undefined` checks satisfy indexed-access
+    // typing without an `as string` cast, never actually reachable.
+    if (left === undefined || right === undefined) {
+      continue;
+    }
     if (left !== right) {
       return left < right ? -1 : 1;
     }
@@ -503,16 +509,32 @@ export interface LegacyConfigPullWouldInvalidateFamily {
   readonly missingFields: ReadonlyArray<LegacyConfigPullMissingField>;
 }
 
+/** Whether `path` falls at or under `root` — the "belongs to this family"
+ * test shared by the write-drop and warning-drop passes below. Both sides of
+ * the comparison live in the SAME `ConfigChange.path` namespace (never
+ * `remotes.<label>`-prefixed, regardless of destination — see
+ * `pull.handler.ts`'s own family-root computation), so no destination-aware
+ * prefixing is needed here either. */
+function isUnderFamilyRoot(root: ReadonlyArray<string>, path: ReadonlyArray<string>): boolean {
+  return root.length <= path.length && root.every((segment, index) => segment === path[index]);
+}
+
 /**
  * `pull.handler.ts`'s schema-validation gate's write-side counterpart: given
  * the families it found still missing/invalid after projecting `plan`'s
  * writes, moves every write whose path falls under one of those families'
- * roots from `writes` to `skipped` (reason `would_invalidate`), and appends
- * one `would_invalidate` warning per family that actually had a write to drop
- * (a family the caller flagged but which planned no write for — nothing left
- * to reduce — contributes no warning; the caller treats that as "could not
- * make progress" and stops retrying instead of looping on a no-op drop).
- * Pure: the caller owns re-validating the reduced plan.
+ * roots from `writes` to `skipped` (reason `would_invalidate`), drops every
+ * OTHER path-scoped warning (`dual_scope`/`duplicates_root`/`array_drift`
+ * from this module, `unpushable` from `pull.handler.ts`'s own convergence
+ * check) that falls under the same root — a warning surviving for a write
+ * that was just moved back to `skipped` would describe something that was
+ * never actually written (`unpushable`'s own wording literally says "was
+ * written here") — and only THEN appends one `would_invalidate` warning per
+ * family that actually had a write to drop (a family the caller flagged but
+ * which planned no write for — nothing left to reduce — contributes no
+ * warning; the caller treats that as "could not make progress" and stops
+ * retrying instead of looping on a no-op drop). Pure: the caller owns
+ * re-validating the reduced plan.
  */
 export function legacyDropConfigPullUnvalidatableFamilies(
   plan: LegacyConfigPullPlan,
@@ -524,10 +546,8 @@ export function legacyDropConfigPullUnvalidatableFamilies(
   const droppedByRoot = new Map<string, Array<LegacyConfigPullPlannedWrite>>();
   const writes: Array<LegacyConfigPullPlannedWrite> = [];
   for (const write of plan.writes) {
-    const family = families.find(
-      (candidate) =>
-        candidate.root.length <= write.change.path.length &&
-        candidate.root.every((segment, index) => segment === write.change.path[index]),
+    const family = families.find((candidate) =>
+      isUnderFamilyRoot(candidate.root, write.change.path),
     );
     if (family === undefined) {
       writes.push(write);
@@ -550,15 +570,20 @@ export function legacyDropConfigPullUnvalidatableFamilies(
       .flat()
       .map((write) => ({ change: write.change, reason: "would_invalidate" as const })),
   ];
+  const droppedFamilies = families.filter((family) => droppedByRoot.has(pathKey(family.root)));
+  const survivingWarnings = plan.warnings.filter((warning) => {
+    const path = warning.path;
+    return (
+      path === undefined || !droppedFamilies.some((family) => isUnderFamilyRoot(family.root, path))
+    );
+  });
   const warnings = [
-    ...plan.warnings,
-    ...families
-      .filter((family) => droppedByRoot.has(pathKey(family.root)))
-      .map((family) => ({
-        kind: "would_invalidate" as const,
-        path: family.root,
-        missingFields: family.missingFields,
-      })),
+    ...survivingWarnings,
+    ...droppedFamilies.map((family) => ({
+      kind: "would_invalidate" as const,
+      path: family.root,
+      missingFields: family.missingFields,
+    })),
   ];
   return { ...plan, writes, skipped, warnings };
 }

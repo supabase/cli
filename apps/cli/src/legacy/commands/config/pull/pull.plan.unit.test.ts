@@ -559,6 +559,53 @@ describe("legacyDropConfigPullUnvalidatableFamilies", () => {
     ]);
   });
 
+  test("a dropped family takes its dual_scope and unpushable warnings with it; unrelated warnings survive (review T2)", () => {
+    const enabledWrite = {
+      change: change({ path: ["auth", "sms", "twilio", "enabled"], class: "update" }),
+      documentPath: ["auth", "sms", "twilio", "enabled"],
+      value: true,
+    };
+    const unrelatedWrite = {
+      change: change({ path: ["api", "max_rows"], class: "update" }),
+      documentPath: ["api", "max_rows"],
+      value: 1000,
+    };
+    const plan: LegacyConfigPullPlan = {
+      writes: [enabledWrite, unrelatedWrite],
+      skipped: [],
+      warnings: [
+        { kind: "dual_scope", path: ["auth", "sms", "twilio", "enabled"] },
+        { kind: "unpushable", path: ["auth", "sms", "twilio", "enabled"] },
+        { kind: "duplicates_root", path: ["api", "max_rows"] },
+        { kind: "uncommitted_changes" },
+      ],
+      createdTable: undefined,
+    };
+
+    const result = legacyDropConfigPullUnvalidatableFamilies(plan, [
+      {
+        root: ["auth", "sms", "twilio"],
+        missingFields: [{ path: ["auth", "sms", "twilio", "message_service_sid"] }],
+      },
+    ]);
+
+    expect(result.writes).toEqual([unrelatedWrite]);
+    // The dropped family's own `dual_scope`/`unpushable` warnings are gone —
+    // both described a write that no longer landed. The unrelated
+    // `duplicates_root` warning (a DIFFERENT path) and the path-less
+    // `uncommitted_changes` warning both survive untouched, and the new
+    // `would_invalidate` warning is appended last.
+    expect(result.warnings).toEqual([
+      { kind: "duplicates_root", path: ["api", "max_rows"] },
+      { kind: "uncommitted_changes" },
+      {
+        kind: "would_invalidate",
+        path: ["auth", "sms", "twilio"],
+        missingFields: [{ path: ["auth", "sms", "twilio", "message_service_sid"] }],
+      },
+    ]);
+  });
+
   test("a family with no matching write contributes no warning and drops nothing", () => {
     const unrelatedWrite = {
       change: change({ path: ["api", "max_rows"], class: "update" }),

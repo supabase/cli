@@ -36,7 +36,12 @@ import {
   LegacyYesFlag,
 } from "../../../../shared/legacy/global-flags.ts";
 import { Output } from "../../../../shared/output/output.service.ts";
-import { legacyConfigPull, legacyOpenConfigPullSource } from "./pull.handler.ts";
+import {
+  legacyConfigPull,
+  legacyOpenConfigPullSource,
+  legacyRunConfigPull,
+  type LegacyConfigPullSource,
+} from "./pull.handler.ts";
 import type { LegacyConfigPullFlags } from "./pull.command.ts";
 
 /**
@@ -87,11 +92,12 @@ function writeProjectEnv(dotenv: string): void {
 
 /** Save/restore a `process.env` var around an Effect — mirrors
  * `push.integration.test.ts`'s `withDotenvPrivateKey` pattern. Set directly
- * on `process.env` (not `supabase/.env`) so BOTH the initial load (which
- * merges `.env` over `process.env`) and `pull.handler.ts`'s
- * schema-validation gate (which reads bare `process.env` only, per
- * `decodeCliConfigDocumentForValidation`'s own doc comment) see the same
- * value. */
+ * on `process.env` (not `supabase/.env`) — `pull.handler.ts`'s
+ * schema-validation gate resolves `env(VAR)` EXACTLY like the loader
+ * (`decodeCliConfigDocumentForValidationEffect`, `@supabase/config/internal`:
+ * process env layered with the project's own `.env`/`.env.local`), so either
+ * source works for both the initial load and the gate alike; a bare
+ * `process.env` var is the simplest one to set/restore from a test. */
 function withProcessEnv<A, E, R>(
   name: string,
   value: string | undefined,
@@ -2287,6 +2293,156 @@ describe("legacy config pull integration", () => {
         expect(data["warnings"]).toEqual(
           expect.arrayContaining([{ kind: "dual_scope", path: ["auth", "captcha", "provider"] }]),
         );
+      }).pipe(Effect.provide(layer));
+    },
+  );
+
+  // -------------------------------------------------------------------------
+  // Review findings (T0/T1): the schema-validation gate resolves env() EXACTLY
+  // like the loader (process env + project dotenv), a remote destination
+  // validates the overlay-merged projection too, and a decode failure that
+  // already existed BEFORE this pull's own writes is never attributed to the
+  // plan.
+  // -------------------------------------------------------------------------
+
+  it.live(
+    "a numeric env() value resolvable only via the project's supabase/.env validates and writes normally, nothing dropped (review T0)",
+    () => {
+      // Before the fix, the validation gate resolved `env(...)` against bare
+      // `process.env` only — `PULL_TEST_NUMERIC_ENV` here resolves ONLY
+      // through the project's own `supabase/.env` (never set on
+      // `process.env`), so the gate used to see the literal string
+      // `"env(PULL_TEST_NUMERIC_ENV)"` where `max_rows` expects a number,
+      // fail to decode, and drop the WHOLE `[api]` family (no `enabled`
+      // sibling to narrow the drop to) — taking the sibling `schemas` write
+      // down with it even though nothing about ITS OWN value was ever
+      // unresolvable.
+      const before =
+        'project_id = "test"\n[api]\nmax_rows = "env(PULL_TEST_NUMERIC_ENV)"\nschemas = ["public"]\n';
+      const { layer, out } = setup({
+        toml: before,
+        dotenv: "PULL_TEST_NUMERIC_ENV=1000\n",
+        yes: true,
+      });
+      return Effect.gen(function* () {
+        yield* legacyConfigPull(noFlags);
+        const after = readFileSync(configPath(), "utf8");
+        expect(after).toContain('max_rows = "env(PULL_TEST_NUMERIC_ENV)"');
+        expect(after).toContain("graphql_public");
+        expect(out.stdoutText).not.toContain("would_invalidate");
+        expect(out.stdoutText).not.toContain("requires values pull cannot write");
+        expect(out.stdoutText).toContain("1 change written.");
+      }).pipe(Effect.provide(layer));
+    },
+  );
+
+  it.live(
+    "a pre-write decode failure at a path unrelated to the plan is exempted: pull still writes its planned change and exits 0 (review T0)",
+    () => {
+      // `legacyRunConfigPull` (exported precisely to be reusable independently
+      // of `legacyConfigPull`'s own load step) is called directly here with a
+      // hand-augmented `source.loaded.rawDocument`/`.text`: the REAL loader
+      // itself unconditionally aborts the whole command on a root-level
+      // business-rule violation (verified directly against the real
+      // loader — a broken `[auth.sms.twilio]` at the config root is NEVER
+      // reachable past `legacyOpenConfigPullSource`'s own initial load, by
+      // construction), so the only way to exercise the validation gate's OWN
+      // pre-existing exemption for a failure the rest of the command's load
+      // path would already have caught is to construct the source directly,
+      // the way `legacyConfigPull` already does before delegating.
+      const before = 'project_id = "test"\n[api]\nmax_rows = 500\n';
+      const { layer, out } = setup({ toml: before, yes: true });
+      return Effect.gen(function* () {
+        const source = yield* legacyOpenConfigPullSource();
+        const brokenRawDocument = {
+          ...source.loaded.rawDocument,
+          auth: { sms: { twilio: { enabled: true, account_sid: "", message_service_sid: "" } } },
+        };
+        const brokenText =
+          `${source.text}[auth.sms.twilio]\n` +
+          "enabled = true\n" +
+          'account_sid = ""\n' +
+          'message_service_sid = ""\n';
+        writeFileSync(configPath(), brokenText);
+        const brokenSource: LegacyConfigPullSource = {
+          loaded: { ...source.loaded, rawDocument: brokenRawDocument },
+          text: brokenText,
+        };
+        yield* legacyRunConfigPull({
+          target: { ref: LEGACY_VALID_REF, branch: undefined },
+          remoteLabel: undefined,
+          dryRun: false,
+          force: false,
+          yes: true,
+          source: brokenSource,
+        });
+        const after = readFileSync(configPath(), "utf8");
+        expect(after).toContain("max_rows = 1000");
+        // The pre-existing, unrelated twilio state is left exactly as it
+        // was — pull never attributes it to this run's own plan.
+        expect(after).toContain("[auth.sms.twilio]");
+        expect(after).toContain("enabled = true");
+        expect(out.stdoutText).not.toContain("would_invalidate");
+        expect(out.stdoutText).toContain("1 change written.");
+      }).pipe(Effect.provide(layer));
+    },
+  );
+
+  it.live(
+    "remote-destination pull: a written value that only violates a business rule once the block is SELECTED gets its family dropped, even though the raw/unmerged document decodes fine on its own (review T1)",
+    () => {
+      const MERGE_CHECK_REF = "eeeeeeeeeeeeeeeeeeee";
+      const before = [
+        'project_id = "test"',
+        "[remotes.staging]",
+        `project_id = "${MERGE_CHECK_REF}"`,
+        "[remotes.staging.auth.sms.twilio]",
+        "enabled = false",
+        'account_sid = ""',
+        'message_service_sid = ""',
+        'auth_token = "env(PULL_TEST_MERGE_TWILIO_AUTH_TOKEN)"',
+        "",
+      ].join("\n");
+      const { layer, out } = setup({
+        toml: before,
+        yes: true,
+        v2: {
+          status: 200,
+          body: v2Response({
+            ref: MERGE_CHECK_REF,
+            attributes: (attributes) => ({
+              ...attributes,
+              auth: {
+                ...(attributes["auth"] as Record<string, unknown>),
+                sms_provider: "twilio",
+                sms_twilio_account_sid: "ACreal0000000000000000000000000",
+                // `sms_twilio_message_service_sid` is deliberately absent —
+                // the remote never reports it, so it can never be written;
+                // writing `enabled`/`account_sid` alone into
+                // `[remotes.staging.*]` decodes fine RAW (remotes decode
+                // with business-rule checks disabled) but fails once this
+                // block is SELECTED and merged over root — exactly the
+                // projection a future `config pull`/`config push` targeting
+                // this project ref would use.
+              },
+            }),
+          }),
+        },
+      });
+      return Effect.gen(function* () {
+        yield* legacyConfigPull({ ...noFlags, projectRef: Option.some(MERGE_CHECK_REF) });
+        const after = readFileSync(configPath(), "utf8");
+        expect(after).toContain("[remotes.staging.auth.sms.twilio]");
+        expect(after).toContain("enabled = false");
+        expect(after).not.toContain("ACreal0000000000000000000000000");
+        expect(out.stdoutText).toContain(
+          "auth.sms.twilio.enabled [update, skip: requires values pull cannot write]",
+        );
+        expect(out.stdoutText).toContain(
+          "auth.sms.twilio.account_sid [update, skip: requires values pull cannot write]",
+        );
+        expect(out.stdoutText).toContain("auth.sms.twilio was not changed: it requires");
+        expect(out.stdoutText).toContain("auth.sms.twilio.message_service_sid");
       }).pipe(Effect.provide(layer));
     },
   );

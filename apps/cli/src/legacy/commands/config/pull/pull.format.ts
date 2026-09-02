@@ -311,7 +311,14 @@ export function legacyRenderConfigPullText(
  * branch target, CLI-2064's bug B) gets its own wording, distinguishable both
  * from "nothing to write" (a block WAS created, or would be) and from a
  * value-writing run (`counts.written` stays 0 either way, see
- * `legacyConfigPullPayload`).
+ * `legacyConfigPullPayload`) — and, within that wording, "no config
+ * differences to apply" (`counts.total === 0`: there was truly nothing to
+ * compare) is itself distinct from every difference having been SKIPPED
+ * (`counts.total > 0` but every one landed in `plan.skipped` — env()
+ * references, local-only fields, a dropped unvalidatable family, …): the
+ * block still only ever got created for its `project_id`, but claiming "no
+ * differences" would be false when differences existed and were simply never
+ * written.
  *
  * `opts.withCaveats` (default `true`) governs whether the masked/unmanaged/
  * not-returned `Note:`s are appended: the machine-mode `message` keeps them
@@ -331,12 +338,16 @@ export function legacyConfigPullSummaryMessage(
   let base: string;
   if (plan.createdTable !== undefined && plan.writes.length === 0) {
     const scopeLabel = `[remotes.${legacyConfigPullCreatedBlockLabel(plan.createdTable)}]`;
+    const applyNote =
+      total === 0
+        ? "no config differences to apply."
+        : `${legacyConfigPlural(total, "difference", "differences")} found but not written (skipped).`;
     if (outcome.dryRun) {
-      base = `${scopeLabel} would be created (dry run); no config differences to apply.`;
+      base = `${scopeLabel} would be created (dry run); ${applyNote}`;
     } else if (outcome.declined) {
       base = `${scopeLabel} not created (declined).`;
     } else {
-      base = `Created ${scopeLabel}; no config differences to apply.`;
+      base = `Created ${scopeLabel}; ${applyNote}`;
     }
   } else if (total === 0) {
     base = "No config differences found.";
