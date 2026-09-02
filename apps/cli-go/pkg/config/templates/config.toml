@@ -410,5 +410,7 @@ s3_secret_key = "env(S3_SECRET_KEY)"
 enabled = {{ .Experimental.PgDeltaInitEnabled }}
 # Directory under `supabase/` where declarative files are written.
 # declarative_schema_path = "./schemas"
-# JSON string passed through to pg-delta SQL formatting.
+# JSON string passed through to pg-delta SQL formatting. When omitted, SQL is
+# formatted with uppercase keywords, indent 2, max width 180, trailing commas,
+# and column/key alignment. Set to "null" to emit raw, unformatted SQL.
 # format_options = "{\"keywordCase\":\"upper\",\"indent\":2,\"maxWidth\":180,\"commaStyle\":\"trailing\"}"
