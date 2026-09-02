@@ -1,26 +1,14 @@
 /**
- * Native TypeScript port of Go's shadow-database provisioning primitives
- * (`apps/cli-go/internal/db/diff/diff.go:138-209`) — CLI-1956. These are the low-level
- * building blocks; `legacyPrepareRawShadow` below (create -> health-wait, no platform
- * baseline) is one of the two composed shapes `db diff`/`db pull` actually call (Go's
- * `PrepareRawShadow`, `apps/cli-go/internal/db/diff/shadow.go:93-116`) — it has zero
- * pg-delta/declarative dependency, so it lives here rather than in
- * `commands/db/shared/legacy-shadow-source.ts`, which owns the OTHER composed shape
- * (`legacyPrepareShadowSource`, Go's `PrepareShadowSource`) precisely because that one also
- * needs the `--target-local` declarative-schema branch and pg-delta, which this module —
- * deliberately kept dependency-light, like every other `shared/db-bootstrap/` module — does
- * not.
+ * The shadow-database provisioning primitives: create, health-wait, platform-baseline setup,
+ * and migrations replay. These are the low-level, dependency-light building blocks — the
+ * composed diff/pull shape (`legacyPrepareShadowSource`, with its migra declarative-schema
+ * branch) lives in `commands/db/shared/legacy-shadow-source.ts` instead, so this module and
+ * the rest of `shared/db-bootstrap/` never pull in the diff engines.
  *
- * Exposed separately (not fused into one monolithic function) because the composed shapes
- * Go itself has are NOT all the same: `migration squash` (a future port, CLI-1969) only ever
- * needs create -> health-wait -> connect -> `SetupDatabase` (no `CREATE_TEMPLATE`, no
- * migrations at that point — `apps/cli-go/internal/migration/squash/squash.go:83-96`,
- * deleted in CLI-1970; last present at commit 7b469f5b3), while
- * `db diff --use-pgadmin` (CLI-1968, realized: see `diff.handler.ts`'s pgadmin branch) needs
- * create -> health-wait -> `MigrateShadowDatabase` (`apps/cli-go/internal/db/diff/
- * pgadmin.go:70-78`). Exposing every primitive individually lets each future caller compose
- * exactly the subset it needs, matching Go's own module shape 1:1 rather than forcing every
- * caller through one shape only `db diff`/`db pull` happen to need.
+ * Exposed as individual primitives rather than one fused function because the callers compose
+ * different subsets: `migration squash` needs create -> health-wait -> connect -> setup (no
+ * `CREATE_TEMPLATE`, no migrations at that point), while `db diff --use-pgadmin` (see
+ * `diff.handler.ts`'s pgadmin branch) needs create -> health-wait -> migrations replay.
  *
  * A note on the shadow container's own addressing, since it's the one genuinely surprising
  * empirical fact this whole module depends on: the shadow container is created with NO name
@@ -377,10 +365,9 @@ export interface LegacyShadowSourceResult {
   /**
    * When set, replaces the diff target with a second database on the SAME shadow container
    * (`contrib_regression`, cloned from `postgres` by `CREATE_TEMPLATE` during shadow setup —
-   * see {@link legacySetupShadowConn}) with declarative schemas applied. Mirrors Go's
-   * local-target declarative branch, where the user's local DB is not diffed. Only ever set
-   * by `legacy-shadow-source.ts`'s `legacyPrepareShadowSource` — {@link legacyPrepareRawShadow}
-   * below always leaves this `undefined`.
+   * see {@link legacySetupShadowConn}) with declarative schemas applied, so the user's local
+   * DB itself is never diffed directly in that branch. Only ever set by
+   * `legacy-shadow-source.ts`'s `legacyPrepareShadowSource`.
    */
   readonly targetUrlOverride: string | undefined;
 }
@@ -400,8 +387,8 @@ export interface LegacyShadowConnectionInput extends LegacyCreateShadowDatabaseI
  * {@link legacySetupDatabase}/`legacyMigrateShadowDatabase`/`legacySetupShadowDatabase` need —
  * the full shape {@link legacyShadowRunInputFromLocalContainerInputs} returns. Named here
  * (CLI-1969) rather than as an `Omit<...>` of a diff/pull-specific type, so `migration squash`
- * — which has none of the diff/pull-specific fields (`targetLocal`/`usePgDelta`/`schemaPaths`/
- * `pgDelta`/`ctx`) — can consume the promoted function's return value directly, with no `as`
+ * — which has none of the diff/pull-specific fields (`targetLocal`/`schemaPaths`/
+ * `migrationMode`/…) — can consume the promoted function's return value directly, with no `as`
  * cast. `legacy-shadow-source.ts`'s `LegacyPrepareShadowSourceInput<E>` extends this with
  * those extra fields instead of duplicating the `setup` field itself.
  */
@@ -435,9 +422,9 @@ export function legacyMemoizeSuccess<A, E>(effect: Effect.Effect<A, E>): Effect.
  * Adapts {@link LegacyLocalDbContainerInputs} (`local-container-inputs.ts`, the SAME
  * config/image/JWKS resolution prelude `db start`/`db reset` share) plus the caller's own
  * already-loaded `config.toml` slice into {@link LegacyShadowSetupInput} — every field
- * `legacyPrepareShadowSource`/{@link legacyPrepareRawShadow} (`legacy-shadow-source.ts`/this
- * module) or `migration squash`'s own shadow composition need EXCEPT the diff/pull-specific
- * ones (`targetLocal`/`usePgDelta`/`schemaPaths`/`pgDelta`/`ctx`, left to each call site).
+ * `legacy-shadow-source.ts`'s `legacyPrepareShadowSource` or `migration squash`'s own shadow
+ * composition need EXCEPT the diff/pull-specific
+ * ones (`targetLocal`/`schemaPaths`/`migrationMode`/…, left to each call site).
  * Promoted here from
  * `commands/db/shared/legacy-shadow-source.ts` (CLI-1969, hoist-before-duplicate): `migration
  * squash` needs this same shadow run-input shape, but importing the `db`-family-scoped

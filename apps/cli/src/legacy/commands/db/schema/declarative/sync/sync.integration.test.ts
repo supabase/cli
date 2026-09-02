@@ -44,7 +44,6 @@ import {
   LegacyDbConnection,
   type LegacyPgConnInput,
 } from "../../../../../shared/legacy-db-connection.service.ts";
-import { LegacyEdgeRuntimeScript } from "../../../../../shared/legacy-edge-runtime-script.service.ts";
 import { LegacyPgDeltaSslProbe } from "../../../../../shared/legacy-pgdelta-ssl-probe.service.ts";
 import {
   LegacyPgDeltaEngine,
@@ -114,12 +113,6 @@ function setup(workdir: string, opts: SetupOpts = {}) {
             : Effect.void,
         ),
       ),
-  });
-  // The engine is fully mocked below, so no pg-delta script runs through the edge
-  // runtime here. `legacyResetLocalDatabase`'s db-setup still statically requires
-  // the service, so provide an inert stub.
-  const edge = Layer.succeed(LegacyEdgeRuntimeScript, {
-    run: () => Effect.succeed({ stdout: "", stderr: "" }),
   });
   const dbExec: string[] = [];
   const dbBatches: Array<ReadonlyArray<string>> = [];
@@ -270,7 +263,6 @@ function setup(workdir: string, opts: SetupOpts = {}) {
     telemetry.layer,
     cache.layer,
     seam,
-    edge,
     engine,
     dbConn,
     resolver,

@@ -1,16 +1,11 @@
 /**
- * The composed shadow-database shapes `db diff`/`db pull` actually call — Go's
- * `PrepareShadowSource`/`PrepareRawShadow` (`apps/cli-go/internal/db/diff/shadow.go`), built
- * on top of `shared/db-bootstrap/shadow-database.ts`'s lower-level primitives plus the
- * `--target-local` declarative-schema branch (Go's `loadDeclaredSchemas`/
- * `migrateBaseDatabase`, `internal/db/diff/diff.go:52-115, 261-274`).
- *
- * Go's `PrepareShadowSource(ctx, schema []string, targetLocal, usePgDelta bool, fsys,
- * options...)` takes a `schema` parameter that is NEVER referenced anywhere in the function
- * body (verified by reading the whole function) — dead code in Go itself, making the `--schema`
- * flag the now-removed `db __shadow` hidden seam used to forward here a no-op even before
- * CLI-1956 deleted that seam in favor of this native port. Deliberately NOT ported here: there
- * is nothing to port.
+ * The composed shadow-provisioning shape `db diff`/`db pull` actually call:
+ * {@link legacyPrepareShadowSource} builds on `shared/db-bootstrap/shadow-database.ts`'s
+ * lower-level primitives (create → health-wait → platform baseline → migrations replay) and
+ * adds the migra `--target-local` declarative-schema branch, which applies declarative files
+ * to a second database on the same shadow container instead of diffing the user's local DB
+ * directly. Schema selection deliberately plays no part in shadow provisioning — the `--schema`
+ * flag only scopes the diff itself, never what the shadow contains.
  */
 
 import { Effect, Result, type FileSystem, type Path } from "effect";
