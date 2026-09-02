@@ -140,7 +140,7 @@ describe("managed stack handles", { timeout: 30_000 }, () => {
               return "docker" as const;
             }),
         };
-        const stack = yield* createStack({
+        yield* createStack({
           projectRoot: project,
           runtime: { kind: "container", engine: "auto" },
         }).pipe(Effect.provideService(ContainerEngineResolver, resolver));
@@ -148,7 +148,6 @@ describe("managed stack handles", { timeout: 30_000 }, () => {
         expect(
           (yield* findStack({ projectRoot: project })).pipe(Option.getOrUndefined)?.runtime,
         ).toEqual({ kind: "container", engine: "docker" });
-        yield* stack.close();
       }),
     ),
   );
@@ -164,7 +163,7 @@ describe("managed stack handles", { timeout: 30_000 }, () => {
               return "podman" as const;
             }),
         };
-        const stack = yield* createStack({
+        yield* createStack({
           projectRoot: project,
           runtime: { kind: "container", engine: "auto" },
         }).pipe(Effect.provideService(ContainerEngineResolver, resolver));
@@ -172,7 +171,6 @@ describe("managed stack handles", { timeout: 30_000 }, () => {
         expect(
           (yield* findStack({ projectRoot: project })).pipe(Option.getOrUndefined)?.runtime,
         ).toEqual({ kind: "container", engine: "podman" });
-        yield* stack.close();
       }),
     ),
   );
@@ -221,12 +219,11 @@ describe("managed stack handles", { timeout: 30_000 }, () => {
               return "podman" as const;
             }),
         };
-        const stack = yield* createStack({
+        yield* createStack({
           projectRoot: project,
           runtime: { kind: "container", engine: "podman" },
         }).pipe(Effect.provideService(ContainerEngineResolver, resolver));
         expect(calls).toEqual(["podman"]);
-        yield* stack.close();
       }),
     ),
   );
@@ -242,11 +239,10 @@ describe("managed stack handles", { timeout: 30_000 }, () => {
               return "podman" as const;
             }),
         };
-        const first = yield* createStack({
+        yield* createStack({
           projectRoot: project,
           runtime: { kind: "container", engine: "podman" },
         }).pipe(Effect.provideService(ContainerEngineResolver, firstResolver));
-        yield* first.close();
         const secondCalls: string[] = [];
         const secondResolver = {
           resolve: (preference: "auto" | "docker" | "podman") =>
@@ -255,7 +251,7 @@ describe("managed stack handles", { timeout: 30_000 }, () => {
               return "docker" as const;
             }),
         };
-        const second = yield* createStack({
+        yield* createStack({
           projectRoot: project,
           runtime: { kind: "container", engine: "auto" },
         }).pipe(Effect.provideService(ContainerEngineResolver, secondResolver));
@@ -264,7 +260,6 @@ describe("managed stack handles", { timeout: 30_000 }, () => {
         expect(
           (yield* findStack({ projectRoot: project })).pipe(Option.getOrUndefined)?.runtime,
         ).toEqual({ kind: "container", engine: "podman" });
-        yield* second.close();
       }),
     ),
   );
@@ -272,7 +267,7 @@ describe("managed stack handles", { timeout: 30_000 }, () => {
   it.live("rejects a conflicting explicit engine before probing", () =>
     withRuntimeRoot((project) =>
       Effect.gen(function* () {
-        const first = yield* createStack({
+        yield* createStack({
           projectRoot: project,
           runtime: { kind: "container", engine: "docker" },
         }).pipe(
@@ -280,7 +275,6 @@ describe("managed stack handles", { timeout: 30_000 }, () => {
             resolve: () => Effect.succeed("docker" as const),
           }),
         );
-        yield* first.close();
         const calls: string[] = [];
         const result = yield* createStack({
           projectRoot: project,
@@ -309,7 +303,7 @@ describe("managed stack handles", { timeout: 30_000 }, () => {
     withRuntimeRoot((project) =>
       Effect.gen(function* () {
         const calls: string[] = [];
-        const stack = yield* createStack({
+        yield* createStack({
           projectRoot: project,
           runtime: { kind: "native" },
         }).pipe(
@@ -322,7 +316,6 @@ describe("managed stack handles", { timeout: 30_000 }, () => {
           }),
         );
         expect(calls).toEqual([]);
-        yield* stack.close();
       }),
     ),
   );
@@ -334,7 +327,6 @@ describe("managed stack handles", { timeout: 30_000 }, () => {
         const status = yield* stack.status();
         expect(status.lifecycle).toBe("unconfigured");
         expect(status.desiredLifecycle).toBe("unconfigured");
-        yield* stack.close();
       }),
     ),
   );
@@ -398,8 +390,7 @@ describe("managed stack handles", { timeout: 30_000 }, () => {
             Effect.fail({ tag: "StackPreparationError", message: "artifact is incomplete" }),
           restart: () => Effect.succeed(status),
           destroy: () => Effect.void,
-          logs: () => Stream.empty,
-          watchStatus: () => Stream.empty,
+          logs: () => Effect.succeed({ entries: [], cursor: { opaque: "v1_0" }, running: false }),
         };
         yield* startControlServer({
           endpoint: lease.metadata.endpoint,
@@ -423,7 +414,6 @@ describe("managed stack handles", { timeout: 30_000 }, () => {
         const error = Exit.isFailure(failed)
           ? Option.getOrUndefined(Cause.findErrorOption(failed.cause))
           : undefined;
-        yield* stack.close();
         yield* lease.release;
         expect(Exit.isFailure(failed)).toBe(true);
         expect(error).toBeInstanceOf(StackPreparationError);
@@ -505,8 +495,7 @@ describe("managed stack handles", { timeout: 30_000 }, () => {
                 Effect.andThen(Deferred.await(responseRelease)),
                 Effect.asVoid,
               ),
-            logs: () => Stream.empty,
-            watchStatus: () => Stream.make(status),
+            logs: () => Effect.succeed({ entries: [], cursor: { opaque: "v1_0" }, running: false }),
           },
           onShutdownReady: Deferred.succeed(callbackStarted, undefined).pipe(
             Effect.andThen(Deferred.await(callbackRelease)),
@@ -527,7 +516,6 @@ describe("managed stack handles", { timeout: 30_000 }, () => {
         yield* Deferred.await(callbackCompleted);
         yield* Scope.close(ownerScope, Exit.void);
         yield* Fiber.join(destroyFiber);
-        yield* stack.close();
         yield* lease.release;
       }),
     ),
@@ -542,8 +530,6 @@ describe("managed stack handles", { timeout: 30_000 }, () => {
         );
         expect(second.id).toBe(first.id);
         expect((yield* second.status()).lifecycle).toBe("unconfigured");
-        yield* first.close();
-        yield* second.close();
       }),
     ),
   );
@@ -569,15 +555,13 @@ describe("managed stack handles", { timeout: 30_000 }, () => {
     ),
   );
 
-  it.live("a closed handle leaves its owner available to a replacement handle", () =>
+  it.live("an ordinary handle exposes no lifecycle close operation", () =>
     withRuntimeRoot((project) =>
       Effect.gen(function* () {
         const first = yield* createStack({ projectRoot: project });
         const id = first.id;
-        yield* first.close();
         const second = yield* openStack(id);
         expect((yield* second.status()).lifecycle).toBe("unconfigured");
-        yield* second.close();
       }),
     ),
   );
@@ -590,11 +574,9 @@ describe("managed stack handles", { timeout: 30_000 }, () => {
         const other = path.join(path.dirname(project), "other-project");
         yield* fs.makeDirectory(other);
         const first = yield* createStack({ projectRoot: project });
-        const second = yield* createStack({ projectRoot: other });
+        yield* createStack({ projectRoot: other });
         const filtered = yield* listStacks({ projectRoot: project });
         expect(filtered.map((entry) => entry.id)).toEqual([first.id]);
-        yield* first.close();
-        yield* second.close();
       }),
     ),
   );
@@ -649,7 +631,6 @@ describe("managed stack handles", { timeout: 30_000 }, () => {
         expect(first.id).toBe(second.id);
         const attached = yield* openStack(StackIdSchema.make(first.id));
         expect((yield* attached.status()).lifecycle).toBe("unconfigured");
-        yield* attached.close();
       }),
     ),
   );
@@ -663,7 +644,6 @@ describe("managed stack handles", { timeout: 30_000 }, () => {
           yield* stack.stop();
           const status = yield* stack.status();
           expect(status.lifecycle).toBe("unconfigured");
-          yield* stack.close();
         }),
       ),
   );

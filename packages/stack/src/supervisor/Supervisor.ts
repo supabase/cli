@@ -14,7 +14,6 @@ import {
   Semaphore,
   Scope,
   Stream,
-  SubscriptionRef,
 } from "effect";
 import type { StackIdentity } from "../identity/Identity.ts";
 import { canonicalize, compileStack, rebuildExecutionPlan } from "../model/Compiler.ts";
@@ -40,7 +39,7 @@ import {
 } from "../public/Errors.ts";
 import type { StackStatus } from "../public/Status.ts";
 import type { StackId } from "../public/StackId.ts";
-import type { LogOptions, StackLogEntry } from "../public/Logs.ts";
+import type { LogQuery, StackLogBatch } from "../public/Logs.ts";
 import type { EffectStackCredentials } from "../public/Credentials.ts";
 import type { RuntimeDriver, ObservedWorkload } from "../runtime/RuntimeDriver.ts";
 import type { PersistedStackState } from "../state/StackState.ts";
@@ -104,8 +103,7 @@ export interface Supervisor {
   readonly shutdown: Effect.Effect<void>;
   /** Shuts down only when durable state is absent or cleanly non-running. */
   readonly shutdownIfIdle: Effect.Effect<void>;
-  readonly watchStatus: Stream.Stream<StackStatus, StackError>;
-  readonly logs: (options?: LogOptions) => Stream.Stream<StackLogEntry, StackError>;
+  readonly logs: (query?: LogQuery) => Effect.Effect<StackLogBatch, StackError>;
   readonly activate: (
     capability: CapabilityName,
   ) => Effect.Effect<ActivationResult, GatewayActivationError | StackError>;
@@ -209,13 +207,6 @@ export const makeSupervisor = (
         Effect.flatMap((current) => (current === "running" ? observe() : Effect.succeed([]))),
       );
 
-    const initialStatus = yield* statusFor(
-      initial,
-      [],
-      yield* Ref.get(active),
-      yield* Ref.get(phase),
-    );
-    const hub = yield* SubscriptionRef.make(initialStatus);
     const snapshot = (): Effect.Effect<StackStatus, StackError> =>
       Effect.gen(function* () {
         const state = yield* read();
@@ -229,8 +220,7 @@ export const makeSupervisor = (
         );
         return status;
       });
-    const publish = (): Effect.Effect<StackStatus, StackError> =>
-      snapshot().pipe(Effect.tap((value) => SubscriptionRef.set(hub, value)));
+    const publish = (): Effect.Effect<StackStatus, StackError> => snapshot();
     const restorePhase = (previous: ActualPhase): Effect.Effect<void, never> =>
       Effect.gen(function* () {
         const state = yield* read().pipe(Effect.orElseSucceed(() => undefined));
@@ -773,8 +763,6 @@ export const makeSupervisor = (
     const stopWithShutdown = submitLifecycle("stop", "stop", stopOperation(), continueShutdown);
     const operation = <A>(effect: Effect.Effect<A, StackError>) =>
       effect.pipe(Effect.mapError((error) => rpcError(rpcTag(error), stateErrorMessage(error))));
-    const streamOperation = <A>(stream: Stream.Stream<A, StackError>) =>
-      stream.pipe(Stream.mapError((error) => rpcError(rpcTag(error), stateErrorMessage(error))));
     const destroyOperation = Effect.gen(function* () {
       const previous = yield* Ref.get(phase);
       yield* Ref.set(phase, "destroying");
@@ -793,21 +781,40 @@ export const makeSupervisor = (
     const destroy = submitLifecycle("destroy", "destroy", destroyOperation, continueShutdown).pipe(
       Effect.asVoid,
     );
-    const logs = (logOptions?: LogOptions): Stream.Stream<StackLogEntry, StackError> => {
-      const stream = runtime.logStore
-        .stream(logOptions)
-        .pipe(
-          Stream.mapError(
-            (error) => new StackStateInvalidError({ message: error.message, cause: error }),
-          ),
+    const logs = (query?: LogQuery): Effect.Effect<StackLogBatch, StackError> =>
+      Effect.gen(function* () {
+        const cursor = query?.cursor?.opaque === "v1_0" ? undefined : query?.cursor;
+        const scanned = yield* runtime.logStore
+          .read(cursor === undefined ? undefined : { cursor })
+          .pipe(
+            Effect.mapError(
+              (error) => new StackStateInvalidError({ message: error.message, cause: error }),
+            ),
+          );
+        const capabilities =
+          query?.capabilities === undefined ? undefined : new Set(query.capabilities);
+        const filtered = scanned.filter((entry) =>
+          capabilities === undefined
+            ? true
+            : entry.source !== "gateway" &&
+              entry.source !== "supervisor" &&
+              capabilities.has(entry.source),
         );
-      return logOptions?.follow === true
-        ? stream.pipe(Stream.interruptWhen(Deferred.await(shutdownSignal)))
-        : stream;
-    };
-    const watchStatus = SubscriptionRef.changes(hub).pipe(
-      Stream.interruptWhen(Deferred.await(shutdownSignal)),
-    );
+        const entries =
+          query?.tail === undefined
+            ? filtered
+            : query.tail <= 0
+              ? []
+              : filtered.slice(-Math.floor(query.tail));
+        const state = yield* read();
+        const running =
+          state?.desiredLifecycle === "running" && (yield* Ref.get(phase)) === "running";
+        return {
+          entries,
+          cursor: scanned.at(-1)?.cursor ?? query?.cursor ?? { opaque: "v1_0" },
+          running,
+        } satisfies StackLogBatch;
+      });
     const maintenanceHandlers = {
       probe: Effect.succeed({
         ok: true,
@@ -1059,8 +1066,7 @@ export const makeSupervisor = (
       start: ({ config }: { readonly config?: StackConfig }) => operation(start({ config })),
       restart: ({ config }: { readonly config?: StackConfig }) => operation(restart({ config })),
       destroy: () => operation(destroy),
-      logs: (logOptions: LogOptions) => streamOperation(logs(logOptions)),
-      watchStatus: () => streamOperation(watchStatus),
+      logs: (query: LogQuery) => operation(logs(query)),
     });
     yield* FiberSet.run(
       ownedFibers,
@@ -1077,7 +1083,6 @@ export const makeSupervisor = (
       destroy,
       shutdown: Deferred.await(shutdownSignal),
       shutdownIfIdle,
-      watchStatus,
       logs,
       activate,
       maintenanceHandlers,

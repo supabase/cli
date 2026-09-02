@@ -1,7 +1,18 @@
 import { inferFunctionsManifest, loadCliConfig } from "@supabase/config/effect";
 import { CliConfigSchema } from "@supabase/config";
 import type { CliConfig, FunctionsManifest } from "@supabase/config";
-import { Crypto, FileSystem, Effect, Option, Path, Redacted, Scope, Schema, Stream } from "effect";
+import {
+  Crypto,
+  Data,
+  FileSystem,
+  Effect,
+  Path,
+  Redacted,
+  Schedule,
+  Scope,
+  Schema,
+  Stream,
+} from "effect";
 import { parse as parseDotenv } from "dotenv";
 import { resolve } from "node:path";
 import { ChildProcessSpawner } from "effect/unstable/process";
@@ -21,7 +32,7 @@ import {
 } from "../../next/config/stack-config.ts";
 
 /** The narrow stack surface owned by the managed Functions command. */
-export type ManagedFunctionsStack = Pick<EffectStack, "start" | "watchStatus" | "logs">;
+export type ManagedFunctionsStack = Pick<EffectStack, "start" | "status" | "logs" | "followLogs">;
 
 type ManagedFunctionsRuntime =
   | Scope.Scope
@@ -91,16 +102,25 @@ const capabilityReady = (status: StackStatus): boolean =>
 const servingReady = (status: StackStatus): boolean =>
   status.lifecycle === "running" && status.endpoints.api !== undefined && capabilityReady(status);
 
+class ReadinessPending extends Data.TaggedError("ReadinessPending")<{}> {}
+
 const statusAfterReadiness = Effect.fnUntraced(function* (
   stack: ManagedFunctionsStack,
   initial: StackStatus,
 ) {
   if (servingReady(initial)) return initial;
-  const next = yield* stack.watchStatus().pipe(Stream.filter(servingReady), Stream.runHead);
-  if (Option.isNone(next)) {
-    return yield* Effect.fail(new Error("Managed Functions stack did not reach gateway readiness"));
-  }
-  return next.value;
+  return yield* stack.status().pipe(
+    Effect.flatMap((next) =>
+      servingReady(next) ? Effect.succeed(next) : Effect.fail(new ReadinessPending()),
+    ),
+    Effect.retry({
+      schedule: Schedule.spaced("100 millis").pipe(Schedule.upTo({ duration: "3 minutes" })),
+      while: (error) => error instanceof ReadinessPending,
+    }),
+    Effect.catchTag("ReadinessPending", () =>
+      Effect.fail(new Error("Managed Functions stack did not reach gateway readiness")),
+    ),
+  );
 });
 
 const toFunctionOverrides = (manifest: FunctionsManifest, options: ServeManagedFunctionsOptions) =>
@@ -290,7 +310,7 @@ export const serveManagedFunctions = Effect.fnUntraced(function* (
       });
       if (apiUrl !== undefined) yield* output.info(`${apiUrl}/functions/v1`);
       yield* stack
-        .logs({ capabilities: ["functions"], follow: true })
+        .followLogs({ capabilities: ["functions"] })
         .pipe(Stream.runForEach((entry) => output.info(`[${entry.source}] ${entry.message}`)));
     }),
   );

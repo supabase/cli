@@ -5,7 +5,7 @@ import { tmpdir } from "node:os";
 // oxlint-disable-next-line effecttsgo/node-builtin-import -- test resource builds an isolated root.
 import { join } from "node:path";
 import { NodeServices } from "@effect/platform-node";
-import { Data } from "effect";
+import { Data, Effect, Schedule } from "effect";
 import { defaultRuntimeEnvironment } from "../supervisor/Launcher.ts";
 import {
   makePromiseApi,
@@ -18,6 +18,10 @@ import type { StackRuntimeEnvironmentValue } from "../state/Ownership.ts";
 
 class TestStackReadinessError extends Data.TaggedError("TestStackReadinessError")<{
   readonly message: string;
+}> {}
+class RetryReadiness extends Data.TaggedError("RetryReadiness")<{
+  readonly message: string;
+  readonly terminal?: boolean;
 }> {}
 
 export interface CreateTestStackOptions {
@@ -124,25 +128,39 @@ const waitForReadiness = async (
   if (ready(initial)) return;
   const initialFailure = terminalFailure(initial);
   if (initialFailure !== undefined) throw initialFailure;
-  const iterator = stack.watchStatus()[Symbol.asyncIterator]();
-  const abort = () => {
-    void iterator.return?.();
-  };
-  signal?.addEventListener("abort", abort, { once: true });
+  const poll = Effect.tryPromise({
+    try: () => {
+      signal?.throwIfAborted();
+      return stack.status();
+    },
+    catch: (cause) =>
+      new TestStackReadinessError({
+        message: cause instanceof Error ? cause.message : String(cause),
+      }),
+  }).pipe(
+    Effect.flatMap(
+      (next): Effect.Effect<Awaited<ReturnType<PromiseStack["status"]>>, RetryReadiness> => {
+        if (ready(next)) return Effect.succeed(next);
+        const failure = terminalFailure(next);
+        return Effect.fail(
+          new RetryReadiness({
+            message: failure?.message ?? "Stack is not ready yet",
+            ...(failure === undefined ? {} : { terminal: true }),
+          }),
+        );
+      },
+    ),
+    Effect.retry({
+      schedule: Schedule.spaced("100 millis").pipe(Schedule.upTo({ duration: "120 seconds" })),
+      while: (error) => error instanceof RetryReadiness && error.terminal !== true,
+    }),
+  );
   try {
-    while (true) {
-      const next = await iterator.next();
-      if (next.done)
-        throw new TestStackReadinessError({
-          message: "Stack did not reach running readiness before its status stream ended",
-        });
-      if (ready(next.value)) return;
-      const failure = terminalFailure(next.value);
-      if (failure !== undefined) throw failure;
-    }
-  } finally {
-    signal?.removeEventListener("abort", abort);
-    await iterator.return?.();
+    await Effect.runPromise(poll);
+  } catch (error) {
+    if (error instanceof RetryReadiness)
+      throw new TestStackReadinessError({ message: error.message });
+    throw error;
   }
 };
 
@@ -159,11 +177,6 @@ const cleanup = async (
       await stack.destroy();
     } catch (error) {
       rootCanBeRemoved = false;
-      if (failure === undefined) failure = error;
-    }
-    try {
-      await stack.close();
-    } catch (error) {
       if (failure === undefined) failure = error;
     }
   }

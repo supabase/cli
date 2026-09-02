@@ -21,7 +21,7 @@ type LogsRuntime =
   | Crypto.Crypto
   | ChildProcessSpawner.ChildProcessSpawner;
 
-type LogsStack = Pick<EffectStack, "logs">;
+type LogsStack = Pick<EffectStack, "logs" | "followLogs">;
 export interface LogsOperations {
   readonly findStack: (
     options: FindStackOptions,
@@ -55,17 +55,9 @@ export const logs = Effect.fnUntraced(function* (
       const stack = yield* operations.openStack(descriptorOption.value.id);
       const capabilities: ReadonlyArray<CapabilityName> | undefined =
         flags.service.length === 0 ? undefined : flags.service;
-      const retainedChunk = yield* stack
-        .logs({ capabilities, follow: false })
-        .pipe(Stream.runCollect);
-      const retained = retainedChunk;
-      const history = flags.tail === 0 ? [] : retained.slice(-flags.tail);
-      let cursorEntries = retained;
-      if (retained.length === 0 && capabilities !== undefined) {
-        const fallbackChunk = yield* stack.logs({ follow: false }).pipe(Stream.runCollect);
-        cursorEntries = fallbackChunk;
-      }
-      const emit = (source: "history" | "live") => (entry: (typeof retained)[number]) =>
+      const retained = yield* stack.logs({ capabilities, tail: flags.tail });
+      const history = retained.entries;
+      const emit = (source: "history" | "live") => (entry: (typeof retained.entries)[number]) =>
         output.format === "stream-json"
           ? output.event({
               type: "log-entry",
@@ -76,11 +68,10 @@ export const logs = Effect.fnUntraced(function* (
               source,
             })
           : output.info(`[${entry.source}] ${entry.message}`);
-      yield* Stream.fromIterable(history).pipe(Stream.runForEach(emit("history")));
+      yield* Effect.forEach(history, emit("history"), { discard: true });
       if (!flags.noFollow) {
-        const cursor = cursorEntries.at(-1)?.cursor;
         yield* stack
-          .logs({ capabilities, follow: true, ...(cursor === undefined ? {} : { cursor }) })
+          .followLogs({ capabilities, cursor: retained.cursor })
           .pipe(Stream.runForEach(emit("live")));
       }
     }),

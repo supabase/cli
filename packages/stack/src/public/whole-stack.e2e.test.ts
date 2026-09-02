@@ -153,28 +153,17 @@ const activate = async <A>(
   expect(capabilityState(before, name), `${name} should be dormant before activation`).toBe(
     "dormant",
   );
-  const iterator = stack.watchStatus()[Symbol.asyncIterator]();
-  const first = iterator.next();
-  void first.catch(() => undefined);
-  const waitUntilReady = async (): Promise<void> => {
-    let next = await first;
-    while (!next.done) {
-      if (capabilityState(next.value, name) === "ready") {
-        return;
-      }
-      next = await iterator.next();
-    }
-    const current = await stack.status();
-    if (capabilityState(current, name) === "ready") return;
-    throw new Error(`Capability ${name} did not become ready after traffic`);
-  };
-  try {
-    const result = await action();
-    await waitUntilReady();
-    return result;
-  } finally {
-    await iterator.return?.();
-  }
+  const waitUntilReady = Effect.tryPromise(() => stack.status()).pipe(
+    Effect.flatMap((current) =>
+      capabilityState(current, name) === "ready"
+        ? Effect.succeed(current)
+        : Effect.fail(new E2ERequestError({ message: `Capability ${name} is not ready yet` })),
+    ),
+    Effect.retry(Schedule.spaced("100 millis").pipe(Schedule.upTo({ duration: "3 minutes" }))),
+  );
+  const result = await action();
+  await Effect.runPromise(waitUntilReady);
+  return result;
 };
 
 const request = async (base: string, path: string, init: RequestInit = {}): Promise<Response> => {
@@ -243,7 +232,7 @@ const throwStudioProfileDiagnostics = async (stack: TestStack, cause: unknown): 
   const studio = status?.capabilities.find(({ name }) => name === "studio");
   const recentLogs: StackLogEntry[] = [];
   try {
-    for await (const entry of stack.logs({ follow: false })) {
+    for (const entry of (await stack.logs()).entries) {
       if (entry.source !== "studio" && entry.source !== "gateway") continue;
       recentLogs.push(entry);
       if (recentLogs.length > 50) recentLogs.shift();
@@ -795,11 +784,7 @@ const runWholeStackScenario = async (mode: (typeof RUNTIME_CASES)[number]): Prom
   const stopped = await stack.status();
   expect(stopped.lifecycle).toBe("stopped");
   expect(stopped.capabilities.every(({ state }) => state === "stopped")).toBe(true);
-  const offlineStatuses: StackStatus[] = [];
-  for await (const status of stack.watchStatus()) offlineStatuses.push(status);
-  expect(offlineStatuses).toEqual([stopped]);
-  const retainedLogs: StackLogEntry[] = [];
-  for await (const entry of stack.logs({ follow: false })) retainedLogs.push(entry);
+  const retainedLogs: StackLogEntry[] = (await stack.logs()).entries.slice();
   expect(retainedLogs.length).toBeGreaterThan(0);
   await expectRuntimeInputsAbsent(projectRoot, initial.id);
   await expectEndpointsRefused(initialEndpoints);

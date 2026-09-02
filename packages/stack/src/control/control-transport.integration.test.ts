@@ -12,7 +12,6 @@ import {
   Redacted,
   Ref,
   Scope,
-  Stream,
 } from "effect";
 import * as TestClock from "effect/testing/TestClock";
 import * as RpcSerialization from "effect/unstable/rpc/RpcSerialization";
@@ -137,8 +136,7 @@ const withServer = <A, E, R>(
         start: () => Effect.succeed(status),
         restart: () => Effect.succeed(status),
         destroy: () => Effect.void,
-        logs: () => Stream.empty,
-        watchStatus: () => Stream.empty,
+        logs: () => Effect.succeed({ entries: [], cursor: { opaque: "v1_0" }, running: false }),
       };
       const defaultMaintenanceHandlers: MaintenanceHandlers = {
         probe: Effect.succeed({

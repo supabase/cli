@@ -6,12 +6,7 @@ import { Effect, Redacted, Stream } from "effect";
 import type { EffectStack, PrepareStackOptions, StartStackOptions } from "./EffectStack.ts";
 import { StackIdSchema } from "./StackId.ts";
 import type { StackStatus } from "./Status.ts";
-import type { StackLogEntry } from "./Logs.ts";
-import {
-  InvalidStackConfigError,
-  StackLifecycleConflictError,
-  StackStateInvalidError,
-} from "./Errors.ts";
+import { InvalidStackConfigError } from "./Errors.ts";
 import { adaptEffectStack, type PromiseStack } from "./PromiseStack.ts";
 import { compileStack } from "../model/Compiler.ts";
 
@@ -67,13 +62,23 @@ const effectStack = (): EffectStack =>
     restart: () => Effect.succeed(status),
     stop: () => Effect.void,
     destroy: () => Effect.void,
-    close: () => Effect.void,
-    watchStatus: () => Stream.make(status),
-    logs: () => Stream.make(),
+    logs: () => Effect.succeed({ entries: [], cursor: { opaque: "v1_0" }, running: false }),
+    followLogs: () => Stream.empty,
   }) satisfies EffectStack;
 
 describe("Promise stack facade", () => {
-  it("unwraps every credential secret and exposes explicit close without async disposal", async () => {
+  it("returns log batches and follows from their cursor", async () => {
+    const stack = adaptEffectStack(effectStack());
+    const first = await stack.logs({ capabilities: ["auth"], tail: 20 });
+    expect(first.entries.every((entry) => entry.source === "auth")).toBe(true);
+    const followed = [];
+    for await (const entry of stack.followLogs({ capabilities: ["auth"], cursor: first.cursor })) {
+      followed.push(entry);
+    }
+    expect(followed.every((entry) => entry.source === "auth")).toBe(true);
+  });
+
+  it("unwraps every credential secret without a lifecycle close operation", async () => {
     const stack: PromiseStack = adaptEffectStack(effectStack());
 
     await expect(stack.credentials()).resolves.toEqual({
@@ -92,32 +97,21 @@ describe("Promise stack facade", () => {
       },
     });
     expect(Symbol.asyncDispose in stack).toBe(false);
-    await expect(stack.close()).resolves.toBeUndefined();
-    await expect(stack.close()).resolves.toBeUndefined();
   });
 
   it("cancels an async stream when the consumer returns early", async () => {
     const stack = adaptEffectStack(effectStack());
-    const iterator = stack.watchStatus()[Symbol.asyncIterator]();
-    await expect(iterator.next()).resolves.toMatchObject({ done: false });
+    const iterator = stack.followLogs()[Symbol.asyncIterator]();
+    await expect(iterator.next()).resolves.toMatchObject({ done: true });
     await expect(iterator.return?.()).resolves.toMatchObject({ done: true });
-    await stack.close();
   });
 
-  it("removes naturally completed streams and rejects new streams after close", async () => {
+  it("completes an empty follower immediately", async () => {
     const stack = adaptEffectStack(effectStack());
-    const statusIterator = stack.watchStatus()[Symbol.asyncIterator]();
-    await expect(statusIterator.next()).resolves.toMatchObject({ done: false });
-    await expect(statusIterator.next()).resolves.toMatchObject({ done: true });
-    const logsIterator = stack.logs()[Symbol.asyncIterator]();
+    const logs = await stack.logs();
+    expect(logs.entries).toHaveLength(0);
+    const logsIterator = stack.followLogs()[Symbol.asyncIterator]();
     await expect(logsIterator.next()).resolves.toMatchObject({ done: true });
-    await stack.close();
-    await expect(stack.watchStatus()[Symbol.asyncIterator]().next()).rejects.toBeInstanceOf(
-      StackLifecycleConflictError,
-    );
-    await expect(stack.logs()[Symbol.asyncIterator]().next()).rejects.toBeInstanceOf(
-      StackLifecycleConflictError,
-    );
   });
 
   it("rejects malformed configs asynchronously with a tagged error", async () => {
@@ -127,7 +121,6 @@ describe("Promise stack facade", () => {
         config: JSON.parse('{"capabilities":{"rest":{"settings":{"unknown":true}}}}'),
       }),
     ).rejects.toBeInstanceOf(InvalidStackConfigError);
-    await stack.close();
   });
 
   it("redacts nested config secrets for prepare, start, and restart", async () => {
@@ -197,45 +190,5 @@ describe("Promise stack facade", () => {
     expect(compiled.definition.capabilities.functions.settings.functions_root).toBe(
       "/tmp/promise-facade-project/supabase/functions",
     );
-    await stack.close();
-  });
-
-  it("always closes the underlying handle when active stream cancellation rejects", async () => {
-    let underlyingClosed = false;
-    const cancellationError = new Error("stream cancellation failed");
-    const entry: StackLogEntry = {
-      cursor: { opaque: "1" },
-      timestamp: "now",
-      source: "functions",
-      stream: "stdout",
-      message: "running",
-    };
-    const foreignStream: AsyncIterable<StackLogEntry> = {
-      [Symbol.asyncIterator]: () => ({
-        next: async () => ({ done: false, value: entry }),
-        return: async () => {
-          throw cancellationError;
-        },
-      }),
-    };
-    const source: EffectStack = {
-      ...effectStack(),
-      logs: () =>
-        Stream.fromAsyncIterable(
-          foreignStream,
-          (error) => new StackStateInvalidError({ message: String(error) }),
-        ),
-      close: () =>
-        Effect.sync(() => {
-          underlyingClosed = true;
-        }),
-    };
-    const stack = adaptEffectStack(source);
-    const iterator = stack.logs()[Symbol.asyncIterator]();
-    await iterator.next();
-    await expect(stack.close()).rejects.toThrow("Failed to close stack handle");
-    expect(underlyingClosed).toBe(true);
-    await expect(stack.status()).rejects.toThrow("Stack handle is closed");
-    await expect(stack.close()).rejects.toThrow("Failed to close stack handle");
   });
 });

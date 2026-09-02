@@ -82,8 +82,9 @@ describe("managed Functions serving", () => {
             servedConfig = options?.config;
             return status("running");
           }),
-        watchStatus: () => Stream.empty,
-        logs: () => Stream.empty,
+        status: () => Effect.succeed(status("running")),
+        logs: () => Effect.succeed({ entries: [], cursor: { opaque: "v1_0" }, running: true }),
+        followLogs: () => Stream.empty,
       };
       const operations: ServeManagedFunctionsOperations = {
         createStack: () => Effect.succeed(stack),
@@ -104,8 +105,9 @@ describe("managed Functions serving", () => {
           startedConfig = options?.config;
           return status("starting");
         }),
-      watchStatus: () => Stream.succeed(status("running")),
-      logs: () =>
+      status: () => Effect.succeed(status("running")),
+      logs: () => Effect.succeed({ entries: [], cursor: { opaque: "v1_0" }, running: true }),
+      followLogs: () =>
         Stream.fromIterable([
           {
             cursor: { opaque: "1" },
@@ -202,8 +204,9 @@ describe("managed Functions serving", () => {
           startedConfig = options?.config;
           return status("running");
         }),
-      watchStatus: () => Stream.empty,
-      logs: () => Stream.empty,
+      status: () => Effect.succeed(status("running")),
+      logs: () => Effect.succeed({ entries: [], cursor: { opaque: "v1_0" }, running: true }),
+      followLogs: () => Stream.empty,
     };
     const operations: ServeManagedFunctionsOperations = {
       createStack: () => Effect.succeed(stack),
@@ -358,8 +361,9 @@ describe("managed Functions serving", () => {
             message: "Running stack input changed",
           }),
         ),
-      watchStatus: () => Stream.empty,
-      logs: () => Stream.empty,
+      status: () => Effect.succeed(status("running")),
+      logs: () => Effect.succeed({ entries: [], cursor: { opaque: "v1_0" }, running: true }),
+      followLogs: () => Stream.empty,
     };
     const operations: ServeManagedFunctionsOperations = {
       createStack: () => Effect.succeed(stack),
@@ -405,8 +409,9 @@ describe("managed Functions serving", () => {
             message: "Stack owner release is outdated",
           }),
         ),
-      watchStatus: () => Stream.empty,
-      logs: () => Stream.empty,
+      status: () => Effect.succeed(status("running")),
+      logs: () => Effect.succeed({ entries: [], cursor: { opaque: "v1_0" }, running: true }),
+      followLogs: () => Stream.empty,
     };
     const operations: ServeManagedFunctionsOperations = {
       createStack: () => Effect.succeed(stack),

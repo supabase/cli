@@ -31,7 +31,7 @@ import type { StackRuntime, StackRuntimePreference } from "./Runtime.ts";
 import type { StackConfig } from "./Config.ts";
 import { type StackStatus, type StackDescriptor, type StackInspection } from "./Status.ts";
 import type { CapabilityName } from "./Capability.ts";
-import type { LogOptions, StackLogEntry } from "./Logs.ts";
+import type { LogQuery, StackLogBatch, StackLogEntry } from "./Logs.ts";
 import type { EffectStackCredentials } from "./Credentials.ts";
 import {
   InvalidStackIdentityError,
@@ -72,7 +72,6 @@ import {
   type StackStartError,
   type StackRestartError,
   type StackStopError,
-  type StackStatusWatchError,
   type StackLogsError,
   type DestroyStackError,
   type StackError,
@@ -164,11 +163,9 @@ export interface EffectStack {
   // oxlint-disable-next-line effecttsgo/lazy-effect
   readonly destroy: () => Effect.Effect<void, DestroyStackError>;
   // oxlint-disable-next-line effecttsgo/lazy-effect
-  readonly close: () => Effect.Effect<void>;
+  readonly logs: (query?: LogQuery) => Effect.Effect<StackLogBatch, StackLogsError>;
   // oxlint-disable-next-line effecttsgo/lazy-effect
-  readonly watchStatus: () => Stream.Stream<StackStatus, StackStatusWatchError>;
-  // oxlint-disable-next-line effecttsgo/lazy-effect
-  readonly logs: (options?: LogOptions) => Stream.Stream<StackLogEntry, StackLogsError>;
+  readonly followLogs: (query?: LogQuery) => Stream.Stream<StackLogEntry, StackLogsError>;
 }
 
 const containerRuntime = (engine: ContainerEngineKind): StackRuntime => ({
@@ -449,15 +446,12 @@ export const makeHandle = (
       Option.Option<PersistedStackState>,
       StackError
     >;
-    readonly readLogs?: (
-      options?: LogOptions,
-    ) => Effect.Effect<ReadonlyArray<StackLogEntry>, StackLogsError>;
+    readonly readLogs?: (query?: LogQuery) => Effect.Effect<StackLogBatch, StackLogsError>;
     readonly waitForRelease?: () => Effect.Effect<void, StackStopError>;
     readonly replacement?: (options?: StartStackOptions) => Effect.Effect<StackStatus, StackError>;
   } = {},
 ): Effect.Effect<EffectStack> =>
   Effect.gen(function* () {
-    const closed = yield* Ref.make(false);
     const readOfflineState = options.readOfflineState;
     const readPersistedState = options.readPersistedState;
     const readLogs = options.readLogs;
@@ -498,16 +492,6 @@ export const makeHandle = (
           : Effect.fail(
               new StackOwnershipConflictError({ message: "No Supervisor owns this stack" }),
             );
-    const check = <A, E, R>(
-      effect: Effect.Effect<A, E, R>,
-    ): Effect.Effect<A, E | StackLifecycleConflictError, R> =>
-      Ref.get(closed).pipe(
-        Effect.flatMap((isClosed): Effect.Effect<A, E | StackLifecycleConflictError, R> =>
-          isClosed
-            ? Effect.fail(new StackLifecycleConflictError({ message: "Stack handle is closed" }))
-            : effect,
-        ),
-      );
     const mapRpcClientFailure = <E extends StackError>(
       error: RpcClientError,
       mapError: (error: ControlError) => E,
@@ -533,7 +517,7 @@ export const makeHandle = (
       call: (rpc: StackRpcClient) => Effect.Effect<A, StackRpcError | RpcClientError>,
       mapError: (error: ControlError) => E,
       launch = false,
-    ): Effect.Effect<A, E | StackLifecycleConflictError> => {
+    ): Effect.Effect<A, E> => {
       const rpcCall: Effect.Effect<A, StackRpcError | RpcClientError | StackError> = resolveClient(
         launch,
       ).pipe(Effect.flatMap((owner) => Effect.scoped(owner.rpc.pipe(Effect.flatMap(call)))));
@@ -544,62 +528,60 @@ export const makeHandle = (
           (error) => Effect.fail(mapError(error)),
         ),
       );
-      return check(mapped);
+      return mapped;
     };
-    const destroyAndAwaitOwner: Effect.Effect<void, DestroyStackError> = check(
-      resolveClient(true).pipe(
-        Effect.mapError(destroyError),
-        Effect.flatMap((client) =>
-          Effect.gen(function* () {
-            const ownerConnected = yield* Deferred.make<void>();
-            const ownerWatch = client.awaitClose(
-              Deferred.succeed(ownerConnected, undefined).pipe(Effect.asVoid),
-            );
-            const ownerFiber = yield* Effect.forkChild(ownerWatch, { startImmediately: true });
-            const ownerReady = Deferred.await(ownerConnected).pipe(
-              Effect.raceFirst(
-                Fiber.join(ownerFiber).pipe(
-                  Effect.flatMap(() =>
-                    Effect.fail(
-                      new StackDestructionError({
-                        message: "Unable to observe Supervisor control connection",
-                      }),
-                    ),
+    const destroyAndAwaitOwner: Effect.Effect<void, DestroyStackError> = resolveClient(true).pipe(
+      Effect.mapError(destroyError),
+      Effect.flatMap((client) =>
+        Effect.gen(function* () {
+          const ownerConnected = yield* Deferred.make<void>();
+          const ownerWatch = client.awaitClose(
+            Deferred.succeed(ownerConnected, undefined).pipe(Effect.asVoid),
+          );
+          const ownerFiber = yield* Effect.forkChild(ownerWatch, { startImmediately: true });
+          const ownerReady = Deferred.await(ownerConnected).pipe(
+            Effect.raceFirst(
+              Fiber.join(ownerFiber).pipe(
+                Effect.flatMap(() =>
+                  Effect.fail(
+                    new StackDestructionError({
+                      message: "Unable to observe Supervisor control connection",
+                    }),
                   ),
+                ),
+                Effect.mapError(
+                  (cause) =>
+                    new StackDestructionError({
+                      message: "Unable to observe Supervisor control connection",
+                      cause,
+                    }),
+                ),
+              ),
+            ),
+          );
+          const result = yield* Effect.exit(
+            ownerReady.pipe(
+              Effect.andThen(invoke((rpc) => rpc.destroy(undefined), destroyError)),
+              // The owner closes its control server only after all workload cleanup has completed.
+              // Await the exact preface-only socket instead of decoding a terminal RPC stream Exit.
+              Effect.andThen(
+                Fiber.join(ownerFiber).pipe(
                   Effect.mapError(
                     (cause) =>
                       new StackDestructionError({
-                        message: "Unable to observe Supervisor control connection",
+                        message: "Unable to observe Supervisor shutdown completion",
                         cause,
                       }),
                   ),
                 ),
               ),
-            );
-            const result = yield* Effect.exit(
-              ownerReady.pipe(
-                Effect.andThen(invoke((rpc) => rpc.destroy(undefined), destroyError)),
-                // The owner closes its control server only after all workload cleanup has completed.
-                // Await the exact preface-only socket instead of decoding a terminal RPC stream Exit.
-                Effect.andThen(
-                  Fiber.join(ownerFiber).pipe(
-                    Effect.mapError(
-                      (cause) =>
-                        new StackDestructionError({
-                          message: "Unable to observe Supervisor shutdown completion",
-                          cause,
-                        }),
-                    ),
-                  ),
-                ),
-              ),
-            );
-            if (Exit.isFailure(result)) {
-              yield* Fiber.interrupt(ownerFiber);
-            }
-            return yield* result;
-          }),
-        ),
+            ),
+          );
+          if (Exit.isFailure(result)) {
+            yield* Fiber.interrupt(ownerFiber);
+          }
+          return yield* result;
+        }),
       ),
     );
     const status = () => {
@@ -649,35 +631,33 @@ export const makeHandle = (
         if (options.waitForRelease !== undefined) yield* options.waitForRelease();
       }).pipe(Effect.mapError(stopError));
     const stop = () =>
-      check(
-        resolveClient(false).pipe(
-          Effect.mapError(stopError),
-          Effect.flatMap(stopOwner),
-          Effect.catchTag("StackOwnershipConflictError", () =>
-            (readOfflineState === undefined
-              ? Effect.fail(
-                  new StackOwnershipConflictError({ message: "No Supervisor owns this stack" }),
-                )
-              : readOfflineState().pipe(
-                  Effect.mapError(stopError),
-                  Effect.flatMap((state) =>
-                    Option.isSome(state) &&
-                    (state.value.desiredLifecycle === "stopped" ||
-                      state.value.desiredLifecycle === "unconfigured")
-                      ? Effect.void
-                      : resolveClient(true).pipe(
-                          Effect.mapError(stopError),
-                          Effect.flatMap(stopOwner),
-                        ),
-                  ),
-                )
-            ).pipe(
-              // Ownership artifacts that block the offline fast path may be
-              // stale. Let ensureSupervisor arbitrate the lease; a live owner
-              // remains protected and returns a typed conflict.
-              Effect.catchTag("StackOwnershipConflictError", () =>
-                resolveClient(true).pipe(Effect.mapError(stopError), Effect.flatMap(stopOwner)),
-              ),
+      resolveClient(false).pipe(
+        Effect.mapError(stopError),
+        Effect.flatMap(stopOwner),
+        Effect.catchTag("StackOwnershipConflictError", () =>
+          (readOfflineState === undefined
+            ? Effect.fail(
+                new StackOwnershipConflictError({ message: "No Supervisor owns this stack" }),
+              )
+            : readOfflineState().pipe(
+                Effect.mapError(stopError),
+                Effect.flatMap((state) =>
+                  Option.isSome(state) &&
+                  (state.value.desiredLifecycle === "stopped" ||
+                    state.value.desiredLifecycle === "unconfigured")
+                    ? Effect.void
+                    : resolveClient(true).pipe(
+                        Effect.mapError(stopError),
+                        Effect.flatMap(stopOwner),
+                      ),
+                ),
+              )
+          ).pipe(
+            // Ownership artifacts that block the offline fast path may be
+            // stale. Let ensureSupervisor arbitrate the lease; a live owner
+            // remains protected and returns a typed conflict.
+            Effect.catchTag("StackOwnershipConflictError", () =>
+              resolveClient(true).pipe(Effect.mapError(stopError), Effect.flatMap(stopOwner)),
             ),
           ),
         ),
@@ -758,6 +738,16 @@ export const makeHandle = (
           ? Effect.succeed(result.value)
           : Effect.failCause(result.cause);
       });
+    const logs = (query?: LogQuery): Effect.Effect<StackLogBatch, StackLogsError> =>
+      invoke((rpc) => rpc.logs(query ?? {}), logsError).pipe(
+        Effect.catchTag("StackOwnershipConflictError", () =>
+          readLogs === undefined
+            ? Effect.fail(
+                new StackOwnershipConflictError({ message: "No Supervisor owns this stack" }),
+              )
+            : readLogs(query),
+        ),
+      );
     return {
       id,
       status,
@@ -808,69 +798,32 @@ export const makeHandle = (
         }),
       stop,
       destroy: () => destroyAndAwaitOwner,
-      close: () => Ref.set(closed, true),
-      watchStatus: () =>
-        Stream.unwrap(
-          check(
-            resolveClient(false).pipe(
-              Effect.mapError(statusError),
-              Effect.map((owner) =>
-                Stream.unwrap(
-                  owner.rpc.pipe(
-                    Effect.map((rpc) =>
-                      rpc
-                        .watchStatus(undefined)
-                        .pipe(
-                          Stream.mapError((error) =>
-                            Predicate.isTagged(error, "RpcClientError")
-                              ? new StackOwnershipConflictError({ message: error.message })
-                              : statusError(error),
-                          ),
-                        ),
-                    ),
-                    Effect.catchIf(
-                      (error): error is RpcClientError =>
-                        Predicate.isTagged(error, "RpcClientError"),
-                      (error) =>
-                        Effect.fail(new StackOwnershipConflictError({ message: error.message })),
-                    ),
-                  ),
-                ),
-              ),
-              Effect.catchTag("StackOwnershipConflictError", () =>
-                Effect.succeed(Stream.fromEffect(status())),
-              ),
+      logs,
+      followLogs: (query) =>
+        Stream.paginate({ cursor: query?.cursor, first: true }, ({ cursor, first }) => {
+          const { cursor: _initialCursor, ...baseQuery } = query ?? {};
+          const options = {
+            ...baseQuery,
+            ...(cursor === undefined || cursor.opaque === "v1_0" ? {} : { cursor }),
+          };
+          const request = logs(options);
+          const delayed = first
+            ? request
+            : Effect.schedule(Effect.void, Schedule.duration("100 millis")).pipe(
+                Effect.andThen(request),
+              );
+          return delayed.pipe(
+            Effect.map(
+              (batch) =>
+                [
+                  batch.entries,
+                  batch.running
+                    ? Option.some({ cursor: batch.cursor, first: false })
+                    : Option.none(),
+                ] as const,
             ),
-          ),
-        ).pipe(Stream.scoped),
-      logs: (options) =>
-        Stream.unwrap(
-          check(
-            resolveClient(false).pipe(
-              Effect.mapError(logsError),
-              Effect.map((owner) =>
-                Stream.unwrap(
-                  owner.rpc.pipe(
-                    Effect.map((rpc) => rpc.logs(options ?? {}).pipe(Stream.mapError(logsError))),
-                    Effect.catchIf(
-                      (error): error is RpcClientError =>
-                        Predicate.isTagged(error, "RpcClientError"),
-                      (error) =>
-                        Effect.fail(new StackOwnershipConflictError({ message: error.message })),
-                    ),
-                  ),
-                ),
-              ),
-              Effect.catchTag("StackOwnershipConflictError", () =>
-                readLogs === undefined
-                  ? Effect.fail(
-                      new StackOwnershipConflictError({ message: "No Supervisor owns this stack" }),
-                    )
-                  : readLogs(options).pipe(Effect.map((entries) => Stream.fromIterable(entries))),
-              ),
-            ),
-          ),
-        ).pipe(Stream.scoped),
+          );
+        }),
     } satisfies EffectStack;
   });
 
@@ -1056,13 +1009,44 @@ const handleDependencies = (options: {
     );
   const readPersistedState = () =>
     provide(options.store.read(options.id)).pipe(Effect.map(optionOf));
-  const readLogs = (logOptions?: LogOptions) =>
+  const readLogs = (query?: LogQuery) =>
     ensureOffline().pipe(
       Effect.andThen(
         resolveStackPaths({ stateRoot: options.environment.stateRoot, stackId: options.id }),
       ),
       Effect.provideService(Path.Path, options.path),
-      Effect.flatMap((paths) => readRetainedLogs(options.fileSystem, paths.logs, logOptions)),
+      Effect.flatMap((paths) =>
+        readRetainedLogs(
+          options.fileSystem,
+          paths.logs,
+          query?.cursor === undefined || query.cursor.opaque === "v1_0"
+            ? undefined
+            : { cursor: query.cursor },
+        ).pipe(
+          Effect.map((scanned) => {
+            const capabilities =
+              query?.capabilities === undefined ? undefined : new Set(query.capabilities);
+            const filtered = scanned.filter((entry) =>
+              capabilities === undefined
+                ? true
+                : entry.source !== "gateway" &&
+                  entry.source !== "supervisor" &&
+                  capabilities.has(entry.source),
+            );
+            const entries =
+              query?.tail === undefined
+                ? filtered
+                : query.tail <= 0
+                  ? []
+                  : filtered.slice(-Math.floor(query.tail));
+            return {
+              entries,
+              cursor: scanned.at(-1)?.cursor ?? query?.cursor ?? { opaque: "v1_0" },
+              running: false,
+            } satisfies StackLogBatch;
+          }),
+        ),
+      ),
       Effect.mapError((error) =>
         error instanceof StackOwnershipConflictError
           ? error

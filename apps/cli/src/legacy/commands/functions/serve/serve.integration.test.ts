@@ -62,8 +62,22 @@ describe("legacy functions serve", () => {
           startedConfig = options?.config;
           return status("starting");
         }),
-      watchStatus: () => Stream.succeed(status("running")),
+      status: () => Effect.succeed(status("running")),
       logs: () =>
+        Effect.succeed({
+          entries: [
+            {
+              cursor: { opaque: "1" },
+              timestamp: "now",
+              source: "functions" as const,
+              stream: "stdout" as const,
+              message: "ready",
+            },
+          ],
+          cursor: { opaque: "1" },
+          running: true,
+        }),
+      followLogs: () =>
         Stream.succeed({
           cursor: { opaque: "1" },
           timestamp: "now",

@@ -5,7 +5,7 @@ import type { RpcClientError } from "effect/unstable/rpc/RpcClientError";
 import { EffectStackCredentialsSchema } from "../public/Credentials.ts";
 import { StackConfigSchema } from "../public/Config.ts";
 import { CapabilityNameSchema } from "../public/Capability.ts";
-import { LogOptionsSchema, StackLogEntrySchema } from "../public/Logs.ts";
+import { LogQuerySchema, StackLogBatchSchema } from "../public/Logs.ts";
 import { StackStatusSchema } from "../public/Status.ts";
 import { STACK_ERROR_TAGS } from "../public/Errors.ts";
 
@@ -65,15 +65,9 @@ const StackRpc = {
   }),
   destroy: Rpc.make("destroy", { success: Schema.Void, error: StackRpcErrorSchema }),
   logs: Rpc.make("logs", {
-    payload: LogOptionsSchema,
-    success: StackLogEntrySchema,
+    payload: LogQuerySchema,
+    success: StackLogBatchSchema,
     error: StackRpcErrorSchema,
-    stream: true,
-  }),
-  watchStatus: Rpc.make("watchStatus", {
-    success: StackStatusSchema,
-    error: StackRpcErrorSchema,
-    stream: true,
   }),
 } as const;
 
@@ -85,7 +79,6 @@ export const StackRpcGroup = RpcGroup.make(
   StackRpc.restart,
   StackRpc.destroy,
   StackRpc.logs,
-  StackRpc.watchStatus,
 );
 type StackRpcDefinitions = RpcGroup.Rpcs<typeof StackRpcGroup>;
 export type StackRpcHandlers = {

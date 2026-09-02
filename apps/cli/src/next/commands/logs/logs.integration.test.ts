@@ -1,6 +1,6 @@
 import { describe, expect, it } from "@effect/vitest";
 import { Effect, Exit, Layer, Option, Stream } from "effect";
-import { StackIdSchema } from "@supabase/stack/effect";
+import { StackIdSchema, type EffectStack } from "@supabase/stack/effect";
 import { logs, type LogsOperations } from "./logs.handler.ts";
 import { emptyEnv, mockOutput, mockProcessControl } from "../../../../tests/helpers/mocks.ts";
 
@@ -75,12 +75,19 @@ describe("logs handler", () => {
         ),
       openStack: () =>
         Effect.succeed({
-          logs: (options) => {
+          logs: (options: Parameters<EffectStack["logs"]>[0]) => {
             seen.push(options);
-            if (options?.follow === true) return Stream.succeed(live);
-            return Stream.fromIterable(
-              entries.filter((entry) => options?.capabilities?.includes(entry.source) ?? true),
-            );
+            return Effect.succeed({
+              entries: entries.filter(
+                (entry) => options?.capabilities?.includes(entry.source) ?? true,
+              ),
+              cursor: { opaque: "v1_3" },
+              running: true,
+            });
+          },
+          followLogs: (options: Parameters<EffectStack["followLogs"]>[0]) => {
+            seen.push(options);
+            return Stream.succeed(live);
           },
         }),
     };
@@ -88,11 +95,10 @@ describe("logs handler", () => {
       Effect.provide(Layer.mergeAll(emptyEnv(), out.layer, mockProcessControl().layer)),
       Effect.tap(() =>
         Effect.sync(() => {
-          expect(seen[0]).toMatchObject({ capabilities: ["auth"], follow: false });
+          expect(seen[0]).toMatchObject({ capabilities: ["auth"], tail: 1 });
           expect(seen[1]).toMatchObject({
             capabilities: ["auth"],
-            follow: true,
-            cursor: { opaque: "2" },
+            cursor: { opaque: "v1_3" },
           });
           expect(out.events).toContainEqual(
             expect.objectContaining({ type: "log-entry", source: "history", line: "new" }),

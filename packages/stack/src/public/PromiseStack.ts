@@ -30,11 +30,11 @@ import {
 import type { StackConfig } from "./Config.ts";
 import { StackConfigSchema } from "./Config.ts";
 import { PromiseStackCredentialsSchema, type PromiseStackCredentials } from "./Credentials.ts";
-import type { LogOptions, StackLogEntry } from "./Logs.ts";
+import type { LogQuery, StackLogBatch, StackLogEntry } from "./Logs.ts";
 import type { StackDescriptor, StackInspection, StackStatus } from "./Status.ts";
 import type { StackId } from "./StackId.ts";
 import type { PreparedCapability, PrepareStackResult } from "./EffectStack.ts";
-import { StackLifecycleConflictError, InvalidStackConfigError } from "./Errors.ts";
+import { InvalidStackConfigError } from "./Errors.ts";
 import { StackRuntimeEnvironment, type StackRuntimeEnvironmentValue } from "../state/Ownership.ts";
 
 // Promise methods are the deliberate outer boundary of this package.
@@ -68,9 +68,8 @@ export interface PromiseStack {
   readonly restart: (options?: PromiseStartStackOptions) => Promise<StackStatus>;
   readonly stop: () => Promise<void>;
   readonly destroy: () => Promise<void>;
-  readonly close: () => Promise<void>;
-  readonly watchStatus: () => AsyncIterable<StackStatus>;
-  readonly logs: (options?: LogOptions) => AsyncIterable<StackLogEntry>;
+  readonly logs: (query?: LogQuery) => Promise<StackLogBatch>;
+  readonly followLogs: (query?: LogQuery) => AsyncIterable<StackLogEntry>;
 }
 
 export interface PromiseStackApi {
@@ -123,55 +122,8 @@ const adaptStream = <A, E>(stream: Stream.Stream<A, E>): AsyncIterable<A> =>
   Stream.toAsyncIterable(stream);
 
 /** Adapts an already-created Effect handle; exported for facade integration tests. */
-export const adaptEffectStack = (
-  effectStack: EffectStack,
-  handleScope?: Scope.Scope,
-): PromiseStack => {
-  let closed = false;
-  let closePromise: Promise<void> | undefined;
-  const active: Set<() => Promise<unknown>> = new Set();
-  const closedError = () => new StackLifecycleConflictError({ message: "Stack handle is closed" });
-  const iterable = <A>(stream: Stream.Stream<A, unknown>): AsyncIterable<A> => ({
-    [Symbol.asyncIterator]() {
-      if (closed) {
-        return {
-          next: async () => Promise.reject(closedError()),
-          return: async () => ({ done: true, value: undefined }),
-          throw: async () => Promise.reject(closedError()),
-        };
-      }
-      const iterator = adaptStream(stream)[Symbol.asyncIterator]();
-      const cancel = () => Promise.resolve(iterator.return?.());
-      active.add(cancel);
-      return {
-        next: async (...args: [] | [undefined]) => {
-          try {
-            const result = await iterator.next(...args);
-            if (result.done === true) active.delete(cancel);
-            return result;
-          } catch (error) {
-            active.delete(cancel);
-            throw error;
-          }
-        },
-        return: async (value?: unknown) => {
-          active.delete(cancel);
-          return iterator.return?.(value) ?? { done: true, value: undefined };
-        },
-        throw:
-          iterator.throw === undefined
-            ? undefined
-            : async (error?: unknown) => {
-                active.delete(cancel);
-                return iterator.throw!(error);
-              },
-      };
-    },
-  });
-  const invoke = <A>(effect: Effect.Effect<A, unknown>): Promise<A> => {
-    if (closed) return Promise.reject(closedError());
-    return Effect.runPromise(effect);
-  };
+export const adaptEffectStack = (effectStack: EffectStack): PromiseStack => {
+  const invoke = <A>(effect: Effect.Effect<A, unknown>): Promise<A> => Effect.runPromise(effect);
   const withConfig = <A>(
     options: { readonly config?: PromiseStackConfig } | undefined,
     operation: (config?: StackConfig) => Effect.Effect<A, unknown>,
@@ -221,41 +173,8 @@ export const adaptEffectStack = (
       ),
     stop: () => invoke(effectStack.stop()),
     destroy: () => invoke(effectStack.destroy()),
-    close: () => {
-      if (closePromise !== undefined) return closePromise;
-      closed = true;
-      closePromise = (async () => {
-        const failures: Array<unknown> = [];
-        await Promise.all(
-          [...active].map(async (cancel) => {
-            try {
-              await cancel();
-            } catch (error) {
-              failures.push(error);
-            } finally {
-              active.delete(cancel);
-            }
-          }),
-        );
-        try {
-          await Effect.runPromise(effectStack.close());
-        } catch (error) {
-          failures.push(error);
-        } finally {
-          if (handleScope !== undefined) {
-            try {
-              await Effect.runPromise(Scope.close(handleScope, Exit.void));
-            } catch (error) {
-              failures.push(error);
-            }
-          }
-        }
-        if (failures.length > 0) throw new AggregateError(failures, "Failed to close stack handle");
-      })();
-      return closePromise;
-    },
-    watchStatus: () => iterable(effectStack.watchStatus()),
-    logs: (options) => iterable(effectStack.logs(options)),
+    logs: (query) => invoke(effectStack.logs(query)),
+    followLogs: (query) => adaptStream(effectStack.followLogs(query)),
   };
 };
 
@@ -286,15 +205,7 @@ export const makePromiseApi = (
 
   const createOrOpen = async (
     effect: Effect.Effect<EffectStack, unknown, RuntimeRequirements>,
-  ): Promise<PromiseStack> => {
-    const scope = await makeScope();
-    try {
-      return adaptEffectStack(await run(effect, scope), scope);
-    } catch (error) {
-      await Effect.runPromise(Scope.close(scope, Exit.fail(error)));
-      throw error;
-    }
-  };
+  ): Promise<PromiseStack> => adaptEffectStack(await run(effect));
   return {
     createStack: (options) => createOrOpen(createEffectStack(options)),
     openStack: (id, options) => createOrOpen(openEffectStack(id, options)),

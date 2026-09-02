@@ -37,6 +37,11 @@ export {
   CapabilityStatusSchema,
   ActivationModeSchema,
 } from "./public/Capability.ts";
-export { LogCursorSchema, LogOptionsSchema, StackLogEntrySchema } from "./public/Logs.ts";
-export type { LogCursor, LogOptions, StackLogEntry } from "./public/Logs.ts";
+export {
+  LogCursorSchema,
+  LogQuerySchema,
+  StackLogBatchSchema,
+  StackLogEntrySchema,
+} from "./public/Logs.ts";
+export type { LogCursor, LogQuery, StackLogBatch, StackLogEntry } from "./public/Logs.ts";
 export * from "./public/Errors.ts";

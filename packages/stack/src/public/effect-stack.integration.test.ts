@@ -10,6 +10,7 @@ import {
   Option,
   Path,
   Redacted,
+  Ref,
   Schedule,
   Schema,
   Scope,
@@ -81,6 +82,9 @@ const credentials = {
   },
 };
 
+const emptyLogs = () =>
+  Effect.succeed({ entries: [], cursor: { opaque: "v1_0" }, running: false } as const);
+
 const withRuntimeRoot = <A, E, R>(effect: (project: string) => Effect.Effect<A, E, R>) =>
   Effect.scoped(
     Effect.gen(function* () {
@@ -104,6 +108,66 @@ const withRuntimeRoot = <A, E, R>(effect: (project: string) => Effect.Effect<A, 
   ).pipe(Effect.provide(NodeServices.layer));
 
 describe("Effect stack lifecycle handoff", () => {
+  it.live("returns filtered log batches and follows from their cursor", () =>
+    withRuntimeRoot((project) =>
+      Effect.gen(function* () {
+        const stack = yield* createStack({ projectRoot: project });
+        const first = yield* stack.logs({ capabilities: ["auth"], tail: 20 });
+        expect(first.entries.every((entry) => entry.source === "auth")).toBe(true);
+        const followed = yield* stack
+          .followLogs({ capabilities: ["auth"], cursor: first.cursor })
+          .pipe(Stream.runCollect);
+        expect(Array.from(followed).every((entry) => entry.source === "auth")).toBe(true);
+      }),
+    ),
+  );
+
+  it.live("delivers final followed entries once and completes after stop", () =>
+    withRuntimeRoot((_project) =>
+      // oxlint-disable-next-line effecttsgo/any-unknown-in-error-context -- test-only handle seam
+      Effect.gen(function* () {
+        const calls = yield* Ref.make(0);
+        const entries = [
+          {
+            cursor: { opaque: "v1_1" },
+            timestamp: "2026-01-01T00:00:00.000Z",
+            source: "auth" as const,
+            stream: "stdout" as const,
+            message: "started",
+          },
+          {
+            cursor: { opaque: "v1_2" },
+            timestamp: "2026-01-01T00:00:01.000Z",
+            source: "auth" as const,
+            stream: "stdout" as const,
+            message: "stopped",
+          },
+        ];
+        const stack = yield* makeHandle(
+          stackId,
+          {},
+          {
+            resolveOwner: () => Effect.succeed(Option.none()),
+            readLogs: () =>
+              Ref.getAndUpdate(calls, (current) => current + 1).pipe(
+                Effect.map((index) => ({
+                  entries: index === 0 ? [entries[0]] : [entries[1]],
+                  cursor: entries[index === 0 ? 0 : 1].cursor,
+                  running: index === 0,
+                })),
+              ),
+          },
+        );
+        const followed = yield* stack
+          .followLogs({ capabilities: ["auth"] })
+          .pipe(Stream.runCollect, Effect.exit);
+        expect(Exit.isSuccess(followed)).toBe(true);
+        if (Exit.isSuccess(followed)) expect(Array.from(followed.value)).toEqual(entries);
+        expect(yield* Ref.get(calls)).toBe(2);
+      }),
+    ),
+  );
+
   it.live("creates a stopped stack without launching a Supervisor", () =>
     withRuntimeRoot((project) =>
       Effect.gen(function* () {
@@ -113,13 +177,11 @@ describe("Effect stack lifecycle handoff", () => {
         const offline = yield* stack.status();
         expect(offline.lifecycle).toBe("unconfigured");
         expect(offline.capabilities.every(({ state }) => state === "disabled")).toBe(true);
-        const opened = yield* openStack(stack.id, { replaceIncompatibleOwner: true });
+        yield* openStack(stack.id, { replaceIncompatibleOwner: true });
         expect(yield* readOwnerMetadata(env.stateRoot, stack.id, env)).toBeUndefined();
-        yield* opened.close();
         yield* stack.stop();
-        expect(yield* Stream.runCollect(stack.watchStatus())).toHaveLength(1);
-        expect(yield* Stream.runCollect(stack.logs())).toHaveLength(0);
-        yield* stack.close();
+        expect((yield* stack.status()).lifecycle).toBe("unconfigured");
+        expect((yield* stack.logs()).entries).toHaveLength(0);
       }),
     ),
   );
@@ -144,7 +206,6 @@ describe("Effect stack lifecycle handoff", () => {
             });
         }).pipe(Effect.retry(Schedule.spaced("25 millis").pipe(Schedule.upTo({ times: 200 }))));
         expect((yield* stack.status()).lifecycle).toBe("unconfigured");
-        yield* stack.close();
       }),
     ),
   );
@@ -166,11 +227,8 @@ describe("Effect stack lifecycle handoff", () => {
         );
         const status = yield* stack.status().pipe(Effect.exit);
         expect(Exit.isFailure(status)).toBe(true);
-        const logs = yield* Stream.runCollect(stack.logs()).pipe(Effect.exit);
+        const logs = yield* stack.logs().pipe(Effect.exit);
         expect(Exit.isFailure(logs)).toBe(true);
-        const watch = yield* Stream.runHead(stack.watchStatus()).pipe(Effect.exit);
-        expect(Exit.isFailure(watch)).toBe(true);
-        yield* stack.close();
       }
     }).pipe(Effect.provide(NodeServices.layer)),
   );
@@ -192,13 +250,7 @@ describe("Effect stack lifecycle handoff", () => {
           const assertGuarded = (candidate: EffectStack) =>
             Effect.gen(function* () {
               expect(Exit.isFailure(yield* candidate.status().pipe(Effect.exit))).toBe(true);
-              expect(
-                Exit.isFailure(yield* Stream.runCollect(candidate.logs()).pipe(Effect.exit)),
-              ).toBe(true);
-              expect(
-                Exit.isFailure(yield* Stream.runHead(candidate.watchStatus()).pipe(Effect.exit)),
-              ).toBe(true);
-              yield* candidate.close();
+              expect(Exit.isFailure(yield* candidate.logs().pipe(Effect.exit))).toBe(true);
             });
           const lockOnly = yield* openStack(stack.id);
           expect(yield* ownerLockExists(env.stateRoot, stack.id)).toBe(true);
@@ -218,7 +270,6 @@ describe("Effect stack lifecycle handoff", () => {
           const metadataOnly = yield* openStack(stack.id);
           expect(yield* readOwnerMetadata(env.stateRoot, stack.id, env)).toBeDefined();
           yield* assertGuarded(metadataOnly);
-          yield* stack.close();
         }),
       ),
     60_000,
@@ -249,8 +300,7 @@ describe("Effect stack lifecycle handoff", () => {
           start: () => Effect.succeed(runningStatus),
           restart: () => Effect.succeed(runningStatus),
           destroy: () => Effect.void,
-          logs: () => Stream.empty,
-          watchStatus: () => Stream.empty,
+          logs: emptyLogs,
         };
         yield* startControlServer({
           endpoint,
@@ -289,7 +339,6 @@ describe("Effect stack lifecycle handoff", () => {
           expect(Option.isSome(error)).toBe(true);
           if (Option.isSome(error)) expect(error.value).toBeInstanceOf(StackPreparationError);
         }
-        yield* stack.close();
       }).pipe(Effect.provide(NodeServices.layer)),
     ),
   );
@@ -322,8 +371,7 @@ describe("Effect stack lifecycle handoff", () => {
             start: () => Effect.succeed(runningStatus),
             restart: () => Effect.succeed(runningStatus),
             destroy: () => Effect.void,
-            logs: () => Stream.empty,
-            watchStatus: () => Stream.empty,
+            logs: emptyLogs,
           },
           maintenanceHandlers: {
             probe: Effect.succeed({
@@ -366,7 +414,6 @@ describe("Effect stack lifecycle handoff", () => {
             expect(error).toBeInstanceOf(StackOwnershipConflictError);
             expect(error?.message).toBe("Supervisor is still shutting down");
           }
-          yield* stack.close();
         }
       }).pipe(Effect.provide(NodeServices.layer)),
     ),
@@ -391,7 +438,6 @@ describe("Effect stack lifecycle handoff", () => {
         }
         expect((yield* store.read(stack.id))?.desiredLifecycle).toBe("running");
         expect(yield* readOwnerMetadata(env.stateRoot, stack.id, env)).toBeUndefined();
-        yield* stack.close();
       }),
     ),
   );
@@ -433,8 +479,7 @@ describe("Effect stack lifecycle handoff", () => {
             return Effect.succeed(runningStatus);
           },
           destroy: () => Effect.void,
-          logs: () => Stream.empty,
-          watchStatus: () => Stream.empty,
+          logs: emptyLogs,
         };
         yield* startControlServer({
           endpoint,
@@ -466,7 +511,6 @@ describe("Effect stack lifecycle handoff", () => {
         expect(payloads.prepare).toEqual([{}, { config: {} }]);
         expect(payloads.start).toEqual([{}, { config: {} }]);
         expect(payloads.restart).toEqual([{}, { config: {} }]);
-        yield* stack.close();
       }).pipe(Effect.provide(NodeServices.layer)),
     ),
   );
@@ -497,8 +541,7 @@ describe("Effect stack lifecycle handoff", () => {
             start: () => Effect.succeed(runningStatus),
             restart: () => Effect.succeed(runningStatus),
             destroy: () => Effect.void,
-            logs: () => Stream.empty,
-            watchStatus: () => Stream.empty,
+            logs: emptyLogs,
           },
           maintenanceHandlers: {
             probe: Effect.succeed({
@@ -525,7 +568,6 @@ describe("Effect stack lifecycle handoff", () => {
         );
         expect((yield* stack.restart()).lifecycle).toBe("running");
         expect(launched).toBe(true);
-        yield* stack.close();
       }).pipe(Effect.provide(NodeServices.layer)),
     ),
   );
@@ -547,8 +589,7 @@ describe("Effect stack lifecycle handoff", () => {
           start: () => Effect.succeed(runningStatus),
           restart: () => Effect.succeed(runningStatus),
           destroy: () => Effect.void,
-          logs: () => Stream.empty,
-          watchStatus: () => Stream.concat(Stream.make(runningStatus), Stream.never),
+          logs: emptyLogs,
         };
         const maintenanceHandlers = {
           probe: Effect.succeed({
@@ -578,7 +619,6 @@ describe("Effect stack lifecycle handoff", () => {
         yield* Scope.close(ownerScope, Exit.void);
         const destroyed = yield* Fiber.join(destroyFiber).pipe(Effect.exit);
         expect(Exit.isSuccess(destroyed)).toBe(true);
-        yield* stack.close();
       }).pipe(Effect.provide(NodeServices.layer)),
     ),
   );
@@ -617,7 +657,6 @@ describe("Effect stack lifecycle handoff", () => {
         yield* Fiber.interrupt(first);
         yield* Deferred.succeed(release, undefined);
         yield* Deferred.await(completed);
-        yield* stack.close();
       }).pipe(Effect.provide(NodeServices.layer)),
     ),
   );
@@ -643,7 +682,6 @@ describe("Effect stack lifecycle handoff", () => {
             expect(error.value.message).toContain("control connection");
           }
         }
-        yield* stack.close();
       }).pipe(Effect.provide(NodeServices.layer)),
     ),
   );
@@ -684,10 +722,8 @@ describe("Effect stack lifecycle handoff", () => {
 
           const oldOwner = yield* openStack(stack.id);
           expect(Exit.isFailure(yield* oldOwner.status().pipe(Effect.exit))).toBe(true);
-          yield* oldOwner.close();
           const ordinaryCreate = yield* createStack({ projectRoot: project });
           expect(ordinaryCreate.id).toBe(stack.id);
-          yield* ordinaryCreate.close();
           const restarted = yield* openStack(stack.id, { replaceIncompatibleOwner: true });
           yield* Effect.addFinalizer(() => restarted.destroy().pipe(Effect.ignore));
           const status = yield* restarted.restart({ config: { capabilities: {} } });
@@ -697,9 +733,6 @@ describe("Effect stack lifecycle handoff", () => {
           expect(status.id).toBe(stack.id);
           expect(status.runtime).toEqual({ kind: "native" });
           expect((yield* restarted.status()).lifecycle).toBe("running");
-          const observed = yield* restarted.watchStatus().pipe(Stream.runHead);
-          expect(Option.isSome(observed)).toBe(true);
-          if (Option.isSome(observed)) expect(observed.value.lifecycle).toBe("running");
           const secondStatus = yield* restarted.restart({ config: { capabilities: {} } });
           expect(secondStatus.lifecycle).toBe("running");
           yield* restarted.stop();
@@ -708,8 +741,6 @@ describe("Effect stack lifecycle handoff", () => {
           const startedAgain = yield* restarted.start({ config: { capabilities: {} } });
           expect(startedAgain.lifecycle).toBe("running");
           yield* restarted.destroy();
-          yield* restarted.close();
-          yield* stack.close();
         }),
       ),
     240_000,
@@ -833,7 +864,6 @@ describe("Effect stack lifecycle handoff", () => {
           });
           expect(yield* readOwnerMetadata(env.stateRoot, createId, env)).toBeUndefined();
           expect(yield* ownerLockExists(env.stateRoot, createId)).toBe(false);
-          yield* created.close();
 
           const openId = yield* makeDeadOwner(openProject, "stack-rpc-v0@0.0.1");
           const replaced = yield* openStack(openId, { replaceIncompatibleOwner: true });
@@ -843,7 +873,6 @@ describe("Effect stack lifecycle handoff", () => {
             STACK_RPC_RELEASE,
           );
           yield* replaced.destroy();
-          yield* replaced.close();
         }),
       ),
     300_000,
@@ -880,8 +909,6 @@ describe("Effect stack lifecycle handoff", () => {
         yield* fs.writeFileString(paths.controlMetadata, incompatibleOwner);
         const oldOwnerHandle = yield* openStack(stack.id);
         yield* oldOwnerHandle.stop();
-        yield* oldOwnerHandle.close();
-        yield* stack.close();
       }),
     ),
   );

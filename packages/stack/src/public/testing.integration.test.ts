@@ -62,13 +62,13 @@ const fakeStack = (
   events: Array<string>,
   failStart = false,
   reachesReadiness = true,
-  failClose = false,
   includeApi = true,
   functionsState: "ready" | "dormant" | "stopped" = "dormant",
   failedCapability?: string,
 ): PromiseStack => ({
   id: stackId,
-  status: async () => status("running", includeApi, functionsState),
+  status: async () =>
+    status(reachesReadiness ? "running" : "stopped", includeApi, functionsState, failedCapability),
   credentials: async () => ({
     database: { url: "postgres://test", password: "test" },
     api: {
@@ -96,20 +96,8 @@ const fakeStack = (
     events.push("destroy");
     if (failStart) throw new Error("destroy failed");
   },
-  close: async () => {
-    events.push("close");
-    if (failClose) throw new Error("close failed");
-  },
-  watchStatus: () =>
-    stream([
-      status(
-        reachesReadiness ? "running" : "starting",
-        includeApi,
-        functionsState,
-        failedCapability,
-      ),
-    ]),
-  logs: () => stream([]),
+  logs: async () => ({ entries: [], cursor: { opaque: "v1_0" }, running: false }),
+  followLogs: () => stream([]),
 });
 
 describe("test stack resource", () => {
@@ -128,7 +116,7 @@ describe("test stack resource", () => {
     };
     const stack = await createTestStackWith({}, operations);
     await stack[Symbol.asyncDispose]();
-    expect(events).toEqual(["create:/tmp/stack-test-owned", "start", "destroy", "close"]);
+    expect(events).toEqual(["create:/tmp/stack-test-owned", "start", "destroy"]);
     expect(removed).toEqual(["/tmp/stack-test-owned"]);
   });
 
@@ -145,7 +133,7 @@ describe("test stack resource", () => {
     await expect(createTestStackWith({}, operations)).rejects.toThrow(
       "startup failed; retained test stack root /tmp/stack-test-failed",
     );
-    expect(events).toEqual(["start", "destroy", "close"]);
+    expect(events).toEqual(["start", "destroy"]);
     expect(removed).toEqual([]);
   });
 
@@ -161,24 +149,24 @@ describe("test stack resource", () => {
     };
     await expect(
       createTestStackWith({ config: { capabilities: { database: {} } } }, operations),
-    ).rejects.toThrow("did not reach running readiness");
-    expect(events).toEqual(["start", "destroy", "close"]);
+    ).rejects.toThrow("Stack lifecycle stopped before stack became ready");
+    expect(events).toEqual(["start", "destroy"]);
     expect(removed).toEqual(["/tmp/stack-test-unready"]);
   });
 
-  it("removes the exact root when disposal close fails and preserves that primary error", async () => {
+  it("removes the exact root after disposal", async () => {
     const events: Array<string> = [];
     const removed: Array<string> = [];
     const operations: TestStackOperations = {
       createRoot: async () => "/tmp/stack-test-close-failed",
-      createStack: async () => fakeStack(events, false, true, true),
+      createStack: async () => fakeStack(events),
       removeRoot: async (root) => {
         removed.push(root);
       },
     };
     const stack = await createTestStackWith({}, operations);
-    await expect(stack[Symbol.asyncDispose]()).rejects.toThrow("close failed");
-    expect(events).toEqual(["start", "destroy", "close"]);
+    await expect(stack[Symbol.asyncDispose]()).resolves.toBeUndefined();
+    expect(events).toEqual(["start", "destroy"]);
     expect(removed).toEqual(["/tmp/stack-test-close-failed"]);
   });
 
@@ -186,7 +174,7 @@ describe("test stack resource", () => {
     const events: Array<string> = [];
     const operations: TestStackOperations = {
       createRoot: async () => "/tmp/stack-test-disabled-surfaces",
-      createStack: async () => fakeStack(events, false, true, false, false, "stopped"),
+      createStack: async () => fakeStack(events, false, true, false, "stopped"),
       removeRoot: async () => undefined,
     };
     const stack = await createTestStackWith(
@@ -194,7 +182,7 @@ describe("test stack resource", () => {
       operations,
     );
     await stack[Symbol.asyncDispose]();
-    expect(events).toEqual(["start", "destroy", "close"]);
+    expect(events).toEqual(["start", "destroy"]);
   });
 
   it("runs setupProject after creating the root and before creating the stack", async () => {
@@ -227,7 +215,6 @@ describe("test stack resource", () => {
       "create:/tmp/stack-test-setup",
       "start",
       "destroy",
-      "close",
       "remove",
     ]);
   });
@@ -290,13 +277,13 @@ describe("test stack resource", () => {
     const removed: Array<string> = [];
     const operations: TestStackOperations = {
       createRoot: async () => "/tmp/stack-test-capability-failed",
-      createStack: async () => fakeStack(events, false, true, false, true, "dormant", "auth"),
+      createStack: async () => fakeStack(events, false, true, true, "dormant", "auth"),
       removeRoot: async (root) => {
         removed.push(root);
       },
     };
     await expect(createTestStackWith({}, operations)).rejects.toThrow("auth failed");
-    expect(events).toEqual(["start", "destroy", "close"]);
+    expect(events).toEqual(["start", "destroy"]);
     expect(removed).toEqual(["/tmp/stack-test-capability-failed"]);
   });
 
@@ -306,12 +293,12 @@ describe("test stack resource", () => {
       createRoot: async () => "/tmp/stack-test-lifecycle-stopped",
       createStack: async () => ({
         ...fakeStack(events),
-        watchStatus: () => stream([status("stopped")]),
+        status: async () => status("stopped"),
       }),
       removeRoot: async () => undefined,
     };
     await expect(createTestStackWith({}, operations)).rejects.toThrow("stopped");
-    expect(events).toEqual(["start", "destroy", "close"]);
+    expect(events).toEqual(["start", "destroy"]);
   });
 
   it("rejects readiness when the lifecycle starts stopping before becoming ready", async () => {
@@ -320,11 +307,11 @@ describe("test stack resource", () => {
       createRoot: async () => "/tmp/stack-test-lifecycle-stopping",
       createStack: async () => ({
         ...fakeStack(events),
-        watchStatus: () => stream([status("stopping")]),
+        status: async () => status("stopping"),
       }),
       removeRoot: async () => undefined,
     };
     await expect(createTestStackWith({}, operations)).rejects.toThrow("stopping");
-    expect(events).toEqual(["start", "destroy", "close"]);
+    expect(events).toEqual(["start", "destroy"]);
   });
 });

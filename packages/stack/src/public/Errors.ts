@@ -194,7 +194,6 @@ export type StackStatusError =
   | StackStateInvalidError
   | StackStateFormatUnsupportedError
   | StackUpgradeRequiredError;
-export type StackStatusWatchError = StackStatusError;
 export type StackCredentialsError =
   | StackNotFoundError
   | StackNotRunningError

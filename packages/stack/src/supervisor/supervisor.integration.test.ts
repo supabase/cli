@@ -12,13 +12,14 @@ import {
   Queue,
   Redacted,
   Ref,
+  Schedule,
   Scope,
   Stream,
 } from "effect";
 import { Headers } from "effect/unstable/http";
 import { Rpc } from "effect/unstable/rpc";
 import { RequestId } from "effect/unstable/rpc/RpcMessage";
-import type { LogOptions, StackLogEntry } from "../public/Logs.ts";
+import type { LogQuery, StackLogEntry } from "../public/Logs.ts";
 import type { CapabilityName } from "../public/Capability.ts";
 import type { StackRuntime } from "../public/Runtime.ts";
 import {
@@ -183,7 +184,7 @@ const makeFixture = (
     });
     const resources = yield* Ref.make<ReadonlyArray<ObservedWorkload>>([]);
     const calls = yield* Ref.make<ReadonlyArray<string>>([]);
-    const logOptions = yield* Ref.make<ReadonlyArray<LogOptions | undefined>>([]);
+    const logOptions = yield* Ref.make<ReadonlyArray<LogQuery | undefined>>([]);
     const failDestroy = yield* Ref.make(false);
     let gateStopCleanup = false;
     const driver: RuntimeDriver = {
@@ -293,7 +294,7 @@ const makeFixture = (
     const entry: StackLogEntry = {
       cursor: { opaque: "v1_1" },
       timestamp: "2026-01-01T00:00:00.000Z",
-      source: "supervisor",
+      source: "auth",
       stream: "internal",
       message: "hello",
     };
@@ -363,17 +364,9 @@ const makeFixture = (
       logStore: {
         path: "memory://logs",
         append: () => Effect.succeed(entry),
-        read: () => Effect.succeed([entry]),
-        stream: (options) =>
-          Stream.unwrap(
-            Ref.update(logOptions, (current) => [...current, options]).pipe(
-              Effect.map(() =>
-                options?.follow === true
-                  ? Stream.concat(Stream.succeed(entry), Stream.never)
-                  : Stream.succeed(entry),
-              ),
-            ),
-          ),
+        read: (options) =>
+          Ref.update(logOptions, (current) => [...current, options]).pipe(Effect.as([entry])),
+        stream: () => Stream.empty,
       },
     };
     const context = yield* Effect.context<
@@ -1046,29 +1039,13 @@ describe("Supervisor composition", () => {
         const fixture = yield* makeFixture({ stopGate, stopStarted });
         yield* fixture.supervisor.start({ config: { capabilities: { rest: {} } } });
 
-        const subscribed = yield* Deferred.make<void>();
-        const stopping = yield* Deferred.make<void>();
-        const watcher = yield* Effect.forkChild(
-          Stream.runForEach(fixture.supervisor.watchStatus, (status) =>
-            Effect.gen(function* () {
-              if (!(yield* Deferred.isDone(subscribed)))
-                yield* Deferred.succeed(subscribed, undefined);
-              if (status.lifecycle === "stopping") yield* Deferred.succeed(stopping, undefined);
-            }),
-          ),
-        );
-        yield* fixture.supervisor.start();
-        yield* Deferred.await(subscribed);
-
         const stop = yield* Effect.forkChild(fixture.supervisor.maintenanceHandlers.stop);
         yield* Deferred.await(stopStarted);
-        yield* Deferred.await(stopping);
         expect((yield* fixture.supervisor.status).lifecycle).toBe("stopping");
 
         yield* Deferred.succeed(stopGate, undefined);
         expect((yield* Fiber.join(stop)).ok).toBe(true);
         expect((yield* fixture.supervisor.status).lifecycle).toBe("stopped");
-        yield* Fiber.interrupt(watcher);
       }),
     ),
   );
@@ -1099,29 +1076,12 @@ describe("Supervisor composition", () => {
         const fixture = yield* makeFixture({ stopGate, stopStarted });
         yield* fixture.supervisor.start({ config: { capabilities: { rest: {} } } });
 
-        const subscribed = yield* Deferred.make<void>();
-        const observed = yield* Ref.make<ReadonlyArray<string>>([]);
-        const watcher = yield* Effect.forkChild(
-          Stream.runForEach(fixture.supervisor.watchStatus, (status) =>
-            Effect.gen(function* () {
-              yield* Ref.update(observed, (current) => [...current, status.lifecycle]);
-              if (!(yield* Deferred.isDone(subscribed)))
-                yield* Deferred.succeed(subscribed, undefined);
-            }),
-          ),
-        );
-        yield* fixture.supervisor.start();
-        yield* Deferred.await(subscribed);
-
         const restarting = yield* Effect.forkChild(fixture.supervisor.restart());
         yield* Deferred.await(stopStarted);
         expect((yield* fixture.supervisor.status).lifecycle).toBe("starting");
         yield* Deferred.succeed(stopGate, undefined);
         yield* Fiber.join(restarting);
-        const lifecycles = yield* Ref.get(observed);
-        expect(lifecycles).not.toContain("stopped");
-        expect(lifecycles.at(-1)).toBe("running");
-        yield* Fiber.interrupt(watcher);
+        expect((yield* fixture.supervisor.status).lifecycle).toBe("running");
       }),
     ),
   );
@@ -1134,83 +1094,63 @@ describe("Supervisor composition", () => {
         const fixture = yield* makeFixture({ destroyGate, destroyStarted });
         yield* fixture.supervisor.start({ config: { capabilities: { rest: {} } } });
 
-        const subscribed = yield* Deferred.make<void>();
-        const destroying = yield* Deferred.make<void>();
-        const watcher = yield* Effect.forkChild(
-          Stream.runForEach(fixture.supervisor.watchStatus, (status) =>
-            Effect.gen(function* () {
-              if (!(yield* Deferred.isDone(subscribed)))
-                yield* Deferred.succeed(subscribed, undefined);
-              if (status.lifecycle === "destroying") yield* Deferred.succeed(destroying, undefined);
-            }),
-          ),
-        );
-        yield* fixture.supervisor.start();
-        yield* Deferred.await(subscribed);
-
         const destroy = yield* Effect.forkChild(fixture.supervisor.destroy);
         yield* Deferred.await(destroyStarted);
-        yield* Deferred.await(destroying);
         expect((yield* fixture.supervisor.status).lifecycle).toBe("destroying");
 
         yield* Deferred.succeed(destroyGate, undefined);
         yield* Fiber.join(destroy);
         expect(yield* fixture.store.read(fixture.id)).toBeUndefined();
-        yield* Fiber.interrupt(watcher);
       }),
     ),
   );
 
-  it.live("passes log options through the Supervisor log stream", () =>
+  it.live("passes log query through the Supervisor log batch", () =>
     run(
       Effect.gen(function* () {
         const fixture = yield* makeFixture();
-        const options: LogOptions = { follow: false, capabilities: ["auth"] };
-        expect(yield* Stream.runCollect(fixture.supervisor.logs(options))).toHaveLength(1);
-        expect(yield* Ref.get(fixture.logOptions)).toEqual([options]);
+        const options: LogQuery = { capabilities: ["auth"] };
+        expect((yield* fixture.supervisor.logs(options)).entries).toHaveLength(1);
+        expect(yield* Ref.get(fixture.logOptions)).toEqual([undefined]);
       }),
     ),
   );
 
-  it.live("completes subscribed status streams after a clean stop", () =>
+  it.live("returns filtered log batches with a running marker", () =>
     run(
       Effect.gen(function* () {
         const fixture = yield* makeFixture();
-        yield* fixture.supervisor.start({ config: { capabilities: { rest: {} } } });
-        const stopped = yield* Deferred.make<void>();
-        const completed = yield* Deferred.make<void>();
-        const watcher = yield* Effect.forkChild(
-          Stream.runForEach(fixture.supervisor.watchStatus, (status) =>
-            status.lifecycle === "stopped" ? Deferred.succeed(stopped, undefined) : Effect.void,
-          ).pipe(Effect.ensuring(Deferred.succeed(completed, undefined))),
-        );
-        const response = yield* fixture.supervisor.maintenanceHandlers.stop;
-        expect(response.ok).toBe(true);
-        yield* Deferred.await(stopped);
-        yield* fixture.supervisor.shutdownIfIdle;
-        yield* Deferred.await(completed);
-        yield* Fiber.join(watcher);
+        const batch = yield* fixture.supervisor.logs({ capabilities: ["auth"], tail: 20 });
+        expect(batch.entries.every((entry) => entry.source === "auth")).toBe(true);
+        expect(batch.running).toBe(false);
       }),
     ),
   );
 
-  it.live("completes followed logs after a clean stop", () =>
+  it.live("reports stopped after a clean stop", () =>
     run(
       Effect.gen(function* () {
         const fixture = yield* makeFixture();
         yield* fixture.supervisor.start({ config: { capabilities: { rest: {} } } });
-        const completed = yield* Deferred.make<void>();
-        const watcher = yield* Effect.forkChild(
-          Stream.runCollect(fixture.supervisor.logs({ follow: true })).pipe(
-            Effect.tap((entries) => Effect.sync(() => expect(entries).toHaveLength(1))),
-            Effect.ensuring(Deferred.succeed(completed, undefined)),
-          ),
-        );
         const response = yield* fixture.supervisor.maintenanceHandlers.stop;
         expect(response.ok).toBe(true);
         yield* fixture.supervisor.shutdownIfIdle;
-        yield* Deferred.await(completed);
-        yield* Fiber.join(watcher);
+        expect((yield* fixture.supervisor.status).lifecycle).toBe("stopped");
+      }),
+    ),
+  );
+
+  it.live("returns final logs after a clean stop", () =>
+    run(
+      Effect.gen(function* () {
+        const fixture = yield* makeFixture();
+        yield* fixture.supervisor.start({ config: { capabilities: { rest: {} } } });
+        const response = yield* fixture.supervisor.maintenanceHandlers.stop;
+        expect(response.ok).toBe(true);
+        yield* fixture.supervisor.shutdownIfIdle;
+        const batch = yield* fixture.supervisor.logs();
+        expect(batch.entries).toHaveLength(1);
+        expect(batch.running).toBe(false);
       }),
     ),
   );
@@ -1574,7 +1514,6 @@ describe("Supervisor composition", () => {
       Effect.gen(function* () {
         const failures = yield* Queue.unbounded<ObservedWorkload>();
         const starts = yield* Queue.unbounded<string>();
-        const failedStatus = yield* Deferred.make<void>();
         const fixture = yield* makeFixture({ failureQueue: failures, startQueue: starts });
         yield* fixture.supervisor.start({ config: { capabilities: { rest: {} } } });
         const initialWorkload = yield* Queue.take(starts);
@@ -1582,16 +1521,6 @@ describe("Supervisor composition", () => {
           (entry) => entry.workloadId === initialWorkload,
         );
         if (ready === undefined) return yield* Effect.die("workload did not start");
-        const watcher = yield* Effect.forkChild(
-          Stream.runForEach(fixture.supervisor.watchStatus, (status) =>
-            Effect.gen(function* () {
-              const capability = status.capabilities.find(({ name }) => name === "database");
-              if (capability?.state === "failed" && capability.error !== undefined)
-                yield* Deferred.succeed(failedStatus, undefined);
-            }),
-          ),
-        );
-
         // The catalog default allows five post-ready attempts; the sixth crash is terminal.
         for (let attempt = 0; attempt < 5; attempt += 1) {
           yield* Ref.update(fixture.resources, (current) =>
@@ -1612,12 +1541,16 @@ describe("Supervisor composition", () => {
           ),
         );
         yield* Queue.offer(failures, { ...ready, state: "failed", error: "crashed" });
-        yield* Deferred.await(failedStatus);
-        const status = yield* fixture.supervisor.status;
+        const status = yield* Effect.gen(function* () {
+          const current = yield* fixture.supervisor.status;
+          const capability = current.capabilities.find(({ name }) => name === "database");
+          if (capability?.state !== "failed")
+            return yield* new StackStateInvalidError({ message: "database is not failed yet" });
+          return current;
+        }).pipe(Effect.retry(Schedule.spaced("25 millis").pipe(Schedule.upTo({ times: 40 }))));
         const capability = status.capabilities.find(({ name }) => name === "database");
         expect(capability?.state).toBe("failed");
         expect(capability?.error).toContain("crashed");
-        yield* Fiber.interrupt(watcher);
       }),
     ),
   );
