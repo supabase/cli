@@ -352,7 +352,7 @@ Deno.serve({
       ...Deno.env.toObject(),
       ...Object.fromEntries(
         Object.entries(functionsConfig[functionName].env ?? {}).filter(
-          ([name, _]) => !name.startsWith("SUPABASE_"),
+          ([name]) => !name.startsWith("SUPABASE_"),
         ),
       ),
       // Listed after the spreads so neither the container env nor function config can shadow it
@@ -370,7 +370,7 @@ Deno.serve({
     }
 
     const envVars = Object.entries(envVarsObj).filter(
-      ([name, _]) => !EXCLUDED_ENVS.includes(name) && !name.startsWith("SUPABASE_INTERNAL_"),
+      ([name]) => !EXCLUDED_ENVS.includes(name) && !name.startsWith("SUPABASE_INTERNAL_"),
     );
 
     const forceCreate = false;
