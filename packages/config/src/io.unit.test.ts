@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, test, vi, type MockInstance } from "vitest";
 import { BunServices } from "@effect/platform-bun";
 import { mkdtempSync } from "node:fs";
-import { mkdir, readFile, rm, writeFile } from "node:fs/promises";
+import { chmod, mkdir, readdir, readFile, rm, stat, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -12,6 +12,7 @@ import {
   encodeCliConfigToJson,
   encodeCliConfigToToml,
   cliConfigValueSourceAt,
+  isObject,
   type LoadedCliConfig,
   type InternalLoadCliConfigOptions,
 } from "./config-document.ts";
@@ -20,7 +21,10 @@ import {
   configTomlPath,
   loadCliConfig,
   loadCliConfigFile,
+  remoteNameForProjectRef,
+  remoteProjectIdEntries,
   saveCliConfig,
+  writeCliConfigDocumentText,
 } from "./io.ts";
 import { loadCliConfig as loadCliConfigFromNode } from "./node.ts";
 import { cliConfigStoreLayer } from "./cli-config.layer.ts";
@@ -87,6 +91,29 @@ describe("config io", () => {
       expect(loaded.config.project_id).toBe("abc123");
       expect(loaded.config.db.major_version).toBe(16);
       expect(loaded.config.api.enabled).toBe(true);
+    } finally {
+      await rm(cwd, { recursive: true, force: true });
+    }
+  });
+
+  test("populates rawDocument for a .json config", async () => {
+    const cwd = makeTempProject();
+    const path = await runConfigEffect(configJsonPath(cwd));
+
+    try {
+      await mkdir(join(cwd, "supabase"), { recursive: true });
+      await writeFile(
+        path,
+        JSON.stringify({
+          project_id: "abc123",
+          db: {
+            major_version: 16,
+          },
+        }),
+      );
+
+      const loaded = await runConfigEffect(loadCliConfigFile(path));
+      expect(loaded.rawDocument).toEqual({ project_id: "abc123", db: { major_version: 16 } });
     } finally {
       await rm(cwd, { recursive: true, force: true });
     }
@@ -1580,6 +1607,114 @@ schemas = ["env(REMOTE_SCHEMA)"]
     }
   });
 
+  test("rawDocument stays pre-interpolation and pre-merge, with remotes intact, while document is resolved and merged", async () => {
+    const previous = process.env.SUPABASE_RAW_DOCUMENT_MAX_ROWS_TEST;
+    process.env.SUPABASE_RAW_DOCUMENT_MAX_ROWS_TEST = "555";
+    const cwd = await writeTomlProject(`project_id = "baseref"
+
+[api]
+max_rows = "env(SUPABASE_RAW_DOCUMENT_MAX_ROWS_TEST)"
+
+[remotes.preview]
+project_id = "${PREVIEW_REF}"
+[remotes.preview.api]
+max_rows = 999
+`);
+    try {
+      const loaded = await runConfigEffect(loadCliConfig(cwd, { projectRef: PREVIEW_REF }));
+
+      // document: env() resolved, the matching remote merged in, remotes stripped.
+      expect(loaded!.config.api.max_rows).toBe(999);
+      expect(loaded!.document?.remotes).toBeUndefined();
+
+      // rawDocument: still the literal env() string, remotes table intact.
+      const rawApi = loaded!.rawDocument?.api;
+      expect(isObject(rawApi) ? rawApi.max_rows : undefined).toBe(
+        "env(SUPABASE_RAW_DOCUMENT_MAX_ROWS_TEST)",
+      );
+      const rawRemotes = loaded!.rawDocument?.remotes;
+      expect(isObject(rawRemotes) ? Object.keys(rawRemotes) : undefined).toEqual(["preview"]);
+      const rawPreview = isObject(rawRemotes) ? rawRemotes.preview : undefined;
+      expect(isObject(rawPreview) ? rawPreview.project_id : undefined).toBe(PREVIEW_REF);
+    } finally {
+      if (previous === undefined) {
+        delete process.env.SUPABASE_RAW_DOCUMENT_MAX_ROWS_TEST;
+      } else {
+        process.env.SUPABASE_RAW_DOCUMENT_MAX_ROWS_TEST = previous;
+      }
+      await rm(cwd, { recursive: true, force: true });
+    }
+  });
+
+  // Unlike the matched case above (where `applyRemoteOverride` strips
+  // `remotes` from `document`), an UNSELECTED `remotes` table survives on
+  // `document` — interpolated, since interpolation runs over the whole
+  // post-merge document regardless of whether anything was selected. Callers
+  // that need to inspect the remaining (non-target) remotes' effective values
+  // can read `document.remotes`; callers deciding WHERE to write must still
+  // use `rawDocument` (see `remoteNameForProjectRef`'s doc comment).
+  test("keeps an interpolated remotes table on document when no remote matches", async () => {
+    const previous = process.env.SUPABASE_UNMATCHED_REMOTE_REF_TEST;
+    process.env.SUPABASE_UNMATCHED_REMOTE_REF_TEST = STAGING_REF;
+    const cwd = await writeTomlProject(`project_id = "baseref"
+
+[remotes.staging]
+project_id = "env(SUPABASE_UNMATCHED_REMOTE_REF_TEST)"
+`);
+    try {
+      const loaded = await runConfigEffect(loadCliConfig(cwd));
+      expect(loaded!.appliedRemote).toBeUndefined();
+
+      const documentRemotes = loaded!.document?.remotes;
+      const documentStaging = isObject(documentRemotes) ? documentRemotes.staging : undefined;
+      expect(isObject(documentStaging) ? documentStaging.project_id : undefined).toBe(STAGING_REF);
+
+      const rawRemotes = loaded!.rawDocument?.remotes;
+      const rawStaging = isObject(rawRemotes) ? rawRemotes.staging : undefined;
+      expect(isObject(rawStaging) ? rawStaging.project_id : undefined).toBe(
+        "env(SUPABASE_UNMATCHED_REMOTE_REF_TEST)",
+      );
+    } finally {
+      if (previous === undefined) {
+        delete process.env.SUPABASE_UNMATCHED_REMOTE_REF_TEST;
+      } else {
+        process.env.SUPABASE_UNMATCHED_REMOTE_REF_TEST = previous;
+      }
+      await rm(cwd, { recursive: true, force: true });
+    }
+  });
+
+  test("interpolatedRemotes carries resolved project_id values distinct from the raw literal", async () => {
+    const previous = process.env.SUPABASE_INTERPOLATED_REMOTES_TEST;
+    process.env.SUPABASE_INTERPOLATED_REMOTES_TEST = STAGING_REF;
+    const cwd = await writeTomlProject(`project_id = "baseref"
+
+[remotes.staging]
+project_id = "env(SUPABASE_INTERPOLATED_REMOTES_TEST)"
+`);
+    try {
+      const loaded = await runConfigEffect(loadCliConfig(cwd));
+
+      const interpolatedStaging = loaded!.interpolatedRemotes?.staging;
+      expect(isObject(interpolatedStaging) ? interpolatedStaging.project_id : undefined).toBe(
+        STAGING_REF,
+      );
+
+      const rawRemotes = loaded!.rawDocument?.remotes;
+      const rawStaging = isObject(rawRemotes) ? rawRemotes.staging : undefined;
+      expect(isObject(rawStaging) ? rawStaging.project_id : undefined).toBe(
+        "env(SUPABASE_INTERPOLATED_REMOTES_TEST)",
+      );
+    } finally {
+      if (previous === undefined) {
+        delete process.env.SUPABASE_INTERPOLATED_REMOTES_TEST;
+      } else {
+        process.env.SUPABASE_INTERPOLATED_REMOTES_TEST = previous;
+      }
+      await rm(cwd, { recursive: true, force: true });
+    }
+  });
+
   test("carries appliedRemote on CliConfigParseError when the matched remote's decode fails", async () => {
     // Go prints `Loading config override: [remotes.<name>]` unconditionally
     // as soon as the `project_id` match is found, *before* `mapstructure`
@@ -2275,5 +2410,155 @@ enabled = true
     // decode verbatim (minus the deprecated key) rather than being merged/dropped.
     expect(loaded.config.remotes.staging?.auth.external).not.toHaveProperty("slack");
     expect(warnings.some((m) => m.includes("is deprecated"))).toBe(false);
+  });
+});
+
+describe("remoteNameForProjectRef / remoteProjectIdEntries", () => {
+  test("matches a remote by its raw-literal project_id", () => {
+    const remotes = {
+      staging: { project_id: "stagingrefaaaaaaaaaa" },
+      preview: { project_id: "previewrefaaaaaaaaaa" },
+    };
+    expect(remoteNameForProjectRef(remotes, "previewrefaaaaaaaaaa")).toBe("preview");
+    expect(remoteNameForProjectRef(remotes, "stagingrefaaaaaaaaaa")).toBe("staging");
+  });
+
+  test("does not match a block whose project_id is still the literal env(REF) form, even when REF resolves to the queried ref", () => {
+    // No interpolation happens inside this function — it compares the RAW
+    // string, mirroring Go's raw-viper selection loop (see
+    // `applyRemoteOverride`'s doc comment in `io.ts`). A block whose
+    // `project_id` is the literal `env(...)` form must never match an
+    // already-resolved ref, even when that's exactly what it would resolve to.
+    const remotes = {
+      staging: { project_id: "env(SUPABASE_REMOTE_REF)" },
+    };
+    expect(remoteNameForProjectRef(remotes, "stagingrefaaaaaaaaaa")).toBeUndefined();
+  });
+
+  test("treats a missing project_id as an empty string", () => {
+    const remotes = { staging: {} };
+    expect(remoteNameForProjectRef(remotes, "")).toBe("staging");
+    expect(remoteNameForProjectRef(remotes, "stagingrefaaaaaaaaaa")).toBeUndefined();
+  });
+
+  test("returns undefined for undefined/garbage remotes", () => {
+    expect(remoteNameForProjectRef(undefined, "ref")).toBeUndefined();
+    expect(remoteNameForProjectRef(null, "ref")).toBeUndefined();
+    expect(remoteNameForProjectRef("garbage", "ref")).toBeUndefined();
+    expect(remoteNameForProjectRef(["array"], "ref")).toBeUndefined();
+    expect(remoteNameForProjectRef(42, "ref")).toBeUndefined();
+  });
+
+  test("returns undefined when projectRef itself is undefined, even for a remote with an empty project_id", () => {
+    const remotes = { staging: {} };
+    expect(remoteNameForProjectRef(remotes, undefined)).toBeUndefined();
+  });
+
+  test("remoteProjectIdEntries lists every remote's name and project_id, in document order", () => {
+    const remotes = {
+      staging: { project_id: "stagingrefaaaaaaaaaa" },
+      preview: {},
+    };
+    expect(remoteProjectIdEntries(remotes)).toEqual([
+      { name: "staging", projectId: "stagingrefaaaaaaaaaa" },
+      { name: "preview", projectId: "" },
+    ]);
+  });
+
+  test("remoteProjectIdEntries returns [] for undefined/garbage remotes", () => {
+    expect(remoteProjectIdEntries(undefined)).toEqual([]);
+    expect(remoteProjectIdEntries(null)).toEqual([]);
+    expect(remoteProjectIdEntries("garbage")).toEqual([]);
+    expect(remoteProjectIdEntries(["array"])).toEqual([]);
+  });
+});
+
+describe("writeCliConfigDocumentText", () => {
+  async function tempFileTargets() {
+    const cwd = makeTempProject();
+    const dir = join(cwd, "supabase");
+    await mkdir(dir, { recursive: true });
+    return { cwd, filePath: join(dir, "config.toml") };
+  }
+
+  async function tmpSurvivors(dir: string, baseName: string): Promise<Array<string>> {
+    const entries = await readdir(dir);
+    return entries.filter((entry) => entry.startsWith(`${baseName}.tmp.`));
+  }
+
+  test("replaces the file's content via a temp file in the same directory, then renames over the target", async () => {
+    const { cwd, filePath } = await tempFileTargets();
+
+    try {
+      await writeFile(filePath, 'project_id = "old"\n');
+
+      await runConfigEffect(writeCliConfigDocumentText(filePath, 'project_id = "new"\n'));
+
+      const content = await readFile(filePath, "utf8");
+      expect(content).toBe('project_id = "new"\n');
+      expect(await tmpSurvivors(join(cwd, "supabase"), "config.toml")).toEqual([]);
+    } finally {
+      await rm(cwd, { recursive: true, force: true });
+    }
+  });
+
+  test("leaves no temp file behind after a successful write", async () => {
+    const { cwd, filePath } = await tempFileTargets();
+
+    try {
+      await writeFile(filePath, 'project_id = "old"\n');
+      await runConfigEffect(writeCliConfigDocumentText(filePath, 'project_id = "new"\n'));
+
+      const entries = await readdir(join(cwd, "supabase"));
+      expect(entries).toEqual(["config.toml"]);
+    } finally {
+      await rm(cwd, { recursive: true, force: true });
+    }
+  });
+
+  test("preserves the target file's existing mode", async () => {
+    const { cwd, filePath } = await tempFileTargets();
+
+    try {
+      await writeFile(filePath, 'project_id = "old"\n');
+      await chmod(filePath, 0o600);
+
+      await runConfigEffect(writeCliConfigDocumentText(filePath, 'project_id = "new"\n'));
+
+      const info = await stat(filePath);
+      expect(info.mode & 0o777).toBe(0o600);
+    } finally {
+      await rm(cwd, { recursive: true, force: true });
+    }
+  });
+
+  test("fails with a typed CliConfigWriteError (not a defect) when the destination directory doesn't exist, leaving nothing behind", async () => {
+    const cwd = makeTempProject();
+    const filePath = join(cwd, "supabase", "config.toml");
+
+    try {
+      const exit = await Effect.runPromiseExit(
+        writeCliConfigDocumentText(filePath, 'project_id = "new"\n').pipe(
+          Effect.provide(BunServices.layer),
+        ),
+      );
+
+      expect(Exit.isFailure(exit)).toBe(true);
+      if (!Exit.isFailure(exit)) {
+        return;
+      }
+      // A typed failure, not a defect: findErrorOption only finds `Fail` reasons.
+      const error = Cause.findErrorOption(exit.cause);
+      expect(Option.isSome(error)).toBe(true);
+      if (Option.isSome(error)) {
+        expect((error.value as { _tag: string })._tag).toBe("CliConfigWriteError");
+        expect((error.value as { path: string }).path).toBe(filePath);
+      }
+
+      await expect(readFile(filePath, "utf8")).rejects.toThrow();
+      await expect(readdir(join(cwd, "supabase"))).rejects.toThrow();
+    } finally {
+      await rm(cwd, { recursive: true, force: true });
+    }
   });
 });

@@ -433,6 +433,7 @@ describe("src/effect.ts is a superset of src/index.ts", () => {
         "CliConfigParseError",
         "CliConfigSchema",
         "CliConfigStore",
+        "CliConfigWriteError",
         "CliProjectEnvParseError",
         "DuplicateRemoteProjectIdError",
         "InvalidRemoteProjectIdError",
@@ -470,6 +471,7 @@ describe("src/effect.ts is a superset of src/index.ts", () => {
         "toProjectConfig",
         "toProjectConfigJsonSchema",
         "unmappedApiFields",
+        "writeCliConfigDocumentText",
       ]
     `);
   });
@@ -511,14 +513,20 @@ describe("src/internal.ts export surface", () => {
     expect(Object.keys(internalEntrypoint).sort()).toMatchInlineSnapshot(`
       [
         "AUTH_HOOK_NAMES",
+        "CliConfigWriteError",
         "ENV_CAPTURE_REGEX",
+        "applyConfigEdits",
         "diffProjectConfig",
+        "dualScopeProjectConfigPaths",
         "loadCliConfig",
         "projectConfigApiBlockKeys",
         "projectConfigMappingRows",
+        "remoteNameForProjectRef",
+        "remoteProjectIdEntries",
         "resolveCliConfigSubtree",
         "resolveCliConfigValue",
         "unmappedSecretApiPaths",
+        "writeCliConfigDocumentText",
       ]
     `);
   });

@@ -1,3 +1,4 @@
+import { randomBytes } from "node:crypto";
 import { Console, Effect, FileSystem, Path, Redacted, Schema } from "effect";
 import * as SmolToml from "smol-toml";
 import { CliConfigSchema, RemotesSchema, type CliConfig } from "./base.ts";
@@ -16,6 +17,7 @@ import {
   DuplicateRemoteProjectIdError,
   InvalidRemoteProjectIdError,
   CliConfigParseError,
+  CliConfigWriteError,
 } from "./errors.ts";
 import { interpolateEnvReferencesAgainstSchema } from "./lib/env.ts";
 import { findCliProjectPaths } from "./paths.ts";
@@ -126,6 +128,53 @@ const checkDuplicateRemoteProjectIds = Effect.fnUntraced(function* (
   }
 });
 
+/**
+ * Extracts `project_id` for every `[remotes.<name>]` block, in document
+ * order, reading a missing field as `""` (Go's `viper.GetString`). Shared by
+ * every reader of raw `remotes.*.project_id` values so there is exactly one
+ * place that defines what counts as a remote's `project_id` — this backs
+ * {@link remoteNameForProjectRef} below and, at the config-load call site,
+ * `applyRemoteOverride`'s match. Returns `[]` for anything that isn't a
+ * `remotes` table (including `undefined`).
+ */
+export function remoteProjectIdEntries(
+  remotes: unknown,
+): ReadonlyArray<{ readonly name: string; readonly projectId: string }> {
+  if (!isObject(remotes)) {
+    return [];
+  }
+  return Object.entries(remotes).map(([name, remote]) => ({
+    name,
+    projectId:
+      isObject(remote) && typeof remote["project_id"] === "string" ? remote["project_id"] : "",
+  }));
+}
+
+/**
+ * The name of the `[remotes.<name>]` block whose `project_id` equals
+ * `projectRef`, or `undefined` when none matches — including when
+ * `projectRef` itself is `undefined`, which never matches a remote, even one
+ * that itself omits `project_id` (which reads as `""`). This is the exact
+ * raw-literal match {@link applyRemoteOverride} runs during config load: Go's
+ * `loadFromFile` selection loop reads viper's raw string values, before
+ * `LoadEnvHook` ever resolves `env(...)` (`apps/cli-go/pkg/config/config.go:
+ * 596-611`, `decode_hooks.go:13-26`). A caller deciding WHERE to write a value
+ * for a given `projectRef` (e.g. `config pull`'s scope resolution) must call
+ * this against `LoadedCliConfig.rawDocument?.["remotes"]`, never
+ * `LoadedCliConfig.document`, for the same reason — an
+ * `[remotes.x] project_id = "env(REF)"` that resolves to `REF` must not match
+ * a caller-supplied, already-resolved `REF`.
+ */
+export function remoteNameForProjectRef(
+  remotes: unknown,
+  projectRef: string | undefined,
+): string | undefined {
+  if (projectRef === undefined) {
+    return undefined;
+  }
+  return remoteProjectIdEntries(remotes).find((entry) => entry.projectId === projectRef)?.name;
+}
+
 /** Go's project-ref pattern (`apps/cli-go/pkg/config/config.go:558`): exactly 20
  * lowercase ASCII letters. */
 const REMOTE_PROJECT_ID_PATTERN = /^[a-z]{20}$/;
@@ -181,6 +230,10 @@ const checkRemoteProjectIdFormat = Effect.fnUntraced(function* (remotes: Record<
  * post-decode `c.Remotes`, mirrored here as the already-interpolated
  * `remotes` subtree) is used only for {@link checkRemoteProjectIdFormat} — see
  * its doc comment for why that check needs the resolved value instead.
+ *
+ * The match itself is {@link remoteNameForProjectRef}, exported for callers
+ * that need the same raw-literal rule against a previously loaded
+ * `LoadedCliConfig.rawDocument` without reloading the file.
  */
 const applyRemoteOverride = Effect.fnUntraced(function* (
   rawDocument: Record<string, unknown>,
@@ -200,11 +253,7 @@ const applyRemoteOverride = Effect.fnUntraced(function* (
     yield* checkDuplicateRemoteProjectIds(remotes);
     yield* checkRemoteProjectIdFormat(interpolatedRemotes ?? remotes);
   }
-  const name = Object.entries(remotes).find(([, remote]) => {
-    const projectId =
-      isObject(remote) && typeof remote["project_id"] === "string" ? remote["project_id"] : "";
-    return projectRef !== undefined && projectId === projectRef;
-  })?.[0];
+  const name = remoteNameForProjectRef(remotes, projectRef);
   if (name === undefined) {
     return {
       document: rawDocument,
@@ -639,6 +688,8 @@ export const loadCliConfigFile = Effect.fnUntraced(function* (
     schemaRef: getSchemaRef(document),
     ignoredPaths: [],
     document: isObject(normalizedForDecode) ? normalizedForDecode : undefined,
+    rawDocument: isObject(normalized) ? normalized : undefined,
+    interpolatedRemotes,
     appliedRemote,
     removedDeprecatedExternalProviders: removedProviders,
     valueOrigins,
@@ -745,4 +796,58 @@ export const saveCliConfig = Effect.fnUntraced(function* (options: SaveCliConfig
     schemaRef,
     ignoredPaths: [],
   } satisfies LoadedCliConfig;
+});
+
+/**
+ * Fallback mode for a freshly created config file, when no existing file's
+ * mode is available to copy — matches the `0644` a plain `touch`/`install`
+ * produces under the common `022` umask.
+ */
+const DEFAULT_CLI_CONFIG_FILE_MODE = 0o644;
+
+/**
+ * Atomically replaces `filePath`'s content with `content`: writes a fresh
+ * temp file in the SAME directory, copies the target's current mode onto it
+ * (falling back to {@link DEFAULT_CLI_CONFIG_FILE_MODE} when the target
+ * doesn't exist yet), then `rename`s over the target. Unlike
+ * {@link writeFileAtomic} (used by `saveCliConfig`'s full-document
+ * regeneration, which dies on any platform failure), this surfaces a typed
+ * {@link CliConfigWriteError} — `config pull`'s surgical edit
+ * (`applyConfigEdits`/`config-edit.ts`) needs to react to a write failure
+ * (e.g. render it in a machine payload) rather than crash. The temp file is
+ * removed on any failure — and, harmlessly, on success too, since by then it
+ * no longer exists at that path (the `remove` failure there is ignored
+ * either way).
+ */
+export const writeCliConfigDocumentText = Effect.fnUntraced(function* (
+  filePath: string,
+  content: string,
+) {
+  const fs = yield* FileSystem.FileSystem;
+  const tmpPath = `${filePath}.tmp.${Date.now()}.${randomBytes(3).toString("hex")}`;
+
+  yield* Effect.gen(function* () {
+    const mode = yield* fs.stat(filePath).pipe(
+      Effect.map((info) => info.mode & 0o7777),
+      Effect.catchTag("PlatformError", (error) =>
+        error.reason._tag === "NotFound"
+          ? Effect.succeed(DEFAULT_CLI_CONFIG_FILE_MODE)
+          : Effect.fail(error),
+      ),
+    );
+    yield* fs.writeFileString(tmpPath, content);
+    yield* fs.chmod(tmpPath, mode);
+    yield* fs.rename(tmpPath, filePath);
+  }).pipe(
+    Effect.ensuring(fs.remove(tmpPath).pipe(Effect.ignore)),
+    Effect.catchTag("PlatformError", (cause) =>
+      Effect.fail(
+        new CliConfigWriteError({
+          path: filePath,
+          cause,
+          message: `Failed to write ${filePath}: ${cause.message}`,
+        }),
+      ),
+    ),
+  );
 });
