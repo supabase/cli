@@ -6,7 +6,7 @@ import {
   encodeCliConfigToTomlDocument,
   isObject,
   type LoadedCliConfig,
-  type LoadCliConfigOptions,
+  type InternalLoadCliConfigOptions,
   cliConfigSchemaKey,
   type CliConfigValueSource,
   type SaveCliConfigOptions,
@@ -482,7 +482,7 @@ export const configTomlPath = Effect.fnUntraced(function* (cwd: string) {
 
 export const loadCliConfigFile = Effect.fnUntraced(function* (
   filePath: string,
-  options?: LoadCliConfigOptions,
+  options?: InternalLoadCliConfigOptions,
 ) {
   const fs = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
@@ -526,7 +526,7 @@ export const loadCliConfigFile = Effect.fnUntraced(function* (
   const goViperCompat = options?.goViperCompat ?? false;
   const interpolateDocument = (
     document: unknown,
-    onResolvedEnv?: (path: ReadonlyArray<string>) => void,
+    onResolvedEnv?: (path: ReadonlyArray<string>, envNames: ReadonlyArray<string>) => void,
   ): unknown =>
     interpolateEnvReferencesAgainstSchema(document, cliProjectEnv?.values ?? {}, CliConfigSchema, {
       goViperCompat,
@@ -574,9 +574,11 @@ export const loadCliConfigFile = Effect.fnUntraced(function* (
   // that path, but correctness on the match+`env()` path matters more than
   // avoiding it.
   const resolvedEnvironmentPaths: Array<string[]> = [];
+  const resolvedEnvironmentNames = new Map<string, ReadonlyArray<string>>();
   documentForDecode = isObject(documentForDecode)
-    ? interpolateDocument(documentForDecode, (path) => {
+    ? interpolateDocument(documentForDecode, (path, envNames) => {
         resolvedEnvironmentPaths.push(Array.from(path));
+        resolvedEnvironmentNames.set(pathKey(Array.from(path)), envNames);
       })
     : documentForDecode;
 
@@ -621,7 +623,12 @@ export const loadCliConfigFile = Effect.fnUntraced(function* (
             : localPathKeys.has(key)
               ? "local"
               : undefined;
-        return source === undefined ? [] : [{ path, source }];
+        if (source === undefined) {
+          return [];
+        }
+        const envVariables =
+          source === "environment" ? resolvedEnvironmentNames.get(key) : undefined;
+        return [{ path, source, ...(envVariables === undefined ? {} : { envVariables }) }];
       })
     : [];
 
@@ -640,7 +647,7 @@ export const loadCliConfigFile = Effect.fnUntraced(function* (
 
 export const loadCliConfig = Effect.fnUntraced(function* (
   cwd: string,
-  options?: LoadCliConfigOptions,
+  options?: InternalLoadCliConfigOptions,
 ) {
   const fs = yield* FileSystem.FileSystem;
   const project = yield* findCliProjectPaths(cwd, { search: options?.search });

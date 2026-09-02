@@ -4,8 +4,9 @@
 declare const Deno: any;
 declare const EdgeRuntime: any;
 
-import { dirname, STATUS_CODE, STATUS_TEXT, toFileUrl } from "./serve-main-deps.ts";
+import { STATUS_CODE, STATUS_TEXT, toFileUrl } from "./serve-main-deps.ts";
 import {
+  createWorkerServicePathResolver,
   packageJsonContainedFor,
   resolveFunctionConfig,
   type FunctionConfig,
@@ -172,6 +173,9 @@ const denoFileSystem: FunctionFileSystem = {
 
 const functionConfig = (slug: string): Promise<FunctionConfig | undefined> =>
   resolveFunctionConfig({ root: FUNCTIONS_ROOT, slug, overrides: configured, fs: denoFileSystem });
+const workerServicePath = createWorkerServicePathResolver(() =>
+  Deno.makeTempDirSync({ prefix: "supabase-worker-" }),
+);
 
 const shouldUsePackageJsonDiscovery = async (config: FunctionConfig): Promise<boolean> => {
   if (config.importMapPath) return false;
@@ -209,6 +213,7 @@ Deno.serve({
       ...Object.fromEntries(
         Object.entries(config.env ?? {}).filter(([name]) => !name.startsWith("SUPABASE_")),
       ),
+      SUPABASE_FUNCTION_SLUG: functionName,
     };
     if (SUPABASE_PUBLISHABLE_KEY)
       envVarsObj.SUPABASE_PUBLISHABLE_KEYS = JSON.stringify({ default: SUPABASE_PUBLISHABLE_KEY });
@@ -219,7 +224,7 @@ Deno.serve({
     );
     try {
       const worker = await EdgeRuntime.userWorkers.create({
-        servicePath: dirname(config.entrypointPath),
+        servicePath: workerServicePath(functionName, config),
         memoryLimitMb: 256,
         workerTimeoutMs: Number.isFinite(WALLCLOCK_LIMIT_SEC)
           ? WALLCLOCK_LIMIT_SEC * 1000

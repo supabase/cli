@@ -1,4 +1,3 @@
-import { KONG_LOCAL_CA_CERT } from "@supabase/config";
 import { defaultJwtSecret, generateJwt } from "../../shared/stack-constants.ts";
 import { Effect, FileSystem, Path } from "effect";
 
@@ -7,6 +6,7 @@ import { LegacyCliSettings } from "../config/legacy-cli-settings.service.ts";
 import { legacyResolveApiExternalUrl } from "./legacy-api-url.ts";
 import { legacyMapTenantApiKeysError } from "./legacy-get-tenant-api-keys.ts";
 import { legacyGetHostname } from "./legacy-hostname.ts";
+import { KONG_LOCAL_CA_CERT } from "./kong-local-ca-cert.ts";
 import { legacyExtractServiceKeys } from "./legacy-tenant-keys.ts";
 import {
   LegacyStorageApiKeysNetworkError,

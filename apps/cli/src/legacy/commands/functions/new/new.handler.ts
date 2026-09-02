@@ -1,4 +1,4 @@
-import { loadCliConfig } from "@supabase/config/effect";
+import { loadCliConfig } from "@supabase/config/internal";
 import { defaultPublishableKey } from "../../../../shared/stack-constants.ts";
 import { Effect, FileSystem, Option, Path } from "effect";
 

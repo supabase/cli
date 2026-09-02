@@ -15,6 +15,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import {
+  createWorkerServicePathResolver,
   packageJsonContainedFor,
   resolveFunctionConfig,
   type FunctionFileSystem,
@@ -32,6 +33,29 @@ const nodeFileSystem: FunctionFileSystem = {
   realPath: (path) => realpath(path),
   readDirectory: async (path) => readdir(path),
 };
+
+describe("Edge Runtime worker service paths", () => {
+  it("keeps stable identities for functions that share a source directory", () => {
+    let nextWorker = 0;
+    const resolveWorkerPath = createWorkerServicePathResolver(
+      () => `/tmp/supabase-worker-${++nextWorker}`,
+    );
+    const alpha = {
+      entrypointPath: "/functions/shared/alpha.ts",
+      importMapPath: "",
+      staticFiles: [],
+      verifyJWT: true,
+    };
+    const beta = { ...alpha, entrypointPath: "/functions/shared/beta.ts" };
+
+    expect(resolveWorkerPath("alpha", alpha)).toBe("/functions/shared");
+    expect(resolveWorkerPath("beta", beta)).toBe("/tmp/supabase-worker-1");
+    expect(resolveWorkerPath("alpha", alpha)).toBe("/functions/shared");
+    expect(
+      resolveWorkerPath("isolated", { ...alpha, entrypointPath: "/functions/isolated/index.ts" }),
+    ).toBe("/functions/isolated");
+  });
+});
 
 describe("Edge Runtime request-time function resolver", () => {
   it("resolves current filesystem paths for create/edit/delete", async () => {

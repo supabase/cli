@@ -10,7 +10,7 @@ import (
 	"github.com/supabase/cli/pkg/api"
 )
 
-var testProject = api.V1ProjectWithDatabaseResponse{
+var testProject = api.V1ProjectWithDatabaseResponseOutput{
 	Ref:              "proj_abc",
 	Name:             "My Project",
 	OrganizationId:   "org_123",
@@ -93,7 +93,7 @@ func TestCacheProjectAndIdentifyGroups(t *testing.T) {
 		analytics := &fakeAnalytics{enabled: true}
 		service := newTestService(t, fsys, analytics)
 
-		noOrgProject := api.V1ProjectWithDatabaseResponse{
+		noOrgProject := api.V1ProjectWithDatabaseResponseOutput{
 			Ref:  "proj_abc",
 			Name: "My Project",
 		}

@@ -340,7 +340,11 @@ Deno.serve(async () => {
     },
   );
   const body = await response.text();
-  return new Response(JSON.stringify({ marker: "${marker}", rows: JSON.parse(body) }), {
+  return new Response(JSON.stringify({
+    marker: "${marker}",
+    functionSlug: Deno.env.get("SUPABASE_FUNCTION_SLUG"),
+    rows: JSON.parse(body),
+  }), {
     status: response.status,
     headers: { "content-type": "application/json" },
   });
@@ -651,6 +655,7 @@ const runWholeStackScenario = async (mode: (typeof RUNTIME_CASES)[number]): Prom
   expect(firstFunction).toEqual(
     expect.objectContaining({
       marker: markers.first,
+      functionSlug,
       rows: expect.arrayContaining([{ id: 1, payload: markers.first }]),
     }),
   );
@@ -664,6 +669,7 @@ const runWholeStackScenario = async (mode: (typeof RUNTIME_CASES)[number]): Prom
   expect(secondFunction).toEqual(
     expect.objectContaining({
       marker: markers.second,
+      functionSlug,
       rows: expect.arrayContaining([{ id: 1, payload: markers.first }]),
     }),
   );

@@ -1,0 +1,31 @@
+{
+  // Compiles the published `dist/` output for `pnpm build`. Extends the same
+  // `@tsconfig/bun` strictness baseline as `tsconfig.json` (dev/tests, run
+  // under Bun) but swaps its bundler-mode settings for a real Node-compatible
+  // ESM emit, so the two configs share strictness without fighting over
+  // `module`/`moduleResolution`/`types`/`noEmit`, which this file overrides.
+  //
+  // `"types": []` drops the ambient `bun` global types from `tsconfig.json`
+  // and doubles as the @types/bun leak audit CLI-2234 requires: if any
+  // compiled module reaches for a Bun-only global (`Bun.*`, `Bun.env`, ...),
+  // this compile fails on a missing name instead of silently type-checking
+  // against `bun-types`.
+  "extends": "@tsconfig/bun/tsconfig.json",
+  "compilerOptions": {
+    "lib": ["ESNext"],
+    "types": [],
+    "module": "nodenext",
+    "moduleResolution": "nodenext",
+    "allowImportingTsExtensions": true,
+    "rewriteRelativeImportExtensions": true,
+    "noEmit": false,
+    "declaration": true,
+    // `dist/` ships alongside `src/` in the published tarball (see `files` in
+    // package.json), so declaration maps resolve back to real source.
+    "declarationMap": true,
+    "outDir": "dist",
+    "rootDir": "src"
+  },
+  "include": ["src/**/*.ts"],
+  "exclude": ["src/**/*.test.ts"]
+}

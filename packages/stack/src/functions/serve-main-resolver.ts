@@ -206,6 +206,22 @@ export const resolveFunctionConfig = async (options: {
 const packageJsonPathFor = (config: FunctionConfig): string =>
   join(dirname(config.entrypointPath), "package.json");
 
+/** Gives dynamically discovered functions stable, distinct Edge Runtime worker identities. */
+export const createWorkerServicePathResolver = (makeTempDirectory: () => string) => {
+  const sourceOwners = new Map<string, string>();
+  const assigned = new Map<string, string>();
+  return (slug: string, config: FunctionConfig): string => {
+    const existing = assigned.get(slug);
+    if (existing !== undefined) return existing;
+    const sourcePath = dirname(config.entrypointPath);
+    const owner = sourceOwners.get(sourcePath);
+    const servicePath = owner === undefined || owner === slug ? sourcePath : makeTempDirectory();
+    if (owner === undefined) sourceOwners.set(sourcePath, slug);
+    assigned.set(slug, servicePath);
+    return servicePath;
+  };
+};
+
 /** Checks package discovery without allowing a package.json symlink to leave the root. */
 export const packageJsonContainedFor = async (options: {
   readonly root: string;

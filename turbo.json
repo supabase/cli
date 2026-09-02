@@ -68,7 +68,7 @@
     "@supabase/config#build": {
       "cache": true,
       "inputs": ["$TURBO_DEFAULT$", "$TURBO_ROOT$/.bun-version", "$TURBO_ROOT$/mise.lock"],
-      "outputs": ["dist/schema.json"]
+      "outputs": ["dist/**"]
     },
     "@supabase/api#generate": {
       "cache": false,
@@ -77,15 +77,20 @@
     },
     "@supabase/docs#generate": {
       "cache": true,
-      "dependsOn": ["supabase#build"],
+      "dependsOn": ["supabase#build", "@supabase/config#build"],
       "inputs": [
         "$TURBO_DEFAULT$",
         "!content/docs/commands/**",
         "!public/cli/config.schema.json",
+        "!public/cli/project-config.schema.json",
         "$TURBO_ROOT$/.bun-version",
         "$TURBO_ROOT$/mise.lock"
       ],
-      "outputs": ["content/docs/commands/**", "public/cli/config.schema.json"]
+      "outputs": [
+        "content/docs/commands/**",
+        "public/cli/config.schema.json",
+        "public/cli/project-config.schema.json"
+      ]
     },
     "@supabase/docs#build": {
       "cache": true,
@@ -94,6 +99,7 @@
         "$TURBO_DEFAULT$",
         "!content/docs/commands/**",
         "!public/cli/config.schema.json",
+        "!public/cli/project-config.schema.json",
         "$TURBO_ROOT$/.bun-version",
         "$TURBO_ROOT$/mise.lock"
       ],

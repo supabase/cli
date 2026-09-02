@@ -8,11 +8,11 @@
  *   - manual (`workflow_dispatch` or an internal maintainer's `/ai-review`
  *     issue comment): a human explicitly asked for a review, so the
  *     marker/dedup guard and the draft/fork/bot skips are bypassed.
- *   - auto (`pull_request` `opened`/`ready_for_review`, currently commented
- *     out in the workflow while prompts are tuned): skips drafts, bots, fork
- *     PRs (v1 is internal-PRs-only; forks go through the manual maintainer
- *     path), and PRs that already carry a marker comment/review from a prior
- *     run.
+ *   - auto (`pull_request` `opened`/`ready_for_review`): only PRs whose
+ *     author has repository write access get the automatic review. Skips
+ *     drafts, bots, fork PRs, authors without write access (external
+ *     contributors go through the manual maintainer path), and PRs that
+ *     already carry a marker comment/review from a prior run.
  *
  * `resolveDecision` is the pure orchestration function (I/O injected, like
  * `evaluateAllOpenPrs` in `contribution-gate.ts`) that a test can drive
@@ -64,6 +64,8 @@ export interface PrDetails {
   state: "open" | "closed";
   draft: boolean;
   authorIsBot: boolean;
+  /** PR author's login, empty when the author account was deleted. */
+  authorLogin: string;
   /** `owner/name` of the fork/branch the PR is from, empty when the head repo was deleted. */
   headRepoFullName: string;
   /** `owner/name` of the repository the PR targets. */
@@ -81,7 +83,7 @@ export interface ResolveIo {
   fetchPr: (prNumber: number) => Promise<PrDetails>;
   listReviews: (prNumber: number) => Promise<MarkedBody[]>;
   listIssueComments: (prNumber: number) => Promise<MarkedBody[]>;
-  /** Resolve a commenter's effective repository permission; see `fetchAuthorPermission`. */
+  /** Resolve a user's effective repository permission; see `fetchAuthorPermission`. */
   fetchPermission: (login: string) => Promise<string | undefined>;
   /** React 👀 to the triggering comment, for UX feedback that the request was picked up. */
   reactToComment: (commentId: number) => Promise<void>;
@@ -173,8 +175,8 @@ export async function resolveDecision(input: ResolveInput, io: ResolveIo): Promi
     return decideForPr(trigger);
   }
 
-  // Auto trigger (future `pull_request` events): v1 is internal-PRs-only and
-  // fires at most once per PR.
+  // Auto trigger (`pull_request` events): internal PRs only, fires at most
+  // once per PR.
   if (pr.draft) {
     return { shouldRun: false, skipReason: "PR is a draft.", trigger };
   }
@@ -185,6 +187,25 @@ export async function resolveDecision(input: ResolveInput, io: ResolveIo): Promi
     return {
       shouldRun: false,
       skipReason: "PR is from a fork; ask a maintainer to comment /ai-review instead.",
+      trigger,
+    };
+  }
+
+  // Authoritative auto-trigger authorization: only PRs authored by someone
+  // with effective repository write access are reviewed automatically. This
+  // is the actual author check, not defense-in-depth — a same-repo head
+  // branch only proves the branch exists in this repo, not that the AUTHOR
+  // pushed it (a PR can be opened from a branch someone else pushed). An
+  // unresolvable permission counts as unauthorized. Mirrors the manual
+  // path's gate above and `contribution-gate.ts`'s `WRITE_PERMISSIONS`.
+  const authorPermission = await io.fetchPermission(pr.authorLogin);
+  if (authorPermission === undefined || !WRITE_PERMISSIONS.has(authorPermission)) {
+    return {
+      shouldRun: false,
+      skipReason:
+        `PR author @${pr.authorLogin} does not have repository write access ` +
+        `(permission=${authorPermission ?? "n/a"}); ` +
+        `a maintainer can comment /ai-review to request a review.`,
       trigger,
     };
   }
@@ -245,7 +266,7 @@ interface RestPullRequest {
   number: number;
   state: "open" | "closed";
   draft: boolean;
-  user: { type: string } | null;
+  user: { login: string; type: string } | null;
   head: { repo: { full_name: string } | null };
   base: { repo: { full_name: string } };
 }
@@ -274,7 +295,12 @@ function assertRestPullRequest(value: unknown): asserts value is RestPullRequest
     typeof value.number !== "number" ||
     (value.state !== "open" && value.state !== "closed") ||
     typeof value.draft !== "boolean" ||
-    !(value.user === null || (isRecordEntry(value.user) && typeof value.user.type === "string")) ||
+    !(
+      value.user === null ||
+      (isRecordEntry(value.user) &&
+        typeof value.user.login === "string" &&
+        typeof value.user.type === "string")
+    ) ||
     !isRecordEntry(value.head) ||
     !(
       value.head.repo === null ||
@@ -310,6 +336,10 @@ async function fetchPullRequest(token: string, base: string, prNumber: number): 
     state: pr.state,
     draft: pr.draft,
     authorIsBot: pr.user?.type === "Bot",
+    // Empty when the author account was deleted; `fetchAuthorPermission`
+    // resolves an empty login to `undefined`, which the auto gate treats as
+    // unauthorized.
+    authorLogin: pr.user?.login ?? "",
     headRepoFullName: pr.head.repo?.full_name ?? "",
     baseRepoFullName: pr.base.repo.full_name,
   };

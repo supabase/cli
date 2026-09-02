@@ -17,12 +17,16 @@
  *     artifact, so a prompt-injected `Read` of a secret-bearing path can't
  *     smuggle a credential out through the artifact even though the posted
  *     review is already scrubbed at render time.
- *   - `post` — posts the consolidated review, THEN best-effort supersedes any
- *     prior AI review on the PR (the marker/dedup guard in `resolve.ts` should
- *     normally prevent a second run, but `/ai-review` lets a maintainer force
- *     one; posting before superseding, and treating the supersede as
- *     best-effort, means a cosmetic supersede failure can never cost the real
- *     review).
+ *   - `post` — snapshots the PR's prior AI reviews, posts the consolidated
+ *     review, THEN best-effort supersedes the snapshotted ones (the
+ *     marker/dedup guard in `resolve.ts` should normally prevent a second
+ *     run, but `/ai-review` lets a maintainer force one). The snapshot must
+ *     happen BEFORE the POST — the fresh review is itself a marker-bearing
+ *     bot review, so a post-hoc listing would sweep it into its own
+ *     supersede pass and every new review would collapse itself. Posting
+ *     before superseding, and treating both the snapshot and the supersede
+ *     as best-effort, means a cosmetic failure can never cost the real
+ *     review.
  *
  * `parseDiffAnchors`, `partitionFindings`, `renderReviewBody`,
  * `renderInlineComment`, `buildReviewPayload`, `foldInlineCommentsIntoBody`,
@@ -39,7 +43,7 @@
 export const AI_REVIEW_MARKER = "<!-- supabase-ai-review -->";
 const SUPERSEDED_SUMMARY = "Superseded by a newer AI review";
 /** Hidden marker `isSuperseded` looks for. Kept out of the human-readable
- * `SUPERSEDED_SUMMARY` text and stripped by `sanitizeModelText` so a model
+ * `SUPERSEDED_SUMMARY` text and broken by `sanitizeModelText` so a model
  * can't forge or evade a supersede by echoing the visible text into a
  * `claim`/`summary` field. */
 const SUPERSEDED_MARKER = "<!-- supabase-ai-review:superseded -->";
@@ -502,7 +506,7 @@ export function computeVerdictCounts(findings: MergedFinding[]): VerdictCounts {
 
 const MENTION_PATTERN = /@(?=\w)/g;
 const ISSUE_REF_PATTERN = /#(?=\d)/g;
-const HTML_COMMENT_PATTERN = /<!--[\s\S]*?-->/g;
+const HTML_COMMENT_OPENER_PATTERN = /<!--/g;
 
 const REDACTED_SECRET = "«redacted»";
 
@@ -560,8 +564,8 @@ export function redactSecretsDeep(value: unknown): unknown {
 
 /**
  * Neutralizes a model-provided string before it's rendered into a
- * `github-actions[bot]` review: redacts secret-shaped substrings first, strips
- * HTML comments (so injected diff content can't forge the hidden
+ * `github-actions[bot]` review: redacts secret-shaped substrings first, breaks
+ * HTML comment openers (so injected diff content can't forge the hidden
  * `AI_REVIEW_MARKER`/`SUPERSEDED_MARKER` comments), then breaks
  * `@mention`/`#123` syntax with a zero-width HTML comment so GitHub never
  * renders them as a live mention or issue reference. Pure; apply to every
@@ -570,7 +574,7 @@ export function redactSecretsDeep(value: unknown): unknown {
  */
 export function sanitizeModelText(text: string): string {
   return redactSecrets(text)
-    .replace(HTML_COMMENT_PATTERN, "")
+    .replace(HTML_COMMENT_OPENER_PATTERN, "<\u200B!--")
     .replace(MENTION_PATTERN, "@<!---->")
     .replace(ISSUE_REF_PATTERN, "#<!---->");
 }
@@ -842,42 +846,61 @@ export interface ReviewIo {
   ) => Promise<{ status: number; body?: string }>;
 }
 
-/** Wraps every prior AI review/comment on the PR in a superseded `<details>` block. Idempotent. */
-async function supersedePriorRuns(io: ReviewIo, prNumber: number): Promise<void> {
-  const [reviews, comments] = await Promise.all([
-    io.listReviews(prNumber),
-    io.listIssueComments(prNumber),
-  ]);
+/** The prior AI reviews/comments this run will supersede, snapshotted BEFORE
+ * the new review is posted. */
+interface PriorRuns {
+  reviews: MarkedEntry[];
+  comments: MarkedEntry[];
+}
 
-  for (const review of reviews) {
-    if (
-      review.authorLogin !== WORKFLOW_BOT_LOGIN ||
-      !review.body.includes(AI_REVIEW_MARKER) ||
-      isSuperseded(review.body)
-    ) {
-      continue;
-    }
-    await io.updateReviewBody(prNumber, review.id, supersededBody(review.body));
-  }
+/** A marker-bearing AI review/comment by the workflow bot that hasn't been
+ * superseded yet — the only kind a supersede pass may wrap. */
+function isSupersedableAiEntry(entry: MarkedEntry): boolean {
+  return (
+    entry.authorLogin === WORKFLOW_BOT_LOGIN &&
+    entry.body.includes(AI_REVIEW_MARKER) &&
+    !isSuperseded(entry.body)
+  );
+}
 
-  for (const comment of comments) {
-    if (
-      comment.authorLogin !== WORKFLOW_BOT_LOGIN ||
-      !comment.body.includes(AI_REVIEW_MARKER) ||
-      isSuperseded(comment.body)
-    ) {
-      continue;
-    }
-    await io.updateIssueCommentBody(comment.id, supersededBody(comment.body));
+/** Snapshots the prior AI reviews/comments to supersede. MUST run before the
+ * new review is posted: the fresh review is itself a marker-bearing bot
+ * review, so a post-hoc listing would sweep it into its own supersede pass
+ * and every new review would immediately collapse as "superseded".
+ * Best-effort — a listing failure degrades to an empty snapshot (prior runs
+ * stay unwrapped) rather than costing the real review. */
+async function listPriorRunsBestEffort(io: ReviewIo, prNumber: number): Promise<PriorRuns> {
+  try {
+    const [reviews, comments] = await Promise.all([
+      io.listReviews(prNumber),
+      io.listIssueComments(prNumber),
+    ]);
+    return {
+      reviews: reviews.filter(isSupersedableAiEntry),
+      comments: comments.filter(isSupersedableAiEntry),
+    };
+  } catch (error) {
+    console.warn(`Could not list prior AI review runs on PR #${prNumber}: ${String(error)}`);
+    return { reviews: [], comments: [] };
   }
 }
 
-/** Best-effort wrapper around `supersedePriorRuns`: a cosmetic failure here
- * (e.g. a transient 404 on a review that was deleted mid-run) must never
- * fail the pipeline after the real review/notice has already been posted. */
-async function supersedePriorRunsBestEffort(io: ReviewIo, prNumber: number): Promise<void> {
+/** Wraps the snapshotted prior AI reviews/comments in a superseded `<details>`
+ * block. Best-effort: a cosmetic failure here (e.g. a transient 404 on a
+ * review that was deleted mid-run) must never fail the pipeline after the
+ * real review has already been posted. */
+async function supersedePriorRunsBestEffort(
+  io: ReviewIo,
+  prNumber: number,
+  prior: PriorRuns,
+): Promise<void> {
   try {
-    await supersedePriorRuns(io, prNumber);
+    for (const review of prior.reviews) {
+      await io.updateReviewBody(prNumber, review.id, supersededBody(review.body));
+    }
+    for (const comment of prior.comments) {
+      await io.updateIssueCommentBody(comment.id, supersededBody(comment.body));
+    }
   } catch (error) {
     console.warn(`Could not supersede prior AI review runs on PR #${prNumber}: ${String(error)}`);
   }
@@ -892,6 +915,10 @@ export async function postConsolidatedReview(
   const diff = await io.fetchPrDiff(prNumber);
   const anchors = parseDiffAnchors(diff);
   const payload = buildReviewPayload(review, anchors, footer);
+
+  // Snapshot before the POST — see `listPriorRunsBestEffort` for why the
+  // ordering is load-bearing.
+  const prior = await listPriorRunsBestEffort(io, prNumber);
 
   const result = await io.postReview(prNumber, payload);
   if (result.status === 422 && payload.comments.length > 0) {
@@ -915,7 +942,7 @@ export async function postConsolidatedReview(
     );
   }
 
-  await supersedePriorRunsBestEffort(io, prNumber);
+  await supersedePriorRunsBestEffort(io, prNumber, prior);
 }
 
 // --- Real GitHub I/O (only runs when executed directly) ---

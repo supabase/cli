@@ -1,14 +1,15 @@
 import { dirname } from "node:path";
-import { findCliProjectRoot, loadCliConfig } from "@supabase/config/effect";
+import { findCliProjectRoot } from "@supabase/config/effect";
+import { loadCliConfig } from "@supabase/config/internal";
 import { Effect, FileSystem, Path } from "effect";
 
 import { LegacyPlatformApi } from "../../../auth/legacy-platform-api.service.ts";
+import { LegacyCliSettings } from "../../../config/legacy-cli-settings.service.ts";
 import { LegacyProjectRefResolver } from "../../../config/legacy-project-ref.service.ts";
 import { LegacyLinkedProjectCache } from "../../../telemetry/legacy-linked-project-cache.service.ts";
 import { LegacyTelemetryState } from "../../../telemetry/legacy-telemetry-state.service.ts";
 import { legacyResolveYesWithProjectEnv } from "../../../../shared/legacy/global-flags.ts";
 import { Output } from "../../../../shared/output/output.service.ts";
-import { RuntimeInfo } from "../../../../shared/runtime/runtime-info.service.ts";
 import {
   legacyAssertDecryptableSecrets,
   legacyLoadProjectEnv,
@@ -88,9 +89,9 @@ export const legacyConfigPush = Effect.fn("legacy.config.push")(function* (
   const output = yield* Output;
   const api = yield* LegacyPlatformApi;
   const resolver = yield* LegacyProjectRefResolver;
+  const cliSettings = yield* LegacyCliSettings;
   const linkedProjectCache = yield* LegacyLinkedProjectCache;
   const telemetryState = yield* LegacyTelemetryState;
-  const runtimeInfo = yield* RuntimeInfo;
   const fs = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
   // `--yes` OR `SUPABASE_YES`. `config push` imports `supabase/.env` before
@@ -100,7 +101,11 @@ export const legacyConfigPush = Effect.fn("legacy.config.push")(function* (
   // (walking up, same as `loadCliConfig` below and the workdir change
   // before config load), so a push from a subdirectory still reads the
   // project root's `supabase/.env`.
-  const projectRoot = (yield* findCliProjectRoot(runtimeInfo.cwd)) ?? runtimeInfo.cwd;
+  // Resolved against `cliSettings.workdir` — the same root the project-ref
+  // resolver and the linked-project cache use — so `--workdir ../other`
+  // pushes `../other`'s config.toml, never the invoking directory's file to
+  // another root's linked project.
+  const projectRoot = (yield* findCliProjectRoot(cliSettings.workdir)) ?? cliSettings.workdir;
   const projectEnv = yield* legacyLoadProjectEnv(fs, path, projectRoot);
   const yes = yield* legacyResolveYesWithProjectEnv(projectEnv);
   // dotenvx private keys for decrypting `encrypted:` secrets, from the shell
@@ -131,7 +136,7 @@ export const legacyConfigPush = Effect.fn("legacy.config.push")(function* (
     // Pass `ref` so a matching `[remotes.*]` block is merged over the base
     // config before decode. A duplicate `project_id` across remotes surfaces
     // an established error message.
-    const loaded = yield* loadCliConfig(runtimeInfo.cwd, {
+    const loaded = yield* loadCliConfig(cliSettings.workdir, {
       projectRef: ref,
       goViperCompat: true,
     }).pipe(

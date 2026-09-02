@@ -13,6 +13,12 @@ export type CliConfigValueSource = "environment" | "local" | "remote";
 export interface CliConfigValueOrigin {
   readonly path: ReadonlyArray<string>;
   readonly source: CliConfigValueSource;
+  /**
+   * For `"environment"` origins: the env var names the `env()` reference
+   * resolved from (one array literal may draw on several, so this is always
+   * a list — consumers must never have to split a joined string).
+   */
+  readonly envVariables?: ReadonlyArray<string>;
 }
 
 export interface LoadedCliConfig {
@@ -71,7 +77,7 @@ export const cliConfigValueSourceAt = (
  * duplicate-`project_id`/project-ref-format checks across every
  * `[remotes.*]` block (`config.go:594-602,996-1001`) run unconditionally on
  * every config load in Go, not only when a caller ends up selecting a
- * remote — but here they only run when {@link LoadCliConfigOptions.goViperCompat}
+ * remote — but here they only run when {@link InternalLoadCliConfigOptions.goViperCompat}
  * is `true`, regardless of whether `projectRef` is set, so non-Go-parity
  * callers that never select a remote (and never opt into Go parity) aren't
  * broken by an unrelated duplicate/malformed `[remotes.*]` block.
@@ -99,6 +105,13 @@ export interface LoadCliConfigOptions {
    * would never see.
    */
   readonly tomlOnly?: boolean;
+}
+
+/**
+ * Not covered by semver — exported from `@supabase/config/internal` only. See
+ * that module's header for why.
+ */
+export interface InternalLoadCliConfigOptions extends LoadCliConfigOptions {
   /**
    * Opt into the Go/viper-parity decode+validation semantics this loader
    * otherwise omits, so only the Go-parity legacy shell (and shared modules

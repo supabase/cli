@@ -52,8 +52,8 @@ func toPostgresURL(config pgconn.Config, userinfo *url.Userinfo) string {
 
 var ErrPrimaryNotFound = errors.New("primary database not found")
 
-func GetPoolerConfigPrimary(ctx context.Context, ref string) (api.SupavisorConfigResponse, error) {
-	var result api.SupavisorConfigResponse
+func GetPoolerConfigPrimary(ctx context.Context, ref string) (api.SupavisorConfigResponseOutput, error) {
+	var result api.SupavisorConfigResponseOutput
 	resp, err := GetSupabase().V1GetPoolerConfigWithResponse(ctx, ref)
 	if err != nil {
 		return result, errors.Errorf("failed to get pooler: %w", err)
@@ -61,7 +61,7 @@ func GetPoolerConfigPrimary(ctx context.Context, ref string) (api.SupavisorConfi
 		return result, errors.Errorf("unexpected get pooler status %d: %s", resp.StatusCode(), string(resp.Body))
 	}
 	for _, config := range *resp.JSON200 {
-		if config.DatabaseType == api.SupavisorConfigResponseDatabaseTypePRIMARY {
+		if config.DatabaseType == api.SupavisorConfigResponseOutputDatabaseTypePRIMARY {
 			return config, nil
 		}
 	}

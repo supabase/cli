@@ -33,6 +33,7 @@ import { RuntimeInfo } from "../../src/shared/runtime/runtime-info.service.ts";
 import { Stdin } from "../../src/shared/runtime/stdin.service.ts";
 import { Tty } from "../../src/shared/runtime/tty.service.ts";
 import { Analytics } from "../../src/shared/telemetry/analytics.service.ts";
+import { CurrentAnalyticsContext } from "../../src/shared/telemetry/analytics-context.ts";
 import { TelemetryRuntime } from "../../src/shared/telemetry/runtime.service.ts";
 import { makeTelemetryIdentity } from "../../src/shared/telemetry/identity.ts";
 
@@ -136,11 +137,13 @@ export function mockTty(
   opts: {
     stdinIsTty?: boolean;
     stdoutIsTty?: boolean;
+    stdoutIsPipe?: boolean;
   } = {},
 ): Layer.Layer<Tty> {
   return Layer.succeed(Tty, {
     stdinIsTty: opts.stdinIsTty ?? false,
     stdoutIsTty: opts.stdoutIsTty ?? false,
+    stdoutIsPipe: opts.stdoutIsPipe ?? false,
   });
 }
 
@@ -511,6 +514,53 @@ export function mockApi(
       return profileCallCount;
     },
   };
+}
+
+/**
+ * `withLegacyCommandInstrumentation` threads `flags`/`command`/etc. through
+ * `CurrentAnalyticsContext`, not the direct `capture()` call args. The plain
+ * `mockAnalytics()` below deliberately doesn't merge that context (most
+ * callers don't need it); tests asserting on context-carried properties
+ * (telemetry `flags` maps, `groups`) use this variant instead.
+ * Shape-compatible with `mockAnalytics()`'s return so it's a drop-in
+ * override wherever a setup helper accepts one.
+ */
+export function mockContextualAnalytics(): ReturnType<typeof mockAnalytics> {
+  const captured: Array<{ event: string; properties: Record<string, unknown> }> = [];
+  const identified: Array<{ distinctId: string; properties: Record<string, unknown> }> = [];
+  const aliased: Array<{ distinctId: string; alias: string }> = [];
+  const groupIdentified: Array<{
+    groupType: string;
+    groupKey: string;
+    properties: Record<string, unknown>;
+  }> = [];
+  const layer = Layer.succeed(
+    Analytics,
+    Analytics.of({
+      capture: (event: string, properties: Record<string, unknown> = {}) =>
+        Effect.gen(function* () {
+          const context = yield* CurrentAnalyticsContext;
+          captured.push({ event, properties: { ...context, ...properties } });
+        }),
+      identify: (distinctId: string, properties: Record<string, unknown> = {}) =>
+        Effect.sync(() => {
+          identified.push({ distinctId, properties });
+        }),
+      alias: (distinctId: string, alias: string) =>
+        Effect.sync(() => {
+          aliased.push({ distinctId, alias });
+        }),
+      groupIdentify: (
+        groupType: string,
+        groupKey: string,
+        properties: Record<string, unknown> = {},
+      ) =>
+        Effect.sync(() => {
+          groupIdentified.push({ groupType, groupKey, properties });
+        }),
+    }),
+  );
+  return { layer, captured, identified, aliased, groupIdentified };
 }
 
 export function mockAnalytics() {

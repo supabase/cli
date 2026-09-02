@@ -34,6 +34,9 @@
       "entry": ["src/**/*.test.ts"],
       "ignoreDependencies": ["undici"]
     },
+    "packages/config": {
+      "entry": ["src/**/*.test.ts"]
+    },
     "packages/stack": {
       "ignoreBinaries": ["mkfifo"],
       "ignoreDependencies": ["@types/ws", "ws"]

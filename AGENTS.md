@@ -33,6 +33,8 @@ Generic linting (`oxlint`), formatting (`oxfmt`), and unused-code analysis (`kni
 Expected exceptions:
 
 - `apps/cli` is published, so it is not `private`
+- `packages/config` is published (on its own release train — see `packages/config/AGENTS.md`), so
+  it is not `private`
 - `apps/docs` is a Next.js app and does not follow the standard package template
 - `packages/cli-*` are binary wrapper packages and do not follow the standard TypeScript workspace template
 
@@ -58,7 +60,7 @@ Expected exceptions:
 
 Use the `Cli*` prefix for the local checkout side and a bare `Project*` name for the hosted
 Supabase project. Config-value helpers follow the config family regardless of their inputs (e.g.
-`resolveCliConfigValue`, `MissingCliConfigValueError`). A symbol that deliberately spans both
+`resolveCliConfigValue`, `CliConfigParseError`). A symbol that deliberately spans both
 families takes a family-neutral name instead of a misleading prefix (see the ADR 0020 addendum for
 the `EffectiveConfig` precedent).
 
