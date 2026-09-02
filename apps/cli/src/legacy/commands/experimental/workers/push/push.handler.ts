@@ -50,6 +50,7 @@ import {
 } from "../../../../../shared/workers/workers.errors.ts";
 import {
   legacyDescribeWorker,
+  type LegacyResolvedWorker,
   legacyDiscoverWorkerNames,
   legacyLoadWorkersProject,
   legacyValidateWorkerName,
@@ -183,6 +184,71 @@ function addYourCode(sourceDisplay: string): string {
   return `Add your worker's code to ${sourceDisplay}, then run this command again.`;
 }
 
+/**
+ * Refuse a source directory there is nothing to deploy from.
+ *
+ * Ahead of `resolveRuntime`, which classifies the directory and announces what
+ * it guessed — inferring a runtime for a path that does not exist reports on it
+ * and only then fails on it.
+ */
+const assertDeployableSource = Effect.fnUntraced(function* (input: {
+  readonly name: string;
+  readonly sourceDir: string;
+  readonly sourceDisplay: string;
+  readonly configPath: string;
+  readonly entry: LegacyResolvedWorker["entry"];
+}) {
+  const fs = yield* FileSystem.FileSystem;
+  const { sourceDisplay } = input;
+
+  const missing = new WorkerSourceMissingError({
+    detail: `There is no worker source at ${sourceDisplay}.`,
+    suggestion: missingSourceSuggestion({
+      name: input.name,
+      sourceDisplay,
+      configPath: input.configPath,
+      entry: input.entry,
+    }),
+  });
+
+  // Only "no such path" means it was never scaffolded. A permission or I/O error
+  // is a different problem with a different fix, so it propagates as itself.
+  const info = yield* fs
+    .stat(input.sourceDir)
+    .pipe(
+      Effect.catchTag("PlatformError", (error) =>
+        Predicate.isTagged(error.reason, "NotFound")
+          ? Effect.fail<WorkerSourceMissingError | PlatformError>(missing)
+          : Effect.fail(error),
+      ),
+    );
+
+  // Occupied but not a directory. "There is no worker source" is false twice
+  // over, and `workers new` refuses this destination too — so the scaffold
+  // suggestion would answer with a second error.
+  if (info.type !== "Directory") {
+    return yield* Effect.fail(
+      new WorkerSourceMissingError({
+        detail: `${sourceDisplay} is not a directory.`,
+        suggestion: `Replace it with a directory holding your worker's code, then run this command again.`,
+      }),
+    );
+  }
+
+  // An empty directory packages and deploys happily, producing an image with
+  // nothing in it. Read errors propagate rather than reading as empty: a
+  // directory the CLI cannot open is not one with nothing in it.
+  const contents = yield* fs.readDirectory(input.sourceDir);
+  if (contents.length === 0) {
+    return yield* Effect.fail(
+      new WorkerSourceMissingError({
+        detail: `${sourceDisplay} is empty, so there is nothing to deploy.`,
+        suggestion: addYourCode(sourceDisplay),
+      }),
+    );
+  }
+});
+
 const deployOneWorker = Effect.fnUntraced(function* (input: {
   readonly project: LegacyWorkersProject;
   readonly name: string;
@@ -201,7 +267,6 @@ const deployOneWorker = Effect.fnUntraced(function* (input: {
   /** Suppresses this step's human output when `-o` owns stdout. */
   readonly rendersText: boolean;
 }) {
-  const fs = yield* FileSystem.FileSystem;
   const output = yield* Output;
   const api = yield* LegacyPlatformApi;
   const settings = yield* LegacyCliSettings;
@@ -211,63 +276,13 @@ const deployOneWorker = Effect.fnUntraced(function* (input: {
 
   const sourceDisplay = displayPath(project.projectRoot, worker.sourceDir);
 
-  // Checked before the runtime is resolved, not after: with no recorded
-  // runtime, `resolveRuntime` classifies the directory and announces what it
-  // guessed. Doing that first meant reporting an inference about a path that
-  // does not exist, and only then failing on the path.
-  {
-    const sourceMissing = new WorkerSourceMissingError({
-      detail: `There is no worker source at ${sourceDisplay}.`,
-      suggestion: missingSourceSuggestion({
-        name,
-        sourceDisplay,
-        configPath: displayPath(project.projectRoot, project.configPath),
-        entry: worker.entry,
-      }),
-    });
-    // Only "no such path" means the worker was never scaffolded. A permission
-    // or I/O error on the directory is a different problem with a different
-    // fix, and answering it with "there is no worker source, run `workers new`"
-    // both misdiagnoses it and points at a directory that already exists — so
-    // every other reason propagates as itself.
-    const info = yield* fs
-      .stat(worker.sourceDir)
-      .pipe(
-        Effect.catchTag("PlatformError", (error) =>
-          Predicate.isTagged(error.reason, "NotFound")
-            ? Effect.fail<WorkerSourceMissingError | PlatformError>(sourceMissing)
-            : Effect.fail(error),
-        ),
-      );
-    // Something is there, it is just not a directory. Reporting that as "there
-    // is no worker source" is false twice over: the path is occupied, and
-    // `workers new` refuses a destination that exists and is not a directory,
-    // so the scaffold suggestion would answer with a second error.
-    if (info.type !== "Directory") {
-      return yield* Effect.fail(
-        new WorkerSourceMissingError({
-          detail: `${sourceDisplay} is not a directory.`,
-          suggestion: `Replace it with a directory holding your worker's code, then run this command again.`,
-        }),
-      );
-    }
-    // An empty directory packages and deploys perfectly happily, producing an
-    // image with nothing in it — a success message for a worker that cannot
-    // serve anything. Refuse before uploading rather than after.
-    //
-    // Read errors propagate rather than reading as empty: a directory the CLI
-    // cannot open is not a directory with nothing in it, and the two want
-    // opposite things from the user.
-    const contents = yield* fs.readDirectory(worker.sourceDir);
-    if (contents.length === 0) {
-      return yield* Effect.fail(
-        new WorkerSourceMissingError({
-          detail: `${sourceDisplay} is empty, so there is nothing to deploy.`,
-          suggestion: addYourCode(sourceDisplay),
-        }),
-      );
-    }
-  }
+  yield* assertDeployableSource({
+    name,
+    sourceDir: worker.sourceDir,
+    sourceDisplay,
+    configPath: displayPath(project.projectRoot, project.configPath),
+    entry: worker.entry,
+  });
 
   const runtime = yield* resolveRuntime({
     name,
