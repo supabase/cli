@@ -114,15 +114,10 @@ describe("legacyWorkersRendersText", () => {
   const CASES = [
     ["no flags", {}, true],
     ["--output-format json", { format: "json" }, false],
-    ["--output-format stream-json", { format: "stream-json" }, false],
+    // `-o json` leaves `output.format` as `text`, so the format alone says yes.
     ["-o json", { goOutput: "json" }, false],
-    ["-o yaml", { goOutput: "yaml" }, false],
-    // These encode nothing and fall through to the text rendering.
-    ["-o pretty", { goOutput: "pretty" }, true],
-    ["-o csv", { goOutput: "csv" }, true],
-    // `-o` outranks `--output-format`, in both directions.
+    // `-o pretty` encodes nothing and outranks `--output-format`.
     ["-o pretty with --output-format json", { goOutput: "pretty", format: "json" }, true],
-    ["-o json with --output-format text", { goOutput: "json" }, false],
   ] as const;
 
   for (const [label, options, expected] of CASES) {

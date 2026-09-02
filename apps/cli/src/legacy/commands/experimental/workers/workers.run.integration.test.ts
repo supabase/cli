@@ -21,34 +21,20 @@ function project() {
   return { dir: created.dir, cleanup: () => rmSync(created.dir, { recursive: true, force: true }) };
 }
 
-/**
- * Every project-scoped command, with only the flags the run needs to get as far
- * as resolving a ref.
- */
+const REF = { projectRef: Option.none() };
+
+/** Every project-scoped command, with the least it needs to reach `resolve`. */
 const COMMANDS = [
-  ["list", () => legacyWorkersList({ projectRef: Option.none() })],
-  ["status", () => legacyWorkersStatus({ name: "api", projectRef: Option.none() })],
-  ["delete", () => legacyWorkersDelete({ name: "api", projectRef: Option.none() })],
+  ["list", () => legacyWorkersList(REF)],
+  ["status", () => legacyWorkersStatus({ ...REF, name: "api" })],
+  ["delete", () => legacyWorkersDelete({ ...REF, name: "api" })],
   [
     "push",
-    () =>
-      legacyWorkersPush({
-        names: ["api"],
-        instances: Option.none(),
-        wait: false,
-        projectRef: Option.none(),
-      }),
+    () => legacyWorkersPush({ ...REF, names: ["api"], instances: Option.none(), wait: false }),
   ],
   [
     "logs",
-    () =>
-      legacyWorkersLogs({
-        name: "api",
-        projectRef: Option.none(),
-        kind: Option.none(),
-        follow: false,
-        tail: 100,
-      }),
+    () => legacyWorkersLogs({ ...REF, name: "api", kind: Option.none(), follow: false, tail: 100 }),
   ],
 ] as const;
 

@@ -4,24 +4,19 @@ import { LegacyLinkedProjectCache } from "../../../telemetry/legacy-linked-proje
 import { LegacyTelemetryState } from "../../../telemetry/legacy-telemetry-state.service.ts";
 import { legacyWorkersProjectRefSuffix } from "./workers.output.ts";
 
-/** What every project-scoped workers command needs before it can do anything. */
 export interface LegacyWorkersRunContext {
   readonly projectRef: string;
-  /** The `--project-ref` a suggestion must carry, or `""` — see the helper. */
+  /** What a suggestion must carry — see `legacyWorkersProjectRefSuffix`. */
   readonly refSuffix: string;
 }
 
 /**
  * The lifecycle every project-scoped workers command shares.
  *
- * Telemetry wraps the ref resolution as well, because an unlinked
- * non-interactive checkout fails inside `resolve` and the command has run by
- * then. The linked-project cache stays under the ref, having nothing to write
- * without one.
- *
- * A helper rather than a per-command preamble because the ordering is the whole
- * point and is easy to get subtly wrong: four commands had the resolution above
- * both finalizers and silently wrote no post-run event.
+ * The ordering is the point: telemetry wraps the ref resolution, since an
+ * unlinked checkout fails inside `resolve` once the command has already run.
+ * The linked-project cache stays under the ref, having nothing to write without
+ * one.
  */
 export const legacyWorkersRun = <A, E, R>(
   projectRefFlag: Option.Option<string>,

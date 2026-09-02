@@ -81,17 +81,11 @@ export const legacyWorkersMachineOutputRequested = Effect.fnUntraced(function* (
 });
 
 /**
- * The format a run actually renders in, with `-o` given priority over
- * `--output-format`.
+ * The format a run renders in, with `-o` given priority over `--output-format`.
+ * `-o pretty|table|csv` encode nothing and fall through to the text rendering.
  *
- * `-o pretty|table|csv` encode nothing and fall through to the text rendering,
- * and an explicit `-o` outranks `--output-format` when both are set. Branching
- * on `output.format` alone therefore emitted JSON for `-o pretty
- * --output-format json`, which asked for exactly the opposite.
- *
- * `-o json|yaml|toml|env` are absent from the result on purpose: those are
- * handled by `legacyEmitWorkersMachineOutput`, which runs before any of this and
- * owns its own stdout.
+ * `-o json|yaml|toml|env` are absent by design: `legacyEmitWorkersMachineOutput`
+ * runs first and owns its own stdout.
  */
 export const legacyWorkersRenderFormat = Effect.fnUntraced(function* () {
   const output = yield* Output;
@@ -118,12 +112,9 @@ export const legacyRejectWorkersEnvOutput = Effect.fnUntraced(function* () {
 });
 
 /**
- * Whether this run renders human text on stdout.
- *
- * Neither flag answers this alone: `-o json|yaml|toml|env` leaves
- * `output.format` as `text`, while `--output-format json` says nothing about
- * `-o`. Every caller was spelling the pair out by hand, and three of them got
- * the precedence wrong.
+ * Whether this run renders human text on stdout. Neither flag answers alone:
+ * `-o json|yaml|toml|env` leaves `output.format` as `text`, and
+ * `--output-format` says nothing about `-o`.
  */
 export const legacyWorkersRendersText = Effect.fnUntraced(function* () {
   if (yield* legacyWorkersMachineOutputRequested()) {
@@ -133,19 +124,12 @@ export const legacyWorkersRendersText = Effect.fnUntraced(function* () {
 });
 
 /**
- * Emit `payload` in whichever machine format the run asked for.
+ * Emit `payload` in whichever machine format the run asked for, returning
+ * whether it did — so a caller can skip its text rendering.
  *
- * Returns whether it emitted, so a caller can skip its text rendering — the
- * same contract as {@link legacyEmitWorkersMachineOutput}, which this wraps.
- *
- * The two format flags are resolved here rather than at each call site.
- * Branching on `output.format` alone ignored `-o`'s priority, so
- * `-o pretty --output-format json` emitted JSON from a run that asked for text.
- *
- * The structured emission happens exactly once, and only in the structured
- * branch: calling `output.success` ahead of the machine check emitted the
- * payload twice, which broke `JSON.parse` and gave `stream-json` two terminal
- * result events.
+ * Exactly one structured emission, and only in the structured branch: calling
+ * `output.success` ahead of the machine check emitted the payload twice, which
+ * broke `JSON.parse` and gave `stream-json` two terminal result events.
  */
 export const legacyEmitWorkersPayload = Effect.fnUntraced(function* (
   payload: Record<string, unknown>,
