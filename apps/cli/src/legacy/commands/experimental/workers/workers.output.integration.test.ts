@@ -6,7 +6,11 @@ import {
   makeWorkersProject,
   setupLegacyWorkers,
 } from "../../../../../tests/helpers/legacy-workers.ts";
-import { legacyEmitWorkersMachineOutput, legacyEmitWorkersPayload } from "./workers.output.ts";
+import {
+  legacyEmitWorkersMachineOutput,
+  legacyEmitWorkersPayload,
+  legacyWorkersRendersText,
+} from "./workers.output.ts";
 
 /**
  * Every workers command refuses `-o env` up front, before it touches the
@@ -100,4 +104,38 @@ describe("legacyEmitWorkersPayload", () => {
       expect(out.stdoutText).toBe("");
     }).pipe(Effect.provide(layer), Effect.ensuring(Effect.sync(cleanup)));
   });
+});
+
+/**
+ * The predicate five call sites were spelling out by hand — progress lines,
+ * prompts, per-worker output. Neither flag answers it alone.
+ */
+describe("legacyWorkersRendersText", () => {
+  const CASES = [
+    ["no flags", {}, true],
+    ["--output-format json", { format: "json" }, false],
+    ["--output-format stream-json", { format: "stream-json" }, false],
+    ["-o json", { goOutput: "json" }, false],
+    ["-o yaml", { goOutput: "yaml" }, false],
+    // These encode nothing and fall through to the text rendering.
+    ["-o pretty", { goOutput: "pretty" }, true],
+    ["-o csv", { goOutput: "csv" }, true],
+    // `-o` outranks `--output-format`, in both directions.
+    ["-o pretty with --output-format json", { goOutput: "pretty", format: "json" }, true],
+    ["-o json with --output-format text", { goOutput: "json" }, false],
+  ] as const;
+
+  for (const [label, options, expected] of CASES) {
+    it.live(`is ${expected} for ${label}`, () => {
+      const created = makeWorkersProject({ "supabase/config.toml": `project_id = "demo"\n` });
+      const { layer } = setupLegacyWorkers({ ...options, workdir: created.dir, routes: {} });
+
+      return Effect.gen(function* () {
+        expect(yield* legacyWorkersRendersText()).toBe(expected);
+      }).pipe(
+        Effect.provide(layer),
+        Effect.ensuring(Effect.sync(() => rmSync(created.dir, { recursive: true, force: true }))),
+      );
+    });
+  }
 });

@@ -6,7 +6,7 @@ import { legacyRenderWorkerDetails } from "../workers.format.ts";
 import {
   legacyEmitWorkersPayload,
   legacyRejectWorkersEnvOutput,
-  legacyWorkersMachineOutputRequested,
+  legacyWorkersRendersText,
 } from "../workers.output.ts";
 import {
   legacyWorkersCommand,
@@ -199,7 +199,7 @@ const deployOneWorker = Effect.fnUntraced(function* (input: {
   readonly pollSchedule?: Schedule.Schedule<unknown>;
   readonly pollRetrySchedule?: Schedule.Schedule<unknown>;
   /** Suppresses this step's human output when `-o` owns stdout. */
-  readonly machineOutput: boolean;
+  readonly rendersText: boolean;
 }) {
   const fs = yield* FileSystem.FileSystem;
   const output = yield* Output;
@@ -377,7 +377,7 @@ const deployOneWorker = Effect.fnUntraced(function* (input: {
 
   // Suppressed when `-o` is in play: the payload owns stdout, and these lines
   // would land in the middle of it.
-  if (output.format === "text" && !input.machineOutput) {
+  if (input.rendersText) {
     // Declarative line first, then the details — the shape every other command
     // that reports a completed remote change uses. `legacyRenderWorkerDetails` drops
     // empty-valued rows, so optional fields need no conditional spreads.
@@ -508,10 +508,10 @@ export const legacyWorkersPush = Effect.fn("legacy.experimental.workers.push")(f
       // that out at the end means failing with the remote project already changed.
       yield* legacyRejectWorkersEnvOutput();
 
-      const machineOutput = yield* legacyWorkersMachineOutputRequested();
+      const rendersText = yield* legacyWorkersRendersText();
       const deployed: Array<Record<string, unknown>> = [];
       for (const [index, name] of names.entries()) {
-        if (names.length > 1 && !machineOutput && output.format === "text") {
+        if (names.length > 1 && rendersText) {
           // stderr, unblanked and labelled, the way `functions deploy` announces
           // each function: a bare name with a leading blank line put a section
           // header into whatever was consuming stdout.
@@ -537,7 +537,7 @@ export const legacyWorkersPush = Effect.fn("legacy.experimental.workers.push")(f
             refSuffix,
             instances: flags.instances,
             wait: flags.wait,
-            machineOutput,
+            rendersText,
             ...(options.pollSchedule === undefined ? {} : { pollSchedule: options.pollSchedule }),
             ...(options.pollRetrySchedule === undefined
               ? {}
@@ -548,7 +548,7 @@ export const legacyWorkersPush = Effect.fn("legacy.experimental.workers.push")(f
 
       // Only for a run that deployed several: one worker already said so itself,
       // and repeating it as a summary reads like a second deploy.
-      if (names.length > 1 && !machineOutput && output.format === "text") {
+      if (names.length > 1 && rendersText) {
         yield* output.raw(
           `Deployed ${names.length} Workers to project ${projectRef}: ${names
             .map((name) => legacyAqua(name, process.stdout))

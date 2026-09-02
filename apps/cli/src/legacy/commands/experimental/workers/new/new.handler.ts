@@ -4,10 +4,7 @@ import { Output } from "../../../../../shared/output/output.service.ts";
 import { emitSuccessTrailer } from "../../../../../shared/cli/success-trailer.ts";
 import { legacyAqua, legacyBold } from "../../../../shared/legacy-colors.ts";
 import { legacyRenderWorkerDetails } from "../workers.format.ts";
-import {
-  legacyEmitWorkersMachineOutput,
-  legacyWorkersMachineOutputRequested,
-} from "../workers.output.ts";
+import { legacyEmitWorkersPayload, legacyWorkersRendersText } from "../workers.output.ts";
 import { LegacyTelemetryState } from "../../../../telemetry/legacy-telemetry-state.service.ts";
 import { RuntimeInfo } from "../../../../../shared/runtime/runtime-info.service.ts";
 import { Tty } from "../../../../../shared/runtime/tty.service.ts";
@@ -74,10 +71,10 @@ function defaultFirst<T>(values: ReadonlyArray<T>, defaultValue: T): Array<T> {
  * prompt is only answerable from a keyboard, so stdin has to be a terminal too
  * — the same pair `workers delete` guards its confirmation with.
  */
-const canPromptFor = Effect.fnUntraced(function* (machineOutput: boolean) {
+const canPromptForThisRun = Effect.fnUntraced(function* () {
   const output = yield* Output;
   const tty = yield* Tty;
-  return output.format === "text" && output.interactive && !machineOutput && tty.stdinIsTty;
+  return (yield* legacyWorkersRendersText()) && output.interactive && tty.stdinIsTty;
 });
 
 /**
@@ -206,8 +203,7 @@ export const legacyWorkersNew = Effect.fn("legacy.experimental.workers.new")(fun
 
     // Decided once, before the first prompt rather than beside the last, since
     // the name is now asked for too — every prompt below shares the answer.
-    const machineOutput = yield* legacyWorkersMachineOutputRequested();
-    const canPrompt = yield* canPromptFor(machineOutput);
+    const canPrompt = yield* canPromptForThisRun();
 
     const name = yield* resolveName({ explicit: flags.name, canPrompt, project });
     yield* legacyValidateWorkerName(name);
@@ -314,14 +310,7 @@ export const legacyWorkersNew = Effect.fn("legacy.experimental.workers.new")(fun
       config_path: project.configPath,
     };
 
-    // `-o` asks for a machine-readable stdout, so nothing human may be written
-    // to it — `output.success` logs to stdout in text mode.
-    if (yield* legacyEmitWorkersMachineOutput(payload)) {
-      return;
-    }
-
-    if (output.format !== "text") {
-      yield* output.success("", payload);
+    if (yield* legacyEmitWorkersPayload(payload)) {
       return;
     }
 

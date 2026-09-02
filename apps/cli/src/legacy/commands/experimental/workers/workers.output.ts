@@ -118,6 +118,21 @@ export const legacyRejectWorkersEnvOutput = Effect.fnUntraced(function* () {
 });
 
 /**
+ * Whether this run renders human text on stdout.
+ *
+ * Neither flag answers this alone: `-o json|yaml|toml|env` leaves
+ * `output.format` as `text`, while `--output-format json` says nothing about
+ * `-o`. Every caller was spelling the pair out by hand, and three of them got
+ * the precedence wrong.
+ */
+export const legacyWorkersRendersText = Effect.fnUntraced(function* () {
+  if (yield* legacyWorkersMachineOutputRequested()) {
+    return false;
+  }
+  return (yield* legacyWorkersRenderFormat()) === "text";
+});
+
+/**
  * Emit `payload` in whichever machine format the run asked for.
  *
  * Returns whether it emitted, so a caller can skip its text rendering — the

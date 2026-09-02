@@ -11,7 +11,7 @@ import { legacyRenderWorkerDetails } from "../workers.format.ts";
 import {
   legacyEmitWorkersPayload,
   legacyRejectWorkersEnvOutput,
-  legacyWorkersMachineOutputRequested,
+  legacyWorkersRendersText,
 } from "../workers.output.ts";
 import { LegacyPlatformApi } from "../../../../auth/legacy-platform-api.service.ts";
 import { displayPath } from "../../../../../shared/workers/worker-paths.ts";
@@ -91,7 +91,7 @@ export const legacyWorkersDelete = Effect.fn("legacy.experimental.workers.delete
       yield* fetching.clear();
 
       const deployed = lookup.worker;
-      const machineOutput = yield* legacyWorkersMachineOutputRequested();
+      const rendersText = yield* legacyWorkersRendersText();
 
       // `--yes` is the scripted path, and `deleteWorker` already treats a DELETE
       // 404 as done — "a delete that races another one is still a delete that
@@ -120,7 +120,7 @@ export const legacyWorkersDelete = Effect.fn("legacy.experimental.workers.delete
         // into the prompt and delete without `--yes`. The confirmation is only
         // meaningful from a keyboard, so stdin has to be a terminal too — the same
         // pair `projects delete` guards its prompt with.
-        if (output.format !== "text" || machineOutput || !output.interactive || !tty.stdinIsTty) {
+        if (!rendersText || !output.interactive || !tty.stdinIsTty) {
           return yield* Effect.fail(
             new WorkerDeleteConfirmationRequiredError({
               detail: `Deleting "${name}" from project ${projectRef} needs confirmation, and there is no interactive terminal to ask on.`,
