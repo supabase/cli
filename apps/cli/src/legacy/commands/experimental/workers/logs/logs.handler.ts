@@ -2,11 +2,7 @@ import { Effect, Option, Ref, Schedule } from "effect";
 import { Output } from "../../../../../shared/output/output.service.ts";
 import { emitSuccessTrailer } from "../../../../../shared/cli/success-trailer.ts";
 import { legacyAqua } from "../../../../shared/legacy-colors.ts";
-import {
-  legacyEmitWorkersMachineOutput,
-  legacyRejectWorkersEnvOutput,
-  legacyWorkersProjectRefSuffix,
-} from "../workers.output.ts";
+import { legacyEmitWorkersMachineOutput, legacyRejectWorkersEnvOutput } from "../workers.output.ts";
 import {
   legacyRenderWorkerLogLine,
   legacyWorkerLogLevel,
@@ -34,14 +30,12 @@ import {
   WorkersApiNetworkError,
   WorkersApiUnexpectedStatusError,
 } from "../../../../../shared/workers/workers.errors.ts";
-import { LegacyProjectRefResolver } from "../../../../config/legacy-project-ref.service.ts";
-import { LegacyLinkedProjectCache } from "../../../../telemetry/legacy-linked-project-cache.service.ts";
-import { LegacyTelemetryState } from "../../../../telemetry/legacy-telemetry-state.service.ts";
 import { legacyValidateWorkerName } from "../workers.shared.ts";
 import {
   legacyWorkersMachineOutputRequested,
   legacyWorkersRenderFormat,
 } from "../workers.output.ts";
+import { legacyWorkersRun } from "../workers.run.ts";
 import type { LegacyWorkersLogsFlags } from "./logs.command.ts";
 
 /**
@@ -158,20 +152,10 @@ export const legacyWorkersLogs = Effect.fn("legacy.experimental.workers.logs")(f
 ) {
   const output = yield* Output;
   const api = yield* LegacyPlatformApi;
-  const resolver = yield* LegacyProjectRefResolver;
-  const linkedProjectCache = yield* LegacyLinkedProjectCache;
-  const telemetryState = yield* LegacyTelemetryState;
   const processControl = yield* ProcessControl;
 
-  // Telemetry wraps the ref resolution as well: an unlinked non-interactive
-  // checkout fails inside `resolve`, and by then the command has run. Only the
-  // linked-project cache stays under the ref, since it has nothing to write
-  // without one.
-  yield* Effect.gen(function* () {
-    const projectRef = yield* resolver.resolve(flags.projectRef);
-    const refSuffix = legacyWorkersProjectRefSuffix(flags.projectRef);
-
-    yield* Effect.gen(function* () {
+  yield* legacyWorkersRun(flags.projectRef, ({ projectRef, refSuffix }) =>
+    Effect.gen(function* () {
       const name = yield* legacyValidateWorkerName(flags.name);
 
       // Up front, like the rest of the family: this payload always carries a `logs`
@@ -449,6 +433,6 @@ export const legacyWorkersLogs = Effect.fn("legacy.experimental.workers.logs")(f
             Effect.flatMap((signal) => processControl.setExitCode(signal === "SIGINT" ? 130 : 0)),
           ),
       );
-    }).pipe(Effect.ensuring(linkedProjectCache.cache(projectRef)));
-  }).pipe(Effect.ensuring(telemetryState.flush));
+    }),
+  );
 });

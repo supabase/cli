@@ -9,10 +9,8 @@ import { LegacyCliSettings } from "../../../../config/legacy-cli-settings.servic
 import { formatApiSize } from "../../../../../shared/workers/worker-runtimes.ts";
 import { workerUrl } from "../../../../../shared/workers/worker-url.ts";
 import { listWorkers, type WorkerRecord } from "../../../../../shared/workers/workers-api.ts";
-import { LegacyProjectRefResolver } from "../../../../config/legacy-project-ref.service.ts";
-import { LegacyLinkedProjectCache } from "../../../../telemetry/legacy-linked-project-cache.service.ts";
-import { LegacyTelemetryState } from "../../../../telemetry/legacy-telemetry-state.service.ts";
 import { legacyDiscoverWorkerNames, legacyLoadWorkersProject } from "../workers.shared.ts";
+import { legacyWorkersRun } from "../workers.run.ts";
 import type { LegacyWorkersListFlags } from "./list.command.ts";
 
 /**
@@ -101,130 +99,120 @@ export const legacyWorkersList = Effect.fn("legacy.experimental.workers.list")(f
 ) {
   const output = yield* Output;
   const api = yield* LegacyPlatformApi;
-  const resolver = yield* LegacyProjectRefResolver;
-  const linkedProjectCache = yield* LegacyLinkedProjectCache;
-  const telemetryState = yield* LegacyTelemetryState;
   const settings = yield* LegacyCliSettings;
 
-  // The ref is resolved outside the finalizers because caching it is one of
-  // them; everything that can fail on its own — loading `config.toml`,
-  // validating the name, resolving the worker — belongs inside, so those
-  // failures still flush telemetry. Same shape as `config/push`.
-  const projectRef = yield* resolver.resolve(flags.projectRef);
+  yield* legacyWorkersRun(flags.projectRef, ({ projectRef }) =>
+    Effect.gen(function* () {
+      const project = yield* legacyLoadWorkersProject();
 
-  yield* Effect.gen(function* () {
-    const project = yield* legacyLoadWorkersProject();
+      // Up front, like the rest of the family: this payload always carries a
+      // `workers` array, so `-o env` can never encode it, and finding that out at
+      // emit time means failing after the fetch has already been paid for.
+      yield* legacyRejectWorkersEnvOutput();
 
-    // Up front, like the rest of the family: this payload always carries a
-    // `workers` array, so `-o env` can never encode it, and finding that out at
-    // emit time means failing after the fetch has already been paid for.
-    yield* legacyRejectWorkersEnvOutput();
+      const fetching = yield* output.task("Fetching workers...");
+      const deployed = yield* listWorkers(api, projectRef).pipe(
+        Effect.tapError(() => fetching.fail()),
+      );
+      yield* fetching.clear();
 
-    const fetching = yield* output.task("Fetching workers...");
-    const deployed = yield* listWorkers(api, projectRef).pipe(
-      Effect.tapError(() => fetching.fail()),
-    );
-    yield* fetching.clear();
+      const byName = new Map(deployed.map((worker) => [worker.name, worker]));
+      const configuredNames = Object.keys(project.section.workers);
+      // Three sources: config entries, deployed workers, and directories under the
+      // workers root. The last are deployable — `legacyDiscoverWorkerNames` is the
+      // walk a bare `push` does — so the inventory has to show them.
+      const discoveredNames = yield* legacyDiscoverWorkerNames(project);
+      const names = [...new Set([...configuredNames, ...discoveredNames, ...byName.keys()])].sort();
 
-    const byName = new Map(deployed.map((worker) => [worker.name, worker]));
-    const configuredNames = Object.keys(project.section.workers);
-    // Three sources: config entries, deployed workers, and directories under the
-    // workers root. The last are deployable — `legacyDiscoverWorkerNames` is the
-    // walk a bare `push` does — so the inventory has to show them.
-    const discoveredNames = yield* legacyDiscoverWorkerNames(project);
-    const names = [...new Set([...configuredNames, ...discoveredNames, ...byName.keys()])].sort();
+      const rows: Array<WorkerRow> = names.map((name) => {
+        const record = byName.get(name);
+        return {
+          name,
+          configured: configuredNames.includes(name),
+          local: configuredNames.includes(name) || discoveredNames.includes(name),
+          deployed: record,
+          localRuntime: project.section.workers[name]?.runtime,
+          url:
+            record !== undefined && record.spec.exposure === "public"
+              ? workerUrl(projectRef, settings.projectHost, name)
+              : undefined,
+        };
+      });
 
-    const rows: Array<WorkerRow> = names.map((name) => {
-      const record = byName.get(name);
-      return {
-        name,
-        configured: configuredNames.includes(name),
-        local: configuredNames.includes(name) || discoveredNames.includes(name),
-        deployed: record,
-        localRuntime: project.section.workers[name]?.runtime,
-        url:
-          record !== undefined && record.spec.exposure === "public"
-            ? workerUrl(projectRef, settings.projectHost, name)
-            : undefined,
+      const payload = {
+        project_ref: projectRef,
+        workers: rows.map((row) => ({
+          name: row.name,
+          configured: row.configured,
+          local: row.local,
+          deployed: row.deployed !== undefined,
+          // Read the same way `runtimeLabel` reads it, so `-o json` and the text
+          // table cannot disagree: for a deployed worker an absent `spec.runtime`
+          // *means* dockerfile, and falling back to the local config there
+          // reported a stale runtime the deployment had moved off.
+          runtime: runtimeLabelFor(row),
+          size: row.deployed?.spec.size,
+          state: stateLabel(row),
+          instances: row.deployed?.spec.instances,
+          url: row.url,
+        })),
       };
-    });
 
-    const payload = {
-      project_ref: projectRef,
-      workers: rows.map((row) => ({
-        name: row.name,
-        configured: row.configured,
-        local: row.local,
-        deployed: row.deployed !== undefined,
-        // Read the same way `runtimeLabel` reads it, so `-o json` and the text
-        // table cannot disagree: for a deployed worker an absent `spec.runtime`
-        // *means* dockerfile, and falling back to the local config there
-        // reported a stale runtime the deployment had moved off.
-        runtime: runtimeLabelFor(row),
-        size: row.deployed?.spec.size,
-        state: stateLabel(row),
-        instances: row.deployed?.spec.instances,
-        url: row.url,
-      })),
-    };
+      // `-o` is independent of `--output-format`: it leaves `output.format` as
+      // `text`, so this has to be checked before the text branch below, not
+      // inside the structured one.
+      if (yield* legacyEmitWorkersMachineOutput(payload)) {
+        return;
+      }
 
-    // `-o` is independent of `--output-format`: it leaves `output.format` as
-    // `text`, so this has to be checked before the text branch below, not
-    // inside the structured one.
-    if (yield* legacyEmitWorkersMachineOutput(payload)) {
-      return;
-    }
+      if (output.format !== "text") {
+        yield* output.success("", payload);
+        return;
+      }
 
-    if (output.format !== "text") {
-      yield* output.success("", payload);
-      return;
-    }
+      if (rows.length === 0) {
+        yield* output.raw(
+          `No workers found. Scaffold one with ${legacyAqua("supabase experimental workers new <name>", process.stdout)}.\n`,
+        );
+        return;
+      }
 
-    if (rows.length === 0) {
-      yield* output.raw(
-        `No workers found. Scaffold one with ${legacyAqua("supabase experimental workers new <name>", process.stdout)}.\n`,
-      );
-      return;
-    }
+      yield* output.raw(renderGlamourTable([...HEADERS], rows.map(toCells)));
 
-    yield* output.raw(renderGlamourTable([...HEADERS], rows.map(toCells)));
+      // Two different problems, and they need different advice. A worker with a
+      // local directory but no entry can be pushed — the runtime is the only
+      // unknown. One with nothing local at all cannot: `deployOneWorker` checks
+      // the source directory *before* inferring a runtime and fails with
+      // `WorkerSourceMissingError`, so telling that user about runtime guessing
+      // points them at the wrong prerequisite.
+      //
+      // Both are written the way this shell writes every other heads-up that is
+      // not a failure: a yellow `WARNING:` prefix, then the consequence on its own
+      // line (`start`'s Docker-on-Windows notice is the same two-line shape). A
+      // single long sentence re-flows differently at every terminal width, right
+      // under a table that lines its columns up.
+      const unconfigured = rows
+        .filter((row) => row.deployed !== undefined && !row.configured && row.local)
+        .map((row) => row.name);
+      if (unconfigured.length > 0) {
+        const configDisplay = displayPath(project.projectRoot, project.configPath);
+        yield* output.raw(
+          `${legacyYellow("WARNING:")} ${nameList(unconfigured)} deployed but not in ${configDisplay}.\n` +
+            `Pushing from here would have to guess the runtime.\n`,
+          "stderr",
+        );
+      }
 
-    // Two different problems, and they need different advice. A worker with a
-    // local directory but no entry can be pushed — the runtime is the only
-    // unknown. One with nothing local at all cannot: `deployOneWorker` checks
-    // the source directory *before* inferring a runtime and fails with
-    // `WorkerSourceMissingError`, so telling that user about runtime guessing
-    // points them at the wrong prerequisite.
-    //
-    // Both are written the way this shell writes every other heads-up that is
-    // not a failure: a yellow `WARNING:` prefix, then the consequence on its own
-    // line (`start`'s Docker-on-Windows notice is the same two-line shape). A
-    // single long sentence re-flows differently at every terminal width, right
-    // under a table that lines its columns up.
-    const unconfigured = rows
-      .filter((row) => row.deployed !== undefined && !row.configured && row.local)
-      .map((row) => row.name);
-    if (unconfigured.length > 0) {
-      const configDisplay = displayPath(project.projectRoot, project.configPath);
-      yield* output.raw(
-        `${legacyYellow("WARNING:")} ${nameList(unconfigured)} deployed but not in ${configDisplay}.\n` +
-          `Pushing from here would have to guess the runtime.\n`,
-        "stderr",
-      );
-    }
-
-    const remoteOnly = rows
-      .filter((row) => row.deployed !== undefined && !row.local)
-      .map((row) => row.name);
-    if (remoteOnly.length > 0) {
-      yield* output.raw(
-        `${legacyYellow("WARNING:")} ${nameList(remoteOnly)} deployed with no source in this project.\n` +
-          `Scaffold or restore before pushing from here.\n`,
-        "stderr",
-      );
-    }
-  }).pipe(
-    Effect.ensuring(linkedProjectCache.cache(projectRef)),
-    Effect.ensuring(telemetryState.flush),
+      const remoteOnly = rows
+        .filter((row) => row.deployed !== undefined && !row.local)
+        .map((row) => row.name);
+      if (remoteOnly.length > 0) {
+        yield* output.raw(
+          `${legacyYellow("WARNING:")} ${nameList(remoteOnly)} deployed with no source in this project.\n` +
+            `Scaffold or restore before pushing from here.\n`,
+          "stderr",
+        );
+      }
+    }),
   );
 });
