@@ -62,6 +62,7 @@ When an ADR becomes outdated, mark it as `deprecated` or reference the supersedi
 | 0019 | [Raw API-Response Passthrough on API-Sourced Config](0019-config-api-response-passthrough.md)                  | accepted   |
 | 0020 | [Config Naming Vocabulary](0020-config-naming-vocabulary.md)                                                   | accepted   |
 | 0021 | [ProjectConfig Convergence Semantics](0021-projectconfig-convergence-semantics.md)                             | accepted   |
+| 0022 | [Config Diff Classification and Managed Surface](0022-config-diff-classification-and-managed-surface.md)       | accepted   |
 
 ## Template
 

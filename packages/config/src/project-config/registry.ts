@@ -314,12 +314,16 @@ const dbSectionRows: ReadonlyArray<ProjectConfigMappingRow> = [
     configPath: ["db", "network_restrictions", "allowed_cidrs"],
     apiPath: networkRestrictionsAllowedCidrsPath,
     transform: (value) => filterCidrAddresses(value, networkRestrictionsAllowedCidrsPath, "v4"),
+    // Matches `config push`'s own order-sensitive network-restrictions diff.
+    arrayEquality: "sequence",
     unit: "type-tagged {address,type}[] → filtered string[] (v4)",
   },
   {
     configPath: ["db", "network_restrictions", "allowed_cidrs_v6"],
     apiPath: networkRestrictionsAllowedCidrsPath,
     transform: (value) => filterCidrAddresses(value, networkRestrictionsAllowedCidrsPath, "v6"),
+    // Matches `config push`'s own order-sensitive network-restrictions diff.
+    arrayEquality: "sequence",
     unit: "type-tagged {address,type}[] → filtered string[] (v6)",
   },
   // Deliberately unmapped (no faithful counterpart): database.

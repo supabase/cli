@@ -735,6 +735,10 @@ const coreRows: ReadonlyArray<ProjectConfigMappingRow> = [
         ? undefined
         : splitCommaSeparated(expectString(value, ["auth", "uri_allow_list"])),
     normalizeDocument: canonicalizeCommaJoinedArray,
+    // GoTrue treats the allow list as membership only — reordering the URLs
+    // changes nothing at runtime, unlike the sequence-semantics CSV arrays
+    // (`api.schemas`, `api.extra_search_path`).
+    arrayEquality: "set",
     unit: "csv → string[]",
   },
   uintRow(["auth", "jwt_expiry"], "jwt_exp"),
@@ -787,8 +791,18 @@ const rateLimitRows: ReadonlyArray<ProjectConfigMappingRow> = [
 // SESSIONS (auth.sync.ts:1400-1408)
 
 const sessionsRows: ReadonlyArray<ProjectConfigMappingRow> = [
-  hoursDurationRow(["auth", "sessions", "timebox"], "sessions_timebox"),
-  hoursDurationRow(["auth", "sessions", "inactivity_timeout"], "sessions_inactivity_timeout"),
+  // GoTrue reports 0 hours for a session bound that was never configured, and
+  // the transform canonicalizes that to the string "0s" — declare it here so
+  // the diff baseline recognizes the canonicalized form (a type-level zero
+  // check would miss it and flag every untouched project).
+  {
+    ...hoursDurationRow(["auth", "sessions", "timebox"], "sessions_timebox"),
+    unconfiguredValue: "0s",
+  },
+  {
+    ...hoursDurationRow(["auth", "sessions", "inactivity_timeout"], "sessions_inactivity_timeout"),
+    unconfiguredValue: "0s",
+  },
 ];
 
 // EMAIL (auth.sync.ts:1548-1562)
@@ -913,9 +927,15 @@ const EMAIL_TEMPLATE_NAMES = [
   "reauthentication",
 ] as const;
 
-const templateRows: ReadonlyArray<ProjectConfigMappingRow> = EMAIL_TEMPLATE_NAMES.map((name) =>
-  stringRow(["auth", "email", "template", name, "subject"], `mailer_subjects_${name}`),
-);
+const templateRows: ReadonlyArray<ProjectConfigMappingRow> = EMAIL_TEMPLATE_NAMES.map((name) => ({
+  ...stringRow(["auth", "email", "template", name, "subject"], `mailer_subjects_${name}`),
+  // `mailer_subjects_*` is a platform-rendered string with no meaningful
+  // local default — a prior version of this row pinned the provisioning
+  // string recorded from a prod fixture as `unconfiguredValue`, which broke
+  // the moment the platform reworded its default (and can never be
+  // simultaneously correct for every environment platform-side).
+  platformRendered: true,
+}));
 
 // Email notifications ×7 (auth.sync.ts:1491-1525)
 
@@ -931,14 +951,25 @@ const EMAIL_NOTIFICATION_NAMES = [
 
 const notificationRows: ReadonlyArray<ProjectConfigMappingRow> = EMAIL_NOTIFICATION_NAMES.flatMap(
   (name) => [
-    boolRow(
-      ["auth", "email", "notification", name, "enabled"],
-      `mailer_notifications_${name}_enabled`,
-    ),
-    stringRow(
-      ["auth", "email", "notification", name, "subject"],
-      `mailer_subjects_${name}_notification`,
-    ),
+    {
+      ...boolRow(
+        ["auth", "email", "notification", name, "enabled"],
+        `mailer_notifications_${name}_enabled`,
+      ),
+      // Every account-change notification defaults to disabled (supabase/auth
+      // `NotificationsConfiguration`, `default:"false"` on each field) — the
+      // config schema declares no default, so the diff baseline needs the
+      // platform's own unconfigured reading here.
+      unconfiguredValue: false,
+    },
+    {
+      ...stringRow(
+        ["auth", "email", "notification", name, "subject"],
+        `mailer_subjects_${name}_notification`,
+      ),
+      // Same platform-rendered rationale as the template subjects above.
+      platformRendered: true,
+    },
   ],
 );
 
