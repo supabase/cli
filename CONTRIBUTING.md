@@ -55,7 +55,7 @@ mise install
 | Tool          | Version source                                      |
 | ------------- | --------------------------------------------------- |
 | Bun           | `.bun-version`                                      |
-| Node.js       | `devEngines.runtime` field in `package.json`        |
+| Node.js       | `.node-version`                                     |
 | pnpm          | `devEngines.packageManager` field in `package.json` |
 | Go            | `mise.toml`                                         |
 | golangci-lint | `mise.toml`                                         |

@@ -46,10 +46,6 @@
       "name": "pnpm",
       "version": "12.2.1",
       "onFail": "error"
-    },
-    "runtime": {
-      "name": "node",
-      "version": "24"
     }
   }
 }
