@@ -53,6 +53,26 @@ packageExtensions:
       # imports pg and debug without shipping their @types packages.
       "@types/debug": "^4.1.12"
       "@types/pg": "^8.23.1"
+  # vitest declares vite as both a dependency and a peer, so pnpm resolves it
+  # purely as a peer. @vitest/coverage-istanbul and @effect/vitest reach vitest
+  # through their own `vitest` peer inside a peer cycle, and pnpm's
+  # cycle-closing resolution hands them a vitest variant with no vite at all.
+  # The local virtual store's hidden hoist papered over that; under the global
+  # store `vitest/node` (loaded whenever coverage is enabled) cannot find vite.
+  # Declaring vite as an optional peer of those consumers makes pnpm resolve
+  # the full vitest variant for them.
+  "@vitest/coverage-istanbul":
+    peerDependencies:
+      vite: "*"
+    peerDependenciesMeta:
+      vite:
+        optional: true
+  "@effect/vitest":
+    peerDependencies:
+      vite: "*"
+    peerDependenciesMeta:
+      vite:
+        optional: true
   # The root `prepare` script (`effect-tsgo patch --oxlint`) replaces files
   # inside these installed packages. Their global-store directories are keyed
   # only by each package's own dependency graph and shared with every checkout

@@ -168,7 +168,7 @@ catalogs:
 overrides:
   '@launchql/protobufjs>@types/node': 24.10.4
 
-packageExtensionsChecksum: sha256-rLpTRZDLUa+NjWfTGNlKoJlOcNLuD6nZerjY3epLD4A=
+packageExtensionsChecksum: sha256-hUITKLmflrJQpiACVXlApRBpLAe4mw6n3nXI/dLAJyA=
 
 patchedDependencies:
   '@libpg-query/parser@17.6.10': ed67c0ca88b6ced3ec50fd6862f191d6192a246cf20d9c777d45efdb8373bed3
@@ -240,7 +240,7 @@ importers:
         version: 4.0.0-rc.112(effect@4.0.0-rc.112)
       '@effect/vitest':
         specifier: 'catalog:'
-        version: 4.0.0-rc.112(effect@4.0.0-rc.112)(vitest@4.1.11)
+        version: 4.0.0-rc.112(effect@4.0.0-rc.112)(vite@8.2.2(@types/node@26.3.0)(esbuild@0.28.2)(jiti@2.7.0)(yaml@2.9.0))(vitest@4.1.11)
       '@modelcontextprotocol/sdk':
         specifier: ^1.30.0
         version: 1.30.0(supports-color@7.2.0)(zod@4.4.3)
@@ -312,7 +312,7 @@ importers:
         version: 1.2.5
       '@vitest/coverage-istanbul':
         specifier: 'catalog:'
-        version: 4.1.11(supports-color@7.2.0)(vitest@4.1.11)
+        version: 4.1.11(supports-color@7.2.0)(vite@8.2.2(@types/node@26.3.0)(esbuild@0.28.2)(jiti@2.7.0)(yaml@2.9.0))(vitest@4.1.11)
       dotenv:
         specifier: ^17.4.2
         version: 17.4.2
@@ -407,7 +407,7 @@ importers:
         version: 1.4.0
       '@vitest/coverage-istanbul':
         specifier: 'catalog:'
-        version: 4.1.11(supports-color@7.2.0)(vitest@4.1.11)
+        version: 4.1.11(supports-color@7.2.0)(vite@8.2.2(@types/node@26.3.0))(vitest@4.1.11)
       typescript:
         specifier: 'catalog:'
         version: 7.0.2
@@ -477,7 +477,7 @@ importers:
         version: 1.4.0
       '@vitest/coverage-istanbul':
         specifier: 'catalog:'
-        version: 4.1.11(supports-color@7.2.0)(vitest@4.1.11)
+        version: 4.1.11(supports-color@7.2.0)(vite@8.2.2(@types/node@26.3.0))(vitest@4.1.11)
       typescript:
         specifier: 'catalog:'
         version: 7.0.2
@@ -507,7 +507,7 @@ importers:
         version: 1.4.0
       '@vitest/coverage-istanbul':
         specifier: 'catalog:'
-        version: 4.1.11(supports-color@7.2.0)(vitest@4.1.11)
+        version: 4.1.11(supports-color@7.2.0)(vite@8.2.2(@types/node@26.3.0))(vitest@4.1.11)
       typescript:
         specifier: 'catalog:'
         version: 7.0.2
@@ -551,7 +551,7 @@ importers:
         version: 1.4.0
       '@vitest/coverage-istanbul':
         specifier: 'catalog:'
-        version: 4.1.11(supports-color@7.2.0)(vitest@4.1.11)
+        version: 4.1.11(supports-color@7.2.0)(vite@8.2.2(@types/node@26.3.0)(esbuild@0.28.2)(jiti@2.7.0)(yaml@2.9.0))(vitest@4.1.11)
       effect:
         specifier: 'catalog:'
         version: 4.0.0-rc.112
@@ -579,7 +579,7 @@ importers:
         version: 4.0.0-rc.112(effect@4.0.0-rc.112)
       '@effect/vitest':
         specifier: 'catalog:'
-        version: 4.0.0-rc.112(effect@4.0.0-rc.112)(vitest@4.1.11)
+        version: 4.0.0-rc.112(effect@4.0.0-rc.112)(vite@8.2.2(@types/node@26.3.0))(vitest@4.1.11)
       '@tsconfig/bun':
         specifier: 'catalog:'
         version: 1.0.11
@@ -588,7 +588,7 @@ importers:
         version: 1.4.0
       '@vitest/coverage-istanbul':
         specifier: 'catalog:'
-        version: 4.1.11(supports-color@7.2.0)(vitest@4.1.11)
+        version: 4.1.11(supports-color@7.2.0)(vite@8.2.2(@types/node@26.3.0))(vitest@4.1.11)
       typescript:
         specifier: 'catalog:'
         version: 7.0.2
@@ -613,7 +613,7 @@ importers:
     devDependencies:
       '@effect/vitest':
         specifier: 'catalog:'
-        version: 4.0.0-rc.112(effect@4.0.0-rc.112)(vitest@4.1.11)
+        version: 4.0.0-rc.112(effect@4.0.0-rc.112)(vite@8.2.2(@types/node@26.3.0))(vitest@4.1.11)
       '@supabase/supabase-js':
         specifier: ^2.112.4
         version: 2.112.4
@@ -625,7 +625,7 @@ importers:
         version: 1.4.0
       '@vitest/coverage-istanbul':
         specifier: 'catalog:'
-        version: 4.1.11(supports-color@7.2.0)(vitest@4.1.11)
+        version: 4.1.11(supports-color@7.2.0)(vite@8.2.2(@types/node@26.3.0))(vitest@4.1.11)
       typescript:
         specifier: 'catalog:'
         version: 7.0.2
@@ -886,7 +886,11 @@ packages:
     resolution: {integrity: sha512-mEKh/FI64mt8JK1/v9mpOrJYdnp+UFZdRUBMEdZMiKz7klg6NPqVgg/oeAGH6wOOQc2iAPcfc2H9BbAv1KyzMQ==}
     peerDependencies:
       effect: ^4.0.0-rc.112
+      vite: '*'
       vitest: '>=4.1.0 <5.0.0'
+    peerDependenciesMeta:
+      vite:
+        optional: true
 
   '@emnapi/core@1.11.2':
     resolution: {integrity: sha512-TC8MkTuZUtcTSiFeuC0ksCh9QIJ5+F21MvZ4Wn4ORfYaFJ/0dsiudv5tVkejgwZlwQ39jL9WWDe2lz8x0WglOA==}
@@ -3126,7 +3130,11 @@ packages:
   '@vitest/coverage-istanbul@4.1.11':
     resolution: {integrity: sha512-pK9LJtOS534bmUwdwLpGD9qL52DeqVWSInrXFMNqrvWLbbAhuIPAlRup3UbsjFOMqCC/p3MmmX7uXV7ZTkcFfQ==}
     peerDependencies:
+      vite: '*'
       vitest: 4.1.11
+    peerDependenciesMeta:
+      vite:
+        optional: true
 
   '@vitest/expect@4.1.11':
     resolution: {integrity: sha512-VX2x5vNJXET47KAFzwERI+KRMtTTCSWTfSMKsW7JsUsXV4psq++e3DvZpuTDOpHcxytiDs6p2nhVb2tVDiiUYw==}
@@ -7139,10 +7147,19 @@ snapshots:
       '@effect/tsgo-win32-arm64': 0.37.0
       '@effect/tsgo-win32-x64': 0.37.0
 
-  '@effect/vitest@4.0.0-rc.112(effect@4.0.0-rc.112)(vitest@4.1.11)':
+  '@effect/vitest@4.0.0-rc.112(effect@4.0.0-rc.112)(vite@8.2.2(@types/node@26.3.0)(esbuild@0.28.2)(jiti@2.7.0)(yaml@2.9.0))(vitest@4.1.11)':
     dependencies:
       effect: 4.0.0-rc.112
-      vitest: 4.1.11(@vitest/coverage-istanbul@4.1.11)
+      vitest: 4.1.11(@types/node@26.3.0)(@vitest/coverage-istanbul@4.1.11)(vite@8.2.2(@types/node@26.3.0)(esbuild@0.28.2)(jiti@2.7.0)(yaml@2.9.0))
+    optionalDependencies:
+      vite: 8.2.2(@types/node@26.3.0)(esbuild@0.28.2)(jiti@2.7.0)(yaml@2.9.0)
+
+  '@effect/vitest@4.0.0-rc.112(effect@4.0.0-rc.112)(vite@8.2.2(@types/node@26.3.0))(vitest@4.1.11)':
+    dependencies:
+      effect: 4.0.0-rc.112
+      vitest: 4.1.11(@types/node@26.3.0)(@vitest/coverage-istanbul@4.1.11)(vite@8.2.2(@types/node@26.3.0))
+    optionalDependencies:
+      vite: 8.2.2(@types/node@26.3.0)(esbuild@0.28.2)(jiti@2.7.0)(yaml@2.9.0)
 
   '@emnapi/core@1.11.2':
     dependencies:
@@ -8973,7 +8990,7 @@ snapshots:
       lodash: 4.18.1
       minimatch: 10.2.6
 
-  '@vitest/coverage-istanbul@4.1.11(supports-color@7.2.0)(vitest@4.1.11)':
+  '@vitest/coverage-istanbul@4.1.11(supports-color@7.2.0)(vite@8.2.2(@types/node@26.3.0)(esbuild@0.28.2)(jiti@2.7.0)(yaml@2.9.0))(vitest@4.1.11)':
     dependencies:
       '@babel/core': 7.29.7(supports-color@7.2.0)
       '@istanbuljs/schema': 0.1.6
@@ -8985,7 +9002,27 @@ snapshots:
       magicast: 0.5.4
       obug: 2.1.4
       tinyrainbow: 3.1.1
-      vitest: 4.1.11(@vitest/coverage-istanbul@4.1.11)
+      vitest: 4.1.11(@types/node@26.3.0)(@vitest/coverage-istanbul@4.1.11)(vite@8.2.2(@types/node@26.3.0)(esbuild@0.28.2)(jiti@2.7.0)(yaml@2.9.0))
+    optionalDependencies:
+      vite: 8.2.2(@types/node@26.3.0)(esbuild@0.28.2)(jiti@2.7.0)(yaml@2.9.0)
+    transitivePeerDependencies:
+      - supports-color
+
+  '@vitest/coverage-istanbul@4.1.11(supports-color@7.2.0)(vite@8.2.2(@types/node@26.3.0))(vitest@4.1.11)':
+    dependencies:
+      '@babel/core': 7.29.7(supports-color@7.2.0)
+      '@istanbuljs/schema': 0.1.6
+      '@jridgewell/gen-mapping': 0.3.13
+      '@jridgewell/trace-mapping': 0.3.31
+      istanbul-lib-coverage: 3.2.2
+      istanbul-lib-report: 3.0.1
+      istanbul-reports: 3.2.0
+      magicast: 0.5.4
+      obug: 2.1.4
+      tinyrainbow: 3.1.1
+      vitest: 4.1.11(@types/node@26.3.0)(@vitest/coverage-istanbul@4.1.11)(vite@8.2.2(@types/node@26.3.0))
+    optionalDependencies:
+      vite: 8.2.2(@types/node@26.3.0)(esbuild@0.28.2)(jiti@2.7.0)(yaml@2.9.0)
     transitivePeerDependencies:
       - supports-color
 
@@ -8997,14 +9034,6 @@ snapshots:
       '@vitest/utils': 4.1.11
       chai: 6.2.2
       tinyrainbow: 3.1.1
-
-  '@vitest/mocker@4.1.11(vite@8.2.2(@types/node@26.3.0)(esbuild@0.28.2)(jiti@2.7.0)(yaml@2.9.0))':
-    dependencies:
-      '@vitest/spy': 4.1.11
-      estree-walker: 3.0.3
-      magic-string: 0.30.21
-    optionalDependencies:
-      vite: 8.2.2(@types/node@26.3.0)(esbuild@0.28.2)(jiti@2.7.0)(yaml@2.9.0)
 
   '@vitest/mocker@4.1.11(vite@8.2.2(@types/node@26.3.0))':
     dependencies:
@@ -13029,7 +13058,7 @@ snapshots:
   vitest@4.1.11(@types/node@26.3.0)(@vitest/coverage-istanbul@4.1.11)(vite@8.2.2(@types/node@26.3.0)(esbuild@0.28.2)(jiti@2.7.0)(yaml@2.9.0)):
     dependencies:
       '@vitest/expect': 4.1.11
-      '@vitest/mocker': 4.1.11(vite@8.2.2(@types/node@26.3.0)(esbuild@0.28.2)(jiti@2.7.0)(yaml@2.9.0))
+      '@vitest/mocker': 4.1.11(vite@8.2.2(@types/node@26.3.0))
       '@vitest/pretty-format': 4.1.11
       '@vitest/runner': 4.1.11
       '@vitest/snapshot': 4.1.11
@@ -13050,7 +13079,7 @@ snapshots:
       why-is-node-running: 2.3.0
     optionalDependencies:
       '@types/node': 26.3.0
-      '@vitest/coverage-istanbul': 4.1.11(supports-color@7.2.0)(vitest@4.1.11)
+      '@vitest/coverage-istanbul': 4.1.11(supports-color@7.2.0)(vite@8.2.2(@types/node@26.3.0)(esbuild@0.28.2)(jiti@2.7.0)(yaml@2.9.0))(vitest@4.1.11)
     transitivePeerDependencies:
       - msw
 
@@ -13078,33 +13107,7 @@ snapshots:
       why-is-node-running: 2.3.0
     optionalDependencies:
       '@types/node': 26.3.0
-      '@vitest/coverage-istanbul': 4.1.11(supports-color@7.2.0)(vitest@4.1.11)
-    transitivePeerDependencies:
-      - msw
-
-  vitest@4.1.11(@vitest/coverage-istanbul@4.1.11):
-    dependencies:
-      '@vitest/expect': 4.1.11
-      '@vitest/mocker': 4.1.11(vite@8.2.2(@types/node@26.3.0))
-      '@vitest/pretty-format': 4.1.11
-      '@vitest/runner': 4.1.11
-      '@vitest/snapshot': 4.1.11
-      '@vitest/spy': 4.1.11
-      '@vitest/utils': 4.1.11
-      es-module-lexer: 2.3.2
-      expect-type: 1.4.0
-      magic-string: 0.30.21
-      obug: 2.1.4
-      pathe: 2.0.3
-      picomatch: 4.0.7
-      std-env: 4.2.0
-      tinybench: 2.9.0
-      tinyexec: 1.3.0
-      tinyglobby: 0.2.17
-      tinyrainbow: 3.1.1
-      why-is-node-running: 2.3.0
-    optionalDependencies:
-      '@vitest/coverage-istanbul': 4.1.11(supports-color@7.2.0)(vitest@4.1.11)
+      '@vitest/coverage-istanbul': 4.1.11(supports-color@7.2.0)(vite@8.2.2(@types/node@26.3.0))(vitest@4.1.11)
     transitivePeerDependencies:
       - msw
 
