@@ -131,7 +131,10 @@ jobs:
           PREVIEW_URL: ${{ steps.preview-metadata.outputs.preview_url }}
         run: |
           set -euo pipefail
+          # temporarily update devEngines to allow npx to run
+          pnpm pkg set devEngines.packageManager.onFail=ignore
           npx --yes "${PREVIEW_URL}" --version
+          pnpm pkg set devEngines.packageManager.onFail=error
 
   comment:
     needs: publish
