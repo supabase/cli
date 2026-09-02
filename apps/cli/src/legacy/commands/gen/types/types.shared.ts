@@ -87,3 +87,16 @@ export function applyProbedSslMode(
     ...(sslrootcert !== undefined && sslrootcert.length > 0 ? { sslrootcert } : {}),
   };
 }
+
+/**
+ * `--network-id` cannot attach the in-process generator to a Docker network.
+ * Point at a host-reachable DSN, or run the CLI inside that network.
+ */
+export function legacyGenTypesNetworkIdUnusedWarning(networkId: string): string {
+  const network = networkId.length > 0 ? networkId : "<network-id>";
+  return (
+    "--network-id is unused: gen types no longer runs inside a container and cannot join a Docker network.\n" +
+    "To reach a hostname that exists only on that network:\n" +
+    `  docker run --rm --network ${network} node:lts npx --yes supabase gen types --db-url <url>`
+  );
+}

@@ -85,6 +85,21 @@ describe("legacyIsIPv6ConnectivityError", () => {
     ).toBe(true);
   });
 
+  it("classifies Node EHOSTUNREACH and EADDRNOTAVAIL stderr for IPv6 literals", () => {
+    expect(legacyIsIPv6ConnectivityError("connect EHOSTUNREACH 2600:1f18::1:5432")).toBe(true);
+    expect(legacyIsIPv6ConnectivityError("connect EADDRNOTAVAIL 2a05:d014::1:5432")).toBe(true);
+    expect(legacyIsIPv6ConnectivityError("connect EHOSTUNREACH 10.0.0.1:5432")).toBe(false);
+    expect(legacyIsIPv6ConnectivityError("connect EADDRNOTAVAIL 10.0.0.1:5432")).toBe(false);
+  });
+
+  it("classifies Node EHOSTUNREACH inside the parenthesized connect-failure rendering", () => {
+    expect(
+      legacyIsIPv6ConnectivityError(
+        "failed to connect to `host=db.x.supabase.co user=postgres database=postgres`: dial error (connect EHOSTUNREACH 2600:1f18::1:5432)",
+      ),
+    ).toBe(true);
+  });
+
   it("does not classify unrelated errors", () => {
     expect(legacyIsIPv6ConnectivityError("permission denied for schema public")).toBe(false);
     expect(legacyIsIPv6ConnectivityError("")).toBe(false);
@@ -597,6 +612,23 @@ describe("legacyIsIPv6ConnectivityErrorCause", () => {
     expect(
       legacyIsIPv6ConnectivityErrorCause(
         new Error("could not translate host name: no address associated with hostname"),
+      ),
+    ).toBe(true);
+  });
+
+  it("classifies the native rendered EHOSTUNREACH connect error without structured fields", () => {
+    expect(
+      legacyIsIPv6ConnectivityErrorCause(
+        new Error(
+          "failed to connect to postgres: failed to connect to `host=db.x.supabase.co user=postgres database=postgres`: dial error (connect EHOSTUNREACH 2600:1f18::1:5432)",
+        ),
+      ),
+    ).toBe(true);
+    expect(
+      legacyIsIPv6ConnectivityErrorCause(
+        new Error(
+          "failed to connect to postgres: failed to connect to `host=db.x.supabase.co user=postgres database=postgres`: dial error (connect EADDRNOTAVAIL 2a05:d014::1:5432)",
+        ),
       ),
     ).toBe(true);
   });

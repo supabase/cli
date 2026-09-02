@@ -1002,6 +1002,48 @@ describe("legacy gen types", () => {
     });
   });
 
+  it.live("warns that --network-id is unused and still generates", () => {
+    const dbUrl = "postgresql://postgres:postgres@db:5432/postgres";
+    const { layer, generator, out } = setup({
+      args: ["gen", "types", "--db-url", dbUrl, "--network-id", "mycompose_default"],
+    });
+
+    return Effect.gen(function* () {
+      yield* legacyGenTypes(defaultFlags({ dbUrl: Option.some(dbUrl) })).pipe(
+        Effect.provide(layer),
+      );
+
+      expect(generator.calls).toHaveLength(1);
+      expect(out.messages).toContainEqual(
+        expect.objectContaining({
+          type: "warn",
+          message: expect.stringContaining("docker run --rm --network mycompose_default"),
+        }),
+      );
+      expect(out.messages).toContainEqual(
+        expect.objectContaining({
+          type: "warn",
+          message: expect.stringContaining("npx --yes supabase gen types"),
+        }),
+      );
+    });
+  });
+
+  it.live("does not warn about --network-id when the flag is omitted", () => {
+    const dbUrl = "postgresql://postgres:postgres@127.0.0.1:5432/postgres";
+    const { layer, out } = setup({
+      args: ["gen", "types", "--db-url", dbUrl],
+    });
+
+    return Effect.gen(function* () {
+      yield* legacyGenTypes(defaultFlags({ dbUrl: Option.some(dbUrl) })).pipe(
+        Effect.provide(layer),
+      );
+
+      expect(out.messages.filter((message) => message.type === "warn")).toEqual([]);
+    });
+  });
+
   for (const scenario of nonTypescriptProjectRefScenarios) {
     it.live(`generates ${scenario.lang} types from a project ref through the DB resolver`, () => {
       const { layer, out, api, linkedProjectCache, dbConfig, generator } = setup({

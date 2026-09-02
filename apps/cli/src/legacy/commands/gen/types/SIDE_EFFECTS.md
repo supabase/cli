@@ -60,7 +60,9 @@ treated as disable. When the connection string carries no explicit
 `connect_timeout`, a positive `--query-timeout` is also used as the connect
 timeout — `0` leaves the driver's default (10s remote, 2s local). `--local`
 connects to the host-mapped database port from `supabase/config.toml`
-(`db.port`).
+(`db.port`). Remote connections that use a `supabase_admin` or `cli_login_*`
+role step down to `postgres` via the shared driver (`SET SESSION ROLE
+postgres`) before introspection.
 
 For a remote target whose DSN carries no explicit `sslmode`, a raw TCP
 `SSLRequest` probe (the shared pg-delta probe, default 10s timeout) is opened
@@ -77,8 +79,9 @@ embedded bundle.
 
 `--network-id` / `SUPABASE_NETWORK_ID` are unused: generation no longer runs
 inside a container, so a hostname reachable only on a Docker network will not
-resolve. `--local` uses the published host port instead; `--db-url` must be
-host-reachable.
+resolve. An explicit `--network-id` prints a warning with a
+`docker run --network … npx supabase gen types` workaround. `--local` uses the
+published host port instead; `--db-url` must be host-reachable.
 
 ## Subprocesses
 

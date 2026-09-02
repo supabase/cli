@@ -7,6 +7,7 @@ import {
   applyProbedSslMode,
   applyQueryTimeouts,
   defaultSchemas,
+  legacyGenTypesNetworkIdUnusedWarning,
   localDbPassword,
   parseQueryTimeoutSeconds,
 } from "./types.shared.ts";
@@ -159,6 +160,19 @@ describe("schema and password helpers", () => {
   it("reads the db password from the environment", () => {
     expect(withEnv("SUPABASE_DB_PASSWORD", undefined, () => localDbPassword())).toBe("postgres");
     expect(withEnv("SUPABASE_DB_PASSWORD", "secret", () => localDbPassword())).toBe("secret");
+  });
+});
+
+describe("legacyGenTypesNetworkIdUnusedWarning", () => {
+  it("names the unused flag and the docker run + npx workaround", () => {
+    const warning = legacyGenTypesNetworkIdUnusedWarning("mycompose_default");
+    expect(warning).toContain("--network-id is unused");
+    expect(warning).toContain("docker run --rm --network mycompose_default");
+    expect(warning).toContain("npx --yes supabase gen types --db-url <url>");
+  });
+
+  it("uses a placeholder when the flag value is empty", () => {
+    expect(legacyGenTypesNetworkIdUnusedWarning("")).toContain("--network <network-id>");
   });
 });
 

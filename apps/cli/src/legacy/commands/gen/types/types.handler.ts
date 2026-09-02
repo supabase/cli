@@ -26,6 +26,7 @@ import {
   legacyReadDbToml,
 } from "../../../shared/legacy-db-config.toml-read.ts";
 import type { LegacyPgConnInput } from "../../../shared/legacy-db-connection.service.ts";
+import { legacyPflagStringValue } from "../../../shared/legacy-pflag-reconcile.ts";
 import { legacyTempPaths } from "../../../shared/legacy-temp-paths.ts";
 import { LegacyLinkedProjectCache } from "../../../telemetry/legacy-linked-project-cache.service.ts";
 import { LegacyTelemetryState } from "../../../telemetry/legacy-telemetry-state.service.ts";
@@ -42,6 +43,7 @@ import {
   defaultSchemas,
   localDbContainerId,
   localDbPassword,
+  legacyGenTypesNetworkIdUnusedWarning,
   parseQueryTimeoutSeconds,
 } from "./types.shared.ts";
 
@@ -442,6 +444,11 @@ export const legacyGenTypes = Effect.fn("legacy.gen.types")(function* (flags: Le
       if (set.length > 1) {
         return yield* Effect.fail(new Error(cobraMutuallyExclusiveErrorMessage(group, set)));
       }
+    }
+
+    const networkIdOverride = legacyPflagStringValue(occurrences, "network-id");
+    if (Option.isSome(networkIdOverride)) {
+      yield* output.warn(legacyGenTypesNetworkIdUnusedWarning(networkIdOverride.value));
     }
 
     if (flags.local) {
