@@ -119,7 +119,7 @@ Important areas:
 - `src/next/commands/` for the next/V3 command tree
 - `src/legacy/commands/` for the legacy command tree
 - `src/shared/output/` for text / JSON / NDJSON output policies
-- `src/shared/runtime/` for TTY, stdin, browser, Ink, and process-control services
+- `src/shared/runtime/` for TTY, stdin, browser, and process-control services
 - `src/next/auth/` for login-related services
 
 The local stack commands use `@supabase/stack` for lifecycle, status, logs, and runtime operations.

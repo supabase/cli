@@ -12,8 +12,6 @@ export interface StackPaths {
   readonly runtime: string;
   /** Control metadata owned by the identity's supervisor. */
   readonly controlMetadata: string;
-  readonly temporaryDirectory: string;
-  readonly temporarySibling: string;
 }
 
 export interface ResolveStackPathsOptions {
@@ -58,7 +56,5 @@ export const resolveStackPaths = (
       logs: path.join(stackRoot, "logs"),
       runtime: path.join(stackRoot, "runtime"),
       controlMetadata: path.join(stackRoot, "control.json"),
-      temporaryDirectory: path.join(stackRoot, ".tmp"),
-      temporarySibling: path.join(stackRoot, "state.json.tmp"),
     };
   });

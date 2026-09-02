@@ -5,7 +5,7 @@ import { isStackId } from "../public/StackId.ts";
 import { makeFunctionsBootstrapOwner } from "./FunctionsBootstrap.ts";
 
 describe("functions bootstrap owner", () => {
-  it.live("publishes one private generation file with restrictive modes", () =>
+  it.live("publishes one private session file with restrictive modes", () =>
     Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem;
       const path = yield* Path.Path;
@@ -14,14 +14,14 @@ describe("functions bootstrap owner", () => {
       if (!isStackId(stackIdValue)) throw new Error("invalid test stack id");
       const stackId = stackIdValue;
       const owner = yield* makeFunctionsBootstrapOwner({ stateRoot: root, stackId });
-      const target = yield* owner.write({ generation: 4, content: "export default 1" });
-      expect(target).toContain(path.join(root, stackId, "runtime", "functions", "4", "index.ts"));
+      const target = yield* owner.write({ content: "export default 1" });
+      expect(target).toContain(path.join(root, stackId, "runtime", "functions", "index.ts"));
       expect((yield* fs.stat(path.dirname(target))).mode! & 0o777).toBe(0o700);
       expect((yield* fs.stat(target)).mode! & 0o777).toBe(0o600);
       expect(yield* fs.readFileString(target)).toBe("export default 1");
-      yield* owner.cleanupGeneration(4);
+      yield* owner.cleanupAll;
       expect(yield* fs.exists(target)).toBe(false);
-      const stale = yield* owner.write({ generation: 5, content: "export default 2" });
+      const stale = yield* owner.write({ content: "export default 2" });
       yield* owner.cleanupAll;
       expect(yield* fs.exists(stale)).toBe(false);
       expect(yield* fs.exists(path.join(root, stackId, "runtime", "functions"))).toBe(false);
@@ -46,13 +46,12 @@ describe("functions bootstrap owner", () => {
         stackId: stackIdValue,
       });
 
-      const target = yield* owner.write({ generation: 1, content: "export default 2" });
+      const target = yield* owner.write({ content: "export default 2" });
       const expected = path.join(
         yield* fs.realPath(canonicalRoot),
         stackIdValue,
         "runtime",
         "functions",
-        "1",
         "index.ts",
       );
       expect(target).toBe(expected);

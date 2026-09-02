@@ -11,7 +11,7 @@ export const MailModule: CapabilityModule<MailSettings> = {
   settings: MailSettingsSchema,
   defaultSettings: { admin_email: "admin@email.com", sender_name: "Admin" },
   defaultEnabled: true,
-  defaultActivation: "eager",
+  defaultActivation: "lazy",
   defaultVersion: "v1.30.2",
   dependencies: [],
   releases: {

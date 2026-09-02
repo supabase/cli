@@ -40,7 +40,7 @@ export const AnalyticsModule: CapabilityModule<AnalyticsSettings> = {
     ]),
   },
   routes: [{ listener: "api", protocol: "http" }],
-  secretPolicy: () => "passthrough",
+  secretPolicy: () => "managed",
   managedSecretSlots: ["analytics.settings.api_key"],
   selectWorkloads: (settings, workloads) => {
     const enabled = typeof settings.vector_port === "number";

@@ -1,74 +1,20 @@
 import {
-  CliConfigSchema,
-  findCliProjectPaths,
-  inferFunctionsManifest,
-  loadCliConfig,
-  resolveCliConfigSubtree,
-  resolveCliConfigValue,
   type CliConfig,
-  type CliProjectEnvironment,
   type ResolvedCliConfigValue,
   type ResolvedFunctionConfig as ManifestFunctionConfig,
 } from "@supabase/config/effect";
-import {
-  defaultJwtSecret,
-  defaultPublishableKey,
-  defaultSecretKey,
-  edgeRuntimeNofileUlimit,
-} from "../stack-constants.ts";
-import {
-  createHmac,
-  createPrivateKey,
-  sign as signJwtBytes,
-  type JsonWebKeyInput,
-} from "node:crypto";
-import { existsSync, watch } from "node:fs";
-import { mkdir, readFile, rm, stat, writeFile } from "node:fs/promises";
-import { basename, dirname, isAbsolute, join, relative, resolve } from "node:path";
-import { styleText } from "node:util";
-import {
-  Cause,
-  Duration,
-  Effect,
-  Exit,
-  Layer,
-  Option,
-  Queue,
-  Redacted,
-  Schema,
-  Stream,
-} from "effect";
-import { ChildProcessSpawner } from "effect/unstable/process";
-import {
-  legacyDescribeContainerCliFailure,
-  spawnContainerCli,
-} from "../../legacy/shared/legacy-container-cli.ts";
-import {
-  LEGACY_SUGGEST_DOCKER_INSTALL,
-  legacyIsDockerDaemonUnreachable,
-} from "../../legacy/shared/legacy-docker-suggest.ts";
+import { edgeRuntimeNofileUlimit } from "../stack-constants.ts";
+import { mkdir, readFile, rm, writeFile } from "node:fs/promises";
+import { basename, isAbsolute, join, relative, resolve } from "node:path";
+import { Effect, Option, Redacted, Stream } from "effect";
 import { parseDotEnv } from "../../legacy/shared/legacy-dotenv.ts";
-import { legacyViperEnvStringWithProjectFallback } from "../legacy/legacy-viper-env.ts";
-import {
-  resolveRemoteJwks,
-  resolveThirdPartyIssuerUrl,
-  thirdPartyIssuerUrlUnchecked,
-  toPublicJwk,
-} from "../auth/jwks.ts";
 import { Output } from "../output/output.service.ts";
-import {
-  FileWatcher,
-  FileWatcherError,
-  type FileWatchEvent,
-} from "../runtime/file-watcher.service.ts";
-import { ProcessControl } from "../runtime/process-control.service.ts";
 import {
   buildDockerBinds,
   discoverFunctionSlugs,
   type DockerBind,
   formatDockerBind,
   dockerWorkdirLabel,
-  rawFunctionConfigRecord,
   resolveFunctionConfigs,
   type ResolvedDeployFunctionConfig,
 } from "./deploy.ts";
@@ -79,66 +25,19 @@ import {
   ensureDockerNamedVolume,
   ensureDockerNetwork,
   localDockerId,
-  normalizeProjectId,
-  resolveDockerNetworkMode,
-  resolveEdgeRuntimeVersion,
-  resolveFunctionsDockerImage,
   runChildProcess,
   toDockerPath,
 } from "./functions-docker.ts";
-import { loadFunctionsCliConfig, type FunctionsGoConfigCompat } from "./functions-config.ts";
-import { edgeRuntimeImage, resolveEdgeRuntimeVersionPin } from "./functions.shared.ts";
-const decodeCliConfig = Schema.decodeUnknownSync(CliConfigSchema);
-const defaultCliConfig = decodeCliConfig({});
 
 const dockerRuntimeServerPort = 8081;
 const dockerRuntimeInspectorPort = 8083;
-// Unix timestamp (~2032-11-30) used as the `exp` claim of the local-dev default
-// JWTs, matching the Go CLI's hardcoded expiry for anon/service_role tokens.
-const defaultJwtExpiry = 1983812996;
-const defaultSigningKey = {
-  kty: "EC",
-  kid: "b81269f1-21d8-4f2e-b719-c2240a840d90",
-  use: "sig",
-  key_ops: ["verify"],
-  alg: "ES256",
-  ext: true,
-  crv: "P-256",
-  x: "M5Sjqn5zwC9Kl1zVfUUGvv9boQjCGd45G8sdopBExB4",
-  y: "P6IXMvA2WYXSHSOMTBH2jsw_9rrzGy89FjPf6oOsIxQ",
-} as const;
 const functionsDirName = join("supabase", "functions");
 const fallbackEnvFilePath = join("supabase", "functions", ".env");
-const ignoredDirNames = new Set([
-  ".git",
-  "node_modules",
-  ".vscode",
-  ".idea",
-  ".DS_Store",
-  "vendor",
-]);
-const dockerLogRetryDelay = Duration.millis(400);
-const dockerLogDiagnosticTailLength = 4_096;
-const defaultSupabaseEnv = "development";
 const serveMainDir = "/root";
 const shellVariableNamePattern = /^[A-Za-z_][A-Za-z0-9_]*$/;
 let cachedLegacyFunctionsServeMainTemplate: string | undefined;
-const watchIgnoreGlobs = [
-  "**/.git/**",
-  "**/node_modules/**",
-  "**/.vscode/**",
-  "**/.idea/**",
-  "**/.DS_Store",
-  "**/vendor/**",
-  "**/*~",
-  "**/.*.swp",
-  "**/.*.swx",
-  "**/___*",
-  "**/*.tmp",
-  "**/.#*",
-] as const;
 
-export const FUNCTIONS_SERVE_INSPECT_MODES = ["run", "brk", "wait"] as const;
+const FUNCTIONS_SERVE_INSPECT_MODES = ["run", "brk", "wait"] as const;
 
 export type FunctionsServeInspectMode = (typeof FUNCTIONS_SERVE_INSPECT_MODES)[number];
 
@@ -152,53 +51,11 @@ export interface FunctionsServeFlags {
   readonly all: boolean;
 }
 
-export interface FunctionsServeDependencies {
-  readonly projectRoot: string;
-  readonly supabaseDir: string;
-  readonly flagCwd: string;
-  readonly platform: NodeJS.Platform;
-  readonly debug: boolean;
-  readonly networkId: Option.Option<string>;
-  readonly projectIdOverride: Option.Option<string>;
-  readonly goViperCompat: boolean;
-  /**
-   * `undefined` in `next`; the legacy shell injects
-   * `legacyFunctionsGoConfigCompat` so this file never imports `legacy/`
-   * directly — see {@link FunctionsGoConfigCompat}. Distinct from
-   * `goViperCompat` above, which only gates `env(...)` interpolation.
-   */
-  readonly goConfigCompat: FunctionsGoConfigCompat | undefined;
-}
-
-interface PlainServeAuthConfig {
-  readonly enabled: boolean;
-  readonly signing_keys_path?: string;
-  readonly publishable_key?: string;
-  readonly secret_key?: string;
-  readonly jwt_secret?: string;
-  readonly anon_key?: string;
-  readonly service_role_key?: string;
-  readonly third_party: CliConfig["auth"]["third_party"];
-}
-
 export interface PlainServeEdgeRuntimeConfig {
   readonly policy: CliConfig["edge_runtime"]["policy"];
   readonly inspector_port: number;
   readonly deno_version?: number;
   readonly secrets: Readonly<Record<string, string>>;
-}
-
-interface ServeResolvedConfig {
-  readonly projectId: string;
-  readonly apiPort: number;
-  readonly auth: PlainServeAuthConfig;
-  readonly edgeRuntime: PlainServeEdgeRuntimeConfig;
-  readonly configDeclaredFunctions: Readonly<Record<string, ManifestFunctionConfig>>;
-  readonly configFunctions: Readonly<Record<string, ManifestFunctionConfig>>;
-  readonly rawConfigFunctions: Readonly<Record<string, Readonly<Record<string, unknown>>>>;
-  readonly configPath?: string;
-  /** Go's post-`loadNestedEnv` merged env (ambient-wins). `undefined` in `next`. */
-  readonly projectEnvValues: Readonly<Record<string, string>> | undefined;
 }
 
 interface ServeFunctionContainerConfig {
@@ -209,28 +66,16 @@ interface ServeFunctionContainerConfig {
   readonly env?: Readonly<Record<string, string>>;
 }
 
-interface WatchSpec {
-  readonly root: string;
-  readonly recursive: boolean;
-  readonly matchPaths?: ReadonlySet<string>;
-}
-
 export interface StartedRuntime {
   readonly containerId: string;
   readonly cleanup: Effect.Effect<void>;
-  readonly watchSpecs: ReadonlyArray<WatchSpec>;
 }
 
 /**
  * Every already-resolved secret/key {@link startEdgeRuntimeContainer} needs,
  * matching {@link finalizeAuthArtifacts}'s return shape. Named and exported so
- * a caller outside this module (`start`'s own edge-runtime bring-up,
- * `legacy/commands/start/services/edge-runtime.service.ts`) can build the
- * exact same shape from values it has already resolved itself, instead of
- * calling {@link resolveLocalAuthArtifacts} (which re-reads `config.toml`/signing
- * keys independently — correct for the standalone `functions serve` command,
- * but would risk resolving different secrets than the rest of a `start`
- * stack for a caller that already has these values).
+ * the legacy start bring-up can build the exact same shape from values it has
+ * already resolved, without reading `config.toml` or signing keys a second time.
  */
 export interface ServeAuthArtifacts {
   readonly publishableKey: string;
@@ -243,14 +88,8 @@ export interface ServeAuthArtifacts {
 
 /**
  * Everything {@link startEdgeRuntimeContainer} needs from `config.toml`
- * beyond auth (see {@link ServeAuthArtifacts}) — a narrowed, exported view of
- * {@link ServeResolvedConfig} (which also carries `auth`/`configPath`, used
- * only to resolve {@link ServeAuthArtifacts} and therefore irrelevant once
- * those are already resolved). `start`'s own bring-up builds this directly
- * from its own already-loaded `CliConfig` via {@link toPlainEdgeRuntimeConfig}/
- * {@link toPlainFunctionRecord}/`inferFunctionsManifest` (`@supabase/config`)
- * rather than going through {@link resolveServeConfig}'s independent
- * config-loading pipeline.
+ * beyond auth (see {@link ServeAuthArtifacts}). The legacy start bring-up
+ * builds this directly from its already-loaded `CliConfig`.
  */
 export interface ServeEdgeRuntimeContainerConfig {
   readonly projectId: string;
@@ -264,27 +103,18 @@ export interface ServeEdgeRuntimeContainerConfig {
 }
 
 /**
- * Input to {@link startEdgeRuntimeContainer} — the reusable "bring up one
- * Edge Runtime container" core extracted from `serveFunctions`'s interactive
- * loop, kept independent of BOTH `functions serve`'s own config-loading
- * (`resolveServeConfig`/`resolveLocalAuthArtifacts`) and its file-watch/log-stream
- * loop, so `start`'s bring-up can call it directly with values it has already
- * resolved through its own pipeline (see `internal-db-connection.ts` for why
- * {@link dbUrl} specifically must be caller-supplied rather than hardcoded).
+ * Input to {@link startEdgeRuntimeContainer}, the reusable "bring up one
+ * Edge Runtime container" core used by the legacy start bring-up. Config and
+ * secrets are resolved by the caller (see `internal-db-connection.ts` for why
+ * {@link dbUrl} must be caller-supplied rather than hardcoded).
  */
 export interface StartEdgeRuntimeContainerInput {
   readonly onContainerCreated?: () => void;
   readonly config: ServeEdgeRuntimeContainerConfig;
   readonly authArtifacts: ServeAuthArtifacts;
   /**
-   * `SUPABASE_DB_URL`. Deliberately NOT hardcoded in the shared core: Go's own
-   * two callers resolve this differently — standalone `functions serve`
-   * (`restartEdgeRuntime`, `serve.go:122`) always uses the `db` network alias
-   * (`postgresql://postgres:postgres@db:5432/postgres`, matching
-   * {@link legacyDefaultServeDbUrl} below), while `start`'s direct call
-   * (`start.go:66-72,1103`) uses the real `dbConfig` — the `db` container's
-   * own sanitized name and `config.db.password` — NOT the alias. Every caller
-   * must supply its own Go-accurate value; this module does not choose one.
+   * `SUPABASE_DB_URL`. Deliberately not hardcoded in the shared core: the
+   * caller supplies the database URL matching its resolved runtime topology.
    */
   readonly dbUrl: string;
   /** Already-resolved edge-runtime image reference (registry-mapped, tag/deno-version already applied). */
@@ -296,7 +126,7 @@ export interface StartEdgeRuntimeContainerInput {
   readonly debug: boolean;
   readonly networkId: string;
   readonly envFile: Option.Option<string>;
-  /** Standalone `functions serve` discovers `supabase/functions/<slug>/.env`; `start` does not. */
+  /** Whether to load each function's local `.env` file; legacy start passes false. */
   readonly discoverFunctionEnvFiles: boolean;
   readonly importMap: Option.Option<string>;
   readonly noVerifyJwt: Option.Option<boolean>;
@@ -304,56 +134,7 @@ export interface StartEdgeRuntimeContainerInput {
   readonly inspectMain: boolean;
 }
 
-type SigningKeyJwk = JsonWebKeyInput["key"] & {
-  readonly kty: "EC" | "RSA";
-  readonly kid?: string;
-  readonly use?: string;
-  readonly ext?: boolean;
-  readonly n?: string;
-  readonly e?: string;
-  readonly crv?: string;
-  readonly x?: string;
-  readonly y?: string;
-  readonly alg?: "ES256" | "RS256";
-  readonly key_ops?: ReadonlyArray<string>;
-};
-
 declare const SUPABASE_FUNCTIONS_SERVE_MAIN_TEMPLATE: string | undefined;
-
-export const serveFileWatcherLayer = Layer.sync(FileWatcher, () =>
-  FileWatcher.of({
-    watch: (root, options) =>
-      Stream.callback<ReadonlyArray<FileWatchEvent>, FileWatcherError>((queue) =>
-        Effect.acquireRelease(
-          Effect.sync(() => {
-            const recursive = options?.recursive ?? true;
-            const watcher = watch(root, { recursive }, (eventType, filename) => {
-              const pathname =
-                filename === null || filename === undefined || filename.length === 0
-                  ? root
-                  : resolve(root, filename.toString());
-              // Node's `fs.watch` only distinguishes "rename" (create/delete/
-              // rename) from "change" (write); Go prints the real fsnotify op
-              // (`internal/functions/serve/watcher.go:100`). The closest
-              // recoverable equivalent is an existence check on "rename"
-              // events: present → create, gone → delete; "change" → update.
-              const type: FileWatchEvent["type"] =
-                eventType === "rename" ? (existsSync(pathname) ? "create" : "delete") : "update";
-              Queue.offerUnsafe(queue, [{ path: pathname, type }]);
-            });
-            watcher.on("error", (cause) => {
-              Queue.failCauseUnsafe(queue, Cause.fail(new FileWatcherError({ path: root, cause })));
-            });
-            return watcher;
-          }),
-          (watcher) =>
-            Effect.sync(() => {
-              watcher.close();
-            }),
-        ),
-      ),
-  }),
-);
 
 /**
  * `serve.main.ts` runs verbatim as a Deno entrypoint inside the edge-runtime
@@ -390,44 +171,6 @@ function reveal(value: string | Redacted.Redacted<string> | undefined): string |
     return undefined;
   }
   return Redacted.isRedacted(value) ? Redacted.value(value) : value;
-}
-
-function toPlainAuthConfig(
-  auth: CliConfig["auth"] | ResolvedCliConfigValue<CliConfig["auth"]>,
-): PlainServeAuthConfig {
-  return {
-    enabled: auth.enabled,
-    signing_keys_path: reveal(auth.signing_keys_path),
-    publishable_key: reveal(auth.publishable_key),
-    secret_key: reveal(auth.secret_key),
-    jwt_secret: reveal(auth.jwt_secret),
-    anon_key: reveal(auth.anon_key),
-    service_role_key: reveal(auth.service_role_key),
-    third_party: {
-      firebase: {
-        enabled: auth.third_party.firebase.enabled,
-        project_id: reveal(auth.third_party.firebase.project_id),
-      },
-      auth0: {
-        enabled: auth.third_party.auth0.enabled,
-        tenant: reveal(auth.third_party.auth0.tenant),
-        tenant_region: reveal(auth.third_party.auth0.tenant_region),
-      },
-      aws_cognito: {
-        enabled: auth.third_party.aws_cognito.enabled,
-        user_pool_id: reveal(auth.third_party.aws_cognito.user_pool_id),
-        user_pool_region: reveal(auth.third_party.aws_cognito.user_pool_region),
-      },
-      clerk: {
-        enabled: auth.third_party.clerk.enabled,
-        domain: reveal(auth.third_party.clerk.domain),
-      },
-      workos: {
-        enabled: auth.third_party.workos.enabled,
-        issuer_url: reveal(auth.third_party.workos.issuer_url),
-      },
-    },
-  };
 }
 
 /**
@@ -488,375 +231,6 @@ export function toPlainFunctionRecord(
   );
 }
 
-function normalizeEnvPath(flagCwd: string, pathname: string) {
-  return isAbsolute(pathname) ? pathname : resolve(flagCwd, pathname);
-}
-
-function encodeBase64Url(input: string) {
-  return Buffer.from(input).toString("base64url");
-}
-
-function toJsonWebKey(signingKey: SigningKeyJwk): JsonWebKeyInput["key"] {
-  return {
-    ...signingKey,
-    ...(signingKey.key_ops === undefined ? {} : { key_ops: [...signingKey.key_ops] }),
-  };
-}
-
-function jwtPayload(role: string, exp: number) {
-  return JSON.stringify({ iss: "supabase-demo", role, exp });
-}
-
-function generateSymmetricJwt(secret: string, role: string) {
-  const header = encodeBase64Url(JSON.stringify({ alg: "HS256", typ: "JWT" }));
-  const payload = encodeBase64Url(jwtPayload(role, defaultJwtExpiry));
-  const data = `${header}.${payload}`;
-  const signature = createHmac("sha256", secret).update(data).digest("base64url");
-  return `${data}.${signature}`;
-}
-
-function generateAsymmetricJwt(signingKey: SigningKeyJwk, role: string) {
-  const algorithm = signingKey.alg;
-  if (algorithm !== "ES256" && algorithm !== "RS256") {
-    throw new Error(`unsupported algorithm: ${String(algorithm)}`);
-  }
-
-  const header = {
-    alg: algorithm,
-    typ: "JWT",
-    ...(signingKey.kid === undefined ? {} : { kid: signingKey.kid }),
-  };
-  const payload = {
-    iss: "supabase-demo",
-    role,
-    exp: Math.floor(Date.now() / 1000) + 60 * 60 * 24 * 365 * 10,
-  };
-  const encodedHeader = encodeBase64Url(JSON.stringify(header));
-  const encodedPayload = encodeBase64Url(JSON.stringify(payload));
-  const data = `${encodedHeader}.${encodedPayload}`;
-  const key = createPrivateKey({
-    key: toJsonWebKey(signingKey),
-    format: "jwk",
-  });
-  const signature = signJwtBytes("sha256", Buffer.from(data), {
-    key,
-    ...(algorithm === "ES256" ? { dsaEncoding: "ieee-p1363" as const } : {}),
-  }).toString("base64url");
-  return `${data}.${signature}`;
-}
-
-async function readSigningKeys(pathname: string): Promise<ReadonlyArray<SigningKeyJwk>> {
-  const decoded = JSON.parse(await readFile(pathname, "utf8"));
-  if (!Array.isArray(decoded)) {
-    throw new Error("expected a JSON array");
-  }
-  return decoded as ReadonlyArray<SigningKeyJwk>;
-}
-
-/**
- * {@link resolveLocalAuthArtifacts}'s return shape — everything
- * {@link finalizeAuthArtifacts} needs to assemble the final
- * {@link ServeAuthArtifacts} once the remote-JWKS fetch is allowed to run
- * (i.e. after the DB assertion — see {@link startEdgeRuntime}).
- */
-interface ServeLocalAuthArtifacts {
-  readonly publishableKey: string;
-  readonly secretKey: string;
-  readonly jwtSecret: string;
-  readonly anonKey: string;
-  readonly serviceRoleKey: string;
-  /** Third-party issuer to fetch remote JWKS from, if one is configured. */
-  readonly issuerUrl: string | undefined;
-  /** Local JWKS entries (signing keys / oct fallback), appended AFTER any remote keys (`config.go:1776-1786`). */
-  readonly localKeys: ReadonlyArray<unknown>;
-}
-
-/**
- * Config-load-time auth resolution — exactly the work Go performs during
- * `flags.LoadConfig`/`Config.Validate`, BEFORE `AssertSupabaseDbIsRunning`:
- * the signing-keys read (`pkg/config/config.go:1110-1115`), the
- * `auth.jwt_secret` ≥16-chars check (`pkg/config/apikeys.go:43-47` via
- * `config.go:1156`), and anon/service-role key generation. Deliberately does
- * NOT fetch remote JWKS: Go only does that inside `ServeFunctions`
- * (`serve.go:141` → `ResolveJWKS`, `config.go:1727-1776`), after the DB
- * assertion — that half lives in {@link finalizeAuthArtifacts} so a config
- * error here still beats a docker-down error, matching Go's precedence.
- */
-const resolveLocalAuthArtifacts = Effect.fnUntraced(function* (
-  auth: PlainServeAuthConfig,
-  configPath: string | undefined,
-) {
-  const signingKeysPath =
-    auth.signing_keys_path === undefined || auth.signing_keys_path.length === 0
-      ? ""
-      : isAbsolute(auth.signing_keys_path)
-        ? auth.signing_keys_path
-        : resolve(
-            dirname(configPath ?? join(process.cwd(), "supabase", "config.toml")),
-            auth.signing_keys_path,
-          );
-
-  const signingKeys = yield* Effect.tryPromise({
-    try: async () => (signingKeysPath.length === 0 ? [] : await readSigningKeys(signingKeysPath)),
-    catch: (cause) => {
-      if (cause instanceof SyntaxError) {
-        return new Error(`failed to decode signing keys: ${cause.message}`);
-      }
-      return new Error(
-        `failed to read signing keys: ${cause instanceof Error ? cause.message : String(cause)}`,
-      );
-    },
-  });
-
-  const jwtSecret =
-    auth.jwt_secret === undefined || auth.jwt_secret.length === 0
-      ? defaultJwtSecret
-      : auth.jwt_secret;
-  if (jwtSecret.length < 16) {
-    return yield* Effect.fail(
-      new Error("Invalid config for auth.jwt_secret. Must be at least 16 characters"),
-    );
-  }
-
-  const anonKey =
-    auth.anon_key === undefined || auth.anon_key.length === 0
-      ? signingKeys.length > 0
-        ? generateAsymmetricJwt(signingKeys[0]!, "anon")
-        : generateSymmetricJwt(jwtSecret, "anon")
-      : auth.anon_key;
-  const serviceRoleKey =
-    auth.service_role_key === undefined || auth.service_role_key.length === 0
-      ? signingKeys.length > 0
-        ? generateAsymmetricJwt(signingKeys[0]!, "service_role")
-        : generateSymmetricJwt(jwtSecret, "service_role")
-      : auth.service_role_key;
-  const shouldUseJwtSecretFallback = signingKeysPath.length === 0;
-
-  // Go's `Auth.ThirdParty.validate()` (the "at most one enabled" + required-field checks
-  // `resolveThirdPartyIssuerUrl` performs) only runs inside `Config.Validate`'s `if
-  // c.Auth.Enabled` block (`config.go:1087-1153`), but `functions serve`'s own JWKS resolution
-  // (`serve.go:141`) discards `ResolveJWKS`'s error unconditionally, regardless of `auth.enabled`.
-  // So a malformed/multi-enabled third-party config must not throw here when auth is disabled —
-  // use the unchecked, no-throw `IssuerURL()`-only builder instead, matching Go exactly.
-  const issuerUrl = auth.enabled
-    ? resolveThirdPartyIssuerUrl(auth.third_party)
-    : thirdPartyIssuerUrlUnchecked(auth.third_party);
-  const localKeys: unknown[] = [];
-  localKeys.push(
-    ...(signingKeys.length > 0
-      ? signingKeys.map(toPublicJwk)
-      : shouldUseJwtSecretFallback
-        ? [defaultSigningKey]
-        : []),
-  );
-  if (shouldUseJwtSecretFallback) {
-    localKeys.push({
-      kty: "oct",
-      k: Buffer.from(jwtSecret).toString("base64url"),
-    });
-  }
-
-  return {
-    publishableKey:
-      auth.publishable_key === undefined || auth.publishable_key.length === 0
-        ? defaultPublishableKey
-        : auth.publishable_key,
-    secretKey:
-      auth.secret_key === undefined || auth.secret_key.length === 0
-        ? defaultSecretKey
-        : auth.secret_key,
-    jwtSecret,
-    anonKey,
-    serviceRoleKey,
-    issuerUrl,
-    localKeys,
-  } satisfies ServeLocalAuthArtifacts;
-});
-
-/**
- * The post-assertion half of `functions serve`'s auth resolution — Go's
- * `ResolveJWKS` call inside `ServeFunctions` (`serve.go:141`,
- * `pkg/config/config.go:1727-1786`): fetch the third-party provider's remote
- * JWKS (two sequential OIDC/JWKS requests with 10s-timeout clients,
- * `config.go:1727-1776`) with the fetch error discarded (`jwks, _ :=`), then
- * assemble the final key set with remote keys FIRST and local keys after
- * (`config.go:1776-1786`). Kept separate from
- * {@link resolveLocalAuthArtifacts} so `startEdgeRuntime` can run it strictly
- * after `assertLocalDbRunning`, matching Go's ordering — with Docker down, no
- * external JWKS request is ever made.
- */
-const finalizeAuthArtifacts = Effect.fnUntraced(function* (local: ServeLocalAuthArtifacts) {
-  const keys: unknown[] = [];
-  if (local.issuerUrl !== undefined) {
-    const issuerUrl = local.issuerUrl;
-    const remoteJwks = yield* Effect.tryPromise({
-      try: () => resolveRemoteJwks(issuerUrl),
-      catch: (cause) => (cause instanceof Error ? cause : new Error(String(cause))),
-    }).pipe(Effect.catch(() => Effect.succeed([] as ReadonlyArray<unknown>)));
-    keys.push(...remoteJwks);
-  }
-  keys.push(...local.localKeys);
-
-  return {
-    publishableKey: local.publishableKey,
-    secretKey: local.secretKey,
-    jwtSecret: local.jwtSecret,
-    anonKey: local.anonKey,
-    serviceRoleKey: local.serviceRoleKey,
-    jwks: JSON.stringify({ keys }),
-  } satisfies ServeAuthArtifacts;
-});
-
-const resolveServeConfig = Effect.fnUntraced(function* (
-  projectRoot: string,
-  projectIdOverride: Option.Option<string>,
-  goViperCompat: boolean,
-  goConfigCompat: FunctionsGoConfigCompat | undefined,
-) {
-  const projectEnv = yield* loadServeCliProjectEnvironment(projectRoot);
-  const projectRef = Option.match(projectIdOverride, {
-    onNone: () => undefined,
-    onSome: (value) => {
-      const normalized = value.trim();
-      return normalized.length > 0 ? normalized : undefined;
-    },
-  });
-  // `loadCliConfig` interpolates `env()` references against the project
-  // environment. We resolve that environment ourselves (Go-accurate, layering
-  // `.env.<SUPABASE_ENV>`/`.env.local`/`.env` over the ambient env) and pass it
-  // in, so loading neither re-reads those files nor mutates `process.env`.
-  //
-  // `search: false`/`tomlOnly: true` when `goConfigCompat` is set (legacy
-  // shell): this MUST match `loadFunctionsCliConfig`'s own options below
-  // exactly, or the two loads can resolve two different files (an ancestor's
-  // config.toml vs this dir's; a stray config.json vs config.toml) — one
-  // supplying `auth`/`edgeRuntime`/`apiPort` here, the other supplying
-  // `denoVersion`/`Config.Validate` below, silently mixing fields from two
-  // different projects. `next` (`goConfigCompat === undefined`) keeps the
-  // package defaults (ancestor search, JSON preferred), unchanged.
-  const loadedConfig = yield* loadCliConfig(projectRoot, {
-    ...(projectRef === undefined ? {} : { projectRef }),
-    ...(projectEnv === null ? {} : { cliProjectEnv: projectEnv }),
-    goViperCompat,
-    ...(goConfigCompat === undefined ? {} : { search: false, tomlOnly: true }),
-  });
-  const baseConfig = loadedConfig?.config ?? defaultCliConfig;
-
-  const auth =
-    projectEnv === null
-      ? toPlainAuthConfig(baseConfig.auth)
-      : toPlainAuthConfig(
-          yield* resolveCliConfigSubtree(baseConfig.auth, projectEnv, "auth", { goViperCompat }),
-        );
-  const edgeRuntime =
-    projectEnv === null
-      ? toPlainEdgeRuntimeConfig(baseConfig.edge_runtime)
-      : toPlainEdgeRuntimeConfig(
-          yield* resolveCliConfigSubtree(baseConfig.edge_runtime, projectEnv, "edge_runtime", {
-            goViperCompat,
-          }),
-        );
-  const apiPort =
-    projectEnv === null
-      ? baseConfig.api.port
-      : (yield* resolveCliConfigSubtree(baseConfig.api, projectEnv, "api", { goViperCompat })).port;
-  const configDeclaredFunctions =
-    projectEnv === null
-      ? toPlainFunctionRecord(baseConfig.functions)
-      : toPlainFunctionRecord(
-          yield* resolveCliConfigSubtree(baseConfig.functions, projectEnv, "functions", {
-            goViperCompat,
-          }),
-        );
-  const configForManifest: CliConfig = {
-    ...baseConfig,
-    functions: configDeclaredFunctions,
-  };
-  const configFunctions = yield* inferFunctionsManifest({
-    cwd: projectRoot,
-    config: configForManifest,
-  });
-  const configProjectId =
-    projectEnv === null
-      ? (baseConfig.project_id ?? "")
-      : (reveal(
-          yield* resolveCliConfigValue(baseConfig.project_id ?? "", projectEnv, "project_id", {
-            goViperCompat,
-          }),
-        ) ?? "");
-  const rawProjectId = Option.getOrElse(projectIdOverride, () => configProjectId).trim();
-  const fallbackProjectId = basename(resolve(projectRoot));
-
-  // Go: `flags.LoadConfig` -> `Config.Validate` (`pkg/config/config.go:878,989-1192`)
-  // — `restartEdgeRuntime` runs this FIRST, before `AssertSupabaseDbIsRunning`
-  // (see this function's own caller for that ordering) — so an invalid
-  // config must fail here too, before any Docker check. Legacy shell only;
-  // `next` keeps its own package-default config resolution above unchanged.
-  // A second, independent config/dotenv load (rather than reusing this
-  // function's own `loadedConfig`/`projectEnv` above) — that pipeline's
-  // `env(...)`-interpolation purpose is unrelated to Go's `SUPABASE_*`
-  // `AutomaticEnv` override system this one provides, and the two shouldn't
-  // be entangled for a shipped, long-running command's config path.
-  // `search`/`tomlOnly` are aligned with this file's own `loadedConfig` call
-  // above (see its comment) so the two loads can never disagree about which
-  // file is "the" project config. `projectEnvValues` (for registry/network-id
-  // env lookups, this file's own caller) and the env-overridden
-  // `deno_version` are consumed from it; `auth`/`apiPort`/functions above
-  // keep their existing derivation. `projectId` also keeps its existing
-  // derivation — a known gap, narrow to trigger but NOT cosmetic when hit:
-  // unlike `deploy`/`download` (which use `context.projectId` outright),
-  // `rawProjectId` below only ever sees `SUPABASE_PROJECT_ID` from the
-  // *ambient* shell (`projectIdOverride`, from `LegacyCliSettings`), not from
-  // project dotenv. A project that sets it only in `supabase/.env` therefore
-  // gets a different `supabase_edge_runtime_<id>`/`supabase_network_<id>`
-  // here than `deploy`/`download`/`start` resolve for the SAME project — so
-  // `serve` creates a second network and a container `reloadKong(projectId)`'s
-  // Kong (named off the other id) can't route to: a silently non-functional
-  // `serve`, where Go reads one `Config.ProjectId` for everything. Folding
-  // `goContext.projectEnvValues` in here would also require reconciling this
-  // function's `projectIdOverride`-wins-unconditionally precedence with
-  // `legacyResolveLocalProjectId`'s config-file-wins-over-`projectRef`
-  // precedence (they're not the same order) — left open rather than risking
-  // that regression under time pressure (review round on CLI-1963).
-  const goContext =
-    goConfigCompat === undefined
-      ? undefined
-      : yield* loadFunctionsCliConfig({
-          projectRoot,
-          projectRef,
-          goConfigCompat,
-        });
-
-  return {
-    projectId: normalizeProjectId(rawProjectId.length > 0 ? rawProjectId : fallbackProjectId),
-    apiPort,
-    auth,
-    edgeRuntime:
-      goContext === undefined
-        ? edgeRuntime
-        : { ...edgeRuntime, deno_version: goContext.denoVersion },
-    configDeclaredFunctions,
-    configFunctions,
-    rawConfigFunctions: rawFunctionConfigRecord(loadedConfig?.document),
-    configPath: loadedConfig?.path,
-    projectEnvValues: goContext?.projectEnvValues,
-  } satisfies ServeResolvedConfig;
-});
-
-export function resolveFunctionsServeInspectMode(
-  flags: FunctionsServeFlags,
-): FunctionsServeInspectMode | undefined {
-  if (flags.inspect && Option.isSome(flags.inspectMode)) {
-    throw new Error(
-      "if any flags in the group [inspect inspect-mode] are set none of the others can be; [inspect inspect-mode] were all set",
-    );
-  }
-  if (Option.isSome(flags.inspectMode)) {
-    return flags.inspectMode.value;
-  }
-  return flags.inspect ? "brk" : undefined;
-}
-
 export function buildFunctionsServeInspectArgs(
   inspectMode: FunctionsServeInspectMode | undefined,
   inspectMain: boolean,
@@ -876,6 +250,10 @@ export function buildFunctionsServeInspectArgs(
     `--${flag}=0.0.0.0:${dockerRuntimeInspectorPort}`,
     ...(inspectMain ? ["--inspect-main"] : []),
   ];
+}
+
+function normalizeEnvPath(flagCwd: string, pathname: string) {
+  return isAbsolute(pathname) ? pathname : resolve(flagCwd, pathname);
 }
 
 const readDotEnvFile = Effect.fnUntraced(function* (pathname: string, optional: boolean) {
@@ -977,11 +355,8 @@ async function writeDockerEnvFile(env: Readonly<Record<string, string>>, dir: st
     return undefined;
   }
 
-  // Self-healing: `dir` is a deterministic, reused path (not a fresh mkdtemp
-  // each call), so a stale directory from an earlier invocation in the same
-  // process (e.g. `functions serve`'s watch-mode restart loop) is removed
-  // first — otherwise leftover files from a shrinking env set would survive
-  // alongside the fresh write.
+  // Self-healing: `dir` is deterministic and reused across invocations, so
+  // remove any stale files before writing a shrinking environment set.
   await rm(dir, { recursive: true, force: true });
   await mkdir(dir, { recursive: true, mode: 0o700 });
   const path = join(dir, "docker.env");
@@ -1067,10 +442,6 @@ function validateDockerMultilineEnvNames(env: ReadonlyArray<readonly [string, st
   }
 }
 
-function loadDefaultEnvFilenames(env: string) {
-  return [`.env.${env}.local`, ...(env === "test" ? [] : [".env.local"]), `.env.${env}`, ".env"];
-}
-
 function sanitizeDotEnvParseError(path: string, cause: unknown) {
   if (!(cause instanceof Error)) {
     return new Error(`failed to parse environment file: ${path}`);
@@ -1102,70 +473,7 @@ function sanitizeDotEnvParseError(path: string, cause: unknown) {
   return new Error(`failed to load ${path}: ${message}`);
 }
 
-function ambientProjectEnv() {
-  return Object.fromEntries(
-    Object.entries(process.env).flatMap(([key, value]) =>
-      value === undefined ? [] : [[key, value]],
-    ),
-  );
-}
-
-const loadServeCliProjectEnvironment = Effect.fnUntraced(function* (projectRoot: string) {
-  const paths = yield* findCliProjectPaths(projectRoot);
-  if (paths === null) {
-    return null;
-  }
-
-  const values: Record<string, string> = ambientProjectEnv();
-  const sources: Record<string, "ambient" | ".env" | ".env.local"> = Object.fromEntries(
-    Object.keys(values).map((key) => [key, "ambient"]),
-  );
-  const loadedPaths: string[] = [];
-  const env = process.env["SUPABASE_ENV"] || defaultSupabaseEnv;
-
-  for (const dir of [paths.supabaseDir, paths.projectRoot]) {
-    for (const filename of loadDefaultEnvFilenames(env)) {
-      const envPath = join(dir, filename);
-      const contents = yield* Effect.tryPromise({
-        try: () =>
-          readFile(envPath, "utf8").then(
-            (value) => value,
-            (error) => {
-              if (error instanceof Error && "code" in error && error.code === "ENOENT") {
-                return undefined;
-              }
-              throw error;
-            },
-          ),
-        catch: (cause) => (cause instanceof Error ? cause : new Error(String(cause))),
-      });
-      if (contents === undefined) {
-        continue;
-      }
-      loadedPaths.push(envPath);
-      const parsed = yield* Effect.try({
-        try: () => parseDotEnv(contents),
-        catch: (cause) => sanitizeDotEnvParseError(envPath, cause),
-      });
-      for (const [key, value] of Object.entries(parsed)) {
-        if (values[key] !== undefined) {
-          continue;
-        }
-        values[key] = value;
-        sources[key] = filename.includes(".local") ? ".env.local" : ".env";
-      }
-    }
-  }
-
-  return { paths, values, loadedPaths, sources } satisfies CliProjectEnvironment;
-});
-
-/**
- * Whether any bind mounts something at `containerPath` or below it, i.e. whether
- * that path exists inside the container. Docker creates a missing `--workdir`,
- * but Podman rejects the container outright (supabase/cli#6035), so the flag can
- * only be set for a path a bind actually materializes.
- */
+/** Whether any bind mounts something at `containerPath` or below it. */
 function hasBindUnder(binds: Iterable<DockerBind>, containerPath: string): boolean {
   for (const bind of binds) {
     if (
@@ -1177,319 +485,6 @@ function hasBindUnder(binds: Iterable<DockerBind>, containerPath: string): boole
   }
   return false;
 }
-
-async function buildWatchSpecs(
-  binds: ReadonlyArray<DockerBind>,
-): Promise<ReadonlyArray<WatchSpec>> {
-  const specs = new Map<string, WatchSpec>();
-
-  for (const bind of binds) {
-    const hostPath = bind.hostPath;
-    if (!isAbsolute(hostPath)) {
-      continue;
-    }
-
-    try {
-      const info = await stat(hostPath);
-      if (info.isDirectory()) {
-        specs.set(hostPath, { root: hostPath, recursive: true });
-      } else {
-        const root = dirname(hostPath);
-        const existing = specs.get(root);
-        if (existing !== undefined && existing.matchPaths === undefined) {
-          continue;
-        }
-        const matchPaths = new Set(existing?.matchPaths ?? []);
-        matchPaths.add(hostPath);
-        specs.set(root, { root, recursive: false, matchPaths });
-      }
-    } catch {
-      continue;
-    }
-  }
-
-  return [...specs.values()];
-}
-
-function shouldIgnoreEvent(pathname: string) {
-  const normalized = pathname.replaceAll("\\", "/");
-  const segments = normalized.split("/");
-  if (segments.some((segment) => ignoredDirNames.has(segment))) {
-    return true;
-  }
-  const base = segments[segments.length - 1] ?? normalized;
-  return (
-    base.endsWith("~") ||
-    (base.startsWith(".") && base.endsWith(".swp")) ||
-    (base.startsWith(".") && base.endsWith(".swx")) ||
-    base.startsWith("___") ||
-    base.endsWith(".tmp") ||
-    base.startsWith(".#")
-  );
-}
-
-function eventMatchesSpec(spec: WatchSpec, event: FileWatchEvent) {
-  if (shouldIgnoreEvent(event.path)) {
-    return false;
-  }
-  if (spec.matchPaths === undefined) {
-    return true;
-  }
-  return spec.matchPaths.has(event.path);
-}
-
-/**
- * fsnotify op tokens as Go prints them in the file-change line
- * (`event.Op.String()`, `internal/functions/serve/watcher.go:100`). RENAME and
- * CHMOD are unreachable here: Node's `fs.watch` folds renames into
- * create/delete pairs and does not report metadata-only changes.
- */
-const goFileEventOp = { create: "CREATE", update: "WRITE", delete: "REMOVE" } as const;
-
-const waitForRestartSignal = Effect.fnUntraced(function* (watchSpecs: ReadonlyArray<WatchSpec>) {
-  if (watchSpecs.length === 0) {
-    return yield* Effect.never;
-  }
-
-  const fileWatcher = yield* FileWatcher;
-  const output = yield* Output;
-
-  const stream = Stream.mergeAll(
-    watchSpecs.map((spec) =>
-      fileWatcher
-        .watch(spec.root, {
-          ignore: watchIgnoreGlobs,
-          recursive: spec.recursive,
-        })
-        .pipe(
-          Stream.map((events) => events.filter((event) => eventMatchesSpec(spec, event))),
-          Stream.filter((events) => events.length > 0),
-        ),
-    ),
-    { concurrency: "unbounded" },
-  ).pipe(
-    Stream.tap((events) =>
-      Effect.forEach(events, (event) =>
-        output.raw(
-          `File change detected: ${event.path} (${goFileEventOp[event.type]})\n`,
-          "stderr",
-        ),
-      ).pipe(Effect.asVoid),
-    ),
-    Stream.debounce(Duration.millis(500)),
-  );
-
-  const next = yield* Stream.runHead(stream);
-  return Option.match(next, {
-    onNone: () => Effect.never,
-    onSome: () => Effect.void,
-  });
-});
-
-function forwardByteStream(
-  stream: Stream.Stream<Uint8Array, unknown>,
-  write: (text: string, stream: "stdout" | "stderr") => Effect.Effect<void>,
-  streamName: "stdout" | "stderr",
-) {
-  const decoder = new TextDecoder();
-  return Stream.runForEach(stream, (chunk) =>
-    write(decoder.decode(chunk, { stream: true }), streamName),
-  ).pipe(Effect.andThen(write(decoder.decode(), streamName)));
-}
-
-function isRetriableDockerLogsError(stderr: string) {
-  const normalized = stderr.toLowerCase();
-  return (
-    normalized.includes("no such container") ||
-    normalized.includes("no such object") ||
-    normalized.includes("conflict") ||
-    normalized.includes("can not get logs from container which is dead or marked for removal")
-  );
-}
-
-function appendDiagnosticTail(existing: string, text: string) {
-  const combined = existing + text;
-  return combined.length <= dockerLogDiagnosticTailLength
-    ? combined
-    : combined.slice(combined.length - dockerLogDiagnosticTailLength);
-}
-
-const inspectContainerExitCode = Effect.fnUntraced(function* (containerId: string) {
-  const result = yield* runChildProcess(
-    "docker",
-    ["container", "inspect", "--format", "{{.State.ExitCode}}", containerId],
-    {
-      stdout: "pipe",
-      stderr: "pipe",
-    },
-  );
-
-  if (result.exitCode !== 0) {
-    const detail = result.stderr.trim() || result.stdout.trim() || "failed to inspect container";
-    return yield* Effect.fail(new Error(detail));
-  }
-
-  const exitCode = Number.parseInt(result.stdout.trim(), 10);
-  if (Number.isNaN(exitCode)) {
-    return yield* Effect.fail(
-      new Error(`failed to parse container exit code: ${result.stdout.trim()}`),
-    );
-  }
-
-  return exitCode;
-});
-
-const streamContainerLogs = Effect.fnUntraced(function* (containerId: string) {
-  const output = yield* Output;
-  const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
-
-  for (;;) {
-    const child = yield* spawnContainerCli(spawner, ["logs", "-f", "--timestamps", containerId], {
-      stdin: "ignore",
-      stdout: "pipe",
-      stderr: "pipe",
-      extendEnv: true,
-    });
-
-    let stderrText = "";
-    const [exitCode] = yield* Effect.all(
-      [
-        child.exitCode.pipe(Effect.map(Number)),
-        forwardByteStream(child.stdout, (text, stream) => output.raw(text, stream), "stdout"),
-        forwardByteStream(
-          child.stderr,
-          (text, stream) => {
-            stderrText = appendDiagnosticTail(stderrText, text);
-            return output.raw(text, stream);
-          },
-          "stderr",
-        ),
-      ],
-      { concurrency: "unbounded" },
-    );
-
-    if (exitCode === 0) {
-      const containerExitCode = yield* inspectContainerExitCode(containerId);
-      if (containerExitCode === 0) {
-        return yield* Effect.fail(new Error(`container exited gracefully: ${containerId}`));
-      }
-      if (containerExitCode === 137) {
-        yield* Effect.sleep(dockerLogRetryDelay);
-        continue;
-      }
-      return yield* Effect.fail(new Error(`error running container: exit ${containerExitCode}`));
-    }
-
-    const trimmedStderr = stderrText.trim();
-    if (!isRetriableDockerLogsError(trimmedStderr)) {
-      return yield* Effect.fail(
-        new Error(trimmedStderr.length > 0 ? trimmedStderr : `docker logs exited with ${exitCode}`),
-      );
-    }
-
-    yield* Effect.sleep(dockerLogRetryDelay);
-  }
-});
-
-const assertLocalDbRunning = Effect.fnUntraced(function* (projectId: string) {
-  const dbId = localDockerId("db", projectId);
-  // A spawn failure (neither `docker` nor `podman` on PATH) must keep its
-  // cause: it is the shell-out equivalent of Go's missing daemon socket, which
-  // `client.IsErrConnectionFailed` classifies as a connection failure and so
-  // gets the Docker Desktop install hint (`internal/utils/misc.go:155-166`).
-  // Blanking stderr here would demote it to a bare "failed to inspect
-  // service" with no guidance.
-  const result = yield* runChildProcess("docker", ["container", "inspect", dbId], {
-    stdout: "ignore",
-    stderr: "pipe",
-  }).pipe(
-    Effect.catch((cause) =>
-      Effect.succeed({ exitCode: 1, stdout: "", stderr: legacyDescribeContainerCliFailure(cause) }),
-    ),
-  );
-
-  if (result.exitCode === 0) {
-    return;
-  }
-
-  if (result.stderr.includes("No such container") || result.stderr.includes("No such object")) {
-    return yield* Effect.fail(new Error("supabase start is not running."));
-  }
-
-  const message =
-    result.stderr.trim().length > 0
-      ? `failed to inspect service: ${result.stderr.trim()}`
-      : "failed to inspect service";
-  // Go's `AssertServiceIsRunning` sets `CmdSuggestion = suggestDockerInstall`
-  // on a daemon-connection failure (`internal/utils/misc.go:155-166`), which
-  // `recoverAndExit` prints on its own stderr line after the red error
-  // (`cmd/root.go:300-303`) — mirrored here by the `suggestion` property that
-  // `normalizeCliError`/`Output.fail` render the same way.
-  return yield* Effect.fail(
-    legacyIsDockerDaemonUnreachable(result.stderr)
-      ? Object.assign(new Error(message), { suggestion: LEGACY_SUGGEST_DOCKER_INSTALL })
-      : new Error(message),
-  );
-});
-
-const bestEffortRemoveContainer = Effect.fnUntraced(function* (containerId: string) {
-  yield* runChildProcess("docker", ["container", "rm", "-f", "-v", containerId], {
-    stdout: "ignore",
-    stderr: "ignore",
-  }).pipe(Effect.ignore);
-});
-
-// One step of Edge Runtime's create → cp → start bring-up. Only the cp step passes a
-// `messagePrefix` — its raw stderr is uninterpretable alone — while create/start keep the
-// `docker run -d` era stderr surface byte-identical.
-const runEdgeRuntimeDockerStep = Effect.fnUntraced(function* (
-  args: ReadonlyArray<string>,
-  opts: { readonly messagePrefix?: string; readonly stdin?: Stream.Stream<Uint8Array> } = {},
-) {
-  const result = yield* runChildProcess("docker", args, {
-    stdin: opts.stdin,
-    stdout: "pipe",
-    stderr: "pipe",
-  });
-  if (result.exitCode !== 0) {
-    const detail = result.stderr.trim() || result.stdout.trim();
-    const message =
-      opts.messagePrefix === undefined
-        ? detail || "failed to start edge runtime"
-        : detail.length > 0
-          ? `${opts.messagePrefix}: ${detail}`
-          : opts.messagePrefix;
-    return yield* Effect.fail(new Error(message));
-  }
-});
-
-const reloadKong = Effect.fnUntraced(function* (projectId: string) {
-  const output = yield* Output;
-  const kongId = localDockerId("kong", projectId);
-  // Reload re-renders nginx.conf from Kong's default template, so it needs the
-  // template bring-up wrote (`kong.service.ts`; formerly Go's
-  // `start.go:589-592`, deleted as unreachable in CLI-1966, last present at
-  // commit a253ccba2) handed back — otherwise it drops that template's
-  // `email_templates` server (#6059). Go's own `restartEdgeRuntime`
-  // (`internal/functions/serve/serve.go:129`) passes the same flag for the
-  // same reason — an earlier revision of this file dropped it believing it was
-  // start-only (#5976), which #6065 proved wrong.
-  const result = yield* runChildProcess(
-    "docker",
-    ["exec", kongId, "kong", "reload", "--nginx-conf", "/home/kong/custom_nginx.template"],
-    { stdout: "ignore", stderr: "pipe" },
-  ).pipe(Effect.catch(() => Effect.succeed({ exitCode: 1, stdout: "", stderr: "" })));
-
-  if (result.exitCode !== 0) {
-    const suffix = result.stderr.trim().length > 0 ? ` ${result.stderr.trim()}` : "";
-    yield* output.raw(`Warning: failed to reload Kong:${suffix}\n`, "stderr");
-  }
-});
-
-const writeStoppedServingMessage = Effect.fnUntraced(function* () {
-  const output = yield* Output;
-  yield* output.raw(`Stopped serving ${styleText("bold", functionsDirName)}\n`, "stdout");
-});
 
 export function buildServeEntrypointCommand(
   command: ReadonlyArray<string>,
@@ -1527,19 +522,9 @@ const resolveServeFunctionConfigs = Effect.fnUntraced(function* (
 
 /**
  * Docker bind mounts (function source, import map, static assets) for every
- * enabled function under `supabase/functions/**` — Go's
- * `serve.PopulatePerFunctionConfigs` (`internal/functions/serve/serve.go:
- * 277-318`), called both from Edge Runtime bring-up below (as part of its
- * own loop) and, standalone, from `start`'s Studio container spec
- * (formerly `internal/start/start.go:1149-1159`, deleted as unreachable in
- * CLI-1966; last present at commit a253ccba2), which needs only the bind mounts,
- * unconditionally of whether Edge Runtime itself is enabled or excluded.
- * `PopulatePerFunctionConfigs` logs `Skipped serving Function: <slug>`
- * unconditionally for every disabled function, regardless of which of its
- * two callers invoked it — so this shared helper reproduces that logging
- * too. Note this means Go (and this port) genuinely double-prints the
- * message when both Edge Runtime and Studio are enabled, since both call
- * sites fire; don't dedupe it, that would itself diverge from Go.
+ * enabled function under `supabase/functions/**`. Both the legacy Edge Runtime
+ * and Studio bring-ups use this helper, so disabled-function diagnostics are
+ * emitted consistently for either caller.
  */
 export const resolveFunctionBindMounts = Effect.fn("functions.resolveFunctionBindMounts")(
   function* (
@@ -1599,26 +584,34 @@ export const resolveFunctionBindMounts = Effect.fn("functions.resolveFunctionBin
   },
 );
 
+// One step of Edge Runtime's create → cp → start bring-up. Only the cp step passes a
+// `messagePrefix` — its raw stderr is uninterpretable alone — while create/start keep the
+// `docker run -d` era stderr surface byte-identical.
+const runEdgeRuntimeDockerStep = Effect.fnUntraced(function* (
+  args: ReadonlyArray<string>,
+  opts: { readonly messagePrefix?: string; readonly stdin?: Stream.Stream<Uint8Array> } = {},
+) {
+  const result = yield* runChildProcess("docker", args, {
+    stdin: opts.stdin,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  if (result.exitCode !== 0) {
+    const detail = result.stderr.trim() || result.stdout.trim();
+    const message =
+      opts.messagePrefix === undefined
+        ? detail || "failed to start edge runtime"
+        : detail.length > 0
+          ? `${opts.messagePrefix}: ${detail}`
+          : opts.messagePrefix;
+    return yield* Effect.fail(new Error(message));
+  }
+});
+
 /**
- * The reusable "bring up one Edge Runtime container" core — Go's
- * `ServeFunctions` (`internal/functions/serve/serve.go:135-252`), called both
- * by standalone `functions serve` (indirectly, via `startEdgeRuntime` below,
- * mirroring Go's `restartEdgeRuntime` wrapper) and directly by `start`'s own
- * bring-up (formerly `internal/start/start.go:1101-1108`, no wrapper step in
- * between; `internal/start` was deleted as unreachable in CLI-1966, last
- * present at commit a253ccba2).
- * Deliberately excludes everything `ServeFunctions` itself excludes too: no
- * config-loading (caller resolves {@link StartEdgeRuntimeContainerInput.config}/
- * {@link StartEdgeRuntimeContainerInput.authArtifacts} itself, matching how
- * Go's two callers each resolve `config.toml`/secrets once, independently, and
- * pass already-resolved values/strings into this shared core — see
- * `serve.go:141-151` vs. `start.go:66-72`), no file-watching, and no log
- * streaming (`serveFunctions`'s own loop, below, still owns both of those for
- * the standalone command). Also excludes the Kong reload: `ServeFunctions`
- * itself never reloads Kong — that only happens in `restartEdgeRuntime`
- * (`startEdgeRuntime` below), after this core succeeds, so `start`'s own
- * bring-up (which calls this core directly) correctly never reloads Kong
- * either.
+ * Reusable Edge Runtime container bring-up used by the legacy start path.
+ * Config, secrets, file watching, and log streaming remain outside this core;
+ * Kong reload is also owned by the caller after this operation succeeds.
  */
 export const startEdgeRuntimeContainer = Effect.fn("functions.startEdgeRuntimeContainer")(
   function* (input: StartEdgeRuntimeContainerInput) {
@@ -1662,7 +655,6 @@ export const startEdgeRuntimeContainer = Effect.fn("functions.startEdgeRuntimeCo
 
     const functionsDir = join(input.projectRoot, functionsDirName);
     const functionBinds = new Map<string, DockerBind>();
-    const watchableBinds = new Map<string, DockerBind>();
     const emittedScopeWarnings = new Set<string>();
     const functionsConfig: Record<string, ServeFunctionContainerConfig> = {};
     for (const config of functionConfigs) {
@@ -1683,9 +675,6 @@ export const startEdgeRuntimeContainer = Effect.fn("functions.startEdgeRuntimeCo
       )) {
         const key = formatDockerBind(bind);
         functionBinds.set(key, bind);
-        if (!bind.externalScope) {
-          watchableBinds.set(key, bind);
-        }
       }
       const missingSourceWarning = bindWarnings.find((warning) =>
         warning.includes("failed to read file:"),
@@ -1840,239 +829,7 @@ export const startEdgeRuntimeContainer = Effect.fn("functions.startEdgeRuntimeCo
       return {
         containerId,
         cleanup: removeRuntimeArtifacts.pipe(Effect.orDie),
-        watchSpecs: yield* Effect.promise(() => buildWatchSpecs([...watchableBinds.values()])),
       } satisfies StartedRuntime;
     }).pipe(Effect.onError(() => bestEffortCleanupRuntimeArtifacts));
   },
 );
-
-/**
- * `SUPABASE_DB_URL`'s value for standalone `functions serve` — Go's
- * `restartEdgeRuntime` (`internal/functions/serve/serve.go:121-122`): "Use
- * network alias because Deno cannot resolve `_` in hostname", always
- * `postgresql://postgres:postgres@db:5432/postgres` regardless of
- * project/config (`db`, `utils.DbAliases[0]`, is a fixed network alias, and
- * `db.Password` is `toml:"-"` — never configurable, always the `"postgres"`
- * literal default, `pkg/config/config.go:459`). This is genuinely NOT the
- * same value `start`'s own bring-up uses — see
- * {@link StartEdgeRuntimeContainerInput.dbUrl}'s doc comment.
- */
-const legacyDefaultServeDbUrl = "postgresql://postgres:postgres@db:5432/postgres";
-
-/**
- * Go's `restartEdgeRuntime` (`internal/functions/serve/serve.go:108-133`):
- * resolves `functions serve`'s own config/secrets/image independently on
- * every (re)start, then delegates the actual bring-up to
- * {@link startEdgeRuntimeContainer} (Go's `ServeFunctions`) exactly like
- * `start`'s own bring-up will. Once that bring-up succeeds, this wrapper — and
- * only this wrapper, matching Go's `restartEdgeRuntime` — reloads Kong
- * (`serve.go:126-131`) so Kong's routing table picks up the freshly
- * (re)started container.
- */
-const startEdgeRuntime = Effect.fnUntraced(function* (input: {
-  readonly flags: FunctionsServeFlags;
-  readonly dependencies: FunctionsServeDependencies;
-  readonly debug: boolean;
-  readonly networkId: Option.Option<string>;
-  readonly inspectMode: FunctionsServeInspectMode | undefined;
-}) {
-  const output = yield* Output;
-  // Deliberately NO docker precheck here — Go's `restartEdgeRuntime`
-  // (`internal/functions/serve/serve.go:107-113`) runs its sanity checks in
-  // order: `flags.LoadConfig` first, then `utils.AssertSupabaseDbIsRunning()`.
-  // A down Docker daemon therefore surfaces from the DB inspect below
-  // (`assertLocalDbRunning`) as `failed to inspect service: …` with the
-  // Docker Desktop install hint as a suggestion (`misc.go:155-166`), never as
-  // an upfront `failed to run docker.` failure. The remote-JWKS fetch is
-  // likewise held until AFTER that assertion (`finalizeAuthArtifacts` below —
-  // Go only fetches inside `ServeFunctions`, `serve.go:141`), so a down
-  // daemon never waits on external OIDC/JWKS requests first.
-  const resolved = yield* resolveServeConfig(
-    input.dependencies.projectRoot,
-    input.dependencies.projectIdOverride,
-    input.dependencies.goViperCompat,
-    input.dependencies.goConfigCompat,
-  );
-  const projectId = resolved.projectId;
-  const containerId = localDockerId("edge_runtime", projectId);
-  let ownsRuntime = false;
-  let startedRuntime: StartedRuntime | undefined;
-  return yield* Effect.gen(function* () {
-    // `SUPABASE_NETWORK_ID` (env or project dotenv) is legacy-shell-only —
-    // same Go-viper-parity gate as `resolved.projectEnvValues` itself
-    // (`undefined` in `next`).
-    const networkMode = resolveDockerNetworkMode({
-      explicit: Option.getOrUndefined(input.networkId),
-      envOverride:
-        resolved.projectEnvValues === undefined
-          ? undefined
-          : legacyViperEnvStringWithProjectFallback(
-              "SUPABASE_NETWORK_ID",
-              resolved.projectEnvValues,
-            ),
-      projectId,
-    });
-    const localAuthArtifacts = yield* resolveLocalAuthArtifacts(resolved.auth, resolved.configPath);
-    const edgeRuntimeVersionOverride = yield* resolveEdgeRuntimeVersionPin(
-      input.dependencies.supabaseDir,
-    );
-    const edgeRuntimeVersion = yield* resolveEdgeRuntimeVersion(
-      resolved.edgeRuntime.deno_version,
-      edgeRuntimeVersionOverride,
-    );
-
-    yield* assertLocalDbRunning(projectId);
-    yield* bestEffortRemoveContainer(containerId);
-
-    // Go's `restartEdgeRuntime` prints this right before calling `ServeFunctions`
-    // (`serve.go:124-125`) — `ServeFunctions` itself (this file's `startEdgeRuntimeContainer`,
-    // also called directly by `start.go:1104`) never prints it, so it belongs in this
-    // `functions serve`-only wrapper, not the shared core.
-    yield* output.raw("Setting up Edge Functions runtime...\n", "stderr");
-
-    // Go's remote-JWKS fetch happens inside `ServeFunctions` (`serve.go:141`)
-    // — i.e. after `AssertSupabaseDbIsRunning`, the container removal, and the
-    // "Setting up…" print above — never before. Finalizing here (rather than
-    // inside `startEdgeRuntimeContainer`) keeps the shared core's
-    // caller-supplies-artifacts contract intact for `start`'s bring-up
-    // (`edge-runtime.service.ts`), which resolves its own JWKS.
-    const authArtifacts = yield* finalizeAuthArtifacts(localAuthArtifacts);
-
-    // Go: `DockerStart` -> `DockerResolveImageIfNotCached` (`internal/utils/docker.go:326-386`)
-    // — resolved here, not earlier: `hasLocalImage` fails fast on an
-    // unreachable daemon, which would otherwise hijack the down-daemon
-    // message `assertLocalDbRunning` above is responsible for producing.
-    //
-    // Known ordering divergence (not fixed here — see below): Go's own
-    // `ServeFunctions` (`serve.go:134-167`) parses `--env-file` and every
-    // per-function config BEFORE ever calling `DockerStart`
-    // (`serve.go:218`), so a broken env file or function config fails fast,
-    // before any pull. This port's `startEdgeRuntimeContainer` (below) does
-    // that same parsing internally, but AFTER receiving an already-resolved
-    // `image` — so on a cold image cache, a broken `--env-file` now surfaces
-    // after a potentially slow `docker pull` instead of immediately. Fixing
-    // this properly means splitting `startEdgeRuntimeContainer` into a
-    // "build container config" phase and a "run it" phase so this resolve
-    // can move between them — but that function is also `start`'s bring-up
-    // core (`edge-runtime.service.ts`), which already passes in a
-    // pre-resolved image via `legacyEnsureImagesCached`, so restructuring it
-    // risks that shipped, more critical path. Left as a documented
-    // UX-only regression (the command still fails with the right error,
-    // just later) rather than a hasty change to shared, `start`-critical
-    // code (review round on CLI-1963).
-    const image = yield* resolveFunctionsDockerImage(
-      edgeRuntimeImage(edgeRuntimeVersion),
-      resolved.projectEnvValues,
-    );
-
-    startedRuntime = yield* startEdgeRuntimeContainer({
-      onContainerCreated: () => {
-        ownsRuntime = true;
-      },
-      config: {
-        projectId,
-        apiPort: resolved.apiPort,
-        edgeRuntimePolicy: resolved.edgeRuntime.policy,
-        edgeRuntimeInspectorPort: resolved.edgeRuntime.inspector_port,
-        edgeRuntimeSecrets: resolved.edgeRuntime.secrets,
-        configDeclaredFunctions: resolved.configDeclaredFunctions,
-        configFunctions: resolved.configFunctions,
-        rawConfigFunctions: resolved.rawConfigFunctions,
-      },
-      authArtifacts,
-      dbUrl: legacyDefaultServeDbUrl,
-      image,
-      projectRoot: input.dependencies.projectRoot,
-      supabaseDir: input.dependencies.supabaseDir,
-      flagCwd: input.dependencies.flagCwd,
-      platform: input.dependencies.platform,
-      debug: input.debug,
-      networkId: networkMode,
-      envFile: input.flags.envFile,
-      discoverFunctionEnvFiles: true,
-      importMap: input.flags.importMap,
-      noVerifyJwt: input.flags.noVerifyJwt,
-      inspectMode: input.inspectMode,
-      inspectMain: input.flags.inspectMain,
-    });
-
-    yield* reloadKong(projectId);
-
-    return startedRuntime;
-  }).pipe(
-    // `startEdgeRuntimeContainer`'s own `Effect.onError` only reaches while it's still running —
-    // once it returns successfully, a failure or interrupt here (e.g. mid-`reloadKong`) escapes
-    // that scope entirely, so this wrapper must also run the returned runtime's own staging-file
-    // cleanup, not just remove the container. Removal stays with this caller for bring-up
-    // failures too (`docker cp`/`docker start`), matching `docker run -d` behavior — the shared
-    // core never removes the container it created.
-    Effect.onExit((exit) =>
-      Exit.isFailure(exit)
-        ? Effect.all([
-            ownsRuntime ? bestEffortRemoveContainer(containerId) : Effect.void,
-            startedRuntime === undefined ? Effect.void : startedRuntime.cleanup,
-          ]).pipe(Effect.asVoid)
-        : Effect.void,
-    ),
-  );
-});
-
-export const serveFunctions = Effect.fn("functions.serve")(function* (
-  flags: FunctionsServeFlags,
-  dependencies: FunctionsServeDependencies,
-) {
-  const processControl = yield* ProcessControl;
-  const inspectMode = yield* Effect.try({
-    try: () => {
-      const resolvedInspectMode = resolveFunctionsServeInspectMode(flags);
-      buildFunctionsServeInspectArgs(resolvedInspectMode, flags.inspectMain);
-      return resolvedInspectMode;
-    },
-    catch: (cause) => (cause instanceof Error ? cause : new Error(String(cause))),
-  });
-
-  const loop = Effect.gen(function* () {
-    for (;;) {
-      const startOutcome = yield* Effect.raceFirst(
-        processControl.awaitSignal().pipe(Effect.as("shutdown" as const)),
-        startEdgeRuntime({
-          flags,
-          dependencies,
-          debug: dependencies.debug,
-          networkId: dependencies.networkId,
-          inspectMode,
-        }).pipe(Effect.map((started) => ({ _tag: "started" as const, started }))),
-      );
-
-      if (startOutcome === "shutdown") {
-        yield* writeStoppedServingMessage();
-        return;
-      }
-
-      const started = startOutcome.started;
-
-      // `streamContainerLogs` never succeeds: it streams logs until the container
-      // exits, then fails. A container crash therefore propagates out of this race
-      // and terminates `serve` — the Go CLI never auto-restarts a crashed container.
-      // The race only ever resolves to "shutdown" (signal) or "restart" (file change).
-      const outcome = yield* Effect.raceFirst(
-        Effect.raceFirst(
-          processControl.awaitSignal().pipe(Effect.as("shutdown" as const)),
-          waitForRestartSignal(started.watchSpecs).pipe(Effect.as("restart" as const)),
-        ),
-        streamContainerLogs(started.containerId),
-      ).pipe(
-        Effect.ensuring(
-          bestEffortRemoveContainer(started.containerId).pipe(Effect.ensuring(started.cleanup)),
-        ),
-      );
-
-      if (outcome === "shutdown") {
-        yield* writeStoppedServingMessage();
-        return;
-      }
-    }
-  });
-
-  yield* Effect.scoped(loop);
-});

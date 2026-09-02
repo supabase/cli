@@ -4,11 +4,7 @@ import {
   StackStateFormatUnsupportedError,
   StackStateInvalidError,
 } from "../public/Errors.ts";
-import type {
-  HostPortAssignment,
-  PersistedStackState,
-  PrivatePortAssignment,
-} from "./StackState.ts";
+import type { PersistedStackState } from "./StackState.ts";
 import { withRegistryLock, type StackStateStore } from "./StackStateStore.ts";
 
 type PortRegistryError =
@@ -17,7 +13,6 @@ type PortRegistryError =
   | StackStateFormatUnsupportedError;
 
 export interface PortRegistry {
-  readonly stateRoot: string;
   /** Serializes one complete port transaction with other processes. */
   readonly withLock: <A, E, R>(
     action: Effect.Effect<A, E, R>,
@@ -25,20 +20,6 @@ export interface PortRegistry {
   /** Enumerates authoritative per-stack state documents; this method never writes a registry. */
   readonly states: Effect.Effect<
     ReadonlyArray<{ readonly stackId: string; readonly state: PersistedStackState }>,
-    PortRegistryError,
-    FileSystem.FileSystem | Path.Path | Crypto.Crypto
-  >;
-  readonly assignments: (
-    stackId: string,
-  ) => Effect.Effect<
-    ReadonlyArray<HostPortAssignment>,
-    PortRegistryError,
-    FileSystem.FileSystem | Path.Path | Crypto.Crypto
-  >;
-  readonly privateAssignments: (
-    stackId: string,
-  ) => Effect.Effect<
-    ReadonlyArray<PrivatePortAssignment>,
     PortRegistryError,
     FileSystem.FileSystem | Path.Path | Crypto.Crypto
   >;
@@ -51,7 +32,6 @@ export const makePortRegistry = (options: {
   readonly store: StackStateStore;
 }): Effect.Effect<PortRegistry> =>
   Effect.succeed({
-    stateRoot: options.stateRoot,
     withLock: <A, E, R>(action: Effect.Effect<A, E, R>) =>
       withRegistryLock(options.stateRoot, action),
     states: Effect.gen(function* () {
@@ -76,8 +56,4 @@ export const makePortRegistry = (options: {
           entry !== undefined,
       );
     }),
-    assignments: (stackId) =>
-      options.store.read(stackId).pipe(Effect.map((state) => state?.ports ?? [])),
-    privateAssignments: (stackId) =>
-      options.store.read(stackId).pipe(Effect.map((state) => state?.privatePorts ?? [])),
   });

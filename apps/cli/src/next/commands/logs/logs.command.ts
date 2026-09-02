@@ -1,4 +1,5 @@
 import { DEFAULT_MANAGED_STACK_NAME } from "../../../shared/stack-constants.ts";
+import { CAPABILITY_NAMES } from "@supabase/stack/effect";
 import { Command, Flag } from "effect/unstable/cli";
 import type * as CliCommand from "effect/unstable/cli/Command";
 import { withJsonErrorHandling } from "../../../shared/output/json-error-handling.ts";
@@ -21,12 +22,12 @@ const flags = {
     ),
     Flag.withDefault(100),
   ),
-  service: Flag.string("service").pipe(
+  service: Flag.choice("service", CAPABILITY_NAMES).pipe(
     Flag.atMost(4),
     Flag.withDescription(
-      "Filter by service name. Repeat the flag for multiple services (for example: --service postgres --service auth)",
+      "Filter by service name. Repeat the flag for multiple services (for example: --service database --service auth)",
     ),
-    Flag.withDefault([] as ReadonlyArray<string>),
+    Flag.withDefault([]),
   ),
   noFollow: Flag.boolean("no-follow").pipe(
     Flag.withDescription("Print buffered history only and exit without following live logs."),
@@ -49,11 +50,11 @@ export const logsCommand = Command.make("logs", flags).pipe(
       description: "Print recent logs across all services, then continue following live output",
     },
     {
-      command: "supabase logs --service postgres --no-follow",
+      command: "supabase logs --service database --no-follow",
       description: "Print a recent Postgres-only snapshot and exit",
     },
     {
-      command: "supabase logs --service postgres --service auth --tail 20",
+      command: "supabase logs --service database --service auth --tail 20",
       description: "Focus on a small recent backlog for two services, then follow live logs",
     },
   ]),

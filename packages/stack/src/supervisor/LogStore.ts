@@ -19,7 +19,6 @@ import {
 } from "../public/Logs.ts";
 import { redactKnownSecrets } from "../state/SecretStore.ts";
 
-const LOG_FORMAT = "supabase-stack-logs-v1" as const;
 const CURSOR_PREFIX = "v1_";
 
 /** File or decoding failure while opening or writing retained logs. */
@@ -63,43 +62,14 @@ export interface LogStore {
 }
 
 interface LogDocument {
-  readonly format: typeof LOG_FORMAT;
   readonly nextCursor: number;
   readonly entries: ReadonlyArray<StackLogEntry>;
 }
 
-const LogDocumentSchema = Schema.Struct({
-  format: Schema.Literal(LOG_FORMAT),
-  nextCursor: Schema.Int.check(Schema.isGreaterThanOrEqualTo(1)),
-  entries: Schema.Array(StackLogEntrySchema),
-});
-
 const emptyDocument = (): LogDocument => ({
-  format: LOG_FORMAT,
   nextCursor: 1,
   entries: [],
 });
-
-const isRecord = (value: unknown): value is Record<string, unknown> =>
-  typeof value === "object" && value !== null && !Array.isArray(value);
-
-const hasExactKeys = (
-  value: unknown,
-  keys: ReadonlyArray<string>,
-): value is Record<string, unknown> =>
-  isRecord(value) &&
-  Object.keys(value).length === keys.length &&
-  keys.every((key) => Object.hasOwn(value, key));
-
-const isRawLogDocument = (value: unknown): boolean => {
-  if (!hasExactKeys(value, ["format", "nextCursor", "entries"]) || !Array.isArray(value.entries))
-    return false;
-  return value.entries.every(
-    (entry) =>
-      hasExactKeys(entry, ["cursor", "timestamp", "source", "stream", "message"]) &&
-      hasExactKeys(entry.cursor, ["opaque"]),
-  );
-};
 
 const fileError = (path: string, message: string, cause?: unknown) =>
   new LogStoreError({ path, message, ...(cause === undefined ? {} : { cause }) });
@@ -166,27 +136,56 @@ const validateDocument = (
 const readDocument = (
   fs: FileSystem.FileSystem,
   path: string,
-): Effect.Effect<LogDocument, LogStoreError> =>
-  fs.readFileString(path).pipe(
-    Effect.flatMap((text) =>
-      Schema.decodeEffect(Schema.fromJsonString(Schema.Unknown))(text).pipe(
-        Effect.mapError((cause) => fileError(path, "Retained log file is malformed", cause)),
-        Effect.filterOrFail(isRawLogDocument, () =>
-          fileError(path, "Retained log file has unexpected fields"),
-        ),
-        Effect.flatMap((raw) =>
-          Schema.decodeUnknownEffect(LogDocumentSchema)(raw).pipe(
-            Effect.mapError((cause) => fileError(path, "Retained log file is malformed", cause)),
-            Effect.flatMap((document) => validateDocument(path, document)),
-          ),
-        ),
+): Effect.Effect<LogDocument, LogStoreError> => {
+  const parse = (text: string, sourcePath: string) => {
+    const rawLines = text.split(/\r?\n/);
+    // A process crash can leave one unterminated tail after an append. Keep all complete JSONL
+    // records and drop only that final tail; a file containing no complete record remains an error.
+    const hasCompleteTail = text.endsWith("\n");
+    const lines = (
+      hasCompleteTail || rawLines.length === 1 ? rawLines : rawLines.slice(0, -1)
+    ).filter((line) => line.length > 0);
+    return Effect.forEach(lines, (line) =>
+      Schema.decodeEffect(Schema.fromJsonString(StackLogEntrySchema))(line).pipe(
+        Effect.mapError((cause) => fileError(sourcePath, "Retained log file is malformed", cause)),
       ),
-    ),
+    ).pipe(
+      Effect.flatMap((entries) => {
+        const nextCursor = entries.reduce(
+          (next, entry) => Math.max(next, Number.parseInt(entry.cursor.opaque.slice(3), 36) + 1),
+          1,
+        );
+        return validateDocument(sourcePath, { nextCursor, entries });
+      }),
+    );
+  };
+  return fs.readFileString(path).pipe(
+    Effect.flatMap((text) => {
+      return parse(text, path);
+    }),
     Effect.catchTag("PlatformError", (error) =>
       Predicate.isTagged(error.reason, "NotFound")
-        ? Effect.succeed(emptyDocument())
+        ? fs.readFileString(`${path}.1`).pipe(
+            Effect.flatMap((text) => parse(text, `${path}.1`)),
+            Effect.catchTag("PlatformError", (backupError) =>
+              Predicate.isTagged(backupError.reason, "NotFound")
+                ? Effect.succeed(emptyDocument())
+                : Effect.fail(fileError(path, "Unable to read retained log file", backupError)),
+            ),
+          )
         : Effect.fail(fileError(path, "Unable to read retained log file", error)),
     ),
+  );
+};
+
+/** Read retained entries without opening or mutating a LogStore. */
+export const readRetainedLogs = (
+  fs: FileSystem.FileSystem,
+  path: string,
+  options?: LogOptions,
+): Effect.Effect<ReadonlyArray<StackLogEntry>, LogStoreError> =>
+  readDocument(fs, path).pipe(
+    Effect.flatMap((document) => selected(document.entries, options, path)),
   );
 
 const redactDocument = (
@@ -202,10 +201,20 @@ const redactDocument = (
   return { document: { ...document, entries }, changed };
 };
 
-const encodedSize = (document: LogDocument, path: string): Effect.Effect<number, LogStoreError> =>
-  Schema.encodeEffect(Schema.fromJsonString(LogDocumentSchema))(document).pipe(
-    Effect.map((encoded) => new TextEncoder().encode(encoded).byteLength),
+const encodedEntry = (entry: StackLogEntry, path: string): Effect.Effect<string, LogStoreError> =>
+  Schema.encodeEffect(Schema.fromJsonString(StackLogEntrySchema))(entry).pipe(
     Effect.mapError((cause) => fileError(path, "Unable to encode retained logs", cause)),
+  );
+
+const encodedSize = (
+  entries: ReadonlyArray<StackLogEntry>,
+  path: string,
+): Effect.Effect<number, LogStoreError> =>
+  Effect.forEach(entries, (entry) => encodedEntry(entry, path), { concurrency: "unbounded" }).pipe(
+    Effect.map(
+      (lines) =>
+        new TextEncoder().encode(lines.join("\n") + (lines.length > 0 ? "\n" : "")).byteLength,
+    ),
   );
 
 const bounded = (
@@ -213,37 +222,40 @@ const bounded = (
   maxEntries: number,
   maxBytes: number,
   path: string,
-): Effect.Effect<LogDocument, LogStoreError> =>
+  initialBytes?: number,
+): Effect.Effect<{ readonly document: LogDocument; readonly bytes: number }, LogStoreError> =>
   Effect.gen(function* () {
     const entries = [...document.entries];
-    while (
-      entries.length > maxEntries ||
-      (yield* encodedSize({ ...document, entries }, path)) > maxBytes
-    ) {
+    let bytes = initialBytes ?? (yield* encodedSize(entries, path));
+    while (entries.length > maxEntries || bytes > maxBytes) {
       if (entries.length === 0) break;
-      entries.shift();
+      const removed = entries.shift();
+      if (removed !== undefined) {
+        const encoded = yield* encodedEntry(removed, path);
+        bytes -= new TextEncoder().encode(`${encoded}\n`).byteLength;
+      }
     }
-    return { ...document, entries };
+    return { document: { ...document, entries }, bytes };
   });
 
 const persist = (
   fs: FileSystem.FileSystem,
   path: string,
-  document: LogDocument,
+  entries: ReadonlyArray<StackLogEntry>,
 ): Effect.Effect<void, LogStoreError> => {
   const temporary = `${path}.tmp`;
   const write = Effect.gen(function* () {
-    const text = yield* Schema.encodeEffect(Schema.fromJsonString(LogDocumentSchema))(
-      document,
-    ).pipe(Effect.mapError((cause) => fileError(path, "Unable to encode retained logs", cause)));
+    const lines = yield* Effect.forEach(entries, (entry) => encodedEntry(entry, path));
+    const text = lines.length === 0 ? "" : `${lines.join("\n")}\n`;
     yield* Effect.scoped(
       Effect.gen(function* () {
         const file = yield* fs.open(temporary, { flag: "w", mode: 0o600 });
-        yield* file.writeAll(new TextEncoder().encode(text));
-        yield* file.sync;
+        if (text.length > 0) yield* file.writeAll(new TextEncoder().encode(text));
       }),
     );
     yield* fs.chmod(temporary, 0o600);
+    yield* fs.remove(`${path}.1`, { force: true });
+    if (yield* fs.exists(path)) yield* fs.rename(path, `${path}.1`);
     yield* fs.rename(temporary, path);
     yield* fs.chmod(path, 0o600);
   });
@@ -290,8 +302,7 @@ export const makeLogStore = (
           fileError(options.path, "Unable to secure retained log directory", error),
         ),
       );
-    const emptySize = yield* encodedSize(emptyDocument(), options.path);
-    if (maxBytes < emptySize)
+    if (maxBytes < 2)
       return yield* fileError(options.path, "Log byte retention limit is too small");
     const knownSecrets = options.knownSecrets ?? [];
     const loaded = yield* readDocument(fs, options.path);
@@ -302,7 +313,8 @@ export const makeLogStore = (
       maxBytes,
       options.path,
     );
-    let document = boundedLoaded;
+    let document = boundedLoaded.document;
+    let retainedBytes = boundedLoaded.bytes;
     const exists = yield* fs
       .exists(options.path)
       .pipe(
@@ -318,8 +330,8 @@ export const makeLogStore = (
             fileError(options.path, "Unable to secure retained logs", error),
           ),
         );
-    if (redactedLoaded.changed || boundedLoaded.entries.length !== loaded.entries.length)
-      yield* persist(fs, options.path, boundedLoaded);
+    if (redactedLoaded.changed || boundedLoaded.document.entries.length !== loaded.entries.length)
+      yield* persist(fs, options.path, boundedLoaded.document.entries);
     const semaphore = yield* Semaphore.make(1);
     const pubsub = yield* PubSub.unbounded<StackLogEntry>();
 
@@ -334,17 +346,34 @@ export const makeLogStore = (
             stream: record.stream,
             message: redactKnownSecrets(record.message, knownSecrets),
           } satisfies StackLogEntry;
-          document = yield* bounded(
-            {
-              format: LOG_FORMAT,
-              nextCursor: document.nextCursor + 1,
-              entries: [...document.entries, entry],
-            },
-            maxEntries,
-            maxBytes,
-            options.path,
-          );
-          yield* persist(fs, options.path, document);
+          const next = {
+            nextCursor: document.nextCursor + 1,
+            entries: [...document.entries, entry],
+          };
+          const encoded = yield* encodedEntry(entry, options.path);
+          const entryBytes = new TextEncoder().encode(`${encoded}\n`).byteLength;
+          const nextBytes = retainedBytes + entryBytes;
+          if (document.entries.length + 1 <= maxEntries && nextBytes <= maxBytes) {
+            document = next;
+            retainedBytes = nextBytes;
+            yield* Effect.scoped(
+              Effect.gen(function* () {
+                const file = yield* fs.open(options.path, { flag: "a", mode: 0o600 });
+                yield* file.writeAll(new TextEncoder().encode(`${encoded}\n`));
+              }),
+            ).pipe(
+              Effect.mapError((error) =>
+                error instanceof LogStoreError
+                  ? error
+                  : fileError(options.path, "Unable to append retained logs", error),
+              ),
+            );
+          } else {
+            const boundedNext = yield* bounded(next, maxEntries, maxBytes, options.path, nextBytes);
+            document = boundedNext.document;
+            retainedBytes = boundedNext.bytes;
+            yield* persist(fs, options.path, document.entries);
+          }
           yield* PubSub.publish(pubsub, entry);
           return entry;
         }),

@@ -13,8 +13,10 @@ import { deriveStackId, type StackIdentity } from "../identity/Identity.ts";
 import { compileStack } from "../model/Compiler.ts";
 import { GatewayActivationError, StackPreparationError } from "../public/Errors.ts";
 import { makeStackStateStore } from "../state/StackStateStore.ts";
+import type { PersistedStackState } from "../state/StackState.ts";
 import { makePortRegistry } from "../state/PortRegistry.ts";
 import { makeSupervisorIngress } from "./Ingress.ts";
+import { privateBindingIntentsFor } from "../runtime/WorkloadRuntimeSpec.ts";
 
 const identity: StackIdentity = {
   projectRoot: "/tmp/supabase-ingress",
@@ -112,17 +114,18 @@ describe("Supervisor ingress", () => {
           },
         });
         const store = yield* makeStackStateStore({ stateRoot: root });
-        yield* store.write(stackId, {
+        yield* store.initialize(stackId, {
           format: "supabase-stack-state-v1",
           identity: { ...stackIdentity, stackId },
           runtime: { kind: "native" },
-          desiredGeneration: 1,
-          portsGeneration: null,
           desiredLifecycle: "running",
           definition: compiled.definition,
           inputFingerprint: compiled.inputFingerprint,
-          ports: [],
-          privatePorts: [],
+          ports: [{ field: "api", port: 55432, intent: "automatic" }],
+          privatePorts: privateBindingIntentsFor(compiled.executionPlan).map((binding, index) => ({
+            ...binding,
+            port: 30000 + index,
+          })),
           secrets: {},
         });
         const registry = yield* makePortRegistry({ stateRoot: root, store });
@@ -141,10 +144,8 @@ describe("Supervisor ingress", () => {
         });
         const input = {
           stackId,
-          generation: 1,
           desiredLifecycle: "running" as const,
           state: yield* store.read(stackId).pipe(Effect.map((value) => value!)),
-          previous: yield* store.read(stackId).pipe(Effect.map((value) => value!)),
           definition: compiled.definition,
           inputFingerprint: compiled.inputFingerprint,
           secrets: {},
@@ -201,7 +202,7 @@ describe("Supervisor ingress", () => {
           config: { capabilities: { rest: {} } },
         });
         const store = yield* makeStackStateStore({ stateRoot: root });
-        yield* store.write(stackId, {
+        yield* store.initialize(stackId, {
           format: "supabase-stack-state-v1",
           identity: {
             ...identity,
@@ -212,13 +213,18 @@ describe("Supervisor ingress", () => {
             stackId,
           },
           runtime: { kind: "native" },
-          desiredGeneration: 1,
-          portsGeneration: null,
           desiredLifecycle: "running",
           definition: compiled.definition,
           inputFingerprint: compiled.inputFingerprint,
-          ports: [],
-          privatePorts: [],
+          ports: [
+            { field: "api", port: 55433, intent: "automatic" },
+            { field: "database", port: 55436, intent: "automatic" },
+            { field: "pooler", port: 55437, intent: "automatic" },
+          ] as const,
+          privatePorts: privateBindingIntentsFor(compiled.executionPlan).map((binding, index) => ({
+            ...binding,
+            port: 30100 + index,
+          })),
           secrets: {},
         });
         const registry = yield* makePortRegistry({ stateRoot: root, store });
@@ -226,10 +232,8 @@ describe("Supervisor ingress", () => {
         const state = yield* store.read(stackId).pipe(Effect.map((value) => value!));
         const reservation = yield* ingress.acquire({
           stackId,
-          generation: 1,
           desiredLifecycle: "running",
           state,
-          previous: state,
           definition: compiled.definition,
           inputFingerprint: compiled.inputFingerprint,
           secrets: {},
@@ -239,10 +243,8 @@ describe("Supervisor ingress", () => {
           .open(
             {
               stackId,
-              generation: 1,
               desiredLifecycle: "running",
               state,
-              previous: state,
               definition: compiled.definition,
               inputFingerprint: compiled.inputFingerprint,
               secrets: {},
@@ -304,20 +306,21 @@ describe("Supervisor ingress", () => {
           },
         });
         const store = yield* makeStackStateStore({ stateRoot: root });
-        const persisted = {
+        const persisted: PersistedStackState = {
           format: "supabase-stack-state-v1" as const,
           identity: { ...stackIdentity, stackId },
           runtime: { kind: "native" as const },
-          desiredGeneration: 1,
-          portsGeneration: null,
           desiredLifecycle: "running" as const,
           definition: compiled.definition,
           inputFingerprint: compiled.inputFingerprint,
-          ports: [],
-          privatePorts: [],
+          ports: [{ field: "database", port: 55434, intent: "automatic" }] as const,
+          privatePorts: privateBindingIntentsFor(compiled.executionPlan).map((binding, index) => ({
+            ...binding,
+            port: 30200 + index,
+          })),
           secrets: {},
         };
-        yield* store.write(stackId, persisted);
+        yield* store.initialize(stackId, persisted);
         const registry = yield* makePortRegistry({ stateRoot: root, store });
         const ingress = yield* makeSupervisorIngress({
           stackId,
@@ -329,10 +332,8 @@ describe("Supervisor ingress", () => {
         });
         const input = {
           stackId,
-          generation: 1,
           desiredLifecycle: "running" as const,
           state: persisted,
-          previous: persisted,
           definition: compiled.definition,
           inputFingerprint: compiled.inputFingerprint,
           secrets: {},
@@ -413,20 +414,21 @@ describe("Supervisor ingress", () => {
           },
         });
         const store = yield* makeStackStateStore({ stateRoot: root });
-        const persisted = {
+        const persisted: PersistedStackState = {
           format: "supabase-stack-state-v1" as const,
           identity: { ...stackIdentity, stackId },
           runtime: { kind: "native" as const },
-          desiredGeneration: 1,
-          portsGeneration: null,
           desiredLifecycle: "running" as const,
           definition: compiled.definition,
           inputFingerprint: compiled.inputFingerprint,
-          ports: [],
-          privatePorts: [],
+          ports: [{ field: "api", port: 55435, intent: "automatic" }] as const,
+          privatePorts: privateBindingIntentsFor(compiled.executionPlan).map((binding, index) => ({
+            ...binding,
+            port: 30300 + index,
+          })),
           secrets: {},
         };
-        yield* store.write(stackId, persisted);
+        yield* store.initialize(stackId, persisted);
         const registry = yield* makePortRegistry({ stateRoot: root, store });
         const activated: string[] = [];
         const ingress = yield* makeSupervisorIngress({
@@ -462,10 +464,8 @@ describe("Supervisor ingress", () => {
         });
         const input = {
           stackId,
-          generation: 1,
           desiredLifecycle: "running" as const,
           state: persisted,
-          previous: persisted,
           definition: compiled.definition,
           inputFingerprint: compiled.inputFingerprint,
           secrets: {},

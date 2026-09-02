@@ -21,6 +21,7 @@ import {
   openStack as openEffectStack,
   type EffectStack,
   type CreateStackOptions,
+  type OpenStackOptions,
   type FindStackOptions,
   type ListStacksOptions,
   type PrepareStackOptions,
@@ -33,6 +34,7 @@ import type { LogOptions, StackLogEntry } from "./Logs.ts";
 import type { StackDescriptor, StackInspection, StackStatus } from "./Status.ts";
 import type { StackId } from "./StackId.ts";
 import type { PreparedCapability, PrepareStackResult } from "./EffectStack.ts";
+import { StackLifecycleConflictError, InvalidStackConfigError } from "./Errors.ts";
 import { StackRuntimeEnvironment, type StackRuntimeEnvironmentValue } from "../state/Ownership.ts";
 
 // Promise methods are the deliberate outer boundary of this package.
@@ -40,7 +42,7 @@ import { StackRuntimeEnvironment, type StackRuntimeEnvironmentValue } from "../s
 // oxlint-disable effecttsgo/any-unknown-in-error-context -- Promise callers receive native rejection values.
 
 /** Recursively replaces Effect `Redacted` leaves with their plain value. */
-export type Unredacted<T> =
+type Unredacted<T> =
   T extends Redacted.Redacted<infer Value>
     ? Unredacted<Value>
     : T extends readonly (infer Item)[]
@@ -73,7 +75,7 @@ export interface PromiseStack {
 
 export interface PromiseStackApi {
   readonly createStack: (options: CreateStackOptions) => Promise<PromiseStack>;
-  readonly openStack: (id: StackId) => Promise<PromiseStack>;
+  readonly openStack: (id: StackId, options?: OpenStackOptions) => Promise<PromiseStack>;
   readonly findStack: (options: FindStackOptions) => Promise<StackDescriptor | undefined>;
   readonly listStacks: (options?: ListStacksOptions) => Promise<ReadonlyArray<StackDescriptor>>;
   readonly inspectStack: (id: StackId) => Promise<StackInspection>;
@@ -91,12 +93,22 @@ type RuntimeRequirements =
 // declarations nested in records and arrays. At this explicit Promise boundary,
 // plain JSON strings become Effect Redacted values for the Effect handle.
 const stackConfigJsonCodec = Schema.toCodecJson(StackConfigSchema);
-const decodePromiseConfig = (input: PromiseStackConfig): StackConfig =>
-  Schema.decodeSync(stackConfigJsonCodec)(input);
+const decodePromiseConfig = (
+  input: PromiseStackConfig,
+): Effect.Effect<StackConfig, InvalidStackConfigError> =>
+  Schema.decodeEffect(stackConfigJsonCodec)(input, { onExcessProperty: "error" }).pipe(
+    Effect.mapError(
+      (cause) =>
+        new InvalidStackConfigError({
+          message: `Invalid stack config: ${String(cause)}`,
+          cause,
+        }),
+    ),
+  );
 
 /** Recursively unwraps every Redacted value at the Promise boundary. */
-export function unredact<T>(input: T): Unredacted<T>;
-export function unredact(input: unknown): unknown {
+function unredact<T>(input: T): Unredacted<T>;
+function unredact(input: unknown): unknown {
   if (Redacted.isRedacted(input)) return unredact(Redacted.value(input));
   if (Array.isArray(input)) return input.map(unredact);
   if (typeof input === "object" && input !== null) {
@@ -118,7 +130,7 @@ export const adaptEffectStack = (
   let closed = false;
   let closePromise: Promise<void> | undefined;
   const active: Set<() => Promise<unknown>> = new Set();
-  const closedError = () => new Error("Stack handle is closed");
+  const closedError = () => new StackLifecycleConflictError({ message: "Stack handle is closed" });
   const iterable = <A>(stream: Stream.Stream<A, unknown>): AsyncIterable<A> => ({
     [Symbol.asyncIterator]() {
       if (closed) {
@@ -160,6 +172,15 @@ export const adaptEffectStack = (
     if (closed) return Promise.reject(closedError());
     return Effect.runPromise(effect);
   };
+  const withConfig = <A>(
+    options: { readonly config?: PromiseStackConfig } | undefined,
+    operation: (config?: StackConfig) => Effect.Effect<A, unknown>,
+  ): Effect.Effect<A, unknown> =>
+    Effect.gen(function* () {
+      const config =
+        options?.config === undefined ? undefined : yield* decodePromiseConfig(options.config);
+      return yield* operation(config);
+    });
   return {
     id: effectStack.id,
     status: () => invoke(effectStack.status()),
@@ -169,36 +190,33 @@ export const adaptEffectStack = (
       ),
     prepare: (options) =>
       invoke(
-        effectStack.prepare(
-          options
-            ? {
-                ...options,
-                config:
-                  options.config === undefined ? undefined : decodePromiseConfig(options.config),
-              }
-            : undefined,
+        withConfig(options, (config) =>
+          effectStack.prepare(
+            options === undefined
+              ? undefined
+              : {
+                  ...(options.capabilities === undefined
+                    ? {}
+                    : { capabilities: options.capabilities }),
+                  ...(config === undefined ? {} : { config }),
+                },
+          ),
         ),
       ),
     start: (options) =>
       invoke(
-        effectStack.start(
-          options
-            ? {
-                config:
-                  options.config === undefined ? undefined : decodePromiseConfig(options.config),
-              }
-            : undefined,
+        withConfig(options, (config) =>
+          options === undefined
+            ? effectStack.start()
+            : effectStack.start(config === undefined ? {} : { config }),
         ),
       ),
     restart: (options) =>
       invoke(
-        effectStack.restart(
-          options
-            ? {
-                config:
-                  options.config === undefined ? undefined : decodePromiseConfig(options.config),
-              }
-            : undefined,
+        withConfig(options, (config) =>
+          options === undefined
+            ? effectStack.restart()
+            : effectStack.restart(config === undefined ? {} : { config }),
         ),
       ),
     stop: () => invoke(effectStack.stop()),
@@ -279,7 +297,7 @@ export const makePromiseApi = (
   };
   return {
     createStack: (options) => createOrOpen(createEffectStack(options)),
-    openStack: (id) => createOrOpen(openEffectStack(id)),
+    openStack: (id, options) => createOrOpen(openEffectStack(id, options)),
     findStack: (options) =>
       run(findEffectStack(options)).then((value) => Option.getOrUndefined(value)),
     listStacks: (options) => run(listEffectStacks(options)),

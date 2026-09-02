@@ -1,11 +1,10 @@
-import { Data, Effect } from "effect";
+import { Data, Effect, Stream } from "effect";
 import type { StackId } from "../public/StackId.ts";
-import type { ExecutionPlan, PlannedWorkload } from "../model/ExecutionPlan.ts";
+import type { PlannedWorkload } from "../model/ExecutionPlan.ts";
 
 /** The exact identity used when touching a private runtime resource. */
 export interface RuntimeWorkloadKey {
   readonly stackId: StackId;
-  readonly desiredGeneration: number;
   readonly workloadId: string;
   readonly specHash: string;
 }
@@ -15,15 +14,6 @@ export interface RuntimeCleanupRequest {
   readonly stackId: StackId;
   /** Remove persistent runtime volumes in addition to ephemeral containers/networks. */
   readonly destroy: boolean;
-}
-
-/** Exact persisted intent used when an owner is replaced or resumes after a crash. */
-export interface RuntimeRecoveryRequest {
-  readonly stackId: StackId;
-  readonly desiredGeneration: number;
-  /** Recovery only adopts a durable running stack; stopped state uses cleanup instead. */
-  readonly desiredLifecycle: "running";
-  readonly plan: ExecutionPlan;
 }
 
 /** A driver only reports states that can be acted on by the reconciler. */
@@ -37,6 +27,8 @@ export interface ObservedWorkload extends RuntimeWorkloadKey {
 type RuntimeWorkload = PlannedWorkload;
 
 export interface RuntimeDriver {
+  /** Unexpected post-readiness failures, scoped to this driver owner. */
+  readonly watchFailures: Stream.Stream<ObservedWorkload, RuntimeDriverError>;
   /** Enumerates only private resources owned by this exact stack identity. */
   readonly observe: (
     stackId: StackId,
@@ -46,22 +38,15 @@ export interface RuntimeDriver {
     key: RuntimeWorkloadKey,
     workload: RuntimeWorkload,
   ) => Effect.Effect<ObservedWorkload, RuntimeDriverError>;
-  /** Stops one exact resource; no other generation or stack may be touched. */
+  /** Stops one exact resource; no other stack may be touched. */
   readonly stop: (key: RuntimeWorkloadKey) => Effect.Effect<void, RuntimeDriverError>;
-  /** Removes one exact resource; no other generation or stack may be touched. */
+  /** Removes one exact resource; no other stack may be touched. */
   readonly remove: (key: RuntimeWorkloadKey) => Effect.Effect<void, RuntimeDriverError>;
   /**
    * Cleans up exact resources belonging to one stack. Ordinary stop retains volumes; destructive
    * cleanup removes them after containers and networks have been removed.
    */
   readonly cleanup: (request: RuntimeCleanupRequest) => Effect.Effect<void, RuntimeDriverError>;
-  /**
-   * Inspects and fences leftover resources without starting anything. Native resources are
-   * terminated; containers with current identities are adopted and stale resources removed.
-   */
-  readonly recover: (
-    request: RuntimeRecoveryRequest,
-  ) => Effect.Effect<ReadonlyArray<ObservedWorkload>, RuntimeDriverError>;
 }
 
 export class RuntimeDriverError extends Data.TaggedError("RuntimeDriverError")<{
@@ -69,21 +54,6 @@ export class RuntimeDriverError extends Data.TaggedError("RuntimeDriverError")<{
   readonly stackId?: StackId;
   readonly workloadId?: string;
   readonly cause?: unknown;
-}> {}
-
-export class RuntimeGenerationMismatchError extends Data.TaggedError(
-  "RuntimeGenerationMismatchError",
-)<{
-  readonly message: string;
-  readonly expectedGeneration: number;
-  readonly actualGeneration: number;
-}> {}
-
-export class RuntimeReadinessTimeoutError extends Data.TaggedError("RuntimeReadinessTimeoutError")<{
-  readonly message: string;
-  readonly stackId: StackId;
-  readonly workloadId: string;
-  readonly desiredGeneration: number;
 }> {}
 
 export class RuntimeRestartBudgetExceededError extends Data.TaggedError(

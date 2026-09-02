@@ -5,6 +5,7 @@ import { tmpdir } from "node:os";
 // oxlint-disable-next-line effecttsgo/node-builtin-import -- test resource builds an isolated root.
 import { join } from "node:path";
 import { NodeServices } from "@effect/platform-node";
+import { Data } from "effect";
 import { defaultRuntimeEnvironment } from "../supervisor/Launcher.ts";
 import {
   makePromiseApi,
@@ -14,6 +15,10 @@ import {
 } from "./PromiseStack.ts";
 import type { CreateStackOptions } from "./EffectStack.ts";
 import type { StackRuntimeEnvironmentValue } from "../state/Ownership.ts";
+
+class TestStackReadinessError extends Data.TaggedError("TestStackReadinessError")<{
+  readonly message: string;
+}> {}
 
 export interface CreateTestStackOptions {
   readonly config?: PromiseStackConfig;
@@ -58,6 +63,7 @@ const waitForReadiness = async (
   stack: PromiseStack,
   initial: Awaited<ReturnType<PromiseStack["status"]>>,
   config: PromiseStackConfig | undefined,
+  signal?: AbortSignal,
 ) => {
   const disabledCapabilities = new Set(
     Object.entries(config?.capabilities ?? {}).flatMap(([name, capability]) =>
@@ -88,7 +94,7 @@ const waitForReadiness = async (
         ([endpointName, endpoint]) => endpointName === name && endpoint !== undefined,
       ),
     );
-  const terminalFailure = (status: typeof initial): Error | undefined => {
+  const terminalFailure = (status: typeof initial): TestStackReadinessError | undefined => {
     const failed = status.capabilities.find(
       (capability) =>
         !disabledCapabilities.has(capability.name) &&
@@ -96,11 +102,12 @@ const waitForReadiness = async (
           (status.lifecycle === "running" && capability.state === "stopped")),
     );
     if (failed !== undefined) {
-      return new Error(
-        failed.error === undefined
-          ? `Capability ${failed.name} ${failed.state} before stack became ready`
-          : failed.error,
-      );
+      return new TestStackReadinessError({
+        message:
+          failed.error === undefined
+            ? `Capability ${failed.name} ${failed.state} before stack became ready`
+            : failed.error,
+      });
     }
     if (
       status.lifecycle === "stopped" ||
@@ -108,19 +115,35 @@ const waitForReadiness = async (
       status.lifecycle === "unconfigured" ||
       status.lifecycle === "stopping"
     ) {
-      return new Error(`Stack lifecycle ${status.lifecycle} before stack became ready`);
+      return new TestStackReadinessError({
+        message: `Stack lifecycle ${status.lifecycle} before stack became ready`,
+      });
     }
     return undefined;
   };
   if (ready(initial)) return;
   const initialFailure = terminalFailure(initial);
   if (initialFailure !== undefined) throw initialFailure;
-  for await (const status of stack.watchStatus()) {
-    if (ready(status)) return;
-    const failure = terminalFailure(status);
-    if (failure !== undefined) throw failure;
+  const iterator = stack.watchStatus()[Symbol.asyncIterator]();
+  const abort = () => {
+    void iterator.return?.();
+  };
+  signal?.addEventListener("abort", abort, { once: true });
+  try {
+    while (true) {
+      const next = await iterator.next();
+      if (next.done)
+        throw new TestStackReadinessError({
+          message: "Stack did not reach running readiness before its status stream ended",
+        });
+      if (ready(next.value)) return;
+      const failure = terminalFailure(next.value);
+      if (failure !== undefined) throw failure;
+    }
+  } finally {
+    signal?.removeEventListener("abort", abort);
+    await iterator.return?.();
   }
-  throw new Error("Stack did not reach running readiness before its status stream ended");
 };
 
 const cleanup = async (
@@ -130,10 +153,12 @@ const cleanup = async (
   primary?: unknown,
 ) => {
   let failure = primary;
+  let rootCanBeRemoved = true;
   if (stack !== undefined) {
     try {
       await stack.destroy();
     } catch (error) {
+      rootCanBeRemoved = false;
       if (failure === undefined) failure = error;
     }
     try {
@@ -142,10 +167,17 @@ const cleanup = async (
       if (failure === undefined) failure = error;
     }
   }
-  try {
-    await operations.removeRoot(root);
-  } catch (error) {
-    if (failure === undefined) failure = error;
+  // Retain the exact root when destroy fails because durable/Docker state may remain recoverable.
+  if (rootCanBeRemoved) {
+    try {
+      await operations.removeRoot(root);
+    } catch (error) {
+      if (failure === undefined) failure = error;
+    }
+  }
+  if (!rootCanBeRemoved) {
+    const reason = failure instanceof Error ? failure.message : String(failure);
+    throw new Error(`${reason}; retained test stack root ${root}`, { cause: failure });
   }
   if (failure !== undefined) throw failure;
 };
@@ -172,7 +204,13 @@ export const createTestStackWith = async (
         ? undefined
         : ({ config: options.config } satisfies PromiseStartStackOptions),
     );
-    await waitForReadiness(stack, started, options.config);
+    const readyStack = stack;
+    try {
+      await waitForReadiness(readyStack, started, options.config, AbortSignal.timeout(120_000));
+    } catch (error) {
+      if (error instanceof TestStackReadinessError) throw error;
+      throw new TestStackReadinessError({ message: String(error) });
+    }
     const resource = stack;
     return {
       ...resource,

@@ -6,6 +6,7 @@ import {
   Fiber,
   FileSystem,
   Path,
+  PubSub,
   Ref,
   Scope,
   Semaphore,
@@ -21,7 +22,6 @@ import { LogStoreError } from "../supervisor/LogStore.ts";
 import {
   RuntimeDriverError,
   type RuntimeCleanupRequest,
-  type RuntimeRecoveryRequest,
   type ObservedWorkload,
   type RuntimeDriver,
   type RuntimeWorkloadKey,
@@ -93,11 +93,10 @@ interface Resource {
 }
 
 const resourceKey = (key: RuntimeWorkloadKey): string =>
-  JSON.stringify([key.stackId, key.desiredGeneration, key.workloadId, key.specHash]);
+  JSON.stringify([key.stackId, key.workloadId, key.specHash]);
 
 const sameKey = (left: RuntimeWorkloadKey, right: RuntimeWorkloadKey): boolean =>
   left.stackId === right.stackId &&
-  left.desiredGeneration === right.desiredGeneration &&
   left.workloadId === right.workloadId &&
   left.specHash === right.specHash;
 
@@ -185,6 +184,7 @@ export const makeNativeRuntime = (
     const runtimeScope = yield* Scope.fork(parentScope, "parallel");
     const lifecycle = yield* Semaphore.make(1);
     const resources = new Map<string, Resource>();
+    const failures = yield* PubSub.unbounded<ObservedWorkload>();
 
     const cleanup = (resource: Resource): Effect.Effect<void, never> =>
       Scope.close(resource.scope, Exit.void).pipe(
@@ -220,11 +220,13 @@ export const makeNativeRuntime = (
         yield* Ref.update(resource.state, (current): ObservedWorkload =>
           current.state === "failed" ? current : next,
         );
-        if (Exit.isFailure(result) && !resource.stopRequested) {
-          yield* Deferred.fail(
-            resource.failure,
-            driverError(resource.key, `Native workload exited before readiness`, result.cause),
-          );
+        if (!resource.stopRequested) {
+          yield* PubSub.publish(failures, next);
+          if (Exit.isFailure(result))
+            yield* Deferred.fail(
+              resource.failure,
+              driverError(resource.key, `Native workload exited before readiness`, result.cause),
+            );
         }
       }).pipe(Effect.ignore);
 
@@ -232,16 +234,31 @@ export const makeNativeRuntime = (
       resource: Resource,
       error: LogStoreError | NativeProcessError,
     ): Effect.Effect<void> => {
+      if (resource.stopRequested) return Effect.void;
       const failure = driverError(
         resource.key,
         `Native log stream failed for ${resource.key.workloadId}: ${error.message}`,
         error,
       );
-      return Ref.update(resource.state, (current): ObservedWorkload =>
-        current.state === "stopped" || current.state === "failed"
-          ? current
-          : { ...current, state: "failed", error: failure.message },
-      ).pipe(Effect.andThen(Deferred.fail(resource.failure, failure)));
+      return Ref.modify(resource.state, (current) => {
+        if (current.state === "stopped" || current.state === "failed")
+          return [false, current] satisfies readonly [boolean, ObservedWorkload];
+        const next: ObservedWorkload = { ...current, state: "failed", error: failure.message };
+        return [true, next] satisfies readonly [boolean, ObservedWorkload];
+      }).pipe(
+        Effect.flatMap((changed) =>
+          changed
+            ? Effect.all([
+                PubSub.publish(failures, {
+                  ...resource.key,
+                  state: "failed",
+                  error: failure.message,
+                }),
+                Deferred.fail(resource.failure, failure),
+              ]).pipe(Effect.asVoid)
+            : Effect.void,
+        ),
+      );
     };
 
     const attachLogs = (resource: Resource, process: NativeProcess) => {
@@ -522,7 +539,7 @@ export const makeNativeRuntime = (
             const existing = resources.get(id);
             if (existing !== undefined) {
               const current = yield* Ref.get(existing.state);
-              if (current.state !== "stopped" && current.state !== "failed") return existing;
+              if (current.state === "starting") return existing;
               yield* cleanup(existing);
             }
             const processScope = yield* Scope.fork(runtimeScope, "parallel");
@@ -650,36 +667,18 @@ export const makeNativeRuntime = (
         }),
       );
 
-    const recover = (
-      request: RuntimeRecoveryRequest,
-    ): Effect.Effect<ReadonlyArray<ObservedWorkload>, RuntimeDriverError> =>
-      lifecycle.withPermit(
-        Effect.gen(function* () {
-          let recoveryCause: Cause.Cause<RuntimeDriverError> = Cause.empty;
-          const attempt = <A>(effect: Effect.Effect<A, RuntimeDriverError>) =>
-            Effect.gen(function* () {
-              const result = yield* Effect.exit(effect);
-              if (Exit.isFailure(result))
-                recoveryCause = Cause.combine(recoveryCause, result.cause);
-            });
-          const owned = [...resources.values()].filter(
-            (resource) => resource.key.stackId === request.stackId,
-          );
-          for (const resource of owned) {
-            yield* attempt(stopResource(resource));
-            yield* attempt(removeResource(resource));
-          }
-          if (recoveryCause.reasons.length > 0) return yield* Effect.failCause(recoveryCause);
-          return [];
-        }),
-      );
+    const watchFailures = Stream.unwrap(
+      PubSub.subscribe(failures).pipe(
+        Effect.map((subscription) => Stream.fromEffectRepeat(PubSub.take(subscription))),
+      ),
+    ).pipe(Stream.scoped);
 
     return {
+      watchFailures,
       observe,
       start,
       stop,
       remove,
       cleanup: cleanupRuntime,
-      recover,
     } satisfies RuntimeDriver;
   });

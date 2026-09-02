@@ -1,4 +1,6 @@
-import { Redacted, Schema } from "effect";
+import { Effect, Redacted, Schema } from "effect";
+import { Flag } from "effect/unstable/cli";
+import { isAbsolute, relative, resolve } from "node:path";
 import type { CliConfig } from "@supabase/config";
 import {
   StackConfigSchema,
@@ -8,9 +10,10 @@ import {
   type RestSettings,
   type StackConfig,
   type StackRuntimePreference,
+  InvalidStackConfigError,
 } from "@supabase/stack/effect";
 
-export const excludedStackServices = [
+const excludedStackServices = [
   "auth",
   "realtime",
   "storage",
@@ -19,26 +22,28 @@ export const excludedStackServices = [
   "pooler",
 ] as const;
 export type ExcludedStackService = (typeof excludedStackServices)[number];
-export const isExcludedStackService = (value: string): value is ExcludedStackService =>
+export const excludeFlag = Flag.choice("exclude", excludedStackServices).pipe(
+  Flag.atMost(excludedStackServices.length),
+  Flag.withDefault([] as ReadonlyArray<ExcludedStackService>),
+);
+const isExcludedStackService = (value: string): value is ExcludedStackService =>
   excludedStackServices.some((candidate) => candidate === value);
-export const startModes = ["native", "docker"] as const;
+const startModes = ["native", "docker"] as const;
 export type StartMode = (typeof startModes)[number];
 
 const disabledCapability = (
   name: string,
-  _native: boolean,
   excluded: ReadonlySet<ExcludedStackService>,
   enabled?: boolean,
 ) => (isExcludedStackService(name) && excluded.has(name)) || enabled === false;
 
 const capability = <S>(
   name: string,
-  native: boolean,
   excluded: ReadonlySet<ExcludedStackService>,
   enabled: boolean | undefined,
   settings: S,
 ) =>
-  disabledCapability(name, native, excluded, enabled)
+  disabledCapability(name, excluded, enabled)
     ? ({ enabled: false } as const)
     : settings === undefined
       ? {}
@@ -116,6 +121,76 @@ const toRestSettings = (api: CliConfig["api"] | undefined): RestSettings => ({
   external_url: api?.external_url,
 });
 
+/**
+ * Converts a config path (relative to `supabase`) to the path expected by the
+ * stack's Functions runtime (relative to that function's directory).
+ *
+ * CLI config and Functions manifests use paths such as
+ * `./functions/hello/index.ts`, while the stack resolves `hello/index.ts`
+ * against `functions_root`. Both `start` and `functions serve` reuse this
+ * translation.
+ */
+const normalizeFunctionsPath = (pathname: string): string =>
+  pathname
+    .replaceAll("\\", "/")
+    .replace(/^\.\//, "")
+    .replace(/^supabase\//, "");
+
+export function relativeFunctionPath(slug: string, pathname: string): string;
+export function relativeFunctionPath(slug: string, pathname: undefined): undefined;
+export function relativeFunctionPath(
+  slug: string,
+  pathname: string | undefined,
+): string | undefined {
+  if (pathname === undefined) return undefined;
+  const normalized = normalizeFunctionsPath(pathname);
+  const prefix = `functions/${slug}/`;
+  return normalized.startsWith(prefix) ? normalized.slice(prefix.length) : pathname;
+}
+
+/** Whether a path is explicitly rooted at one function's directory. */
+export function isFunctionScopedPath(slug: string, pathname: string | undefined): boolean {
+  if (pathname === undefined) return false;
+  const normalized = normalizeFunctionsPath(pathname);
+  return normalized.startsWith(`functions/${slug}/`);
+}
+
+/**
+ * Converts a Functions path supplied for one project function into a path
+ * relative to the shared `functions_root`. This is used by serve's global
+ * `--import-map` default; `./functions/hello/deno.json` becomes
+ * `hello/deno.json`, so every discovered slug resolves the same file. Absolute
+ * or caller-cwd paths are also converted when `projectRoot` is supplied.
+ */
+export function relativeGlobalFunctionPath(
+  pathname: string | undefined,
+  options: { readonly projectRoot?: string; readonly cwd?: string } = {},
+): string | undefined {
+  if (pathname === undefined) return undefined;
+  const normalized = normalizeFunctionsPath(pathname);
+  if (normalized.startsWith("functions/")) return normalized.slice("functions/".length);
+
+  // CLI flags are normally relative to the caller's cwd. Persist only a path
+  // relative to `functions_root` so the same config works in native and
+  // container runtimes. Out-of-root values remain unchanged and are rejected
+  // by the runtime's canonical containment check.
+  if (options.projectRoot !== undefined) {
+    const functionsRoot = resolve(options.projectRoot, "supabase", "functions");
+    const absolute = isAbsolute(pathname)
+      ? pathname
+      : resolve(options.cwd ?? options.projectRoot, pathname);
+    const rootRelative = relative(functionsRoot, absolute).replaceAll("\\", "/");
+    if (
+      rootRelative !== "" &&
+      rootRelative !== ".." &&
+      !rootRelative.startsWith("../") &&
+      !isAbsolute(rootRelative)
+    )
+      return rootRelative;
+  }
+  return normalized;
+}
+
 const toFunctionsSettings = (
   edgeRuntime: CliConfig["edge_runtime"] | undefined,
   functions: CliConfig["functions"] | undefined,
@@ -138,6 +213,11 @@ const toFunctionsSettings = (
             {
               ...fn,
               env: secretRecord(fn.env),
+              import_map: relativeFunctionPath(name, fn.import_map),
+              entrypoint: relativeFunctionPath(name, fn.entrypoint),
+              static_files: fn.static_files?.map((pathname) =>
+                relativeFunctionPath(name, pathname),
+              ),
             },
           ]),
         ),
@@ -240,14 +320,12 @@ const toAuthSettings = (auth: CliConfig["auth"] | undefined): AuthSettings | und
   };
 };
 
-/** Translates CLI exclusions and mode to the stack's closed capability config. */
+/** Translates CLI exclusions to the stack's closed capability config. */
 export function toStartStackConfig(
   config: CliConfig | undefined,
   exclude: ReadonlyArray<ExcludedStackService>,
-  mode?: StartMode,
-): StackConfig {
+): Effect.Effect<StackConfig, InvalidStackConfigError> {
   const excluded = new Set(exclude);
-  const native = mode === "native";
   const db = config?.db;
   const api = config?.api;
   const auth = config?.auth;
@@ -290,13 +368,13 @@ export function toStartStackConfig(
   const configOutput = {
     capabilities: {
       database: { version: db?.major_version?.toString(), settings: databaseSettings },
-      rest: capability("rest", native, excluded, api?.enabled, toRestSettings(api)),
-      auth: capability("auth", native, excluded, auth?.enabled, authSettings),
-      realtime: capability("realtime", native, excluded, realtime?.enabled, {
+      rest: capability("rest", excluded, api?.enabled, toRestSettings(api)),
+      auth: capability("auth", excluded, auth?.enabled, authSettings),
+      realtime: capability("realtime", excluded, realtime?.enabled, {
         ip_version: ipVersion(realtime?.ip_version),
         max_header_length: realtime?.max_header_length,
       }),
-      storage: capability("storage", native, excluded, storage?.enabled, {
+      storage: capability("storage", excluded, storage?.enabled, {
         file_size_limit: storage?.file_size_limit,
         image_transformation: storage?.image_transformation,
         buckets: storage?.buckets,
@@ -304,14 +382,14 @@ export function toStartStackConfig(
         analytics: storage?.analytics,
         vector: storage?.vector,
       }),
-      functions: capability("functions", native, excluded, edgeRuntime?.enabled, functionSettings),
-      studio: capability("studio", native, excluded, studio?.enabled, studioSettings),
-      mail: capability("mail", native, excluded, mail?.enabled, {
+      functions: capability("functions", excluded, edgeRuntime?.enabled, functionSettings),
+      studio: capability("studio", excluded, studio?.enabled, studioSettings),
+      mail: capability("mail", excluded, mail?.enabled, {
         admin_email: mail?.admin_email,
         sender_name: mail?.sender_name,
       }),
-      analytics: capability("analytics", native, excluded, analytics?.enabled, analyticsSettings),
-      pooler: capability("pooler", native, excluded, pooler?.enabled, poolerSettings),
+      analytics: capability("analytics", excluded, analytics?.enabled, analyticsSettings),
+      pooler: capability("pooler", excluded, pooler?.enabled, poolerSettings),
     },
     listeners: {
       api: api === undefined ? undefined : { port: api.port },
@@ -342,9 +420,18 @@ export function toStartStackConfig(
           },
   };
 
-  // This synchronous, service-free CLI boundary validates the normalized overlay against the
-  // closed stack schema before handing it to the Effect-native runtime.
-  return Schema.decodeUnknownSync(StackConfigSchema)(omitUndefined(configOutput));
+  // Keep schema failures in the Effect error channel so command boundaries can render a tagged
+  // InvalidStackConfigError rather than throwing synchronously inside an Effect generator.
+  return Schema.decodeUnknownEffect(StackConfigSchema)(omitUndefined(configOutput), {
+    onExcessProperty: "error",
+  }).pipe(
+    Effect.mapError(
+      (error) =>
+        new InvalidStackConfigError({
+          message: `Invalid stack configuration: ${String(error)}`,
+        }),
+    ),
+  );
 }
 
 export function runtimePreference(mode?: StartMode): StackRuntimePreference | undefined {

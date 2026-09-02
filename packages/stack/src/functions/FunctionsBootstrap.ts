@@ -4,12 +4,10 @@ import { resolveStackPaths } from "../state/Paths.ts";
 import type { StackId } from "../public/StackId.ts";
 
 export interface FunctionsBootstrapOwner {
-  /** Publishes the stack-owned Edge Runtime main service for one generation. */
+  /** Publishes the stack-owned Edge Runtime main service for the current session. */
   readonly write: (input: {
-    readonly generation: number;
     readonly content: string;
   }) => Effect.Effect<string, StackPreparationError>;
-  readonly cleanupGeneration: (generation: number) => Effect.Effect<void, StackPreparationError>;
   /** Removes only this stack's functions bootstrap root. */
   readonly cleanupAll: Effect.Effect<void, StackPreparationError>;
 }
@@ -46,33 +44,25 @@ export const makeFunctionsBootstrapOwner = (
     const root = path.join(stackPaths.runtime, "functions");
 
     const write = (input: {
-      readonly generation: number;
       readonly content: string;
     }): Effect.Effect<string, StackPreparationError> => {
-      if (!Number.isSafeInteger(input.generation) || input.generation < 0)
-        return Effect.fail(failure("Invalid functions bootstrap generation"));
       if (input.content.includes("\u0000"))
         return Effect.fail(failure("Functions bootstrap contains an invalid character"));
-      const generationRoot = path.join(root, String(input.generation));
-      const target = path.join(generationRoot, "index.ts");
+      const target = path.join(root, "index.ts");
       return Effect.gen(function* () {
         const token = yield* crypto.randomUUIDv4.pipe(
           Effect.mapError((cause) =>
             failure("Unable to allocate functions bootstrap file", { cause }),
           ),
         );
-        const temporary = path.join(generationRoot, `.index.ts.${token}.tmp`);
+        const temporary = path.join(root, `.index.ts.${token}.tmp`);
         return yield* Effect.gen(function* () {
           yield* mapFs(
-            generationRoot,
+            root,
             "create functions bootstrap directory",
-            fs.makeDirectory(generationRoot, { recursive: true, mode: 0o700 }),
+            fs.makeDirectory(root, { recursive: true, mode: 0o700 }),
           );
-          yield* mapFs(
-            generationRoot,
-            "secure functions bootstrap directory",
-            fs.chmod(generationRoot, 0o700),
-          );
+          yield* mapFs(root, "secure functions bootstrap directory", fs.chmod(root, 0o700));
           yield* Effect.scoped(
             Effect.gen(function* () {
               const file = yield* mapFs(
@@ -110,18 +100,10 @@ export const makeFunctionsBootstrapOwner = (
       });
     };
 
-    const cleanupGeneration = (generation: number): Effect.Effect<void, StackPreparationError> =>
-      !Number.isSafeInteger(generation) || generation < 0
-        ? Effect.fail(failure("Invalid functions bootstrap generation"))
-        : mapFs(
-            path.join(root, String(generation)),
-            "clean functions bootstrap generation",
-            fs.remove(path.join(root, String(generation)), { recursive: true, force: true }),
-          );
     const cleanupAll = mapFs(
       root,
       "clean functions bootstrap files",
       fs.remove(root, { recursive: true, force: true }),
     );
-    return { write, cleanupGeneration, cleanupAll };
+    return { write, cleanupAll };
   });

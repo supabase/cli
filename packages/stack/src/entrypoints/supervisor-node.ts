@@ -13,7 +13,7 @@ import { makeStackStateStore } from "../state/StackStateStore.ts";
 import { StackIdSchema } from "../public/StackId.ts";
 import { makeSupervisor } from "../supervisor/Supervisor.ts";
 import { makeProductionRuntimeFactory } from "../runtime/ProductionRuntime.ts";
-import { startOwnerSession } from "../supervisor/OwnerSession.ts";
+import { startControlServer } from "../control/ControlServer.ts";
 import { STACK_RPC_RELEASE } from "../control/StackRpc.ts";
 import { OwnerSessionIdSchema } from "../control/MaintenanceProtocol.ts";
 import { StackOwnershipConflictError } from "../public/Errors.ts";
@@ -141,23 +141,17 @@ const runSupervisor = (args: SupervisorArgs) =>
         context,
         runtimeFactory,
       });
-      const session = yield* startOwnerSession({
+      yield* startControlServer({
         endpoint: lease.metadata.endpoint,
         stackId: args.stackId,
         ownerSessionId,
         rpcRelease: args.rpcRelease || STACK_RPC_RELEASE,
         maintenanceHandlers: supervisor.maintenanceHandlers,
         rpcHandlers: supervisor.rpcHandlers,
-        onMaintenanceComplete: (op) => (op === "quiesce" ? supervisor.signalShutdown : Effect.void),
-        onMaintenanceAbandoned: (op) =>
-          op === "quiesce" ? supervisor.signalShutdown : Effect.void,
-        onDestroyResponse: () => supervisor.signalShutdown,
-        onDestroyAbandoned: () => supervisor.signalShutdown,
+        onShutdownReady: supervisor.shutdownIfIdle,
       });
-      yield* session.ready;
       yield* publishOwnership(lease);
       yield* writeReadiness({ ok: true, stackId: args.stackId, ownerSessionId });
-      yield* supervisor.recover;
       yield* supervisor.shutdown;
     }),
   ).pipe(Effect.provide(NodeServices.layer));

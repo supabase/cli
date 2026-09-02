@@ -41,6 +41,17 @@ export const PORT_FIELDS = [
 ] as const;
 export type PortField = (typeof PORT_FIELDS)[number];
 
+export const PORT_FIELD_PROTOCOL: Readonly<Record<PortField, "http" | "tcp">> = {
+  api: "http",
+  database: "tcp",
+  pooler: "tcp",
+  studio: "http",
+  mailUi: "http",
+  smtp: "tcp",
+  pop3: "tcp",
+  functionsInspector: "http",
+};
+
 /** A concrete host/network port. Automatic assignment is represented by listeners, not here. */
 export const NetworkPortSchema = Schema.Int.check(
   Schema.isBetween({ minimum: 1, maximum: 65_535 }),
@@ -101,7 +112,6 @@ export const StackStatusSchema = Schema.Struct({
   lifecycle: StackLifecycleSchema,
   desiredLifecycle: DesiredStackLifecycleSchema,
   runtime: StackRuntimeSchema,
-  desiredGeneration: Schema.optionalKey(Schema.Finite),
   endpoints: StackEndpointsSchema,
   versions: CapabilityVersionsSchema,
   capabilities: CompleteCapabilityStatusesSchema,
@@ -112,7 +122,6 @@ export interface StackStatus {
   readonly lifecycle: StackLifecycle;
   readonly desiredLifecycle: DesiredStackLifecycle;
   readonly runtime: StackRuntime;
-  readonly desiredGeneration?: number;
   readonly endpoints: Readonly<Partial<Record<PortField, StackEndpoint>>>;
   readonly versions: Readonly<Partial<Record<CapabilityName, string>>>;
   readonly capabilities: ReadonlyArray<CapabilityStatus>;

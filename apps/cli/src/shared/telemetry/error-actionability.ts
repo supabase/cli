@@ -224,57 +224,6 @@ type CliErrorSuggestion =
       readonly suggested_command?: never;
     };
 
-/** Q2 KPI metric definitions, kept next to the taxonomy they consume. */
-export const CliErrorActionabilityMetricDefinitions = {
-  strictRecovery: {
-    id: "same_command_success_same_session",
-    event: "cli_command_executed",
-    partition_by: ["device_id", "$session_id", "command"],
-    command_identity:
-      "Exact equality of the command property, which is the normalized command path emitted by CLI instrumentation without argument values.",
-    order_by: "event timestamp ascending",
-    eligible_failure: "exit_code != 0 AND error_kind = 'user_actionable'",
-    recovered_when:
-      "For eligible failure F, there exists event S with S.timestamp > F.timestamp, S.exit_code = 0, and S.device_id = F.device_id, S.$session_id = F.$session_id, and S.command = F.command. Intervening events do not change the result.",
-    reset_when:
-      "The observation window ends with the $session_id. A success with a different device_id, $session_id, or command never counts.",
-    description:
-      "A user-actionable failure is recovered only when the same normalized command later succeeds for the same device_id and $session_id.",
-  },
-  repeatError: {
-    id: "same_command_same_error_same_session_before_success",
-    event: "cli_command_executed",
-    partition_by: ["device_id", "$session_id", "command"],
-    command_identity:
-      "Exact equality of the command property, which is the normalized command path emitted by CLI instrumentation without argument values.",
-    order_by: "event timestamp ascending",
-    eligible_failure:
-      "exit_code != 0 AND error_kind = 'user_actionable' AND error_fingerprint IS NOT NULL",
-    repeated_when:
-      "Failed event F is a repeat when an earlier failed event P in the same partition has P.error_fingerprint = F.error_fingerprint and no event S in that partition has P.timestamp < S.timestamp < F.timestamp and S.exit_code = 0.",
-    reset_when:
-      "Any exit_code = 0 event in the partition clears every prior fingerprint for that command. A different $session_id starts a new partition; successes for other commands do not reset it.",
-    description:
-      "The second and each later occurrence of the same user-actionable error_fingerprint is a repeat until that normalized command succeeds or the session changes.",
-  },
-  internalUnknownBugRate: {
-    id: "failed_commands_internal_bug_or_unknown",
-    event: "cli_command_executed",
-    denominator: "count where exit_code != 0 AND error_kind IS NOT NULL",
-    numerator: "count where exit_code != 0 AND error_kind IN ('internal_bug', 'unknown')",
-    description:
-      "Internal/unknown bug failure rate is the share of classified failed commands reported as internal_bug or unknown. Failures without error_kind (pure Go-proxy commands, CLI versions predating the classification) are excluded from both sides; classificationCoverage reports their share.",
-  },
-  classificationCoverage: {
-    id: "failed_commands_with_classification",
-    event: "cli_command_executed",
-    denominator: "count where exit_code != 0",
-    numerator: "count where exit_code != 0 AND error_kind IS NOT NULL",
-    description:
-      "Share of failed commands carrying the error classification. Pure Go-proxy commands report through the Go binary without these fields, and older CLI versions never send them, so the recovery, repeat, and bug-rate metrics cover exactly this fraction of the failure volume.",
-  },
-} as const;
-
 /**
  * Symbol under which CLI error classes declare their own actionability.
  * It is intentionally absent from the global symbol registry, so errors from

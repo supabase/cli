@@ -1,6 +1,6 @@
 import { NodeServices } from "@effect/platform-node";
 import { describe, expect, it } from "@effect/vitest";
-import { Effect, Exit, FileSystem, Redacted } from "effect";
+import { Effect, Exit, FileSystem, Redacted, Schema } from "effect";
 import { WORKLOAD_CATALOG } from "../model/WorkloadCatalog.ts";
 import type { PlannedWorkload } from "../model/ExecutionPlan.ts";
 import { deriveStackId } from "../identity/Identity.ts";
@@ -44,8 +44,6 @@ const state: PersistedStackState = {
     stackName: "runtime-spec",
   },
   runtime: { kind: "native" },
-  desiredGeneration: 1,
-  portsGeneration: 1,
   desiredLifecycle: "running",
   ports: [
     { field: "database", port: 55432, intent: "exact" },
@@ -68,6 +66,7 @@ const state: PersistedStackState = {
     { workloadId: "analytics:analytics", binding: "primary", port: 30_013 },
     { workloadId: "analytics:vector", binding: "primary", port: 30_014 },
     { workloadId: "pooler:pooler", binding: "primary", port: 30_016 },
+    { workloadId: "pooler:pooler", binding: "admin", port: 30_017 },
   ],
   secrets: {
     "secret:database.internal.password": { policy: "managed", value: "postgres" },
@@ -77,6 +76,11 @@ const state: PersistedStackState = {
       value: "sb_publishable_test",
     },
     "secret:auth.settings.secret_key": { policy: "managed", value: "sb_secret_test" },
+    "secret:realtime.settings.db_enc_key": { policy: "managed", value: "realtime-db-key" },
+    "secret:realtime.settings.secret_key_base": {
+      policy: "managed",
+      value: "realtime-secret-base",
+    },
   },
 };
 
@@ -137,7 +141,7 @@ describe("workload runtime catalog", () => {
       });
       const functions = planned("functions:edge-runtime");
       expect(runtimeSpecFor(functions)?.env(configured, functions, 9000)).toMatchObject({
-        FUNCTIONS_ROOT: `${state.identity.projectRoot}/supabase/functions`,
+        SUPABASE_INTERNAL_FUNCTIONS_ROOT: `${state.identity.projectRoot}/supabase/functions`,
         EDGE_RUNTIME_POLICY: "per_worker",
         EDGE_RUNTIME_DENO_VERSION: "2",
       });
@@ -217,11 +221,9 @@ describe("workload runtime catalog", () => {
       };
       const stackId = yield* deriveStackId(identity);
       const store = yield* makeStackStateStore({ stateRoot: root });
-      yield* store.write(stackId, {
+      yield* store.initialize(stackId, {
         ...state,
         identity: { ...identity, stackId },
-        desiredGeneration: 0,
-        portsGeneration: null,
         desiredLifecycle: "stopped",
         ports: [],
         privatePorts: [],
@@ -231,7 +233,6 @@ describe("workload runtime catalog", () => {
         stackId,
         disabledListenerIntents,
         {
-          lifecycle: "stopped",
           privateBindings: privateBindingIntentsFor(compiled.executionPlan),
         },
       );
@@ -471,14 +472,39 @@ describe("workload runtime catalog", () => {
     expect(containerResolutionFor(state, storage)?.startup).toEqual([
       { entrypoint: "/node/bin/node", command: ["dist/scripts/migrate-call.js"] },
     ]);
-    expect(containerResolutionFor(state, realtime)?.command).toEqual([]);
+    expect(containerResolutionFor(state, realtime)?.entrypoint).toBe("/usr/bin/tini");
+    expect(containerResolutionFor(state, realtime)?.command).toEqual([
+      "-s",
+      "-g",
+      "--",
+      "/app/bin/server",
+    ]);
+    expect(containerResolutionFor(state, realtime)?.startup).toEqual([
+      { entrypoint: "/app/bin/migrate", command: [] },
+      {
+        entrypoint: "/app/bin/realtime",
+        command: ["eval", "Realtime.Release.seeds(Realtime.Repo)"],
+      },
+    ]);
     expect(containerResolutionFor(state, analytics)?.command).toEqual([]);
-    expect(containerResolutionFor(state, pooler)?.command).toEqual([]);
+    expect(containerResolutionFor(state, pooler)?.entrypoint).toBe("/usr/bin/tini");
+    expect(containerResolutionFor(state, pooler)?.command).toEqual([
+      "-s",
+      "-g",
+      "--",
+      "/app/bin/server",
+    ]);
+    expect(containerResolutionFor(state, pooler)?.startup).toEqual([
+      { entrypoint: "/app/bin/migrate", command: [] },
+    ]);
     const poolerWithTenant = containerResolutionFor(state, pooler, tenantInput);
-    expect(poolerWithTenant?.command).toEqual([
-      "/usr/bin/sh",
-      "-c",
-      '/app/bin/supavisor eval "$(cat "$SUPABASE_POOLER_TENANT_PATH")" && exec /app/bin/server',
+    expect(poolerWithTenant?.command).toEqual(["-s", "-g", "--", "/app/bin/server"]);
+    expect(poolerWithTenant?.startup).toEqual([
+      { entrypoint: "/app/bin/migrate", command: [] },
+      {
+        entrypoint: "/usr/bin/sh",
+        command: ["-c", 'exec /app/bin/supavisor eval "$(cat "$SUPABASE_POOLER_TENANT_PATH")"'],
+      },
     ]);
     expect(poolerWithTenant?.mounts).toEqual([
       { source: "/tmp/pooler-tenant.exs", target: "/app/pooler_tenant.exs", readOnly: true },
@@ -511,7 +537,12 @@ describe("workload runtime catalog", () => {
               },
               functions: {
                 settings: {
-                  edge_runtime: { policy: "oneshot", deno_version: 1 },
+                  edge_runtime: {
+                    policy: "oneshot",
+                    deno_version: 1,
+                    verify_jwt_default: false,
+                    import_map_default: "shared-deno.json",
+                  },
                   inspector: { mode: "brk", main: true },
                   functions: { hello: { verify_jwt: false } },
                 },
@@ -575,6 +606,21 @@ describe("workload runtime catalog", () => {
         const rest = runtimeSpecFor(planned("rest:rest"));
         const storage = runtimeSpecFor(planned("storage:storage"));
         const functions = planned("functions:edge-runtime");
+        const functionsEnvironment = runtimeSpecFor(functions)?.env(
+          configured,
+          functions,
+          9000,
+          "native",
+        );
+        const functionsConfig = yield* Schema.decodeEffect(Schema.fromJsonString(Schema.Unknown))(
+          functionsEnvironment?.SUPABASE_INTERNAL_FUNCTIONS_CONFIG ?? "{}",
+        );
+        expect(functionsConfig).toMatchObject({
+          $default: {
+            verify_jwt: false,
+            import_map_root: "shared-deno.json",
+          },
+        });
         expect(runtimeSpecFor(functions)?.env(configured, functions, 9000, "native")).toMatchObject(
           {
             SUPABASE_URL: "http://127.0.0.1:54321",
@@ -728,7 +774,7 @@ describe("workload runtime catalog", () => {
           POOL_MODE: "session",
           MAX_CLIENT_CONN: "250",
           TENANT_ID: "pooler-dev",
-          PORT: "4000",
+          PORT: "30017",
           PROXY_PORT_SESSION: "30016",
           PROXY_PORT_TRANSACTION: "6543",
         });
@@ -740,6 +786,7 @@ describe("workload runtime catalog", () => {
         );
         expect(containerResolutionFor(configured, planned("pooler:pooler"))?.publications).toEqual([
           { address: "127.0.0.1", hostPort: 30016, containerPort: 5432 },
+          { address: "127.0.0.1", hostPort: 30017, containerPort: 4000 },
         ]);
         const resolution = containerResolutionFor(configured, functions, {
           hostRoute: { host: "host.docker.internal", gateway: "host-gateway" },
@@ -759,8 +806,10 @@ describe("workload runtime catalog", () => {
           EDGE_RUNTIME_DENO_VERSION: "1",
           INSPECTOR_MODE: "brk",
           INSPECTOR_MAIN: "true",
-          FUNCTIONS_FUNCTIONS_HELLO_VERIFY_JWT: "false",
         });
+        expect(
+          Object.keys(resolution?.env ?? {}).some((key) => key.startsWith("FUNCTIONS_FUNCTIONS_")),
+        ).toBe(false);
         expect(resolution?.env.EDGE_RUNTIME_PORT).toBe("9000");
         expect(resolution?.hostRoute).toEqual({
           host: "host.docker.internal",
@@ -793,6 +842,10 @@ describe("workload runtime catalog", () => {
           LOGFLARE_URL: "http://supabase-analytics:4000",
           EDGE_FUNCTIONS_MANAGEMENT_FOLDER: FUNCTIONS_CONTAINER_ROOT,
         });
+        expect(studio?.env(configured, planned("studio:studio"), 3000, "native")).toMatchObject({
+          SUPABASE_URL: "https://studio.example",
+          SUPABASE_PUBLIC_URL: "http://127.0.0.1:54321",
+        });
         expect(studio?.containerMounts?.(configured, planned("studio:studio"))).toEqual([
           {
             source: `${state.identity.projectRoot}/supabase/functions`,
@@ -815,6 +868,17 @@ describe("workload runtime catalog", () => {
           executable: "/tmp/native-artifact/node/bin/node",
           args: ["/tmp/native-artifact/app/apps/studio/docker-entrypoint.mjs"],
           cwd: "/tmp/native-artifact/app",
+        });
+        expect(
+          runtimeSpecFor(planned("database:database"))?.nativeProcess(
+            nodeArtifactRoot,
+            configured,
+            planned("database:database"),
+            5432,
+          ),
+        ).toMatchObject({
+          gracefulStopSignal: "SIGINT",
+          gracefulStopTimeout: "15 seconds",
         });
         expect(
           runtimeSpecFor(planned("analytics:vector"))?.nativeProcess(
@@ -1064,6 +1128,14 @@ describe("workload runtime catalog", () => {
       const spec = runtimeSpecFor(workload);
       expect(spec?.env(state, workload, 3000)[key]).toBe("symmetric-secret");
     }
+  });
+
+  it("uses managed per-stack Realtime encryption keys", () => {
+    const workload = planned("realtime:realtime");
+    expect(runtimeSpecFor(workload)?.env(state, workload, 3000)).toMatchObject({
+      DB_ENC_KEY: "realtime-db-key",
+      SECRET_KEY_BASE: "realtime-secret-base",
+    });
   });
 
   it.live("keeps Auth's local JWT secret alongside resolved JWKS material", () =>

@@ -1,11 +1,6 @@
 import { describe, expect, it } from "@effect/vitest";
-import { Cause, Deferred, Effect, Exit, Fiber, Option, Ref } from "effect";
-import * as TestClock from "effect/testing/TestClock";
-import {
-  RuntimeDriverError,
-  RuntimeGenerationMismatchError,
-  RuntimeReadinessTimeoutError,
-} from "../runtime/RuntimeDriver.ts";
+import { Cause, Deferred, Effect, Exit, Fiber, Ref, Stream } from "effect";
+import { RuntimeDriverError, RuntimeRestartBudgetExceededError } from "../runtime/RuntimeDriver.ts";
 import type { RuntimeDriver, ObservedWorkload } from "../runtime/RuntimeDriver.ts";
 import type { ExecutionPlan, PlannedWorkload } from "../model/ExecutionPlan.ts";
 import { StackIdSchema } from "../public/StackId.ts";
@@ -44,7 +39,6 @@ const planFor = (workloads: ReadonlyArray<PlannedWorkload>): ExecutionPlan => ({
     pooler: "eager",
   },
   startOrder: ["database"],
-  stopOrder: ["database"],
   dependencies: {
     database: [],
     rest: [],
@@ -69,6 +63,7 @@ const fakeDriver = (options: {
     const resources = yield* Ref.make<ReadonlyArray<ObservedWorkload>>([]);
     const starts = yield* Ref.make<ReadonlyArray<string>>([]);
     const driver: RuntimeDriver = {
+      watchFailures: Stream.empty,
       observe: () => Ref.get(resources),
       start: (key, entry) =>
         Effect.gen(function* () {
@@ -98,22 +93,17 @@ const fakeDriver = (options: {
           current.filter((entry) => entry.workloadId !== key.workloadId),
         ),
       cleanup: () => Effect.void,
-      recover: () => Effect.succeed([]),
     };
     return { driver, resources, starts };
   });
-
-const failureOf = <E>(exit: Exit.Exit<unknown, E>): E | undefined =>
-  Exit.isFailure(exit) ? Option.getOrUndefined(Cause.findErrorOption(exit.cause)) : undefined;
 
 describe("stack reconciler", () => {
   it.live("keeps independent branches running and blocks failed dependents", () =>
     Effect.gen(function* () {
       const { driver, starts } = yield* fakeDriver({ fail: new Set(["root"]) });
-      const reconciler = yield* makeReconciler({ driver, readGeneration: () => Effect.succeed(1) });
+      const reconciler = yield* makeReconciler({ driver });
       const result = yield* reconciler.reconcile({
         stackId,
-        desiredGeneration: 1,
         desiredLifecycle: "running",
         plan: planFor([workload("root"), workload("dependent", ["root"]), workload("independent")]),
       });
@@ -127,24 +117,20 @@ describe("stack reconciler", () => {
     Effect.gen(function* () {
       const { driver, resources } = yield* fakeDriver({ fail: new Set(["root"]) });
       yield* Ref.set(resources, [
-        { stackId, desiredGeneration: 1, workloadId: "root", specHash: "root", state: "failed" },
         {
           stackId,
-          desiredGeneration: 1,
           workloadId: "dependent",
           specHash: "dependent",
           state: "ready",
         },
         {
           stackId,
-          desiredGeneration: 1,
           workloadId: "leaf",
           specHash: "leaf",
           state: "ready",
         },
         {
           stackId,
-          desiredGeneration: 1,
           workloadId: "independent",
           specHash: "independent",
           state: "ready",
@@ -152,11 +138,9 @@ describe("stack reconciler", () => {
       ]);
       const reconciler = yield* makeReconciler({
         driver,
-        readGeneration: () => Effect.succeed(1),
       });
       const result = yield* reconciler.reconcile({
         stackId,
-        desiredGeneration: 1,
         desiredLifecycle: "running",
         plan: planFor([
           workload("root"),
@@ -175,72 +159,54 @@ describe("stack reconciler", () => {
     }),
   );
 
-  it.effect("reports a readiness deadline and preserves the bounded restart budget", () =>
+  it.live("bounds repeated post-readiness crashes and resets after stop", () =>
     Effect.gen(function* () {
-      const entered = [
-        yield* Deferred.make<void>(),
-        yield* Deferred.make<void>(),
-        yield* Deferred.make<void>(),
-        yield* Deferred.make<void>(),
-      ] as const;
+      const resources = yield* Ref.make<ReadonlyArray<ObservedWorkload>>([]);
       const starts = yield* Ref.make(0);
-      const generation = yield* Ref.make(1);
       const driver: RuntimeDriver = {
-        observe: () => Effect.succeed([]),
-        start: (_key) =>
+        watchFailures: Stream.empty,
+        observe: () => Ref.get(resources),
+        start: (key) =>
           Effect.gen(function* () {
-            const attempt = yield* Ref.updateAndGet(starts, (count) => count + 1);
-            const signal = entered[attempt - 1];
-            if (signal !== undefined) yield* Deferred.succeed(signal, undefined);
-            return yield* Effect.never;
+            yield* Ref.update(starts, (count) => count + 1);
+            const ready = { ...key, state: "ready" as const };
+            yield* Ref.set(resources, [ready]);
+            return ready;
           }),
-        stop: () => Effect.void,
+        stop: () => Ref.set(resources, []),
         remove: () => Effect.void,
         cleanup: () => Effect.void,
-        recover: () => Effect.succeed([]),
       };
       const reconciler = yield* makeReconciler({
         driver,
-        readGeneration: () => Ref.get(generation),
-        readinessTimeout: "5 millis",
       });
       const request = {
         stackId,
-        desiredGeneration: 1,
         desiredLifecycle: "running" as const,
-        plan: planFor([workload("slow", [], { maxAttempts: 2, backoffMs: 0 })]),
+        plan: planFor([workload("post-ready", [], { maxAttempts: 2, backoffMs: 0 })]),
       };
-      const fiber = yield* Effect.forkChild(reconciler.reconcile(request), {
-        startImmediately: true,
-      });
-      yield* Deferred.await(entered[0]);
-      yield* TestClock.adjust("1 second");
-      yield* Deferred.await(entered[1]);
-      yield* TestClock.adjust("1 second");
-      const result = yield* Fiber.join(fiber);
-      expect(result.failed[0]?.error).toBeInstanceOf(RuntimeReadinessTimeoutError);
+      const key = {
+        stackId,
+        workloadId: "post-ready",
+        specHash: "post-ready",
+      };
+      yield* Ref.set(resources, [{ ...key, state: "ready" }]);
+
+      for (let attempt = 0; attempt < 2; attempt += 1) {
+        yield* Ref.set(resources, [{ ...key, state: "failed", error: "crashed" }]);
+        const result = yield* reconciler.reconcile(request);
+        expect(result.started).toEqual(["post-ready"]);
+      }
+      yield* Ref.set(resources, [{ ...key, state: "failed", error: "crashed" }]);
+      const exhausted = yield* reconciler.reconcile(request);
+      expect(exhausted.failed[0]?.error).toBeInstanceOf(RuntimeRestartBudgetExceededError);
       expect(yield* Ref.get(starts)).toBe(2);
 
-      const second = yield* reconciler.reconcile({
-        ...request,
-      });
-      expect(second.failed[0]?.error).toBeDefined();
-      expect(yield* Ref.get(starts)).toBe(2);
-      yield* Ref.set(generation, 2);
-      const nextFiber = yield* Effect.forkChild(
-        reconciler.reconcile({
-          ...request,
-          desiredGeneration: 2,
-        }),
-        { startImmediately: true },
-      );
-      yield* Deferred.await(entered[2]);
-      yield* TestClock.adjust("1 second");
-      yield* Deferred.await(entered[3]);
-      yield* TestClock.adjust("1 second");
-      const nextGeneration = yield* Fiber.join(nextFiber);
-      expect(nextGeneration.failed[0]?.error).toBeInstanceOf(RuntimeReadinessTimeoutError);
-      expect(yield* Ref.get(starts)).toBe(4);
+      yield* reconciler.reconcile({ ...request, desiredLifecycle: "stopped" });
+      yield* Ref.set(resources, [{ ...key, state: "failed", error: "crashed" }]);
+      const reset = yield* reconciler.reconcile(request);
+      expect(reset.started).toEqual(["post-ready"]);
+      expect(yield* Ref.get(starts)).toBe(3);
     }),
   );
 
@@ -252,6 +218,7 @@ describe("stack reconciler", () => {
       const entered = yield* Deferred.make<void>();
       const release = yield* Deferred.make<void>();
       const driver: RuntimeDriver = {
+        watchFailures: Stream.empty,
         observe: () => Ref.get(resources),
         start: (key, _entry) =>
           Effect.gen(function* () {
@@ -267,12 +234,10 @@ describe("stack reconciler", () => {
         stop: () => Effect.void,
         remove: () => Effect.void,
         cleanup: () => Effect.void,
-        recover: () => Effect.succeed([]),
       };
-      const reconciler = yield* makeReconciler({ driver, readGeneration: () => Effect.succeed(1) });
+      const reconciler = yield* makeReconciler({ driver });
       const request = {
         stackId,
-        desiredGeneration: 1,
         desiredLifecycle: "running" as const,
         plan: planFor([workload("one")]),
       };
@@ -292,41 +257,6 @@ describe("stack reconciler", () => {
     }),
   );
 
-  it.live("fences a generation change after a driver mutation without retrying", () =>
-    Effect.gen(function* () {
-      const generation = yield* Ref.make(1);
-      const starts = yield* Ref.make(0);
-      const driver: RuntimeDriver = {
-        observe: () => Effect.succeed([]),
-        start: (key, _entry) => {
-          const ready: ObservedWorkload = { ...key, state: "ready" };
-          return Ref.update(starts, (count) => count + 1).pipe(
-            Effect.andThen(Ref.set(generation, 2)),
-            Effect.andThen(Effect.succeed(ready)),
-          );
-        },
-        stop: () => Effect.void,
-        remove: () => Effect.void,
-        cleanup: () => Effect.void,
-        recover: () => Effect.succeed([]),
-      };
-      const reconciler = yield* makeReconciler({
-        driver,
-        readGeneration: () => Ref.get(generation),
-      });
-      const exit = yield* reconciler
-        .reconcile({
-          stackId,
-          desiredGeneration: 1,
-          desiredLifecycle: "running",
-          plan: planFor([workload("fenced")]),
-        })
-        .pipe(Effect.exit);
-      expect(failureOf(exit)).toBeInstanceOf(RuntimeGenerationMismatchError);
-      expect(yield* Ref.get(starts)).toBe(1);
-    }),
-  );
-
   it.live("releases lifecycle serialization when a waiting caller is interrupted", () =>
     Effect.gen(function* () {
       const started = yield* Deferred.make<void>();
@@ -334,6 +264,7 @@ describe("stack reconciler", () => {
       const blocked = yield* Ref.make(true);
       const starts = yield* Ref.make(0);
       const driver: RuntimeDriver = {
+        watchFailures: Stream.empty,
         observe: () => Effect.succeed([]),
         start: (key) => {
           const ready: ObservedWorkload = { ...key, state: "ready" };
@@ -350,15 +281,12 @@ describe("stack reconciler", () => {
         stop: () => Effect.void,
         remove: () => Effect.void,
         cleanup: () => Effect.void,
-        recover: () => Effect.succeed([]),
       };
       const reconciler = yield* makeReconciler({
         driver,
-        readGeneration: () => Effect.succeed(1),
       });
       const request = {
         stackId,
-        desiredGeneration: 1,
         desiredLifecycle: "running" as const,
         plan: planFor([workload("interruptible")]),
       };
@@ -379,24 +307,22 @@ describe("stack reconciler", () => {
     Effect.gen(function* () {
       const trace = yield* Ref.make<ReadonlyArray<string>>([]);
       const resources: ReadonlyArray<ObservedWorkload> = [
-        { stackId, desiredGeneration: 1, workloadId: "a", specHash: "a", state: "ready" },
-        { stackId, desiredGeneration: 1, workloadId: "b", specHash: "b", state: "ready" },
+        { stackId, workloadId: "a", specHash: "a", state: "ready" },
+        { stackId, workloadId: "b", specHash: "b", state: "ready" },
       ];
       const driver: RuntimeDriver = {
+        watchFailures: Stream.empty,
         observe: () => Effect.succeed(resources),
         start: () => Effect.die("unexpected start"),
         stop: (key) => Ref.update(trace, (current) => [...current, `stop:${key.workloadId}`]),
         remove: (key) => Ref.update(trace, (current) => [...current, `remove:${key.workloadId}`]),
         cleanup: () => Effect.void,
-        recover: () => Effect.succeed([]),
       };
       const reconciler = yield* makeReconciler({
         driver,
-        readGeneration: () => Effect.succeed(1),
       });
       yield* reconciler.reconcile({
         stackId,
-        desiredGeneration: 1,
         desiredLifecycle: "stopped",
         plan: planFor([workload("a"), workload("b", ["a"])]),
       });
@@ -404,16 +330,14 @@ describe("stack reconciler", () => {
     }),
   );
 
-  it.live("resets a generation-scoped restart budget after an explicit stop", () =>
+  it.live("resets the restart budget after an explicit stop", () =>
     Effect.gen(function* () {
       const { driver, starts } = yield* fakeDriver({ fail: new Set(["retryable"]) });
       const reconciler = yield* makeReconciler({
         driver,
-        readGeneration: () => Effect.succeed(1),
       });
       const request = {
         stackId,
-        desiredGeneration: 1,
         desiredLifecycle: "running" as const,
         plan: planFor([workload("retryable")]),
       };
@@ -429,6 +353,7 @@ describe("stack reconciler", () => {
   it.live("preserves defects in a mixed driver Cause instead of reporting budget exhaustion", () =>
     Effect.gen(function* () {
       const driver: RuntimeDriver = {
+        watchFailures: Stream.empty,
         observe: () => Effect.succeed([]),
         start: () =>
           Effect.failCause(
@@ -442,16 +367,13 @@ describe("stack reconciler", () => {
         stop: () => Effect.void,
         remove: () => Effect.void,
         cleanup: () => Effect.void,
-        recover: () => Effect.succeed([]),
       };
       const reconciler = yield* makeReconciler({
         driver,
-        readGeneration: () => Effect.succeed(1),
       });
       const exit = yield* reconciler
         .reconcile({
           stackId,
-          desiredGeneration: 1,
           desiredLifecycle: "running",
           plan: planFor([workload("mixed")]),
         })

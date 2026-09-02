@@ -265,7 +265,7 @@ export const legacyDeclarativeSchemaWrittenLine = (dir: string): string =>
  * files may be deleted. Name the survivors and give the one instruction that
  * actually produces a clean tree.
  */
-export const legacyPreservedUnmanagedDeclarativeFilesWarning = (
+const legacyPreservedUnmanagedDeclarativeFilesWarning = (
   dir: string,
   files: ReadonlyArray<string>,
 ): string =>

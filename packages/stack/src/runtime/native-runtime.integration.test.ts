@@ -41,7 +41,6 @@ const workload = (id: string, bootstrap?: "database"): PlannedWorkload => ({
 
 const keyFor = (id: string): RuntimeWorkloadKey => ({
   stackId,
-  desiredGeneration: 1,
   workloadId: `database:${id}`,
   specHash: id,
 });
@@ -133,6 +132,41 @@ describe("native runtime", { timeout: 15_000 }, () => {
         yield* runtime.remove(key);
         expect(yield* runtime.observe(stackId)).toEqual([]);
         expect((yield* logStore.read()).map((entry) => entry.message)).toContain("[REDACTED]");
+      }),
+    ),
+  );
+
+  it.live("publishes an unexpected native workload exit after readiness", () =>
+    withPlatform(
+      Effect.gen(function* () {
+        let startedProcess: NativeProcess | undefined;
+        const runtime = yield* makeNativeRuntime({
+          resolveProcess: () => Effect.succeed(processPlan(fixtureProcess("native-watch"))),
+          waitForReadiness: (_key, _workload, process) =>
+            Effect.sync(() => {
+              startedProcess = process;
+            }),
+        });
+        const failures = runtime.watchFailures;
+        expect(failures).toBeDefined();
+        if (failures === undefined) return;
+        const eventFiber = yield* failures.pipe(
+          Stream.take(1),
+          Stream.runCollect,
+          Effect.forkChild({ startImmediately: true }),
+        );
+        const ready = yield* runtime.start(keyFor("watch"), workload("watch"));
+        expect(ready.state).toBe("ready");
+        expect(startedProcess).toBeDefined();
+        if (startedProcess !== undefined) yield* startedProcess.kill;
+        const events = yield* Fiber.join(eventFiber);
+        expect(events).toEqual([
+          expect.objectContaining({
+            workloadId: keyFor("watch").workloadId,
+            state: "failed",
+          }),
+        ]);
+        yield* runtime.remove(keyFor("watch"));
       }),
     ),
   );

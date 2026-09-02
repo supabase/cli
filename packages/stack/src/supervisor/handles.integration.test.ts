@@ -17,7 +17,6 @@ import {
   Stream,
 } from "effect";
 import { ChildProcess } from "effect/unstable/process";
-import { compileStack } from "../model/Compiler.ts";
 import { CAPABILITY_NAMES } from "../public/Capability.ts";
 import {
   createStack,
@@ -50,7 +49,6 @@ import {
   ContainerEngineError,
   StackPreparationError,
   StackRuntimeMismatchError,
-  StackUpgradeRequiredError,
 } from "../public/Errors.ts";
 import { ContainerEngineProtocolError } from "../runtime/ContainerEngine.ts";
 import { ContainerEngineResolver } from "../runtime/ContainerEngineResolver.ts";
@@ -77,7 +75,7 @@ const withRuntimeRoot = <A, E, R>(effect: (project: string) => Effect.Effect<A, 
         yield* Effect.forEach(
           entries,
           (entry) =>
-            Schema.is(StackIdSchema)(entry) ? quiesceOwner(StackIdSchema.make(entry)) : Effect.void,
+            Schema.is(StackIdSchema)(entry) ? stopOwner(StackIdSchema.make(entry)) : Effect.void,
           { discard: true },
         );
       });
@@ -88,7 +86,7 @@ const withRuntimeRoot = <A, E, R>(effect: (project: string) => Effect.Effect<A, 
     }),
   ).pipe(Effect.provide(NodeServices.layer));
 
-const quiesceOwner = (id: StackId) =>
+const stopOwner = (id: StackId) =>
   Effect.gen(function* () {
     const env = yield* StackRuntimeEnvironment;
     const fs = yield* FileSystem.FileSystem;
@@ -110,7 +108,7 @@ const quiesceOwner = (id: StackId) =>
         stackId: id,
         ownerSessionId: owner.ownerSessionId,
         rpcRelease: owner.rpcRelease,
-      }).quiesce(),
+      }).stop(),
     );
     const remaining = yield* readOwnerMetadata(env.stateRoot, id, env);
     if (remaining === undefined) {
@@ -353,8 +351,6 @@ describe("managed stack handles", { timeout: 30_000 }, () => {
           format: "supabase-stack-state-v1",
           identity: { ...identity, stackId },
           runtime: { kind: "native" },
-          desiredGeneration: 0,
-          portsGeneration: null,
           desiredLifecycle: "stopped",
           ports: [],
           privatePorts: [],
@@ -374,7 +370,6 @@ describe("managed stack handles", { timeout: 30_000 }, () => {
           lifecycle: "stopped",
           desiredLifecycle: "stopped",
           runtime: { kind: "native" },
-          desiredGeneration: 0,
           endpoints: {},
           versions: {},
           capabilities: CAPABILITY_NAMES.map((name) => ({
@@ -420,7 +415,6 @@ describe("managed stack handles", { timeout: 30_000 }, () => {
               rpcRelease: STACK_RPC_RELEASE,
             }),
             stop: Effect.succeed({ ok: true, op: "stop" }),
-            quiesce: Effect.succeed({ ok: true, op: "quiesce" }),
           },
           rpcHandlers: handlers,
         });
@@ -450,8 +444,6 @@ describe("managed stack handles", { timeout: 30_000 }, () => {
           format: "supabase-stack-state-v1",
           identity: { ...identity, stackId },
           runtime: { kind: "native" },
-          desiredGeneration: 0,
-          portsGeneration: null,
           desiredLifecycle: "stopped",
           ports: [],
           privatePorts: [],
@@ -472,7 +464,6 @@ describe("managed stack handles", { timeout: 30_000 }, () => {
           lifecycle: "stopped",
           desiredLifecycle: "stopped",
           runtime: { kind: "native" },
-          desiredGeneration: 0,
           endpoints: {},
           versions: {},
           capabilities: CAPABILITY_NAMES.map((name) => ({
@@ -501,7 +492,6 @@ describe("managed stack handles", { timeout: 30_000 }, () => {
               rpcRelease: STACK_RPC_RELEASE,
             }),
             stop: Effect.succeed({ ok: true, op: "stop" }),
-            quiesce: Effect.succeed({ ok: true, op: "quiesce" }),
           },
           rpcHandlers: {
             status: () => Effect.succeed(status),
@@ -518,12 +508,11 @@ describe("managed stack handles", { timeout: 30_000 }, () => {
             logs: () => Stream.empty,
             watchStatus: () => Stream.make(status),
           },
-          onDestroyResponse: () =>
-            Deferred.succeed(callbackStarted, undefined).pipe(
-              Effect.andThen(Deferred.await(callbackRelease)),
-              Effect.andThen(Deferred.succeed(callbackCompleted, undefined)),
-              Effect.asVoid,
-            ),
+          onShutdownReady: Deferred.succeed(callbackStarted, undefined).pipe(
+            Effect.andThen(Deferred.await(callbackRelease)),
+            Effect.andThen(Deferred.succeed(callbackCompleted, undefined)),
+            Effect.asVoid,
+          ),
         }).pipe(Effect.provideService(Scope.Scope, ownerScope));
         const stack = yield* openStack(stackId);
         const destroyFiber = yield* Effect.forkChild(
@@ -559,79 +548,6 @@ describe("managed stack handles", { timeout: 30_000 }, () => {
     ),
   );
 
-  it.live("publishes an attachable owner before corrupt persisted recovery fails", () =>
-    withRuntimeRoot((project) =>
-      Effect.gen(function* () {
-        const env = yield* StackRuntimeEnvironment;
-        const identity = yield* resolveStackIdentity({ projectRoot: project });
-        const stackId = yield* deriveStackId(identity);
-        const store = yield* makeStackStateStore({ stateRoot: env.stateRoot });
-        const compiled = yield* compileStack({
-          projectRoot: project,
-          runtime: { kind: "native" },
-          config: { capabilities: { rest: {} } },
-        });
-        const corruptDefinition = {
-          ...compiled.definition,
-          capabilities: {
-            ...compiled.definition.capabilities,
-            rest: { ...compiled.definition.capabilities.rest, version: "unsupported" },
-          },
-        };
-        const persisted = {
-          format: "supabase-stack-state-v1" as const,
-          identity: { ...identity, stackId },
-          runtime: { kind: "native" } as const,
-          desiredGeneration: 1,
-          portsGeneration: null,
-          desiredLifecycle: "running" as const,
-          definition: corruptDefinition,
-          inputFingerprint: compiled.inputFingerprint,
-          ports: [],
-          privatePorts: [],
-          secrets: {},
-        };
-        yield* store.initialize(stackId, persisted);
-        const stack = yield* createStack({
-          projectRoot: project,
-          runtime: { kind: "native" },
-        });
-        yield* Effect.gen(function* () {
-          const failed = yield* stack.watchStatus().pipe(
-            Stream.filter(
-              (status) =>
-                status.lifecycle === "stopped" &&
-                status.capabilities.some(
-                  ({ name, state }) => name === "rest" && state === "failed",
-                ),
-            ),
-            Stream.runHead,
-            Effect.timeout("30 seconds"),
-          );
-          const attached = Option.isSome(failed) ? yield* openStack(stack.id) : undefined;
-          if (attached !== undefined) {
-            const status = yield* attached.status();
-            expect(status.lifecycle).toBe("stopped");
-            expect(status.capabilities.find(({ name }) => name === "rest")?.state).toBe("failed");
-            yield* attached.close();
-          }
-          expect(Option.isSome(failed)).toBe(true);
-        }).pipe(
-          Effect.ensuring(
-            store
-              .replace(
-                stack.id,
-                { ...persisted, definition: compiled.definition },
-                persisted.desiredGeneration,
-              )
-              .pipe(Effect.ignore),
-          ),
-        );
-        yield* stack.close();
-      }),
-    ),
-  );
-
   it.live("discovery never creates an identity", () =>
     withRuntimeRoot((project) =>
       Effect.gen(function* () {
@@ -662,39 +578,6 @@ describe("managed stack handles", { timeout: 30_000 }, () => {
         const second = yield* openStack(id);
         expect((yield* second.status()).lifecycle).toBe("unconfigured");
         yield* second.close();
-      }),
-    ),
-  );
-
-  it.live("rejects an incompatible owner release without replacing the owner", () =>
-    withRuntimeRoot((project) =>
-      Effect.gen(function* () {
-        const stack = yield* createStack({ projectRoot: project });
-        const env = yield* StackRuntimeEnvironment;
-        const fs = yield* FileSystem.FileSystem;
-        const paths = yield* resolveStackPaths({ stateRoot: env.stateRoot, stackId: stack.id });
-        const metadata = yield* readOwnerMetadata(env.stateRoot, stack.id, env);
-        expect(metadata).not.toBeUndefined();
-        const current = yield* fs.readFileString(paths.controlMetadata);
-        yield* fs.writeFileString(
-          paths.controlMetadata,
-          current.replace(STACK_RPC_RELEASE, "stack-rpc-v0@0.0.1"),
-        );
-        const opened = yield* openStack(stack.id).pipe(Effect.exit);
-        expect(Exit.isFailure(opened)).toBe(true);
-        if (Exit.isFailure(opened)) {
-          const error = Option.getOrUndefined(Cause.findErrorOption(opened.cause));
-          expect(error).toBeInstanceOf(StackUpgradeRequiredError);
-        }
-        const recreated = yield* createStack({ projectRoot: project }).pipe(Effect.exit);
-        expect(Exit.isFailure(recreated)).toBe(true);
-        if (Exit.isFailure(recreated)) {
-          const error = Option.getOrUndefined(Cause.findErrorOption(recreated.cause));
-          expect(error).toBeInstanceOf(StackUpgradeRequiredError);
-        }
-        const inspected = yield* inspectStack(stack.id);
-        expect(inspected.owner).toBe("incompatible");
-        yield* stack.close();
       }),
     ),
   );

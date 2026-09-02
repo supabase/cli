@@ -4,7 +4,8 @@ import {
   Effect,
   Exit,
   Fiber,
-  Option,
+  PubSub,
+  Ref,
   Scope,
   Semaphore,
   Stream,
@@ -34,7 +35,6 @@ import {
 import {
   RuntimeDriverError,
   type RuntimeCleanupRequest,
-  type RuntimeRecoveryRequest,
   type ObservedWorkload,
   type RuntimeDriver,
   type RuntimeWorkloadKey,
@@ -55,7 +55,7 @@ export interface ContainerRuntimeOptions {
     workload: PlannedWorkload,
     resource: ContainerResource,
   ) => Effect.Effect<void, RuntimeDriverError>;
-  /** Probes an adopted or newly-started workload before reporting it ready. */
+  /** Probes a newly-started workload before reporting it ready. */
   readonly waitForReadiness?: (
     key: RuntimeWorkloadKey,
     workload: PlannedWorkload,
@@ -66,6 +66,8 @@ export interface ContainerRuntimeOptions {
 }
 
 export interface ContainerWorkloadResolution {
+  /** Optional main-container entrypoint override (startup processes are explicit). */
+  readonly entrypoint?: string;
   readonly mounts?: ReadonlyArray<ContainerMount>;
   readonly volume?: ContainerVolumeRequest;
   /** Path to an owned env file; secret bytes are kept out of engine argv. */
@@ -102,7 +104,6 @@ interface ContainerVolumeRequest {
 
 interface ContainerRuntimeResourceIds {
   readonly container: string;
-  readonly network: string;
   readonly state: "running" | "stopped" | "failed";
   readonly error?: string;
 }
@@ -110,18 +111,20 @@ interface ContainerRuntimeResourceIds {
 interface ContainerRuntimeResource extends ContainerRuntimeResourceIds {
   readonly key: RuntimeWorkloadKey;
   readonly workload: PlannedWorkload;
+  readonly ownerSessionId: string;
   readonly failure: Deferred.Deferred<never, RuntimeDriverError>;
   logFiber?: Fiber.Fiber<void, never>;
+  watchFiber?: Fiber.Fiber<void, never>;
   stopRequested: boolean;
 }
 
 const resourceKey = (key: RuntimeWorkloadKey): string =>
-  `${key.stackId}:${key.desiredGeneration}:${key.workloadId}:${key.specHash}`;
+  `${key.stackId}:${key.workloadId}:${key.specHash}`;
 
 const nameFor = (key: RuntimeWorkloadKey, role: ContainerResourceRole): string =>
   role === "network"
-    ? `supabase-${key.stackId.slice(0, 16)}-${key.desiredGeneration}-network`
-    : `supabase-${key.stackId.slice(0, 16)}-${key.desiredGeneration}-${key.workloadId.replace(/[^A-Za-z0-9_.-]/g, "-")}-${role}`;
+    ? `supabase-${key.stackId.slice(0, 16)}-network`
+    : `supabase-${key.stackId.slice(0, 16)}-${key.workloadId.replace(/[^A-Za-z0-9_.-]/g, "-")}-${role}`;
 
 const networkLabelsFor = (
   key: RuntimeWorkloadKey,
@@ -129,7 +132,6 @@ const networkLabelsFor = (
 ): ContainerNetworkLabels => ({
   stackId: key.stackId,
   ownerSessionId,
-  desiredGeneration: key.desiredGeneration,
   role: "network",
 });
 const workloadLabelsFor = (
@@ -138,7 +140,6 @@ const workloadLabelsFor = (
 ): ContainerWorkloadLabels => ({
   stackId: key.stackId,
   ownerSessionId,
-  desiredGeneration: key.desiredGeneration,
   workloadId: key.workloadId,
   specHash: key.specHash,
   role: "workload",
@@ -187,7 +188,6 @@ const sameLabels = (left: ContainerLabels, right: ContainerLabels): boolean =>
       "ownerSessionId" in left &&
       "ownerSessionId" in right &&
       left.ownerSessionId === right.ownerSessionId &&
-      left.desiredGeneration === right.desiredGeneration &&
       (left.role === "network" ||
         ("workloadId" in left &&
           "workloadId" in right &&
@@ -196,19 +196,19 @@ const sameLabels = (left: ContainerLabels, right: ContainerLabels): boolean =>
           "specHash" in right &&
           left.specHash === right.specHash)));
 
-/** Recovery identity deliberately excludes ownerSessionId. The ownership lock fences adoption. */
+/** Workload identity deliberately excludes ownerSessionId; stack ownership is fenced externally. */
 const sameWorkloadIdentity = (left: ContainerLabels, right: ContainerWorkloadLabels): boolean =>
   left.role === "workload" &&
   left.stackId === right.stackId &&
-  left.desiredGeneration === right.desiredGeneration &&
   left.workloadId === right.workloadId &&
   left.specHash === right.specHash;
 
-/** Networks are adopted by stack and desired generation, never by old owner session. */
+/** Networks are identified by stack identity. */
 const sameNetworkIdentity = (left: ContainerLabels, right: ContainerNetworkLabels): boolean =>
   left.role === "network" &&
   left.stackId === right.stackId &&
-  left.desiredGeneration === right.desiredGeneration;
+  "ownerSessionId" in left &&
+  left.ownerSessionId === right.ownerSessionId;
 
 const toDriverError = (
   key: Pick<RuntimeWorkloadKey, "stackId" | "workloadId">,
@@ -252,16 +252,17 @@ const isValidPublication = (
 /** RuntimeDriver implementation backed by one exact, injected container engine. */
 export const makeContainerRuntime = (
   options: ContainerRuntimeOptions,
-): Effect.Effect<RuntimeDriver, never> =>
+): Effect.Effect<RuntimeDriver, never, Scope.Scope> =>
   Effect.gen(function* () {
     const startupProcessTimeout =
       options.startupProcessTimeout ?? ("5 minutes" satisfies Duration.Input);
-    const parentScope = yield* Effect.serviceOption(Scope.Scope);
-    const runtimeScope = Option.isSome(parentScope)
-      ? yield* Scope.fork(parentScope.value, "parallel")
-      : yield* Scope.make("parallel");
+    const parentScope = yield* Scope.Scope;
+    const runtimeScope = yield* Scope.fork(parentScope, "parallel");
     const lifecycle = yield* Semaphore.make(1);
     const resources = new Map<string, ContainerRuntimeResource>();
+    const startGuards = new Map<string, Ref.Ref<boolean>>();
+    const startFibers = new Map<string, Fiber.Fiber<ObservedWorkload, RuntimeDriverError>>();
+    const failures = yield* PubSub.unbounded<ObservedWorkload>();
 
     const withEngine = <A>(
       key: Pick<RuntimeWorkloadKey, "stackId" | "workloadId">,
@@ -272,13 +273,19 @@ export const makeContainerRuntime = (
     const stopLogs = (resource: ContainerRuntimeResource): Effect.Effect<void> =>
       resource.logFiber === undefined ? Effect.void : Fiber.interrupt(resource.logFiber);
 
-    const reportLogFailure = (
+    const stopExitWatcher = (resource: ContainerRuntimeResource): Effect.Effect<void> =>
+      resource.watchFiber === undefined ? Effect.void : Fiber.interrupt(resource.watchFiber);
+
+    const reportFailure = (
       resource: ContainerRuntimeResource,
       error: unknown,
+      message = `Container workload failed for ${resource.key.workloadId}`,
     ): Effect.Effect<void> => {
-      if (resource.stopRequested) return Effect.void;
+      const current = resources.get(resourceKey(resource.key));
+      if (resource.stopRequested || current !== resource || resource.state === "failed")
+        return Effect.void;
       const failure = new RuntimeDriverError({
-        message: `Container log stream failed for ${resource.key.workloadId}`,
+        message,
         stackId: resource.key.stackId,
         workloadId: resource.key.workloadId,
         cause: error,
@@ -288,7 +295,14 @@ export const makeContainerRuntime = (
         state: "failed",
         error: failure.message,
       });
-      return Deferred.fail(resource.failure, failure).pipe(Effect.asVoid);
+      return Effect.all([
+        PubSub.publish(failures, {
+          ...resource.key,
+          state: "failed",
+          error: failure.message,
+        }),
+        Deferred.fail(resource.failure, failure),
+      ]).pipe(Effect.asVoid);
     };
 
     const attachLogs = (
@@ -298,7 +312,11 @@ export const makeContainerRuntime = (
       const logStore = options.logStore;
       if (logStore === undefined) return Effect.void;
       if (options.engine.streamLogs === undefined)
-        return reportLogFailure(resource, new Error("Container log streaming is unavailable"));
+        return reportFailure(
+          resource,
+          new Error("Container log streaming is unavailable"),
+          `Container log stream failed for ${resource.key.workloadId}`,
+        );
       const stream = options.engine.streamLogs(resource.container, { tail });
       const consume = stream.pipe(
         Stream.runForEach((line) =>
@@ -311,13 +329,46 @@ export const makeContainerRuntime = (
             .pipe(Effect.asVoid),
         ),
         Effect.mapError((error) => toDriverError(resource.key, error)),
-        Effect.catch((error) => reportLogFailure(resource, error)),
+        Effect.catch((error) =>
+          reportFailure(
+            resource,
+            error,
+            `Container log stream failed for ${resource.key.workloadId}`,
+          ),
+        ),
       );
       return Effect.gen(function* () {
         resource.logFiber = yield* Effect.forkIn(consume, runtimeScope);
         // Give the follower one scheduling turn so process acquisition begins before readiness.
         yield* Effect.yieldNow;
       });
+    };
+
+    const attachExitWatcher = (resource: ContainerRuntimeResource): Effect.Effect<void> => {
+      if (resource.watchFiber !== undefined) return Effect.void;
+      const wait = Effect.exit(
+        withEngine(resource.key, options.engine.waitContainer(resource.container)),
+      ).pipe(
+        Effect.flatMap((result) =>
+          resource.stopRequested
+            ? Effect.void
+            : reportFailure(
+                resource,
+                Exit.isFailure(result)
+                  ? result.cause
+                  : new Error(`Container exited with code ${String(result.value)}`),
+              ),
+        ),
+        Effect.ignore,
+      );
+      return Effect.forkIn(wait, runtimeScope).pipe(
+        Effect.tap((fiber) =>
+          Effect.sync(() => {
+            resource.watchFiber = fiber;
+          }),
+        ),
+        Effect.asVoid,
+      );
     };
 
     const observe = (
@@ -332,7 +383,6 @@ export const makeContainerRuntime = (
             .map((entry) => {
               const key: RuntimeWorkloadKey = {
                 stackId: entry.labels.stackId,
-                desiredGeneration: entry.labels.desiredGeneration,
                 workloadId: entry.labels.workloadId,
                 specHash: entry.labels.specHash,
               };
@@ -356,7 +406,7 @@ export const makeContainerRuntime = (
     const runStartupProcess = (
       key: RuntimeWorkloadKey,
       workload: PlannedWorkload,
-      process: ContainerStartupProcess,
+      startupProcess: ContainerStartupProcess,
       index: number,
       context: Readonly<{
         readonly artifact: ContainerArtifact;
@@ -377,8 +427,8 @@ export const makeContainerRuntime = (
           context.volumeRequest === undefined ? [] : [volumeMountFor(key, context.volumeRequest)],
         publications: [],
         role: "workload",
-        entrypoint: process.entrypoint,
-        command: process.command,
+        entrypoint: startupProcess.entrypoint,
+        command: startupProcess.command,
         ...(context.resolution.envFile === undefined
           ? {}
           : { envFile: context.resolution.envFile }),
@@ -478,16 +528,37 @@ export const makeContainerRuntime = (
         options.resolveWorkload === undefined
           ? Effect.succeed<ContainerWorkloadResolution>({})
           : options.resolveWorkload(key, workload);
+      const id = resourceKey(key);
+      const guard = Effect.gen(function* () {
+        const current = startGuards.get(id);
+        if (current === undefined)
+          return yield* toDriverError(
+            key,
+            new Error("Container workload start was not registered"),
+          );
+        const stopped = yield* Ref.get(current);
+        if (stopped)
+          return yield* toDriverError(key, new Error("Container workload start was stopped"));
+      });
       const startEffect = Effect.gen(function* () {
+        yield* guard;
         const existing = resources.get(resourceKey(key));
+        if (
+          existing !== undefined &&
+          existing.ownerSessionId === options.ownerSessionId &&
+          existing.state === "running"
+        )
+          return { ...key, state: "ready" } satisfies ObservedWorkload;
         if (existing !== undefined && existing.state !== "running") {
           existing.stopRequested = true;
           yield* stopLogs(existing);
+          yield* stopExitWatcher(existing);
           if (existing.state === "failed")
             yield* withEngine(key, options.engine.stopContainer(existing.container));
           resources.delete(resourceKey(key));
         }
         const resolution = yield* resolved;
+        yield* guard;
         const requestedPublications = resolution.publications ?? [];
         if (requestedPublications.some((publication) => !isValidPublication(publication)))
           return yield* toDriverError(
@@ -521,7 +592,7 @@ export const makeContainerRuntime = (
               return yield* toDriverError(key, new Error("Container volume identity collision"));
           }
         }
-        const exact = entries.find(
+        const existingExact = entries.find(
           (entry) => entry.kind === "workload" && sameWorkloadIdentity(entry.labels, labels),
         );
         const namedCollision = entries.find(
@@ -532,7 +603,7 @@ export const makeContainerRuntime = (
             ? namedCollision
             : undefined;
         if (
-          exact === undefined &&
+          existingExact === undefined &&
           namedCollision !== undefined &&
           (collision === undefined ||
             collision.labels.stackId !== key.stackId ||
@@ -564,14 +635,21 @@ export const makeContainerRuntime = (
             new Error("Container network name is owned by another stack"),
           );
 
-        if (exact === undefined)
-          yield* withEngine(key, options.engine.inspectImage(artifact.image)).pipe(
-            Effect.flatMap((inspected) =>
-              inspected.present
-                ? Effect.void
-                : withEngine(key, options.engine.pullImage(artifact.image)),
-            ),
-          );
+        // A new owner never adopts a durable container. Remove any exact identity first;
+        // lifecycle ownership has already fenced the stack before this activation.
+        if (existingExact !== undefined) {
+          if (existingExact.state === "running")
+            yield* withEngine(key, options.engine.stopContainer(existingExact.id));
+          yield* withEngine(key, options.engine.removeContainer(existingExact.id));
+        }
+        yield* withEngine(key, options.engine.inspectImage(artifact.image)).pipe(
+          Effect.flatMap((inspected) =>
+            inspected.present
+              ? Effect.void
+              : withEngine(key, options.engine.pullImage(artifact.image)),
+          ),
+        );
+        yield* guard;
 
         if (exactNetwork === undefined && networkCollision !== undefined)
           yield* withEngine(key, options.engine.removeNetwork(networkCollision.id));
@@ -594,77 +672,70 @@ export const makeContainerRuntime = (
             yield* withEngine(key, options.engine.createVolume(volume));
         }
 
-        if (exact === undefined && collision !== undefined) {
+        if (collision !== undefined && collision.id !== existingExact?.id) {
           if (collision.state === "running")
             yield* withEngine(key, options.engine.stopContainer(collision.id));
           yield* withEngine(key, options.engine.removeContainer(collision.id));
         }
 
-        if (exact === undefined)
-          for (const [index, startup] of (resolution.startup ?? []).entries())
-            yield* runStartupProcess(key, workload, startup, index, {
-              artifact,
-              network: networkResource,
-              resolution,
-              ...(volumeRequest === undefined ? {} : { volumeRequest }),
-            });
+        for (const [index, startup] of (resolution.startup ?? []).entries())
+          yield* runStartupProcess(key, workload, startup, index, {
+            artifact,
+            network: networkResource,
+            resolution,
+            ...(volumeRequest === undefined ? {} : { volumeRequest }),
+          });
+        yield* guard;
 
-        let container: ContainerResource;
         let created = false;
         let startedByUs = false;
-        if (exact !== undefined) {
-          container = exact;
-          if (exact.state !== "running") {
-            yield* withEngine(key, options.engine.startContainer(exact.id));
-            startedByUs = true;
-          }
-        } else {
-          container = yield* withEngine(
-            key,
-            options.engine.createContainer({
-              name: nameFor(key, "workload"),
-              image: artifact.image,
-              labels,
-              network: networkResource.id,
-              mounts: resolution.mounts ?? [],
-              publications,
-              volumeMounts: volumeRequest === undefined ? [] : [volumeMountFor(key, volumeRequest)],
-              role: "workload",
-              ...(resolution.envFile === undefined ? {} : { envFile: resolution.envFile }),
-              ...(resolution.networkAliases === undefined
-                ? {}
-                : { networkAliases: resolution.networkAliases }),
-              ...(resolution.hostRoute === undefined ? {} : { hostRoute: resolution.hostRoute }),
-              ...(resolution.command === undefined ? {} : { command: resolution.command }),
-            } satisfies ContainerContainerSpec),
-          );
-          created = true;
-          if (resolution.bootstrap !== undefined) {
-            const copied = yield* Effect.exit(
-              withEngine(
-                key,
-                options.engine.copyToContainer(
-                  container.id,
-                  resolution.bootstrap.source,
-                  resolution.bootstrap.destination,
-                ),
+        const container = yield* withEngine(
+          key,
+          options.engine.createContainer({
+            name: nameFor(key, "workload"),
+            image: artifact.image,
+            labels,
+            network: networkResource.id,
+            mounts: resolution.mounts ?? [],
+            publications,
+            volumeMounts: volumeRequest === undefined ? [] : [volumeMountFor(key, volumeRequest)],
+            role: "workload",
+            ...(resolution.envFile === undefined ? {} : { envFile: resolution.envFile }),
+            ...(resolution.networkAliases === undefined
+              ? {}
+              : { networkAliases: resolution.networkAliases }),
+            ...(resolution.hostRoute === undefined ? {} : { hostRoute: resolution.hostRoute }),
+            ...(resolution.entrypoint === undefined ? {} : { entrypoint: resolution.entrypoint }),
+            ...(resolution.command === undefined ? {} : { command: resolution.command }),
+          } satisfies ContainerContainerSpec),
+        );
+        created = true;
+        if (resolution.bootstrap !== undefined) {
+          const copied = yield* Effect.exit(
+            withEngine(
+              key,
+              options.engine.copyToContainer(
+                container.id,
+                resolution.bootstrap.source,
+                resolution.bootstrap.destination,
               ),
+            ),
+          );
+          if (Exit.isFailure(copied)) {
+            const removed = yield* Effect.exit(
+              withEngine(key, options.engine.removeContainer(container.id)),
             );
-            if (Exit.isFailure(copied)) {
-              const removed = yield* Effect.exit(
-                withEngine(key, options.engine.removeContainer(container.id)),
-              );
-              const cleanupCause = Exit.isFailure(removed) ? removed.cause : Cause.empty;
-              return yield* Effect.failCause(
-                cleanupCause.reasons.length === 0
-                  ? copied.cause
-                  : Cause.combine(copied.cause, cleanupCause),
-              );
-            }
+            const cleanupCause = Exit.isFailure(removed) ? removed.cause : Cause.empty;
+            return yield* Effect.failCause(
+              cleanupCause.reasons.length === 0
+                ? copied.cause
+                : Cause.combine(copied.cause, cleanupCause),
+            );
           }
-          yield* withEngine(key, options.engine.startContainer(container.id));
-          startedByUs = true;
         }
+        yield* guard;
+        yield* withEngine(key, options.engine.startContainer(container.id));
+        startedByUs = true;
         const current = resources.get(resourceKey(key));
         const resource =
           current !== undefined && current.container === container.id && current.state === "running"
@@ -674,8 +745,8 @@ export const makeContainerRuntime = (
                 const createdResource: ContainerRuntimeResource = {
                   key,
                   workload,
+                  ownerSessionId: options.ownerSessionId,
                   container: container.id,
-                  network: networkResource.id,
                   state: "running",
                   failure,
                   stopRequested: false,
@@ -684,6 +755,7 @@ export const makeContainerRuntime = (
                 return createdResource;
               });
         if (resource.logFiber === undefined) yield* attachLogs(resource, created ? "all" : 0);
+        yield* attachExitWatcher(resource);
         const readiness =
           resolution.waitForReadiness === undefined
             ? options.waitForReadiness === undefined
@@ -705,6 +777,7 @@ export const makeContainerRuntime = (
         if (Exit.isFailure(ready)) {
           resource.stopRequested = true;
           yield* stopLogs(resource);
+          yield* stopExitWatcher(resource);
           const stopExit =
             startedByUs || workload.bootstrap === "database"
               ? yield* Effect.exit(withEngine(key, options.engine.stopContainer(container.id)))
@@ -724,21 +797,57 @@ export const makeContainerRuntime = (
         const result: ObservedWorkload = { ...key, state: "ready" };
         return result;
       });
-      return lifecycle.withPermit(startEffect);
+      return Effect.gen(function* () {
+        const inFlight = startFibers.get(id);
+        if (inFlight !== undefined) return yield* Fiber.join(inFlight);
+        const guardRef = yield* Ref.make(false);
+        startGuards.set(id, guardRef);
+        // Track the whole lifecycle wait, not only the body after permit acquisition. Cleanup
+        // must be able to interrupt starts queued behind another activation as well. The permit
+        // only covers forking the body; readiness and log following continue after it is released.
+        const run = Effect.gen(function* () {
+          const body = yield* lifecycle.withPermit(
+            Effect.forkChild(startEffect, { startImmediately: true }),
+          );
+          return yield* Fiber.join(body);
+        });
+        const fiber = yield* Effect.forkChild(run, { startImmediately: true });
+        startFibers.set(id, fiber);
+        return yield* Fiber.join(fiber).pipe(
+          Effect.ensuring(
+            Effect.sync(() => {
+              if (startGuards.get(id) === guardRef) startGuards.delete(id);
+              if (startFibers.get(id) === fiber) startFibers.delete(id);
+            }),
+          ),
+        );
+      });
     };
 
     const stopInPermit = (key: RuntimeWorkloadKey): Effect.Effect<void, RuntimeDriverError> => {
       const found = resources.get(resourceKey(key));
+      const guard = startGuards.get(resourceKey(key));
       return found !== undefined
         ? found.state === "stopped"
           ? Effect.void
           : Effect.gen(function* () {
               found.stopRequested = true;
+              if (guard !== undefined) yield* Ref.set(guard, true);
+              yield* Deferred.fail(
+                found.failure,
+                new RuntimeDriverError({
+                  message: "Container workload was stopped while starting",
+                  stackId: key.stackId,
+                  workloadId: key.workloadId,
+                }),
+              );
               yield* stopLogs(found);
+              yield* stopExitWatcher(found);
               yield* withEngine(key, options.engine.stopContainer(found.container));
               resources.set(resourceKey(key), { ...found, state: "stopped" });
             })
-        : withEngine(key, options.engine.listResources(key.stackId)).pipe(
+        : (guard === undefined ? Effect.void : Ref.set(guard, true)).pipe(
+            Effect.andThen(withEngine(key, options.engine.listResources(key.stackId))),
             Effect.flatMap((entries) => {
               const exact = entries
                 .filter(isWorkloadResource)
@@ -766,13 +875,26 @@ export const makeContainerRuntime = (
           const found = resources.get(resourceKey(key));
           if (found !== undefined) {
             found.stopRequested = true;
+            const guard = startGuards.get(resourceKey(key));
+            if (guard !== undefined) yield* Ref.set(guard, true);
+            yield* Deferred.fail(
+              found.failure,
+              new RuntimeDriverError({
+                message: "Container workload was removed while starting",
+                stackId: key.stackId,
+                workloadId: key.workloadId,
+              }),
+            );
             yield* stopLogs(found);
+            yield* stopExitWatcher(found);
             if (found.state !== "stopped")
               yield* withEngine(key, options.engine.stopContainer(found.container));
             yield* withEngine(key, options.engine.removeContainer(found.container));
             resources.delete(resourceKey(key));
             return;
           }
+          const guard = startGuards.get(resourceKey(key));
+          if (guard !== undefined) yield* Ref.set(guard, true);
           const entries = yield* withEngine(key, options.engine.listResources(key.stackId));
           const exact = entries
             .filter(isWorkloadResource)
@@ -789,6 +911,23 @@ export const makeContainerRuntime = (
     const cleanup = (request: RuntimeCleanupRequest): Effect.Effect<void, RuntimeDriverError> =>
       lifecycle.withPermit(
         Effect.gen(function* () {
+          // Stop and interrupt starts that have not registered a resource yet. Without this
+          // fence, cleanup can observe an empty resource list while an activation is still inside
+          // createContainer, then the activation creates a new orphan after cleanup returns.
+          const pendingStartIds = new Set(
+            [...startGuards.keys(), ...startFibers.keys()].filter((id) =>
+              id.startsWith(`${request.stackId}:`),
+            ),
+          );
+          for (const id of pendingStartIds) {
+            const guard = startGuards.get(id);
+            if (guard !== undefined) yield* Ref.set(guard, true);
+          }
+          for (const id of pendingStartIds) {
+            const fiber = startFibers.get(id);
+            if (fiber !== undefined) yield* Fiber.interrupt(fiber);
+          }
+
           const entries = yield* withEngine(
             { stackId: request.stackId, workloadId: "" },
             options.engine.listResources(request.stackId),
@@ -807,6 +946,7 @@ export const makeContainerRuntime = (
             if (resource.key.stackId === request.stackId) {
               resource.stopRequested = true;
               yield* stopLogs(resource);
+              yield* stopExitWatcher(resource);
             }
 
           // Stop and remove every stack workload before touching its network. A failed
@@ -844,221 +984,22 @@ export const makeContainerRuntime = (
 
           for (const id of resources.keys())
             if (id.startsWith(`${request.stackId}:`)) resources.delete(id);
-          yield* Scope.close(runtimeScope, Exit.void);
           if (cleanupCause.reasons.length > 0) return yield* Effect.failCause(cleanupCause);
         }),
       );
 
-    const recover = (
-      request: RuntimeRecoveryRequest,
-    ): Effect.Effect<ReadonlyArray<ObservedWorkload>, RuntimeDriverError> =>
-      lifecycle.withPermit(
-        Effect.gen(function* () {
-          const entries = yield* withEngine(
-            { stackId: request.stackId, workloadId: "" },
-            options.engine.listResources(request.stackId),
-          );
-          const owned = entries
-            .filter((entry) => entry.labels.stackId === request.stackId)
-            .sort((left, right) => left.id.localeCompare(right.id));
-          const desiredHashes = new Map(
-            request.plan.workloads.map((workload) => [workload.id, workload.specHash]),
-          );
-          const desiredWorkloads = new Map(
-            request.plan.workloads.map((workload) => [workload.id, workload]),
-          );
-          const adopted: Array<ObservedWorkload> = [];
-          const adoptedResourceKeys = new Set<string>();
-          const adoptedIdentities = new Set<string>();
-          let retainedNetworkId: string | undefined;
-          let recoveryCause: Cause.Cause<RuntimeDriverError> = Cause.empty;
-          const attempt = <A>(effect: Effect.Effect<A, RuntimeDriverError>) =>
-            Effect.gen(function* () {
-              const result = yield* Effect.exit(effect);
-              if (Exit.isFailure(result))
-                recoveryCause = Cause.combine(recoveryCause, result.cause);
-            });
-          const stopAndRemove = (entry: ContainerResource) =>
-            Effect.gen(function* () {
-              if (entry.state === "running")
-                yield* attempt(
-                  withEngine(
-                    { stackId: request.stackId, workloadId: "" },
-                    options.engine.stopContainer(entry.id),
-                  ),
-                );
-              yield* attempt(
-                withEngine(
-                  { stackId: request.stackId, workloadId: "" },
-                  options.engine.removeContainer(entry.id),
-                ),
-              );
-            });
-          const stopAdopted = (
-            entry: ContainerResource & { readonly labels: ContainerWorkloadLabels },
-          ) =>
-            withEngine(
-              { stackId: request.stackId, workloadId: entry.labels.workloadId },
-              options.engine.stopContainer(entry.id),
-            );
+    const watchFailures = Stream.unwrap(
+      PubSub.subscribe(failures).pipe(
+        Effect.map((subscription) => Stream.fromEffectRepeat(PubSub.take(subscription))),
+      ),
+    ).pipe(Stream.scoped);
 
-          // Recovery never starts or creates anything. Workload identities are evaluated before
-          // retaining the network so stale resources cannot leak into the new owner.
-          for (const entry of owned.filter(isWorkloadResource)) {
-            const hash = desiredHashes.get(entry.labels.workloadId);
-            const current =
-              entry.labels.desiredGeneration === request.desiredGeneration &&
-              hash !== undefined &&
-              hash === entry.labels.specHash;
-            if (!current) {
-              yield* stopAndRemove(entry);
-              continue;
-            }
-            const identity = `${entry.labels.desiredGeneration}:${entry.labels.workloadId}:${entry.labels.specHash}`;
-            if (adoptedIdentities.has(identity)) {
-              yield* stopAndRemove(entry);
-              continue;
-            }
-            adoptedIdentities.add(identity);
-            const desiredWorkload = desiredWorkloads.get(entry.labels.workloadId);
-            const key: RuntimeWorkloadKey = {
-              stackId: entry.labels.stackId,
-              desiredGeneration: entry.labels.desiredGeneration,
-              workloadId: entry.labels.workloadId,
-              specHash: entry.labels.specHash,
-            };
-            if (entry.state === "running" && desiredWorkload !== undefined) {
-              const readiness = options.waitForReadiness;
-              if (readiness !== undefined) {
-                const readinessExit = yield* Effect.exit(readiness(key, desiredWorkload, entry));
-                if (Exit.isFailure(readinessExit)) {
-                  recoveryCause = Cause.combine(recoveryCause, readinessExit.cause);
-                  const stopExit = yield* Effect.exit(stopAdopted(entry));
-                  if (Exit.isFailure(stopExit))
-                    recoveryCause = Cause.combine(recoveryCause, stopExit.cause);
-                  continue;
-                }
-              }
-            }
-            if (entry.state === "running" && desiredWorkload?.bootstrap === "database") {
-              const bootstrap =
-                options.bootstrapDatabase === undefined
-                  ? Effect.fail(
-                      toDriverError(
-                        key,
-                        new Error("Database bootstrap resolver is not configured"),
-                      ),
-                    )
-                  : options.bootstrapDatabase(key, desiredWorkload, entry);
-              const bootstrapExit = yield* Effect.exit(bootstrap);
-              if (Exit.isFailure(bootstrapExit)) {
-                recoveryCause = Cause.combine(recoveryCause, bootstrapExit.cause);
-                const stopExit = yield* Effect.exit(stopAdopted(entry));
-                if (Exit.isFailure(stopExit))
-                  recoveryCause = Cause.combine(recoveryCause, stopExit.cause);
-                continue;
-              }
-            }
-            if (entry.state === "running" && desiredWorkload !== undefined) {
-              const known = resources.get(resourceKey(key));
-              if (known !== undefined && known.container === entry.id && known.state === "failed") {
-                recoveryCause = Cause.combine(
-                  recoveryCause,
-                  Cause.fail(
-                    toDriverError(key, new Error(known.error ?? "Container log stream failed")),
-                  ),
-                );
-                known.stopRequested = true;
-                const stopExit = yield* Effect.exit(stopAdopted(entry));
-                if (Exit.isFailure(stopExit))
-                  recoveryCause = Cause.combine(recoveryCause, stopExit.cause);
-                yield* stopLogs(known);
-                resources.delete(resourceKey(key));
-                continue;
-              }
-              if (
-                known !== undefined &&
-                (known.container !== entry.id || known.state !== "running")
-              ) {
-                known.stopRequested = true;
-                yield* stopLogs(known);
-                resources.delete(resourceKey(key));
-              }
-              const resource =
-                resources.get(resourceKey(key)) ??
-                (yield* Effect.gen(function* () {
-                  const failure = yield* Deferred.make<never, RuntimeDriverError>();
-                  const adoptedResource: ContainerRuntimeResource = {
-                    key,
-                    workload: desiredWorkload,
-                    container: entry.id,
-                    network: retainedNetworkId ?? "",
-                    state: "running",
-                    failure,
-                    stopRequested: false,
-                  };
-                  resources.set(resourceKey(key), adoptedResource);
-                  return adoptedResource;
-                }));
-              if (resource.logFiber === undefined) yield* attachLogs(resource, 0);
-              if (resource.state === "failed") {
-                recoveryCause = Cause.combine(
-                  recoveryCause,
-                  Cause.fail(
-                    toDriverError(key, new Error(resource.error ?? "Container log stream failed")),
-                  ),
-                );
-                resource.stopRequested = true;
-                const stopExit = yield* Effect.exit(stopAdopted(entry));
-                if (Exit.isFailure(stopExit))
-                  recoveryCause = Cause.combine(recoveryCause, stopExit.cause);
-                resources.delete(resourceKey(key));
-                continue;
-              }
-              adoptedResourceKeys.add(resourceKey(key));
-            }
-            adopted.push({
-              stackId: entry.labels.stackId,
-              desiredGeneration: entry.labels.desiredGeneration,
-              workloadId: entry.labels.workloadId,
-              specHash: entry.labels.specHash,
-              state:
-                entry.state === "running"
-                  ? "ready"
-                  : entry.state === "stopped"
-                    ? "stopped"
-                    : "starting",
-            });
-          }
-
-          // Networks are only considered after all workloads. Keep one network for
-          // the exact current generation; duplicate or stale-generation networks are ephemera.
-          for (const entry of owned.filter(isNetworkResource)) {
-            if (
-              retainedNetworkId === undefined &&
-              entry.labels.desiredGeneration === request.desiredGeneration
-            ) {
-              retainedNetworkId = entry.id;
-              continue;
-            }
-            yield* attempt(
-              withEngine(
-                { stackId: request.stackId, workloadId: "" },
-                options.engine.removeNetwork(entry.id),
-              ),
-            );
-          }
-
-          for (const [id, resource] of resources)
-            if (id.startsWith(`${request.stackId}:`) && !adoptedResourceKeys.has(id)) {
-              resource.stopRequested = true;
-              yield* stopLogs(resource);
-              resources.delete(id);
-            }
-          if (recoveryCause.reasons.length > 0) return yield* Effect.failCause(recoveryCause);
-          return adopted;
-        }),
-      );
-
-    return { observe, start, stop, remove, cleanup, recover } satisfies RuntimeDriver;
+    return {
+      watchFailures,
+      observe,
+      start,
+      stop,
+      remove,
+      cleanup,
+    } satisfies RuntimeDriver;
   });

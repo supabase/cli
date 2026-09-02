@@ -1,5 +1,5 @@
 import { describe, expect, it } from "@effect/vitest";
-import { Effect, Exit, Layer, Option } from "effect";
+import { Cause, Effect, Exit, Layer, Option } from "effect";
 import { StackIdSchema } from "@supabase/stack/effect";
 import type { StackStatus } from "@supabase/stack/effect";
 import { CAPABILITY_NAMES, StackUpgradeRequiredError } from "@supabase/stack/effect";
@@ -26,6 +26,7 @@ const status: StackStatus = {
 describe("restart handler", () => {
   it.live("restarts the managed stack with translated config", () => {
     let receivedConfig: unknown;
+    let receivedOptions: unknown;
     const output = mockOutput({ interactive: false });
     const stack: RestartStack = {
       restart: (options) =>
@@ -46,7 +47,11 @@ describe("restart handler", () => {
             desiredLifecycle: "running" as const,
           }),
         ),
-      openStack: () => Effect.succeed(stack),
+      openStack: (_id, options) =>
+        Effect.sync(() => {
+          receivedOptions = options;
+          return stack;
+        }),
       loadConfig: () => Effect.succeed(undefined),
     };
     return restart({ stack: "default", exclude: ["auth"] }, operations).pipe(
@@ -62,6 +67,7 @@ describe("restart handler", () => {
           expect(receivedConfig).toMatchObject({
             capabilities: { auth: { enabled: false } },
           });
+          expect(receivedOptions).toEqual({ replaceIncompatibleOwner: true });
           expect(output.messages).toContainEqual(
             expect.objectContaining({ message: "Local Supabase stack restarted." }),
           );
@@ -97,6 +103,11 @@ describe("restart handler", () => {
       Effect.tap((exit) =>
         Effect.sync(() => {
           expect(Exit.isFailure(exit)).toBe(true);
+          if (Exit.isFailure(exit)) {
+            const error = Cause.findErrorOption(exit.cause);
+            expect(Option.isSome(error)).toBe(true);
+            if (Option.isSome(error)) expect(error.value).toBeInstanceOf(StackUpgradeRequiredError);
+          }
         }),
       ),
     );

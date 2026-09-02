@@ -1,4 +1,4 @@
-import { findStack } from "@supabase/stack/effect";
+import { findStack, InvalidProjectRootError } from "@supabase/stack/effect";
 import { Effect, Option } from "effect";
 import { PlatformApi } from "../../../auth/platform-api.service.ts";
 import { CliProjectHome } from "../../../config/cli-project-home.service.ts";
@@ -93,7 +93,16 @@ export const switchBranch = Effect.fn("branches.switch")(function* (
 
   // Branch switching updates the linked project state. A running local stack
   // remains untouched; users can restart it explicitly with `supabase restart`.
-  const descriptor = yield* operations.findStack({ projectRoot: cliProjectHome.projectRoot });
+  const descriptor = yield* operations
+    .findStack({ projectRoot: cliProjectHome.projectRoot })
+    // Branch switching is valid outside a local checkout. In that case there
+    // is simply no managed stack to remind the user about.
+    .pipe(
+      Effect.catchIf(
+        (error) => error instanceof InvalidProjectRootError,
+        () => Effect.succeed(Option.none()),
+      ),
+    );
   if (
     Option.isSome(descriptor) &&
     descriptor.value.desiredLifecycle === "running" &&

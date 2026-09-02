@@ -1,7 +1,7 @@
 import { Crypto, Effect, FileSystem, Path, Scope } from "effect";
 import {
   createStack,
-  StackUpgradeRequiredError,
+  StackMustBeStoppedError,
   type EffectStack,
   type CreateStackOptions,
 } from "@supabase/stack/effect";
@@ -22,7 +22,7 @@ type StartRuntime =
   | Crypto.Crypto
   | ChildProcessSpawner.ChildProcessSpawner;
 
-export type StartStack = Pick<EffectStack, "prepare" | "start">;
+export type StartStack = Pick<EffectStack, "start">;
 export interface StartOperations {
   readonly createStack: (
     options: CreateStackOptions,
@@ -54,16 +54,18 @@ export const start = Effect.fnUntraced(function* (
         name: flags.stack,
         runtime: runtimePreference(flags.mode),
       });
-      const config = toStartStackConfig(loadedConfig, flags.exclude, flags.mode);
-      yield* stack.prepare({ config });
+      const config = yield* toStartStackConfig(loadedConfig, flags.exclude);
       const status = yield* stack.start({ config }).pipe(
-        Effect.catchTag("StackUpgradeRequiredError", (error) =>
-          Effect.fail(
-            new StackUpgradeRequiredError({
-              message: `${error.message}; run supabase restart to apply it`,
-              guidance: "Run supabase restart to apply stopped-time changes",
-            }),
-          ),
+        Effect.catchIf(
+          (error) => error instanceof StackMustBeStoppedError,
+          (error) =>
+            Effect.fail(
+              new StackMustBeStoppedError({
+                ...error,
+                message: `${error.message}; run supabase restart to apply it`,
+                guidance: "Run supabase restart to apply stopped-time changes",
+              }),
+            ),
         ),
       );
       yield* output.success(

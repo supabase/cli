@@ -1,4 +1,21 @@
-export * from "./public/PromiseStack.ts";
+export {
+  createStack,
+  openStack,
+  findStack,
+  listStacks,
+  inspectStack,
+} from "./public/PromiseStack.ts";
+export type {
+  PromiseStack,
+  PromiseStackApi,
+  PromiseStackConfig,
+  PromiseStartStackOptions,
+  PromisePrepareStackOptions,
+  CreateStackOptions,
+  FindStackOptions,
+  ListStacksOptions,
+  PreparedCapability,
+} from "./public/PromiseStack.ts";
 export type {
   CapabilityName,
   CapabilityStatus,

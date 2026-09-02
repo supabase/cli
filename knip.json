@@ -35,7 +35,8 @@
       "ignoreDependencies": ["undici"]
     },
     "packages/stack": {
-      "ignoreBinaries": ["mkfifo"]
+      "ignoreBinaries": ["mkfifo"],
+      "ignoreDependencies": ["@types/ws", "ws"]
     },
     "packages/cli-test-helpers": {
       "entry": ["src/**/*.test.ts"]

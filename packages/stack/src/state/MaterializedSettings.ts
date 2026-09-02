@@ -1,5 +1,7 @@
-import type { CapabilityName } from "../public/Capability.ts";
+import { CAPABILITY_NAMES, type CapabilityName } from "../public/Capability.ts";
 import type { PersistedStackState } from "./StackState.ts";
+import { Effect } from "effect";
+import { StackStateInvalidError } from "../public/Errors.ts";
 
 /** A plain object in the persisted, materialized settings document. */
 export const isRecord = (value: unknown): value is Readonly<Record<string, unknown>> =>
@@ -68,4 +70,40 @@ export const valueAt = (
     current = current[segment];
   }
   return settingValue(state, current);
+};
+
+/** Ensures every materialized secret slot is present before runtime mutation. */
+export const validateMaterializedSecrets = (
+  state: PersistedStackState,
+  capability?: CapabilityName,
+): Effect.Effect<void, StackStateInvalidError> => {
+  const visit = (value: unknown, path: string): StackStateInvalidError | undefined => {
+    if (isRecord(value) && typeof value.slot === "string" && Object.keys(value).length === 1) {
+      return state.secrets[value.slot] === undefined
+        ? new StackStateInvalidError({
+            message: `Missing materialized secret slot ${value.slot} at ${path}`,
+            slot: value.slot,
+          })
+        : undefined;
+    }
+    if (Array.isArray(value)) {
+      for (const [index, entry] of value.entries()) {
+        const failure = visit(entry, `${path}[${index}]`);
+        if (failure !== undefined) return failure;
+      }
+    } else if (isRecord(value)) {
+      for (const [key, entry] of Object.entries(value)) {
+        const failure = visit(entry, path.length === 0 ? key : `${path}.${key}`);
+        if (failure !== undefined) return failure;
+      }
+    }
+    return undefined;
+  };
+  const names = capability === undefined ? CAPABILITY_NAMES : [capability];
+  for (const name of names) {
+    const settings = state.definition?.capabilities[name]?.settings;
+    const failure = visit(settings, `${name}.settings`);
+    if (failure !== undefined) return Effect.fail(failure);
+  }
+  return Effect.void;
 };

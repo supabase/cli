@@ -28,7 +28,7 @@ import type { NonInteractiveError } from "../../../shared/output/errors.ts";
 import { LoginFailedError, NoTtyError } from "./login.errors.ts";
 import type { LoginFlags } from "./login.command.ts";
 
-export class LoginVerificationError extends Data.TaggedError("LoginVerificationError")<{
+class LoginVerificationError extends Data.TaggedError("LoginVerificationError")<{
   cause: ApiError;
 }> {
   get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {

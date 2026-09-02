@@ -57,6 +57,32 @@ describe("closed capability compiler", () => {
     }),
   );
 
+  it.live("defaults only the database capability to eager activation", () =>
+    Effect.gen(function* () {
+      const result = yield* compile({});
+      expect(result.executionPlan.activation).toEqual({
+        database: "eager",
+        rest: "lazy",
+        auth: "lazy",
+        realtime: "lazy",
+        storage: "lazy",
+        functions: "lazy",
+        studio: "lazy",
+        mail: "lazy",
+        analytics: "lazy",
+        pooler: "lazy",
+      });
+      expect(result.definition.capabilities.pooler).toMatchObject({
+        enabled: true,
+        activation: "lazy",
+      });
+      expect(result.definition.listeners.pooler.enabled).toBe(true);
+      const disabledPooler = yield* compile({ capabilities: { pooler: { enabled: false } } });
+      expect(disabledPooler.definition.capabilities.pooler.enabled).toBe(false);
+      expect(disabledPooler.definition.listeners.pooler.enabled).toBe(true);
+    }),
+  );
+
   it.live("rejects an invalid database health timeout during compilation", () =>
     Effect.gen(function* () {
       const result = yield* compile({
@@ -405,15 +431,16 @@ describe("closed capability compiler", () => {
     }),
   );
 
-  it.live("preserves a supplied Analytics access key as pass-through", () =>
+  it.live("manages a supplied Analytics access key", () =>
     Effect.gen(function* () {
       const result = yield* compile({
         capabilities: { analytics: { settings: { api_key: Redacted.make("custom-api-key") } } },
       });
       expect(result.secrets).toContainEqual({
         slot: "secret:analytics.settings.api_key",
-        policy: "passthrough",
+        policy: "managed",
         value: Redacted.make("custom-api-key"),
+        generator: { kind: "random-base64url", bytes: 32 },
       });
       expect(result.definition.capabilities.analytics.settings.api_key).toEqual({
         slot: "secret:analytics.settings.api_key",

@@ -1,6 +1,7 @@
 import type { Redacted, Schema } from "effect";
 import type { CapabilityName, ActivationMode } from "../public/Capability.ts";
 import type { PortField } from "../public/Status.ts";
+import { catalogEntryFor } from "./WorkloadCatalog.ts";
 
 /** Logical artifact descriptors. Download/image resolution belongs to preparation. */
 export interface NativeArtifact {
@@ -21,6 +22,11 @@ export interface WorkloadSpec {
   readonly dependencies: ReadonlyArray<string>;
   readonly readiness: Readonly<{ readonly mode: "http" | "tcp"; readonly portField?: PortField }>;
   readonly restart: Readonly<{ readonly maxAttempts: number; readonly backoffMs: number }>;
+  /** Exact artifacts selected for this workload release. */
+  readonly artifacts: Readonly<{
+    readonly native: NativeArtifact;
+    readonly container: ContainerArtifact;
+  }>;
 }
 
 /** Settings shape persisted by the compiler, where absent and secret leaves are materialized. */
@@ -83,11 +89,21 @@ export const workload = (
     readonly readiness?: WorkloadSpec["readiness"];
     readonly restart?: WorkloadSpec["restart"];
   } = {},
-): WorkloadSpec => ({
-  name,
-  capability,
-  ...(options.bootstrap === undefined ? {} : { bootstrap: options.bootstrap }),
-  dependencies: options.dependencies ?? [],
-  readiness: options.readiness ?? { mode: "tcp" },
-  restart: options.restart ?? { maxAttempts: 5, backoffMs: 250 },
-});
+): WorkloadSpec => {
+  const catalog = catalogEntryFor(`${capability}:${name}`);
+  if (catalog === undefined)
+    throw new Error(`Missing workload artifact declaration: ${capability}:${name}`);
+  const artifacts = {
+    native: { kind: "native" as const, release: catalog.nativeVersion },
+    container: { kind: "container" as const, image: catalog.containerImage },
+  };
+  return {
+    name,
+    capability,
+    ...(options.bootstrap === undefined ? {} : { bootstrap: options.bootstrap }),
+    dependencies: options.dependencies ?? [],
+    readiness: options.readiness ?? { mode: "tcp" },
+    restart: options.restart ?? { maxAttempts: 5, backoffMs: 250 },
+    artifacts,
+  };
+};

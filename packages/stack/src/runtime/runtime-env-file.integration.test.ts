@@ -10,7 +10,7 @@ const withPlatform = <A, E, R>(effect: Effect.Effect<A, E, R>) =>
   Effect.scoped(effect).pipe(Effect.provide(NodeServices.layer));
 
 describe("runtime environment file owner", () => {
-  it.live("writes deterministic owner-only generation files atomically", () =>
+  it.live("writes deterministic owner-only session files atomically", () =>
     withPlatform(
       Effect.gen(function* () {
         const fs = yield* FileSystem.FileSystem;
@@ -18,12 +18,10 @@ describe("runtime environment file owner", () => {
         const root = yield* fs.makeTempDirectoryScoped({ prefix: "stack-env-" });
         const owner = yield* makeRuntimeEnvFileOwner({ stateRoot: root, stackId });
         const first = yield* owner.write({
-          generation: 4,
           workloadId: "database:database",
           values: { Z_LAST: "two", A_FIRST: "one" },
         });
         const second = yield* owner.write({
-          generation: 4,
           workloadId: "database:database",
           values: { A_FIRST: "updated" },
         });
@@ -44,7 +42,6 @@ describe("runtime environment file owner", () => {
         const secret = "very-secret-value";
         const invalid = yield* owner
           .write({
-            generation: 1,
             workloadId: "database:database",
             values: { VALID: `${secret}\nINJECTED` },
           })
@@ -53,28 +50,27 @@ describe("runtime environment file owner", () => {
         if (Exit.isFailure(invalid)) expect(String(invalid.cause)).not.toContain(secret);
         expect(yield* fs.exists(`${root}/${stackId}/runtime/env`)).toBe(false);
         const invalidWorkload = yield* owner
-          .write({ generation: 1, workloadId: "../escape", values: { SAFE: "ok" } })
+          .write({ workloadId: "../escape", values: { SAFE: "ok" } })
           .pipe(Effect.exit);
         expect(Exit.isFailure(invalidWorkload)).toBe(true);
       }),
     ),
   );
 
-  it.live("cleans exact generations idempotently", () =>
+  it.live("cleans exact session files idempotently", () =>
     withPlatform(
       Effect.gen(function* () {
         const fs = yield* FileSystem.FileSystem;
         const root = yield* fs.makeTempDirectoryScoped({ prefix: "stack-env-cleanup-" });
         const owner = yield* makeRuntimeEnvFileOwner({ stateRoot: root, stackId });
         const file = yield* owner.write({
-          generation: 2,
           workloadId: "rest:rest",
           values: { X: "y" },
         });
-        yield* owner.cleanupGeneration(2);
+        yield* owner.cleanupAll;
         expect(yield* fs.exists(file)).toBe(false);
-        yield* owner.cleanupGeneration(2);
-        yield* owner.write({ generation: 3, workloadId: "rest:rest", values: { X: "z" } });
+        yield* owner.cleanupAll;
+        yield* owner.write({ workloadId: "rest:rest", values: { X: "z" } });
         yield* owner.cleanupAll;
         expect(yield* fs.exists(`${root}/${stackId}/runtime/env`)).toBe(false);
       }),
@@ -89,8 +85,8 @@ describe("runtime environment file owner", () => {
         const owner = yield* makeRuntimeEnvFileOwner({ stateRoot: root, stackId });
         const files = yield* Effect.all(
           [
-            owner.write({ generation: 7, workloadId: "rest:rest", values: { A: "one" } }),
-            owner.write({ generation: 7, workloadId: "auth:auth", values: { B: "two" } }),
+            owner.write({ workloadId: "rest:rest", values: { A: "one" } }),
+            owner.write({ workloadId: "auth:auth", values: { B: "two" } }),
           ],
           { concurrency: "unbounded" },
         );

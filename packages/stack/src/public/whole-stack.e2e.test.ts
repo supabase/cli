@@ -7,9 +7,13 @@
 // oxlint-disable effecttsgo/global-date -- query windows use host timestamps.
 // oxlint-disable effecttsgo/node-builtin-import -- E2E setup writes a real project with host fs/path APIs.
 import { PgClient } from "@effect/sql-pg";
-import { Data, Effect, Redacted, Schedule } from "effect";
-import { mkdir, writeFile } from "node:fs/promises";
+import { Data, Effect, Redacted, Schedule, type Duration } from "effect";
+import { execFile as execFileCallback } from "node:child_process";
+import { access, mkdir, readFile, readdir, writeFile } from "node:fs/promises";
+import { connect as connectTcp } from "node:net";
 import { join } from "node:path";
+import { promisify } from "node:util";
+import { WebSocket } from "ws";
 import { describe, expect, test } from "vitest";
 import { createTestStack, type TestStack } from "../testing.ts";
 import { CAPABILITY_NAMES } from "./Capability.ts";
@@ -20,18 +24,89 @@ import type { StackEndpoint, StackStatus } from "./Status.ts";
 
 const E2E_TIMEOUT_MS = 15 * 60_000;
 const REQUEST_TIMEOUT_MS = 60_000;
-// Studio's first lazy request can start four workloads sequentially (4 × 30s).
-const LAZY_STUDIO_ACTIVATION_TIMEOUT_MS = 180_000;
+const execFile = promisify(execFileCallback);
 const ANALYTICS_QUERY_RETRY_SCHEDULE = Schedule.spaced("1 second").pipe(
   Schedule.upTo({ duration: "3 minutes" }),
 );
 const MAILPIT_DELIVERY_RETRY_SCHEDULE = Schedule.spaced("250 millis").pipe(
   Schedule.upTo({ duration: "30 seconds" }),
 );
+// Studio's first lazy request can start four workloads sequentially (4 × 30s).
+const LAZY_STUDIO_ACTIVATION_TIMEOUT_MS = 180_000;
+// Pooler is activated by the first TCP connection and may take longer than the normal
+// query deadline while its migration and tenant bootstrap processes run.
+const LAZY_POOLER_ACTIVATION_TIMEOUT = "30 seconds";
 const RUNTIME_CASES = [
   { name: "native", runtime: { kind: "native" as const } },
   { name: "Docker", runtime: { kind: "container" as const, engine: "docker" as const } },
 ] as const;
+
+const dockerOwnedResourceCount = async (
+  stackId: string,
+  kind: "containers" | "networks" | "volumes",
+): Promise<number> => {
+  const args =
+    kind === "containers"
+      ? ["ps", "-aq", "--filter", `label=com.supabase.stack.stackId=${stackId}`]
+      : [
+          kind === "networks" ? "network" : "volume",
+          "ls",
+          "-q",
+          "--filter",
+          `label=com.supabase.stack.stackId=${stackId}`,
+        ];
+  const result = await execFile("docker", args, { encoding: "utf8" });
+  return result.stdout.trim().length === 0 ? 0 : result.stdout.trim().split("\n").length;
+};
+
+const supervisorPid = async (stackId: string): Promise<number> => {
+  const result = await execFile("ps", ["-axo", "pid=,command="], { encoding: "utf8" });
+  const matches = result.stdout.split("\n").flatMap((line) => {
+    const match = /^\s*(\d+)\s+(.+)$/u.exec(line);
+    if (match === null) return [];
+    const pid = Number(match[1]);
+    const command = match[2] ?? "";
+    return command.includes(stackId) &&
+      (command.includes("supervisor-node.ts") || command.includes("__supabase_stack_supervisor__"))
+      ? [pid]
+      : [];
+  });
+  if (matches.length !== 1)
+    throw new Error(`Expected one Supervisor process for ${stackId}, found ${matches.length}`);
+  const pid = matches[0];
+  if (pid === undefined) throw new Error(`Supervisor process for ${stackId} has no PID`);
+  return pid;
+};
+
+const waitForProcessExit = (pid: number): Promise<void> => {
+  const exited = Effect.try({
+    try: () => {
+      try {
+        process.kill(pid, 0);
+      } catch (cause) {
+        if (
+          typeof cause === "object" &&
+          cause !== null &&
+          "code" in cause &&
+          cause.code === "ESRCH"
+        )
+          return;
+        throw cause;
+      }
+      throw new Error(`Process ${pid} is still running`);
+    },
+    catch: (cause) =>
+      new E2ERequestError({
+        message: cause instanceof Error ? cause.message : String(cause),
+        cause,
+      }),
+  });
+  return Effect.runPromise(
+    Effect.retry(exited, {
+      schedule: Schedule.spaced("25 millis").pipe(Schedule.upTo({ duration: "15 seconds" })),
+    }),
+  );
+};
 
 type JsonObject = Record<string, unknown>;
 
@@ -43,10 +118,63 @@ class E2ERequestError extends Data.TaggedError("E2ERequestError")<{
 const isJsonObject = (value: unknown): value is JsonObject =>
   typeof value === "object" && value !== null && !Array.isArray(value);
 
+const websocketDataText = (data: WebSocket.RawData): string => {
+  if (typeof data === "string") return data;
+  if (Buffer.isBuffer(data)) return data.toString("utf8");
+  if (data instanceof ArrayBuffer) return Buffer.from(data).toString("utf8");
+  return Buffer.concat(data).toString("utf8");
+};
+
 const endpoint = (status: StackStatus, name: keyof StackStatus["endpoints"]): StackEndpoint => {
   const value = status.endpoints[name];
   if (value === undefined) throw new Error(`Expected ${name} listener in stack status`);
   return value;
+};
+
+const capabilityState = (status: StackStatus, name: string): string | undefined =>
+  status.capabilities.find((capability) => capability.name === name)?.state;
+
+const expectDefaultLazyState = (status: StackStatus): void => {
+  expect(status.lifecycle).toBe("running");
+  expect(capabilityState(status, "database")).toBe("ready");
+  for (const name of CAPABILITY_NAMES) {
+    if (name === "database") continue;
+    expect(capabilityState(status, name), `${name} should remain dormant`).toBe("dormant");
+  }
+};
+
+/** Wait for one capability transition while subscribing before sending traffic. */
+const activate = async <A>(
+  stack: TestStack,
+  name: string,
+  action: () => Promise<A>,
+): Promise<A> => {
+  const before = await stack.status();
+  expect(capabilityState(before, name), `${name} should be dormant before activation`).toBe(
+    "dormant",
+  );
+  const iterator = stack.watchStatus()[Symbol.asyncIterator]();
+  const first = iterator.next();
+  void first.catch(() => undefined);
+  const waitUntilReady = async (): Promise<void> => {
+    let next = await first;
+    while (!next.done) {
+      if (capabilityState(next.value, name) === "ready") {
+        return;
+      }
+      next = await iterator.next();
+    }
+    const current = await stack.status();
+    if (capabilityState(current, name) === "ready") return;
+    throw new Error(`Capability ${name} did not become ready after traffic`);
+  };
+  try {
+    const result = await action();
+    await waitUntilReady();
+    return result;
+  } finally {
+    await iterator.return?.();
+  }
 };
 
 const request = async (base: string, path: string, init: RequestInit = {}): Promise<Response> => {
@@ -67,6 +195,42 @@ const request = async (base: string, path: string, init: RequestInit = {}): Prom
     throw new Error(`${method} ${url} returned ${response.status}: ${body}`);
   }
   return response;
+};
+
+const connect = (endpoint: StackEndpoint): Promise<void> =>
+  new Promise((resolve, reject) => {
+    const socket = connectTcp(endpoint.port, endpoint.address);
+    const fail = (cause: unknown) => {
+      socket.destroy();
+      reject(cause instanceof Error ? cause : new Error(String(cause)));
+    };
+    socket.once("connect", () => {
+      socket.destroy();
+      resolve();
+    });
+    socket.once("error", fail);
+    socket.setTimeout(2_000, () => fail(new Error("TCP connection timed out")));
+  });
+
+const expectEndpointsRefused = async (endpoints: ReadonlyArray<StackEndpoint>): Promise<void> => {
+  for (const listener of endpoints) {
+    await expect(
+      connect(listener),
+      `${listener.protocol} ${listener.url} should be closed`,
+    ).rejects.toThrow();
+  }
+};
+
+const expectRuntimeInputsAbsent = async (projectRoot: string, stackId: string): Promise<void> => {
+  const stackRoot = join(projectRoot, ".supabase", "managed", "stacks", stackId);
+  for (const relativePath of ["runtime/env", "runtime/inputs", "runtime/functions"]) {
+    const path = join(stackRoot, relativePath);
+    try {
+      expect(await readdir(path), `${path} should be empty after cleanup`).toHaveLength(0);
+    } catch (cause) {
+      if (!(cause instanceof Error && "code" in cause && cause.code === "ENOENT")) throw cause;
+    }
+  }
 };
 
 const throwStudioProfileDiagnostics = async (stack: TestStack, cause: unknown): Promise<never> => {
@@ -112,22 +276,35 @@ const databaseQuery = async (
   url: string,
   statement: string,
   parameters: ReadonlyArray<unknown> = [],
-): Promise<ReadonlyArray<object>> =>
-  Effect.runPromise(
-    Effect.scoped(
-      Effect.gen(function* () {
-        const client = yield* PgClient.PgClient;
-        return yield* client.unsafe(statement, parameters);
-      }).pipe(
-        Effect.provide(
-          PgClient.layer({
-            url: Redacted.make(url),
-            connectTimeout: "10 seconds",
-          }),
+  options: Readonly<{ readonly connectTimeout?: Duration.Input }> = {},
+): Promise<ReadonlyArray<object>> => {
+  try {
+    return await Effect.runPromise(
+      Effect.scoped(
+        Effect.gen(function* () {
+          const client = yield* PgClient.PgClient;
+          return yield* client.unsafe(statement, parameters);
+        }).pipe(
+          Effect.provide(
+            PgClient.layer({
+              url: Redacted.make(url),
+              connectTimeout: options.connectTimeout ?? "10 seconds",
+            }),
+          ),
         ),
       ),
-    ),
-  );
+    );
+  } catch (cause) {
+    let target = "<database>";
+    try {
+      const parsed = new URL(url);
+      target = `${parsed.protocol}//${parsed.hostname}:${parsed.port || "default"}${parsed.pathname}`;
+    } catch {
+      // Keep diagnostics safe even when the connection URL is malformed.
+    }
+    throw new Error(`databaseQuery failed for ${target}: ${statement}`, { cause });
+  }
+};
 
 const apiHeaders = (
   credentials: PromiseStackCredentials,
@@ -178,9 +355,9 @@ const waitForSocket = (
     let settled = false;
     const cleanup = () => {
       clearTimeout(timeout);
-      socket.removeEventListener("message", onMessage);
-      socket.removeEventListener("error", onError);
-      socket.removeEventListener("close", onClose);
+      socket.removeListener("message", onMessage);
+      socket.removeListener("error", onError);
+      socket.removeListener("close", onClose);
     };
     const finish = (error: Error | undefined, value?: JsonObject) => {
       if (settled) return;
@@ -193,9 +370,9 @@ const waitForSocket = (
       () => finish(new Error("Timed out waiting for Realtime message")),
       REQUEST_TIMEOUT_MS,
     );
-    const onMessage = (event: MessageEvent) => {
+    const onMessage = (data: WebSocket.RawData) => {
       try {
-        const value: unknown = JSON.parse(String(event.data));
+        const value: unknown = JSON.parse(websocketDataText(data));
         if (!isJsonObject(value)) return;
         if (!predicate(value)) return;
         finish(undefined, Object.fromEntries(Object.entries(value)));
@@ -205,26 +382,19 @@ const waitForSocket = (
     };
     const onError = () => finish(new Error("Realtime WebSocket failed while waiting"));
     const onClose = () => finish(new Error("Realtime WebSocket closed while waiting"));
-    socket.addEventListener("message", onMessage);
-    socket.addEventListener("error", onError);
-    socket.addEventListener("close", onClose);
+    socket.on("message", onMessage);
+    socket.on("error", onError);
+    socket.on("close", onClose);
   });
 
 const openSocket = (url: string): Promise<WebSocket> =>
   new Promise((resolve, reject) => {
-    const socket = new WebSocket(url);
-    const timeout = setTimeout(() => {
-      socket.close();
-      reject(new Error("Timed out opening Realtime WebSocket"));
-    }, REQUEST_TIMEOUT_MS);
-    socket.addEventListener("open", () => {
-      clearTimeout(timeout);
-      resolve(socket);
+    const socket = new WebSocket(url, {
+      handshakeTimeout: REQUEST_TIMEOUT_MS,
+      perMessageDeflate: false,
     });
-    socket.addEventListener("error", () => {
-      clearTimeout(timeout);
-      reject(new Error("Realtime WebSocket failed to open"));
-    });
+    socket.once("open", () => resolve(socket));
+    socket.once("error", (cause) => reject(cause));
   });
 
 const makeRealtimeUrl = (api: StackEndpoint, apikey: string): string => {
@@ -242,52 +412,23 @@ const onePixelPng = Uint8Array.from(
   (character) => character.charCodeAt(0),
 );
 
-const stackConfig = (
+const optionalWorkloadConfig = (
   functionSlug: string,
   analyticsApiKey: string,
-  poolerTenantId: string,
 ): PromiseStackConfig => ({
   capabilities: {
-    database: { version: "17.6.1.167" },
-    rest: { enabled: true, activation: "lazy" },
-    auth: {
-      enabled: true,
-      settings: {
-        enable_signup: true,
-        email: { enable_signup: true, enable_confirmations: false },
-      },
-    },
-    realtime: { enabled: true },
-    storage: { enabled: true, settings: { image_transformation: { enabled: true } } },
-    functions: {
-      enabled: true,
-      settings: {
-        functions_root: "supabase/functions",
-        functions: { [functionSlug]: { enabled: true, verify_jwt: false } },
-      },
-    },
-    studio: { enabled: true, activation: "lazy" },
-    mail: { enabled: true },
-    analytics: { enabled: true, settings: { vector_port: 9001, api_key: analyticsApiKey } },
-    pooler: { enabled: true, settings: { tenant_id: poolerTenantId } },
+    storage: { settings: { image_transformation: { enabled: true } } },
+    functions: { settings: { functions: { [functionSlug]: { verify_jwt: false } } } },
+    analytics: { settings: { vector_port: 9001, api_key: analyticsApiKey } },
   },
-  listeners: {
-    api: { enabled: true },
-    database: { enabled: true },
-    pooler: { enabled: true },
-    studio: { enabled: true },
-    mailUi: { enabled: true },
-    smtp: { enabled: true },
-    pop3: { enabled: true },
-    functionsInspector: { enabled: true },
-  },
+  listeners: { smtp: { enabled: true } },
 });
 
 const queryAnalyticsMarker = async (
   api: StackEndpoint,
   analyticsApiKey: string,
   marker: string,
-): Promise<{ readonly count: number; readonly response?: JsonObject; readonly error?: string }> => {
+): Promise<number> => {
   const query = new URLSearchParams({
     project: "default",
     iso_timestamp_start: new Date(Date.now() - 3_600_000).toISOString(),
@@ -297,38 +438,25 @@ const queryAnalyticsMarker = async (
       marker +
       "')",
   });
-  let response: JsonObject | undefined;
-  let lastError: string | undefined;
   const attempt = Effect.tryPromise({
     try: async () => {
-      response = await jsonObject(
+      const response = await jsonObject(
         await request(api.url, "/analytics/v1/api/endpoints/query/logs.all?" + query, {
           headers: { "x-api-key": analyticsApiKey },
         }),
       );
       const rows = response.result;
       const count = Array.isArray(rows) && isJsonObject(rows[0]) ? Number(rows[0].c) : 0;
-      if (count <= 0) throw new Error("Analytics query pending (count=" + count + ")");
-      return response;
+      if (count <= 0) throw new Error(`Analytics query pending (count=${count})`);
+      return count;
     },
-    catch: (cause) => {
-      const reason = cause instanceof Error ? cause.message : String(cause);
-      lastError = reason;
-      return new E2ERequestError({ message: reason, cause });
-    },
+    catch: (cause) =>
+      new E2ERequestError({
+        message: cause instanceof Error ? cause.message : String(cause),
+        cause,
+      }),
   });
-  try {
-    await Effect.runPromise(Effect.retry(attempt, { schedule: ANALYTICS_QUERY_RETRY_SCHEDULE }));
-  } catch {
-    // The returned diagnostics identify the final response and error.
-  }
-  const rows = response?.result;
-  const count = Array.isArray(rows) && isJsonObject(rows[0]) ? Number(rows[0].c) : 0;
-  return {
-    count,
-    ...(response === undefined ? {} : { response }),
-    ...(lastError === undefined ? {} : { error: lastError }),
-  };
+  return Effect.runPromise(Effect.retry(attempt, { schedule: ANALYTICS_QUERY_RETRY_SCHEDULE }));
 };
 
 const runWholeStackScenario = async (mode: (typeof RUNTIME_CASES)[number]): Promise<void> => {
@@ -339,14 +467,11 @@ const runWholeStackScenario = async (mode: (typeof RUNTIME_CASES)[number]): Prom
   const email = `${identity}@example.test`;
   const password = "SupabaseStackE2e!123";
   const markers = { first: `first-${identity}`, second: `second-${identity}` };
-  const analyticsApiKey = `analytics-key-${identity}`;
-  const poolerTenantId = `pooler-${identity}`;
   let projectRoot = "";
 
   await using stack: TestStack = await createTestStack({
     name: `stack-e2e-${identity}`,
     runtime: mode.runtime,
-    config: stackConfig(functionSlug, analyticsApiKey, poolerTenantId),
     setupProject: async (root) => {
       projectRoot = root;
       const directory = join(root, "supabase", "functions", functionSlug);
@@ -361,11 +486,13 @@ const runWholeStackScenario = async (mode: (typeof RUNTIME_CASES)[number]): Prom
   const pooler = endpoint(initial, "pooler");
   const studio = endpoint(initial, "studio");
   const mailUi = endpoint(initial, "mailUi");
+  const initialEndpoints = Object.values(initial.endpoints).filter(
+    (value): value is StackEndpoint => value !== undefined,
+  );
 
   expect(initial.runtime).toEqual(mode.runtime);
   expect(projectRoot.length).toBeGreaterThan(0);
-  expect(initial.capabilities.find(({ name }) => name === "rest")?.state).toBe("dormant");
-  expect(initial.capabilities.find(({ name }) => name === "studio")?.state).toBe("dormant");
+  expectDefaultLazyState(initial);
 
   // Direct SQL creates the table and enables Realtime's publication for it.
   await databaseQuery(
@@ -389,20 +516,26 @@ const runWholeStackScenario = async (mode: (typeof RUNTIME_CASES)[number]): Prom
 
   // PostgREST reads the SQL-created row, then writes through the authenticated user token.
   const restPath = `/rest/v1/${table}?select=id,payload&order=id`;
-  const restRows = await jsonValue(
-    await request(api.url, restPath, {
-      headers: { ...apiHeaders(credentials), Accept: "application/json" },
-    }),
-  );
+  let restRows: unknown = undefined;
+  await activate(stack, "rest", async () => {
+    restRows = await jsonValue(
+      await request(api.url, restPath, {
+        headers: { ...apiHeaders(credentials), Accept: "application/json" },
+      }),
+    );
+  });
   expect(restRows).toEqual(expect.arrayContaining([{ id: 1, payload: markers.first }]));
 
-  const signup = await jsonObject(
-    await request(api.url, "/auth/v1/signup", {
-      method: "POST",
-      headers: { ...apiHeaders(credentials), "content-type": "application/json" },
-      body: JSON.stringify({ email, password }),
-    }),
-  );
+  let signup: JsonObject = {};
+  await activate(stack, "auth", async () => {
+    signup = await jsonObject(
+      await request(api.url, "/auth/v1/signup", {
+        method: "POST",
+        headers: { ...apiHeaders(credentials), "content-type": "application/json" },
+        body: JSON.stringify({ email, password }),
+      }),
+    );
+  });
   const accessToken = signup.access_token;
   expect(typeof accessToken).toBe("string");
   if (typeof accessToken !== "string")
@@ -424,7 +557,19 @@ const runWholeStackScenario = async (mode: (typeof RUNTIME_CASES)[number]): Prom
   );
 
   // Realtime receives the next Postgres change over the same public API listener.
-  const socket = await openSocket(makeRealtimeUrl(api, credentials.api.publishableKey));
+  let openedSocket: WebSocket | undefined;
+  const socket = await (async (): Promise<WebSocket> => {
+    try {
+      return await activate(stack, "realtime", async () => {
+        const candidate = await openSocket(makeRealtimeUrl(api, credentials.api.publishableKey));
+        openedSocket = candidate;
+        return candidate;
+      });
+    } catch (cause) {
+      openedSocket?.close();
+      throw cause;
+    }
+  })();
   const socketWaiters: Array<Promise<JsonObject>> = [];
   try {
     const joined = waitForSocket(socket, (value) => {
@@ -478,32 +623,31 @@ const runWholeStackScenario = async (mode: (typeof RUNTIME_CASES)[number]): Prom
   }
 
   // Storage exercises the lazy Storage workload and its image-transform companion.
-  await request(api.url, "/storage/v1/bucket", {
-    method: "POST",
-    headers: { ...serviceHeaders(credentials), "content-type": "application/json" },
-    body: JSON.stringify({ id: bucket, name: bucket, public: true }),
+  await activate(stack, "storage", async () => {
+    await request(api.url, "/storage/v1/bucket", {
+      method: "POST",
+      headers: { ...serviceHeaders(credentials), "content-type": "application/json" },
+      body: JSON.stringify({ id: bucket, name: bucket, public: true }),
+    });
+    await request(api.url, `/storage/v1/object/${bucket}/pixel.png`, {
+      method: "POST",
+      headers: { ...serviceHeaders(credentials), "content-type": "image/png" },
+      body: new Blob([onePixelPng], { type: "image/png" }),
+    });
+    const downloaded = await request(api.url, `/storage/v1/object/public/${bucket}/pixel.png`, {
+      headers: serviceHeaders(credentials),
+    });
+    expect((await downloaded.arrayBuffer()).byteLength).toBeGreaterThan(0);
   });
-  await request(api.url, `/storage/v1/object/${bucket}/pixel.png`, {
-    method: "POST",
-    headers: { ...serviceHeaders(credentials), "content-type": "image/png" },
-    body: new Blob([onePixelPng], { type: "image/png" }),
-  });
-  const downloaded = await request(api.url, `/storage/v1/object/public/${bucket}/pixel.png`, {
-    headers: serviceHeaders(credentials),
-  });
-  expect((await downloaded.arrayBuffer()).byteLength).toBeGreaterThan(0);
-  const transformed = await request(
-    api.url,
-    `/storage/v1/render/image/public/${bucket}/pixel.png?width=1&height=1`,
-    { headers: serviceHeaders(credentials) },
-  );
-  expect((await transformed.arrayBuffer()).byteLength).toBeGreaterThan(0);
 
   // Functions are request-time discovered and call REST through SUPABASE_URL.
   const functionPath = `/functions/v1/${functionSlug}`;
-  const firstFunction = await jsonObject(
-    await request(api.url, functionPath, { headers: apiHeaders(credentials) }),
-  );
+  let firstFunction: JsonObject = {};
+  await activate(stack, "functions", async () => {
+    firstFunction = await jsonObject(
+      await request(api.url, functionPath, { headers: apiHeaders(credentials) }),
+    );
+  });
   expect(firstFunction).toEqual(
     expect.objectContaining({
       marker: markers.first,
@@ -524,78 +668,403 @@ const runWholeStackScenario = async (mode: (typeof RUNTIME_CASES)[number]): Prom
     }),
   );
 
-  // Recovery email traverses Auth → SMTP → Mailpit, then is observable via Mailpit's API.
-  await request(api.url, "/auth/v1/recover", {
-    method: "POST",
-    headers: { ...apiHeaders(credentials), "content-type": "application/json" },
-    body: JSON.stringify({ email }),
+  // Mailpit UI traffic lazily activates the mail capability. SMTP delivery is
+  // covered by the explicit SMTP configuration scenario below.
+  await activate(stack, "mail", async () => {
+    await request(mailUi.url, "/api/v1/messages?limit=100");
   });
-  const mailAttempt = Effect.tryPromise({
-    try: async () => {
-      const messages = await request(mailUi.url, "/api/v1/messages?limit=100");
-      const body = await messages.text();
-      if (!body.includes(email)) throw new Error(`Mailpit delivery pending for ${email}`);
-      return body;
-    },
-    catch: (cause) =>
-      new E2ERequestError({
-        message: cause instanceof Error ? cause.message : String(cause),
-        cause,
-      }),
-  });
-  await Effect.runPromise(Effect.retry(mailAttempt, { schedule: MAILPIT_DELIVERY_RETRY_SCHEDULE }));
 
   // Studio's profile endpoint lazily activates Studio and its transitive dependencies.
+  // Analytics is activated first so Studio does not hide that assertion.
+  await activate(stack, "analytics", async () => {
+    await request(api.url, "/analytics/v1/health");
+  });
   try {
-    await request(studio.url, "/api/platform/profile", {
-      headers: serviceHeaders(credentials),
-      signal: AbortSignal.timeout(LAZY_STUDIO_ACTIVATION_TIMEOUT_MS),
+    await activate(stack, "studio", async () => {
+      await request(studio.url, "/api/platform/profile", {
+        headers: serviceHeaders(credentials),
+        signal: AbortSignal.timeout(LAZY_STUDIO_ACTIVATION_TIMEOUT_MS),
+      });
     });
   } catch (cause) {
     await throwStudioProfileDiagnostics(stack, cause);
   }
 
-  // Analytics exercises health, authenticated ingestion, and query through the public API route;
-  // vector is a readiness dependency selected by the configured vector_port above.
-  await request(api.url, "/analytics/v1/health");
-  const analyticsMarker = `analytics-${identity}`;
-  await request(api.url, "/analytics/v1/logs?source_name=postgres.logs", {
-    method: "POST",
-    headers: { "x-api-key": analyticsApiKey, "content-type": "application/json" },
-    body: JSON.stringify({
-      event_message: analyticsMarker,
-      project: "default",
-      metadata: { source: "stack-e2e" },
-    }),
-  });
-  const analyticsResult = await queryAnalyticsMarker(api, analyticsApiKey, analyticsMarker);
-  expect(
-    analyticsResult.count,
-    `Analytics query did not observe ${analyticsMarker}; last response: ${JSON.stringify(analyticsResult.response ?? null)}; last error: ${analyticsResult.error ?? "none"}`,
-  ).toBeGreaterThan(0);
-  const vectorResult = await queryAnalyticsMarker(api, analyticsApiKey, "supabase-stack-vector");
-  expect(
-    vectorResult.count,
-    `Analytics query did not observe Vector marker; last response: ${JSON.stringify(vectorResult.response ?? null)}; last error: ${vectorResult.error ?? "none"}`,
-  ).toBeGreaterThan(0);
-
   // Pooler is a separate public TCP listener over the same database credentials.
   const poolerUrl = new URL(credentials.database.url);
   poolerUrl.port = String(pooler.port);
-  poolerUrl.username = `postgres.${poolerTenantId}`;
-  const poolerRows = await databaseQuery(poolerUrl.toString(), "SELECT 42 AS answer");
+  poolerUrl.username = "postgres.pooler-dev";
+  let poolerRows: ReadonlyArray<object> = [];
+  await activate(stack, "pooler", async () => {
+    poolerRows = await databaseQuery(poolerUrl.toString(), "SELECT 42 AS answer", [], {
+      connectTimeout: LAZY_POOLER_ACTIVATION_TIMEOUT,
+    });
+  });
   expect(poolerRows).toEqual([{ answer: 42 }]);
+
+  const ready = await stack.status();
+  expect(ready.capabilities.map(({ name, state }) => ({ name, state }))).toEqual(
+    CAPABILITY_NAMES.map((name) => ({ name, state: "ready" })),
+  );
+  const idempotentStart = await stack.start();
+  expect(idempotentStart.capabilities.map(({ name, state }) => ({ name, state }))).toEqual(
+    CAPABILITY_NAMES.map((name) => ({ name, state: "ready" })),
+  );
+
+  const endpointSnapshot = Object.fromEntries(
+    Object.entries(ready.endpoints).map(([name, value]) => [name, value?.port]),
+  );
+  const persistedMarker = await databaseQuery(
+    credentials.database.url,
+    `SELECT payload FROM public."${table}" WHERE id = 1`,
+  );
+  expect(persistedMarker).toEqual([{ payload: markers.first }]);
+  const volumesBeforeStop =
+    mode.runtime.kind === "container"
+      ? await dockerOwnedResourceCount(initial.id, "volumes")
+      : undefined;
+
+  const reactivate = async (): Promise<void> => {
+    await activate(stack, "rest", async () => {
+      await request(api.url, restPath, { headers: apiHeaders(credentials) });
+    });
+    await activate(stack, "auth", async () => {
+      await request(api.url, "/auth/v1/settings", { headers: apiHeaders(credentials) });
+    });
+    await activate(stack, "realtime", async () => {
+      const probe = await openSocket(makeRealtimeUrl(api, credentials.api.publishableKey));
+      probe.close();
+    });
+    await activate(stack, "storage", async () => {
+      await request(api.url, "/storage/v1/bucket", { headers: serviceHeaders(credentials) });
+    });
+    await activate(stack, "functions", async () => {
+      await request(api.url, functionPath, { headers: apiHeaders(credentials) });
+    });
+    await activate(stack, "mail", async () => {
+      await request(mailUi.url, "/api/v1/messages?limit=1");
+    });
+    await activate(stack, "analytics", async () => {
+      await request(api.url, "/analytics/v1/health");
+    });
+    await activate(stack, "studio", async () => {
+      await request(studio.url, "/api/platform/profile", {
+        headers: serviceHeaders(credentials),
+        signal: AbortSignal.timeout(LAZY_STUDIO_ACTIVATION_TIMEOUT_MS),
+      });
+    });
+    await activate(stack, "pooler", async () => {
+      await databaseQuery(poolerUrl.toString(), "SELECT 42 AS answer", [], {
+        connectTimeout: LAZY_POOLER_ACTIVATION_TIMEOUT,
+      });
+    });
+  };
+
+  try {
+    await stack.stop();
+  } catch (cause) {
+    let diagnostic: StackStatus | undefined;
+    try {
+      diagnostic = await stack.status();
+    } catch {
+      // Preserve the original stop failure if the owner is already gone.
+    }
+    const reason = cause instanceof Error ? cause.message : String(cause);
+    const states =
+      diagnostic === undefined
+        ? "unavailable"
+        : diagnostic.capabilities
+            .map(
+              ({ name, state, error }) =>
+                `${name}=${state}${error === undefined ? "" : ` (${error})`}`,
+            )
+            .join(", ");
+    throw new Error(
+      `Stack stop failed: ${reason}; lifecycle=${diagnostic?.lifecycle ?? "unknown"}; ${states}`,
+      {
+        cause,
+      },
+    );
+  }
+  const stopped = await stack.status();
+  expect(stopped.lifecycle).toBe("stopped");
+  expect(stopped.capabilities.every(({ state }) => state === "stopped")).toBe(true);
+  const offlineStatuses: StackStatus[] = [];
+  for await (const status of stack.watchStatus()) offlineStatuses.push(status);
+  expect(offlineStatuses).toEqual([stopped]);
+  const retainedLogs: StackLogEntry[] = [];
+  for await (const entry of stack.logs({ follow: false })) retainedLogs.push(entry);
+  expect(retainedLogs.length).toBeGreaterThan(0);
+  await expectRuntimeInputsAbsent(projectRoot, initial.id);
+  await expectEndpointsRefused(initialEndpoints);
+  if (mode.runtime.kind === "container") {
+    expect(await dockerOwnedResourceCount(initial.id, "containers")).toBe(0);
+    expect(await dockerOwnedResourceCount(initial.id, "networks")).toBe(0);
+    expect(await dockerOwnedResourceCount(initial.id, "volumes")).toBe(volumesBeforeStop);
+  }
+
+  const started = await stack.start();
+  expectDefaultLazyState(started);
+  expect(
+    Object.fromEntries(
+      Object.entries(started.endpoints).map(([name, value]) => [name, value?.port]),
+    ),
+  ).toEqual(endpointSnapshot);
+  expect(
+    await databaseQuery(
+      credentials.database.url,
+      `SELECT payload FROM public."${table}" WHERE id = 1`,
+    ),
+  ).toEqual([{ payload: markers.first }]);
+  await reactivate();
+
+  await stack.restart();
+  const restarted = await stack.status();
+  expectDefaultLazyState(restarted);
+  expect(
+    Object.fromEntries(
+      Object.entries(restarted.endpoints).map(([name, value]) => [name, value?.port]),
+    ),
+  ).toEqual(endpointSnapshot);
+  expect(
+    await databaseQuery(
+      credentials.database.url,
+      `SELECT payload FROM public."${table}" WHERE id = 1`,
+    ),
+  ).toEqual([{ payload: markers.first }]);
+  await reactivate();
 
   const final = await stack.status();
   expect(final.capabilities.map(({ name, state }) => ({ name, state }))).toEqual(
     CAPABILITY_NAMES.map((name) => ({ name, state: "ready" })),
   );
+
+  await stack.stop();
+  const reconfigured = await stack.start({
+    config: {
+      capabilities: { studio: { enabled: false } },
+      listeners: {
+        api: { port: studio.port },
+        studio: { enabled: false },
+      },
+    },
+  });
+  expect(capabilityState(reconfigured, "database")).toBe("ready");
+  expect(capabilityState(reconfigured, "studio")).toBe("disabled");
+  expect(endpoint(reconfigured, "api").port).toBe(studio.port);
+  expect(endpoint(reconfigured, "api").port).not.toBe(api.port);
+  expect(reconfigured.endpoints.studio).toBeUndefined();
 };
 
 describe("managed Supabase stack whole-stack E2E", () => {
+  test(
+    "recovers the native database after abrupt Supervisor termination",
+    { timeout: E2E_TIMEOUT_MS },
+    async () => {
+      let projectRoot = "";
+      await using stack: TestStack = await createTestStack({
+        name: `stack-crash-recovery-${crypto.randomUUID().replaceAll("-", "").slice(0, 16)}`,
+        runtime: { kind: "native" },
+        setupProject: async (root) => {
+          projectRoot = root;
+        },
+      });
+      const before = await stack.status();
+      const database = endpoint(before, "database");
+      const lockPath = join(
+        projectRoot,
+        ".supabase",
+        "managed",
+        "stacks",
+        stack.id,
+        "data",
+        "database",
+        "postmaster.pid",
+      );
+      const databasePid = Number((await readFile(lockPath, "utf8")).split("\n", 1)[0]);
+      if (!Number.isSafeInteger(databasePid) || databasePid <= 0)
+        throw new Error("Native database lock did not contain a valid PID");
+      process.kill(await supervisorPid(stack.id), "SIGKILL");
+      await waitForProcessExit(databasePid);
+      await expect(connect(database)).rejects.toThrow();
+      await access(lockPath);
+
+      const recovered = await stack.start();
+      expectDefaultLazyState(recovered);
+      expect(
+        await databaseQuery((await stack.credentials()).database.url, "SELECT 1 AS value"),
+      ).toEqual([{ value: 1 }]);
+    },
+  );
+
   for (const mode of RUNTIME_CASES) {
     test(`supports the complete user flow in ${mode.name} mode`, { timeout: E2E_TIMEOUT_MS }, () =>
       runWholeStackScenario(mode),
+    );
+
+    test(
+      `supports optional image and vector workloads in ${mode.name} mode`,
+      { timeout: E2E_TIMEOUT_MS },
+      async () => {
+        const identity = crypto.randomUUID().replaceAll("-", "").slice(0, 20).toLowerCase();
+        const bucket = `stack-optional-${identity}`;
+        const functionSlug = `optional_${identity}`;
+        const analyticsApiKey = `analytics-key-${identity}`;
+        const email = `${identity}@example.test`;
+        const password = "SupabaseStackE2e!123";
+        await using stack: TestStack = await createTestStack({
+          name: `stack-optional-${identity}`,
+          runtime: mode.runtime,
+          config: optionalWorkloadConfig(functionSlug, analyticsApiKey),
+          setupProject: async (root) => {
+            await mkdir(join(root, "supabase", "functions", functionSlug), { recursive: true });
+            await writeFile(
+              join(root, "supabase", "functions", functionSlug, "index.ts"),
+              "Deno.serve(() => new Response('ok'))",
+            );
+          },
+        });
+        const credentials = await stack.credentials();
+        const status = await stack.status();
+        const api = endpoint(status, "api");
+        const mailUi = endpoint(status, "mailUi");
+        await activate(stack, "storage", async () => {
+          await request(api.url, "/storage/v1/bucket", {
+            method: "POST",
+            headers: { ...serviceHeaders(credentials), "content-type": "application/json" },
+            body: JSON.stringify({ id: bucket, name: bucket, public: true }),
+          });
+          await request(api.url, `/storage/v1/object/${bucket}/pixel.png`, {
+            method: "POST",
+            headers: { ...serviceHeaders(credentials), "content-type": "image/png" },
+            body: new Blob([onePixelPng], { type: "image/png" }),
+          });
+          const transformed = await request(
+            api.url,
+            `/storage/v1/render/image/public/${bucket}/pixel.png?width=1&height=1`,
+            { headers: serviceHeaders(credentials) },
+          );
+          expect((await transformed.arrayBuffer()).byteLength).toBeGreaterThan(0);
+        });
+        await activate(stack, "analytics", async () => {
+          await request(api.url, "/analytics/v1/health", {
+            headers: { "x-api-key": analyticsApiKey },
+          });
+          const marker = `analytics-${identity}`;
+          await request(api.url, "/analytics/v1/logs?source_name=postgres.logs", {
+            method: "POST",
+            headers: { "x-api-key": analyticsApiKey, "content-type": "application/json" },
+            body: JSON.stringify({
+              event_message: marker,
+              project: "default",
+              metadata: { source: "stack-e2e" },
+            }),
+          });
+          expect(await queryAnalyticsMarker(api, analyticsApiKey, marker)).toBeGreaterThan(0);
+          expect(
+            await queryAnalyticsMarker(api, analyticsApiKey, "supabase-stack-vector"),
+          ).toBeGreaterThan(0);
+        });
+        await activate(stack, "mail", async () => {
+          await request(mailUi.url, "/api/v1/messages?limit=100");
+        });
+        let signup: JsonObject = {};
+        await activate(stack, "auth", async () => {
+          signup = await jsonObject(
+            await request(api.url, "/auth/v1/signup", {
+              method: "POST",
+              headers: { ...apiHeaders(credentials), "content-type": "application/json" },
+              body: JSON.stringify({ email, password }),
+            }),
+          );
+        });
+        expect(typeof signup.access_token).toBe("string");
+        await request(api.url, "/auth/v1/recover", {
+          method: "POST",
+          headers: { ...apiHeaders(credentials), "content-type": "application/json" },
+          body: JSON.stringify({ email }),
+        });
+        const mailAttempt = Effect.tryPromise({
+          try: async () => {
+            const body = await (await request(mailUi.url, "/api/v1/messages?limit=100")).text();
+            if (!body.includes(email)) throw new Error(`Mailpit delivery pending for ${email}`);
+            return body;
+          },
+          catch: (cause) =>
+            new E2ERequestError({
+              message: cause instanceof Error ? cause.message : String(cause),
+              cause,
+            }),
+        });
+        await Effect.runPromise(
+          Effect.retry(mailAttempt, { schedule: MAILPIT_DELIVERY_RETRY_SCHEDULE }),
+        );
+      },
+    );
+  }
+
+  for (const mode of RUNTIME_CASES) {
+    test(
+      `releases owned resources across repeated stop/start cycles in ${mode.name} mode`,
+      { timeout: E2E_TIMEOUT_MS },
+      async () => {
+        let stackId: string | undefined;
+        let projectRoot = "";
+        const snapshots: Array<
+          Readonly<{ containers: number; networks: number; volumes: number }>
+        > = [];
+        let endpointSnapshot: ReadonlyArray<StackEndpoint> = [];
+        {
+          await using stack: TestStack = await createTestStack({
+            name: `stack-resource-audit-${crypto.randomUUID().replaceAll("-", "").slice(0, 16)}`,
+            runtime: mode.runtime,
+            setupProject: async (root) => {
+              projectRoot = root;
+            },
+          });
+          stackId = stack.id;
+          const initial = await stack.status();
+          expectDefaultLazyState(initial);
+          endpointSnapshot = Object.values(initial.endpoints).filter(
+            (value): value is StackEndpoint => value !== undefined,
+          );
+          for (let cycle = 0; cycle < 3; cycle += 1) {
+            await stack.stop();
+            const stopped = await stack.status();
+            expect(stopped.lifecycle).toBe("stopped");
+            expect(stopped.capabilities.every(({ state }) => state === "stopped")).toBe(true);
+            await expectRuntimeInputsAbsent(projectRoot, stack.id);
+            await expectEndpointsRefused(endpointSnapshot);
+            if (mode.runtime.kind === "container") {
+              if (stackId === undefined) throw new Error("Stack id was not assigned");
+              snapshots.push({
+                containers: await dockerOwnedResourceCount(stackId, "containers"),
+                networks: await dockerOwnedResourceCount(stackId, "networks"),
+                volumes: await dockerOwnedResourceCount(stackId, "volumes"),
+              });
+              expect(snapshots.at(-1)).toEqual({ containers: 0, networks: 0, volumes: 1 });
+            }
+            await stack.start();
+            const restarted = await stack.status();
+            expectDefaultLazyState(restarted);
+            expect(
+              Object.values(restarted.endpoints).filter(
+                (value): value is StackEndpoint => value !== undefined,
+              ),
+            ).toEqual(endpointSnapshot);
+          }
+          if (mode.runtime.kind === "container")
+            expect(new Set(snapshots.map((snapshot) => JSON.stringify(snapshot))).size).toBe(1);
+        }
+        expect(projectRoot.length).toBeGreaterThan(0);
+        await expect(access(projectRoot)).rejects.toThrow();
+        if (mode.runtime.kind === "container") {
+          if (stackId === undefined) throw new Error("Stack id was not assigned");
+          expect(await dockerOwnedResourceCount(stackId, "containers")).toBe(0);
+          expect(await dockerOwnedResourceCount(stackId, "networks")).toBe(0);
+          expect(await dockerOwnedResourceCount(stackId, "volumes")).toBe(0);
+        }
+      },
     );
   }
 });

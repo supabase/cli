@@ -2,14 +2,13 @@ import { describe, expect, it } from "@effect/vitest";
 import { Cause, Deferred, Effect, Exit, Fiber, Option, Stream } from "effect";
 import * as TestClock from "effect/testing/TestClock";
 import { NodeServices } from "@effect/platform-node";
-import type { ExecutionPlan, PlannedWorkload } from "../model/ExecutionPlan.ts";
+import type { PlannedWorkload } from "../model/ExecutionPlan.ts";
 import type { ContainerArtifact } from "../model/CapabilityModule.ts";
 import { StackIdSchema } from "../public/StackId.ts";
 import {
   ContainerExecutableNotFoundError,
   ContainerCommandError,
   ContainerEngineProtocolError,
-  makeControlledCommandRunner,
   makeProcessCommandRunner,
   selectContainerEngine,
   type ContainerProcessRequest,
@@ -17,6 +16,7 @@ import {
   type ContainerContainerSpec,
   type ContainerLogLine,
   type ContainerEngine,
+  type ContainerCommandRunner,
   type ContainerNetworkSpec,
   type ContainerResource,
   type ContainerVolumeSpec,
@@ -27,10 +27,17 @@ import { makeContainerRuntime } from "./ContainerRuntime.ts";
 import { RuntimeDriverError, type RuntimeWorkloadKey } from "./RuntimeDriver.ts";
 import { LogStoreError, type LogRecord, type LogStore } from "../supervisor/LogStore.ts";
 
+const makeControlledCommandRunner = (
+  options: Omit<ContainerCommandRunner, "executable"> & { readonly executable?: string },
+): ContainerCommandRunner => ({
+  executable: options.executable ?? "controlled-container-engine",
+  run: options.run,
+  ...(options.stream === undefined ? {} : { stream: options.stream }),
+});
+
 const stackId = StackIdSchema.make("a".repeat(64));
 const key: RuntimeWorkloadKey = {
   stackId,
-  desiredGeneration: 7,
   workloadId: "database:database",
   specHash: "hash-7",
 };
@@ -52,38 +59,6 @@ const workload = (selected: PlannedWorkload["selected"] = containerArtifact): Pl
   },
   selected,
   specHash: key.specHash,
-});
-
-const recoveryPlan = (workloads: ReadonlyArray<PlannedWorkload>): ExecutionPlan => ({
-  runtime: { kind: "container", engine: "docker" },
-  activation: {
-    database: "eager",
-    rest: "eager",
-    auth: "eager",
-    realtime: "eager",
-    storage: "eager",
-    functions: "eager",
-    studio: "eager",
-    mail: "eager",
-    analytics: "eager",
-    pooler: "eager",
-  },
-  startOrder: ["database"],
-  stopOrder: ["database"],
-  dependencies: {
-    database: [],
-    rest: [],
-    auth: [],
-    realtime: [],
-    storage: [],
-    functions: [],
-    studio: [],
-    mail: [],
-    analytics: [],
-    pooler: [],
-  },
-  routes: [],
-  workloads,
 });
 
 const commandResult = (value: unknown): ContainerCommandResult => ({
@@ -312,7 +287,6 @@ describe("container runtime", () => {
         labels: {
           stackId,
           ownerSessionId: "owner",
-          desiredGeneration: 7,
           workloadId: "auth:auth",
           specHash: key.specHash,
           role: "workload",
@@ -518,6 +492,46 @@ describe("container runtime", () => {
       expect(startupWait).toBeGreaterThan(startupStart);
       expect(startupRemove).toBeGreaterThan(startupWait);
       yield* runtime.stop(key);
+    }),
+  );
+
+  it.live("publishes an unexpected container workload exit after readiness", () =>
+    Effect.gen(function* () {
+      const state: FakeContainerState = {
+        resources: [],
+        imagePresent: true,
+        calls: [],
+        createdSpecs: [],
+        nextId: 1,
+      };
+      const exit = yield* Deferred.make<number, never>();
+      const base = fakeContainerEngine(state);
+      const runtime = yield* makeContainerRuntime({
+        engine: {
+          ...base,
+          waitContainer: (resourceId) =>
+            state.calls.includes(`wait:${resourceId}`)
+              ? Deferred.await(exit)
+              : base.waitContainer(resourceId),
+        },
+        ownerSessionId: "owner-session",
+      });
+      const failures = runtime.watchFailures;
+      expect(failures).toBeDefined();
+      if (failures === undefined) return;
+      const eventFiber = yield* failures.pipe(
+        Stream.take(1),
+        Stream.runCollect,
+        Effect.forkChild({ startImmediately: true }),
+      );
+      const ready = yield* runtime.start(key, workload());
+      expect(ready.state).toBe("ready");
+      yield* Deferred.succeed(exit, 17);
+      const events = yield* Fiber.join(eventFiber);
+      expect(events).toEqual([
+        expect.objectContaining({ workloadId: key.workloadId, state: "failed" }),
+      ]);
+      yield* runtime.remove(key);
     }),
   );
 
@@ -883,17 +897,90 @@ describe("container runtime", () => {
     }),
   );
 
-  it.live("does not rerun migration for an adopted exact main container", () =>
+  it.live("allows stop to interrupt a blocked container readiness", () =>
+    Effect.gen(function* () {
+      const state: FakeContainerState = {
+        resources: [],
+        imagePresent: true,
+        calls: [],
+        createdSpecs: [],
+        nextId: 1,
+      };
+      const entered = yield* Deferred.make<void>();
+      const release = yield* Deferred.make<void>();
+      const runtime = yield* makeContainerRuntime({
+        engine: fakeContainerEngine(state),
+        ownerSessionId: "owner-session",
+        resolveWorkload: () =>
+          Effect.succeed({
+            waitForReadiness: () =>
+              Effect.gen(function* () {
+                yield* Deferred.succeed(entered, undefined);
+                yield* Deferred.await(release);
+              }),
+          }),
+      });
+      const starting = yield* runtime
+        .start(key, workload())
+        .pipe(Effect.forkChild({ startImmediately: true }));
+      yield* Deferred.await(entered);
+      yield* runtime.stop(key);
+      const failed = yield* Fiber.join(starting).pipe(Effect.exit);
+      expect(Exit.isFailure(failed)).toBe(true);
+      expect(state.calls.some((call) => call.startsWith("stop:"))).toBe(true);
+      yield* Deferred.succeed(release, undefined);
+    }),
+  );
+
+  it.live("does not let cleanup race an in-flight container creation", () =>
+    Effect.gen(function* () {
+      const state: FakeContainerState = {
+        resources: [],
+        imagePresent: true,
+        calls: [],
+        createdSpecs: [],
+        nextId: 1,
+      };
+      const createEntered = yield* Deferred.make<void>();
+      const releaseCreate = yield* Deferred.make<void>();
+      const base = fakeContainerEngine(state);
+      const runtime = yield* makeContainerRuntime({
+        engine: {
+          ...base,
+          createContainer: (spec) =>
+            Effect.gen(function* () {
+              yield* Deferred.succeed(createEntered, undefined);
+              yield* Deferred.await(releaseCreate);
+              return yield* base.createContainer(spec);
+            }),
+        },
+        ownerSessionId: "owner-session",
+      });
+      const starting = yield* runtime
+        .start(key, workload())
+        .pipe(Effect.forkChild({ startImmediately: true }));
+      yield* Deferred.await(createEntered);
+
+      // Cleanup must interrupt the start before it can create an unowned container.
+      yield* runtime.cleanup({ stackId, destroy: true });
+      yield* Deferred.succeed(releaseCreate, undefined);
+      const startExit = yield* Fiber.join(starting).pipe(Effect.exit);
+      expect(Exit.isFailure(startExit)).toBe(true);
+
+      expect(state.resources.some((resource) => resource.kind === "workload")).toBe(false);
+    }),
+  );
+
+  it.live("does not adopt an exact main container when starting a new session", () =>
     Effect.gen(function* () {
       const existing: ContainerResource = {
         id: "existing-main",
-        name: "supabase-aaaaaaaaaaaaaaaa-7-database_database-workload",
+        name: "supabase-aaaaaaaaaaaaaaaa-database_database-workload",
         kind: "workload",
         state: "running",
         labels: {
           stackId,
           ownerSessionId: "owner-session",
-          desiredGeneration: key.desiredGeneration,
           workloadId: key.workloadId,
           specHash: key.specHash,
           role: "workload",
@@ -916,8 +1003,8 @@ describe("container runtime", () => {
       });
       const ready = yield* runtime.start(key, workload());
       expect(ready.state).toBe("ready");
-      expect(state.createdSpecs).toEqual([]);
-      expect(state.calls.some((call) => call.startsWith("wait:"))).toBe(false);
+      expect(state.createdSpecs).toHaveLength(2);
+      expect(state.calls.some((call) => call.startsWith("wait:"))).toBe(true);
     }),
   );
 
@@ -925,13 +1012,12 @@ describe("container runtime", () => {
     Effect.gen(function* () {
       const stale: ContainerResource = {
         id: "stale-startup",
-        name: `supabase-${stackId.slice(0, 16)}-${key.desiredGeneration}-${key.workloadId.replace(/[^A-Za-z0-9_.-]/g, "-")}-workload`,
+        name: `supabase-${stackId.slice(0, 16)}-${key.workloadId.replace(/[^A-Za-z0-9_.-]/g, "-")}-workload`,
         kind: "workload",
         state: "stopped",
         labels: {
           stackId,
           ownerSessionId: "owner-session",
-          desiredGeneration: key.desiredGeneration,
           workloadId: key.workloadId,
           specHash: `${key.specHash}:startup:0`,
           role: "workload",
@@ -956,59 +1042,6 @@ describe("container runtime", () => {
       expect(ready.state).toBe("ready");
       expect(state.calls).toContain("remove:stale-startup");
       expect(state.createdSpecs).toHaveLength(2);
-    }),
-  );
-
-  it.live("removes crash-orphaned startup containers during recovery", () =>
-    Effect.gen(function* () {
-      const startup: ContainerResource = {
-        id: "orphaned-startup",
-        name: `supabase-${stackId.slice(0, 16)}-${key.desiredGeneration}-${key.workloadId.replace(/[^A-Za-z0-9_.-]/g, "-")}-workload`,
-        kind: "workload",
-        state: "stopped",
-        labels: {
-          stackId,
-          ownerSessionId: "previous-owner",
-          desiredGeneration: key.desiredGeneration,
-          workloadId: key.workloadId,
-          specHash: `${key.specHash}:startup:0`,
-          role: "workload",
-        },
-      };
-      const main: ContainerResource = {
-        id: "main-workload",
-        name: startup.name,
-        kind: "workload",
-        state: "running",
-        labels: {
-          stackId,
-          ownerSessionId: "previous-owner",
-          desiredGeneration: key.desiredGeneration,
-          workloadId: key.workloadId,
-          specHash: key.specHash,
-          role: "workload",
-        },
-      };
-      const state: FakeContainerState = {
-        resources: [startup, main],
-        imagePresent: true,
-        calls: [],
-        createdSpecs: [],
-        nextId: 1,
-      };
-      const runtime = yield* makeContainerRuntime({
-        engine: fakeContainerEngine(state),
-        ownerSessionId: "new-owner",
-      });
-      const recovered = yield* runtime.recover({
-        stackId,
-        desiredGeneration: key.desiredGeneration,
-        desiredLifecycle: "running",
-        plan: recoveryPlan([workload()]),
-      });
-      expect(recovered).toEqual([{ ...key, state: "ready" }]);
-      expect(state.calls).toContain("remove:orphaned-startup");
-      expect(state.resources.map((resource) => resource.id)).toEqual(["main-workload"]);
     }),
   );
 
@@ -1096,6 +1129,148 @@ describe("container runtime", () => {
         yield* runtime.stop(key);
         expect(state.calls.some((call) => call.startsWith("stop:"))).toBe(true);
       }),
+  );
+
+  it.live("keeps following logs after a non-destructive cleanup and restart", () =>
+    Effect.gen(function* () {
+      const state: FakeContainerState = {
+        resources: [],
+        imagePresent: true,
+        calls: [],
+        createdSpecs: [],
+        nextId: 1,
+      };
+      const records: LogRecord[] = [];
+      const firstAppended = yield* Deferred.make<void>();
+      const secondAppended = yield* Deferred.make<void>();
+      let followerCalls = 0;
+      const base = fakeContainerEngine(state);
+      const baseLogStore = memoryLogStore(records);
+      const logStore: LogStore = {
+        ...baseLogStore,
+        append: (record) =>
+          baseLogStore
+            .append(record)
+            .pipe(
+              Effect.tap(() =>
+                records.length === 1
+                  ? Deferred.succeed(firstAppended, undefined)
+                  : Deferred.succeed(secondAppended, undefined),
+              ),
+            ),
+      };
+      const engine: ContainerEngine = {
+        ...base,
+        streamLogs: () => {
+          const sequence = followerCalls + 1;
+          followerCalls += 1;
+          return Stream.fromIterable([
+            {
+              stream: "stdout",
+              message: `container-started-${sequence}`,
+            } satisfies ContainerLogLine,
+          ]);
+        },
+      };
+      const runtime = yield* makeContainerRuntime({
+        engine,
+        ownerSessionId: "owner-session",
+        logStore,
+      });
+
+      yield* runtime.start(key, workload());
+      yield* Deferred.await(firstAppended);
+      yield* runtime.cleanup({ stackId: key.stackId, destroy: false });
+
+      const restartedKey: RuntimeWorkloadKey = { ...key, specHash: "hash-8" };
+      const restartedWorkload: PlannedWorkload = {
+        ...workload(),
+        specHash: restartedKey.specHash,
+      };
+      yield* runtime.start(restartedKey, restartedWorkload);
+      yield* Deferred.await(secondAppended);
+
+      expect(followerCalls).toBe(2);
+      expect(records.map((record) => record.message)).toEqual([
+        "container-started-1",
+        "container-started-2",
+      ]);
+    }),
+  );
+
+  it.live("propagates restart-session log failures after a non-destructive cleanup", () =>
+    Effect.gen(function* () {
+      const state: FakeContainerState = {
+        resources: [],
+        imagePresent: true,
+        calls: [],
+        createdSpecs: [],
+        nextId: 1,
+      };
+      const readiness = yield* Deferred.make<void>();
+      const followerAttached = yield* Deferred.make<void>();
+      const followerFailure = yield* Deferred.make<never, ContainerEngineProtocolError>();
+      const restartedKey: RuntimeWorkloadKey = { ...key, specHash: "hash-9" };
+      const restartedWorkload: PlannedWorkload = {
+        ...workload(),
+        specHash: restartedKey.specHash,
+      };
+      let followerCalls = 0;
+      const engine: ContainerEngine = {
+        ...fakeContainerEngine(state),
+        streamLogs: () => {
+          followerCalls += 1;
+          return followerCalls === 1
+            ? Stream.empty
+            : Stream.fromEffect(
+                Effect.gen(function* () {
+                  yield* Deferred.succeed(followerAttached, undefined);
+                  return yield* Deferred.await(followerFailure);
+                }),
+              );
+        },
+      };
+      const runtime = yield* makeContainerRuntime({
+        engine,
+        ownerSessionId: "owner-session",
+        logStore: memoryLogStore([]),
+        resolveWorkload: (requestKey) =>
+          Effect.succeed({
+            waitForReadiness:
+              requestKey.specHash === restartedKey.specHash
+                ? () => Deferred.await(readiness)
+                : undefined,
+          }),
+      });
+
+      yield* runtime.start(key, workload());
+      yield* runtime.cleanup({ stackId: key.stackId, destroy: false });
+
+      const starting = yield* runtime
+        .start(restartedKey, restartedWorkload)
+        .pipe(Effect.forkChild({ startImmediately: true }));
+      yield* Deferred.await(followerAttached);
+      yield* Deferred.fail(
+        followerFailure,
+        new ContainerEngineProtocolError({
+          operation: "logs",
+          message: "restart-session follower disconnected",
+        }),
+      );
+      const result = yield* Fiber.join(starting).pipe(Effect.exit);
+      expect(Exit.isFailure(result)).toBe(true);
+      if (Exit.isFailure(result)) {
+        const error = Cause.findErrorOption(result.cause);
+        expect(Option.isSome(error)).toBe(true);
+        if (Option.isSome(error)) {
+          expect(error.value).toBeInstanceOf(RuntimeDriverError);
+          expect(error.value.message).toContain("Container log stream failed");
+        }
+      }
+      expect(state.resources.some((resource) => resource.kind === "workload")).toBe(false);
+      expect(state.calls.some((call) => call.startsWith("stop:"))).toBe(true);
+      expect(state.calls.some((call) => call.startsWith("remove:"))).toBe(true);
+    }),
   );
 
   it.live("fails startup and removes a new container when log persistence fails", () =>
@@ -1212,7 +1387,6 @@ describe("container runtime", () => {
           labels: {
             stackId,
             ownerSessionId: "owner-session",
-            desiredGeneration: 1,
             workloadId: "database:database",
             specHash: "hash",
             role: "workload",
@@ -1244,11 +1418,11 @@ describe("container runtime", () => {
                     ? "not-json\n"
                     : ""
                 : request.args[0] === "ps"
-                  ? `${dockerJsonRow(["container-id", "backend", stackId, "owner", "7", key.workloadId, key.specHash, "workload", "running"])}\n`
+                  ? `${dockerJsonRow(["container-id", "backend", stackId, "owner", key.workloadId, key.specHash, "workload", "running"])}\n`
                   : request.args[0] === "network" && request.args[1] === "create"
                     ? "created-id\nsecond\n"
                     : request.args[0] === "network"
-                      ? `${dockerJsonRow(["network-id", "private", stackId, "owner", "7", "network"])}\n`
+                      ? `${dockerJsonRow(["network-id", "private", stackId, "owner", "network"])}\n`
                       : request.args[0] === "volume"
                         ? `${dockerJsonRow(["volume-name", stackId, key.workloadId, "volume"])}\n`
                         : request.args[0] === "version"
@@ -1275,7 +1449,7 @@ describe("container runtime", () => {
       const multiline = yield* engine
         .createNetwork({
           name: "private",
-          labels: { stackId, ownerSessionId: "owner", desiredGeneration: 7, role: "network" },
+          labels: { stackId, ownerSessionId: "owner", role: "network" },
         })
         .pipe(Effect.exit);
       expect(Exit.isFailure(multiline)).toBe(true);
@@ -1290,7 +1464,6 @@ describe("container runtime", () => {
         labels: {
           stackId,
           ownerSessionId: "owner",
-          desiredGeneration: 7,
           workloadId: "backend",
           specHash: key.specHash,
           role: "workload" as const,
@@ -1364,9 +1537,9 @@ describe("container runtime", () => {
                       ? "bad\trow\n"
                       : ""
                   : request.args[0] === "ps"
-                    ? `container-id\tbackend\t${stackId}\towner\t7\t${key.workloadId}\t${key.specHash}\tworkload\trunning\n`
+                    ? `container-id\tbackend\t${stackId}\towner\t${key.workloadId}\t${key.specHash}\tworkload\trunning\n`
                     : request.args[0] === "network"
-                      ? `network-id\tprivate\t${stackId}\towner\t7\tnetwork\n`
+                      ? `network-id\tprivate\t${stackId}\towner\tnetwork\n`
                       : request.args[0] === "volume"
                         ? `volume-name\t${stackId}\t${key.workloadId}\tvolume\n`
                         : "created-id\n",
@@ -1517,7 +1690,7 @@ describe("container runtime", () => {
     10_000,
   );
 
-  it.live("adopts an exact running container and replaces only same-owner stale state", () =>
+  it.live("replaces an exact running container for each new start session", () =>
     Effect.gen(function* () {
       const state: FakeContainerState = {
         resources: [],
@@ -1531,11 +1704,16 @@ describe("container runtime", () => {
         ownerSessionId: "owner-session",
       });
       yield* runtime.start(key, workload());
+      const nextRuntime = yield* makeContainerRuntime({
+        engine: fakeContainerEngine(state),
+        ownerSessionId: "next-owner-session",
+      });
       state.calls.length = 0;
-      yield* runtime.start(key, workload());
-      expect(state.calls).not.toContain("inspect-image");
-      expect(state.calls).not.toContain("create-container");
-      expect(state.calls.some((call) => call.startsWith("start:"))).toBe(false);
+      yield* nextRuntime.start(key, workload());
+      expect(state.calls).toContain("inspect-image");
+      expect(state.calls).toContain("create-container");
+      expect(state.calls.some((call) => call.startsWith("stop:"))).toBe(true);
+      expect(state.calls.some((call) => call.startsWith("remove:"))).toBe(true);
 
       const staleKey = { ...key, specHash: "hash-new" };
       state.calls.length = 0;
@@ -1549,22 +1727,19 @@ describe("container runtime", () => {
     }),
   );
 
-  it.live("runs database bootstrap before reporting an adopted running container ready", () =>
+  it.live("recreates a same-stack network owned by a previous start session", () =>
     Effect.gen(function* () {
+      const networkName = `supabase-${key.stackId.slice(0, 16)}-network`;
       const state: FakeContainerState = {
         resources: [
           {
-            id: "adopted-database",
-            name: "adopted-database",
-            kind: "workload",
-            state: "running",
+            id: "stale-network",
+            name: networkName,
+            kind: "network",
             labels: {
               stackId: key.stackId,
               ownerSessionId: "previous-owner",
-              desiredGeneration: key.desiredGeneration,
-              workloadId: key.workloadId,
-              specHash: key.specHash,
-              role: "workload",
+              role: "network",
             },
           },
         ],
@@ -1573,156 +1748,33 @@ describe("container runtime", () => {
         createdSpecs: [],
         nextId: 1,
       };
-      const order: string[] = [];
       const runtime = yield* makeContainerRuntime({
         engine: fakeContainerEngine(state),
-        ownerSessionId: "new-owner",
-        waitForReadiness: () => Effect.sync(() => order.push("readiness")),
-        bootstrapDatabase: () => Effect.sync(() => order.push("bootstrap")),
+        ownerSessionId: "current-owner",
       });
-      const databaseWorkload = { ...workload(), bootstrap: "database" as const };
-      const adopted = yield* runtime.recover({
-        stackId: key.stackId,
-        desiredGeneration: key.desiredGeneration,
-        desiredLifecycle: "running",
-        plan: recoveryPlan([databaseWorkload]),
-      });
-      expect(order).toEqual(["readiness", "bootstrap"]);
-      expect(adopted).toEqual([{ ...key, state: "ready" }]);
-      expect(state.calls.some((call) => call.startsWith("stop:"))).toBe(false);
-    }),
-  );
 
-  it.live("attaches one current-output follower when recovering a running container", () =>
-    Effect.gen(function* () {
-      const state: FakeContainerState = {
-        resources: [
-          {
-            id: "adopted-container",
-            name: "adopted-container",
-            kind: "workload",
-            state: "running",
-            labels: {
-              stackId: key.stackId,
-              ownerSessionId: "previous-owner",
-              desiredGeneration: key.desiredGeneration,
-              workloadId: key.workloadId,
-              specHash: key.specHash,
-              role: "workload",
-            },
-          },
-        ],
-        imagePresent: true,
-        calls: [],
-        createdSpecs: [],
-        nextId: 1,
-      };
-      const order: string[] = [];
-      const records: LogRecord[] = [];
-      let followers = 0;
-      const runtime = yield* makeContainerRuntime({
-        engine: {
-          ...fakeContainerEngine(state),
-          streamLogs: (_id, options) => {
-            followers += 1;
-            order.push(`attach:${options?.tail ?? "default"}`);
-            return Stream.fromIterable([
-              { stream: "stdout", message: "recovered-current-output" } satisfies ContainerLogLine,
-            ]);
-          },
-        },
-        ownerSessionId: "new-owner",
-        logStore: memoryLogStore(records),
-        waitForReadiness: () => Effect.sync(() => order.push("readiness")),
-      });
-      const recovered = yield* runtime.recover({
-        stackId: key.stackId,
-        desiredGeneration: key.desiredGeneration,
-        desiredLifecycle: "running",
-        plan: recoveryPlan([workload()]),
-      });
-      expect(recovered).toEqual([{ ...key, state: "ready" }]);
-      expect(order).toEqual(["readiness", "attach:0"]);
-      yield* runtime.recover({
-        stackId: key.stackId,
-        desiredGeneration: key.desiredGeneration,
-        desiredLifecycle: "running",
-        plan: recoveryPlan([workload()]),
-      });
-      expect(followers).toBe(1);
-      yield* runtime.cleanup({ stackId: key.stackId, destroy: false });
-      expect(records.map((record) => record.message)).toContain("recovered-current-output");
-    }),
-  );
+      yield* runtime.start(key, workload());
 
-  it.live(
-    "stops but does not remove an adopted database after bootstrap failure, then retries",
-    () =>
-      Effect.gen(function* () {
-        const state: FakeContainerState = {
-          resources: [
-            {
-              id: "adopted-database",
-              name: "adopted-database",
-              kind: "workload",
-              state: "running",
-              labels: {
-                stackId: key.stackId,
-                ownerSessionId: "previous-owner",
-                desiredGeneration: key.desiredGeneration,
-                workloadId: key.workloadId,
-                specHash: key.specHash,
-                role: "workload",
-              },
-            },
-          ],
-          imagePresent: true,
-          calls: [],
-          createdSpecs: [],
-          nextId: 1,
-        };
-        const bootstrapError = new RuntimeDriverError({
-          message: "recovered database bootstrap failed",
-          stackId: key.stackId,
-          workloadId: key.workloadId,
-        });
-        let attempts = 0;
-        const runtime = yield* makeContainerRuntime({
-          engine: fakeContainerEngine(state),
-          ownerSessionId: "new-owner",
-          bootstrapDatabase: () =>
-            Effect.gen(function* () {
-              attempts += 1;
-              if (attempts === 1) return yield* bootstrapError;
-            }),
-        });
-        const databaseWorkload = { ...workload(), bootstrap: "database" as const };
-        const failed = yield* runtime
-          .recover({
-            stackId: key.stackId,
-            desiredGeneration: key.desiredGeneration,
-            desiredLifecycle: "running",
-            plan: recoveryPlan([databaseWorkload]),
-          })
-          .pipe(Effect.exit);
-        expect(Exit.isFailure(failed)).toBe(true);
-        expect(state.resources.find((resource) => resource.id === "adopted-database")?.state).toBe(
-          "stopped",
-        );
-        expect(state.calls.some((call) => call.startsWith("stop:"))).toBe(true);
-        expect(state.calls.some((call) => call.startsWith("remove:"))).toBe(false);
-        const retry = yield* runtime.start(key, databaseWorkload);
-        expect(retry.state).toBe("ready");
-        expect(attempts).toBe(2);
-        expect(state.calls.some((call) => call.startsWith("remove:"))).toBe(false);
-      }),
+      const removeIndex = state.calls.findIndex((call) => call === "remove-network:stale-network");
+      const createIndex = state.calls.findIndex((call) => call === "create-network");
+      expect(removeIndex).toBeGreaterThanOrEqual(0);
+      expect(createIndex).toBeGreaterThan(removeIndex);
+      expect(
+        state.resources.some(
+          (resource) =>
+            resource.kind === "network" &&
+            resource.labels.role === "network" &&
+            resource.labels.ownerSessionId === "current-owner",
+        ),
+      ).toBe(true);
+    }),
   );
 
   it.live("leaves foreign and sanitized-name collisions untouched", () =>
     Effect.gen(function* () {
       const foreignStackId = StackIdSchema.make("c".repeat(64));
       const foreignKey = { ...key, stackId: foreignStackId, workloadId: "api:api" };
-      const foreignName = `supabase-${stackId.slice(0, 16)}-${foreignKey.desiredGeneration}-api-api-workload`;
+      const foreignName = `supabase-${stackId.slice(0, 16)}-api-api-workload`;
       const state: FakeContainerState = {
         resources: [
           {
@@ -1733,7 +1785,6 @@ describe("container runtime", () => {
             labels: {
               stackId: foreignStackId,
               ownerSessionId: "other-session",
-              desiredGeneration: foreignKey.desiredGeneration,
               workloadId: foreignKey.workloadId,
               specHash: foreignKey.specHash,
               role: "workload",
@@ -1805,7 +1856,13 @@ describe("container runtime", () => {
         yield* runtime.start(otherStackKey, workload());
         expect(state.resources.filter((resource) => resource.kind === "volume")).toHaveLength(2);
         state.calls.length = 0;
-        yield* runtime.start(key, workload());
+        const nextRuntime = yield* makeContainerRuntime({
+          engine: fakeContainerEngine(state),
+          ownerSessionId: "next-owner-session",
+          resolveWorkload: () =>
+            Effect.succeed({ bootstrap: { source: "/tmp/main.ts", destination: "/root" } }),
+        });
+        yield* nextRuntime.start(key, workload());
         expect(state.calls).not.toContain(`create-volume:${physicalVolumeName}`);
 
         const invalidState: FakeContainerState = {
@@ -1897,121 +1954,6 @@ describe("container runtime", () => {
       expect(state.calls.filter((call) => call.startsWith("remove-volume:"))).toEqual([
         `remove-volume:${sharedVolume.id}`,
       ]);
-    }),
-  );
-
-  it.live("recovers an exact shared owner volume and destroys it once", () =>
-    Effect.gen(function* () {
-      const ownerWorkloadId = "storage:storage";
-      const secondaryWorkloadId = "storage:imgproxy";
-      const ownerSpecHash = "storage-hash";
-      const secondarySpecHash = "imgproxy-hash";
-      const ownerWorkload = {
-        ...workload(),
-        id: ownerWorkloadId,
-        capability: "storage" as const,
-        specHash: ownerSpecHash,
-      };
-      const secondaryWorkload = {
-        ...workload(),
-        id: secondaryWorkloadId,
-        capability: "storage" as const,
-        specHash: secondarySpecHash,
-      };
-      const sharedVolumeName = `supabase-${stackId}-${ownerWorkloadId.replace(/[^A-Za-z0-9_.-]/g, "-")}-volume`;
-      const state: FakeContainerState = {
-        resources: [
-          {
-            id: "shared-network",
-            name: "shared-network",
-            kind: "network",
-            labels: {
-              stackId,
-              ownerSessionId: "previous-owner",
-              desiredGeneration: key.desiredGeneration,
-              role: "network",
-            },
-          },
-          {
-            id: "shared-volume",
-            name: sharedVolumeName,
-            kind: "volume",
-            labels: { stackId, workloadId: ownerWorkloadId, role: "volume" },
-          },
-          {
-            id: "storage-container",
-            name: "storage-container",
-            kind: "workload",
-            state: "running",
-            labels: {
-              stackId,
-              ownerSessionId: "previous-owner",
-              desiredGeneration: key.desiredGeneration,
-              workloadId: ownerWorkloadId,
-              specHash: ownerSpecHash,
-              role: "workload",
-            },
-          },
-          {
-            id: "imgproxy-container",
-            name: "imgproxy-container",
-            kind: "workload",
-            state: "running",
-            labels: {
-              stackId,
-              ownerSessionId: "previous-owner",
-              desiredGeneration: key.desiredGeneration,
-              workloadId: secondaryWorkloadId,
-              specHash: secondarySpecHash,
-              role: "workload",
-            },
-          },
-        ],
-        imagePresent: true,
-        calls: [],
-        createdSpecs: [],
-        nextId: 1,
-      };
-      const runtime = yield* makeContainerRuntime({
-        engine: fakeContainerEngine(state),
-        ownerSessionId: "new-owner",
-        resolveWorkload: (requestKey) =>
-          Effect.succeed({
-            volume:
-              requestKey.workloadId === ownerWorkloadId
-                ? { target: "/var/lib/storage", readOnly: false, ownerWorkloadId }
-                : { target: "/mnt", readOnly: true, ownerWorkloadId },
-          }),
-      });
-      const plan = recoveryPlan([ownerWorkload, secondaryWorkload]);
-      const observed = yield* runtime.recover({
-        stackId,
-        desiredGeneration: key.desiredGeneration,
-        desiredLifecycle: "running",
-        plan,
-      });
-      expect(observed).toHaveLength(2);
-      expect(observed.map(({ workloadId }) => workloadId)).toEqual(
-        expect.arrayContaining([ownerWorkloadId, secondaryWorkloadId]),
-      );
-      expect(state.calls.some((call) => call.startsWith("create-volume:"))).toBe(false);
-      yield* runtime.start(
-        { ...key, workloadId: ownerWorkloadId, specHash: ownerSpecHash },
-        ownerWorkload,
-      );
-      yield* runtime.start(
-        { ...key, workloadId: secondaryWorkloadId, specHash: secondarySpecHash },
-        secondaryWorkload,
-      );
-      expect(state.calls.some((call) => call.startsWith("create-volume:"))).toBe(false);
-      yield* runtime.cleanup({ stackId, destroy: false });
-      expect(state.resources.some((resource) => resource.id === "shared-volume")).toBe(true);
-      const volumeId = state.resources.find((resource) => resource.id === "shared-volume")?.id;
-      yield* runtime.cleanup({ stackId, destroy: true });
-      expect(state.calls.filter((call) => call.startsWith("remove-volume:"))).toEqual([
-        `remove-volume:${volumeId}`,
-      ]);
-      expect(state.resources.some((resource) => resource.id === "shared-volume")).toBe(false);
     }),
   );
 
@@ -2115,7 +2057,7 @@ describe("container runtime", () => {
     }),
   );
 
-  it.live("does not remove an adopted running database container on bootstrap failure", () =>
+  it.live("removes a replaced running database container on bootstrap failure", () =>
     Effect.gen(function* () {
       const state: FakeContainerState = {
         resources: [],
@@ -2131,12 +2073,12 @@ describe("container runtime", () => {
       yield* owner.start(key, workload());
       state.calls.length = 0;
       const bootstrapError = new RuntimeDriverError({
-        message: "adopted database bootstrap failed",
+        message: "replaced database bootstrap failed",
         stackId: key.stackId,
         workloadId: key.workloadId,
       });
       let attempts = 0;
-      const adopted = yield* makeContainerRuntime({
+      const replacementRuntime = yield* makeContainerRuntime({
         engine: fakeContainerEngine(state),
         ownerSessionId: "new-owner",
         bootstrapDatabase: () =>
@@ -2145,47 +2087,52 @@ describe("container runtime", () => {
             if (attempts === 1) return yield* bootstrapError;
           }),
       });
-      const result = yield* adopted
+      const result = yield* replacementRuntime
         .start(key, { ...workload(), bootstrap: "database" as const })
         .pipe(Effect.exit);
       expect(Exit.isFailure(result)).toBe(true);
       expect(state.calls.some((call) => call.startsWith("stop:"))).toBe(true);
-      expect(state.calls.some((call) => call.startsWith("remove:"))).toBe(false);
-      expect(state.resources.find((resource) => resource.kind === "workload")?.state).toBe(
-        "stopped",
-      );
-      const retry = yield* adopted.start(key, { ...workload(), bootstrap: "database" as const });
+      expect(state.calls.some((call) => call.startsWith("remove:"))).toBe(true);
+      expect(state.resources.some((resource) => resource.kind === "workload")).toBe(false);
+      const retry = yield* replacementRuntime.start(key, {
+        ...workload(),
+        bootstrap: "database" as const,
+      });
       expect(retry.state).toBe("ready");
       expect(attempts).toBe(2);
     }),
   );
 
-  it.live(
-    "copies a new functions bootstrap before starting and never copies an adopted container",
-    () =>
-      Effect.gen(function* () {
-        const state: FakeContainerState = {
-          resources: [],
-          imagePresent: true,
-          calls: [],
-          createdSpecs: [],
-          nextId: 1,
-        };
-        const runtime = yield* makeContainerRuntime({
-          engine: fakeContainerEngine(state),
-          ownerSessionId: "owner-session",
-          resolveWorkload: () =>
-            Effect.succeed({ bootstrap: { source: "/tmp/main.ts", destination: "/root" } }),
-        });
-        yield* runtime.start(key, workload());
-        const copyIndex = state.calls.findIndex((call) => call.startsWith("copy:"));
-        const startIndex = state.calls.findIndex((call) => call.startsWith("start:"));
-        expect(copyIndex).toBeGreaterThanOrEqual(0);
-        expect(startIndex).toBeGreaterThan(copyIndex);
-        state.calls.length = 0;
-        yield* runtime.start(key, workload());
-        expect(state.calls.some((call) => call.startsWith("copy:"))).toBe(false);
-      }),
+  it.live("copies a new functions bootstrap on each fresh start", () =>
+    Effect.gen(function* () {
+      const state: FakeContainerState = {
+        resources: [],
+        imagePresent: true,
+        calls: [],
+        createdSpecs: [],
+        nextId: 1,
+      };
+      const runtime = yield* makeContainerRuntime({
+        engine: fakeContainerEngine(state),
+        ownerSessionId: "owner-session",
+        resolveWorkload: () =>
+          Effect.succeed({ bootstrap: { source: "/tmp/main.ts", destination: "/root" } }),
+      });
+      yield* runtime.start(key, workload());
+      const copyIndex = state.calls.findIndex((call) => call.startsWith("copy:"));
+      const startIndex = state.calls.findIndex((call) => call.startsWith("start:"));
+      expect(copyIndex).toBeGreaterThanOrEqual(0);
+      expect(startIndex).toBeGreaterThan(copyIndex);
+      state.calls.length = 0;
+      const nextRuntime = yield* makeContainerRuntime({
+        engine: fakeContainerEngine(state),
+        ownerSessionId: "next-owner-session",
+        resolveWorkload: () =>
+          Effect.succeed({ bootstrap: { source: "/tmp/main.ts", destination: "/root" } }),
+      });
+      yield* nextRuntime.start(key, workload());
+      expect(state.calls.some((call) => call.startsWith("copy:"))).toBe(true);
+    }),
   );
 
   it.live("removes a newly-created container when bootstrap copy fails", () =>

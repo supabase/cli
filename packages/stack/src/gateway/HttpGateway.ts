@@ -11,11 +11,7 @@ import {
 import { Socket } from "node:net";
 import type { Duplex } from "node:stream";
 import type { Fiber } from "effect/Fiber";
-import {
-  GatewayActivationError,
-  GatewayAuthenticationError,
-  GatewayStaleGenerationError,
-} from "../public/Errors.ts";
+import { GatewayActivationError, GatewayAuthenticationError } from "../public/Errors.ts";
 import type {
   ActivationResult,
   BackendEndpoint,
@@ -24,7 +20,6 @@ import type {
   GatewayRoute,
   GatewayRouteRequest,
   GatewayHeaders,
-  LazyActivator,
   PreparedGatewayRoute,
 } from "./Gateway.ts";
 import { GatewayRouteNotFoundError, isGatewayProxyRoute } from "./Gateway.ts";
@@ -39,7 +34,9 @@ export interface HttpGatewayOptions {
   readonly port?: number;
   readonly listener?: HostListener;
   readonly routes: ReadonlyArray<GatewayRoute>;
-  readonly activate: LazyActivator["activate"];
+  readonly activate: (
+    capability: import("../public/Capability.ts").CapabilityName,
+  ) => Effect.Effect<ActivationResult, GatewayActivationError>;
   readonly resolveBackend?: (
     route: GatewayProxyRoute,
     request: GatewayRouteRequest,
@@ -193,7 +190,9 @@ const resolveProxyRequest = (
               path: preparedPath(route, prepared, view),
               headers: preparedHeaders(route, prepared, view, request),
             })),
-            Effect.mapError((cause) => new GatewayBackendError({ cause })),
+            Effect.mapError((cause) =>
+              cause instanceof GatewayActivationError ? cause : new GatewayBackendError({ cause }),
+            ),
           );
         }),
       ),
@@ -286,13 +285,9 @@ const proxy = (
 const mapFailure = (cause: Cause.Cause<unknown>): number => {
   const error = Cause.findErrorOption(cause);
   if (Option.isSome(error) && error.value instanceof GatewayRouteNotFoundError) return 404;
+  if (Option.isSome(error) && error.value instanceof GatewayActivationError) return 503;
   if (Option.isSome(error) && error.value instanceof GatewayBackendError) return 502;
-  if (
-    Option.isSome(error) &&
-    (error.value instanceof GatewayAuthenticationError ||
-      error.value instanceof GatewayStaleGenerationError)
-  )
-    return 503;
+  if (Option.isSome(error) && error.value instanceof GatewayAuthenticationError) return 503;
   return 503;
 };
 
@@ -314,9 +309,9 @@ const handleRequest = (
     response.end();
     return;
   }
-  const health = options.healthPaths ?? ["/health", "/healthz", "/status"];
+  const health = options.healthPaths;
   const pathname = view.path.split("?", 1)[0] ?? view.path;
-  if (health.some((path) => pathname === path)) {
+  if (health?.some((path) => pathname === path)) {
     response.statusCode = 200;
     response.setHeader("content-type", "application/json");
     response.end(JSON.stringify({ ok: true }));
@@ -402,7 +397,7 @@ const handleUpgrade = (
   const activation = resolveProxyRequest(request, view, route, options).pipe(
     Effect.flatMap(({ backend, path, headers }) =>
       Effect.callback<void, GatewayBackendError>((resume) => {
-        const target = new Socket();
+        const target = new Socket({ allowHalfOpen: true });
         let settled = false;
         const fail = (cause: unknown) => {
           if (settled) return;

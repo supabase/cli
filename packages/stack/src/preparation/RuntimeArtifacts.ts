@@ -6,7 +6,7 @@ import {
   type NativeWorkloadArtifact,
 } from "../model/WorkloadCatalog.ts";
 import type { StackRuntime } from "../public/Runtime.ts";
-import { StackPreparationError } from "../public/Errors.ts";
+import { ContainerPullError, StackPreparationError } from "../public/Errors.ts";
 import {
   makeArtifactStore,
   type ArtifactStore,
@@ -28,7 +28,7 @@ export interface PreparedWorkloadArtifact {
   readonly workloadId: string;
   readonly capability: PlannedWorkload["capability"];
   readonly version: string;
-  readonly outcome: "cached" | "downloaded" | "present" | "pulled";
+  readonly outcome: "cached" | "downloaded" | "pulled";
   /** Native installation root. Container preparation deliberately has no root. */
   readonly artifactRoot?: string;
   readonly executablePath?: string;
@@ -44,7 +44,10 @@ export interface RuntimeArtifactPreparer {
   readonly containerEngine?: ContainerEngine;
 }
 
-export type RuntimeArtifactPreparationError = ArtifactStoreError | StackPreparationError;
+export type RuntimeArtifactPreparationError =
+  | ArtifactStoreError
+  | StackPreparationError
+  | ContainerPullError;
 
 export interface RuntimeArtifactPreparerOptions {
   readonly native?: {
@@ -127,10 +130,18 @@ export const makeRuntimeArtifactPreparer = (
               workloadId: workload.id,
               capability: workload.capability,
               version: containerVersion(image),
-              outcome: "present",
+              outcome: "cached",
               image,
             })
           : engine.pullImage(image).pipe(
+              Effect.mapError(
+                (cause) =>
+                  new ContainerPullError({
+                    message: `Unable to pull container image ${image}`,
+                    workload: workload.id,
+                    cause,
+                  }),
+              ),
               Effect.as({
                 workloadId: workload.id,
                 capability: workload.capability,
@@ -140,11 +151,14 @@ export const makeRuntimeArtifactPreparer = (
               }),
             ),
       ),
-      Effect.mapError(() =>
-        error("Container image preparation failed", {
-          workload: workload.id,
-          engine: runtime.engine,
-        }),
+      Effect.mapError((cause) =>
+        cause instanceof ContainerPullError
+          ? cause
+          : error("Container image preparation failed", {
+              workload: workload.id,
+              engine: runtime.engine,
+              cause,
+            }),
       ),
     );
   },

@@ -1,4 +1,4 @@
-import { Data, Effect, Schema } from "effect";
+import { Data, Effect, Predicate, Schema } from "effect";
 import { isStackId, StackIdSchema } from "../public/StackId.ts";
 
 /** The stable protocol is intentionally frozen independently of Stack RPC releases. */
@@ -12,6 +12,13 @@ export class MaintenanceProtocolError extends Data.TaggedError("MaintenanceProto
   readonly message: string;
   readonly reason?: string;
 }> {}
+
+/** Errors that indicate an owner endpoint is unavailable rather than rejecting a request. */
+export const isMaintenanceTransportFailure = (error: unknown): boolean => {
+  if (Predicate.isTagged(error, "SocketError")) return true;
+  if (!Predicate.isTagged(error, "MaintenanceProtocolError")) return false;
+  return Predicate.hasProperty(error, "reason") && error.reason === "transport";
+};
 
 export const ownerSessionIdIsValid = (value: string): boolean =>
   value.length > 0 && value.length <= 128 && /^[A-Za-z0-9_-]+$/.test(value);
@@ -44,11 +51,6 @@ export const MaintenanceRequestSchema = Schema.Union([
     stackId: StackIdSchema,
     ownerSessionId: OwnerSessionIdSchema,
   }),
-  Schema.Struct({
-    op: Schema.Literal("quiesce"),
-    stackId: StackIdSchema,
-    ownerSessionId: OwnerSessionIdSchema,
-  }),
 ]);
 export type MaintenanceRequest = Schema.Schema.Type<typeof MaintenanceRequestSchema>;
 
@@ -68,7 +70,7 @@ export const MaintenanceResponseSchema = Schema.Union([
     stackId: StackIdSchema,
     rpcRelease: ReleaseTokenSchema,
   }),
-  Schema.Struct({ ok: Schema.Literal(true), op: Schema.Literals(["stop", "quiesce"] as const) }),
+  Schema.Struct({ ok: Schema.Literal(true), op: Schema.Literal("stop") }),
   Schema.Struct({
     ok: Schema.Literal(false),
     error: Schema.Struct({ tag: MaintenanceErrorCodeSchema, message: Schema.String }),

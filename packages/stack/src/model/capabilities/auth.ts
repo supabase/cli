@@ -138,10 +138,10 @@ const EmailSchema = Schema.Struct({
   notification: Schema.optionalKey(Schema.Record(Schema.String, EmailNotificationSchema)),
 });
 
-const SmsAuthProvider = Schema.Struct({ enabled: OptionalBoolean });
+const EnabledFlag = Schema.Struct({ enabled: OptionalBoolean });
 const Web3Schema = Schema.Struct({
-  solana: Schema.optionalKey(SmsAuthProvider),
-  ethereum: Schema.optionalKey(SmsAuthProvider),
+  solana: Schema.optionalKey(EnabledFlag),
+  ethereum: Schema.optionalKey(EnabledFlag),
 });
 const CaptchaSchema = Schema.Struct({
   enabled: OptionalBoolean,

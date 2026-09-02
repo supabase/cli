@@ -1,25 +1,16 @@
-import { Effect, Schema } from "effect";
-import { StackIdSchema, type StackId } from "../public/StackId.ts";
 import {
+  makeContainerEngineCodecs,
   makeContainerEngineCore,
   type ContainerCommand,
-  type ContainerCommandResult,
   type ContainerEngine,
-  type ContainerEngineFailure,
   type ContainerEngineOptions,
   type ContainerLogOptions,
   type ContainerLabels,
-  type ContainerNetworkLabels,
   type ContainerProcessRequest,
-  type ContainerResource,
-  type ContainerResourceRole,
-  type ContainerWorkloadLabels,
 } from "./ContainerEngine.ts";
-import { ContainerEngineProtocolError } from "./ContainerEngine.ts";
 
 const stackLabel = "com.supabase.stack.stackId";
 const ownerLabel = "com.supabase.stack.ownerSessionId";
-const generationLabel = "com.supabase.stack.desiredGeneration";
 const workloadLabel = "com.supabase.stack.workloadId";
 const hashLabel = "com.supabase.stack.specHash";
 const roleLabel = "com.supabase.stack.role";
@@ -30,7 +21,6 @@ const labels = (value: ContainerLabels): ReadonlyArray<string> => {
       ? [
           ["stackId", value.stackId],
           ["ownerSessionId", value.ownerSessionId],
-          ["desiredGeneration", value.desiredGeneration],
           ["role", value.role],
         ]
       : value.role === "volume"
@@ -42,7 +32,6 @@ const labels = (value: ContainerLabels): ReadonlyArray<string> => {
         : [
             ["stackId", value.stackId],
             ["ownerSessionId", value.ownerSessionId],
-            ["desiredGeneration", value.desiredGeneration],
             ["workloadId", value.workloadId],
             ["specHash", value.specHash],
             ["role", value.role],
@@ -59,7 +48,6 @@ const containerFormat = [
   "{{json .Names}}",
   jsonLabel(stackLabel),
   jsonLabel(ownerLabel),
-  jsonLabel(generationLabel),
   jsonLabel(workloadLabel),
   jsonLabel(hashLabel),
   jsonLabel(roleLabel),
@@ -70,7 +58,6 @@ const networkFormat = [
   "{{json .Name}}",
   jsonLabel(stackLabel),
   jsonLabel(ownerLabel),
-  jsonLabel(generationLabel),
   jsonLabel(roleLabel),
 ].join("\\t");
 const volumeFormat = [
@@ -205,234 +192,16 @@ const serializeDockerLogs = (
   ],
 });
 
-const protocol = (operation: string, cause?: unknown): ContainerEngineProtocolError =>
-  new ContainerEngineProtocolError({
-    operation,
-    message: `${operation} returned an invalid Docker response`,
-    ...(cause === undefined ? {} : { cause }),
-  });
-
-const parseJson = (
-  operation: string,
-  raw: string,
-): Effect.Effect<unknown, ContainerEngineFailure> =>
-  Schema.decodeEffect(Schema.fromJsonString(Schema.Unknown))(raw).pipe(
-    Effect.mapError((cause) => protocol(operation, cause)),
-  );
-
-const lines = (raw: string): ReadonlyArray<string> =>
-  raw
-    .split(/\r?\n/)
-    .map((line) => line.trim())
-    .filter((line) => line.length > 0);
-
-const scalarString = (
-  operation: string,
-  raw: string,
-): Effect.Effect<string, ContainerEngineFailure> =>
-  parseJson(operation, raw).pipe(
-    Effect.flatMap((value) =>
-      typeof value === "string" && value.length > 0
-        ? Effect.succeed(value)
-        : Effect.fail(protocol(operation)),
-    ),
-  );
-
-const fields = (
-  operation: string,
-  line: string,
-  count: number,
-): Effect.Effect<ReadonlyArray<string>, ContainerEngineFailure> => {
-  const values = line.split(/\\t|\t/);
-  if (values.length !== count) return Effect.fail(protocol(operation));
-  return Effect.forEach(values, (value) =>
-    parseJson(operation, value).pipe(
-      Effect.flatMap((parsed) =>
-        typeof parsed === "string" ? Effect.succeed(parsed) : Effect.fail(protocol(operation)),
-      ),
-    ),
-  );
-};
-
-const decodeIdentity = (
-  operation: string,
-  stack: string | undefined,
-): Effect.Effect<StackId, ContainerEngineFailure> => {
-  if (stack === undefined) return Effect.fail(protocol(operation));
-  return Schema.decodeEffect(StackIdSchema)(stack).pipe(
-    Effect.mapError((error) => protocol(operation, error)),
-  );
-};
-
-const networkLabels = (
-  operation: string,
-  values: ReadonlyArray<string>,
-): Effect.Effect<ContainerNetworkLabels, ContainerEngineFailure> => {
-  const [stack, owner, generation, role] = values;
-  if (owner === undefined || generation === undefined || role !== "network")
-    return Effect.fail(protocol(operation));
-  return decodeIdentity(operation, stack).pipe(
-    Effect.flatMap((stackId) => {
-      const desiredGeneration = Number(generation);
-      return Number.isInteger(desiredGeneration)
-        ? Effect.succeed({
-            stackId,
-            ownerSessionId: owner,
-            desiredGeneration,
-            role: "network",
-          })
-        : Effect.fail(protocol(operation));
-    }),
-  );
-};
-
-const workloadLabels = (
-  operation: string,
-  values: ReadonlyArray<string>,
-): Effect.Effect<ContainerWorkloadLabels, ContainerEngineFailure> => {
-  const [stack, owner, generation, workload, hash, role] = values;
-  if (
-    owner === undefined ||
-    generation === undefined ||
-    workload === undefined ||
-    hash === undefined ||
-    role !== "workload"
-  )
-    return Effect.fail(protocol(operation));
-  return decodeIdentity(operation, stack).pipe(
-    Effect.flatMap((stackId) => {
-      const desiredGeneration = Number(generation);
-      return Number.isInteger(desiredGeneration)
-        ? Effect.succeed({
-            stackId,
-            ownerSessionId: owner,
-            desiredGeneration,
-            workloadId: workload,
-            specHash: hash,
-            role,
-          })
-        : Effect.fail(protocol(operation));
-    }),
-  );
-};
-
-const decodeRows = <A>(
-  operation: string,
-  raw: string,
-  count: number,
-  decode: (values: ReadonlyArray<string>) => Effect.Effect<A, ContainerEngineFailure>,
-): Effect.Effect<ReadonlyArray<A>, ContainerEngineFailure> =>
-  Effect.forEach(lines(raw), (line) => fields(operation, line, count).pipe(Effect.flatMap(decode)));
-
-const decodeContainers = (result: ContainerCommandResult) =>
-  decodeRows("inspect-containers", result.stdout, 9, (values) => {
-    const [id, name, stack, owner, generation, workload, hash, role, state] = values;
-    if (
-      id === undefined ||
-      name === undefined ||
-      stack === undefined ||
-      owner === undefined ||
-      generation === undefined ||
-      workload === undefined ||
-      hash === undefined ||
-      role === undefined ||
-      state === undefined ||
-      role !== "workload"
-    )
-      return Effect.fail(protocol("inspect-containers"));
-    return workloadLabels("inspect-containers", [
-      stack,
-      owner,
-      generation,
-      workload,
-      hash,
-      role,
-    ]).pipe(
-      Effect.map((labels): ContainerResource => ({
-        id,
-        name,
-        kind: role,
-        labels,
-        state: state.includes("running") ? "running" : "stopped",
-      })),
-    );
-  });
-
-const decodeNetworks = (result: ContainerCommandResult) =>
-  decodeRows("inspect-networks", result.stdout, 6, (values) => {
-    const [id, name, stack, owner, generation, role] = values;
-    if (id === undefined || name === undefined || role === undefined)
-      return Effect.fail(protocol("inspect-networks"));
-    return networkLabels("inspect-networks", [
-      stack ?? "",
-      owner ?? "",
-      generation ?? "",
-      role,
-    ]).pipe(Effect.map((labels): ContainerResource => ({ id, name, kind: "network", labels })));
-  });
-
-const decodeVolumes = (result: ContainerCommandResult) =>
-  decodeRows("inspect-volumes", result.stdout, 4, (values) => {
-    const [name, stack, workload, role] = values;
-    if (name === undefined || stack === undefined || workload === undefined || role === undefined)
-      return Effect.fail(protocol("inspect-volumes"));
-    return Schema.decodeEffect(StackIdSchema)(stack).pipe(
-      Effect.mapError((error) => protocol("inspect-volumes", error)),
-      Effect.flatMap((stackId) =>
-        role === "volume"
-          ? Effect.succeed<ContainerResource>({
-              id: name,
-              name,
-              kind: "volume",
-              labels: { stackId, workloadId: workload, role: "volume" },
-            })
-          : Effect.fail(protocol("inspect-volumes")),
-      ),
-    );
-  });
-
-const decodeCreate = <R extends ContainerResourceRole>(
-  operation: string,
-  result: ContainerCommandResult,
-  spec: { readonly name: string; readonly labels: ContainerLabels },
-  kind: R,
-): Effect.Effect<ContainerResource, ContainerEngineFailure> => {
-  const id = result.stdout.trim();
-  return id.length > 0 && !/[\r\n]/.test(id)
-    ? Effect.succeed({ id, name: spec.name, kind, labels: spec.labels, state: "created" })
-    : Effect.fail(protocol(operation));
-};
-
-const decodeWait = (
-  result: ContainerCommandResult,
-): Effect.Effect<number, ContainerEngineFailure> => {
-  const values = lines(result.stdout);
-  const value = values[0];
-  if (values.length !== 1 || value === undefined || !/^\d+$/.test(value))
-    return Effect.fail(protocol("wait-container"));
-  const exitCode = Number(value);
-  return Number.isSafeInteger(exitCode)
-    ? Effect.succeed(exitCode)
-    : Effect.fail(protocol("wait-container"));
-};
-
-const makeDockerCodecs = () => ({
-  serialize: serializeDockerCommand,
-  serializeLogs: serializeDockerLogs,
-  decodeProbe: (result: ContainerCommandResult) =>
-    scalarString("probe", result.stdout).pipe(Effect.asVoid),
-  decodeImage: (result: ContainerCommandResult) =>
-    Effect.forEach(lines(result.stdout), (line) => scalarString("inspect-image", line)).pipe(
-      Effect.map((values) => ({ present: values.length > 0 })),
-    ),
-  decodeContainers,
-  decodeNetworks,
-  decodeVolumes,
-  decodeCreate,
-  decodeWait,
-});
-
 export const makeDockerEngine = (
   options: Omit<ContainerEngineOptions, "kind" | "codecs">,
 ): ContainerEngine =>
-  makeContainerEngineCore({ ...options, kind: "docker", codecs: makeDockerCodecs() });
+  makeContainerEngineCore({
+    ...options,
+    kind: "docker",
+    codecs: makeContainerEngineCodecs({
+      engineName: "Docker",
+      scalarFormat: "json",
+      serialize: serializeDockerCommand,
+      serializeLogs: serializeDockerLogs,
+    }),
+  });

@@ -21,8 +21,6 @@ const stateFrom = (definition: PersistedStackState["definition"]): PersistedStac
     stackName: "default",
   },
   runtime: { kind: "native" },
-  desiredGeneration: 1,
-  portsGeneration: 1,
   desiredLifecycle: "stopped",
   definition,
   inputFingerprint: "b".repeat(64),

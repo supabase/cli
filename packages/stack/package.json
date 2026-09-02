@@ -6,7 +6,8 @@
   "exports": {
     ".": "./src/index.ts",
     "./effect": "./src/effect.ts",
-    "./testing": "./src/testing.ts"
+    "./testing": "./src/testing.ts",
+    "./internal/supervisor": "./src/internal/supervisor-process.ts"
   },
   "scripts": {
     "test": "pnpm run test:unit && pnpm run test:integration",
@@ -28,8 +29,10 @@
     "@effect/vitest": "catalog:",
     "@tsconfig/bun": "catalog:",
     "@types/bun": "catalog:",
+    "@types/ws": "catalog:",
     "esbuild": "^0.28.2",
     "typescript": "catalog:",
-    "vitest": "catalog:"
+    "vitest": "catalog:",
+    "ws": "catalog:"
   }
 }

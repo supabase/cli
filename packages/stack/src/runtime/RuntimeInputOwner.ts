@@ -17,6 +17,7 @@ import { StackPreparationError } from "../public/Errors.ts";
 import { resolveStackPaths } from "../state/Paths.ts";
 import { isRecord, settingValue, settingsFor } from "../state/MaterializedSettings.ts";
 import {
+  base64UrlEncode,
   resolveSigningKeyMaterial,
   type ResolvedSigningKeyMaterial,
 } from "../state/SecretStore.ts";
@@ -45,7 +46,7 @@ interface RuntimeInputMaterial {
   }>;
   readonly analytics?: Readonly<{
     readonly gcpJwtPath?: string;
-    /** Generation-scoped Vector config owned by this stack runtime. */
+    /** Session-scoped Vector config owned by this stack runtime. */
     readonly vectorConfigPath?: string;
   }>;
   readonly pooler?: Readonly<{ readonly tenantPath?: string }>;
@@ -56,7 +57,6 @@ export interface RuntimeInputOwner {
   /** Resolves all stack-owned inputs needed before a workload is created. */
   readonly resolve: (
     state: PersistedStackState,
-    generation: number,
     options?: Readonly<{ readonly includePooler?: boolean }>,
   ) => Effect.Effect<RuntimeInputMaterial, StackPreparationError>;
   /** Resolves one configured project-relative regular file without copying it. */
@@ -67,15 +67,8 @@ export interface RuntimeInputOwner {
   readonly resolveAuthTemplates: (
     state: PersistedStackState,
   ) => Effect.Effect<ReadonlyArray<RuntimeAuthTemplate>, StackPreparationError>;
-  /** Removes only the generation-owned material for the stopped workload. */
-  readonly cleanupGeneration: (
-    generation: number,
-    owner: RuntimeInputOwnerKind,
-  ) => Effect.Effect<void, StackPreparationError>;
   readonly cleanupAll: Effect.Effect<void, StackPreparationError>;
 }
-
-type RuntimeInputOwnerKind = "pooler" | "vector";
 
 export interface RuntimeInputOwnerOptions {
   readonly stateRoot: string;
@@ -95,9 +88,6 @@ const mapFile = <A, R>(
   effect.pipe(
     Effect.mapError((error) => failure(`Unable to ${operation}`, { path: target, cause: error })),
   );
-
-const invalidGeneration = (generation: number): boolean =>
-  !Number.isSafeInteger(generation) || generation < 0;
 
 const finiteSetting = (value: string): number | undefined => {
   const trimmed = value.trim();
@@ -138,21 +128,6 @@ const safeUrlLabel = (value: string): string => {
   } catch {
     return "<invalid-url>";
   }
-};
-
-const base64UrlEncode = (bytes: Uint8Array): string => {
-  const alphabet = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_";
-  let output = "";
-  for (let index = 0; index < bytes.length; index += 3) {
-    const first = bytes[index] ?? 0;
-    const second = bytes[index + 1];
-    const third = bytes[index + 2];
-    output += alphabet[first >> 2] ?? "";
-    output += alphabet[((first & 3) << 4) | ((second ?? 0) >> 4)] ?? "";
-    if (second !== undefined) output += alphabet[((second & 15) << 2) | ((third ?? 0) >> 6)] ?? "";
-    if (third !== undefined) output += alphabet[third & 63] ?? "";
-  }
-  return output;
 };
 
 const symmetricJwk = (secret: string): Readonly<Record<string, unknown>> => ({
@@ -501,10 +476,8 @@ export const makeRuntimeInputOwner = (
 
     const writePoolerTenant = (
       state: PersistedStackState,
-      generation: number,
       runtime: "native" | "container",
     ): Effect.Effect<string, StackPreparationError> => {
-      if (invalidGeneration(generation)) return Effect.fail(failure("Invalid pooler generation"));
       const password = state.secrets["secret:database.internal.password"]?.value ?? "";
       if (password.length === 0)
         return Effect.fail(failure("Persisted database secret is missing"));
@@ -539,24 +512,19 @@ export const makeRuntimeInputOwner = (
         defaultPoolSize,
         maxClientConn,
       });
-      const generationRoot = path.join(poolerRoot, String(generation));
-      const target = path.join(generationRoot, "pooler_tenant.exs");
+      const target = path.join(poolerRoot, "pooler_tenant.exs");
       return Effect.gen(function* () {
         const token = yield* crypto.randomUUIDv4.pipe(
           Effect.mapError(() => failure("Unable to allocate pooler tenant file")),
         );
-        const temporary = path.join(generationRoot, `.pooler_tenant.exs.${token}.tmp`);
+        const temporary = path.join(poolerRoot, `.pooler_tenant.exs.${token}.tmp`);
         return yield* Effect.gen(function* () {
           yield* mapFile(
-            generationRoot,
+            poolerRoot,
             "create pooler tenant directory",
-            fs.makeDirectory(generationRoot, { recursive: true, mode: 0o700 }),
+            fs.makeDirectory(poolerRoot, { recursive: true, mode: 0o700 }),
           );
-          yield* mapFile(
-            generationRoot,
-            "secure pooler tenant directory",
-            fs.chmod(generationRoot, 0o700),
-          );
+          yield* mapFile(poolerRoot, "secure pooler tenant directory", fs.chmod(poolerRoot, 0o700));
           yield* Effect.scoped(
             Effect.gen(function* () {
               const file = yield* mapFile(
@@ -588,31 +556,24 @@ export const makeRuntimeInputOwner = (
 
     const writeVectorConfig = (
       state: PersistedStackState,
-      generation: number,
     ): Effect.Effect<string, StackPreparationError> => {
-      if (invalidGeneration(generation)) return Effect.fail(failure("Invalid Vector generation"));
       const assignment = state.privatePorts.find(
         (entry) => entry.workloadId === "analytics:vector" && entry.binding === "primary",
       );
       if (state.runtime.kind === "native" && assignment === undefined)
         return Effect.fail(failure("Persisted native Vector assignment is missing"));
-      const generationRoot = path.join(vectorRoot, String(generation));
-      const target = path.join(generationRoot, "vector.yaml");
+      const target = path.join(vectorRoot, "vector.yaml");
       return Effect.gen(function* () {
         yield* mapFile(
-          generationRoot,
+          vectorRoot,
           "create Vector config directory",
-          fs.makeDirectory(generationRoot, { recursive: true, mode: 0o700 }),
+          fs.makeDirectory(vectorRoot, { recursive: true, mode: 0o700 }),
         );
-        yield* mapFile(
-          generationRoot,
-          "secure Vector config directory",
-          fs.chmod(generationRoot, 0o700),
-        );
+        yield* mapFile(vectorRoot, "secure Vector config directory", fs.chmod(vectorRoot, 0o700));
         const token = yield* crypto.randomUUIDv4.pipe(
           Effect.mapError(() => failure("Unable to allocate Vector config file")),
         );
-        const temporary = path.join(generationRoot, `.vector.yaml.${token}.tmp`);
+        const temporary = path.join(vectorRoot, `.vector.yaml.${token}.tmp`);
         yield* Effect.ensuring(
           Effect.scoped(
             Effect.gen(function* () {
@@ -648,28 +609,11 @@ export const makeRuntimeInputOwner = (
     const commonCompleted = new Map<string, RuntimeInputMaterial>();
     const poolerPending = new Map<string, OwnedResult<string>>();
     const poolerCompleted = new Map<string, string>();
-    let acceptedGeneration: number | undefined;
-    const keyFor = (state: PersistedStackState, generation: number): string =>
-      `${state.identity.projectRoot}\u0000${state.inputFingerprint ?? ""}\u0000${state.runtime.kind}\u0000${generation}`;
-    const generationFor = (key: string): number => Number(key.slice(key.lastIndexOf("\u0000") + 1));
-    const retireEntries = <A>(
-      pending: Map<string, OwnedResult<A>>,
-      completed: Map<string, A>,
-      matches: (key: string) => boolean,
-    ): ReadonlyArray<OwnedResult<A>> => {
-      const retired: Array<OwnedResult<A>> = [];
-      for (const [key, deferred] of pending)
-        if (matches(key)) {
-          pending.delete(key);
-          retired.push(deferred);
-        }
-      for (const key of completed.keys()) if (matches(key)) completed.delete(key);
-      return retired;
-    };
+    const keyFor = (state: PersistedStackState): string =>
+      `${state.identity.projectRoot}\u0000${state.inputFingerprint ?? ""}\u0000${state.runtime.kind}`;
 
     const materializeCommon = (
       state: PersistedStackState,
-      generation: number,
     ): Effect.Effect<RuntimeInputMaterial, StackPreparationError> =>
       Effect.gen(function* () {
         const jwtConsumers = ["rest", "auth", "realtime", "storage", "functions"] as const;
@@ -686,9 +630,7 @@ export const makeRuntimeInputOwner = (
           ? settingValue(state, analyticsSettings.vector_port)
           : "";
         const vectorConfigPath =
-          analyticsEnabled && vectorPort.length > 0
-            ? yield* writeVectorConfig(state, generation)
-            : undefined;
+          analyticsEnabled && vectorPort.length > 0 ? yield* writeVectorConfig(state) : undefined;
         const analytics =
           !analyticsEnabled || (gcpPath.length === 0 && vectorConfigPath === undefined)
             ? undefined
@@ -736,7 +678,9 @@ export const makeRuntimeInputOwner = (
                       const completion = yield* admission.withPermit(
                         Effect.sync(() => {
                           if (pending.get(key) !== deferred)
-                            return Exit.fail(failure("Runtime input generation was invalidated"));
+                            return Exit.fail(
+                              failure("Runtime input materialization was invalidated"),
+                            );
                           pending.delete(key);
                           if (Exit.isSuccess(exit)) completed.set(key, exit.value);
                           return exit;
@@ -753,7 +697,7 @@ export const makeRuntimeInputOwner = (
                       Effect.sync(() => pending.get(key) === deferred),
                     );
                     if (!stillCurrent)
-                      return yield* failure("Runtime input generation was invalidated");
+                      return yield* failure("Runtime input materialization was invalidated");
                     return yield* restore(materialize);
                   }).pipe(Effect.onExit(publish)),
                 );
@@ -776,45 +720,15 @@ export const makeRuntimeInputOwner = (
 
     const resolve = (
       state: PersistedStackState,
-      generation: number,
       options: Readonly<{ readonly includePooler?: boolean }> = {},
     ): Effect.Effect<RuntimeInputMaterial, StackPreparationError> =>
       Effect.gen(function* () {
-        const key = keyFor(state, generation);
-        type Retirement = Readonly<{
-          readonly rejected: boolean;
-          readonly retired: ReadonlyArray<OwnedResult<RuntimeInputMaterial>>;
-        }>;
-        const retirement = yield* admission.withPermit(
-          Effect.sync((): Retirement => {
-            const accepted = acceptedGeneration;
-            if (accepted !== undefined && generation < accepted)
-              return { rejected: true, retired: [] };
-            if (accepted === undefined || generation <= accepted) {
-              acceptedGeneration = generation;
-              return { rejected: false, retired: [] };
-            }
-            const retired = retireEntries(
-              commonPending,
-              commonCompleted,
-              (pendingKey) => generationFor(pendingKey) < generation,
-            );
-            acceptedGeneration = generation;
-            return { rejected: false, retired };
-          }),
-        );
-        yield* Effect.forEach(retirement.retired, (deferred) =>
-          Deferred.succeed(
-            deferred,
-            Exit.fail(failure("Runtime input generation was invalidated")),
-          ),
-        );
-        if (retirement.rejected) return yield* failure("Runtime input generation was invalidated");
+        const key = keyFor(state);
         const common = yield* singleFlight(
           key,
           commonPending,
           commonCompleted,
-          materializeCommon(state, generation),
+          materializeCommon(state),
         );
         if (
           options.includePooler !== true ||
@@ -825,55 +739,10 @@ export const makeRuntimeInputOwner = (
           key,
           poolerPending,
           poolerCompleted,
-          writePoolerTenant(state, generation, state.runtime.kind),
+          writePoolerTenant(state, state.runtime.kind),
         );
         return { ...common, pooler: { tenantPath } };
       });
-
-    const cleanupGeneration = (
-      generation: number,
-      owner: RuntimeInputOwnerKind,
-    ): Effect.Effect<void, StackPreparationError> =>
-      invalidGeneration(generation)
-        ? Effect.fail(failure("Invalid runtime input generation"))
-        : execution.withPermit(
-            Effect.gen(function* () {
-              const matches = (key: string) => key.endsWith(`\u0000${generation}`);
-              if (owner === "pooler") {
-                const retired = yield* admission.withPermit(
-                  Effect.sync(() => retireEntries(poolerPending, poolerCompleted, matches)),
-                );
-                yield* Effect.forEach(retired, (deferred) =>
-                  Deferred.succeed(
-                    deferred,
-                    Exit.fail(failure("Runtime input generation was invalidated")),
-                  ),
-                );
-              } else {
-                // Vector config is part of common material. Invalidate both
-                // completed and in-flight entries so a same-generation
-                // restart publishes a fresh config path.
-                const retired = yield* admission.withPermit(
-                  Effect.sync(() => retireEntries(commonPending, commonCompleted, matches)),
-                );
-                yield* Effect.forEach(retired, (deferred) =>
-                  Deferred.succeed(
-                    deferred,
-                    Exit.fail(failure("Runtime input generation was invalidated")),
-                  ),
-                );
-              }
-              const root = owner === "pooler" ? poolerRoot : vectorRoot;
-              yield* mapFile(
-                path.join(root, String(generation)),
-                `clean ${owner} generation`,
-                fs.remove(path.join(root, String(generation)), {
-                  recursive: true,
-                  force: true,
-                }),
-              );
-            }),
-          );
     const cleanupAll = execution.withPermit(
       Effect.gen(function* () {
         const pending = yield* admission.withPermit(
@@ -884,7 +753,6 @@ export const makeRuntimeInputOwner = (
             commonCompleted.clear();
             poolerPending.clear();
             poolerCompleted.clear();
-            acceptedGeneration = undefined;
             return { common, pooler };
           }),
         );
@@ -911,7 +779,6 @@ export const makeRuntimeInputOwner = (
       resolve,
       resolveProjectFile,
       resolveAuthTemplates,
-      cleanupGeneration,
       cleanupAll,
     };
   });

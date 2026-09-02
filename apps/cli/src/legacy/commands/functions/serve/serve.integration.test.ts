@@ -10,11 +10,11 @@ import {
 } from "../../../../../tests/helpers/legacy-mocks.ts";
 import { mockOutput } from "../../../../../tests/helpers/mocks.ts";
 import type { LegacyFunctionsServeFlags } from "./serve.handler.ts";
-import {
-  legacyFunctionsServe,
-  type ServeManagedFunctionsOperations,
-  type ManagedFunctionsStack,
-} from "./serve.handler.ts";
+import { legacyFunctionsServe } from "./serve.handler.ts";
+import type {
+  ManagedFunctionsStack,
+  ServeManagedFunctionsOperations,
+} from "../../../../shared/functions/managed-functions-runtime.ts";
 
 const baseFlags = (): LegacyFunctionsServeFlags => ({
   noVerifyJwt: Option.some(true),
@@ -57,8 +57,6 @@ describe("legacy functions serve", () => {
   it.live("uses managed Functions with flags, gateway readiness, and stack logs", () => {
     let startedConfig: StackConfig | undefined;
     const stack: ManagedFunctionsStack = {
-      id: stackId,
-      status: () => Effect.succeed(status("running")),
       start: (options) =>
         Effect.sync(() => {
           startedConfig = options?.config;
@@ -73,7 +71,6 @@ describe("legacy functions serve", () => {
           stream: "stdout" as const,
           message: "ready",
         }),
-      close: () => Effect.void,
     };
     const output = mockOutput({ interactive: false });
     const manifest: FunctionsManifest = {
@@ -87,9 +84,7 @@ describe("legacy functions serve", () => {
       },
     };
     const operations: ServeManagedFunctionsOperations = {
-      findStack: () => Effect.succeed(Option.none()),
       createStack: () => Effect.succeed(stack),
-      openStack: () => Effect.succeed(stack),
       loadConfig: () => Effect.succeed(Schema.decodeUnknownSync(CliConfigSchema)({})),
       loadManifest: () => Effect.succeed(manifest),
     };
@@ -109,9 +104,10 @@ describe("legacy functions serve", () => {
             functions !== undefined && "settings" in functions ? functions.settings : undefined;
           const hello = functionSettings?.functions?.hello;
           expect(functionSettings?.functions_root).toBe("supabase/functions");
+          expect(functionSettings?.edge_runtime?.import_map_default).toBe("deno.json");
           expect(functionSettings?.inspector).toEqual({ mode: "run", main: true });
           expect(hello?.verify_jwt).toBe(false);
-          expect(hello?.import_map).toBe("supabase/functions/deno.json");
+          expect(hello?.import_map).toBeUndefined();
           expect(output.messages).toContainEqual(
             expect.objectContaining({ message: "http://127.0.0.1:54321/functions/v1" }),
           );

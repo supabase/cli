@@ -8,7 +8,6 @@ import {
   FileSystem,
   Option,
   Predicate,
-  Queue,
   Schema,
   Scope,
   Semaphore,
@@ -55,28 +54,19 @@ interface ControlIdentity {
 export interface MaintenanceHandlers {
   readonly probe: Effect.Effect<MaintenanceResponse>;
   readonly stop: Effect.Effect<MaintenanceResponse>;
-  readonly quiesce: Effect.Effect<MaintenanceResponse>;
 }
 
 export interface ControlServerOptions extends ControlIdentity {
   readonly endpoint: ControlEndpoint;
   readonly rpcRelease?: string;
   readonly maintenanceHandlers: MaintenanceHandlers;
-  /** Invoked only after the maintenance response has been written and the connection closed. */
-  readonly onMaintenanceComplete?: (op: MaintenanceRequest["op"]) => Effect.Effect<void>;
-  /** Invoked when a successful quiesce has no writable response connection. */
-  readonly onMaintenanceAbandoned?: (op: MaintenanceRequest["op"]) => Effect.Effect<void>;
-  /** Invoked only after a successful destroy RPC response has been written. */
-  readonly onDestroyResponse?: () => Effect.Effect<void>;
-  /** Invoked when a successful destroy has no writable response connection. */
-  readonly onDestroyAbandoned?: () => Effect.Effect<void>;
+  /** Re-evaluates owner shutdown after a lifecycle response or disconnect. */
+  readonly onShutdownReady?: Effect.Effect<void>;
   readonly rpcHandlers: StackRpcHandlers;
 }
 
 export interface ControlServer {
   readonly endpoint: ControlEndpoint;
-  readonly shutdown: Effect.Effect<void>;
-  readonly ready: Effect.Effect<void>;
 }
 
 const endpointPath = (endpoint: ControlEndpoint): string =>
@@ -159,19 +149,20 @@ const demuxSocket = (
             ),
           );
 
+        type MaintenanceValidation =
+          | { readonly _tag: "invalid-request" }
+          | { readonly _tag: "stale-session"; readonly request: MaintenanceRequest }
+          | { readonly _tag: "valid"; readonly request: MaintenanceRequest };
+
         const dispatchMaintenance = (
-          frame: Uint8Array,
+          validation: MaintenanceValidation,
         ): Effect.Effect<void, Socket.SocketError> => {
           let responseValue: MaintenanceResponse | undefined;
           let operationName: MaintenanceRequest["op"] | undefined;
-          let responseWritten = false;
           let completionStarted = false;
-          const startCompletion = (
-            callback: (op: MaintenanceRequest["op"]) => Effect.Effect<void>,
-            op: MaintenanceRequest["op"],
-          ) =>
+          const startCompletion = (completion: Effect.Effect<void>) =>
             Effect.uninterruptible(
-              FiberSet.run(completionFibers, callback(op), { startImmediately: true }).pipe(
+              FiberSet.run(completionFibers, completion, { startImmediately: true }).pipe(
                 // This witness is set only after the completion fiber has been
                 // handed to the owner-scoped FiberSet. The uninterruptible
                 // region keeps the fork and witness atomic to dispatch/onExit.
@@ -183,72 +174,45 @@ const demuxSocket = (
               ),
             );
           const dispatch = Effect.gen(function* () {
-            const decoded = yield* Effect.exit(decodeFrame(frame));
-            if (Exit.isFailure(decoded)) {
-              yield* close;
-              return;
-            }
-            const request = yield* Effect.exit(
-              Schema.decodeUnknownEffect(MaintenanceRequestSchema)(decoded.value, {
-                onExcessProperty: "error",
-              }),
-            );
-            if (Exit.isFailure(request)) {
+            if (validation._tag === "invalid-request") {
               yield* sendJson(protocolFailure("invalid-request"));
               yield* close;
               return;
             }
-            if (request.value.stackId !== options.stackId) {
-              yield* sendJson(protocolFailure("invalid-request"));
-              yield* close;
-              return;
-            }
-            if (request.value.ownerSessionId !== options.ownerSessionId) {
+            if (validation._tag === "stale-session") {
               yield* sendJson(protocolFailure("stale-session"));
               yield* close;
               return;
             }
-            operationName = request.value.op;
+            const request = validation.request;
+            operationName = request.op;
             const operation =
-              request.value.op === "probe"
+              request.op === "probe"
                 ? options.maintenanceHandlers.probe
-                : request.value.op === "stop"
-                  ? options.maintenanceHandlers.stop
-                  : options.maintenanceHandlers.quiesce;
+                : options.maintenanceHandlers.stop;
             const result = yield* Effect.exit(operation);
             const response = Exit.isSuccess(result)
               ? result.value
               : protocolFailure("operation-failed");
             responseValue = response;
-            yield* sendJson(response).pipe(
-              Effect.tap(() =>
-                Effect.sync(() => {
-                  responseWritten = true;
-                }),
-              ),
-            );
+            yield* sendJson(response);
             yield* close;
-            yield* markPrefaceReady;
-            if (response.ok && options.onMaintenanceComplete !== undefined) {
+            if (request.op === "stop" && options.onShutdownReady !== undefined) {
               // The connection scope closes as soon as the close frame is sent;
               // completion belongs to the owner session and must outlive it.
-              yield* startCompletion(options.onMaintenanceComplete, request.value.op);
+              yield* startCompletion(options.onShutdownReady);
             }
           });
           return dispatch.pipe(
             Effect.onExit((exit) => {
               const response = responseValue;
-              if (response === undefined || !response.ok || operationName !== "quiesce")
-                return Effect.void;
+              if (response === undefined || operationName !== "stop") return Effect.void;
               if (Exit.isSuccess(exit)) return Effect.void;
               const connectionFailure =
                 Cause.hasInterruptsOnly(exit.cause) || isResponseConnectionFailure(exit.cause);
-              if (!connectionFailure || (responseWritten && completionStarted)) return Effect.void;
-              const callback = responseWritten
-                ? options.onMaintenanceComplete
-                : options.onMaintenanceAbandoned;
-              if (callback === undefined) return Effect.void;
-              return startCompletion(callback, "quiesce").pipe(Effect.asVoid);
+              if (!connectionFailure || completionStarted || options.onShutdownReady === undefined)
+                return Effect.void;
+              return startCompletion(options.onShutdownReady).pipe(Effect.asVoid);
             }),
             Effect.catchReasons("SocketError", {
               SocketWriteError: () => Effect.void,
@@ -267,12 +231,41 @@ const demuxSocket = (
             for (const frame of result.value) {
               if (closed) break;
               if (phase === "maintenance") {
-                yield* maintenanceSemaphore.withPermit(dispatchMaintenance(frame)).pipe(
-                  Effect.timeoutOrElse({
-                    duration: MAINTENANCE_REQUEST_DEADLINE_MS,
-                    orElse: () => sendJson(protocolFailure("timeout")).pipe(Effect.andThen(close)),
-                  }),
+                // Probe and request validation are bounded by the maintenance admission
+                // deadline. A validated stop owns its full cleanup operation and may
+                // legitimately outlive that connection deadline; the caller joins the result.
+                // The preface deadline only governs admission until the first frame arrives;
+                // once a frame is present, dispatch owns the remaining validation/operation
+                // policy below.
+                yield* markPrefaceReady;
+                const operation = yield* Effect.exit(
+                  decodeFrame(frame).pipe(
+                    Effect.flatMap((decoded) =>
+                      Schema.decodeUnknownEffect(MaintenanceRequestSchema)(decoded, {
+                        onExcessProperty: "error",
+                      }),
+                    ),
+                  ),
                 );
+                const validation: MaintenanceValidation = Exit.isFailure(operation)
+                  ? { _tag: "invalid-request" }
+                  : operation.value.stackId !== options.stackId
+                    ? { _tag: "invalid-request" }
+                    : operation.value.ownerSessionId !== options.ownerSessionId
+                      ? { _tag: "stale-session", request: operation.value }
+                      : { _tag: "valid", request: operation.value };
+                const dispatch = maintenanceSemaphore.withPermit(dispatchMaintenance(validation));
+                if (validation._tag === "valid" && validation.request.op !== "probe") {
+                  yield* dispatch;
+                } else {
+                  yield* dispatch.pipe(
+                    Effect.timeoutOrElse({
+                      duration: MAINTENANCE_REQUEST_DEADLINE_MS,
+                      orElse: () =>
+                        sendJson(protocolFailure("timeout")).pipe(Effect.andThen(close)),
+                    }),
+                  );
+                }
               } else {
                 const returned = handler(frame.slice(4));
                 if (Effect.isEffect(returned)) yield* returned;
@@ -449,72 +442,37 @@ export const startControlServer = (
       Effect.provideService(SocketServer.SocketServer, server),
       Effect.provideService(RpcSerialization.RpcSerialization, RpcSerialization.json),
     );
-    const destroyRequests = new Set<string>();
-    const destroyDisconnects = new Set<number>();
-    const disconnects = yield* Queue.unbounded<number>();
-    const startDestroyCompletion = (callback: () => Effect.Effect<void>) =>
+    const isCompletionRequest = (tag: string): boolean =>
+      tag === "prepare" || tag === "start" || tag === "restart" || tag === "destroy";
+    const completionRequests = new Set<string>();
+    const startShutdown = (completion: Effect.Effect<void>) =>
       Effect.uninterruptible(
-        FiberSet.run(completionFibers, callback(), { startImmediately: true }).pipe(Effect.asVoid),
+        FiberSet.run(completionFibers, completion, { startImmediately: true }).pipe(Effect.asVoid),
       );
-    yield* FiberSet.run(
-      completionFibers,
-      Effect.forever(
-        Queue.take(protocol.disconnects).pipe(
-          Effect.flatMap((clientId) =>
-            Effect.gen(function* () {
-              const prefix = `${clientId}:`;
-              const hasPendingDestroy = [...destroyRequests].some((request) =>
-                request.startsWith(prefix),
-              );
-              if (hasPendingDestroy) {
-                destroyDisconnects.add(clientId);
-                return;
-              }
-              yield* Queue.offer(disconnects, clientId);
-            }),
-          ),
-          Effect.asVoid,
-        ),
-      ),
-      { startImmediately: true },
-    );
     const patchedProtocol = RpcServer.Protocol.of({
       ...protocol,
-      disconnects,
       run: (handler) =>
         protocol.run((clientId, request) => {
-          if (Predicate.isTagged(request, "Request") && request.tag === "destroy")
-            destroyRequests.add(`${clientId}:${String(request.id)}`);
+          if (Predicate.isTagged(request, "Request") && isCompletionRequest(request.tag))
+            completionRequests.add(`${clientId}:${String(request.id)}`);
           return handler(clientId, request);
         }),
       send: (clientId, response, transferables) =>
         Predicate.isTagged(response, "Exit") &&
-        destroyRequests.has(`${clientId}:${String(response.requestId)}`)
+        completionRequests.has(`${clientId}:${String(response.requestId)}`)
           ? Effect.gen(function* () {
               const key = `${clientId}:${String(response.requestId)}`;
-              const connected =
-                !destroyDisconnects.has(clientId) && (yield* protocol.clientIds).has(clientId);
-              const sent = connected
-                ? yield* Effect.exit(protocol.send(clientId, response, transferables))
-                : Exit.succeed(undefined);
-              const wroteResponse = connected && Exit.isSuccess(sent);
-              const successful = Predicate.isTagged(response.exit, "Success");
-              destroyRequests.delete(key);
-              if (successful) {
-                if (wroteResponse && options.onDestroyResponse !== undefined)
-                  yield* startDestroyCompletion(options.onDestroyResponse);
-                if (!wroteResponse && options.onDestroyAbandoned !== undefined)
-                  yield* startDestroyCompletion(options.onDestroyAbandoned);
-              }
-              if (![...destroyRequests].some((request) => request.startsWith(`${clientId}:`))) {
-                if (destroyDisconnects.delete(clientId)) yield* Queue.offer(disconnects, clientId);
-              }
+              const connected = (yield* protocol.clientIds).has(clientId);
+              if (connected) yield* Effect.exit(protocol.send(clientId, response, transferables));
+              const completed = completionRequests.delete(key);
+              if (completed && options.onShutdownReady !== undefined)
+                yield* startShutdown(options.onShutdownReady);
             })
           : protocol.send(clientId, response, transferables),
     });
-    // Keep handler defects as keyed Exit responses so destroy request state can be cleaned by
-    // the same send path as typed failures. Without this option RpcServer emits a client-level
-    // Defect frame that has no requestId for the terminal handoff.
+    // Keep handler defects as keyed Exit responses so lifecycle-completion request state can be
+    // cleaned by the same send path as typed failures. Without this option RpcServer emits a
+    // client-level Defect frame that has no requestId for the terminal handoff.
     const rpcProgram: Effect.Effect<never, never> = RpcServer.make(StackRpcGroup, {
       disableTracing: true,
       disableFatalDefects: true,
@@ -528,8 +486,6 @@ export const startControlServer = (
     yield* Effect.forkScoped(rpcProgram);
     return {
       endpoint: options.endpoint,
-      ready: Effect.void,
-      shutdown: Effect.void,
     } satisfies ControlServer;
   });
 
@@ -616,38 +572,27 @@ export interface ControlClient {
   // oxlint-disable-next-line effecttsgo/lazy-effect
   readonly probe: () => Effect.Effect<
     MaintenanceResponse,
-    Socket.SocketError | MaintenanceProtocolError,
-    Scope.Scope
+    Socket.SocketError | MaintenanceProtocolError
   >;
   // oxlint-disable-next-line effecttsgo/lazy-effect
   readonly stop: () => Effect.Effect<
     MaintenanceResponse,
-    Socket.SocketError | MaintenanceProtocolError,
-    Scope.Scope
+    Socket.SocketError | MaintenanceProtocolError
   >;
   // oxlint-disable-next-line effecttsgo/lazy-effect
-  readonly quiesce: () => Effect.Effect<
-    MaintenanceResponse,
-    Socket.SocketError | MaintenanceProtocolError,
-    Scope.Scope
-  >;
   /** Connects with an RPC preface and completes when the owner closes the socket. */
   readonly awaitClose: (onOpen?: Effect.Effect<void>) => Effect.Effect<void, Socket.SocketError>;
   readonly rpc: Effect.Effect<StackRpcClient, RpcClientError, Scope.Scope>;
 }
 
-/** A scoped client seam used by OwnerSession and the public Stack handle. */
+/** A scoped client seam used by the Supervisor entrypoint and public Stack handles. */
 export const makeControlClient = (
   endpoint: ControlEndpoint,
   options: ControlClientOptions,
 ): ControlClient => {
   const maintenance = (
     op: MaintenanceRequest["op"],
-  ): Effect.Effect<
-    MaintenanceResponse,
-    Socket.SocketError | MaintenanceProtocolError,
-    Scope.Scope
-  > =>
+  ): Effect.Effect<MaintenanceResponse, Socket.SocketError | MaintenanceProtocolError> =>
     Effect.scoped(
       Effect.gen(function* () {
         const socket = yield* NodeSocket.makeNet({
@@ -701,36 +646,44 @@ export const makeControlClient = (
           stackId: options.stackId,
           ownerSessionId: options.ownerSessionId,
         }).pipe(Effect.flatMap(write));
-        const readerDone = Fiber.join(fiber).pipe(
-          Effect.mapError(
-            () => new MaintenanceProtocolError({ message: "Control connection closed" }),
-          ),
-          Effect.flatMap(() =>
-            Effect.fail(new MaintenanceProtocolError({ message: "Control connection closed" })),
+        // The server closes a successful maintenance connection immediately
+        // after flushing its response. Check the response witness after the
+        // reader exits so the close event cannot win that handoff race.
+        const readerDone = Effect.exit(Fiber.join(fiber)).pipe(
+          Effect.flatMap(() => Deferred.poll(response)),
+          Effect.flatMap((completed) =>
+            Option.isSome(completed)
+              ? completed.value
+              : Effect.fail(
+                  new MaintenanceProtocolError({
+                    message: "Control connection closed",
+                    reason: "transport",
+                  }),
+                ),
           ),
         );
-        const value = yield* Effect.raceFirst(Deferred.await(response), readerDone).pipe(
-          Effect.timeoutOrElse({
-            duration: MAINTENANCE_REQUEST_DEADLINE_MS,
-            orElse: () =>
-              Effect.fail(new MaintenanceProtocolError({ message: "Control request timed out" })),
-          }),
+        const wait = Effect.raceFirst(Deferred.await(response), readerDone).pipe(
           Effect.ensuring(Fiber.interrupt(fiber)),
         );
-        return value;
-      }),
-    ).pipe(
-      Effect.timeoutOrElse({
-        duration: MAINTENANCE_REQUEST_DEADLINE_MS,
-        orElse: () =>
-          Effect.fail(new MaintenanceProtocolError({ message: "Control request timed out" })),
+        return yield* wait;
       }),
     );
 
   return {
-    probe: () => maintenance("probe"),
+    probe: () =>
+      maintenance("probe").pipe(
+        Effect.timeoutOrElse({
+          duration: MAINTENANCE_REQUEST_DEADLINE_MS,
+          orElse: () =>
+            Effect.fail(
+              new MaintenanceProtocolError({
+                message: "Control request timed out",
+                reason: "transport",
+              }),
+            ),
+        }),
+      ),
     stop: () => maintenance("stop"),
-    quiesce: () => maintenance("quiesce"),
     awaitClose: (onOpen = Effect.void) =>
       Effect.scoped(
         Effect.gen(function* () {

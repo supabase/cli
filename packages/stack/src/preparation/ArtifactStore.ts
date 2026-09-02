@@ -12,7 +12,7 @@ import {
 } from "effect";
 import { ChildProcessSpawner } from "effect/unstable/process";
 import { ArtifactIntegrityError, StackPreparationError } from "../public/Errors.ts";
-import { validateRelativePath, validateSha256, verifySha256 } from "./Integrity.ts";
+import { digestHex, validateRelativePath, validateSha256, verifySha256 } from "./Integrity.ts";
 
 /**
  * A concrete artifact identity. `key` is deliberately private to preparation and may contain
@@ -67,8 +67,7 @@ export interface ArtifactStore {
   ) => Effect.Effect<PreparedArtifact, ArtifactStoreError>;
 }
 
-const ARTIFACT_FORMAT = "supabase-stack-artifact-v1";
-const ARCHIVE_NAME = ".artifact-source";
+const ARTIFACT_FORMAT = "supabase-stack-artifact-v2";
 const METADATA_NAME = ".artifact.json";
 const EXECUTABLE_MODE = 0o755;
 
@@ -83,6 +82,7 @@ const ArtifactMetadataSchema = Schema.Struct({
   key: Schema.String,
   sha256: Schema.String,
   requiredRuntimePaths: Schema.Array(Schema.String),
+  requiredRuntimeDigests: Schema.Record(Schema.String, Schema.String),
   executablePath: Schema.optional(Schema.String),
 });
 type ArtifactMetadata = Schema.Schema.Type<typeof ArtifactMetadataSchema>;
@@ -147,13 +147,141 @@ const requestFlightKey = (request: ArtifactRequest, expectedSha256: string): str
     "\u0000",
   );
 
-const metadataFor = (request: ArtifactRequest, sha256: string): ArtifactMetadata => ({
+const metadataFor = (
+  request: ArtifactRequest,
+  sha256: string,
+  requiredRuntimeDigests: Readonly<Record<string, string>>,
+): ArtifactMetadata => ({
   format: ARTIFACT_FORMAT,
   key: request.key,
   sha256,
   requiredRuntimePaths: [...request.requiredRuntimePaths],
+  requiredRuntimeDigests,
   ...(request.executablePath === undefined ? {} : { executablePath: request.executablePath }),
 });
+
+const digestRuntimePaths = (
+  fs: FileSystem.FileSystem,
+  crypto: Crypto.Crypto,
+  path: Path.Path,
+  root: string,
+  relativePaths: ReadonlyArray<string>,
+): Effect.Effect<Readonly<Record<string, string>>, ArtifactIntegrityError> =>
+  Effect.gen(function* () {
+    const realRoot = yield* fs
+      .realPath(root)
+      .pipe(
+        Effect.mapError((cause) =>
+          metadataError("Unable to resolve runtime path root", { path: root, cause }),
+        ),
+      );
+    const digest = (bytes: Uint8Array, candidate: string) =>
+      crypto.digest("SHA-256", bytes).pipe(
+        Effect.mapError((cause) =>
+          metadataError("Unable to digest required runtime path", {
+            path: candidate,
+            cause,
+          }),
+        ),
+      );
+    const digestPath = (relative: string): Effect.Effect<string, ArtifactIntegrityError> =>
+      Effect.gen(function* () {
+        const candidate = path.resolve(root, relative);
+        const realCandidate = yield* fs.realPath(candidate).pipe(
+          Effect.mapError((cause) =>
+            metadataError("Unable to resolve required runtime path", {
+              path: candidate,
+              cause,
+            }),
+          ),
+        );
+        if (!pathAtOrBelow(realRoot, realCandidate, path.sep))
+          return yield* metadataError("Required runtime path escapes its installation directory", {
+            path: relative,
+          });
+        const info = yield* fs
+          .stat(candidate)
+          .pipe(
+            Effect.mapError((cause) =>
+              metadataError("Unable to inspect required runtime path", { path: candidate, cause }),
+            ),
+          );
+        if (info.type === "File") {
+          const bytes = yield* fs
+            .readFile(candidate)
+            .pipe(
+              Effect.mapError((cause) =>
+                metadataError("Unable to read required runtime path", { path: candidate, cause }),
+              ),
+            );
+          return yield* digest(bytes, candidate).pipe(Effect.map(digestHex));
+        }
+        if (info.type !== "Directory")
+          return yield* metadataError("Required runtime path must be a file or directory", {
+            path: relative,
+            type: info.type,
+          });
+        const children = yield* fs.readDirectory(candidate, { recursive: true }).pipe(
+          Effect.mapError((cause) =>
+            metadataError("Unable to inspect required runtime directory", {
+              path: candidate,
+              cause,
+            }),
+          ),
+        );
+        const records: Array<string> = [];
+        for (const child of children.sort()) {
+          const childPath = path.join(candidate, child);
+          const realChild = yield* fs.realPath(childPath).pipe(
+            Effect.mapError((cause) =>
+              metadataError("Unable to resolve required runtime path", {
+                path: childPath,
+                cause,
+              }),
+            ),
+          );
+          if (!pathAtOrBelow(realRoot, realChild, path.sep))
+            return yield* metadataError(
+              "Required runtime path escapes its installation directory",
+              {
+                path: child,
+              },
+            );
+          const childInfo = yield* fs.stat(childPath).pipe(
+            Effect.mapError((cause) =>
+              metadataError("Unable to inspect required runtime path", {
+                path: childPath,
+                cause,
+              }),
+            ),
+          );
+          if (childInfo.type === "File") {
+            const bytes = yield* fs
+              .readFile(childPath)
+              .pipe(
+                Effect.mapError((cause) =>
+                  metadataError("Unable to read required runtime path", { path: childPath, cause }),
+                ),
+              );
+            const childDigest = yield* digest(bytes, childPath).pipe(Effect.map(digestHex));
+            records.push(`${child}\u0000file\u0000${childDigest}`);
+          } else if (childInfo.type === "Directory") {
+            records.push(`${child}\u0000directory`);
+          } else {
+            return yield* metadataError("Required runtime path must contain files or directories", {
+              path: child,
+              type: childInfo.type,
+            });
+          }
+        }
+        const directoryBytes = new TextEncoder().encode(records.join("\n"));
+        return yield* digest(directoryBytes, candidate).pipe(Effect.map(digestHex));
+      });
+    const entries = yield* Effect.forEach(relativePaths, (relative) =>
+      digestPath(relative).pipe(Effect.map((digest) => [relative, digest] as const)),
+    );
+    return Object.fromEntries(entries);
+  });
 
 const encodeMetadata = (metadata: ArtifactMetadata): Effect.Effect<string, StackPreparationError> =>
   Schema.encodeEffect(Schema.fromJsonString(ArtifactMetadataSchema))(metadata).pipe(
@@ -348,6 +476,20 @@ const verifyMetadata = (
   return Effect.void;
 };
 
+const verifyRuntimeDigests = (
+  metadata: ArtifactMetadata,
+  actual: Readonly<Record<string, string>>,
+): Effect.Effect<void, ArtifactIntegrityError> => {
+  const expectedEntries = Object.entries(metadata.requiredRuntimeDigests);
+  const actualEntries = Object.entries(actual);
+  if (
+    expectedEntries.length !== actualEntries.length ||
+    expectedEntries.some(([path, digest]) => actual[path] !== digest)
+  )
+    return Effect.fail(metadataError("Cached artifact runtime path failed integrity verification"));
+  return Effect.void;
+};
+
 const writeBytesSync = (
   fs: FileSystem.FileSystem,
   path: string,
@@ -420,29 +562,20 @@ const makeArtifactOperation = (
       ? yield* ensureSafeRoot(fs, path, target, cacheRoot)
       : undefined;
     const metadataPath = path.join(target, METADATA_NAME);
-    const archivePath = path.join(target, ARCHIVE_NAME);
     const checkCached: Effect.Effect<PreparedArtifact, ArtifactIntegrityError> = Effect.gen(
       function* () {
         const realRoot = cachedRoot ?? (yield* ensureSafeRoot(fs, path, target, cacheRoot));
         const metadata = yield* readMetadata(fs, metadataPath);
         yield* verifyMetadata(request, expectedSha256, metadata);
-        const archive = yield* fs
-          .readFile(archivePath)
-          .pipe(
-            Effect.mapError((cause) =>
-              metadataError("Cached artifact source is unreadable", { path: archivePath, cause }),
-            ),
-          );
-        yield* verifySha256(archive, expectedSha256).pipe(
-          Effect.provideService(Crypto.Crypto, crypto),
-          Effect.mapError((error) =>
-            metadataError("Cached artifact source failed integrity verification", {
-              path: archivePath,
-              cause: error,
-            }),
-          ),
-        );
         yield* ensureSafePaths(fs, path, target, realRoot, request.requiredRuntimePaths);
+        const runtimeDigests = yield* digestRuntimePaths(
+          fs,
+          crypto,
+          path,
+          target,
+          request.requiredRuntimePaths,
+        );
+        yield* verifyRuntimeDigests(metadata, runtimeDigests);
         if (request.executablePath !== undefined) {
           yield* ensureExecutableFile(fs, path, target, request.executablePath);
           const executable = path.resolve(target, request.executablePath);
@@ -499,12 +632,17 @@ const makeArtifactOperation = (
           }),
         ),
       );
-      const sourceArchive = path.join(temporary, ARCHIVE_NAME);
-      yield* writeBytesSync(fs, sourceArchive, archive);
+      const runtimeDigests = yield* digestRuntimePaths(
+        fs,
+        crypto,
+        path,
+        temporary,
+        request.requiredRuntimePaths,
+      );
       yield* writeMetadataSync(
         fs,
         path.join(temporary, METADATA_NAME),
-        metadataFor(request, expectedSha256),
+        metadataFor(request, expectedSha256, runtimeDigests),
       );
       yield* ensureSafePaths(fs, path, temporary, temporaryRoot, request.requiredRuntimePaths);
       if (request.executablePath !== undefined) {
@@ -517,7 +655,10 @@ const makeArtifactOperation = (
         );
       }
       const nowExists = yield* mapFs(target, "inspect concurrent artifact", fs.exists(target));
-      if (nowExists) return yield* checkCached;
+      if (nowExists) {
+        const cached = yield* checkCached;
+        return cached;
+      }
       const rename = mapFs(temporary, "publish artifact", fs.rename(temporary, target)).pipe(
         Effect.as(undefined),
       );
@@ -526,7 +667,10 @@ const makeArtifactOperation = (
       ): Effect.Effect<PreparedArtifact | undefined, ArtifactStoreError> =>
         Effect.gen(function* () {
           const exists = yield* mapFs(target, "inspect concurrent artifact", fs.exists(target));
-          if (exists) return yield* checkCached;
+          if (exists) {
+            const cached = yield* checkCached;
+            return cached;
+          }
           return yield* error;
         });
       const recovered: Effect.Effect<PreparedArtifact | undefined, ArtifactStoreError> =

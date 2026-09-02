@@ -11,7 +11,7 @@ import {
   mockProjectLinkState,
 } from "../../../../../tests/helpers/mocks.ts";
 import { switchBranch } from "./switch.handler.ts";
-import { StackIdSchema } from "@supabase/stack/effect";
+import { InvalidProjectRootError, StackIdSchema } from "@supabase/stack/effect";
 
 const MAIN = {
   id: "00000000-0000-4000-8000-000000000001",
@@ -128,6 +128,24 @@ describe("branches switch handler", () => {
         Effect.sync(() => {
           expect(out.messages.some((message) => message.message.includes("supabase restart"))).toBe(
             true,
+          );
+        }),
+      ),
+    );
+  });
+
+  it.live("switches branches when the command is outside a local checkout", () => {
+    const { out, layer } = setup();
+    const operations = {
+      findStack: () =>
+        Effect.fail(new InvalidProjectRootError({ message: "not a local checkout" })),
+    };
+    return switchBranch({ name: Option.some("dev") }, operations).pipe(
+      Effect.provide(layer),
+      Effect.tap(() =>
+        Effect.sync(() => {
+          expect(out.messages).toContainEqual(
+            expect.objectContaining({ type: "outro", message: "Switched to branch 'dev'." }),
           );
         }),
       ),

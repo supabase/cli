@@ -307,7 +307,7 @@ function legacyResolveValidatedRemoteProjectId(
  * When a matched `[remotes.*]` block supplies any of these, the block value
  * must beat the matching env override.
  */
-export const LEGACY_ENV_OVERRIDABLE_KEYS = [
+const LEGACY_ENV_OVERRIDABLE_KEYS = [
   // The matched `[remotes.<name>]` block's own `project_id` field is what selected it in the
   // first place (`applyRemoteOverride` above matches on exactly this key) — same override-tier
   // reasoning as every other key in this array. NOT guaranteed present, though: a block can also

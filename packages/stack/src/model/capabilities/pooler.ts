@@ -22,8 +22,8 @@ export const PoolerModule: CapabilityModule<PoolerSettings> = {
     default_pool_size: 20,
     max_client_conn: 100,
   },
-  defaultEnabled: false,
-  defaultActivation: "eager",
+  defaultEnabled: true,
+  defaultActivation: "lazy",
   defaultVersion: "v2.9.12",
   dependencies: ["database"],
   releases: {

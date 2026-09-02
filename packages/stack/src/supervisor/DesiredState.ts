@@ -6,7 +6,6 @@ export type DesiredLifecycle = "unconfigured" | "stopped" | "running" | "destroy
 
 export interface ReconciliationInput {
   readonly stackId: StackId;
-  readonly desiredGeneration: number;
   readonly desiredLifecycle: DesiredLifecycle;
   readonly plan: ExecutionPlan;
   readonly observed: ReadonlyArray<ObservedWorkload>;
@@ -40,21 +39,16 @@ export interface DesiredStatePlan {
   readonly blocked: ReadonlyArray<BlockedWorkload>;
 }
 
-const keyFor = (
-  stackId: StackId,
-  desiredGeneration: number,
-  workloadId: string,
-  specHash: string,
-): RuntimeWorkloadKey => ({ stackId, desiredGeneration, workloadId, specHash });
+const keyFor = (stackId: StackId, workloadId: string, specHash: string): RuntimeWorkloadKey => ({
+  stackId,
+  workloadId,
+  specHash,
+});
 
 const isCurrent = (
   observed: ObservedWorkload | undefined,
-  generation: number,
   specHash: string,
-): observed is ObservedWorkload =>
-  observed !== undefined &&
-  observed.desiredGeneration === generation &&
-  observed.specHash === specHash;
+): observed is ObservedWorkload => observed !== undefined && observed.specHash === specHash;
 
 /**
  * Builds a deterministic desired-state delta. `ExecutionPlan.workloads` is already a stable
@@ -69,20 +63,16 @@ export const planDesiredState = (input: ReconciliationInput): DesiredStatePlan =
   const observationsFor = (workloadId: string): ReadonlyArray<ObservedWorkload> =>
     input.observed
       .filter((entry) => entry.workloadId === workloadId)
-      .sort(
-        (left, right) =>
-          left.desiredGeneration - right.desiredGeneration ||
-          left.specHash.localeCompare(right.specHash),
-      );
+      .sort((left, right) => left.specHash.localeCompare(right.specHash));
   const removeEntry = (entry: ObservedWorkload) =>
     removes.push({
       kind: "remove",
-      key: keyFor(input.stackId, entry.desiredGeneration, entry.workloadId, entry.specHash),
+      key: keyFor(input.stackId, entry.workloadId, entry.specHash),
     });
 
   if (input.desiredLifecycle === "running") {
     // Failed workloads are restart candidates. Only a failed start in this reconciliation blocks
-    // dependents; an observed failure gets one fresh attempt while its generation budget allows.
+    // dependents; an observed failure gets one fresh attempt while its session budget allows.
     const failed = new Set<string>();
     for (const workload of input.plan.workloads) {
       const dependencyFailure = workload.dependencies.find((dependency) => failed.has(dependency));
@@ -92,31 +82,29 @@ export const planDesiredState = (input: ReconciliationInput): DesiredStatePlan =
         continue;
       }
       const observations = observationsFor(workload.id);
-      const current = observations.filter((entry) =>
-        isCurrent(entry, input.desiredGeneration, workload.specHash),
-      );
-      // Every duplicate old-generation/spec resource is stale, even when an exact current
+      const current = observations.filter((entry) => isCurrent(entry, workload.specHash));
+      // Every duplicate old-definition/spec resource is stale, even when an exact current
       // resource also exists. Never collapse observations by workload id: each exact key must be
       // cleaned independently.
       const stale = observations.filter(
         (entry) =>
-          !isCurrent(entry, input.desiredGeneration, workload.specHash) ||
+          !isCurrent(entry, workload.specHash) ||
           entry.state === "failed" ||
           entry.state === "stopped",
       );
       if (stale.length > 0) staleByWorkload.set(workload.id, stale);
       if (current.some((entry) => entry.state === "ready" || entry.state === "starting")) continue;
-      const key = keyFor(input.stackId, input.desiredGeneration, workload.id, workload.specHash);
+      const key = keyFor(input.stackId, workload.id, workload.specHash);
       starts.push({ kind: "start", key, workload });
     }
     // Stale replacements are removed child-first, preserving dependency safety when several
-    // generations/spec hashes for a planned graph are present at once.
+    // definitions/spec hashes for a planned graph are present at once.
     for (const workload of [...input.plan.workloads].reverse()) {
       for (const entry of staleByWorkload.get(workload.id) ?? []) {
         if (entry.state === "ready" || entry.state === "starting") {
           stops.push({
             kind: "stop",
-            key: keyFor(input.stackId, entry.desiredGeneration, entry.workloadId, entry.specHash),
+            key: keyFor(input.stackId, entry.workloadId, entry.specHash),
           });
         }
         removeEntry(entry);
@@ -127,12 +115,7 @@ export const planDesiredState = (input: ReconciliationInput): DesiredStatePlan =
     for (const workload of reverse) {
       for (const observed of observationsFor(workload.id)) {
         if (observed.state === "absent") continue;
-        const key = keyFor(
-          input.stackId,
-          observed.desiredGeneration,
-          observed.workloadId,
-          observed.specHash,
-        );
+        const key = keyFor(input.stackId, observed.workloadId, observed.specHash);
         if (observed.state !== "stopped") {
           stops.push({ kind: "stop", key });
         }
@@ -149,14 +132,13 @@ export const planDesiredState = (input: ReconciliationInput): DesiredStatePlan =
     .sort(
       (left, right) =>
         left.workloadId.localeCompare(right.workloadId) ||
-        left.desiredGeneration - right.desiredGeneration ||
         left.specHash.localeCompare(right.specHash),
     );
   for (const entry of stale) {
     if (entry.state === "ready" || entry.state === "starting") {
       stops.push({
         kind: "stop",
-        key: keyFor(input.stackId, entry.desiredGeneration, entry.workloadId, entry.specHash),
+        key: keyFor(input.stackId, entry.workloadId, entry.specHash),
       });
     }
     removeEntry(entry);

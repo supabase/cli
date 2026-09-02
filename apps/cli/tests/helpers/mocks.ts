@@ -3,7 +3,6 @@ import { join } from "node:path";
 import process from "node:process";
 import { BunServices } from "@effect/platform-bun";
 import { Deferred, Effect, Layer, Option, Redacted, Stream } from "effect";
-import type { ReactElement } from "react";
 import type { CliProjectEnvironment, CliProjectPaths } from "@supabase/config";
 import { Api } from "../../src/next/auth/api.service.ts";
 import type { LoginSessionResponse, ProfileResponse } from "../../src/next/auth/api.service.ts";
@@ -26,7 +25,6 @@ import { NonInteractiveError } from "../../src/shared/output/errors.ts";
 import { Output } from "../../src/shared/output/output.service.ts";
 import type { OutputFormat } from "../../src/shared/output/types.ts";
 import { Browser } from "../../src/shared/runtime/browser.service.ts";
-import { Ink, type InkInstance } from "../../src/shared/runtime/ink.service.ts";
 import {
   ProcessControl,
   type CliProcessSignal,
@@ -602,46 +600,6 @@ export function mockTelemetryRuntime(
       cliVersion: opts.cliVersion ?? "0.1.0",
     }),
   );
-}
-
-export function mockInk(opts: { manualExit?: boolean } = {}) {
-  let rendered = false;
-  let unmounted = false;
-  let element: ReactElement | null = null;
-  let resolveExit = () => {};
-  const exitPromise = new Promise<unknown>((resolve) => {
-    resolveExit = () => resolve(undefined);
-  });
-  return {
-    layer: Layer.succeed(Ink, {
-      render: (nextElement) =>
-        Effect.sync(() => {
-          rendered = true;
-          element = nextElement;
-          return {
-            unmount: () => {
-              unmounted = true;
-            },
-            rerender: (updatedElement) => {
-              element = updatedElement;
-            },
-            waitUntilExit: () => (opts.manualExit ? exitPromise : Promise.resolve()),
-          } satisfies InkInstance;
-        }),
-    }),
-    get rendered() {
-      return rendered;
-    },
-    get unmounted() {
-      return unmounted;
-    },
-    get element() {
-      return element;
-    },
-    exit() {
-      resolveExit();
-    },
-  };
 }
 
 // ---------------------------------------------------------------------------

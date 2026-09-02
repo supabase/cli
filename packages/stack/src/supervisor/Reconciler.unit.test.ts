@@ -39,7 +39,6 @@ const planFor = (workloads: ReadonlyArray<PlannedWorkload>): ExecutionPlan => ({
     pooler: "eager",
   },
   startOrder: ["database"],
-  stopOrder: ["database"],
   dependencies: {
     database: [],
     rest: [],
@@ -59,11 +58,9 @@ const planFor = (workloads: ReadonlyArray<PlannedWorkload>): ExecutionPlan => ({
 const observed = (
   workloadId: string,
   state: ObservedWorkload["state"],
-  desiredGeneration = 1,
   specHash = workloadId,
 ): ObservedWorkload => ({
   stackId,
-  desiredGeneration,
   workloadId,
   specHash,
   state,
@@ -75,7 +72,6 @@ describe("desired workload planning", () => {
     const plan = planFor(workloads);
     const running = planDesiredState({
       stackId,
-      desiredGeneration: 1,
       desiredLifecycle: "running",
       plan,
       observed: [],
@@ -84,7 +80,6 @@ describe("desired workload planning", () => {
 
     const stopped = planDesiredState({
       stackId,
-      desiredGeneration: 1,
       desiredLifecycle: "stopped",
       plan,
       observed: workloads.map(({ id }) => observed(id, "ready")),
@@ -94,7 +89,6 @@ describe("desired workload planning", () => {
 
     const destroying = planDesiredState({
       stackId,
-      desiredGeneration: 1,
       desiredLifecycle: "destroying",
       plan,
       observed: workloads.map(({ id }) => observed(id, "ready")),
@@ -102,23 +96,22 @@ describe("desired workload planning", () => {
     expect(destroying.stops.map(({ key }) => key.workloadId)).toEqual(["c", "b", "a"]);
   });
 
-  it("replaces a stale generation or workload spec before starting the accepted key", () => {
+  it("replaces a stale workload spec before starting the accepted key", () => {
     const plan = planFor([workload("a", [], "new-hash")]);
     const delta = planDesiredState({
       stackId,
-      desiredGeneration: 2,
       desiredLifecycle: "running",
       plan,
-      observed: [observed("a", "ready", 1, "old-hash")],
+      observed: [observed("a", "ready", "old-hash")],
     });
     expect(delta.stops.map(({ key }) => key)).toEqual([
-      { stackId, desiredGeneration: 1, workloadId: "a", specHash: "old-hash" },
+      { stackId, workloadId: "a", specHash: "old-hash" },
     ]);
     expect(delta.removes.map(({ key }) => key)).toEqual([
-      { stackId, desiredGeneration: 1, workloadId: "a", specHash: "old-hash" },
+      { stackId, workloadId: "a", specHash: "old-hash" },
     ]);
     expect(delta.starts.map(({ key }) => key)).toEqual([
-      { stackId, desiredGeneration: 2, workloadId: "a", specHash: "new-hash" },
+      { stackId, workloadId: "a", specHash: "new-hash" },
     ]);
   });
 
@@ -126,14 +119,13 @@ describe("desired workload planning", () => {
     const plan = planFor([workload("a"), workload("b", ["a"])]);
     const delta = planDesiredState({
       stackId,
-      desiredGeneration: 2,
       desiredLifecycle: "running",
       plan,
       observed: [
-        observed("a", "ready", 1, "old-a"),
-        observed("a", "ready", 2, "a"),
-        observed("b", "ready", 1, "old-b"),
-        observed("b", "ready", 2, "b"),
+        observed("a", "ready", "old-a"),
+        observed("a", "ready", "a"),
+        observed("b", "ready", "old-b"),
+        observed("b", "ready", "b"),
       ],
     });
     expect(delta.starts).toHaveLength(0);
@@ -150,7 +142,6 @@ describe("desired workload planning", () => {
     ]);
     const delta = planDesiredState({
       stackId,
-      desiredGeneration: 1,
       desiredLifecycle: "running",
       plan,
       observed: [observed("root-failed", "failed")],

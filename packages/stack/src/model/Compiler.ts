@@ -15,7 +15,7 @@ import type {
   JwtSigning,
 } from "../public/Config.ts";
 import { CAPABILITY_NAMES, type CapabilityName } from "../public/Capability.ts";
-import { PORT_FIELDS, type PortField } from "../public/Status.ts";
+import type { PortField } from "../public/Status.ts";
 import type { StackRuntime } from "../public/Runtime.ts";
 import {
   AuthModule,
@@ -96,7 +96,6 @@ export interface SecretSlotInput {
 }
 
 const AUTH_JWT_SECRET_SLOT = "secret:auth.settings.jwt_secret";
-const SECURITY_JWT_SIGNING_SECRET_SLOT = "secret:security.jwt.signing.secret";
 
 /** Internal credentials are not user settings but still need durable managed slots. */
 const INTERNAL_MANAGED_SECRET_SLOTS = ["secret:database.internal.password"] as const;
@@ -110,7 +109,7 @@ export interface CompiledStack {
 
 export interface PreviousCompilation {
   readonly definition: StackDefinition;
-  readonly inputFingerprint: InputFingerprint;
+  readonly inputFingerprint: string;
 }
 
 export interface CompileStackInput {
@@ -212,8 +211,6 @@ const ensureCanonicalJwtSlot = (
   slots: SecretSlotInput[],
   value: Redacted.Redacted<string> | undefined,
 ): void => {
-  for (let index = slots.length - 1; index >= 0; index--)
-    if (slots[index]?.slot === SECURITY_JWT_SIGNING_SECRET_SLOT) slots.splice(index, 1);
   const existingIndex = slots.findIndex((entry) => entry.slot === AUTH_JWT_SECRET_SLOT);
   if (existingIndex < 0) {
     slots.push({
@@ -264,6 +261,10 @@ const managedRandomBase64urlGenerators: Readonly<Record<string, SecretGenerator>
   "secret:analytics.settings.api_key": { kind: "random-base64url", bytes: 32 },
   "secret:pooler.settings.encryption_key": { kind: "random-base64url", bytes: 24 },
   "secret:pooler.settings.secret_key_base": { kind: "random-base64url", bytes: 48 },
+  // Realtime encrypts with AES-128-ECB and consumes this value as a raw 16-byte key.
+  // Twelve random bytes encode to exactly sixteen unpadded base64url characters.
+  "secret:realtime.settings.db_enc_key": { kind: "random-base64url", bytes: 12 },
+  "secret:realtime.settings.secret_key_base": { kind: "random-base64url", bytes: 48 },
 };
 
 const attachManagedRandomSecretGenerators = (slots: SecretSlotInput[]): void => {
@@ -477,9 +478,11 @@ const validateFunctionKeys = (config: unknown): Effect.Effect<void, InvalidStack
 const releaseFor = <T>(
   module: CapabilityModule<T>,
   raw: unknown,
+  previousVersion?: string,
 ): Effect.Effect<CapabilityRelease, StackVersionUnsupportedError> => {
   const selected = extract(raw, "version");
-  const selector = typeof selected === "string" ? selected : module.defaultVersion;
+  const selector =
+    typeof selected === "string" ? selected : (previousVersion ?? module.defaultVersion);
   const release = module.releases[selector];
   if (release !== undefined) return Effect.succeed(release);
   return Effect.fail(
@@ -535,6 +538,7 @@ const materializeCapability = <T>(
   slots: SecretSlotInput[],
   specHashes: Map<string, string>,
   normalizeFunctions: boolean,
+  previousVersion?: string,
 ): Effect.Effect<
   MaterializedCapability<T> & { readonly release: CapabilityRelease },
   InvalidStackConfigError | StackVersionUnsupportedError,
@@ -551,7 +555,7 @@ const materializeCapability = <T>(
     const merged = materializeAbsence(normalizedSettings);
     const slotted = slotsFor(merged, `${module.name}.settings`, slots, module.secretPolicy);
     const completeSettings = ensureManagedSlots(slotted, module, selected.enabled, slots);
-    const selectedRelease = yield* releaseFor(module, selected.raw);
+    const selectedRelease = yield* releaseFor(module, selected.raw, previousVersion);
     const version = selectedRelease.version;
     for (const entry of selectedRelease.workloads) {
       const bytes = yield* crypto.digest(
@@ -695,7 +699,7 @@ const planForDefinition = (
   const specHashes = new Map<string, string>();
   return hashDefinitionWorkloads(definition, crypto, specHashes).pipe(
     Effect.flatMap(() =>
-      createExecutionPlan(runtime, enabled, specHashes, versions, CAPABILITY_MODULES, settings),
+      createExecutionPlan(runtime, enabled, specHashes, versions, settings, CAPABILITY_MODULES),
     ),
   );
 };
@@ -816,6 +820,7 @@ export const compileStack = (
       slots,
       specHashes,
       false,
+      previous?.definition.capabilities.database.version,
     );
     const restResult = yield* materializeCapability(
       RestModule,
@@ -826,6 +831,7 @@ export const compileStack = (
       slots,
       specHashes,
       false,
+      previous?.definition.capabilities.rest.version,
     );
     const authResult = yield* materializeCapability(
       AuthModule,
@@ -836,6 +842,7 @@ export const compileStack = (
       slots,
       specHashes,
       false,
+      previous?.definition.capabilities.auth.version,
     );
     const thirdParty = resolveThirdPartyIssuer(authResult.settings);
     if (!thirdParty.ok)
@@ -852,6 +859,7 @@ export const compileStack = (
       slots,
       specHashes,
       false,
+      previous?.definition.capabilities.realtime.version,
     );
     const storageResult = yield* materializeCapability(
       StorageModule,
@@ -862,6 +870,7 @@ export const compileStack = (
       slots,
       specHashes,
       false,
+      previous?.definition.capabilities.storage.version,
     );
     const functionsResult = yield* materializeCapability(
       FunctionsModule,
@@ -872,6 +881,7 @@ export const compileStack = (
       slots,
       specHashes,
       true,
+      previous?.definition.capabilities.functions.version,
     );
     const studioResult = yield* materializeCapability(
       StudioModule,
@@ -882,6 +892,7 @@ export const compileStack = (
       slots,
       specHashes,
       false,
+      previous?.definition.capabilities.studio.version,
     );
     const mailResult = yield* materializeCapability(
       MailModule,
@@ -892,6 +903,7 @@ export const compileStack = (
       slots,
       specHashes,
       false,
+      previous?.definition.capabilities.mail.version,
     );
     const analyticsResult = yield* materializeCapability(
       AnalyticsModule,
@@ -902,6 +914,7 @@ export const compileStack = (
       slots,
       specHashes,
       false,
+      previous?.definition.capabilities.analytics.version,
     );
     const poolerResult = yield* materializeCapability(
       PoolerModule,
@@ -912,6 +925,7 @@ export const compileStack = (
       slots,
       specHashes,
       false,
+      previous?.definition.capabilities.pooler.version,
     );
     const database = withoutRelease(databaseResult);
     const rest = withoutRelease(restResult);
@@ -949,14 +963,14 @@ export const compileStack = (
     };
     const rawListeners = isRecord(config.listeners) ? config.listeners : {};
     const listeners = {
-      [PORT_FIELDS[0]]: materializeListener(rawListeners[PORT_FIELDS[0]], true),
-      [PORT_FIELDS[1]]: materializeListener(rawListeners[PORT_FIELDS[1]], true),
-      [PORT_FIELDS[2]]: materializeListener(rawListeners[PORT_FIELDS[2]], false),
-      [PORT_FIELDS[3]]: materializeListener(rawListeners[PORT_FIELDS[3]], true),
-      [PORT_FIELDS[4]]: materializeListener(rawListeners[PORT_FIELDS[4]], true),
-      [PORT_FIELDS[5]]: materializeListener(rawListeners[PORT_FIELDS[5]], false),
-      [PORT_FIELDS[6]]: materializeListener(rawListeners[PORT_FIELDS[6]], false),
-      [PORT_FIELDS[7]]: materializeListener(rawListeners[PORT_FIELDS[7]], false),
+      api: materializeListener(rawListeners.api, true),
+      database: materializeListener(rawListeners.database, true),
+      pooler: materializeListener(rawListeners.pooler, true),
+      studio: materializeListener(rawListeners.studio, true),
+      mailUi: materializeListener(rawListeners.mailUi, true),
+      smtp: materializeListener(rawListeners.smtp, false),
+      pop3: materializeListener(rawListeners.pop3, false),
+      functionsInspector: materializeListener(rawListeners.functionsInspector, false),
     } satisfies Record<PortField, MaterializedListener>;
     const rawJwt = config.security?.jwt;
     ensureCanonicalJwtSlot(slots, jwtSecret);
@@ -993,7 +1007,6 @@ export const compileStack = (
       enabled,
       specHashes,
       versions,
-      CAPABILITY_MODULES,
       {
         database: database.settings,
         rest: rest.settings,
@@ -1006,6 +1019,7 @@ export const compileStack = (
         analytics: analytics.settings,
         pooler: pooler.settings,
       },
+      CAPABILITY_MODULES,
     );
     return { definition, inputFingerprint, secrets: slots, executionPlan };
   }).pipe(

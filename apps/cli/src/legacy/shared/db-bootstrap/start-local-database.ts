@@ -99,9 +99,9 @@ function wrapDbConfigOverride<T>(
   });
 }
 
-export type LegacyStartLocalDatabaseStatus = "already-running" | "started";
+type LegacyStartLocalDatabaseStatus = "already-running" | "started";
 
-export interface LegacyStartLocalDatabaseResult {
+interface LegacyStartLocalDatabaseResult {
   readonly status: LegacyStartLocalDatabaseStatus;
 }
 

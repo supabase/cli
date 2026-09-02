@@ -1,6 +1,8 @@
 import {
+  Cause,
   Crypto,
   Effect,
+  Exit,
   FileSystem,
   Fiber,
   Option,
@@ -24,6 +26,7 @@ import {
 } from "../state/Ownership.ts";
 import type { StackStateStore } from "../state/StackStateStore.ts";
 import { makeControlClient } from "../control/ControlServer.ts";
+import { isMaintenanceTransportFailure } from "../control/MaintenanceProtocol.ts";
 import { STACK_RPC_RELEASE } from "../control/StackRpc.ts";
 import {
   StackOwnershipConflictError,
@@ -154,18 +157,32 @@ const validateCompatibleOwner = (
   Scope.Scope
 > =>
   Effect.gen(function* () {
-    if (metadata.rpcRelease !== STACK_RPC_RELEASE)
-      return yield* new StackUpgradeRequiredError({
-        message: `Stack owner release ${metadata.rpcRelease} requires explicit restart`,
-        expectedRelease: STACK_RPC_RELEASE,
-        actualRelease: metadata.rpcRelease,
-      });
-    const probe = yield* makeControlClient(metadata.endpoint, {
+    const probeExit = yield* makeControlClient(metadata.endpoint, {
       stackId: options.stackId,
       ownerSessionId: metadata.ownerSessionId,
     })
       .probe()
-      .pipe(Effect.mapError((error) => mapFailure(String(error))));
+      .pipe(Effect.exit);
+    if (Exit.isFailure(probeExit)) {
+      const failure = Cause.findErrorOption(probeExit.cause);
+      if (Option.isSome(failure) && isMaintenanceTransportFailure(failure.value))
+        return yield* mapFailure("Unable to probe existing Supervisor: transport unavailable");
+      return yield* new StackOwnershipConflictError({
+        message: "Existing Supervisor probe failed",
+        stackId: options.stackId,
+      });
+    }
+    const probe = probeExit.value;
+    if (
+      probe.ok &&
+      probe.op === "probe" &&
+      (metadata.rpcRelease !== STACK_RPC_RELEASE || probe.rpcRelease !== STACK_RPC_RELEASE)
+    )
+      return yield* new StackUpgradeRequiredError({
+        message: `Stack owner release ${probe.rpcRelease} requires explicit restart`,
+        expectedRelease: STACK_RPC_RELEASE,
+        actualRelease: probe.rpcRelease,
+      });
     if (
       !probe.ok ||
       probe.op !== "probe" ||
@@ -220,7 +237,7 @@ const launchAndAwait = (
   paths: { readonly stackRoot: string },
 ): Effect.Effect<
   OwnerMetadata,
-  StackOwnershipConflictError | StackStateInvalidError,
+  StackOwnershipConflictError | StackStateInvalidError | StackUpgradeRequiredError,
   FileSystem.FileSystem | Path.Path | Scope.Scope | ChildProcessSpawner.ChildProcessSpawner
 > =>
   Effect.gen(function* () {
@@ -230,7 +247,7 @@ const launchAndAwait = (
       return yield* mapFailure("Supervisor launcher is not configured");
     const encoded = yield* encodeLaunchPayload(payload);
     // Subscribe before spawning: a loser can observe the winner's exact
-    // metadata publication even when its own child exits on O_EXCL conflict.
+    // metadata publication even when its own child loses the atomic lock race.
     const ownerFiber = yield* Effect.forkChild(observeOwner(options, paths), {
       startImmediately: true,
     });
@@ -298,7 +315,21 @@ const launchAndAwait = (
         options.stackId,
         options.environment,
       );
-      if (current !== undefined) return current;
+      if (current !== undefined) {
+        // The watcher is only a launch-time helper once the winner is visible.
+        yield* Fiber.interrupt(ownerFiber);
+        return yield* validateCompatibleOwner(options, current).pipe(
+          Effect.as(current),
+          Effect.catchTag("StackStateInvalidError", () =>
+            Effect.fail(
+              new StackOwnershipConflictError({
+                message: "A live Supervisor owns this stack but is not responding",
+                stackId: options.stackId,
+              }),
+            ),
+          ),
+        );
+      }
       return yield* Fiber.join(ownerFiber).pipe(
         Effect.timeoutOrElse({
           duration: 5_000,
@@ -346,8 +377,14 @@ export const ensureSupervisor = (
       options.environment,
     );
     if (existing !== undefined) {
-      yield* validateCompatibleOwner(options, existing);
-      return existing;
+      const compatible = yield* validateCompatibleOwner(options, existing).pipe(
+        Effect.as(true),
+        // A published document with an unavailable control endpoint may be a
+        // crashed owner. Let the child arbitrate through the OS-held lease;
+        // malformed metadata remains fail-closed in readOwnerMetadata.
+        Effect.catchTag("StackStateInvalidError", () => Effect.succeed(false)),
+      );
+      if (compatible) return existing;
     }
     const stackId = yield* Schema.decodeEffect(StackIdSchema)(options.stackId).pipe(
       Effect.mapError((error) => mapFailure(`Invalid StackId: ${String(error)}`)),

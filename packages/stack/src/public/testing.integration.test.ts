@@ -113,7 +113,7 @@ const fakeStack = (
 });
 
 describe("test stack resource", () => {
-  it("starts with default-disabled pooler readiness and destroys only its owned identity", async () => {
+  it("starts automatically and destroys only its owned identity", async () => {
     const events: Array<string> = [];
     const removed: Array<string> = [];
     const operations: TestStackOperations = {
@@ -132,7 +132,7 @@ describe("test stack resource", () => {
     expect(removed).toEqual(["/tmp/stack-test-owned"]);
   });
 
-  it("preserves startup failure while cleaning up destroy, close, and temporary root", async () => {
+  it("preserves startup failure while retaining the root when destroy fails", async () => {
     const events: Array<string> = [];
     const removed: Array<string> = [];
     const operations: TestStackOperations = {
@@ -142,9 +142,11 @@ describe("test stack resource", () => {
         removed.push(root);
       },
     };
-    await expect(createTestStackWith({}, operations)).rejects.toThrow("startup failed");
+    await expect(createTestStackWith({}, operations)).rejects.toThrow(
+      "startup failed; retained test stack root /tmp/stack-test-failed",
+    );
     expect(events).toEqual(["start", "destroy", "close"]);
-    expect(removed).toEqual(["/tmp/stack-test-failed"]);
+    expect(removed).toEqual([]);
   });
 
   it("fails and cleans up when readiness status ends before becoming ready", async () => {

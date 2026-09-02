@@ -101,7 +101,7 @@ const encodeJwtHeader = (value: JwtHeader) =>
 const encodeJwtPayload = (value: JwtPayload) =>
   Schema.encodeEffect(Schema.fromJsonString(JwtPayloadSchema))(value);
 
-const base64UrlEncode = (bytes: Uint8Array): string => {
+export const base64UrlEncode = (bytes: Uint8Array): string => {
   let output = "";
   for (let index = 0; index < bytes.length; index += 3) {
     const first = bytes[index] ?? 0;

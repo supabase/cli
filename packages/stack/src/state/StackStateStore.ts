@@ -1,8 +1,7 @@
-import { Crypto, Effect, FileSystem, Path, Schedule, Schema } from "effect";
+import { Crypto, Data, Effect, Exit, FileSystem, Path, Predicate, Schedule, Schema } from "effect";
 import {
   InvalidProjectRootError,
   StackStateFormatUnsupportedError,
-  StackStateGenerationMismatchError,
   StackStateInvalidError,
 } from "../public/Errors.ts";
 import { resolveStackPaths, type StackPaths } from "./Paths.ts";
@@ -13,6 +12,17 @@ import {
   STACK_STATE_FORMAT,
   type PersistedStackState,
 } from "./StackState.ts";
+import {
+  acquirePortLease,
+  installLease,
+  readOwnerLock,
+  removeLeaseIfHeld,
+  writeLockTemp,
+  type OwnerLock,
+  OWNER_LOCK_FORMAT,
+} from "./Ownership.ts";
+
+class RegistryBusyError extends Data.TaggedError("RegistryBusyError")<{}> {}
 
 export interface StackStateStore {
   /** Reads without taking the registry lock. `undefined` means an unconfigured identity. */
@@ -20,15 +30,6 @@ export interface StackStateStore {
     stackId: string,
   ) => Effect.Effect<
     PersistedStackState | undefined,
-    InvalidProjectRootError | StackStateInvalidError | StackStateFormatUnsupportedError,
-    FileSystem.FileSystem | Path.Path | Crypto.Crypto
-  >;
-  /** Writes a complete state document. Intended for creation or explicitly fenced callers. */
-  readonly write: (
-    stackId: string,
-    state: PersistedStackState,
-  ) => Effect.Effect<
-    void,
     InvalidProjectRootError | StackStateInvalidError | StackStateFormatUnsupportedError,
     FileSystem.FileSystem | Path.Path | Crypto.Crypto
   >;
@@ -41,30 +42,22 @@ export interface StackStateStore {
     InvalidProjectRootError | StackStateInvalidError | StackStateFormatUnsupportedError,
     FileSystem.FileSystem | Path.Path | Crypto.Crypto
   >;
-  /** Replaces one complete state value after checking the expected generation. */
+  /** Replaces one complete state value while holding the registry lock. */
   readonly replace: (
     stackId: string,
     state: PersistedStackState,
-    expectedGeneration: number,
   ) => Effect.Effect<
     void,
-    | InvalidProjectRootError
-    | StackStateInvalidError
-    | StackStateFormatUnsupportedError
-    | StackStateGenerationMismatchError,
+    InvalidProjectRootError | StackStateInvalidError | StackStateFormatUnsupportedError,
     FileSystem.FileSystem | Path.Path | Crypto.Crypto
   >;
   /** Internal transaction primitive for callers that already hold the registry lock. */
   readonly replaceUnlocked: (
     stackId: string,
     state: PersistedStackState,
-    expectedGeneration: number,
   ) => Effect.Effect<
     void,
-    | InvalidProjectRootError
-    | StackStateInvalidError
-    | StackStateFormatUnsupportedError
-    | StackStateGenerationMismatchError,
+    InvalidProjectRootError | StackStateInvalidError | StackStateFormatUnsupportedError,
     FileSystem.FileSystem | Path.Path | Crypto.Crypto
   >;
   /** Explicit, exact-identity destructive cleanup. Ordinary lifecycle paths never call this. */
@@ -250,11 +243,7 @@ const persistValidatedState = (
     yield* atomicWrite(fs, path, crypto, paths.stateDocument, paths.stackRoot, state);
   });
 
-/**
- * Acquires one short cross-process lock. The lock is an O_EXCL file owned by this operation and is
- * removed exactly on release. We intentionally do not steal stale locks because ownership cannot
- * be proven safely after a process crash.
- */
+/** Acquires one short cross-process lock using the same OS-held lease as Supervisor ownership. */
 export const withRegistryLock = <A, E, R>(
   stateRoot: string,
   action: Effect.Effect<A, E, R>,
@@ -278,25 +267,60 @@ export const withRegistryLock = <A, E, R>(
         ),
       );
     const lockPath = path.join(root, ".stack-registry.lock");
-    // `writeFileString(..., { flag: "wx" })` is the platform's atomic O_EXCL
-    // primitive.  The lock descriptor itself need not stay open: the exact
-    // lock file is the ownership token and is removed only by this operation.
-    // Avoid scoping the action here: callers may acquire native listeners in
-    // their Scope and those must outlive the short registry transaction.
-    yield* fs.writeFileString(lockPath, "", { flag: "wx", mode: 0o600 }).pipe(
+    const acquire = Effect.suspend(() =>
+      Effect.gen(function* () {
+        const existing = yield* readOwnerLock(fs, lockPath);
+        const held = yield* acquirePortLease(existing?.port ?? 0).pipe(
+          Effect.mapError((error) =>
+            existing !== undefined && error["code"] === "EADDRINUSE"
+              ? new RegistryBusyError()
+              : error,
+          ),
+        );
+        const install = Effect.gen(function* () {
+          const token = yield* Effect.try({
+            // Registry tokens are ephemeral identity labels; ownership is proven
+            // by the held loopback lease and atomic canonical link.
+            // oxlint-disable-next-line effecttsgo/crypto-random-uuid-in-effect
+            try: () => globalThis.crypto.randomUUID(),
+            catch: (cause) =>
+              stateError(`Unable to allocate registry lock token: ${String(cause)}`),
+          });
+          const lock: OwnerLock = { format: OWNER_LOCK_FORMAT, token, port: held.port };
+          const temporary = yield* writeLockTemp(fs, path, lockPath, lock);
+          yield* installLease({ fs, lockPath, temporary, observed: existing }).pipe(
+            Effect.ensuring(
+              fs
+                .remove(temporary, { force: true })
+                .pipe(Effect.catchTag("PlatformError", () => Effect.void)),
+            ),
+          );
+          return { held, token };
+        });
+        return yield* install.pipe(
+          Effect.onExit((exit) => (Exit.isFailure(exit) ? held.close : Effect.void)),
+        );
+      }),
+    ).pipe(
+      Effect.mapError((error) =>
+        Predicate.isTagged(error, "LeaseSlotTaken") ? new RegistryBusyError() : error,
+      ),
       Effect.retry({
-        schedule: Schedule.exponential("1 millis").pipe(Schedule.upTo({ times: 20 })),
+        while: (error) => Predicate.isTagged(error, "RegistryBusyError"),
+        // Registry transactions include port leasing and atomic state writes; allow a few
+        // seconds for a concurrent owner to finish before failing closed.
+        schedule: Schedule.spaced("25 millis").pipe(Schedule.upTo({ times: 80 })),
       }),
       Effect.mapError((error) =>
-        stateError(`Unable to acquire stack registry lock: ${error.message}`),
+        Predicate.isTagged(error, "RegistryBusyError")
+          ? stateError("Stack registry is busy")
+          : error,
       ),
     );
-    return yield* action.pipe(
-      Effect.ensuring(
-        fs
-          .remove(lockPath, { force: true })
-          .pipe(Effect.catchTag("PlatformError", () => Effect.void)),
-      ),
+    return yield* Effect.acquireUseRelease(
+      acquire,
+      () => action,
+      ({ held, token }) => removeLeaseIfHeld(fs, lockPath, token).pipe(Effect.andThen(held.close)),
     );
   });
 
@@ -385,28 +409,6 @@ export const makeStackStateStore = (options: {
         return decoded;
       });
 
-    const write = (
-      stackId: string,
-      next: PersistedStackState,
-    ): Effect.Effect<
-      void,
-      InvalidProjectRootError | StackStateInvalidError | StackStateFormatUnsupportedError,
-      FileSystem.FileSystem | Path.Path | Crypto.Crypto
-    > =>
-      withRegistryLock(
-        options.stateRoot,
-        Effect.gen(function* () {
-          const paths = yield* pathsFor(stackId);
-          yield* validateState(stackId, next);
-          const existing = yield* read(stackId);
-          if (existing !== undefined)
-            return yield* stateError(
-              "Stack state already exists; use a generation-fenced replacement",
-            );
-          yield* persistValidatedState(fs, path, crypto, paths, next);
-        }),
-      );
-
     const initialize = (
       stackId: string,
       candidate: PersistedStackState,
@@ -430,26 +432,16 @@ export const makeStackStateStore = (options: {
     const replaceUnlocked = (
       stackId: string,
       next: PersistedStackState,
-      expectedGeneration: number,
     ): Effect.Effect<
       void,
-      | InvalidProjectRootError
-      | StackStateInvalidError
-      | StackStateFormatUnsupportedError
-      | StackStateGenerationMismatchError,
+      InvalidProjectRootError | StackStateInvalidError | StackStateFormatUnsupportedError,
       FileSystem.FileSystem | Path.Path | Crypto.Crypto
     > =>
       Effect.gen(function* () {
         const paths = yield* pathsFor(stackId);
         yield* validateIdentityForStackId(next.identity, stackId);
         const current = yield* read(stackId);
-        if (current === undefined || current.desiredGeneration !== expectedGeneration) {
-          return yield* new StackStateGenerationMismatchError({
-            expectedGeneration,
-            actualGeneration: current?.desiredGeneration,
-            message: "Persisted stack state generation changed",
-          });
-        }
+        if (current === undefined) return yield* stateError("Cannot replace missing stack state");
         yield* validateStateSchema(next);
         yield* persistValidatedState(fs, path, crypto, paths, next);
       });
@@ -457,15 +449,11 @@ export const makeStackStateStore = (options: {
     const replace = (
       stackId: string,
       next: PersistedStackState,
-      expectedGeneration: number,
     ): Effect.Effect<
       void,
-      | InvalidProjectRootError
-      | StackStateInvalidError
-      | StackStateFormatUnsupportedError
-      | StackStateGenerationMismatchError,
+      InvalidProjectRootError | StackStateInvalidError | StackStateFormatUnsupportedError,
       FileSystem.FileSystem | Path.Path | Crypto.Crypto
-    > => withRegistryLock(options.stateRoot, replaceUnlocked(stackId, next, expectedGeneration));
+    > => withRegistryLock(options.stateRoot, replaceUnlocked(stackId, next));
 
     const cleanup = (
       stackId: string,
@@ -488,7 +476,7 @@ export const makeStackStateStore = (options: {
         }),
       );
 
-    return { read, write, initialize, replace, replaceUnlocked, cleanup } satisfies StackStateStore;
+    return { read, initialize, replace, replaceUnlocked, cleanup } satisfies StackStateStore;
   });
 
 export { PersistedStackStateSchema } from "./StackState.ts";

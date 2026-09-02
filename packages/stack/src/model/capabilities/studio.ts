@@ -10,9 +10,9 @@ export type StudioSettings = Schema.Schema.Type<typeof StudioSettingsSchema>;
 export const StudioModule: CapabilityModule<StudioSettings> = {
   name: "studio",
   settings: StudioSettingsSchema,
-  defaultSettings: { api_url: "http://127.0.0.1", openai_api_key: undefined },
+  defaultSettings: { api_url: "", openai_api_key: undefined },
   defaultEnabled: true,
-  defaultActivation: "eager",
+  defaultActivation: "lazy",
   defaultVersion: "2026.08.24-sha-8ec45b2",
   dependencies: ["rest", "analytics"],
   releases: {

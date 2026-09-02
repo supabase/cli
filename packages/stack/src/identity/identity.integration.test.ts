@@ -277,9 +277,6 @@ describe("deterministic stack identity and state paths", () => {
         expect(paths.logs).toBe(path.join(stateRoot, id, "logs"));
         expect(paths.runtime).toBe(path.join(stateRoot, id, "runtime"));
         expect(paths.controlMetadata).toBe(path.join(stateRoot, id, "control.json"));
-        expect(paths.temporaryDirectory).toBe(path.join(stateRoot, id, ".tmp"));
-        expect(paths.temporarySibling).toBe(path.join(stateRoot, id, "state.json.tmp"));
-        expect(path.dirname(paths.temporarySibling)).toBe(paths.stackRoot);
         for (const value of Object.values(paths)) {
           const relative = path.relative(paths.stackRoot, value);
           expect(

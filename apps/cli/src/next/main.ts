@@ -1,10 +1,7 @@
 #!/usr/bin/env bun
-import { runSupervisorProcess } from "../../../../packages/stack/src/entrypoints/supervisor-node.ts";
-import { SUPERVISOR_DISPATCH_SENTINEL } from "../../../../packages/stack/src/supervisor/Launcher.ts";
+import { runSupervisorProcessIfDispatched } from "@supabase/stack/internal/supervisor";
 
 const args = process.argv.slice(2);
-if (args[0] === SUPERVISOR_DISPATCH_SENTINEL) {
-  await runSupervisorProcess(args.slice(1));
-} else {
+if (!(await runSupervisorProcessIfDispatched(args))) {
   await import("./cli/main.ts");
 }

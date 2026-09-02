@@ -13,6 +13,10 @@ export interface NativeProcessSpec {
   readonly args?: ReadonlyArray<string>;
   readonly env?: Readonly<Record<string, string>>;
   readonly cwd?: string;
+  /** Signal used for an explicit graceful stop before the forced kill fallback. */
+  readonly gracefulStopSignal?: "SIGTERM" | "SIGINT";
+  /** Graceful-stop budget for this workload. */
+  readonly gracefulStopTimeout?: Duration.Input;
   /** Maximum time allowed for this service-owned one-shot process. */
   readonly timeout?: Duration.Input;
   /** Exact lifecycle witness written after a successful one-shot process. */
@@ -144,8 +148,8 @@ export const spawnNativeProcess = (
           // effect sends the signal and waits for the launcher exit event;
           // bound that wait before forcing the same group.
           const graceful = yield* handle
-            .kill({ killSignal: "SIGTERM" })
-            .pipe(Effect.timeoutOption("2 seconds"));
+            .kill({ killSignal: spec.gracefulStopSignal ?? "SIGTERM" })
+            .pipe(Effect.timeoutOption(spec.gracefulStopTimeout ?? "2 seconds"));
           if (Option.isNone(graceful)) {
             const running = yield* handle.isRunning;
             if (running) yield* handle.kill({ killSignal: "SIGKILL" });

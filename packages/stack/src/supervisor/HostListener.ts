@@ -5,14 +5,7 @@ import { createServer as createHttpServer, type Server as HttpServer } from "nod
 import { createServer as createNetServer, type Server as NetServer } from "node:net";
 import { PortUnavailableError } from "../public/Errors.ts";
 import { type HostListener } from "../state/PortCoordinator.ts";
-import type { PortField } from "../public/Status.ts";
-
-const HTTP_FIELDS: ReadonlySet<PortField> = new Set([
-  "api",
-  "studio",
-  "mailUi",
-  "functionsInspector",
-]);
+import { PORT_FIELD_PROTOCOL, type PortField } from "../public/Status.ts";
 
 export interface HostListenerBindOptions {
   readonly createHttpServer?: () => HttpServer;
@@ -42,7 +35,7 @@ const bind = <T extends HttpServer | NetServer>(
   server: T,
   address: string,
   port: number,
-  field: PortField,
+  field: string,
   listen: HostListenerBindOptions["listen"] = (value, host, number, onListening) =>
     value.listen({ host, port: number }, onListening),
 ): Effect.Effect<T, PortUnavailableError, Scope.Scope> =>
@@ -102,6 +95,14 @@ const bind = <T extends HttpServer | NetServer>(
     });
   });
 
+/** Verifies an address/port can be bound without retaining a listener. */
+export const checkHostPort = (
+  address: string,
+  port: number,
+  field: string,
+): Effect.Effect<void, PortUnavailableError> =>
+  Effect.scoped(bind(createNetServer(), address, port, field).pipe(Effect.flatMap(closeServer)));
+
 /** Bind and retain one public host listener for direct adoption by a gateway. */
 export const bindHostListener = (
   address: string,
@@ -116,7 +117,7 @@ export const bindHostListenerWithOptions = (
   field: PortField,
   options: HostListenerBindOptions = {},
 ): Effect.Effect<HostListener, PortUnavailableError, Scope.Scope> => {
-  if (HTTP_FIELDS.has(field))
+  if (PORT_FIELD_PROTOCOL[field] === "http")
     return bind(
       options.createHttpServer?.() ?? createHttpServer(),
       address,
@@ -161,4 +162,4 @@ export const bindHostListenerWithOptions = (
   );
 };
 
-export const isHttpPortField = (field: PortField): boolean => HTTP_FIELDS.has(field);
+export const isHttpPortField = (field: PortField): boolean => PORT_FIELD_PROTOCOL[field] === "http";

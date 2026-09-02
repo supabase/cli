@@ -216,7 +216,7 @@ export const targetForPlatform = (platform: {
   return undefined;
 };
 
-/** Returns the catalog entry for an open workload identity. */
+/** Returns the catalog entry for a workload. */
 export const catalogEntryFor = (workloadId: string): WorkloadCatalogEntry | undefined =>
   WORKLOAD_CATALOG[workloadId];
 

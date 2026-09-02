@@ -1,4 +1,6 @@
 import {
+  Cause,
+  Context,
   Crypto,
   Deferred,
   Effect,
@@ -9,21 +11,25 @@ import {
   Path,
   Predicate,
   Ref,
+  Schedule,
   Scope,
   Schema,
   Stream,
 } from "effect";
 import type { RpcClientError } from "effect/unstable/rpc/RpcClientError";
 import type { SocketError } from "effect/unstable/socket/Socket";
+import { ChildProcessSpawner } from "effect/unstable/process";
+import type { ChildProcessSpawner as ChildProcessSpawnerService } from "effect/unstable/process/ChildProcessSpawner";
 import type { StackIdentity } from "../identity/Identity.ts";
 import { resolveStackIdentity, deriveStackId } from "../identity/Identity.ts";
-import type { PersistedStackState } from "../state/StackState.ts";
+import type { PersistedStackIdentity, PersistedStackState } from "../state/StackState.ts";
 import { toPersistedIdentity } from "../state/StackState.ts";
-import { makeStackStateStore } from "../state/StackStateStore.ts";
+import { makeStackStateStore, type StackStateStore } from "../state/StackStateStore.ts";
+import { resolveStackPaths } from "../state/Paths.ts";
 import { StackIdSchema, type StackId } from "./StackId.ts";
 import type { StackRuntime, StackRuntimePreference } from "./Runtime.ts";
 import type { StackConfig } from "./Config.ts";
-import type { StackStatus, StackDescriptor, StackInspection } from "./Status.ts";
+import { type StackStatus, type StackDescriptor, type StackInspection } from "./Status.ts";
 import type { CapabilityName } from "./Capability.ts";
 import type { LogOptions, StackLogEntry } from "./Logs.ts";
 import type { EffectStackCredentials } from "./Credentials.ts";
@@ -49,7 +55,6 @@ import {
   ServiceReadinessError,
   ContainerEngineError,
   StackUpgradeReplacementError,
-  StackStateGenerationMismatchError,
   StackStateInvalidError,
   StackStateFormatUnsupportedError,
   StackUpgradeRequiredError,
@@ -57,7 +62,6 @@ import {
   PortAllocationError,
   PortUnavailableError,
   GatewayAuthenticationError,
-  GatewayStaleGenerationError,
   GatewayActivationError,
   type CreateStackError,
   type OpenStackError,
@@ -68,7 +72,6 @@ import {
   type StackStartError,
   type StackRestartError,
   type StackStopError,
-  type StackCloseError,
   type StackStatusWatchError,
   type StackLogsError,
   type DestroyStackError,
@@ -76,9 +79,17 @@ import {
   type StackErrorTag,
   isStackErrorTag,
 } from "./Errors.ts";
-import { readOwnerMetadata } from "../state/Ownership.ts";
+import {
+  ownerLockExists,
+  readOwnerMetadata,
+  type OwnerMetadata,
+  type StackRuntimeEnvironmentValue,
+} from "../state/Ownership.ts";
 import { makeControlClient } from "../control/ControlServer.ts";
-import { MaintenanceProtocolError } from "../control/MaintenanceProtocol.ts";
+import {
+  isMaintenanceTransportFailure,
+  MaintenanceProtocolError,
+} from "../control/MaintenanceProtocol.ts";
 import { STACK_RPC_RELEASE, type StackRpcError, type StackRpcClient } from "../control/StackRpc.ts";
 import {
   ensureSupervisor,
@@ -96,8 +107,10 @@ import {
   type ContainerEngineKind,
   type ContainerPlatform,
 } from "../runtime/ContainerEngine.ts";
+import { statusFor } from "../supervisor/StatusProjection.ts";
 import { makeDockerEngine } from "../runtime/DockerEngine.ts";
 import { makePodmanEngine } from "../runtime/PodmanEngine.ts";
+import { readRetainedLogs } from "../supervisor/LogStore.ts";
 
 export interface StartStackOptions {
   readonly config?: StackConfig;
@@ -114,6 +127,10 @@ export interface CreateStackOptions {
 export interface FindStackOptions {
   readonly projectRoot: string;
   readonly name?: string;
+}
+export interface OpenStackOptions {
+  /** Explicit restart path used to replace an owner from an older RPC release. */
+  readonly replaceIncompatibleOwner?: boolean;
 }
 export interface ListStacksOptions {
   readonly projectRoot?: string;
@@ -147,23 +164,20 @@ export interface EffectStack {
   // oxlint-disable-next-line effecttsgo/lazy-effect
   readonly destroy: () => Effect.Effect<void, DestroyStackError>;
   // oxlint-disable-next-line effecttsgo/lazy-effect
-  readonly close: () => Effect.Effect<void, StackCloseError>;
+  readonly close: () => Effect.Effect<void>;
   // oxlint-disable-next-line effecttsgo/lazy-effect
   readonly watchStatus: () => Stream.Stream<StackStatus, StackStatusWatchError>;
   // oxlint-disable-next-line effecttsgo/lazy-effect
   readonly logs: (options?: LogOptions) => Stream.Stream<StackLogEntry, StackLogsError>;
 }
 
-const runtimeFor = (
-  preference: StackRuntimePreference | undefined,
-  engine?: ContainerEngineKind,
-): StackRuntime =>
-  preference?.kind === "container"
-    ? {
-        kind: "container",
-        engine: engine ?? (preference.engine === "podman" ? "podman" : "docker"),
-      }
-    : { kind: "native" };
+const containerRuntime = (engine: ContainerEngineKind): StackRuntime => ({
+  kind: "container",
+  engine,
+});
+
+const optionOf = <A>(value: A | undefined): Option.Option<A> =>
+  value === undefined ? Option.none() : Option.some(value);
 
 const defaultContainerPlatform = (): ContainerPlatform => {
   // Host details are read only at this composition boundary. The real
@@ -189,11 +203,7 @@ const defaultContainerEngineResolver = (): ContainerEngineResolverShape => ({
 
 const resolveRuntime = (
   preference: StackRuntimePreference | undefined,
-): Effect.Effect<
-  StackRuntime,
-  ContainerEngineError,
-  import("effect/unstable/process/ChildProcessSpawner").ChildProcessSpawner
-> =>
+): Effect.Effect<StackRuntime, ContainerEngineError, ChildProcessSpawnerService> =>
   preference?.kind !== "container"
     ? Effect.succeed({ kind: "native" })
     : Effect.serviceOption(ContainerEngineResolver).pipe(
@@ -201,7 +211,7 @@ const resolveRuntime = (
           Option.isSome(service) ? service.value : defaultContainerEngineResolver(),
         ),
         Effect.flatMap((resolver) => resolver.resolve(preference.engine ?? "auto")),
-        Effect.map((engine) => runtimeFor(preference, engine)),
+        Effect.map(containerRuntime),
         Effect.mapError(
           (error) =>
             new ContainerEngineError({
@@ -227,7 +237,12 @@ const environment = () =>
     Effect.map(Option.getOrElse(defaultRuntimeEnvironment)),
   );
 
-type ControlError = StackRpcError | RpcClientError | SocketError | MaintenanceProtocolError;
+type ControlError =
+  | StackRpcError
+  | RpcClientError
+  | SocketError
+  | MaintenanceProtocolError
+  | StackError;
 
 const stackErrorFactories = {
   InvalidStackIdentityError: (message: string) => new InvalidStackIdentityError({ message }),
@@ -244,8 +259,6 @@ const stackErrorFactories = {
   StackStateInvalidError: (message: string) => new StackStateInvalidError({ message }),
   StackStateFormatUnsupportedError: (message: string) =>
     new StackStateFormatUnsupportedError({ message }),
-  StackStateGenerationMismatchError: (message: string) =>
-    new StackStateGenerationMismatchError({ message }),
   StackUpgradeRequiredError: (message: string) => new StackUpgradeRequiredError({ message }),
   StackUpgradeReplacementError: (message: string) => new StackUpgradeReplacementError({ message }),
   StackSecretMismatchError: (message: string) => new StackSecretMismatchError({ message }),
@@ -254,7 +267,6 @@ const stackErrorFactories = {
   PortAllocationError: (message: string) => new PortAllocationError({ message }),
   PortUnavailableError: (message: string) => new PortUnavailableError({ message }),
   GatewayAuthenticationError: (message: string) => new GatewayAuthenticationError({ message }),
-  GatewayStaleGenerationError: (message: string) => new GatewayStaleGenerationError({ message }),
   GatewayActivationError: (message: string) => new GatewayActivationError({ message }),
   StackPreparationError: (message: string) => new StackPreparationError({ message }),
   ArtifactIntegrityError: (message: string) => new ArtifactIntegrityError({ message }),
@@ -267,6 +279,21 @@ const stackErrorFactories = {
 } satisfies Record<StackErrorTag, (message: string) => StackError>;
 
 const errorForRpc = (error: ControlError): StackError => {
+  if (
+    Predicate.isTagged(error, "StackOwnershipConflictError") ||
+    Predicate.isTagged(error, "StackLifecycleConflictError") ||
+    Predicate.isTagged(error, "StackStateInvalidError") ||
+    Predicate.isTagged(error, "StackStateFormatUnsupportedError")
+  )
+    return error;
+  if (
+    Predicate.isTagged(error, "RpcClientError") ||
+    Predicate.isTagged(error, "SocketError") ||
+    isMaintenanceTransportFailure(error)
+  )
+    return new StackOwnershipConflictError({
+      message: `Stack owner is unreachable: ${error.message}`,
+    });
   if (
     typeof error === "object" &&
     error !== null &&
@@ -286,6 +313,7 @@ const errorForRpc = (error: ControlError): StackError => {
 const statusError = (error: ControlError): StackStatusError => {
   const mapped = errorForRpc(error);
   return mapped instanceof StackNotFoundError ||
+    mapped instanceof StackOwnershipConflictError ||
     mapped instanceof StackStateInvalidError ||
     mapped instanceof StackStateFormatUnsupportedError ||
     mapped instanceof StackUpgradeRequiredError
@@ -297,6 +325,7 @@ const credentialsError = (error: ControlError): StackCredentialsError => {
   const mapped = errorForRpc(error);
   return mapped instanceof StackNotFoundError ||
     mapped instanceof StackNotRunningError ||
+    mapped instanceof StackOwnershipConflictError ||
     mapped instanceof StackSecretMismatchError ||
     mapped instanceof InvalidJwtSigningMaterialError
     ? mapped
@@ -307,27 +336,37 @@ const prepareError = (error: ControlError): PrepareStackError => {
   const mapped = errorForRpc(error);
   return mapped instanceof StackPreparationError ||
     mapped instanceof ArtifactIntegrityError ||
-    mapped instanceof ContainerPullError
+    mapped instanceof ContainerPullError ||
+    mapped instanceof StackOwnershipConflictError ||
+    mapped instanceof StackStateInvalidError ||
+    mapped instanceof StackLifecycleConflictError
     ? mapped
     : new StackPreparationError({ message: mapped.message });
 };
 
 const startError = (error: ControlError): StackStartError => {
   const mapped = errorForRpc(error);
-  return mapped instanceof StackDefinitionRequiredError ||
+  return mapped instanceof InvalidStackConfigError ||
+    mapped instanceof StackDefinitionRequiredError ||
     mapped instanceof StackVersionUnsupportedError ||
+    mapped instanceof StackNotRunningError ||
+    mapped instanceof StackMustBeStoppedError ||
     mapped instanceof StackLifecycleConflictError ||
     mapped instanceof StackStateInvalidError ||
     mapped instanceof StackStateFormatUnsupportedError ||
     mapped instanceof StackUpgradeRequiredError ||
     mapped instanceof StackSecretMismatchError ||
+    mapped instanceof InvalidJwtSigningMaterialError ||
+    mapped instanceof PortAllocationError ||
+    mapped instanceof PortUnavailableError ||
     mapped instanceof StackPreparationError ||
     mapped instanceof ArtifactIntegrityError ||
     mapped instanceof ContainerPullError ||
     mapped instanceof StackReconciliationError ||
     mapped instanceof ServiceStartError ||
     mapped instanceof ServiceReadinessError ||
-    mapped instanceof ContainerEngineError
+    mapped instanceof ContainerEngineError ||
+    mapped instanceof StackOwnershipConflictError
     ? mapped
     : new StackStateInvalidError({ message: mapped.message });
 };
@@ -337,21 +376,56 @@ const restartError = (error: ControlError): StackRestartError => {
   return mapped instanceof StackUpgradeReplacementError ? mapped : startError(error);
 };
 
+const restartErrorFromStack = (error: StackError): StackRestartError =>
+  error instanceof StackUpgradeReplacementError ||
+  error instanceof InvalidStackConfigError ||
+  error instanceof StackDefinitionRequiredError ||
+  error instanceof StackVersionUnsupportedError ||
+  error instanceof StackOwnershipConflictError ||
+  error instanceof StackNotRunningError ||
+  error instanceof StackMustBeStoppedError ||
+  error instanceof StackLifecycleConflictError ||
+  error instanceof StackStateInvalidError ||
+  error instanceof StackStateFormatUnsupportedError ||
+  error instanceof StackUpgradeRequiredError ||
+  error instanceof StackSecretMismatchError ||
+  error instanceof InvalidJwtSigningMaterialError ||
+  error instanceof PortAllocationError ||
+  error instanceof PortUnavailableError ||
+  error instanceof StackPreparationError ||
+  error instanceof ArtifactIntegrityError ||
+  error instanceof ContainerPullError ||
+  error instanceof StackReconciliationError ||
+  error instanceof ServiceStartError ||
+  error instanceof ServiceReadinessError ||
+  error instanceof ContainerEngineError
+    ? error
+    : new StackLifecycleConflictError({ message: error.message });
+
 const stopError = (error: ControlError): StackStopError => {
   const mapped = errorForRpc(error);
-  return mapped instanceof StackNotRunningError ||
-    mapped instanceof StackLifecycleConflictError ||
-    mapped instanceof StackReconciliationError ||
-    mapped instanceof ServiceReadinessError ||
-    mapped instanceof ContainerEngineError
+  return mapped instanceof StackOwnershipConflictError ||
+    mapped instanceof StackLifecycleConflictError
     ? mapped
     : new StackLifecycleConflictError({ message: mapped.message });
+};
+
+const logsError = (error: ControlError): StackLogsError => {
+  const mapped = errorForRpc(error);
+  return mapped instanceof StackNotFoundError ||
+    mapped instanceof StackNotRunningError ||
+    mapped instanceof StackStateInvalidError ||
+    mapped instanceof StackOwnershipConflictError ||
+    mapped instanceof StackLifecycleConflictError
+    ? mapped
+    : new StackStateInvalidError({ message: mapped.message });
 };
 
 const destroyError = (error: ControlError): DestroyStackError => {
   const mapped = errorForRpc(error);
   return mapped instanceof StackDestructionError ||
     mapped instanceof StackNotFoundError ||
+    mapped instanceof StackOwnershipConflictError ||
     mapped instanceof StackLifecycleConflictError ||
     mapped instanceof ContainerEngineError
     ? mapped
@@ -362,29 +436,83 @@ const destroyError = (error: ControlError): DestroyStackError => {
 export const makeHandle = (
   id: StackId,
   metadata: {
-    readonly endpoint: Parameters<typeof makeControlClient>[0];
-    readonly ownerSessionId: string;
-    readonly rpcRelease: string;
+    readonly endpoint?: Parameters<typeof makeControlClient>[0];
+    readonly ownerSessionId?: string;
+    readonly rpcRelease?: string;
   },
+  options: {
+    readonly resolveOwner?: (
+      launch: boolean,
+    ) => Effect.Effect<Option.Option<OwnerMetadata>, StackError>;
+    readonly readOfflineState?: () => Effect.Effect<Option.Option<PersistedStackState>, StackError>;
+    readonly readPersistedState?: () => Effect.Effect<
+      Option.Option<PersistedStackState>,
+      StackError
+    >;
+    readonly readLogs?: (
+      options?: LogOptions,
+    ) => Effect.Effect<ReadonlyArray<StackLogEntry>, StackLogsError>;
+    readonly waitForRelease?: () => Effect.Effect<void, StackStopError>;
+    readonly replacement?: (options?: StartStackOptions) => Effect.Effect<StackStatus, StackError>;
+  } = {},
 ): Effect.Effect<EffectStack> =>
   Effect.gen(function* () {
     const closed = yield* Ref.make(false);
-    const client = makeControlClient(metadata.endpoint, {
-      stackId: id,
-      ownerSessionId: metadata.ownerSessionId,
-      rpcRelease: metadata.rpcRelease,
-    });
-    const check = <A, E, R>(effect: Effect.Effect<A, E, R>): Effect.Effect<A, E, R> =>
+    const readOfflineState = options.readOfflineState;
+    const readPersistedState = options.readPersistedState;
+    const readLogs = options.readLogs;
+    let replacement = options.replacement;
+    type ReplacementExit = Exit.Exit<StackStatus, StackRestartError>;
+    const replacementActive = yield* Ref.make(false);
+    const client: ReturnType<typeof makeControlClient> | undefined =
+      metadata.endpoint !== undefined &&
+      metadata.ownerSessionId !== undefined &&
+      metadata.rpcRelease !== undefined
+        ? makeControlClient(metadata.endpoint, {
+            stackId: id,
+            ownerSessionId: metadata.ownerSessionId,
+            rpcRelease: metadata.rpcRelease,
+          })
+        : undefined;
+    const resolveClient = (
+      launch: boolean,
+    ): Effect.Effect<ReturnType<typeof makeControlClient>, StackError> =>
+      options.resolveOwner !== undefined
+        ? options.resolveOwner(launch).pipe(
+            Effect.flatMap((owner) =>
+              Option.isSome(owner)
+                ? Effect.succeed(
+                    makeControlClient(owner.value.endpoint, {
+                      stackId: id,
+                      ownerSessionId: owner.value.ownerSessionId,
+                      rpcRelease: owner.value.rpcRelease,
+                    }),
+                  )
+                : Effect.fail(
+                    new StackOwnershipConflictError({ message: "No Supervisor owns this stack" }),
+                  ),
+            ),
+          )
+        : client !== undefined
+          ? Effect.succeed(client)
+          : Effect.fail(
+              new StackOwnershipConflictError({ message: "No Supervisor owns this stack" }),
+            );
+    const check = <A, E, R>(
+      effect: Effect.Effect<A, E, R>,
+    ): Effect.Effect<A, E | StackLifecycleConflictError, R> =>
       Ref.get(closed).pipe(
-        Effect.flatMap((isClosed): Effect.Effect<A, E, R> =>
-          isClosed ? Effect.interrupt : effect,
+        Effect.flatMap((isClosed): Effect.Effect<A, E | StackLifecycleConflictError, R> =>
+          isClosed
+            ? Effect.fail(new StackLifecycleConflictError({ message: "Stack handle is closed" }))
+            : effect,
         ),
       );
     const mapRpcClientFailure = <E extends StackError>(
       error: RpcClientError,
       mapError: (error: ControlError) => E,
     ): Effect.Effect<never, E> =>
-      Effect.exit(Effect.scoped(client.probe())).pipe(
+      Effect.exit(resolveClient(false).pipe(Effect.flatMap((owner) => owner.probe()))).pipe(
         Effect.flatMap((probe) => {
           if (
             Exit.isSuccess(probe) &&
@@ -404,10 +532,11 @@ export const makeHandle = (
     const invoke = <A, E extends StackError>(
       call: (rpc: StackRpcClient) => Effect.Effect<A, StackRpcError | RpcClientError>,
       mapError: (error: ControlError) => E,
-    ): Effect.Effect<A, E> => {
-      const rpcCall: Effect.Effect<A, StackRpcError | RpcClientError> = Effect.scoped(
-        client.rpc.pipe(Effect.flatMap(call)),
-      );
+      launch = false,
+    ): Effect.Effect<A, E | StackLifecycleConflictError> => {
+      const rpcCall: Effect.Effect<A, StackRpcError | RpcClientError | StackError> = resolveClient(
+        launch,
+      ).pipe(Effect.flatMap((owner) => Effect.scoped(owner.rpc.pipe(Effect.flatMap(call)))));
       const mapped: Effect.Effect<A, E> = rpcCall.pipe(
         Effect.catchIf(
           (error): error is RpcClientError => Predicate.isTagged(error, "RpcClientError"),
@@ -418,98 +547,298 @@ export const makeHandle = (
       return check(mapped);
     };
     const destroyAndAwaitOwner: Effect.Effect<void, DestroyStackError> = check(
-      Effect.gen(function* () {
-        const ownerConnected = yield* Deferred.make<void>();
-        const ownerWatch = client.awaitClose(
-          Deferred.succeed(ownerConnected, undefined).pipe(Effect.asVoid),
-        );
-        const ownerFiber = yield* Effect.forkChild(ownerWatch, { startImmediately: true });
-        const ownerReady = Deferred.await(ownerConnected).pipe(
-          Effect.raceFirst(
-            Fiber.join(ownerFiber).pipe(
-              Effect.flatMap(() =>
-                Effect.fail(
-                  new StackDestructionError({
-                    message: "Unable to observe Supervisor control connection",
-                  }),
+      resolveClient(true).pipe(
+        Effect.mapError(destroyError),
+        Effect.flatMap((client) =>
+          Effect.gen(function* () {
+            const ownerConnected = yield* Deferred.make<void>();
+            const ownerWatch = client.awaitClose(
+              Deferred.succeed(ownerConnected, undefined).pipe(Effect.asVoid),
+            );
+            const ownerFiber = yield* Effect.forkChild(ownerWatch, { startImmediately: true });
+            const ownerReady = Deferred.await(ownerConnected).pipe(
+              Effect.raceFirst(
+                Fiber.join(ownerFiber).pipe(
+                  Effect.flatMap(() =>
+                    Effect.fail(
+                      new StackDestructionError({
+                        message: "Unable to observe Supervisor control connection",
+                      }),
+                    ),
+                  ),
+                  Effect.mapError(
+                    (cause) =>
+                      new StackDestructionError({
+                        message: "Unable to observe Supervisor control connection",
+                        cause,
+                      }),
+                  ),
                 ),
               ),
-              Effect.mapError(
-                (cause) =>
-                  new StackDestructionError({
-                    message: "Unable to observe Supervisor control connection",
-                    cause,
-                  }),
+            );
+            const result = yield* Effect.exit(
+              ownerReady.pipe(
+                Effect.andThen(invoke((rpc) => rpc.destroy(undefined), destroyError)),
+                // The owner closes its control server only after all workload cleanup has completed.
+                // Await the exact preface-only socket instead of decoding a terminal RPC stream Exit.
+                Effect.andThen(
+                  Fiber.join(ownerFiber).pipe(
+                    Effect.mapError(
+                      (cause) =>
+                        new StackDestructionError({
+                          message: "Unable to observe Supervisor shutdown completion",
+                          cause,
+                        }),
+                    ),
+                  ),
+                ),
+              ),
+            );
+            if (Exit.isFailure(result)) {
+              yield* Fiber.interrupt(ownerFiber);
+            }
+            return yield* result;
+          }),
+        ),
+      ),
+    );
+    const status = () => {
+      const rpcStatus = invoke((rpc) => rpc.status(undefined), statusError);
+      if (readOfflineState === undefined) return rpcStatus;
+      return rpcStatus.pipe(
+        Effect.catchTag("StackOwnershipConflictError", () =>
+          readOfflineState().pipe(
+            Effect.mapError(statusError),
+            Effect.flatMap((state) =>
+              Option.isSome(state) &&
+              (state.value.desiredLifecycle === "stopped" ||
+                state.value.desiredLifecycle === "unconfigured")
+                ? statusFor(state.value, [], new Set<CapabilityName>(), "stopped").pipe(
+                    Effect.mapError(statusError),
+                  )
+                : Effect.fail(
+                    new StackOwnershipConflictError({ message: "No Supervisor owns this stack" }),
+                  ),
+            ),
+          ),
+        ),
+      );
+    };
+    const start = (options?: StartStackOptions) =>
+      invoke(
+        (rpc) =>
+          options?.config === undefined ? rpc.start({}) : rpc.start({ config: options.config }),
+        startError,
+        true,
+      );
+    const stopOwner = (owner: ReturnType<typeof makeControlClient>) =>
+      Effect.gen(function* () {
+        // Subscribe to the owner control connection before sending stop so a
+        // fast shutdown cannot race the close witness.
+        const closeFiber = yield* Effect.forkChild(owner.awaitClose(), { startImmediately: true });
+        const response = yield* owner.stop().pipe(Effect.exit);
+        if (Exit.isFailure(response)) {
+          yield* Fiber.interrupt(closeFiber);
+          return yield* Effect.failCause(response.cause);
+        }
+        if (!response.value.ok) {
+          yield* Fiber.interrupt(closeFiber);
+          return yield* new StackLifecycleConflictError({ message: response.value.error.message });
+        }
+        yield* Fiber.join(closeFiber).pipe(Effect.ignore);
+        if (options.waitForRelease !== undefined) yield* options.waitForRelease();
+      }).pipe(Effect.mapError(stopError));
+    const stop = () =>
+      check(
+        resolveClient(false).pipe(
+          Effect.mapError(stopError),
+          Effect.flatMap(stopOwner),
+          Effect.catchTag("StackOwnershipConflictError", () =>
+            (readOfflineState === undefined
+              ? Effect.fail(
+                  new StackOwnershipConflictError({ message: "No Supervisor owns this stack" }),
+                )
+              : readOfflineState().pipe(
+                  Effect.mapError(stopError),
+                  Effect.flatMap((state) =>
+                    Option.isSome(state) &&
+                    (state.value.desiredLifecycle === "stopped" ||
+                      state.value.desiredLifecycle === "unconfigured")
+                      ? Effect.void
+                      : resolveClient(true).pipe(
+                          Effect.mapError(stopError),
+                          Effect.flatMap(stopOwner),
+                        ),
+                  ),
+                )
+            ).pipe(
+              // Ownership artifacts that block the offline fast path may be
+              // stale. Let ensureSupervisor arbitrate the lease; a live owner
+              // remains protected and returns a typed conflict.
+              Effect.catchTag("StackOwnershipConflictError", () =>
+                resolveClient(true).pipe(Effect.mapError(stopError), Effect.flatMap(stopOwner)),
               ),
             ),
+          ),
+        ),
+      );
+    const prepare = (prepareOptions?: PrepareStackOptions) =>
+      Effect.gen(function* () {
+        const ownerBefore = yield* resolveClient(false).pipe(
+          Effect.mapError(prepareError),
+          Effect.flatMap((owner) =>
+            owner.probe().pipe(
+              Effect.flatMap((response) =>
+                response.ok
+                  ? Effect.succeed(true)
+                  : Effect.fail(new StackPreparationError({ message: response.error.message })),
+              ),
+              Effect.mapError((error) =>
+                isMaintenanceTransportFailure(error)
+                  ? new StackOwnershipConflictError({
+                      message: "The existing Supervisor is unreachable",
+                    })
+                  : prepareError(error),
+              ),
+            ),
+          ),
+          Effect.catchTag("StackOwnershipConflictError", () =>
+            readPersistedState === undefined
+              ? Effect.succeed(false)
+              : readPersistedState().pipe(
+                  Effect.mapError(prepareError),
+                  Effect.flatMap((state) =>
+                    Option.isSome(state) && state.value.desiredLifecycle === "running"
+                      ? Effect.fail(
+                          new StackOwnershipConflictError({
+                            stackId: id,
+                            message:
+                              "Stack has running intent without a reachable Supervisor; restart it before preparing",
+                          }),
+                        )
+                      : Effect.succeed(false),
+                  ),
+                ),
           ),
         );
         const result = yield* Effect.exit(
-          ownerReady.pipe(
-            Effect.andThen(invoke((rpc) => rpc.destroy(undefined), destroyError)),
-            // The owner closes its control server only after all workload cleanup has completed.
-            // Await the exact preface-only socket instead of decoding a terminal RPC stream Exit.
-            Effect.andThen(
-              Fiber.join(ownerFiber).pipe(
-                Effect.mapError(
-                  (cause) =>
-                    new StackDestructionError({
-                      message: "Unable to observe Supervisor shutdown completion",
-                      cause,
-                    }),
-                ),
-              ),
-            ),
+          invoke(
+            (rpc) =>
+              prepareOptions === undefined
+                ? rpc.prepare({})
+                : rpc.prepare({
+                    ...(prepareOptions.config === undefined
+                      ? {}
+                      : { config: prepareOptions.config }),
+                    ...(prepareOptions.capabilities === undefined
+                      ? {}
+                      : { capabilities: prepareOptions.capabilities }),
+                  }),
+            prepareError,
+            true,
           ),
         );
-        if (Exit.isFailure(result)) {
-          yield* Fiber.interrupt(ownerFiber);
+        if (!ownerBefore && options.waitForRelease !== undefined) {
+          const released = yield* Effect.uninterruptible(options.waitForRelease()).pipe(
+            Effect.mapError(prepareError),
+            Effect.exit,
+          );
+          if (Exit.isFailure(released)) {
+            if (Exit.isSuccess(result)) {
+              const retainedOwner = yield* resolveClient(false).pipe(
+                Effect.flatMap((owner) => owner.probe()),
+                Effect.exit,
+              );
+              if (Exit.isSuccess(retainedOwner) && retainedOwner.value.ok) return result.value;
+            }
+            return yield* Effect.failCause(released.cause);
+          }
         }
-        return yield* result;
-      }),
-    );
-    const status = () => invoke((rpc) => rpc.status(undefined), statusError);
+        return yield* Exit.isSuccess(result)
+          ? Effect.succeed(result.value)
+          : Effect.failCause(result.cause);
+      });
     return {
       id,
       status,
       credentials: () => invoke((rpc) => rpc.credentials(undefined), credentialsError),
-      prepare: (options) =>
-        invoke(
-          (rpc) => rpc.prepare({ config: options?.config, capabilities: options?.capabilities }),
-          prepareError,
-        ),
-      start: (options) => invoke((rpc) => rpc.start({ config: options?.config }), startError),
-      restart: (options) => invoke((rpc) => rpc.restart({ config: options?.config }), restartError),
-      stop: () =>
-        check(
-          Effect.scoped(client.stop()).pipe(
-            Effect.mapError((error) => stopError(error)),
-            Effect.flatMap((response) =>
-              response.ok
-                ? Effect.void
-                : Effect.fail(new StackLifecycleConflictError({ message: response.error.message })),
-            ),
-          ),
-        ),
+      prepare,
+      start,
+      restart: (options) =>
+        Effect.gen(function* () {
+          if (replacement !== undefined) {
+            const admitted = yield* Ref.modify(replacementActive, (active) =>
+              active ? [false, true] : [true, true],
+            );
+            if (!admitted)
+              return yield* new StackLifecycleConflictError({
+                message: "A replacement restart is already active",
+              });
+            const result = yield* Deferred.make<ReplacementExit>();
+            const ownerFiber = replacement(options).pipe(
+              Effect.mapError(restartErrorFromStack),
+              Effect.exit,
+              Effect.tap((exit) =>
+                (Exit.isSuccess(exit)
+                  ? Effect.sync(() => {
+                      replacement = undefined;
+                    })
+                  : Effect.void
+                ).pipe(
+                  Effect.andThen(Ref.set(replacementActive, false)),
+                  Effect.andThen(Deferred.succeed(result, exit)),
+                ),
+              ),
+            );
+            // Replacement owns a stop/start handoff. It must finish even when the initiating
+            // request is interrupted, while later callers receive an explicit conflict.
+            yield* ownerFiber.pipe(Effect.forkDetach);
+            const exit = yield* Deferred.await(result);
+            if (Exit.isFailure(exit)) return yield* Effect.failCause(exit.cause);
+            return exit.value;
+          }
+          return yield* invoke(
+            (rpc) =>
+              options?.config === undefined
+                ? rpc.restart({})
+                : rpc.restart({ config: options.config }),
+            restartError,
+            true,
+          );
+        }),
+      stop,
       destroy: () => destroyAndAwaitOwner,
       close: () => Ref.set(closed, true),
       watchStatus: () =>
         Stream.unwrap(
           check(
-            client.rpc.pipe(
-              Effect.map((rpc) =>
-                rpc.watchStatus(undefined).pipe(
-                  Stream.catchIf(
-                    (error): error is RpcClientError => Predicate.isTagged(error, "RpcClientError"),
-                    (error) => Stream.fromEffect(mapRpcClientFailure(error, statusError)),
-                    (error) => Stream.fail(statusError(error)),
+            resolveClient(false).pipe(
+              Effect.mapError(statusError),
+              Effect.map((owner) =>
+                Stream.unwrap(
+                  owner.rpc.pipe(
+                    Effect.map((rpc) =>
+                      rpc
+                        .watchStatus(undefined)
+                        .pipe(
+                          Stream.mapError((error) =>
+                            Predicate.isTagged(error, "RpcClientError")
+                              ? new StackOwnershipConflictError({ message: error.message })
+                              : statusError(error),
+                          ),
+                        ),
+                    ),
+                    Effect.catchIf(
+                      (error): error is RpcClientError =>
+                        Predicate.isTagged(error, "RpcClientError"),
+                      (error) =>
+                        Effect.fail(new StackOwnershipConflictError({ message: error.message })),
+                    ),
                   ),
                 ),
               ),
-              Effect.catchIf(
-                (error): error is RpcClientError => Predicate.isTagged(error, "RpcClientError"),
-                (error) => mapRpcClientFailure(error, statusError),
-                (error) => Effect.fail(statusError(error)),
+              Effect.catchTag("StackOwnershipConflictError", () =>
+                Effect.succeed(Stream.fromEffect(status())),
               ),
             ),
           ),
@@ -517,31 +846,124 @@ export const makeHandle = (
       logs: (options) =>
         Stream.unwrap(
           check(
-            client.rpc.pipe(
-              Effect.map((rpc) =>
-                rpc.logs(options ?? {}).pipe(
-                  Stream.mapError((error) => {
-                    const mapped = errorForRpc(error);
-                    return mapped instanceof StackNotFoundError ||
-                      mapped instanceof StackNotRunningError ||
-                      mapped instanceof StackStateInvalidError
-                      ? mapped
-                      : new StackStateInvalidError({ message: mapped.message });
-                  }),
+            resolveClient(false).pipe(
+              Effect.mapError(logsError),
+              Effect.map((owner) =>
+                Stream.unwrap(
+                  owner.rpc.pipe(
+                    Effect.map((rpc) => rpc.logs(options ?? {}).pipe(Stream.mapError(logsError))),
+                    Effect.catchIf(
+                      (error): error is RpcClientError =>
+                        Predicate.isTagged(error, "RpcClientError"),
+                      (error) =>
+                        Effect.fail(new StackOwnershipConflictError({ message: error.message })),
+                    ),
+                  ),
                 ),
               ),
-              Effect.mapError((error) => {
-                const mapped = errorForRpc(error);
-                return mapped instanceof StackNotFoundError ||
-                  mapped instanceof StackNotRunningError ||
-                  mapped instanceof StackStateInvalidError
-                  ? mapped
-                  : new StackStateInvalidError({ message: mapped.message });
-              }),
+              Effect.catchTag("StackOwnershipConflictError", () =>
+                readLogs === undefined
+                  ? Effect.fail(
+                      new StackOwnershipConflictError({ message: "No Supervisor owns this stack" }),
+                    )
+                  : readLogs(options).pipe(Effect.map((entries) => Stream.fromIterable(entries))),
+              ),
             ),
           ),
         ).pipe(Stream.scoped),
     } satisfies EffectStack;
+  });
+
+const replaceIncompatibleOwner = (
+  id: StackId,
+  state: PersistedStackState,
+  owner: OwnerMetadata,
+  env: StackRuntimeEnvironmentValue,
+  store: StackStateStore,
+): Effect.Effect<
+  EffectStack,
+  OpenStackError,
+  Scope.Scope | FileSystem.FileSystem | Path.Path | Crypto.Crypto | ChildProcessSpawnerService
+> =>
+  Effect.gen(function* () {
+    const client = makeControlClient(owner.endpoint, {
+      stackId: id,
+      ownerSessionId: owner.ownerSessionId,
+    });
+    const probeExit = yield* client.probe().pipe(Effect.exit);
+    if (Exit.isFailure(probeExit)) {
+      const failure = Cause.findErrorOption(probeExit.cause);
+      const transportFailure =
+        Option.isSome(failure) && isMaintenanceTransportFailure(failure.value);
+      if (!transportFailure)
+        return yield* new StackOwnershipConflictError({
+          stackId: id,
+          message: Option.isSome(failure)
+            ? `Unable to probe incompatible stack owner: ${failure.value.message}`
+            : "Unable to probe incompatible stack owner",
+        });
+      const currentOwner = yield* ensureSupervisor({
+        identity: runtimeIdentity(state.identity),
+        stackId: id,
+        stateStore: store,
+        environment: env,
+      });
+      return yield* makeHandle(id, currentOwner);
+    }
+    // Stable maintenance stop is supported across RPC releases and fully shuts down
+    // the previous owner before replacement is launched.
+    const responseExit = yield* client.stop().pipe(Effect.exit);
+    if (Exit.isFailure(responseExit)) {
+      const failure = Cause.findErrorOption(responseExit.cause);
+      const transportFailure =
+        Option.isSome(failure) && isMaintenanceTransportFailure(failure.value);
+      if (!transportFailure)
+        return yield* new StackOwnershipConflictError({
+          stackId: id,
+          message: Option.isSome(failure)
+            ? `Unable to stop incompatible stack owner: ${failure.value.message}`
+            : "Unable to stop incompatible stack owner",
+        });
+      return yield* new StackOwnershipConflictError({
+        stackId: id,
+        message: "Live incompatible stack owner stopped responding during stop",
+      });
+    }
+    const response = responseExit.value;
+    if (!response.ok)
+      return yield* new StackOwnershipConflictError({
+        stackId: id,
+        message: response.error.message,
+      });
+
+    const released = Effect.gen(function* () {
+      const current = yield* readOwnerMetadata(env.stateRoot, id, env);
+      if (current !== undefined)
+        return yield* new StackOwnershipConflictError({
+          stackId: id,
+          message: "Previous stack owner is still shutting down",
+        });
+      if (yield* ownerLockExists(env.stateRoot, id))
+        return yield* new StackOwnershipConflictError({
+          stackId: id,
+          message: "Previous stack ownership lease is still held",
+        });
+    }).pipe(
+      Effect.retry(Schedule.spaced("25 millis").pipe(Schedule.upTo({ times: 200 }))),
+      Effect.mapError((error) =>
+        error instanceof StackOwnershipConflictError
+          ? error
+          : new StackStateInvalidError({ message: String(error) }),
+      ),
+    );
+    yield* released;
+    const currentOwner = yield* ensureSupervisor({
+      identity: runtimeIdentity(state.identity),
+      stackId: id,
+      stateStore: store,
+      environment: env,
+    });
+    return yield* makeHandle(id, currentOwner);
   });
 
 const stateInitial = (
@@ -552,24 +974,133 @@ const stateInitial = (
   format: "supabase-stack-state-v1",
   identity: toPersistedIdentity(identity, stackId),
   runtime,
-  desiredGeneration: 0,
-  portsGeneration: null,
   desiredLifecycle: "unconfigured",
   ports: [],
   privatePorts: [],
   secrets: {},
 });
 
+const runtimeIdentity = (identity: PersistedStackIdentity): StackIdentity => {
+  const { stackId: _stackId, ...value } = identity;
+  return value;
+};
+
+type ChildProcessSpawnerValue = Context.Service.Shape<
+  typeof ChildProcessSpawner.ChildProcessSpawner
+>;
+
+const handleDependencies = (options: {
+  readonly environment: StackRuntimeEnvironmentValue;
+  readonly store: StackStateStore;
+  readonly id: StackId;
+  readonly identity: StackIdentity;
+  readonly fileSystem: FileSystem.FileSystem;
+  readonly path: Path.Path;
+  readonly crypto: Crypto.Crypto;
+  readonly spawner: ChildProcessSpawnerValue;
+}) => {
+  const provide = <A, E>(
+    effect: Effect.Effect<A, E, FileSystem.FileSystem | Path.Path | Crypto.Crypto>,
+  ) =>
+    effect.pipe(
+      Effect.provideService(FileSystem.FileSystem, options.fileSystem),
+      Effect.provideService(Path.Path, options.path),
+      Effect.provideService(Crypto.Crypto, options.crypto),
+    );
+  const resolveOwner = (launch: boolean) =>
+    provide(readOwnerMetadata(options.environment.stateRoot, options.id, options.environment)).pipe(
+      Effect.flatMap((owner) =>
+        launch
+          ? Effect.scoped(
+              ensureSupervisor({
+                identity: options.identity,
+                stackId: options.id,
+                stateStore: options.store,
+                environment: options.environment,
+              }).pipe(
+                Effect.provideService(FileSystem.FileSystem, options.fileSystem),
+                Effect.provideService(Path.Path, options.path),
+                Effect.provideService(Crypto.Crypto, options.crypto),
+                Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, options.spawner),
+              ),
+            ).pipe(Effect.map(Option.some))
+          : owner !== undefined
+            ? Effect.succeed(Option.some(owner))
+            : Effect.succeed(Option.none()),
+      ),
+    );
+  const ensureOffline = () =>
+    provide(readOwnerMetadata(options.environment.stateRoot, options.id, options.environment)).pipe(
+      Effect.flatMap((owner) =>
+        owner !== undefined
+          ? Effect.fail(
+              new StackOwnershipConflictError({ message: "A Supervisor still owns this stack" }),
+            )
+          : provide(ownerLockExists(options.environment.stateRoot, options.id)).pipe(
+              Effect.flatMap((locked) =>
+                locked
+                  ? Effect.fail(
+                      new StackOwnershipConflictError({
+                        message: "The stack ownership lease is still held",
+                      }),
+                    )
+                  : Effect.void,
+              ),
+            ),
+      ),
+    );
+  const readOfflineState = () =>
+    ensureOffline().pipe(
+      Effect.andThen(provide(options.store.read(options.id))),
+      Effect.map(optionOf),
+    );
+  const readPersistedState = () =>
+    provide(options.store.read(options.id)).pipe(Effect.map(optionOf));
+  const readLogs = (logOptions?: LogOptions) =>
+    ensureOffline().pipe(
+      Effect.andThen(
+        resolveStackPaths({ stateRoot: options.environment.stateRoot, stackId: options.id }),
+      ),
+      Effect.provideService(Path.Path, options.path),
+      Effect.flatMap((paths) => readRetainedLogs(options.fileSystem, paths.logs, logOptions)),
+      Effect.mapError((error) =>
+        error instanceof StackOwnershipConflictError
+          ? error
+          : new StackStateInvalidError({ message: error.message, cause: error }),
+      ),
+    );
+  const waitForRelease = () =>
+    Effect.gen(function* () {
+      if (
+        (yield* readOwnerMetadata(
+          options.environment.stateRoot,
+          options.id,
+          options.environment,
+        )) !== undefined
+      )
+        return yield* new StackOwnershipConflictError({
+          message: "Supervisor is still shutting down",
+        });
+      if (yield* ownerLockExists(options.environment.stateRoot, options.id))
+        return yield* new StackOwnershipConflictError({
+          message: "Supervisor ownership lease is still held",
+        });
+    }).pipe(
+      Effect.retry(Schedule.spaced("25 millis").pipe(Schedule.upTo({ times: 200 }))),
+      Effect.mapError((error) => new StackOwnershipConflictError({ message: error.message })),
+      Effect.provideService(FileSystem.FileSystem, options.fileSystem),
+      Effect.provideService(Path.Path, options.path),
+      Effect.provideService(Crypto.Crypto, options.crypto),
+    );
+  return { resolveOwner, readOfflineState, readPersistedState, readLogs, waitForRelease };
+};
+
 export const createStack = (
   options: CreateStackOptions,
 ): Effect.Effect<
   EffectStack,
   CreateStackError,
-  | Scope.Scope
-  | FileSystem.FileSystem
-  | Path.Path
-  | Crypto.Crypto
-  | import("effect/unstable/process/ChildProcessSpawner").ChildProcessSpawner
+  Scope.Scope | FileSystem.FileSystem | Path.Path | Crypto.Crypto | ChildProcessSpawnerService
 > =>
   Effect.gen(function* () {
     const env = yield* environment();
@@ -603,21 +1134,30 @@ export const createStack = (
       return yield* new StackRuntimeMismatchError({
         message: "Stack runtime is immutable for an existing identity",
       });
-    const owner = yield* ensureSupervisor({
-      identity,
-      stackId,
-      stateStore: store,
+    const fs = yield* FileSystem.FileSystem;
+    const path = yield* Path.Path;
+    const crypto = yield* Crypto.Crypto;
+    const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
+    const dependencies = handleDependencies({
       environment: env,
+      store,
+      id: stackId,
+      identity,
+      fileSystem: fs,
+      path,
+      crypto,
+      spawner,
     });
-    return yield* makeHandle(stackId, owner);
+    return yield* makeHandle(stackId, {}, dependencies);
   });
 
 export const openStack = (
   id: StackId,
+  options: OpenStackOptions = {},
 ): Effect.Effect<
   EffectStack,
   OpenStackError,
-  Scope.Scope | FileSystem.FileSystem | Path.Path | Crypto.Crypto
+  Scope.Scope | FileSystem.FileSystem | Path.Path | Crypto.Crypto | ChildProcessSpawnerService
 > =>
   Effect.gen(function* () {
     const env = yield* environment();
@@ -625,39 +1165,53 @@ export const openStack = (
     const state = yield* store.read(id);
     if (state === undefined)
       return yield* new StackNotFoundError({ stackId: id, message: "Stack state was not found" });
+    const fs = yield* FileSystem.FileSystem;
+    const path = yield* Path.Path;
+    const crypto = yield* Crypto.Crypto;
+    const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
+    const identity = runtimeIdentity(state.identity);
+    const dependencies = handleDependencies({
+      environment: env,
+      store,
+      id,
+      identity,
+      fileSystem: fs,
+      path,
+      crypto,
+      spawner,
+    });
     const owner = yield* readOwnerMetadata(env.stateRoot, id, env);
-    if (owner === undefined)
-      return yield* new StackOwnershipConflictError({
-        stackId: id,
-        message: "No Supervisor owns this stack",
-      });
-    if (owner.rpcRelease !== STACK_RPC_RELEASE)
-      return yield* new StackUpgradeRequiredError({
-        message: `Stack owner release ${owner.rpcRelease} requires explicit restart`,
-        expectedRelease: STACK_RPC_RELEASE,
-        actualRelease: owner.rpcRelease,
-      });
-    const probe = yield* makeControlClient(owner.endpoint, {
-      stackId: id,
-      ownerSessionId: owner.ownerSessionId,
-    })
-      .probe()
-      .pipe(
-        Effect.mapError(
-          (error) => new StackOwnershipConflictError({ stackId: id, message: String(error) }),
-        ),
-      );
     if (
-      !probe.ok ||
-      probe.op !== "probe" ||
-      probe.stackId !== id ||
-      probe.ownerSessionId !== owner.ownerSessionId
-    )
-      return yield* new StackOwnershipConflictError({
-        stackId: id,
-        message: "Owner session probe failed",
-      });
-    return yield* makeHandle(id, owner);
+      owner !== undefined &&
+      owner.rpcRelease !== STACK_RPC_RELEASE &&
+      options.replaceIncompatibleOwner
+    ) {
+      // Defer the entire maintenance handoff until restart is invoked. This
+      // keeps stop, owner release, replacement launch, and start in one
+      // package-owned operation with no cancellable gap after openStack().
+      const replacement = (
+        startOptions?: StartStackOptions,
+      ): Effect.Effect<StackStatus, StackError> =>
+        Effect.scoped(
+          replaceIncompatibleOwner(id, state, owner, env, store).pipe(
+            Effect.flatMap((handle) => handle.start(startOptions)),
+          ),
+        ).pipe(
+          Effect.provideService(FileSystem.FileSystem, fs),
+          Effect.provideService(Path.Path, path),
+          Effect.provideService(Crypto.Crypto, crypto),
+          Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner),
+        );
+      return yield* makeHandle(
+        id,
+        {},
+        {
+          ...dependencies,
+          replacement,
+        },
+      );
+    }
+    return yield* makeHandle(id, {}, dependencies);
   });
 
 export const findStack = (
@@ -733,22 +1287,37 @@ export const inspectStack = (
     if (state === undefined)
       return yield* new StackNotFoundError({ stackId: id, message: "Stack state was not found" });
     const metadata = yield* readOwnerMetadata(env.stateRoot, id, env);
-    if (metadata === undefined) return { descriptor: descriptor(state), owner: "absent" };
+    if (metadata === undefined)
+      return {
+        descriptor: descriptor(state),
+        owner: (yield* ownerLockExists(env.stateRoot, id)) ? "unreachable" : "absent",
+      };
     if (metadata.rpcRelease !== STACK_RPC_RELEASE)
       return { descriptor: descriptor(state), owner: "incompatible" };
-    const probe = yield* Effect.scoped(
-      makeControlClient(metadata.endpoint, {
-        stackId: id,
-        ownerSessionId: metadata.ownerSessionId,
-      }).probe(),
+    const status = yield* Effect.scoped(
+      Effect.gen(function* () {
+        const client = makeControlClient(metadata.endpoint, {
+          stackId: id,
+          ownerSessionId: metadata.ownerSessionId,
+        });
+        const rpc = yield* client.rpc;
+        return yield* rpc.status(undefined);
+      }),
     ).pipe(Effect.exit);
-    if (Exit.isFailure(probe)) return { descriptor: descriptor(state), owner: "unreachable" };
-    if (
-      !probe.value.ok ||
-      probe.value.op !== "probe" ||
-      probe.value.stackId !== id ||
-      probe.value.ownerSessionId !== metadata.ownerSessionId
-    )
-      return { descriptor: descriptor(state), owner: "incompatible" };
-    return { descriptor: descriptor(state), owner: "running" };
+    if (Exit.isFailure(status)) {
+      const failure = Cause.findErrorOption(status.cause);
+      if (
+        Option.isSome(failure) &&
+        (isMaintenanceTransportFailure(failure.value) ||
+          (Predicate.isTagged(failure.value, "RpcClientError") &&
+            Predicate.hasProperty(failure.value, "reason") &&
+            (Predicate.isTagged(failure.value.reason, "SocketOpenError") ||
+              Predicate.isTagged(failure.value.reason, "SocketReadError") ||
+              Predicate.isTagged(failure.value.reason, "SocketWriteError") ||
+              Predicate.isTagged(failure.value.reason, "SocketCloseError"))))
+      )
+        return { descriptor: descriptor(state), owner: "unreachable" };
+      return { descriptor: descriptor(state), owner: "running" };
+    }
+    return { descriptor: descriptor(state), owner: "running", status: status.value };
   });

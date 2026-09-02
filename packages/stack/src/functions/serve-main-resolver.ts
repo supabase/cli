@@ -9,11 +9,15 @@ interface FunctionOverride {
   readonly entrypoint?: string;
   readonly importMapPath?: string;
   readonly import_map?: string;
+  /** Reserved `$default` field: path relative to the shared functions root. */
+  readonly importMapRoot?: string;
+  readonly import_map_root?: string;
   readonly staticFiles?: ReadonlyArray<string>;
   readonly static_files?: ReadonlyArray<string>;
   readonly env?: Readonly<Record<string, string>>;
 }
 
+/** Persisted per-function overrides plus the reserved global defaults entry. */
 export type FunctionOverrides = Readonly<Record<string, FunctionOverride>>;
 
 export interface FunctionConfig {
@@ -105,11 +109,24 @@ export const resolveFunctionConfig = async (options: {
   const { root, slug, overrides, fs } = options;
   if (!root.startsWith("/") || !slugPattern.test(slug) || slug === "_shared") return undefined;
   const rootInfo = await optionalInfo(fs, root);
-  if (rootInfo === undefined || !rootInfo.isDirectory || rootInfo.isSymbolicLink) return undefined;
+  // The configured functions root itself may be a symlink; descendants remain
+  // subject to canonical containment and entrypoint symlink rejection below.
+  if (rootInfo === undefined) return undefined;
   const canonicalRoot = await fs.realPath(root).catch(() => "");
   if (!canonicalRoot.startsWith("/")) return undefined;
-  const override = overrides[slug];
-  if (override?.enabled === false) return undefined;
+  const canonicalInfo = await optionalInfo(fs, canonicalRoot);
+  if (canonicalInfo === undefined || !canonicalInfo.isDirectory) return undefined;
+  const globalDefaults = overrides.$default;
+  const functionOverride = overrides[slug];
+  // `$default` cannot be a function slug (the slug schema only accepts letters,
+  // digits, `_`, and `-`) and therefore provides a collision-free global
+  // default for functions discovered after the stack started. A closed
+  // per-function override is spread last so it always wins.
+  const override = {
+    ...globalDefaults,
+    ...functionOverride,
+  };
+  if (override.enabled === false) return undefined;
   const functionDirectory = join(canonicalRoot, slug);
   const directoryInfo = await optionalInfo(fs, functionDirectory);
   if (directoryInfo === undefined || !directoryInfo.isDirectory) return undefined;
@@ -118,7 +135,7 @@ export const resolveFunctionConfig = async (options: {
   const rawEntrypoint =
     override?.entrypointPath && override.entrypointPath.length > 0
       ? override.entrypointPath
-      : override?.entrypoint && override.entrypoint.length > 0
+      : override.entrypoint && override.entrypoint.length > 0
         ? override.entrypoint
         : "index.ts";
   const entrypointPath = relativePath(functionDirectory, rawEntrypoint);
@@ -127,8 +144,17 @@ export const resolveFunctionConfig = async (options: {
   if (entrypointInfo === undefined || !entrypointInfo.isFile || entrypointInfo.isSymbolicLink)
     return undefined;
 
-  const rawImportMap = override?.importMapPath ?? override?.import_map ?? "";
-  let importMapPath = relativePath(functionDirectory, rawImportMap);
+  // Per-function import maps are relative to that function's directory. The
+  // reserved global default is explicitly root-relative, so one shared map is
+  // reused by every slug (including slugs created after serve starts).
+  const functionImportMap = functionOverride?.importMapPath ?? functionOverride?.import_map;
+  const globalImportMap = globalDefaults?.importMapRoot ?? globalDefaults?.import_map_root;
+  let importMapPath =
+    functionImportMap !== undefined
+      ? relativePath(functionDirectory, functionImportMap)
+      : globalImportMap !== undefined
+        ? relativePath(canonicalRoot, globalImportMap)
+        : relativePath(functionDirectory, "");
   if (importMapPath.length > 0) {
     if (!(await safeRealPath(fs, canonicalRoot, importMapPath))) return undefined;
     const info = await optionalInfo(fs, importMapPath);
@@ -146,7 +172,7 @@ export const resolveFunctionConfig = async (options: {
     }
   }
 
-  const staticFiles = (override?.staticFiles ?? override?.static_files ?? []).map((pattern) =>
+  const staticFiles = (override.staticFiles ?? override.static_files ?? []).map((pattern) =>
     relativePath(functionDirectory, pattern),
   );
   for (const pattern of staticFiles) {
@@ -172,8 +198,8 @@ export const resolveFunctionConfig = async (options: {
     entrypointPath,
     importMapPath,
     staticFiles,
-    verifyJWT: override?.verifyJWT ?? override?.verify_jwt ?? true,
-    env: override?.env,
+    verifyJWT: override.verifyJWT ?? override.verify_jwt ?? true,
+    env: override.env,
   };
 };
 
@@ -188,9 +214,11 @@ export const packageJsonContainedFor = async (options: {
 }): Promise<boolean> => {
   if (!options.root.startsWith("/")) return false;
   const rootInfo = await optionalInfo(options.fs, options.root);
-  if (rootInfo === undefined || !rootInfo.isDirectory || rootInfo.isSymbolicLink) return false;
+  if (rootInfo === undefined || (!rootInfo.isDirectory && !rootInfo.isSymbolicLink)) return false;
   const canonicalRoot = await options.fs.realPath(options.root).catch(() => "");
   if (!canonicalRoot.startsWith("/")) return false;
+  const canonicalInfo = await optionalInfo(options.fs, canonicalRoot);
+  if (canonicalInfo === undefined || !canonicalInfo.isDirectory) return false;
   const packagePath = packageJsonPathFor(options.config);
   const packageInfo = await optionalInfo(options.fs, packagePath);
   if (packageInfo === undefined || !packageInfo.isFile || packageInfo.isSymbolicLink) return false;

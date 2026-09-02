@@ -1,48 +1,15 @@
 import { NodeServices } from "@effect/platform-node";
 import { describe, expect, it } from "@effect/vitest";
 import { Cause, Deferred, Effect, Exit, FileSystem, Fiber, Option, Path, Stream } from "effect";
-import { CAPABILITY_NAMES } from "../public/Capability.ts";
-import { StackIdSchema } from "../public/StackId.ts";
-import type { StackStatus } from "../public/Status.ts";
 import { LogStoreError, makeLogStore } from "./LogStore.ts";
-import { makeStatusHub } from "./StatusHub.ts";
 
 const withPlatform = <A, E, R>(effect: Effect.Effect<A, E, R>) =>
   Effect.scoped(effect).pipe(Effect.provide(NodeServices.layer));
-
-const status = (generation: number): StackStatus => ({
-  id: StackIdSchema.make("a".repeat(64)),
-  lifecycle: generation === 0 ? "stopped" : "running",
-  desiredLifecycle: generation === 0 ? "stopped" : "running",
-  runtime: { kind: "native" },
-  desiredGeneration: generation,
-  endpoints: {},
-  versions: {},
-  capabilities: CAPABILITY_NAMES.map((name) => ({ name, activation: "eager", state: "stopped" })),
-});
 
 const errorOf = <E>(exit: Exit.Exit<unknown, E>): E | undefined =>
   Exit.isFailure(exit) ? Option.getOrUndefined(Cause.findErrorOption(exit.cause)) : undefined;
 
 describe("observability", () => {
-  it.live("starts status watches with the current complete snapshot", () =>
-    withPlatform(
-      Effect.gen(function* () {
-        const hub = yield* makeStatusHub(status(0));
-        const ready = yield* Deferred.make<void>();
-        const values = yield* hub.changes.pipe(
-          Stream.tap(() => Deferred.succeed(ready, void 0)),
-          Stream.take(2),
-          Stream.runCollect,
-          Effect.forkChild({ startImmediately: true }),
-        );
-        yield* Deferred.await(ready);
-        yield* hub.publish(status(1));
-        expect(yield* Fiber.join(values)).toEqual([status(0), status(1)]);
-      }),
-    ),
-  );
-
   it.live("retains bounded redacted records and resumes from an opaque cursor", () =>
     withPlatform(
       Effect.gen(function* () {
@@ -145,6 +112,10 @@ describe("observability", () => {
         const second = yield* makeLogStore({ path: logPath, knownSecrets: ["old-secret"] });
         expect((yield* second.read()).map((entry) => entry.message)).toEqual(["[REDACTED]"]);
         expect(yield* fs.readFileString(logPath)).not.toContain("old-secret");
+        const complete = yield* fs.readFileString(logPath);
+        yield* fs.writeFileString(logPath, `${complete}{"cursor"`);
+        const recovered = yield* makeLogStore({ path: logPath });
+        expect((yield* recovered.read()).map((entry) => entry.message)).toEqual(["[REDACTED]"]);
         yield* fs.writeFileString(logPath, "not json");
         const malformed = yield* makeLogStore({ path: logPath }).pipe(Effect.exit);
         expect(errorOf(malformed)).toBeInstanceOf(LogStoreError);

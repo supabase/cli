@@ -111,7 +111,7 @@ type Spawner = ChildProcessSpawner["Service"];
  * Exported only so the exhaustive actionability guard can inspect its declaration;
  * runtime callers observe it through {@link LegacyStartDatabaseError}.
  */
-export class LegacyStartBackupVolumeExistsError extends Data.TaggedError(
+class LegacyStartBackupVolumeExistsError extends Data.TaggedError(
   "LegacyStartBackupVolumeExistsError",
 )<{
   readonly message: string;

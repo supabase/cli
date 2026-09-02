@@ -9,7 +9,7 @@ import { legacyWalkSqlFiles } from "../../../../shared/legacy-glob.ts";
 /** The default declarative directory before it moved to `supabase/schemas`. */
 const FORMER_DEFAULT_SEGMENTS = ["supabase", "database"] as const;
 
-export const legacyFormerDeclarativeDefaultWarning = (
+const legacyFormerDeclarativeDefaultWarning = (
   formerDirRel: string,
   defaultDirRel: string,
 ): string =>

@@ -6,7 +6,7 @@ import { provideCliProjectCommandRuntime } from "../../config/project-runtime.la
 import { withCommandInstrumentation } from "../../../shared/telemetry/command-instrumentation.ts";
 import { withJsonErrorHandling } from "../../../shared/output/json-error-handling.ts";
 import { restart } from "./restart.handler.ts";
-import { excludeFlag } from "../start/start.command.ts";
+import { excludeFlag } from "../../config/stack-config.ts";
 
 const flags = {
   stack: Flag.string("stack").pipe(

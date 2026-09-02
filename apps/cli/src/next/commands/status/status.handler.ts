@@ -1,14 +1,38 @@
-import { Effect, Option } from "effect";
-import { findStack, inspectStack, openStack } from "@supabase/stack/effect";
+import { Crypto, Effect, FileSystem, Option, Path } from "effect";
+import {
+  findStack,
+  inspectStack,
+  type FindStackOptions,
+  type StackDescriptor,
+  type StackDiscoveryError,
+  type StackId,
+  type StackInspection,
+  type StackNotFoundError,
+} from "@supabase/stack/effect";
 import { CliProjectHome } from "../../config/cli-project-home.service.ts";
 import { Output } from "../../../shared/output/output.service.ts";
 import type { StatusFlags } from "./status.command.ts";
 
-export const status = Effect.fnUntraced(function* (flags: StatusFlags) {
+type StatusRuntime = FileSystem.FileSystem | Path.Path | Crypto.Crypto;
+export interface StatusOperations {
+  readonly findStack: (
+    options: FindStackOptions,
+  ) => Effect.Effect<Option.Option<StackDescriptor>, StackDiscoveryError, StatusRuntime>;
+  readonly inspectStack: (
+    id: StackId,
+  ) => Effect.Effect<StackInspection, StackNotFoundError | StackDiscoveryError, StatusRuntime>;
+}
+
+const defaultOperations: StatusOperations = { findStack, inspectStack };
+
+export const status = Effect.fnUntraced(function* (
+  flags: StatusFlags,
+  operations: StatusOperations = defaultOperations,
+) {
   const output = yield* Output;
   const project = yield* CliProjectHome;
   yield* output.intro("Show local Supabase stack status");
-  const descriptorOption = yield* findStack({
+  const descriptorOption = yield* operations.findStack({
     projectRoot: project.projectRoot,
     name: flags.stack,
   });
@@ -18,18 +42,20 @@ export const status = Effect.fnUntraced(function* (flags: StatusFlags) {
     return yield* output.success(message, { running: false, stack: flags.stack });
   }
   const descriptor = descriptorOption.value;
-  const inspection = yield* inspectStack(descriptor.id);
-  let observed = inspection.status;
-  if (inspection.owner === "running") {
-    observed = yield* Effect.scoped(
-      Effect.gen(function* () {
-        const stack = yield* openStack(descriptor.id);
-        return yield* stack.status();
-      }),
-    );
-  }
-  const running = observed?.lifecycle === "running";
-  const message = running ? "Local Supabase stack is running." : "Local Supabase stack is stopped.";
+  const inspection = yield* operations.inspectStack(descriptor.id);
+  const observed = inspection.status;
+  const lifecycle = observed?.lifecycle ?? descriptor.desiredLifecycle;
+  const running = inspection.owner === "running" && lifecycle === "running";
+  const crashed = inspection.owner === "absent" && descriptor.desiredLifecycle === "running";
+  const unavailable =
+    inspection.owner === "incompatible" || inspection.owner === "unreachable" || crashed;
+  let message: string;
+  if (inspection.owner === "incompatible")
+    message = "Local Supabase stack has an incompatible owner; run supabase restart.";
+  else if (inspection.owner === "unreachable")
+    message = "Local Supabase stack owner is unreachable; run supabase restart.";
+  else if (crashed) message = "Local Supabase stack owner is not running; run supabase start.";
+  else message = `Local Supabase stack is ${lifecycle}.`;
   const data = {
     stack: descriptor.name,
     running,
@@ -39,11 +65,13 @@ export const status = Effect.fnUntraced(function* (flags: StatusFlags) {
     endpoints: observed?.endpoints ?? {},
     versions: observed?.versions ?? {},
     capabilities: observed?.capabilities ?? [],
+    owner: inspection.owner,
   };
   if (output.format !== "text") return yield* output.success(message, data);
-  yield* running ? output.success(message) : output.info(message);
+  if (unavailable) yield* output.warn(message);
+  else yield* running ? output.success(message) : output.info(message);
   yield* output.info(`Stack: ${descriptor.name}`);
-  yield* output.info(`Lifecycle: ${data.lifecycle}`);
+  yield* output.info(`Lifecycle: ${lifecycle}`);
   yield* output.info(`Runtime: ${descriptor.runtime.kind}`);
   for (const [name, endpoint] of Object.entries(data.endpoints)) {
     if (endpoint !== undefined) yield* output.info(`${name}: ${endpoint.url}`);
@@ -52,6 +80,6 @@ export const status = Effect.fnUntraced(function* (flags: StatusFlags) {
     yield* output.info(`${capability.name}: ${capability.state}`);
   }
   yield* output.outro(
-    `Local Supabase stack ${descriptor.name} is ${running ? "running" : "stopped"}.`,
+    `Local Supabase stack ${descriptor.name} is ${unavailable ? "unavailable" : lifecycle}.`,
   );
 });

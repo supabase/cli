@@ -10,7 +10,6 @@ import type { LegacyMigrationTransactionMode } from "../../../shared/legacy-migr
 import type {
   LegacyPgDeltaErrorDiagnostic,
   LegacyPgDeltaExportManifest,
-  LegacyPgDeltaHazardKind,
   LegacyPgDeltaHazardReport,
   LegacyPgDeltaRemovalSummary,
 } from "./legacy-pgdelta-engine.service.ts";
@@ -48,7 +47,6 @@ export interface LegacyPgDeltaNextRenderedFile {
   readonly actionCount: number;
 }
 
-export type LegacyPgDeltaNextHazardKind = LegacyPgDeltaHazardKind;
 export type LegacyPgDeltaNextHazardReport = LegacyPgDeltaHazardReport;
 
 export interface LegacyPgDeltaNextSqlFile {

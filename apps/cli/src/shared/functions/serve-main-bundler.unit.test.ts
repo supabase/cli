@@ -21,6 +21,7 @@ describe("bundleServeMainTemplate", () => {
     expect(packageJson.exports).toEqual({
       ".": "./src/index.ts",
       "./effect": "./src/effect.ts",
+      "./internal/supervisor": "./src/internal/supervisor-process.ts",
       "./testing": "./src/testing.ts",
     });
     expect(bundleServeMainTemplate).toBe(stackBundleServeMainTemplate);

@@ -1,8 +1,7 @@
-import { Redacted, Schema } from "effect";
+import { Schema } from "effect";
 import { release, workload, type CapabilityModule } from "../CapabilityModule.ts";
 
 const Secret = Schema.Redacted(Schema.String);
-export type FunctionSecret = Redacted.Redacted<string>;
 const FunctionSlug = Schema.String.check(Schema.isPattern(/^[a-zA-Z0-9_-]+$/));
 const EnvName = Schema.String.check(Schema.isPattern(/^[A-Z_][A-Z0-9_]*$/));
 const FunctionOverrideSchema = Schema.Struct({
@@ -14,29 +13,12 @@ const FunctionOverrideSchema = Schema.Struct({
   env: Schema.optionalKey(Schema.Record(EnvName, Secret)),
 });
 
-/** Fully materialized per-function settings consumed by request-time discovery. */
-export interface FunctionSettings {
-  readonly enabled: boolean;
-  readonly verify_jwt: boolean;
-  readonly import_map: string;
-  readonly entrypoint: string;
-  readonly static_files: ReadonlyArray<string>;
-  readonly env: Readonly<Record<string, FunctionSecret>>;
-}
-export type MaterializedFunctionSettings = Readonly<Record<string, FunctionSettings>>;
-
-export const FunctionSettingsDefaults: FunctionSettings = {
-  enabled: true,
-  verify_jwt: true,
-  import_map: "",
-  entrypoint: "",
-  static_files: [],
-  env: {},
-};
-
 const EdgeRuntimeSettingsSchema = Schema.Struct({
   policy: Schema.optionalKey(Schema.Literals(["oneshot", "per_worker"] as const)),
   deno_version: Schema.optionalKey(Schema.Finite),
+  /** Defaults applied to functions discovered after the stack starts. */
+  verify_jwt_default: Schema.optionalKey(Schema.Boolean),
+  import_map_default: Schema.optionalKey(Schema.String),
   secrets: Schema.optionalKey(Schema.Record(Schema.String, Secret)),
 });
 
@@ -67,6 +49,7 @@ export const FunctionsModule: CapabilityModule<FunctionsSettings> = {
       deno_version: 2,
       secrets: {},
     },
+    inspector: undefined,
     functions: {},
   },
   defaultEnabled: true,
@@ -92,7 +75,14 @@ export const FunctionsModule: CapabilityModule<FunctionsSettings> = {
     functions: Object.fromEntries(
       Object.entries(settings.functions ?? {}).map(([name, fn]) => [
         name,
-        { ...FunctionSettingsDefaults, ...fn, env: fn.env ?? {} },
+        {
+          enabled: fn.enabled ?? true,
+          verify_jwt: fn.verify_jwt ?? true,
+          import_map: fn.import_map ?? "",
+          entrypoint: fn.entrypoint ?? "",
+          static_files: fn.static_files ?? [],
+          env: fn.env ?? {},
+        },
       ]),
     ),
   }),

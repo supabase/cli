@@ -4,6 +4,7 @@ import { Cause, Effect, Exit, Option } from "effect";
 import { compileStack } from "./Compiler.ts";
 import { CAPABILITY_NAMES } from "../public/Capability.ts";
 import { CAPABILITY_MODULES } from "./ExecutionPlan.ts";
+import { workload } from "./CapabilityModule.ts";
 import {
   resolveNativeArtifactForWorkload,
   targetForPlatform,
@@ -24,6 +25,14 @@ const compileContainer = (config: Parameters<typeof compileStack>[0]["config"]) 
   }).pipe(Effect.provide(NodeServices.layer));
 
 describe("complete workload catalog", () => {
+  it("uses the catalog release for both runtime artifact identities", () => {
+    const selected = workload("rest", "rest");
+    expect(selected.artifacts).toEqual({
+      native: { kind: "native", release: WORKLOAD_CATALOG["rest:rest"]?.nativeVersion },
+      container: { kind: "container", image: WORKLOAD_CATALOG["rest:rest"]?.containerImage },
+    });
+  });
+
   it("matches the executable paths shipped by slim-services archives", () => {
     const expected = {
       "database:database": "share/supabase-cli/bin/supabase-postgres-init.sh",

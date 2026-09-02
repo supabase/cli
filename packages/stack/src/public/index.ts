@@ -13,6 +13,7 @@ export type {
   StartStackOptions,
   PrepareStackOptions,
   CreateStackOptions,
+  OpenStackOptions,
   FindStackOptions,
   ListStacksOptions,
   PreparedCapability,

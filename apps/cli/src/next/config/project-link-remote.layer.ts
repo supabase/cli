@@ -15,7 +15,7 @@ import {
 } from "./project-link-remote.service.ts";
 import type { LinkedServiceVersions } from "./project-link-state.service.ts";
 
-export class ServiceVersionNotFoundError extends Data.TaggedError("ServiceVersionNotFoundError")<{
+class ServiceVersionNotFoundError extends Data.TaggedError("ServiceVersionNotFoundError")<{
   readonly service: string;
 }> {
   get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
@@ -23,7 +23,7 @@ export class ServiceVersionNotFoundError extends Data.TaggedError("ServiceVersio
   }
 }
 
-export class NoProjectApiKeyError extends Data.TaggedError("NoProjectApiKeyError")<{
+class NoProjectApiKeyError extends Data.TaggedError("NoProjectApiKeyError")<{
   readonly projectRef: string;
 }> {
   get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {

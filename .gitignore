@@ -25,3 +25,4 @@ packages/cli-*/bin/
 
 # Turbo
 .turbo/
+apps/cli/.supabase/

@@ -48,7 +48,7 @@ describe("verified native artifact preparation", () => {
         expect(prepared.outcome).toBe("downloaded");
         expect(yield* fs.exists(`${prepared.path}/bin/postgres`)).toBe(true);
         expect((yield* fs.stat(`${prepared.path}/bin/postgres`)).mode & 0o111).not.toBe(0);
-        expect(yield* fs.exists(`${root}/database/postgres/.artifact-source`)).toBe(true);
+        expect(yield* fs.exists(`${prepared.path}/.artifact-source`)).toBe(false);
       }),
     ),
   );
@@ -78,21 +78,94 @@ describe("verified native artifact preparation", () => {
     ),
   );
 
-  it.live("rejects a corrupted cached archive without replacing the published tree", () =>
+  it.live("fails closed for unknown artifact metadata instead of executing the cached tree", () =>
     withPlatform(
       Effect.gen(function* () {
         const fs = yield* FileSystem.FileSystem;
         const root = yield* fs.makeTempDirectoryScoped({
-          prefix: "supabase-stack-artifact-corrupt-cache-",
+          prefix: "supabase-stack-artifact-unknown-metadata-",
+        });
+        const target = `${root}/${request.key}`;
+        yield* fs.makeDirectory(`${target}/bin`, { recursive: true });
+        yield* fs.writeFileString(`${target}/bin/postgres`, "unverified postgres");
+        yield* fs.writeFileString(
+          `${target}/.artifact.json`,
+          '{"format":"supabase-stack-artifact-v0"}',
+        );
+        let called = false;
+        const source: ArtifactSource = {
+          materialize: () =>
+            Effect.sync(() => {
+              called = true;
+              return archive;
+            }),
+        };
+        const store = yield* makeArtifactStore({ cacheRoot: root, source });
+
+        const exit = yield* store.prepare(request).pipe(Effect.exit);
+
+        expect(errorOf(exit)).toBeInstanceOf(ArtifactIntegrityError);
+        expect(called).toBe(false);
+        expect(yield* fs.readFileString(`${target}/bin/postgres`)).toBe("unverified postgres");
+      }),
+    ),
+  );
+
+  it.live("rejects a tampered required executable on a cache hit", () =>
+    withPlatform(
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const root = yield* fs.makeTempDirectoryScoped({
+          prefix: "supabase-stack-artifact-tampered-runtime-",
         });
         const store = yield* makeArtifactStore({ cacheRoot: root, source: sourceWriting() });
         const published = yield* store.prepare(request);
-        yield* fs.writeFileString(`${published.path}/.artifact-source`, "corrupt");
-
+        yield* fs.writeFileString(`${published.path}/bin/postgres`, "tampered executable");
         const exit = yield* store.prepare(request).pipe(Effect.exit);
         expect(errorOf(exit)).toBeInstanceOf(ArtifactIntegrityError);
-        expect(yield* fs.exists(`${published.path}/bin/postgres`)).toBe(true);
-        expect(yield* fs.exists(`${published.path}/.artifact-source`)).toBe(true);
+      }),
+    ),
+  );
+
+  it.live("verifies required directory contents and internal symlinks on a cache hit", () =>
+    withPlatform(
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const root = yield* fs.makeTempDirectoryScoped({
+          prefix: "supabase-stack-artifact-directory-runtime-",
+        });
+        const directoryRequest: ArtifactRequest = {
+          ...request,
+          key: "database/postgres-directory-runtime",
+          requiredRuntimePaths: ["bin/postgres", "share/runtime"],
+        };
+        const source: ArtifactSource = {
+          materialize: (_entry, destination) =>
+            Effect.gen(function* () {
+              yield* fs.makeDirectory(`${destination}/bin`, { recursive: true });
+              yield* fs.makeDirectory(`${destination}/share/runtime`, { recursive: true });
+              yield* fs.writeFileString(`${destination}/bin/postgres`, "native postgres");
+              yield* fs.writeFileString(`${destination}/share/runtime/config`, "config");
+              yield* fs.symlink("config", `${destination}/share/runtime/config-link`);
+              return archive;
+            }).pipe(
+              Effect.mapError(
+                (cause) =>
+                  new StackPreparationError({
+                    message: `materialization failed: ${cause.message}`,
+                    cause,
+                  }),
+              ),
+            ),
+        };
+        const store = yield* makeArtifactStore({ cacheRoot: root, source });
+        const prepared = yield* store.prepare(directoryRequest);
+        expect((yield* store.prepare(directoryRequest)).outcome).toBe("cached");
+
+        yield* fs.writeFileString(`${prepared.path}/share/runtime/config`, "tampered config");
+        const exit = yield* store.prepare(directoryRequest).pipe(Effect.exit);
+
+        expect(errorOf(exit)).toBeInstanceOf(ArtifactIntegrityError);
       }),
     ),
   );
@@ -111,7 +184,7 @@ describe("verified native artifact preparation", () => {
           .pipe(Effect.exit);
         expect(errorOf(conflict)).toBeInstanceOf(ArtifactIntegrityError);
         expect(yield* fs.exists(`${published.path}/bin/postgres`)).toBe(true);
-        expect(yield* fs.exists(`${published.path}/.artifact-source`)).toBe(true);
+        expect(yield* fs.exists(`${published.path}/.artifact-source`)).toBe(false);
       }),
     ),
   );

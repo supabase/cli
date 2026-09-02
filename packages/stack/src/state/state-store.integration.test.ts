@@ -1,18 +1,53 @@
 import { NodeServices } from "@effect/platform-node";
 import { describe, expect, it } from "@effect/vitest";
-import { Cause, Effect, Exit, FileSystem, Option, Path, Redacted, Schema } from "effect";
+import {
+  Cause,
+  Deferred,
+  Effect,
+  Exit,
+  Fiber,
+  FileSystem,
+  Option,
+  Path,
+  Redacted,
+  Schema,
+} from "effect";
+import { createServer, type Server } from "node:net";
 import { compileStack, type StackDefinition } from "../model/Compiler.ts";
 import { deriveStackId } from "../identity/Identity.ts";
-import {
-  StackStateFormatUnsupportedError,
-  StackStateGenerationMismatchError,
-  StackStateInvalidError,
-} from "../public/Errors.ts";
+import { StackStateFormatUnsupportedError, StackStateInvalidError } from "../public/Errors.ts";
 import {
   makeStackStateStore,
+  withRegistryLock,
   PersistedStackStateSchema,
   type PersistedStackState,
 } from "./StackStateStore.ts";
+import { removeLeaseIfHeld } from "./Ownership.ts";
+
+const bindEphemeral = Effect.callback<Server, Error>((resume) => {
+  const server = createServer();
+  const onError = (error: Error) => resume(Effect.fail(error));
+  const onListening = () => {
+    server.off("error", onError);
+    resume(Effect.succeed(server));
+  };
+  server.once("error", onError);
+  server.once("listening", onListening);
+  server.listen({ host: "127.0.0.1", port: 0 });
+  return Effect.sync(() => {
+    server.off("error", onError);
+    server.off("listening", onListening);
+    if (server.listening) server.close(() => undefined);
+  });
+});
+
+const closeServer = (server: Server) =>
+  Effect.callback<void, Error>((resume) => {
+    if (!server.listening) return resume(Effect.void);
+    server.close((error) =>
+      error === undefined ? resume(Effect.void) : resume(Effect.fail(error)),
+    );
+  });
 
 const layer = NodeServices.layer;
 const withPlatform = <A, E, R>(effect: Effect.Effect<A, E, R>) =>
@@ -28,16 +63,10 @@ const identity = {
   stackName: "default",
 } as const;
 
-const state = (
-  stackId: string,
-  generation = 0,
-  definition?: StackDefinition,
-): PersistedStackState => ({
+const state = (stackId: string, definition?: StackDefinition): PersistedStackState => ({
   format: "supabase-stack-state-v1",
   identity: { ...identity, stackId },
   runtime: { kind: "native" },
-  desiredGeneration: generation,
-  portsGeneration: null,
   desiredLifecycle: "stopped",
   definition,
   inputFingerprint: definition === undefined ? undefined : "d".repeat(64),
@@ -50,8 +79,104 @@ const errorOf = <E>(exit: Exit.Exit<unknown, E>): E | undefined =>
   Exit.isFailure(exit) ? Option.getOrUndefined(Cause.findErrorOption(exit.cause)) : undefined;
 const jsonText = (value: unknown) =>
   Schema.encodeEffect(Schema.fromJsonString(Schema.Unknown))(value);
+const jsonTextSync = (value: unknown) =>
+  Schema.encodeSync(Schema.fromJsonString(Schema.Unknown))(value);
 
 describe("atomic stack state", () => {
+  it.live("rejects a competing registry action while the lease is held", () =>
+    withPlatform(
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const root = yield* fs.makeTempDirectoryScoped({ prefix: "supabase-stack-registry-busy-" });
+        const entered = yield* Deferred.make<void>();
+        const release = yield* Deferred.make<void>();
+        let ran = false;
+        const first = yield* Effect.forkChild(
+          withRegistryLock(
+            root,
+            Effect.gen(function* () {
+              yield* Deferred.succeed(entered, undefined);
+              yield* Deferred.await(release);
+            }),
+          ),
+          { startImmediately: true },
+        );
+        yield* Deferred.await(entered);
+        const competing = yield* withRegistryLock(
+          root,
+          Effect.sync(() => {
+            ran = true;
+            return undefined;
+          }),
+        ).pipe(Effect.exit);
+        expect(Exit.isFailure(competing)).toBe(true);
+        expect(ran).toBe(false);
+        yield* Deferred.succeed(release, undefined);
+        yield* Fiber.join(first);
+      }),
+    ),
+  );
+
+  it.live("does not let a stale registry release remove a successor lock", () =>
+    withPlatform(
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const root = yield* fs.makeTempDirectoryScoped({
+          prefix: "supabase-stack-registry-fence-",
+        });
+        const path = yield* Path.Path;
+        const lockPath = path.join(root, ".stack-registry.lock");
+        yield* fs.writeFileString(
+          lockPath,
+          jsonTextSync({ format: "supabase-stack-lease-v1", token: "successor", port: 45_678 }),
+        );
+        yield* removeLeaseIfHeld(fs, lockPath, "stale-owner");
+        expect(yield* fs.readFileString(lockPath)).toContain("successor");
+      }),
+    ),
+  );
+
+  it.live("reclaims a registry lock whose lease was released by a crashed process", () =>
+    withPlatform(
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const root = yield* fs.makeTempDirectoryScoped({ prefix: "supabase-stack-registry-" });
+        const stale = yield* bindEphemeral;
+        const address = stale.address();
+        if (address === null || typeof address === "string")
+          return yield* new StackStateInvalidError({ message: "missing lease port" });
+        yield* fs.writeFileString(
+          path.join(root, ".stack-registry.lock"),
+          jsonTextSync({
+            format: "supabase-stack-lease-v1",
+            token: "old-registry",
+            port: address.port,
+          }),
+        );
+        yield* closeServer(stale);
+        const result = yield* withRegistryLock(root, Effect.succeed("recovered"));
+        expect(result).toBe("recovered");
+        expect(yield* fs.exists(path.join(root, ".stack-registry.lock"))).toBe(false);
+      }),
+    ),
+  );
+
+  it.live("fails closed immediately for malformed registry state", () =>
+    withPlatform(
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const root = yield* fs.makeTempDirectoryScoped({
+          prefix: "supabase-stack-registry-invalid-",
+        });
+        yield* fs.writeFileString(path.join(root, ".stack-registry.lock"), "not-json");
+        const result = yield* withRegistryLock(root, Effect.void).pipe(Effect.exit);
+        expect(errorOf(result)).toBeInstanceOf(StackStateInvalidError);
+      }),
+    ),
+  );
+
   it.live("round-trips a compiled complete definition and rejects nested unknowns", () =>
     withPlatform(
       Effect.gen(function* () {
@@ -78,13 +203,13 @@ describe("atomic stack state", () => {
             },
           },
         });
-        const complete = state(stackId, 2, compiled.definition);
-        yield* store.write(stackId, complete);
+        const complete = state(stackId, compiled.definition);
+        yield* store.initialize(stackId, complete);
         expect(yield* store.read(stackId)).toEqual(complete);
-        const materialized = { ...complete, portsGeneration: 2 };
-        yield* store.replace(stackId, materialized, 2);
+        const materialized = { ...complete };
+        yield* store.replace(stackId, materialized);
         expect(yield* store.read(stackId)).toEqual(materialized);
-        yield* store.replace(stackId, complete, 2);
+        yield* store.replace(stackId, complete);
 
         const encoded = yield* Schema.encodeEffect(PersistedStackStateSchema)(complete);
         const statePath = path.join(root, stackId, "state.json");
@@ -203,26 +328,24 @@ describe("atomic stack state", () => {
     ),
   );
 
-  it.live("rejects unsupported format and stale generation mutations", () =>
+  it.live("rejects unsupported state formats", () =>
     withPlatform(
       Effect.gen(function* () {
         const fs = yield* FileSystem.FileSystem;
         const path = yield* Path.Path;
-        const root = yield* fs.makeTempDirectoryScoped({ prefix: "supabase-stack-generation-" });
+        const root = yield* fs.makeTempDirectoryScoped({ prefix: "supabase-stack-format-" });
         const store = yield* makeStackStateStore({ stateRoot: root });
         const stackId = yield* deriveStackId(identity);
-        yield* store.write(stackId, state(stackId, 4));
-        const stale = yield* store.replace(stackId, state(stackId, 5), 3).pipe(Effect.exit);
-        expect(errorOf(stale)).toBeInstanceOf(StackStateGenerationMismatchError);
+        yield* store.initialize(stackId, state(stackId));
         yield* fs.writeFileString(
           path.join(root, stackId, "state.json"),
-          yield* jsonText({ ...state(stackId, 4), format: "supabase-stack-state-v2" }),
+          yield* jsonText({ ...state(stackId), format: "supabase-stack-state-v2" }),
         );
         const unsupported = yield* store.read(stackId).pipe(Effect.exit);
         expect(errorOf(unsupported)).toBeInstanceOf(StackStateFormatUnsupportedError);
         yield* fs.writeFileString(
           path.join(root, stackId, "state.json"),
-          yield* jsonText({ ...state(stackId, 4), format: 1 }),
+          yield* jsonText({ ...state(stackId), format: 1 }),
         );
         const malformed = yield* store.read(stackId).pipe(Effect.exit);
         expect(errorOf(malformed)).toBeInstanceOf(StackStateInvalidError);
@@ -243,7 +366,7 @@ describe("atomic stack state", () => {
           ...original,
           identity: { ...original.identity, workspaceId: "/tmp/forged" },
         };
-        const exit = yield* store.write(stackId, forged).pipe(Effect.exit);
+        const exit = yield* store.initialize(stackId, forged).pipe(Effect.exit);
         expect(errorOf(exit)).toBeInstanceOf(StackStateInvalidError);
         expect(yield* fs.exists(path.join(root, stackId))).toBe(false);
       }),
@@ -258,22 +381,16 @@ describe("atomic stack state", () => {
         });
         const store = yield* makeStackStateStore({ stateRoot: root });
         const stackId = yield* deriveStackId(identity);
-        yield* store.write(stackId, state(stackId, 0));
-        const updates = Array.from({ length: 8 }, (_, index) =>
-          store.replace(stackId, state(stackId, index + 1), index),
-        );
+        yield* store.initialize(stackId, state(stackId));
+        const updates = Array.from({ length: 8 }, () => store.replace(stackId, state(stackId)));
         const writer = Effect.forEach(updates, (update) => update, { concurrency: 1 });
         const readers = Effect.forEach(Array.from({ length: 32 }), () => store.read(stackId), {
           concurrency: 8,
         });
         const [, observations] = yield* Effect.all([writer, readers], { concurrency: 2 });
-        const allowedGenerations = new Set(
-          Array.from({ length: 9 }, (_, generation) => generation),
-        );
         for (const observation of observations) {
           expect(observation).toBeDefined();
           if (observation === undefined) continue;
-          expect(allowedGenerations.has(observation.desiredGeneration)).toBe(true);
           expect(observation.format).toBe("supabase-stack-state-v1");
           expect(observation.identity.stackId).toBe(stackId);
           expect(Array.isArray(observation.ports)).toBe(true);

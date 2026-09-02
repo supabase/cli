@@ -1,7 +1,7 @@
 import { describe, expect, test } from "vitest";
 import { BunServices } from "@effect/platform-bun";
 import { Effect, Exit } from "effect";
-import { excludeFlag } from "./start.command.ts";
+import { excludeFlag } from "../../config/stack-config.ts";
 
 describe("start command exclude flag", () => {
   test("parses repeated excluded services", async () => {

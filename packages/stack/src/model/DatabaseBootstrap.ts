@@ -105,13 +105,11 @@ interface DatabaseBootstrapRevision {
 const TRACKING_SCHEMA = "supabase_internal";
 const TRACKING_TABLE = `${TRACKING_SCHEMA}.bootstrap_revisions`;
 
-const TRACKING_TABLE_STATEMENT = `
-  CREATE SCHEMA IF NOT EXISTS ${TRACKING_SCHEMA};
-  CREATE TABLE IF NOT EXISTS ${TRACKING_TABLE} (
+const TRACKING_SCHEMA_STATEMENT = `CREATE SCHEMA IF NOT EXISTS ${TRACKING_SCHEMA};`;
+const TRACKING_TABLE_STATEMENT = `CREATE TABLE IF NOT EXISTS ${TRACKING_TABLE} (
     revision text PRIMARY KEY,
     applied_at timestamptz NOT NULL DEFAULT now()
-  );
-`;
+  );`;
 const APPLIED_REVISIONS_STATEMENT = `
   SELECT revision FROM ${TRACKING_TABLE} ORDER BY revision;
 `;
@@ -152,6 +150,9 @@ export const runDatabaseBootstrap = (
         yield* transaction
           .execute(ADVISORY_LOCK_STATEMENT)
           .pipe(Effect.mapError((error) => statementError(error, ADVISORY_LOCK_STATEMENT)));
+        yield* transaction
+          .execute(TRACKING_SCHEMA_STATEMENT)
+          .pipe(Effect.mapError((error) => statementError(error, TRACKING_SCHEMA_STATEMENT)));
         yield* transaction
           .execute(TRACKING_TABLE_STATEMENT)
           .pipe(Effect.mapError((error) => statementError(error, TRACKING_TABLE_STATEMENT)));

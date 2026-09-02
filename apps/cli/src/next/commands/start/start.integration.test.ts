@@ -1,23 +1,46 @@
 import { describe, expect, it } from "@effect/vitest";
 import { Cause, Effect, Exit, Layer, Option } from "effect";
 import { start, type StartOperations, type StartStack } from "./start.handler.ts";
-import { CAPABILITY_NAMES, StackIdSchema, StackUpgradeRequiredError } from "@supabase/stack/effect";
+import {
+  CAPABILITY_NAMES,
+  ServiceStartError,
+  StackIdSchema,
+  StackMustBeStoppedError,
+} from "@supabase/stack/effect";
 import type { StackStatus } from "@supabase/stack/effect";
-import { emptyEnv, mockOutput } from "../../../../tests/helpers/mocks.ts";
+import { emptyEnv, mockCliProjectHome, mockOutput } from "../../../../tests/helpers/mocks.ts";
 
 describe("start handler", () => {
-  it.live("reports runtime startup failures through the command boundary", () => {
+  it.live("preserves the runtime startup failure tag through the command boundary", () => {
     const out = mockOutput({ interactive: false });
-    return start({ stack: "default", mode: "native", exclude: [], detach: true }).pipe(
-      Effect.provide(Layer.mergeAll(emptyEnv(), out.layer)),
+    const stack: StartStack = {
+      start: () => Effect.fail(new ServiceStartError({ message: "auth failed" })),
+    };
+    const operations: StartOperations = {
+      createStack: () => Effect.succeed(stack),
+      loadConfig: () => Effect.succeed(undefined),
+    };
+    return start({ stack: "default", mode: "native", exclude: [], detach: true }, operations).pipe(
+      Effect.provide(
+        Layer.mergeAll(emptyEnv(), out.layer, mockCliProjectHome({ projectRoot: process.cwd() })),
+      ),
       Effect.exit,
-      Effect.tap((exit) => Effect.sync(() => expect(Exit.isFailure(exit)).toBe(true))),
+      Effect.tap((exit) =>
+        Effect.sync(() => {
+          expect(Exit.isFailure(exit)).toBe(true);
+          if (Exit.isFailure(exit)) {
+            const failure = Option.getOrUndefined(Cause.findErrorOption(exit.cause));
+            expect(failure).toBeInstanceOf(ServiceStartError);
+            if (failure instanceof ServiceStartError) expect(failure.message).toBe("auth failed");
+          }
+        }),
+      ),
     );
   });
 
-  it.live("prepares the translated config before starting the managed stack", () => {
+  it.live("starts the managed stack with the translated config", () => {
     const out = mockOutput({ interactive: false });
-    const events: Array<string> = [];
+    let receivedConfig: unknown;
     const id = StackIdSchema.make(
       "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
     );
@@ -35,14 +58,9 @@ describe("start handler", () => {
       })),
     };
     const stack: StartStack = {
-      prepare: () =>
+      start: (options) =>
         Effect.sync(() => {
-          events.push("prepare");
-          return { capabilities: [] };
-        }),
-      start: () =>
-        Effect.sync(() => {
-          events.push("start");
+          receivedConfig = options?.config;
           return status;
         }),
     };
@@ -54,7 +72,7 @@ describe("start handler", () => {
       Effect.provide(Layer.mergeAll(emptyEnv(), out.layer)),
       Effect.tap(() =>
         Effect.sync(() => {
-          expect(events).toEqual(["prepare", "start"]);
+          expect(receivedConfig).toBeDefined();
           expect(out.messages).toContainEqual(
             expect.objectContaining({ message: "Local Supabase stack is running." }),
           );
@@ -66,10 +84,9 @@ describe("start handler", () => {
   it.live("preserves explicit restart guidance when running input changed", () => {
     const out = mockOutput({ interactive: false });
     const stack: StartStack = {
-      prepare: () => Effect.succeed({ capabilities: [] }),
       start: () =>
         Effect.fail(
-          new StackUpgradeRequiredError({
+          new StackMustBeStoppedError({
             message: "Running stack input changed; call restart explicitly to apply it",
             guidance: "Use restart() to apply stopped-time changes",
           }),
@@ -87,8 +104,8 @@ describe("start handler", () => {
           expect(Exit.isFailure(exit)).toBe(true);
           if (Exit.isFailure(exit)) {
             const failure = Option.getOrUndefined(Cause.findErrorOption(exit.cause));
-            expect(failure).toBeInstanceOf(StackUpgradeRequiredError);
-            if (failure instanceof StackUpgradeRequiredError)
+            expect(failure).toBeInstanceOf(StackMustBeStoppedError);
+            if (failure instanceof StackMustBeStoppedError)
               expect(failure.message).toContain("supabase restart");
           }
         }),

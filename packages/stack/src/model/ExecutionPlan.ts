@@ -19,7 +19,6 @@ import type {
   ContainerArtifact,
   MaterializedSettings,
 } from "./CapabilityModule.ts";
-import { WORKLOAD_CATALOG } from "./WorkloadCatalog.ts";
 import { Effect } from "effect";
 import { InvalidStackConfigError } from "../public/Errors.ts";
 import type { AnalyticsSettings } from "./capabilities/analytics.ts";
@@ -66,7 +65,6 @@ export interface ExecutionPlan {
   /** Materialized lazy/eager policy consumed by the Supervisor gateway seam. */
   readonly activation: Readonly<{ [Name in CapabilityName]: EnabledCapability["activation"] }>;
   readonly startOrder: ReadonlyArray<CapabilityName>;
-  readonly stopOrder: ReadonlyArray<CapabilityName>;
   readonly dependencies: Readonly<{ [Name in CapabilityName]: ReadonlyArray<CapabilityName> }>;
   readonly routes: ReadonlyArray<
     Readonly<{
@@ -77,6 +75,26 @@ export interface ExecutionPlan {
   >;
   readonly workloads: ReadonlyArray<PlannedWorkload>;
 }
+
+export const eagerCapabilities = (plan: ExecutionPlan): Set<CapabilityName> => {
+  const active = new Set<CapabilityName>();
+  const visit = (name: CapabilityName): void => {
+    if (active.has(name)) return;
+    active.add(name);
+    for (const dependency of plan.dependencies[name]) visit(dependency);
+  };
+  for (const name of CAPABILITY_NAMES) if (plan.activation[name] === "eager") visit(name);
+  return active;
+};
+
+export const activeExecutionPlan = (
+  plan: ExecutionPlan,
+  active: ReadonlySet<CapabilityName>,
+): ExecutionPlan => ({
+  ...plan,
+  workloads: plan.workloads.filter((workload) => active.has(workload.capability)),
+  startOrder: plan.startOrder.filter((name) => active.has(name)),
+});
 
 export interface EnabledCapability {
   readonly enabled: boolean;
@@ -131,8 +149,8 @@ export const createExecutionPlan = (
   enabled: Readonly<{ [Name in CapabilityName]: EnabledCapability }>,
   specHashes: ReadonlyMap<string, string>,
   versions: Readonly<{ [Name in CapabilityName]: string }>,
-  modules: typeof CAPABILITY_MODULES = CAPABILITY_MODULES,
   settings: PlanSettings,
+  modules: typeof CAPABILITY_MODULES = CAPABILITY_MODULES,
 ): Effect.Effect<ExecutionPlan, InvalidStackConfigError> => {
   const dependencyMap = {
     database: modules.database.dependencies,
@@ -191,7 +209,6 @@ export const createExecutionPlan = (
   };
   for (const name of CAPABILITY_NAMES) visit(name);
   if (capabilityGraphError !== undefined) return Effect.fail(capabilityGraphError);
-  const stopOrder = [...start].reverse();
   const routes = CAPABILITY_NAMES.flatMap((name) =>
     enabled[name].enabled
       ? modules[name].routes.map((route) => ({ capability: name, ...route }))
@@ -212,19 +229,6 @@ export const createExecutionPlan = (
     const selectedEntries = selectedWorkloads(name, modules, settings, release.workloads);
     for (const entry of selectedEntries) {
       const id = `${name}:${entry.name}`;
-      const catalog = WORKLOAD_CATALOG[id];
-      if (catalog === undefined)
-        return Effect.fail(
-          new InvalidStackConfigError({
-            message: `Missing workload catalog entry ${id}`,
-            capability: name,
-            workload: id,
-          }),
-        );
-      const artifacts: PlannedWorkload["artifacts"] = {
-        native: { kind: "native", release: catalog.nativeVersion },
-        container: { kind: "container", image: catalog.containerImage },
-      };
       const specHash = specHashes.get(id);
       if (specHash === undefined || specHash.length === 0)
         return Effect.fail(
@@ -241,8 +245,8 @@ export const createExecutionPlan = (
         dependencies: entry.dependencies,
         readiness: entry.readiness,
         restart: entry.restart,
-        artifacts,
-        selected: runtime.kind === "native" ? artifacts.native : artifacts.container,
+        artifacts: entry.artifacts,
+        selected: runtime.kind === "native" ? entry.artifacts.native : entry.artifacts.container,
         specHash,
       });
     }
@@ -293,7 +297,6 @@ export const createExecutionPlan = (
     runtime,
     activation,
     startOrder: start,
-    stopOrder,
     dependencies: dependencyMap,
     routes,
     workloads: workloadOrder,

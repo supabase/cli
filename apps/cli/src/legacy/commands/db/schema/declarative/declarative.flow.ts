@@ -9,7 +9,7 @@ import type { LegacyPgDeltaRemovalSummary } from "../../shared/legacy-pgdelta-en
 /** Extensions that legacy pg-delta treated as part of its implicit Supabase baseline. */
 const LEGACY_IMPLICIT_EXTENSIONS = ["pg_net", "pgcrypto", "uuid-ossp"] as const;
 
-export type LegacyDeclarativeImplicitExtension = (typeof LEGACY_IMPLICIT_EXTENSIONS)[number];
+type LegacyDeclarativeImplicitExtension = (typeof LEGACY_IMPLICIT_EXTENSIONS)[number];
 
 export interface LegacyDeclarativeLoadDiagnostic {
   readonly code: string;
@@ -294,7 +294,7 @@ function schemaArguments(schema: ReadonlyArray<string>, platform: LegacyShellPla
     .join("");
 }
 
-export const legacyFormatDeclarativeSyncCommand = (
+const legacyFormatDeclarativeSyncCommand = (
   schema: ReadonlyArray<string>,
   platform: LegacyShellPlatform,
 ): string =>

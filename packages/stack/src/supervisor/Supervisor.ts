@@ -1,12 +1,12 @@
 import {
   Context,
-  Cause,
   Crypto,
   Deferred,
   Effect,
   Exit,
   FileSystem,
   FiberSet,
+  Option,
   Path,
   Redacted,
   Ref,
@@ -14,15 +14,17 @@ import {
   Semaphore,
   Scope,
   Stream,
+  SubscriptionRef,
 } from "effect";
 import type { StackIdentity } from "../identity/Identity.ts";
 import { canonicalize, compileStack, rebuildExecutionPlan } from "../model/Compiler.ts";
-import type { ExecutionPlan, PlannedWorkload } from "../model/ExecutionPlan.ts";
 import {
-  CAPABILITY_NAMES,
-  type CapabilityName,
-  type CapabilityStatus,
-} from "../public/Capability.ts";
+  activeExecutionPlan,
+  eagerCapabilities,
+  type ExecutionPlan,
+  type PlannedWorkload,
+} from "../model/ExecutionPlan.ts";
+import { CAPABILITY_NAMES, type CapabilityName } from "../public/Capability.ts";
 import { StackConfigSchema, type StackConfig } from "../public/Config.ts";
 import type { StackRuntime } from "../public/Runtime.ts";
 import {
@@ -36,16 +38,11 @@ import {
   StackStateInvalidError,
   type StackError,
 } from "../public/Errors.ts";
-import type { StackEndpoint, StackStatus } from "../public/Status.ts";
-import { StackIdSchema, type StackId } from "../public/StackId.ts";
+import type { StackStatus } from "../public/Status.ts";
+import type { StackId } from "../public/StackId.ts";
 import type { LogOptions, StackLogEntry } from "../public/Logs.ts";
 import type { EffectStackCredentials } from "../public/Credentials.ts";
-import type {
-  RuntimeDriver,
-  RuntimeRecoveryRequest,
-  ObservedWorkload,
-} from "../runtime/RuntimeDriver.ts";
-import { RuntimeDriverError, RuntimeGenerationMismatchError } from "../runtime/RuntimeDriver.ts";
+import type { RuntimeDriver, ObservedWorkload } from "../runtime/RuntimeDriver.ts";
 import type { PersistedStackState } from "../state/StackState.ts";
 import type { StackStateStore } from "../state/StackStateStore.ts";
 import { makeReconciler, type Reconciler } from "./Reconciler.ts";
@@ -53,14 +50,13 @@ import {
   makeLifecycleController,
   type LifecycleBackend,
   type LifecycleInput,
-  type LifecyclePrepared,
 } from "./Lifecycle.ts";
-import { makeStatusHub } from "./StatusHub.ts";
 import type { LogStore } from "./LogStore.ts";
 import type { SupervisorIngress } from "./Ingress.ts";
 import { StackRpcGroup, type StackRpcError, type StackRpcHandlers } from "../control/StackRpc.ts";
 import type { MaintenanceResponse } from "../control/MaintenanceProtocol.ts";
 import type { PreparedWorkloadArtifact } from "../preparation/RuntimeArtifacts.ts";
+import { statusFor, type ActualPhase } from "./StatusProjection.ts";
 
 interface ActivationResult {
   readonly capability: CapabilityName;
@@ -71,18 +67,21 @@ interface ActivationResult {
 export interface SupervisorRuntime {
   readonly driver: RuntimeDriver;
   /** Verifies and prepares immutable workload artifacts without changing lifecycle state. */
-  readonly prepare?: (
+  readonly prepare: (
     runtime: StackRuntime,
     workloads: ReadonlyArray<PlannedWorkload>,
   ) => Effect.Effect<ReadonlyArray<PreparedWorkloadArtifact>, StackError>;
-  readonly preflight?: (input: LifecycleInput) => Effect.Effect<LifecyclePrepared, StackError>;
-  readonly activate?: (
+  readonly preflight: (
+    input: LifecycleInput,
+    mode: "cold" | "live",
+  ) => Effect.Effect<void, StackError>;
+  readonly activate: (
     capability: CapabilityName,
     input: LifecycleInput,
   ) => Effect.Effect<ActivationResult["endpoint"], GatewayActivationError | StackError>;
-  /** Optional Supervisor-owned public ingress and lazy route activation lifecycle. */
-  readonly ingress?: SupervisorIngress;
-  readonly logStore?: LogStore;
+  /** Supervisor-owned public ingress and lazy route activation lifecycle. */
+  readonly ingress: SupervisorIngress;
+  readonly logStore: LogStore;
 }
 
 export interface SupervisorRuntimeFactory {
@@ -101,12 +100,10 @@ export interface Supervisor {
     readonly config?: StackConfig;
   }) => Effect.Effect<StackStatus, StackError>;
   readonly destroy: Effect.Effect<void, StackError>;
-  /** Completes persisted-running recovery for a deferred owner session. */
-  readonly recover: Effect.Effect<void>;
-  /** Completes after a successful destroy or quiesce shutdown signal. */
+  /** Completes after a successful stop or destroy shutdown signal. */
   readonly shutdown: Effect.Effect<void>;
-  /** Signals owner shutdown after accepted quiesce or a successful destroy response. */
-  readonly signalShutdown: Effect.Effect<void>;
+  /** Shuts down only when durable state is absent or cleanly non-running. */
+  readonly shutdownIfIdle: Effect.Effect<void>;
   readonly watchStatus: Stream.Stream<StackStatus, StackError>;
   readonly logs: (options?: LogOptions) => Stream.Stream<StackLogEntry, StackError>;
   readonly activate: (
@@ -115,24 +112,28 @@ export interface Supervisor {
   readonly maintenanceHandlers: {
     readonly probe: Effect.Effect<MaintenanceResponse>;
     readonly stop: Effect.Effect<MaintenanceResponse>;
-    readonly quiesce: Effect.Effect<MaintenanceResponse>;
   };
   readonly rpcHandlers: StackRpcHandlers;
 }
 
-export interface SupervisorOptions {
+type SupervisorRuntimeInput =
+  | {
+      readonly runtime: SupervisorRuntime;
+      readonly runtimeFactory?: never;
+    }
+  | {
+      readonly runtimeFactory: SupervisorRuntimeFactory;
+      readonly runtime?: never;
+    };
+
+export type SupervisorOptions = {
   readonly identity: StackIdentity;
   readonly stackId: StackId;
   readonly ownerSessionId: string;
   readonly rpcRelease: string;
   readonly stateStore: StackStateStore;
   readonly context: Context.Context<FileSystem.FileSystem | Path.Path | Crypto.Crypto>;
-  /** Tests and future catalog composition may provide a concrete runtime. */
-  readonly runtime?: SupervisorRuntime;
-  readonly runtimeFactory?: SupervisorRuntimeFactory;
-}
-
-type ActualPhase = "stopped" | "starting" | "running" | "stopping" | "destroying";
+} & SupervisorRuntimeInput;
 
 const rpcError = (tag: StackRpcError["tag"], message: string): StackRpcError => ({ tag, message });
 const stateErrorMessage = (error: StackError | { readonly message?: string }): string =>
@@ -153,196 +154,8 @@ const revealRedacted = (value: unknown): unknown => {
 const digestHex = (bytes: Uint8Array): string =>
   [...bytes].map((byte) => byte.toString(16).padStart(2, "0")).join("");
 
-const runtimeUnavailable = (): SupervisorRuntime => {
-  const unavailable = (operation: string): Effect.Effect<never, RuntimeDriverError> =>
-    Effect.fail(new RuntimeDriverError({ message: `Runtime ${operation} is unavailable` }));
-  const driver: RuntimeDriver = {
-    observe: () => Effect.succeed([]),
-    start: () => unavailable("start"),
-    stop: () => unavailable("stop"),
-    remove: () => unavailable("remove"),
-    cleanup: () => unavailable("cleanup"),
-    recover: () => unavailable("recovery"),
-  };
-  return {
-    driver,
-    preflight: () =>
-      Effect.fail(new StackReconciliationError({ message: "Stack runtime is unavailable" })),
-  };
-};
-
-const eagerCapabilities = (plan: ExecutionPlan): Set<CapabilityName> => {
-  const active = new Set<CapabilityName>();
-  const visit = (name: CapabilityName): void => {
-    if (active.has(name)) return;
-    active.add(name);
-    for (const dependency of plan.dependencies[name]) visit(dependency);
-  };
-  for (const name of CAPABILITY_NAMES) if (plan.activation[name] === "eager") visit(name);
-  return active;
-};
-
-const activePlan = (plan: ExecutionPlan, active: ReadonlySet<CapabilityName>): ExecutionPlan => ({
-  ...plan,
-  workloads: plan.workloads.filter((workload) => active.has(workload.capability)),
-  startOrder: plan.startOrder.filter((name) => active.has(name)),
-  stopOrder: plan.stopOrder.filter((name) => active.has(name)),
-});
-
-const observedForCapability = (
-  name: CapabilityName,
-  observed: ReadonlyArray<ObservedWorkload>,
-): ReadonlyArray<ObservedWorkload> =>
-  observed.filter((entry) => entry.workloadId.startsWith(`${name}:`));
-
-const capabilityState = (
-  name: CapabilityName,
-  state: PersistedStackState,
-  observed: ReadonlyArray<ObservedWorkload>,
-  active: ReadonlySet<CapabilityName>,
-  phase: ActualPhase,
-  recoveryFailed: boolean,
-): CapabilityStatus["state"] => {
-  const configured = state.definition?.capabilities[name];
-  if (configured === undefined || !configured.enabled) return "disabled";
-  if (
-    state.desiredLifecycle !== "running" ||
-    phase === "stopped" ||
-    phase === "stopping" ||
-    phase === "destroying"
-  )
-    return "stopped";
-  if (recoveryFailed) return "failed";
-  if (configured.activation === "lazy" && !active.has(name)) return "dormant";
-  if (phase === "starting") return "starting";
-  const resources = observedForCapability(name, observed);
-  if (resources.some((entry) => entry.state === "failed")) return "failed";
-  if (resources.some((entry) => entry.state === "starting")) return "starting";
-  if (resources.length > 0 && resources.every((entry) => entry.state === "ready")) return "ready";
-  return "stopped";
-};
-
-const capabilityError = (
-  name: CapabilityName,
-  observed: ReadonlyArray<ObservedWorkload>,
-  state: CapabilityStatus["state"],
-): string | undefined => {
-  if (state !== "failed") return undefined;
-  const failed = observedForCapability(name, observed).filter((entry) => entry.state === "failed");
-  if (failed.length === 1) return failed[0]?.error;
-  const details = failed.flatMap((entry) =>
-    entry.error === undefined ? [] : [`${entry.workloadId}: ${entry.error}`],
-  );
-  return details.length === 0 ? undefined : details.join("; ");
-};
-
-const statusFor = (
-  state: PersistedStackState,
-  observed: ReadonlyArray<ObservedWorkload>,
-  active: ReadonlySet<CapabilityName>,
-  phase: ActualPhase,
-  recoveryFailed: boolean,
-): Effect.Effect<StackStatus, StackStateInvalidError> =>
-  Schema.decodeEffect(StackIdSchema)(state.identity.stackId).pipe(
-    Effect.mapError(
-      (error) =>
-        new StackStateInvalidError({ message: `Invalid persisted StackId: ${String(error)}` }),
-    ),
-    Effect.map((id) => {
-      const definition = state.definition;
-      const capabilities = CAPABILITY_NAMES.map((name) => {
-        const capability = capabilityState(name, state, observed, active, phase, recoveryFailed);
-        const error = capabilityError(name, observed, capability);
-        return {
-          name,
-          activation: definition?.capabilities[name].activation ?? "eager",
-          state: capability,
-          ...(error === undefined ? {} : { error }),
-        };
-      });
-      const versions: Partial<Record<CapabilityName, string>> = {};
-      if (definition !== undefined)
-        for (const name of CAPABILITY_NAMES) versions[name] = definition.capabilities[name].version;
-      const endpoints = state.ports.reduce<
-        Readonly<
-          Partial<
-            Record<
-              | "api"
-              | "database"
-              | "pooler"
-              | "studio"
-              | "mailUi"
-              | "smtp"
-              | "pop3"
-              | "functionsInspector",
-              StackEndpoint
-            >
-          >
-        >
-      >((result, assignment) => {
-        const tcp =
-          assignment.field === "database" ||
-          assignment.field === "pooler" ||
-          assignment.field === "smtp" ||
-          assignment.field === "pop3";
-        const protocol = tcp ? "tcp" : "http";
-        const listener = state.definition?.listeners[assignment.field];
-        return {
-          ...result,
-          [assignment.field]: {
-            protocol,
-            address: listener?.address ?? "127.0.0.1",
-            port: assignment.port,
-            url: `${protocol}://${listener?.address ?? "127.0.0.1"}:${assignment.port}`,
-          },
-        };
-      }, {});
-      const activeStates = capabilities.filter(
-        ({ name }) => active.has(name) && definition?.capabilities[name].enabled,
-      );
-      const anyStarting = activeStates.some(({ state }) => state === "starting");
-      const anyFailed = activeStates.some(({ state }) => state === "failed");
-      const allReady =
-        activeStates.length > 0 && activeStates.every(({ state }) => state === "ready");
-      const lifecycle =
-        state.desiredLifecycle === "unconfigured"
-          ? "unconfigured"
-          : state.desiredLifecycle === "destroying"
-            ? "destroying"
-            : state.desiredLifecycle === "stopped"
-              ? "stopped"
-              : recoveryFailed
-                ? "stopped"
-                : anyFailed
-                  ? "stopped"
-                  : phase === "starting"
-                    ? "starting"
-                    : phase === "stopping"
-                      ? "stopping"
-                      : phase === "destroying"
-                        ? "destroying"
-                        : anyStarting
-                          ? "starting"
-                          : allReady
-                            ? "running"
-                            : "stopped";
-      return {
-        id,
-        lifecycle,
-        desiredLifecycle: state.desiredLifecycle,
-        runtime: state.runtime,
-        desiredGeneration: state.desiredGeneration,
-        endpoints,
-        versions,
-        capabilities,
-      } satisfies StackStatus;
-    }),
-  );
-
 const mapReconcileError = (error: unknown): StackError => {
   if (error instanceof StackStateInvalidError) return error;
-  if (error instanceof RuntimeGenerationMismatchError)
-    return new StackLifecycleConflictError({ message: error.message });
   return new StackReconciliationError({
     message: error instanceof Error ? error.message : String(error),
     cause: error,
@@ -362,75 +175,38 @@ export const makeSupervisor = (
     if (initial === undefined)
       return yield* new StackStateInvalidError({ message: "Stack state is missing" });
     const runtime =
-      options.runtime ??
-      (options.runtimeFactory === undefined
-        ? runtimeUnavailable()
-        : yield* options.runtimeFactory.make(initial));
+      options.runtimeFactory !== undefined
+        ? yield* options.runtimeFactory.make(initial)
+        : options.runtime;
     const reconciler: Reconciler = yield* makeReconciler({
       driver: runtime.driver,
-      readGeneration: (stackId) =>
-        options.stateStore.read(stackId).pipe(
-          Effect.provideContext(options.context),
-          Effect.flatMap((state) =>
-            state === undefined
-              ? Effect.fail(new RuntimeDriverError({ message: "Stack state is missing", stackId }))
-              : Effect.succeed(state.desiredGeneration),
-          ),
-          Effect.mapError((error) =>
-            error instanceof RuntimeDriverError
-              ? error
-              : new RuntimeDriverError({ message: error.message, stackId, cause: error }),
-          ),
-        ),
     });
     const active = yield* Ref.make<ReadonlySet<CapabilityName>>(new Set());
-    const generation = yield* Ref.make(initial.desiredGeneration);
-    const phase = yield* Ref.make<ActualPhase>(
-      initial.desiredLifecycle === "running" ? "starting" : "stopped",
-    );
-    const recoveryFailure = yield* Ref.make(false);
+    const phase = yield* Ref.make<ActualPhase>("stopped");
+    // A Supervisor created after a crash must clean exact runtime ephemera once before its first
+    // fresh start. The marker is session-local and only advances after cleanup succeeds.
+    const sessionInitialized = yield* Ref.make(false);
     type ActivationHandler = (
       capability: CapabilityName,
     ) => Effect.Effect<ActivationResult, GatewayActivationError | StackError>;
-    // The ingress is opened during persisted-running recovery, before the public Supervisor
-    // methods are assembled. A one-shot handoff keeps a request waiting for the handler instead of
-    // exposing a construction-time race.
+    // The ingress opens during an explicit lifecycle operation. A one-shot handoff keeps a request
+    // waiting for the handler instead of exposing a construction-time race.
     const activationHandler = yield* Deferred.make<ActivationHandler, never>();
     const ingressActivate = (
       capability: CapabilityName,
     ): Effect.Effect<ActivationResult, GatewayActivationError | StackError> =>
       Deferred.await(activationHandler).pipe(Effect.flatMap((handler) => handler(capability)));
-    const initializeActivation = (
-      plan: ExecutionPlan,
-      observed: ReadonlyArray<ObservedWorkload> = [],
-    ) => {
-      const next = eagerCapabilities(plan);
-      for (const entry of observed) {
-        const capability = CAPABILITY_NAMES.find((name) => entry.workloadId.startsWith(`${name}:`));
-        if (capability !== undefined) next.add(capability);
-      }
-      return Ref.set(active, next);
-    };
-    const resetForGeneration = (input: LifecycleInput) =>
+    const initializeActivation = (plan: ExecutionPlan) => Ref.set(active, eagerCapabilities(plan));
+    const resetForSession = (input: LifecycleInput) =>
       Effect.gen(function* () {
-        const current = yield* Ref.get(generation);
-        if (current === input.generation && input.desiredLifecycle === "running") return;
-        if (input.generation < current)
-          return yield* new StackLifecycleConflictError({
-            stackId: options.stackId,
-            message: "Lifecycle input generation is older than the adopted generation",
-          });
-        yield* Ref.set(generation, input.generation);
         activationOwned.clear();
         yield* initializeActivation(input.plan);
       });
     const observe = () =>
       runtime.driver.observe(options.stackId).pipe(Effect.mapError(mapReconcileError));
     const observedForStatus = () =>
-      Effect.all({ phase: Ref.get(phase), recoveryFailed: Ref.get(recoveryFailure) }).pipe(
-        Effect.flatMap(({ phase: current, recoveryFailed }) =>
-          current === "running" && !recoveryFailed ? observe() : Effect.succeed([]),
-        ),
+      Ref.get(phase).pipe(
+        Effect.flatMap((current) => (current === "running" ? observe() : Effect.succeed([]))),
       );
 
     const initialStatus = yield* statusFor(
@@ -438,9 +214,8 @@ export const makeSupervisor = (
       [],
       yield* Ref.get(active),
       yield* Ref.get(phase),
-      false,
     );
-    const hub = yield* makeStatusHub(initialStatus);
+    const hub = yield* SubscriptionRef.make(initialStatus);
     const snapshot = (): Effect.Effect<StackStatus, StackError> =>
       Effect.gen(function* () {
         const state = yield* read();
@@ -451,24 +226,30 @@ export const makeSupervisor = (
           yield* observedForStatus(),
           yield* Ref.get(active),
           yield* Ref.get(phase),
-          yield* Ref.get(recoveryFailure),
         );
         return status;
       });
     const publish = (): Effect.Effect<StackStatus, StackError> =>
-      snapshot().pipe(Effect.tap((value) => hub.publish(value)));
+      snapshot().pipe(Effect.tap((value) => SubscriptionRef.set(hub, value)));
     const restorePhase = (previous: ActualPhase): Effect.Effect<void, never> =>
       Effect.gen(function* () {
         const state = yield* read().pipe(Effect.orElseSucceed(() => undefined));
-        const next: ActualPhase =
-          previous === "running" && state?.desiredLifecycle === "running" ? "running" : "stopped";
+        const currentPhase = yield* Ref.get(phase);
+        let next: ActualPhase = "stopped";
+        if (state?.desiredLifecycle === "destroying") next = "destroying";
+        else if (state?.desiredLifecycle === "running") {
+          if (currentPhase === "running" || previous === "running") next = "running";
+          else next = "starting";
+        }
         yield* Ref.set(phase, next);
         yield* publish().pipe(Effect.ignore);
       });
 
-    // Admission and execution are separate: callers join the same owned fiber while the
-    // execution semaphore serializes lifecycle/activation transitions.
+    // Admission joins equivalent operations while execution serializes lifecycle and activation
+    // work against background failure supervision.
     const admission = yield* Semaphore.make(1);
+    // Background failure supervision shares the execution gate with explicit lifecycle operations.
+    // This prevents a failure event from reconciling against a concurrently stopping lifecycle.
     const execution = yield* Semaphore.make(1);
     const supervisorScope = yield* Effect.scope;
     const ownedFibers = yield* FiberSet.make().pipe(
@@ -476,40 +257,64 @@ export const makeSupervisor = (
     );
     const joinExit = <A, E>(result: Exit.Exit<A, E>): Effect.Effect<A, E> =>
       Exit.isSuccess(result) ? Effect.succeed(result.value) : Effect.failCause(result.cause);
-    type OwnedResult<A, E> = Deferred.Deferred<Exit.Exit<A, E>, never>;
-    const startOwned = new Map<string, OwnedResult<StackStatus, StackError>>();
-    const restartOwned = new Map<string, OwnedResult<StackStatus, StackError>>();
-    const stopOwned = new Map<string, OwnedResult<PersistedStackState, StackError>>();
-    const destroyOwned = new Map<string, OwnedResult<void, StackError>>();
-    const recoveryOwned = new Map<string, OwnedResult<void, StackError>>();
+    type LifecycleKind = "start" | "restart" | "stop" | "destroy";
+    type LifecycleResult = Deferred.Deferred<Exit.Exit<void, StackError>, never>;
+    type ActiveLifecycle = Readonly<{
+      kind: LifecycleKind;
+      key: string;
+      result: LifecycleResult;
+    }>;
+    const lifecycleActive = yield* Ref.make<ActiveLifecycle | undefined>(undefined);
+    const preparationsActive = yield* Ref.make(0);
+    const shutdownSignal = yield* Deferred.make<void, never>();
+    const signalShutdown = Deferred.succeed(shutdownSignal, undefined).pipe(Effect.asVoid);
+    const ensureAcceptingOperations = Deferred.poll(shutdownSignal).pipe(
+      Effect.flatMap((shutdown) =>
+        Option.isNone(shutdown)
+          ? Effect.void
+          : Effect.fail(
+              new StackLifecycleConflictError({
+                stackId: options.stackId,
+                message: "Stack owner is shutting down",
+              }),
+            ),
+      ),
+    );
 
-    const submitOwned = <A, E>(
-      slots: Map<string, OwnedResult<A, E>>,
+    const submitLifecycle = (
+      kind: LifecycleKind,
       key: string,
-      effect: Effect.Effect<A, E>,
-      onWaiterInterrupt?: (owned: OwnedResult<A, E>) => Effect.Effect<void>,
-    ): Effect.Effect<A, E> =>
+      effect: Effect.Effect<void, StackError>,
+      onWaiterInterrupt?: (owned: LifecycleResult) => Effect.Effect<void>,
+    ): Effect.Effect<void, StackError> =>
       Effect.gen(function* () {
         const result = yield* Effect.uninterruptibleMask((restore) =>
           Effect.gen(function* () {
             const owned = yield* admission.withPermit(
               Effect.gen(function* () {
-                const current = slots.get(key);
-                if (current !== undefined) return current;
-                const deferred = yield* Deferred.make<Exit.Exit<A, E>, never>();
-                slots.set(key, deferred);
-                const owner = Effect.gen(function* () {
-                  const result = yield* execution.withPermit(effect).pipe(Effect.exit);
-                  yield* Deferred.succeed(deferred, result);
-                }).pipe(
-                  Effect.ensuring(
-                    admission.withPermit(
-                      Effect.sync(() => {
-                        if (slots.get(key) === deferred) slots.delete(key);
-                      }),
-                    ),
+                yield* ensureAcceptingOperations;
+                const current = yield* Ref.get(lifecycleActive);
+                if (current !== undefined) {
+                  if (current.kind === kind && current.key === key) return current.result;
+                  return yield* new StackLifecycleConflictError({
+                    stackId: options.stackId,
+                    message: `Lifecycle operation ${current.kind} is already active`,
+                  });
+                }
+                const deferred = yield* Deferred.make<Exit.Exit<void, StackError>, never>();
+                yield* Ref.set(lifecycleActive, { kind, key, result: deferred });
+                const release = admission.withPermit(
+                  Ref.update(lifecycleActive, (current) =>
+                    current?.result === deferred ? undefined : current,
                   ),
                 );
+                const owner = Effect.gen(function* () {
+                  const result = yield* execution.withPermit(effect).pipe(Effect.exit);
+                  // Release the admission slot before waking waiters so a completed operation
+                  // cannot make the next lifecycle request look like a conflict.
+                  yield* release;
+                  yield* Deferred.succeed(deferred, result);
+                }).pipe(Effect.ensuring(release));
                 yield* FiberSet.run(ownedFibers, owner, { startImmediately: true });
                 return deferred;
               }),
@@ -526,44 +331,33 @@ export const makeSupervisor = (
 
     const reconcileBackend = (
       input: LifecycleInput,
+      session: "fresh" | "current",
       selectedOverride?: ReadonlySet<CapabilityName>,
     ): Effect.Effect<void, StackError> =>
       Effect.gen(function* () {
+        if (session === "fresh") yield* resetForSession(input);
         const reservation =
-          input.desiredLifecycle === "running" && runtime.ingress !== undefined
-            ? yield* runtime.ingress.acquire(input)
-            : undefined;
-        if (input.desiredLifecycle !== "running" && runtime.ingress !== undefined)
-          yield* runtime.ingress.close;
-        yield* resetForGeneration(input);
+          input.desiredLifecycle === "running" ? yield* runtime.ingress.acquire(input) : undefined;
+        if (input.desiredLifecycle !== "running") yield* runtime.ingress.close;
+        if (session === "fresh") yield* Ref.set(sessionInitialized, true);
         const selected = selectedOverride ?? (yield* Ref.get(active));
         const plan =
-          input.desiredLifecycle === "running" ? activePlan(input.plan, selected) : input.plan;
+          input.desiredLifecycle === "running"
+            ? activeExecutionPlan(input.plan, selected)
+            : input.plan;
         const reconciled = yield* reconciler
           .reconcile({
             stackId: options.stackId,
-            desiredGeneration: input.generation,
             desiredLifecycle: input.desiredLifecycle,
             plan,
           })
           .pipe(Effect.mapError(mapReconcileError), Effect.exit);
         if (Exit.isFailure(reconciled)) {
-          if (reservation?.fresh === true && runtime.ingress !== undefined)
-            yield* runtime.ingress.close.pipe(Effect.ignore);
+          if (reservation?.fresh === true) yield* runtime.ingress.close.pipe(Effect.ignore);
           return yield* Effect.failCause(reconciled.cause);
         }
         const result = reconciled.value;
-        if (result.failed.length > 0)
-          return yield* Effect.gen(function* () {
-            if (reservation?.fresh === true && runtime.ingress !== undefined)
-              yield* runtime.ingress.close.pipe(Effect.ignore);
-            return yield* new StackReconciliationError({
-              message: result.failed
-                .map(({ workloadId, error }) => `${workloadId}: ${error.message}`)
-                .join("; "),
-            });
-          });
-        if (runtime.ingress !== undefined && reservation !== undefined) {
+        if (reservation !== undefined) {
           const opened = yield* runtime.ingress
             .open(input, reservation, ingressActivate)
             .pipe(Effect.exit);
@@ -572,30 +366,39 @@ export const makeSupervisor = (
             return yield* Effect.failCause(opened.cause);
           }
         }
+        if (result.failed.length > 0) {
+          // Keep independent workloads and the gateway reachable. The failed capability remains
+          // visible through status while start reports a typed reconciliation failure.
+          yield* Ref.set(phase, "running");
+          yield* publish().pipe(Effect.ignore);
+          return yield* new StackReconciliationError({
+            message: result.failed
+              .map(({ workloadId, error }) => `${workloadId}: ${error.message}`)
+              .join("; "),
+          });
+        }
         yield* publish();
       });
 
+    const cleanupEpoch = yield* Ref.make(0);
     const backend: LifecycleBackend = {
-      preflight: (input) =>
-        runtime.preflight === undefined ? Effect.succeed({}) : runtime.preflight(input),
+      preflight: runtime.preflight,
       reconcile: reconcileBackend,
-      cleanup: () =>
-        Effect.gen(function* () {
-          if (runtime.ingress !== undefined) yield* runtime.ingress.close;
-          yield* runtime.driver
-            .cleanup({ stackId: options.stackId, destroy: false })
-            .pipe(Effect.mapError(mapReconcileError));
-          yield* Ref.set(active, new Set());
-          yield* Ref.set(phase, "stopped");
-          yield* publish();
-        }),
-      destroyData: () =>
-        Effect.gen(function* () {
-          if (runtime.ingress !== undefined) yield* runtime.ingress.close;
-          yield* runtime.driver
-            .cleanup({ stackId: options.stackId, destroy: true })
-            .pipe(Effect.mapError(mapReconcileError));
-        }),
+      cleanup: Effect.gen(function* () {
+        yield* runtime.ingress.close;
+        yield* runtime.driver
+          .cleanup({ stackId: options.stackId, destroy: false })
+          .pipe(Effect.mapError(mapReconcileError));
+        yield* Ref.set(active, new Set());
+        yield* Ref.update(cleanupEpoch, (epoch) => epoch + 1);
+        yield* publish();
+      }),
+      destroyData: Effect.gen(function* () {
+        yield* runtime.ingress.close;
+        yield* runtime.driver
+          .cleanup({ stackId: options.stackId, destroy: true })
+          .pipe(Effect.mapError(mapReconcileError));
+      }),
     };
     const controller = yield* makeLifecycleController({
       stackId: options.stackId,
@@ -605,104 +408,22 @@ export const makeSupervisor = (
     }).pipe(Effect.provideContext(options.context));
     const status = snapshot();
 
-    const recoveryOperation: Effect.Effect<void, StackError> = Effect.gen(function* () {
-      const current = yield* read();
-      if (current === undefined)
-        return yield* new StackStateInvalidError({ message: "Stack state is missing" });
-      // Recovery is deferred until after owner publication. A lifecycle operation may have
-      // superseded the construction snapshot while it waited for execution; that operation owns
-      // the current phase/generation, so stale recovery must become a no-op.
-      if (
-        current.desiredGeneration !== initial.desiredGeneration ||
-        current.desiredLifecycle !== initial.desiredLifecycle ||
-        current.inputFingerprint !== initial.inputFingerprint
-      )
-        return;
-      const definition = current.definition;
-      if (definition === undefined || current.desiredLifecycle !== "running") {
-        yield* Ref.set(recoveryFailure, false);
-        if (options.runtime !== undefined || options.runtimeFactory !== undefined)
-          yield* runtime.driver
-            .cleanup({ stackId: options.stackId, destroy: false })
-            .pipe(Effect.mapError(mapReconcileError));
-        yield* Ref.set(active, new Set());
-        yield* Ref.set(phase, "stopped");
-        yield* publish().pipe(Effect.ignore);
-        return;
-      }
-
-      yield* Ref.set(phase, "starting");
-      yield* Ref.set(recoveryFailure, false);
-      yield* publish().pipe(Effect.ignore);
-      const attempt = yield* Effect.exit(
-        Effect.gen(function* () {
-          const plan = yield* rebuildExecutionPlan(current.runtime, definition).pipe(
-            Effect.provideContext(options.context),
-            Effect.mapError(
-              (error) => new StackStateInvalidError({ message: error.message, cause: error }),
-            ),
-          );
-          const request: RuntimeRecoveryRequest = {
-            stackId: options.stackId,
-            desiredGeneration: current.desiredGeneration,
-            desiredLifecycle: "running",
-            plan,
-          };
-          const recoveryInput: LifecycleInput = {
-            stackId: options.stackId,
-            generation: current.desiredGeneration,
-            desiredLifecycle: "running",
-            state: current,
-            previous: current,
-            definition,
-            inputFingerprint: current.inputFingerprint ?? "",
-            secrets: current.secrets,
-            plan,
-          };
-          yield* initializeActivation(plan);
-          const recovered = yield* runtime.driver
-            .recover(request)
-            .pipe(Effect.mapError(mapReconcileError));
-          yield* initializeActivation(plan, recovered);
-          yield* reconcileBackend(recoveryInput);
-        }),
-      );
-      if (Exit.isFailure(attempt)) {
-        // Recovery must not tear down the owner session. Keep the phase observable as starting
-        // and retain the cause in the owner-only log for the next inspection/retry.
-        if (runtime.logStore !== undefined)
-          yield* runtime.logStore
-            .append({
-              source: "supervisor",
-              stream: "stderr",
-              message: `Stack recovery failed: ${Cause.pretty(attempt.cause)}`,
-            })
-            .pipe(Effect.ignore);
-        yield* Ref.set(recoveryFailure, true);
-        yield* Ref.set(phase, "starting");
-        yield* publish().pipe(Effect.ignore);
-        return;
-      }
-      yield* Ref.set(phase, "running");
-      yield* publish().pipe(Effect.ignore);
-    }).pipe(Effect.provideContext(options.context));
-
-    const recover = submitOwned(recoveryOwned, "recovery", recoveryOperation).pipe(Effect.ignore);
-
     const activateOperation = (
       capability: CapabilityName,
     ): Effect.Effect<ActivationResult, GatewayActivationError | StackError> =>
       Effect.gen(function* () {
+        const lifecycle = yield* Ref.get(lifecycleActive);
+        if (lifecycle !== undefined)
+          return yield* new StackLifecycleConflictError({
+            stackId: options.stackId,
+            message: `Cannot activate while ${lifecycle.kind} is in progress`,
+          });
         const state = yield* read();
         if (state === undefined)
           return yield* new StackStateInvalidError({ message: "Stack state is missing" });
         if (state.desiredLifecycle !== "running")
           return yield* new StackNotRunningError({
             message: "Stack must be running before activation",
-          });
-        if (yield* Ref.get(recoveryFailure))
-          return yield* new StackNotRunningError({
-            message: "Stack recovery has failed; start or restart the stack before activation",
           });
         const definition = state.definition;
         if (definition === undefined || !definition.capabilities[capability].enabled)
@@ -724,26 +445,60 @@ export const makeSupervisor = (
         visit(capability);
         const input: LifecycleInput = {
           stackId: options.stackId,
-          generation: state.desiredGeneration,
           desiredLifecycle: "running",
           state,
-          previous: state,
           definition,
           inputFingerprint: state.inputFingerprint ?? "",
           secrets: state.secrets,
           plan,
         };
-        yield* reconcileBackend(input, next);
-        if (runtime.activate === undefined)
-          return yield* new GatewayActivationError({
-            message: `Capability ${capability} has no route endpoint`,
-          });
-        const endpoint = yield* runtime.activate(capability, input);
+        // Activation is accepted for this lifecycle session before reconciliation begins. This keeps a
+        // failed lazy start visible as failed rather than leaving the capability dormant.
         yield* Ref.set(active, next);
+        yield* reconcileBackend(input, "current", next);
         yield* Ref.set(phase, "running");
-        yield* publish();
+        yield* publish().pipe(Effect.ignore);
+        const endpoint = yield* runtime.activate(capability, input);
         return { capability, endpoint };
       });
+
+    const superviseFailure = (failure: ObservedWorkload): Effect.Effect<void, never> =>
+      execution
+        .withPermit(
+          Effect.gen(function* () {
+            // Explicit lifecycle transitions own the execution gate. Failure events are consumed
+            // only while the accepted lifecycle is fully running; stopping/restarting sessions
+            // are fenced by the durable lifecycle and therefore skipped safely.
+            if ((yield* Ref.get(phase)) !== "running") return;
+            const state = yield* read().pipe(Effect.orElseSucceed(() => undefined));
+            if (
+              state === undefined ||
+              state.desiredLifecycle !== "running" ||
+              failure.state !== "failed" ||
+              state.definition === undefined
+            )
+              return;
+            const plan = yield* rebuildExecutionPlan(state.runtime, state.definition).pipe(
+              Effect.provideContext(options.context),
+              Effect.mapError(
+                (error) => new StackStateInvalidError({ message: error.message, cause: error }),
+              ),
+              Effect.orElseSucceed(() => undefined),
+            );
+            if (plan === undefined) return;
+            const input: LifecycleInput = {
+              stackId: options.stackId,
+              desiredLifecycle: "running",
+              state,
+              definition: state.definition,
+              inputFingerprint: state.inputFingerprint ?? "",
+              secrets: state.secrets,
+              plan,
+            };
+            yield* reconcileBackend(input, "current").pipe(Effect.ignore);
+          }),
+        )
+        .pipe(Effect.ignoreCause);
 
     const activationOwned = new Map<
       CapabilityName,
@@ -767,6 +522,12 @@ export const makeSupervisor = (
       capability: CapabilityName,
     ): Effect.Effect<ActivationResult, GatewayActivationError | StackError> =>
       Effect.gen(function* () {
+        const lifecycle = yield* Ref.get(lifecycleActive);
+        if (lifecycle !== undefined)
+          return yield* new StackLifecycleConflictError({
+            stackId: options.stackId,
+            message: `Cannot activate while ${lifecycle.kind} is in progress`,
+          });
         const token = yield* admission.withPermit(
           Effect.gen(function* () {
             const current = activationOwned.get(capability);
@@ -784,7 +545,27 @@ export const makeSupervisor = (
             activationOwned.set(capability, { _tag: "pending", result: deferred });
             const owner = Effect.gen(function* () {
               const result = yield* execution
-                .withPermit(activateOperation(capability))
+                .withPermit(
+                  admission
+                    .withPermit(
+                      Effect.sync(() => {
+                        const current = activationOwned.get(capability);
+                        return current?._tag === "pending" && current.result === deferred;
+                      }),
+                    )
+                    .pipe(
+                      Effect.flatMap((stillAdmitted) =>
+                        stillAdmitted
+                          ? activateOperation(capability)
+                          : Effect.fail(
+                              new StackLifecycleConflictError({
+                                stackId: options.stackId,
+                                message: "Lazy activation was superseded by a lifecycle transition",
+                              }),
+                            ),
+                      ),
+                    ),
+                )
                 .pipe(Effect.exit);
               yield* admission.withPermit(
                 Effect.sync(() => {
@@ -820,15 +601,23 @@ export const makeSupervisor = (
     const startOperation = (startOptions?: { readonly config?: StackConfig }) =>
       Effect.gen(function* () {
         const previous = yield* Ref.get(phase);
-        yield* Ref.set(phase, "starting");
-        yield* publish();
-        yield* controller.start({ config: startOptions?.config }).pipe(
-          Effect.provideContext(options.context),
-          Effect.tapError(() => restorePhase(previous)),
-        );
+        const freshSession = !(yield* Ref.get(sessionInitialized));
+        if (freshSession || previous === "stopping") {
+          yield* backend.cleanup;
+          yield* Ref.set(phase, "starting");
+          yield* publish().pipe(Effect.ignore);
+        }
+        yield* controller
+          .start({
+            config: startOptions?.config,
+            freshSession,
+          })
+          .pipe(
+            Effect.provideContext(options.context),
+            Effect.tapError(() => restorePhase(previous)),
+          );
         yield* Ref.set(phase, "running");
-        yield* Ref.set(recoveryFailure, false);
-        return yield* publish();
+        yield* publish();
       });
     const operationKey = (config: StackConfig | undefined): Effect.Effect<string, StackError> =>
       Effect.gen(function* () {
@@ -861,34 +650,30 @@ export const makeSupervisor = (
             stackId: options.stackId,
             message: "Persisted stack definition fingerprint is missing",
           });
-        const secretIdentity: Record<
-          string,
-          { readonly policy: "managed" | "passthrough"; readonly value?: string }
-        > = {};
+        // The compiler fingerprint captures caller semantics. Include only explicitly supplied
+        // secret values; generated managed values are persisted during start and must not make an
+        // equivalent concurrent request conflict with its owner.
+        const secretIdentity: Record<string, { readonly policy: string; readonly value: string }> =
+          {};
         if (compiled === undefined) {
           for (const [slot, entry] of Object.entries(state.secrets))
-            secretIdentity[slot] = { policy: entry.policy, value: entry.value };
+            if (entry.value !== undefined)
+              secretIdentity[slot] = { policy: entry.policy, value: entry.value };
         } else {
           for (const declaration of compiled.secrets) {
-            const persisted = state.secrets[declaration.slot];
-            const value =
-              declaration.value === undefined
-                ? persisted?.value
-                : String(Redacted.value(declaration.value));
+            if (declaration.value === undefined) continue;
             secretIdentity[declaration.slot] = {
               policy: declaration.policy,
-              ...(value === undefined ? {} : { value }),
+              value: String(Redacted.value(declaration.value)),
             };
           }
         }
-        const semantics = {
-          fingerprint,
-          definition: compiled?.definition ?? state.definition,
-          secrets: secretIdentity,
-        };
         const crypto = yield* Crypto.Crypto;
         const digest = yield* crypto
-          .digest("SHA-256", new TextEncoder().encode(canonicalize(revealRedacted(semantics))))
+          .digest(
+            "SHA-256",
+            new TextEncoder().encode(canonicalize(revealRedacted({ fingerprint, secretIdentity }))),
+          )
           .pipe(
             Effect.mapError(
               (error) =>
@@ -904,69 +689,125 @@ export const makeSupervisor = (
     const start = (startOptions?: { readonly config?: StackConfig }) =>
       Effect.gen(function* () {
         const key = yield* operationKey(startOptions?.config);
-        return yield* submitOwned(startOwned, key, startOperation(startOptions));
+        yield* submitLifecycle("start", key, startOperation(startOptions), continueShutdown);
+        return yield* snapshot();
       });
     const restartOperation = (startOptions?: { readonly config?: StackConfig }) =>
       Effect.gen(function* () {
         const previous = yield* Ref.get(phase);
+        const freshSession = !(yield* Ref.get(sessionInitialized));
+        if (freshSession) yield* backend.cleanup;
+        const cleanupBeforeRestart = yield* Ref.get(cleanupEpoch);
         yield* Ref.set(phase, "starting");
-        yield* publish();
-        yield* controller.restart({ config: startOptions?.config }).pipe(
-          Effect.provideContext(options.context),
-          Effect.tapError(() => restorePhase(previous)),
-        );
+        yield* publish().pipe(Effect.ignore);
+        const restarted = yield* controller
+          .restart({ config: startOptions?.config, freshSession })
+          .pipe(Effect.provideContext(options.context), Effect.exit);
+        if (Exit.isFailure(restarted)) {
+          const state = yield* read().pipe(Effect.orElseSucceed(() => undefined));
+          if (state?.desiredLifecycle === "stopped") {
+            const cleanup = yield* backend.cleanup.pipe(Effect.exit);
+            yield* Ref.set(phase, Exit.isSuccess(cleanup) ? "stopped" : "stopping");
+            yield* publish().pipe(Effect.ignore);
+          } else {
+            const tornDown = (yield* Ref.get(cleanupEpoch)) > cleanupBeforeRestart;
+            yield* restorePhase(tornDown ? "starting" : previous);
+          }
+          return yield* Effect.failCause(restarted.cause);
+        }
         yield* Ref.set(phase, "running");
-        yield* Ref.set(recoveryFailure, false);
-        return yield* publish();
+        yield* publish();
       });
     const restart = (startOptions?: { readonly config?: StackConfig }) =>
       Effect.gen(function* () {
         const key = yield* operationKey(startOptions?.config);
-        return yield* submitOwned(restartOwned, key, restartOperation(startOptions));
+        yield* submitLifecycle("restart", key, restartOperation(startOptions), continueShutdown);
+        return yield* snapshot();
       });
-    const stopOperation = () => controller.stop().pipe(Effect.provideContext(options.context));
-    const shutdownSignal = yield* Deferred.make<void, never>();
-    const signalShutdown = Deferred.succeed(shutdownSignal, undefined).pipe(Effect.asVoid);
-    const signalShutdownAfterSuccess = <A, E>(owned: OwnedResult<A, E>) =>
-      Deferred.await(owned).pipe(
-        Effect.flatMap((result) => (Exit.isSuccess(result) ? signalShutdown : Effect.void)),
-      );
-    const continueShutdownAfterInterrupt = <A, E>(owned: OwnedResult<A, E>) =>
-      FiberSet.run(ownedFibers, signalShutdownAfterSuccess(owned), {
+    const stopOperation = () =>
+      Effect.gen(function* () {
+        const previous = yield* Ref.get(phase);
+        yield* Ref.set(phase, "stopping");
+        yield* publish().pipe(Effect.ignore);
+        const result = yield* controller
+          .stop()
+          .pipe(Effect.provideContext(options.context), Effect.exit);
+        if (Exit.isFailure(result)) {
+          const state = yield* read().pipe(Effect.orElseSucceed(() => undefined));
+          if (state?.desiredLifecycle === "stopped") {
+            // The durable stopped fence is already committed, but cleanup did not complete.
+            // Keep the observable phase stopping so callers cannot mistake this for a clean stop.
+            yield* Ref.set(phase, "stopping");
+            yield* publish().pipe(Effect.ignore);
+          } else {
+            yield* restorePhase(previous);
+          }
+          return yield* Effect.failCause(result.cause);
+        }
+        yield* Ref.set(phase, "stopped");
+        yield* publish();
+      });
+    const shutdownIfIdle = admission.withPermit(
+      Effect.gen(function* () {
+        const state = yield* read().pipe(Effect.exit);
+        if (Exit.isFailure(state)) return;
+        const lifecycle = yield* Ref.get(lifecycleActive);
+        const preparations = yield* Ref.get(preparationsActive);
+        const currentPhase = yield* Ref.get(phase);
+        if (
+          lifecycle === undefined &&
+          preparations === 0 &&
+          currentPhase !== "stopping" &&
+          (state.value === undefined ||
+            state.value.desiredLifecycle === "stopped" ||
+            state.value.desiredLifecycle === "unconfigured")
+        )
+          yield* signalShutdown;
+      }),
+    );
+    const continueShutdown = <A, E>(owned: Deferred.Deferred<Exit.Exit<A, E>, never>) =>
+      FiberSet.run(ownedFibers, Deferred.await(owned).pipe(Effect.andThen(shutdownIfIdle)), {
         startImmediately: true,
       }).pipe(Effect.asVoid);
-    const stop = submitOwned(stopOwned, "stop", stopOperation());
-    // Keep stop and quiesce in separate slots: quiesce's waiter interruption is terminal, while
-    // ordinary maintenance stop must never inherit that shutdown continuation.
-    const quiesceOwned = new Map<string, OwnedResult<PersistedStackState, StackError>>();
-    const quiesce = submitOwned(
-      quiesceOwned,
-      "quiesce",
-      stopOperation(),
-      continueShutdownAfterInterrupt,
-    );
+    // An interrupted stop waiter still requests shutdown after the owned operation succeeds.
+    const stopWithShutdown = submitLifecycle("stop", "stop", stopOperation(), continueShutdown);
     const operation = <A>(effect: Effect.Effect<A, StackError>) =>
       effect.pipe(Effect.mapError((error) => rpcError(rpcTag(error), stateErrorMessage(error))));
-    const destroyOperation = controller
-      .destroy()
-      .pipe(Effect.provideContext(options.context), Effect.andThen(Ref.set(phase, "stopped")));
-    const destroy = submitOwned(
-      destroyOwned,
-      "destroy",
-      destroyOperation,
-      continueShutdownAfterInterrupt,
-    ).pipe(Effect.asVoid);
-    const logs = (logOptions?: LogOptions): Stream.Stream<StackLogEntry, StackError> =>
-      runtime.logStore === undefined
-        ? Stream.fail(new StackNotRunningError({ message: "Stack logs are unavailable" }))
-        : runtime.logStore
-            .stream(logOptions)
-            .pipe(
-              Stream.mapError(
-                (error) => new StackStateInvalidError({ message: error.message, cause: error }),
-              ),
-            );
-    const watchStatus = hub.changes;
+    const streamOperation = <A>(stream: Stream.Stream<A, StackError>) =>
+      stream.pipe(Stream.mapError((error) => rpcError(rpcTag(error), stateErrorMessage(error))));
+    const destroyOperation = Effect.gen(function* () {
+      const previous = yield* Ref.get(phase);
+      yield* Ref.set(phase, "destroying");
+      yield* publish().pipe(Effect.ignore);
+      const result = yield* controller
+        .destroy()
+        .pipe(Effect.provideContext(options.context), Effect.exit);
+      if (Exit.isFailure(result)) {
+        yield* restorePhase(previous);
+        return yield* Effect.failCause(result.cause);
+      }
+      yield* Ref.set(phase, "stopped");
+      yield* publish().pipe(Effect.ignore);
+      return result.value;
+    });
+    const destroy = submitLifecycle("destroy", "destroy", destroyOperation, continueShutdown).pipe(
+      Effect.asVoid,
+    );
+    const logs = (logOptions?: LogOptions): Stream.Stream<StackLogEntry, StackError> => {
+      const stream = runtime.logStore
+        .stream(logOptions)
+        .pipe(
+          Stream.mapError(
+            (error) => new StackStateInvalidError({ message: error.message, cause: error }),
+          ),
+        );
+      return logOptions?.follow === true
+        ? stream.pipe(Stream.interruptWhen(Deferred.await(shutdownSignal)))
+        : stream;
+    };
+    const watchStatus = SubscriptionRef.changes(hub).pipe(
+      Stream.interruptWhen(Deferred.await(shutdownSignal)),
+    );
     const maintenanceHandlers = {
       probe: Effect.succeed({
         ok: true,
@@ -975,26 +816,14 @@ export const makeSupervisor = (
         stackId: options.stackId,
         rpcRelease: options.rpcRelease,
       } satisfies MaintenanceResponse),
-      stop: stop.pipe(
+      stop: stopWithShutdown.pipe(
         Effect.provideContext(options.context),
         Effect.as({ ok: true, op: "stop" } satisfies MaintenanceResponse),
-        Effect.orElseSucceed(
-          () =>
-            ({
-              ok: false,
-              error: { tag: "operation-failed", message: "Unable to stop stack" },
-            }) satisfies MaintenanceResponse,
-        ),
-      ),
-      quiesce: quiesce.pipe(
-        Effect.provideContext(options.context),
-        Effect.as({ ok: true, op: "quiesce" } satisfies MaintenanceResponse),
-        Effect.orElseSucceed(
-          () =>
-            ({
-              ok: false,
-              error: { tag: "operation-failed", message: "Unable to quiesce stack" },
-            }) satisfies MaintenanceResponse,
+        Effect.catch((error) =>
+          Effect.succeed({
+            ok: false,
+            error: { tag: "operation-failed", message: stateErrorMessage(error) },
+          } satisfies MaintenanceResponse),
         ),
       ),
     };
@@ -1004,13 +833,10 @@ export const makeSupervisor = (
           Effect.mapError((error) => rpcError(rpcTag(error), stateErrorMessage(error))),
         );
         const actualPhase = yield* Ref.get(phase);
-        const adoptedGeneration = yield* Ref.get(generation);
         if (
           state === undefined ||
           actualPhase !== "running" ||
-          state.desiredLifecycle !== "running" ||
-          state.portsGeneration !== state.desiredGeneration ||
-          adoptedGeneration !== state.desiredGeneration
+          state.desiredLifecycle !== "running"
         )
           return yield* Effect.fail(
             rpcError("StackNotRunningError", "Stack credentials are unavailable"),
@@ -1170,11 +996,6 @@ export const makeSupervisor = (
         }
 
         const workloads = plan.workloads.filter((workload) => selected.has(workload.capability));
-        if (runtime.prepare === undefined)
-          return yield* new StackPreparationError({
-            stackId: options.stackId,
-            message: "Stack runtime artifact preparation is unavailable",
-          });
         const artifacts = yield* runtime.prepare(state.runtime, workloads);
         const byCapability = new Map<CapabilityName, ReadonlyArray<PreparedWorkloadArtifact>>();
         for (const artifact of artifacts) {
@@ -1201,26 +1022,51 @@ export const makeSupervisor = (
           });
         return { capabilities };
       }).pipe(Effect.provideContext(options.context));
+    const submitPreparation = <A>(
+      effect: Effect.Effect<A, StackError>,
+    ): Effect.Effect<A, StackError> =>
+      Effect.uninterruptibleMask((restore) =>
+        Effect.gen(function* () {
+          const result = yield* Deferred.make<Exit.Exit<A, StackError>, never>();
+          const released = yield* Ref.make(false);
+          const release = Ref.getAndSet(released, true).pipe(
+            Effect.flatMap((alreadyReleased) =>
+              alreadyReleased ? Effect.void : Ref.update(preparationsActive, (count) => count - 1),
+            ),
+          );
+          const owner = Effect.gen(function* () {
+            const exit = yield* Effect.exit(effect);
+            yield* release;
+            yield* Deferred.succeed(result, exit);
+          }).pipe(Effect.ensuring(release));
+          yield* admission.withPermit(
+            ensureAcceptingOperations.pipe(
+              Effect.andThen(Ref.update(preparationsActive, (count) => count + 1)),
+              Effect.andThen(FiberSet.run(ownedFibers, owner, { startImmediately: true })),
+            ),
+          );
+          const awaitResult = Deferred.await(result).pipe(
+            Effect.onInterrupt(() => continueShutdown(result)),
+          );
+          return yield* restore(awaitResult).pipe(Effect.flatMap(joinExit));
+        }),
+      );
     const rpcHandlers: StackRpcHandlers = StackRpcGroup.of({
-      status: () =>
-        status.pipe(Effect.mapError((error) => rpcError(rpcTag(error), stateErrorMessage(error)))),
+      status: () => operation(status),
       credentials: () => credentials,
       prepare: ({ config, capabilities }) =>
-        prepareOperation({ config, capabilities }).pipe(
-          Effect.mapError((error) => rpcError(rpcTag(error), stateErrorMessage(error))),
-        ),
+        operation(submitPreparation(prepareOperation({ config, capabilities }))),
       start: ({ config }: { readonly config?: StackConfig }) => operation(start({ config })),
       restart: ({ config }: { readonly config?: StackConfig }) => operation(restart({ config })),
       destroy: () => operation(destroy),
-      logs: (logOptions: LogOptions) =>
-        logs(logOptions).pipe(
-          Stream.mapError((error) => rpcError(rpcTag(error), stateErrorMessage(error))),
-        ),
-      watchStatus: () =>
-        watchStatus.pipe(
-          Stream.mapError((error) => rpcError(rpcTag(error), stateErrorMessage(error))),
-        ),
+      logs: (logOptions: LogOptions) => streamOperation(logs(logOptions)),
+      watchStatus: () => streamOperation(watchStatus),
     });
+    yield* FiberSet.run(
+      ownedFibers,
+      runtime.driver.watchFailures.pipe(Stream.runForEach(superviseFailure)),
+      { startImmediately: true },
+    );
     return {
       identity: options.identity,
       stackId: options.stackId,
@@ -1229,9 +1075,8 @@ export const makeSupervisor = (
       start,
       restart,
       destroy,
-      recover,
       shutdown: Deferred.await(shutdownSignal),
-      signalShutdown,
+      shutdownIfIdle,
       watchStatus,
       logs,
       activate,

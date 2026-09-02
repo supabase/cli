@@ -1,4 +1,4 @@
-import { Context, Crypto, Effect, FileSystem, Path, Ref, Scope, Semaphore } from "effect";
+import { Context, Crypto, Effect, Exit, FileSystem, Path, Ref, Scope, Semaphore } from "effect";
 import type { LifecycleInput } from "./Lifecycle.ts";
 import type {
   ActivationResult,
@@ -27,9 +27,8 @@ import { privateBindingIntentsFor } from "../runtime/WorkloadRuntimeSpec.ts";
 import type { PortField } from "../public/Status.ts";
 import { bindHostListener, isHttpPortField } from "./HostListener.ts";
 
-export interface SupervisorIngressReservation extends PortReservation {
-  readonly generation: number;
-  /** False when this generation already owns the exact listeners and gateway. */
+interface SupervisorIngressReservation extends PortReservation {
+  /** False when this accepted definition already owns the exact listeners and gateway. */
   readonly fresh: boolean;
 }
 
@@ -60,7 +59,7 @@ export interface SupervisorIngressOptions {
   readonly apiMaterial?: (
     state: LifecycleInput["state"],
   ) => Effect.Effect<GatewayApiMaterial, StackPreparationError>;
-  /** Resolves the accepted generation's Auth templates for live local serving. */
+  /** Resolves the accepted definition's Auth templates for live local serving. */
   readonly resolveAuthTemplates?: (state: LifecycleInput["state"]) => Effect.Effect<
     ReadonlyArray<{
       readonly id: string;
@@ -114,13 +113,25 @@ const routeBackend = (
   activation: ActivationResult,
 ) => {
   if (route.binding === undefined) return Effect.succeed(activation.endpoint);
-  const workload = input.plan.workloads.find((entry) => entry.capability === route.capability);
-  const assignment = reservation.privateAssignments.find(
-    (entry) => entry.workloadId === workload?.id && entry.binding === route.binding,
+  const workloadIds = new Set(
+    input.plan.workloads
+      .filter((entry) => entry.capability === route.capability)
+      .map((entry) => entry.id),
   );
-  return assignment === undefined
-    ? Effect.fail(new GatewayActivationError({ message: "Gateway private binding is unavailable" }))
-    : Effect.succeed({ host: "127.0.0.1", port: assignment.port });
+  const assignments = reservation.privateAssignments.filter(
+    (entry) => workloadIds.has(entry.workloadId) && entry.binding === route.binding,
+  );
+  const [assignment, ...additionalAssignments] = assignments;
+  if (assignment === undefined || additionalAssignments.length > 0)
+    return Effect.fail(
+      new GatewayActivationError({
+        message:
+          assignment === undefined
+            ? "Gateway private binding is unavailable"
+            : "Gateway private binding is ambiguous",
+      }),
+    );
+  return Effect.succeed({ host: "127.0.0.1", port: assignment.port });
 };
 
 const templateContentType = (extension: string): string => {
@@ -153,6 +164,7 @@ export const makeSupervisorIngress = (
       | {
           readonly input: LifecycleInput;
           readonly reservation: SupervisorIngressReservation;
+          readonly scope: Scope.Scope;
           readonly gateway?: StackGateway;
         }
       | undefined
@@ -168,26 +180,23 @@ export const makeSupervisorIngress = (
       lock.withPermit(
         Effect.gen(function* () {
           const existing = yield* Ref.get(current);
-          if (existing !== undefined && existing.reservation.generation === input.generation)
+          if (existing !== undefined && existing.input.inputFingerprint === input.inputFingerprint)
             return { ...existing.reservation, fresh: false };
           if (existing !== undefined) yield* closeCurrent(existing);
+          const reservationScope = Scope.forkUnsafe(ownerScope);
           const reservation = yield* coordinator
             .planAndReserve(options.stackId, listenerIntents(input), {
-              lifecycle: "running",
-              expectedGeneration: input.generation,
-              nextGeneration: input.generation,
               privateBindings: privateBindingIntentsFor(input.plan),
             })
             .pipe(
               Effect.provideContext(options.context),
-              Effect.provideService(Scope.Scope, ownerScope),
+              Effect.provideService(Scope.Scope, reservationScope),
             );
           const owned: SupervisorIngressReservation = {
             ...reservation,
-            generation: input.generation,
             fresh: true,
           };
-          yield* Ref.set(current, { input, reservation: owned });
+          yield* Ref.set(current, { input, reservation: owned, scope: reservationScope });
           return owned;
         }),
       );
@@ -195,13 +204,11 @@ export const makeSupervisorIngress = (
     const closeCurrent = (entry: {
       readonly reservation: SupervisorIngressReservation;
       readonly gateway?: StackGateway;
+      readonly scope: Scope.Scope;
     }): Effect.Effect<void, StackError> =>
       Effect.gen(function* () {
         if (entry.gateway !== undefined) yield* entry.gateway.close;
-        yield* Effect.forEach(entry.reservation.hostListeners, (listener) => listener.close, {
-          concurrency: "unbounded",
-          discard: true,
-        });
+        yield* Scope.close(entry.scope, Exit.void);
       });
 
     const close: Effect.Effect<void, StackError> = lock.withPermit(
@@ -223,12 +230,11 @@ export const makeSupervisorIngress = (
       lock.withPermit(
         Effect.gen(function* () {
           const entry = yield* Ref.get(current);
-          if (
-            entry !== undefined &&
-            entry.reservation.generation === reservation.generation &&
-            entry.gateway !== undefined
-          )
-            return;
+          if (entry === undefined || entry.input.inputFingerprint !== input.inputFingerprint)
+            return yield* new GatewayActivationError({
+              message: "Gateway reservation is no longer current",
+            });
+          if (entry.gateway !== undefined) return;
           const material = input.definition.listeners.api.enabled
             ? yield* (options.apiMaterial ?? defaultApiMaterial)(input.state)
             : undefined;
@@ -320,8 +326,13 @@ export const makeSupervisorIngress = (
                     : new GatewayActivationError({ message: error.message, cause: error }),
                 ),
               ),
-          }).pipe(Effect.provideService(Scope.Scope, ownerScope));
-          yield* Ref.set(current, { input, reservation, gateway });
+          }).pipe(Effect.provideService(Scope.Scope, entry.scope));
+          yield* Ref.set(current, {
+            input,
+            reservation,
+            scope: entry.scope,
+            gateway,
+          });
         }),
       );
 

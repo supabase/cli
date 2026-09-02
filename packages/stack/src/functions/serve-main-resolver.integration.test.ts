@@ -150,6 +150,121 @@ describe("Edge Runtime request-time function resolver", () => {
     }
   });
 
+  it("applies global defaults to newly discovered functions while preserving overrides", async () => {
+    const root = await mkdtemp(join(tmpdir(), "stack-functions-resolver-defaults-"));
+    try {
+      const hello = join(root, "hello");
+      const created = join(root, "created");
+      const canonicalRoot = await realpath(root);
+      await mkdir(hello, { recursive: true });
+      await mkdir(created, { recursive: true });
+      await writeFile(join(hello, "index.ts"), "export default 1");
+      await writeFile(join(created, "index.ts"), "export default 2");
+      await writeFile(join(root, "shared-deno.json"), "{}");
+
+      const defaults = {
+        verify_jwt: false,
+        import_map_root: "shared-deno.json",
+      };
+      const overrides = {
+        $default: defaults,
+        hello: { verify_jwt: true },
+      };
+
+      expect(
+        await resolveFunctionConfig({ root, slug: "created", overrides, fs: nodeFileSystem }),
+      ).toMatchObject({
+        verifyJWT: false,
+        importMapPath: join(canonicalRoot, "shared-deno.json"),
+      });
+      expect(
+        await resolveFunctionConfig({ root, slug: "hello", overrides, fs: nodeFileSystem }),
+      ).toMatchObject({
+        verifyJWT: true,
+        importMapPath: join(canonicalRoot, "shared-deno.json"),
+      });
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
+  it("keeps a closed per-function import map relative to that function", async () => {
+    const root = await mkdtemp(join(tmpdir(), "stack-functions-resolver-import-map-"));
+    try {
+      const hello = join(root, "hello");
+      await mkdir(hello, { recursive: true });
+      await writeFile(join(hello, "index.ts"), "export default 1");
+      await writeFile(join(root, "shared-deno.json"), "{}");
+      await writeFile(join(hello, "custom-deno.json"), "{}");
+
+      const canonicalRoot = await realpath(root);
+      await expect(
+        resolveFunctionConfig({
+          root,
+          slug: "hello",
+          overrides: {
+            $default: { import_map_root: "shared-deno.json" },
+            hello: { import_map: "custom-deno.json" },
+          },
+          fs: nodeFileSystem,
+        }),
+      ).resolves.toMatchObject({
+        importMapPath: join(canonicalRoot, "hello", "custom-deno.json"),
+      });
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
+  it("accepts a symlinked functions root while enforcing canonical descendants", async () => {
+    const root = await mkdtemp(join(tmpdir(), "stack-functions-resolver-root-link-"));
+    try {
+      const canonical = join(root, "canonical");
+      const configured = join(root, "configured");
+      await mkdir(join(canonical, "hello"), { recursive: true });
+      await writeFile(join(canonical, "hello", "index.ts"), "export default 1");
+      await symlink(canonical, configured, "dir");
+      const found = await resolveFunctionConfig({
+        root: configured,
+        slug: "hello",
+        overrides: {},
+        fs: nodeFileSystem,
+      });
+      expect(found?.entrypointPath).toBe(join(await realpath(canonical), "hello", "index.ts"));
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
+  it("allows package.json discovery under a symlinked functions root", async () => {
+    const root = await mkdtemp(join(tmpdir(), "stack-functions-resolver-package-root-link-"));
+    try {
+      const canonical = join(root, "canonical");
+      const configured = join(root, "configured");
+      const functionRoot = join(canonical, "hello");
+      await mkdir(functionRoot, { recursive: true });
+      await writeFile(join(functionRoot, "index.ts"), "export default 1");
+      await writeFile(join(functionRoot, "package.json"), "{}");
+      await symlink(canonical, configured, "dir");
+      const config = await resolveFunctionConfig({
+        root: configured,
+        slug: "hello",
+        overrides: {},
+        fs: nodeFileSystem,
+      });
+      expect(config).toBeDefined();
+      expect(
+        await packageJsonContainedFor({
+          root: configured,
+          config: { ...config!, importMapPath: "" },
+          fs: nodeFileSystem,
+        }),
+      ).toBe(true);
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
   it("requires an absolute root and rejects traversal and symlink escapes", async () => {
     const root = await mkdtemp(join(tmpdir(), "stack-functions-resolver-paths-"));
     const outside = await mkdtemp(join(tmpdir(), "stack-functions-resolver-outside-"));

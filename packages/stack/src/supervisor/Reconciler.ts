@@ -1,4 +1,4 @@
-import { Cause, Duration, Effect, Exit, Option, Schedule, Semaphore } from "effect";
+import { Cause, Effect, Exit, Option, Schedule, Semaphore } from "effect";
 import type { ExecutionPlan } from "../model/ExecutionPlan.ts";
 import type { StackId } from "../public/StackId.ts";
 import {
@@ -8,8 +8,6 @@ import {
 } from "./DesiredState.ts";
 import {
   RuntimeDriverError,
-  RuntimeGenerationMismatchError,
-  RuntimeReadinessTimeoutError,
   RuntimeRestartBudgetExceededError,
   type ObservedWorkload,
   type RuntimeDriver,
@@ -17,30 +15,22 @@ import {
 
 interface ReconcilerRequest {
   readonly stackId: StackId;
-  readonly desiredGeneration: number;
   readonly desiredLifecycle: DesiredLifecycle;
   readonly plan: ExecutionPlan;
 }
 
 export interface ReconcilerOptions {
   readonly driver: RuntimeDriver;
-  /** Reads durable state and lets every mutation fence itself to the accepted generation. */
-  readonly readGeneration: (stackId: StackId) => Effect.Effect<number, RuntimeDriverError>;
-  readonly readinessTimeout?: Duration.Input;
 }
 
 interface ReconciliationResult {
-  readonly generation: number;
   readonly observed: ReadonlyArray<ObservedWorkload>;
   readonly started: ReadonlyArray<string>;
   readonly stopped: ReadonlyArray<string>;
   readonly removed: ReadonlyArray<string>;
   readonly failed: ReadonlyArray<{
     readonly workloadId: string;
-    readonly error:
-      | RuntimeDriverError
-      | RuntimeReadinessTimeoutError
-      | RuntimeRestartBudgetExceededError;
+    readonly error: RuntimeDriverError | RuntimeRestartBudgetExceededError;
   }>;
   readonly blocked: ReadonlyArray<{ readonly workloadId: string; readonly dependencyId: string }>;
 }
@@ -51,16 +41,9 @@ export interface Reconciler {
   ) => Effect.Effect<ReconciliationResult, ReconcilerError>;
 }
 
-type ReconcilerError =
-  | RuntimeDriverError
-  | RuntimeGenerationMismatchError
-  | RuntimeReadinessTimeoutError
-  | RuntimeRestartBudgetExceededError;
+type ReconcilerError = RuntimeDriverError | RuntimeRestartBudgetExceededError;
 
-type AttemptFailure =
-  | RuntimeDriverError
-  | RuntimeGenerationMismatchError
-  | RuntimeReadinessTimeoutError;
+type AttemptFailure = RuntimeDriverError;
 
 /** Internal retry sentinel that keeps the complete failed attempt Cause intact. */
 class RuntimeAttemptControlError extends RuntimeDriverError {
@@ -82,38 +65,20 @@ class RuntimeAttemptControlError extends RuntimeDriverError {
 export const makeReconciler = (options: ReconcilerOptions): Effect.Effect<Reconciler> =>
   Effect.gen(function* () {
     const lifecycle = yield* Semaphore.make(1);
-    // Restart budgets are Supervisor-local. A new accepted generation gets a fresh key; repeated
-    // observations of the same failed generation cannot silently reset an exhausted budget.
-    const exhausted = new Map<string, number>();
+    // Restart budgets are Supervisor-local and reset when lifecycle enters stopped.
+    const restartAttempts = new Map<string, number>();
 
     const reconcile = (
       request: ReconcilerRequest,
     ): Effect.Effect<ReconciliationResult, ReconcilerError> =>
       lifecycle.withPermit(
         Effect.gen(function* () {
-          const readGeneration = options.readGeneration;
-          const generationFence = (expected: number) =>
-            readGeneration(request.stackId).pipe(
-              Effect.flatMap((actual) =>
-                actual === expected
-                  ? Effect.void
-                  : Effect.fail(
-                      new RuntimeGenerationMismatchError({
-                        message: `Desired generation changed from ${expected} to ${actual}`,
-                        expectedGeneration: expected,
-                        actualGeneration: actual,
-                      }),
-                    ),
-              ),
-            );
-
-          yield* generationFence(request.desiredGeneration);
           if (request.desiredLifecycle !== "running") {
             const prefix = `${request.stackId}:`;
-            for (const key of exhausted.keys()) if (key.startsWith(prefix)) exhausted.delete(key);
+            for (const key of restartAttempts.keys())
+              if (key.startsWith(prefix)) restartAttempts.delete(key);
           }
           const observed = yield* options.driver.observe(request.stackId);
-          yield* generationFence(request.desiredGeneration);
           const desired: ReconciliationInput = { ...request, observed };
           const delta = planDesiredState(desired);
           const failed: Array<ReconciliationResult["failed"][number]> = [];
@@ -129,11 +94,9 @@ export const makeReconciler = (options: ReconcilerOptions): Effect.Effect<Reconc
 
           const runMutation = <A, E>(
             effect: Effect.Effect<A, E>,
-          ): Effect.Effect<A, E | RuntimeDriverError | RuntimeGenerationMismatchError> =>
+          ): Effect.Effect<A, E | RuntimeDriverError> =>
             Effect.gen(function* () {
-              yield* generationFence(request.desiredGeneration);
               const result = yield* effect.pipe(Effect.exit);
-              yield* generationFence(request.desiredGeneration);
               if (Exit.isSuccess(result)) return result.value;
               return yield* Effect.failCause(result.cause);
             });
@@ -141,7 +104,6 @@ export const makeReconciler = (options: ReconcilerOptions): Effect.Effect<Reconc
           const quiesceDependents = () =>
             Effect.gen(function* () {
               const current = yield* options.driver.observe(request.stackId);
-              yield* generationFence(request.desiredGeneration);
               const affected: Array<{
                 readonly workload: (typeof request.plan.workloads)[number];
                 readonly dependencyId: string;
@@ -162,13 +124,11 @@ export const makeReconciler = (options: ReconcilerOptions): Effect.Effect<Reconc
                 const observed = current.find(({ workloadId }) => workloadId === workload.id);
                 if (
                   observed === undefined ||
-                  observed.desiredGeneration !== request.desiredGeneration ||
                   (observed.state !== "ready" && observed.state !== "starting")
                 )
                   continue;
                 const key = {
                   stackId: request.stackId,
-                  desiredGeneration: observed.desiredGeneration,
                   workloadId: observed.workloadId,
                   specHash: observed.specHash,
                 };
@@ -184,6 +144,23 @@ export const makeReconciler = (options: ReconcilerOptions): Effect.Effect<Reconc
             stopped.push(action.key.workloadId);
           }
           for (const action of delta.removes) {
+            const observedEntry = observed.find(
+              (entry) =>
+                entry.stackId === action.key.stackId &&
+                entry.workloadId === action.key.workloadId &&
+                entry.specHash === action.key.specHash,
+            );
+            const workload = request.plan.workloads.find(({ id }) => id === action.key.workloadId);
+            const budgetKey = `${request.stackId}:${action.key.workloadId}`;
+            const attempts = restartAttempts.get(budgetKey);
+            const preserveExhaustedFailure =
+              observedEntry?.state === "failed" &&
+              workload !== undefined &&
+              attempts !== undefined &&
+              attempts >= Math.max(1, workload.restart.maxAttempts);
+            // Keep a terminal failed resource visible to status. Removing it would make an
+            // exhausted post-readiness crash look dormant/stopped and lose the diagnostic error.
+            if (preserveExhaustedFailure) continue;
             yield* runMutation(options.driver.remove(action.key));
             removed.push(action.key.workloadId);
           }
@@ -198,9 +175,9 @@ export const makeReconciler = (options: ReconcilerOptions): Effect.Effect<Reconc
               continue;
             }
             const maxAttempts = Math.max(1, action.workload.restart.maxAttempts);
-            const budgetKey = `${request.stackId}:${request.desiredGeneration}:${action.workload.id}`;
-            const previousAttempts = exhausted.get(budgetKey);
-            if (previousAttempts !== undefined) {
+            const budgetKey = `${request.stackId}:${action.workload.id}`;
+            const previousAttempts = restartAttempts.get(budgetKey);
+            if (previousAttempts !== undefined && previousAttempts >= maxAttempts) {
               failedIds.add(action.workload.id);
               failed.push({
                 workloadId: action.workload.id,
@@ -214,25 +191,32 @@ export const makeReconciler = (options: ReconcilerOptions): Effect.Effect<Reconc
               yield* quiesceDependents();
               continue;
             }
-            const start = options.driver.start(action.key, action.workload);
-            const attempt =
-              options.readinessTimeout === undefined
-                ? start
-                : start.pipe(
-                    Effect.timeoutOption(options.readinessTimeout),
-                    Effect.flatMap((result) =>
-                      Option.isSome(result)
-                        ? Effect.succeed(result.value)
-                        : Effect.fail(
-                            new RuntimeReadinessTimeoutError({
-                              message: `Readiness deadline exceeded for ${action.workload.id}`,
-                              stackId: request.stackId,
-                              workloadId: action.workload.id,
-                              desiredGeneration: request.desiredGeneration,
-                            }),
-                          ),
-                    ),
-                  );
+            const hadReadyFailure = observed.some(
+              (entry) =>
+                entry.workloadId === action.workload.id &&
+                entry.specHash === action.workload.specHash &&
+                entry.state === "failed",
+            );
+            if (hadReadyFailure) {
+              const attempts = restartAttempts.get(budgetKey) ?? 0;
+              if (attempts >= maxAttempts) {
+                restartAttempts.set(budgetKey, attempts);
+                failedIds.add(action.workload.id);
+                failed.push({
+                  workloadId: action.workload.id,
+                  error: new RuntimeRestartBudgetExceededError({
+                    message: `Restart budget exhausted for ${action.workload.id}`,
+                    stackId: request.stackId,
+                    workloadId: action.workload.id,
+                    attempts,
+                  }),
+                });
+                yield* quiesceDependents();
+                continue;
+              }
+              restartAttempts.set(budgetKey, attempts + 1);
+            }
+            const attempt = options.driver.start(action.key, action.workload);
             const schedule: Schedule.Schedule<unknown, RuntimeAttemptControlError> =
               Schedule.exponential(`${Math.max(0, action.workload.restart.backoffMs)} millis`).pipe(
                 Schedule.upTo({ times: Math.max(0, maxAttempts - 1) }),
@@ -243,8 +227,7 @@ export const makeReconciler = (options: ReconcilerOptions): Effect.Effect<Reconc
                   const reason = cause.reasons.length === 1 ? cause.reasons[0] : undefined;
                   const failure =
                     reason !== undefined && Cause.isFailReason(reason) ? reason.error : undefined;
-                  const retryable =
-                    failure !== undefined && !(failure instanceof RuntimeGenerationMismatchError);
+                  const retryable = failure !== undefined;
                   return Effect.fail(new RuntimeAttemptControlError(cause, retryable));
                 }),
               );
@@ -268,18 +251,14 @@ export const makeReconciler = (options: ReconcilerOptions): Effect.Effect<Reconc
               return yield* Effect.failCause(error.originalCause);
             const original = Cause.findErrorOption(error.originalCause);
             if (Option.isNone(original)) return yield* Effect.failCause(error.originalCause);
-            if (original.value instanceof RuntimeGenerationMismatchError)
-              return yield* original.value;
             failedIds.add(action.workload.id);
-            exhausted.set(budgetKey, maxAttempts);
+            restartAttempts.set(budgetKey, maxAttempts);
             failed.push({ workloadId: action.workload.id, error: original.value });
             yield* quiesceDependents();
           }
 
           const current = yield* options.driver.observe(request.stackId);
-          yield* generationFence(request.desiredGeneration);
           return {
-            generation: request.desiredGeneration,
             observed: current,
             started,
             stopped,

@@ -2,7 +2,7 @@ import { Data, Effect, Predicate, Schema, Stream } from "effect";
 import { ChildProcess, ChildProcessSpawner } from "effect/unstable/process";
 import type * as ChildProcessSpawnerService from "effect/unstable/process/ChildProcessSpawner";
 import type { ContainerArtifact } from "../model/CapabilityModule.ts";
-import type { StackId } from "../public/StackId.ts";
+import { StackIdSchema, type StackId } from "../public/StackId.ts";
 import { NetworkPortSchema } from "../public/Status.ts";
 
 export type ContainerEngineKind = "docker" | "podman";
@@ -41,7 +41,6 @@ export type ContainerResourceRole = "network" | "volume" | "workload";
 interface ContainerIdentityLabels {
   readonly stackId: StackId;
   readonly ownerSessionId: string;
-  readonly desiredGeneration: number;
 }
 export interface ContainerNetworkLabels extends ContainerIdentityLabels {
   readonly role: "network";
@@ -166,23 +165,6 @@ export interface ContainerCommandRunner {
     request: ContainerProcessRequest,
   ) => Stream.Stream<ContainerProcessOutputChunk, ContainerEngineFailure>;
 }
-export interface ControlledCommandRunnerOptions {
-  readonly executable?: string;
-  readonly run: (
-    request: ContainerProcessRequest,
-  ) => Effect.Effect<ContainerCommandResult, ContainerEngineFailure>;
-  readonly stream?: (
-    request: ContainerProcessRequest,
-  ) => Stream.Stream<ContainerProcessOutputChunk, ContainerEngineFailure>;
-}
-export const makeControlledCommandRunner = (
-  options: ControlledCommandRunnerOptions,
-): ContainerCommandRunner => ({
-  executable: options.executable ?? "controlled-container-engine",
-  run: options.run,
-  ...(options.stream === undefined ? {} : { stream: options.stream }),
-});
-
 export interface ProcessCommandRunnerOptions {
   readonly executable: string;
   readonly baseArgs?: ReadonlyArray<string>;
@@ -358,7 +340,7 @@ export const makeProcessCommandRunner = (
     return { executable: options.executable, run, stream };
   });
 
-interface ContainerEngineCodecs {
+export interface ContainerEngineCodecs {
   readonly serialize: (command: ContainerCommand) => ContainerProcessRequest;
   readonly decodeProbe: (
     result: ContainerCommandResult,
@@ -389,6 +371,164 @@ interface ContainerEngineCodecs {
     options: ContainerLogOptions | undefined,
   ) => ContainerProcessRequest;
 }
+
+export const makeContainerEngineCodecs = (options: {
+  readonly engineName: "Docker" | "Podman";
+  readonly scalarFormat: "json" | "raw";
+  readonly serialize: ContainerEngineCodecs["serialize"];
+  readonly serializeLogs: ContainerEngineCodecs["serializeLogs"];
+}): ContainerEngineCodecs => {
+  const protocol = (operation: string, cause?: unknown): ContainerEngineProtocolError =>
+    new ContainerEngineProtocolError({
+      operation,
+      message: `${operation} returned an invalid ${options.engineName} response`,
+      ...(cause === undefined ? {} : { cause }),
+    });
+  const lines = (raw: string): ReadonlyArray<string> =>
+    raw
+      .split(/\r?\n/)
+      .map((line) => line.trim())
+      .filter((line) => line.length > 0);
+  const scalar = (
+    operation: string,
+    raw: string,
+  ): Effect.Effect<string, ContainerEngineFailure> => {
+    if (options.scalarFormat === "raw") {
+      const value = raw.trim();
+      return value.length > 0 && !/\\t|\t/.test(value)
+        ? Effect.succeed(value)
+        : Effect.fail(protocol(operation));
+    }
+    return Schema.decodeEffect(Schema.fromJsonString(Schema.Unknown))(raw).pipe(
+      Effect.mapError((cause) => protocol(operation, cause)),
+      Effect.flatMap((value) =>
+        typeof value === "string" && value.length > 0
+          ? Effect.succeed(value)
+          : Effect.fail(protocol(operation)),
+      ),
+    );
+  };
+  const fields = (operation: string, line: string, count: number) => {
+    const values = line.split(/\\t|\t/);
+    if (values.length !== count) return Effect.fail(protocol(operation));
+    return options.scalarFormat === "json"
+      ? Effect.forEach(values, (value) => scalar(operation, value))
+      : Effect.succeed(values);
+  };
+  const decodeIdentity = (operation: string, stack: string | undefined) =>
+    stack === undefined
+      ? Effect.fail(protocol(operation))
+      : Schema.decodeEffect(StackIdSchema)(stack).pipe(
+          Effect.mapError((error) => protocol(operation, error)),
+        );
+  const networkLabels = (operation: string, values: ReadonlyArray<string>) => {
+    const [stack, owner, role] = values;
+    if (owner === undefined || role !== "network") return Effect.fail(protocol(operation));
+    return decodeIdentity(operation, stack).pipe(
+      Effect.map((stackId) => ({ stackId, ownerSessionId: owner, role: "network" as const })),
+    );
+  };
+  const workloadLabels = (operation: string, values: ReadonlyArray<string>) => {
+    const [stack, owner, workload, hash, role] = values;
+    if (owner === undefined || workload === undefined || hash === undefined || role !== "workload")
+      return Effect.fail(protocol(operation));
+    return decodeIdentity(operation, stack).pipe(
+      Effect.map((stackId) => ({
+        stackId,
+        ownerSessionId: owner,
+        workloadId: workload,
+        specHash: hash,
+        role: "workload" as const,
+      })),
+    );
+  };
+  const decodeRows = <A>(
+    operation: string,
+    raw: string,
+    count: number,
+    decode: (values: ReadonlyArray<string>) => Effect.Effect<A, ContainerEngineFailure>,
+  ) =>
+    Effect.forEach(lines(raw), (line) =>
+      fields(operation, line, count).pipe(Effect.flatMap(decode)),
+    );
+  const decodeContainers: ContainerEngineCodecs["decodeContainers"] = (result) =>
+    decodeRows("inspect-containers", result.stdout, 8, (values) => {
+      const [id, name, stack, owner, workload, hash, role, state] = values;
+      if (
+        id === undefined ||
+        name === undefined ||
+        stack === undefined ||
+        owner === undefined ||
+        workload === undefined ||
+        hash === undefined ||
+        role !== "workload" ||
+        state === undefined
+      )
+        return Effect.fail(protocol("inspect-containers"));
+      return workloadLabels("inspect-containers", [stack, owner, workload, hash, role]).pipe(
+        Effect.map((labels): ContainerResource => ({
+          id,
+          name,
+          kind: "workload",
+          labels,
+          state: state.includes("running") ? "running" : "stopped",
+        })),
+      );
+    });
+  const decodeNetworks: ContainerEngineCodecs["decodeNetworks"] = (result) =>
+    decodeRows("inspect-networks", result.stdout, 5, (values) => {
+      const [id, name, stack, owner, role] = values;
+      if (id === undefined || name === undefined || role === undefined)
+        return Effect.fail(protocol("inspect-networks"));
+      return networkLabels("inspect-networks", [stack ?? "", owner ?? "", role]).pipe(
+        Effect.map((labels): ContainerResource => ({ id, name, kind: "network", labels })),
+      );
+    });
+  const decodeVolumes: ContainerEngineCodecs["decodeVolumes"] = (result) =>
+    decodeRows("inspect-volumes", result.stdout, 4, (values) => {
+      const [name, stack, workload, role] = values;
+      if (name === undefined || stack === undefined || workload === undefined || role !== "volume")
+        return Effect.fail(protocol("inspect-volumes"));
+      return decodeIdentity("inspect-volumes", stack).pipe(
+        Effect.map((stackId): ContainerResource => ({
+          id: name,
+          name,
+          kind: "volume",
+          labels: { stackId, workloadId: workload, role: "volume" },
+        })),
+      );
+    });
+  const decodeCreate: ContainerEngineCodecs["decodeCreate"] = (operation, result, spec, kind) => {
+    const id = result.stdout.trim();
+    return id.length > 0 && !/[\r\n]/.test(id)
+      ? Effect.succeed({ id, name: spec.name, kind, labels: spec.labels, state: "created" })
+      : Effect.fail(protocol(operation));
+  };
+  const decodeWait: ContainerEngineCodecs["decodeWait"] = (result) => {
+    const values = lines(result.stdout);
+    const value = values[0];
+    if (values.length !== 1 || value === undefined || !/^\d+$/.test(value))
+      return Effect.fail(protocol("wait-container"));
+    const exitCode = Number(value);
+    return Number.isSafeInteger(exitCode)
+      ? Effect.succeed(exitCode)
+      : Effect.fail(protocol("wait-container"));
+  };
+  return {
+    serialize: options.serialize,
+    serializeLogs: options.serializeLogs,
+    decodeProbe: (result) => scalar("probe", result.stdout).pipe(Effect.asVoid),
+    decodeImage: (result) =>
+      Effect.forEach(lines(result.stdout), (line) => scalar("inspect-image", line)).pipe(
+        Effect.map((values) => ({ present: values.length > 0 })),
+      ),
+    decodeContainers,
+    decodeNetworks,
+    decodeVolumes,
+    decodeCreate,
+    decodeWait,
+  };
+};
 export interface ContainerEngineOptions {
   readonly kind: ContainerEngineKind;
   readonly runner: ContainerCommandRunner;

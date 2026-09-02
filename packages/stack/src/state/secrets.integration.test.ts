@@ -59,10 +59,18 @@ describe("managed and pass-through secrets", () => {
         "secret:auth.settings.anon_key",
         "secret:auth.settings.service_role_key",
         "secret:storage.settings.s3_protocol.secret_access_key",
+        "secret:realtime.settings.db_enc_key",
+        "secret:realtime.settings.secret_key_base",
       ]) {
         expect(first.persisted[slot]?.policy).toBe("managed");
         expect(first.persisted[slot]?.value).toBe(second.persisted[slot]?.value);
       }
+      expect(first.persisted["secret:realtime.settings.db_enc_key"]?.value).toMatch(
+        /^[A-Za-z0-9_-]{16}$/,
+      );
+      expect(first.persisted["secret:realtime.settings.secret_key_base"]?.value).toMatch(
+        /^[A-Za-z0-9_-]{64}$/,
+      );
       expect(first.persisted["secret:auth.settings.publishable_key"]?.value).toMatch(
         /^sb_publishable_[A-Za-z0-9_-]{32,}$/,
       );

@@ -21,8 +21,8 @@ import {
 } from "../model/WorkloadCatalog.ts";
 import { parseFileSize } from "../model/capabilities/storage.ts";
 import { resolveThirdPartyIssuer } from "../model/capabilities/auth-third-party.ts";
-import { Effect } from "effect";
-import { StackPreparationError } from "../public/Errors.ts";
+import { Effect, type Duration } from "effect";
+import { StackPreparationError, StackStateInvalidError } from "../public/Errors.ts";
 
 type WorkloadRuntimeKind = "native" | "container";
 
@@ -81,6 +81,8 @@ interface NativeProcessResolution {
   readonly args: ReadonlyArray<string>;
   readonly cwd: string;
   readonly env?: Readonly<Record<string, string>>;
+  readonly gracefulStopSignal?: "SIGTERM" | "SIGINT";
+  readonly gracefulStopTimeout?: Duration.Input;
 }
 
 /** Complete process-side contract for one catalog workload. */
@@ -112,8 +114,14 @@ export interface WorkloadRuntimeSpec {
     port: number,
     inputs?: WorkloadRuntimeInputs,
   ) => ReadonlyArray<string>;
-  /** Closed set of service-owned one-shot container processes. */
-  readonly containerStartupProcesses: ReadonlyArray<ContainerStartupProcess>;
+  /** Optional main-container entrypoint override; startup processes remain explicit. */
+  readonly containerEntrypoint?: string;
+  /** Service-owned one-shot container processes run before the main container. */
+  readonly containerStartupProcesses: (
+    state: PersistedStackState,
+    workload: PlannedWorkload,
+    inputs?: WorkloadRuntimeInputs,
+  ) => ReadonlyArray<ContainerStartupProcess>;
   readonly containerMounts?: (
     state: PersistedStackState,
     workload: PlannedWorkload,
@@ -169,6 +177,7 @@ type WorkloadRuntimeSpecDefinition = Omit<
   >;
 
 export interface ContainerWorkloadResolution {
+  readonly entrypoint?: string;
   readonly command: ReadonlyArray<string>;
   readonly startup?: ReadonlyArray<ContainerStartupProcess>;
   readonly env: Readonly<Record<string, string>>;
@@ -192,7 +201,7 @@ export const validateWorkloadRuntimeInputs = (
   state: PersistedStackState,
   workload: PlannedWorkload,
   inputs: WorkloadRuntimeInputs = {},
-): Effect.Effect<void, StackPreparationError> =>
+): Effect.Effect<void, StackPreparationError | StackStateInvalidError> =>
   Effect.gen(function* () {
     const signing = state.definition?.security.jwt.signing;
     const thirdParty = resolveThirdPartyIssuer(settingsFor(state, "auth"));
@@ -393,8 +402,16 @@ const edgeRuntimeJwtEnvironment = (
 
 const functionsConfigEnvironment = (state: PersistedStackState): string => {
   const settings = settingsFor(state, "functions");
+  const edgeRuntime =
+    isRecord(settings) && isRecord(settings.edge_runtime) ? settings.edge_runtime : {};
   const configured = isRecord(settings) && isRecord(settings.functions) ? settings.functions : {};
   const result: Record<string, unknown> = {};
+  const defaults: Record<string, unknown> = {};
+  if (typeof edgeRuntime.verify_jwt_default === "boolean")
+    defaults.verify_jwt = edgeRuntime.verify_jwt_default;
+  if (typeof edgeRuntime.import_map_default === "string")
+    defaults.import_map_root = edgeRuntime.import_map_default;
+  if (Object.keys(defaults).length > 0) result.$default = defaults;
   for (const [slug, value] of Object.entries(configured)) {
     if (!isRecord(value)) continue;
     const env = isRecord(value.env)
@@ -483,6 +500,9 @@ const nativeProcessFor = (
       executable: artifactPath(artifactRoot, metadata.executablePath),
       args: nativeArgsFor(workload, metadataArgs, inputs),
       cwd: artifactPath(artifactRoot, metadata.cwd),
+      ...(workload.id === "database:database"
+        ? { gracefulStopSignal: "SIGINT", gracefulStopTimeout: "15 seconds" }
+        : {}),
     };
   }
   const executablePath = catalog?.executablePath;
@@ -498,6 +518,9 @@ const nativeProcessFor = (
       executablePath === undefined ? artifactRoot : artifactPath(artifactRoot, executablePath),
     args: nativeArgs,
     cwd: spec.cwd?.(state, workload) ?? state.identity.projectRoot,
+    ...(workload.id === "database:database"
+      ? { gracefulStopSignal: "SIGINT", gracefulStopTimeout: "15 seconds" }
+      : {}),
   };
 };
 
@@ -1033,7 +1056,7 @@ const specs: Readonly<Record<string, WorkloadRuntimeSpecDefinition>> = {
     env: (state, workload, port, runtime = "native", inputs = {}) =>
       withAuthSettings(state, runtime, port, workload, inputs),
     containerArgs: () => [],
-    containerStartupProcesses: [{ entrypoint: "/usr/local/bin/auth", command: ["migrate"] }],
+    containerStartupProcesses: () => [{ entrypoint: "/usr/local/bin/auth", command: ["migrate"] }],
     readiness: { protocol: "http", path: "/health" },
   },
   "realtime:realtime": {
@@ -1054,8 +1077,8 @@ const specs: Readonly<Record<string, WorkloadRuntimeSpecDefinition>> = {
         API_JWT_SECRET: secret(state, "secret:auth.settings.jwt_secret"),
         ...(inputs.auth?.jwks === undefined ? {} : { API_JWT_JWKS: inputs.auth.jwks }),
         METRICS_JWT_SECRET: secret(state, "secret:auth.settings.jwt_secret"),
-        DB_ENC_KEY: "supabaserealtime",
-        SECRET_KEY_BASE: "EAx3IQ/wRG1v47ZD4NE4/9RzBI8Jmil3x0yhcW4V2NHBP6c2iPIzwjofi2Ep4HIG",
+        DB_ENC_KEY: secret(state, "secret:realtime.settings.db_enc_key"),
+        SECRET_KEY_BASE: secret(state, "secret:realtime.settings.secret_key_base"),
         DNS_NODES: "''",
         APP_NAME: "realtime",
         SEED_SELF_HOST: "true",
@@ -1066,7 +1089,15 @@ const specs: Readonly<Record<string, WorkloadRuntimeSpecDefinition>> = {
             : "-proto_dist inet_tcp",
         RUN_JANITOR: "true",
       }),
-    containerArgs: () => [],
+    containerEntrypoint: "/usr/bin/tini",
+    containerArgs: () => ["-s", "-g", "--", "/app/bin/server"],
+    containerStartupProcesses: () => [
+      { entrypoint: "/app/bin/migrate", command: [] },
+      {
+        entrypoint: "/app/bin/realtime",
+        command: ["eval", "Realtime.Release.seeds(Realtime.Repo)"],
+      },
+    ],
     readiness: { protocol: "http", path: "/healthcheck" },
   },
   "storage:storage": {
@@ -1075,7 +1106,7 @@ const specs: Readonly<Record<string, WorkloadRuntimeSpecDefinition>> = {
     env: (state, workload, port, runtime = "native", inputs = {}) =>
       withStorageSettings(state, runtime, port, workload, inputs),
     containerArgs: () => [],
-    containerStartupProcesses: [
+    containerStartupProcesses: () => [
       { entrypoint: "/node/bin/node", command: ["dist/scripts/migrate-call.js"] },
     ],
     readiness: { protocol: "http", path: "/status" },
@@ -1102,10 +1133,8 @@ const specs: Readonly<Record<string, WorkloadRuntimeSpecDefinition>> = {
     ],
     env: (state, workload, port, runtime = "native", inputs = {}) => ({
       ...common(workload, port),
-      ...capabilityEnv(state, "functions", "FUNCTIONS"),
       ...edgeRuntimeJwtEnvironment(state, inputs),
       EDGE_RUNTIME_PORT: String(port),
-      FUNCTIONS_ROOT: functionsRoot(state),
       FUNCTIONS_CONTAINER_ROOT,
       SUPABASE_INTERNAL_FUNCTIONS_ROOT:
         runtime === "container" ? FUNCTIONS_CONTAINER_ROOT : functionsRoot(state),
@@ -1149,7 +1178,7 @@ const specs: Readonly<Record<string, WorkloadRuntimeSpecDefinition>> = {
           valueAt(state, "analytics", "backend").length > 0 ? "true" : "false",
         NEXT_ANALYTICS_BACKEND_PROVIDER: valueAt(state, "analytics", "backend"),
         SUPABASE_URL: apiGatewayUrl(state, runtime === "container" ? inputs : undefined),
-        SUPABASE_PUBLIC_URL: apiGatewayUrl(state, runtime === "container" ? inputs : undefined),
+        SUPABASE_PUBLIC_URL: apiListenerUrl(state),
         SUPABASE_ANON_KEY: secret(state, "secret:auth.settings.anon_key"),
         SUPABASE_SERVICE_KEY: secret(state, "secret:auth.settings.service_role_key"),
         SUPABASE_PUBLISHABLE_KEY: secret(state, "secret:auth.settings.publishable_key"),
@@ -1257,46 +1286,65 @@ const specs: Readonly<Record<string, WorkloadRuntimeSpecDefinition>> = {
     readiness: { protocol: "http", path: "/health" },
   },
   "pooler:pooler": {
-    bindings: { primary: { containerPort: 6543 } },
+    bindings: { primary: { containerPort: 6543 }, admin: { containerPort: 4000 } },
     args: () => ["start"],
-    env: (state, workload, port, runtime = "native", inputs = {}) => ({
-      ...common(workload, port),
-      ...beamDistributionEnvironment(runtime),
-      ...capabilityEnv(state, "pooler", "POOLER"),
-      PORT: "4000",
-      PROXY_PORT_SESSION:
-        runtime === "native" && valueAt(state, "pooler", "pool_mode") === "session"
-          ? String(port)
-          : "5432",
-      PROXY_PORT_TRANSACTION:
-        runtime === "native" && valueAt(state, "pooler", "pool_mode") !== "session"
-          ? String(port)
-          : "6543",
-      DATABASE_URL: `ecto://postgres:${secret(state, "secret:database.internal.password")}@${dbHost(runtime)}:${runtime === "container" ? 5432 : dbPort(state)}/_supabase`,
-      API_JWT_SECRET: secret(state, "secret:auth.settings.jwt_secret"),
-      REGION: "local",
-      TENANT_ID: valueAt(state, "pooler", "tenant_id"),
-      CLUSTER_POSTGRES: "true",
-      SECRET_KEY_BASE: valueAt(state, "pooler", "secret_key_base"),
-      VAULT_ENC_KEY: valueAt(state, "pooler", "encryption_key"),
-      METRICS_JWT_SECRET: secret(state, "secret:auth.settings.jwt_secret"),
-      DEFAULT_POOL_SIZE: valueAt(state, "pooler", "default_pool_size"),
-      MAX_CLIENT_CONN: valueAt(state, "pooler", "max_client_conn"),
-      POOL_MODE: valueAt(state, "pooler", "pool_mode"),
-      ...(runtime === "container" && inputs.pooler?.tenantPath !== undefined
-        ? { SUPABASE_POOLER_TENANT_PATH: "/app/pooler_tenant.exs" }
-        : {}),
-    }),
-    // The slim container entrypoint performs Supavisor migrations. Tenant
-    // provisioning is a separate owner/bootstrap phase.
-    containerArgs: (_state, _workload, _port, inputs = {}) =>
-      inputs.pooler?.tenantPath === undefined
-        ? []
+    env: (state, workload, port, runtime = "native", inputs = {}) => {
+      const adminPort =
+        runtime === "container" ? 4000 : privatePortFor(state, "pooler:pooler", "admin");
+      const primaryPort = privatePortFor(state, "pooler:pooler", "primary");
+      if (adminPort === undefined || primaryPort === undefined)
+        throw new Error("Pooler private port assignments must be validated before env resolution");
+      return {
+        ...common(workload, port),
+        ...beamDistributionEnvironment(runtime),
+        ...capabilityEnv(state, "pooler", "POOLER"),
+        // `port` is the readiness binding (admin); proxy listeners use the primary SQL binding.
+        // validatePrivateAssignments guarantees both native bindings are assigned.
+        PORT: String(adminPort),
+        PROXY_PORT_SESSION:
+          runtime === "native" && valueAt(state, "pooler", "pool_mode") === "session"
+            ? String(primaryPort)
+            : "5432",
+        PROXY_PORT_TRANSACTION:
+          runtime === "native" && valueAt(state, "pooler", "pool_mode") !== "session"
+            ? String(primaryPort)
+            : "6543",
+        DATABASE_URL: `ecto://postgres:${secret(state, "secret:database.internal.password")}@${dbHost(runtime)}:${runtime === "container" ? 5432 : dbPort(state)}/_supabase`,
+        API_JWT_SECRET: secret(state, "secret:auth.settings.jwt_secret"),
+        REGION: "local",
+        TENANT_ID: valueAt(state, "pooler", "tenant_id"),
+        CLUSTER_POSTGRES: "true",
+        SECRET_KEY_BASE: valueAt(state, "pooler", "secret_key_base"),
+        VAULT_ENC_KEY: valueAt(state, "pooler", "encryption_key"),
+        METRICS_JWT_SECRET: secret(state, "secret:auth.settings.jwt_secret"),
+        DEFAULT_POOL_SIZE: valueAt(state, "pooler", "default_pool_size"),
+        MAX_CLIENT_CONN: valueAt(state, "pooler", "max_client_conn"),
+        POOL_MODE: valueAt(state, "pooler", "pool_mode"),
+        ...(runtime === "container" && inputs.pooler?.tenantPath !== undefined
+          ? { SUPABASE_POOLER_TENANT_PATH: "/app/pooler_tenant.exs" }
+          : {}),
+      };
+    },
+    // Mirror native convergence explicitly: migrate before the main server.
+    // Tenant provisioning remains a separate owner/bootstrap phase.
+    containerEntrypoint: "/usr/bin/tini",
+    containerStartupProcesses: (_state, _workload, inputs = {}) => {
+      const migrate = { entrypoint: "/app/bin/migrate", command: [] };
+      const tenantPath = inputs.pooler?.tenantPath;
+      return tenantPath === undefined
+        ? [migrate]
         : [
-            "/usr/bin/sh",
-            "-c",
-            '/app/bin/supavisor eval "$(cat "$SUPABASE_POOLER_TENANT_PATH")" && exec /app/bin/server',
-          ],
+            migrate,
+            {
+              entrypoint: "/usr/bin/sh",
+              command: [
+                "-c",
+                'exec /app/bin/supavisor eval "$(cat "$SUPABASE_POOLER_TENANT_PATH")"',
+              ],
+            },
+          ];
+    },
+    containerArgs: () => ["-s", "-g", "--", "/app/bin/server"],
     containerMounts: (_state, _workload, inputs = {}) =>
       inputs.pooler?.tenantPath === undefined
         ? []
@@ -1307,7 +1355,7 @@ const specs: Readonly<Record<string, WorkloadRuntimeSpecDefinition>> = {
               readOnly: true,
             },
           ],
-    readiness: { protocol: "tcp" },
+    readiness: { protocol: "http", path: "/api/health", binding: "admin" },
   },
 };
 
@@ -1347,6 +1395,7 @@ export const validatePrivateAssignments = (
 ): Effect.Effect<void, StackPreparationError> => {
   const spec = specs[workload.id];
   if (spec === undefined) return Effect.void;
+  // Runtime env resolution assumes every declared binding was assigned here.
   for (const [binding] of declaredBindings(spec.bindings)) {
     if (
       !state.privatePorts.some(
@@ -1382,7 +1431,8 @@ export const runtimeSpecFor = (workload: PlannedWorkload): WorkloadRuntimeSpec |
       spec.args(state, currentWorkload, port, runtime),
     env: (state, currentWorkload, port, runtime = "native", inputs = {}) =>
       spec.env(state, currentWorkload, port, runtime, inputs),
-    containerStartupProcesses: spec.containerStartupProcesses ?? [],
+    containerStartupProcesses: (state, currentWorkload, inputs = {}) =>
+      spec.containerStartupProcesses?.(state, currentWorkload, inputs) ?? [],
     readiness: { ...spec.readiness, binding: spec.readiness.binding ?? "primary" },
     privateEndpoint:
       spec.privateEndpoint ??
@@ -1414,13 +1464,14 @@ export const containerResolutionFor = (
   const catalog = catalogEntryFor(workload.id);
   if (catalog === undefined) return undefined;
   return {
+    ...(spec.containerEntrypoint === undefined ? {} : { entrypoint: spec.containerEntrypoint }),
     command: spec.containerArgs(
       state,
       workload,
       containerPortFor(state, workload.id, "primary", spec.containerPort),
       inputs,
     ),
-    startup: spec.containerStartupProcesses,
+    startup: spec.containerStartupProcesses(state, workload, inputs),
     env: spec.env(
       state,
       workload,
@@ -1467,7 +1518,10 @@ export const resolveContainerResolutionFor = (
   state: PersistedStackState,
   workload: PlannedWorkload,
   inputs: WorkloadRuntimeInputs = {},
-): Effect.Effect<ContainerWorkloadResolution | undefined, StackPreparationError> =>
+): Effect.Effect<
+  ContainerWorkloadResolution | undefined,
+  StackPreparationError | StackStateInvalidError
+> =>
   Effect.all([
     validateWorkloadRuntimeInputs(state, workload, inputs),
     validatePrivateAssignments(state, workload),

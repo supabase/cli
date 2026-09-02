@@ -8,9 +8,7 @@ import {
   PortAllocationError,
   PortUnavailableError,
   InvalidProjectRootError,
-  StackLifecycleConflictError,
   StackStateFormatUnsupportedError,
-  StackStateGenerationMismatchError,
   StackStateInvalidError,
 } from "../public/Errors.ts";
 import type {
@@ -49,10 +47,6 @@ type HostListenerBinding =
   | { readonly kind: "tcp"; readonly server: NetServer; readonly allowHalfOpen: true };
 
 interface PortPlanOptions {
-  readonly lifecycle?: "stopped" | "running";
-  readonly expectedGeneration?: number;
-  /** Generation to persist after this transaction; unchanged unless explicitly supplied. */
-  readonly nextGeneration?: number;
   /** Requested durable workload endpoints. Every binding receives an automatic port. */
   readonly privateBindings?: ReadonlyArray<PrivatePortIntent>;
 }
@@ -71,12 +65,6 @@ export interface PortCoordinatorOptions {
     port: number,
     field: PortField,
   ) => Effect.Effect<HostListener, PortUnavailableError, Scope.Scope>;
-  /** Optional non-owning host probe used to skip occupied automatic ports. */
-  readonly checkHostPort?: (
-    address: string,
-    port: number,
-    field: PortField,
-  ) => Effect.Effect<boolean, PortUnavailableError>;
 }
 
 export interface PortCoordinator {
@@ -88,11 +76,9 @@ export interface PortCoordinator {
     PortReservation,
     | PortAllocationError
     | PortUnavailableError
-    | StackLifecycleConflictError
     | StackStateInvalidError
     | StackStateFormatUnsupportedError
-    | InvalidProjectRootError
-    | StackStateGenerationMismatchError,
+    | InvalidProjectRootError,
     Scope.Scope | Crypto.Crypto | FileSystem.FileSystem | Path.Path
   >;
 }
@@ -121,12 +107,6 @@ const automaticConflict = (port: number, field: PortField) =>
     message: `Port ${port} for ${field} is reserved by another stack's automatic assignment`,
   });
 
-const lifecycleConflict = (field: string) =>
-  new StackLifecycleConflictError({
-    field,
-    message: `Cannot change the ${field} port assignment while the stack is running`,
-  });
-
 export const makePortCoordinator = (
   registry: PortRegistry,
   store: StackStateStore,
@@ -141,16 +121,7 @@ export const makePortCoordinator = (
             return yield* new StackStateInvalidError({
               message: "Cannot allocate ports for an unconfigured stack",
             });
-          const expected = planOptions.expectedGeneration ?? current.desiredGeneration;
-          if (current.desiredGeneration !== expected)
-            return yield* new StackStateGenerationMismatchError({
-              expectedGeneration: expected,
-              actualGeneration: current.desiredGeneration,
-              message: "Persisted stack state generation changed",
-            });
-          const lifecycle =
-            planOptions.lifecycle ??
-            (current.desiredLifecycle === "running" ? "running" : "stopped");
+          const lifecycle = current.desiredLifecycle === "running" ? "running" : "stopped";
           const allStates = yield* registry.states;
           const usedAutomaticPublic = new Set<number>();
           const usedLivePublic = new Set<number>();
@@ -179,31 +150,6 @@ export const makePortCoordinator = (
             current.privatePorts.map((entry) => [bindingKey(entry), entry]),
           );
 
-          // A running generation may reject listener/private intent changes only after its
-          // assignment materialization has committed. The marker is explicit so an empty set of
-          // assignments is still fenced, while a failed first bind (which leaves the marker old)
-          // can be retried for the accepted generation.
-          if (lifecycle === "running" && current.portsGeneration === current.desiredGeneration) {
-            for (const field of fields) {
-              const intent = listenerIntents[field];
-              const prior = existing.get(field);
-              const unchanged =
-                intent.enabled && prior !== undefined
-                  ? intent.port === "automatic"
-                    ? prior.intent === "automatic"
-                    : prior.intent === "exact" && prior.port === intent.port
-                  : !intent.enabled && prior === undefined;
-              if (!unchanged) return yield* lifecycleConflict(field);
-            }
-            const priorKeys = new Set(current.privatePorts.map(bindingKey));
-            const nextKeys = new Set(privateIntents.map(bindingKey));
-            if (
-              priorKeys.size !== nextKeys.size ||
-              [...priorKeys].some((key) => !nextKeys.has(key))
-            )
-              return yield* lifecycleConflict("private workload");
-          }
-
           const assignments: HostPortAssignment[] = [];
           const byField: Partial<Record<PortField, HostPortAssignment>> = {};
           const usedByThisStack = new Set<number>();
@@ -225,10 +171,6 @@ export const makePortCoordinator = (
                     !usedReservedPrivate.has(port) &&
                     !usedByThisStack.has(port)
                   ) {
-                    if (options.checkHostPort !== undefined) {
-                      const available = yield* options.checkHostPort(intent.address, port, field);
-                      if (!available) continue;
-                    }
                     selected = port;
                     break;
                   }
@@ -308,44 +250,40 @@ export const makePortCoordinator = (
 
           const next: PersistedStackState = {
             ...current,
-            // Keep a running lifecycle only after ownership/publication succeeds.
-            desiredLifecycle: lifecycle === "running" ? current.desiredLifecycle : lifecycle,
-            desiredGeneration: planOptions.nextGeneration ?? current.desiredGeneration,
-            portsGeneration:
-              lifecycle === "running"
-                ? current.portsGeneration
-                : (planOptions.nextGeneration ?? current.desiredGeneration),
+            // Lifecycle is owned by Supervisor; port planning never mutates it.
+            desiredLifecycle: current.desiredLifecycle,
             ports: assignments,
             privatePorts: privateAssignments,
           };
-          yield* store.replaceUnlocked(stackId, next, expected);
+          yield* store.replaceUnlocked(stackId, next);
           return { current, next, lifecycle, byField, privateAssignments };
         }),
       );
 
       const hostListeners: HostListener[] = [];
-      const runningState: PersistedStackState = {
-        ...committed.next,
-        desiredLifecycle: "running",
-        portsGeneration: committed.next.desiredGeneration,
-      };
-      const commitRunning = registry.withLock(
-        Effect.gen(function* () {
-          const latest = yield* store.read(stackId);
-          if (latest === undefined || latest.desiredGeneration !== committed.next.desiredGeneration)
-            return yield* new StackStateGenerationMismatchError({
-              expectedGeneration: committed.next.desiredGeneration,
-              actualGeneration: latest?.desiredGeneration,
-              message: "Persisted stack state changed while acquiring runtime ownership",
-            });
-          yield* store.replaceUnlocked(stackId, runningState, latest.desiredGeneration);
-        }),
-      );
       const enabledAssignments = fields.flatMap((field) => {
         const intent = listenerIntents[field];
         const assignment = committed.byField[field];
         return intent.enabled && assignment !== undefined ? [{ field, intent, assignment }] : [];
       });
+      const rollbackFreshAutomatic = registry.withLock(
+        Effect.gen(function* () {
+          const latest = yield* store.read(stackId);
+          if (latest === undefined)
+            return yield* new StackStateInvalidError({ message: "Stack state disappeared" });
+          const priorByField = new Map(
+            committed.current.ports.map((entry) => [entry.field, entry]),
+          );
+          const ports = committed.next.ports.filter(
+            (entry) => entry.intent !== "automatic" || priorByField.has(entry.field),
+          );
+          const priorBindings = new Set(committed.current.privatePorts.map(bindingKey));
+          const privatePorts = committed.next.privatePorts.filter((entry) =>
+            priorBindings.has(bindingKey(entry)),
+          );
+          yield* store.replaceUnlocked(stackId, { ...latest, ports, privatePorts });
+        }),
+      );
       if (committed.lifecycle === "running") {
         const bindHost = options.bindHost;
         if (bindHost === undefined) {
@@ -370,12 +308,8 @@ export const makePortCoordinator = (
             );
             if (Exit.isFailure(bound)) {
               yield* Scope.close(listenerScope, bound);
+              yield* rollbackFreshAutomatic;
               return yield* Effect.failCause(bound.cause);
-            }
-            const committedRunning = yield* Effect.exit(restore(commitRunning));
-            if (Exit.isFailure(committedRunning)) {
-              yield* Scope.close(listenerScope, committedRunning);
-              return yield* Effect.failCause(committedRunning.cause);
             }
             return bound.value;
           }),

@@ -7,7 +7,11 @@ import type { EffectStack, PrepareStackOptions, StartStackOptions } from "./Effe
 import { StackIdSchema } from "./StackId.ts";
 import type { StackStatus } from "./Status.ts";
 import type { StackLogEntry } from "./Logs.ts";
-import { StackStateInvalidError } from "./Errors.ts";
+import {
+  InvalidStackConfigError,
+  StackLifecycleConflictError,
+  StackStateInvalidError,
+} from "./Errors.ts";
 import { adaptEffectStack, type PromiseStack } from "./PromiseStack.ts";
 import { compileStack } from "../model/Compiler.ts";
 
@@ -108,12 +112,22 @@ describe("Promise stack facade", () => {
     const logsIterator = stack.logs()[Symbol.asyncIterator]();
     await expect(logsIterator.next()).resolves.toMatchObject({ done: true });
     await stack.close();
-    await expect(stack.watchStatus()[Symbol.asyncIterator]().next()).rejects.toThrow(
-      "Stack handle is closed",
+    await expect(stack.watchStatus()[Symbol.asyncIterator]().next()).rejects.toBeInstanceOf(
+      StackLifecycleConflictError,
     );
-    await expect(stack.logs()[Symbol.asyncIterator]().next()).rejects.toThrow(
-      "Stack handle is closed",
+    await expect(stack.logs()[Symbol.asyncIterator]().next()).rejects.toBeInstanceOf(
+      StackLifecycleConflictError,
     );
+  });
+
+  it("rejects malformed configs asynchronously with a tagged error", async () => {
+    const stack = adaptEffectStack(effectStack());
+    await expect(
+      stack.start({
+        config: JSON.parse('{"capabilities":{"rest":{"settings":{"unknown":true}}}}'),
+      }),
+    ).rejects.toBeInstanceOf(InvalidStackConfigError);
+    await stack.close();
   });
 
   it("redacts nested config secrets for prepare, start, and restart", async () => {

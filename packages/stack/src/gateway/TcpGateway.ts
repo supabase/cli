@@ -8,7 +8,6 @@ import type {
   GatewayRoute,
   GatewayProxyRoute,
   GatewayRouteRequest,
-  LazyActivator,
 } from "./Gateway.ts";
 import { isGatewayProxyRoute } from "./Gateway.ts";
 import type { HostListener } from "../state/PortCoordinator.ts";
@@ -18,7 +17,9 @@ export interface TcpGatewayOptions {
   readonly port?: number;
   readonly listener?: HostListener;
   readonly routes: ReadonlyArray<GatewayRoute>;
-  readonly activate: LazyActivator["activate"];
+  readonly activate: (
+    capability: import("../public/Capability.ts").CapabilityName,
+  ) => Effect.Effect<ActivationResult, GatewayActivationError>;
   readonly resolveBackend?: (
     route: GatewayProxyRoute,
     request: GatewayRouteRequest,
@@ -41,7 +42,7 @@ const tunnel = (
   backend: BackendEndpoint,
 ): Effect.Effect<void, GatewayActivationError> =>
   Effect.callback<void, GatewayActivationError>((resume) => {
-    const target = new Socket();
+    const target = new Socket({ allowHalfOpen: true });
     let settled = false;
     let targetEnded = false;
     const onSourceError = (cause: Error) => {

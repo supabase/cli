@@ -120,7 +120,7 @@ const legacyShadowCacheUnavailable = (
 // ---------------------------------------------------------------------------
 
 /** One of the three PG15+ one-shot migrate jobs, as the cache key sees it. */
-export interface LegacyShadowCacheServiceInput {
+interface LegacyShadowCacheServiceInput {
   readonly enabled: boolean;
   /** Registry-resolved image; hashed only when {@link enabled}. */
   readonly image: string;
