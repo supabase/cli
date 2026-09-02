@@ -4,10 +4,7 @@ import { Command, Flag } from "effect/unstable/cli";
 
 import { PROJECT_REF_PATTERN } from "../../../config/legacy-project-ref.service.ts";
 import { withJsonErrorHandling } from "../../../../shared/output/json-error-handling.ts";
-import {
-  LEGACY_QUERY_OUTPUT_FORMATS,
-  LEGACY_RESOURCE_OUTPUT_FORMATS,
-} from "../../../shared/legacy-go-output-flag.ts";
+import { LEGACY_GLOBAL_OUTPUT_FORMATS } from "../../../../shared/legacy/global-flags.ts";
 import { legacyManagementApiRuntimeLayer } from "../../../shared/legacy-management-api-runtime.layer.ts";
 import { withLegacyCommandInstrumentation } from "../../../telemetry/legacy-command-instrumentation.ts";
 import { legacyConfigDiff } from "./diff.handler.ts";
@@ -51,11 +48,12 @@ export const legacyConfigDiffHandler = (flags: LegacyConfigDiffFlags) =>
           : [],
       // Net-new TS command, no Go parity contract (CLI-2156): the handler
       // itself rejects every `-o/--output` value with a message pointing at
-      // `--output-format`, so the full global choice set is declared
-      // "allowed" here — otherwise the wrapper's own per-command enum check
-      // would reject an out-of-set value (e.g. `-o table`) with its generic
-      // pflag-style message before the handler ever gets a chance to run.
-      outputFormats: [...LEGACY_RESOURCE_OUTPUT_FORMATS, ...LEGACY_QUERY_OUTPUT_FORMATS],
+      // `--output-format`, so the full global choice set — single-sourced
+      // from the flag's own definition — is declared "allowed" here.
+      // Otherwise the wrapper's own per-command enum check would reject an
+      // out-of-set value (e.g. `-o table`) with its generic pflag-style
+      // message before the handler ever gets a chance to run.
+      outputFormats: LEGACY_GLOBAL_OUTPUT_FORMATS,
     }),
     withJsonErrorHandling,
   );

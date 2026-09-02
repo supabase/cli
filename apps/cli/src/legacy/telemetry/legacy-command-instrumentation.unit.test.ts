@@ -921,40 +921,37 @@ describe("withLegacyCommandInstrumentation", () => {
     },
   );
 
-  it.live(
-    "classifies a config diff load failure normally (exit 1, cause-derived metadata)",
-    () => {
-      // A real command failure on `config diff` (e.g. an unparseable config
-      // file) must not be swept into the drift-signal exception above — it
-      // still fails the Effect, so recordedExitCode stays 1 with the usual
-      // cause-derived classification.
-      const analytics = mockContextualAnalytics();
-      const failure = new LegacyConfigDiffLoadConfigError({ message: "invalid config" });
+  it.live("classifies a config diff load failure normally (exit 1, cause-derived metadata)", () => {
+    // A real command failure on `config diff` (e.g. an unparseable config
+    // file) must not be swept into the drift-signal exception above — it
+    // still fails the Effect, so recordedExitCode stays 1 with the usual
+    // cause-derived classification.
+    const analytics = mockContextualAnalytics();
+    const failure = new LegacyConfigDiffLoadConfigError({ message: "invalid config" });
 
-      return Effect.fail(failure).pipe(
-        withLegacyCommandInstrumentation(),
-        Effect.provide(analytics.layer),
-        Effect.provide(mockProcessControl().layer),
-        Effect.provide(mockOutput({ format: "text" }).layer),
-        Effect.provide(Stdio.layerTest({ args: Effect.succeed(["config", "diff"]) })),
-        Effect.provide(commandRuntimeLayer(["config", "diff"])),
-        Effect.exit,
-        Effect.tap(() =>
-          Effect.sync(() => {
-            expect(analytics.captured[0]?.properties).toMatchObject({
-              exit_code: 1,
-              error_kind: "user_actionable",
-              error_category: "invalid_config",
-              error_fingerprint: "tag:LegacyConfigDiffLoadConfigError",
-              has_suggestion: true,
-              suggestion_type: "update_config",
-            });
-          }),
-        ),
-        Effect.asVoid,
-      );
-    },
-  );
+    return Effect.fail(failure).pipe(
+      withLegacyCommandInstrumentation(),
+      Effect.provide(analytics.layer),
+      Effect.provide(mockProcessControl().layer),
+      Effect.provide(mockOutput({ format: "text" }).layer),
+      Effect.provide(Stdio.layerTest({ args: Effect.succeed(["config", "diff"]) })),
+      Effect.provide(commandRuntimeLayer(["config", "diff"])),
+      Effect.exit,
+      Effect.tap(() =>
+        Effect.sync(() => {
+          expect(analytics.captured[0]?.properties).toMatchObject({
+            exit_code: 1,
+            error_kind: "user_actionable",
+            error_category: "invalid_config",
+            error_fingerprint: "tag:LegacyConfigDiffLoadConfigError",
+            has_suggestion: true,
+            suggestion_type: "update_config",
+          });
+        }),
+      ),
+      Effect.asVoid,
+    );
+  });
 
   it.live("skips analytics capture when analytics are disabled", () => {
     const analytics = mockContextualAnalytics();

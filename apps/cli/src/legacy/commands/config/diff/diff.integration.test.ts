@@ -20,6 +20,7 @@ import {
   mockLegacyTelemetryStateTracked,
   useLegacyTempWorkdir,
 } from "../../../../../tests/helpers/legacy-mocks.ts";
+import { LEGACY_GLOBAL_OUTPUT_FORMATS } from "../../../../shared/legacy/global-flags.ts";
 import { commandRuntimeLayer } from "../../../../shared/runtime/command-runtime.layer.ts";
 import { legacyConfigDiffHandler } from "./diff.command.ts";
 import { LEGACY_CONFIG_DIFF_PAYLOAD_VERSION } from "./diff.format.ts";
@@ -660,9 +661,9 @@ describe("legacy config diff integration", () => {
       );
       expect(Exit.isFailure(exit)).toBe(true);
       // The message names the REAL file that failed to parse (`cause.path`),
-      // not a hardcoded `.toml` guess.
-      const configPath = join(tempRoot.current, "supabase", "config.toml");
-      expect(JSON.stringify(exit)).toContain(`failed to parse ${configPath}`);
+      // not a hardcoded `.toml` guess — rendered workdir-relative so it reads
+      // the same regardless of invocation cwd.
+      expect(JSON.stringify(exit)).toContain(`failed to parse ${join("supabase", "config.toml")}`);
       expect(api.requests).toHaveLength(0);
       expect(telemetry.flushed).toBe(true);
     }).pipe(Effect.provide(layer));
@@ -673,8 +674,7 @@ describe("legacy config diff integration", () => {
     return Effect.gen(function* () {
       const exit = yield* legacyConfigDiff(noFlags).pipe(Effect.exit);
       expect(Exit.isFailure(exit)).toBe(true);
-      const configPath = join(tempRoot.current, "supabase", "config.toml");
-      expect(JSON.stringify(exit)).toContain(`failed to parse ${configPath}`);
+      expect(JSON.stringify(exit)).toContain(`failed to parse ${join("supabase", "config.toml")}`);
     }).pipe(Effect.provide(layer));
   });
 
@@ -873,7 +873,9 @@ describe("legacy config diff integration", () => {
     // and the `db query`-only `table`/`csv` values alike — is rejected with
     // the exact message pointing at `--output-format` (CLI-2156, per Colum),
     // before any config load, target resolution, or network call.
-    const values = ["json", "yaml", "toml", "env", "pretty", "table", "csv"] as const;
+    // Iterates the flag's own choice list, so a value added to the global
+    // flag automatically extends this rejection coverage.
+    const values = LEGACY_GLOBAL_OUTPUT_FORMATS;
     const run = (goOutput: (typeof values)[number]) => {
       const { layer, api } = setup({
         toml: 'project_id = "test"\n[api]\nmax_rows = 500\n',

@@ -13,6 +13,7 @@ import { LegacyProjectRefResolver } from "../../../config/legacy-project-ref.ser
 import {
   legacyParentNotLinkedMessage,
   legacyParentRefInvalidMessage,
+  legacyParentRefTypoHint,
   legacyResolveLinkedParentRef,
   legacyResolveParentScopedProjectRef,
 } from "../../../shared/legacy-parent-project-ref.ts";
@@ -105,6 +106,14 @@ export const legacyConfigDiff = Effect.fn("legacy.config.diff")(function* (
   // resolver and the linked-project cache use — so `--workdir ../other`
   // compares `../other`'s config.toml against `../other`'s linked project,
   // never the invoking directory's file against another root's project.
+  // `cause.path` is anchored under the workdir; render it relative so the
+  // message reads `supabase/config.json` like the family's other messages,
+  // regardless of invocation cwd.
+  const relativeConfigPath = (path: string) =>
+    path.startsWith(cliSettings.workdir)
+      ? path.slice(cliSettings.workdir.length).replace(/^[/\\]/, "")
+      : path;
+
   const loadLocalConfig = (projectRef: string | undefined) =>
     loadCliConfig(cliSettings.workdir, { projectRef, goViperCompat: true }).pipe(
       // `cause.path` names the file that actually failed to parse — `loadCliConfig`
@@ -115,7 +124,7 @@ export const legacyConfigDiff = Effect.fn("legacy.config.diff")(function* (
         "CliConfigParseError",
         (cause) =>
           new LegacyConfigDiffLoadConfigError({
-            message: `failed to parse ${cause.path}: ${String(cause.cause)}`,
+            message: `failed to parse ${relativeConfigPath(cause.path)}: ${String(cause.cause)}`,
           }),
       ),
       Effect.catchTag(
@@ -223,7 +232,7 @@ export const legacyConfigDiff = Effect.fn("legacy.config.diff")(function* (
             cause.status === 404
               ? Effect.fail(
                   new LegacyConfigDiffBranchNotFoundError({
-                    message: `Branch "${legacySanitizeInlineName(target)}" not found. Run \`supabase branches list\` to see available branches.`,
+                    message: `Branch "${legacySanitizeInlineName(target)}" not found. Run \`supabase branches list\` to see available branches.${legacyParentRefTypoHint(target)}`,
                   }),
                 )
               : Effect.fail(cause),

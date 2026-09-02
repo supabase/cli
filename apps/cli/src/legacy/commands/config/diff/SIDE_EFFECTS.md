@@ -8,13 +8,13 @@ writes `config.toml` or any remote configuration.**
 
 ## Files Read
 
-| Path                                           | Format                    | When                                                                                                                                                                                                        |
-| ----------------------------------------------- | ------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Path                                              | Format                    | When                                                                                                                                                                                                                                                                                        |
+| ------------------------------------------------- | ------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `<workdir>/supabase/config.toml` or `config.json` | TOML/JSON                 | always, before any network call (`loadCliConfig` probes `config.json` first, then `config.toml` — a missing file or parse error aborts, exit 1, naming whichever file actually failed); re-read after target resolution when the file declares `[remotes.*]`, to apply the matching overlay |
-| `<workdir>/supabase/.env`, `.env.local`        | dotenv                    | always, to resolve `env(VAR)` references inside `config.toml`                                                                                                                                             |
-| `<workdir>/supabase/.temp/project-ref`         | plain text                | project-ref fallback (flag → `SUPABASE_PROJECT_ID` → this file); parent-ref candidate for a branch-name `--project-ref` (checked eagerly, BEFORE any spinner or branch lookup)                            |
-| `<workdir>/supabase/.temp/linked-project.json` | JSON                      | parent-ref candidate for a branch-name `--project-ref` (same eager pre-check); existence-checked for the telemetry cache write below                                                                     |
-| `~/.supabase/access-token`                     | plain text (token string) | when `SUPABASE_ACCESS_TOKEN` unset and keyring unavailable                                                                                                                                                 |
+| `<workdir>/supabase/.env`, `.env.local`           | dotenv                    | always, to resolve `env(VAR)` references inside `config.toml`                                                                                                                                                                                                                               |
+| `<workdir>/supabase/.temp/project-ref`            | plain text                | project-ref fallback (flag → `SUPABASE_PROJECT_ID` → this file); parent-ref candidate for a branch-name `--project-ref` (checked eagerly, BEFORE any spinner or branch lookup)                                                                                                              |
+| `<workdir>/supabase/.temp/linked-project.json`    | JSON                      | parent-ref candidate for a branch-name `--project-ref` (same eager pre-check); existence-checked for the telemetry cache write below                                                                                                                                                        |
+| `~/.supabase/access-token`                        | plain text (token string) | when `SUPABASE_ACCESS_TOKEN` unset and keyring unavailable                                                                                                                                                                                                                                  |
 
 ## Files Written
 
@@ -31,11 +31,11 @@ that finds differences.
 
 All Bearer-authenticated, all read-only.
 
-| #   | Purpose                 | Method | Path                                 | Success | Notes                                                                                                                                                                                              |
-| --- | ----------------------- | ------ | ------------------------------------- | ------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| 0a  | branch by UUID          | GET    | `/v1/branches/{branch_id}`           | 200     | only when `--project-ref` is a UUID; needs no linked project (no parent pre-check)                                                                                                                |
+| #   | Purpose                 | Method | Path                                 | Success | Notes                                                                                                                                                                                                     |
+| --- | ----------------------- | ------ | ------------------------------------ | ------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| 0a  | branch by UUID          | GET    | `/v1/branches/{branch_id}`           | 200     | only when `--project-ref` is a UUID; needs no linked project (no parent pre-check)                                                                                                                        |
 | 0b  | branch by name          | GET    | `/v1/projects/{ref}/branches/{name}` | 200     | only when `--project-ref` is a NAME (not a ref/UUID); the parent ref is resolved from local state BEFORE this call — an absent/invalid parent fails without making this request; 404 → "branch not found" |
-| 1   | effective remote config | GET    | `/v2/projects/{ref}/config`          | 200     | always (after target resolution); 401/403/404 get purpose-written messages, other statuses the generic `unexpected status N: body` shape                                                          |
+| 1   | effective remote config | GET    | `/v2/projects/{ref}/config`          | 200     | always (after target resolution); 401/403/404 get purpose-written messages, other statuses the generic `unexpected status N: body` shape                                                                  |
 
 ## Environment Variables
 
@@ -56,24 +56,25 @@ convention; `1` stays the CLI-wide failure code). In **text mode only**, exit
 found (--exit-code).`, so a CI log never shows a bare "exit code 2" with no
 explanation; machine mode (`--output-format json/stream-json`) never prints
 it, keeping its bytes unchanged. The masked/unmanaged/not-returned-block
-caveats never flip the exit code by themselves — only `changeSet.counts.total
-> 0` (a real `update`/`remote_only`/`local_only` entry) does. Because
+caveats never flip the exit code by themselves — only a non-zero
+`changeSet.counts.total` (a real `update`/`remote_only`/`local_only` entry)
+does. Because
 `run.ts` only runs its `afterSuccess` hooks (e.g. the upgrade notice) on exit
 code `0`, a `--exit-code` run that exits `2` on drift suppresses that hook,
 same as any other non-zero exit.
 
-| Code | Condition                                                                       |
-| ---- | -------------------------------------------------------------------------------- |
-| `0`  | success — including when differences are found, unless `--exit-code` is passed  |
-| `2`  | `--exit-code` passed and at least one difference found                          |
-| `1`  | the `-o`/`--output` global flag passed (any value — not supported by this command) |
-| `1`  | missing or malformed `supabase/config.toml`/`config.json`                       |
-| `1`  | branch-name `--project-ref` with no linked parent project (`LegacyConfigDiffBranchNotLinkedError`) |
+| Code | Condition                                                                                                      |
+| ---- | -------------------------------------------------------------------------------------------------------------- |
+| `0`  | success — including when differences are found, unless `--exit-code` is passed                                 |
+| `2`  | `--exit-code` passed and at least one difference found                                                         |
+| `1`  | the `-o`/`--output` global flag passed (any value — not supported by this command)                             |
+| `1`  | missing or malformed `supabase/config.toml`/`config.json`                                                      |
+| `1`  | branch-name `--project-ref` with no linked parent project (`LegacyConfigDiffBranchNotLinkedError`)             |
 | `1`  | branch-name `--project-ref` with a corrupt/invalid linked parent ref (`LegacyConfigDiffParentRefInvalidError`) |
-| `1`  | unknown branch (branch-name `--project-ref` 404, `LegacyConfigDiffBranchNotFoundError`) |
-| `1`  | resolved branch has no project ref yet — still provisioning (`LegacyConfigDiffBranchNotReadyError`) |
-| `1`  | two `[remotes.*]` blocks declare the same `project_id` as the target ref        |
-| `1`  | remote config read failure (network, 401/403/404, or other unexpected status)  |
+| `1`  | unknown branch (branch-name `--project-ref` 404, `LegacyConfigDiffBranchNotFoundError`)                        |
+| `1`  | resolved branch has no project ref yet — still provisioning (`LegacyConfigDiffBranchNotReadyError`)            |
+| `1`  | two `[remotes.*]` blocks declare the same `project_id` as the target ref                                       |
+| `1`  | remote config read failure (network, 401/403/404, or other unexpected status)                                  |
 
 ## Output
 
@@ -128,7 +129,11 @@ command's own `withLegacyCommandInstrumentation` wiring widens the wrapper's
 per-command `-o` enum to the full global choice set so every value (including
 `table`/`csv`, which are otherwise only meaningful to `db query`) reaches this
 handler-level rejection with its pointed message, rather than the wrapper's
-generic pflag-style "invalid argument" rejection.
+generic pflag-style "invalid argument" rejection. One telemetry consequence of
+the widening: a rejected `-o` invocation still emits `cli_command_executed`
+(exit code 1, `invalid_input`), whereas other commands' out-of-enum `-o`
+values are rejected by the wrapper's enum check before instrumentation fires
+and emit nothing.
 
 ## Notes
 

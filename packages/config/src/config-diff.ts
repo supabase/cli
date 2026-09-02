@@ -431,6 +431,8 @@ export function diffProjectConfig(options: DiffProjectConfigOptions): ConfigChan
         valueAtPath(getDefaultCliConfig(), path) ??
         unconfiguredValueByPathKey.get(pathKey(path));
       const suppressed =
+        // Exact match, not the unmanaged exclusion's ancestor walk: every
+        // platformRendered row is a leaf path.
         platformRenderedPathKeys.has(pathKey(path)) ||
         (baseline !== undefined && equalsAtPath(path, baseline, remoteValue));
       if (!suppressed) {
