@@ -5,7 +5,7 @@ const tags = ["workers"];
 
 const links = [
   {
-    name: "`supabase workers` CLI subcommands",
+    name: "`supabase experimental workers` CLI subcommands",
     link: "https://supabase.com/docs/reference/cli/supabase-workers",
   },
 ];

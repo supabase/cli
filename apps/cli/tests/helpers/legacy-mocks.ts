@@ -764,8 +764,8 @@ export const legacyWithEnv = <A, E, R>(
   );
 
 /**
- * Pins `SUPABASE_SHADOW_CACHE=0` for the calling file so a developer/CI soak (`=1`)
- * cannot flip mocked-spawner suites onto the cache path. Call at module scope (or
+ * Pins `SUPABASE_SHADOW_CACHE=0` for the calling file so the default-ON cache cannot
+ * flip mocked-spawner suites onto the cache path. Call at module scope (or
  * inside the surrounding `describe`). Cache-subject tests opt back in with
  * {@link legacyWithEnv}.
  */

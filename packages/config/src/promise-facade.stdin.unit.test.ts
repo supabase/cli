@@ -5,7 +5,7 @@ import { rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { Context, Effect, Layer, Option, Terminal } from "effect";
-import { findCliProjectRootFor } from "./bun.ts";
+import { findCliProjectRoot } from "./bun.ts";
 
 // CLI-2231 regression guard: `BunServices.layer` (the full Bun platform
 // services bundle) pulls in `Terminal`, which attaches a permanent
@@ -32,7 +32,7 @@ describe("promise-facade stdin-leak regression (CLI-2231)", () => {
     const before = process.stdin.listenerCount("end");
 
     try {
-      await findCliProjectRootFor(cwd);
+      await findCliProjectRoot(cwd);
 
       expect(process.stdin.listenerCount("end")).toBe(before);
     } finally {

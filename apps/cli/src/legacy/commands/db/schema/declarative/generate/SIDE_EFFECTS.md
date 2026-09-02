@@ -37,14 +37,15 @@ formatting without disabling safe compaction.
 
 ## Environment Variables
 
-| Variable                     | Purpose                                                             | Required? |
-| ---------------------------- | ------------------------------------------------------------------- | --------- |
-| `SUPABASE_ACCESS_TOKEN`      | auth token for `--linked`                                           | no        |
-| `DB_PASSWORD`                | password for `--linked` / `--db-url`                                | no        |
-| `SUPABASE_HOME`              | overrides the `~/.supabase` root (access token and other CLI state) | no        |
-| `PGDELTA_DEBUG`              | bundled-engine debug artifacts                                      | no        |
-| `SUPABASE_SERVICES_HOSTNAME` | local DB host for `--local`                                         | no        |
-| `DOCKER_HOST`                | tcp daemon host used as the local DB host fallback                  | no        |
+| Variable                     | Purpose                                                                                                                                                                                                                                                                | Required? |
+| ---------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | --------- |
+| `SUPABASE_ACCESS_TOKEN`      | auth token for `--linked`                                                                                                                                                                                                                                              | no        |
+| `DB_PASSWORD`                | password for `--linked` / `--db-url`                                                                                                                                                                                                                                   | no        |
+| `SUPABASE_HOME`              | overrides the `~/.supabase` root (access token and other CLI state)                                                                                                                                                                                                    | no        |
+| `PGDELTA_DEBUG`              | bundled-engine debug artifacts                                                                                                                                                                                                                                         | no        |
+| `SUPABASE_SERVICES_HOSTNAME` | local DB host for `--local`                                                                                                                                                                                                                                            | no        |
+| `DOCKER_HOST`                | tcp daemon host used as the local DB host fallback                                                                                                                                                                                                                     | no        |
+| `SUPABASE_USE_SLIM_IMAGES`   | resolves the expected local `db` image for the stale-container guard from the slim `ghcr.io/supabase/cli` builds (`true`/`1` enable); majors 13/15 use `15.14.1.167` when the flag is on; historical pins, PG14, OrioleDB, and flag-off `15.8.1.085` stay on docker.io | no        |
 
 ## Exit Codes
 
@@ -90,3 +91,10 @@ always go to stderr, in every `--output-format`. On success:
   codes.
 - Remote Supabase targets use the shared connection/TLS behavior.
 - **Architecture:** the engine extracts and renders the target in-process.
+- **Stale local-container guard.** `--local`/smart-mode's Local target inspects
+  the running local `db` container's actual image and compares it against the
+  currently-configured/resolved one before reading from it. A same-tag family
+  mismatch (slim vs docker.io, e.g. after toggling `SUPABASE_USE_SLIM_IMAGES`
+  without restarting) fails with a suggestion to `supabase stop` then
+  `supabase start` with the same flag. A real version/tag mismatch still
+  suggests `supabase stop --all --no-backup` then `supabase start`.

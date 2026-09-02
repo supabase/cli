@@ -11,6 +11,7 @@ import { afterEach, beforeEach, vi } from "vitest";
 import {
   mockLegacyCliSettings,
   mockLegacyShadowContainerCliSpawner,
+  useLegacyShadowCacheDisabled,
 } from "../../../../../tests/helpers/legacy-mocks.ts";
 import { mockOutput, mockRuntimeInfo } from "../../../../../tests/helpers/mocks.ts";
 import { CliArgs } from "../../../../shared/cli/cli-args.service.ts";
@@ -111,6 +112,8 @@ const sslProbe = Layer.succeed(LegacyPgDeltaSslProbe, {
   requireSsl: () => Effect.succeed(false),
   requireSslForHost: () => Effect.succeed(false),
 });
+
+useLegacyShadowCacheDisabled();
 
 function setup(
   workdir: string,

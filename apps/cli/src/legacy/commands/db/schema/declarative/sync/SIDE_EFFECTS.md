@@ -44,13 +44,14 @@ disabling safe compaction.
 
 ## Environment Variables
 
-| Variable                     | Purpose                                                                                                                                                            | Required? |
-| ---------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------ | --------- |
-| `SUPABASE_HOME`              | overrides the `~/.supabase` root used for the shadow baseline cache (and other CLI state)                                                                          | no        |
-| `SUPABASE_SHADOW_CACHE`      | shadow baseline cache; opt-in (`1`/`true`); the shadow's post-baseline PGDATA is snapshotted to a tar and restored into the next run's fresh container (see Notes) | no        |
-| `PGDELTA_DEBUG`              | bundled-engine debug artifacts                                                                                                                                     | no        |
-| `SUPABASE_SERVICES_HOSTNAME` | local DB host for the bootstrap generate                                                                                                                           | no        |
-| `DOCKER_HOST`                | tcp daemon host used as the local DB host fallback                                                                                                                 | no        |
+| Variable                     | Purpose                                                                                                                                                                                                                                                                                       | Required? |
+| ---------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | --------- |
+| `SUPABASE_HOME`              | overrides the `~/.supabase` root used for the shadow baseline cache (and other CLI state)                                                                                                                                                                                                     | no        |
+| `SUPABASE_SHADOW_CACHE`      | shadow baseline cache; on by default, opt-out (`0`/`false`); the shadow's post-baseline PGDATA is snapshotted to a tar and restored into the next run's fresh container (see Notes)                                                                                                           | no        |
+| `PGDELTA_DEBUG`              | bundled-engine debug artifacts                                                                                                                                                                                                                                                                | no        |
+| `SUPABASE_SERVICES_HOSTNAME` | local DB host for the bootstrap generate                                                                                                                                                                                                                                                      | no        |
+| `DOCKER_HOST`                | tcp daemon host used as the local DB host fallback                                                                                                                                                                                                                                            | no        |
+| `SUPABASE_USE_SLIM_IMAGES`   | resolves the current-pin shadow Postgres and PG15+ realtime/storage/auth migrate-job images from the slim `ghcr.io/supabase/cli` builds (`true`/`1` enable); majors 13/15 use `15.14.1.167` when the flag is on; historical pins, PG14, OrioleDB, and flag-off `15.8.1.085` stay on docker.io | no        |
 
 ## Exit Codes
 
@@ -125,19 +126,29 @@ existing SQL or creates an export manifest.
   rather than firing a second one from a child process).
 - **Architecture:** the engine plans and renders in-process from two live
   shadows.
+- **Stale local-container guard.** Before diffing against the running local `db`
+  target, the running container's actual image is inspected and compared
+  against the currently-configured/resolved one. A same-tag family mismatch
+  (slim vs docker.io, e.g. after toggling `SUPABASE_USE_SLIM_IMAGES` without
+  restarting) fails with a suggestion to `supabase stop` then `supabase start`
+  with the same flag. A real version/tag mismatch still suggests
+  `supabase stop --all --no-backup` then `supabase start`.
 
-### Shadow baseline cache (`SUPABASE_SHADOW_CACHE`, default OFF)
+### Shadow baseline cache (`SUPABASE_SHADOW_CACHE`, default ON)
 
 The bundled (pg-delta next) engine provisions both plan shadows through
-`legacyAcquireShadowDatabase` (`legacy-pgdelta-next-shadow.layer.ts`): off unless
-`SUPABASE_SHADOW_CACHE` is set (ambient env or project dotenv); `--no-cache`
+`legacyAcquireShadowDatabase` (`legacy-pgdelta-next-shadow.layer.ts`): on by default, off when
+`SUPABASE_SHADOW_CACHE` is set to anything not viper-true (ambient env or project dotenv); `--no-cache`
 bypasses restore and publish for that invocation. Next allocates an ephemeral host port per
 shadow; the cache key hashes the cluster recipe (including the effective Webhooks/`pg_net`
 policy), not the published port, so worktrees and repeated syncs with the same settings share
 a warm hit. The migrations shadow follows project config; the declarative shadow forces
 `pg_net` off — those are distinct keys when Webhooks are enabled. A warm hit skips the
 platform baseline on both shadows (`legacyMigrateNextShadowDatabase` /
-`legacySetupShadowDatabase` are baseline-state-aware). Artifact:
+`legacySetupShadowDatabase` are baseline-state-aware). When both snapshots are
+already published they restore concurrently; a first-run pair that shares a
+cache key builds the baseline once and hands it off; otherwise the two shadows
+stay sequential so progress lines never interleave. Artifact:
 `~/.supabase/cache/shadow-baseline/shadow-baseline-<key>.tar` (~90MB; `SUPABASE_HOME` overrides
 the root), keyed by a hash of every input baked into the cluster (including the effective
 Webhooks/`pg_net` policy); shared across worktrees with the same settings; retention is LRU

@@ -444,7 +444,7 @@ func (a *auth) ToUpdateAuthConfigBody() v1API.UpdateAuthConfigBody {
 	return body
 }
 
-func (a *auth) FromRemoteAuthConfig(remoteConfig v1API.AuthConfigResponse) {
+func (a *auth) FromRemoteAuthConfig(remoteConfig v1API.AuthConfigResponseOutput) {
 	a.SiteUrl = ValOrDefault(remoteConfig.SiteUrl, "")
 	a.AdditionalRedirectUrls = strToArr(ValOrDefault(remoteConfig.UriAllowList, ""))
 	a.JwtExpiry = cast.IntToUint(ValOrDefault(remoteConfig.JwtExp, 0))
@@ -483,7 +483,7 @@ func (r rateLimit) toAuthConfigBody(body *v1API.UpdateAuthConfigBody) {
 	body.RateLimitWeb3 = nullable.NewNullableWithValue((cast.UintToInt(r.Web3)))
 }
 
-func (r *rateLimit) fromAuthConfig(remoteConfig v1API.AuthConfigResponse) {
+func (r *rateLimit) fromAuthConfig(remoteConfig v1API.AuthConfigResponseOutput) {
 	r.AnonymousUsers = cast.IntToUint(ValOrDefault(remoteConfig.RateLimitAnonymousUsers, 0))
 	r.TokenRefresh = cast.IntToUint(ValOrDefault(remoteConfig.RateLimitTokenRefresh, 0))
 	r.SignInSignUps = cast.IntToUint(ValOrDefault(remoteConfig.RateLimitOtp, 0))
@@ -502,7 +502,7 @@ func (c captcha) toAuthConfigBody(body *v1API.UpdateAuthConfigBody) {
 	}
 }
 
-func (c *captcha) fromAuthConfig(remoteConfig v1API.AuthConfigResponse) {
+func (c *captcha) fromAuthConfig(remoteConfig v1API.AuthConfigResponseOutput) {
 	// When local config is not set, we assume platform defaults should not change
 	if c == nil {
 		return
@@ -521,7 +521,7 @@ func (p Passkey) toAuthConfigBody(body *v1API.UpdateAuthConfigBody) {
 	body.PasskeyEnabled = cast.Ptr(p.Enabled)
 }
 
-func (p *Passkey) fromAuthConfig(remoteConfig v1API.AuthConfigResponse) {
+func (p *Passkey) fromAuthConfig(remoteConfig v1API.AuthConfigResponseOutput) {
 	// When local config is not set, we assume platform defaults should not change
 	if p == nil {
 		return
@@ -535,7 +535,7 @@ func (w Webauthn) toAuthConfigBody(body *v1API.UpdateAuthConfigBody) {
 	body.WebauthnRpOrigins = nullable.NewNullableWithValue(strings.Join(w.RpOrigins, ","))
 }
 
-func (w *Webauthn) fromAuthConfig(remoteConfig v1API.AuthConfigResponse) {
+func (w *Webauthn) fromAuthConfig(remoteConfig v1API.AuthConfigResponseOutput) {
 	// When local config is not set, we assume platform defaults should not change
 	if w == nil {
 		return
@@ -597,7 +597,7 @@ func (h hook) toAuthConfigBody(body *v1API.UpdateAuthConfigBody) {
 		}
 	}
 }
-func (h *hook) fromAuthConfig(remoteConfig v1API.AuthConfigResponse) {
+func (h *hook) fromAuthConfig(remoteConfig v1API.AuthConfigResponseOutput) {
 	// When local config is not set, we assume platform defaults should not change
 	if hook := h.BeforeUserCreated; hook != nil {
 		// Ignore disabled hooks because their envs are not loaded
@@ -671,7 +671,7 @@ func (m mfa) toAuthConfigBody(body *v1API.UpdateAuthConfigBody) {
 	body.MfaWebAuthnVerifyEnabled = nullable.NewNullableWithValue(m.WebAuthn.VerifyEnabled)
 }
 
-func (m *mfa) fromAuthConfig(remoteConfig v1API.AuthConfigResponse) {
+func (m *mfa) fromAuthConfig(remoteConfig v1API.AuthConfigResponseOutput) {
 	m.MaxEnrolledFactors = cast.IntToUint(ValOrDefault(remoteConfig.MfaMaxEnrolledFactors, 0))
 	m.TOTP.EnrollEnabled = ValOrDefault(remoteConfig.MfaTotpEnrollEnabled, false)
 	m.TOTP.VerifyEnabled = ValOrDefault(remoteConfig.MfaTotpVerifyEnabled, false)
@@ -689,7 +689,7 @@ func (s sessions) toAuthConfigBody(body *v1API.UpdateAuthConfigBody) {
 	body.SessionsInactivityTimeout = nullable.NewNullableWithValue(float32(s.InactivityTimeout.Hours()))
 }
 
-func (s *sessions) fromAuthConfig(remoteConfig v1API.AuthConfigResponse) {
+func (s *sessions) fromAuthConfig(remoteConfig v1API.AuthConfigResponseOutput) {
 	s.Timebox = time.Duration(ValOrDefault(remoteConfig.SessionsTimebox, 0)) * time.Hour
 	s.InactivityTimeout = time.Duration(ValOrDefault(remoteConfig.SessionsInactivityTimeout, 0)) * time.Hour
 }
@@ -819,7 +819,7 @@ func (e email) toAuthConfigBody(body *v1API.UpdateAuthConfigBody) {
 	}
 }
 
-func (e *email) fromAuthConfig(remoteConfig v1API.AuthConfigResponse) {
+func (e *email) fromAuthConfig(remoteConfig v1API.AuthConfigResponseOutput) {
 	e.EnableSignup = ValOrDefault(remoteConfig.ExternalEmailEnabled, false)
 	e.DoubleConfirmChanges = ValOrDefault(remoteConfig.MailerSecureEmailChangeEnabled, false)
 	e.EnableConfirmations = !ValOrDefault(remoteConfig.MailerAutoconfirm, false)
@@ -1093,7 +1093,7 @@ func (s smtp) toAuthConfigBody(body *v1API.UpdateAuthConfigBody) {
 	body.SmtpSenderName = nullable.NewNullableWithValue(s.SenderName)
 }
 
-func (s *smtp) fromAuthConfig(remoteConfig v1API.AuthConfigResponse) {
+func (s *smtp) fromAuthConfig(remoteConfig v1API.AuthConfigResponseOutput) {
 	// When local config is not set, we assume platform defaults should not change
 	if s == nil {
 		return
@@ -1164,7 +1164,7 @@ func (s sms) toAuthConfigBody(body *v1API.UpdateAuthConfigBody) {
 	}
 }
 
-func (s *sms) fromAuthConfig(remoteConfig v1API.AuthConfigResponse) {
+func (s *sms) fromAuthConfig(remoteConfig v1API.AuthConfigResponseOutput) {
 	s.EnableSignup = ValOrDefault(remoteConfig.ExternalPhoneEnabled, false)
 	s.MaxFrequency = time.Duration(ValOrDefault(remoteConfig.SmsMaxFrequency, 0)) * time.Second
 	s.EnableConfirmations = ValOrDefault(remoteConfig.SmsAutoconfirm, false)
@@ -1404,7 +1404,7 @@ func (e external) toAuthConfigBody(body *v1API.UpdateAuthConfigBody) {
 	}
 }
 
-func (e external) fromAuthConfig(remoteConfig v1API.AuthConfigResponse) {
+func (e external) fromAuthConfig(remoteConfig v1API.AuthConfigResponseOutput) {
 	if len(e) == 0 {
 		return
 	}
@@ -1665,7 +1665,7 @@ func (w web3) toAuthConfigBody(body *v1API.UpdateAuthConfigBody) {
 	body.ExternalWeb3EthereumEnabled = nullable.NewNullableWithValue(w.Ethereum.Enabled)
 }
 
-func (w *web3) fromAuthConfig(remoteConfig v1API.AuthConfigResponse) {
+func (w *web3) fromAuthConfig(remoteConfig v1API.AuthConfigResponseOutput) {
 	if value, err := remoteConfig.ExternalWeb3SolanaEnabled.Get(); err == nil {
 		w.Solana.Enabled = value
 	}
@@ -1681,26 +1681,26 @@ func (o OAuthServer) toAuthConfigBody(body *v1API.UpdateAuthConfigBody) {
 	// Will be implemented when the feature reaches GA
 }
 
-func (o *OAuthServer) fromAuthConfig(remoteConfig v1API.AuthConfigResponse) {
+func (o *OAuthServer) fromAuthConfig(remoteConfig v1API.AuthConfigResponseOutput) {
 	// TODO(cemal) :: implement me
 	// OAuth server configuration is behind a feature flag in the remote API
 	// Will be implemented when the feature reaches GA
 }
 
-func (a *auth) DiffWithRemote(remoteConfig v1API.AuthConfigResponse, filter ...func(string) bool) ([]byte, error) {
+func (a *auth) DiffWithRemote(remoteConfig v1API.AuthConfigResponseOutput, filter ...func(string) bool) ([]byte, error) {
 	copy := a.Clone()
 	copy.FromRemoteAuthConfig(remoteConfig)
 	// Confirm cost before enabling addons
 	for _, keep := range filter {
 		if a.MFA.Phone.VerifyEnabled && !copy.MFA.Phone.VerifyEnabled {
-			if !keep(string(v1API.ListProjectAddonsResponseAvailableAddonsTypeAuthMfaPhone)) {
+			if !keep(string(v1API.ListProjectAddonsResponseOutputAvailableAddonsTypeAuthMfaPhone)) {
 				a.MFA.Phone.VerifyEnabled = false
 				// Enroll cannot be enabled on its own
 				a.MFA.Phone.EnrollEnabled = false
 			}
 		}
 		if a.MFA.WebAuthn.VerifyEnabled && !copy.MFA.WebAuthn.VerifyEnabled {
-			if !keep(string(v1API.ListProjectAddonsResponseAvailableAddonsTypeAuthMfaWebAuthn)) {
+			if !keep(string(v1API.ListProjectAddonsResponseOutputAvailableAddonsTypeAuthMfaWebAuthn)) {
 				a.MFA.WebAuthn.VerifyEnabled = false
 				// Enroll cannot be enabled on its own
 				a.MFA.WebAuthn.EnrollEnabled = false

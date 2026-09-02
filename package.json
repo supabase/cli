@@ -22,6 +22,7 @@
     "fmt:fix": "oxfmt --config .oxfmtrc.json",
     "knip:check": "knip-bun",
     "knip:fix": "knip-bun --fix",
+    "check:config-api": "bun tools/config-api-compare.ts",
     "repos:install": "git submodule update --init --recursive",
     "repos:pull": "git submodule update --remote",
     "local-registry": "bun tools/release/local-registry.ts",
@@ -38,7 +39,7 @@
     "pkg-pr-new": "0.0.88",
     "turbo": "catalog:",
     "typescript": "catalog:",
-    "verdaccio": "^6.9.3"
+    "verdaccio": "^6.10.0"
   },
   "devEngines": {
     "runtime": {

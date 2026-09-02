@@ -152,7 +152,7 @@ func (a *settings) ToUpdatePostgresConfigBody() v1API.UpdatePostgresConfigBody {
 	return body
 }
 
-func (a *settings) FromRemotePostgresConfig(remoteConfig v1API.PostgresConfigResponse) {
+func (a *settings) FromRemotePostgresConfig(remoteConfig v1API.PostgresConfigResponseOutput) {
 	a.EffectiveCacheSize = remoteConfig.EffectiveCacheSize
 	a.LogicalDecodingWorkMem = remoteConfig.LogicalDecodingWorkMem
 	a.MaintenanceWorkMem = remoteConfig.MaintenanceWorkMem
@@ -189,7 +189,7 @@ func (a *settings) ToPostgresConfig() string {
 	return pgConfHeader + string(body)
 }
 
-func (a *settings) DiffWithRemote(remoteConfig v1API.PostgresConfigResponse) ([]byte, error) {
+func (a *settings) DiffWithRemote(remoteConfig v1API.PostgresConfigResponseOutput) ([]byte, error) {
 	copy := *a
 	// Convert the config values into easily comparable remoteConfig values
 	currentValue, err := ToTomlBytes(copy)
@@ -212,7 +212,7 @@ func (n networkRestrictions) ToUpdateNetworkRestrictionsBody() v1API.V1UpdateNet
 	return body
 }
 
-func (n *networkRestrictions) FromRemoteNetworkRestrictions(remoteConfig v1API.NetworkRestrictionsResponse) {
+func (n *networkRestrictions) FromRemoteNetworkRestrictions(remoteConfig v1API.NetworkRestrictionsResponseOutput) {
 	if !n.Enabled {
 		return
 	}
@@ -224,7 +224,7 @@ func (n *networkRestrictions) FromRemoteNetworkRestrictions(remoteConfig v1API.N
 	}
 }
 
-func (n *networkRestrictions) DiffWithRemote(remoteConfig v1API.NetworkRestrictionsResponse) ([]byte, error) {
+func (n *networkRestrictions) DiffWithRemote(remoteConfig v1API.NetworkRestrictionsResponseOutput) ([]byte, error) {
 	copy := *n
 	// Convert the config values into easily comparable remoteConfig values
 	currentValue, err := ToTomlBytes(copy)
@@ -245,14 +245,14 @@ func (s sslEnforcement) ToUpdateSslEnforcementBody() v1API.V1UpdateSslEnforcemen
 	return body
 }
 
-func (s *sslEnforcement) FromRemoteSslEnforcement(remoteConfig v1API.SslEnforcementResponse) {
+func (s *sslEnforcement) FromRemoteSslEnforcement(remoteConfig v1API.SslEnforcementResponseOutput) {
 	if s == nil {
 		return
 	}
 	s.Enabled = remoteConfig.CurrentConfig.Database
 }
 
-func (s *sslEnforcement) DiffWithRemote(remoteConfig v1API.SslEnforcementResponse) ([]byte, error) {
+func (s *sslEnforcement) DiffWithRemote(remoteConfig v1API.SslEnforcementResponseOutput) ([]byte, error) {
 	copy := *s
 	// Convert the config values into easily comparable remoteConfig values
 	currentValue, err := ToTomlBytes(copy)

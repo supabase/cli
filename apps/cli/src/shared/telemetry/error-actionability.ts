@@ -940,7 +940,6 @@ const externalActionabilityByTag: Record<string, ErrorActionabilityAdapter> = {
   // @supabase/config
   CliConfigParseError: () => actionability.invalidConfig,
   CliProjectEnvParseError: () => actionability.invalidConfig,
-  MissingCliConfigValueError: () => actionability.invalidConfig,
   DuplicateRemoteProjectIdError: () => actionability.invalidConfig,
   InvalidRemoteProjectIdError: () => actionability.invalidConfig,
   // A Management API project-config response that fails to map is a platform

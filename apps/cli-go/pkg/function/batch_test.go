@@ -53,15 +53,15 @@ func TestUpsertFunctions(t *testing.T) {
 		gock.New(mockApiHost).
 			Get("/v1/projects/" + mockProject + "/functions").
 			Reply(http.StatusOK).
-			JSON([]api.FunctionResponse{{Slug: "test-a"}})
+			JSON([]api.FunctionResponseOutput{{Slug: "test-a"}})
 		gock.New(mockApiHost).
 			Patch("/v1/projects/" + mockProject + "/functions/test-a").
 			Reply(http.StatusOK).
-			JSON(api.FunctionResponse{Slug: "test-a"})
+			JSON(api.FunctionResponseOutput{Slug: "test-a"})
 		gock.New(mockApiHost).
 			Post("/v1/projects/" + mockProject + "/functions").
 			Reply(http.StatusCreated).
-			JSON(api.FunctionResponse{Slug: "test-b"})
+			JSON(api.FunctionResponseOutput{Slug: "test-b"})
 		gock.New(mockApiHost).
 			Put("/v1/projects/" + mockProject + "/functions").
 			ReplyError(errors.New("network error"))
@@ -89,7 +89,7 @@ func TestUpsertFunctions(t *testing.T) {
 		gock.New(mockApiHost).
 			Get("/v1/projects/" + mockProject + "/functions").
 			Reply(http.StatusOK).
-			JSON([]api.FunctionResponse{{
+			JSON([]api.FunctionResponseOutput{{
 				Slug:       "test-a",
 				VerifyJwt:  cast.Ptr(true),
 				EzbrSha256: cast.Ptr("e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"),
@@ -111,7 +111,7 @@ func TestUpsertFunctions(t *testing.T) {
 		gock.New(mockApiHost).
 			Get("/v1/projects/" + mockProject + "/functions").
 			Reply(http.StatusOK).
-			JSON([]api.FunctionResponse{{
+			JSON([]api.FunctionResponseOutput{{
 				Slug:       "test-a",
 				VerifyJwt:  cast.Ptr(false),
 				EzbrSha256: cast.Ptr("e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"),
@@ -132,7 +132,7 @@ func TestUpsertFunctions(t *testing.T) {
 		gock.New(mockApiHost).
 			Get("/v1/projects/" + mockProject + "/functions").
 			Reply(http.StatusOK).
-			JSON([]api.FunctionResponse{})
+			JSON([]api.FunctionResponseOutput{})
 		gock.New(mockApiHost).
 			Post("/v1/projects/" + mockProject + "/functions").
 			Reply(http.StatusBadRequest).
@@ -140,7 +140,7 @@ func TestUpsertFunctions(t *testing.T) {
 		gock.New(mockApiHost).
 			Patch("/v1/projects/" + mockProject + "/functions/test").
 			Reply(http.StatusOK).
-			JSON(api.FunctionResponse{Slug: "test"})
+			JSON(api.FunctionResponseOutput{Slug: "test"})
 		// Run test
 		err := client.UpsertFunctions(context.Background(), config.FunctionConfig{
 			"test": {Enabled: true},
@@ -179,7 +179,7 @@ func TestCreateFunction(t *testing.T) {
 	gock.New(mockApiHost).
 		Get("/v1/projects/" + mockProject + "/functions").
 		Reply(http.StatusOK).
-		JSON([]api.FunctionResponse{})
+		JSON([]api.FunctionResponseOutput{})
 	gock.New(mockApiHost).
 		Post("/v1/projects/" + mockProject + "/functions").
 		ReplyError(errors.New("network error"))
@@ -189,7 +189,7 @@ func TestCreateFunction(t *testing.T) {
 	gock.New(mockApiHost).
 		Post("/v1/projects/" + mockProject + "/functions").
 		Reply(http.StatusCreated).
-		JSON(api.FunctionResponse{Slug: "test"})
+		JSON(api.FunctionResponseOutput{Slug: "test"})
 	// Run test
 	err := client.UpsertFunctions(context.Background(), config.FunctionConfig{
 		"test": {Enabled: true},
@@ -207,7 +207,7 @@ func TestUpdateFunction(t *testing.T) {
 	gock.New(mockApiHost).
 		Get("/v1/projects/" + mockProject + "/functions").
 		Reply(http.StatusOK).
-		JSON([]api.FunctionResponse{{Slug: "test"}})
+		JSON([]api.FunctionResponseOutput{{Slug: "test"}})
 	gock.New(mockApiHost).
 		Patch("/v1/projects/" + mockProject + "/functions/test").
 		ReplyError(errors.New("network error"))
@@ -217,7 +217,7 @@ func TestUpdateFunction(t *testing.T) {
 	gock.New(mockApiHost).
 		Patch("/v1/projects/" + mockProject + "/functions/test").
 		Reply(http.StatusOK).
-		JSON(api.FunctionResponse{Slug: "test"})
+		JSON(api.FunctionResponseOutput{Slug: "test"})
 	// Run test
 	err := client.UpsertFunctions(context.Background(), config.FunctionConfig{
 		"test": {Enabled: true},

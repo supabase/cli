@@ -1,5 +1,5 @@
 /**
- * A minimal USTAR writer, for the `.tar.gz` build context `supabase workers
+ * A minimal USTAR writer, for the `.tar.gz` build context `supabase experimental workers
  * push` uploads.
  *
  * Shelling out to `tar` would be shorter, but the CLI ships as a single
