@@ -131,10 +131,10 @@ jobs:
           PREVIEW_URL: ${{ steps.preview-metadata.outputs.preview_url }}
         run: |
           set -euo pipefail
-          # temporarily update devEngines to allow npx to run
-          pnpm pkg set devEngines.packageManager.onFail=ignore
+          # Run outside the checkout: npm enforces the root package.json's
+          # devEngines.packageManager (pnpm) against itself and would refuse.
+          cd "${RUNNER_TEMP}"
           npx --yes "${PREVIEW_URL}" --version
-          pnpm pkg set devEngines.packageManager.onFail=error
 
   comment:
     needs: publish
