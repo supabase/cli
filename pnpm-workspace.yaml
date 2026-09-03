@@ -31,7 +31,7 @@ catalog:
   "semantic-release": "^25.0.9"
   "tldts": "^7.4.11"
   "turbo": "2.10.12"
-  "vitest": "^4.1.11"
+  "vitest": ^5.0.0
   "ws": "8.21.3"
 
 blockExoticSubdeps: true
@@ -111,6 +111,9 @@ minimumReleaseAgeExclude:
   - "bun-types@1.4.0"
   - "effect@4.0.0-rc.112"
   - "turbo@2.10.11"
+  - "@vitest/mocker@5.0.0"
+  - "@vitest/spy@5.0.0"
+  - vitest@5.0.0
 
 supportedArchitectures:
   cpu:
