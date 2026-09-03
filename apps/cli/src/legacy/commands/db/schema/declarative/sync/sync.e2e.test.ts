@@ -196,10 +196,22 @@ describe("db schema declarative sync (e2e)", () => {
             exitTimeoutMs: SCENARIO_COMMAND_TIMEOUT_MS,
           },
         );
-      const latestMigrationSql = () => {
-        const latest = migrationFiles(projectDir).at(-1);
-        if (latest === undefined) throw new Error("sync did not write a migration");
-        return readFileSync(path.join(projectDir, "supabase", "migrations", latest), "utf8");
+      // A next-engine plan may span several ordered migration files; read every
+      // file a sync added rather than only the last one.
+      const syncAndReadSql = async (name: string) => {
+        const before = new Set(migrationFiles(projectDir));
+        const result = await sync(name);
+        expect(result.exitCode, commandFailure(result)).toBe(0);
+        const added = migrationFiles(projectDir).filter((file) => !before.has(file));
+        expect(added.length, "sync did not write a migration").toBeGreaterThan(0);
+        return {
+          result,
+          sql: added
+            .map((file) =>
+              readFileSync(path.join(projectDir, "supabase", "migrations", file), "utf8"),
+            )
+            .join("\n"),
+        };
       };
 
       writeFileSync(
@@ -210,23 +222,22 @@ describe("db schema declarative sync (e2e)", () => {
           "",
         ].join("\n"),
       );
-      const added = await sync("add_jobs");
-      expect(added.exitCode, commandFailure(added)).toBe(0);
-      expect(latestMigrationSql()).toContain("cron.schedule('nightly_cleanup'");
-      expect(latestMigrationSql()).toContain("pgmq.create('emails')");
+      const added = await syncAndReadSql("add_jobs");
+      expect(added.sql).toContain("cron.schedule('nightly_cleanup'");
+      expect(added.sql).toContain("pgmq.create('emails')");
 
       // Rename the job and drop the queue: previously refused as a legacy export.
       writeFileSync(
         jobsPath,
         "select cron.schedule('weekly_cleanup', '0 3 * * 0', $$delete from public.disposable_note$$);\n",
       );
-      const removed = await sync("rename_job_drop_queue");
-      expect(removed.exitCode, commandFailure(removed)).toBe(0);
-      expect(`${removed.stdout}${removed.stderr}`).not.toContain("legacy pg-delta export");
-      const sql = latestMigrationSql();
-      expect(sql).toContain("cron.unschedule('nightly_cleanup')");
-      expect(sql).toContain("cron.schedule('weekly_cleanup'");
-      expect(sql).toContain("pgmq.drop_queue('emails')");
+      const removed = await syncAndReadSql("rename_job_drop_queue");
+      expect(`${removed.result.stdout}${removed.result.stderr}`).not.toContain(
+        "legacy pg-delta export",
+      );
+      expect(removed.sql).toContain("cron.unschedule('nightly_cleanup')");
+      expect(removed.sql).toContain("cron.schedule('weekly_cleanup'");
+      expect(removed.sql).toContain("pgmq.drop_queue('emails')");
     },
   );
 });
