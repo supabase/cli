@@ -1,7 +1,7 @@
 # 0022. Config Diff Classification and Managed Surface
 
 **Status**: accepted
-**Date**: 2026-08-20 (registry consolidation 2026-08-28; review revision 2026-08-31)
+**Date**: 2026-08-20 (registry consolidation 2026-08-28; review revision 2026-08-31; public entrypoint promotion 2026-09-03)
 
 ## Problem Statement
 
