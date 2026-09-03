@@ -23,7 +23,6 @@ const stateFrom = (definition: PersistedStackState["definition"]): PersistedStac
   runtime: { kind: "native" },
   desiredLifecycle: "stopped",
   definition,
-  inputFingerprint: "b".repeat(64),
   ports: [],
   privatePorts: [{ workloadId: "database:database", binding: "primary", port: 54_321 }],
   secrets: {

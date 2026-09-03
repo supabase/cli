@@ -355,7 +355,6 @@ describe("production runtime composition", () => {
             },
             desiredLifecycle: "running" as const,
             definition: compiled.definition,
-            inputFingerprint: compiled.inputFingerprint,
             privatePorts: [
               { workloadId: "database:database", binding: "primary", port: address.port },
             ],
@@ -453,7 +452,6 @@ describe("production runtime composition", () => {
             },
             desiredLifecycle: "running" as const,
             definition: compiled.definition,
-            inputFingerprint: compiled.inputFingerprint,
             privatePorts: [
               { workloadId: "database:database", binding: "primary", port: address.port },
             ],
@@ -546,7 +544,6 @@ describe("production runtime composition", () => {
             },
             desiredLifecycle: "running" as const,
             definition: compiled.definition,
-            inputFingerprint: compiled.inputFingerprint,
             privatePorts: [
               { workloadId: "storage:imgproxy", binding: "primary", port: 41_001 },
               { workloadId: "storage:storage", binding: "primary", port: 41_002 },
@@ -571,7 +568,6 @@ describe("production runtime composition", () => {
           desiredLifecycle: "running" as const,
           state: current.value,
           definition: compiled.definition,
-          inputFingerprint: compiled.inputFingerprint,
           secrets: current.value.secrets,
           plan: compiled.executionPlan,
         } satisfies LifecycleInput;
@@ -633,7 +629,6 @@ describe("production runtime composition", () => {
             },
             desiredLifecycle: "running" as const,
             definition: compiled.definition,
-            inputFingerprint: compiled.inputFingerprint,
             privatePorts: [
               { workloadId: "realtime:realtime", binding: "primary", port: address.port },
             ],
@@ -713,7 +708,6 @@ describe("production runtime composition", () => {
             },
             desiredLifecycle: "running" as const,
             definition: compiled.definition,
-            inputFingerprint: compiled.inputFingerprint,
             privatePorts: [
               { workloadId: "database:database", binding: "primary", port: address.port },
             ],
@@ -822,7 +816,6 @@ describe("production runtime composition", () => {
               },
               desiredLifecycle: "running" as const,
               definition: compiled.definition,
-              inputFingerprint: compiled.inputFingerprint,
               privatePorts: [
                 { workloadId: "database:database", binding: "primary", port: address.port },
               ],
@@ -957,12 +950,10 @@ describe("production runtime composition", () => {
       const configuredState = {
         ...stateFor({}),
         definition: configured.definition,
-        inputFingerprint: configured.inputFingerprint,
       };
       const defaultState = {
         ...stateFor({}),
         definition: defaulted.definition,
-        inputFingerprint: defaulted.inputFingerprint,
       };
       expect(
         Duration.toMillis(yield* readinessDeadlineFor(configuredState, configuredDatabase)),
@@ -1116,7 +1107,6 @@ describe("production runtime composition", () => {
               checkoutId: root,
             },
             definition: compiled.definition,
-            inputFingerprint: compiled.inputFingerprint,
             secrets,
           },
         } satisfies { value: PersistedStackState };
@@ -1156,7 +1146,6 @@ describe("production runtime composition", () => {
             desiredLifecycle: "stopped",
             state: current.value,
             definition: compiled.definition,
-            inputFingerprint: compiled.inputFingerprint,
             secrets,
             plan: compiled.executionPlan,
           },
@@ -1201,7 +1190,6 @@ describe("production runtime composition", () => {
               checkoutId: root,
             },
             definition: compiled.definition,
-            inputFingerprint: compiled.inputFingerprint,
             ports: [{ field: "database", port, intent: "exact" }],
             secrets,
           },
@@ -1236,7 +1224,6 @@ describe("production runtime composition", () => {
               desiredLifecycle: "running",
               state: current.value,
               definition: compiled.definition,
-              inputFingerprint: compiled.inputFingerprint,
               secrets,
               plan: compiled.executionPlan,
             },
@@ -1279,7 +1266,6 @@ describe("production runtime composition", () => {
               checkoutId: root,
             },
             definition: compiled.definition,
-            inputFingerprint: compiled.inputFingerprint,
             secrets,
           },
         } satisfies { value: PersistedStackState };
@@ -1319,7 +1305,6 @@ describe("production runtime composition", () => {
               desiredLifecycle: "running",
               state: current.value,
               definition: compiled.definition,
-              inputFingerprint: compiled.inputFingerprint,
               secrets,
               plan: compiled.executionPlan,
             },
@@ -1364,7 +1349,6 @@ describe("production runtime composition", () => {
           }),
           desiredLifecycle: "running" as const,
           definition: compiled.definition,
-          inputFingerprint: compiled.inputFingerprint,
         } satisfies PersistedStackState;
         const context = yield* Effect.context<FileSystem.FileSystem | Path.Path | Crypto.Crypto>();
         const factory = yield* makeProductionRuntimeFactory({
@@ -1395,7 +1379,6 @@ describe("production runtime composition", () => {
             desiredLifecycle: "running",
             state: candidate,
             definition: compiled.definition,
-            inputFingerprint: compiled.inputFingerprint,
             secrets: candidate.secrets,
             plan: compiled.executionPlan,
           },
@@ -1536,7 +1519,6 @@ describe("production runtime composition", () => {
             },
             desiredLifecycle: "running" as const,
             definition: compiled.definition,
-            inputFingerprint: compiled.inputFingerprint,
             ports: [{ field: "api" as const, port: 40_000, intent: "exact" as const }],
             privatePorts: [
               {
@@ -1801,7 +1783,6 @@ describe("production runtime composition", () => {
             },
             desiredLifecycle: "running" as const,
             definition: compiled.definition,
-            inputFingerprint: compiled.inputFingerprint,
             privatePorts: [
               { workloadId: "rest:rest", binding: "primary", port: address.port },
               { workloadId: "rest:rest", binding: "admin", port: address.port + 1 },

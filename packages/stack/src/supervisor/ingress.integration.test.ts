@@ -120,7 +120,6 @@ describe("Supervisor ingress", () => {
           runtime: { kind: "native" },
           desiredLifecycle: "running",
           definition: compiled.definition,
-          inputFingerprint: compiled.inputFingerprint,
           ports: [{ field: "api", port: 55432, intent: "automatic" }],
           privatePorts: privateBindingIntentsFor(compiled.executionPlan).map((binding, index) => ({
             ...binding,
@@ -147,7 +146,6 @@ describe("Supervisor ingress", () => {
           desiredLifecycle: "running" as const,
           state: yield* store.read(stackId).pipe(Effect.map((value) => value!)),
           definition: compiled.definition,
-          inputFingerprint: compiled.inputFingerprint,
           secrets: {},
           plan: compiled.executionPlan,
         };
@@ -215,7 +213,6 @@ describe("Supervisor ingress", () => {
           runtime: { kind: "native" },
           desiredLifecycle: "running",
           definition: compiled.definition,
-          inputFingerprint: compiled.inputFingerprint,
           ports: [
             { field: "api", port: 55433, intent: "automatic" },
             { field: "database", port: 55436, intent: "automatic" },
@@ -235,7 +232,6 @@ describe("Supervisor ingress", () => {
           desiredLifecycle: "running",
           state,
           definition: compiled.definition,
-          inputFingerprint: compiled.inputFingerprint,
           secrets: {},
           plan: compiled.executionPlan,
         });
@@ -246,7 +242,6 @@ describe("Supervisor ingress", () => {
               desiredLifecycle: "running",
               state,
               definition: compiled.definition,
-              inputFingerprint: compiled.inputFingerprint,
               secrets: {},
               plan: compiled.executionPlan,
             },
@@ -312,7 +307,6 @@ describe("Supervisor ingress", () => {
           runtime: { kind: "native" as const },
           desiredLifecycle: "running" as const,
           definition: compiled.definition,
-          inputFingerprint: compiled.inputFingerprint,
           ports: [{ field: "database", port: 55434, intent: "automatic" }] as const,
           privatePorts: privateBindingIntentsFor(compiled.executionPlan).map((binding, index) => ({
             ...binding,
@@ -335,7 +329,6 @@ describe("Supervisor ingress", () => {
           desiredLifecycle: "running" as const,
           state: persisted,
           definition: compiled.definition,
-          inputFingerprint: compiled.inputFingerprint,
           secrets: {},
           plan: compiled.executionPlan,
         };
@@ -420,7 +413,6 @@ describe("Supervisor ingress", () => {
           runtime: { kind: "native" as const },
           desiredLifecycle: "running" as const,
           definition: compiled.definition,
-          inputFingerprint: compiled.inputFingerprint,
           ports: [{ field: "api", port: 55435, intent: "automatic" }] as const,
           privatePorts: privateBindingIntentsFor(compiled.executionPlan).map((binding, index) => ({
             ...binding,
@@ -467,7 +459,6 @@ describe("Supervisor ingress", () => {
           desiredLifecycle: "running" as const,
           state: persisted,
           definition: compiled.definition,
-          inputFingerprint: compiled.inputFingerprint,
           secrets: {},
           plan: compiled.executionPlan,
         };

@@ -120,7 +120,6 @@ describe("durable lifecycle controller", () => {
         const result = yield* fixture.controller.start();
         expect(result.desiredLifecycle).toBe("running");
         expect(result.definition).toBeDefined();
-        expect(result.inputFingerprint).toMatch(/^[0-9a-f]{64}$/);
         expect(fixture.state.calls).toEqual(["preflight", "reconcile:running"]);
         expect(yield* fixture.store.read(fixture.id)).toEqual(result);
       }),
@@ -138,7 +137,6 @@ describe("durable lifecycle controller", () => {
         fixture.state.calls.length = 0;
         const third = yield* fixture.controller.start();
         expect(third.definition).toEqual(first.definition);
-        expect(third.inputFingerprint).toBe(first.inputFingerprint);
         expect(fixture.state.preflight.at(-1)?.definition).toEqual(first.definition);
       }),
     ),
@@ -153,6 +151,19 @@ describe("durable lifecycle controller", () => {
         const second = yield* fixture.controller.start({ config: { capabilities: { rest: {} } } });
         expect(second).toEqual(first);
         expect(fixture.state.calls).toEqual(["reconcile:running"]);
+      }),
+    ),
+  );
+
+  it.live("accepts explicit materialized defaults for a running stack", () =>
+    run(
+      Effect.gen(function* () {
+        const fixture = yield* makeFixture();
+        const first = yield* fixture.controller.start();
+        const second = yield* fixture.controller.start({
+          config: { capabilities: { rest: { enabled: true } } },
+        });
+        expect(second.definition).toEqual(first.definition);
       }),
     ),
   );
@@ -259,7 +270,6 @@ describe("durable lifecycle controller", () => {
         expect(yield* fixture.store.read(fixture.id)).toMatchObject({
           desiredLifecycle: "stopped",
           definition: first.definition,
-          inputFingerprint: first.inputFingerprint,
         });
         expect(fixture.state.calls).toEqual(["preflight"]);
       }),

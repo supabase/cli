@@ -180,8 +180,10 @@ export const makeSupervisorIngress = (
       lock.withPermit(
         Effect.gen(function* () {
           const existing = yield* Ref.get(current);
-          if (existing !== undefined && existing.input.inputFingerprint === input.inputFingerprint)
-            return { ...existing.reservation, fresh: false };
+          // A Supervisor owns one ingress reservation for its running session. Definition
+          // changes are rejected while running and a stopped session closes this reservation,
+          // so a live reservation can always be reused without a configuration fingerprint.
+          if (existing !== undefined) return { ...existing.reservation, fresh: false };
           if (existing !== undefined) yield* closeCurrent(existing);
           const reservationScope = Scope.forkUnsafe(ownerScope);
           const reservation = yield* coordinator
@@ -230,7 +232,7 @@ export const makeSupervisorIngress = (
       lock.withPermit(
         Effect.gen(function* () {
           const entry = yield* Ref.get(current);
-          if (entry === undefined || entry.input.inputFingerprint !== input.inputFingerprint)
+          if (entry === undefined || entry.reservation !== reservation)
             return yield* new GatewayActivationError({
               message: "Gateway reservation is no longer current",
             });

@@ -604,7 +604,6 @@ describe("Effect stack lifecycle handoff", () => {
         yield* store.replace(stack.id, {
           ...state,
           definition: persisted.definition,
-          inputFingerprint: persisted.inputFingerprint,
         });
         const prepared = yield* stack.prepare({
           config: { capabilities: { rest: { settings: { schemas: ["private"] } } } },
@@ -1021,7 +1020,6 @@ describe("Effect stack lifecycle handoff", () => {
                       );
                       return {
                         definition: compiled.definition,
-                        inputFingerprint: compiled.inputFingerprint,
                         secrets: resolved.persisted,
                       };
                     })

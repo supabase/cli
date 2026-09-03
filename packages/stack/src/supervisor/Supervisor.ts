@@ -413,7 +413,6 @@ export const makeSupervisor = (
           desiredLifecycle: "running",
           state,
           definition,
-          inputFingerprint: state.inputFingerprint ?? "",
           secrets: state.secrets,
           plan,
         };
@@ -456,7 +455,6 @@ export const makeSupervisor = (
               desiredLifecycle: "running",
               state,
               definition: state.definition,
-              inputFingerprint: state.inputFingerprint ?? "",
               secrets: state.secrets,
               plan,
             };

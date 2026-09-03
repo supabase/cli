@@ -40,9 +40,6 @@ import type {
 } from "./CapabilityModule.ts";
 import type { SecretGenerator, SecretJwtSigning } from "../state/SecretStore.ts";
 
-type InputFingerprint = Schema.Schema.Type<typeof InputFingerprintSchema>;
-const InputFingerprintSchema = Schema.String.pipe(Schema.brand("InputFingerprint"));
-
 interface SecretSlot {
   readonly slot: string;
 }
@@ -102,14 +99,12 @@ const INTERNAL_MANAGED_SECRET_SLOTS = ["secret:database.internal.password"] as c
 
 export interface CompiledStack {
   readonly definition: StackDefinition;
-  readonly inputFingerprint: InputFingerprint;
   readonly secrets: ReadonlyArray<SecretSlotInput>;
   readonly executionPlan: ExecutionPlan;
 }
 
 export interface PreviousCompilation {
   readonly definition: StackDefinition;
-  readonly inputFingerprint: string;
 }
 
 export interface CompileStackInput {
@@ -718,39 +713,6 @@ export const rebuildExecutionPlan = (
     return yield* planForDefinition(runtime, definition, crypto);
   });
 
-const collectSuppliedSecrets = (
-  config: StackConfig,
-  slots: SecretSlotInput[],
-  jwtSecret: Redacted.Redacted<string> | undefined,
-): void => {
-  const capabilities = config.capabilities;
-  for (const name of CAPABILITY_NAMES) {
-    const module = CAPABILITY_MODULES[name];
-    const capability = capabilities?.[name];
-    if (capability === undefined) {
-      if (module.defaultEnabled) {
-        for (const path of module.managedSecretSlots)
-          slots.push({ slot: `secret:${path}`, policy: "managed" });
-      }
-      continue;
-    }
-    slotsFor(
-      "settings" in capability ? capability.settings : undefined,
-      `${name}.settings`,
-      slots,
-      module.secretPolicy,
-    );
-    if ("enabled" in capability && capability.enabled === false) continue;
-    for (const path of module.managedSecretSlots) {
-      if (!slots.some((entry) => entry.slot === `secret:${path}`))
-        slots.push({ slot: `secret:${path}`, policy: "managed" });
-    }
-  }
-  const signing = config.security?.jwt?.signing;
-  if (signing?.kind === "jwks-file") slotsFor(signing, "security.jwt.signing", slots);
-  ensureCanonicalJwtSlot(slots, jwtSecret);
-};
-
 export const compileStack = (
   input: CompileStackInput,
   previous?: PreviousCompilation,
@@ -769,45 +731,6 @@ export const compileStack = (
     yield* validateStorageFileSizes(config);
     const jwtSecret = yield* canonicalJwtSecret(config);
     const rawCapabilities = isRecord(config.capabilities) ? config.capabilities : {};
-    const normalizedFunctions = yield* materializeFunctionsRoot(
-      extract(extract(rawCapabilities, "functions"), "settings"),
-      input.projectRoot,
-      path,
-    );
-    const rawForFingerprint = {
-      projectRoot: path.resolve(input.projectRoot),
-      runtime: input.runtime,
-      config: {
-        ...config,
-        capabilities: {
-          ...rawCapabilities,
-          functions: isRecord(rawCapabilities.functions)
-            ? { ...rawCapabilities.functions, settings: normalizedFunctions }
-            : rawCapabilities.functions,
-        },
-      },
-    };
-    const fingerprintBytes = yield* crypto.digest(
-      "SHA-256",
-      new TextEncoder().encode(canonical(rawForFingerprint)),
-    );
-    const inputFingerprint = yield* Schema.decodeEffect(InputFingerprintSchema)(
-      digestHex(fingerprintBytes),
-    ).pipe(Effect.mapError((error) => new InvalidStackConfigError({ message: String(error) })));
-    if (previous?.inputFingerprint === inputFingerprint) {
-      const slots: SecretSlotInput[] = [];
-      for (const slot of INTERNAL_MANAGED_SECRET_SLOTS) slots.push({ slot, policy: "managed" });
-      collectSuppliedSecrets(config, slots, jwtSecret);
-      attachAuthSecretGenerators(slots, input.projectRoot, config.security?.jwt?.signing);
-      attachManagedRandomSecretGenerators(slots);
-      const executionPlan = yield* planForDefinition(input.runtime, previous.definition, crypto);
-      return {
-        definition: previous.definition,
-        inputFingerprint,
-        secrets: slots,
-        executionPlan,
-      };
-    }
     const slots: SecretSlotInput[] = [];
     for (const slot of INTERNAL_MANAGED_SECRET_SLOTS) slots.push({ slot, policy: "managed" });
     const specHashes = new Map<string, string>();
@@ -1021,11 +944,11 @@ export const compileStack = (
       },
       CAPABILITY_MODULES,
     );
-    return { definition, inputFingerprint, secrets: slots, executionPlan };
-  }).pipe(
-    Effect.catchTag("PlatformError", (error) =>
-      Effect.fail(new InvalidStackConfigError({ message: error.message })),
-    ),
-  );
+    return { definition, secrets: slots, executionPlan };
+  });
 
 export const canonicalize = canonical;
+
+/** Compares two complete materialized definitions by their canonical schema representation. */
+export const sameDefinition = (left: StackDefinition, right: StackDefinition): boolean =>
+  canonical(left) === canonical(right);

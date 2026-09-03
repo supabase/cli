@@ -69,7 +69,6 @@ const state = (stackId: string, definition?: StackDefinition): PersistedStackSta
   runtime: { kind: "native" },
   desiredLifecycle: "stopped",
   definition,
-  inputFingerprint: definition === undefined ? undefined : "d".repeat(64),
   ports: [],
   privatePorts: [],
   secrets: {},

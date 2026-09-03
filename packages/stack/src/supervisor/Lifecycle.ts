@@ -1,6 +1,6 @@
 import { Crypto, Effect, Exit, FileSystem, Path, Redacted } from "effect";
 import type { StackDefinition, CompiledStack, SecretSlotInput } from "../model/Compiler.ts";
-import { compileStack, rebuildExecutionPlan } from "../model/Compiler.ts";
+import { compileStack, rebuildExecutionPlan, sameDefinition } from "../model/Compiler.ts";
 import type { ExecutionPlan } from "../model/ExecutionPlan.ts";
 import type { StackConfig } from "../public/Config.ts";
 import type { StackRuntime } from "../public/Runtime.ts";
@@ -29,7 +29,6 @@ export interface LifecycleInput {
   readonly desiredLifecycle: "running" | "stopped" | "destroying";
   readonly state: PersistedStackState;
   readonly definition: StackDefinition;
-  readonly inputFingerprint: string;
   readonly secrets: PersistedSecretValues;
   readonly plan: ExecutionPlan;
 }
@@ -79,7 +78,6 @@ export interface LifecycleControllerOptions {
 
 interface Candidate {
   readonly definition: StackDefinition;
-  readonly inputFingerprint: string;
   readonly secrets: PersistedSecretValues;
   readonly plan: ExecutionPlan;
 }
@@ -135,11 +133,7 @@ const materializeCandidate = (
   secretLifecycle: PersistedStackState["desiredLifecycle"] = state.desiredLifecycle,
 ): Effect.Effect<Candidate, StackError, LifecycleRequirements> =>
   Effect.gen(function* () {
-    if (
-      config === undefined &&
-      state.definition !== undefined &&
-      state.inputFingerprint !== undefined
-    ) {
+    if (config === undefined && state.definition !== undefined) {
       const plan = yield* rebuildExecutionPlan(runtime, state.definition);
       const resolved = yield* resolveSecrets(
         declarationsFromPersisted(state.secrets),
@@ -148,7 +142,6 @@ const materializeCandidate = (
       );
       return {
         definition: state.definition,
-        inputFingerprint: state.inputFingerprint,
         secrets: resolved.persisted,
         plan,
       };
@@ -159,12 +152,7 @@ const materializeCandidate = (
         runtime,
         config,
       },
-      state.definition === undefined || state.inputFingerprint === undefined
-        ? undefined
-        : {
-            definition: state.definition,
-            inputFingerprint: state.inputFingerprint,
-          },
+      state.definition === undefined ? undefined : { definition: state.definition },
     );
     const resolved = yield* resolveSecrets(
       declarationsFromCompiled(compiled),
@@ -173,7 +161,6 @@ const materializeCandidate = (
     );
     return {
       definition: compiled.definition,
-      inputFingerprint: compiled.inputFingerprint,
       secrets: resolved.persisted,
       plan: compiled.executionPlan,
     };
@@ -186,12 +173,9 @@ const persistedCandidate = (
 ): Effect.Effect<Candidate, StackError, LifecycleRequirements> =>
   Effect.gen(function* () {
     const definition = state.definition;
-    const inputFingerprint = state.inputFingerprint;
-    if (definition === undefined || inputFingerprint === undefined)
-      return yield* invalidDefinition(stackId);
+    if (definition === undefined) return yield* invalidDefinition(stackId);
     return {
       definition,
-      inputFingerprint,
       secrets: state.secrets,
       plan: yield* rebuildExecutionPlan(runtime, definition),
     };
@@ -209,7 +193,6 @@ const lifecycleInput = (
   desiredLifecycle,
   state,
   definition: candidate.definition,
-  inputFingerprint: candidate.inputFingerprint,
   secrets: candidate.secrets,
   plan: candidate.plan,
 });
@@ -222,7 +205,6 @@ const stateWithCandidate = (
   ...state,
   desiredLifecycle,
   definition: candidate.definition,
-  inputFingerprint: candidate.inputFingerprint,
   secrets: candidate.secrets,
   ports: state.ports,
 });
@@ -254,7 +236,11 @@ export const makeLifecycleController = (
 
         const candidate = yield* materializeCandidate(initial, initial.runtime, supplied);
         if (initial.desiredLifecycle === "running") {
-          if (supplied !== undefined && candidate.inputFingerprint !== initial.inputFingerprint)
+          if (
+            supplied !== undefined &&
+            (initial.definition === undefined ||
+              !sameDefinition(candidate.definition, initial.definition))
+          )
             return yield* new StackMustBeStoppedError({
               stackId: options.stackId,
               message: "Running stack input changed; stop the stack before applying it",

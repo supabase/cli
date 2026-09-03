@@ -2,7 +2,7 @@ import { NodeServices } from "@effect/platform-node";
 import { describe, expect, it } from "@effect/vitest";
 import { Cause, Effect, Exit, Option, Redacted } from "effect";
 import { InvalidStackConfigError, StackVersionUnsupportedError } from "../public/Errors.ts";
-import { canonicalize, compileStack } from "./Compiler.ts";
+import { canonicalize, compileStack, rebuildExecutionPlan, sameDefinition } from "./Compiler.ts";
 import { resolveThirdPartyIssuer } from "./capabilities/auth-third-party.ts";
 import { DEFAULT_DATABASE_HEALTH_TIMEOUT } from "./capabilities/database.ts";
 import { parseFileSize } from "./capabilities/storage.ts";
@@ -154,7 +154,6 @@ describe("closed capability compiler", () => {
         site_url: "https://example.test",
       });
       expect(canonicalize(result.definition)).not.toContain("secret-value");
-      expect(canonicalize(result.inputFingerprint)).not.toContain("secret-value");
       expect(canonicalize(result.executionPlan)).not.toContain("secret-value");
       const supplied = result.secrets.find(
         (entry) => entry.slot === "secret:auth.settings.secret_key",
@@ -527,7 +526,6 @@ describe("closed capability compiler", () => {
         { kind: "native" },
         {
           definition: first.definition,
-          inputFingerprint: first.inputFingerprint,
         },
       );
       expect(
@@ -554,7 +552,7 @@ describe("closed capability compiler", () => {
     }),
   );
 
-  it.live("keeps record key insertion order out of fingerprints", () =>
+  it.live("keeps record key insertion order out of materialized definitions", () =>
     Effect.gen(function* () {
       const one = yield* compile({
         capabilities: {
@@ -566,19 +564,19 @@ describe("closed capability compiler", () => {
           storage: { settings: { buckets: { b: { public: false }, a: { public: true } } } },
         },
       });
-      expect(one.inputFingerprint).toBe(two.inputFingerprint);
+      expect(sameDefinition(one.definition, two.definition)).toBe(true);
     }),
   );
 
-  it.live("preserves omitted versus explicit capability selection", () =>
+  it.live("materializes omitted and explicit defaults identically", () =>
     Effect.gen(function* () {
       const omitted = yield* compile({});
       const explicit = yield* compile({ capabilities: { rest: { enabled: true } } });
-      expect(omitted.inputFingerprint).not.toBe(explicit.inputFingerprint);
+      expect(sameDefinition(omitted.definition, explicit.definition)).toBe(true);
     }),
   );
 
-  it.live("reuses the exact previous definition for an identical fingerprint", () =>
+  it.live("accepts an equivalent materialized definition from a previous compilation", () =>
     Effect.gen(function* () {
       const first = yield* compile({
         capabilities: { rest: { settings: { schemas: ["private"] } } },
@@ -591,8 +589,8 @@ describe("closed capability compiler", () => {
         { kind: "native" },
         first,
       );
-      expect(first.inputFingerprint).toBe(second.inputFingerprint);
-      expect(reused.definition).toBe(first.definition);
+      expect(sameDefinition(first.definition, second.definition)).toBe(true);
+      expect(sameDefinition(reused.definition, first.definition)).toBe(true);
     }),
   );
 
@@ -691,7 +689,7 @@ describe("closed capability compiler", () => {
     }),
   );
 
-  it.live("rebuilds a plan from an identical persisted definition", () =>
+  it.live("compiles supplied configuration against persisted release pins", () =>
     Effect.gen(function* () {
       const first = yield* compile({
         capabilities: { rest: { settings: { schemas: ["current"] } } },
@@ -706,17 +704,15 @@ describe("closed capability compiler", () => {
           },
         },
       };
-      const reused = yield* compile(
+      const compiled = yield* compile(
         { capabilities: { rest: { settings: { schemas: ["current"] } } } },
         { kind: "native" },
-        { definition: persisted, inputFingerprint: first.inputFingerprint },
+        { definition: persisted },
       );
-      expect(reused.definition).toBe(persisted);
-      const previousHash = first.executionPlan.workloads.find(
-        (w) => w.id === "rest:rest",
-      )?.specHash;
-      const freshHash = reused.executionPlan.workloads.find((w) => w.id === "rest:rest")?.specHash;
-      expect(freshHash).not.toBe(previousHash);
+      expect(compiled.definition.capabilities.rest.settings.schemas).toEqual(["current"]);
+      expect(compiled.definition.capabilities.rest.version).toBe(
+        persisted.capabilities.rest.version,
+      );
     }),
   );
 
@@ -735,7 +731,6 @@ describe("closed capability compiler", () => {
         { kind: "native" },
         {
           definition: persisted,
-          inputFingerprint: first.inputFingerprint,
         },
       ).pipe(Effect.exit);
       expect(failureOf(result)).toBeInstanceOf(StackVersionUnsupportedError);
@@ -752,11 +747,10 @@ describe("closed capability compiler", () => {
           rest: { ...first.definition.capabilities.rest, enabled: false },
         },
       };
-      const result = yield* compile(
-        {},
-        { kind: "native" },
-        { definition: persisted, inputFingerprint: first.inputFingerprint },
-      ).pipe(Effect.exit);
+      const result = yield* rebuildExecutionPlan({ kind: "native" }, persisted).pipe(
+        Effect.provide(layer),
+        Effect.exit,
+      );
       expect(failureOf(result)).toBeInstanceOf(InvalidStackConfigError);
     }),
   );

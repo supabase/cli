@@ -309,22 +309,19 @@ const stateShape = Schema.Struct({
   runtime: StackRuntimeSchema,
   desiredLifecycle: DesiredStackLifecycleSchema,
   definition: Schema.optional(StackDefinitionSchema),
-  inputFingerprint: Schema.optional(Schema.String.check(Schema.isPattern(/^[0-9a-f]{64}$/))),
   ports: PortAssignmentsSchema,
   privatePorts: PrivatePortAssignmentsSchema,
   secrets: PersistedSecretValuesSchema,
 });
 
-/** Complete durable state. Definition and fingerprint are intentionally an all-or-none pair. */
+/** Complete durable state. An optional definition is present once the identity is configured. */
 export const PersistedStackStateSchema = stateShape.pipe(
   Schema.decode({
     decode: SchemaGetter.checkEffect((state) =>
       Effect.succeed(
-        (state.definition === undefined) !== (state.inputFingerprint === undefined)
-          ? "definition and inputFingerprint must be persisted together"
-          : state.ports.some(({ port }) => state.privatePorts.some((entry) => entry.port === port))
-            ? "Public and private persisted ports must not overlap"
-            : undefined,
+        state.ports.some(({ port }) => state.privatePorts.some((entry) => entry.port === port))
+          ? "Public and private persisted ports must not overlap"
+          : undefined,
       ),
     ),
     encode: SchemaGetter.passthrough(),

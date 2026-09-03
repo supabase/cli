@@ -830,12 +830,7 @@ const handleDependencies = (options: {
               runtime: state.runtime,
               config: prepareOptions?.config,
             },
-            state.definition === undefined || state.inputFingerprint === undefined
-              ? undefined
-              : {
-                  definition: state.definition,
-                  inputFingerprint: state.inputFingerprint,
-                },
+            state.definition === undefined ? undefined : { definition: state.definition },
           ).pipe(
             Effect.provideService(Path.Path, options.path),
             Effect.provideService(Crypto.Crypto, options.crypto),

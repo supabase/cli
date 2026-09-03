@@ -23,6 +23,7 @@ import {
 } from "../state/SecretStore.ts";
 import { resolveThirdPartyIssuer } from "../model/capabilities/auth-third-party.ts";
 import { containerAliasFor } from "../model/WorkloadCatalog.ts";
+import { canonicalize } from "../model/Compiler.ts";
 
 /** A parsed JSON document fetched by the owner for OIDC discovery. */
 export type RuntimeJsonFetcher = (url: string) => Effect.Effect<unknown, StackPreparationError>;
@@ -610,7 +611,7 @@ export const makeRuntimeInputOwner = (
     const poolerPending = new Map<string, OwnedResult<string>>();
     const poolerCompleted = new Map<string, string>();
     const keyFor = (state: PersistedStackState): string =>
-      `${state.identity.projectRoot}\u0000${state.inputFingerprint ?? ""}\u0000${state.runtime.kind}`;
+      `${options.stackId}\u0000${canonicalize(state.runtime)}\u0000${canonicalize(state.definition ?? {})}`;
 
     const materializeCommon = (
       state: PersistedStackState,

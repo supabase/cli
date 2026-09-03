@@ -49,7 +49,6 @@ const stateFor = (
   runtime,
   desiredLifecycle: "stopped",
   definition: compiled.definition,
-  inputFingerprint: compiled.inputFingerprint,
   ports: [],
   privatePorts: [],
   secrets,
