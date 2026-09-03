@@ -41,12 +41,6 @@ import {
 } from "../../../../shared/legacy/global-flags.ts";
 import type { OutputFormat } from "../../../../shared/output/types.ts";
 import { legacyDockerRunLayer } from "../../../shared/legacy-docker-run.layer.ts";
-import { LegacyEdgeRuntimeScriptError } from "../../../shared/legacy-edge-runtime-script.errors.ts";
-import {
-  LegacyEdgeRuntimeScript,
-  type LegacyEdgeRuntimeRunOpts,
-} from "../../../shared/legacy-edge-runtime-script.service.ts";
-import { LegacyPgDeltaSslProbe } from "../../../shared/legacy-pgdelta-ssl-probe.service.ts";
 import { LegacyDbConfigResolver } from "../../../shared/legacy-db-config.service.ts";
 import type {
   LegacyDbConfigFlags,
@@ -438,10 +432,6 @@ function setup(
     replicationSlotCounts?: ReadonlyArray<number>;
     replicationSlotQueryFails?: boolean;
     failStatement?: { readonly sql: string; readonly code?: string; readonly message: string };
-    // pg-delta migrations-catalog cache, wired into the remote-reset path
-    // after a successful migrate/schema-files + seed.
-    catalogStdout?: string;
-    catalogExportFailWith?: string;
     // Simulates a genuinely unlinked workdir: `loadProjectRef` fails with
     // `LegacyProjectNotLinkedError` absent an explicit `--project-ref` flag,
     // instead of silently falling back to `opts.ref ?? LEGACY_VALID_REF`.
@@ -473,30 +463,6 @@ function setup(
   });
   const route = opts.route ?? defaultLocalResetRoute(opts.routeOpts);
   const child = mockContainerCliSpawner(route);
-  // Backs both the local recreate's post-setup pg-delta migrations-catalog warmup
-  // (`db-setup.ts`'s `legacyTryCacheMigrationsCatalog`) and the remote path's own
-  // post-reset catalog-cache call — tracked so tests can assert on it directly
-  // (`edgeRunCalls`/`registryEnvAtRunTime`), same as `db push`'s own integration
-  // tests (`push.integration.test.ts`).
-  const edgeRunCalls: Array<LegacyEdgeRuntimeRunOpts> = [];
-  const registryEnvAtRunTime: Array<string | undefined> = [];
-  const edgeRuntime = Layer.succeed(LegacyEdgeRuntimeScript, {
-    run: (runOpts: LegacyEdgeRuntimeRunOpts) => {
-      edgeRunCalls.push(runOpts);
-      registryEnvAtRunTime.push(process.env["SUPABASE_INTERNAL_IMAGE_REGISTRY"]);
-      if (opts.catalogExportFailWith !== undefined) {
-        return Effect.fail(
-          new LegacyEdgeRuntimeScriptError({ message: opts.catalogExportFailWith }),
-        );
-      }
-      return Effect.succeed({ stdout: opts.catalogStdout ?? '{"version":1}', stderr: "" });
-    },
-  });
-  const pgDeltaSslProbe = Layer.succeed(LegacyPgDeltaSslProbe, {
-    requireSsl: () => Effect.succeed(false),
-    requireSslForHost: () => Effect.succeed(false),
-  });
-
   const layer = Layer.mergeAll(
     out.layer,
     conn.layer,
@@ -511,8 +477,6 @@ function setup(
       Layer.provide(child.layer),
       Layer.provide(mockProcessControl().layer),
     ),
-    edgeRuntime,
-    pgDeltaSslProbe,
     Layer.succeed(LegacyNetworkIdFlag, Option.none()),
     // The remote-reset confirmation is answered through mockOutput's
     // `promptConfirmResponses` (the TTY/clack path), so mark stdin a TTY. Stdin is
@@ -555,8 +519,6 @@ function setup(
     linkedCache,
     resolver,
     child,
-    edgeRunCalls,
-    registryEnvAtRunTime,
   };
 }
 
@@ -1256,7 +1218,7 @@ describe("legacy db reset", () => {
         // such file exists), failing the whole reset, instead of `supabase/schema.sql`
         // (where this test actually places the file).
         const { layer, conn } = setup(tmp.current, {
-          toml: 'project_id = "test"\n[db]\nmajor_version = 14\n[db.migrations]\nschema_paths = ["schema.sql"]\n',
+          toml: 'project_id = "test"\n[db]\nmajor_version = 14\n[db.migrations]\nschema_paths = ["schema.sql"]\n[experimental.pgdelta]\nenabled = false\n',
           files: { "supabase/schema.sql": "create table schema_paths_marker ();" },
           args: ["db", "reset", "--local"],
           isLocal: true,
@@ -1695,138 +1657,12 @@ describe("legacy db reset", () => {
     });
 
     it.live(
-      "caches the migrations catalog after a successful remote reset with SUPABASE_EXPERIMENTAL_PG_DELTA set",
-      () => {
-        // Best-effort caches the pg-delta migrations catalog right after the
-        // migrate-and-seed step succeeds — gated on
-        // `experimental.pgdelta.enabled` OR the legacy
-        // `SUPABASE_EXPERIMENTAL_PG_DELTA` env switch, independent of
-        // `--experimental`'s own schema-files gate.
-        const { layer, out, edgeRunCalls } = setup(tmp.current, {
-          toml: 'project_id = "test"\n',
-          files: {
-            ...migrationFile("20240101000000"),
-            "supabase/.env": "SUPABASE_EXPERIMENTAL_PG_DELTA=true\n",
-          },
-          confirm: [true],
-        });
-        return Effect.gen(function* () {
-          yield* legacyDbReset({ ...DEFAULT_FLAGS, linked: true }).pipe(Effect.provide(layer));
-          expect(out.stderrText).not.toContain("failed to cache migrations catalog");
-          expect(edgeRunCalls).toHaveLength(1);
-        });
-      },
-    );
-
-    it.live(
-      "resolves the pg-delta cache export image via SUPABASE_INTERNAL_IMAGE_REGISTRY from supabase/.env",
-      () => {
-        // The project `.env` is applied to make a `supabase/.env`-only
-        // `SUPABASE_INTERNAL_IMAGE_REGISTRY` visible to the WHOLE reset run,
-        // including the pg-delta catalog export the reset handler triggers
-        // after a successful remote reset (review CLI-1958 round 18) —
-        // mirroring `db push`'s own `legacyApplyProjectEnv(projectEnv)`
-        // scoping (same-named test in `push.integration.test.ts`). Without
-        // that scoping, this reads only real `process.env` and falls back to
-        // the default registry instead.
-        const prev = process.env["SUPABASE_INTERNAL_IMAGE_REGISTRY"];
-        delete process.env["SUPABASE_INTERNAL_IMAGE_REGISTRY"];
-        const { layer, registryEnvAtRunTime } = setup(tmp.current, {
-          toml: 'project_id = "test"\n[experimental.pgdelta]\nenabled = true\n',
-          files: {
-            ...migrationFile("20240101000000"),
-            "supabase/.env": "SUPABASE_INTERNAL_IMAGE_REGISTRY=my-mirror.example.com\n",
-          },
-          confirm: [true],
-        });
-        return Effect.gen(function* () {
-          yield* legacyDbReset({ ...DEFAULT_FLAGS, linked: true }).pipe(Effect.provide(layer));
-          expect(registryEnvAtRunTime).toEqual(["my-mirror.example.com"]);
-          // The finalizer reverted it — never leaks into the surrounding process.
-          expect(process.env["SUPABASE_INTERNAL_IMAGE_REGISTRY"]).toBeUndefined();
-        }).pipe(
-          Effect.ensuring(
-            Effect.sync(() => {
-              if (prev === undefined) delete process.env["SUPABASE_INTERNAL_IMAGE_REGISTRY"];
-              else process.env["SUPABASE_INTERNAL_IMAGE_REGISTRY"] = prev;
-            }),
-          ),
-        );
-      },
-    );
-
-    it.live("warns without failing the reset when the migrations-catalog cache write fails", () => {
-      const { layer, out } = setup(tmp.current, {
-        toml: 'project_id = "test"\n[experimental.pgdelta]\nenabled = true\n',
-        files: migrationFile("20240101000000"),
-        confirm: [true],
-        catalogExportFailWith: "edge-runtime script produced no output",
-      });
-      return Effect.gen(function* () {
-        const exit = yield* legacyDbReset({ ...DEFAULT_FLAGS, linked: true }).pipe(
-          Effect.provide(layer),
-          Effect.exit,
-        );
-        expect(Exit.isSuccess(exit)).toBe(true);
-        expect(out.stderrText).toContain(
-          "Warning: failed to cache migrations catalog: edge-runtime script produced no output",
-        );
-      });
-    });
-
-    it.live(
-      "falls back to the linked project ref for the pg-delta cache when config.toml has no project_id",
-      () => {
-        // The project id seeds from the ref BEFORE the config loads, so on
-        // the linked remote path an absent `project_id` retains the linked
-        // ref rather than falling to the workdir basename.
-        const { layer, out, edgeRunCalls } = setup(tmp.current, {
-          toml: "[experimental.pgdelta]\nenabled = true\n",
-          ref: LEGACY_VALID_REF,
-          files: migrationFile("20240101000000"),
-          confirm: [true],
-        });
-        return Effect.gen(function* () {
-          yield* legacyDbReset({ ...DEFAULT_FLAGS, linked: true }).pipe(Effect.provide(layer));
-          expect(out.stderrText).not.toContain("failed to cache migrations catalog");
-          expect(edgeRunCalls).toHaveLength(1);
-        });
-      },
-    );
-
-    it.live(
-      "skips the migrations-catalog cache for a versioned remote reset even with pg-delta caching enabled",
-      () => {
-        // `pgcache.TryCacheMigrationsCatalog` no-ops on any non-empty `version`
-        // (`pgcache/cache.go:73`, `len(version) > 0`) — a `--version`/`--last` reset
-        // never refreshes the cache, unlike a full (versionless) reset.
-        const { layer, out, edgeRunCalls } = setup(tmp.current, {
-          toml: 'project_id = "test"\n[experimental.pgdelta]\nenabled = true\n',
-          files: {
-            ...migrationFile("20240101000000"),
-            ...migrationFile("20240202000000"),
-          },
-          confirm: [true],
-        });
-        return Effect.gen(function* () {
-          yield* legacyDbReset({
-            ...DEFAULT_FLAGS,
-            linked: true,
-            version: Option.some("20240101000000"),
-          }).pipe(Effect.provide(layer));
-          expect(out.stderrText).not.toContain("failed to cache migrations catalog");
-          expect(edgeRunCalls).toHaveLength(0);
-        });
-      },
-    );
-
-    it.live(
       "applies configured schema files instead of replaying migrations on an experimental remote reset",
       () => {
         // `--linked=false` still selects the linked/remote target (Cobra `Changed`
         // semantics) — exercised here alongside the schema-files branch itself.
         const { layer, out, conn, resolver, linkedCache } = setup(tmp.current, {
-          toml: 'project_id = "test"\n\n[db.migrations]\nschema_paths = ["schemas/*.sql"]\n',
+          toml: 'project_id = "test"\n\n[db.migrations]\nschema_paths = ["schemas/*.sql"]\n\n[experimental.pgdelta]\nenabled = false\n',
           files: {
             "supabase/schemas/01_users.sql": "create table schema_users ();",
             ...migrationFile("20240101000000", "create table migrated_table ();"),
@@ -1864,7 +1700,7 @@ describe("legacy db reset", () => {
         // order ACROSS patterns (no global re-sort) — `zz/*.sql`'s files
         // must all run before `aa/*.sql`'s, even though "aa" sorts before "zz".
         const { layer, conn } = setup(tmp.current, {
-          toml: 'project_id = "test"\n\n[db.migrations]\nschema_paths = ["zz/*.sql", "aa/*.sql"]\n',
+          toml: 'project_id = "test"\n\n[db.migrations]\nschema_paths = ["zz/*.sql", "aa/*.sql"]\n\n[experimental.pgdelta]\nenabled = false\n',
           files: {
             "supabase/zz/b.sql": "create table zz_b ();",
             "supabase/zz/a.sql": "create table zz_a ();",
@@ -1891,7 +1727,7 @@ describe("legacy db reset", () => {
         // (not a plain-files glob), which expands a directory match to its
         // regular `.sql` files, recursively — unlike a plain glob pattern.
         const { layer, conn } = setup(tmp.current, {
-          toml: 'project_id = "test"\n\n[db.migrations]\nschema_paths = ["some-dir"]\n',
+          toml: 'project_id = "test"\n\n[db.migrations]\nschema_paths = ["some-dir"]\n\n[experimental.pgdelta]\nenabled = false\n',
           files: {
             "supabase/some-dir/01_top.sql": "create table dir_top ();",
             "supabase/some-dir/nested/02_nested.sql": "create table dir_nested ();",
@@ -1914,7 +1750,7 @@ describe("legacy db reset", () => {
         // schema-files apply is a silent no-op — it does NOT fall back to
         // replaying migrations (a hard if/else-if).
         const { layer, out, conn } = setup(tmp.current, {
-          toml: 'project_id = "test"\n',
+          toml: 'project_id = "test"\n\n[experimental.pgdelta]\nenabled = false\n',
           files: migrationFile("20240101000000", "create table migrated_table ();"),
           experimental: true,
           confirm: [true],
@@ -1954,10 +1790,35 @@ describe("legacy db reset", () => {
     );
 
     it.live(
+      "replays migrations instead of schema files on an experimental remote reset with no pgdelta config section (pg-delta default, CLI-1588)",
+      () => {
+        // With NO `[experimental.pgdelta]` section, `enabled` now defaults to
+        // TRUE, so an experimental versionless remote reset suppresses the
+        // schema-files branch and replays migrations — only an explicit
+        // `enabled = false` re-enables the schema-files path.
+        const { layer, out, conn } = setup(tmp.current, {
+          toml: 'project_id = "test"\n\n[db.migrations]\nschema_paths = ["schemas/*.sql"]\n',
+          files: {
+            "supabase/schemas/01_users.sql": "create table schema_users ();",
+            ...migrationFile("20240101000000", "create table migrated_table ();"),
+          },
+          experimental: true,
+          confirm: [true],
+        });
+        return Effect.gen(function* () {
+          yield* legacyDbReset({ ...DEFAULT_FLAGS, linked: true }).pipe(Effect.provide(layer));
+          expect(conn.execs.some((s) => s.includes("create table migrated_table"))).toBe(true);
+          expect(conn.execs.some((s) => s.includes("create table schema_users"))).toBe(false);
+          expect(out.stderrText).toContain("Applying migration");
+        });
+      },
+    );
+
+    it.live(
       "replays migrations instead of schema files on an experimental remote reset with a resolved version",
       () => {
         const { layer, conn } = setup(tmp.current, {
-          toml: 'project_id = "test"\n\n[db.migrations]\nschema_paths = ["schemas/*.sql"]\n',
+          toml: 'project_id = "test"\n\n[db.migrations]\nschema_paths = ["schemas/*.sql"]\n\n[experimental.pgdelta]\nenabled = false\n',
           files: {
             "supabase/schemas/01_users.sql": "create table schema_users ();",
             ...migrationFile("20240101000000", "create table migrated_table ();"),
@@ -1983,7 +1844,7 @@ describe("legacy db reset", () => {
       "fails an experimental remote reset when no schema_paths pattern matches anything",
       () => {
         const { layer, conn } = setup(tmp.current, {
-          toml: 'project_id = "test"\n\n[db.migrations]\nschema_paths = ["nomatch/*.sql"]\n',
+          toml: 'project_id = "test"\n\n[db.migrations]\nschema_paths = ["nomatch/*.sql"]\n\n[experimental.pgdelta]\nenabled = false\n',
           experimental: true,
           confirm: [true],
         });
@@ -2009,7 +1870,7 @@ describe("legacy db reset", () => {
       // The joined glob error only surfaces when NO pattern matched anything
       // at all; a partial failure is silently dropped.
       const { layer, out, conn } = setup(tmp.current, {
-        toml: 'project_id = "test"\n\n[db.migrations]\nschema_paths = ["schemas/*.sql", "typo/*.sql"]\n',
+        toml: 'project_id = "test"\n\n[db.migrations]\nschema_paths = ["schemas/*.sql", "typo/*.sql"]\n\n[experimental.pgdelta]\nenabled = false\n',
         files: {
           "supabase/schemas/01_users.sql": "create table schema_users ();",
           // Present so the (unrelated) seed glob's own "no files matched" WARN line
@@ -2030,7 +1891,7 @@ describe("legacy db reset", () => {
       "attaches Go's schema-file suggestion when a schema file fails to apply on an experimental remote reset",
       () => {
         const { layer } = setup(tmp.current, {
-          toml: 'project_id = "test"\n\n[db.migrations]\nschema_paths = ["schemas/*.sql"]\n',
+          toml: 'project_id = "test"\n\n[db.migrations]\nschema_paths = ["schemas/*.sql"]\n\n[experimental.pgdelta]\nenabled = false\n',
           files: { "supabase/schemas/01_users.sql": "not valid sql;" },
           experimental: true,
           confirm: [true],
@@ -2065,7 +1926,7 @@ describe("legacy db reset", () => {
         // must fail WITHOUT the suggestion, unlike the exec-failure case above.
         const schemaFile = join(tmp.current, "supabase", "schemas", "01_users.sql");
         const { layer, conn } = setup(tmp.current, {
-          toml: 'project_id = "test"\n\n[db.migrations]\nschema_paths = ["schemas/*.sql"]\n',
+          toml: 'project_id = "test"\n\n[db.migrations]\nschema_paths = ["schemas/*.sql"]\n\n[experimental.pgdelta]\nenabled = false\n',
           files: { "supabase/schemas/01_users.sql": "create table schema_users ();" },
           experimental: true,
           confirm: [true],
@@ -2097,7 +1958,7 @@ describe("legacy db reset", () => {
         // having applied nothing.
         const schemasDir = join(tmp.current, "supabase", "schemas");
         const { layer, conn } = setup(tmp.current, {
-          toml: 'project_id = "test"\n\n[db.migrations]\nschema_paths = ["schemas"]\n',
+          toml: 'project_id = "test"\n\n[db.migrations]\nschema_paths = ["schemas"]\n\n[experimental.pgdelta]\nenabled = false\n',
           files: { "supabase/schemas/01_users.sql": "create table schema_users ();" },
           experimental: true,
           confirm: [true],
@@ -2130,7 +1991,7 @@ describe("legacy db reset", () => {
         const previous = process.env["SUPABASE_EXPERIMENTAL"];
         delete process.env["SUPABASE_EXPERIMENTAL"];
         const { layer, out, conn } = setup(tmp.current, {
-          toml: 'project_id = "test"\n\n[db.migrations]\nschema_paths = ["schemas/*.sql"]\n',
+          toml: 'project_id = "test"\n\n[db.migrations]\nschema_paths = ["schemas/*.sql"]\n\n[experimental.pgdelta]\nenabled = false\n',
           files: {
             "supabase/.env": "SUPABASE_EXPERIMENTAL=true\n",
             "supabase/schemas/01_users.sql": "create table schema_users ();",
@@ -2176,7 +2037,7 @@ describe("legacy db reset", () => {
       "applies configured schema files and skips seeding on an experimental remote --db-url reset",
       () => {
         const { layer, conn, resolver } = setup(tmp.current, {
-          toml: 'project_id = "test"\n\n[db.migrations]\nschema_paths = ["schemas/*.sql"]\n',
+          toml: 'project_id = "test"\n\n[db.migrations]\nschema_paths = ["schemas/*.sql"]\n\n[experimental.pgdelta]\nenabled = false\n',
           files: { "supabase/schemas/01_users.sql": "create table schema_users ();" },
           experimental: true,
           args: ["db", "reset", "--db-url", "postgresql://db.example.com:5432/postgres"],
@@ -2393,7 +2254,7 @@ describe("legacy db reset", () => {
         // branch of the migrate-and-seed step ran — seeding sits outside the
         // if/else-if, and the seed override is resolved entirely upstream of it.
         const { layer, out, conn } = setup(tmp.current, {
-          toml: 'project_id = "test"\n\n[db.migrations]\nschema_paths = ["schemas/*.sql"]\n',
+          toml: 'project_id = "test"\n\n[db.migrations]\nschema_paths = ["schemas/*.sql"]\n\n[experimental.pgdelta]\nenabled = false\n',
           files: {
             "supabase/schemas/01_users.sql": "create table schema_users ();",
             "supabase/custom-seed.sql": "insert into t values (2);",

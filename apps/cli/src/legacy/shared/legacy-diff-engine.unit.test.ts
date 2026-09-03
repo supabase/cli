@@ -9,19 +9,10 @@ import {
 } from "./legacy-diff-engine.ts";
 
 describe("legacyShouldUsePgDelta", () => {
-  it("is the OR of config, flag, and env", () => {
-    expect(
-      legacyShouldUsePgDelta({ configEnabled: false, usePgDeltaFlag: false, envEnabled: false }),
-    ).toBe(false);
-    expect(
-      legacyShouldUsePgDelta({ configEnabled: true, usePgDeltaFlag: false, envEnabled: false }),
-    ).toBe(true);
-    expect(
-      legacyShouldUsePgDelta({ configEnabled: false, usePgDeltaFlag: true, envEnabled: false }),
-    ).toBe(true);
-    expect(
-      legacyShouldUsePgDelta({ configEnabled: false, usePgDeltaFlag: false, envEnabled: true }),
-    ).toBe(true);
+  it("follows the config default and lets --use-pg-delta override an explicit rollback", () => {
+    expect(legacyShouldUsePgDelta({ configEnabled: false, usePgDeltaFlag: false })).toBe(false);
+    expect(legacyShouldUsePgDelta({ configEnabled: true, usePgDeltaFlag: false })).toBe(true);
+    expect(legacyShouldUsePgDelta({ configEnabled: false, usePgDeltaFlag: true })).toBe(true);
   });
 });
 

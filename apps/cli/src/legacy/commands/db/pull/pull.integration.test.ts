@@ -90,7 +90,6 @@ const pgDeltaDiffEnvelope = (
   });
 
 interface SetupOpts {
-  readonly engineImplementation?: "next" | "legacy";
   readonly nextDebugDirectory?: string;
   readonly format?: OutputFormat;
   readonly remoteVersions?: ReadonlyArray<string>;
@@ -167,7 +166,6 @@ function setup(workdir: string, opts: SetupOpts = {}) {
   const pgDeltaEngine = Layer.succeed(
     LegacyPgDeltaEngine,
     LegacyPgDeltaEngine.of({
-      implementation: opts.engineImplementation ?? "legacy",
       diffExplicit: () => Effect.die("diffExplicit unused"),
       diffDatabase: (input) => {
         engineCalls.push({
@@ -194,15 +192,12 @@ function setup(workdir: string, opts: SetupOpts = {}) {
             files: [],
             ...(process.env["PGDELTA_DEBUG"] !== undefined
               ? {
-                  debug:
-                    opts.engineImplementation === "next"
-                      ? {
-                          sourceSnapshot: opts.catalogStdout ?? "",
-                          ...(opts.nextDebugDirectory !== undefined
-                            ? { directory: opts.nextDebugDirectory }
-                            : {}),
-                        }
-                      : { sourceSnapshot: opts.catalogStdout ?? "", stderr: "" },
+                  debug: {
+                    sourceSnapshot: opts.catalogStdout ?? "",
+                    ...(opts.nextDebugDirectory !== undefined
+                      ? { directory: opts.nextDebugDirectory }
+                      : {}),
+                  },
                 }
               : {}),
           });
@@ -787,7 +782,6 @@ describe("legacy db pull", () => {
     );
     const s = setup(tmp.current, {
       remoteVersions: ["20240101000000"],
-      engineImplementation: "next",
       // The next engine's mock parses `edgeStdout` as a rendered-file envelope.
       edgeStdout: JSON.stringify({
         files: [
@@ -810,9 +804,18 @@ describe("legacy db pull", () => {
 
   it.effect("pulls with migra and does not warn about schema_paths", () => {
     seedMigration(tmp.current, "20240101000000");
+    // pg-delta is the default engine now, so migra requires the explicit
+    // config opt-out.
     writeFileSync(
       join(tmp.current, "supabase", "config.toml"),
-      ["[db.migrations]", 'schema_paths = ["database/*.sql"]', ""].join("\n"),
+      [
+        "[db.migrations]",
+        'schema_paths = ["database/*.sql"]',
+        "",
+        "[experimental.pgdelta]",
+        "enabled = false",
+        "",
+      ].join("\n"),
     );
     const s = setup(tmp.current, {
       remoteVersions: ["20240101000000"],
@@ -901,23 +904,17 @@ describe("legacy db pull", () => {
         scope: "database",
         files: ["public/t.sql"],
       });
-      // Declarative mode's bare shadow (`legacyPrepareRawShadow`) never connects to set
-      // up a platform baseline or `contrib_regression` template. The only connects are
-      // the top-level target connect (`resolved.conn`, port 5432, database "postgres")
-      // and the shadow's own readiness probe on the shadow port — a single short-lived
-      // connect that is now the provisioning gate (`legacyWaitForShadowReady`) in place
-      // of waiting on the shadow container's 10s-interval Docker healthcheck.
-      expect(s.connectTargets).toEqual([
-        { database: "postgres", port: 5432 },
-        { database: "postgres", port: 54320 },
-      ]);
-      expect(s.shadowSpawned.filter((call) => call.args[0] === "create")).toHaveLength(1);
-      expect(s.shadowSpawned.filter((call) => call.args[0] === "rm")).toHaveLength(1);
+      // Declarative export reads only the live target: the sole connect is the
+      // top-level target connect (`resolved.conn`, port 5432, database "postgres"),
+      // and no shadow database is ever provisioned.
+      expect(s.connectTargets).toEqual([{ database: "postgres", port: 5432 }]);
+      expect(s.shadowSpawned.filter((call) => call.args[0] === "create")).toHaveLength(0);
+      expect(s.shadowSpawned.filter((call) => call.args[0] === "rm")).toHaveLength(0);
     }).pipe(Effect.provide(s.layer));
   });
 
-  it.effect("next declarative export does not provision a baseline shadow", () => {
-    const s = setup(tmp.current, { engineImplementation: "next" });
+  it.effect("declarative export does not provision a baseline shadow", () => {
+    const s = setup(tmp.current, {});
     return Effect.gen(function* () {
       yield* legacyDbPull(flags({ declarative: Option.some(true) }));
       expect(s.engineCalls[0]?.operation).toBe("export");
@@ -932,7 +929,10 @@ describe("legacy db pull", () => {
       // config (db pull does not force-enable it), so later db reset/db diff read
       // the pulled files.
       mkdirSync(join(tmp.current, "supabase"), { recursive: true });
-      writeFileSync(join(tmp.current, "supabase", "config.toml"), "[db]\n");
+      writeFileSync(
+        join(tmp.current, "supabase", "config.toml"),
+        "[db]\n\n[experimental.pgdelta]\nenabled = false\n",
+      );
       const s = setup(tmp.current, { edgeStdout: EXPORT_JSON });
       return Effect.gen(function* () {
         yield* legacyDbPull(flags({ declarative: Option.some(true) }));
@@ -963,7 +963,7 @@ describe("legacy db pull", () => {
     mkdirSync(join(tmp.current, "supabase"), { recursive: true });
     writeFileSync(
       join(tmp.current, "supabase", "config.toml"),
-      '[db.migrations]\nschema_paths = [\n  "schemas/*.sql",\n]\n',
+      '[db.migrations]\nschema_paths = [\n  "schemas/*.sql",\n]\n\n[experimental.pgdelta]\nenabled = false\n',
     );
     const s = setup(tmp.current, { edgeStdout: EXPORT_JSON });
     return Effect.gen(function* () {
@@ -1040,6 +1040,13 @@ describe("legacy db pull", () => {
       // invocation ends false => migration mode + history repair, NOT declarative
       // export. OR-ing the two parsed flags would wrongly take the declarative path.
       seedMigration(tmp.current, "20240101000000");
+      // The raw-SQL `edgeStdout` below is migra output; opt out of the pg-delta
+      // default via config (the diff-engine flag is mutually exclusive with the
+      // declarative alias this test exercises).
+      writeFileSync(
+        join(tmp.current, "supabase", "config.toml"),
+        "[experimental.pgdelta]\nenabled = false\n",
+      );
       const s = setup(tmp.current, {
         remoteVersions: ["20240101000000"],
         edgeStdout: "create table remote ();\n",
@@ -1059,6 +1066,12 @@ describe("legacy db pull", () => {
     "--use-pg-delta --declarative=false stays in migration mode (Go last-occurrence-wins)",
     () => {
       seedMigration(tmp.current, "20240101000000");
+      // Same config opt-out as above: raw-SQL `edgeStdout` is migra output and
+      // the diff-engine flag would trip the declarative-alias mutual exclusion.
+      writeFileSync(
+        join(tmp.current, "supabase", "config.toml"),
+        "[experimental.pgdelta]\nenabled = false\n",
+      );
       const s = setup(tmp.current, {
         remoteVersions: ["20240101000000"],
         edgeStdout: "create table remote ();\n",
@@ -1110,7 +1123,7 @@ describe("legacy db pull", () => {
         yes: true,
       });
       return Effect.gen(function* () {
-        yield* legacyDbPull(flags());
+        yield* legacyDbPull(flags({ diffEngine: Option.some("migra") }));
         expect(s.proxyCalls).toHaveLength(0);
         expect(s.proxyCaptureCalls).toHaveLength(0);
         // pg_dump ran with the schema-dump env (internal-schema exclude + comment strip).
@@ -1150,7 +1163,7 @@ describe("legacy db pull", () => {
       edgeStdout: "create table diffed ();\n",
     });
     return Effect.gen(function* () {
-      yield* legacyDbPull(flags());
+      yield* legacyDbPull(flags({ diffEngine: Option.some("migra") }));
       expect(s.proxyCalls).toHaveLength(0);
       expect(s.proxyCaptureCalls).toHaveLength(0);
       const success = s.out.messages.find((m) => m.type === "success");
@@ -1181,7 +1194,9 @@ describe("legacy db pull", () => {
       yes: true,
     });
     return Effect.gen(function* () {
-      const exit = yield* legacyDbPull(flags()).pipe(Effect.exit);
+      const exit = yield* legacyDbPull(flags({ diffEngine: Option.some("migra") })).pipe(
+        Effect.exit,
+      );
       expect(Exit.isSuccess(exit)).toBe(true);
       const dir = join(tmp.current, "supabase", "migrations");
       const file = readdirSync(dir).find((f) => f.endsWith("_remote_schema.sql"));
@@ -1243,7 +1258,9 @@ describe("legacy db pull", () => {
         yes: true,
       });
       return Effect.gen(function* () {
-        const error = yield* legacyDbPull(flags()).pipe(Effect.flip);
+        const error = yield* legacyDbPull(flags({ diffEngine: Option.some("migra") })).pipe(
+          Effect.flip,
+        );
         expect(error.message).toBe("No schema changes found");
         expect(s.dumpCalls).toHaveLength(2); // direct attempt + pooler retry
         expect(s.historyUpserts).toHaveLength(0); // no migration-history row written
@@ -1258,7 +1275,9 @@ describe("legacy db pull", () => {
       dumpStderr: "connection refused",
     });
     return Effect.gen(function* () {
-      const error = yield* legacyDbPull(flags()).pipe(Effect.flip);
+      const error = yield* legacyDbPull(flags({ diffEngine: Option.some("migra") })).pipe(
+        Effect.flip,
+      );
       expect(error.message).toContain("error running container: exit 1");
       // The diff pass never ran — the dump failure aborts before provisioning a shadow.
       expect(s.shadowSpawned.filter((c) => c.args[0] === "create")).toEqual([]);
@@ -1277,7 +1296,7 @@ describe("legacy db pull", () => {
       yes: true,
     });
     return Effect.gen(function* () {
-      yield* legacyDbPull(flags());
+      yield* legacyDbPull(flags({ diffEngine: Option.some("migra") }));
       expect(s.dumpCalls).toHaveLength(2); // direct attempt + pooler retry
       expect(s.poolerFallbackCalls).toHaveLength(1);
       const err = streamText(s.out, "stderr");
@@ -1297,7 +1316,9 @@ describe("legacy db pull", () => {
       poolerAvailable: false,
     });
     return Effect.gen(function* () {
-      const error = yield* legacyDbPull(flags()).pipe(Effect.flip);
+      const error = yield* legacyDbPull(flags({ diffEngine: Option.some("migra") })).pipe(
+        Effect.flip,
+      );
       expect(error.message).toContain("error running container: exit 1");
       expect(s.poolerFallbackCalls).toHaveLength(1); // gate checked, no pooler resolved
       expect(streamText(s.out, "stderr")).not.toContain("Retrying via the IPv4 connection pooler");
@@ -1320,51 +1341,6 @@ describe("legacy db pull", () => {
       });
     }).pipe(Effect.provide(s.layer));
   });
-
-  it.effect(
-    "an empty pg-delta diff under PGDELTA_DEBUG saves a debug bundle and reports it",
-    () => {
-      // A debug bundle is saved and its path embedded in the in-sync error when
-      // PGDELTA_DEBUG is set on an empty pg-delta diff.
-      seedMigration(tmp.current, "20240101000000");
-      const catalog = JSON.stringify({ tables: [{ schema: "public", name: "t" }] });
-      const s = setup(tmp.current, {
-        remoteVersions: ["20240101000000"],
-        edgeStdout: "", // empty diff
-        catalogStdout: catalog, // shadow + remote catalog exports succeed
-        yes: true,
-      });
-      return Effect.gen(function* () {
-        const prev = process.env["PGDELTA_DEBUG"];
-        process.env["PGDELTA_DEBUG"] = "1";
-        try {
-          const error = yield* legacyDbPull(flags({ diffEngine: Option.some("pg-delta") })).pipe(
-            Effect.flip,
-          );
-          expect(error.message).toContain("No schema changes found (debug bundle:");
-        } finally {
-          if (prev === undefined) delete process.env["PGDELTA_DEBUG"];
-          else process.env["PGDELTA_DEBUG"] = prev;
-        }
-        const debugRoot = join(tmp.current, "supabase", ".temp", "pgdelta", "debug");
-        const ids = existsSync(debugRoot) ? readdirSync(debugRoot) : [];
-        expect(ids).toHaveLength(1);
-        const bundleDir = join(debugRoot, ids[0] ?? "");
-        const files = readdirSync(bundleDir);
-        expect(files).toContain("source-catalog.json");
-        expect(files).toContain("target-catalog.json");
-        expect(files).toContain("connection.txt");
-        expect(files).toContain("error.txt");
-        expect(readFileSync(join(bundleDir, "error.txt"), "utf8")).toBe("No schema changes found");
-        // connection.txt is password-redacted (→ xxxxx).
-        expect(readFileSync(join(bundleDir, "connection.txt"), "utf8")).toContain(
-          "url=postgresql://postgres:xxxxx@",
-        );
-        expect(streamText(s.out, "stderr")).toContain("pg-delta returned 0 statements.");
-        expect(streamText(s.out, "stderr")).toContain("Debug bundle saved to");
-      }).pipe(Effect.provide(s.layer));
-    },
-  );
 
   it.effect("an empty pg-delta diff without PGDELTA_DEBUG writes no debug bundle", () => {
     seedMigration(tmp.current, "20240101000000");
@@ -1393,7 +1369,6 @@ describe("legacy db pull", () => {
     const s = setup(tmp.current, {
       remoteVersions: ["20240101000000"],
       edgeStdout: "",
-      engineImplementation: "next",
       nextDebugDirectory: debugDir,
     });
     return Effect.gen(function* () {
@@ -1422,7 +1397,7 @@ describe("legacy db pull", () => {
       promptConfirmResponses: [true],
     });
     return Effect.gen(function* () {
-      yield* legacyDbPull(flags());
+      yield* legacyDbPull(flags({ diffEngine: Option.some("migra") }));
       expect(s.historyUpserts.length).toBe(1);
     }).pipe(Effect.provide(s.layer));
   });
@@ -1436,7 +1411,7 @@ describe("legacy db pull", () => {
       promptConfirmResponses: [false],
     });
     return Effect.gen(function* () {
-      yield* legacyDbPull(flags());
+      yield* legacyDbPull(flags({ diffEngine: Option.some("migra") }));
       expect(s.historyUpserts.length).toBe(0);
     }).pipe(Effect.provide(s.layer));
   });
@@ -1454,7 +1429,7 @@ describe("legacy db pull", () => {
       stdinIsTty: false,
     });
     return Effect.gen(function* () {
-      yield* legacyDbPull(flags());
+      yield* legacyDbPull(flags({ diffEngine: Option.some("migra") }));
       expect(s.historyUpserts.length).toBe(1);
     }).pipe(Effect.provide(s.layer));
   });
@@ -1471,7 +1446,7 @@ describe("legacy db pull", () => {
       pipedAnswers: ["n"],
     });
     return Effect.gen(function* () {
-      yield* legacyDbPull(flags());
+      yield* legacyDbPull(flags({ diffEngine: Option.some("migra") }));
       expect(s.historyUpserts.length).toBe(0);
       // Prints the label then echoes the consumed answer.
       expect(streamText(s.out, "stderr")).toContain(
@@ -1489,7 +1464,7 @@ describe("legacy db pull", () => {
       yes: true,
     });
     return Effect.gen(function* () {
-      yield* legacyDbPull(flags());
+      yield* legacyDbPull(flags({ diffEngine: Option.some("migra") }));
       expect(streamText(s.out, "stdout")).not.toContain("Finished supabase db pull.");
       // Diagnostics still go to stderr in machine mode (the Connecting line is
       // written regardless of output format); stdout stays payload-only.
@@ -1508,7 +1483,7 @@ describe("legacy db pull", () => {
       // no --yes: a non-interactive prompt falls back to the default (true).
     });
     return Effect.gen(function* () {
-      yield* legacyDbPull(flags());
+      yield* legacyDbPull(flags({ diffEngine: Option.some("migra") }));
       expect(s.historyUpserts.length).toBe(1);
     }).pipe(Effect.provide(s.layer));
   });
@@ -1527,7 +1502,7 @@ describe("legacy db pull", () => {
       stdinIsTty: true,
     });
     return Effect.gen(function* () {
-      yield* legacyDbPull(flags());
+      yield* legacyDbPull(flags({ diffEngine: Option.some("migra") }));
       expect(s.historyUpserts.length).toBe(1);
       expect(streamText(s.out, "stderr")).toContain(
         "Update remote migration history table? [Y/n] y",
@@ -1561,7 +1536,7 @@ describe("legacy db pull", () => {
       pipedAnswers: ["n"],
     });
     return Effect.gen(function* () {
-      yield* legacyDbPull(flags());
+      yield* legacyDbPull(flags({ diffEngine: Option.some("migra") }));
       expect(s.historyUpserts.length).toBe(1);
     }).pipe(
       Effect.ensuring(
@@ -1595,7 +1570,7 @@ describe("legacy db pull", () => {
         yes: true,
       });
       return Effect.gen(function* () {
-        yield* legacyDbPull(flags());
+        yield* legacyDbPull(flags({ diffEngine: Option.some("migra") }));
         expect(s.dumpCalls.length).toBeGreaterThanOrEqual(1);
         // The pg_dump container image is rewritten to the configured mirror.
         expect(s.dumpCalls[0]?.image).toMatch(/^my-mirror\.example\.com\/supabase\//u);
@@ -1628,7 +1603,7 @@ describe("legacy db pull", () => {
         yes: true,
       });
       return Effect.gen(function* () {
-        yield* legacyDbPull(flags());
+        yield* legacyDbPull(flags({ diffEngine: Option.some("migra") }));
         expect(s.dumpCalls.length).toBeGreaterThanOrEqual(1);
         expect(s.dumpCalls[0]?.network).toEqual({ _tag: "named", name: "dotenv-net" });
       }).pipe(
@@ -1659,7 +1634,7 @@ describe("legacy db pull", () => {
       args: ["db", "pull", "--yes=false"],
     });
     return Effect.gen(function* () {
-      yield* legacyDbPull(flags());
+      yield* legacyDbPull(flags({ diffEngine: Option.some("migra") }));
       expect(s.historyUpserts.length).toBe(0);
     }).pipe(
       Effect.ensuring(
@@ -1691,7 +1666,7 @@ describe("legacy db pull", () => {
         args: ["db", "pull", "--password", "--yes=false"],
       });
       return Effect.gen(function* () {
-        yield* legacyDbPull(flags());
+        yield* legacyDbPull(flags({ diffEngine: Option.some("migra") }));
         expect(s.historyUpserts.length).toBe(1);
         expect(streamText(s.out, "stderr")).toContain(
           "Update remote migration history table? [Y/n] y",
@@ -1867,7 +1842,7 @@ describe("legacy db pull", () => {
         args: ["db", "pull", "--experimental=false"],
       });
       return Effect.gen(function* () {
-        yield* legacyDbPull(flags());
+        yield* legacyDbPull(flags({ diffEngine: Option.some("migra") }));
         expect(streamText(s.out, "stderr")).toContain("Connecting to remote database...\n");
       }).pipe(
         Effect.ensuring(
@@ -1964,20 +1939,93 @@ describe("legacy db pull", () => {
     },
   );
 
-  it.effect("a project supabase/.env enabling pg-delta selects the pg-delta engine", () => {
-    // A project .env must select pg-delta even when the shell env doesn't set it.
-    // The handler reads it via toml.envLookup, not process.env.
+  it.effect(
+    "config enabled = false selects migra even with a stale SUPABASE_EXPERIMENTAL_PG_DELTA opt-in",
+    () => {
+      // The explicit config rollback is authoritative: the historical
+      // SUPABASE_EXPERIMENTAL_PG_DELTA opt-in (here in the project .env) is no
+      // longer consulted, so it cannot silently defeat `enabled = false`.
+      seedMigration(tmp.current, "20240101000000");
+      writeFileSync(
+        join(tmp.current, "supabase", "config.toml"),
+        "[experimental.pgdelta]\nenabled = false\n",
+      );
+      writeFileSync(join(tmp.current, "supabase", ".env"), "SUPABASE_EXPERIMENTAL_PG_DELTA=true\n");
+      const s = setup(tmp.current, {
+        remoteVersions: ["20240101000000"],
+        edgeStdout: "create table remote ();\n",
+        yes: true,
+      });
+      return Effect.gen(function* () {
+        yield* legacyDbPull(flags());
+        expect(s.engineCalls).toHaveLength(0);
+        expect(s.edgeRunCount).toBe(1);
+      }).pipe(Effect.provide(s.layer));
+    },
+  );
+
+  it.effect(
+    "defaults to the pg-delta engine when config has no [experimental.pgdelta] section",
+    () => {
+      // CLI-1588: pg-delta is the default schema diff engine. With no config
+      // section and no --diff-engine flag, the migration-style pull must call
+      // the pg-delta engine's diffDatabase, never migra's edge-runtime script.
+      seedMigration(tmp.current, "20240101000000");
+      const s = setup(tmp.current, {
+        remoteVersions: ["20240101000000"],
+        edgeStdout: pgDeltaDiffEnvelope([
+          { name: "schema_changes", sql: "create table remote ();" },
+        ]),
+        yes: true,
+      });
+      return Effect.gen(function* () {
+        yield* legacyDbPull(flags());
+        expect(s.engineCalls).toHaveLength(1);
+        expect(s.engineCalls[0]?.operation).toBe("diff");
+        expect(s.edgeRunCount).toBe(0);
+      }).pipe(Effect.provide(s.layer));
+    },
+  );
+
+  it.effect("[experimental.pgdelta] enabled = false in config selects the migra engine", () => {
+    // Explicit config opt-out from the pg-delta default: the pull must run
+    // migra's edge-runtime diff and never touch the pg-delta engine. Migra
+    // selection is also proven by the raw-SQL `edgeStdout` being written as a
+    // migration (pg-delta would fail to JSON.parse it).
     seedMigration(tmp.current, "20240101000000");
-    mkdirSync(join(tmp.current, "supabase"), { recursive: true });
-    writeFileSync(join(tmp.current, "supabase", ".env"), "SUPABASE_EXPERIMENTAL_PG_DELTA=true\n");
+    writeFileSync(
+      join(tmp.current, "supabase", "config.toml"),
+      "[experimental.pgdelta]\nenabled = false\n",
+    );
     const s = setup(tmp.current, {
       remoteVersions: ["20240101000000"],
-      edgeStdout: pgDeltaDiffEnvelope([{ name: "schema_changes", sql: "create table remote ();" }]),
+      edgeStdout: "create table remote ();\n",
       yes: true,
     });
     return Effect.gen(function* () {
       yield* legacyDbPull(flags());
-      expect(s.engineCalls[0]?.operation).toBe("diff");
+      expect(s.engineCalls).toHaveLength(0);
+      expect(s.edgeRunCount).toBe(1);
+      const dir = join(tmp.current, "supabase", "migrations");
+      expect(readdirSync(dir).some((f) => f.endsWith("_remote_schema.sql"))).toBe(true);
+    }).pipe(Effect.provide(s.layer));
+  });
+
+  it.effect("--diff-engine migra forces migra even when config leaves the default on", () => {
+    // No config.toml at all, so the config-level default is pg-delta; the
+    // explicit flag must still win and select migra.
+    seedMigration(tmp.current, "20240101000000");
+    const s = setup(tmp.current, {
+      remoteVersions: ["20240101000000"],
+      edgeStdout: "create table remote ();\n",
+      yes: true,
+    });
+    return Effect.gen(function* () {
+      yield* legacyDbPull(flags({ diffEngine: Option.some("migra") }));
+      expect(s.engineCalls).toHaveLength(0);
+      expect(s.edgeRunCount).toBe(1);
+      const dir = join(tmp.current, "supabase", "migrations");
+      expect(readdirSync(dir).some((f) => f.endsWith("_remote_schema.sql"))).toBe(true);
     }).pipe(Effect.provide(s.layer));
   });
 
@@ -1986,7 +2034,6 @@ describe("legacy db pull", () => {
     mkdirSync(join(tmp.current, "supabase", "schemas"), { recursive: true });
     writeFileSync(join(tmp.current, "supabase", "schemas", "public.sql"), "select 1;\n");
     const s = setup(tmp.current, {
-      engineImplementation: "next",
       remoteVersions: ["20240101000000"],
       edgeStdout: pgDeltaDiffEnvelope([{ name: "schema_changes", sql: "create table remote ();" }]),
       yes: true,
@@ -2013,7 +2060,7 @@ describe("legacy db pull", () => {
       yes: true,
     });
     return Effect.gen(function* () {
-      yield* legacyDbPull(flags({ local: Option.some(true) }));
+      yield* legacyDbPull(flags({ local: Option.some(true), diffEngine: Option.some("migra") }));
       expect(s.connectedDatabases).toContain("contrib_regression");
       // A local target prints the local wording (established output contract).
       expect(streamText(s.out, "stderr")).toContain("Connecting to local database...\n");
@@ -2087,7 +2134,7 @@ describe("legacy db pull", () => {
       // no --yes
     });
     return Effect.gen(function* () {
-      yield* legacyDbPull(flags());
+      yield* legacyDbPull(flags({ diffEngine: Option.some("migra") }));
       expect(s.historyUpserts.length).toBe(1);
       const success = s.out.messages.find((m) => m.type === "success");
       expect(success?.data).toMatchObject({ remoteHistoryUpdated: true });
@@ -2194,7 +2241,7 @@ describe("legacy db pull", () => {
         resolvedRef: "abcdefghijklmnopqrst",
       });
       return Effect.gen(function* () {
-        yield* legacyDbPull(flags({ linked: Option.some(true) }));
+        yield* legacyDbPull(flags({ linked: Option.some(true), diffEngine: Option.some("migra") }));
         const createArgs = s.shadowSpawned.find((c) => c.args[0] === "create")?.args ?? [];
         expect(createArgs).toContain("--tmpfs");
       }).pipe(Effect.provide(s.layer));
@@ -2243,11 +2290,8 @@ describe("legacy db pull", () => {
 
   it.effect("retries the declarative export through the IPv4 pooler on an IPv6 error", () => {
     // The declarative export retries through the pooler in the same IPv6
-    // scenario, but unlike the migration-style diff it prepares the raw shadow
-    // ONCE before the retry and only re-runs the export against the same shadow —
-    // a deliberate asymmetry, not a gap to close. Assert the single-shadow-reuse
-    // shape so a future change doesn't accidentally "fix" this path to
-    // double-provision like the migration-style diff path correctly does.
+    // scenario. The export reads only the live target, so no shadow database is
+    // ever provisioned on this path.
     const s = setup(tmp.current, {
       edgeFailFirstWith: "error exporting declarative schema:\nnetwork is unreachable",
       edgeStdout: EXPORT_JSON,
@@ -2260,7 +2304,7 @@ describe("legacy db pull", () => {
       expect(streamText(s.out, "stderr")).toContain(
         `Declarative schema written to ${join("supabase", "schemas")}\n`,
       );
-      expect(s.shadowSpawned.filter((c) => c.args[0] === "create")).toHaveLength(1);
+      expect(s.shadowSpawned.filter((c) => c.args[0] === "create")).toHaveLength(0);
     }).pipe(Effect.provide(s.layer));
   });
 
@@ -2329,8 +2373,8 @@ describe("legacy db pull", () => {
      * the second run's behaviour — the cache key is global and deliberately workdir-independent,
      * so two worktrees with identical settings still collide on the same tar.
      */
-    const runCached = (implementation: "legacy" | "next") => {
-      const workdir = join(tmp.current, `${implementation}-worktree`);
+    const runCached = (engine: "migra" | "pg-delta") => {
+      const workdir = join(tmp.current, `${engine}-worktree`);
       seedMigration(workdir, "20240101000000");
       writeFileSync(
         join(workdir, "supabase", "config.toml"),
@@ -2338,9 +2382,11 @@ describe("legacy db pull", () => {
       );
       const s = setup(workdir, {
         statefulDocker: true,
-        engineImplementation: implementation,
         remoteVersions: ["20240101000000"],
-        edgeStdout: pgDeltaDiffEnvelope([{ name: "schema_changes", sql: "create table t ();" }]),
+        edgeStdout:
+          engine === "pg-delta"
+            ? pgDeltaDiffEnvelope([{ name: "schema_changes", sql: "create table t ();" }])
+            : "create table t ();\n",
         yes: true,
       });
       return legacyWithEnv(
@@ -2349,31 +2395,34 @@ describe("legacy db pull", () => {
         legacyWithEnv(
           "SUPABASE_SHADOW_CACHE",
           "1",
-          legacyDbPull(flags()).pipe(Effect.provide(s.layer)),
+          legacyDbPull(flags(engine === "migra" ? { diffEngine: Option.some("migra") } : {})).pipe(
+            Effect.provide(s.layer),
+          ),
         ),
       ).pipe(Effect.as(s));
     };
 
     // Regression: both migrate paths used to pass a hardcoded `{ webhooks: "enabled" }`, so the
-    // legacy run's forced-`pg_net` baseline and the next run's config-following baseline keyed
+    // migra run's forced-`pg_net` baseline and the pg-delta run's config-following baseline keyed
     // to the SAME tar and silently restored each other's cluster. The handler now forks the
     // policy on `migrationMode`; `shadow-cache.integration.test.ts` covers the cache's half of
     // the contract, this covers `db pull`'s call site.
-    it.live("a legacy-engine baseline is never restored into a pg-delta-next run", () => {
+    it.live("a migra-engine baseline is never restored into a pg-delta run", () => {
       return Effect.gen(function* () {
-        // Legacy migrate forces `pg_net` on regardless of config, and publishes that baseline.
-        const legacyRun = yield* runCached("legacy");
-        expect(legacyRun.dockerDaemon?.stepCalls("cp-out")).toHaveLength(1);
-        const legacyTars = publishedTars();
-        expect(legacyTars).toHaveLength(1);
+        // Migra's migrate path forces `pg_net` on regardless of config, and publishes
+        // that baseline.
+        const migraRun = yield* runCached("migra");
+        expect(migraRun.dockerDaemon?.stepCalls("cp-out")).toHaveLength(1);
+        const migraTars = publishedTars();
+        expect(migraTars).toHaveLength(1);
 
-        // pg-delta next follows the config (webhooks are off here), so it must cold-provision
+        // pg-delta follows the config (webhooks are off here), so it must cold-provision
         // and publish its OWN baseline rather than restore the forced-on one above.
-        const nextRun = yield* runCached("next");
-        expect(nextRun.dockerDaemon?.stepCalls("cp-in")).toHaveLength(0);
-        expect(nextRun.dockerDaemon?.stepCalls("cp-out")).toHaveLength(1);
+        const pgDeltaRun = yield* runCached("pg-delta");
+        expect(pgDeltaRun.dockerDaemon?.stepCalls("cp-in")).toHaveLength(0);
+        expect(pgDeltaRun.dockerDaemon?.stepCalls("cp-out")).toHaveLength(1);
         expect(publishedTars()).toHaveLength(2);
-        expect(publishedTars()).toEqual(expect.arrayContaining(legacyTars));
+        expect(publishedTars()).toEqual(expect.arrayContaining(migraTars));
       });
     });
   });

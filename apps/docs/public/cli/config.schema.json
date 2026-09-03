@@ -2380,8 +2380,8 @@
           "properties": {
             "enabled": {
               "type": "boolean",
-              "description": "Use pg-delta as the schema diff engine for db diff / db pull / db remote commit. Set false to fall back to the legacy migra engine.",
-              "default": false
+              "description": "Use pg-delta as the schema diff engine for db diff / db pull / db remote commit (the default). Set false to fall back to the legacy migra engine.",
+              "default": true
             },
             "declarative_schema_path": {
               "type": "string",
@@ -4819,8 +4819,8 @@
                         "properties": {
                           "enabled": {
                             "type": "boolean",
-                            "description": "Use pg-delta as the schema diff engine for db diff / db pull / db remote commit. Set false to fall back to the legacy migra engine.",
-                            "default": false
+                            "description": "Use pg-delta as the schema diff engine for db diff / db pull / db remote commit (the default). Set false to fall back to the legacy migra engine.",
+                            "default": true
                           },
                           "declarative_schema_path": {
                             "type": "string",

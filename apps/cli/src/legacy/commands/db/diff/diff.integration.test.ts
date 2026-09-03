@@ -80,7 +80,6 @@ interface SetupOpts {
   // Exact suffixes returned by the next renderer, parallel to `diffFiles`.
   readonly diffSuffixes?: ReadonlyArray<string | null>;
   readonly hazards?: LegacyPgDeltaHazardReport;
-  readonly pgDeltaImplementation?: "legacy" | "next";
   readonly oom?: boolean; // edge-runtime OOMs; the bash fallback returns `diffSql`
   readonly delegateStdout?: string; // stdout returned by a captured Go-delegate run
   // When set, the PGDELTA_DEBUG shadow-catalog export fails with this message
@@ -252,9 +251,6 @@ function setup(workdir: string, opts: SetupOpts = {}) {
   const pgDeltaEngine = Layer.succeed(
     LegacyPgDeltaEngine,
     LegacyPgDeltaEngine.of({
-      // The handler must route through this strategy even when the selected
-      // implementation is legacy; the strategy owns edge runtime and shadows.
-      implementation: opts.pgDeltaImplementation ?? "legacy",
       diffExplicit: (input) =>
         Effect.sync(() => {
           explicitDiffCalls.push(input);
@@ -563,46 +559,54 @@ const PGADMIN_SOURCE_URL =
 const PGADMIN_TARGET_URL = "postgresql://postgres:postgres@127.0.0.1:54320/postgres";
 
 describe("legacy db diff", () => {
-  it.effect("diffs local with the default migra engine and prints SQL to stdout", () => {
-    const s = setup(tmp.current, { diffSql: "create table players ();\n" });
-    return Effect.gen(function* () {
-      yield* legacyDbDiff(flags());
-      // The native shadow was created once (one `docker create`) and removed once
-      // (one `docker rm -f -v`) — see `mockLegacyShadowContainerCliSpawner`.
-      expect(s.shadowSpawned.filter((c) => c.args[0] === "create")).toHaveLength(1);
-      expect(s.shadowSpawned.filter((c) => c.args[0] === "rm")).toHaveLength(1);
-      expect(stdout(s.out)).toBe("create table players ();\n\n");
-      expect(stderr(s.out)).toContain("Creating shadow database...");
-      expect(stderr(s.out)).toContain("Diffing schemas...");
-      expect(stderr(s.out)).toContain("Finished supabase db diff on branch");
-      expect(s.telemetry.flushed).toBe(true);
-      // The shadow's PG15+ one-shot platform-baseline job(s) connect to the shadow over
-      // Docker's embedded DNS using the shadow container's OWN 12-char short id as
-      // `DB_HOST` — NOT the real `db` container's name, and not some other slice length
-      // (a mutation from `.slice(0, 12)` to `.slice(0, 8)` must fail this). This is the
-      // one shadow-specific parameterization that matters
-      // (`legacyBuildShadowSetupDatabaseInput`'s `dbHost`). The default config enables
-      // realtime (and PG >= 15 by default), so this always exercises at least one
-      // one-shot job — Realtime's own env sets `DB_HOST` directly; Storage/Auth embed
-      // the same host inside a `DATABASE_URL`-style connection string instead.
-      const expectedHost = LEGACY_FAKE_SHADOW_CONTAINER_ID.slice(0, 12);
-      expect(s.shadowSetupJobCalls.length).toBeGreaterThan(0);
-      let sawHost = false;
-      for (const call of s.shadowSetupJobCalls) {
-        if (call.env["DB_HOST"] !== undefined) {
-          expect(call.env["DB_HOST"]).toBe(expectedHost);
-          sawHost = true;
-        }
-        for (const value of Object.values(call.env)) {
-          if (value.includes("@") && value.includes(":")) {
-            expect(value).toContain(`@${expectedHost}:`);
+  it.effect(
+    "diffs local with the default pg-delta engine (no pgdelta config section) and prints SQL to stdout",
+    () => {
+      const s = setup(tmp.current, { diffSql: "create table players ();\n" });
+      return Effect.gen(function* () {
+        yield* legacyDbDiff(flags());
+        // With NO `[experimental.pgdelta]` section, `enabled` defaults to TRUE
+        // (CLI-1588), so the diff routes through the pg-delta engine — not migra's
+        // edge-runtime script.
+        expect(s.databaseDiffCalls).toHaveLength(1);
+        expect(s.edgeCalls).toEqual([]);
+        // The native shadow was created once (one `docker create`) and removed once
+        // (one `docker rm -f -v`) — see `mockLegacyShadowContainerCliSpawner`.
+        expect(s.shadowSpawned.filter((c) => c.args[0] === "create")).toHaveLength(1);
+        expect(s.shadowSpawned.filter((c) => c.args[0] === "rm")).toHaveLength(1);
+        expect(stdout(s.out)).toBe("create table players ();\n\n");
+        expect(stderr(s.out)).toContain("Creating shadow database...");
+        expect(stderr(s.out)).toContain("Diffing schemas...");
+        expect(stderr(s.out)).toContain("Finished supabase db diff on branch");
+        expect(s.telemetry.flushed).toBe(true);
+        // The shadow's PG15+ one-shot platform-baseline job(s) connect to the shadow over
+        // Docker's embedded DNS using the shadow container's OWN 12-char short id as
+        // `DB_HOST` — NOT the real `db` container's name, and not some other slice length
+        // (a mutation from `.slice(0, 12)` to `.slice(0, 8)` must fail this). This is the
+        // one shadow-specific parameterization that matters
+        // (`legacyBuildShadowSetupDatabaseInput`'s `dbHost`). The default config enables
+        // realtime (and PG >= 15 by default), so this always exercises at least one
+        // one-shot job — Realtime's own env sets `DB_HOST` directly; Storage/Auth embed
+        // the same host inside a `DATABASE_URL`-style connection string instead.
+        const expectedHost = LEGACY_FAKE_SHADOW_CONTAINER_ID.slice(0, 12);
+        expect(s.shadowSetupJobCalls.length).toBeGreaterThan(0);
+        let sawHost = false;
+        for (const call of s.shadowSetupJobCalls) {
+          if (call.env["DB_HOST"] !== undefined) {
+            expect(call.env["DB_HOST"]).toBe(expectedHost);
             sawHost = true;
           }
+          for (const value of Object.values(call.env)) {
+            if (value.includes("@") && value.includes(":")) {
+              expect(value).toContain(`@${expectedHost}:`);
+              sawHost = true;
+            }
+          }
         }
-      }
-      expect(sawHost).toBe(true);
-    }).pipe(Effect.provide(s.layer));
-  });
+        expect(sawHost).toBe(true);
+      }).pipe(Effect.provide(s.layer));
+    },
+  );
 
   it.effect("diffs local with pgdelta when --use-pg-delta is set", () => {
     const s = setup(tmp.current, { diffSql: "create table p ();\n" });
@@ -638,6 +642,38 @@ describe("legacy db diff", () => {
     }).pipe(Effect.provide(s.layer));
   });
 
+  it.effect("an explicit [experimental.pgdelta] enabled = false selects the migra engine", () => {
+    mkdirSync(join(tmp.current, "supabase"), { recursive: true });
+    writeFileSync(
+      join(tmp.current, "supabase", "config.toml"),
+      "[experimental.pgdelta]\nenabled = false\n",
+    );
+    const s = setup(tmp.current, { diffSql: "create table players ();\n" });
+    return Effect.gen(function* () {
+      yield* legacyDbDiff(flags());
+      // Explicitly disabling pg-delta opts back into migra: the diff runs through
+      // migra's edge-runtime script (not pg-delta's `renderPlanFiles` script, and
+      // not the pg-delta engine service).
+      expect(s.databaseDiffCalls).toEqual([]);
+      expect(s.edgeCalls).toHaveLength(1);
+      expect(s.edgeCalls[0]?.script).not.toContain("renderPlanFiles");
+      expect(stdout(s.out)).toBe("create table players ();\n\n");
+    }).pipe(Effect.provide(s.layer));
+  });
+
+  it.effect("--use-migra overrides the pg-delta default when no pgdelta config exists", () => {
+    const s = setup(tmp.current, { diffSql: "create table players ();\n" });
+    return Effect.gen(function* () {
+      yield* legacyDbDiff(flags({ useMigra: Option.some(true) }));
+      // No `[experimental.pgdelta]` section, so pg-delta is the default — the
+      // `--use-migra` flag must still win and route through migra.
+      expect(s.databaseDiffCalls).toEqual([]);
+      expect(s.edgeCalls).toHaveLength(1);
+      expect(s.edgeCalls[0]?.script).not.toContain("renderPlanFiles");
+      expect(stdout(s.out)).toBe("create table players ();\n\n");
+    }).pipe(Effect.provide(s.layer));
+  });
+
   it.effect("next local diff ignores schema_paths and declarative files", () => {
     mkdirSync(join(tmp.current, "supabase", "schemas"), { recursive: true });
     writeFileSync(
@@ -657,7 +693,6 @@ describe("legacy db diff", () => {
       "create table ignored ();\n",
     );
     const s = setup(tmp.current, {
-      pgDeltaImplementation: "next",
       diffSql: "create table result ();\n",
     });
     return Effect.gen(function* () {
@@ -682,10 +717,10 @@ describe("legacy db diff", () => {
     }).pipe(Effect.provide(s.layer));
   });
 
-  // The transition warning is only true for the bundled next engine. Every other
-  // engine still routes a local target with declarative files through the
-  // declared-schema `contrib_regression` override, so schema_paths DOES still shape
-  // their output and claiming otherwise would be a lie.
+  // The transition warning is only true for pg-delta. Migra still routes a local
+  // target with declarative files through the declared-schema `contrib_regression`
+  // override, so schema_paths DOES still shape its output and claiming otherwise
+  // would be a lie.
   const writeSchemaPathsConfig = (pgDeltaEnabled: boolean) => {
     mkdirSync(join(tmp.current, "supabase", "database"), { recursive: true });
     writeFileSync(
@@ -702,14 +737,13 @@ describe("legacy db diff", () => {
     writeFileSync(join(tmp.current, "supabase", "configured.sql"), "create table configured ();\n");
   };
 
-  it.effect("legacy pg-delta local diff does not print the schema_paths transition warning", () => {
-    writeSchemaPathsConfig(true);
+  it.effect("migra local diff does not print the schema_paths transition warning", () => {
+    writeSchemaPathsConfig(false);
     const s = setup(tmp.current, {
-      pgDeltaImplementation: "legacy",
       diffSql: "create table result ();\n",
     });
     return Effect.gen(function* () {
-      yield* legacyDbDiff(flags({ usePgDelta: Option.some(true) }));
+      yield* legacyDbDiff(flags());
       expect(stderr(s.out)).not.toContain("schema_paths no longer changes the migrations baseline");
     }).pipe(Effect.provide(s.layer));
   });
@@ -1055,7 +1089,9 @@ describe("legacy db diff", () => {
       writeFileSync(join(tmp.current, "supabase", "schemas", "public.sql"), "select 1;\n");
       const s = setup(tmp.current, { diffSql: "create table o ();\n" });
       return Effect.gen(function* () {
-        yield* legacyDbDiff(flags());
+        // Migra is opt-in now that pg-delta is the default engine (CLI-1588);
+        // pg-delta ignores the declarative contrib_regression override entirely.
+        yield* legacyDbDiff(flags({ useMigra: Option.some(true) }));
         expect(stdout(s.out)).toBe("create table o ();\n\n");
         // The declarative-schema file was migrated into the contrib_regression override.
         expect(s.shadowConnectedDatabases).toContain("contrib_regression");
@@ -1310,7 +1346,7 @@ describe("legacy db diff", () => {
       return Effect.gen(function* () {
         yield* legacyDbDiff(flags({ usePgSchema: Option.some(true) }));
         // The TS wrapper prints its own deprecation notice pointing at pg-delta /
-        // the default migra engine, additive to (not a replacement for) the
+        // the migra rollback, additive to (not a replacement for) the
         // delegated Go child's own "experimental" warning (unchanged, printed by
         // the real Go binary rather than this mocked proxy). Assert on a stable
         // substring so future wording tweaks don't require touching every test site.
@@ -1444,7 +1480,6 @@ describe("legacy db diff", () => {
       "create table declarative_only ();\n",
     );
     const s = setup(tmp.current, {
-      pgDeltaImplementation: "next",
       diffSql: "create table live_only ();\n",
     });
     return Effect.gen(function* () {
@@ -1470,7 +1505,6 @@ describe("legacy db diff", () => {
     );
     const s = setup(tmp.current, {
       format: "json",
-      pgDeltaImplementation: "next",
       diffSql: "create table dogfood_note ();\n",
     });
     return Effect.gen(function* () {
@@ -1511,7 +1545,6 @@ describe("legacy db diff", () => {
     writeFileSync(join(tmp.current, "supabase", "not-a-directory.sql"), "select 1;\n");
     const s = setup(tmp.current, {
       format: "json",
-      pgDeltaImplementation: "next",
       diffSql: "create table dogfood_note ();\n",
     });
     return Effect.gen(function* () {
@@ -1917,7 +1950,6 @@ describe("legacy db diff", () => {
   it.effect("warns on semantic data-loss hazards without a DROP statement", () => {
     const sql = "ALTER TABLE public.accounts ALTER COLUMN email TYPE text;";
     const s = setup(tmp.current, {
-      pgDeltaImplementation: "next",
       diffSql: sql,
       hazards: {
         actions: [{ actionIndex: 0, kinds: ["data_loss"] }],
@@ -1936,7 +1968,9 @@ describe("legacy db diff", () => {
   it.effect("emits a json envelope with --output-format json (payload-only stdout)", () => {
     const s = setup(tmp.current, { format: "json", diffSql: "create table j ();\n" });
     return Effect.gen(function* () {
-      yield* legacyDbDiff(flags());
+      // Migra is opt-in now that pg-delta is the default engine (CLI-1588); this
+      // test pins the migra envelope's `engine` value specifically.
+      yield* legacyDbDiff(flags({ useMigra: Option.some(true) }));
       // No raw SQL on stdout in machine mode; the envelope carries it instead.
       expect(stdout(s.out)).toBe("");
       const success = s.out.messages.find((m) => m.type === "success");
@@ -1963,7 +1997,9 @@ describe("legacy db diff", () => {
         "error diffing schema: error running script:\nTypeError: Cannot read properties of undefined (reading 'constraints')\nPGDELTA_SCRIPT_ERROR\n",
     });
     return Effect.gen(function* () {
-      const exit = yield* legacyDbDiff(flags()).pipe(Effect.exit);
+      // Migra is opt-in now that pg-delta is the default engine (CLI-1588); the
+      // crash is injected into migra's edge-runtime script run.
+      const exit = yield* legacyDbDiff(flags({ useMigra: Option.some(true) })).pipe(Effect.exit);
       expect(Exit.isFailure(exit)).toBe(true);
       expect(stderr(s.out)).not.toContain("No schema changes found");
     }).pipe(Effect.provide(s.layer));
@@ -1972,8 +2008,9 @@ describe("legacy db diff", () => {
   it.effect("falls back to the migra Docker image when edge-runtime OOMs", () => {
     const s = setup(tmp.current, { oom: true, diffSql: "create table fb ();\n", isLocal: true });
     return Effect.gen(function* () {
+      // Migra is opt-in now that pg-delta is the default engine (CLI-1588).
       // Pass --schema so the fallback does not need a live DB to list schemas.
-      yield* legacyDbDiff(flags({ schema: ["public"] }));
+      yield* legacyDbDiff(flags({ useMigra: Option.some(true), schema: ["public"] }));
       expect(s.dockerCalls).toHaveLength(1);
       expect(stdout(s.out)).toBe("create table fb ();\n\n");
     }).pipe(Effect.provide(s.layer));
@@ -1989,7 +2026,8 @@ describe("legacy db diff", () => {
       networkId: "my-net",
     });
     return Effect.gen(function* () {
-      yield* legacyDbDiff(flags({ schema: ["public"] }));
+      // Migra is opt-in now that pg-delta is the default engine (CLI-1588).
+      yield* legacyDbDiff(flags({ useMigra: Option.some(true), schema: ["public"] }));
       expect(s.dockerCalls).toHaveLength(1);
       expect((s.dockerCalls[0] as { network: unknown }).network).toEqual({
         _tag: "named",
@@ -2619,10 +2657,9 @@ describe("legacy db diff", () => {
      * Runs `db diff` with the shadow baseline cache on and artifacts under the workdir,
      * against the stateful Docker model the export/restore round trip needs.
      */
-    const runCached = (implementation: "legacy" | "next") => {
+    const runCached = (engine: "migra" | "pg-delta") => {
       const s = setup(tmp.current, {
         statefulDocker: true,
-        pgDeltaImplementation: implementation,
         diffSql: "create table t ();\n",
       });
       return legacyWithEnv(
@@ -2631,36 +2668,43 @@ describe("legacy db diff", () => {
         legacyWithEnv(
           "SUPABASE_SHADOW_CACHE",
           "1",
-          legacyDbDiff(flags({ usePgDelta: Option.some(true) })).pipe(Effect.provide(s.layer)),
+          legacyDbDiff(
+            flags(
+              engine === "pg-delta"
+                ? { usePgDelta: Option.some(true) }
+                : { useMigra: Option.some(true) },
+            ),
+          ).pipe(Effect.provide(s.layer)),
         ),
       ).pipe(Effect.as(s));
     };
 
     // Regression: both migrate paths used to pass a hardcoded `{ webhooks: "enabled" }`, so the
-    // legacy run's forced-`pg_net` baseline and the next run's config-following baseline keyed
+    // migra run's forced-`pg_net` baseline and the pg-delta run's config-following baseline keyed
     // to the SAME tar and silently restored each other's cluster. The handler now forks the
     // policy on `migrationMode`; `shadow-cache.integration.test.ts` covers the cache's half of
     // the contract, this covers `db diff`'s call site.
-    it.live("a legacy-engine baseline is never restored into a pg-delta-next run", () => {
+    it.live("a migra-engine baseline is never restored into a pg-delta run", () => {
       mkdirSync(join(tmp.current, "supabase"), { recursive: true });
       writeFileSync(
         join(tmp.current, "supabase", "config.toml"),
         "[experimental.pgdelta]\nenabled = true\n",
       );
       return Effect.gen(function* () {
-        // Legacy migrate forces `pg_net` on regardless of config, and publishes that baseline.
-        const legacyRun = yield* runCached("legacy");
-        expect(legacyRun.dockerDaemon?.stepCalls("cp-out")).toHaveLength(1);
-        const legacyTars = publishedTars();
-        expect(legacyTars).toHaveLength(1);
+        // Migra's migrate path forces `pg_net` on regardless of config, and publishes
+        // that baseline.
+        const migraRun = yield* runCached("migra");
+        expect(migraRun.dockerDaemon?.stepCalls("cp-out")).toHaveLength(1);
+        const migraTars = publishedTars();
+        expect(migraTars).toHaveLength(1);
 
-        // pg-delta next follows the config (webhooks are off here), so it must cold-provision
+        // pg-delta follows the config (webhooks are off here), so it must cold-provision
         // and publish its OWN baseline rather than restore the forced-on one above.
-        const nextRun = yield* runCached("next");
-        expect(nextRun.dockerDaemon?.stepCalls("cp-in")).toHaveLength(0);
-        expect(nextRun.dockerDaemon?.stepCalls("cp-out")).toHaveLength(1);
+        const pgDeltaRun = yield* runCached("pg-delta");
+        expect(pgDeltaRun.dockerDaemon?.stepCalls("cp-in")).toHaveLength(0);
+        expect(pgDeltaRun.dockerDaemon?.stepCalls("cp-out")).toHaveLength(1);
         expect(publishedTars()).toHaveLength(2);
-        expect(publishedTars()).toEqual(expect.arrayContaining(legacyTars));
+        expect(publishedTars()).toEqual(expect.arrayContaining(migraTars));
       });
     });
   });

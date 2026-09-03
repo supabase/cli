@@ -124,7 +124,12 @@ func GetDeclarativeDir() string {
 }
 
 func IsPgDeltaEnabled() bool {
-	return Config.Experimental.PgDelta != nil && Config.Experimental.PgDelta.Enabled
+	// pg-delta is the default diff engine: an absent [experimental.pgdelta]
+	// section (nil before config load) resolves to enabled. The config template
+	// ejects `enabled = true` as the viper default, so a section that omits the
+	// key also resolves to enabled; only an explicit `enabled = false` opts back
+	// into migra.
+	return Config.Experimental.PgDelta == nil || Config.Experimental.PgDelta.Enabled
 }
 
 func GetCurrentTimestamp() string {

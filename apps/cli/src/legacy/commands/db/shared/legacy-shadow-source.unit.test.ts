@@ -5,11 +5,7 @@ import { BunServices } from "@effect/platform-bun";
 import { describe, expect, it } from "@effect/vitest";
 import { Effect, Exit, FileSystem, Layer, Option, Path, PlatformError } from "effect";
 
-import {
-  legacyCleanSchemaPath,
-  legacyLoadDeclaredSchemas,
-  legacyShouldApplyDeclarativeWithPgDelta,
-} from "./legacy-shadow-source.ts";
+import { legacyCleanSchemaPath, legacyLoadDeclaredSchemas } from "./legacy-shadow-source.ts";
 import type { LegacyPgDeltaTomlConfig } from "../../../shared/legacy-db-config.toml-read.ts";
 
 function pgDelta(overrides: Partial<LegacyPgDeltaTomlConfig> = {}): LegacyPgDeltaTomlConfig {
@@ -17,7 +13,6 @@ function pgDelta(overrides: Partial<LegacyPgDeltaTomlConfig> = {}): LegacyPgDelt
     enabled: false,
     declarativeSchemaPath: Option.none(),
     formatOptions: Option.none(),
-    npmVersion: Option.none(),
     ...overrides,
   };
 }
@@ -28,90 +23,6 @@ function makeWorkdir(): string {
 
 // Root bypasses POSIX permission bits, so chmod 000 wouldn't block readdir() there.
 const isRoot = typeof process.getuid === "function" && process.getuid() === 0;
-
-describe("legacyShouldApplyDeclarativeWithPgDelta", () => {
-  it.effect("is false whenever usePgDelta is false, regardless of schema_paths", () =>
-    Effect.gen(function* () {
-      const path = yield* Path.Path;
-      expect(legacyShouldApplyDeclarativeWithPgDelta(path, false, [], pgDelta())).toBe(false);
-      expect(
-        legacyShouldApplyDeclarativeWithPgDelta(path, false, ["schemas/x.sql"], pgDelta()),
-      ).toBe(false);
-    }).pipe(Effect.provide(BunServices.layer)),
-  );
-
-  it.effect("is true when usePgDelta and zero schema_paths are configured", () =>
-    Effect.gen(function* () {
-      const path = yield* Path.Path;
-      expect(legacyShouldApplyDeclarativeWithPgDelta(path, true, [], pgDelta())).toBe(true);
-    }).pipe(Effect.provide(BunServices.layer)),
-  );
-
-  it.effect("is false when more than one schema_paths entry is configured", () =>
-    Effect.gen(function* () {
-      const path = yield* Path.Path;
-      expect(
-        legacyShouldApplyDeclarativeWithPgDelta(path, true, ["a.sql", "b.sql"], pgDelta()),
-      ).toBe(false);
-    }).pipe(Effect.provide(BunServices.layer)),
-  );
-
-  it.effect(
-    "is true when exactly one schema_paths entry resolves to the effective declarative dir",
-    () =>
-      Effect.gen(function* () {
-        const path = yield* Path.Path;
-        expect(legacyShouldApplyDeclarativeWithPgDelta(path, true, ["schemas"], pgDelta())).toBe(
-          true,
-        );
-      }).pipe(Effect.provide(BunServices.layer)),
-  );
-
-  it.effect("is false when the single schema_paths entry does not match the declarative dir", () =>
-    Effect.gen(function* () {
-      const path = yield* Path.Path;
-      expect(legacyShouldApplyDeclarativeWithPgDelta(path, true, ["database"], pgDelta())).toBe(
-        false,
-      );
-    }).pipe(Effect.provide(BunServices.layer)),
-  );
-
-  it.effect("matches a configured (non-default) declarative_schema_path the same way", () =>
-    Effect.gen(function* () {
-      const path = yield* Path.Path;
-      const configured = pgDelta({ declarativeSchemaPath: Option.some("supabase/custom-decl") });
-      expect(legacyShouldApplyDeclarativeWithPgDelta(path, true, ["custom-decl"], configured)).toBe(
-        true,
-      );
-    }).pipe(Effect.provide(BunServices.layer)),
-  );
-
-  it.effect(
-    "on POSIX, a backslash in schema_paths is a literal character, not a path separator",
-    () =>
-      Effect.gen(function* () {
-        const path = yield* Path.Path;
-        // Go's `filepath.Clean`/`ToSlash` only treat `\` as a separator on a Windows build —
-        // on darwin/linux it's untouched, so a `foo\bar` schema_paths entry (which
-        // `legacyResolveSeedSqlPath` joins under `supabase/` unresolved) must NOT be treated
-        // as equivalent to the slash-separated declarative dir `supabase/foo/bar`.
-        const configured = pgDelta({ declarativeSchemaPath: Option.some("supabase/foo/bar") });
-        expect(
-          legacyShouldApplyDeclarativeWithPgDelta(path, true, ["foo\\bar"], configured, "darwin"),
-        ).toBe(false);
-      }).pipe(Effect.provide(BunServices.layer)),
-  );
-
-  it.effect("on win32, a backslash in schema_paths normalizes as a path separator", () =>
-    Effect.gen(function* () {
-      const path = yield* Path.Path;
-      const configured = pgDelta({ declarativeSchemaPath: Option.some("supabase/foo/bar") });
-      expect(
-        legacyShouldApplyDeclarativeWithPgDelta(path, true, ["foo\\bar"], configured, "win32"),
-      ).toBe(true);
-    }).pipe(Effect.provide(BunServices.layer)),
-  );
-});
 
 describe("legacyCleanSchemaPath", () => {
   // Go's `filepath.Clean` (windows build) never cleans INTO a leading UNC volume — verified

@@ -789,36 +789,6 @@ func pgDeltaFormatOptions() string {
 	return strings.TrimSpace(utils.Config.Experimental.PgDelta.FormatOptions)
 }
 
-func TryCacheMigrationsCatalog(ctx context.Context, config pgconn.Config, prefix string, version string, fsys afero.Fs, options ...func(*pgx.ConnConfig)) error {
-	if !shouldCacheMigrationsCatalog() || len(version) > 0 {
-		return nil
-	}
-	if len(strings.TrimSpace(prefix)) == 0 {
-		prefix = catalogPrefixFromConfig(config)
-	}
-	hash, err := hashMigrations(fsys)
-	if err != nil {
-		return err
-	}
-	snapshot, err := exportCatalog(ctx, utils.ToPostgresURL(config), "postgres", options...)
-	if err != nil {
-		return err
-	}
-	if err := ensureTempDir(fsys); err != nil {
-		return err
-	}
-	_, err = pgcache.WriteMigrationCatalogSnapshot(fsys, prefix, hash, snapshot)
-	return err
-}
-
-func shouldCacheMigrationsCatalog() bool {
-	return pgcache.ShouldCacheMigrationsCatalog()
-}
-
-func catalogPrefixFromConfig(config pgconn.Config) string {
-	return pgcache.CatalogPrefixFromConfig(config)
-}
-
 // findDropStatements extracts DROP statements for safety warnings shown when
 // generating migration output from declarative diffs.
 func findDropStatements(out string) []string {

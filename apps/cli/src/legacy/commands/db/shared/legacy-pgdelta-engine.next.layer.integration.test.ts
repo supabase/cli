@@ -15,7 +15,6 @@ const common = {
   context: {
     projectId: "test",
     cwd: "/tmp/test",
-    npmVersion: undefined,
     denoVersion: 2,
     projectEnv: {},
   },
@@ -27,7 +26,6 @@ const common = {
 
 const toml: LegacyDbTomlValues = {
   projectEnv: {},
-  envLookup: () => undefined,
   apiSchemas: ["public", "graphql_public"],
   port: 54322,
   shadowPort: 54320,
@@ -41,7 +39,6 @@ const toml: LegacyDbTomlValues = {
     enabled: false,
     declarativeSchemaPath: Option.none(),
     formatOptions: Option.none(),
-    npmVersion: Option.none(),
   },
   webhooksEnabled: false,
   baseline: {
@@ -162,16 +159,6 @@ describe("pg-delta next shadow selection", () => {
           toml,
           files: [{ name: "schema.sql", sql: "create table example(id int);" }],
           noCache: false,
-          setupInputs: {
-            image: "postgres:17",
-            majorVersion: 17,
-            authEnabled: true,
-            storageEnabled: true,
-            realtimeEnabled: true,
-            autoExpose: true,
-            vaultNames: [],
-            rolesSql: "",
-          },
         })
         .pipe(Effect.exit);
 
@@ -191,16 +178,6 @@ describe("pg-delta next shadow selection", () => {
           toml,
           files: [{ name: "schema.sql", sql: "create table example(id int);" }],
           noCache: true,
-          setupInputs: {
-            image: "postgres:17",
-            majorVersion: 17,
-            authEnabled: true,
-            storageEnabled: true,
-            realtimeEnabled: true,
-            autoExpose: true,
-            vaultNames: [],
-            rolesSql: "",
-          },
         })
         .pipe(Effect.exit);
 

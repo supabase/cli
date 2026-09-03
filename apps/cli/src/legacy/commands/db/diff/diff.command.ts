@@ -8,10 +8,9 @@ import { legacyDbDiff } from "./diff.handler.ts";
 import { legacyDbDiffRuntimeLayer } from "./diff.layers.ts";
 
 const config = {
-  // The four engine flags are a mutually-exclusive group, and `--use-migra`
-  // defaults to true, so they are modelled as `Option` to track whether the flag
-  // was passed: the mutex check and `resolveDiffEngine`'s `useMigraChanged` key
-  // off whether the flag was passed, not its value.
+  // The four engine flags are a mutually-exclusive group, modelled as `Option`
+  // so the mutex check and `resolveDiffEngine`'s `useMigraChanged` key off
+  // whether the flag was passed, not its value.
   useMigra: Flag.boolean("use-migra").pipe(
     Flag.withDescription("Use migra to generate schema diff."),
     Flag.optional,
@@ -21,13 +20,13 @@ const config = {
     Flag.optional,
   ),
   usePgSchema: Flag.boolean("use-pg-schema").pipe(
-    // Deprecated in favor of the pg-delta engine (or the default migra engine) —
+    // Deprecated in favor of the default pg-delta engine (or the migra engine) —
     // a keep-in-Go exception (in-process stripe/pg-schema-diff library, no
     // TS/container equivalent — see SIDE_EFFECTS.md). This description-only
     // notice is not enforced by the flag framework — see diff.handler.ts's
     // runtime warning for the enforced half of the deprecation.
     Flag.withDescription(
-      "Use pg-schema-diff to generate schema diff. Deprecated: use the pg-delta engine ([experimental.pgdelta] enabled = true / --use-pg-delta) or the default migra engine instead.",
+      "Use pg-schema-diff to generate schema diff. Deprecated: use the default pg-delta engine or the migra engine (--use-migra) instead.",
     ),
     Flag.optional,
   ),

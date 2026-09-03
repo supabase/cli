@@ -2,8 +2,6 @@ package declarative
 
 import (
 	"context"
-	"crypto/sha256"
-	"encoding/hex"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -20,10 +18,17 @@ import (
 )
 
 func TestWriteDeclarativeSchemas(t *testing.T) {
-	// This verifies the main happy path for declarative export materialization:
-	// files are written to expected locations and config is updated accordingly.
+	// This verifies the main happy path for declarative export materialization
+	// with pg-delta explicitly disabled: files are written to expected locations
+	// and [db.migrations] schema_paths is updated accordingly. (With pg-delta
+	// enabled — the default — the config update is skipped; see the tests below.)
 	fsys := afero.NewMemMapFs()
 	require.NoError(t, afero.WriteFile(fsys, utils.ConfigPath, []byte("[db]\n"), 0644))
+	original := utils.Config.Experimental.PgDelta
+	utils.Config.Experimental.PgDelta = &config.PgDeltaConfig{Enabled: false}
+	t.Cleanup(func() {
+		utils.Config.Experimental.PgDelta = original
+	})
 
 	output := diff.DeclarativeOutput{
 		Files: []diff.DeclarativeFile{
@@ -74,74 +79,6 @@ func TestWriteDeclarativeSchemasSkipsConfigUpdateWhenPgDeltaEnabled(t *testing.T
 	cfg, err := afero.ReadFile(fsys, utils.ConfigPath)
 	require.NoError(t, err)
 	assert.Equal(t, originalConfig, string(cfg))
-}
-
-func TestTryCacheMigrationsCatalogWritesPrefixedCache(t *testing.T) {
-	fsys := afero.NewMemMapFs()
-	original := utils.Config.Experimental.PgDelta
-	utils.Config.Experimental.PgDelta = &config.PgDeltaConfig{Enabled: true}
-	t.Cleanup(func() {
-		utils.Config.Experimental.PgDelta = original
-		exportCatalog = diff.ExportCatalogPgDelta
-	})
-	p := filepath.Join(utils.MigrationsDir, "20240101000000_first.sql")
-	require.NoError(t, afero.WriteFile(fsys, p, []byte("create table a();"), 0644))
-	exportCatalog = func(_ context.Context, targetRef, role string, _ ...func(*pgx.ConnConfig)) (string, error) {
-		assert.Equal(t, "postgres", role)
-		assert.Contains(t, targetRef, "db.test.supabase.co")
-		return `{"version":1}`, nil
-	}
-
-	err := TryCacheMigrationsCatalog(t.Context(), pgconn.Config{
-		Host:     "db.test.supabase.co",
-		Port:     5432,
-		User:     "postgres",
-		Password: "postgres",
-		Database: "postgres",
-	}, "remote-ref", "", fsys)
-	require.NoError(t, err)
-
-	hash, err := hashMigrations(fsys)
-	require.NoError(t, err)
-	cachePath, ok, err := pgcache.ResolveMigrationCatalogPath(fsys, hash, "remote-ref")
-	require.NoError(t, err)
-	require.True(t, ok)
-	cached, err := afero.ReadFile(fsys, cachePath)
-	require.NoError(t, err)
-	assert.JSONEq(t, `{"version":1}`, string(cached))
-}
-
-func TestTryCacheMigrationsCatalogSkipsPartialApply(t *testing.T) {
-	fsys := afero.NewMemMapFs()
-	original := utils.Config.Experimental.PgDelta
-	utils.Config.Experimental.PgDelta = &config.PgDeltaConfig{Enabled: true}
-	called := false
-	t.Cleanup(func() {
-		utils.Config.Experimental.PgDelta = original
-		exportCatalog = diff.ExportCatalogPgDelta
-	})
-	exportCatalog = func(_ context.Context, _ string, _ string, _ ...func(*pgx.ConnConfig)) (string, error) {
-		called = true
-		return `{"version":1}`, nil
-	}
-
-	err := TryCacheMigrationsCatalog(t.Context(), pgconn.Config{
-		Host: "127.0.0.1", Port: 5432, User: "postgres", Password: "postgres", Database: "postgres",
-	}, "", "20240101000000", fsys)
-	require.NoError(t, err)
-	assert.False(t, called)
-}
-
-func TestCatalogPrefixFromConfig(t *testing.T) {
-	local := catalogPrefixFromConfig(pgconn.Config{Host: utils.Config.Hostname, Port: utils.Config.Db.Port})
-	assert.Equal(t, "local", local)
-
-	linked := catalogPrefixFromConfig(pgconn.Config{Host: "db.abcdefghijklmnopqrst.supabase.co", Port: 5432})
-	assert.Equal(t, "abcdefghijklmnopqrst", linked)
-
-	custom := catalogPrefixFromConfig(pgconn.Config{Host: "db.example.com", Port: 5432, Database: "postgres", User: "postgres"})
-	sum := sha256.Sum256([]byte("postgres@db.example.com:5432/postgres"))
-	assert.Equal(t, "url-"+hex.EncodeToString(sum[:])[:12], custom)
 }
 
 func TestWriteDeclarativeSchemasUsesConfiguredDir(t *testing.T) {

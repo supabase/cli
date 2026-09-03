@@ -3,8 +3,8 @@
 // equality against the Go sources in `apps/cli-go/internal/db/diff/templates/`.
 // Do not hand-edit — regenerate from Go.
 //
-// migra is `db diff`'s default engine and the non-pg-delta `db pull` diff
-// engine. The `.ts` template runs inside Edge Runtime (`@pgkit/migra` +
+// Rollback engine for `db diff --use-migra` and `db pull --diff-engine migra`.
+// The `.ts` template runs inside Edge Runtime (`@pgkit/migra` +
 // `@pgkit/client`); the `.sh` template is the OOM bash fallback executed in the
 // `supabase/migra` Docker image.
 
