@@ -1,3 +1,4 @@
+// oxlint-disable effecttsgo/prefer-schema-over-json -- malformed caller/state fixtures exercise public validation boundaries.
 import { NodeServices } from "@effect/platform-node";
 import { describe, expect, it } from "@effect/vitest";
 import {
@@ -41,11 +42,15 @@ import {
   StackDestructionError,
   StackCleanupError,
   ContainerEngineError,
+  InvalidStackConfigError,
   InvalidLogCursorError,
   StackOwnershipConflictError,
   StackPreparationError,
   StackRuntimeMismatchError,
   StackStateInvalidError,
+  StackStateFormatUnsupportedError,
+  StackNotFoundError,
+  StackVersionUnsupportedError,
   StackUpgradeRequiredError,
 } from "./Errors.ts";
 import type { LogQuery, StackLogBatch, StackLogEntry } from "./Logs.ts";
@@ -594,6 +599,79 @@ describe("Effect stack lifecycle handoff", () => {
         expect(yield* (yield* FileSystem.FileSystem).readFileString(paths.stateDocument)).toBe(
           before,
         );
+      }),
+    ),
+  );
+
+  it.live("preserves input and version errors from prepare", () =>
+    withRuntimeRoot((project) =>
+      Effect.gen(function* () {
+        const stack = yield* createStack({ projectRoot: project, runtime: { kind: "native" } });
+        // oxlint-disable-next-line effecttsgo/prefer-schema-over-json -- exercise unknown caller input
+        const invalid = yield* stack
+          .prepare({
+            config: JSON.parse('{"capabilities":{"rest":{"settings":{"unknown":true}}}}'),
+          })
+          .pipe(Effect.exit);
+        expect(Exit.isFailure(invalid)).toBe(true);
+        if (Exit.isFailure(invalid))
+          expect(Option.getOrUndefined(Cause.findErrorOption(invalid.cause))).toBeInstanceOf(
+            InvalidStackConfigError,
+          );
+
+        const unsupported = yield* stack
+          .prepare({ config: { capabilities: { database: { version: "99" } } } })
+          .pipe(Effect.exit);
+        expect(Exit.isFailure(unsupported)).toBe(true);
+        if (Exit.isFailure(unsupported))
+          expect(Option.getOrUndefined(Cause.findErrorOption(unsupported.cause))).toBeInstanceOf(
+            StackVersionUnsupportedError,
+          );
+      }),
+    ),
+  );
+
+  it.live("preserves unsupported persisted state format from prepare", () =>
+    withRuntimeRoot((project) =>
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const env = yield* StackRuntimeEnvironment;
+        const stack = yield* createStack({ projectRoot: project });
+        const paths = yield* resolveStackPaths({ stateRoot: env.stateRoot, stackId: stack.id });
+        // oxlint-disable-next-line effecttsgo/prefer-schema-over-json -- malformed persisted state fixture
+        yield* fs.writeFileString(
+          paths.stateDocument,
+          JSON.stringify({ format: "supabase-stack-v0" }),
+        );
+
+        const result = yield* stack.prepare().pipe(Effect.exit);
+        expect(Exit.isFailure(result)).toBe(true);
+        if (Exit.isFailure(result))
+          expect(Option.getOrUndefined(Cause.findErrorOption(result.cause))).toBeInstanceOf(
+            StackStateFormatUnsupportedError,
+          );
+      }),
+    ),
+  );
+
+  it.live("reports a retained handle as not found after destroy", () =>
+    withRuntimeRoot((project) =>
+      Effect.gen(function* () {
+        const stack = yield* createStack({ projectRoot: project });
+        yield* stack.destroy();
+
+        const status = yield* stack.status().pipe(Effect.exit);
+        expect(Exit.isFailure(status)).toBe(true);
+        if (Exit.isFailure(status))
+          expect(Option.getOrUndefined(Cause.findErrorOption(status.cause))).toBeInstanceOf(
+            StackNotFoundError,
+          );
+        const logs = yield* stack.logs().pipe(Effect.exit);
+        expect(Exit.isFailure(logs)).toBe(true);
+        if (Exit.isFailure(logs))
+          expect(Option.getOrUndefined(Cause.findErrorOption(logs.cause))).toBeInstanceOf(
+            StackNotFoundError,
+          );
       }),
     ),
   );

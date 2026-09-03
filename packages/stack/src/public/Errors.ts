@@ -1,4 +1,4 @@
-import { Data } from "effect";
+import { Data, Predicate } from "effect";
 
 /**
  * Error context is intentionally open while operation-specific fields settle
@@ -148,6 +148,11 @@ export type StackError =
   | ContainerEngineError
   | StackDestructionError;
 
+export const isStackError = (value: unknown): value is StackError =>
+  Predicate.hasProperty(value, "_tag") &&
+  typeof value._tag === "string" &&
+  isStackErrorTag(value._tag);
+
 type ErrorByTag<Tag extends StackErrorTag> = Extract<StackError, { _tag: Tag }>;
 
 export const CREATE_STACK_ERROR_TAGS = [
@@ -201,12 +206,16 @@ export const STACK_CREDENTIALS_ERROR_TAGS = [
 export type StackCredentialsError = ErrorByTag<(typeof STACK_CREDENTIALS_ERROR_TAGS)[number]>;
 
 export const PREPARE_STACK_ERROR_TAGS = [
+  "InvalidStackConfigError",
+  "StackVersionUnsupportedError",
+  "InvalidProjectRootError",
   "StackPreparationError",
   "ArtifactIntegrityError",
   "ContainerPullError",
   "ContainerEngineError",
   "StackOwnershipConflictError",
   "StackStateInvalidError",
+  "StackStateFormatUnsupportedError",
   "StackLifecycleConflictError",
 ] as const satisfies ReadonlyArray<StackErrorTag>;
 export type PrepareStackError = ErrorByTag<(typeof PREPARE_STACK_ERROR_TAGS)[number]>;
@@ -250,6 +259,7 @@ export const STACK_LOGS_ERROR_TAGS = [
   "InvalidLogCursorError",
   "StackOwnershipConflictError",
   "StackLifecycleConflictError",
+  "StackUpgradeRequiredError",
 ] as const satisfies ReadonlyArray<StackErrorTag>;
 export type StackLogsError = ErrorByTag<(typeof STACK_LOGS_ERROR_TAGS)[number]>;
 
@@ -260,5 +270,6 @@ export const DESTROY_STACK_ERROR_TAGS = [
   "StackLifecycleConflictError",
   "ContainerEngineError",
   "StackCleanupError",
+  "StackUpgradeRequiredError",
 ] as const satisfies ReadonlyArray<StackErrorTag>;
 export type DestroyStackError = ErrorByTag<(typeof DESTROY_STACK_ERROR_TAGS)[number]>;

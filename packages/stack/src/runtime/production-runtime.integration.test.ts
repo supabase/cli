@@ -27,6 +27,7 @@ import type { StackStateStore } from "../state/StackStateStore.ts";
 import { resolveStackPaths } from "../state/Paths.ts";
 import type { SupervisorIngress } from "../supervisor/Ingress.ts";
 import type { LogStore } from "../supervisor/LogStore.ts";
+import { LogStoreError } from "../supervisor/LogStore.ts";
 import type { LifecycleInput } from "../supervisor/Lifecycle.ts";
 import {
   makeProductionRuntime,
@@ -34,6 +35,7 @@ import {
   readinessDeadlineFor,
   withOwnedRuntimeFileCleanup,
 } from "./ProductionRuntime.ts";
+import { makeSupervisor } from "../supervisor/Supervisor.ts";
 import { RuntimeDriverError, type RuntimeDriver } from "./RuntimeDriver.ts";
 import {
   InvalidStackConfigError,
@@ -94,6 +96,25 @@ const stateStoreFor = (
   replace: () => Effect.die("unused"),
   replaceUnlocked: () => Effect.die("unused"),
   cleanup: () => Effect.die("unused"),
+});
+
+const mutableStateStoreFor = (current: {
+  value: PersistedStackState | undefined;
+}): StackStateStore => ({
+  read: () => Effect.succeed(current.value),
+  initialize: () => Effect.die("unused"),
+  replace: (_stackId, state) =>
+    Effect.sync(() => {
+      current.value = state;
+    }),
+  replaceUnlocked: (_stackId, state) =>
+    Effect.sync(() => {
+      current.value = state;
+    }),
+  cleanup: () =>
+    Effect.sync(() => {
+      current.value = undefined;
+    }),
 });
 
 const memoryLogStore = (entries: StackLogEntry[]): LogStore => ({
@@ -298,6 +319,72 @@ const ownerInputContainerEngine = (
 };
 
 describe("production runtime", () => {
+  it.live("keeps cleanup available when retained logs are corrupted", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const root = yield* fs.makeTempDirectoryScoped({ prefix: "supabase-production-bad-logs-" });
+        const compiled = yield* compileStack({
+          projectRoot: root,
+          runtime: { kind: "container", engine: "docker" },
+        });
+        const paths = yield* resolveStackPaths({ stateRoot: root, stackId });
+        yield* fs.makeDirectory(path.dirname(paths.logs), { recursive: true });
+        yield* fs.writeFileString(paths.logs, "not-json\n");
+        const current = {
+          value: {
+            ...stateFor({}, { kind: "container", engine: "docker" }),
+            desiredLifecycle: "running" as const,
+            definition: compiled.definition,
+            identity: {
+              ...stateFor({}).identity,
+              projectRoot: root,
+              checkoutRoot: root,
+              workspaceId: root,
+              checkoutId: root,
+            },
+          },
+        } satisfies { value: PersistedStackState | undefined };
+        const store = mutableStateStoreFor(current);
+        const context = yield* Effect.context<FileSystem.FileSystem | Path.Path | Crypto.Crypto>();
+        const runtime = yield* makeProductionRuntime({
+          stateRoot: root,
+          stackId,
+          ownerSessionId: "bad-logs-owner",
+          stateStore: store,
+          context,
+          ingress,
+          artifactPreparer: artifacts,
+          containerEngine: ownerInputContainerEngine([]),
+          envFileOwner: envFiles,
+          functionsBootstrapOwner: bootstrap,
+        });
+        const supervisor = yield* makeSupervisor({
+          stackId,
+          ownerSessionId: "bad-logs-owner",
+          rpcRelease: "test-release",
+          stateStore: store,
+          context,
+          runtime,
+        });
+        const failed = yield* supervisor.start().pipe(Effect.exit);
+        expect(Exit.isFailure(failed)).toBe(true);
+        if (Exit.isFailure(failed)) {
+          const error = Cause.findErrorOption(failed.cause);
+          expect(Option.isSome(error)).toBe(true);
+          if (Option.isSome(error)) {
+            expect(error.value).toBeInstanceOf(StackPreparationError);
+            expect(error.value.cause).toBeInstanceOf(LogStoreError);
+          }
+        }
+        expect((yield* supervisor.maintenanceHandlers.stop).ok).toBe(true);
+        yield* supervisor.destroy;
+        expect(current.value).toBeUndefined();
+      }),
+    ).pipe(Effect.provide(NodeServices.layer)),
+  );
+
   it.live("retries a transient database bootstrap connection failure", () =>
     Effect.scoped(
       Effect.gen(function* () {

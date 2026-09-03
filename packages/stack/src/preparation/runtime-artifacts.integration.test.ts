@@ -40,8 +40,12 @@ const prepared = (request: ArtifactRequest): PreparedArtifact => ({
   outcome: "downloaded",
 });
 
-const containerEngine = (present: boolean, calls: string[]): ContainerEngine => ({
-  kind: "docker",
+const containerEngine = (
+  present: boolean,
+  calls: string[],
+  kind: ContainerEngine["kind"] = "docker",
+): ContainerEngine => ({
+  kind,
   executable: "docker",
   preflight: Effect.succeed({ host: "host.docker.internal" }),
   probe: Effect.sync(() => {
@@ -161,7 +165,7 @@ describe("runtime artifact preparation", () => {
     const engine = containerEngine(false, calls);
     const runtime = makeRuntimeArtifactPreparer({
       native: { store: { prepare: () => Effect.die("unused") } },
-      containers: { docker: engine, podman: engine },
+      containerEngine: engine,
     });
     const result = Effect.runSync(
       runtime.prepare(
@@ -181,14 +185,10 @@ describe("runtime artifact preparation", () => {
   });
 
   it("uses the persisted container engine identity", () => {
-    const dockerCalls: string[] = [];
     const podmanCalls: string[] = [];
     const runtime = makeRuntimeArtifactPreparer({
       native: { store: { prepare: () => Effect.die("unused") } },
-      containers: {
-        docker: containerEngine(true, dockerCalls),
-        podman: containerEngine(true, podmanCalls),
-      },
+      containerEngine: containerEngine(true, podmanCalls, "podman"),
     });
     Effect.runSync(
       runtime.prepare(
@@ -200,7 +200,6 @@ describe("runtime artifact preparation", () => {
       ),
     );
     expect(podmanCalls).toContain("probe");
-    expect(dockerCalls).toEqual([]);
   });
 
   it("reports unavailable container engines separately from artifact preparation", () => {
@@ -215,7 +214,7 @@ describe("runtime artifact preparation", () => {
       ),
     };
     const runtime = makeRuntimeArtifactPreparer({
-      containers: { docker: unavailable },
+      containerEngine: unavailable,
     });
     const exit = Effect.runSyncExit(
       runtime.prepare(

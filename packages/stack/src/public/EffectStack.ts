@@ -73,7 +73,9 @@ import {
   type DestroyStackError,
   type StackError,
   type StackErrorTag,
+  isStackError,
   isStackErrorTag,
+  PREPARE_STACK_ERROR_TAGS,
   STACK_STATUS_ERROR_TAGS,
   STACK_CREDENTIALS_ERROR_TAGS,
   STACK_START_ERROR_TAGS,
@@ -218,13 +220,8 @@ const stackErrorFactories = {
   StackDestructionError: (message: string) => new StackDestructionError({ message }),
 } satisfies Record<StackErrorTag, (message: string) => StackError>;
 
-const isPublicStackError = (error: unknown): error is StackError =>
-  Predicate.hasProperty(error, "_tag") &&
-  typeof error._tag === "string" &&
-  isStackErrorTag(error._tag);
-
 const errorForRpc = (error: ControlError): StackError => {
-  if (isPublicStackError(error)) return error;
+  if (isStackError(error)) return error;
   if (
     Predicate.isTagged(error, "RpcClientError") ||
     Predicate.isTagged(error, "SocketError") ||
@@ -429,15 +426,16 @@ export const makeHandle = (
           readOfflineState().pipe(
             Effect.mapError(statusError),
             Effect.flatMap((state) =>
-              Option.isSome(state) &&
-              (state.value.desiredLifecycle === "stopped" ||
-                state.value.desiredLifecycle === "unconfigured")
-                ? statusFor(state.value, [], new Set<CapabilityName>(), "stopped").pipe(
-                    Effect.mapError(statusError),
-                  )
-                : Effect.fail(
-                    new StackOwnershipConflictError({ message: "No Supervisor owns this stack" }),
-                  ),
+              Option.isNone(state)
+                ? Effect.fail(new StackNotFoundError({ message: "Stack state was not found" }))
+                : state.value.desiredLifecycle === "stopped" ||
+                    state.value.desiredLifecycle === "unconfigured"
+                  ? statusFor(state.value, [], new Set<CapabilityName>(), "stopped").pipe(
+                      Effect.mapError(statusError),
+                    )
+                  : Effect.fail(
+                      new StackOwnershipConflictError({ message: "No Supervisor owns this stack" }),
+                    ),
             ),
           ),
         ),
@@ -471,7 +469,9 @@ export const makeHandle = (
       );
     };
     const logsStateError = (error: StackError): StackLogsError =>
-      error instanceof StackOwnershipConflictError || error instanceof StackStateInvalidError
+      error instanceof StackNotFoundError ||
+      error instanceof StackOwnershipConflictError ||
+      error instanceof StackStateInvalidError
         ? error
         : new StackStateInvalidError({ message: error.message, cause: error });
     const stopOwner = (owner: ReturnType<typeof makeControlClient>) =>
@@ -547,17 +547,16 @@ export const makeHandle = (
             );
           if (readOfflineState === undefined || readPersistedState === undefined)
             return Effect.fail(ownershipError);
-          const ownerStopped = readPersistedState().pipe(
-            Effect.map(
-              (state) =>
-                Option.isSome(state) &&
-                (state.value.desiredLifecycle === "stopped" ||
-                  state.value.desiredLifecycle === "unconfigured"),
-            ),
-            Effect.mapError(logsStateError),
-          );
+          const ownerStopped = readPersistedState().pipe(Effect.mapError(logsStateError));
           return ownerStopped.pipe(
-            Effect.flatMap((teardown) => {
+            Effect.flatMap((state) => {
+              if (Option.isNone(state))
+                return Effect.fail(
+                  new StackNotFoundError({ message: "Stack state was not found" }),
+                );
+              const teardown =
+                state.value.desiredLifecycle === "stopped" ||
+                state.value.desiredLifecycle === "unconfigured";
               if (!teardown) return Effect.fail(ownershipError);
               return Effect.suspend(() =>
                 // During an owner stop the control socket can close before its metadata/lease are
@@ -589,14 +588,14 @@ export const makeHandle = (
       followLogs: (query) =>
         Stream.paginate({ cursor: query?.cursor, first: true }, ({ cursor, first }) => {
           const { cursor: _initialCursor, tail: _tail, ...baseQuery } = query ?? {};
-          const options = {
+          const pollQuery = {
             ...baseQuery,
             ...(first && query?.tail !== undefined ? { tail: query.tail } : {}),
             ...(cursor === undefined || cursor.opaque === EMPTY_LOG_CURSOR.opaque
               ? {}
               : { cursor }),
           };
-          const request = logs(options);
+          const request = logs(pollQuery);
           const delayed = first
             ? request
             : Effect.schedule(Effect.void, Schedule.duration("100 millis")).pipe(
@@ -708,33 +707,22 @@ const handleDependencies = (options: {
     );
   const readPersistedState = () =>
     provide(options.store.read(options.id)).pipe(Effect.map(optionOf));
-  const directPrepareError = (cause: unknown): PrepareStackError =>
-    cause instanceof StackPreparationError ||
-    cause instanceof ArtifactIntegrityError ||
-    cause instanceof ContainerPullError ||
-    cause instanceof ContainerEngineError ||
-    cause instanceof StackOwnershipConflictError ||
-    cause instanceof StackStateInvalidError ||
-    cause instanceof StackLifecycleConflictError
-      ? cause
-      : new StackPreparationError({
-          stackId: options.id,
-          message: cause instanceof Error ? cause.message : String(cause),
-          cause,
-        });
+  const directPrepareError = (cause: unknown): PrepareStackError => {
+    if (isStackError(cause) && isNarrowError(cause, PREPARE_STACK_ERROR_TAGS)) return cause;
+    return new StackPreparationError({
+      stackId: options.id,
+      message: cause instanceof Error ? cause.message : String(cause),
+      cause,
+    });
+  };
   const prepare = (
     prepareOptions?: PrepareStackOptions,
   ): Effect.Effect<PrepareStackResult, PrepareStackError> =>
     Effect.scoped(
       Effect.gen(function* () {
-        const state = yield* options.store
-          .read(options.id)
-          .pipe(
-            Effect.provideService(FileSystem.FileSystem, options.fileSystem),
-            Effect.provideService(Path.Path, options.path),
-            Effect.provideService(Crypto.Crypto, options.crypto),
-            Effect.mapError(directPrepareError),
-          );
+        const state = yield* provide(options.store.read(options.id)).pipe(
+          Effect.mapError(directPrepareError),
+        );
         if (state === undefined)
           return yield* new StackStateInvalidError({
             stackId: options.id,
@@ -744,9 +732,7 @@ const handleDependencies = (options: {
         let plan: ExecutionPlan;
         if (prepareOptions?.config === undefined && state.definition !== undefined) {
           definition = state.definition;
-          plan = yield* rebuildExecutionPlan(state.runtime, definition).pipe(
-            Effect.provideService(Crypto.Crypto, options.crypto),
-          );
+          plan = yield* rebuildExecutionPlan(state.runtime, definition);
         } else {
           const compiled = yield* compileStack(
             {
@@ -755,10 +741,7 @@ const handleDependencies = (options: {
               config: prepareOptions?.config,
             },
             state.definition === undefined ? undefined : { definition: state.definition },
-          ).pipe(
-            Effect.provideService(Path.Path, options.path),
-            Effect.provideService(Crypto.Crypto, options.crypto),
-          );
+          ).pipe(Effect.provideService(Path.Path, options.path));
           definition = compiled.definition;
           plan = compiled.executionPlan;
         }

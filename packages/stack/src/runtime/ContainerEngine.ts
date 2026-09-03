@@ -734,12 +734,3 @@ export const makeContainerEngineCore = (options: ContainerEngineOptions): Contai
     streamLogs,
   };
 };
-export interface SelectContainerEngineOptions {
-  readonly preference: ContainerEngineKind;
-  readonly docker: ContainerEngine;
-  readonly podman: ContainerEngine;
-}
-export const selectContainerEngine = (
-  options: SelectContainerEngineOptions,
-): Effect.Effect<ContainerEngine, ContainerEngineFailure> =>
-  options.preference === "docker" ? Effect.succeed(options.docker) : Effect.succeed(options.podman);

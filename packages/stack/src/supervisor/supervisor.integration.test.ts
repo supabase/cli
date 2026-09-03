@@ -30,6 +30,7 @@ import {
   StackStateInvalidError,
   StackMustBeStoppedError,
   StackVersionUnsupportedError,
+  ArtifactIntegrityError,
 } from "../public/Errors.ts";
 import {
   RuntimeDriverError,
@@ -107,6 +108,7 @@ const makeFixture = (
     readonly activationCalls?: Ref.Ref<number>;
     readonly activationFailFirst?: Ref.Ref<boolean>;
     readonly startFailures?: Ref.Ref<number>;
+    readonly startFailureCause?: ArtifactIntegrityError;
     readonly preflightFailFirst?: Ref.Ref<boolean>;
     readonly preflightCalls?: Ref.Ref<number>;
     readonly preflightGate?: Deferred.Deferred<void>;
@@ -246,6 +248,16 @@ const makeFixture = (
               });
             }
           }
+          if (
+            fixtureOptions.startFailureCause !== undefined &&
+            key.workloadId === "functions:edge-runtime"
+          )
+            return yield* new RuntimeDriverError({
+              message: fixtureOptions.startFailureCause.message,
+              stackId: key.stackId,
+              workloadId: key.workloadId,
+              cause: fixtureOptions.startFailureCause,
+            });
           const ready = { ...key, state: "ready" as const };
           yield* Ref.update(resources, (current) => [
             ...current.filter((entry) => entry.workloadId !== key.workloadId),
@@ -609,6 +621,53 @@ describe("Supervisor composition", () => {
           expect(status.capabilities.find((capability) => capability.name === name)?.state).toBe(
             "dormant",
           );
+      }),
+    ),
+  );
+
+  it.live("reports starting while relaunching a stopped owner", () =>
+    run(
+      Effect.gen(function* () {
+        const fixture = yield* makeFixture();
+        yield* fixture.supervisor.start({ config: {} });
+        expect((yield* fixture.supervisor.maintenanceHandlers.stop).ok).toBe(true);
+
+        const blocked = yield* Ref.make(false);
+        const launchStarted = yield* Deferred.make<void>();
+        const launchGate = yield* Deferred.make<void>();
+        const baseDriver = fixture.runtime.driver;
+        const driver: RuntimeDriver = {
+          ...baseDriver,
+          start: (key, workload) =>
+            Effect.gen(function* () {
+              if (yield* Ref.get(blocked)) {
+                yield* Deferred.succeed(launchStarted, undefined);
+                yield* Deferred.await(launchGate);
+              }
+              return yield* baseDriver.start(key, workload);
+            }),
+        };
+        const successor = yield* makeSupervisor({
+          stackId: fixture.id,
+          ownerSessionId: "stopped-relaunch-successor",
+          rpcRelease: "test-release",
+          stateStore: fixture.store,
+          context: fixture.context,
+          runtime: { ...fixture.runtime, driver },
+        });
+        yield* successor.start({ config: {} });
+        expect((yield* successor.maintenanceHandlers.stop).ok).toBe(true);
+        yield* Ref.set(blocked, true);
+
+        const starting = yield* Effect.forkChild(successor.start(), { startImmediately: true });
+        yield* Deferred.await(launchStarted);
+        expect((yield* successor.status).lifecycle).toBe("starting");
+        expect((yield* successor.logs()).running).toBe(true);
+        yield* Deferred.succeed(launchGate, undefined);
+        expect((yield* Fiber.join(starting)).lifecycle).toBe("running");
+        yield* successor.maintenanceHandlers.stop;
+        yield* successor.shutdownIfIdle;
+        yield* fixture.supervisor.shutdownIfIdle;
       }),
     ),
   );
@@ -1414,6 +1473,60 @@ describe("Supervisor composition", () => {
           (yield* fixture.supervisor.status).capabilities.find(({ name }) => name === "functions")
             ?.state,
         ).toBe("ready");
+      }),
+    ),
+  );
+
+  it.live("preserves lazy artifact preparation failures during activation", () =>
+    run(
+      Effect.gen(function* () {
+        const fixture = yield* makeFixture();
+        const artifactFailure = new ArtifactIntegrityError({
+          message: "functions artifact checksum mismatch",
+        });
+        const baseDriver = fixture.runtime.driver;
+        const driver: RuntimeDriver = {
+          ...baseDriver,
+          start: (key, workload) =>
+            key.workloadId === "functions:edge-runtime"
+              ? Effect.fail(
+                  new RuntimeDriverError({
+                    message: artifactFailure.message,
+                    stackId: key.stackId,
+                    workloadId: key.workloadId,
+                    cause: artifactFailure,
+                  }),
+                )
+              : baseDriver.start(key, workload),
+        };
+        const supervisor = yield* makeSupervisor({
+          stackId: fixture.id,
+          ownerSessionId: "artifact-failure-supervisor",
+          rpcRelease: "test-release",
+          stateStore: fixture.store,
+          context: fixture.context,
+          runtime: { ...fixture.runtime, driver },
+        });
+        yield* supervisor.start({
+          config: {
+            capabilities: {
+              rest: { enabled: false },
+              auth: { enabled: false },
+              realtime: { enabled: false },
+              storage: { enabled: false },
+              functions: { activation: "lazy" },
+              studio: { enabled: false },
+              mail: { enabled: false },
+              analytics: { enabled: false },
+              pooler: { enabled: false },
+            },
+          },
+        });
+        const result = yield* supervisor.activate("functions").pipe(Effect.exit);
+        expect(errorOf(result)).toBeInstanceOf(ArtifactIntegrityError);
+        yield* supervisor.maintenanceHandlers.stop;
+        yield* supervisor.shutdownIfIdle;
+        yield* fixture.supervisor.shutdownIfIdle;
       }),
     ),
   );

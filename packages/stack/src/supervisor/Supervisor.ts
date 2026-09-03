@@ -33,6 +33,7 @@ import {
   StackRuntimeError,
   StackCleanupError,
   StackStateInvalidError,
+  isStackError,
   isStackErrorTag,
   type StackErrorTag,
   type StackError,
@@ -122,8 +123,7 @@ const credentialHost = (address: string): string =>
 const mapRuntimeError = (error: unknown): StackError => {
   if (error instanceof StackStateInvalidError) return error;
   if (error instanceof ContainerEngineError) return error;
-  if (error instanceof RuntimeDriverError && error.cause instanceof ContainerEngineError)
-    return error.cause;
+  if (error instanceof RuntimeDriverError && isStackError(error.cause)) return error.cause;
   return new StackRuntimeError({
     message: error instanceof Error ? error.message : String(error),
     cause: error,
@@ -322,10 +322,9 @@ export const makeSupervisor = (
       input: LifecycleInput,
       session: "fresh" | "current",
       selectedOverride?: ReadonlySet<CapabilityName>,
-    ): Effect.Effect<SupervisorLaunchAttempt | undefined, StackError> =>
+    ): Effect.Effect<SupervisorLaunchAttempt, StackError> =>
       Effect.gen(function* () {
         if (session === "fresh") yield* resetForSession(input);
-        if (input.state.desiredLifecycle !== "running") return undefined;
         const selected = selectedOverride ?? (yield* Ref.get(active));
         const plan = activeExecutionPlan(input.plan, selected);
         const reservation = yield* runtime.ingress.acquire(input);
@@ -456,13 +455,11 @@ export const makeSupervisor = (
         const activated = yield* runtime.activate(capability, input).pipe(Effect.exit);
         if (Exit.isFailure(activated)) {
           yield* Ref.set(active, previousActive);
-          if (launched !== undefined) {
-            const rolledBack = yield* launched.rollback.pipe(Effect.exit);
-            if (Exit.isFailure(rolledBack)) {
-              yield* Ref.set(phase, "stopping");
-              let cause: Cause.Cause<StackError> = Cause.combine(activated.cause, rolledBack.cause);
-              return yield* Effect.failCause(cause);
-            }
+          const rolledBack = yield* launched.rollback.pipe(Effect.exit);
+          if (Exit.isFailure(rolledBack)) {
+            yield* Ref.set(phase, "stopping");
+            const cause: Cause.Cause<StackError> = Cause.combine(activated.cause, rolledBack.cause);
+            return yield* Effect.failCause(cause);
           }
           return yield* Effect.failCause(activated.cause);
         }
@@ -580,6 +577,7 @@ export const makeSupervisor = (
           }
           yield* Ref.set(phase, "starting");
         }
+        if (!freshSession && previous === "stopped") yield* Ref.set(phase, "starting");
         const started = yield* controller
           .start({
             config: startOptions?.config,

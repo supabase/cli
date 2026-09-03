@@ -7,6 +7,7 @@ import {
   Effect,
   Exit,
   FileSystem,
+  Option,
   Path,
   Ref,
   Scope,
@@ -40,7 +41,12 @@ import {
 } from "../public/Errors.ts";
 import { makeSupervisorIngress, type SupervisorIngress } from "../supervisor/Ingress.ts";
 import { checkHostPort } from "../supervisor/HostListener.ts";
-import { makeLogStore, type LogStore, type LogRecord } from "../supervisor/LogStore.ts";
+import {
+  LogStoreError,
+  makeLogStore,
+  type LogStore,
+  type LogRecord,
+} from "../supervisor/LogStore.ts";
 import type { LifecycleInput } from "../supervisor/Lifecycle.ts";
 import type { SupervisorRuntime } from "../supervisor/Supervisor.ts";
 import {
@@ -105,6 +111,12 @@ export interface ProductionRuntimeOptions {
 
 const preparationError = (message: string, cause?: unknown): StackPreparationError =>
   new StackPreparationError({ message, ...(cause === undefined ? {} : { cause }) });
+
+const unavailableLogStore = (error: LogStoreError, path: string): LogStore => ({
+  path,
+  append: () => Effect.fail(error),
+  read: () => Effect.fail(error),
+});
 
 const driverError = (
   key: Pick<RuntimeWorkloadKey, "stackId" | "workloadId">,
@@ -543,11 +555,29 @@ export const makeProductionRuntime = (
         stackId: options.stackId,
       }));
     const knownSecrets = yield* Ref.make<ReadonlySet<string>>(new Set(stateSecrets(state)));
-    const baseLogs =
-      options.logStore ??
-      (yield* makeLogStore({ path: paths.logs, knownSecrets: stateSecrets(state) }).pipe(
-        Effect.mapError((error) => preparationError("Unable to open stack logs", error)),
-      ));
+    const logStoreInitialization = yield* Effect.exit(
+      options.logStore === undefined
+        ? makeLogStore({ path: paths.logs, knownSecrets: stateSecrets(state) }).pipe(
+            Effect.provideService(FileSystem.FileSystem, fileSystem),
+            Effect.provideService(Path.Path, pathService),
+          )
+        : Effect.succeed(options.logStore),
+    );
+    const baseLogs: LogStore = Exit.isSuccess(logStoreInitialization)
+      ? logStoreInitialization.value
+      : unavailableLogStore(
+          Option.getOrElse(
+            Cause.findErrorOption(logStoreInitialization.cause),
+            () => new LogStoreError({ path: paths.logs, message: "Unable to open stack logs" }),
+          ),
+          paths.logs,
+        );
+    const logStoreInitializationFailure = Exit.isFailure(logStoreInitialization)
+      ? Option.getOrElse(
+          Cause.findErrorOption(logStoreInitialization.cause),
+          () => new LogStoreError({ path: paths.logs, message: "Unable to open stack logs" }),
+        )
+      : undefined;
     const logs = dynamicLogStore(baseLogs, knownSecrets);
     const selectedEngine = state.runtime.kind === "container" ? state.runtime.engine : undefined;
     const containerEngine =
@@ -663,6 +693,11 @@ export const makeProductionRuntime = (
 
     const preflight = (input: LifecycleInput): Effect.Effect<void, StackError> =>
       Effect.gen(function* () {
+        if (logStoreInitializationFailure !== undefined)
+          return yield* preparationError(
+            "Unable to open stack logs",
+            logStoreInitializationFailure,
+          );
         if (!runtimeMatches(input.state.runtime, state.runtime))
           return yield* new StackRuntimeMismatchError({
             message: "Lifecycle runtime does not match persisted runtime",

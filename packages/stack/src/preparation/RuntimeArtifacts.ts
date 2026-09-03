@@ -18,7 +18,7 @@ import {
   type PreparedArtifact,
 } from "./ArtifactStore.ts";
 import { makeSlimServicesSource, slimServicesChecksum } from "./SlimServicesSource.ts";
-import { type ContainerEngine, type ContainerEngineKind } from "../runtime/ContainerEngine.ts";
+import type { ContainerEngine } from "../runtime/ContainerEngine.ts";
 import {
   resolveContainerEngine,
   type ContainerEngineResolverShape,
@@ -58,7 +58,7 @@ export interface RuntimeArtifactPreparerOptions {
     ) => Effect.Effect<string, StackPreparationError>;
     readonly platform?: { readonly os: string; readonly arch: string };
   };
-  readonly containers?: Readonly<Partial<Record<ContainerEngineKind, ContainerEngine>>>;
+  readonly containerEngine?: ContainerEngine;
 }
 
 const error = (message: string, fields: Readonly<Record<string, unknown>> = {}) =>
@@ -113,8 +113,8 @@ export const makeRuntimeArtifactPreparer = (
           workload: workload.id,
         }),
       );
-    const engine = options.containers?.[runtime.engine];
-    if (engine === undefined)
+    const engine = options.containerEngine;
+    if (engine === undefined || engine.kind !== runtime.engine)
       return Effect.fail(
         error("Container runtime has no configured container engine", {
           workload: workload.id,
@@ -238,15 +238,9 @@ export const makeProductionRuntimeArtifactPreparer = (options: {
                 }),
             ),
           ));
-    const containers =
-      selectedEngine === undefined || containerEngine === undefined
-        ? undefined
-        : selectedEngine === "docker"
-          ? { docker: containerEngine }
-          : { podman: containerEngine };
     const preparer = makeRuntimeArtifactPreparer({
       ...(store === undefined ? {} : { native: { store, checksum } }),
-      containers,
+      ...(containerEngine === undefined ? {} : { containerEngine }),
     });
     return preparer;
   });

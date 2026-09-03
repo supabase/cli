@@ -13,7 +13,7 @@ import type { EffectStack, PrepareStackOptions, StartStackOptions } from "./Effe
 import type { StackLogEntry } from "./Logs.ts";
 import { StackIdSchema } from "./StackId.ts";
 import type { StackStatus } from "./Status.ts";
-import { InvalidStackConfigError } from "./Errors.ts";
+import { InvalidStackConfigError, StackVersionUnsupportedError } from "./Errors.ts";
 import { adaptEffectStack, makePromiseApi, type PromiseStack } from "./PromiseStack.ts";
 import { compileStack } from "../model/Compiler.ts";
 
@@ -90,6 +90,30 @@ describe("Promise stack facade", () => {
       await expect(stack.prepare({ capabilities: [] })).resolves.toEqual({ capabilities: [] });
       expect(await readFile(statePath, "utf8")).toBe(before);
       expect(await readdir(join(stateRoot, stack.id))).not.toContain("control.json");
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
+  it("preserves prepare validation tags", async () => {
+    const root = await mkdtemp(join(tmpdir(), "supabase-promise-prepare-errors-"));
+    try {
+      const project = join(root, "project");
+      await mkdir(project);
+      const api = makePromiseApi(NodeServices.layer, {
+        stateRoot: join(root, "managed", "stacks"),
+        tempRoot: tmpdir(),
+        platform: "posix",
+      });
+      const stack = await api.createStack({ projectRoot: project, runtime: { kind: "native" } });
+      await expect(
+        stack.prepare({
+          config: JSON.parse('{"capabilities":{"rest":{"settings":{"unknown":true}}}}'),
+        }),
+      ).rejects.toBeInstanceOf(InvalidStackConfigError);
+      await expect(
+        stack.prepare({ config: { capabilities: { database: { version: "99" } } } }),
+      ).rejects.toBeInstanceOf(StackVersionUnsupportedError);
     } finally {
       await rm(root, { recursive: true, force: true });
     }

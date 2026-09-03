@@ -20,7 +20,6 @@ import {
   ContainerCommandError,
   ContainerEngineProtocolError,
   makeProcessCommandRunner,
-  selectContainerEngine,
   type ContainerProcessRequest,
   type ContainerCommandResult,
   type ContainerContainerSpec,
@@ -247,41 +246,6 @@ describe("container runtime", () => {
       yield* Deferred.await(firstChunk);
       yield* Fiber.interrupt(follower);
     }).pipe(Effect.provide(NodeServices.layer)),
-  );
-
-  it.live("selects only the explicitly requested engine without probing", () =>
-    Effect.gen(function* () {
-      const dockerCalls: string[] = [];
-      const podmanCalls: string[] = [];
-      const docker = makeDockerEngine({
-        runner: makeControlledCommandRunner({
-          run: (request) =>
-            Effect.sync(() => {
-              dockerCalls.push(request.args[0] ?? "");
-              return commandResult({ ok: true });
-            }),
-        }),
-        platform: { os: "linux", desktop: false },
-      });
-      const podman = makePodmanEngine({
-        runner: makeControlledCommandRunner({
-          run: (request) =>
-            Effect.sync(() => {
-              podmanCalls.push(request.args[0] ?? "");
-              return commandResult({ ok: true });
-            }),
-        }),
-        platform: { os: "linux", rootless: true },
-      });
-      expect((yield* selectContainerEngine({ preference: "docker", docker, podman })).kind).toBe(
-        "docker",
-      );
-      expect((yield* selectContainerEngine({ preference: "podman", docker, podman })).kind).toBe(
-        "podman",
-      );
-      expect(dockerCalls).toEqual([]);
-      expect(podmanCalls).toEqual([]);
-    }),
   );
 
   it.live("serializes an entrypoint override before the image", () =>
