@@ -219,6 +219,9 @@ const environment = () =>
     Effect.map(Option.getOrElse(defaultRuntimeEnvironment)),
   );
 
+const isCapabilityName = (value: unknown): value is CapabilityName =>
+  typeof value === "string" && CAPABILITY_NAMES.some((name) => name === value);
+
 type ControlError =
   | StackRpcError
   | RpcClientError
@@ -821,11 +824,19 @@ const handleDependencies = (options: {
             Effect.provideService(Crypto.Crypto, options.crypto),
           );
         } else {
-          const compiled = yield* compileStack({
-            projectRoot: state.identity.projectRoot,
-            runtime: state.runtime,
-            config: prepareOptions?.config,
-          }).pipe(
+          const compiled = yield* compileStack(
+            {
+              projectRoot: state.identity.projectRoot,
+              runtime: state.runtime,
+              config: prepareOptions?.config,
+            },
+            state.definition === undefined || state.inputFingerprint === undefined
+              ? undefined
+              : {
+                  definition: state.definition,
+                  inputFingerprint: state.inputFingerprint,
+                },
+          ).pipe(
             Effect.provideService(Path.Path, options.path),
             Effect.provideService(Crypto.Crypto, options.crypto),
           );
@@ -851,7 +862,15 @@ const handleDependencies = (options: {
           for (const name of CAPABILITY_NAMES)
             if (definition.capabilities[name].enabled) selected.add(name);
         } else {
-          for (const name of new Set(prepareOptions.capabilities)) yield* visit(name);
+          for (const name of prepareOptions.capabilities) {
+            if (!isCapabilityName(name))
+              return yield* new StackPreparationError({
+                stackId: options.id,
+                capability: String(name),
+                message: `Unknown capability ${String(name)}`,
+              });
+            yield* visit(name);
+          }
         }
         const workloads = plan.workloads.filter((workload) => selected.has(workload.capability));
         const containerEngine =
@@ -1001,11 +1020,10 @@ export const createStack = (
     );
     const runtimeMismatch =
       options.runtime !== undefined &&
-      (current.runtime.kind !== options.runtime.kind ||
-        (options.runtime.kind === "container" &&
+      (current.runtime.kind !== requestedRuntime.kind ||
+        (requestedRuntime.kind === "container" &&
           current.runtime.kind === "container" &&
-          options.runtime.engine !== undefined &&
-          current.runtime.engine !== options.runtime.engine));
+          current.runtime.engine !== requestedRuntime.engine));
     if (runtimeMismatch)
       return yield* new StackRuntimeMismatchError({
         message: "Stack runtime is immutable for an existing identity",

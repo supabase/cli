@@ -214,12 +214,15 @@ describe("managed stack handles", { timeout: 30_000 }, () => {
   it.live("does not probe a persisted container engine when reopening", () =>
     withRuntimeRoot((project) =>
       Effect.gen(function* () {
-        yield* createStack({ projectRoot: project, runtime: { kind: "container" } });
+        const created = yield* createStack({
+          projectRoot: project,
+          runtime: { kind: "container", engine: "podman" },
+        });
         const resolver = { resolve: () => Effect.die("resolver must not be called") };
-        const stack = yield* createStack({ projectRoot: project }).pipe(
+        const stack = yield* openStack(created.id).pipe(
           Effect.provideService(ContainerEngineResolver, resolver),
         );
-        expect((yield* stack.status()).runtime).toEqual({ kind: "container", engine: "docker" });
+        expect((yield* stack.status()).runtime).toEqual({ kind: "container", engine: "podman" });
       }),
     ),
   );

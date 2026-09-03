@@ -41,6 +41,8 @@ import { compileStack } from "../model/Compiler.ts";
 import {
   StackDestructionError,
   StackOwnershipConflictError,
+  StackPreparationError,
+  StackRuntimeMismatchError,
   StackStateInvalidError,
   StackUpgradeRequiredError,
 } from "./Errors.ts";
@@ -51,6 +53,7 @@ import {
   makeHandle,
   openStack,
   type EffectStack,
+  type PrepareStackResult,
 } from "./EffectStack.ts";
 import * as effectApi from "../effect.ts";
 import { CAPABILITY_NAMES } from "./Capability.ts";
@@ -488,6 +491,130 @@ describe("Effect stack lifecycle handoff", () => {
         expect(yield* (yield* FileSystem.FileSystem).readFileString(paths.stateDocument)).toBe(
           before,
         );
+      }),
+    ),
+  );
+
+  it.live("treats an omitted container engine as Docker for runtime identity", () =>
+    withRuntimeRoot((project) =>
+      Effect.gen(function* () {
+        yield* createStack({
+          projectRoot: project,
+          runtime: { kind: "container", engine: "podman" },
+        });
+        const result = yield* createStack({
+          projectRoot: project,
+          runtime: { kind: "container" },
+        }).pipe(Effect.exit);
+        expect(Exit.isFailure(result)).toBe(true);
+        if (Exit.isFailure(result)) {
+          const failure = Cause.findErrorOption(result.cause);
+          expect(Option.isSome(failure)).toBe(true);
+          if (Option.isSome(failure))
+            expect(failure.value).toBeInstanceOf(StackRuntimeMismatchError);
+        }
+      }),
+    ),
+  );
+
+  it.live("rejects unknown capabilities as a typed preparation error", () =>
+    withRuntimeRoot((project) =>
+      Effect.gen(function* () {
+        const stack = yield* createStack({ projectRoot: project });
+        const malformedOptions = { capabilities: ["not-a-capability"] };
+        const malformedPrepare = (): Effect.Effect<PrepareStackResult, StackPreparationError> =>
+          Reflect.apply(stack.prepare, stack, [malformedOptions]);
+        const result = yield* malformedPrepare().pipe(Effect.exit);
+        expect(Exit.isFailure(result)).toBe(true);
+        if (Exit.isFailure(result)) {
+          const failure = Cause.findErrorOption(result.cause);
+          expect(Option.isSome(failure)).toBe(true);
+          if (Option.isSome(failure)) expect(failure.value).toBeInstanceOf(StackPreparationError);
+        }
+      }),
+    ),
+  );
+
+  it.live("rejects a disabled capability before preparing artifacts", () =>
+    withRuntimeRoot((project) =>
+      Effect.gen(function* () {
+        const stack = yield* createStack({ projectRoot: project });
+        const result = yield* stack
+          .prepare({
+            config: { capabilities: { pooler: { enabled: false } } },
+            capabilities: ["pooler"],
+          })
+          .pipe(Effect.exit);
+        expect(Exit.isFailure(result)).toBe(true);
+        if (Exit.isFailure(result)) {
+          const failure = Cause.findErrorOption(result.cause);
+          expect(Option.isSome(failure)).toBe(true);
+          if (Option.isSome(failure)) expect(failure.value).toBeInstanceOf(StackPreparationError);
+        }
+      }),
+    ),
+  );
+
+  it.live("uses persisted pins and dependency closure for prospective preparation", () =>
+    withRuntimeRoot((project) =>
+      Effect.gen(function* () {
+        const env = yield* StackRuntimeEnvironment;
+        const path = yield* Path.Path;
+        const crypto = yield* Crypto.Crypto;
+        const calls: Array<string> = [];
+        const runner: ContainerCommandRunner = {
+          executable: "controlled-docker",
+          run: (request) => {
+            calls.push(request.args.slice(0, 3).join(" "));
+            if (request.args[0] === "version")
+              return Effect.succeed<ContainerCommandResult>({
+                stdout: '"1"\n',
+                stderr: "",
+                exitCode: 0,
+              });
+            if (request.args[0] === "image" && request.args[1] === "ls")
+              return Effect.succeed<ContainerCommandResult>({
+                stdout: '"cached"\n',
+                stderr: "",
+                exitCode: 0,
+              });
+            return Effect.succeed<ContainerCommandResult>({ stdout: "", stderr: "", exitCode: 0 });
+          },
+        };
+        const engine = makeDockerEngine({ runner, platform: { os: "linux" } });
+        const stack = yield* createStack({
+          projectRoot: project,
+          runtime: { kind: "container", engine: "docker" },
+        }).pipe(
+          Effect.provideService(ContainerEngineResolver, {
+            resolve: () => Effect.succeed(engine),
+          }),
+        );
+        const store = yield* makeStackStateStore({ stateRoot: env.stateRoot });
+        const state = yield* store.read(stack.id);
+        if (state === undefined) return yield* Effect.die("stack state was not initialized");
+        const persisted = yield* compileStack({
+          projectRoot: project,
+          runtime: { kind: "container", engine: "docker" },
+          config: { capabilities: { database: { version: "17" } } },
+        }).pipe(
+          Effect.provideService(Path.Path, path),
+          Effect.provideService(Crypto.Crypto, crypto),
+        );
+        yield* store.replace(stack.id, {
+          ...state,
+          definition: persisted.definition,
+          inputFingerprint: persisted.inputFingerprint,
+        });
+        const prepared = yield* stack.prepare({
+          config: { capabilities: { rest: { settings: { schemas: ["private"] } } } },
+          capabilities: ["rest"],
+        });
+        expect(prepared.capabilities).toEqual([
+          { capability: "database", version: "17.6.1.167", outcome: "cached" },
+          { capability: "rest", version: "v16.2", outcome: "cached" },
+        ]);
+        expect(calls.filter((call) => call.startsWith("image ls"))).toHaveLength(2);
       }),
     ),
   );

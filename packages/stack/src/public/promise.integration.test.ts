@@ -1,6 +1,12 @@
 // oxlint-disable effecttsgo/async-function -- integration test exercises the Promise facade directly.
 import { describe, expect, it } from "@effect/vitest";
 import { NodeServices } from "@effect/platform-node";
+// oxlint-disable-next-line effecttsgo/node-builtin-import -- isolated Promise facade state root.
+import { mkdir, mkdtemp, readFile, readdir, rm } from "node:fs/promises";
+// oxlint-disable-next-line effecttsgo/node-builtin-import -- isolated Promise facade state root.
+import { tmpdir } from "node:os";
+// oxlint-disable-next-line effecttsgo/node-builtin-import -- isolated Promise facade state root.
+import { join } from "node:path";
 import { CAPABILITY_NAMES, type CapabilityStatus } from "./Capability.ts";
 import { Effect, Redacted, Stream } from "effect";
 import type { EffectStack, PrepareStackOptions, StartStackOptions } from "./EffectStack.ts";
@@ -8,7 +14,7 @@ import type { StackLogEntry } from "./Logs.ts";
 import { StackIdSchema } from "./StackId.ts";
 import type { StackStatus } from "./Status.ts";
 import { InvalidStackConfigError } from "./Errors.ts";
-import { adaptEffectStack, type PromiseStack } from "./PromiseStack.ts";
+import { adaptEffectStack, makePromiseApi, type PromiseStack } from "./PromiseStack.ts";
 import { compileStack } from "../model/Compiler.ts";
 
 const stackId = StackIdSchema.make(
@@ -67,6 +73,28 @@ const effectStack = (): EffectStack =>
   }) satisfies EffectStack;
 
 describe("Promise stack facade", () => {
+  it("prepares a real stack without publishing owner metadata", async () => {
+    const root = await mkdtemp(join(tmpdir(), "supabase-promise-prepare-"));
+    try {
+      const project = join(root, "project");
+      const stateRoot = join(root, "managed", "stacks");
+      await mkdir(project);
+      const api = makePromiseApi(NodeServices.layer, {
+        stateRoot,
+        tempRoot: tmpdir(),
+        platform: "posix",
+      });
+      const stack = await api.createStack({ projectRoot: project, runtime: { kind: "native" } });
+      const statePath = join(stateRoot, stack.id, "state.json");
+      const before = await readFile(statePath, "utf8");
+      await expect(stack.prepare({ capabilities: [] })).resolves.toEqual({ capabilities: [] });
+      expect(await readFile(statePath, "utf8")).toBe(before);
+      expect(await readdir(join(stateRoot, stack.id))).not.toContain("control.json");
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
   it("returns log batches and follows from their cursor", async () => {
     const stack = adaptEffectStack(effectStack());
     const first = await stack.logs({ capabilities: ["auth"], tail: 20 });
