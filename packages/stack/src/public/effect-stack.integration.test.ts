@@ -12,7 +12,6 @@ import {
   Path,
   Redacted,
   Ref,
-  Schedule,
   Schema,
   Scope,
   Stream,
@@ -358,14 +357,8 @@ describe("Effect stack lifecycle handoff", () => {
           .pipe(Effect.exit);
 
         expect(Exit.isFailure(started)).toBe(true);
-        yield* Effect.gen(function* () {
-          const owner = yield* readOwnerMetadata(env.stateRoot, stack.id, env);
-          const locked = yield* ownerLockExists(env.stateRoot, stack.id);
-          if (owner !== undefined || locked)
-            return yield* new StackOwnershipConflictError({
-              message: "temporary Supervisor is still shutting down",
-            });
-        }).pipe(Effect.retry(Schedule.recurs(200)));
+        expect(yield* readOwnerMetadata(env.stateRoot, stack.id, env)).toBeUndefined();
+        expect(yield* ownerLockExists(env.stateRoot, stack.id)).toBe(false);
         expect((yield* stack.status()).lifecycle).toBe("unconfigured");
       }),
     ),

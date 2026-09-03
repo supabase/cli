@@ -39,7 +39,6 @@ import {
   InvalidProjectRootError,
   InvalidStackConfigError,
   StackVersionUnsupportedError,
-  StackDefinitionRequiredError,
   StackDestructionError,
   StackNotFoundError,
   StackNotRunningError,
@@ -51,9 +50,8 @@ import {
   ContainerPullError,
   StackSecretMismatchError,
   InvalidJwtSigningMaterialError,
-  StackReconciliationError,
-  ServiceStartError,
-  ServiceReadinessError,
+  StackRuntimeError,
+  StackCleanupError,
   ContainerEngineError,
   StackStateInvalidError,
   StackStateFormatUnsupportedError,
@@ -61,7 +59,6 @@ import {
   StackMustBeStoppedError,
   PortAllocationError,
   PortUnavailableError,
-  GatewayAuthenticationError,
   GatewayActivationError,
   type CreateStackError,
   type OpenStackError,
@@ -76,6 +73,12 @@ import {
   type StackError,
   type StackErrorTag,
   isStackErrorTag,
+  STACK_STATUS_ERROR_TAGS,
+  STACK_CREDENTIALS_ERROR_TAGS,
+  STACK_START_ERROR_TAGS,
+  STACK_STOP_ERROR_TAGS,
+  STACK_LOGS_ERROR_TAGS,
+  DESTROY_STACK_ERROR_TAGS,
 } from "./Errors.ts";
 import {
   ownerLockExists,
@@ -237,7 +240,6 @@ const stackErrorFactories = {
   StackNotFoundError: (message: string) => new StackNotFoundError({ message }),
   StackOwnershipConflictError: (message: string) => new StackOwnershipConflictError({ message }),
   StackRuntimeMismatchError: (message: string) => new StackRuntimeMismatchError({ message }),
-  StackDefinitionRequiredError: (message: string) => new StackDefinitionRequiredError({ message }),
   StackNotRunningError: (message: string) => new StackNotRunningError({ message }),
   StackMustBeStoppedError: (message: string) => new StackMustBeStoppedError({ message }),
   StackLifecycleConflictError: (message: string) => new StackLifecycleConflictError({ message }),
@@ -250,14 +252,12 @@ const stackErrorFactories = {
     new InvalidJwtSigningMaterialError({ message }),
   PortAllocationError: (message: string) => new PortAllocationError({ message }),
   PortUnavailableError: (message: string) => new PortUnavailableError({ message }),
-  GatewayAuthenticationError: (message: string) => new GatewayAuthenticationError({ message }),
   GatewayActivationError: (message: string) => new GatewayActivationError({ message }),
   StackPreparationError: (message: string) => new StackPreparationError({ message }),
   ArtifactIntegrityError: (message: string) => new ArtifactIntegrityError({ message }),
   ContainerPullError: (message: string) => new ContainerPullError({ message }),
-  StackReconciliationError: (message: string) => new StackReconciliationError({ message }),
-  ServiceStartError: (message: string) => new ServiceStartError({ message }),
-  ServiceReadinessError: (message: string) => new ServiceReadinessError({ message }),
+  StackRuntimeError: (message: string) => new StackRuntimeError({ message }),
+  StackCleanupError: (message: string) => new StackCleanupError({ message }),
   ContainerEngineError: (message: string) => new ContainerEngineError({ message }),
   StackDestructionError: (message: string) => new StackDestructionError({ message }),
 } satisfies Record<StackErrorTag, (message: string) => StackError>;
@@ -295,84 +295,40 @@ const errorForRpc = (error: ControlError): StackError => {
   return new StackStateInvalidError({ message: error.message });
 };
 
-const statusError = (error: ControlError): StackStatusError => {
+const isNarrowError = <Tags extends ReadonlyArray<StackErrorTag>>(
+  error: StackError,
+  tags: Tags,
+): error is Extract<StackError, { _tag: Tags[number] }> => tags.some((tag) => tag === error._tag);
+
+const narrowError = <Tags extends ReadonlyArray<StackErrorTag>>(
+  error: ControlError,
+  tags: Tags,
+  fallback: (message: string) => Extract<StackError, { _tag: Tags[number] }>,
+): Extract<StackError, { _tag: Tags[number] }> => {
   const mapped = errorForRpc(error);
-  return mapped instanceof StackNotFoundError ||
-    mapped instanceof StackOwnershipConflictError ||
-    mapped instanceof StackStateInvalidError ||
-    mapped instanceof StackStateFormatUnsupportedError ||
-    mapped instanceof StackUpgradeRequiredError
-    ? mapped
-    : new StackStateInvalidError({ message: mapped.message });
+  return isNarrowError(mapped, tags) ? mapped : fallback(mapped.message);
 };
 
-const credentialsError = (error: ControlError): StackCredentialsError => {
-  const mapped = errorForRpc(error);
-  return mapped instanceof StackNotFoundError ||
-    mapped instanceof StackNotRunningError ||
-    mapped instanceof StackOwnershipConflictError ||
-    mapped instanceof StackSecretMismatchError ||
-    mapped instanceof InvalidJwtSigningMaterialError
-    ? mapped
-    : new StackNotRunningError({ message: mapped.message });
-};
-
-const startError = (error: ControlError): StackStartError => {
-  const mapped = errorForRpc(error);
-  return mapped instanceof InvalidStackConfigError ||
-    mapped instanceof StackDefinitionRequiredError ||
-    mapped instanceof StackVersionUnsupportedError ||
-    mapped instanceof StackNotRunningError ||
-    mapped instanceof StackMustBeStoppedError ||
-    mapped instanceof StackLifecycleConflictError ||
-    mapped instanceof StackStateInvalidError ||
-    mapped instanceof StackStateFormatUnsupportedError ||
-    mapped instanceof StackUpgradeRequiredError ||
-    mapped instanceof StackSecretMismatchError ||
-    mapped instanceof InvalidJwtSigningMaterialError ||
-    mapped instanceof PortAllocationError ||
-    mapped instanceof PortUnavailableError ||
-    mapped instanceof StackPreparationError ||
-    mapped instanceof ArtifactIntegrityError ||
-    mapped instanceof ContainerPullError ||
-    mapped instanceof StackReconciliationError ||
-    mapped instanceof ServiceStartError ||
-    mapped instanceof ServiceReadinessError ||
-    mapped instanceof ContainerEngineError ||
-    mapped instanceof StackOwnershipConflictError
-    ? mapped
-    : new StackStateInvalidError({ message: mapped.message });
-};
-
-const stopError = (error: ControlError): StackStopError => {
-  const mapped = errorForRpc(error);
-  return mapped instanceof StackOwnershipConflictError ||
-    mapped instanceof StackLifecycleConflictError
-    ? mapped
-    : new StackLifecycleConflictError({ message: mapped.message });
-};
-
-const logsError = (error: ControlError): StackLogsError => {
-  const mapped = errorForRpc(error);
-  return mapped instanceof StackNotFoundError ||
-    mapped instanceof StackNotRunningError ||
-    mapped instanceof StackStateInvalidError ||
-    mapped instanceof StackOwnershipConflictError ||
-    mapped instanceof StackLifecycleConflictError
-    ? mapped
-    : new StackStateInvalidError({ message: mapped.message });
-};
-
-const destroyError = (error: ControlError): DestroyStackError => {
-  const mapped = errorForRpc(error);
-  return mapped instanceof StackDestructionError ||
-    mapped instanceof StackNotFoundError ||
-    mapped instanceof StackOwnershipConflictError ||
-    mapped instanceof StackLifecycleConflictError ||
-    mapped instanceof ContainerEngineError
-    ? mapped
-    : new StackDestructionError({ message: mapped.message });
-};
+const statusError = (error: ControlError): StackStatusError =>
+  narrowError(error, STACK_STATUS_ERROR_TAGS, (message) => new StackStateInvalidError({ message }));
+const credentialsError = (error: ControlError): StackCredentialsError =>
+  narrowError(
+    error,
+    STACK_CREDENTIALS_ERROR_TAGS,
+    (message) => new StackNotRunningError({ message }),
+  );
+const startError = (error: ControlError): StackStartError =>
+  narrowError(error, STACK_START_ERROR_TAGS, (message) => new StackStateInvalidError({ message }));
+const stopError = (error: ControlError): StackStopError =>
+  narrowError(
+    error,
+    STACK_STOP_ERROR_TAGS,
+    (message) => new StackLifecycleConflictError({ message }),
+  );
+const logsError = (error: ControlError): StackLogsError =>
+  narrowError(error, STACK_LOGS_ERROR_TAGS, (message) => new StackStateInvalidError({ message }));
+const destroyError = (error: ControlError): DestroyStackError =>
+  narrowError(error, DESTROY_STACK_ERROR_TAGS, (message) => new StackDestructionError({ message }));
 
 /** Internal control-transport seam used by public lifecycle integration tests. */
 export const makeHandle = (
@@ -551,13 +507,33 @@ export const makeHandle = (
         ),
       );
     };
-    const start = (options?: StartStackOptions) =>
-      invoke(
+    const start = (startOptions?: StartStackOptions) => {
+      const waitForRelease = options.waitForRelease;
+      const readPersistedState = options.readPersistedState;
+      return invoke(
         (rpc) =>
-          options?.config === undefined ? rpc.start({}) : rpc.start({ config: options.config }),
+          startOptions?.config === undefined
+            ? rpc.start({})
+            : rpc.start({ config: startOptions.config }),
         startError,
         true,
+      ).pipe(
+        Effect.tapError(() =>
+          waitForRelease === undefined || readPersistedState === undefined
+            ? Effect.void
+            : readPersistedState().pipe(
+                Effect.flatMap((state) =>
+                  Option.isSome(state) &&
+                  (state.value.desiredLifecycle === "stopped" ||
+                    state.value.desiredLifecycle === "unconfigured")
+                    ? waitForRelease().pipe(Effect.ignore)
+                    : Effect.void,
+                ),
+                Effect.ignore,
+              ),
+        ),
       );
+    };
     const logsStateError = (error: StackError): StackLogsError =>
       error instanceof StackOwnershipConflictError || error instanceof StackStateInvalidError
         ? error

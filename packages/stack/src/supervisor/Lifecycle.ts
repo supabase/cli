@@ -6,7 +6,6 @@ import type { StackConfig } from "../public/Config.ts";
 import type { StackRuntime } from "../public/Runtime.ts";
 import type { StackId } from "../public/StackId.ts";
 import {
-  StackDefinitionRequiredError,
   StackLifecycleConflictError,
   StackMustBeStoppedError,
   StackStateInvalidError,
@@ -26,7 +25,6 @@ import {
  */
 export interface LifecycleInput {
   readonly stackId: StackId;
-  readonly desiredLifecycle: "running" | "stopped" | "destroying";
   readonly state: PersistedStackState;
   readonly definition: StackDefinition;
   readonly secrets: PersistedSecretValues;
@@ -35,12 +33,9 @@ export interface LifecycleInput {
 
 export interface LifecycleBackend {
   /** Must complete all runtime/resource validation before the controller writes accepted intent. */
-  readonly preflight: (
-    input: LifecycleInput,
-    mode: "cold" | "live",
-  ) => Effect.Effect<void, StackError>;
+  readonly preflight: (input: LifecycleInput) => Effect.Effect<void, StackError>;
   /** Applies the desired lifecycle to runtime resources for one accepted definition. */
-  readonly reconcile: (
+  readonly launch: (
     input: LifecycleInput,
     session: "fresh" | "current",
   ) => Effect.Effect<void, StackError>;
@@ -87,9 +82,6 @@ const missingState = (stackId: StackId): StackStateInvalidError =>
     stackId,
     message: "Stack state is missing; refusing lifecycle mutation",
   });
-
-const invalidDefinition = (stackId: StackId): StackDefinitionRequiredError =>
-  new StackDefinitionRequiredError({ stackId, message: "A complete stack definition is required" });
 
 const lifecycleConflict = (message: string): StackLifecycleConflictError =>
   new StackLifecycleConflictError({ message });
@@ -166,31 +158,12 @@ const materializeCandidate = (
     };
   });
 
-const persistedCandidate = (
-  stackId: StackId,
-  state: PersistedStackState,
-  runtime: StackRuntime,
-): Effect.Effect<Candidate, StackError, LifecycleRequirements> =>
-  Effect.gen(function* () {
-    const definition = state.definition;
-    if (definition === undefined) return yield* invalidDefinition(stackId);
-    return {
-      definition,
-      secrets: state.secrets,
-      plan: yield* rebuildExecutionPlan(runtime, definition),
-    };
-  });
-
 const lifecycleInput = (
   stackId: StackId,
   state: PersistedStackState,
   candidate: Candidate,
-  desiredLifecycle: LifecycleInput["desiredLifecycle"] = state.desiredLifecycle === "unconfigured"
-    ? "running"
-    : state.desiredLifecycle,
 ): LifecycleInput => ({
   stackId,
-  desiredLifecycle,
   state,
   definition: candidate.definition,
   secrets: candidate.secrets,
@@ -254,39 +227,33 @@ export const makeLifecycleController = (
             });
           const freshSession = startOptions?.freshSession === true;
           if (freshSession)
-            yield* options.backend.preflight(
-              lifecycleInput(options.stackId, initial, candidate),
-              "cold",
-            );
-          const reconciled = yield* options.backend
-            .reconcile(
+            yield* options.backend.preflight(lifecycleInput(options.stackId, initial, candidate));
+          const launched = yield* options.backend
+            .launch(
               lifecycleInput(options.stackId, initial, candidate),
               freshSession ? "fresh" : "current",
             )
             .pipe(Effect.exit);
-          if (Exit.isFailure(reconciled) && freshSession) {
+          if (Exit.isFailure(launched) && freshSession) {
             const stopped = { ...initial, desiredLifecycle: "stopped" as const };
             const persisted = yield* options.stateStore
               .replace(options.stackId, stopped)
               .pipe(Effect.exit);
             const cleaned = yield* options.backend.cleanup.pipe(Effect.exit);
-            let cause = reconciled.cause;
+            let cause = launched.cause;
             if (Exit.isFailure(persisted)) cause = Cause.combine(cause, persisted.cause);
             if (Exit.isFailure(cleaned)) cause = Cause.combine(cause, cleaned.cause);
             return yield* Effect.failCause(cause);
           }
-          if (Exit.isFailure(reconciled)) return yield* Effect.failCause(reconciled.cause);
+          if (Exit.isFailure(launched)) return yield* Effect.failCause(launched.cause);
           return initial;
         }
 
-        yield* options.backend.preflight(
-          lifecycleInput(options.stackId, initial, candidate),
-          "cold",
-        );
+        yield* options.backend.preflight(lifecycleInput(options.stackId, initial, candidate));
         const next = stateWithCandidate(initial, candidate, "running");
         yield* options.stateStore.replace(options.stackId, next);
         const started = yield* options.backend
-          .reconcile(lifecycleInput(options.stackId, next, candidate), "fresh")
+          .launch(lifecycleInput(options.stackId, next, candidate), "fresh")
           .pipe(Effect.exit);
         if (Exit.isSuccess(started)) return next;
 
@@ -316,19 +283,11 @@ export const makeLifecycleController = (
         }
         if (current.desiredLifecycle === "destroying")
           return yield* lifecycleConflict("Stack is being destroyed");
-        const candidate = yield* Effect.exit(
-          persistedCandidate(options.stackId, current, current.runtime),
-        );
         const stopped: PersistedStackState =
           current.desiredLifecycle === "stopped"
             ? current
             : { ...current, desiredLifecycle: "stopped" };
         if (stopped !== current) yield* options.stateStore.replace(options.stackId, stopped);
-        if (Exit.isSuccess(candidate))
-          yield* options.backend.reconcile(
-            lifecycleInput(options.stackId, stopped, candidate.value, "stopped"),
-            "current",
-          );
         yield* options.backend.cleanup;
         return stopped;
       });

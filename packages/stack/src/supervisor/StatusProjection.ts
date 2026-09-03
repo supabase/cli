@@ -60,7 +60,6 @@ const capabilityError = (
 const stackLifecycle = (
   state: PersistedStackState,
   phase: ActualPhase,
-  activeStates: ReadonlyArray<CapabilityStatus>,
 ): StackStatus["lifecycle"] => {
   if (phase === "stopping") return "stopping";
   if (state.desiredLifecycle === "unconfigured") return "unconfigured";
@@ -68,9 +67,6 @@ const stackLifecycle = (
   if (phase === "starting") return "starting";
   if (state.desiredLifecycle === "stopped") return "stopped";
   if (phase === "running") return "running";
-  if (activeStates.some(({ state }) => state === "starting")) return "starting";
-  if (activeStates.length > 0 && activeStates.every(({ state }) => state === "ready"))
-    return "running";
   return "stopped";
 };
 
@@ -114,12 +110,9 @@ export const statusFor = (
           },
         };
       }, {});
-      const activeStates = capabilities.filter(
-        ({ name }) => active.has(name) && definition?.capabilities[name].enabled,
-      );
       return {
         id,
-        lifecycle: stackLifecycle(state, phase, activeStates),
+        lifecycle: stackLifecycle(state, phase),
         desiredLifecycle: state.desiredLifecycle,
         runtime: state.runtime,
         endpoints,

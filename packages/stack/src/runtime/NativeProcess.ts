@@ -33,6 +33,12 @@ export interface NativeProcessLauncher {
   readonly args: ReadonlyArray<string>;
 }
 
+/** Stable command-line marker used by diagnostics to identify owned processes. */
+export interface NativeProcessIdentity {
+  readonly stackId: string;
+  readonly workloadId: string;
+}
+
 export class NativeProcessError extends Data.TaggedError("NativeProcessError")<{
   readonly message: string;
   readonly executable?: string;
@@ -81,13 +87,23 @@ const mapProcessError = (error: unknown, spec: NativeProcessSpec): NativeProcess
 export const spawnNativeProcess = (
   spec: NativeProcessSpec,
   launcher: NativeProcessLauncher = defaultNativeProcessLauncher(),
+  identity?: NativeProcessIdentity,
 ): Effect.Effect<
   NativeProcess,
   NativeProcessError,
   import("effect/unstable/process/ChildProcessSpawner").ChildProcessSpawner | Scope.Scope
 > =>
   Effect.gen(function* () {
-    const handle: ChildProcessHandle = yield* ChildProcess.make(launcher.command, launcher.args, {
+    const launcherArgs =
+      identity === undefined
+        ? launcher.args
+        : [
+            ...launcher.args,
+            "--",
+            `supabase-stack-id=${identity.stackId}`,
+            `supabase-workload-id=${identity.workloadId}`,
+          ];
+    const handle: ChildProcessHandle = yield* ChildProcess.make(launcher.command, launcherArgs, {
       cwd: spec.cwd,
       detached: true,
       stdin: "ignore",

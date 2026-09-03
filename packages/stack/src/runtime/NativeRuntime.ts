@@ -292,7 +292,7 @@ export const makeNativeRuntime = (
         const startupScope = yield* Scope.fork(resource.scope, "parallel");
         let started: NativeProcess | undefined;
         const run = Effect.gen(function* () {
-          const process = yield* spawnNativeProcess(spec, launcher).pipe(
+          const process = yield* spawnNativeProcess(spec, launcher, resource.key).pipe(
             Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, childSpawner),
             Scope.provide(startupScope),
             Effect.mapError((error) => processError(error, resource.key, `${phase} spawn`)),
@@ -429,7 +429,7 @@ export const makeNativeRuntime = (
           const resolved = yield* options.resolveProcess(key, workload);
           for (const startup of resolved.startup)
             yield* runStartupProcess(resource, startup, launcher, "startup");
-          const process = yield* spawnNativeProcess(resolved.main, launcher).pipe(
+          const process = yield* spawnNativeProcess(resolved.main, launcher, key).pipe(
             Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, childSpawner),
             Scope.provide(resource.scope),
             Effect.mapError((error) => processError(error, key, "spawn")),

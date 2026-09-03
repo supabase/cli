@@ -40,6 +40,26 @@ const RUNTIME_CASES = [
   { name: "native", runtime: { kind: "native" as const } },
   { name: "Docker", runtime: { kind: "container" as const, engine: "docker" as const } },
 ] as const;
+const BASE_WORKLOAD_IDS = [
+  "analytics:analytics",
+  "auth:auth",
+  "database:database",
+  "functions:edge-runtime",
+  "mail:mail",
+  "pooler:pooler",
+  "realtime:realtime",
+  "rest:rest",
+  "storage:storage",
+  "studio:pgmeta",
+  "studio:studio",
+] as const;
+const OPTIONAL_STORAGE_ANALYTICS_WORKLOAD_IDS = [
+  "database:database",
+  "analytics:vector",
+  "analytics:analytics",
+  "storage:imgproxy",
+  "storage:storage",
+] as const;
 
 const dockerOwnedResourceCount = async (
   stackId: string,
@@ -57,6 +77,61 @@ const dockerOwnedResourceCount = async (
         ];
   const result = await execFile("docker", args, { encoding: "utf8" });
   return result.stdout.trim().length === 0 ? 0 : result.stdout.trim().split("\n").length;
+};
+
+const dockerOwnedWorkloadIds = async (stackId: string): Promise<ReadonlyArray<string>> => {
+  const listed = await execFile(
+    "docker",
+    ["ps", "-aq", "--filter", `label=com.supabase.stack.stackId=${stackId}`],
+    { encoding: "utf8" },
+  );
+  const ids = listed.stdout
+    .trim()
+    .split("\n")
+    .filter((value) => value.length > 0);
+  if (ids.length === 0) return [];
+  const inspected = await execFile(
+    "docker",
+    ["inspect", "--format", '{{index .Config.Labels "com.supabase.stack.workloadId"}}', ...ids],
+    { encoding: "utf8" },
+  );
+  return [
+    ...new Set(
+      inspected.stdout
+        .trim()
+        .split("\n")
+        .filter((value) => value.length > 0),
+    ),
+  ].sort();
+};
+
+/** Native launchers carry the exact stack/workload marker in their command line. */
+const nativeWorkloadIds = async (stackId: string): Promise<ReadonlyArray<string>> => {
+  const result = await execFile("ps", ["-axo", "pid=,command="], { encoding: "utf8" });
+  const marker = `supabase-stack-id=${stackId}`;
+  return [
+    ...new Set(
+      result.stdout.split("\n").flatMap((line) => {
+        if (!line.includes(marker)) return [];
+        const match = /supabase-workload-id=([^\s]+)/u.exec(line);
+        return match?.[1] === undefined ? [] : [match[1]];
+      }),
+    ),
+  ].sort();
+};
+
+const ownedWorkloadIds = async (
+  mode: (typeof RUNTIME_CASES)[number],
+  stackId: string,
+): Promise<ReadonlyArray<string>> =>
+  mode.runtime.kind === "container" ? dockerOwnedWorkloadIds(stackId) : nativeWorkloadIds(stackId);
+
+const expectOwnedWorkloads = async (
+  mode: (typeof RUNTIME_CASES)[number],
+  stackId: string,
+  expected: ReadonlyArray<string>,
+): Promise<void> => {
+  expect(await ownedWorkloadIds(mode, stackId)).toEqual([...expected].sort());
 };
 
 const supervisorPids = async (stackId: string): Promise<ReadonlyArray<number>> => {
@@ -312,6 +387,7 @@ const serviceHeaders = (credentials: PromiseStackCredentials): Record<string, st
 
 const functionSource = (table: string, marker: string): string => `
 Deno.serve(async () => {
+  console.log("${marker}");
   let publishableKey: unknown;
   try {
     publishableKey = JSON.parse(
@@ -463,7 +539,11 @@ const runWholeStackScenario = async (mode: (typeof RUNTIME_CASES)[number]): Prom
   const functionSlug = `cross_service_${identity}`;
   const email = `${identity}@example.test`;
   const password = "SupabaseStackE2e!123";
-  const markers = { first: `first-${identity}`, second: `second-${identity}` };
+  const markers = {
+    first: `first-${identity}`,
+    second: `second-${identity}`,
+    live: `live-${identity}`,
+  };
   let projectRoot = "";
 
   await using stack: TestStack = await createTestStack({
@@ -481,6 +561,7 @@ const runWholeStackScenario = async (mode: (typeof RUNTIME_CASES)[number]): Prom
   expect(initialRunning.runtime).toEqual(mode.runtime);
   expect(projectRoot.length).toBeGreaterThan(0);
   expectDefaultLazyState(initialRunning);
+  await expectOwnedWorkloads(mode, stack.id, ["database:database"]);
 
   // Preparation is an explicit cache-only operation. It runs after the helper's
   // initial session is stopped, so the test proves it creates no owner, listener,
@@ -499,6 +580,7 @@ const runWholeStackScenario = async (mode: (typeof RUNTIME_CASES)[number]): Prom
   );
   const initial = await stack.start();
   expectDefaultLazyState(initial);
+  await expectOwnedWorkloads(mode, stack.id, ["database:database"]);
   const credentials = await stack.credentials();
   const api = endpoint(initial, "api");
   const pooler = endpoint(initial, "pooler");
@@ -699,6 +781,36 @@ const runWholeStackScenario = async (mode: (typeof RUNTIME_CASES)[number]): Prom
     }),
   );
 
+  // followLogs is a client-side poller. Capture the current cursor and subscribe
+  // before producing a unique console marker through the real edge runtime.
+  const beforeLiveLogs = await stack.logs({ capabilities: ["functions"] });
+  const liveIterator = stack
+    .followLogs({ capabilities: ["functions"], cursor: beforeLiveLogs.cursor })
+    [Symbol.asyncIterator]();
+  try {
+    const liveNext = liveIterator.next();
+    await writeFile(
+      join(projectRoot, "supabase", "functions", functionSlug, "index.ts"),
+      functionSource(table, markers.live),
+    );
+    await jsonObject(await request(api.url, functionPath, { headers: apiHeaders(credentials) }));
+    let liveEntry = await liveNext;
+    for (let attempt = 0; attempt < 100; attempt += 1) {
+      if (liveEntry.done) break;
+      if (liveEntry.value.source === "functions" && liveEntry.value.message.includes(markers.live))
+        break;
+      liveEntry = await liveIterator.next();
+    }
+    expect(liveEntry.done).toBe(false);
+    if (!liveEntry.done) {
+      expect(liveEntry.value.source).toBe("functions");
+      expect(liveEntry.value.message).toContain(markers.live);
+    }
+  } finally {
+    await liveIterator.return?.();
+  }
+  expect((await liveIterator.next()).done).toBe(true);
+
   // Mailpit UI traffic lazily activates the mail capability. SMTP delivery is
   // covered by the explicit SMTP configuration scenario below.
   await activate(stack, "mail", async () => {
@@ -737,6 +849,7 @@ const runWholeStackScenario = async (mode: (typeof RUNTIME_CASES)[number]): Prom
   expect(ready.capabilities.map(({ name, state }) => ({ name, state }))).toEqual(
     CAPABILITY_NAMES.map((name) => ({ name, state: "ready" })),
   );
+  await expectOwnedWorkloads(mode, stack.id, BASE_WORKLOAD_IDS);
   const idempotentStart = await stack.start();
   expect(idempotentStart.capabilities.map(({ name, state }) => ({ name, state }))).toEqual(
     CAPABILITY_NAMES.map((name) => ({ name, state: "ready" })),
@@ -820,6 +933,7 @@ const runWholeStackScenario = async (mode: (typeof RUNTIME_CASES)[number]): Prom
   const stopped = await stack.status();
   expect(stopped.lifecycle).toBe("stopped");
   expect(stopped.capabilities.every(({ state }) => state === "stopped")).toBe(true);
+  await expectOwnedWorkloads(mode, stack.id, []);
   const retainedLogs: StackLogEntry[] = (await stack.logs()).entries.slice();
   expect(retainedLogs.length).toBeGreaterThan(0);
   await expectRuntimeInputsAbsent(projectRoot, initial.id);
@@ -832,6 +946,7 @@ const runWholeStackScenario = async (mode: (typeof RUNTIME_CASES)[number]): Prom
 
   const started = await stack.start();
   expectDefaultLazyState(started);
+  await expectOwnedWorkloads(mode, stack.id, ["database:database"]);
   expect(
     Object.fromEntries(
       Object.entries(started.endpoints).map(([name, value]) => [name, value?.port]),
@@ -865,8 +980,10 @@ const runWholeStackScenario = async (mode: (typeof RUNTIME_CASES)[number]): Prom
   expect(final.capabilities.map(({ name, state }) => ({ name, state }))).toEqual(
     CAPABILITY_NAMES.map((name) => ({ name, state: "ready" })),
   );
+  await expectOwnedWorkloads(mode, stack.id, BASE_WORKLOAD_IDS);
 
   await stack.stop();
+  await expectOwnedWorkloads(mode, stack.id, []);
   const reconfigured = await stack.start({
     config: {
       capabilities: { studio: { enabled: false } },
@@ -947,6 +1064,7 @@ describe("managed Supabase stack whole-stack E2E", () => {
         expect(capabilityState(status, "database")).toBe("ready");
         expect(capabilityState(status, "rest")).toBe("ready");
         expect(capabilityState(status, "auth")).toBe("ready");
+        await expectOwnedWorkloads(mode, stack.id, ["database:database", "rest:rest", "auth:auth"]);
         for (const name of CAPABILITY_NAMES) {
           if (name === "database" || name === "rest" || name === "auth") continue;
           expect(capabilityState(status, name), `${name} should remain dormant`).toBe("dormant");
@@ -1016,6 +1134,7 @@ describe("managed Supabase stack whole-stack E2E", () => {
           expect(
             await queryAnalyticsMarker(api, analyticsApiKey, "supabase-stack-vector"),
           ).toBeGreaterThan(0);
+          await expectOwnedWorkloads(mode, stack.id, OPTIONAL_STORAGE_ANALYTICS_WORKLOAD_IDS);
         });
         await activate(stack, "mail", async () => {
           await request(mailUi.url, "/api/v1/messages?limit=100");
@@ -1086,6 +1205,7 @@ describe("managed Supabase stack whole-stack E2E", () => {
             expect(stopped.lifecycle).toBe("stopped");
             expect(stopped.capabilities.every(({ state }) => state === "stopped")).toBe(true);
             expect(await supervisorPids(stack.id)).toHaveLength(0);
+            await expectOwnedWorkloads(mode, stack.id, []);
             await expectRuntimeInputsAbsent(projectRoot, stack.id);
             await expectEndpointsRefused(endpointSnapshot);
             if (mode.runtime.kind === "container") {
@@ -1100,6 +1220,7 @@ describe("managed Supabase stack whole-stack E2E", () => {
             await stack.start();
             const restarted = await stack.status();
             expectDefaultLazyState(restarted);
+            await expectOwnedWorkloads(mode, stack.id, ["database:database"]);
             expect(
               Object.values(restarted.endpoints).filter(
                 (value): value is StackEndpoint => value !== undefined,
@@ -1117,6 +1238,8 @@ describe("managed Supabase stack whole-stack E2E", () => {
           expect(await dockerOwnedResourceCount(stackId, "networks")).toBe(0);
           expect(await dockerOwnedResourceCount(stackId, "volumes")).toBe(0);
         }
+        if (stackId === undefined) throw new Error("Stack id was not assigned");
+        await expectOwnedWorkloads(mode, stackId, []);
       },
     );
   }

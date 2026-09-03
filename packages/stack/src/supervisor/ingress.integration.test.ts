@@ -252,7 +252,6 @@ describe("Supervisor ingress", () => {
         const state = yield* store.read(stackId).pipe(Effect.map((value) => value!));
         const reservation = yield* ingress.acquire({
           stackId,
-          desiredLifecycle: "running",
           state,
           definition: compiled.definition,
           secrets: {},
@@ -262,7 +261,6 @@ describe("Supervisor ingress", () => {
           .open(
             {
               stackId,
-              desiredLifecycle: "running",
               state,
               definition: compiled.definition,
               secrets: {},

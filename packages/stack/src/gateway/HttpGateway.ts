@@ -11,7 +11,7 @@ import {
 import { Socket } from "node:net";
 import type { Duplex } from "node:stream";
 import type { Fiber } from "effect/Fiber";
-import { GatewayActivationError, GatewayAuthenticationError } from "../public/Errors.ts";
+import { GatewayActivationError } from "../public/Errors.ts";
 import type {
   ActivationResult,
   BackendEndpoint,
@@ -287,7 +287,6 @@ const mapFailure = (cause: Cause.Cause<unknown>): number => {
   if (Option.isSome(error) && error.value instanceof GatewayRouteNotFoundError) return 404;
   if (Option.isSome(error) && error.value instanceof GatewayActivationError) return 503;
   if (Option.isSome(error) && error.value instanceof GatewayBackendError) return 502;
-  if (Option.isSome(error) && error.value instanceof GatewayAuthenticationError) return 503;
   return 503;
 };
 

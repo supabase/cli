@@ -1,15 +1,4 @@
-import {
-  Data,
-  DateTime,
-  Effect,
-  FileSystem,
-  Path,
-  Predicate,
-  PubSub,
-  Schema,
-  Semaphore,
-  Stream,
-} from "effect";
+import { Data, DateTime, Effect, FileSystem, Path, Predicate, Schema, Semaphore } from "effect";
 import {
   StackLogEntrySchema,
   type LogCursor,
@@ -46,10 +35,9 @@ export interface LogRecord {
   readonly message: string;
 }
 
-/** Internal retained-log query; follow is only used by the Supervisor log store stream. */
+/** Internal retained-log query. */
 interface LogStoreQuery {
   readonly capabilities?: ReadonlyArray<CapabilityName>;
-  readonly follow?: boolean;
   readonly cursor?: LogCursor;
   readonly tail?: number;
 }
@@ -61,12 +49,6 @@ export interface LogStore {
   readonly read: (
     options?: LogStoreQuery,
   ) => Effect.Effect<ReadonlyArray<StackLogEntry>, LogStoreError>;
-  /**
-   * Returns retained records followed by live records when `follow` is true.
-   * Subscription creation and retained snapshotting happen in one critical
-   * section with append, so no entry can be lost or observed twice at handoff.
-   */
-  readonly stream: (options?: LogStoreQuery) => Stream.Stream<StackLogEntry, LogStoreError>;
 }
 
 interface LogDocument {
@@ -341,8 +323,6 @@ export const makeLogStore = (
     if (redactedLoaded.changed || boundedLoaded.document.entries.length !== loaded.entries.length)
       yield* persist(fs, options.path, boundedLoaded.document.entries);
     const semaphore = yield* Semaphore.make(1);
-    const pubsub = yield* PubSub.unbounded<StackLogEntry>();
-
     const append = (record: LogRecord) =>
       semaphore.withPermit(
         Effect.gen(function* () {
@@ -382,7 +362,6 @@ export const makeLogStore = (
             retainedBytes = boundedNext.bytes;
             yield* persist(fs, options.path, document.entries);
           }
-          yield* PubSub.publish(pubsub, entry);
           return entry;
         }),
       );
@@ -390,64 +369,9 @@ export const makeLogStore = (
     const read = (readOptions?: LogStoreQuery) =>
       semaphore.withPermit(selected(document.entries, readOptions, options.path));
 
-    const stream = (streamOptions?: LogStoreQuery): Stream.Stream<StackLogEntry, LogStoreError> =>
-      Stream.unwrap(
-        Effect.gen(function* () {
-          const handoff = yield* semaphore.withPermit(
-            Effect.gen(function* () {
-              const retainedEntries = yield* selected(
-                document.entries,
-                streamOptions,
-                options.path,
-              );
-              const requestedCursor = yield* decodeCursor(options.path, streamOptions?.cursor);
-              const lastRetainedCursor = document.entries.at(-1)?.cursor.opaque;
-              const retainedCursor =
-                lastRetainedCursor === undefined
-                  ? undefined
-                  : yield* parseOpaqueCursor(options.path, lastRetainedCursor);
-              const handoffCursor =
-                retainedCursor === undefined
-                  ? requestedCursor
-                  : requestedCursor === undefined
-                    ? retainedCursor
-                    : Math.max(retainedCursor, requestedCursor);
-              if (streamOptions?.follow !== true)
-                return { retainedEntries, handoffCursor, subscription: undefined } as const;
-              const subscription = yield* PubSub.subscribe(pubsub);
-              return { retainedEntries, handoffCursor, subscription } as const;
-            }),
-          );
-          const retainedStream = Stream.fromIterable(handoff.retainedEntries);
-          if (handoff.subscription === undefined) return retainedStream;
-          const capabilities =
-            streamOptions?.capabilities === undefined
-              ? undefined
-              : new Set(streamOptions.capabilities);
-          const liveStream = Stream.fromEffectRepeat(PubSub.take(handoff.subscription)).pipe(
-            Stream.filter((entry) => {
-              if (
-                handoff.handoffCursor !== undefined &&
-                Number.parseInt(entry.cursor.opaque.slice(CURSOR_PREFIX.length), 36) <=
-                  handoff.handoffCursor
-              )
-                return false;
-              if (capabilities === undefined) return true;
-              return (
-                entry.source !== "gateway" &&
-                entry.source !== "supervisor" &&
-                capabilities.has(entry.source)
-              );
-            }),
-          );
-          return Stream.concat(retainedStream, liveStream);
-        }),
-      ).pipe(Stream.scoped);
-
     return {
       path: options.path,
       append,
       read,
-      stream,
     };
   });

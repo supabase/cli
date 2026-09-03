@@ -1,6 +1,6 @@
 import { NodeServices } from "@effect/platform-node";
 import { describe, expect, it } from "@effect/vitest";
-import { Cause, Deferred, Effect, Exit, FileSystem, Fiber, Option, Path, Stream } from "effect";
+import { Cause, Effect, Exit, FileSystem, Option, Path } from "effect";
 import { LogStoreError, makeLogStore } from "./LogStore.ts";
 
 const withPlatform = <A, E, R>(effect: Effect.Effect<A, E, R>) =>
@@ -41,10 +41,6 @@ describe("observability", () => {
         expect(
           (yield* store.read({ capabilities: ["auth"] })).map((entry) => entry.message),
         ).toEqual(["two"]);
-        expect((yield* Stream.runCollect(store.stream())).map((entry) => entry.message)).toEqual([
-          "two",
-          "three",
-        ]);
         const invalidCursor = yield* store
           .read({ cursor: { opaque: "not-a-cursor" } })
           .pipe(Effect.exit);
@@ -119,38 +115,6 @@ describe("observability", () => {
         yield* fs.writeFileString(logPath, "not json");
         const malformed = yield* makeLogStore({ path: logPath }).pipe(Effect.exit);
         expect(errorOf(malformed)).toBeInstanceOf(LogStoreError);
-      }),
-    ),
-  );
-
-  it.live("subscribes before append so retained-to-live handoff has no gap", () =>
-    withPlatform(
-      Effect.gen(function* () {
-        const fs = yield* FileSystem.FileSystem;
-        const path = yield* Path.Path;
-        const root = yield* fs.makeTempDirectoryScoped({ prefix: "supabase-stack-log-handoff-" });
-        const store = yield* makeLogStore({
-          path: path.join(root, "logs.json"),
-          knownSecrets: ["live-secret"],
-        });
-        yield* store.append({ source: "database", stream: "stdout", message: "retained" });
-        const subscribed = yield* Deferred.make<void>();
-        const values = yield* store.stream({ follow: true }).pipe(
-          Stream.tap(() => Deferred.succeed(subscribed, void 0)),
-          Stream.take(2),
-          Stream.runCollect,
-          Effect.forkChild({ startImmediately: true }),
-        );
-        yield* Deferred.await(subscribed);
-        yield* store.append({
-          source: "database",
-          stream: "stdout",
-          message: "live live-secret",
-        });
-        expect((yield* Fiber.join(values)).map((entry) => entry.message)).toEqual([
-          "retained",
-          "live [REDACTED]",
-        ]);
       }),
     ),
   );

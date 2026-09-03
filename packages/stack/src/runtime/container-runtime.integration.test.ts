@@ -194,7 +194,6 @@ const memoryLogStore = (records: LogRecord[]): LogStore => ({
       ...record,
     })).pipe(Effect.tap((entry) => Effect.sync(() => records.push(entry)))),
   read: () => Effect.succeed([]),
-  stream: () => Stream.empty,
 });
 
 describe("container runtime", () => {
@@ -735,7 +734,6 @@ describe("container runtime", () => {
           path: logError.path,
           append: () => Effect.fail(logError),
           read: () => Effect.succeed([]),
-          stream: () => Stream.empty,
         },
         resolveWorkload: () =>
           Effect.succeed({
@@ -780,7 +778,6 @@ describe("container runtime", () => {
           path: logError.path,
           append: () => Effect.fail(logError),
           read: () => Effect.succeed([]),
-          stream: () => Stream.empty,
         },
         resolveWorkload: () =>
           Effect.succeed({
@@ -1268,7 +1265,6 @@ describe("container runtime", () => {
         path: logError.path,
         append: () => Effect.fail(logError),
         read: () => Effect.succeed([]),
-        stream: () => Stream.empty,
       };
       const runtime = yield* makeContainerRuntime({
         engine: {

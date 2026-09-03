@@ -63,6 +63,22 @@ const processPlan = <A>(main: A) => ({ startup: [], main });
 const withPlatform = <A, E, R>(effect: Effect.Effect<A, E, R>) =>
   Effect.scoped(effect).pipe(Effect.provide(NodeServices.layer));
 
+const signalOnLog = (
+  base: LogStore,
+  message: string,
+  signal: Deferred.Deferred<void, never>,
+): LogStore => ({
+  ...base,
+  append: (record) =>
+    base
+      .append(record)
+      .pipe(
+        Effect.tap((entry) =>
+          entry.message === message ? Deferred.succeed(signal, undefined) : Effect.void,
+        ),
+      ),
+});
+
 // Native launcher tests create real process trees. Keep their timeout local to
 // this suite so file-level parallelism does not turn the default 5s guard into
 // a false failure while leaving the rest of the integration suite unchanged.
@@ -102,33 +118,31 @@ describe("native runtime", { timeout: 15_000 }, () => {
           path: path.join(root, "logs.json"),
           knownSecrets: ["secret-value"],
         });
+        const outputLogged = yield* Deferred.make<void>();
+        const signaledLogStore = signalOnLog(logStore, "[REDACTED]", outputLogged);
         let startedProcess: NativeProcess | undefined;
         const runtime = yield* makeNativeRuntime({
           resolveProcess: (_key, _entry) =>
             Effect.succeed(processPlan(fixtureProcess("secret-value"))),
-          logStore,
+          logStore: signaledLogStore,
           waitForReadiness: (_key, _workload, process) =>
             Effect.sync(() => {
               startedProcess = process;
             }),
         });
         const key = keyFor("one");
-        const logs = yield* logStore
-          .stream({ follow: true })
-          .pipe(Stream.take(1), Stream.runCollect, Effect.forkChild({ startImmediately: true }));
         const ready = yield* runtime.start(key, workload("one"));
         expect(ready.state).toBe("ready");
-        const firstLog = (yield* Fiber.join(logs))[0];
-        expect(firstLog?.message).toBe("[REDACTED]");
+        yield* Deferred.await(outputLogged);
         const values = yield* runtime.observe(stackId);
         expect(values).toHaveLength(1);
         yield* runtime.stop(key);
         expect((yield* runtime.observe(stackId))[0]?.state).toBe("stopped");
         expect(startedProcess).toBeDefined();
         if (startedProcess !== undefined) expect(yield* startedProcess.isRunning).toBe(false);
+        expect((yield* logStore.read()).map((entry) => entry.message)).toContain("[REDACTED]");
         yield* runtime.remove(key);
         expect(yield* runtime.observe(stackId)).toEqual([]);
-        expect((yield* logStore.read()).map((entry) => entry.message)).toContain("[REDACTED]");
       }),
     ),
   );
@@ -173,15 +187,11 @@ describe("native runtime", { timeout: 15_000 }, () => {
         const readinessEntered = yield* Deferred.make<void>();
         const readinessRelease = yield* Deferred.make<void>();
         let startedProcess: NativeProcess | undefined;
-        const output = yield* logStore.stream({ follow: true }).pipe(
-          Stream.filter((entry) => entry.message === "main-started"),
-          Stream.take(1),
-          Stream.runDrain,
-          Effect.forkChild({ startImmediately: true }),
-        );
+        const outputReady = yield* Deferred.make<void>();
+        const signaledLogStore = signalOnLog(logStore, "main-started", outputReady);
         const runtime = yield* makeNativeRuntime({
           resolveProcess: () => Effect.succeed(processPlan(fixtureProcess("main-started"))),
-          logStore,
+          logStore: signaledLogStore,
           waitForReadiness: (_key, _workload, process) =>
             Effect.sync(() => {
               startedProcess = process;
@@ -195,7 +205,7 @@ describe("native runtime", { timeout: 15_000 }, () => {
           .start(key, workload("exit-observer"))
           .pipe(Effect.forkChild({ startImmediately: true }));
         yield* Deferred.await(readinessEntered);
-        yield* Fiber.join(output);
+        yield* Deferred.await(outputReady);
         yield* Deferred.succeed(readinessRelease, undefined);
         const ready = yield* Fiber.join(caller);
         expect(ready.state).toBe("ready");
@@ -314,7 +324,6 @@ describe("native runtime", { timeout: 15_000 }, () => {
               new LogStoreError({ path: "memory://failing-log-store", message: "disk full" }),
             ),
           read: () => Effect.succeed([]),
-          stream: () => Stream.empty,
         };
         const runtime = yield* makeNativeRuntime({
           resolveProcess: () => Effect.succeed(processPlan(fixtureProcess("log-failure"))),
@@ -337,11 +346,8 @@ describe("native runtime", { timeout: 15_000 }, () => {
         const path = yield* Path.Path;
         const root = yield* fs.makeTempDirectoryScoped({ prefix: "supabase-native-startup-" });
         const logStore = yield* makeLogStore({ path: path.join(root, "logs.json") });
-        const logs = yield* logStore.stream({ follow: true }).pipe(
-          Stream.takeUntil((entry) => entry.message === "main"),
-          Stream.runCollect,
-          Effect.forkChild({ startImmediately: true }),
-        );
+        const mainLogged = yield* Deferred.make<void>();
+        const signaledLogStore = signalOnLog(logStore, "main", mainLogged);
         let observedReady = false;
         const runtime = yield* makeNativeRuntime({
           resolveProcess: () =>
@@ -349,7 +355,7 @@ describe("native runtime", { timeout: 15_000 }, () => {
               startup: [oneShotProcess("startup")],
               main: fixtureProcess("main"),
             }),
-          logStore,
+          logStore: signaledLogStore,
           waitForReadiness: () =>
             Effect.sync(() => {
               observedReady = true;
@@ -359,7 +365,8 @@ describe("native runtime", { timeout: 15_000 }, () => {
         const ready = yield* runtime.start(key, workload("startup-order"));
         expect(ready.state).toBe("ready");
         expect(observedReady).toBe(true);
-        const messages = (yield* Fiber.join(logs)).map((entry) => entry.message);
+        yield* Deferred.await(mainLogged);
+        const messages = (yield* logStore.read()).map((entry) => entry.message);
         expect(messages.indexOf("startup")).toBeGreaterThanOrEqual(0);
         expect(messages).toContain("startup-stderr");
         expect(messages.indexOf("main")).toBeGreaterThan(messages.indexOf("startup"));
@@ -542,12 +549,8 @@ describe("native runtime", { timeout: 15_000 }, () => {
         expect(spawnSync("mkfifo", [readyPath]).status).toBe(0);
         expect(spawnSync("mkfifo", [releasePath]).status).toBe(0);
         const logStore = yield* makeLogStore({ path: path.join(root, "logs.json") });
-        const postStarted = yield* logStore.stream({ follow: true }).pipe(
-          Stream.filter((entry) => entry.message === "post-blocked"),
-          Stream.take(1),
-          Stream.runCollect,
-          Effect.forkChild({ startImmediately: true }),
-        );
+        const postStartedSignal = yield* Deferred.make<void>();
+        const signaledLogStore = signalOnLog(logStore, "post-blocked", postStartedSignal);
         const postReadiness = {
           executable: process.execPath,
           args: [
@@ -565,14 +568,14 @@ describe("native runtime", { timeout: 15_000 }, () => {
         const runtime = yield* makeNativeRuntime({
           resolveProcess: () =>
             Effect.succeed({ startup: [], postReadiness: [postReadiness], main }),
-          logStore,
+          logStore: signaledLogStore,
           waitForReadiness: () => Effect.void,
         });
         const key = keyFor("post-readiness-main-exit");
         const caller = yield* runtime
           .start(key, workload("post-readiness-main-exit"))
           .pipe(Effect.forkChild({ startImmediately: true }));
-        yield* Fiber.join(postStarted);
+        yield* Deferred.await(postStartedSignal);
         const releaseMain = spawnSync(
           process.execPath,
           ["-e", `require("node:fs").writeFileSync(${JSON.stringify(readyPath)}, "x")`],
@@ -610,12 +613,8 @@ describe("native runtime", { timeout: 15_000 }, () => {
         });
         const pidPath = path.join(root, "pid");
         const logStore = yield* makeLogStore({ path: path.join(root, "logs.json") });
-        const started = yield* logStore.stream({ follow: true }).pipe(
-          Stream.filter((entry) => entry.message === "post-started"),
-          Stream.take(1),
-          Stream.runCollect,
-          Effect.forkChild({ startImmediately: true }),
-        );
+        const startedSignal = yield* Deferred.make<void>();
+        const signaledLogStore = signalOnLog(logStore, "post-started", startedSignal);
         const runtime = yield* makeNativeRuntime({
           resolveProcess: () =>
             Effect.succeed({
@@ -631,14 +630,14 @@ describe("native runtime", { timeout: 15_000 }, () => {
               ],
               main: fixtureProcess("never-main"),
             }),
-          logStore,
+          logStore: signaledLogStore,
           waitForReadiness: () => Effect.void,
         });
         const key = keyFor("post-readiness-interrupted");
         const caller = yield* runtime
           .start(key, workload("post-readiness-interrupted"))
           .pipe(Effect.forkChild({ startImmediately: true }));
-        yield* Fiber.join(started);
+        yield* Deferred.await(startedSignal);
         yield* runtime.stop(key);
         const result = yield* Fiber.join(caller).pipe(Effect.exit);
         expect(Exit.isFailure(result)).toBe(true);
@@ -675,7 +674,6 @@ describe("native runtime", { timeout: 15_000 }, () => {
               }),
             ),
           read: () => Effect.succeed([]),
-          stream: () => Stream.empty,
         };
         const runtime = yield* makeNativeRuntime({
           resolveProcess: () =>
@@ -744,6 +742,8 @@ describe("native runtime", { timeout: 15_000 }, () => {
         const path = yield* Path.Path;
         const root = yield* fs.makeTempDirectoryScoped({ prefix: "supabase-native-drain-" });
         const logStore = yield* makeLogStore({ path: path.join(root, "logs.json") });
+        const startupOutputSignal = yield* Deferred.make<void>();
+        const signaledLogStore = signalOnLog(logStore, "startup-late", startupOutputSignal);
         const runtime = yield* makeNativeRuntime({
           resolveProcess: () =>
             Effect.succeed({
@@ -755,18 +755,13 @@ describe("native runtime", { timeout: 15_000 }, () => {
               ],
               main: fixtureProcess("drained-main"),
             }),
-          logStore,
+          logStore: signaledLogStore,
           waitForReadiness: () => Effect.void,
         });
-        const startupOutput = yield* logStore.stream({ follow: true }).pipe(
-          Stream.takeUntil((entry) => entry.message === "startup-late"),
-          Stream.runCollect,
-          Effect.forkChild({ startImmediately: true }),
-        );
         const caller = yield* runtime
           .start(keyFor("startup-drain"), workload("startup-drain"))
           .pipe(Effect.forkChild({ startImmediately: true }));
-        yield* Fiber.join(startupOutput);
+        yield* Deferred.await(startupOutputSignal);
         const ready = yield* Fiber.join(caller);
         expect(ready.state).toBe("ready");
         yield* runtime.remove(keyFor("startup-drain"));
@@ -782,9 +777,8 @@ describe("native runtime", { timeout: 15_000 }, () => {
         const pidPath = path.join(root, "pid");
         const stoppedPath = path.join(root, "stopped");
         const logStore = yield* makeLogStore({ path: path.join(root, "logs.json") });
-        const started = yield* logStore
-          .stream({ follow: true })
-          .pipe(Stream.take(1), Stream.runCollect, Effect.forkChild({ startImmediately: true }));
+        const startedSignal = yield* Deferred.make<void>();
+        const signaledLogStore = signalOnLog(logStore, "started", startedSignal);
         const runtime = yield* makeNativeRuntime({
           resolveProcess: () =>
             Effect.succeed({
@@ -799,14 +793,14 @@ describe("native runtime", { timeout: 15_000 }, () => {
               ],
               main: fixtureProcess("never-main"),
             }),
-          logStore,
+          logStore: signaledLogStore,
           waitForReadiness: () => Effect.void,
         });
         const key = keyFor("startup-interrupted");
         const caller = yield* runtime
           .start(key, workload("startup-interrupted"))
           .pipe(Effect.forkChild({ startImmediately: true }));
-        yield* Fiber.join(started);
+        yield* Deferred.await(startedSignal);
         yield* runtime.stop(key);
         yield* Fiber.interrupt(caller);
         expect(Number.isSafeInteger(Number.parseInt(yield* fs.readFileString(pidPath), 10))).toBe(
@@ -830,7 +824,6 @@ describe("native runtime", { timeout: 15_000 }, () => {
               return yield* Deferred.await(appendFailure);
             }),
           read: () => Effect.succeed([]),
-          stream: () => Stream.empty,
         };
         const runtime = yield* makeNativeRuntime({
           resolveProcess: () =>

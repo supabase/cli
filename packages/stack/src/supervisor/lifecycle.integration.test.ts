@@ -3,7 +3,8 @@ import { describe, expect, it } from "@effect/vitest";
 import { Cause, Deferred, Effect, Exit, FileSystem, Option, Redacted } from "effect";
 import { deriveStackId } from "../identity/Identity.ts";
 import {
-  StackReconciliationError,
+  StackRuntimeError,
+  StackCleanupError,
   StackStateInvalidError,
   StackMustBeStoppedError,
 } from "../public/Errors.ts";
@@ -35,16 +36,16 @@ interface BackendState {
   readonly calls: Array<string>;
   readonly preflight: Array<LifecycleInput>;
   failPreflight?: boolean;
-  failReconcile?: boolean;
+  failLaunch?: boolean;
   failDestroyData?: boolean;
   failDestroyDataOnce?: boolean;
   failCleanupOnce?: boolean;
   gate?: Deferred.Deferred<void>;
   preflightStarted?: Deferred.Deferred<void>;
-  waitBeforeReconcile?: Deferred.Deferred<void>;
-  stopReconcileStarted?: Deferred.Deferred<void>;
-  stopReconcileGate?: Deferred.Deferred<void>;
-  startReconcileStarted?: Deferred.Deferred<void>;
+  waitBeforeLaunch?: Deferred.Deferred<void>;
+  stopLaunchStarted?: Deferred.Deferred<void>;
+  stopLaunchGate?: Deferred.Deferred<void>;
+  startLaunchStarted?: Deferred.Deferred<void>;
   lastLifecycle?: PersistedStackState["desiredLifecycle"];
 }
 
@@ -55,40 +56,33 @@ const backend = (state: BackendState): LifecycleBackend => ({
       state.preflight.push(input);
       if (state.preflightStarted !== undefined)
         yield* Deferred.succeed(state.preflightStarted, undefined);
-      if (state.failPreflight)
-        return yield* new StackReconciliationError({ message: "preflight failed" });
+      if (state.failPreflight) return yield* new StackRuntimeError({ message: "preflight failed" });
       if (state.gate !== undefined) yield* Deferred.await(state.gate);
     }),
-  reconcile: (input) =>
+  launch: (input) =>
     Effect.gen(function* () {
       state.lastLifecycle = input.state.desiredLifecycle;
-      state.calls.push(`reconcile:${input.state.desiredLifecycle}`);
-      if (input.state.desiredLifecycle === "running" && state.startReconcileStarted !== undefined)
-        yield* Deferred.succeed(state.startReconcileStarted, undefined);
-      if (input.state.desiredLifecycle === "stopped") {
-        if (state.stopReconcileStarted !== undefined)
-          yield* Deferred.succeed(state.stopReconcileStarted, undefined);
-        if (state.stopReconcileGate !== undefined) yield* Deferred.await(state.stopReconcileGate);
-      }
-      if (state.waitBeforeReconcile !== undefined) yield* Deferred.await(state.waitBeforeReconcile);
-      if (state.failReconcile)
-        return yield* new StackReconciliationError({ message: "reconcile failed" });
+      state.calls.push(`launch:${input.state.desiredLifecycle}`);
+      if (input.state.desiredLifecycle === "running" && state.startLaunchStarted !== undefined)
+        yield* Deferred.succeed(state.startLaunchStarted, undefined);
+      if (state.waitBeforeLaunch !== undefined) yield* Deferred.await(state.waitBeforeLaunch);
+      if (state.failLaunch) return yield* new StackRuntimeError({ message: "launch failed" });
     }),
   cleanup: Effect.gen(function* () {
     state.calls.push(`cleanup:${state.lastLifecycle ?? "invalid"}`);
     if (state.failCleanupOnce) {
       state.failCleanupOnce = false;
-      return yield* new StackReconciliationError({ message: "cleanup failed" });
+      return yield* new StackCleanupError({ message: "cleanup failed" });
     }
   }),
   destroyData: Effect.gen(function* () {
     state.calls.push(`destroy-data:${state.lastLifecycle ?? "invalid"}`);
     if (state.failDestroyDataOnce) {
       state.failDestroyDataOnce = false;
-      return yield* new StackReconciliationError({ message: "destroy-data failed" });
+      return yield* new StackCleanupError({ message: "destroy-data failed" });
     }
     if (state.failDestroyData)
-      return yield* new StackReconciliationError({ message: "destroy-data failed" });
+      return yield* new StackCleanupError({ message: "destroy-data failed" });
   }),
 });
 
@@ -128,7 +122,7 @@ describe("durable lifecycle controller", () => {
         const result = yield* fixture.controller.start();
         expect(result.desiredLifecycle).toBe("running");
         expect(result.definition).toBeDefined();
-        expect(fixture.state.calls).toEqual(["preflight", "reconcile:running"]);
+        expect(fixture.state.calls).toEqual(["preflight", "launch:running"]);
         expect(yield* fixture.store.read(fixture.id)).toEqual(result);
       }),
     ),
@@ -158,7 +152,7 @@ describe("durable lifecycle controller", () => {
         fixture.state.calls.length = 0;
         const second = yield* fixture.controller.start({ config: { capabilities: { rest: {} } } });
         expect(second).toEqual(first);
-        expect(fixture.state.calls).toEqual(["reconcile:running"]);
+        expect(fixture.state.calls).toEqual(["launch:running"]);
       }),
     ),
   );
@@ -168,10 +162,10 @@ describe("durable lifecycle controller", () => {
       Effect.gen(function* () {
         const fixture = yield* makeFixture();
         yield* fixture.controller.start();
-        fixture.state.failReconcile = true;
+        fixture.state.failLaunch = true;
 
         const failed = yield* fixture.controller.start({ freshSession: true }).pipe(Effect.exit);
-        expect(errorOf(failed)).toBeInstanceOf(StackReconciliationError);
+        expect(errorOf(failed)).toBeInstanceOf(StackRuntimeError);
         expect((yield* fixture.store.read(fixture.id))?.desiredLifecycle).toBe("stopped");
         expect(fixture.state.calls.at(-1)).toBe("cleanup:running");
       }),
@@ -250,11 +244,11 @@ describe("durable lifecycle controller", () => {
         const first = yield* fixture.controller.stop();
         expect(first.desiredLifecycle).toBe("stopped");
         expect(first.definition).toBeDefined();
-        expect(fixture.state.calls).toEqual(["reconcile:stopped", "cleanup:stopped"]);
+        expect(fixture.state.calls).toEqual(["cleanup:running"]);
         fixture.state.calls.length = 0;
         const second = yield* fixture.controller.stop();
         expect(second).toEqual(first);
-        expect(fixture.state.calls).toEqual(["reconcile:stopped", "cleanup:stopped"]);
+        expect(fixture.state.calls).toEqual(["cleanup:running"]);
       }),
     ),
   );
@@ -267,13 +261,13 @@ describe("durable lifecycle controller", () => {
         fixture.state.calls.length = 0;
         fixture.state.failCleanupOnce = true;
         const first = yield* fixture.controller.stop().pipe(Effect.exit);
-        expect(errorOf(first)).toBeInstanceOf(StackReconciliationError);
+        expect(errorOf(first)).toBeInstanceOf(StackCleanupError);
         const stopped = yield* fixture.store.read(fixture.id);
         expect(stopped?.desiredLifecycle).toBe("stopped");
         fixture.state.calls.length = 0;
         const second = yield* fixture.controller.stop();
         expect(second.desiredLifecycle).toBe("stopped");
-        expect(fixture.state.calls).toEqual(["reconcile:stopped", "cleanup:stopped"]);
+        expect(fixture.state.calls).toEqual(["cleanup:running"]);
       }),
     ),
   );
@@ -289,7 +283,7 @@ describe("durable lifecycle controller", () => {
         const exit = yield* fixture.controller
           .start({ config: { capabilities: { rest: {} } } })
           .pipe(Effect.exit);
-        expect(errorOf(exit)).toBeInstanceOf(StackReconciliationError);
+        expect(errorOf(exit)).toBeInstanceOf(StackRuntimeError);
         expect(yield* fixture.store.read(fixture.id)).toMatchObject({
           desiredLifecycle: "stopped",
           definition: first.definition,
@@ -333,7 +327,7 @@ describe("durable lifecycle controller", () => {
         fixture.state.calls.length = 0;
         fixture.state.failDestroyData = true;
         const exit = yield* fixture.controller.destroy().pipe(Effect.exit);
-        expect(errorOf(exit)).toBeInstanceOf(StackReconciliationError);
+        expect(errorOf(exit)).toBeInstanceOf(StackCleanupError);
         expect(yield* fixture.store.read(fixture.id)).toMatchObject({
           desiredLifecycle: "destroying",
         });
@@ -362,7 +356,7 @@ describe("durable lifecycle controller", () => {
         const fixture = yield* makeFixture();
         fixture.state.failDestroyDataOnce = true;
         const first = yield* fixture.controller.destroy().pipe(Effect.exit);
-        expect(errorOf(first)).toBeInstanceOf(StackReconciliationError);
+        expect(errorOf(first)).toBeInstanceOf(StackCleanupError);
         expect((yield* fixture.store.read(fixture.id))?.desiredLifecycle).toBe("destroying");
         yield* fixture.controller.destroy();
         expect(yield* fixture.store.read(fixture.id)).toBeUndefined();

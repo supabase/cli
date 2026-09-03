@@ -13,7 +13,6 @@ import {
   Redacted,
   Ref,
   Scope,
-  Stream,
 } from "effect";
 import { Headers } from "effect/unstable/http";
 import { Rpc } from "effect/unstable/rpc";
@@ -25,7 +24,8 @@ import {
   PortUnavailableError,
   StackLifecycleConflictError,
   StackNotRunningError,
-  StackReconciliationError,
+  StackRuntimeError,
+  StackCleanupError,
   StackStateInvalidError,
   StackMustBeStoppedError,
 } from "../public/Errors.ts";
@@ -91,7 +91,7 @@ const makeFixture = (
     readonly activationFailFirst?: Ref.Ref<boolean>;
     readonly startFailures?: Ref.Ref<number>;
     readonly preflightFailFirst?: Ref.Ref<boolean>;
-    readonly preflightModes?: Ref.Ref<ReadonlyArray<"cold" | "live">>;
+    readonly preflightCalls?: Ref.Ref<number>;
     readonly preflightGate?: Deferred.Deferred<void>;
     readonly preflightStarted?: Deferred.Deferred<void>;
     readonly stopGate?: Deferred.Deferred<void>;
@@ -307,10 +307,10 @@ const makeFixture = (
             ),
           );
         }),
-      preflight: (_input, mode) =>
+      preflight: (_input) =>
         Effect.gen(function* () {
-          if (fixtureOptions.preflightModes !== undefined)
-            yield* Ref.update(fixtureOptions.preflightModes, (current) => [...current, mode]);
+          if (fixtureOptions.preflightCalls !== undefined)
+            yield* Ref.update(fixtureOptions.preflightCalls, (count) => count + 1);
           if (fixtureOptions.preflightStarted !== undefined)
             yield* Deferred.succeed(fixtureOptions.preflightStarted, undefined);
           if (fixtureOptions.preflightGate !== undefined)
@@ -319,7 +319,7 @@ const makeFixture = (
             const fail = yield* Ref.get(fixtureOptions.preflightFailFirst);
             if (fail) {
               yield* Ref.set(fixtureOptions.preflightFailFirst, false);
-              return yield* new StackReconciliationError({ message: "injected preflight failure" });
+              return yield* new StackRuntimeError({ message: "injected preflight failure" });
             }
           }
         }),
@@ -359,7 +359,6 @@ const makeFixture = (
           Ref.update(logOptions, (current) => [...current, options]).pipe(
             Effect.andThen(Ref.get(logEntries)),
           ),
-        stream: () => Stream.empty,
       },
     };
     const context = yield* Effect.context<
@@ -476,6 +475,7 @@ describe("Supervisor composition", () => {
         expect(errorOf(yield* invokeCredentials(fixture.supervisor).pipe(Effect.exit))?.tag).toBe(
           "StackNotRunningError",
         );
+        yield* fixture.supervisor.shutdownIfIdle;
         const retry = yield* fixture.supervisor.start().pipe(Effect.exit);
         expect(errorOf(retry)).toBeInstanceOf(StackLifecycleConflictError);
         expect(yield* Ref.get(fixture.calls)).toContain("start:database:database");
@@ -518,6 +518,7 @@ describe("Supervisor composition", () => {
 
         expect(Exit.isFailure(yield* fixture.supervisor.start().pipe(Effect.exit))).toBe(true);
         expect((yield* fixture.supervisor.status).lifecycle).toBe("stopped");
+        yield* fixture.supervisor.shutdownIfIdle;
         expect(errorOf(yield* fixture.supervisor.start().pipe(Effect.exit))).toBeInstanceOf(
           StackLifecycleConflictError,
         );
@@ -584,17 +585,19 @@ describe("Supervisor composition", () => {
     ),
   );
 
-  it.live("uses cold preflight when starting after a stop", () =>
+  it.live("skips preflight for a live session and preflights a new owner", () =>
     run(
       Effect.gen(function* () {
-        const preflightModes = yield* Ref.make<ReadonlyArray<"cold" | "live">>([]);
-        const fixture = yield* makeFixture({ preflightModes });
+        const preflightCalls = yield* Ref.make(0);
+        const fixture = yield* makeFixture({ preflightCalls });
         yield* fixture.supervisor.start({ config: {} });
-        yield* Ref.set(preflightModes, []);
+        yield* Ref.set(preflightCalls, 0);
 
+        yield* fixture.supervisor.start();
+        expect(yield* Ref.get(preflightCalls)).toBe(0);
         yield* fixture.supervisor.maintenanceHandlers.stop;
         yield* fixture.supervisor.start();
-        expect(yield* Ref.get(preflightModes)).toEqual(["cold"]);
+        expect(yield* Ref.get(preflightCalls)).toBe(1);
 
         const successor = yield* makeSupervisor({
           identity,
@@ -605,9 +608,9 @@ describe("Supervisor composition", () => {
           context: fixture.context,
           runtime: fixture.runtime,
         });
-        yield* Ref.set(preflightModes, []);
+        yield* Ref.set(preflightCalls, 0);
         yield* successor.start();
-        expect(yield* Ref.get(preflightModes)).toEqual(["cold"]);
+        expect(yield* Ref.get(preflightCalls)).toBe(1);
       }),
     ),
   );
@@ -686,7 +689,7 @@ describe("Supervisor composition", () => {
               const remaining = yield* Ref.get(closeFailures);
               if (remaining > 0) {
                 yield* Ref.set(closeFailures, remaining - 1);
-                return yield* new StackReconciliationError({ message: "injected close failure" });
+                return yield* new StackCleanupError({ message: "injected close failure" });
               }
             }),
           },
@@ -1024,6 +1027,7 @@ describe("Supervisor composition", () => {
         yield* Deferred.succeed(stopGate, undefined);
         yield* Fiber.join(stopping);
         expect((yield* fixture.supervisor.status).lifecycle).toBe("stopped");
+        yield* fixture.supervisor.shutdownIfIdle;
         const restart = yield* fixture.supervisor.start().pipe(Effect.exit);
         expect(errorOf(restart)).toBeInstanceOf(StackLifecycleConflictError);
       }),
@@ -1262,6 +1266,8 @@ describe("Supervisor composition", () => {
         yield* Deferred.await(preflightStarted);
         yield* Fiber.interrupt(waiter);
         yield* Deferred.succeed(preflightGate, undefined);
+        yield* Effect.yieldNow;
+        yield* fixture.supervisor.shutdownIfIdle;
         yield* fixture.supervisor.shutdown.pipe(
           Effect.timeoutOrElse({
             duration: "1 second",
@@ -1549,7 +1555,7 @@ describe("Supervisor composition", () => {
               const remaining = yield* Ref.get(closeFailures);
               if (remaining > 0) {
                 yield* Ref.set(closeFailures, remaining - 1);
-                return yield* new StackReconciliationError({ message: "injected close failure" });
+                return yield* new StackCleanupError({ message: "injected close failure" });
               }
             }),
           },
@@ -1628,6 +1634,7 @@ describe("Supervisor composition", () => {
           StackLifecycleConflictError,
         );
         expect((yield* fixture.supervisor.maintenanceHandlers.stop).ok).toBe(true);
+        yield* fixture.supervisor.shutdownIfIdle;
         yield* fixture.supervisor.shutdown;
         const successor = yield* makeSupervisor({
           identity,
@@ -1750,6 +1757,8 @@ describe("Supervisor composition", () => {
         yield* Deferred.await(stopStarted);
         yield* Fiber.interrupt(waiter);
         yield* Deferred.succeed(stopGate, undefined);
+        yield* Effect.yieldNow;
+        yield* fixture.supervisor.shutdownIfIdle;
         yield* fixture.supervisor.shutdown;
         expect((yield* fixture.store.read(fixture.id))?.desiredLifecycle).toBe("stopped");
       }),
@@ -1767,6 +1776,8 @@ describe("Supervisor composition", () => {
         yield* Deferred.await(destroyStarted);
         yield* Fiber.interrupt(waiter);
         yield* Deferred.succeed(destroyGate, undefined);
+        yield* Effect.yieldNow;
+        yield* fixture.supervisor.shutdownIfIdle;
         yield* fixture.supervisor.shutdown;
         expect(yield* fixture.store.read(fixture.id)).toBeUndefined();
       }),

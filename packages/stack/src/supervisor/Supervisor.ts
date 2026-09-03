@@ -29,7 +29,8 @@ import {
   GatewayActivationError,
   StackLifecycleConflictError,
   StackNotRunningError,
-  StackReconciliationError,
+  StackRuntimeError,
+  StackCleanupError,
   StackStateInvalidError,
   type StackError,
 } from "../public/Errors.ts";
@@ -71,10 +72,7 @@ export interface SupervisorRuntime {
     runtime: StackRuntime,
     workloads: ReadonlyArray<PlannedWorkload>,
   ) => Effect.Effect<ReadonlyArray<PreparedWorkloadArtifact>, StackError>;
-  readonly preflight: (
-    input: LifecycleInput,
-    mode: "cold" | "live",
-  ) => Effect.Effect<void, StackError>;
+  readonly preflight: (input: LifecycleInput) => Effect.Effect<void, StackError>;
   readonly activate: (
     capability: CapabilityName,
     input: LifecycleInput,
@@ -138,9 +136,17 @@ const stateErrorMessage = (error: StackError | { readonly message?: string }): s
 const credentialHost = (address: string): string =>
   address.includes(":") && !address.startsWith("[") ? `[${address}]` : address;
 
-const mapReconcileError = (error: unknown): StackError => {
+const mapRuntimeError = (error: unknown): StackError => {
   if (error instanceof StackStateInvalidError) return error;
-  return new StackReconciliationError({
+  return new StackRuntimeError({
+    message: error instanceof Error ? error.message : String(error),
+    cause: error,
+  });
+};
+
+const mapCleanupError = (error: unknown): StackError => {
+  if (error instanceof StackStateInvalidError) return error;
+  return new StackCleanupError({
     message: error instanceof Error ? error.message : String(error),
     cause: error,
   });
@@ -192,7 +198,7 @@ export const makeSupervisor = (
         yield* initializeActivation(input.plan);
       });
     const observe = () =>
-      runtime.driver.observe(options.stackId).pipe(Effect.mapError(mapReconcileError));
+      runtime.driver.observe(options.stackId).pipe(Effect.mapError(mapRuntimeError));
     const observedForStatus = () =>
       Ref.get(phase).pipe(
         Effect.flatMap((current) => (current === "running" ? observe() : Effect.succeed([]))),
@@ -285,7 +291,6 @@ export const makeSupervisor = (
     const submitLifecycle = (
       kind: LifecycleKind,
       effect: Effect.Effect<void, StackError>,
-      onWaiterInterrupt?: (owned: LifecycleResult) => Effect.Effect<void>,
     ): Effect.Effect<void, StackError> =>
       Effect.gen(function* () {
         const result = yield* Effect.uninterruptibleMask((restore) =>
@@ -313,17 +318,12 @@ export const makeSupervisor = (
                   // cannot make the next lifecycle request look like a conflict.
                   yield* release;
                   yield* Deferred.succeed(deferred, result);
-                  yield* shutdownIfIdle;
                 }).pipe(Effect.ensuring(release));
                 yield* FiberSet.run(ownedFibers, owner, { startImmediately: true });
                 return deferred;
               }),
             );
-            const awaitResult =
-              onWaiterInterrupt === undefined
-                ? Deferred.await(owned)
-                : Deferred.await(owned).pipe(Effect.onInterrupt(() => onWaiterInterrupt(owned)));
-            return yield* restore(awaitResult);
+            return yield* restore(Deferred.await(owned));
           }),
         );
         return yield* joinExit(result);
@@ -336,16 +336,16 @@ export const makeSupervisor = (
     ): Effect.Effect<SupervisorLaunchAttempt | undefined, StackError> =>
       Effect.gen(function* () {
         if (session === "fresh") yield* resetForSession(input);
-        if (input.desiredLifecycle !== "running") return undefined;
+        if (input.state.desiredLifecycle !== "running") return undefined;
         const selected = selectedOverride ?? (yield* Ref.get(active));
         const plan = activeExecutionPlan(input.plan, selected);
         const reservation = yield* runtime.ingress.acquire(input);
         const launched = yield* launcher
           .launch(plan)
-          .pipe(Effect.mapError(mapReconcileError), Effect.exit);
+          .pipe(Effect.mapError(mapRuntimeError), Effect.exit);
         if (Exit.isFailure(launched)) {
           const closed = reservation.fresh
-            ? yield* runtime.ingress.close.pipe(Effect.mapError(mapReconcileError), Effect.exit)
+            ? yield* runtime.ingress.close.pipe(Effect.mapError(mapRuntimeError), Effect.exit)
             : Exit.succeed(undefined);
           const launchCleanupProven = yield* launcher.cleanupProven;
           let cause: Cause.Cause<StackError> = launched.cause;
@@ -354,7 +354,7 @@ export const makeSupervisor = (
             yield* Ref.set(phase, "stopping");
             if (!reservation.fresh && !Exit.isFailure(closed)) {
               const fenced = yield* runtime.ingress.close.pipe(
-                Effect.mapError(mapReconcileError),
+                Effect.mapError(mapRuntimeError),
                 Effect.exit,
               );
               if (Exit.isFailure(fenced)) cause = Cause.combine(cause, fenced.cause);
@@ -364,11 +364,11 @@ export const makeSupervisor = (
         }
         const rollback: Effect.Effect<void, StackError> = Effect.gen(function* () {
           const workload = yield* launched.value.rollback.pipe(
-            Effect.mapError(mapReconcileError),
+            Effect.mapError(mapRuntimeError),
             Effect.exit,
           );
           const closed = reservation.fresh
-            ? yield* runtime.ingress.close.pipe(Effect.mapError(mapReconcileError), Effect.exit)
+            ? yield* runtime.ingress.close.pipe(Effect.mapError(mapRuntimeError), Effect.exit)
             : Exit.succeed(undefined);
           let cause: Cause.Cause<StackError> = Cause.empty;
           if (Exit.isFailure(workload)) cause = Cause.combine(cause, workload.cause);
@@ -398,15 +398,15 @@ export const makeSupervisor = (
       Effect.gen(function* () {
         yield* Ref.set(cleanupProven, true);
         const ingress = yield* runtime.ingress.close.pipe(
-          Effect.mapError(mapReconcileError),
+          Effect.mapError(mapCleanupError),
           Effect.exit,
         );
         const launched = destroy
           ? Exit.succeed(undefined)
-          : yield* launcher.stop.pipe(Effect.mapError(mapReconcileError), Effect.exit);
+          : yield* launcher.stop.pipe(Effect.mapError(mapCleanupError), Effect.exit);
         const driver = yield* runtime.driver
           .cleanup({ stackId: options.stackId, destroy })
-          .pipe(Effect.mapError(mapReconcileError), Effect.exit);
+          .pipe(Effect.mapError(mapCleanupError), Effect.exit);
         let cause: Cause.Cause<StackError> = Cause.empty;
         for (const result of [ingress, launched, driver])
           if (Exit.isFailure(result)) cause = Cause.combine(cause, result.cause);
@@ -422,7 +422,7 @@ export const makeSupervisor = (
       });
     const backend: LifecycleBackend = {
       preflight: runtime.preflight,
-      reconcile: launchBackend,
+      launch: launchBackend,
       cleanup: cleanupRuntime(false),
       destroyData: cleanupRuntime(true),
     };
@@ -460,7 +460,6 @@ export const makeSupervisor = (
         visit(capability);
         const input: LifecycleInput = {
           stackId: options.stackId,
-          desiredLifecycle: "running",
           state,
           definition,
           secrets: state.secrets,
@@ -621,7 +620,7 @@ export const makeSupervisor = (
       });
     const start = (startOptions?: { readonly config?: StackConfig }) =>
       Effect.gen(function* () {
-        yield* submitLifecycle("start", startOperation(startOptions), continueShutdown);
+        yield* submitLifecycle("start", startOperation(startOptions));
         return yield* snapshot();
       });
     const stopOperation = () =>
@@ -644,28 +643,26 @@ export const makeSupervisor = (
         }
         yield* Ref.set(phase, "stopped");
       });
-    const shutdownIfIdle = admission.withPermit(
+    const signalShutdownIfIdle = (): Effect.Effect<void> =>
       Effect.gen(function* () {
+        const lifecycle = yield* admission.withPermit(Ref.get(lifecycleActive));
+        if (lifecycle !== undefined) {
+          yield* Deferred.await(lifecycle.result);
+          return yield* signalShutdownIfIdle();
+        }
         const state = yield* read().pipe(Effect.exit);
         if (Exit.isFailure(state)) return;
-        const lifecycle = yield* Ref.get(lifecycleActive);
         const currentPhase = yield* Ref.get(phase);
         if (
-          lifecycle === undefined &&
           currentPhase !== "stopping" &&
           (state.value === undefined ||
             state.value.desiredLifecycle === "stopped" ||
             state.value.desiredLifecycle === "unconfigured")
         )
           yield* signalShutdown;
-      }),
-    );
-    const continueShutdown = <A, E>(owned: Deferred.Deferred<Exit.Exit<A, E>, never>) =>
-      FiberSet.run(ownedFibers, Deferred.await(owned).pipe(Effect.andThen(shutdownIfIdle)), {
-        startImmediately: true,
-      }).pipe(Effect.asVoid);
-    // An interrupted stop waiter still requests shutdown after the owned operation succeeds.
-    const stopWithShutdown = submitLifecycle("stop", stopOperation(), continueShutdown);
+      });
+    const shutdownIfIdle = signalShutdownIfIdle();
+    const stopWithShutdown = submitLifecycle("stop", stopOperation());
     const operation = <A>(effect: Effect.Effect<A, StackError>) =>
       effect.pipe(Effect.mapError((error) => rpcError(rpcTag(error), stateErrorMessage(error))));
     const destroyOperation = Effect.gen(function* () {
@@ -681,9 +678,7 @@ export const makeSupervisor = (
       yield* Ref.set(phase, "stopped");
       return result.value;
     });
-    const destroy = submitLifecycle("destroy", destroyOperation, continueShutdown).pipe(
-      Effect.asVoid,
-    );
+    const destroy = submitLifecycle("destroy", destroyOperation).pipe(Effect.asVoid);
     const logs = (query?: LogQuery): Effect.Effect<StackLogBatch, StackError> =>
       Effect.gen(function* () {
         // Capture lifecycle phase before reading the log store. A stopping snapshot stays live

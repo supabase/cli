@@ -131,7 +131,6 @@ const memoryLogStore = (entries: StackLogEntry[]): LogStore => ({
       return entry;
     }),
   read: () => Effect.succeed(entries),
-  stream: () => Stream.fromIterable(entries),
 });
 
 const ingress: SupervisorIngress = {
@@ -560,7 +559,6 @@ describe("production runtime composition", () => {
         const runtime = yield* factory.make(current.value);
         const input = {
           stackId,
-          desiredLifecycle: "running" as const,
           state: current.value,
           definition: compiled.definition,
           secrets: current.value.secrets,
@@ -1127,17 +1125,13 @@ describe("production runtime composition", () => {
           bootstrapDatabase: () => Effect.void,
         });
         const runtime = yield* factory.make(current.value);
-        yield* runtime.preflight(
-          {
-            stackId,
-            desiredLifecycle: "stopped",
-            state: current.value,
-            definition: compiled.definition,
-            secrets,
-            plan: compiled.executionPlan,
-          },
-          "cold",
-        );
+        yield* runtime.preflight({
+          stackId,
+          state: current.value,
+          definition: compiled.definition,
+          secrets,
+          plan: compiled.executionPlan,
+        });
         expect(yield* fs.exists(functionsRoot)).toBe(false);
         expect(prepared).toEqual(["database:database"]);
         yield* runtime.driver.cleanup({ stackId, destroy: false });
@@ -1205,17 +1199,13 @@ describe("production runtime composition", () => {
         });
         const runtime = yield* factory.make(current.value);
         const result = yield* runtime
-          .preflight(
-            {
-              stackId,
-              desiredLifecycle: "running",
-              state: current.value,
-              definition: compiled.definition,
-              secrets,
-              plan: compiled.executionPlan,
-            },
-            "cold",
-          )
+          .preflight({
+            stackId,
+            state: current.value,
+            definition: compiled.definition,
+            secrets,
+            plan: compiled.executionPlan,
+          })
           .pipe(Effect.exit);
         expect(Exit.isFailure(result)).toBe(true);
         if (Exit.isFailure(result)) {
@@ -1286,17 +1276,13 @@ describe("production runtime composition", () => {
         });
         const runtime = yield* factory.make(current.value);
         const result = yield* runtime
-          .preflight(
-            {
-              stackId,
-              desiredLifecycle: "running",
-              state: current.value,
-              definition: compiled.definition,
-              secrets,
-              plan: compiled.executionPlan,
-            },
-            "cold",
-          )
+          .preflight({
+            stackId,
+            state: current.value,
+            definition: compiled.definition,
+            secrets,
+            plan: compiled.executionPlan,
+          })
           .pipe(Effect.exit);
         expect(Exit.isFailure(result)).toBe(true);
         if (Exit.isFailure(result)) {
@@ -1360,17 +1346,13 @@ describe("production runtime composition", () => {
           bootstrapDatabase: () => Effect.void,
         });
         const runtime = yield* factory.make(current.value);
-        yield* runtime.preflight(
-          {
-            stackId,
-            desiredLifecycle: "running",
-            state: candidate,
-            definition: compiled.definition,
-            secrets: candidate.secrets,
-            plan: compiled.executionPlan,
-          },
-          "cold",
-        );
+        yield* runtime.preflight({
+          stackId,
+          state: candidate,
+          definition: compiled.definition,
+          secrets: candidate.secrets,
+          plan: compiled.executionPlan,
+        });
         const logStore = runtime.logStore;
         expect(logStore).toBeDefined();
         if (logStore === undefined) return;

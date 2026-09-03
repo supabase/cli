@@ -11,7 +11,6 @@ import {
   Ref,
   Scope,
   Schedule,
-  Stream,
 } from "effect";
 import { ChildProcessSpawner } from "effect/unstable/process";
 import { eagerCapabilities, type PlannedWorkload } from "../model/ExecutionPlan.ts";
@@ -269,14 +268,6 @@ const dynamicLogStore = (base: LogStore, knownSecrets: Ref.Ref<ReadonlySet<strin
           base
             .read(options)
             .pipe(Effect.map((entries) => entries.map((entry) => redactEntry(entry, known)))),
-        ),
-      ),
-    stream: (options) =>
-      Stream.unwrap(
-        secrets.pipe(
-          Effect.map((known) =>
-            base.stream(options).pipe(Stream.map((entry) => redactEntry(entry, known))),
-          ),
         ),
       ),
   };
@@ -665,10 +656,7 @@ export const makeProductionRuntimeFactory = (
               };
             });
 
-          const preflight = (
-            input: LifecycleInput,
-            mode: "cold" | "live",
-          ): Effect.Effect<void, StackError> =>
+          const preflight = (input: LifecycleInput): Effect.Effect<void, StackError> =>
             Effect.gen(function* () {
               if (!runtimeMatches(input.state.runtime, state.runtime))
                 return yield* new StackRuntimeMismatchError({
@@ -706,7 +694,7 @@ export const makeProductionRuntimeFactory = (
                 );
                 yield* Ref.set(hostRoute, route);
               }
-              if (input.state.runtime.kind === "native" && mode === "cold") {
+              if (input.state.runtime.kind === "native") {
                 for (const assignment of input.state.ports) {
                   const listener = input.definition.listeners[assignment.field];
                   yield* checkHostPort(listener.address, assignment.port, assignment.field).pipe(

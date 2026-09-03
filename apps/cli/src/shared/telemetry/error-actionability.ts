@@ -830,12 +830,6 @@ const externalActionabilityByTag: Record<string, ErrorActionabilityAdapter> = {
   }),
   SchemaError: () => ({ ...actionability.apiStatus, fingerprint_suffix: "api_response" }),
 
-  // @supabase/stack — StackError is a tagged error with a structured `code`
-  // field.
-  StackError: (error) =>
-    readString(error, "code") === "PORT_ALLOCATION"
-      ? { ...actionability.invalidConfig, fingerprint_suffix: "port_allocation" }
-      : actionability.unknown,
   InvalidStackIdentityError: () => actionability.invalidInput,
   InvalidProjectRootError: () => actionability.invalidInput,
   InvalidStackConfigError: () => actionability.invalidConfig,
@@ -843,7 +837,6 @@ const externalActionabilityByTag: Record<string, ErrorActionabilityAdapter> = {
   StackNotFoundError: () => actionability.invalidInput,
   StackOwnershipConflictError: () => actionability.invalidInput,
   StackRuntimeMismatchError: () => actionability.invalidConfig,
-  StackDefinitionRequiredError: () => actionability.startStack,
   StackMustBeStoppedError: () => actionability.stopStack,
   StackLifecycleConflictError: () => actionability.startStack,
   StackStateInvalidError: () => actionability.invalidConfig,
@@ -852,14 +845,12 @@ const externalActionabilityByTag: Record<string, ErrorActionabilityAdapter> = {
   StackSecretMismatchError: () => actionability.invalidConfig,
   InvalidJwtSigningMaterialError: () => actionability.invalidConfig,
   PortUnavailableError: () => actionability.invalidConfig,
-  GatewayAuthenticationError: () => actionability.startStack,
   GatewayActivationError: () => actionability.startStack,
   StackPreparationError: () => actionability.startStack,
   ArtifactIntegrityError: () => actionability.externalNetwork,
   ContainerPullError: () => actionability.externalNetwork,
-  StackReconciliationError: () => actionability.startStack,
-  ServiceStartError: () => actionability.startStack,
-  ServiceReadinessError: () => actionability.startStack,
+  StackRuntimeError: () => actionability.startStack,
+  StackCleanupError: () => actionability.stopStack,
   ContainerEngineError: () => actionability.dockerNotRunning,
   StackDestructionError: () => actionability.stopStack,
   BinaryNotFoundError: () => actionability.invalidConfig,
@@ -875,101 +866,14 @@ const externalActionabilityByTag: Record<string, ErrorActionabilityAdapter> = {
     error["daemonDown"] === true
       ? { ...actionability.dockerNotRunning, fingerprint_suffix: "docker_not_running" }
       : { ...actionability.externalNetwork, fingerprint_suffix: "registry_pull" },
-  StackBuildError: (error) => {
-    const reason = readString(error, "reason");
-    if (reason === "invalid_config") {
-      return { ...actionability.invalidConfig, fingerprint_suffix: "invalid_config" };
-    }
-    if (reason === "docker_not_running") {
-      return { ...actionability.dockerNotRunning, fingerprint_suffix: "docker_not_running" };
-    }
-    if (reason === "asset_preparation") {
-      return { ...actionability.externalNetwork, fingerprint_suffix: "asset_preparation" };
-    }
-    return { ...actionability.impossibleState, fingerprint_suffix: "internal_build" };
-  },
-  PortConflictError: () => ({
-    ...actionability.invalidConfig,
-    fingerprint_suffix: "port_conflict",
-  }),
   PortAllocationError: () => ({
     ...actionability.invalidConfig,
     fingerprint_suffix: "port_allocation",
   }),
-  AtomicClaimUnsupportedError: () => ({
-    ...actionability.invalidInput,
-    fingerprint_suffix: "managed_identity",
-  }),
   StackNotRunningError: () => actionability.startStack,
-  StackReadinessError: () => actionability.startStack,
-  StackUnavailableError: () => actionability.startStack,
-  StackRpcTransportError: () => ({
-    ...actionability.startStack,
-    fingerprint_suffix: "daemon_transport",
-  }),
   StackRpcProtocolError: () => ({
     ...actionability.impossibleState,
     fingerprint_suffix: "daemon_protocol",
-  }),
-  NoRunningStackError: () => actionability.startStack,
-  DaemonUpgradeRequired: () => ({
-    ...actionability.startStack,
-    fingerprint_suffix: "daemon_upgrade_required",
-  }),
-  UpgradePreflightError: () => ({
-    ...actionability.startStack,
-    fingerprint_suffix: "daemon_upgrade_preflight",
-  }),
-  UpgradeRestartError: () => ({
-    ...actionability.startStack,
-    fingerprint_suffix: "daemon_upgrade_restart",
-  }),
-  StopTimeout: () => ({
-    ...actionability.stopStack,
-    fingerprint_suffix: "daemon_stop_timeout",
-  }),
-  InvalidControlOwnershipIdError: () => ({
-    ...actionability.impossibleState,
-    fingerprint_suffix: "managed_control_ownership",
-  }),
-  ControlBindError: () => ({
-    ...actionability.startStack,
-    fingerprint_suffix: "managed_control_bind",
-  }),
-  ControlTransportError: () => ({
-    ...actionability.startStack,
-    fingerprint_suffix: "managed_control_transport",
-  }),
-  ControlProtocolError: () => ({
-    ...actionability.impossibleState,
-    fingerprint_suffix: "managed_control_protocol",
-  }),
-  ControlProtocolMismatchError: () => ({
-    ...actionability.impossibleState,
-    fingerprint_suffix: "managed_control_protocol",
-  }),
-  ControlAddressConflictError: () => ({
-    ...actionability.startStack,
-    fingerprint_suffix: "managed_control_address_conflict",
-  }),
-  ControlStopConflictError: () => ({
-    ...actionability.impossibleState,
-    fingerprint_suffix: "managed_control_stop_conflict",
-  }),
-  ControlMaintenanceBusyError: () => ({
-    error_kind: CliErrorKind.UserActionable,
-    error_category: CliErrorCategory.InvalidConfig,
-    has_suggestion: true,
-    suggestion_type: CliSuggestionType.RunCommand,
-    fingerprint_suffix: "managed_control_maintenance_busy",
-  }),
-  InvalidManagedStackDocumentError: () => ({
-    ...actionability.invalidConfig,
-    fingerprint_suffix: "managed_document",
-  }),
-  ManagedStackControlRequiredError: () => ({
-    ...actionability.stopStack,
-    fingerprint_suffix: "managed_control_required",
   }),
   ManagedStackAttachedError: () => ({
     ...actionability.stopStack,
@@ -1011,20 +915,6 @@ const externalActionabilityByTag: Record<string, ErrorActionabilityAdapter> = {
  */
 export function isClassifiedExternalErrorTag(tag: string): boolean {
   return Object.hasOwn(externalActionabilityByTag, tag);
-}
-
-/**
- * A wrapper's preserved `cause`, but only when classifying it cannot degrade
- * the result: the cause must carry its own declaration or a known external
- * adapter tag, otherwise the wrapper's own classification is more truthful.
- */
-function classifiableCause(error: ErrorRecord): ErrorRecord | undefined {
-  const cause = error["cause"];
-  if (!isErrorRecord(cause)) return undefined;
-  if (readDeclaration(cause) !== undefined) return cause;
-  const causeTag = readErrorTag(cause);
-  if (causeTag !== undefined && Object.hasOwn(externalActionabilityByTag, causeTag)) return cause;
-  return undefined;
 }
 
 function classifyShowHelp(error: ErrorRecord, depth: number): CliErrorActionability | undefined {
@@ -1096,23 +986,6 @@ function classifyAtDepth(error: unknown, depth: number): CliErrorActionability {
     return classifyAtDepth(error["cause"], depth + 1);
   }
 
-  // @supabase/stack wrapper errors preserve the underlying tagged failure in
-  // `cause`; classify it when it is more specific than the wrapper (e.g. a
-  // daemon-down DockerPullError inside an asset-preparation StackBuildError,
-  // or a user's CliConfigParseError inside a reason-less StackBuildError).
-  // Explicit `invalid_config` StackBuildErrors are deliberate user-facing
-  // config verdicts and are never overridden by their cause.
-  if (
-    isErrorRecord(error) &&
-    tag === "StackBuildError" &&
-    readString(error, "reason") !== "invalid_config"
-  ) {
-    const cause = classifiableCause(error);
-    if (cause !== undefined) {
-      return classifyAtDepth(cause, depth + 1);
-    }
-  }
-
   // DownloadError recurses ONLY into local filesystem causes (PlatformError:
   // unwritable cache, extraction failure). HTTP causes stay on the wrapper —
   // the HttpClientError adapter's 401/403 → auth/permission policy is
@@ -1121,33 +994,6 @@ function classifyAtDepth(error: unknown, depth: number): CliErrorActionability {
     const cause = error["cause"];
     if (isErrorRecord(cause) && readErrorTag(cause) === "PlatformError") {
       return classifyAtDepth(cause, depth + 1);
-    }
-  }
-
-  // ManagedStackInitializationError is only a wrapper: the real provisioning
-  // failure (a Docker pull, a config parse, ...) is preserved in `cause`, and
-  // the generic initialization verdict would hide the actionable one.
-  if (isErrorRecord(error) && tag === "ManagedStackInitializationError") {
-    const cause = classifiableCause(error);
-    if (cause !== undefined) return classifyAtDepth(cause, depth + 1);
-  }
-
-  // @supabase/stack's public wrapper is itself a tagged error. Handle it
-  // before generic tag dispatch so a preserved classifiable cause (for
-  // example DockerPullError or a native exception) is not hidden by the
-  // wrapper's own generic StackError adapter.
-  if (isErrorRecord(error) && tag === "StackError") {
-    const cause = classifiableCause(error);
-    if (cause !== undefined) return classifyAtDepth(cause, depth + 1);
-    // toStackError wraps arbitrary thrown errors with code "UNKNOWN"; a
-    // native JS exception cause is a stack-internal crash and must land in
-    // the internal-bug bucket, matching the top-level native-exception rule.
-    if (isNativeJsExceptionName(readErrorName(error["cause"]))) {
-      return classifyAtDepth(error["cause"], depth + 1);
-    }
-    const classify = externalActionabilityByTag["StackError"];
-    if (classify !== undefined) {
-      return toActionability(classify(error), "tag", "StackError");
     }
   }
 

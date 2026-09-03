@@ -28,9 +28,6 @@ export class StackRuntimeMismatchError extends Data.TaggedError(
   "StackRuntimeMismatchError",
 )<StackErrorFields> {}
 
-export class StackDefinitionRequiredError extends Data.TaggedError(
-  "StackDefinitionRequiredError",
-)<StackErrorFields> {}
 export class StackNotRunningError extends Data.TaggedError(
   "StackNotRunningError",
 )<StackErrorFields> {}
@@ -64,9 +61,6 @@ export class PortUnavailableError extends Data.TaggedError(
   "PortUnavailableError",
 )<StackErrorFields> {}
 
-export class GatewayAuthenticationError extends Data.TaggedError(
-  "GatewayAuthenticationError",
-)<StackErrorFields> {}
 export class GatewayActivationError extends Data.TaggedError(
   "GatewayActivationError",
 )<StackErrorFields> {}
@@ -79,13 +73,8 @@ export class ArtifactIntegrityError extends Data.TaggedError(
 )<StackErrorFields> {}
 export class ContainerPullError extends Data.TaggedError("ContainerPullError")<StackErrorFields> {}
 
-export class StackReconciliationError extends Data.TaggedError(
-  "StackReconciliationError",
-)<StackErrorFields> {}
-export class ServiceStartError extends Data.TaggedError("ServiceStartError")<StackErrorFields> {}
-export class ServiceReadinessError extends Data.TaggedError(
-  "ServiceReadinessError",
-)<StackErrorFields> {}
+export class StackRuntimeError extends Data.TaggedError("StackRuntimeError")<StackErrorFields> {}
+export class StackCleanupError extends Data.TaggedError("StackCleanupError")<StackErrorFields> {}
 export class ContainerEngineError extends Data.TaggedError(
   "ContainerEngineError",
 )<StackErrorFields> {}
@@ -102,7 +91,6 @@ export const STACK_ERROR_TAGS = [
   "StackNotFoundError",
   "StackOwnershipConflictError",
   "StackRuntimeMismatchError",
-  "StackDefinitionRequiredError",
   "StackNotRunningError",
   "StackMustBeStoppedError",
   "StackLifecycleConflictError",
@@ -113,14 +101,12 @@ export const STACK_ERROR_TAGS = [
   "InvalidJwtSigningMaterialError",
   "PortAllocationError",
   "PortUnavailableError",
-  "GatewayAuthenticationError",
   "GatewayActivationError",
   "StackPreparationError",
   "ArtifactIntegrityError",
   "ContainerPullError",
-  "StackReconciliationError",
-  "ServiceStartError",
-  "ServiceReadinessError",
+  "StackRuntimeError",
+  "StackCleanupError",
   "ContainerEngineError",
   "StackDestructionError",
 ] as const;
@@ -138,7 +124,6 @@ export type StackError =
   | StackNotFoundError
   | StackOwnershipConflictError
   | StackRuntimeMismatchError
-  | StackDefinitionRequiredError
   | StackNotRunningError
   | StackMustBeStoppedError
   | StackLifecycleConflictError
@@ -149,92 +134,122 @@ export type StackError =
   | InvalidJwtSigningMaterialError
   | PortAllocationError
   | PortUnavailableError
-  | GatewayAuthenticationError
   | GatewayActivationError
   | StackPreparationError
   | ArtifactIntegrityError
   | ContainerPullError
-  | StackReconciliationError
-  | ServiceStartError
-  | ServiceReadinessError
+  | StackRuntimeError
+  | StackCleanupError
   | ContainerEngineError
   | StackDestructionError;
 
-export type CreateStackError =
-  | InvalidStackIdentityError
-  | InvalidProjectRootError
-  | StackOwnershipConflictError
-  | StackRuntimeMismatchError
-  | ContainerEngineError
-  | StackStateInvalidError
-  | StackStateFormatUnsupportedError;
-export type OpenStackError =
-  | StackNotFoundError
-  | StackOwnershipConflictError
-  | StackRuntimeMismatchError
-  | InvalidProjectRootError
-  | StackStateInvalidError
-  | StackStateFormatUnsupportedError
-  | StackUpgradeRequiredError;
-export type StackDiscoveryError =
-  | InvalidStackIdentityError
-  | InvalidProjectRootError
-  | StackStateInvalidError
-  | StackStateFormatUnsupportedError;
-export type StackStatusError =
-  | StackNotFoundError
-  | StackOwnershipConflictError
-  | StackLifecycleConflictError
-  | StackStateInvalidError
-  | StackStateFormatUnsupportedError
-  | StackUpgradeRequiredError;
-export type StackCredentialsError =
-  | StackNotFoundError
-  | StackNotRunningError
-  | StackOwnershipConflictError
-  | StackLifecycleConflictError
-  | StackSecretMismatchError
-  | InvalidJwtSigningMaterialError;
-export type PrepareStackError =
-  | StackPreparationError
-  | ArtifactIntegrityError
-  | ContainerPullError
-  | StackOwnershipConflictError
-  | StackStateInvalidError
-  | StackLifecycleConflictError;
-export type StackStartError =
-  | InvalidStackConfigError
-  | StackDefinitionRequiredError
-  | StackVersionUnsupportedError
-  | StackOwnershipConflictError
-  | StackNotRunningError
-  | StackMustBeStoppedError
-  | StackLifecycleConflictError
-  | StackStateInvalidError
-  | StackStateFormatUnsupportedError
-  | StackUpgradeRequiredError
-  | StackSecretMismatchError
-  | InvalidJwtSigningMaterialError
-  | PortAllocationError
-  | PortUnavailableError
-  | StackPreparationError
-  | ArtifactIntegrityError
-  | ContainerPullError
-  | StackReconciliationError
-  | ServiceStartError
-  | ServiceReadinessError
-  | ContainerEngineError;
+type ErrorByTag<Tag extends StackErrorTag> = Extract<StackError, { _tag: Tag }>;
+
+export const CREATE_STACK_ERROR_TAGS = [
+  "InvalidStackIdentityError",
+  "InvalidProjectRootError",
+  "StackOwnershipConflictError",
+  "StackRuntimeMismatchError",
+  "ContainerEngineError",
+  "StackStateInvalidError",
+  "StackStateFormatUnsupportedError",
+] as const satisfies ReadonlyArray<StackErrorTag>;
+export type CreateStackError = ErrorByTag<(typeof CREATE_STACK_ERROR_TAGS)[number]>;
+
+export const OPEN_STACK_ERROR_TAGS = [
+  "StackNotFoundError",
+  "StackOwnershipConflictError",
+  "StackRuntimeMismatchError",
+  "InvalidProjectRootError",
+  "StackStateInvalidError",
+  "StackStateFormatUnsupportedError",
+  "StackUpgradeRequiredError",
+] as const satisfies ReadonlyArray<StackErrorTag>;
+export type OpenStackError = ErrorByTag<(typeof OPEN_STACK_ERROR_TAGS)[number]>;
+
+export const STACK_DISCOVERY_ERROR_TAGS = [
+  "InvalidStackIdentityError",
+  "InvalidProjectRootError",
+  "StackStateInvalidError",
+  "StackStateFormatUnsupportedError",
+] as const satisfies ReadonlyArray<StackErrorTag>;
+export type StackDiscoveryError = ErrorByTag<(typeof STACK_DISCOVERY_ERROR_TAGS)[number]>;
+
+export const STACK_STATUS_ERROR_TAGS = [
+  "StackNotFoundError",
+  "StackOwnershipConflictError",
+  "StackLifecycleConflictError",
+  "StackStateInvalidError",
+  "StackStateFormatUnsupportedError",
+  "StackUpgradeRequiredError",
+] as const satisfies ReadonlyArray<StackErrorTag>;
+export type StackStatusError = ErrorByTag<(typeof STACK_STATUS_ERROR_TAGS)[number]>;
+
+export const STACK_CREDENTIALS_ERROR_TAGS = [
+  "StackNotFoundError",
+  "StackNotRunningError",
+  "StackOwnershipConflictError",
+  "StackLifecycleConflictError",
+  "StackSecretMismatchError",
+  "InvalidJwtSigningMaterialError",
+] as const satisfies ReadonlyArray<StackErrorTag>;
+export type StackCredentialsError = ErrorByTag<(typeof STACK_CREDENTIALS_ERROR_TAGS)[number]>;
+
+export const PREPARE_STACK_ERROR_TAGS = [
+  "StackPreparationError",
+  "ArtifactIntegrityError",
+  "ContainerPullError",
+  "StackOwnershipConflictError",
+  "StackStateInvalidError",
+  "StackLifecycleConflictError",
+] as const satisfies ReadonlyArray<StackErrorTag>;
+export type PrepareStackError = ErrorByTag<(typeof PREPARE_STACK_ERROR_TAGS)[number]>;
+
+export const STACK_START_ERROR_TAGS = [
+  "InvalidStackConfigError",
+  "StackVersionUnsupportedError",
+  "StackOwnershipConflictError",
+  "StackNotRunningError",
+  "StackMustBeStoppedError",
+  "StackLifecycleConflictError",
+  "StackStateInvalidError",
+  "StackStateFormatUnsupportedError",
+  "StackUpgradeRequiredError",
+  "StackSecretMismatchError",
+  "InvalidJwtSigningMaterialError",
+  "PortAllocationError",
+  "PortUnavailableError",
+  "StackPreparationError",
+  "ArtifactIntegrityError",
+  "ContainerPullError",
+  "StackRuntimeError",
+  "StackCleanupError",
+  "ContainerEngineError",
+] as const satisfies ReadonlyArray<StackErrorTag>;
+export type StackStartError = ErrorByTag<(typeof STACK_START_ERROR_TAGS)[number]>;
+
 /** Stable maintenance stop reports cleanup failures as lifecycle conflicts with their message. */
-export type StackStopError = StackOwnershipConflictError | StackLifecycleConflictError;
-export type StackLogsError =
-  | StackNotFoundError
-  | StackNotRunningError
-  | StackStateInvalidError
-  | StackOwnershipConflictError
-  | StackLifecycleConflictError;
-export type DestroyStackError =
-  | StackDestructionError
-  | StackNotFoundError
-  | StackOwnershipConflictError
-  | StackLifecycleConflictError
-  | ContainerEngineError;
+export const STACK_STOP_ERROR_TAGS = [
+  "StackOwnershipConflictError",
+  "StackLifecycleConflictError",
+] as const satisfies ReadonlyArray<StackErrorTag>;
+export type StackStopError = ErrorByTag<(typeof STACK_STOP_ERROR_TAGS)[number]>;
+
+export const STACK_LOGS_ERROR_TAGS = [
+  "StackNotFoundError",
+  "StackNotRunningError",
+  "StackStateInvalidError",
+  "StackOwnershipConflictError",
+  "StackLifecycleConflictError",
+] as const satisfies ReadonlyArray<StackErrorTag>;
+export type StackLogsError = ErrorByTag<(typeof STACK_LOGS_ERROR_TAGS)[number]>;
+
+export const DESTROY_STACK_ERROR_TAGS = [
+  "StackDestructionError",
+  "StackNotFoundError",
+  "StackOwnershipConflictError",
+  "StackLifecycleConflictError",
+  "ContainerEngineError",
+  "StackCleanupError",
+] as const satisfies ReadonlyArray<StackErrorTag>;
+export type DestroyStackError = ErrorByTag<(typeof DESTROY_STACK_ERROR_TAGS)[number]>;

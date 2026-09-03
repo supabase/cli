@@ -3,7 +3,7 @@ import { Cause, Effect, Exit, Layer, Option } from "effect";
 import { start, type StartOperations, type StartStack } from "./start.handler.ts";
 import {
   CAPABILITY_NAMES,
-  ServiceStartError,
+  StackRuntimeError,
   StackIdSchema,
   StackMustBeStoppedError,
 } from "@supabase/stack/effect";
@@ -14,7 +14,7 @@ describe("start handler", () => {
   it.live("preserves the runtime startup failure tag through the command boundary", () => {
     const out = mockOutput({ interactive: false });
     const stack: StartStack = {
-      start: () => Effect.fail(new ServiceStartError({ message: "auth failed" })),
+      start: () => Effect.fail(new StackRuntimeError({ message: "auth failed" })),
     };
     const operations: StartOperations = {
       createStack: () => Effect.succeed(stack),
@@ -30,8 +30,8 @@ describe("start handler", () => {
           expect(Exit.isFailure(exit)).toBe(true);
           if (Exit.isFailure(exit)) {
             const failure = Option.getOrUndefined(Cause.findErrorOption(exit.cause));
-            expect(failure).toBeInstanceOf(ServiceStartError);
-            if (failure instanceof ServiceStartError) expect(failure.message).toBe("auth failed");
+            expect(failure).toBeInstanceOf(StackRuntimeError);
+            if (failure instanceof StackRuntimeError) expect(failure.message).toBe("auth failed");
           }
         }),
       ),
