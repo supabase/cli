@@ -479,13 +479,21 @@ describe("functions serve runtime template (offline)", () => {
         );
 
         const diagnosticContainers = [kongContainer, runtimeContainer] as const;
-        const [customResponse, aliasResponse, nestedResponse] = await Promise.all([
-          fetchColdFunction(`${functionsUrl}/custom`, diagnosticContainers, {
+        const customResponse = await fetchColdFunction(
+          `${functionsUrl}/custom`,
+          diagnosticContainers,
+          {
             headers: { Origin: "http://localhost:3000" },
-          }),
-          fetchColdFunction(`${functionsUrl}/custom-alias`, diagnosticContainers),
-          fetchColdFunction(`${functionsUrl}/nested-worker-path`, diagnosticContainers),
-        ]);
+          },
+        );
+        const aliasResponse = await fetchColdFunction(
+          `${functionsUrl}/custom-alias`,
+          diagnosticContainers,
+        );
+        const nestedResponse = await fetchColdFunction(
+          `${functionsUrl}/nested-worker-path`,
+          diagnosticContainers,
+        );
         expect(customResponse.status).toBe(200);
         expect(customResponse.headers.get("x-custom-id")).toBe("abc123");
         expect(customResponse.headers.get("x-function-slug")).toBe("custom");
