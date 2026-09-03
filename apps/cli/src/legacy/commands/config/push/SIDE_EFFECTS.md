@@ -82,14 +82,18 @@ the group it belongs to ships for another reason.
 Some declared properties have no Management API field at all and are only
 reported, never pushed: `db.major_version`,
 `db.pooler.{pool_mode,default_pool_size,max_client_conn}`,
-`auth.oauth_server.{enabled,allow_dynamic_registration,authorization_url_path}`,
-plus any routed change belonging to a resource whose local gate is off (e.g.
-a declared `auth.*` value while `auth.enabled = false`) — these are reported
-in the "no Management API field" `Note:` line. Separately, a handful of
-declared, gated-on values can't be structurally expressed by their encoder —
-`api.enabled = true` with no `api.schemas` declared, or no SMS provider
-locally enabled while an SMS-family value changed — reported in their own
-`Note:` line with the specific reason. See Output below for both.
+`auth.oauth_server.{enabled,allow_dynamic_registration,authorization_url_path}`
+— these are reported in the "no Management API field" `Note:` line. A
+resource whose local gate is off (e.g. a declared `auth.*` value while
+`auth.enabled = false`) is NOT reported there: the projection's
+disabled-sentinel prune already removes its other declared keys before
+diffing, so it stays silently `disabled` in text mode (reported as
+`disabled` in the JSON payload's `services[]` entry — see Output below).
+Separately, a handful of declared, gated-on values can't be structurally
+expressed by their encoder — `api.enabled = true` with no `api.schemas`
+declared, or no SMS provider locally enabled while an SMS-family value
+changed — reported in their own `Note:` line with the specific reason. See
+Output below for both.
 
 ## Environment Variables
 
@@ -169,10 +173,10 @@ After the resource loop, up to six `Note:` lines report anything the push couldn
 or had to work around:
 
 ```
-Note: 2 declared properties have no Management API field and were not pushed: db.pooler.pool_mode, db.major_version (change them from the dashboard).
+Note: 2 declared properties have no Management API field and were not pushed: db.major_version, db.pooler.pool_mode (change them from the dashboard).
 Note: 1 declared property could not be encoded and was not pushed: api.enabled (enabling the Data API needs at least one schema in api.schemas)
 Note: 1 declared property is not managed by config push and was not compared; run `supabase config diff` to list them.
-Note: 1 undeclared property had to be sent alongside a declared change and was written at its config default: db.network_restrictions.allowed_cidrs_v6
+Note: 1 undeclared property had to be sent alongside a declared change and was written at its config default: db.network_restrictions.allowed_cidrs_v6 (the values shown in the confirmation block were applied).
 Note: 1 credential value was not pushed (empty or unresolved env reference): auth.captcha.secret
 Note: 12 remote properties are not declared in supabase/config.toml and were left unchanged (config push no longer resets undeclared properties to their defaults; run `supabase config diff` to inspect).
 ```

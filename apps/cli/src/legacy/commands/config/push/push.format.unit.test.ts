@@ -346,7 +346,7 @@ describe("legacyPushNotes", () => {
         forced: [{ path: ["db", "network_restrictions", "allowed_cidrs_v6"], value: [] }],
       }),
     ).toBe(
-      "Note: 1 undeclared property had to be sent alongside a declared change and was written at its config default: db.network_restrictions.allowed_cidrs_v6\n",
+      "Note: 1 undeclared property had to be sent alongside a declared change and was written at its config default: db.network_restrictions.allowed_cidrs_v6 (the values shown in the confirmation block were applied).\n",
     );
     expect(
       legacyPushNotes({
@@ -358,7 +358,45 @@ describe("legacyPushNotes", () => {
       }),
     ).toBe(
       "Note: 2 undeclared properties had to be sent alongside a declared change and were written at their config default: " +
-        "db.network_restrictions.allowed_cidrs_v6, storage.vector.max_indexes\n",
+        "db.network_restrictions.allowed_cidrs_v6, storage.vector.max_indexes (the values shown in the confirmation block were applied).\n",
+    );
+  });
+
+  test("forced: globally path-sorted even when passed out of order", () => {
+    expect(
+      legacyPushNotes({
+        ...EMPTY_NOTES,
+        forced: [
+          { path: ["storage", "vector", "max_indexes"], value: 100 },
+          { path: ["db", "network_restrictions", "allowed_cidrs_v6"], value: [] },
+        ],
+      }),
+    ).toBe(
+      "Note: 2 undeclared properties had to be sent alongside a declared change and were written at their config default: " +
+        "db.network_restrictions.allowed_cidrs_v6, storage.vector.max_indexes (the values shown in the confirmation block were applied).\n",
+    );
+  });
+
+  test("unencodable: globally path-sorted even when passed out of order", () => {
+    expect(
+      legacyPushNotes({
+        ...EMPTY_NOTES,
+        unencodable: [
+          {
+            path: ["auth", "sms", "twilio", "enabled"],
+            reason:
+              "config push can switch between SMS providers but cannot turn the active provider off; disable phone sign-in or use the dashboard",
+          },
+          {
+            path: ["api", "enabled"],
+            reason: "enabling the Data API needs at least one schema in api.schemas",
+          },
+        ],
+      }),
+    ).toBe(
+      "Note: 2 declared properties could not be encoded and were not pushed: " +
+        "api.enabled (enabling the Data API needs at least one schema in api.schemas), " +
+        "auth.sms.twilio.enabled (config push can switch between SMS providers but cannot turn the active provider off; disable phone sign-in or use the dashboard)\n",
     );
   });
 
@@ -409,7 +447,7 @@ describe("legacyPushNotes", () => {
       "Note: 1 declared property has no Management API field and was not pushed: db.major_version (change them from the dashboard).\n" +
         "Note: 1 declared property could not be encoded and was not pushed: api.enabled (enabling the Data API needs at least one schema in api.schemas)\n" +
         "Note: 1 declared property is not managed by config push and was not compared; run `supabase config diff` to list them.\n" +
-        "Note: 1 undeclared property had to be sent alongside a declared change and was written at its config default: db.network_restrictions.allowed_cidrs_v6\n" +
+        "Note: 1 undeclared property had to be sent alongside a declared change and was written at its config default: db.network_restrictions.allowed_cidrs_v6 (the values shown in the confirmation block were applied).\n" +
         "Note: 1 credential value was not pushed (empty or unresolved env reference): auth.captcha.secret\n" +
         "Note: 12 remote properties are not declared in supabase/config.toml and were left unchanged (config push no longer resets undeclared properties to their defaults; run `supabase config diff` to inspect).\n",
     );
@@ -436,6 +474,7 @@ describe("legacyPushSummaryMessage", () => {
     unencodable: [],
     forced: [],
     unmanaged: [],
+    unmanagedCount: 0,
     secrets: [],
     authWriteRan: false,
     declinedAddons: [],
@@ -518,11 +557,12 @@ describe("legacyPushSummaryMessage", () => {
     );
   });
 
-  test("caveat: unmanaged, singular and plural", () => {
+  test("caveat: unmanagedCount, singular and plural", () => {
     expect(
       legacyPushSummaryMessage({
         ...EMPTY_SUMMARY_INPUT,
         unmanaged: [["auth", "oauth_server", "enabled"]],
+        unmanagedCount: 1,
       }),
     ).toBe(
       "Nothing to push: the project already matches the declared properties. 1 declared property is not managed by config push.",
@@ -534,9 +574,29 @@ describe("legacyPushSummaryMessage", () => {
           ["auth", "oauth_server", "enabled"],
           ["auth", "oauth_server", "allow_dynamic_registration"],
         ],
+        unmanagedCount: 2,
       }),
     ).toBe(
       "Nothing to push: the project already matches the declared properties. 2 declared properties are not managed by config push.",
+    );
+  });
+
+  test("caveat: unmanagedCount drives the sentence even when it diverges from unmanaged.length", () => {
+    // `unmanagedCount` (gate-filtered, matching `legacyPushNotes`' stderr note) can be smaller
+    // than the payload's own unfiltered `unmanaged` list — a gated-off resource's own `unmanaged`
+    // entries are excluded from the count but stay in the full list (D5).
+    expect(
+      legacyPushSummaryMessage({
+        ...EMPTY_SUMMARY_INPUT,
+        unmanaged: [
+          ["auth", "oauth_server", "enabled"],
+          ["auth", "oauth_server", "allow_dynamic_registration"],
+          ["db", "pooler", "pool_mode"],
+        ],
+        unmanagedCount: 1,
+      }),
+    ).toBe(
+      "Nothing to push: the project already matches the declared properties. 1 declared property is not managed by config push.",
     );
   });
 
@@ -619,6 +679,7 @@ describe("legacyPushSummaryMessage", () => {
         unencodable: [],
         forced: [],
         unmanaged: [["auth", "oauth_server", "enabled"]],
+        unmanagedCount: 1,
         secrets: [NOT_SET_SECRET],
         authWriteRan: false,
         declinedAddons: ["auth_mfa_phone"],
@@ -661,6 +722,7 @@ describe("legacyPushPayload", () => {
     ],
     forced: [{ path: ["db", "network_restrictions", "allowed_cidrs_v6"], value: [] }],
     unmanaged: [["auth", "oauth_server", "enabled"]],
+    unmanagedCount: 1,
     secrets: [SENT_SECRET, UNCHANGED_SECRET, NOT_SET_SECRET, GATED_SECRET],
     authWriteRan: true,
     declinedAddons: ["auth_mfa_phone"],
@@ -715,6 +777,7 @@ describe("legacyPushPayload", () => {
         unencodable: [],
         forced: [],
         unmanaged: [],
+        unmanagedCount: 0,
         secrets: [],
         authWriteRan: false,
         declinedAddons: [],

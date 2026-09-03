@@ -8,6 +8,7 @@ import {
   legacyConfigRenderValue,
   type LegacyConfigApiScope,
 } from "../config.format.ts";
+import { legacyComparePaths } from "./push.paths.ts";
 import type { LegacyPushResource } from "./push.plan.ts";
 import type { LegacyPushSecretReport } from "./push.secrets.ts";
 
@@ -70,6 +71,16 @@ const RESOURCE_DISPLAY_NAME: Readonly<Record<LegacyPushResource, string>> = {
   auth: "Auth",
   storage: "Storage",
 };
+
+/** Global path order, applied wherever entries from more than one resource's encoder output get
+ * concatenated (`legacyPushNotes`/`legacyPushPayload`) — each encoder already sorts its OWN
+ * `unencodable`/`forced` list, but the handler appends those lists across resources in push order,
+ * not path order. */
+function sortByPath<T extends { readonly path: ReadonlyArray<string> }>(
+  entries: ReadonlyArray<T>,
+): ReadonlyArray<T> {
+  return [...entries].sort((a, b) => legacyComparePaths(a.path, b.path));
+}
 
 /** One `<path> [<label>]` / `local:` / `remote:` block, always followed by a blank line — the
  * same shape `legacyConfigRenderChangeLines` uses for ordinary property changes, so appending any
@@ -218,7 +229,7 @@ export function legacyPushNotes(input: LegacyPushNotesInput): string {
 
   if (input.unencodable.length > 0) {
     const n = input.unencodable.length;
-    const rendered = input.unencodable
+    const rendered = sortByPath(input.unencodable)
       .map((entry) => `${legacyConfigRenderPath(entry.path)} (${entry.reason})`)
       .join(", ");
     lines.push(
@@ -235,8 +246,11 @@ export function legacyPushNotes(input: LegacyPushNotesInput): string {
 
   if (input.forced.length > 0) {
     const n = input.forced.length;
+    const rendered = sortByPath(input.forced)
+      .map((entry) => legacyConfigRenderPath(entry.path))
+      .join(", ");
     lines.push(
-      `Note: ${legacyConfigPlural(n, "undeclared property", "undeclared properties")} had to be sent alongside a declared change and ${n === 1 ? "was" : "were"} written at ${n === 1 ? "its" : "their"} config default: ${input.forced.map((entry) => legacyConfigRenderPath(entry.path)).join(", ")}`,
+      `Note: ${legacyConfigPlural(n, "undeclared property", "undeclared properties")} had to be sent alongside a declared change and ${n === 1 ? "was" : "were"} written at ${n === 1 ? "its" : "their"} config default: ${rendered} (the values shown in the confirmation block were applied).`,
     );
   }
 
@@ -273,6 +287,11 @@ export interface LegacyPushPayloadInput {
   /** `changeSet.unmanaged`, unfiltered — the note above is count-only, the payload keeps the
    *  full list (including paths under a gated-off resource). */
   readonly unmanaged: ReadonlyArray<ReadonlyArray<string>>;
+  /** Count of `unmanaged` entries NOT already covered by a disabled resource's own `disabled`
+   *  status — the same gate-filtered count `legacyPushNotes`'s note reports, used here so the
+   *  json/stream-json summary sentence agrees with the stderr note instead of counting the
+   *  unfiltered `unmanaged` list, which the payload's own `unmanaged` field keeps in full. */
+  readonly unmanagedCount: number;
   /** Every declared secret's decision, unfiltered — partitions `changeSet.masked` across all
    *  five buckets below (`gated` is now included, unlike the pre-fix-pass payload). */
   readonly secrets: ReadonlyArray<LegacyPushSecretReport>;
@@ -319,8 +338,8 @@ export function legacyPushSummaryMessage(input: LegacyPushPayloadInput): string 
     );
   }
 
-  if (input.unmanaged.length > 0) {
-    const n = input.unmanaged.length;
+  if (input.unmanagedCount > 0) {
+    const n = input.unmanagedCount;
     parts.push(
       `${legacyConfigPlural(n, "declared property", "declared properties")} ${n === 1 ? "is" : "are"} not managed by config push.`,
     );
@@ -376,8 +395,11 @@ export function legacyPushPayload(input: LegacyPushPayloadInput): Record<string,
       changes: service.changes,
     })),
     unsupported: input.unsupported,
-    unencodable: input.unencodable.map((entry) => ({ path: entry.path, reason: entry.reason })),
-    forced: input.forced.map((entry) => ({ path: entry.path, value: entry.value })),
+    unencodable: sortByPath(input.unencodable).map((entry) => ({
+      path: entry.path,
+      reason: entry.reason,
+    })),
+    forced: sortByPath(input.forced).map((entry) => ({ path: entry.path, value: entry.value })),
     unmanaged: input.unmanaged,
     secrets: {
       sent: input.authWriteRan ? sendDecisions.map((secret) => secret.path) : [],

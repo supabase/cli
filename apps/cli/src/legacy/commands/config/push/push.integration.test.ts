@@ -1,4 +1,5 @@
 import { describe, expect, it } from "@effect/vitest";
+import { V1UpdateAuthServiceConfigOutput } from "@supabase/api/effect";
 import { Effect, Exit, Layer, Option, Stdio } from "effect";
 import * as HttpClient from "effect/unstable/http/HttpClient";
 import * as HttpClientResponse from "effect/unstable/http/HttpClientResponse";
@@ -90,6 +91,33 @@ const POSTGREST_WRITE_RESPONSE = {
 };
 
 /**
+ * Every non-nullable field `V1UpdateAuthServiceConfigOutput` requires a
+ * concrete value for — the rest of its ~230 fields accept `T | null`, so
+ * `null` satisfies them without hand-authoring the whole record.
+ */
+const AUTH_WRITE_RESPONSE_NON_NULLABLE: Readonly<Record<string, unknown>> = {
+  mailer_otp_exp: 3600,
+  passkey_enabled: false,
+  mfa_phone_otp_length: 6,
+  sms_otp_length: 6,
+  oauth_server_enabled: false,
+  oauth_server_allow_dynamic_registration: false,
+  custom_oauth_enabled: false,
+  custom_oauth_max_providers: 0,
+};
+
+/** Schema-valid `V1UpdateAuthServiceConfigOutput` body for the auth PATCH when it's routed
+ *  through the real typed client (`setup()` below). */
+function authWriteResponseFixture(): Record<string, unknown> {
+  const fixture: Record<string, unknown> = {};
+  for (const key of Object.keys(V1UpdateAuthServiceConfigOutput.fields)) {
+    fixture[key] =
+      key in AUTH_WRITE_RESPONSE_NON_NULLABLE ? AUTH_WRITE_RESPONSE_NON_NULLABLE[key] : null;
+  }
+  return fixture;
+}
+
+/**
  * Real-client setup, routed by URL — for scenarios whose only writes are
  * `api` (PATCH /postgrest) and `db.settings` (PUT /config/database/postgres),
  * the two update endpoints whose response schema is simple enough to satisfy
@@ -105,6 +133,10 @@ function setup(opts: {
   readonly postgresPut?: { status: number; body: unknown } | "fail";
   /** `V1UpdateStorageConfigOutput` is `Schema.Void` — the response body is never decoded, so any status/body pair proves the point. */
   readonly storagePatch?: { status: number; body: unknown } | "fail";
+  /** Defaults to a schema-valid `authWriteResponseFixture()` — override the body/status to
+   *  exercise a failure, while still validating the auth PATCH's REQUEST body through the real
+   *  typed client (`V1UpdateAuthServiceConfigInput`). */
+  readonly authPatch?: { status: number; body: unknown } | "fail";
   readonly format?: "text" | "json" | "stream-json";
   readonly yes?: boolean;
   readonly confirm?: ReadonlyArray<boolean>;
@@ -172,10 +204,17 @@ function setup(opts: {
         const p = opts.storagePatch ?? { status: 200, body: {} };
         return Effect.succeed(legacyJsonResponse(request, p.status, p.body));
       }
-      // Anything else (auth/network-restrictions/ssl/webhooks) — succeed
-      // with an empty body; scenarios that write to one of those use
-      // `setupService()` below instead (their typed responses have too many
-      // required fields to hand-author).
+      if (url.includes("/config/auth")) {
+        if (opts.authPatch === "fail") {
+          return Effect.fail(legacyTransportFailure(request));
+        }
+        const p = opts.authPatch ?? { status: 200, body: authWriteResponseFixture() };
+        return Effect.succeed(legacyJsonResponse(request, p.status, p.body));
+      }
+      // Anything else (network-restrictions/ssl/webhooks) — succeed with an
+      // empty body; scenarios that write to one of those use `setupService()`
+      // below instead (their typed responses have too many required fields
+      // to hand-author).
       return Effect.succeed(legacyJsonResponse(request, 200, {}));
     },
   });
@@ -340,6 +379,11 @@ max_rows = 1000
     return Effect.gen(function* () {
       yield* legacyConfigPush({ projectRef: Option.none() });
       expect(out.stderrText).toContain("Updating API service with config:");
+      // push.types.ts: a `skipped` service's `changes` still carries what the
+      // declined write would have communicated — visible here as the
+      // per-property block the confirmation prompt printed before the
+      // decline (`api.max_rows`, the only routed change this run).
+      expect(out.stderrText).toContain("api.max_rows [update]");
       expect(api.requests.some((r) => r.method === "PATCH" && r.url.includes("/postgrest"))).toBe(
         false,
       );
@@ -617,6 +661,41 @@ statement_timeout = "8s"
       expect(put?.body).toEqual({ statement_timeout: "8s" });
     }).pipe(Effect.provide(layer));
   });
+
+  it.live(
+    "pushes site_url, sessions.timebox, mfa.phone.max_frequency, and password_requirements through the REAL typed client",
+    () => {
+      // Regression test for the auth encoder's mapped value types: the REAL
+      // typed client validates the request against
+      // `V1UpdateAuthServiceConfigInput` before sending, so this pins
+      // `sessions_timebox`/`mfa_phone_max_frequency` as numbers (not the
+      // declared duration strings) alongside the plain string-mapped fields.
+      const toml = `project_id = "test"
+[auth]
+site_url = "https://example.com"
+password_requirements = "lower_upper_letters_digits"
+[auth.sessions]
+timebox = "24h"
+[auth.mfa.phone]
+max_frequency = "10s"
+`;
+      const { layer, api } = setup({ toml, yes: true });
+      return Effect.gen(function* () {
+        yield* legacyConfigPush({ projectRef: Option.none() });
+        const update = api.requests.find(
+          (r) => r.method === "PATCH" && r.url.includes("/config/auth"),
+        );
+        expect(update).toBeDefined();
+        expect(update?.body).toEqual({
+          site_url: "https://example.com",
+          password_required_characters:
+            "abcdefghijklmnopqrstuvwxyz:ABCDEFGHIJKLMNOPQRSTUVWXYZ:0123456789",
+          sessions_timebox: 24,
+          mfa_phone_max_frequency: 10,
+        });
+      }).pipe(Effect.provide(layer));
+    },
+  );
 
   it.live("routes db.pooler.pool_mode to the unsupported note, never a resource", () => {
     const { layer, out } = setup({
@@ -1886,6 +1965,48 @@ secret = "super-secret"
       }).pipe(Effect.provide(layer));
     },
   );
+
+  it.live("the not-set credential note is suppressed when auth itself is unavailable", () => {
+    // Same missing-auth-block shape as the D2/S5 test above, but with a
+    // declared credential that would otherwise be reported `not_set`
+    // (empty/unresolved `env(...)`) rather than `send` — the note is
+    // specific to a credential whose OWN value was empty/unresolved, which
+    // doesn't apply when the whole resource was never compared.
+    const toml = `project_id = "test"
+[auth]
+site_url = "https://example.com"
+[auth.captcha]
+enabled = true
+provider = "hcaptcha"
+secret = "env(MISSING_CAPTCHA_SECRET)"
+`;
+    const { layer, apiMock, out } = setupService({
+      toml,
+      format: "json",
+      v2: {
+        status: 200,
+        body: v2Response({
+          attributes: (a) => {
+            const { auth: _auth, ...rest } = a;
+            return rest;
+          },
+        }),
+      },
+    });
+    return Effect.gen(function* () {
+      yield* legacyConfigPush({ projectRef: Option.none() });
+      expect(out.stderrText).not.toContain("credential value was not pushed");
+      expect(methodsOf(apiMock)).not.toContain("updateAuthServiceConfig");
+      const success = out.messages.find((m) => m.type === "success");
+      const data = success?.data as Record<string, unknown>;
+      const services = data["services"] as ReadonlyArray<Record<string, unknown>>;
+      expect(services.find((s) => s["service"] === "auth")).toEqual({
+        service: "auth",
+        status: "unavailable",
+        changes: [],
+      });
+    }).pipe(Effect.provide(layer));
+  });
 
   it.live(
     "not_pushable status renders correctly for a genuinely reachable unencodable case (an invalid byte size)",

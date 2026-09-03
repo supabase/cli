@@ -5,7 +5,7 @@ import { legacySanitizeInlineName } from "../../shared/legacy-http-errors.ts";
 
 /**
  * Shared pure formatters, payload fragments, and input adapters for the
- * `config` command family (`diff`, `pull`) — no Effect, no services,
+ * `config` command family (`diff`, `pull`, `push`) — no Effect, no services,
  * unit-testable in isolation. Hoisted out of `diff/diff.format.ts` once
  * `config pull` needed the same API-scope classification, target-naming
  * phrase, value/path rendering, and masked/unmanaged/not-returned caveat
@@ -40,10 +40,8 @@ export interface LegacyConfigApiScope {
 /**
  * Human-readable labels for `ConfigChange.class`, hyphenated for prose
  * (`remote_only` reads as "this key exists only remotely", but the raw enum
- * token is not itself prose). Owned here so `diff`/`pull` never disagree on
- * how a class renders; `diff.format.ts` still keeps its own private copy
- * (unifying it onto this export is a follow-up, CLI-2064 — the two are
- * identical today).
+ * token is not itself prose). Owned here so `diff`/`pull`/`push` never
+ * disagree on how a class renders.
  */
 export const LEGACY_CONFIG_CLASS_LABELS: Record<ConfigChange["class"], string> = {
   update: "update",

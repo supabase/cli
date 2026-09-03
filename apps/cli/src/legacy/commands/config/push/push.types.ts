@@ -31,6 +31,8 @@ type LegacyConfigPushServiceStatus =
 export interface LegacyConfigPushServiceResult {
   readonly service: LegacyPushResource | "experimental.webhooks";
   readonly status: LegacyConfigPushServiceStatus;
-  /** Change paths this service's write communicated (empty for every status but `updated`). */
+  /** Change paths this service's write communicated (empty for `up_to_date`/`disabled`/
+   *  `unavailable`/`not_pushable`; `skipped` carries what the declined write would have
+   *  communicated, excluding secrets). */
   readonly changes: ReadonlyArray<ReadonlyArray<string>>;
 }

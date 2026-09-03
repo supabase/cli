@@ -5,6 +5,7 @@
 import type { CliConfig, ProjectConfig } from "@supabase/config";
 import { getDefaultCliConfig } from "@supabase/config";
 import type { ConfigChange } from "@supabase/config/internal";
+import { AUTH_HOOK_NAMES, projectConfigMappingRows } from "@supabase/config/internal";
 import { describe, expect, it } from "vitest";
 
 import type { LegacyAuthEmailContent } from "./push.auth-email-content.ts";
@@ -15,10 +16,20 @@ import {
   legacyEncodeNetworkRestrictionsBody,
   legacyEncodeSslEnforcementBody,
   legacyEncodeStorageBody,
+  LEGACY_PUSH_AUTH_LEAF_MAP,
   type LegacyAuthEncoderInput,
   type LegacyPushEncoderInput,
   type LegacyStorageEncoderInput,
 } from "./push.encoders.ts";
+import { legacySamePath } from "./push.paths.ts";
+import {
+  LEGACY_EMAIL_NOTIFICATION_NAMES,
+  LEGACY_EMAIL_TEMPLATE_NAMES,
+  LEGACY_EXTERNAL_PROVIDER_IDS,
+  LEGACY_PROVIDERS_WITH_EMAIL_OPTIONAL,
+  LEGACY_PROVIDERS_WITH_SKIP_NONCE_CHECK,
+  LEGACY_PROVIDERS_WITH_URL,
+} from "./push.registry-names.ts";
 import type { LegacyPushSecretDecision } from "./push.secrets.ts";
 
 function change(
@@ -189,6 +200,20 @@ describe("legacyEncodeDbSettingsBody", () => {
   it("is up to date when nothing changed", () => {
     const result = legacyEncodeDbSettingsBody(input());
     expect(result.body).toBeUndefined();
+  });
+
+  it("rejects a change not shaped like db.settings.<key> as unencodable", () => {
+    const result = legacyEncodeDbSettingsBody(
+      input({ changes: [change(["db", "settings"], "256MB")] }),
+    );
+    expect(result.body).toBeUndefined();
+    expect(result.unencodable).toEqual([
+      {
+        path: ["db", "settings"],
+        reason:
+          "only a top-level db.settings.<key> value can be encoded into a Postgres config write",
+      },
+    ]);
   });
 });
 
@@ -592,7 +617,18 @@ describe("legacyEncodeAuthBody", () => {
 
     it("withholds smtp_pass while unchanged/gated/not_set", () => {
       const local: ProjectConfig = {
-        auth: { email: { smtp: { enabled: true, host: "h", port: 1 } } },
+        auth: {
+          email: {
+            smtp: {
+              enabled: true,
+              host: "h",
+              port: 1,
+              user: "user",
+              admin_email: "a@b.com",
+              sender_name: "Sender",
+            },
+          },
+        },
       };
       const secrets: ReadonlyArray<LegacyPushSecretDecision> = [
         secretDecision({
@@ -617,6 +653,20 @@ describe("legacyEncodeAuthBody", () => {
         {
           path: ["auth", "email", "smtp", "host"],
           reason: "the container's enabled state could not be determined from the declared config",
+        },
+      ]);
+    });
+
+    it("routes the whole container to unencodable (REASON_GROUP_INCOMPLETE) when a companion cannot be resolved from remote or local", () => {
+      const local: ProjectConfig = { auth: { email: { smtp: { enabled: true, host: "h" } } } };
+      const result = legacyEncodeAuthBody(
+        authInput({ changes: [change(["auth", "email", "smtp", "host"], "h")], local }),
+      );
+      expect(result.body).toBeUndefined();
+      expect(result.unencodable).toEqual([
+        {
+          path: ["auth", "email", "smtp", "host"],
+          reason: "one or more of this group's required fields could not be resolved",
         },
       ]);
     });
@@ -716,6 +766,22 @@ describe("legacyEncodeAuthBody", () => {
         hook_before_user_created_enabled: false,
         hook_mfa_verification_attempt_enabled: false,
       });
+    });
+
+    it("routes the hook to unencodable (REASON_GROUP_INCOMPLETE) when uri cannot be resolved", () => {
+      const result = legacyEncodeAuthBody(
+        authInput({
+          changes: [change(["auth", "hook", "send_email", "enabled"], true)],
+          local: { auth: { hook: { send_email: { enabled: true } } } },
+        }),
+      );
+      expect(result.body).toBeUndefined();
+      expect(result.unencodable).toEqual([
+        {
+          path: ["auth", "hook", "send_email", "enabled"],
+          reason: "one or more of this group's required fields could not be resolved",
+        },
+      ]);
     });
   });
 
@@ -883,6 +949,22 @@ describe("legacyEncodeAuthBody", () => {
       });
       expect(result.encoded).toEqual([]);
     });
+
+    it("routes the provider to unencodable (REASON_GROUP_INCOMPLETE) when client_id cannot be resolved", () => {
+      const result = legacyEncodeAuthBody(
+        authInput({
+          changes: [change(["auth", "external", "github", "enabled"], true)],
+          local: { auth: { external: { github: { enabled: true } } } },
+        }),
+      );
+      expect(result.body).toBeUndefined();
+      expect(result.unencodable).toEqual([
+        {
+          path: ["auth", "external", "github", "enabled"],
+          reason: "one or more of this group's required fields could not be resolved",
+        },
+      ]);
+    });
   });
 
   describe("dead passkey/webauthn keys", () => {
@@ -903,18 +985,20 @@ describe("legacyEncodeAuthBody", () => {
 
   describe("sms test otp", () => {
     it("joins the map as K=V pairs and sets valid_until from the injected clock", () => {
+      // Bare-digit phone keys — the API's `sms_test_otp` pattern
+      // (`^(?:[0-9]{1,15}=...)?$`) rejects a leading `+`.
       const local: ProjectConfig = {
-        auth: { sms: { test_otp: { "+15555550100": "123456", "+15555550101": "654321" } } },
+        auth: { sms: { test_otp: { "15555550100": "123456", "15555550101": "654321" } } },
       };
       const result = legacyEncodeAuthBody(
         authInput({
-          changes: [change(["auth", "sms", "test_otp", "+15555550100"], "123456")],
+          changes: [change(["auth", "sms", "test_otp", "15555550100"], "123456")],
           local,
           now: new Date("2030-06-15T12:00:00.000Z"),
         }),
       );
       expect(result.body).toEqual({
-        sms_test_otp: "+15555550100=123456,+15555550101=654321",
+        sms_test_otp: "15555550100=123456,15555550101=654321",
         sms_test_otp_valid_until: "2040-06-15T12:00:00.000Z",
       });
     });
@@ -980,6 +1064,20 @@ describe("legacyEncodeAuthBody", () => {
         },
       ]);
     });
+
+    it("routes the active provider to unencodable (REASON_GROUP_INCOMPLETE) when a credential field cannot be resolved", () => {
+      const local: ProjectConfig = { auth: { sms: { twilio: { enabled: true } } } };
+      const result = legacyEncodeAuthBody(
+        authInput({ changes: [change(["auth", "sms", "twilio", "enabled"], true)], local }),
+      );
+      expect(result.body).toBeUndefined();
+      expect(result.unencodable).toEqual([
+        {
+          path: ["auth", "sms", "twilio", "enabled"],
+          reason: "one or more of this group's required fields could not be resolved",
+        },
+      ]);
+    });
   });
 
   describe("push-only mailer content", () => {
@@ -1042,4 +1140,153 @@ describe("legacyEncodeAuthBody", () => {
       external_web3_ethereum_enabled: false,
     });
   });
+});
+
+describe("auth encoder key-name drift guard", () => {
+  /**
+   * Every `(configPath, apiKey)` pair the auth encoder maps, across the flat
+   * leaf table AND every string-built container (smtp, captcha, hooks,
+   * external providers, sms-provider credentials, email template
+   * subjects, email notification enabled+subject). For each pair, asserts
+   * the apiKey matches the registry's OWN `apiPath` for that configPath
+   * (`@supabase/config/internal`'s `projectConfigMappingRows`) — a guard
+   * against `push.encoders.ts` silently drifting from the registry `config
+   * pull`/`config diff` also read.
+   *
+   * The leaf table (`LEGACY_PUSH_AUTH_LEAF_MAP`) is imported, not
+   * re-declared, so this guard tests the actual source of truth the encoder
+   * iterates — a change to that table is exercised here automatically. The
+   * container groups build their `apiKey` from a string template instead
+   * (`smtp_${field}`, `hook_${name}_enabled`, `external_${id}_client_id`,
+   * `sms_${provider}_${key}`, `mailer_subjects_${name}`, …), so their pairs
+   * are enumerated directly against the registry below.
+   */
+  interface LeafPair {
+    readonly configPath: ReadonlyArray<string>;
+    readonly apiKey: string;
+  }
+
+  const leafPairs: ReadonlyArray<LeafPair> = LEGACY_PUSH_AUTH_LEAF_MAP.map((spec) => ({
+    configPath: spec.configPath,
+    apiKey: spec.apiKey,
+  }));
+
+  const smtpPairs: ReadonlyArray<LeafPair> = [
+    { configPath: ["auth", "email", "smtp", "host"], apiKey: "smtp_host" },
+    { configPath: ["auth", "email", "smtp", "port"], apiKey: "smtp_port" },
+    { configPath: ["auth", "email", "smtp", "user"], apiKey: "smtp_user" },
+    { configPath: ["auth", "email", "smtp", "admin_email"], apiKey: "smtp_admin_email" },
+    { configPath: ["auth", "email", "smtp", "sender_name"], apiKey: "smtp_sender_name" },
+    { configPath: ["auth", "email", "smtp", "pass"], apiKey: "smtp_pass" },
+  ];
+
+  const captchaPairs: ReadonlyArray<LeafPair> = [
+    { configPath: ["auth", "captcha", "enabled"], apiKey: "security_captcha_enabled" },
+    { configPath: ["auth", "captcha", "provider"], apiKey: "security_captcha_provider" },
+    { configPath: ["auth", "captcha", "secret"], apiKey: "security_captcha_secret" },
+  ];
+
+  const hookPairs: ReadonlyArray<LeafPair> = AUTH_HOOK_NAMES.flatMap((name) => [
+    { configPath: ["auth", "hook", name, "enabled"], apiKey: `hook_${name}_enabled` },
+    { configPath: ["auth", "hook", name, "uri"], apiKey: `hook_${name}_uri` },
+    { configPath: ["auth", "hook", name, "secrets"], apiKey: `hook_${name}_secrets` },
+  ]);
+
+  const providerPairs: ReadonlyArray<LeafPair> = [
+    ...LEGACY_EXTERNAL_PROVIDER_IDS.flatMap((id) => [
+      { configPath: ["auth", "external", id, "enabled"], apiKey: `external_${id}_enabled` },
+      { configPath: ["auth", "external", id, "client_id"], apiKey: `external_${id}_client_id` },
+      { configPath: ["auth", "external", id, "secret"], apiKey: `external_${id}_secret` },
+    ]),
+    ...LEGACY_PROVIDERS_WITH_URL.map((id) => ({
+      configPath: ["auth", "external", id, "url"],
+      apiKey: `external_${id}_url`,
+    })),
+    ...LEGACY_PROVIDERS_WITH_EMAIL_OPTIONAL.map((id) => ({
+      configPath: ["auth", "external", id, "email_optional"],
+      apiKey: `external_${id}_email_optional`,
+    })),
+    ...LEGACY_PROVIDERS_WITH_SKIP_NONCE_CHECK.map((id) => ({
+      configPath: ["auth", "external", id, "skip_nonce_check"],
+      apiKey: `external_${id}_skip_nonce_check`,
+    })),
+  ];
+
+  const smsProviderCredentialPairs: ReadonlyArray<LeafPair> = [
+    { configPath: ["auth", "sms", "twilio", "account_sid"], apiKey: "sms_twilio_account_sid" },
+    {
+      configPath: ["auth", "sms", "twilio", "message_service_sid"],
+      apiKey: "sms_twilio_message_service_sid",
+    },
+    { configPath: ["auth", "sms", "twilio", "auth_token"], apiKey: "sms_twilio_auth_token" },
+    {
+      configPath: ["auth", "sms", "twilio_verify", "account_sid"],
+      apiKey: "sms_twilio_verify_account_sid",
+    },
+    {
+      configPath: ["auth", "sms", "twilio_verify", "message_service_sid"],
+      apiKey: "sms_twilio_verify_message_service_sid",
+    },
+    {
+      configPath: ["auth", "sms", "twilio_verify", "auth_token"],
+      apiKey: "sms_twilio_verify_auth_token",
+    },
+    {
+      configPath: ["auth", "sms", "messagebird", "originator"],
+      apiKey: "sms_messagebird_originator",
+    },
+    {
+      configPath: ["auth", "sms", "messagebird", "access_key"],
+      apiKey: "sms_messagebird_access_key",
+    },
+    { configPath: ["auth", "sms", "textlocal", "sender"], apiKey: "sms_textlocal_sender" },
+    { configPath: ["auth", "sms", "textlocal", "api_key"], apiKey: "sms_textlocal_api_key" },
+    { configPath: ["auth", "sms", "vonage", "api_key"], apiKey: "sms_vonage_api_key" },
+    { configPath: ["auth", "sms", "vonage", "from"], apiKey: "sms_vonage_from" },
+    { configPath: ["auth", "sms", "vonage", "api_secret"], apiKey: "sms_vonage_api_secret" },
+  ];
+
+  const templateSubjectPairs: ReadonlyArray<LeafPair> = LEGACY_EMAIL_TEMPLATE_NAMES.map((name) => ({
+    configPath: ["auth", "email", "template", name, "subject"],
+    apiKey: `mailer_subjects_${name}`,
+  }));
+
+  const notificationPairs: ReadonlyArray<LeafPair> = LEGACY_EMAIL_NOTIFICATION_NAMES.flatMap(
+    (name) => [
+      {
+        configPath: ["auth", "email", "notification", name, "enabled"],
+        apiKey: `mailer_notifications_${name}_enabled`,
+      },
+      {
+        configPath: ["auth", "email", "notification", name, "subject"],
+        apiKey: `mailer_subjects_${name}_notification`,
+      },
+    ],
+  );
+
+  const allPairs: ReadonlyArray<LeafPair> = [
+    ...leafPairs,
+    ...smtpPairs,
+    ...captchaPairs,
+    ...hookPairs,
+    ...providerPairs,
+    ...smsProviderCredentialPairs,
+    ...templateSubjectPairs,
+    ...notificationPairs,
+  ];
+
+  it("covers exactly 182 (configPath, apiKey) pairs (42 leaf + 6 smtp + 3 captcha + 18 hooks + 80 providers + 13 sms credentials + 6 template subjects + 14 notifications)", () => {
+    expect(leafPairs.length).toBe(42);
+    expect(allPairs.length).toBe(182);
+  });
+
+  it.each(allPairs.map((pair) => [pair.configPath.join("."), pair] as const))(
+    "%s's apiKey matches the registry's own apiPath",
+    (_label, pair) => {
+      const row = projectConfigMappingRows.find((candidate) =>
+        legacySamePath(candidate.configPath, pair.configPath),
+      );
+      expect(row?.apiPath.at(-1)).toBe(pair.apiKey);
+    },
+  );
 });

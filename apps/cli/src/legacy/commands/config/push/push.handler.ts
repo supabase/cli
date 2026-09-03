@@ -89,10 +89,6 @@ import { legacyResolveAuthSecrets, type LegacyPushSecretDecision } from "./push.
 import type { LegacyConfigPushFlags } from "./push.command.ts";
 import type { LegacyConfigPushServiceResult } from "./push.types.ts";
 
-function isRecord(value: unknown): value is Readonly<Record<string, unknown>> {
-  return legacyIsRecord(value);
-}
-
 /** The `services[].changes` union (D8): encoded paths ∪ content extras ∪ secret paths the write
  * ACTUALLY sent, path-sorted. `sentSecretPaths` is `[]` for a declined/skipped write. */
 function legacyPushServiceChanges(
@@ -287,7 +283,7 @@ export const legacyConfigPush = Effect.fn("legacy.config.push")(function* (
     // problem, not something `fromApiProjectConfig` should have to reject
     // via its own typed error — checked once, up front, so every read below
     // can index `responseJson` directly.
-    if (!isRecord(responseJson)) {
+    if (!legacyIsRecord(responseJson)) {
       return yield* new LegacyConfigPushConfigReadNetworkError({
         message: "failed to read project config: response body is not a JSON object",
         decode: true,
@@ -302,7 +298,8 @@ export const legacyConfigPush = Effect.fn("legacy.config.push")(function* (
     const remote = yield* legacyConfigProjectConfigTry(() => fromApiProjectConfig(responseJson));
 
     const data = responseJson["data"];
-    const attributes = isRecord(data) && isRecord(data["attributes"]) ? data["attributes"] : {};
+    const attributes =
+      legacyIsRecord(data) && legacyIsRecord(data["attributes"]) ? data["attributes"] : {};
     const scope = legacyConfigApiScope(attributes);
     // Always echoed (family consistency with `config diff`/`config pull`),
     // not just when a block is missing.
@@ -312,7 +309,7 @@ export const legacyConfigPush = Effect.fn("legacy.config.push")(function* (
         message: `The API returned no configuration for project ${legacySanitizeInlineName(ref)}; nothing was pushed. Check that your access token can read the project's configuration.`,
       });
     }
-    const remoteAuthAttributes = isRecord(attributes["auth"]) ? attributes["auth"] : {};
+    const remoteAuthAttributes = legacyIsRecord(attributes["auth"]) ? attributes["auth"] : {};
 
     const local = yield* legacyConfigProjectConfigTry(() => fromConfigDocument(loaded));
     const changeSet = yield* legacyConfigProjectConfigTry(() =>
@@ -322,13 +319,24 @@ export const legacyConfigPush = Effect.fn("legacy.config.push")(function* (
     // 5. Route pushable changes to their v1 write endpoint and resolve every
     // declared secret's send/unchanged/not_set/gated status.
     const plan = legacyPlanConfigPush(changeSet);
-    const secrets = legacyResolveAuthSecrets({
-      maskedPaths: changeSet.masked,
-      config,
-      local,
-      remoteAuthAttributes,
-      projectRef: ref,
-      dotenvPrivateKeys,
+    // Defensive: the document-wide decrypt-or-abort pre-check above (step 1b)
+    // is expected to make this unreachable — kept as a typed failure, in the
+    // same `failed to parse config: <cause>` shape, rather than an uncaught
+    // throw, in case that invariant is ever violated (see push.secret.ts).
+    const secrets = yield* Effect.try({
+      try: () =>
+        legacyResolveAuthSecrets({
+          maskedPaths: changeSet.masked,
+          config,
+          local,
+          remoteAuthAttributes,
+          projectRef: ref,
+          dotenvPrivateKeys,
+        }),
+      catch: (cause) =>
+        new LegacyConfigPushLoadConfigError({
+          message: cause instanceof Error ? cause.message : String(cause),
+        }),
     });
     const now = new Date(yield* Clock.currentTimeMillis);
 
@@ -413,20 +421,17 @@ export const legacyConfigPush = Effect.fn("legacy.config.push")(function* (
     // 7. Six resources, in the established push order. A resource whose
     // response block was omitted from the read is `unavailable` — nothing is
     // compared, nothing is written (S5/D2); the `Comparison scope:` line
-    // above already explains why. Otherwise, a gated-off resource routes its
-    // routed changes into `unsupported` (B1) instead of silently dropping
-    // them, and a gated-on resource dispatches to its own encoder/write pair.
+    // above already explains why. Otherwise, a gated-off resource is simply
+    // `disabled` — the projection's disabled-sentinel prune already removed
+    // its other declared keys before diffing, so `plan.changesByResource`
+    // never has anything left to route here — and a gated-on resource
+    // dispatches to its own encoder/write pair.
     for (const resource of LEGACY_PUSH_RESOURCES) {
       if (scope.missing.includes(legacyPushResponseBlock(resource))) {
         services.push({ service: resource, status: "unavailable", changes: [] });
         continue;
       }
       if (!resourceEnabled[resource]) {
-        // Defensive: the projection's disabled-sentinel prune removes a
-        // gated-off resource's other declared keys before diffing, so
-        // `plan.changesByResource[resource]` is not expected to be non-empty
-        // here — this route exists for changes the projection leaves behind.
-        unsupported.push(...plan.changesByResource[resource].map((change) => change.path));
         services.push({ service: resource, status: "disabled", changes: [] });
         continue;
       }
@@ -619,14 +624,20 @@ export const legacyConfigPush = Effect.fn("legacy.config.push")(function* (
       const resourceForPath = legacyPushResourceForPath(changePath);
       return resourceForPath === "unsupported" || resourceEnabled[resourceForPath];
     }).length;
+    // An `unavailable` auth resource never read (or wrote) any credential —
+    // the "not pushed" framing this note carries is specific to a credential
+    // whose OWN value was empty/unresolved, which doesn't apply when the
+    // whole resource was never compared to begin with.
+    const authUnavailable =
+      services.find((service) => service.service === "auth")?.status === "unavailable";
     const notes = legacyPushNotes({
       unsupported,
       unencodable,
       unmanagedCount,
       forced,
-      secretsNotSet: secrets
-        .filter((secret) => secret.status === "not_set")
-        .map((secret) => secret.path),
+      secretsNotSet: authUnavailable
+        ? []
+        : secrets.filter((secret) => secret.status === "not_set").map((secret) => secret.path),
       remoteOnly: plan.remoteOnly,
     });
     if (notes !== "") {
@@ -642,6 +653,7 @@ export const legacyConfigPush = Effect.fn("legacy.config.push")(function* (
         unencodable,
         forced,
         unmanaged: changeSet.unmanaged,
+        unmanagedCount,
         secrets: secrets.map(toSecretReport),
         authWriteRan,
         declinedAddons,
