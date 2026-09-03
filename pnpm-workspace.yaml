@@ -91,6 +91,15 @@ packageExtensions:
   "@oxlint-tsgolint/win32-arm64": *effect-tsgo-patched
   "@oxlint-tsgolint/win32-x64": *effect-tsgo-patched
 
+# @effect/vitest 4.0.0-rc.x declares a `vitest >=4.1.0 <5.0.0` peer, but it only
+# uses the stable `vitest` entrypoint and runs cleanly against Vitest 5 (the
+# whole unit/integration suite passes). Upstream has not widened the range yet;
+# accept Vitest 5 here so every install stops warning about a known-good pair.
+# Drop this rule once @effect/vitest ships a vitest@5-compatible peer range.
+peerDependencyRules:
+  allowedVersions:
+    "@effect/vitest>vitest": "5"
+
 minimumReleaseAge: 10200
 minimumReleaseAgeExclude:
   - "@turbo/darwin-64@2.10.11"
