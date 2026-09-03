@@ -61,11 +61,22 @@ The v1 analytics endpoints allow **10 requests per 60 seconds**, and the server
 applies a 30-second query timeout. One bounded invocation spends one request, or
 two when the result is empty.
 
-`--follow` polls every **10 seconds** — 6 requests a minute, leaving room for the
-history query, the deployed-worker check, and a retry inside the same window. The
-interval is set by that limit, not by responsiveness: a 2-second poll would spend
-the allowance in ten seconds. A 429 mid-tail is retried on a spaced schedule
-rather than ending the tail.
+`--follow` polls every **10 seconds**. A quiet tail spends one request per poll —
+6 a minute, leaving room for the history query, the deployed-worker check, and a
+retry inside the same window. The interval is set by that limit, not by
+responsiveness: a 2-second poll would spend the allowance in ten seconds.
+
+A poll that finds more than one page of new rows drains the burst over up to
+**5** requests, so a sustained backlog can reach **30 requests a minute** and will
+be rate limited. That is deliberate rather than budgeted for: a 429 mid-tail is
+retried on a spaced schedule rather than ending the tail, so the effect is a
+throttled tail, not a dropped one.
+
+The drain bound is also a **lossy** one. It walks backwards from the newest rows,
+so exhausting it leaves the oldest part of the burst unfetched while the cursor
+advances past it — a burst above **5000 lines in one poll interval** loses its
+middle. The run says so once on stderr, in every output format, since a
+`stream-json` consumer cannot infer the hole from the events it receives.
 
 Each poll re-asks for a window starting 60 seconds behind the newest line already
 printed, because guest lines arrive late and out of order. Overlap is therefore

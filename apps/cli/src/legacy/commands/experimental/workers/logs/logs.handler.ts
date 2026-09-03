@@ -81,9 +81,16 @@ const FOLLOW_PAGE_SIZE = 1000;
  * How many requests one poll may spend draining a burst.
  *
  * A bound rather than an open loop: the endpoint allows 10 requests a minute, so
- * an unbounded drain could spend a whole window's allowance on one poll. Rows
- * beyond it are not lost — the cursor only advances past what was emitted, so
- * the next poll re-asks for them.
+ * an unbounded drain could spend a whole window's allowance on one poll.
+ *
+ * **Rows past the bound are dropped, not deferred.** The drain walks `end`
+ * backwards, so the pages it did fetch are the *newest* ones; the cursor then
+ * advances to the newest row printed, past the region it never reached. Only the
+ * part of that region inside the next window's grace is picked up again. Nothing
+ * here can fix that — `followWindow` moves the window's floor, not its ceiling,
+ * so lowering the cursor just re-fetches the same newest pages and never walks
+ * down to the gap. A burst above {@link FOLLOW_PAGE_SIZE} × this bound in one
+ * poll interval therefore loses its middle, and says so on stderr.
  */
 const FOLLOW_MAX_PAGES = 5;
 
@@ -349,6 +356,10 @@ export const legacyWorkersLogs = Effect.fn("legacy.experimental.workers.logs")(f
       // the Effect was built: an Effect is a reusable description and may run more
       // than once, and shared cursor state across runs would drop lines.
       const seenIds = yield* Ref.make(new Set(entries.map((entry) => entry.id)));
+      // Same reason these live in the generator rather than the closure: an
+      // Effect is a reusable description, and a notice already "shown" on a
+      // previous run would stay silent on the next one.
+      const skipNoticeShown = yield* Ref.make(false);
       const newestSeenMs = yield* Ref.make(
         entries.length === 0 ? Date.now() : entries[entries.length - 1]!.timestampMs,
       );
@@ -367,6 +378,10 @@ export const legacyWorkersLogs = Effect.fn("legacy.experimental.workers.logs")(f
         // pages come back full; a short page means the window is drained.
         const collected: Array<WorkerLogEntry> = [];
         let end = new Date();
+        // A short page is the only proof the window is empty below this point.
+        // Both other exits — the page budget running out, and a full page too
+        // narrow to walk past — leave rows unfetched underneath.
+        let drained = false;
         for (let page = 0; page < FOLLOW_MAX_PAGES; page += 1) {
           const rows = yield* fetchWorkerLogs(api, projectRef, {
             name,
@@ -376,17 +391,35 @@ export const legacyWorkersLogs = Effect.fn("legacy.experimental.workers.logs")(f
           });
           collected.push(...rows);
           if (rows.length < FOLLOW_PAGE_SIZE) {
+            drained = true;
             break;
           }
           // Rows arrive oldest-first, so the next page ends where this one began.
           const nextEnd = new Date(rows[0]!.timestampMs);
           // A full page whose rows all share one timestamp cannot narrow the
-          // window. Stop rather than re-request it; the cursor has not advanced
-          // past those rows, so the next poll's grace window still covers them.
+          // window: re-requesting it would return the same page forever.
           if (nextEnd.getTime() >= end.getTime()) {
             break;
           }
           end = nextEnd;
+        }
+
+        // Once per run, not once per poll: a sustained burst would otherwise
+        // repeat this every interval and bury the lines it is warning about.
+        //
+        // Emitted in **every** format, unlike the "Waiting for new logs" notice
+        // above — same reasoning as `push`'s `reportUnattempted`. That one is
+        // progress, which a machine consumer did not ask for; this one says the
+        // stream it is reading has a hole in it, which it cannot infer from the
+        // events themselves.
+        if (!drained && !(yield* Ref.get(skipNoticeShown))) {
+          yield* Ref.set(skipNoticeShown, true);
+          yield* output.raw(
+            `Skipped part of a burst larger than ${FOLLOW_MAX_PAGES * FOLLOW_PAGE_SIZE} lines: ` +
+              `some lines older than the ones below were not printed. ` +
+              `Narrow the stream with --kind, or read the full range in the dashboard.\n`,
+            "stderr",
+          );
         }
 
         // Windows always overlap - the server rounds them to the minute and the
@@ -433,8 +466,14 @@ export const legacyWorkersLogs = Effect.fn("legacy.experimental.workers.logs")(f
       // `repeat` runs the body before applying the schedule, so the first poll is
       // immediate. That is wanted: it catches anything that landed while the history
       // query was in flight, and the rows it repeats are discarded by the id dedupe.
-      // Measured cost is ~7 requests in the worst 60-second window, against a limit
-      // of 10.
+      //
+      // Cost against the endpoint's limit of 10 requests per 60 seconds: a quiet
+      // tail spends one request per poll, so 6 a minute, plus the opening history
+      // query and the deployed-worker check. A poll draining a burst spends up to
+      // `FOLLOW_MAX_PAGES`, so a sustained backlog can reach 30 a minute and will
+      // be rate limited — `isRetryableFollowFailure` treats the 429 as transient
+      // and the spaced retry rides it out, which throttles the tail rather than
+      // ending it.
       yield* Effect.raceFirst(
         poll.pipe(Effect.repeat({ schedule: pollSchedule })),
         // `setExitCode`, not `exit`: the production `exit` calls `process.exit`
