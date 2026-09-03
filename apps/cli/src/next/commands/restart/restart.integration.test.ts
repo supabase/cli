@@ -1,8 +1,12 @@
 import { describe, expect, it } from "@effect/vitest";
-import { Cause, Effect, Exit, Layer, Option } from "effect";
+import { Cause, Deferred, Effect, Exit, Fiber, Layer, Option } from "effect";
 import { StackIdSchema } from "@supabase/stack/effect";
 import type { StackStatus } from "@supabase/stack/effect";
-import { CAPABILITY_NAMES, StackUpgradeRequiredError } from "@supabase/stack/effect";
+import {
+  CAPABILITY_NAMES,
+  StackLifecycleConflictError,
+  StackUpgradeRequiredError,
+} from "@supabase/stack/effect";
 import { mockCliProjectHome, mockOutput, emptyEnv } from "../../../../tests/helpers/mocks.ts";
 import { restart, type RestartOperations, type RestartStack } from "./restart.handler.ts";
 
@@ -28,54 +32,65 @@ describe("restart handler", () => {
     const events: Array<string> = [];
     let receivedConfig: unknown;
     const output = mockOutput({ interactive: false });
-    const stack: RestartStack = {
-      stop: () =>
-        Effect.sync(() => {
-          events.push("stop");
-        }),
-      start: (options) =>
-        Effect.sync(() => {
-          events.push("start");
-          receivedConfig = options?.config;
-          return status;
-        }),
-    };
-    const operations: RestartOperations = {
-      findStack: () =>
-        Effect.succeed(
-          Option.some({
-            id: stackId,
-            projectRoot: process.cwd(),
-            name: "default",
-            branchContext: "refs/heads/main",
-            runtime: { kind: "native" as const },
-            desiredLifecycle: "running" as const,
+    return Effect.gen(function* () {
+      const stopStarted = yield* Deferred.make<void>();
+      const stopRelease = yield* Deferred.make<void>();
+      const stopFinished = yield* Deferred.make<void>();
+      const startCalled = yield* Deferred.make<void>();
+      const stack: RestartStack = {
+        stop: () =>
+          Effect.gen(function* () {
+            events.push("stop-started");
+            yield* Deferred.succeed(stopStarted, undefined);
+            yield* Deferred.await(stopRelease);
+            events.push("stop-finished");
+            yield* Deferred.succeed(stopFinished, undefined);
           }),
-        ),
-      openStack: () =>
-        Effect.sync(() => {
-          return stack;
-        }),
-      loadConfig: () => Effect.succeed(undefined),
-    };
-    return restart({ stack: "default", exclude: ["auth"] }, operations).pipe(
+        start: (options) =>
+          Effect.gen(function* () {
+            events.push("start");
+            receivedConfig = options?.config;
+            yield* Deferred.succeed(startCalled, undefined);
+            return status;
+          }),
+      };
+      const operations: RestartOperations = {
+        findStack: () =>
+          Effect.succeed(
+            Option.some({
+              id: stackId,
+              projectRoot: process.cwd(),
+              name: "default",
+              branchContext: "refs/heads/main",
+              runtime: { kind: "native" as const },
+              desiredLifecycle: "running" as const,
+            }),
+          ),
+        openStack: () => Effect.succeed(stack),
+        loadConfig: () => Effect.succeed(undefined),
+      };
+      const run = yield* Effect.forkChild(
+        restart({ stack: "default", exclude: ["auth"] }, operations),
+      );
+      yield* Deferred.await(stopStarted);
+      expect(Option.isNone(yield* Deferred.poll(startCalled))).toBe(true);
+      yield* Deferred.succeed(stopRelease, undefined);
+      yield* Fiber.join(run);
+      expect(Option.isSome(yield* Deferred.poll(stopFinished))).toBe(true);
+      expect(events).toEqual(["stop-started", "stop-finished", "start"]);
+      expect(receivedConfig).toMatchObject({
+        capabilities: { auth: { enabled: false } },
+      });
+      expect(output.messages).toContainEqual(
+        expect.objectContaining({ message: "Local Supabase stack restarted." }),
+      );
+    }).pipe(
       Effect.provide(
         Layer.mergeAll(
           emptyEnv(),
           output.layer,
           mockCliProjectHome({ projectRoot: process.cwd() }),
         ),
-      ),
-      Effect.tap(() =>
-        Effect.sync(() => {
-          expect(events).toEqual(["stop", "start"]);
-          expect(receivedConfig).toMatchObject({
-            capabilities: { auth: { enabled: false } },
-          });
-          expect(output.messages).toContainEqual(
-            expect.objectContaining({ message: "Local Supabase stack restarted." }),
-          );
-        }),
       ),
     );
   });
@@ -112,6 +127,50 @@ describe("restart handler", () => {
             const error = Cause.findErrorOption(exit.cause);
             expect(Option.isSome(error)).toBe(true);
             if (Option.isSome(error)) expect(error.value).toBeInstanceOf(StackUpgradeRequiredError);
+          }
+        }),
+      ),
+    );
+  });
+
+  it.live("stops on failure without invoking start", () => {
+    let startCalled = false;
+    const output = mockOutput({ interactive: false });
+    const stopError = new StackLifecycleConflictError({ message: "stop still in progress" });
+    const operations: RestartOperations = {
+      findStack: () =>
+        Effect.succeed(
+          Option.some({
+            id: stackId,
+            projectRoot: process.cwd(),
+            name: "default",
+            branchContext: "refs/heads/main",
+            runtime: { kind: "native" as const },
+            desiredLifecycle: "running" as const,
+          }),
+        ),
+      openStack: () =>
+        Effect.succeed({
+          stop: () => Effect.fail(stopError),
+          start: () =>
+            Effect.sync(() => {
+              startCalled = true;
+              return status;
+            }),
+        }),
+      loadConfig: () => Effect.succeed(undefined),
+    };
+    return restart({ stack: "default", exclude: [] }, operations).pipe(
+      Effect.provide(Layer.mergeAll(emptyEnv(), output.layer)),
+      Effect.exit,
+      Effect.tap((exit) =>
+        Effect.sync(() => {
+          expect(startCalled).toBe(false);
+          expect(Exit.isFailure(exit)).toBe(true);
+          if (Exit.isFailure(exit)) {
+            const error = Cause.findErrorOption(exit.cause);
+            expect(Option.isSome(error)).toBe(true);
+            if (Option.isSome(error)) expect(error.value).toBe(stopError);
           }
         }),
       ),

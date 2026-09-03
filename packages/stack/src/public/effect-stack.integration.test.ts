@@ -31,10 +31,12 @@ import {
 } from "../state/Ownership.ts";
 import { resolveStackPaths } from "../state/Paths.ts";
 import { makeStackStateStore } from "../state/StackStateStore.ts";
+import { resolveSecrets } from "../state/SecretStore.ts";
 import { deriveStackId, resolveStackIdentity } from "../identity/Identity.ts";
 import { toPersistedIdentity, type PersistedStackState } from "../state/StackState.ts";
 import { startControlServer } from "../control/ControlServer.ts";
 import { STACK_RPC_RELEASE, type StackRpcHandlers } from "../control/StackRpc.ts";
+import { compileStack } from "../model/Compiler.ts";
 import {
   StackDestructionError,
   StackOwnershipConflictError,
@@ -905,19 +907,56 @@ describe("Effect stack lifecycle handoff", () => {
           const path = yield* Path.Path;
           const env = yield* StackRuntimeEnvironment;
           const store = yield* makeStackStateStore({ stateRoot: env.stateRoot });
-          const makeDeadOwner = (projectRoot: string, rpcRelease: string) =>
+          const makeDeadOwner = (
+            projectRoot: string,
+            rpcRelease: string,
+            desiredLifecycle: "running" | "unconfigured" = "unconfigured",
+          ) =>
             Effect.gen(function* () {
               const identity = yield* resolveStackIdentity({ projectRoot });
               const id = yield* deriveStackId(identity);
-              yield* store.initialize(id, {
+              const persisted =
+                desiredLifecycle === "running"
+                  ? yield* Effect.gen(function* () {
+                      const compiled = yield* compileStack({
+                        projectRoot,
+                        runtime: { kind: "native" },
+                        config: { capabilities: {} },
+                      });
+                      const resolved = yield* resolveSecrets(
+                        {
+                          declarations: compiled.secrets.map(
+                            ({ slot, policy, value, generator }) => ({
+                              slot,
+                              policy,
+                              ...(value === undefined ? {} : { value }),
+                              ...(generator === undefined ? {} : { generator }),
+                            }),
+                          ),
+                        },
+                        undefined,
+                        "running",
+                      );
+                      return {
+                        definition: compiled.definition,
+                        inputFingerprint: compiled.inputFingerprint,
+                        secrets: resolved.persisted,
+                      };
+                    })
+                  : undefined;
+              const initialState: PersistedStackState = {
                 format: "supabase-stack-state-v1",
                 identity: toPersistedIdentity(identity, id),
                 runtime: { kind: "native" },
-                desiredLifecycle: "unconfigured",
+                desiredLifecycle,
                 ports: [],
                 privatePorts: [],
                 secrets: {},
-              });
+              };
+              yield* store.initialize(
+                id,
+                persisted === undefined ? initialState : { ...initialState, ...persisted },
+              );
               const encodedEnvironment = yield* Schema.encodeEffect(
                 Schema.fromJsonString(Schema.Unknown),
               )({
@@ -1015,14 +1054,40 @@ describe("Effect stack lifecycle handoff", () => {
           expect(yield* readOwnerMetadata(env.stateRoot, createId, env)).toBeUndefined();
           expect(yield* ownerLockExists(env.stateRoot, createId)).toBe(false);
 
-          const openId = yield* makeDeadOwner(openProject, "stack-rpc-v0@0.0.1");
+          const openId = yield* makeDeadOwner(openProject, "stack-rpc-v0@0.0.1", "running");
           const replaced = yield* openStack(openId);
-          yield* Effect.addFinalizer(() => replaced.destroy().pipe(Effect.ignore));
-          yield* replaced.start({ config: { capabilities: {} } });
+          const cleanupRecovered = yield* Effect.cached(
+            Effect.uninterruptible(
+              Effect.gen(function* () {
+                yield* replaced.stop();
+                yield* replaced.destroy();
+                yield* Effect.gen(function* () {
+                  const owner = yield* readOwnerMetadata(env.stateRoot, openId, env);
+                  const locked = yield* ownerLockExists(env.stateRoot, openId);
+                  if (owner !== undefined || locked)
+                    return yield* new StackOwnershipConflictError({
+                      message: "recovered owner did not release ownership",
+                    });
+                }).pipe(
+                  Effect.retry(Schedule.spaced("25 millis").pipe(Schedule.upTo({ times: 200 }))),
+                );
+              }),
+            ),
+          );
+          // Register exact cleanup before launching the replacement. The cached effect makes the
+          // explicit assertion below and scope finalization share one stop/destroy transition.
+          yield* Effect.addFinalizer(() => cleanupRecovered.pipe(Effect.ignore));
+          yield* replaced.start();
           expect((yield* readOwnerMetadata(env.stateRoot, openId, env))?.rpcRelease).toBe(
             STACK_RPC_RELEASE,
           );
-          yield* replaced.destroy();
+          expect((yield* readOwnerMetadata(env.stateRoot, openId, env))?.ownerSessionId).not.toBe(
+            "crashed-owner",
+          );
+          expect(yield* ownerLockExists(env.stateRoot, openId)).toBe(true);
+          yield* cleanupRecovered;
+          expect(yield* readOwnerMetadata(env.stateRoot, openId, env)).toBeUndefined();
+          expect(yield* ownerLockExists(env.stateRoot, openId)).toBe(false);
         }),
       ),
     300_000,

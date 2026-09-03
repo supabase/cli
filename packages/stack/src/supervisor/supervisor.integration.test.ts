@@ -126,6 +126,7 @@ const makeFixture = (
     readonly prepareStarted?: Deferred.Deferred<void>;
     readonly startGate?: Deferred.Deferred<void>;
     readonly startStarted?: Deferred.Deferred<void>;
+    readonly startFinished?: Deferred.Deferred<void>;
     readonly activationGate?: Deferred.Deferred<void>;
     readonly activationStarted?: Deferred.Deferred<void>;
     readonly activationCalls?: Ref.Ref<number>;
@@ -251,6 +252,8 @@ const makeFixture = (
             ...current.filter((entry) => entry.workloadId !== key.workloadId),
             ready,
           ]);
+          if (fixtureOptions.startFinished !== undefined && workload.id === "rest:rest")
+            yield* Deferred.succeed(fixtureOptions.startFinished, undefined);
           if (fixtureOptions.startQueue !== undefined)
             yield* Queue.offer(fixtureOptions.startQueue, workload.id);
           return ready;
@@ -1273,6 +1276,35 @@ describe("Supervisor composition", () => {
           (yield* fixture.supervisor.status).capabilities.find(({ name }) => name === "functions")
             ?.state,
         ).toBe("ready");
+      }),
+    ),
+  );
+
+  it.live("keeps accepted start work alive when its waiter is interrupted", () =>
+    run(
+      Effect.gen(function* () {
+        const startGate = yield* Deferred.make<void>();
+        const startStarted = yield* Deferred.make<void>();
+        const startFinished = yield* Deferred.make<void>();
+        const fixture = yield* makeFixture({ startGate, startStarted, startFinished });
+        const config = {
+          capabilities: { rest: { activation: "eager" } },
+        } satisfies import("../public/Config.ts").StackConfig;
+        const waiter = yield* Effect.forkChild(fixture.supervisor.start({ config }));
+        yield* Deferred.await(startStarted);
+        yield* Fiber.interrupt(waiter);
+        yield* Deferred.succeed(startGate, undefined);
+        yield* Deferred.await(startFinished);
+        // shutdownIfIdle acquires the lifecycle admission permit, so it waits until the accepted
+        // owner operation has released admission after publishing its running phase.
+        yield* fixture.supervisor.shutdownIfIdle;
+
+        const status = yield* fixture.supervisor.status;
+        expect(status.lifecycle).toBe("running");
+        expect(status.capabilities.find(({ name }) => name === "rest")?.state).toBe("ready");
+        const starts = (yield* Ref.get(fixture.calls)).filter((call) => call.startsWith("start:"));
+        expect(starts).toContain("start:database:database");
+        expect(starts).toContain("start:rest:rest");
       }),
     ),
   );
