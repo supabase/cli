@@ -12,8 +12,8 @@ import { LegacyWorkersEnvNotSupportedError } from "./workers.errors.ts";
  * machine-readable.
  *
  * The struct-shaped encoders elsewhere reproduce a payload shape their command
- * already shipped. `workers` has none to match, so it serialises through the
- * generic encoders and shapes its payload as the command reads best.
+ * is required to match. `workers` has none, so it serialises through the generic
+ * encoders and shapes its payload as the command reads best.
  *
  * Returns whether it emitted anything, so the caller can skip its text
  * rendering — `output.success` writes to stdout in text mode and would corrupt

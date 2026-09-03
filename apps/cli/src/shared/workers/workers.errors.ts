@@ -22,6 +22,22 @@ export class InvalidWorkerNameError extends Data.TaggedError("InvalidWorkerNameE
 }
 
 /**
+ * A bare `new` had no name to scaffold under, and nowhere to ask for one.
+ *
+ * The name is the one input this command cannot default — it is the directory,
+ * the `config.toml` key and the hostname all at once — so with `-o` in force or
+ * no interactive terminal there is nothing to do but say so.
+ */
+export class MissingWorkerNameError extends Data.TaggedError("MissingWorkerNameError")<{
+  readonly detail: string;
+  readonly suggestion: string;
+}> {
+  get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
+    return actionability.provideFlags;
+  }
+}
+
+/**
  * A symlink in the worker source points outside the build context.
  *
  * The archive is everything the server gets — it runs no install step and has
