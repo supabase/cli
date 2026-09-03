@@ -72,10 +72,12 @@ import type { LegacyWorkersPushFlags } from "./push.command.ts";
  * of your Dockerfile. Every runtime this CLI offers has code to package, so
  * there is no path here that skips the upload.
  *
- * The command returns once the platform accepts the deploy. The container build
- * that follows runs for minutes, and blocking on it made every successful
- * deploy as slow as the slowest one — so `--wait` opts into the build's
- * verdict, for CI and for anyone who needs the image version before continuing.
+ * The command waits for that server-side build by default, so a plain push
+ * reports the build's verdict rather than only that the deploy was accepted.
+ * The build routinely runs for minutes, though, which makes every successful
+ * deploy as slow as the slowest one — so `--no-wait` returns as soon as the
+ * platform accepts the deploy, for an inner-loop redeploy or a CI step that
+ * only needs the spec on file.
  */
 
 const resolveRuntime = Effect.fnUntraced(function* (options: {
@@ -192,8 +194,8 @@ const deployOneWorker = Effect.fnUntraced(function* (input: {
    */
   readonly refSuffix: string;
   readonly instances: Option.Option<number>;
-  /** `--wait`: block on the server-side build instead of returning once it starts. */
-  readonly wait: boolean;
+  /** `--no-wait`: return once the deploy is accepted instead of blocking on the build. */
+  readonly noWait: boolean;
   readonly pollSchedule?: Schedule.Schedule<unknown>;
   readonly pollRetrySchedule?: Schedule.Schedule<unknown>;
   /** Suppresses this step's human output when `-o` owns stdout. */
@@ -341,19 +343,19 @@ const deployOneWorker = Effect.fnUntraced(function* (input: {
     Effect.tapError(() => deploying.fail()),
   );
 
-  const settled = input.wait
-    ? yield* awaitWorkerBuild(api, projectRef, name, {
+  const settled = input.noWait
+    ? accepted
+    : yield* awaitWorkerBuild(api, projectRef, name, {
         schedule: input.pollSchedule,
         retrySchedule: input.pollRetrySchedule,
         refSuffix: input.refSuffix,
         onPoll: (polled) =>
           polled.buildState === "building" ? deploying.message("Building worker...") : Effect.void,
-      }).pipe(Effect.tapError(() => deploying.fail()))
-    : accepted;
+      }).pipe(Effect.tapError(() => deploying.fail()));
 
-  // Checked whether or not the build was waited on. A deploy answered with a
-  // spec already in `failed` is a refusal the command should report as one,
-  // rather than exiting zero on a worker that will never come up.
+  // Checked whether or not the build was waited on. Under `--no-wait` a deploy
+  // answered with a spec already in `failed` is a refusal the command should
+  // report as one, rather than exiting zero on a worker that will never come up.
   if (settled.buildState === "failed") {
     yield* deploying.clear();
     return yield* Effect.fail(
@@ -385,14 +387,15 @@ const deployOneWorker = Effect.fnUntraced(function* (input: {
     yield* output.raw(
       legacyRenderWorkerDetails([
         // Labelled `State`, and placed first, the way `workers status` renders
-        // the same field: without `--wait` it is the one row that says the
+        // the same field: under `--no-wait` it is the one row that says the
         // worker is not serving yet, so it should not be hunted for at the
         // bottom of the block.
         ["State", settled.buildState],
         ["Runtime", runtime],
         ["Size", formatApiSize(settled.spec.size)],
-        // Empty without `--wait`: no image exists until the build produces one,
-        // and `legacyRenderWorkerDetails` drops an empty-valued row.
+        // Empty on a first deploy under `--no-wait`: no image exists until the
+        // build produces one, and `legacyRenderWorkerDetails` drops an
+        // empty-valued row.
         ["Image", settled.imageVersion ?? ""],
         ["Access", settled.spec.exposure],
         ["URL", url ?? ""],
@@ -406,14 +409,17 @@ const deployOneWorker = Effect.fnUntraced(function* (input: {
       // more than for those: pushing several workers would otherwise bury each
       // worker's hint under the next worker's packaging and deploy output.
       //
-      // One short sentence per line, with the command and the flag aqua'd the
-      // way every other follow-up hint in this shell writes them. The single
-      // wrapped paragraph this replaced re-flowed differently at every terminal
-      // width and buried both commands mid-sentence.
+      // One short sentence per line, with the command aqua'd the way every
+      // other follow-up hint in this shell writes them. The single wrapped
+      // paragraph this replaced re-flowed differently at every terminal width
+      // and buried the command mid-sentence.
+      //
+      // No "drop `--no-wait` next time" line to go with it: reaching here means
+      // the caller asked not to wait, so the only thing left to tell them is
+      // where the build's verdict will show up.
       yield* emitSuccessTrailer(
         `\nYour build was submitted successfully.\n` +
-          `Run ${legacyAqua(`supabase experimental workers status ${name}${input.refSuffix}`)} to check on it.\n` +
-          `Add ${legacyAqua("--wait")} to block on the build next time.\n`,
+          `Run ${legacyAqua(`supabase experimental workers status ${name}${input.refSuffix}`)} to check on it.\n`,
       );
     }
   }
@@ -465,9 +471,9 @@ const reportUnattempted = Effect.fnUntraced(function* (skipped: ReadonlyArray<st
  * the run, because a build that failed is usually the thing to fix before
  * spending minutes on the rest.
  *
- * Without `--wait` that serialization only covers the package/upload/deploy
+ * Under `--no-wait` that serialization only covers the package/upload/deploy
  * legs; the builds themselves then run concurrently on the platform, which is
- * what the caller asked for by not waiting.
+ * what the caller asked for by opting out of the wait.
  */
 export const legacyWorkersPush = Effect.fn("legacy.experimental.workers.push")(function* (
   flags: LegacyWorkersPushFlags,
@@ -545,7 +551,7 @@ export const legacyWorkersPush = Effect.fn("legacy.experimental.workers.push")(f
           projectRef,
           refSuffix,
           instances: flags.instances,
-          wait: flags.wait,
+          noWait: flags.noWait,
           machineOutput,
           ...(options.pollSchedule === undefined ? {} : { pollSchedule: options.pollSchedule }),
           ...(options.pollRetrySchedule === undefined
