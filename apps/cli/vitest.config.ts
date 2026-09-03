@@ -59,7 +59,6 @@ export default defineConfig({
       {
         resolve: workspacePackageResolve,
         ssr: { resolve: workspacePackageSsrResolve },
-        plugins: [dockerfileTextPlugin()],
         test: {
           name: "unit",
           include: ["**/*.unit.test.ts"],
@@ -69,7 +68,6 @@ export default defineConfig({
       {
         resolve: workspacePackageResolve,
         ssr: { resolve: workspacePackageSsrResolve },
-        plugins: [dockerfileTextPlugin()],
         test: {
           name: "integration",
           include: ["**/*.integration.test.ts"],
@@ -78,7 +76,6 @@ export default defineConfig({
       {
         resolve: workspacePackageResolve,
         ssr: { resolve: workspacePackageSsrResolve },
-        plugins: [dockerfileTextPlugin()],
         test: {
           // Stackless e2e: black-box CLI subprocesses against an isolated
           // temporary home. Safe under file-level parallelism (see the flake
@@ -115,7 +112,6 @@ export default defineConfig({
       {
         resolve: workspacePackageResolve,
         ssr: { resolve: workspacePackageSsrResolve },
-        plugins: [dockerfileTextPlugin()],
         test: {
           // Live tests run against one provisioned project on the configured
           // platform. They are never part of the default unit/integration/e2e
