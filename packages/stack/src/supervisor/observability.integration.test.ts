@@ -1,6 +1,7 @@
 import { NodeServices } from "@effect/platform-node";
 import { describe, expect, it } from "@effect/vitest";
 import { Cause, Effect, Exit, FileSystem, Option, Path } from "effect";
+import { InvalidLogCursorError } from "../public/Errors.ts";
 import { LogStoreError, makeLogStore, selectLogBatch } from "./LogStore.ts";
 
 const withPlatform = <A, E, R>(effect: Effect.Effect<A, E, R>) =>
@@ -45,7 +46,7 @@ describe("observability", () => {
         const invalidCursor = yield* store
           .read({ cursor: { opaque: "not-a-cursor" } })
           .pipe(Effect.exit);
-        expect(errorOf(invalidCursor)).toBeInstanceOf(LogStoreError);
+        expect(errorOf(invalidCursor)).toBeInstanceOf(InvalidLogCursorError);
         expect(yield* fs.readFileString(path.join(root, "logs.json"))).not.toContain("top-secret");
         expect((yield* fs.stat(path.join(root, "logs.json"))).mode & 0o077).toBe(0);
       }),

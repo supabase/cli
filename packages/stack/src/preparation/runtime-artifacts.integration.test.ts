@@ -1,6 +1,6 @@
 import { NodeServices } from "@effect/platform-node";
 import { describe, expect, it } from "@effect/vitest";
-import { Effect, Exit, FileSystem, Path } from "effect";
+import { Cause, Effect, Exit, FileSystem, Option, Path } from "effect";
 import type { PlannedWorkload } from "../model/ExecutionPlan.ts";
 import type { ArtifactRequest, ArtifactStore, PreparedArtifact } from "./ArtifactStore.ts";
 import type {
@@ -13,6 +13,8 @@ import {
   makeProductionRuntimeArtifactPreparer,
   makeRuntimeArtifactPreparer,
 } from "./RuntimeArtifacts.ts";
+import { ContainerEngineError } from "../public/Errors.ts";
+import { ContainerEngineProtocolError } from "../runtime/ContainerEngine.ts";
 
 const nativeWorkload = (selected: PlannedWorkload["selected"]): PlannedWorkload => ({
   id: "database:database",
@@ -96,6 +98,35 @@ describe("runtime artifact preparation", () => {
     ),
   );
 
+  it.live("surfaces selected-engine resolver failures as container engine errors", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const root = yield* fs.makeTempDirectoryScoped({ prefix: "supabase-artifact-engine-" });
+        const resolver = {
+          resolve: () =>
+            Effect.fail(
+              new ContainerEngineProtocolError({
+                operation: "probe",
+                message: "podman is not installed",
+              }),
+            ),
+        };
+        const exit = yield* makeProductionRuntimeArtifactPreparer({
+          stateRoot: root,
+          runtime: { kind: "container", engine: "podman" },
+          containerEngineResolver: resolver,
+        }).pipe(Effect.exit);
+        expect(Exit.isFailure(exit)).toBe(true);
+        const error = Exit.isFailure(exit)
+          ? Option.getOrUndefined(Cause.findErrorOption(exit.cause))
+          : undefined;
+        expect(error).toBeInstanceOf(ContainerEngineError);
+        expect(error).toMatchObject({ engine: "podman" });
+      }).pipe(Effect.provide(NodeServices.layer)),
+    ),
+  );
+
   it("resolves native catalog metadata, checksum, and one ArtifactRequest", () => {
     const requests: ArtifactRequest[] = [];
     const store: ArtifactStore = {
@@ -170,6 +201,37 @@ describe("runtime artifact preparation", () => {
     );
     expect(podmanCalls).toContain("probe");
     expect(dockerCalls).toEqual([]);
+  });
+
+  it("reports unavailable container engines separately from artifact preparation", () => {
+    const engine = containerEngine(true, []);
+    const unavailable: ContainerEngine = {
+      ...engine,
+      probe: Effect.fail(
+        new ContainerEngineProtocolError({
+          operation: "probe",
+          message: "docker daemon is unavailable",
+        }),
+      ),
+    };
+    const runtime = makeRuntimeArtifactPreparer({
+      containers: { docker: unavailable },
+    });
+    const exit = Effect.runSyncExit(
+      runtime.prepare(
+        { kind: "container", engine: "docker" },
+        nativeWorkload({
+          kind: "container",
+          image: "ghcr.io/supabase/cli/postgres:17.6.1.167",
+        }),
+      ),
+    );
+    expect(Exit.isFailure(exit)).toBe(true);
+    const error = Exit.isFailure(exit)
+      ? Option.getOrUndefined(Cause.findErrorOption(exit.cause))
+      : undefined;
+    expect(error).toBeInstanceOf(ContainerEngineError);
+    expect(error).toMatchObject({ engine: "docker", message: "docker daemon is unavailable" });
   });
 
   it("fails strict runtime/artifact mismatches before touching a store or engine", () => {

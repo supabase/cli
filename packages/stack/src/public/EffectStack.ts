@@ -60,6 +60,7 @@ import {
   PortAllocationError,
   PortUnavailableError,
   GatewayActivationError,
+  InvalidLogCursorError,
   type CreateStackError,
   type OpenStackError,
   type StackDiscoveryError,
@@ -198,6 +199,7 @@ const stackErrorFactories = {
   StackMustBeStoppedError: (message: string) => new StackMustBeStoppedError({ message }),
   StackLifecycleConflictError: (message: string) => new StackLifecycleConflictError({ message }),
   StackStateInvalidError: (message: string) => new StackStateInvalidError({ message }),
+  InvalidLogCursorError: (message: string) => new InvalidLogCursorError({ message }),
   StackStateFormatUnsupportedError: (message: string) =>
     new StackStateFormatUnsupportedError({ message }),
   StackUpgradeRequiredError: (message: string) => new StackUpgradeRequiredError({ message }),
@@ -221,6 +223,8 @@ const errorForRpc = (error: ControlError): StackError => {
     Predicate.isTagged(error, "StackOwnershipConflictError") ||
     Predicate.isTagged(error, "StackLifecycleConflictError") ||
     Predicate.isTagged(error, "StackStateInvalidError") ||
+    Predicate.isTagged(error, "InvalidLogCursorError") ||
+    Predicate.isTagged(error, "StackCleanupError") ||
     Predicate.isTagged(error, "StackStateFormatUnsupportedError") ||
     Predicate.isTagged(error, "StackUpgradeRequiredError")
   )
@@ -486,6 +490,15 @@ export const makeHandle = (
         }
         if (!response.value.ok) {
           yield* Fiber.interrupt(closeFiber);
+          if (
+            response.value.error.tag === "operation-failed" &&
+            response.value.error.stackErrorTag !== undefined &&
+            isStackErrorTag(response.value.error.stackErrorTag)
+          ) {
+            return yield* stackErrorFactories[response.value.error.stackErrorTag](
+              response.value.error.message,
+            );
+          }
           return yield* new StackLifecycleConflictError({ message: response.value.error.message });
         }
         yield* Fiber.join(closeFiber).pipe(Effect.ignore);
@@ -703,6 +716,7 @@ const handleDependencies = (options: {
     cause instanceof StackPreparationError ||
     cause instanceof ArtifactIntegrityError ||
     cause instanceof ContainerPullError ||
+    cause instanceof ContainerEngineError ||
     cause instanceof StackOwnershipConflictError ||
     cause instanceof StackStateInvalidError ||
     cause instanceof StackLifecycleConflictError
@@ -841,7 +855,7 @@ const handleDependencies = (options: {
         ),
       ),
       Effect.mapError((error) =>
-        error instanceof StackOwnershipConflictError
+        error instanceof StackOwnershipConflictError || error instanceof InvalidLogCursorError
           ? error
           : new StackStateInvalidError({ message: error.message, cause: error }),
       ),

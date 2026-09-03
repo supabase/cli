@@ -17,10 +17,11 @@ import {
 import { Headers } from "effect/unstable/http";
 import { Rpc } from "effect/unstable/rpc";
 import { RequestId } from "effect/unstable/rpc/RpcMessage";
-import type { LogQuery, StackLogEntry } from "../public/Logs.ts";
+import type { LogQuery, StackLogBatch, StackLogEntry } from "../public/Logs.ts";
 import type { StackRuntime } from "../public/Runtime.ts";
 import {
   GatewayActivationError,
+  InvalidLogCursorError,
   PortUnavailableError,
   StackLifecycleConflictError,
   StackNotRunningError,
@@ -74,6 +75,24 @@ const invokeCredentials = (
     return value;
   });
 
+const invokeLogs = (
+  supervisor: Supervisor,
+  query: LogQuery,
+): Effect.Effect<StackLogBatch, StackRpcError, Scope.Scope> =>
+  Effect.gen(function* () {
+    const handler = yield* StackRpcGroup.accessHandler("logs").pipe(
+      Effect.provide(StackRpcGroup.toLayerHandler("logs", supervisor.rpcHandlers.logs)),
+    );
+    const value = yield* handler(query, {
+      client: new Rpc.ServerClient(1),
+      requestId: RequestId(1),
+      headers: Headers.empty,
+    });
+    if (Deferred.isDeferred<StackLogBatch, StackRpcError>(value))
+      return yield* Deferred.await(value);
+    return value;
+  });
+
 const makeFixture = (
   fixtureOptions: {
     readonly ingress?: SupervisorIngress;
@@ -101,6 +120,9 @@ const makeFixture = (
     readonly destroyPreFenceFail?: Ref.Ref<boolean>;
     readonly stoppedReplaceFail?: Ref.Ref<boolean>;
     readonly startQueue?: Queue.Queue<string>;
+    readonly shutdownReadArmed?: Ref.Ref<boolean>;
+    readonly shutdownReadStarted?: Deferred.Deferred<void>;
+    readonly shutdownReadGate?: Deferred.Deferred<void>;
   } = {},
 ) =>
   Effect.gen(function* () {
@@ -110,7 +132,7 @@ const makeFixture = (
     const baseStore = yield* makeStackStateStore({ stateRoot: root });
     const destroyPreFenceFail = fixtureOptions.destroyPreFenceFail;
     const stoppedReplaceFail = fixtureOptions.stoppedReplaceFail;
-    const store =
+    const persistedStore =
       destroyPreFenceFail === undefined && stoppedReplaceFail === undefined
         ? baseStore
         : {
@@ -136,6 +158,26 @@ const makeFixture = (
                   }
                 }
                 return yield* baseStore.replace(stackId, state);
+              }),
+          };
+    const store =
+      fixtureOptions.shutdownReadArmed === undefined ||
+      fixtureOptions.shutdownReadStarted === undefined ||
+      fixtureOptions.shutdownReadGate === undefined
+        ? persistedStore
+        : {
+            ...persistedStore,
+            read: (stackId: string) =>
+              Effect.gen(function* () {
+                const armed = yield* Ref.modify(fixtureOptions.shutdownReadArmed!, (value) => [
+                  value,
+                  false,
+                ]);
+                if (armed) {
+                  yield* Deferred.succeed(fixtureOptions.shutdownReadStarted!, undefined);
+                  yield* Deferred.await(fixtureOptions.shutdownReadGate!);
+                }
+                return yield* persistedStore.read(stackId);
               }),
           };
     yield* store.initialize(id, {
@@ -336,9 +378,11 @@ const makeFixture = (
         path: "memory://logs",
         append: () => Effect.succeed(entry),
         read: (options) =>
-          Ref.update(logOptions, (current) => [...current, options]).pipe(
-            Effect.andThen(Ref.get(logEntries)),
-          ),
+          options?.cursor?.opaque === "not-a-cursor"
+            ? Effect.fail(new InvalidLogCursorError({ message: "Log cursor is invalid" }))
+            : Ref.update(logOptions, (current) => [...current, options]).pipe(
+                Effect.andThen(Ref.get(logEntries)),
+              ),
       },
     };
     const context = yield* Effect.context<
@@ -360,6 +404,18 @@ const run = <A, E, R>(effect: Effect.Effect<A, E, R>) =>
   Effect.scoped(effect).pipe(Effect.provide(NodeServices.layer));
 
 describe("Supervisor composition", () => {
+  it.live("reports malformed log cursors as invalid caller input", () =>
+    run(
+      Effect.gen(function* () {
+        const fixture = yield* makeFixture();
+        const result = yield* invokeLogs(fixture.supervisor, {
+          cursor: { opaque: "not-a-cursor" },
+        }).pipe(Effect.exit);
+        expect(errorOf(result)).toMatchObject({ tag: "InvalidLogCursorError" });
+      }),
+    ),
+  );
+
   it.live("rejects new work after owner shutdown begins", () =>
     run(
       Effect.gen(function* () {
@@ -368,6 +424,30 @@ describe("Supervisor composition", () => {
 
         const start = yield* fixture.supervisor.start().pipe(Effect.exit);
         expect(errorOf(start)).toBeInstanceOf(StackLifecycleConflictError);
+      }),
+    ),
+  );
+
+  it.live("does not admit a lifecycle while idle shutdown makes its final decision", () =>
+    run(
+      Effect.gen(function* () {
+        const readArmed = yield* Ref.make(false);
+        const readStarted = yield* Deferred.make<void>();
+        const readGate = yield* Deferred.make<void>();
+        const fixture = yield* makeFixture({
+          shutdownReadArmed: readArmed,
+          shutdownReadStarted: readStarted,
+          shutdownReadGate: readGate,
+        });
+        yield* Ref.set(readArmed, true);
+        const shutdown = yield* Effect.forkChild(fixture.supervisor.shutdownIfIdle);
+        yield* Deferred.await(readStarted);
+        const start = yield* Effect.forkChild(fixture.supervisor.start({ config: {} }));
+        yield* Deferred.succeed(readGate, undefined);
+        yield* Fiber.join(shutdown);
+        expect(errorOf(yield* Fiber.join(start).pipe(Effect.exit))).toBeInstanceOf(
+          StackLifecycleConflictError,
+        );
       }),
     ),
   );
@@ -643,6 +723,42 @@ describe("Supervisor composition", () => {
         expect((yield* fixture.supervisor.status).lifecycle).toBe("stopped");
         yield* fixture.supervisor.shutdownIfIdle;
         yield* fixture.supervisor.shutdown;
+      }),
+    ),
+  );
+
+  it.live("persists stopped after a proven fresh-session preflight failure", () =>
+    run(
+      Effect.gen(function* () {
+        const preflightFailFirst = yield* Ref.make(false);
+        const fixture = yield* makeFixture({ preflightFailFirst });
+        yield* fixture.supervisor.start({ config: {} });
+        yield* Ref.set(preflightFailFirst, true);
+
+        const successor = yield* makeSupervisor({
+          stackId: fixture.id,
+          ownerSessionId: "successor-session",
+          rpcRelease: "test-release",
+          stateStore: fixture.store,
+          context: fixture.context,
+          runtime: fixture.runtime,
+        });
+        const failed = yield* successor.start().pipe(Effect.exit);
+        expect(Exit.isFailure(failed)).toBe(true);
+        expect((yield* fixture.store.read(fixture.id))?.desiredLifecycle).toBe("stopped");
+        expect((yield* successor.status).lifecycle).toBe("stopped");
+        yield* successor.shutdownIfIdle;
+        yield* successor.shutdown;
+
+        const retryOwner = yield* makeSupervisor({
+          stackId: fixture.id,
+          ownerSessionId: "retry-session",
+          rpcRelease: "test-release",
+          stateStore: fixture.store,
+          context: fixture.context,
+          runtime: fixture.runtime,
+        });
+        expect((yield* retryOwner.start()).lifecycle).toBe("running");
       }),
     ),
   );
@@ -945,7 +1061,11 @@ describe("Supervisor composition", () => {
         const response = yield* fixture.supervisor.maintenanceHandlers.stop;
         expect(response).toEqual({
           ok: false,
-          error: { tag: "operation-failed", message: "injected stop cleanup failure" },
+          error: {
+            tag: "operation-failed",
+            message: "injected stop cleanup failure",
+            stackErrorTag: "StackCleanupError",
+          },
         });
         expect((yield* fixture.supervisor.status).lifecycle).toBe("stopping");
       }),

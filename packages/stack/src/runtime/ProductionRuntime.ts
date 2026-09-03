@@ -31,6 +31,7 @@ import {
   GatewayActivationError,
   StackPreparationError,
   ArtifactIntegrityError,
+  ContainerEngineError,
   ContainerPullError,
   PortUnavailableError,
   StackRuntimeMismatchError,
@@ -66,7 +67,11 @@ import { makeNativeRuntime } from "./NativeRuntime.ts";
 import { makeContainerRuntime, type ContainerWorkloadResolution } from "./ContainerRuntime.ts";
 import { DEFAULT_READINESS_DEADLINE, probeReadiness } from "./ReadinessProbe.ts";
 import { parseGoDuration } from "../model/capabilities/database.ts";
-import type { ContainerEngine, ContainerHostRoute } from "./ContainerEngine.ts";
+import type {
+  ContainerEngine,
+  ContainerEngineKind,
+  ContainerHostRoute,
+} from "./ContainerEngine.ts";
 import { resolveContainerEngine } from "./ContainerEngineResolver.ts";
 import { bootstrapDatabaseAt } from "./PostgresDatabaseSession.ts";
 import { DatabaseBootstrapError } from "../model/DatabaseBootstrap.ts";
@@ -551,7 +556,11 @@ export const makeProductionRuntime = (
         ? undefined
         : yield* resolveContainerEngine(selectedEngine).pipe(
             Effect.mapError((error) =>
-              preparationError(`Unable to configure ${selectedEngine} artifact engine`, error),
+              containerEngineError(
+                selectedEngine,
+                `Unable to configure ${selectedEngine} artifact engine`,
+                error,
+              ),
             ),
           ));
     const preparer =
@@ -584,7 +593,9 @@ export const makeProductionRuntime = (
       return cached === undefined
         ? preparer.prepare(runtime, workload).pipe(
             Effect.mapError((error) =>
-              error instanceof ArtifactIntegrityError || error instanceof ContainerPullError
+              error instanceof ArtifactIntegrityError ||
+              error instanceof ContainerPullError ||
+              error instanceof ContainerEngineError
                 ? error
                 : preparationError(`Unable to prepare ${workload.id}`, error),
             ),
@@ -674,11 +685,15 @@ export const makeProductionRuntime = (
           }),
         );
         if (input.state.runtime.kind === "container") {
-          if (containerEngine === undefined || containerEngine.kind !== input.state.runtime.engine)
-            return yield* preparationError("Selected container engine is unavailable");
+          const engineKind = input.state.runtime.engine;
+          if (containerEngine === undefined || containerEngine.kind !== engineKind)
+            return yield* containerEngineError(
+              engineKind,
+              "Selected container engine is unavailable",
+            );
           const route = yield* containerEngine.preflight.pipe(
             Effect.mapError((error) =>
-              preparationError("Container host route preflight failed", error),
+              containerEngineError(engineKind, "Container host route preflight failed", error),
             ),
           );
           yield* Ref.set(hostRoute, route);
@@ -881,7 +896,10 @@ export const makeProductionRuntime = (
       );
     } else {
       if (containerEngine === undefined || containerEngine.kind !== state.runtime.engine)
-        return yield* preparationError("Selected container engine is unavailable");
+        return yield* containerEngineError(
+          state.runtime.engine,
+          "Selected container engine is unavailable",
+        );
       driver = yield* makeContainerRuntime({
         engine: containerEngine,
         ownerSessionId: options.ownerSessionId,
@@ -974,3 +992,10 @@ export const makeProductionRuntime = (
       logStore: logs,
     } satisfies SupervisorRuntime;
   });
+
+const containerEngineError = (
+  engine: ContainerEngineKind,
+  message: string,
+  cause?: unknown,
+): ContainerEngineError =>
+  new ContainerEngineError({ engine, message, ...(cause === undefined ? {} : { cause }) });

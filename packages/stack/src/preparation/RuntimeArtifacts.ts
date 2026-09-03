@@ -6,7 +6,11 @@ import {
   type NativeWorkloadArtifact,
 } from "../model/WorkloadCatalog.ts";
 import type { StackRuntime } from "../public/Runtime.ts";
-import { ContainerPullError, StackPreparationError } from "../public/Errors.ts";
+import {
+  ContainerEngineError,
+  ContainerPullError,
+  StackPreparationError,
+} from "../public/Errors.ts";
 import {
   makeArtifactStore,
   type ArtifactStore,
@@ -42,6 +46,7 @@ export interface RuntimeArtifactPreparer {
 export type RuntimeArtifactPreparationError =
   | ArtifactStoreError
   | StackPreparationError
+  | ContainerEngineError
   | ContainerPullError;
 
 export interface RuntimeArtifactPreparerOptions {
@@ -149,8 +154,8 @@ export const makeRuntimeArtifactPreparer = (
       Effect.mapError((cause) =>
         cause instanceof ContainerPullError
           ? cause
-          : error("Container image preparation failed", {
-              workload: workload.id,
+          : new ContainerEngineError({
+              message: cause instanceof Error ? cause.message : "Container engine operation failed",
               engine: runtime.engine,
               cause,
             }),
@@ -224,7 +229,14 @@ export const makeProductionRuntimeArtifactPreparer = (options: {
       (selectedEngine === undefined
         ? undefined
         : yield* resolveContainerEngine(selectedEngine, options.containerEngineResolver).pipe(
-            Effect.mapError(() => error(`Unable to configure ${selectedEngine} artifact engine`)),
+            Effect.mapError(
+              (cause) =>
+                new ContainerEngineError({
+                  message: `Unable to configure ${selectedEngine} artifact engine`,
+                  engine: selectedEngine,
+                  cause,
+                }),
+            ),
           ));
     const containers =
       selectedEngine === undefined || containerEngine === undefined

@@ -41,6 +41,9 @@ export class StackLifecycleConflictError extends Data.TaggedError(
 export class StackStateInvalidError extends Data.TaggedError(
   "StackStateInvalidError",
 )<StackErrorFields> {}
+export class InvalidLogCursorError extends Data.TaggedError(
+  "InvalidLogCursorError",
+)<StackErrorFields> {}
 export class StackStateFormatUnsupportedError extends Data.TaggedError(
   "StackStateFormatUnsupportedError",
 )<StackErrorFields> {}
@@ -95,6 +98,7 @@ export const STACK_ERROR_TAGS = [
   "StackMustBeStoppedError",
   "StackLifecycleConflictError",
   "StackStateInvalidError",
+  "InvalidLogCursorError",
   "StackStateFormatUnsupportedError",
   "StackUpgradeRequiredError",
   "StackSecretMismatchError",
@@ -128,6 +132,7 @@ export type StackError =
   | StackMustBeStoppedError
   | StackLifecycleConflictError
   | StackStateInvalidError
+  | InvalidLogCursorError
   | StackStateFormatUnsupportedError
   | StackUpgradeRequiredError
   | StackSecretMismatchError
@@ -199,6 +204,7 @@ export const PREPARE_STACK_ERROR_TAGS = [
   "StackPreparationError",
   "ArtifactIntegrityError",
   "ContainerPullError",
+  "ContainerEngineError",
   "StackOwnershipConflictError",
   "StackStateInvalidError",
   "StackLifecycleConflictError",
@@ -232,6 +238,8 @@ export type StackStartError = ErrorByTag<(typeof STACK_START_ERROR_TAGS)[number]
 export const STACK_STOP_ERROR_TAGS = [
   "StackOwnershipConflictError",
   "StackLifecycleConflictError",
+  "StackStateInvalidError",
+  "StackCleanupError",
 ] as const satisfies ReadonlyArray<StackErrorTag>;
 export type StackStopError = ErrorByTag<(typeof STACK_STOP_ERROR_TAGS)[number]>;
 
@@ -239,6 +247,7 @@ export const STACK_LOGS_ERROR_TAGS = [
   "StackNotFoundError",
   "StackNotRunningError",
   "StackStateInvalidError",
+  "InvalidLogCursorError",
   "StackOwnershipConflictError",
   "StackLifecycleConflictError",
 ] as const satisfies ReadonlyArray<StackErrorTag>;

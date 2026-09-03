@@ -6,6 +6,7 @@ import {
   type StackLogEntry,
   type StackLogSource,
 } from "../public/Logs.ts";
+import { InvalidLogCursorError } from "../public/Errors.ts";
 import { redactKnownSecrets } from "../state/SecretStore.ts";
 
 const CURSOR_PREFIX = "v1_";
@@ -74,7 +75,7 @@ export interface LogStore {
   /** Returns retained records after the supplied cursor. */
   readonly read: (
     options?: LogStoreQuery,
-  ) => Effect.Effect<ReadonlyArray<StackLogEntry>, LogStoreError>;
+  ) => Effect.Effect<ReadonlyArray<StackLogEntry>, LogStoreError | InvalidLogCursorError>;
 }
 
 interface LogDocument {
@@ -102,19 +103,28 @@ const parseOpaqueCursor = (path: string, opaque: string): Effect.Effect<number, 
     : Effect.fail(fileError(path, "Log cursor is out of range"));
 };
 
+const parseQueryCursor = (
+  path: string,
+  cursor: LogCursor | undefined,
+): Effect.Effect<number | undefined, InvalidLogCursorError> => {
+  if (cursor === undefined) return Effect.map(Effect.void, () => undefined);
+  return parseOpaqueCursor(path, cursor.opaque).pipe(
+    Effect.mapError((error) => new InvalidLogCursorError({ message: error.message, cause: error })),
+  );
+};
+
 const decodeCursor = (
   path: string,
   cursor: LogCursor | undefined,
-): Effect.Effect<number | undefined, LogStoreError> => {
-  if (cursor === undefined) return Effect.as(Effect.void, undefined);
-  return parseOpaqueCursor(path, cursor.opaque);
+): Effect.Effect<number | undefined, InvalidLogCursorError> => {
+  return parseQueryCursor(path, cursor);
 };
 
 const selected = (
   entries: ReadonlyArray<StackLogEntry>,
   options: LogStoreQuery | undefined,
   path: string,
-): Effect.Effect<ReadonlyArray<StackLogEntry>, LogStoreError> =>
+): Effect.Effect<ReadonlyArray<StackLogEntry>, InvalidLogCursorError> =>
   Effect.map(decodeCursor(path, options?.cursor), (after) =>
     after === undefined
       ? entries
@@ -192,7 +202,7 @@ export const readRetainedLogs = (
   fs: FileSystem.FileSystem,
   path: string,
   options?: LogStoreQuery,
-): Effect.Effect<ReadonlyArray<StackLogEntry>, LogStoreError> =>
+): Effect.Effect<ReadonlyArray<StackLogEntry>, LogStoreError | InvalidLogCursorError> =>
   readDocument(fs, path).pipe(
     Effect.flatMap((document) => selected(document.entries, options, path)),
   );

@@ -7,6 +7,7 @@ import {
   StackCleanupError,
   StackStateInvalidError,
   StackMustBeStoppedError,
+  type StackError,
 } from "../public/Errors.ts";
 import type { StackRuntime } from "../public/Runtime.ts";
 import type { PersistedStackState } from "../state/StackState.ts";
@@ -43,6 +44,7 @@ interface BackendState {
   gate?: Deferred.Deferred<void>;
   preflightStarted?: Deferred.Deferred<void>;
   waitBeforeLaunch?: Deferred.Deferred<void>;
+  launchMutation?: () => Effect.Effect<void, StackError>;
   stopLaunchStarted?: Deferred.Deferred<void>;
   stopLaunchGate?: Deferred.Deferred<void>;
   startLaunchStarted?: Deferred.Deferred<void>;
@@ -66,6 +68,7 @@ const backend = (state: BackendState): LifecycleBackend => ({
       if (input.state.desiredLifecycle === "running" && state.startLaunchStarted !== undefined)
         yield* Deferred.succeed(state.startLaunchStarted, undefined);
       if (state.waitBeforeLaunch !== undefined) yield* Deferred.await(state.waitBeforeLaunch);
+      if (state.launchMutation !== undefined) yield* state.launchMutation();
       if (state.failLaunch) return yield* new StackRuntimeError({ message: "launch failed" });
     }),
   cleanup: Effect.gen(function* () {
@@ -168,6 +171,40 @@ describe("durable lifecycle controller", () => {
         expect(errorOf(failed)).toBeInstanceOf(StackRuntimeError);
         expect((yield* fixture.store.read(fixture.id))?.desiredLifecycle).toBe("stopped");
         expect(fixture.state.calls.at(-1)).toBe("cleanup:running");
+      }),
+    ),
+  );
+
+  it.live("preserves sticky ports allocated during a failed cold launch", () =>
+    run(
+      Effect.gen(function* () {
+        const fixture = yield* makeFixture();
+        fixture.state.failLaunch = true;
+        fixture.state.launchMutation = () =>
+          Effect.provide(
+            fixture.store.read(fixture.id).pipe(
+              Effect.flatMap((current) =>
+                current === undefined
+                  ? Effect.fail(new StackStateInvalidError({ message: "state disappeared" }))
+                  : fixture.store.replace(fixture.id, {
+                      ...current,
+                      ports: [{ field: "api", port: 54_321, intent: "automatic" }],
+                      privatePorts: [{ workloadId: "rest:rest", binding: "http", port: 54_322 }],
+                    }),
+              ),
+              Effect.asVoid,
+            ),
+            layer,
+          );
+
+        const failed = yield* fixture.controller.start().pipe(Effect.exit);
+        expect(errorOf(failed)).toBeInstanceOf(StackRuntimeError);
+        const stopped = yield* fixture.store.read(fixture.id);
+        expect(stopped?.desiredLifecycle).toBe("stopped");
+        expect(stopped?.ports).toEqual([{ field: "api", port: 54_321, intent: "automatic" }]);
+        expect(stopped?.privatePorts).toEqual([
+          { workloadId: "rest:rest", binding: "http", port: 54_322 },
+        ]);
       }),
     ),
   );

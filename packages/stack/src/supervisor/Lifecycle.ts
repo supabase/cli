@@ -225,8 +225,27 @@ export const makeLifecycleController = (
               guidance: "Use stop() followed by start() to apply stopped-time changes",
             });
           const freshSession = startOptions?.freshSession === true;
-          if (freshSession)
-            yield* options.backend.preflight(lifecycleInput(options.stackId, initial, candidate));
+          if (freshSession) {
+            const preflighted = yield* options.backend
+              .preflight(lifecycleInput(options.stackId, initial, candidate))
+              .pipe(Effect.exit);
+            if (Exit.isFailure(preflighted)) {
+              const current = yield* options.stateStore.read(options.stackId).pipe(Effect.exit);
+              const stopped =
+                Exit.isSuccess(current) && current.value !== undefined
+                  ? { ...current.value, desiredLifecycle: "stopped" as const }
+                  : { ...initial, desiredLifecycle: "stopped" as const };
+              const persisted = yield* options.stateStore
+                .replace(options.stackId, stopped)
+                .pipe(Effect.exit);
+              const cleaned = yield* options.backend.cleanup.pipe(Effect.exit);
+              let cause = preflighted.cause;
+              if (Exit.isFailure(current)) cause = Cause.combine(cause, current.cause);
+              if (Exit.isFailure(persisted)) cause = Cause.combine(cause, persisted.cause);
+              if (Exit.isFailure(cleaned)) cause = Cause.combine(cause, cleaned.cause);
+              return yield* Effect.failCause(cause);
+            }
+          }
           const launched = yield* options.backend
             .launch(
               lifecycleInput(options.stackId, initial, candidate),
@@ -234,12 +253,17 @@ export const makeLifecycleController = (
             )
             .pipe(Effect.exit);
           if (Exit.isFailure(launched) && freshSession) {
-            const stopped = { ...initial, desiredLifecycle: "stopped" as const };
+            const current = yield* options.stateStore.read(options.stackId).pipe(Effect.exit);
+            const stopped =
+              Exit.isSuccess(current) && current.value !== undefined
+                ? { ...current.value, desiredLifecycle: "stopped" as const }
+                : { ...initial, desiredLifecycle: "stopped" as const };
             const persisted = yield* options.stateStore
               .replace(options.stackId, stopped)
               .pipe(Effect.exit);
             const cleaned = yield* options.backend.cleanup.pipe(Effect.exit);
             let cause = launched.cause;
+            if (Exit.isFailure(current)) cause = Cause.combine(cause, current.cause);
             if (Exit.isFailure(persisted)) cause = Cause.combine(cause, persisted.cause);
             if (Exit.isFailure(cleaned)) cause = Cause.combine(cause, cleaned.cause);
             return yield* Effect.failCause(cause);
@@ -259,12 +283,17 @@ export const makeLifecycleController = (
         // A failed cold launch never leaves a durable running intent behind. Cleanup is attempted
         // before publishing the stopped state; if cleanup is not proven, the stopped fence remains
         // durable and the Supervisor stays available for an explicit retry.
-        const stopped = { ...next, desiredLifecycle: "stopped" as const };
+        const current = yield* options.stateStore.read(options.stackId).pipe(Effect.exit);
+        const stopped =
+          Exit.isSuccess(current) && current.value !== undefined
+            ? { ...current.value, desiredLifecycle: "stopped" as const }
+            : { ...next, desiredLifecycle: "stopped" as const };
         const persisted = yield* options.stateStore
           .replace(options.stackId, stopped)
           .pipe(Effect.exit);
         const cleaned = yield* options.backend.cleanup.pipe(Effect.exit);
         let cause = started.cause;
+        if (Exit.isFailure(current)) cause = Cause.combine(cause, current.cause);
         if (Exit.isFailure(persisted)) cause = Cause.combine(cause, persisted.cause);
         if (Exit.isFailure(cleaned)) cause = Cause.combine(cause, cleaned.cause);
         return yield* Effect.failCause(cause);

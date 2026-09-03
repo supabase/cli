@@ -39,6 +39,7 @@ import { STACK_RPC_RELEASE, type StackRpcHandlers } from "../control/StackRpc.ts
 import { compileStack } from "../model/Compiler.ts";
 import {
   StackDestructionError,
+  StackCleanupError,
   StackOwnershipConflictError,
   StackPreparationError,
   StackRuntimeMismatchError,
@@ -135,6 +136,67 @@ const withRuntimeRoot = <A, E, R>(effect: (project: string) => Effect.Effect<A, 
   ).pipe(Effect.provide(NodeServices.layer));
 
 describe("Effect stack lifecycle handoff", () => {
+  it.live("preserves stop cleanup error identity through maintenance transport", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const root = yield* fs.makeTempDirectoryScoped({
+          prefix: "supabase-effect-stack-stop-error-",
+        });
+        const endpoint = { kind: "unix" as const, path: path.join(root, "control.sock") };
+        const ownerSessionId = "stop-error-session";
+        const owner = {
+          format: "supabase-stack-owner-v1" as const,
+          stackId,
+          endpoint,
+          ownerSessionId,
+          rpcRelease: STACK_RPC_RELEASE,
+        };
+        const ownerScope = yield* Scope.make();
+        yield* startControlServer({
+          endpoint,
+          stackId,
+          ownerSessionId,
+          rpcRelease: STACK_RPC_RELEASE,
+          rpcHandlers: {
+            status: () => Effect.succeed(runningStatus),
+            credentials: () => Effect.succeed(credentials),
+            start: () => Effect.succeed(runningStatus),
+            destroy: () => Effect.void,
+            logs: () => emptyLogs(),
+          },
+          maintenanceHandlers: {
+            probe: Effect.succeed({
+              ok: true,
+              op: "probe",
+              stackId,
+              ownerSessionId,
+              rpcRelease: STACK_RPC_RELEASE,
+            }),
+            stop: Effect.succeed({
+              ok: false,
+              error: {
+                tag: "operation-failed",
+                message: "injected stop cleanup failure",
+                stackErrorTag: "StackCleanupError",
+              },
+            }),
+          },
+        }).pipe(Effect.provideService(Scope.Scope, ownerScope));
+        const stack = yield* makeHandle(stackId, {
+          resolveOwner: () => Effect.succeed(Option.some(owner)),
+        });
+        const stopped = yield* stack.stop().pipe(Effect.exit);
+        expect(Exit.isFailure(stopped)).toBe(true);
+        if (Exit.isFailure(stopped))
+          expect(Option.getOrUndefined(Cause.findErrorOption(stopped.cause))).toBeInstanceOf(
+            StackCleanupError,
+          );
+      }).pipe(Effect.provide(NodeServices.layer)),
+    ),
+  );
+
   it.live("hands off filtered logs through a real owner stop", () =>
     Effect.scoped(
       Effect.gen(function* () {

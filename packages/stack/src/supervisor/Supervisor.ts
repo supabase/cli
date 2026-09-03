@@ -9,6 +9,7 @@ import {
   FiberSet,
   Option,
   Path,
+  Predicate,
   Redacted,
   Ref,
   Semaphore,
@@ -25,18 +26,22 @@ import type { CapabilityName } from "../public/Capability.ts";
 import type { StackConfig } from "../public/Config.ts";
 import {
   GatewayActivationError,
+  ContainerEngineError,
+  InvalidLogCursorError,
   StackLifecycleConflictError,
   StackNotRunningError,
   StackRuntimeError,
   StackCleanupError,
   StackStateInvalidError,
+  isStackErrorTag,
+  type StackErrorTag,
   type StackError,
 } from "../public/Errors.ts";
 import type { StackStatus } from "../public/Status.ts";
 import type { StackId } from "../public/StackId.ts";
 import type { LogQuery, StackLogBatch } from "../public/Logs.ts";
 import type { EffectStackCredentials } from "../public/Credentials.ts";
-import type { RuntimeDriver } from "../runtime/RuntimeDriver.ts";
+import { RuntimeDriverError, type RuntimeDriver } from "../runtime/RuntimeDriver.ts";
 import type { PersistedStackState } from "../state/StackState.ts";
 import type { StackStateStore } from "../state/StackStateStore.ts";
 import { makeSessionLauncher, type SessionLauncher } from "./SessionLauncher.ts";
@@ -116,6 +121,9 @@ const credentialHost = (address: string): string =>
 
 const mapRuntimeError = (error: unknown): StackError => {
   if (error instanceof StackStateInvalidError) return error;
+  if (error instanceof ContainerEngineError) return error;
+  if (error instanceof RuntimeDriverError && error.cause instanceof ContainerEngineError)
+    return error.cause;
   return new StackRuntimeError({
     message: error instanceof Error ? error.message : String(error),
     cause: error,
@@ -131,6 +139,12 @@ const mapCleanupError = (error: unknown): StackError => {
 };
 
 const rpcTag = (error: StackError): StackRpcError["tag"] => error._tag;
+const maintenanceStackErrorTag = (error: unknown): StackErrorTag | undefined =>
+  Predicate.hasProperty(error, "_tag") &&
+  typeof error._tag === "string" &&
+  isStackErrorTag(error._tag)
+    ? error._tag
+    : undefined;
 
 /** Compose one owner process around the durable lifecycle controller and a runtime driver. */
 export const makeSupervisor = (
@@ -614,21 +628,29 @@ export const makeSupervisor = (
       });
     const signalShutdownIfIdle = (): Effect.Effect<void> =>
       Effect.gen(function* () {
-        const lifecycle = yield* admission.withPermit(Ref.get(lifecycleActive));
+        const lifecycle = yield* Ref.get(lifecycleActive);
         if (lifecycle !== undefined) {
           yield* Deferred.await(lifecycle.result);
           return yield* signalShutdownIfIdle();
         }
-        const state = yield* read().pipe(Effect.exit);
-        if (Exit.isFailure(state)) return;
-        const currentPhase = yield* Ref.get(phase);
-        if (
-          currentPhase !== "stopping" &&
-          (state.value === undefined ||
-            state.value.desiredLifecycle === "stopped" ||
-            state.value.desiredLifecycle === "unconfigured")
-        )
-          yield* signalShutdown;
+        yield* admission.withPermit(
+          Effect.gen(function* () {
+            // Recheck ownership after admission: a lifecycle may have started between the
+            // initial observation and this critical section. Keep the permit while making the
+            // final state/phase decision and signalling shutdown so no new start can slip in.
+            if ((yield* Ref.get(lifecycleActive)) !== undefined) return;
+            const state = yield* read().pipe(Effect.exit);
+            if (Exit.isFailure(state)) return;
+            const currentPhase = yield* Ref.get(phase);
+            if (
+              currentPhase !== "stopping" &&
+              (state.value === undefined ||
+                state.value.desiredLifecycle === "stopped" ||
+                state.value.desiredLifecycle === "unconfigured")
+            )
+              yield* signalShutdown;
+          }),
+        );
       });
     const shutdownIfIdle = signalShutdownIfIdle();
     const stopWithShutdown = submitLifecycle("stop", stopOperation());
@@ -658,8 +680,10 @@ export const makeSupervisor = (
         const scanned = yield* runtime.logStore
           .read(cursor === undefined ? undefined : { cursor })
           .pipe(
-            Effect.mapError(
-              (error) => new StackStateInvalidError({ message: error.message, cause: error }),
+            Effect.mapError((error) =>
+              error instanceof InvalidLogCursorError
+                ? error
+                : new StackStateInvalidError({ message: error.message, cause: error }),
             ),
           );
         const selected = selectLogBatch(scanned, query);
@@ -683,7 +707,13 @@ export const makeSupervisor = (
         Effect.catch((error) =>
           Effect.succeed({
             ok: false,
-            error: { tag: "operation-failed", message: stateErrorMessage(error) },
+            error: {
+              tag: "operation-failed",
+              message: stateErrorMessage(error),
+              ...(maintenanceStackErrorTag(error) === undefined
+                ? {}
+                : { stackErrorTag: maintenanceStackErrorTag(error) }),
+            },
           } satisfies MaintenanceResponse),
         ),
       ),

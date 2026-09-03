@@ -13,7 +13,7 @@ import type { EffectStack, PrepareStackOptions, StartStackOptions } from "./Effe
 import type { StackLogEntry } from "./Logs.ts";
 import { StackIdSchema } from "./StackId.ts";
 import type { StackStatus } from "./Status.ts";
-import { InvalidStackConfigError } from "./Errors.ts";
+import { InvalidLogCursorError, InvalidStackConfigError } from "./Errors.ts";
 import { adaptEffectStack, makePromiseApi, type PromiseStack } from "./PromiseStack.ts";
 import { compileStack } from "../model/Compiler.ts";
 
@@ -104,6 +104,17 @@ describe("Promise stack facade", () => {
       followed.push(entry);
     }
     expect(followed.every((entry) => entry.source === "auth")).toBe(true);
+  });
+
+  it("preserves malformed log cursor errors through the Promise facade", async () => {
+    const source: EffectStack = {
+      ...effectStack(),
+      logs: () => Effect.fail(new InvalidLogCursorError({ message: "Log cursor is invalid" })),
+    };
+    const stack = adaptEffectStack(source);
+    await expect(stack.logs({ cursor: { opaque: "not-a-cursor" } })).rejects.toBeInstanceOf(
+      InvalidLogCursorError,
+    );
   });
 
   it("unwraps every credential secret without a lifecycle close operation", async () => {
