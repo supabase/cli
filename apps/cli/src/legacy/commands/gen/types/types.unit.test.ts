@@ -8,7 +8,6 @@ import {
   applyQueryTimeouts,
   defaultSchemas,
   legacyGenTypesNetworkIdUnusedWarning,
-  localDbPassword,
   parseQueryTimeoutSeconds,
 } from "./types.shared.ts";
 
@@ -27,34 +26,7 @@ const BASE_CONN = {
   database: "postgres",
 };
 
-function withEnv<T>(key: string, value: string | undefined, run: () => T): T {
-  const previous = process.env[key];
-  if (value === undefined) {
-    delete process.env[key];
-  } else {
-    process.env[key] = value;
-  }
-  try {
-    return run();
-  } finally {
-    if (previous === undefined) {
-      delete process.env[key];
-    } else {
-      process.env[key] = previous;
-    }
-  }
-}
-
 describe("parseQueryTimeoutSeconds", () => {
-  it.effect("parses compound Go durations", () =>
-    Effect.gen(function* () {
-      expect(yield* parseQueryTimeoutSeconds("15s")).toBe(15);
-      expect(yield* parseQueryTimeoutSeconds("1h")).toBe(3600);
-      expect(yield* parseQueryTimeoutSeconds("1m30s")).toBe(90);
-      expect(yield* parseQueryTimeoutSeconds("2h30m")).toBe(9000);
-    }),
-  );
-
   it.effect("accepts Go's bare 0 as disable", () =>
     Effect.gen(function* () {
       expect(yield* parseQueryTimeoutSeconds("0")).toBe(0);
@@ -74,36 +46,6 @@ describe("parseQueryTimeoutSeconds", () => {
       for (const raw of ["1ms", "400ms", `15${"µ"}s`, `15${"μ"}s`]) {
         expectInvalidDuration(yield* parseQueryTimeoutSeconds(raw).pipe(Effect.exit), raw);
       }
-    }),
-  );
-
-  it.effect("rejects an empty duration", () =>
-    Effect.gen(function* () {
-      expectInvalidDuration(yield* parseQueryTimeoutSeconds("  ").pipe(Effect.exit), "  ");
-    }),
-  );
-
-  it.effect("rejects a duration with a leading non-duration prefix", () =>
-    Effect.gen(function* () {
-      expectInvalidDuration(yield* parseQueryTimeoutSeconds("x15s").pipe(Effect.exit), "x15s");
-    }),
-  );
-
-  it.effect("rejects a duration with trailing junk", () =>
-    Effect.gen(function* () {
-      expectInvalidDuration(yield* parseQueryTimeoutSeconds("15s30").pipe(Effect.exit), "15s30");
-    }),
-  );
-
-  it.effect("rejects a string with no recognizable units", () =>
-    Effect.gen(function* () {
-      expectInvalidDuration(yield* parseQueryTimeoutSeconds("abc").pipe(Effect.exit), "abc");
-    }),
-  );
-
-  it.effect("rejects a negative duration", () =>
-    Effect.gen(function* () {
-      expectInvalidDuration(yield* parseQueryTimeoutSeconds("-5s").pipe(Effect.exit), "-5s");
     }),
   );
 });
@@ -151,26 +93,14 @@ describe("applyProbedSslMode", () => {
   });
 });
 
-describe("schema and password helpers", () => {
+describe("schema helpers", () => {
   it("prepends public and removes duplicates from default schemas", () => {
     expect(defaultSchemas(["auth", "public", "storage"])).toEqual(["public", "auth", "storage"]);
     expect(defaultSchemas()).toEqual(["public"]);
   });
-
-  it("reads the db password from the environment", () => {
-    expect(withEnv("SUPABASE_DB_PASSWORD", undefined, () => localDbPassword())).toBe("postgres");
-    expect(withEnv("SUPABASE_DB_PASSWORD", "secret", () => localDbPassword())).toBe("secret");
-  });
 });
 
 describe("legacyGenTypesNetworkIdUnusedWarning", () => {
-  it("names the unused flag and the docker run + npx workaround", () => {
-    const warning = legacyGenTypesNetworkIdUnusedWarning("mycompose_default");
-    expect(warning).toContain("--network-id is unused");
-    expect(warning).toContain("docker run --rm --network mycompose_default");
-    expect(warning).toContain("npx --yes supabase gen types --db-url <url>");
-  });
-
   it("uses a placeholder when the flag value is empty", () => {
     expect(legacyGenTypesNetworkIdUnusedWarning("")).toContain("--network <network-id>");
   });

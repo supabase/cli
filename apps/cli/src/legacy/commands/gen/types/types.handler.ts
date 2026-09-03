@@ -446,7 +446,11 @@ export const legacyGenTypes = Effect.fn("legacy.gen.types")(function* (flags: Le
       }
     }
 
-    const networkIdOverride = legacyPflagStringValue(occurrences, "network-id");
+    // Persistent `--network-id` can appear before the command path
+    // (`supabase --network-id net gen types …`); last-wins matches workdir/profile.
+    const networkIdOverride = legacyPflagStringValue(occurrences, "network-id").pipe(
+      Option.orElse(() => legacyPflagStringValue(scan.prePathOccurrences, "network-id")),
+    );
     if (Option.isSome(networkIdOverride)) {
       yield* output.warn(legacyGenTypesNetworkIdUnusedWarning(networkIdOverride.value));
     }

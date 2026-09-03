@@ -2,6 +2,7 @@ import { Context, type Effect } from "effect";
 
 import type { LegacyDbConnectError } from "../../../shared/legacy-db-connection.errors.ts";
 import type { LegacyPgConnInput } from "../../../shared/legacy-db-connection.service.ts";
+import type { LegacyPgDeltaSslProbeError } from "../../../shared/legacy-pgdelta-ssl-probe.service.ts";
 import type { LegacyGenTypesGenerateError, LegacyGenTypesMetadataError } from "./types.errors.ts";
 
 export type LegacyGenTypesLang = "typescript" | "go" | "swift" | "python";
@@ -44,7 +45,10 @@ interface LegacyGenTypesGeneratorShape {
     input: LegacyGenTypesGenerateInput,
   ) => Effect.Effect<
     string,
-    LegacyDbConnectError | LegacyGenTypesGenerateError | LegacyGenTypesMetadataError
+    | LegacyDbConnectError
+    | LegacyGenTypesGenerateError
+    | LegacyGenTypesMetadataError
+    | LegacyPgDeltaSslProbeError
   >;
 }
 

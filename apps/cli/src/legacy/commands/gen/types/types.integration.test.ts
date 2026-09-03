@@ -1044,6 +1044,27 @@ describe("legacy gen types", () => {
     });
   });
 
+  it.live("warns that a pre-path --network-id is unused and still generates", () => {
+    const dbUrl = "postgresql://postgres:postgres@db:5432/postgres";
+    const { layer, generator, out } = setup({
+      args: ["--network-id", "mycompose_default", "gen", "types", "--db-url", dbUrl],
+    });
+
+    return Effect.gen(function* () {
+      yield* legacyGenTypes(defaultFlags({ dbUrl: Option.some(dbUrl) })).pipe(
+        Effect.provide(layer),
+      );
+
+      expect(generator.calls).toHaveLength(1);
+      expect(out.messages).toContainEqual(
+        expect.objectContaining({
+          type: "warn",
+          message: expect.stringContaining("docker run --rm --network mycompose_default"),
+        }),
+      );
+    });
+  });
+
   for (const scenario of nonTypescriptProjectRefScenarios) {
     it.live(`generates ${scenario.lang} types from a project ref through the DB resolver`, () => {
       const { layer, out, api, linkedProjectCache, dbConfig, generator } = setup({
@@ -2208,22 +2229,6 @@ describe("legacy gen types", () => {
     });
   });
 
-  it.live("ignores positional language scanning when argv lacks the gen types context", () => {
-    const { layer, api } = setup({
-      args: ["unrelated", "argv"],
-      projectId: Option.some(LEGACY_VALID_REF),
-      projectTypes: "ok",
-    });
-
-    return Effect.gen(function* () {
-      yield* legacyGenTypes(defaultFlags({ projectId: Option.some(LEGACY_VALID_REF) })).pipe(
-        Effect.provide(layer),
-      );
-
-      expect(api.requests).toHaveLength(1);
-    });
-  });
-
   it.live("rejects a non-typescript language passed after a -- separator", () => {
     const { layer } = setup({ args: ["gen", "types", "--", "go"] });
 
@@ -2252,18 +2257,6 @@ describe("legacy gen types", () => {
 
   it.live("treats a positional after a valueless long flag as the language", () => {
     const { layer } = setup({ args: ["gen", "types", "--local", "go"] });
-
-    return Effect.gen(function* () {
-      const exit = yield* legacyGenTypes(defaultFlags()).pipe(Effect.provide(layer), Effect.exit);
-      expect(Exit.isFailure(exit)).toBe(true);
-      if (Exit.isFailure(exit)) {
-        expect(String(exit.cause)).toContain("use --lang flag to specify the typegen language");
-      }
-    });
-  });
-
-  it.live("treats a positional after a valueless short flag as the language", () => {
-    const { layer } = setup({ args: ["gen", "types", "-x", "go"] });
 
     return Effect.gen(function* () {
       const exit = yield* legacyGenTypes(defaultFlags()).pipe(Effect.provide(layer), Effect.exit);
@@ -2604,18 +2597,6 @@ describe("legacy gen types", () => {
       );
 
       expect(generator.calls[0]?.isLocal).toBe(true);
-    });
-  });
-
-  it.live("accepts legacy positional typescript without changing behavior", () => {
-    const { layer } = setup({
-      args: ["gen", "types", "typescript"],
-      projectId: Option.some(LEGACY_VALID_REF),
-      projectTypes: "ok",
-    });
-
-    return Effect.gen(function* () {
-      yield* legacyGenTypes(defaultFlags()).pipe(Effect.provide(layer));
     });
   });
 

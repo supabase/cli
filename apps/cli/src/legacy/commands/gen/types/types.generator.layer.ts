@@ -6,9 +6,12 @@ import {
   sortGeneratorMetadata,
 } from "@supabase/postgrest-typegen/generation";
 import { introspect } from "@supabase/postgrest-typegen/introspection";
-import { Duration, Effect, FileSystem, Layer, Path, Result } from "effect";
+import { Duration, Effect, FileSystem, Layer, Path } from "effect";
 
-import { legacyAcquirePgPool } from "../../../shared/legacy-db-connection.sql-pg.layer.ts";
+import {
+  legacyAcquirePgPool,
+  legacyIsUnixSocketHost,
+} from "../../../shared/legacy-db-connection.sql-pg.layer.ts";
 import { LEGACY_PG_DELTA_CA_BUNDLE } from "../../../shared/legacy-pgdelta-ssl.ts";
 import { LegacyPgDeltaSslProbe } from "../../../shared/legacy-pgdelta-ssl-probe.service.ts";
 import { LegacyGenTypesGenerateError, LegacyGenTypesMetadataError } from "./types.errors.ts";
@@ -44,18 +47,18 @@ const generate = (
   Effect.scoped(
     Effect.gen(function* () {
       let conn = applyQueryTimeouts(input.conn, input.queryTimeoutSeconds);
-      // Remote DSNs without sslmode probe first (pg-meta did): no TLS →
-      // disable; TLS → require + the CA pin pg-meta got via
-      // PG_META_DB_SSL_ROOT_CERT. Probe failure keeps the driver default.
-      if (!input.isLocal && conn.sslmode === undefined) {
-        const probed = yield* sslProbe.requireSslForHost(conn.host, conn.port).pipe(Effect.result);
-        if (Result.isSuccess(probed)) {
-          if (!probed.success) {
-            conn = applyProbedSslMode(conn, false);
-          } else {
-            const sslrootcert = yield* pinProbedCaBundle(fs, path);
-            conn = applyProbedSslMode(conn, true, sslrootcert);
-          }
+      // Remote TCP DSNs without sslmode probe first: no TLS → disable;
+      // TLS → require + the CA pin. Probe failure fails closed so a
+      // DoH-only / broken-native-DNS environment cannot fall through to
+      // the driver's unverified TLS default. Unix sockets skip the probe
+      // — the driver never speaks TLS on a socket.
+      if (!input.isLocal && conn.sslmode === undefined && !legacyIsUnixSocketHost(conn.host)) {
+        const useTls = yield* sslProbe.requireSslForHost(conn.host, conn.port);
+        if (!useTls) {
+          conn = applyProbedSslMode(conn, false);
+        } else {
+          const sslrootcert = yield* pinProbedCaBundle(fs, path);
+          conn = applyProbedSslMode(conn, true, sslrootcert);
         }
       }
 
