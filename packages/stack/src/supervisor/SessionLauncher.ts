@@ -14,11 +14,18 @@ interface SessionWorkload {
 
 export interface SessionLauncher {
   /** Starts the supplied dependency closure in topological order. */
-  readonly launch: (plan: ExecutionPlan) => Effect.Effect<void, RuntimeDriverError>;
+  readonly launch: (plan: ExecutionPlan) => Effect.Effect<SessionLaunch, RuntimeDriverError>;
   /** Stops and removes every workload started in this session in reverse order. */
   readonly stop: Effect.Effect<void, RuntimeDriverError>;
+  /** Whether the most recent launch/rollback cleanup completed exactly. */
+  readonly cleanupProven: Effect.Effect<boolean>;
   /** Clears the session after stack-wide runtime cleanup has completed. */
   readonly clear: Effect.Effect<void>;
+}
+
+/** Resources created by one launch attempt and a rollback scoped to that attempt. */
+export interface SessionLaunch {
+  readonly rollback: Effect.Effect<void, RuntimeDriverError>;
 }
 
 const keyFor = (stackId: StackId, workload: PlannedWorkload): RuntimeWorkloadKey => ({
@@ -42,6 +49,7 @@ export const makeSessionLauncher = (options: {
 }): Effect.Effect<SessionLauncher> =>
   Effect.gen(function* () {
     const session = yield* Ref.make<ReadonlyArray<SessionWorkload>>([]);
+    const cleanupProven = yield* Ref.make(true);
 
     const cleanup = (
       entries: ReadonlyArray<SessionWorkload>,
@@ -61,8 +69,9 @@ export const makeSessionLauncher = (options: {
         if (cleanupCause.reasons.length > 0) return yield* Effect.failCause(cleanupCause);
       });
 
-    const launch = (plan: ExecutionPlan): Effect.Effect<void, RuntimeDriverError> =>
+    const launch = (plan: ExecutionPlan): Effect.Effect<SessionLaunch, RuntimeDriverError> =>
       Effect.gen(function* () {
+        yield* Ref.set(cleanupProven, true);
         const existing = new Set((yield* Ref.get(session)).map(({ key }) => key.workloadId));
         const attempted: SessionWorkload[] = [];
         const outcome = yield* Effect.exit(
@@ -79,8 +88,32 @@ export const makeSessionLauncher = (options: {
             { concurrency: 1, discard: true },
           ),
         );
-        if (Exit.isSuccess(outcome)) return;
+        if (Exit.isSuccess(outcome)) {
+          const rollback = Effect.gen(function* () {
+            const result = yield* cleanup(attempted).pipe(Effect.exit);
+            yield* Ref.set(cleanupProven, Exit.isSuccess(result));
+            // A failed rollback is not a reusable session workload. The exact runtime cleanup
+            // boundary remains responsible for retrying any resource whose remove failed.
+            yield* Ref.update(session, (current) =>
+              current.filter(
+                (candidate) =>
+                  !attempted.some((entry) => entry.key.workloadId === candidate.key.workloadId),
+              ),
+            );
+            if (Exit.isFailure(result)) return yield* Effect.failCause(result.cause);
+          });
+          return { rollback } satisfies SessionLaunch;
+        }
         const cleaned = yield* cleanup(attempted).pipe(Effect.exit);
+        yield* Ref.set(cleanupProven, Exit.isSuccess(cleaned));
+        // Failed launch entries are never reusable. Exact stack cleanup will retry any resource
+        // whose stop/remove failed, while a later activation must attempt a fresh start.
+        yield* Ref.update(session, (current) =>
+          current.filter(
+            (candidate) =>
+              !attempted.some((entry) => entry.key.workloadId === candidate.key.workloadId),
+          ),
+        );
         if (Exit.isFailure(cleaned))
           return yield* Effect.failCause(combine(outcome.cause, cleaned.cause));
         return yield* Effect.failCause(outcome.cause);
@@ -90,6 +123,7 @@ export const makeSessionLauncher = (options: {
     return {
       launch,
       stop,
+      cleanupProven: Ref.get(cleanupProven),
       clear: Ref.set(session, []),
     } satisfies SessionLauncher;
   });

@@ -46,7 +46,7 @@ export interface LifecycleBackend {
   ) => Effect.Effect<void, StackError>;
   /** Removes runtime resources while retaining durable state/data (stop path). */
   readonly cleanup: Effect.Effect<void, StackError>;
-  /** Removes persistent data after exact runtime cleanup (destroy path). */
+  /** Removes all exact runtime resources and persistent data (destroy path). */
   readonly destroyData: Effect.Effect<void, StackError>;
 }
 
@@ -336,40 +336,23 @@ export const makeLifecycleController = (
     const destroy = (): Effect.Effect<void, StackError, LifecycleRequirements> =>
       Effect.gen(function* () {
         const current = yield* read();
-        if (current.desiredLifecycle === "unconfigured" && current.definition === undefined) {
-          yield* options.stateStore.cleanup(options.stackId);
-          return;
-        }
-        if (current.desiredLifecycle === "destroying" && current.definition === undefined)
-          return yield* invalidDefinition(options.stackId);
         const destroying: PersistedStackState =
           current.desiredLifecycle === "destroying"
             ? current
             : { ...current, desiredLifecycle: "destroying" };
         if (destroying !== current) yield* options.stateStore.replace(options.stackId, destroying);
-        yield* destroyRuntime(destroying);
+        yield* destroyRuntime;
       });
 
-    const destroyRuntime = (
-      state: PersistedStackState,
-    ): Effect.Effect<void, StackError, LifecycleRequirements> =>
-      Effect.gen(function* () {
-        const candidate = yield* Effect.exit(
-          persistedCandidate(options.stackId, state, state.runtime),
-        );
-        if (Exit.isSuccess(candidate)) {
-          const input = lifecycleInput(options.stackId, state, candidate.value);
-          yield* options.backend.reconcile(input, "current");
-          yield* options.backend.cleanup;
-          yield* options.backend.destroyData;
-        } else {
-          // Preserve the stable maintenance guarantee: stop and destroy remain usable even when
-          // persisted configuration is no longer compilable.
-          yield* options.backend.cleanup;
-          yield* options.backend.destroyData;
-        }
+    const destroyRuntime: Effect.Effect<void, StackError, LifecycleRequirements> = Effect.gen(
+      function* () {
+        // Destructive cleanup is the single runtime teardown path. It is exact and idempotent,
+        // so it also handles an unconfigured state left behind by an interrupted first start.
+        // Persisted configuration need not compile in order to remove runtime remnants.
+        yield* options.backend.destroyData;
         yield* options.stateStore.cleanup(options.stackId);
-      });
+      },
+    );
 
     return { start, stop, destroy } satisfies LifecycleController;
   });

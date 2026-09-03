@@ -40,7 +40,11 @@ import type { EffectStackCredentials } from "../public/Credentials.ts";
 import type { RuntimeDriver } from "../runtime/RuntimeDriver.ts";
 import type { PersistedStackState } from "../state/StackState.ts";
 import type { StackStateStore } from "../state/StackStateStore.ts";
-import { makeSessionLauncher, type SessionLauncher } from "./SessionLauncher.ts";
+import {
+  makeSessionLauncher,
+  type SessionLaunch,
+  type SessionLauncher,
+} from "./SessionLauncher.ts";
 import {
   makeLifecycleController,
   type LifecycleBackend,
@@ -166,6 +170,9 @@ export const makeSupervisor = (
     // A failed cleanup leaves the owner in `stopping` so callers can retry an exact cleanup.
     // This marker is set by the backend cleanup boundary and read only by start failure handling.
     const cleanupProven = yield* Ref.make(true);
+    // A lazy activation rollback that cannot be proven leaves the owner fenced in stopping until
+    // an explicit stop retries exact cleanup.
+    const activationRollbackUnproven = yield* Ref.make(false);
     // A Supervisor created after a crash must clean exact runtime ephemera once before its first
     // fresh start. The marker is session-local and only advances after cleanup succeeds.
     const sessionInitialized = yield* Ref.make(false);
@@ -183,6 +190,7 @@ export const makeSupervisor = (
     const resetForSession = (input: LifecycleInput) =>
       Effect.gen(function* () {
         activationOwned.clear();
+        yield* Ref.set(activationRollbackUnproven, false);
         yield* launcher.clear;
         yield* initializeActivation(input.plan);
       });
@@ -305,10 +313,10 @@ export const makeSupervisor = (
       input: LifecycleInput,
       session: "fresh" | "current",
       selectedOverride?: ReadonlySet<CapabilityName>,
-    ): Effect.Effect<void, StackError> =>
+    ): Effect.Effect<SessionLaunch | undefined, StackError> =>
       Effect.gen(function* () {
         if (session === "fresh") yield* resetForSession(input);
-        if (input.desiredLifecycle !== "running") return;
+        if (input.desiredLifecycle !== "running") return undefined;
         const selected = selectedOverride ?? (yield* Ref.get(active));
         const plan = activeExecutionPlan(input.plan, selected);
         const reservation = yield* runtime.ingress.acquire(input);
@@ -317,17 +325,46 @@ export const makeSupervisor = (
           .pipe(Effect.mapError(mapReconcileError), Effect.exit);
         if (Exit.isFailure(launched)) {
           if (reservation.fresh) yield* runtime.ingress.close.pipe(Effect.ignore);
+          if (session === "current" && !(yield* launcher.cleanupProven)) {
+            yield* Ref.set(activationRollbackUnproven, true);
+            yield* Ref.set(phase, "stopping");
+            const closed = yield* runtime.ingress.close.pipe(
+              Effect.mapError(mapReconcileError),
+              Effect.exit,
+            );
+            if (Exit.isFailure(closed))
+              return yield* Effect.failCause(Cause.combine(launched.cause, closed.cause));
+            yield* publish().pipe(Effect.ignore);
+          }
           return yield* Effect.failCause(launched.cause);
         }
         const opened = yield* runtime.ingress
           .open(input, reservation, ingressActivate)
           .pipe(Effect.exit);
         if (Exit.isFailure(opened)) {
-          if (reservation.fresh) yield* runtime.ingress.close.pipe(Effect.ignore);
-          return yield* Effect.failCause(opened.cause);
+          const rolledBack = yield* launched.value.rollback.pipe(
+            Effect.mapError(mapReconcileError),
+            Effect.exit,
+          );
+          const closed = reservation.fresh
+            ? yield* runtime.ingress.close.pipe(Effect.mapError(mapReconcileError), Effect.exit)
+            : Exit.succeed(undefined);
+          let cause: Cause.Cause<StackError> = opened.cause;
+          if (Exit.isFailure(rolledBack)) cause = Cause.combine(cause, rolledBack.cause);
+          if (Exit.isFailure(closed)) cause = Cause.combine(cause, closed.cause);
+          if (Exit.isFailure(rolledBack)) {
+            yield* Ref.set(cleanupProven, false);
+            if (session === "current") {
+              yield* Ref.set(activationRollbackUnproven, true);
+              yield* Ref.set(phase, "stopping");
+              yield* publish().pipe(Effect.ignore);
+            }
+          }
+          return yield* Effect.failCause(cause);
         }
         if (session === "fresh") yield* Ref.set(sessionInitialized, true);
         yield* publish();
+        return launched.value;
       });
 
     const cleanupRuntime = (destroy: boolean): Effect.Effect<void, StackError> =>
@@ -337,7 +374,9 @@ export const makeSupervisor = (
           Effect.mapError(mapReconcileError),
           Effect.exit,
         );
-        const launched = yield* launcher.stop.pipe(Effect.mapError(mapReconcileError), Effect.exit);
+        const launched = destroy
+          ? Exit.succeed(undefined)
+          : yield* launcher.stop.pipe(Effect.mapError(mapReconcileError), Effect.exit);
         const driver = yield* runtime.driver
           .cleanup({ stackId: options.stackId, destroy })
           .pipe(Effect.mapError(mapReconcileError), Effect.exit);
@@ -350,7 +389,10 @@ export const makeSupervisor = (
         }
         if (!destroy) {
           yield* Ref.set(active, new Set());
+          yield* Ref.set(activationRollbackUnproven, false);
           yield* publish();
+        } else {
+          yield* launcher.clear;
         }
       });
     const backend: LifecycleBackend = {
@@ -377,6 +419,11 @@ export const makeSupervisor = (
             stackId: options.stackId,
             message: `Cannot activate while ${lifecycle.kind} is in progress`,
           });
+        if ((yield* Ref.get(activationRollbackUnproven)) || (yield* Ref.get(phase)) === "stopping")
+          return yield* new StackLifecycleConflictError({
+            stackId: options.stackId,
+            message: "Cannot activate while exact cleanup is pending; stop the stack first",
+          });
         const state = yield* read();
         if (state === undefined)
           return yield* new StackStateInvalidError({ message: "Stack state is missing" });
@@ -395,7 +442,8 @@ export const makeSupervisor = (
             (error) => new StackStateInvalidError({ message: error.message, cause: error }),
           ),
         );
-        const next = new Set(yield* Ref.get(active));
+        const previousActive = yield* Ref.get(active);
+        const next = new Set(previousActive);
         const visit = (name: CapabilityName): void => {
           if (next.has(name)) return;
           next.add(name);
@@ -412,11 +460,33 @@ export const makeSupervisor = (
         };
         // Activation is accepted for this lifecycle session before launching its dependency closure.
         // A failed attempt removes only newly-created resources; the capability remains retryable.
+        const launched = yield* launchBackend(input, "current", next);
         yield* Ref.set(active, next);
-        yield* launchBackend(input, "current", next);
         yield* Ref.set(phase, "running");
         yield* publish().pipe(Effect.ignore);
-        const endpoint = yield* runtime.activate(capability, input);
+        const activated = yield* runtime.activate(capability, input).pipe(Effect.exit);
+        if (Exit.isFailure(activated)) {
+          yield* Ref.set(active, previousActive);
+          if (launched !== undefined) {
+            const rolledBack = yield* launched.rollback.pipe(
+              Effect.mapError(mapReconcileError),
+              Effect.exit,
+            );
+            if (Exit.isFailure(rolledBack)) {
+              yield* Ref.set(activationRollbackUnproven, true);
+              yield* Ref.set(phase, "stopping");
+              const closed = yield* runtime.ingress.close.pipe(
+                Effect.mapError(mapReconcileError),
+                Effect.exit,
+              );
+              let cause: Cause.Cause<StackError> = Cause.combine(activated.cause, rolledBack.cause);
+              if (Exit.isFailure(closed)) cause = Cause.combine(cause, closed.cause);
+              return yield* Effect.failCause(cause);
+            }
+          }
+          return yield* Effect.failCause(activated.cause);
+        }
+        const endpoint = activated.value;
         return { capability, endpoint };
       });
 
@@ -540,7 +610,14 @@ export const makeSupervisor = (
           .pipe(Effect.provideContext(options.context), Effect.exit);
         if (Exit.isFailure(started)) {
           if (freshSession) {
-            yield* Ref.set(phase, (yield* Ref.get(cleanupProven)) ? "stopped" : "stopping");
+            const durable = yield* read().pipe(Effect.exit);
+            const canReportStopped =
+              (yield* Ref.get(cleanupProven)) &&
+              Exit.isSuccess(durable) &&
+              durable.value !== undefined &&
+              (durable.value.desiredLifecycle === "stopped" ||
+                durable.value.desiredLifecycle === "unconfigured");
+            yield* Ref.set(phase, canReportStopped ? "stopped" : "stopping");
             yield* publish().pipe(Effect.ignore);
           } else yield* restorePhase(previous);
           return yield* Effect.failCause(started.cause);

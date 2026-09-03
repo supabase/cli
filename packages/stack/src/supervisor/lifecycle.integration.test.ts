@@ -37,6 +37,7 @@ interface BackendState {
   failPreflight?: boolean;
   failReconcile?: boolean;
   failDestroyData?: boolean;
+  failDestroyDataOnce?: boolean;
   failCleanupOnce?: boolean;
   gate?: Deferred.Deferred<void>;
   preflightStarted?: Deferred.Deferred<void>;
@@ -82,6 +83,10 @@ const backend = (state: BackendState): LifecycleBackend => ({
   }),
   destroyData: Effect.gen(function* () {
     state.calls.push(`destroy-data:${state.lastLifecycle ?? "invalid"}`);
+    if (state.failDestroyDataOnce) {
+      state.failDestroyDataOnce = false;
+      return yield* new StackReconciliationError({ message: "destroy-data failed" });
+    }
     if (state.failDestroyData)
       return yield* new StackReconciliationError({ message: "destroy-data failed" });
   }),
@@ -303,11 +308,7 @@ describe("durable lifecycle controller", () => {
         yield* fixture.controller.start();
         fixture.state.calls.length = 0;
         yield* fixture.controller.destroy();
-        expect(fixture.state.calls).toEqual([
-          "reconcile:destroying",
-          "cleanup:destroying",
-          "destroy-data:destroying",
-        ]);
+        expect(fixture.state.calls).toEqual(["destroy-data:running"]);
         expect(yield* fixture.store.read(fixture.id)).toBeUndefined();
         expect(yield* fs.exists(`${fixture.root}/${fixture.id}`)).toBe(false);
         const recreated = yield* fixture.store.initialize(fixture.id, {
@@ -336,11 +337,35 @@ describe("durable lifecycle controller", () => {
         expect(yield* fixture.store.read(fixture.id)).toMatchObject({
           desiredLifecycle: "destroying",
         });
-        expect(fixture.state.calls).toEqual([
-          "reconcile:destroying",
-          "cleanup:destroying",
-          "destroy-data:destroying",
-        ]);
+        expect(fixture.state.calls).toEqual(["destroy-data:running"]);
+        fixture.state.failDestroyData = false;
+        yield* fixture.controller.destroy();
+        expect(yield* fixture.store.read(fixture.id)).toBeUndefined();
+      }),
+    ),
+  );
+
+  it.live("destroys exact runtime remnants from an unconfigured state", () =>
+    run(
+      Effect.gen(function* () {
+        const fixture = yield* makeFixture();
+        yield* fixture.controller.destroy();
+        expect(fixture.state.calls).toEqual(["destroy-data:invalid"]);
+        expect(yield* fixture.store.read(fixture.id)).toBeUndefined();
+      }),
+    ),
+  );
+
+  it.live("retries destructive cleanup after a transient failure", () =>
+    run(
+      Effect.gen(function* () {
+        const fixture = yield* makeFixture();
+        fixture.state.failDestroyDataOnce = true;
+        const first = yield* fixture.controller.destroy().pipe(Effect.exit);
+        expect(errorOf(first)).toBeInstanceOf(StackReconciliationError);
+        expect((yield* fixture.store.read(fixture.id))?.desiredLifecycle).toBe("destroying");
+        yield* fixture.controller.destroy();
+        expect(yield* fixture.store.read(fixture.id)).toBeUndefined();
       }),
     ),
   );
