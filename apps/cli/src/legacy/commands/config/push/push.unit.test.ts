@@ -78,10 +78,10 @@ describe("legacyConfigPushTargetLines", () => {
     const rendered = legacyConfigPushTargetLines({
       kind: "project",
       ref: REF,
-      name: "evil[31mred",
+      name: "evil\x1b[31mred",
     });
     expect(rendered).toBe(`Pushing config to project: evil[31mred (${REF})\n`);
-    expect(rendered).not.toContain("");
+    expect(rendered).not.toContain("\x1b");
   });
 
   test("a newline in a branch/parent name is collapsed instead of forging extra output lines", () => {
@@ -118,7 +118,7 @@ describe("legacyConfigPushBranchPromptLabel", () => {
       legacyConfigPushBranchPromptLabel({
         kind: "branch",
         ref: REF,
-        branch: "evil[31m\nname",
+        branch: "evil\x1b[31m\nname",
       }),
     ).toBe(`Do you want to push config to branch "evil[31m name" (${REF})?${skipHint}`);
   });
