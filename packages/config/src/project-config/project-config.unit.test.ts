@@ -9,6 +9,7 @@ import { Schema } from "effect";
 import {
   attachApiResponse,
   comparableProjectConfigPaths,
+  DOCUMENT_ONLY_LOCAL_PATHS,
   fromApiProjectConfig,
   fromConfigDocument,
   isComparableProjectConfigPath,
@@ -158,13 +159,17 @@ describe("fromConfigDocument", () => {
     // itself EMPTIED (secret stripping) — an originally-empty container is
     // declared data (a record entry's value can be an empty struct by schema
     // design, e.g. `storage.analytics.buckets` entries, where the key is the
-    // information).
+    // information). `realtime` is absent, not present-as-`{}` like `workers`:
+    // all 3 of its config-side fields are `DOCUMENT_ONLY_LOCAL_PATHS` entries
+    // (CLI-2316), all 3 are always-materialized (not `optionalKey`) so the
+    // default config always declares them, and the emptied-by-exclusion
+    // section prune (same rule as the secret-stripped case) removes it
+    // entirely — see the dedicated describe block below.
     expect(Object.keys(projected).sort()).toEqual([
       "api",
       "auth",
       "db",
       "experimental",
-      "realtime",
       "storage",
       "workers",
     ]);
@@ -207,8 +212,18 @@ describe("fromConfigDocument", () => {
   test("deep-copies rather than sharing the subtree reference", () => {
     const config = getDefaultCliConfig();
     const projected = fromConfigDocument(config);
+    // The top-level `api`/`db` containers are still freshly built (never the
+    // same object as `config`'s), even though `toEqual`-comparing them WHOLE
+    // against `config.api`/`config.db` would now fail: CLI-2316 strips
+    // several of their fields (`api.port`/`tls`/`external_url`,
+    // `db.port`/`shadow_port`/`health_timeout`/`major_version`/`pooler`/
+    // `migrations`/`seed` — see the dedicated describe block below) from the
+    // projection. `storage.s3_protocol` — an always-materialized nested
+    // object none of those exclusions touch — is the equality probe instead.
     expect(projected.api).not.toBe(config.api);
-    expect(projected.api).toEqual(config.api);
+    expect(projected.db).not.toBe(config.db);
+    expect(projected.storage?.s3_protocol).not.toBe(config.storage.s3_protocol);
+    expect(projected.storage?.s3_protocol).toEqual(config.storage.s3_protocol);
     expect(projected.auth?.captcha).not.toBe(config.auth.captcha);
     expect(projected.auth?.captcha).toEqual(config.auth.captcha);
   });
@@ -446,6 +461,166 @@ describe("fromConfigDocument", () => {
     expect(projected.auth?.mfa?.phone?.max_frequency).toBe("5s");
     expect(projected.auth?.sms?.max_frequency).toBe("5s");
     expect(projected.storage?.file_size_limit).toBe("50MiB");
+  });
+});
+
+describe("fromConfigDocument — CLI-only field exclusion (CLI-2316)", () => {
+  function readAtPath(root: unknown, path: ReadonlyArray<string>): unknown {
+    let current = root;
+    for (const segment of path) {
+      if (current === null || typeof current !== "object" || Array.isArray(current)) {
+        return undefined;
+      }
+      current = (current as Record<string, unknown>)[segment];
+    }
+    return current;
+  }
+
+  test("excludes local ports, db.major_version, and the whole db.pooler/migrations/seed subtrees", () => {
+    const document = decodeCliConfig({
+      api: { port: 9999, external_url: "http://example.com", max_rows: 42 },
+      db: {
+        port: 9999,
+        shadow_port: 8888,
+        health_timeout: "5m",
+        major_version: 15,
+        pooler: {
+          enabled: true,
+          port: 7777,
+          pool_mode: "session",
+          default_pool_size: 5,
+          max_client_conn: 50,
+        },
+        migrations: { enabled: false, schema_paths: ["a.sql"] },
+        seed: { enabled: false, sql_paths: ["b.sql"] },
+        settings: { max_connections: 5 },
+      },
+    });
+
+    const projected = fromConfigDocument(document);
+
+    expect(Object.hasOwn(projected.api ?? {}, "port")).toBe(false);
+    expect(Object.hasOwn(projected.api ?? {}, "external_url")).toBe(false);
+    expect(Object.hasOwn(projected.api ?? {}, "tls")).toBe(false);
+    expect(Object.hasOwn(projected.db ?? {}, "port")).toBe(false);
+    expect(Object.hasOwn(projected.db ?? {}, "shadow_port")).toBe(false);
+    expect(Object.hasOwn(projected.db ?? {}, "health_timeout")).toBe(false);
+    expect(Object.hasOwn(projected.db ?? {}, "major_version")).toBe(false);
+    expect(Object.hasOwn(projected.db ?? {}, "pooler")).toBe(false);
+    expect(Object.hasOwn(projected.db ?? {}, "migrations")).toBe(false);
+    expect(Object.hasOwn(projected.db ?? {}, "seed")).toBe(false);
+    // Siblings prove the exclusion is targeted, not a section-wide wipe.
+    expect(projected.api?.max_rows).toBe(42);
+    expect(projected.db?.settings?.max_connections).toBe(5);
+  });
+
+  test("excludes the whole realtime section — it survives on neither arm", () => {
+    const document = decodeCliConfig({
+      realtime: { enabled: false, ip_version: "IPv6", max_header_length: 1 },
+    });
+    const projected = fromConfigDocument(document);
+    // Every config-side `realtime` field is excluded, so — unlike `workers`,
+    // which survives as `{}` — the section disappears entirely: it was
+    // emptied BY this exclusion, the same prune rule as a secret-stripped
+    // section.
+    expect(Object.hasOwn(projected, "realtime")).toBe(false);
+  });
+
+  test("excludes local-only experimental fields while experimental.webhooks (genuinely pushed) survives", () => {
+    const document = decodeCliConfig({
+      experimental: {
+        orioledb_version: "1.0",
+        s3_host: "bucket.s3.example.com",
+        s3_region: "us-east-1",
+        pgdelta: { enabled: true },
+        inspect: { rules: [{ name: "r1" }] },
+        webhooks: { enabled: true },
+      },
+    });
+    const projected = fromConfigDocument(document);
+    expect(Object.hasOwn(projected.experimental ?? {}, "orioledb_version")).toBe(false);
+    expect(Object.hasOwn(projected.experimental ?? {}, "s3_host")).toBe(false);
+    expect(Object.hasOwn(projected.experimental ?? {}, "s3_region")).toBe(false);
+    expect(Object.hasOwn(projected.experimental ?? {}, "pgdelta")).toBe(false);
+    expect(Object.hasOwn(projected.experimental ?? {}, "inspect")).toBe(false);
+    expect(projected.experimental?.webhooks).toEqual({ enabled: true });
+  });
+
+  test("db.major_version and db.pooler.* still populate from the API arm — only the document arm is silent", () => {
+    const documentSide = fromConfigDocument(
+      decodeCliConfig({ db: { major_version: 15, pooler: { pool_mode: "session" } } }),
+    );
+    expect(Object.hasOwn(documentSide.db ?? {}, "major_version")).toBe(false);
+    expect(Object.hasOwn(documentSide.db ?? {}, "pooler")).toBe(false);
+
+    const apiSide = fromApiProjectConfig({
+      database: { major_version: 17 },
+      pooler: { pool_mode: "session", default_pool_size: 15, max_client_conn: 200 },
+    });
+    expect(apiSide.db?.major_version).toBe(17);
+    expect(apiSide.db?.pooler).toEqual({
+      pool_mode: "session",
+      default_pool_size: 15,
+      max_client_conn: 200,
+    });
+  });
+
+  // Exhaustive counterpart to the hand-picked tests above, iterating
+  // `DOCUMENT_ONLY_LOCAL_PATHS` itself rather than a second hand-picked field
+  // list. Unlike the x-secret exhaustiveness test just above — which builds
+  // its OWN probe programmatically from `secretPathPatterns`, so it can never
+  // go vacuous — this probe is still hand-written (`DOCUMENT_ONLY_LOCAL_PATHS`
+  // mixes whole-subtree and scalar-leaf entries of different value types, so
+  // one generic "put a marker at every path" builder can't populate it the
+  // way the all-string x-secret patterns allow). The `toBeDefined` check
+  // below on `document` itself is what keeps that hand-written gap from
+  // silently rotting: `decodeCliConfig` drops any key the schema doesn't
+  // recognize, so a typo in the probe below, or a new
+  // `DOCUMENT_ONLY_LOCAL_PATHS` entry the probe forgets to populate, fails
+  // loudly here instead of the `toBeUndefined` assertion passing vacuously.
+  test("no DOCUMENT_ONLY_LOCAL_PATHS entry survives fromConfigDocument, exhaustively", () => {
+    expect(DOCUMENT_ONLY_LOCAL_PATHS.length).toBeGreaterThan(0);
+
+    const document = decodeCliConfig({
+      api: {
+        port: 1,
+        external_url: "http://example.com",
+        tls: { enabled: true },
+        max_rows: 42,
+      },
+      db: {
+        port: 1,
+        shadow_port: 2,
+        health_timeout: "5m",
+        major_version: 15,
+        pooler: { enabled: true },
+        migrations: { enabled: false },
+        seed: { enabled: false },
+        settings: { max_connections: 5 },
+      },
+      realtime: { enabled: false, ip_version: "IPv6", max_header_length: 1 },
+      experimental: {
+        orioledb_version: "1.0",
+        s3_host: "host",
+        s3_region: "region",
+        pgdelta: { enabled: true },
+        inspect: { rules: [{ name: "r1" }] },
+        webhooks: { enabled: true },
+      },
+    });
+
+    const projected = fromConfigDocument(document);
+
+    for (const path of DOCUMENT_ONLY_LOCAL_PATHS) {
+      // The probe actually populated this path — otherwise the assertion
+      // below would pass whether or not the exclusion code does anything.
+      expect(readAtPath(document, path)).toBeDefined();
+      expect(readAtPath(projected, path)).toBeUndefined();
+    }
+
+    expect(projected.api?.max_rows).toBe(42);
+    expect(projected.db?.settings?.max_connections).toBe(5);
+    expect(projected.experimental?.webhooks).toEqual({ enabled: true });
   });
 });
 
@@ -1389,11 +1564,25 @@ describe("review round: numeric and provider narrowing (CLI-2230)", () => {
 
 describe("review round: aliasing, unknown-empty sections, path encoding (CLI-2230)", () => {
   test("object elements inside hosted arrays are copied, not aliased", () => {
-    const rule = { name: "r1" };
-    const projected = fromConfigDocument({ experimental: { inspect: { rules: [rule] } } });
-    const copied = projected.experimental?.inspect?.rules?.[0];
-    expect(copied).toEqual(rule);
-    expect(copied).not.toBe(rule);
+    // `experimental.inspect.rules` was the only schema field shaped as an
+    // array of objects (this file's own `copyHostedValueWithoutSecrets`
+    // docstring used it as its example) — CLI-2316 excludes the whole
+    // `experimental.inspect` subtree as CLI-only, so it can no longer probe
+    // this. But `fromConfigDocument` runs no schema validation on its input
+    // (see that same docstring), so the object-in-array copy path is still
+    // reachable through any surviving array field — `api.schemas` (real
+    // schema type `string[]`) is used here as a structurally-typed carrier: a
+    // `Record<string, unknown>` operand is assignable to the exported
+    // `EffectiveConfig` parameter (every `EffectiveConfig` property is
+    // optional, so nothing named on it needs to reconcile against the
+    // index-signature type), with no cast, while still reaching this
+    // function's fully untyped runtime behavior.
+    const element = { nested: "value" };
+    const probe: Record<string, unknown> = { api: { schemas: [element] } };
+    const projected = fromConfigDocument(probe);
+    const copied = projected.api?.schemas?.[0];
+    expect(copied).toEqual(element);
+    expect(copied).not.toBe(element);
   });
 
   test("an unknown empty section survives into unmappedApiFields", () => {

@@ -408,6 +408,30 @@ describe("diffProjectConfig classification", () => {
     expect(result.unmanaged).toEqual([]);
   });
 
+  test("db.major_version and db.pooler.* surface as unmanaged, not update, when declared (CLI-2316)", () => {
+    // Both are `comparableProjectConfigPaths` members (`fromApiProjectConfig`
+    // maps them from real, read-only remote state), but `fromConfigDocument`
+    // never populates either — `config push` has no write path for a
+    // project's Postgres version or its Supavisor settings at all. A stock
+    // `supabase init` template declares both, so before CLI-2316 excluded
+    // them from the document projection, a differing remote value here
+    // misclassified as a pushable `update`, which push would then silently
+    // fail to apply.
+    const result = diffWith(
+      { db: { major_version: 15, pooler: { pool_mode: "session", default_pool_size: 15 } } },
+      {
+        database: { major_version: 17 },
+        pooler: { pool_mode: "transaction", default_pool_size: 20 },
+      },
+    );
+    expect(changeAt(result.changes, ["db", "major_version"])).toBeUndefined();
+    expect(changeAt(result.changes, ["db", "pooler", "pool_mode"])).toBeUndefined();
+    expect(changeAt(result.changes, ["db", "pooler", "default_pool_size"])).toBeUndefined();
+    expect(result.unmanaged).toContainEqual(["db", "major_version"]);
+    expect(result.unmanaged).toContainEqual(["db", "pooler", "pool_mode"]);
+    expect(result.unmanaged).toContainEqual(["db", "pooler", "default_pool_size"]);
+  });
+
   test("sequence arrays register reordering as drift", () => {
     // api.schemas is order-significant (the first entry is PostgREST's
     // default schema), so local ["public","extensions"] vs the wire's

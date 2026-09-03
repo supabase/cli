@@ -119,6 +119,20 @@ export type ReadonlyJsonValue =
  * see that ADR for the full enumeration). A `ProjectConfig` built from a
  * document is therefore not a faithful rendering of what the user wrote in
  * their config file; see {@link fromConfigDocument}'s own docstring.
+ *
+ * Relatedly (CLI-2316), a document-sourced `ProjectConfig` never carries any
+ * of the paths in {@link DOCUMENT_ONLY_LOCAL_PATHS} — ports, TLS/URL
+ * overrides, `db.major_version`, the whole `db.pooler`/`db.migrations`/
+ * `db.seed` subtrees, every config-side `realtime.*` field, and most of
+ * `experimental.*` — even though each lives inside one of the seven hosted
+ * sections above: none has a live hosted counterpart under any CLI command,
+ * so a `ProjectConfig` describing "the state after push" has nothing to say
+ * about them. This is an asymmetry between the two arms for `db.major_version`
+ * and `db.pooler.{pool_mode,default_pool_size,max_client_conn}` specifically:
+ * {@link fromApiProjectConfig} still maps those from the platform's real
+ * (informational, unpushable-via-`config push`) Postgres version and
+ * Supavisor settings, so an API-sourced `ProjectConfig` CAN carry them while
+ * a document-sourced one never does.
  */
 export type ProjectConfig = DeepPartial<Pick<CliConfig, HostedSectionKey>> & {
   // Readonly, recursively: the runtime value is deep-frozen
@@ -131,7 +145,10 @@ export type ProjectConfig = DeepPartial<Pick<CliConfig, HostedSectionKey>> & {
 /**
  * Deep-copies `value` (a hosted-section subtree rooted at `path`) at the
  * OBJECT level, dropping every leaf whose full path matches an `x-secret`
- * schema annotation (CLI-2230's secret-omission finding): `fromConfigDocument`'s
+ * schema annotation (CLI-2230's secret-omission finding) OR is a member of
+ * {@link DOCUMENT_ONLY_LOCAL_PATHS} (CLI-2316 — a field that lives inside a
+ * hosted section but describes purely local dev-server behavior no
+ * `config push` can ever act on): `fromConfigDocument`'s
  * input is a *decoded* `CliConfig`/`EffectiveConfig`, where `secret()`-annotated fields
  * (`../lib/env.ts`) hold plaintext or an unresolved `env(VAR)` literal, never
  * a `Redacted` wrapper (decode never redacts — only
@@ -143,10 +160,15 @@ export type ProjectConfig = DeepPartial<Pick<CliConfig, HostedSectionKey>> & {
  * HMAC digest), a document-sourced `ProjectConfig` that kept its secrets
  * would register as drift against the API-sourced side for every secret
  * field, which is worse than useless for a diff consumer. Arrays are copied
- * recursively, element by element — a hosted array can hold objects (e.g.
- * `experimental.inspect.rules`), and a merely-sliced container would alias
- * them back to the (possibly frozen) input, breaking the fresh-copy
- * contract. No `x-secret` leaf in `CliConfigSchema` sits inside an array, so
+ * recursively, element by element — no schema validation runs on this
+ * function's input, so a caller can still hand it an array of objects at any
+ * path (`experimental.inspect.rules` was the one schema field shaped that
+ * way, until CLI-2316 excluded the whole `experimental.inspect` subtree as
+ * CLI-only — this branch stays defensive against object-shaped array
+ * elements arriving through any future field or a loosely-typed caller), and
+ * a merely-sliced container would alias them back to the (possibly frozen)
+ * input, breaking the fresh-copy contract. No `x-secret` leaf in
+ * `CliConfigSchema` sits inside an array, so
  * the secret-path walk carries through elements as a no-op; empty-record
  * *elements* are preserved (the empty-container prune applies only to record
  * children — arrays compare wholesale in `../sparse.ts`, so their contents
@@ -168,8 +190,9 @@ export type ProjectConfig = DeepPartial<Pick<CliConfig, HostedSectionKey>> & {
  */
 function copyHostedValueWithoutSecrets(value: unknown, path: ReadonlyArray<string>): unknown {
   if (Array.isArray(value)) {
-    // Elements are copied recursively too — a hosted array can hold objects
-    // (e.g. `experimental.inspect.rules`), and a merely-sliced container
+    // Elements are copied recursively too — this function's input is never
+    // schema-validated, so an object-shaped array element is still reachable
+    // (see this function's own docstring), and a merely-sliced container
     // would alias them back to the (possibly frozen) input, breaking the
     // fresh-copy contract. The path passes through unchanged: no x-secret
     // pattern descends through an array in the hosted schema today, and
@@ -182,7 +205,7 @@ function copyHostedValueWithoutSecrets(value: unknown, path: ReadonlyArray<strin
     const result: Record<string, unknown> = {};
     for (const [key, child] of Object.entries(value)) {
       const childPath = [...path, key];
-      if (isSecretPath(childPath)) {
+      if (isSecretPath(childPath) || isDocumentOnlyLocalPath(childPath)) {
         continue;
       }
       const copied = copyHostedValueWithoutSecrets(child, childPath);
@@ -205,6 +228,132 @@ function copyHostedValueWithoutSecrets(value: unknown, path: ReadonlyArray<strin
     return result;
   }
   return value;
+}
+
+/**
+ * `fromConfigDocument`-ONLY exclusions (CLI-2316), applied by
+ * {@link isDocumentOnlyLocalPath} inside {@link copyHostedValueWithoutSecrets}'s
+ * object recursion, alongside {@link isSecretPath}. Every one of these fields
+ * lives inside a {@link HOSTED_SECTION_KEYS} section, so the whole-section
+ * copy would otherwise include it, but none can ever converge toward or
+ * diverge from anything the platform holds via `config push` — verified by
+ * tracing every `apps/cli/src/legacy/commands/config/push/config-sync/*.sync.ts`
+ * mapper plus `seed buckets`, `db inspect`, `db schema declarative generate`,
+ * and `start`'s local bootstrap. Projecting one would contradict
+ * {@link fromConfigDocument}'s own "predicts the state AFTER pushing
+ * `config`" contract. That said, this list mixes two different REASONS a
+ * field can't converge, not one — most entries have no hosted concept behind
+ * them at all, but `db.major_version` and 3 of `db.pooler`'s 5 fields name a
+ * REAL, platform-owned hosted fact that `config push` simply has no write
+ * path for (the API arm still reports it, read-only) — see those two
+ * entries' own bullets below for the distinction:
+ *
+ * - `api.port`, `api.tls`, `api.external_url` — local Kong bind port/TLS
+ *   termination/URL override. `apiToUpdateBody` (`api.sync.ts`) reads only
+ *   `db_schema`/`db_extra_search_path`/`max_rows`; none of these three.
+ * - `db.port`, `db.shadow_port`, `db.health_timeout` — local Postgres/
+ *   shadow-DB bind ports and local health-check wait. None is referenced
+ *   anywhere in `db.sync.ts`; a hosted project has no "port" (it's reached
+ *   over a fixed HTTPS URL) and no CLI-configurable startup health check.
+ * - `db.major_version` — selects which local Postgres Docker image to run.
+ *   The REMOTE database's actual major version IS a real, platform-owned
+ *   hosted fact — mapped separately by {@link fromApiProjectConfig} (the
+ *   `database.major_version` row in `./registry.ts`, read-only reporting)
+ *   — that mapping is correct and untouched by this list. This document-side
+ *   field just isn't how you'd ever change it: there is no `config push`
+ *   write path for a project's Postgres version at all, so the document arm
+ *   has no comparable value to project.
+ * - `db.pooler` — the WHOLE subtree (`enabled`, `port`, `pool_mode`,
+ *   `default_pool_size`, `max_client_conn`), not just `port`: legacy
+ *   `config-sync/` has no `pooler`/`pgbouncer`/`supavisor` reference
+ *   anywhere — `db.pooler.*` is read exclusively by `start`'s local
+ *   Supavisor bootstrap. The same `db.major_version` situation applies to 3
+ *   of these 5 fields — {@link fromApiProjectConfig} DOES map
+ *   `pool_mode`/`default_pool_size`/`max_client_conn` from real, read-only
+ *   remote Supavisor state (`./registry.ts`), untouched here for the same
+ *   reason; `enabled` and `port` have no hosted concept on either arm.
+ * - `db.migrations`, `db.seed` — whole subtrees (their own children,
+ *   `enabled`/`schema_paths`/`sql_paths`, never need listing separately: the
+ *   container itself is skipped before this function ever recurses into
+ *   them). Both describe how the LOCAL CLI behaves during `db push`/`db
+ *   reset`, not anything about the hosted project — no matching API
+ *   attribute exists for either.
+ * - `realtime.enabled`, `realtime.ip_version`, `realtime.max_header_length`
+ *   — every config-side `realtime` field, i.e. the whole section (see
+ *   `./registry.ts`'s own comment on why the 12 real hosted `realtime.*` API
+ *   attributes have no config-side counterpart in EITHER direction — this
+ *   entry closes the document-arm half of that same gap). A `ProjectConfig`
+ *   built from a document therefore never carries a POPULATED `realtime` key
+ *   (pruned by the empty-section rule below whenever the document declares
+ *   any of these 3 — a document that instead declares `realtime` itself
+ *   empty, e.g. `{realtime: {}}`, still projects `{realtime: {}}` verbatim,
+ *   same as any other section: pruning only fires on a container this
+ *   function's OWN exclusion emptied, never one that started empty), matching
+ *   `fromApiProjectConfig` already never carrying a populated one either.
+ * - `experimental.orioledb_version`, `experimental.s3_host`,
+ *   `experimental.s3_region` — local OrioleDB-with-S3 storage engine config
+ *   (`experimental.s3_access_key`/`s3_secret_key` need no entry: both are
+ *   already `x-secret`-stripped). `experimental.pgdelta`,
+ *   `experimental.inspect` — whole subtrees, local `db diff`/`db pull`
+ *   engine choice and `db inspect` query config respectively. Only
+ *   `experimental.webhooks.enabled` in this section is genuinely pushed
+ *   (`experimental.sync.ts` POSTs to enable database webhooks) and is
+ *   deliberately NOT in this list.
+ *
+ * Deliberately NOT listed, despite looking like the same "local toggle"
+ * shape as the entries above — each was checked against how `config push`
+ * actually treats it, not excluded on the strength of its description alone:
+ * `auth.enabled`/`storage.enabled` (kept: {@link DISABLED_SENTINEL_PRUNES}'s
+ * `["auth"]`/`["storage"]` entries already deliberately preserve
+ * `{enabled: false}` as a reviewed "is this section managed by push" signal,
+ * PR #6339), `db.network_restrictions.enabled` (kept: the same deliberate
+ * management-opt-out shape, CLI-2314's own ruling), `api.auto_expose_new_tables`
+ * and `auth.third_party`/`auth.jwt_issuer`/`auth.signing_keys_path` (real
+ * hosted concepts push either already sends or simply hasn't been wired to
+ * send yet — a push-capability gap, not a CLI-only field), and
+ * `storage.buckets` (real hosted state via `seed buckets --linked`, which
+ * writes buckets onto the remote project through the Storage API — a
+ * different write path than `config push`, but still hosted).
+ *
+ * `studio.*`/`inbucket.*` need no entry here despite being named in the
+ * report this list is derived from (Slack, Ivan, 2026-09-03): neither
+ * `studio` nor `local_smtp` (the config-side key `[inbucket]` normalizes to,
+ * `../io.ts`) is a member of `HOSTED_SECTION_KEYS` at all, so both are
+ * already excluded by construction — confirmed by this file's own "keeps
+ * exactly the hosted sections" test.
+ *
+ * Exact-match only, no wildcard segments: unlike `../lib/secret-paths.ts`'s
+ * patterns (which need a `"*"` segment for a dynamic `Schema.Record` key,
+ * e.g. `db.vault.*`), every path below names a static struct field, so a
+ * plain length-and-segment comparison is enough.
+ */
+export const DOCUMENT_ONLY_LOCAL_PATHS: ReadonlyArray<ReadonlyArray<string>> = [
+  ["api", "port"],
+  ["api", "tls"],
+  ["api", "external_url"],
+  ["db", "port"],
+  ["db", "shadow_port"],
+  ["db", "health_timeout"],
+  ["db", "major_version"],
+  ["db", "pooler"],
+  ["db", "migrations"],
+  ["db", "seed"],
+  ["realtime", "enabled"],
+  ["realtime", "ip_version"],
+  ["realtime", "max_header_length"],
+  ["experimental", "orioledb_version"],
+  ["experimental", "s3_host"],
+  ["experimental", "s3_region"],
+  ["experimental", "pgdelta"],
+  ["experimental", "inspect"],
+];
+
+function isDocumentOnlyLocalPath(path: ReadonlyArray<string>): boolean {
+  return DOCUMENT_ONLY_LOCAL_PATHS.some(
+    (excluded) =>
+      excluded.length === path.length &&
+      excluded.every((segment, index) => segment === path[index]),
+  );
 }
 
 /**
@@ -367,9 +516,13 @@ function unwrapConfigDocumentSource(input: Record<string, unknown>): {
  * Projects a {@link CliConfig} document (or any {@link EffectiveConfig}
  * operand — a full `CliConfig` is one) down to its hosted-section subset.
  * Copies each hosted section deeply and only when own-present on `config`,
- * omitting every `x-secret` leaf ({@link copyHostedValueWithoutSecrets}) and
- * canonicalizing every field a registry row's `normalizeDocument` covers
- * ({@link applyDocumentNormalizations}) — parity with
+ * omitting every `x-secret` leaf and every {@link DOCUMENT_ONLY_LOCAL_PATHS}
+ * entry — a field with no live hosted counterpart under any CLI command, e.g.
+ * `db.port`, `db.major_version`, `db.pooler`, `db.migrations`, `db.seed`, the
+ * whole `realtime` section (both via {@link copyHostedValueWithoutSecrets};
+ * CLI-2316) — and canonicalizing every field a registry row's
+ * `normalizeDocument` covers ({@link applyDocumentNormalizations}) — parity
+ * with
  * {@link fromApiProjectConfig}'s own secret omission and canonical
  * duration/byte-size spellings, so the same logical hosted config compares
  * equal regardless of which side produced it, and so this function never
