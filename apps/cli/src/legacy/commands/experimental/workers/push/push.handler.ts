@@ -386,6 +386,16 @@ const deployOneWorker = Effect.fnUntraced(function* (input: {
       ? workerUrl(projectRef, settings.projectHost, name)
       : undefined;
 
+  // Dropped while the build is still running, rather than passed through.
+  // `image_version` is optional-but-permitted on the deploy response, so a
+  // re-push of a worker that is already serving can echo the image it is
+  // serving *now* — the previous build's, not this one's. Rendered beside
+  // `State building` that names an image this deploy did not produce, and a
+  // script reading `image_version` next to `build_state: "building"` would take
+  // it for the new one. Only reachable under `--no-wait`; the default polls
+  // until the build leaves `building`, so `settled` carries the real image.
+  const imageVersion = settled.buildState === "building" ? undefined : settled.imageVersion;
+
   // Suppressed when `-o` is in play: the payload owns stdout, and these lines
   // would land in the middle of it.
   if (output.format === "text" && !input.machineOutput) {
@@ -404,10 +414,10 @@ const deployOneWorker = Effect.fnUntraced(function* (input: {
         ["State", settled.buildState],
         ["Runtime", runtime],
         ["Size", formatApiSize(settled.spec.size)],
-        // Empty on a first deploy under `--no-wait`: no image exists until the
+        // Empty under `--no-wait`: this deploy's image does not exist until the
         // build produces one, and `legacyRenderWorkerDetails` drops an
         // empty-valued row.
-        ["Image", settled.imageVersion ?? ""],
+        ["Image", imageVersion ?? ""],
         ["Access", settled.spec.exposure],
         ["URL", url ?? ""],
       ]),
@@ -444,7 +454,7 @@ const deployOneWorker = Effect.fnUntraced(function* (input: {
     // Omitted rather than present-and-undefined: `-o toml` hands the payload to
     // smol-toml, which cannot represent undefined and would throw *after* the
     // upload and deploy had completed. Same reason `url` is spread below.
-    ...(settled.imageVersion === undefined ? {} : { image_version: settled.imageVersion }),
+    ...(imageVersion === undefined ? {} : { image_version: imageVersion }),
     build_state: settled.buildState,
     ...(url === undefined ? {} : { url }),
   };
@@ -470,6 +480,31 @@ const reportUnattempted = Effect.fnUntraced(function* (skipped: ReadonlyArray<st
   // A label rather than a sentence, so it reads the same for one name or six
   // and carries no verb to agree with the count.
   yield* output.raw(`Not attempted: ${skipped.join(", ")}\n`, "stderr");
+});
+
+/**
+ * Names the workers whose builds the run left running.
+ *
+ * Under `--no-wait` a worker is accepted while its build is still in flight, and
+ * its follow-up hint goes out as a success trailer. `runCli` drains trailers
+ * only on exit code 0 (`shared/cli/run.ts`, `afterSuccess`), so a later worker
+ * failing discards every hint the run had queued — including for builds that are
+ * still running on the platform, which the failure does nothing to stop.
+ *
+ * Reported here instead, on the path that actually runs. Same stderr-in-every-
+ * format rule as {@link reportUnattempted} and the same reason: a machine-format
+ * run is a CI run, and "what is still in flight" is as much a part of the
+ * failure's answer as "what never started".
+ *
+ * Empty on a waiting run, without needing to check the flag: a worker the run
+ * waited for has left `building` by the time it returns.
+ */
+const reportStillBuilding = Effect.fnUntraced(function* (building: ReadonlyArray<string>) {
+  if (building.length === 0) {
+    return;
+  }
+  const output = yield* Output;
+  yield* output.raw(`Still building: ${building.join(", ")}\n`, "stderr");
 });
 
 /**
@@ -536,6 +571,9 @@ export const legacyWorkersPush = Effect.fn("legacy.experimental.workers.push")(f
     // explicit `--project-ref` has to survive into every hint this push emits.
     const refSuffix = legacyWorkersProjectRefSuffix(flags.projectRef);
     const deployed: Array<Record<string, unknown>> = [];
+    // Accepted, but not finished: their builds outlive a failure further down
+    // the loop, so the failure path has to name them. See `reportStillBuilding`.
+    const stillBuilding: Array<string> = [];
     for (const [index, name] of names.entries()) {
       if (names.length > 1 && !machineOutput && output.format === "text") {
         // stderr, unblanked and labelled, the way `functions deploy` announces
@@ -555,21 +593,31 @@ export const legacyWorkersPush = Effect.fn("legacy.experimental.workers.push")(f
           "stderr",
         );
       }
-      deployed.push(
-        yield* deployOneWorker({
-          project,
-          name,
-          projectRef,
-          refSuffix,
-          instances: flags.instances,
-          noWait: flags.noWait,
-          machineOutput,
-          ...(options.pollSchedule === undefined ? {} : { pollSchedule: options.pollSchedule }),
-          ...(options.pollRetrySchedule === undefined
-            ? {}
-            : { pollRetrySchedule: options.pollRetrySchedule }),
-        }).pipe(Effect.tapError(() => reportUnattempted(names.slice(index + 1)))),
+      const worker = yield* deployOneWorker({
+        project,
+        name,
+        projectRef,
+        refSuffix,
+        instances: flags.instances,
+        noWait: flags.noWait,
+        machineOutput,
+        ...(options.pollSchedule === undefined ? {} : { pollSchedule: options.pollSchedule }),
+        ...(options.pollRetrySchedule === undefined
+          ? {}
+          : { pollRetrySchedule: options.pollRetrySchedule }),
+      }).pipe(
+        // In flight before what never started: one is a thing the user now has
+        // to follow, the other a thing they have to re-run.
+        Effect.tapError(() =>
+          reportStillBuilding(stillBuilding).pipe(
+            Effect.andThen(reportUnattempted(names.slice(index + 1))),
+          ),
+        ),
       );
+      deployed.push(worker);
+      if (worker.build_state === "building") {
+        stillBuilding.push(name);
+      }
     }
 
     // Only for a run that deployed several: one worker already said so itself,

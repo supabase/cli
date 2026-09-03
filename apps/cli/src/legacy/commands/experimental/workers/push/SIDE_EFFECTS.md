@@ -85,11 +85,19 @@ only** — like the rest of the human deploy report it sits behind
 `build_state` from the payload instead. The hint carries an explicit
 `--project-ref` when the flag supplied one, since it is copy-pasted verbatim.
 
-A multi-worker run stops at the first failure, and names the workers it never
-attempted on stderr in **every** format, machine ones included — unlike the
-trailer above, `reportUnattempted` has no format guard: that run is a
-CI run, where nobody watched the loop and "what still needs deploying" is the
-question the failure raises.
+A multi-worker run stops at the first failure, and names on stderr in **every**
+format, machine ones included, both the workers it never attempted and — under
+`--no-wait` — the accepted workers whose builds it left running. Neither report
+has the trailer's format guard: that run is a CI run, where nobody watched the
+loop, and "what still needs deploying" and "what is still in flight" are both
+part of the question the failure raises. The second report also covers a real
+gap, since `runCli` drains success trailers only on exit code 0, so a failing
+run discards every follow-up hint it had queued.
+
+Under `--no-wait` the `Image` row and the payload's `image_version` are omitted
+while `build_state` is `building`. The deploy response may carry an
+`image_version` — a re-push of a worker that is already serving echoes the image
+it is serving now — and that is the previous build's, not this one's.
 
 The presigned `PUT` above is the one request whose URL is itself a credential.
 `--debug` logs every request URL, so `legacyHttpClientLayer` redacts query
