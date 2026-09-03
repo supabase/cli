@@ -575,9 +575,8 @@ export const makeSupervisor = (
             yield* Ref.set(phase, "stopping");
             return yield* Effect.failCause(cleaned.cause);
           }
-          yield* Ref.set(phase, "starting");
         }
-        if (!freshSession && previous === "stopped") yield* Ref.set(phase, "starting");
+        if (freshSession || previous === "stopped") yield* Ref.set(phase, "starting");
         const started = yield* controller
           .start({
             config: startOptions?.config,

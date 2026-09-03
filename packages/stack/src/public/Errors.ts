@@ -213,10 +213,8 @@ export const PREPARE_STACK_ERROR_TAGS = [
   "ArtifactIntegrityError",
   "ContainerPullError",
   "ContainerEngineError",
-  "StackOwnershipConflictError",
   "StackStateInvalidError",
   "StackStateFormatUnsupportedError",
-  "StackLifecycleConflictError",
 ] as const satisfies ReadonlyArray<StackErrorTag>;
 export type PrepareStackError = ErrorByTag<(typeof PREPARE_STACK_ERROR_TAGS)[number]>;
 

@@ -41,6 +41,7 @@ import {
   InvalidStackConfigError,
   PortUnavailableError,
   StackPreparationError,
+  StackStateInvalidError,
 } from "../public/Errors.ts";
 import { DatabaseBootstrapError } from "../model/DatabaseBootstrap.ts";
 import type { RuntimeArtifactPreparer } from "../preparation/RuntimeArtifacts.ts";
@@ -378,7 +379,19 @@ describe("production runtime", () => {
             expect(error.value.cause).toBeInstanceOf(LogStoreError);
           }
         }
+        const logs = yield* supervisor.logs().pipe(Effect.exit);
+        expect(Exit.isFailure(logs)).toBe(true);
+        if (Exit.isFailure(logs)) {
+          const error = Cause.findErrorOption(logs.cause);
+          expect(Option.isSome(error)).toBe(true);
+          if (Option.isSome(error)) {
+            expect(error.value).toBeInstanceOf(StackStateInvalidError);
+            expect(error.value.cause).toBeInstanceOf(LogStoreError);
+          }
+        }
+        expect(yield* fs.readFileString(paths.logs)).toBe("not-json\n");
         expect((yield* supervisor.maintenanceHandlers.stop).ok).toBe(true);
+        expect(yield* fs.readFileString(paths.logs)).toBe("not-json\n");
         yield* supervisor.destroy;
         expect(current.value).toBeUndefined();
       }),

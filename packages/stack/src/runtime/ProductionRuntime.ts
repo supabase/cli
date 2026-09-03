@@ -7,9 +7,9 @@ import {
   Effect,
   Exit,
   FileSystem,
-  Option,
   Path,
   Ref,
+  Result,
   Scope,
   Schedule,
 } from "effect";
@@ -555,29 +555,17 @@ export const makeProductionRuntime = (
         stackId: options.stackId,
       }));
     const knownSecrets = yield* Ref.make<ReadonlySet<string>>(new Set(stateSecrets(state)));
-    const logStoreInitialization = yield* Effect.exit(
+    const logStoreInitialization = yield* Effect.result(
       options.logStore === undefined
-        ? makeLogStore({ path: paths.logs, knownSecrets: stateSecrets(state) }).pipe(
-            Effect.provideService(FileSystem.FileSystem, fileSystem),
-            Effect.provideService(Path.Path, pathService),
-          )
+        ? makeLogStore({ path: paths.logs, knownSecrets: stateSecrets(state) })
         : Effect.succeed(options.logStore),
     );
-    const baseLogs: LogStore = Exit.isSuccess(logStoreInitialization)
-      ? logStoreInitialization.value
-      : unavailableLogStore(
-          Option.getOrElse(
-            Cause.findErrorOption(logStoreInitialization.cause),
-            () => new LogStoreError({ path: paths.logs, message: "Unable to open stack logs" }),
-          ),
-          paths.logs,
-        );
-    const logStoreInitializationFailure = Exit.isFailure(logStoreInitialization)
-      ? Option.getOrElse(
-          Cause.findErrorOption(logStoreInitialization.cause),
-          () => new LogStoreError({ path: paths.logs, message: "Unable to open stack logs" }),
-        )
+    const logStoreInitializationFailure = Result.isFailure(logStoreInitialization)
+      ? logStoreInitialization.failure
       : undefined;
+    const baseLogs: LogStore = Result.isSuccess(logStoreInitialization)
+      ? logStoreInitialization.success
+      : unavailableLogStore(logStoreInitialization.failure, paths.logs);
     const logs = dynamicLogStore(baseLogs, knownSecrets);
     const selectedEngine = state.runtime.kind === "container" ? state.runtime.engine : undefined;
     const containerEngine =

@@ -114,11 +114,19 @@ export const makeRuntimeArtifactPreparer = (
         }),
       );
     const engine = options.containerEngine;
-    if (engine === undefined || engine.kind !== runtime.engine)
+    if (engine === undefined)
       return Effect.fail(
         error("Container runtime has no configured container engine", {
           workload: workload.id,
           engine: runtime.engine,
+        }),
+      );
+    if (engine.kind !== runtime.engine)
+      return Effect.fail(
+        error("Configured container engine does not match runtime", {
+          workload: workload.id,
+          engine: runtime.engine,
+          configuredEngine: engine.kind,
         }),
       );
     const image = workload.selected.image;

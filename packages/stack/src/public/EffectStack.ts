@@ -304,6 +304,9 @@ export const makeHandle = (
     const readOfflineState = options.readOfflineState;
     const readPersistedState = options.readPersistedState;
     const readLogs = options.readLogs;
+    const isStoppedState = (state: PersistedStackState): boolean =>
+      state.desiredLifecycle === "stopped" || state.desiredLifecycle === "unconfigured";
+    const stackNotFound = () => new StackNotFoundError({ message: "Stack state was not found" });
     const resolveClient = (
       launch: boolean,
     ): Effect.Effect<ReturnType<typeof makeControlClient>, StackError> =>
@@ -427,9 +430,8 @@ export const makeHandle = (
             Effect.mapError(statusError),
             Effect.flatMap((state) =>
               Option.isNone(state)
-                ? Effect.fail(new StackNotFoundError({ message: "Stack state was not found" }))
-                : state.value.desiredLifecycle === "stopped" ||
-                    state.value.desiredLifecycle === "unconfigured"
+                ? Effect.fail(stackNotFound())
+                : isStoppedState(state.value)
                   ? statusFor(state.value, [], new Set<CapabilityName>(), "stopped").pipe(
                       Effect.mapError(statusError),
                     )
@@ -457,9 +459,7 @@ export const makeHandle = (
             ? Effect.void
             : readPersistedState().pipe(
                 Effect.flatMap((state) =>
-                  Option.isSome(state) &&
-                  (state.value.desiredLifecycle === "stopped" ||
-                    state.value.desiredLifecycle === "unconfigured")
+                  Option.isSome(state) && isStoppedState(state.value)
                     ? waitForRelease().pipe(Effect.ignore)
                     : Effect.void,
                 ),
@@ -512,9 +512,7 @@ export const makeHandle = (
             : readOfflineState().pipe(
                 Effect.mapError(stopError),
                 Effect.flatMap((state) =>
-                  Option.isSome(state) &&
-                  (state.value.desiredLifecycle === "stopped" ||
-                    state.value.desiredLifecycle === "unconfigured")
+                  Option.isSome(state) && isStoppedState(state.value)
                     ? Effect.void
                     : resolveClient(true).pipe(
                         Effect.mapError(stopError),
@@ -550,13 +548,8 @@ export const makeHandle = (
           const ownerStopped = readPersistedState().pipe(Effect.mapError(logsStateError));
           return ownerStopped.pipe(
             Effect.flatMap((state) => {
-              if (Option.isNone(state))
-                return Effect.fail(
-                  new StackNotFoundError({ message: "Stack state was not found" }),
-                );
-              const teardown =
-                state.value.desiredLifecycle === "stopped" ||
-                state.value.desiredLifecycle === "unconfigured";
+              if (Option.isNone(state)) return Effect.fail(stackNotFound());
+              const teardown = isStoppedState(state.value);
               if (!teardown) return Effect.fail(ownershipError);
               return Effect.suspend(() =>
                 // During an owner stop the control socket can close before its metadata/lease are

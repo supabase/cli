@@ -108,7 +108,6 @@ const makeFixture = (
     readonly activationCalls?: Ref.Ref<number>;
     readonly activationFailFirst?: Ref.Ref<boolean>;
     readonly startFailures?: Ref.Ref<number>;
-    readonly startFailureCause?: ArtifactIntegrityError;
     readonly preflightFailFirst?: Ref.Ref<boolean>;
     readonly preflightCalls?: Ref.Ref<number>;
     readonly preflightGate?: Deferred.Deferred<void>;
@@ -248,16 +247,6 @@ const makeFixture = (
               });
             }
           }
-          if (
-            fixtureOptions.startFailureCause !== undefined &&
-            key.workloadId === "functions:edge-runtime"
-          )
-            return yield* new RuntimeDriverError({
-              message: fixtureOptions.startFailureCause.message,
-              stackId: key.stackId,
-              workloadId: key.workloadId,
-              cause: fixtureOptions.startFailureCause,
-            });
           const ready = { ...key, state: "ready" as const };
           yield* Ref.update(resources, (current) => [
             ...current.filter((entry) => entry.workloadId !== key.workloadId),
