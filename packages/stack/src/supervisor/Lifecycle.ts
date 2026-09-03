@@ -206,45 +206,72 @@ export const makeLifecycleController = (
         if (initial.desiredLifecycle === "destroying")
           return yield* lifecycleConflict("Stack is being destroyed");
 
-        const candidate = yield* materializeCandidate(initial, initial.runtime, supplied);
+        const freshSession =
+          initial.desiredLifecycle === "running" && startOptions?.freshSession === true;
+        const persistStoppedAfterFailure = (
+          primary: Cause.Cause<StackError>,
+          cleanup: boolean,
+        ): Effect.Effect<never, StackError, LifecycleRequirements> =>
+          Effect.gen(function* () {
+            const current = yield* options.stateStore.read(options.stackId).pipe(Effect.exit);
+            let cause = primary;
+            if (Exit.isFailure(current)) {
+              cause = Cause.combine(cause, current.cause);
+            } else if (current.value === undefined) {
+              cause = Cause.combine(cause, Cause.fail(missingState(options.stackId)));
+            } else {
+              const persisted = yield* options.stateStore
+                .replace(options.stackId, {
+                  ...current.value,
+                  desiredLifecycle: "stopped" as const,
+                })
+                .pipe(Effect.exit);
+              if (Exit.isFailure(persisted)) cause = Cause.combine(cause, persisted.cause);
+            }
+            if (cleanup) {
+              const cleaned = yield* options.backend.cleanup.pipe(Effect.exit);
+              if (Exit.isFailure(cleaned)) cause = Cause.combine(cause, cleaned.cause);
+            }
+            return yield* Effect.failCause(cause);
+          });
+
+        const materialized = yield* materializeCandidate(initial, initial.runtime, supplied).pipe(
+          Effect.exit,
+        );
+        if (Exit.isFailure(materialized)) {
+          if (freshSession) return yield* persistStoppedAfterFailure(materialized.cause, false);
+          return yield* Effect.failCause(materialized.cause);
+        }
+        const candidate = materialized.value;
         if (initial.desiredLifecycle === "running") {
           if (
             supplied !== undefined &&
             (initial.definition === undefined ||
               !sameDefinition(candidate.definition, initial.definition))
-          )
-            return yield* new StackMustBeStoppedError({
+          ) {
+            const error = new StackMustBeStoppedError({
               stackId: options.stackId,
               message: "Running stack input changed; stop the stack before applying it",
               guidance: "Use stop() followed by start() to apply stopped-time changes",
             });
-          if (supplied !== undefined && !sameSecrets(candidate.secrets, initial.secrets))
-            return yield* new StackMustBeStoppedError({
+            if (freshSession) return yield* persistStoppedAfterFailure(Cause.fail(error), false);
+            return yield* error;
+          }
+          if (supplied !== undefined && !sameSecrets(candidate.secrets, initial.secrets)) {
+            const error = new StackMustBeStoppedError({
               stackId: options.stackId,
               message: "Running stack secrets changed; stop the stack before applying them",
               guidance: "Use stop() followed by start() to apply stopped-time changes",
             });
-          const freshSession = startOptions?.freshSession === true;
+            if (freshSession) return yield* persistStoppedAfterFailure(Cause.fail(error), false);
+            return yield* error;
+          }
           if (freshSession) {
             const preflighted = yield* options.backend
               .preflight(lifecycleInput(options.stackId, initial, candidate))
               .pipe(Effect.exit);
-            if (Exit.isFailure(preflighted)) {
-              const current = yield* options.stateStore.read(options.stackId).pipe(Effect.exit);
-              const stopped =
-                Exit.isSuccess(current) && current.value !== undefined
-                  ? { ...current.value, desiredLifecycle: "stopped" as const }
-                  : { ...initial, desiredLifecycle: "stopped" as const };
-              const persisted = yield* options.stateStore
-                .replace(options.stackId, stopped)
-                .pipe(Effect.exit);
-              const cleaned = yield* options.backend.cleanup.pipe(Effect.exit);
-              let cause = preflighted.cause;
-              if (Exit.isFailure(current)) cause = Cause.combine(cause, current.cause);
-              if (Exit.isFailure(persisted)) cause = Cause.combine(cause, persisted.cause);
-              if (Exit.isFailure(cleaned)) cause = Cause.combine(cause, cleaned.cause);
-              return yield* Effect.failCause(cause);
-            }
+            if (Exit.isFailure(preflighted))
+              return yield* persistStoppedAfterFailure(preflighted.cause, false);
           }
           const launched = yield* options.backend
             .launch(
@@ -252,22 +279,8 @@ export const makeLifecycleController = (
               freshSession ? "fresh" : "current",
             )
             .pipe(Effect.exit);
-          if (Exit.isFailure(launched) && freshSession) {
-            const current = yield* options.stateStore.read(options.stackId).pipe(Effect.exit);
-            const stopped =
-              Exit.isSuccess(current) && current.value !== undefined
-                ? { ...current.value, desiredLifecycle: "stopped" as const }
-                : { ...initial, desiredLifecycle: "stopped" as const };
-            const persisted = yield* options.stateStore
-              .replace(options.stackId, stopped)
-              .pipe(Effect.exit);
-            const cleaned = yield* options.backend.cleanup.pipe(Effect.exit);
-            let cause = launched.cause;
-            if (Exit.isFailure(current)) cause = Cause.combine(cause, current.cause);
-            if (Exit.isFailure(persisted)) cause = Cause.combine(cause, persisted.cause);
-            if (Exit.isFailure(cleaned)) cause = Cause.combine(cause, cleaned.cause);
-            return yield* Effect.failCause(cause);
-          }
+          if (Exit.isFailure(launched) && freshSession)
+            return yield* persistStoppedAfterFailure(launched.cause, true);
           if (Exit.isFailure(launched)) return yield* Effect.failCause(launched.cause);
           return initial;
         }
@@ -283,20 +296,7 @@ export const makeLifecycleController = (
         // A failed cold launch never leaves a durable running intent behind. Cleanup is attempted
         // before publishing the stopped state; if cleanup is not proven, the stopped fence remains
         // durable and the Supervisor stays available for an explicit retry.
-        const current = yield* options.stateStore.read(options.stackId).pipe(Effect.exit);
-        const stopped =
-          Exit.isSuccess(current) && current.value !== undefined
-            ? { ...current.value, desiredLifecycle: "stopped" as const }
-            : { ...next, desiredLifecycle: "stopped" as const };
-        const persisted = yield* options.stateStore
-          .replace(options.stackId, stopped)
-          .pipe(Effect.exit);
-        const cleaned = yield* options.backend.cleanup.pipe(Effect.exit);
-        let cause = started.cause;
-        if (Exit.isFailure(current)) cause = Cause.combine(cause, current.cause);
-        if (Exit.isFailure(persisted)) cause = Cause.combine(cause, persisted.cause);
-        if (Exit.isFailure(cleaned)) cause = Cause.combine(cause, cleaned.cause);
-        return yield* Effect.failCause(cause);
+        return yield* persistStoppedAfterFailure(started.cause, true);
       });
     };
 

@@ -1,6 +1,5 @@
 import { Data, Effect, Predicate, Schema } from "effect";
 import { isStackId, StackIdSchema } from "../public/StackId.ts";
-import { STACK_ERROR_TAGS } from "../public/Errors.ts";
 
 /** The stable protocol is intentionally frozen independently of Stack RPC releases. */
 const MAINTENANCE_PROTOCOL = "maintenance-v1" as const;
@@ -62,7 +61,7 @@ const MaintenanceErrorCodeSchema = Schema.Literals([
   "operation-failed",
   "unsupported-release",
 ] as const);
-const MaintenanceStackErrorTagSchema = Schema.Literals(STACK_ERROR_TAGS);
+const MaintenanceStackErrorTagSchema = Schema.String;
 
 export const MaintenanceResponseSchema = Schema.Union([
   Schema.Struct({

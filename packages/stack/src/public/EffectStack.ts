@@ -218,17 +218,13 @@ const stackErrorFactories = {
   StackDestructionError: (message: string) => new StackDestructionError({ message }),
 } satisfies Record<StackErrorTag, (message: string) => StackError>;
 
+const isPublicStackError = (error: unknown): error is StackError =>
+  Predicate.hasProperty(error, "_tag") &&
+  typeof error._tag === "string" &&
+  isStackErrorTag(error._tag);
+
 const errorForRpc = (error: ControlError): StackError => {
-  if (
-    Predicate.isTagged(error, "StackOwnershipConflictError") ||
-    Predicate.isTagged(error, "StackLifecycleConflictError") ||
-    Predicate.isTagged(error, "StackStateInvalidError") ||
-    Predicate.isTagged(error, "InvalidLogCursorError") ||
-    Predicate.isTagged(error, "StackCleanupError") ||
-    Predicate.isTagged(error, "StackStateFormatUnsupportedError") ||
-    Predicate.isTagged(error, "StackUpgradeRequiredError")
-  )
-    return error;
+  if (isPublicStackError(error)) return error;
   if (
     Predicate.isTagged(error, "RpcClientError") ||
     Predicate.isTagged(error, "SocketError") ||

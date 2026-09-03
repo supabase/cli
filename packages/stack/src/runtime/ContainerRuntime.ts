@@ -38,6 +38,7 @@ import {
   type RuntimeDriver,
   type RuntimeWorkloadKey,
 } from "./RuntimeDriver.ts";
+import { ContainerEngineError } from "../public/Errors.ts";
 
 export interface ContainerRuntimeOptions {
   readonly engine: ContainerEngine;
@@ -212,6 +213,16 @@ const toDriverError = (
     cause: error,
   });
 
+const toContainerEngineError = (
+  engine: ContainerEngine["kind"],
+  error: unknown,
+): ContainerEngineError =>
+  new ContainerEngineError({
+    engine,
+    message: error instanceof Error ? error.message : String(error),
+    cause: error,
+  });
+
 const containerArtifact = (workload: PlannedWorkload): ContainerArtifact | undefined =>
   workload.selected.kind === "container" ? workload.selected : undefined;
 
@@ -258,7 +269,11 @@ export const makeContainerRuntime = (
       key: Pick<RuntimeWorkloadKey, "stackId" | "workloadId">,
       effect: Effect.Effect<A, ContainerEngineFailure>,
     ): Effect.Effect<A, RuntimeDriverError> =>
-      effect.pipe(Effect.mapError((error) => toDriverError(key, error)));
+      effect.pipe(
+        Effect.mapError((error) =>
+          toDriverError(key, toContainerEngineError(options.engine.kind, error)),
+        ),
+      );
 
     const stopLogs = (resource: ContainerRuntimeResource): Effect.Effect<void> =>
       resource.logFiber === undefined ? Effect.void : Fiber.interrupt(resource.logFiber);
@@ -311,7 +326,9 @@ export const makeContainerRuntime = (
             })
             .pipe(Effect.asVoid),
         ),
-        Effect.mapError((error) => toDriverError(resource.key, error)),
+        Effect.mapError((error) =>
+          toDriverError(resource.key, toContainerEngineError(options.engine.kind, error)),
+        ),
         Effect.catch((error) =>
           reportFailure(
             resource,
@@ -434,7 +451,9 @@ export const makeContainerRuntime = (
                   })
                   .pipe(Effect.asVoid),
               ),
-              Effect.mapError((error) => toDriverError(key, error)),
+              Effect.mapError((error) =>
+                toDriverError(key, toContainerEngineError(options.engine.kind, error)),
+              ),
             );
             logFiber = yield* Effect.forkIn(consume, runtimeScope);
           }

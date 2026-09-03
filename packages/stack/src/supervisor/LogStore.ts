@@ -103,7 +103,7 @@ const parseOpaqueCursor = (path: string, opaque: string): Effect.Effect<number, 
     : Effect.fail(fileError(path, "Log cursor is out of range"));
 };
 
-const parseQueryCursor = (
+const decodeCursor = (
   path: string,
   cursor: LogCursor | undefined,
 ): Effect.Effect<number | undefined, InvalidLogCursorError> => {
@@ -111,13 +111,6 @@ const parseQueryCursor = (
   return parseOpaqueCursor(path, cursor.opaque).pipe(
     Effect.mapError((error) => new InvalidLogCursorError({ message: error.message, cause: error })),
   );
-};
-
-const decodeCursor = (
-  path: string,
-  cursor: LogCursor | undefined,
-): Effect.Effect<number | undefined, InvalidLogCursorError> => {
-  return parseQueryCursor(path, cursor);
 };
 
 const selected = (

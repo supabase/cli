@@ -704,18 +704,17 @@ export const makeSupervisor = (
       stop: stopWithShutdown.pipe(
         Effect.provideContext(options.context),
         Effect.as({ ok: true, op: "stop" } satisfies MaintenanceResponse),
-        Effect.catch((error) =>
-          Effect.succeed({
+        Effect.catch((error) => {
+          const stackErrorTag = maintenanceStackErrorTag(error);
+          return Effect.succeed({
             ok: false,
             error: {
               tag: "operation-failed",
               message: stateErrorMessage(error),
-              ...(maintenanceStackErrorTag(error) === undefined
-                ? {}
-                : { stackErrorTag: maintenanceStackErrorTag(error) }),
+              ...(stackErrorTag === undefined ? {} : { stackErrorTag }),
             },
-          } satisfies MaintenanceResponse),
-        ),
+          } satisfies MaintenanceResponse);
+        }),
       ),
     };
     const credentials: Effect.Effect<EffectStackCredentials, StackRpcError> = Effect.gen(

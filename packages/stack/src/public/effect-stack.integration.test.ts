@@ -40,6 +40,8 @@ import { compileStack } from "../model/Compiler.ts";
 import {
   StackDestructionError,
   StackCleanupError,
+  ContainerEngineError,
+  InvalidLogCursorError,
   StackOwnershipConflictError,
   StackPreparationError,
   StackRuntimeMismatchError,
@@ -60,7 +62,10 @@ import { CAPABILITY_NAMES } from "./Capability.ts";
 import { StackIdSchema } from "./StackId.ts";
 import type { StackStatus } from "./Status.ts";
 import { makeDockerEngine } from "../runtime/DockerEngine.ts";
-import type { ContainerCommandResult, ContainerCommandRunner } from "../runtime/ContainerEngine.ts";
+import {
+  type ContainerCommandResult,
+  type ContainerCommandRunner,
+} from "../runtime/ContainerEngine.ts";
 import { ContainerEngineResolver } from "../runtime/ContainerEngineResolver.ts";
 
 const stackId = StackIdSchema.make(
@@ -318,6 +323,59 @@ describe("Effect stack lifecycle handoff", () => {
         expect(Array.from(followed)).toEqual([finalAuth]);
         yield* Scope.close(ownerScope, Exit.void);
         yield* Fiber.join(stopFiber);
+      }).pipe(Effect.provide(NodeServices.layer)),
+    ),
+  );
+
+  it.live("propagates malformed log cursors through the public control handle", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const root = yield* fs.makeTempDirectoryScoped({ prefix: "supabase-effect-stack-cursor-" });
+        const endpoint = { kind: "unix" as const, path: path.join(root, "control.sock") };
+        const ownerSessionId = "cursor-session";
+        const ownerScope = yield* Scope.make();
+        yield* Effect.addFinalizer(() => Scope.close(ownerScope, Exit.void));
+        const owner = {
+          format: "supabase-stack-owner-v1" as const,
+          stackId,
+          endpoint,
+          ownerSessionId,
+          rpcRelease: STACK_RPC_RELEASE,
+        };
+        yield* startControlServer({
+          endpoint,
+          stackId,
+          ownerSessionId,
+          rpcHandlers: {
+            status: () => Effect.succeed(runningStatus),
+            credentials: () => Effect.succeed(credentials),
+            start: () => Effect.succeed(runningStatus),
+            destroy: () => Effect.void,
+            logs: () =>
+              Effect.fail({ tag: "InvalidLogCursorError", message: "Log cursor is invalid" }),
+          },
+          maintenanceHandlers: {
+            probe: Effect.succeed({
+              ok: true,
+              op: "probe",
+              stackId,
+              ownerSessionId,
+              rpcRelease: STACK_RPC_RELEASE,
+            }),
+            stop: Effect.succeed({ ok: true, op: "stop" }),
+          },
+        }).pipe(Effect.provideService(Scope.Scope, ownerScope));
+        const stack = yield* makeHandle(stackId, {
+          resolveOwner: () => Effect.succeed(Option.some(owner)),
+        });
+        const result = yield* stack.logs({ cursor: { opaque: "not-a-cursor" } }).pipe(Effect.exit);
+        expect(Exit.isFailure(result)).toBe(true);
+        if (Exit.isFailure(result))
+          expect(Option.getOrUndefined(Cause.findErrorOption(result.cause))).toBeInstanceOf(
+            InvalidLogCursorError,
+          );
       }).pipe(Effect.provide(NodeServices.layer)),
     ),
   );
@@ -661,6 +719,71 @@ describe("Effect stack lifecycle handoff", () => {
         expect(calls.filter((call) => call.startsWith("image ls"))).toHaveLength(2);
       }),
     ),
+  );
+
+  it.live(
+    "surfaces a container engine failure during public start",
+    () =>
+      Effect.scoped(
+        Effect.gen(function* () {
+          const fs = yield* FileSystem.FileSystem;
+          const path = yield* Path.Path;
+          const root = yield* fs.makeTempDirectoryScoped({
+            prefix: "supabase-effect-stack-start-",
+          });
+          const endpoint = { kind: "unix" as const, path: path.join(root, "control.sock") };
+          const ownerSessionId = "start-error-session";
+          const ownerScope = yield* Scope.make();
+          yield* Effect.addFinalizer(() => Scope.close(ownerScope, Exit.void));
+          const owner = {
+            format: "supabase-stack-owner-v1" as const,
+            stackId,
+            endpoint,
+            ownerSessionId,
+            rpcRelease: STACK_RPC_RELEASE,
+          };
+          yield* startControlServer({
+            endpoint,
+            stackId,
+            ownerSessionId,
+            rpcHandlers: {
+              status: () => Effect.succeed(runningStatus),
+              credentials: () => Effect.succeed(credentials),
+              start: () =>
+                Effect.fail({
+                  tag: "ContainerEngineError",
+                  message: "Container engine command failed while starting database",
+                }),
+              destroy: () => Effect.void,
+              logs: () => emptyLogs(),
+            },
+            maintenanceHandlers: {
+              probe: Effect.succeed({
+                ok: true,
+                op: "probe",
+                stackId,
+                ownerSessionId,
+                rpcRelease: STACK_RPC_RELEASE,
+              }),
+              stop: Effect.succeed({ ok: true, op: "stop" }),
+            },
+          }).pipe(Effect.provideService(Scope.Scope, ownerScope));
+          const stack = yield* makeHandle(stackId, {
+            resolveOwner: () => Effect.succeed(Option.some(owner)),
+          });
+          const result = yield* stack.start().pipe(Effect.exit);
+          expect(Exit.isFailure(result)).toBe(true);
+          if (Exit.isFailure(result)) {
+            const failure = Cause.findErrorOption(result.cause);
+            expect(Option.isSome(failure)).toBe(true);
+            if (Option.isSome(failure)) {
+              expect(failure.value).toBeInstanceOf(ContainerEngineError);
+              expect(failure.value.message).toContain("Container engine command failed");
+            }
+          }
+        }),
+      ).pipe(Effect.provide(NodeServices.layer)),
+    240_000,
   );
 
   it.live("cancels unfinished direct preparation while retaining completed artifacts", () =>

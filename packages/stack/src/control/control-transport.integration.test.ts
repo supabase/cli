@@ -255,6 +255,32 @@ const makeDestroyRequestFrame = (): Effect.Effect<Uint8Array, MaintenanceProtoco
   });
 
 describe("control transport", () => {
+  it.live("accepts unknown maintenance stack error tags for forward compatibility", () =>
+    withServer(
+      ({ endpoint, stackId, ownerSessionId }) =>
+        Effect.gen(function* () {
+          const client = makeControlClient(endpoint, { stackId, ownerSessionId });
+          const response = yield* client.stop();
+          expect(response).toMatchObject({
+            ok: false,
+            error: { tag: "operation-failed", stackErrorTag: "FutureStackError" },
+          });
+        }),
+      () => ({
+        maintenanceHandlers: {
+          stop: Effect.succeed({
+            ok: false,
+            error: {
+              tag: "operation-failed",
+              message: "future owner failure",
+              stackErrorTag: "FutureStackError",
+            },
+          }),
+        },
+      }),
+    ),
+  );
+
   it.live("reevaluates owner shutdown after a failed start response", () =>
     withServer(
       ({ endpoint, stackId, ownerSessionId, completion }) =>

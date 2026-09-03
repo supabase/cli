@@ -1,6 +1,6 @@
 import { NodeServices } from "@effect/platform-node";
 import { describe, expect, it } from "@effect/vitest";
-import { Cause, Deferred, Effect, Exit, FileSystem, Option, Redacted } from "effect";
+import { Cause, Deferred, Effect, Exit, FileSystem, Option, Redacted, Ref } from "effect";
 import { deriveStackId } from "../identity/Identity.ts";
 import {
   StackRuntimeError,
@@ -11,7 +11,7 @@ import {
 } from "../public/Errors.ts";
 import type { StackRuntime } from "../public/Runtime.ts";
 import type { PersistedStackState } from "../state/StackState.ts";
-import { makeStackStateStore } from "../state/StackStateStore.ts";
+import { makeStackStateStore, type StackStateStore } from "../state/StackStateStore.ts";
 import {
   makeLifecycleController,
   type LifecycleBackend,
@@ -45,6 +45,7 @@ interface BackendState {
   preflightStarted?: Deferred.Deferred<void>;
   waitBeforeLaunch?: Deferred.Deferred<void>;
   launchMutation?: () => Effect.Effect<void, StackError>;
+  failCurrentRead?: Ref.Ref<boolean>;
   stopLaunchStarted?: Deferred.Deferred<void>;
   stopLaunchGate?: Deferred.Deferred<void>;
   startLaunchStarted?: Deferred.Deferred<void>;
@@ -105,13 +106,26 @@ const makeFixture = (runtime: StackRuntime = { kind: "native" }) =>
       secrets: {},
     });
     const state: BackendState = { calls: [], preflight: [] };
+    const persistedStore: StackStateStore = {
+      ...store,
+      read: (stackId) =>
+        Effect.gen(function* () {
+          if (state.failCurrentRead !== undefined && (yield* Ref.get(state.failCurrentRead))) {
+            yield* Ref.set(state.failCurrentRead, false);
+            return yield* new StackStateInvalidError({
+              message: "injected current-state read failure",
+            });
+          }
+          return yield* store.read(stackId);
+        }),
+    };
     const controller = yield* makeLifecycleController({
       stackId: id,
       runtime,
-      stateStore: store,
+      stateStore: persistedStore,
       backend: backend(state),
     });
-    return { id, root, store, state, controller };
+    return { id, root, store: persistedStore, state, controller };
   });
 
 const run = <A, E, R>(effect: Effect.Effect<A, E, R>) =>
@@ -205,6 +219,22 @@ describe("durable lifecycle controller", () => {
         expect(stopped?.privatePorts).toEqual([
           { workloadId: "rest:rest", binding: "http", port: 54_322 },
         ]);
+      }),
+    ),
+  );
+
+  it.live("does not write a stale stopped state when current-state read fails", () =>
+    run(
+      Effect.gen(function* () {
+        const fixture = yield* makeFixture();
+        fixture.state.failLaunch = true;
+        const failCurrentRead = yield* Ref.make(false);
+        fixture.state.failCurrentRead = failCurrentRead;
+        fixture.state.launchMutation = () => Ref.set(failCurrentRead, true);
+        const failed = yield* fixture.controller.start().pipe(Effect.exit);
+        expect(errorOf(failed)).toBeInstanceOf(StackRuntimeError);
+        expect(fixture.state.calls).toContain("cleanup:running");
+        expect((yield* fixture.store.read(fixture.id))?.desiredLifecycle).toBe("running");
       }),
     ),
   );

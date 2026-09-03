@@ -25,6 +25,7 @@ import { makePodmanEngine, serializePodmanCommand } from "./PodmanEngine.ts";
 import { makeContainerRuntime } from "./ContainerRuntime.ts";
 import { RuntimeDriverError, type RuntimeWorkloadKey } from "./RuntimeDriver.ts";
 import { LogStoreError, type LogRecord, type LogStore } from "../supervisor/LogStore.ts";
+import { ContainerEngineError } from "../public/Errors.ts";
 
 const makeControlledCommandRunner = (
   options: Omit<ContainerCommandRunner, "executable"> & { readonly executable?: string },
@@ -62,6 +63,9 @@ const commandResult = (value: unknown): ContainerCommandResult => ({
   stderr: "",
   exitCode: 0,
 });
+
+const errorOf = <E>(exit: Exit.Exit<unknown, E>): E | undefined =>
+  Exit.isFailure(exit) ? Option.getOrUndefined(Cause.findErrorOption(exit.cause)) : undefined;
 
 interface FakeContainerState {
   resources: Array<ContainerResource>;
@@ -2153,6 +2157,32 @@ describe("container runtime", () => {
       expect(failedState.calls).not.toContain("pull-image");
       expect(failedState.calls).not.toContain("create-network");
       expect(failedState.calls).not.toContain("create-container");
+    }),
+  );
+
+  it.live("preserves container engine identity for runtime operations after preflight", () =>
+    Effect.gen(function* () {
+      const state: FakeContainerState = {
+        resources: [],
+        imagePresent: true,
+        calls: [],
+        createdSpecs: [],
+        nextId: 1,
+        inspectImageFailure: new ContainerCommandError({
+          operation: "inspect-image",
+          message: "daemon rejected image inspection",
+        }),
+      };
+      const runtime = yield* makeContainerRuntime({
+        engine: fakeContainerEngine(state),
+        ownerSessionId: "owner-session",
+      });
+      const result = yield* runtime.start(key, workload()).pipe(Effect.exit);
+      expect(Exit.isFailure(result)).toBe(true);
+      const failure = errorOf(result);
+      expect(failure).toBeInstanceOf(RuntimeDriverError);
+      expect(failure?.cause).toBeInstanceOf(ContainerEngineError);
+      expect(failure?.cause).toMatchObject({ message: "daemon rejected image inspection" });
     }),
   );
 });

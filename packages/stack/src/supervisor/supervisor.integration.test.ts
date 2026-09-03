@@ -29,6 +29,7 @@ import {
   StackCleanupError,
   StackStateInvalidError,
   StackMustBeStoppedError,
+  StackVersionUnsupportedError,
 } from "../public/Errors.ts";
 import {
   RuntimeDriverError,
@@ -759,6 +760,69 @@ describe("Supervisor composition", () => {
           runtime: fixture.runtime,
         });
         expect((yield* retryOwner.start()).lifecycle).toBe("running");
+      }),
+    ),
+  );
+
+  it.live("persists stopped after a proven fresh-session materialization failure", () =>
+    run(
+      Effect.gen(function* () {
+        const fixture = yield* makeFixture();
+        yield* fixture.supervisor.start({ config: {} });
+        yield* Ref.set(fixture.calls, []);
+        const successor = yield* makeSupervisor({
+          stackId: fixture.id,
+          ownerSessionId: "materialization-successor",
+          rpcRelease: "test-release",
+          stateStore: fixture.store,
+          context: fixture.context,
+          runtime: fixture.runtime,
+        });
+        const failed = yield* successor
+          .start({ config: { capabilities: { database: { version: "99" } } } })
+          .pipe(Effect.exit);
+        expect(Exit.isFailure(failed)).toBe(true);
+        expect(errorOf(failed)).toBeInstanceOf(StackVersionUnsupportedError);
+        expect((yield* fixture.store.read(fixture.id))?.desiredLifecycle).toBe("stopped");
+        expect((yield* successor.status).lifecycle).toBe("stopped");
+        expect(yield* Ref.get(fixture.calls)).toEqual(["cleanup:stop"]);
+        yield* successor.shutdownIfIdle;
+        yield* successor.shutdown;
+        const retryOwner = yield* makeSupervisor({
+          stackId: fixture.id,
+          ownerSessionId: "materialization-retry",
+          rpcRelease: "test-release",
+          stateStore: fixture.store,
+          context: fixture.context,
+          runtime: fixture.runtime,
+        });
+        expect((yield* retryOwner.start()).lifecycle).toBe("running");
+      }),
+    ),
+  );
+
+  it.live("persists stopped after a proven fresh-session changed-input rejection", () =>
+    run(
+      Effect.gen(function* () {
+        const fixture = yield* makeFixture();
+        yield* fixture.supervisor.start({ config: {} });
+        const successor = yield* makeSupervisor({
+          stackId: fixture.id,
+          ownerSessionId: "changed-input-successor",
+          rpcRelease: "test-release",
+          stateStore: fixture.store,
+          context: fixture.context,
+          runtime: fixture.runtime,
+        });
+        const failed = yield* successor
+          .start({ config: { capabilities: { rest: { settings: { schemas: ["private"] } } } } })
+          .pipe(Effect.exit);
+        expect(Exit.isFailure(failed)).toBe(true);
+        expect(errorOf(failed)).toBeInstanceOf(StackMustBeStoppedError);
+        expect((yield* fixture.store.read(fixture.id))?.desiredLifecycle).toBe("stopped");
+        expect((yield* successor.status).lifecycle).toBe("stopped");
+        yield* successor.shutdownIfIdle;
+        yield* successor.shutdown;
       }),
     ),
   );
