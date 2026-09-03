@@ -783,6 +783,10 @@ export const makeSupervisor = (
     );
     const logs = (query?: LogQuery): Effect.Effect<StackLogBatch, StackError> =>
       Effect.gen(function* () {
+        // Capture lifecycle phase before reading the log store. Stop publishes the stopped
+        // phase only after cleanup has appended terminal records; a stopping snapshot therefore
+        // stays live and gives followers one more poll rather than racing a final batch.
+        const phaseAtRead = yield* Ref.get(phase);
         const cursor = query?.cursor?.opaque === "v1_0" ? undefined : query?.cursor;
         const scanned = yield* runtime.logStore
           .read(cursor === undefined ? undefined : { cursor })
@@ -806,9 +810,7 @@ export const makeSupervisor = (
             : query.tail <= 0
               ? []
               : filtered.slice(-Math.floor(query.tail));
-        const state = yield* read();
-        const running =
-          state?.desiredLifecycle === "running" && (yield* Ref.get(phase)) === "running";
+        const running = phaseAtRead !== "stopped";
         return {
           entries,
           cursor: scanned.at(-1)?.cursor ?? query?.cursor ?? { opaque: "v1_0" },

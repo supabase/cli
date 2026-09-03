@@ -32,7 +32,7 @@ import {
 import { resolveStackPaths } from "../state/Paths.ts";
 import { makeStackStateStore } from "../state/StackStateStore.ts";
 import { deriveStackId, resolveStackIdentity } from "../identity/Identity.ts";
-import { toPersistedIdentity } from "../state/StackState.ts";
+import { toPersistedIdentity, type PersistedStackState } from "../state/StackState.ts";
 import { startControlServer } from "../control/ControlServer.ts";
 import { STACK_RPC_RELEASE, type StackRpcHandlers } from "../control/StackRpc.ts";
 import {
@@ -42,6 +42,7 @@ import {
   StackPreparationError,
   StackStateInvalidError,
 } from "./Errors.ts";
+import type { LogQuery, StackLogBatch, StackLogEntry } from "./Logs.ts";
 import {
   createStack,
   inspectStack,
@@ -82,6 +83,25 @@ const credentials = {
   },
 };
 
+const stoppedState = (): PersistedStackState => ({
+  format: "supabase-stack-state-v1",
+  identity: {
+    stackId,
+    projectRoot: "/tmp/project",
+    checkoutRoot: "/tmp/project",
+    workspaceId: "workspace",
+    checkoutId: "checkout",
+    branchContext: "branch",
+    localProjectKey: "key",
+    stackName: "stack",
+  },
+  runtime: { kind: "native" },
+  desiredLifecycle: "stopped",
+  ports: [],
+  privatePorts: [],
+  secrets: {},
+});
+
 const emptyLogs = () =>
   Effect.succeed({ entries: [], cursor: { opaque: "v1_0" }, running: false } as const);
 
@@ -108,17 +128,128 @@ const withRuntimeRoot = <A, E, R>(effect: (project: string) => Effect.Effect<A, 
   ).pipe(Effect.provide(NodeServices.layer));
 
 describe("Effect stack lifecycle handoff", () => {
-  it.live("returns filtered log batches and follows from their cursor", () =>
-    withRuntimeRoot((project) =>
+  it.live("hands off filtered logs through a real owner stop", () =>
+    Effect.scoped(
       Effect.gen(function* () {
-        const stack = yield* createStack({ projectRoot: project });
-        const first = yield* stack.logs({ capabilities: ["auth"], tail: 20 });
-        expect(first.entries.every((entry) => entry.source === "auth")).toBe(true);
-        const followed = yield* stack
-          .followLogs({ capabilities: ["auth"], cursor: first.cursor })
-          .pipe(Stream.runCollect);
-        expect(Array.from(followed).every((entry) => entry.source === "auth")).toBe(true);
-      }),
+        const fs = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const root = yield* fs.makeTempDirectoryScoped({ prefix: "supabase-effect-stack-logs-" });
+        const endpoint = { kind: "unix" as const, path: path.join(root, "control.sock") };
+        const ownerSessionId = "logs-session";
+        const stopped = yield* Deferred.make<void>();
+        const followRead = yield* Deferred.make<void>();
+        const ownerScope = yield* Scope.make();
+        yield* Effect.addFinalizer(() => Scope.close(ownerScope, Exit.void));
+        const initialAuth: StackLogEntry = {
+          cursor: { opaque: "v1_1" },
+          timestamp: "2026-01-01T00:00:00.000Z",
+          source: "auth",
+          stream: "stdout",
+          message: "started",
+        };
+        const unrelatedDatabase: StackLogEntry = {
+          cursor: { opaque: "v1_2" },
+          timestamp: "2026-01-01T00:00:01.000Z",
+          source: "database",
+          stream: "stdout",
+          message: "ignored",
+        };
+        const finalAuth: StackLogEntry = {
+          cursor: { opaque: "v1_3" },
+          timestamp: "2026-01-01T00:00:02.000Z",
+          source: "auth",
+          stream: "stdout",
+          message: "stopped",
+        };
+        const logEntries = yield* Ref.make<ReadonlyArray<StackLogEntry>>([
+          initialAuth,
+          unrelatedDatabase,
+        ]);
+        const ownerRunning = yield* Ref.make(true);
+        const readLogs = (query: LogQuery): Effect.Effect<StackLogBatch> =>
+          Effect.gen(function* () {
+            if (query.cursor !== undefined)
+              yield* Deferred.succeed(followRead, undefined).pipe(Effect.asVoid);
+            const allEntries = yield* Ref.get(logEntries);
+            const cursorIndex =
+              query.cursor === undefined
+                ? -1
+                : allEntries.findIndex((entry) => entry.cursor.opaque === query.cursor?.opaque);
+            const capabilities = query.capabilities;
+            const matching = allEntries
+              .slice(cursorIndex + 1)
+              .filter(
+                (entry) =>
+                  capabilities === undefined ||
+                  (entry.source !== "gateway" &&
+                    entry.source !== "supervisor" &&
+                    capabilities.includes(entry.source)),
+              );
+            const entries =
+              query.tail === undefined ? matching : matching.slice(-Math.floor(query.tail));
+            const cursor = allEntries.at(-1)?.cursor ?? { opaque: "v1_0" };
+            return {
+              entries,
+              cursor,
+              running: yield* Ref.get(ownerRunning),
+            };
+          });
+        const owner = {
+          format: "supabase-stack-owner-v1" as const,
+          stackId,
+          endpoint,
+          ownerSessionId,
+          rpcRelease: STACK_RPC_RELEASE,
+        };
+        yield* startControlServer({
+          endpoint,
+          stackId,
+          ownerSessionId,
+          rpcHandlers: {
+            status: () => Effect.succeed(runningStatus),
+            credentials: () => Effect.succeed(credentials),
+            prepare: () => Effect.succeed({ capabilities: [] }),
+            start: () => Effect.succeed(runningStatus),
+            restart: () => Effect.succeed(runningStatus),
+            destroy: () => Effect.void,
+            logs: (query) => readLogs(query),
+          },
+          maintenanceHandlers: {
+            probe: Effect.succeed({
+              ok: true,
+              op: "probe",
+              stackId,
+              ownerSessionId,
+              rpcRelease: STACK_RPC_RELEASE,
+            }),
+            stop: Effect.gen(function* () {
+              yield* Ref.set(ownerRunning, false);
+              yield* Ref.update(logEntries, (entries) => [...entries, finalAuth]);
+              yield* Deferred.succeed(stopped, undefined);
+              return { ok: true, op: "stop" } as const;
+            }),
+          },
+          onShutdownReady: Deferred.succeed(stopped, undefined).pipe(Effect.asVoid),
+        }).pipe(Effect.provideService(Scope.Scope, ownerScope));
+        const stack = yield* makeHandle(stackId, owner);
+        const first = yield* stack.logs({ capabilities: ["auth"], tail: 1 });
+        expect(first.entries).toEqual([initialAuth]);
+        expect(first.cursor).toEqual(unrelatedDatabase.cursor);
+
+        const followedFiber = yield* Effect.forkChild(
+          stack
+            .followLogs({ capabilities: ["auth"], cursor: first.cursor })
+            .pipe(Stream.runCollect),
+          { startImmediately: true },
+        );
+        yield* Deferred.await(followRead);
+        const stopFiber = yield* Effect.forkChild(stack.stop(), { startImmediately: true });
+        yield* Deferred.await(stopped);
+        const followed = yield* Fiber.join(followedFiber);
+        expect(Array.from(followed)).toEqual([finalAuth]);
+        yield* Scope.close(ownerScope, Exit.void);
+        yield* Fiber.join(stopFiber);
+      }).pipe(Effect.provide(NodeServices.layer)),
     ),
   );
 
@@ -127,7 +258,7 @@ describe("Effect stack lifecycle handoff", () => {
       // oxlint-disable-next-line effecttsgo/any-unknown-in-error-context -- test-only handle seam
       Effect.gen(function* () {
         const calls = yield* Ref.make(0);
-        const entries = [
+        const entries: [StackLogEntry, StackLogEntry, StackLogEntry, StackLogEntry] = [
           {
             cursor: { opaque: "v1_1" },
             timestamp: "2026-01-01T00:00:00.000Z",
@@ -142,24 +273,48 @@ describe("Effect stack lifecycle handoff", () => {
             stream: "stdout" as const,
             message: "stopped",
           },
+          {
+            cursor: { opaque: "v1_3" },
+            timestamp: "2026-01-01T00:00:02.000Z",
+            source: "auth" as const,
+            stream: "stdout" as const,
+            message: "drained",
+          },
+          {
+            cursor: { opaque: "v1_4" },
+            timestamp: "2026-01-01T00:00:03.000Z",
+            source: "auth" as const,
+            stream: "stdout" as const,
+            message: "closed",
+          },
         ];
+        const burst = entries.slice(1);
         const stack = yield* makeHandle(
           stackId,
           {},
           {
             resolveOwner: () => Effect.succeed(Option.none()),
-            readLogs: () =>
+            readPersistedState: () => Effect.succeed(Option.some(stoppedState())),
+            readOfflineState: () => Effect.succeed(Option.none()),
+            readLogs: (query?: LogQuery) =>
               Ref.getAndUpdate(calls, (current) => current + 1).pipe(
-                Effect.map((index) => ({
-                  entries: index === 0 ? [entries[0]] : [entries[1]],
-                  cursor: entries[index === 0 ? 0 : 1].cursor,
-                  running: index === 0,
-                })),
+                Effect.map((index) => {
+                  const batchEntries = index === 0 ? [entries[0]] : burst;
+                  const visibleEntries =
+                    query?.tail === undefined
+                      ? batchEntries
+                      : batchEntries.slice(-Math.floor(query.tail));
+                  return {
+                    entries: visibleEntries,
+                    cursor: entries.at(index === 0 ? 0 : 3)?.cursor ?? { opaque: "v1_0" },
+                    running: index === 0,
+                  };
+                }),
               ),
           },
         );
         const followed = yield* stack
-          .followLogs({ capabilities: ["auth"] })
+          .followLogs({ capabilities: ["auth"], tail: 1 })
           .pipe(Stream.runCollect, Effect.exit);
         expect(Exit.isSuccess(followed)).toBe(true);
         if (Exit.isSuccess(followed)) expect(Array.from(followed.value)).toEqual(entries);
@@ -231,6 +386,44 @@ describe("Effect stack lifecycle handoff", () => {
         expect(Exit.isFailure(logs)).toBe(true);
       }
     }).pipe(Effect.provide(NodeServices.layer)),
+  );
+
+  it.live("waits for owner teardown before falling back to offline logs", () =>
+    withRuntimeRoot((_project) =>
+      Effect.gen(function* () {
+        const attempts = yield* Ref.make(0);
+        const readAttempts = yield* Ref.make(0);
+        const ownership = new StackOwnershipConflictError({
+          message: "Supervisor is still shutting down",
+        });
+        const stack = yield* makeHandle(
+          stackId,
+          {},
+          {
+            resolveOwner: () => Effect.succeed(Option.none()),
+            readPersistedState: () => Effect.succeed(Option.some(stoppedState())),
+            readOfflineState: () =>
+              Ref.getAndUpdate(readAttempts, (current) => current + 1).pipe(
+                Effect.flatMap((attempt) =>
+                  attempt === 0 ? Effect.fail(ownership) : Effect.succeed(Option.none()),
+                ),
+              ),
+            readLogs: () =>
+              Ref.update(attempts, (current) => current + 1).pipe(
+                Effect.as({
+                  entries: [],
+                  cursor: { opaque: "v1_0" },
+                  running: false,
+                }),
+              ),
+          },
+        );
+        const batch = yield* stack.logs();
+        expect(batch.entries).toEqual([]);
+        expect(yield* Ref.get(attempts)).toBe(1);
+        expect(yield* Ref.get(readAttempts)).toBe(2);
+      }),
+    ),
   );
 
   it.live(

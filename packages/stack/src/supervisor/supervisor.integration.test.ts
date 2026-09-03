@@ -12,7 +12,6 @@ import {
   Queue,
   Redacted,
   Ref,
-  Schedule,
   Scope,
   Stream,
 } from "effect";
@@ -146,6 +145,7 @@ const makeFixture = (
     readonly destroyPreFenceFail?: Ref.Ref<boolean>;
     readonly failureQueue?: Queue.Queue<ObservedWorkload>;
     readonly startQueue?: Queue.Queue<string>;
+    readonly failureObserved?: Deferred.Deferred<void>;
   } = {},
 ) =>
   Effect.gen(function* () {
@@ -185,6 +185,20 @@ const makeFixture = (
     const resources = yield* Ref.make<ReadonlyArray<ObservedWorkload>>([]);
     const calls = yield* Ref.make<ReadonlyArray<string>>([]);
     const logOptions = yield* Ref.make<ReadonlyArray<LogQuery | undefined>>([]);
+    const entry: StackLogEntry = {
+      cursor: { opaque: "v1_1" },
+      timestamp: "2026-01-01T00:00:00.000Z",
+      source: "auth",
+      stream: "internal",
+      message: "hello",
+    };
+    const finalEntry: StackLogEntry = {
+      ...entry,
+      cursor: { opaque: "v1_2" },
+      timestamp: "2026-01-01T00:00:01.000Z",
+      message: "stopped",
+    };
+    const logEntries = yield* Ref.make<ReadonlyArray<StackLogEntry>>([entry]);
     const failDestroy = yield* Ref.make(false);
     let gateStopCleanup = false;
     const driver: RuntimeDriver = {
@@ -192,7 +206,15 @@ const makeFixture = (
         fixtureOptions.failureQueue === undefined
           ? Stream.empty
           : Stream.fromQueue(fixtureOptions.failureQueue),
-      observe: () => Ref.get(resources),
+      observe: () =>
+        Ref.get(resources).pipe(
+          Effect.tap((current) =>
+            fixtureOptions.failureObserved === undefined ||
+            !current.some((entry) => entry.state === "failed")
+              ? Effect.void
+              : Deferred.succeed(fixtureOptions.failureObserved, undefined),
+          ),
+        ),
       start: (key, workload: PlannedWorkload) =>
         Effect.gen(function* () {
           gateStopCleanup = true;
@@ -289,14 +311,9 @@ const makeFixture = (
           if (!destroy && gateStopCleanup && fixtureOptions.stopGate !== undefined)
             yield* Deferred.await(fixtureOptions.stopGate);
           yield* Ref.set(resources, []);
+          if (!destroy && gateStopCleanup)
+            yield* Ref.update(logEntries, (current) => [...current, finalEntry]);
         }),
-    };
-    const entry: StackLogEntry = {
-      cursor: { opaque: "v1_1" },
-      timestamp: "2026-01-01T00:00:00.000Z",
-      source: "auth",
-      stream: "internal",
-      message: "hello",
     };
     const runtime: SupervisorRuntime = {
       driver,
@@ -365,7 +382,9 @@ const makeFixture = (
         path: "memory://logs",
         append: () => Effect.succeed(entry),
         read: (options) =>
-          Ref.update(logOptions, (current) => [...current, options]).pipe(Effect.as([entry])),
+          Ref.update(logOptions, (current) => [...current, options]).pipe(
+            Effect.andThen(Ref.get(logEntries)),
+          ),
         stream: () => Stream.empty,
       },
     };
@@ -1140,16 +1159,25 @@ describe("Supervisor composition", () => {
     ),
   );
 
-  it.live("returns final logs after a clean stop", () =>
+  it.live("keeps followers live through stop and returns final logs once", () =>
     run(
       Effect.gen(function* () {
-        const fixture = yield* makeFixture();
+        const stopGate = yield* Deferred.make<void>();
+        const stopStarted = yield* Deferred.make<void>();
+        const fixture = yield* makeFixture({ stopGate, stopStarted });
         yield* fixture.supervisor.start({ config: { capabilities: { rest: {} } } });
-        const response = yield* fixture.supervisor.maintenanceHandlers.stop;
+        const stopping = yield* Effect.forkChild(fixture.supervisor.maintenanceHandlers.stop);
+        yield* Deferred.await(stopStarted);
+        const duringStop = yield* fixture.supervisor.logs();
+        expect(duringStop.running).toBe(true);
+        expect(duringStop.entries).toHaveLength(1);
+        yield* Deferred.succeed(stopGate, undefined);
+        const response = yield* Fiber.join(stopping);
         expect(response.ok).toBe(true);
         yield* fixture.supervisor.shutdownIfIdle;
         const batch = yield* fixture.supervisor.logs();
-        expect(batch.entries).toHaveLength(1);
+        expect(batch.entries).toHaveLength(2);
+        expect(batch.entries.filter((entry) => entry.message === "stopped")).toHaveLength(1);
         expect(batch.running).toBe(false);
       }),
     ),
@@ -1514,7 +1542,12 @@ describe("Supervisor composition", () => {
       Effect.gen(function* () {
         const failures = yield* Queue.unbounded<ObservedWorkload>();
         const starts = yield* Queue.unbounded<string>();
-        const fixture = yield* makeFixture({ failureQueue: failures, startQueue: starts });
+        const failureObserved = yield* Deferred.make<void, never>();
+        const fixture = yield* makeFixture({
+          failureQueue: failures,
+          startQueue: starts,
+          failureObserved,
+        });
         yield* fixture.supervisor.start({ config: { capabilities: { rest: {} } } });
         const initialWorkload = yield* Queue.take(starts);
         const ready = (yield* Ref.get(fixture.resources)).find(
@@ -1541,13 +1574,9 @@ describe("Supervisor composition", () => {
           ),
         );
         yield* Queue.offer(failures, { ...ready, state: "failed", error: "crashed" });
-        const status = yield* Effect.gen(function* () {
-          const current = yield* fixture.supervisor.status;
-          const capability = current.capabilities.find(({ name }) => name === "database");
-          if (capability?.state !== "failed")
-            return yield* new StackStateInvalidError({ message: "database is not failed yet" });
-          return current;
-        }).pipe(Effect.retry(Schedule.spaced("25 millis").pipe(Schedule.upTo({ times: 40 }))));
+        // oxlint-disable-next-line effecttsgo/any-unknown-in-error-context -- fixture event seam
+        yield* Deferred.await(failureObserved);
+        const status = yield* fixture.supervisor.status;
         const capability = status.capabilities.find(({ name }) => name === "database");
         expect(capability?.state).toBe("failed");
         expect(capability?.error).toContain("crashed");

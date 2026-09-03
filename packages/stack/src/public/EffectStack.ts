@@ -613,6 +613,10 @@ export const makeHandle = (
         startError,
         true,
       );
+    const logsStateError = (error: StackError): StackLogsError =>
+      error instanceof StackOwnershipConflictError || error instanceof StackStateInvalidError
+        ? error
+        : new StackStateInvalidError({ message: error.message, cause: error });
     const stopOwner = (owner: ReturnType<typeof makeControlClient>) =>
       Effect.gen(function* () {
         // Subscribe to the owner control connection before sending stop so a
@@ -740,13 +744,42 @@ export const makeHandle = (
       });
     const logs = (query?: LogQuery): Effect.Effect<StackLogBatch, StackLogsError> =>
       invoke((rpc) => rpc.logs(query ?? {}), logsError).pipe(
-        Effect.catchTag("StackOwnershipConflictError", () =>
-          readLogs === undefined
-            ? Effect.fail(
-                new StackOwnershipConflictError({ message: "No Supervisor owns this stack" }),
-              )
-            : readLogs(query),
-        ),
+        Effect.catchTag("StackOwnershipConflictError", (ownershipError) => {
+          if (readLogs === undefined)
+            return Effect.fail(
+              new StackOwnershipConflictError({ message: "No Supervisor owns this stack" }),
+            );
+          if (readOfflineState === undefined || readPersistedState === undefined)
+            return Effect.fail(ownershipError);
+          const ownerStopped = readPersistedState().pipe(
+            Effect.map(
+              (state) =>
+                Option.isSome(state) &&
+                (state.value.desiredLifecycle === "stopped" ||
+                  state.value.desiredLifecycle === "unconfigured"),
+            ),
+            Effect.mapError(logsStateError),
+          );
+          return ownerStopped.pipe(
+            Effect.flatMap((teardown) => {
+              if (!teardown) return Effect.fail(ownershipError);
+              return Effect.suspend(() =>
+                // During an owner stop the control socket can close before its metadata/lease are
+                // released. Re-check ownership before each read and retry only that typed
+                // transition; a live owner or other log failure remains visible.
+                readOfflineState().pipe(
+                  Effect.mapError(logsStateError),
+                  Effect.andThen(readLogs(query)),
+                ),
+              ).pipe(
+                Effect.retry({
+                  schedule: Schedule.spaced("25 millis").pipe(Schedule.upTo({ times: 200 })),
+                  while: (error) => error instanceof StackOwnershipConflictError,
+                }),
+              );
+            }),
+          );
+        }),
       );
     return {
       id,
@@ -801,9 +834,10 @@ export const makeHandle = (
       logs,
       followLogs: (query) =>
         Stream.paginate({ cursor: query?.cursor, first: true }, ({ cursor, first }) => {
-          const { cursor: _initialCursor, ...baseQuery } = query ?? {};
+          const { cursor: _initialCursor, tail: _tail, ...baseQuery } = query ?? {};
           const options = {
             ...baseQuery,
+            ...(first && query?.tail !== undefined ? { tail: query.tail } : {}),
             ...(cursor === undefined || cursor.opaque === "v1_0" ? {} : { cursor }),
           };
           const request = logs(options);

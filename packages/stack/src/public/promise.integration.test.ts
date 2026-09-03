@@ -4,6 +4,7 @@ import { NodeServices } from "@effect/platform-node";
 import { CAPABILITY_NAMES, type CapabilityStatus } from "./Capability.ts";
 import { Effect, Redacted, Stream } from "effect";
 import type { EffectStack, PrepareStackOptions, StartStackOptions } from "./EffectStack.ts";
+import type { StackLogEntry } from "./Logs.ts";
 import { StackIdSchema } from "./StackId.ts";
 import type { StackStatus } from "./Status.ts";
 import { InvalidStackConfigError } from "./Errors.ts";
@@ -99,11 +100,32 @@ describe("Promise stack facade", () => {
     expect(Symbol.asyncDispose in stack).toBe(false);
   });
 
-  it("cancels an async stream when the consumer returns early", async () => {
-    const stack = adaptEffectStack(effectStack());
+  it("cancels an active async stream and witnesses its finalizer", async () => {
+    let finalized = false;
+    const entry: StackLogEntry = {
+      cursor: { opaque: "v1_1" },
+      timestamp: "2026-01-01T00:00:00.000Z",
+      source: "auth",
+      stream: "stdout",
+      message: "active",
+    };
+    const source: EffectStack = {
+      ...effectStack(),
+      followLogs: () =>
+        Stream.make(entry).pipe(
+          Stream.concat(Stream.never),
+          Stream.ensuring(
+            Effect.sync(() => {
+              finalized = true;
+            }),
+          ),
+        ),
+    };
+    const stack = adaptEffectStack(source);
     const iterator = stack.followLogs()[Symbol.asyncIterator]();
-    await expect(iterator.next()).resolves.toMatchObject({ done: true });
+    await expect(iterator.next()).resolves.toEqual({ done: false, value: entry });
     await expect(iterator.return?.()).resolves.toMatchObject({ done: true });
+    expect(finalized).toBe(true);
   });
 
   it("completes an empty follower immediately", async () => {
