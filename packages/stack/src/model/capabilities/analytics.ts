@@ -31,11 +31,11 @@ export const AnalyticsModule: CapabilityModule<AnalyticsSettings> = {
     "v1.50.6": release("v1.50.6", [
       workload("analytics", "analytics", {
         dependencies: ["database:database"],
-        readiness: { mode: "http", portField: "api" },
+        readiness: { portField: "api" },
       }),
       workload("vector", "analytics", {
         dependencies: ["analytics:analytics"],
-        readiness: { mode: "tcp" },
+        readiness: {},
       }),
     ]),
   },

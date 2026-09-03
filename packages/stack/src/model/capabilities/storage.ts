@@ -106,10 +106,10 @@ export const StorageModule: CapabilityModule<StorageSettings> = {
     "v1.72.1": release("v1.72.1", [
       workload("storage", "storage", {
         dependencies: ["database:database"],
-        readiness: { mode: "http", portField: "api" },
+        readiness: { portField: "api" },
       }),
       workload("imgproxy", "storage", {
-        readiness: { mode: "http" },
+        readiness: {},
       }),
     ]),
   },

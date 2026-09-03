@@ -5,7 +5,7 @@ import { tmpdir } from "node:os";
 // oxlint-disable-next-line effecttsgo/node-builtin-import -- test resource builds an isolated root.
 import { join } from "node:path";
 import { NodeServices } from "@effect/platform-node";
-import { Data, Effect, Schedule } from "effect";
+import { Data } from "effect";
 import { defaultRuntimeEnvironment } from "../supervisor/Launcher.ts";
 import {
   makePromiseApi,
@@ -19,11 +19,6 @@ import type { StackRuntimeEnvironmentValue } from "../state/Ownership.ts";
 class TestStackReadinessError extends Data.TaggedError("TestStackReadinessError")<{
   readonly message: string;
 }> {}
-class RetryReadiness extends Data.TaggedError("RetryReadiness")<{
-  readonly message: string;
-  readonly terminal?: boolean;
-}> {}
-
 export interface CreateTestStackOptions {
   readonly config?: PromiseStackConfig;
   readonly name?: string;
@@ -63,11 +58,9 @@ const isolatedEnvironment = (projectRoot: string): StackRuntimeEnvironmentValue 
   stateRoot: join(projectRoot, ".supabase", "managed", "stacks"),
 });
 
-const waitForReadiness = async (
-  stack: PromiseStack,
+const validateStartedStatus = (
   initial: Awaited<ReturnType<PromiseStack["status"]>>,
   config: PromiseStackConfig | undefined,
-  signal?: AbortSignal,
 ) => {
   const disabledCapabilities = new Set(
     Object.entries(config?.capabilities ?? {}).flatMap(([name, capability]) =>
@@ -126,42 +119,13 @@ const waitForReadiness = async (
     return undefined;
   };
   if (ready(initial)) return;
-  const initialFailure = terminalFailure(initial);
-  if (initialFailure !== undefined) throw initialFailure;
-  const poll = Effect.tryPromise({
-    try: () => {
-      signal?.throwIfAborted();
-      return stack.status();
-    },
-    catch: (cause) =>
-      new TestStackReadinessError({
-        message: cause instanceof Error ? cause.message : String(cause),
-      }),
-  }).pipe(
-    Effect.flatMap(
-      (next): Effect.Effect<Awaited<ReturnType<PromiseStack["status"]>>, RetryReadiness> => {
-        if (ready(next)) return Effect.succeed(next);
-        const failure = terminalFailure(next);
-        return Effect.fail(
-          new RetryReadiness({
-            message: failure?.message ?? "Stack is not ready yet",
-            ...(failure === undefined ? {} : { terminal: true }),
-          }),
-        );
-      },
-    ),
-    Effect.retry({
-      schedule: Schedule.spaced("100 millis").pipe(Schedule.upTo({ duration: "120 seconds" })),
-      while: (error) => error instanceof RetryReadiness && error.terminal !== true,
-    }),
+  const failure = terminalFailure(initial);
+  throw (
+    failure ??
+    new TestStackReadinessError({
+      message: `Stack did not become ready after start (lifecycle ${initial.lifecycle})`,
+    })
   );
-  try {
-    await Effect.runPromise(poll);
-  } catch (error) {
-    if (error instanceof RetryReadiness)
-      throw new TestStackReadinessError({ message: error.message });
-    throw error;
-  }
 };
 
 const cleanup = async (
@@ -217,9 +181,8 @@ export const createTestStackWith = async (
         ? undefined
         : ({ config: options.config } satisfies PromiseStartStackOptions),
     );
-    const readyStack = stack;
     try {
-      await waitForReadiness(readyStack, started, options.config, AbortSignal.timeout(120_000));
+      validateStartedStatus(started, options.config);
     } catch (error) {
       if (error instanceof TestStackReadinessError) throw error;
       throw new TestStackReadinessError({ message: String(error) });

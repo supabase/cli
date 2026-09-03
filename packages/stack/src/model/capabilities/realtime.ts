@@ -28,7 +28,7 @@ export const RealtimeModule: CapabilityModule<RealtimeSettings> = {
     "v2.130.0": release("v2.130.0", [
       workload("realtime", "realtime", {
         dependencies: ["database:database"],
-        readiness: { mode: "http", portField: "api" },
+        readiness: { portField: "api" },
       }),
     ]),
   },

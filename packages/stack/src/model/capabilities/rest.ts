@@ -36,7 +36,7 @@ export const RestModule: CapabilityModule<RestSettings> = {
     "v16.2": release("v16.2", [
       workload("rest", "rest", {
         dependencies: ["database:database"],
-        readiness: { mode: "http", portField: "api" },
+        readiness: { portField: "api" },
       }),
     ]),
   },

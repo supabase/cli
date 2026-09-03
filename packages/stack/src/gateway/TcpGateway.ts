@@ -5,18 +5,16 @@ import { GatewayActivationError } from "../public/Errors.ts";
 import type {
   ActivationResult,
   BackendEndpoint,
-  GatewayRoute,
   GatewayProxyRoute,
   GatewayRouteRequest,
 } from "./Gateway.ts";
-import { isGatewayProxyRoute } from "./Gateway.ts";
 import type { HostListener } from "../state/PortCoordinator.ts";
 
 export interface TcpGatewayOptions {
   readonly address?: string;
   readonly port?: number;
   readonly listener?: HostListener;
-  readonly routes: ReadonlyArray<GatewayRoute>;
+  readonly routes: ReadonlyArray<GatewayProxyRoute>;
   readonly activate: (
     capability: import("../public/Capability.ts").CapabilityName,
   ) => Effect.Effect<ActivationResult, GatewayActivationError>;
@@ -34,7 +32,7 @@ export interface TcpGateway {
   readonly server: Server;
 }
 
-const routeFor = (routes: ReadonlyArray<GatewayRoute>): GatewayRoute | undefined =>
+const routeFor = (routes: ReadonlyArray<GatewayProxyRoute>): GatewayProxyRoute | undefined =>
   routes.find((route) => route.match({ path: "/", headers: {} }));
 
 const tunnel = (
@@ -118,10 +116,6 @@ const handleConnection = (
   source.once("close", () => active.delete(source));
   const route = routeFor(options.routes);
   if (route === undefined) {
-    source.destroy();
-    return;
-  }
-  if (!isGatewayProxyRoute(route)) {
     source.destroy();
     return;
   }

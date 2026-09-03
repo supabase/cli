@@ -21,20 +21,22 @@ import * as Socket from "effect/unstable/socket/Socket";
 import * as SocketServer from "effect/unstable/socket/SocketServer";
 import type { ControlEndpoint } from "../state/Ownership.ts";
 import {
-  CONTROL_PREFACE_MAX_BYTES,
   decodeFrame,
-  decodePreface,
   encodeFrame,
-  encodePreface,
   encodeRawFrame,
   FrameDecoder,
+  type JsonValue,
+} from "./FrameCodec.ts";
+import {
+  CONTROL_PREFACE_MAX_BYTES,
+  decodePreface,
+  encodePreface,
   MAINTENANCE_MAX_CONCURRENT_REQUESTS,
   MAINTENANCE_REQUEST_DEADLINE_MS,
   MaintenanceRequestSchema,
   MaintenanceProtocolError,
   MaintenanceResponseSchema,
   ownerSessionIdIsValid,
-  type JsonValue,
   type MaintenanceRequest,
   type MaintenanceResponse,
 } from "./MaintenanceProtocol.ts";

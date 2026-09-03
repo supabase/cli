@@ -29,7 +29,7 @@ const workload = (id: string, bootstrap?: "database"): PlannedWorkload => ({
   capability: "database",
   ...(bootstrap === undefined ? {} : { bootstrap }),
   dependencies: [],
-  readiness: { mode: "tcp" },
+  readiness: {},
   artifacts: {
     native: { kind: "native", release: "test" },
     container: { kind: "container", image: `test/${id}` },

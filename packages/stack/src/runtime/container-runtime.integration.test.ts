@@ -64,7 +64,7 @@ const workload = (selected: PlannedWorkload["selected"] = containerArtifact): Pl
   id: key.workloadId,
   capability: key.workloadId.startsWith("functions:") ? "functions" : "database",
   dependencies: [],
-  readiness: { mode: "tcp" },
+  readiness: {},
   artifacts: {
     native: { kind: "native", release: "1" },
     container: containerArtifact,

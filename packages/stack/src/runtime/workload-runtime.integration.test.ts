@@ -6,7 +6,6 @@ import type { PlannedWorkload } from "../model/ExecutionPlan.ts";
 import { deriveStackId } from "../identity/Identity.ts";
 import type { PersistedStackState } from "../state/StackState.ts";
 import { makePortCoordinator, type ListenerIntents } from "../state/PortCoordinator.ts";
-import { makePortRegistry } from "../state/PortRegistry.ts";
 import { makeStackStateStore } from "../state/StackStateStore.ts";
 import { CAPABILITY_NAMES } from "../public/Capability.ts";
 import { compileStack } from "../model/Compiler.ts";
@@ -94,7 +93,7 @@ const planned = (id: string): PlannedWorkload => {
     id,
     capability,
     dependencies: [],
-    readiness: { mode: "tcp" },
+    readiness: {},
     artifacts: {
       native: { kind: "native", release: entry.nativeVersion },
       container: { kind: "container", image: entry.containerImage },
@@ -225,8 +224,7 @@ describe("workload runtime catalog", () => {
         ports: [],
         privatePorts: [],
       });
-      const registry = yield* makePortRegistry({ stateRoot: root, store });
-      const reservation = yield* makePortCoordinator(registry, store).planAndReserve(
+      const reservation = yield* makePortCoordinator({ stateRoot: root, store }).planAndReserve(
         stackId,
         disabledListenerIntents,
         {

@@ -20,7 +20,6 @@ import {
   makeFunctionsBootstrapOwner,
   type FunctionsBootstrapOwner,
 } from "../functions/FunctionsBootstrap.ts";
-import { makePortRegistry } from "../state/PortRegistry.ts";
 import type { StackStateStore } from "../state/StackStateStore.ts";
 import { resolveStackPaths } from "../state/Paths.ts";
 import { redactKnownSecrets } from "../state/SecretStore.ts";
@@ -532,15 +531,11 @@ export const makeProductionRuntime = (
     );
     // Register this child scope before constructing drivers: LIFO cleanup
     // stops workloads, closes owner fibers, then removes generated files.
-    const registry = yield* makePortRegistry({
-      stateRoot: options.stateRoot,
-      store: options.stateStore,
-    });
     const ingress =
       options.ingress ??
       (yield* makeSupervisorIngress({
         stackId: options.stackId,
-        registry,
+        stateRoot: options.stateRoot,
         store: options.stateStore,
         context: options.context,
         resolveAuthTemplates: inputOwner.resolveAuthTemplates,

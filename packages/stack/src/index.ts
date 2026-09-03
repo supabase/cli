@@ -7,7 +7,6 @@ export {
 } from "./public/PromiseStack.ts";
 export type {
   PromiseStack,
-  PromiseStackApi,
   PromiseStackConfig,
   PromiseStartStackOptions,
   PromisePrepareStackOptions,

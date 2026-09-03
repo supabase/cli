@@ -26,16 +26,18 @@ import {
   type ControlServerOptions,
 } from "./ControlServer.ts";
 import {
-  CONTROL_PREFACE_MAX_BYTES,
   decodeFrame,
-  decodePreface,
   encodeFrame,
-  encodePreface,
   encodeRawFrame,
   FrameDecoder,
-  MaintenanceProtocolError,
   MAINTENANCE_MAX_FRAME_BYTES,
   type JsonValue,
+} from "./FrameCodec.ts";
+import {
+  CONTROL_PREFACE_MAX_BYTES,
+  decodePreface,
+  encodePreface,
+  MaintenanceProtocolError,
 } from "./MaintenanceProtocol.ts";
 import type { StackRpcError, StackRpcHandlers } from "./StackRpc.ts";
 

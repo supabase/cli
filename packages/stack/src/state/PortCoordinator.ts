@@ -17,7 +17,7 @@ import type {
   PrivatePortAssignment,
 } from "./StackState.ts";
 import type { StackStateStore } from "./StackStateStore.ts";
-import type { PortRegistry } from "./PortRegistry.ts";
+import { withRegistryLock } from "./StackStateStore.ts";
 
 interface ListenerIntent {
   readonly enabled: boolean;
@@ -59,6 +59,8 @@ export interface PortReservation {
 }
 
 export interface PortCoordinatorOptions {
+  readonly stateRoot: string;
+  readonly store: StackStateStore;
   /** Binds and retains a host listener. The enclosing Scope owns its release. */
   readonly bindHost?: (
     address: string,
@@ -107,22 +109,45 @@ const automaticConflict = (port: number, field: PortField) =>
     message: `Port ${port} for ${field} is reserved by another stack's automatic assignment`,
   });
 
-export const makePortCoordinator = (
-  registry: PortRegistry,
-  store: StackStateStore,
-  options: PortCoordinatorOptions = {},
-): PortCoordinator => ({
+const idPattern = /^[0-9a-f]{64}$/;
+
+const readAuthoritativeStates = (options: PortCoordinatorOptions) =>
+  Effect.gen(function* () {
+    const fs = yield* FileSystem.FileSystem;
+    const path = yield* Path.Path;
+    const root = path.resolve(options.stateRoot);
+    const exists = yield* fs
+      .exists(root)
+      .pipe(Effect.mapError((error) => new StackStateInvalidError({ message: error.message })));
+    if (!exists) return [];
+    const entries = yield* fs
+      .readDirectory(root)
+      .pipe(Effect.mapError((error) => new StackStateInvalidError({ message: error.message })));
+    const ids = entries.filter((entry) => idPattern.test(entry));
+    const values = yield* Effect.forEach(ids, (stackId) =>
+      options.store
+        .read(stackId)
+        .pipe(Effect.map((state) => (state === undefined ? undefined : { stackId, state }))),
+    );
+    return values.filter(
+      (entry): entry is { readonly stackId: string; readonly state: PersistedStackState } =>
+        entry !== undefined,
+    );
+  });
+
+export const makePortCoordinator = (options: PortCoordinatorOptions): PortCoordinator => ({
   planAndReserve: (stackId, listenerIntents, planOptions = {}) =>
     Effect.gen(function* () {
-      const committed = yield* registry.withLock(
+      const committed = yield* withRegistryLock(
+        options.stateRoot,
         Effect.gen(function* () {
-          const current = yield* store.read(stackId);
+          const current = yield* options.store.read(stackId);
           if (current === undefined)
             return yield* new StackStateInvalidError({
               message: "Cannot allocate ports for an unconfigured stack",
             });
           const lifecycle = current.desiredLifecycle === "running" ? "running" : "stopped";
-          const allStates = yield* registry.states;
+          const allStates = yield* readAuthoritativeStates(options);
           const usedAutomaticPublic = new Set<number>();
           const usedLivePublic = new Set<number>();
           const usedReservedPublic = new Set<number>();
@@ -255,7 +280,7 @@ export const makePortCoordinator = (
             ports: assignments,
             privatePorts: privateAssignments,
           };
-          yield* store.replaceUnlocked(stackId, next);
+          yield* options.store.replaceUnlocked(stackId, next);
           return { current, next, lifecycle, byField, privateAssignments };
         }),
       );
@@ -266,9 +291,10 @@ export const makePortCoordinator = (
         const assignment = committed.byField[field];
         return intent.enabled && assignment !== undefined ? [{ field, intent, assignment }] : [];
       });
-      const rollbackFreshAutomatic = registry.withLock(
+      const rollbackFreshAutomatic = withRegistryLock(
+        options.stateRoot,
         Effect.gen(function* () {
-          const latest = yield* store.read(stackId);
+          const latest = yield* options.store.read(stackId);
           if (latest === undefined)
             return yield* new StackStateInvalidError({ message: "Stack state disappeared" });
           const priorByField = new Map(
@@ -281,7 +307,7 @@ export const makePortCoordinator = (
           const privatePorts = committed.next.privatePorts.filter((entry) =>
             priorBindings.has(bindingKey(entry)),
           );
-          yield* store.replaceUnlocked(stackId, { ...latest, ports, privatePorts });
+          yield* options.store.replaceUnlocked(stackId, { ...latest, ports, privatePorts });
         }),
       );
       if (committed.lifecycle === "running") {

@@ -17,7 +17,7 @@ export const MailModule: CapabilityModule<MailSettings> = {
   releases: {
     "v1.30.2": release("v1.30.2", [
       workload("mail", "mail", {
-        readiness: { mode: "http", portField: "mailUi" },
+        readiness: { portField: "mailUi" },
       }),
     ]),
   },

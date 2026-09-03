@@ -60,7 +60,7 @@ export const FunctionsModule: CapabilityModule<FunctionsSettings> = {
     "v1.74.3": release("v1.74.3", [
       workload("edge-runtime", "functions", {
         dependencies: ["database:database"],
-        readiness: { mode: "http", portField: "functionsInspector" },
+        readiness: { portField: "functionsInspector" },
       }),
     ]),
   },

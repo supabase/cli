@@ -20,7 +20,7 @@ export interface WorkloadSpec {
   /** Closed internal lifecycle marker for work that must run before dependents are ready. */
   readonly bootstrap?: "database";
   readonly dependencies: ReadonlyArray<string>;
-  readonly readiness: Readonly<{ readonly mode: "http" | "tcp"; readonly portField?: PortField }>;
+  readonly readiness: Readonly<{ readonly portField?: PortField }>;
   /** Exact artifacts selected for this workload release. */
   readonly artifacts: Readonly<{
     readonly native: NativeArtifact;
@@ -100,7 +100,7 @@ export const workload = (
     capability,
     ...(options.bootstrap === undefined ? {} : { bootstrap: options.bootstrap }),
     dependencies: options.dependencies ?? [],
-    readiness: options.readiness ?? { mode: "tcp" },
+    readiness: options.readiness ?? {},
     artifacts,
   };
 };

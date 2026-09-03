@@ -88,7 +88,12 @@ const fakeStack = (
   start: async () => {
     events.push("start");
     if (failStart) throw new Error("startup failed");
-    return status("starting", includeApi, functionsState);
+    return status(
+      reachesReadiness ? "running" : "stopped",
+      includeApi,
+      functionsState,
+      failedCapability,
+    );
   },
   stop: async () => undefined,
   destroy: async () => {
@@ -136,19 +141,25 @@ describe("test stack resource", () => {
     expect(removed).toEqual([]);
   });
 
-  it("fails and cleans up when readiness status ends before becoming ready", async () => {
+  it("fails and cleans up when start returns before the stack is ready", async () => {
     const events: Array<string> = [];
     const removed: Array<string> = [];
     const operations: TestStackOperations = {
       createRoot: async () => "/tmp/stack-test-unready",
-      createStack: async () => fakeStack(events, false, false),
+      createStack: async () => ({
+        ...fakeStack(events),
+        start: async () => {
+          events.push("start");
+          return status("starting");
+        },
+      }),
       removeRoot: async (root) => {
         removed.push(root);
       },
     };
     await expect(
       createTestStackWith({ config: { capabilities: { database: {} } } }, operations),
-    ).rejects.toThrow("Stack lifecycle stopped before stack became ready");
+    ).rejects.toThrow("Stack did not become ready after start (lifecycle starting)");
     expect(events).toEqual(["start", "destroy"]);
     expect(removed).toEqual(["/tmp/stack-test-unready"]);
   });
@@ -292,7 +303,10 @@ describe("test stack resource", () => {
       createRoot: async () => "/tmp/stack-test-lifecycle-stopped",
       createStack: async () => ({
         ...fakeStack(events),
-        status: async () => status("stopped"),
+        start: async () => {
+          events.push("start");
+          return status("stopped");
+        },
       }),
       removeRoot: async () => undefined,
     };
@@ -306,7 +320,10 @@ describe("test stack resource", () => {
       createRoot: async () => "/tmp/stack-test-lifecycle-stopping",
       createStack: async () => ({
         ...fakeStack(events),
-        status: async () => status("stopping"),
+        start: async () => {
+          events.push("start");
+          return status("stopping");
+        },
       }),
       removeRoot: async () => undefined,
     };

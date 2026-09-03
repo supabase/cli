@@ -14,7 +14,6 @@ import { compileStack } from "../model/Compiler.ts";
 import { GatewayActivationError, StackPreparationError } from "../public/Errors.ts";
 import { makeStackStateStore } from "../state/StackStateStore.ts";
 import type { PersistedStackState } from "../state/StackState.ts";
-import { makePortRegistry } from "../state/PortRegistry.ts";
 import { makeSupervisorIngress } from "./Ingress.ts";
 import { privateBindingIntentsFor } from "../runtime/WorkloadRuntimeSpec.ts";
 
@@ -127,10 +126,9 @@ describe("Supervisor ingress", () => {
           })),
           secrets: {},
         });
-        const registry = yield* makePortRegistry({ stateRoot: root, store });
         const ingress = yield* makeSupervisorIngress({
           stackId,
-          registry,
+          stateRoot: root,
           store,
           context,
           apiMaterial: () =>
@@ -247,8 +245,7 @@ describe("Supervisor ingress", () => {
           })),
           secrets: {},
         });
-        const registry = yield* makePortRegistry({ stateRoot: root, store });
-        const ingress = yield* makeSupervisorIngress({ stackId, registry, store, context });
+        const ingress = yield* makeSupervisorIngress({ stackId, stateRoot: root, store, context });
         const state = yield* store.read(stackId).pipe(Effect.map((value) => value!));
         const reservation = yield* ingress.acquire({
           stackId,
@@ -336,10 +333,9 @@ describe("Supervisor ingress", () => {
           secrets: {},
         };
         yield* store.initialize(stackId, persisted);
-        const registry = yield* makePortRegistry({ stateRoot: root, store });
         const ingress = yield* makeSupervisorIngress({
           stackId,
-          registry,
+          stateRoot: root,
           store,
           context,
           apiMaterial: () =>
@@ -442,11 +438,10 @@ describe("Supervisor ingress", () => {
           secrets: {},
         };
         yield* store.initialize(stackId, persisted);
-        const registry = yield* makePortRegistry({ stateRoot: root, store });
         const activated: string[] = [];
         const ingress = yield* makeSupervisorIngress({
           stackId,
-          registry,
+          stateRoot: root,
           store,
           context,
           apiMaterial: () =>

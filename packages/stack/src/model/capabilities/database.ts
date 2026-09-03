@@ -138,7 +138,7 @@ const defaults: DatabaseSettings = {
 const postgres17Release = release("17.6.1.167", [
   workload("database", "database", {
     bootstrap: "database",
-    readiness: { mode: "tcp", portField: "database" },
+    readiness: { portField: "database" },
   }),
 ]);
 

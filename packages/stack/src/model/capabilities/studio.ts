@@ -19,11 +19,11 @@ export const StudioModule: CapabilityModule<StudioSettings> = {
     "2026.08.24-sha-8ec45b2": release("2026.08.24-sha-8ec45b2", [
       workload("studio", "studio", {
         dependencies: ["studio:pgmeta", "analytics:analytics"],
-        readiness: { mode: "http", portField: "studio" },
+        readiness: { portField: "studio" },
       }),
       workload("pgmeta", "studio", {
         dependencies: ["database:database"],
-        readiness: { mode: "http" },
+        readiness: {},
       }),
     ]),
   },

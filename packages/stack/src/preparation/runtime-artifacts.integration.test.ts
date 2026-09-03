@@ -20,7 +20,7 @@ const nativeWorkload = (selected: PlannedWorkload["selected"]): PlannedWorkload 
   id: "database:database",
   capability: "database",
   dependencies: [],
-  readiness: { mode: "tcp" },
+  readiness: {},
   artifacts: {
     native: { kind: "native", release: "17.6.1.167" },
     container: {

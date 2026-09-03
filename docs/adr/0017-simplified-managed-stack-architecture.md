@@ -15,6 +15,13 @@ handles communicate with it through same-release Effect RPC and a small
 release-stable maintenance protocol for probe and stop. CLI handlers call this
 facade and do not maintain a second metadata or PID-based liveness path.
 
+The public API has two deliberate entrypoints: Effect-native operations are
+available from `@supabase/stack/effect`, while the package root exposes the
+Promise handle and root Promise functions (`createStack`, `openStack`,
+`findStack`, `listStacks`, and `inspectStack`). Test callers use the public
+`createTestStack` helper from `@supabase/stack/testing`; it owns an isolated
+project root and exact-identity cleanup through `await using`.
+
 The managed document is private, unreleased state under the user-level managed
 root. It is not a repository contract, service registry, compatibility facade,
 or independently versioned database schema. Platform entrypoints only provide
@@ -56,8 +63,11 @@ current Supervisor intentionally owns. Cold recovery never adopts those
 resources.
 
 Every managed document records one concrete runtime selection. Native and
-container runtimes never mix. Container state records the selected Docker or
-Podman engine; it never stores an unresolved or mode-less choice.
+container runtimes never mix. Container callers select Docker or Podman
+explicitly; state records that exact engine and never stores an unresolved or
+mode-less choice. Capability releases and workload artifacts are persisted as
+exact version pins (including their concrete native release and container image)
+rather than ranges or floating tags.
 
 Read-only discovery never acquires ownership. Owner metadata points to a Unix
 domain socket on POSIX or a named pipe on Windows, and the ownership lock is the
@@ -81,6 +91,20 @@ warm selected artifacts, but it is not part of ordinary CLI start. Preparation
 is caller-owned: cancellation stops that caller's unfinished transfers while
 completed cache entries remain. It never acquires control or ownership and does
 not create runtime resources.
+
+Artifact cache trust begins only after a candidate has passed checksum and
+runtime-path validation, had its metadata written, and been atomically
+published. A cache hit revalidates the metadata, required path kinds and
+containment, and executable shape, but does not cryptographically revalidate
+published contents. The cache is user-owned and immutable by contract; manual
+post-publication changes may execute successfully or fail later at workload
+start. A partially published or malformed entry is never trusted merely
+because its directory exists.
+
+Effect failures remain operation-specific tagged errors (for example,
+configuration, preparation, gateway, port, and lifecycle failures), preserving
+typed recovery and actionable context at the Effect boundary. The Promise
+facade translates those failures into native rejections only at its outer edge.
 
 ## Why this replaces ADR-0015
 

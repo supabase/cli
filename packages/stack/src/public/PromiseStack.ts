@@ -70,7 +70,7 @@ export interface PromiseStack {
   readonly followLogs: (query?: LogQuery) => AsyncIterable<StackLogEntry>;
 }
 
-export interface PromiseStackApi {
+interface PromiseStackApi {
   readonly createStack: (options: CreateStackOptions) => Promise<PromiseStack>;
   readonly openStack: (id: StackId) => Promise<PromiseStack>;
   readonly findStack: (options: FindStackOptions) => Promise<StackDescriptor | undefined>;

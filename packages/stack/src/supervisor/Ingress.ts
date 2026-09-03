@@ -21,7 +21,6 @@ import {
   type PortCoordinator,
   type PortReservation,
 } from "../state/PortCoordinator.ts";
-import type { PortRegistry } from "../state/PortRegistry.ts";
 import type { StackStateStore } from "../state/StackStateStore.ts";
 import { privateBindingIntentsFor } from "../runtime/WorkloadRuntimeSpec.ts";
 import type { PortField } from "../public/Status.ts";
@@ -59,7 +58,7 @@ export interface SupervisorIngress {
 
 export interface SupervisorIngressOptions {
   readonly stackId: string;
-  readonly registry: PortRegistry;
+  readonly stateRoot: string;
   readonly store: StackStateStore;
   readonly portCoordinator?: PortCoordinator;
   readonly context: Context.Context<Crypto.Crypto | FileSystem.FileSystem | Path.Path>;
@@ -179,7 +178,9 @@ export const makeSupervisorIngress = (
     >(undefined);
     const coordinator =
       options.portCoordinator ??
-      makePortCoordinator(options.registry, options.store, {
+      makePortCoordinator({
+        stateRoot: options.stateRoot,
+        store: options.store,
         bindHost: options.bindHost ?? bindHostListener,
       });
     const acquire = (

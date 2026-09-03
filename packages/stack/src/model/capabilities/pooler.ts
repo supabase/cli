@@ -30,7 +30,7 @@ export const PoolerModule: CapabilityModule<PoolerSettings> = {
     "v2.9.12": release("v2.9.12", [
       workload("pooler", "pooler", {
         dependencies: ["database:database"],
-        readiness: { mode: "tcp", portField: "pooler" },
+        readiness: { portField: "pooler" },
       }),
     ]),
   },

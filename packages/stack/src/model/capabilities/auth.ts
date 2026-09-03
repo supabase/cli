@@ -398,7 +398,7 @@ export const AuthModule: CapabilityModule<AuthSettings> = {
     "v2.196.0": release("v2.196.0", [
       workload("auth", "auth", {
         dependencies: ["database:database"],
-        readiness: { mode: "http", portField: "api" },
+        readiness: { portField: "api" },
       }),
     ]),
   },

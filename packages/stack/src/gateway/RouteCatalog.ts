@@ -4,13 +4,14 @@ import type { PortField } from "../public/Status.ts";
 import type {
   GatewayHeaderTransform,
   GatewayHeaders,
+  GatewayProxyRoute,
   GatewayRoute,
   GatewayRouteRequest,
 } from "./Gateway.ts";
 
 export interface GatewayRouteCatalog {
   readonly http: ReadonlyMap<PortField, ReadonlyArray<GatewayRoute>>;
-  readonly tcp: ReadonlyMap<PortField, ReadonlyArray<GatewayRoute>>;
+  readonly tcp: ReadonlyMap<PortField, ReadonlyArray<GatewayProxyRoute>>;
 }
 
 /** Owner-resolved API material used only for forwarding transformations. */
@@ -151,20 +152,20 @@ const prefixRoute = (
   match: (request: GatewayRouteRequest) => boolean = (request) =>
     pathStartsWith(prefix)(pathAndQuery(request.path)[0]),
   upstreamHeaders?: GatewayHeaderTransform,
-): GatewayRoute => ({
+): GatewayProxyRoute => ({
   capability,
   match,
   upstreamPath,
   ...(upstreamHeaders === undefined ? {} : { upstreamHeaders }),
 });
 
-const directRoute = (capability: CapabilityName, binding?: string): GatewayRoute => ({
+const directRoute = (capability: CapabilityName, binding?: string): GatewayProxyRoute => ({
   capability,
   ...(binding === undefined ? {} : { binding }),
   match: () => true,
 });
 
-const realtimeWebsocketRoute = (material?: GatewayApiMaterial): GatewayRoute =>
+const realtimeWebsocketRoute = (material?: GatewayApiMaterial): GatewayProxyRoute =>
   prefixRoute(
     "realtime",
     "/realtime/v1",
@@ -278,11 +279,11 @@ export const routeCatalogFor = (
   material?: GatewayApiMaterial,
 ): GatewayRouteCatalog => {
   const http = new Map<PortField, GatewayRoute[]>();
-  const tcp = new Map<PortField, GatewayRoute[]>();
-  const append = (
-    target: Map<PortField, GatewayRoute[]>,
+  const tcp = new Map<PortField, GatewayProxyRoute[]>();
+  const append = <Route extends GatewayRoute>(
+    target: Map<PortField, Route[]>,
     field: PortField,
-    routes: ReadonlyArray<GatewayRoute>,
+    routes: ReadonlyArray<Route>,
   ) => {
     const current = target.get(field) ?? [];
     current.push(...routes);
