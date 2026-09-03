@@ -344,7 +344,7 @@ describe("production runtime composition", () => {
         const createdSpecs: ContainerContainerSpec[] = [];
         let attempts = 0;
         const context = yield* Effect.context<FileSystem.FileSystem | Path.Path | Crypto.Crypto>();
-        const factory = yield* makeProductionRuntimeFactory({
+        const runtime = yield* makeProductionRuntimeFactory({
           stateRoot: root,
           stackId,
           ownerSessionId: "owner",
@@ -375,7 +375,6 @@ describe("production runtime composition", () => {
               : Effect.void;
           },
         });
-        const runtime = yield* factory.make(current.value);
         const ready = yield* runtime.driver.start(
           {
             stackId,
@@ -438,7 +437,7 @@ describe("production runtime composition", () => {
         if (database === undefined) return yield* Effect.die("Expected database workload");
         let attempts = 0;
         const context = yield* Effect.context<FileSystem.FileSystem | Path.Path | Crypto.Crypto>();
-        const factory = yield* makeProductionRuntimeFactory({
+        const runtime = yield* makeProductionRuntimeFactory({
           stateRoot: root,
           stackId,
           ownerSessionId: "owner",
@@ -462,7 +461,6 @@ describe("production runtime composition", () => {
             return Effect.fail(new DatabaseBootstrapError({ message: "invalid password" }));
           },
         });
-        const runtime = yield* factory.make(current.value);
         const result = yield* runtime.driver
           .start(
             {
@@ -525,7 +523,7 @@ describe("production runtime composition", () => {
           },
         } satisfies { value: PersistedStackState };
         const context = yield* Effect.context<FileSystem.FileSystem | Path.Path | Crypto.Crypto>();
-        const factory = yield* makeProductionRuntimeFactory({
+        const runtime = yield* makeProductionRuntimeFactory({
           stateRoot: root,
           stackId,
           ownerSessionId: "owner",
@@ -536,7 +534,6 @@ describe("production runtime composition", () => {
           logStore: memoryLogStore([]),
           bootstrapDatabase: () => Effect.void,
         });
-        const runtime = yield* factory.make(current.value);
         const input = {
           stackId,
           state: current.value,
@@ -608,7 +605,7 @@ describe("production runtime composition", () => {
           },
         } satisfies { value: PersistedStackState };
         const context = yield* Effect.context<FileSystem.FileSystem | Path.Path | Crypto.Crypto>();
-        const factory = yield* makeProductionRuntimeFactory({
+        const runtime = yield* makeProductionRuntimeFactory({
           stateRoot: root,
           stackId,
           ownerSessionId: "owner",
@@ -628,7 +625,6 @@ describe("production runtime composition", () => {
           logStore: memoryLogStore([]),
           bootstrapDatabase: () => Effect.void,
         });
-        const runtime = yield* factory.make(current.value);
         const realtime = compiled.executionPlan.workloads.find(
           (workload) => workload.id === "realtime:realtime",
         );
@@ -697,7 +693,7 @@ describe("production runtime composition", () => {
             ),
           );
         const context = yield* Effect.context<FileSystem.FileSystem | Path.Path | Crypto.Crypto>();
-        const factory = yield* makeProductionRuntimeFactory({
+        const runtime = yield* makeProductionRuntimeFactory({
           stateRoot: root,
           stackId,
           ownerSessionId: "owner",
@@ -717,7 +713,6 @@ describe("production runtime composition", () => {
           logStore: memoryLogStore([]),
           bootstrapDatabase: bootstrap,
         });
-        const runtime = yield* factory.make(current.value);
         const database = compiled.executionPlan.workloads.find(
           (workload) => workload.id === "database:database",
         );
@@ -815,7 +810,7 @@ describe("production runtime composition", () => {
           const context = yield* Effect.context<
             FileSystem.FileSystem | Path.Path | Crypto.Crypto
           >();
-          const factory = yield* makeProductionRuntimeFactory({
+          const runtime = yield* makeProductionRuntimeFactory({
             stateRoot: root,
             stackId,
             ownerSessionId: "owner",
@@ -835,7 +830,6 @@ describe("production runtime composition", () => {
             logStore: memoryLogStore([]),
             bootstrapDatabase: bootstrap,
           });
-          const runtime = yield* factory.make(current.value);
           const database = compiled.executionPlan.workloads.find(
             (workload) => workload.id === "database:database",
           );
@@ -1021,7 +1015,7 @@ describe("production runtime composition", () => {
         expect(yield* fs.exists(functionsRoot)).toBe(false);
         const prepared: string[] = [];
         const context = yield* Effect.context<FileSystem.FileSystem | Path.Path | Crypto.Crypto>();
-        const factory = yield* makeProductionRuntimeFactory({
+        const runtime = yield* makeProductionRuntimeFactory({
           stateRoot: root,
           stackId,
           ownerSessionId: "owner",
@@ -1045,7 +1039,6 @@ describe("production runtime composition", () => {
           },
           bootstrapDatabase: () => Effect.void,
         });
-        const runtime = yield* factory.make(current.value);
         yield* runtime.preflight({
           stackId,
           state: current.value,
@@ -1097,7 +1090,7 @@ describe("production runtime composition", () => {
           },
         } satisfies { value: PersistedStackState };
         const context = yield* Effect.context<FileSystem.FileSystem | Path.Path | Crypto.Crypto>();
-        const factory = yield* makeProductionRuntimeFactory({
+        const runtime = yield* makeProductionRuntimeFactory({
           stateRoot: root,
           stackId,
           ownerSessionId: "owner",
@@ -1118,7 +1111,6 @@ describe("production runtime composition", () => {
           },
           bootstrapDatabase: () => Effect.void,
         });
-        const runtime = yield* factory.make(current.value);
         const result = yield* runtime
           .preflight({
             stackId,
@@ -1174,7 +1166,7 @@ describe("production runtime composition", () => {
           `${process.pid}\n`,
         );
         const context = yield* Effect.context<FileSystem.FileSystem | Path.Path | Crypto.Crypto>();
-        const factory = yield* makeProductionRuntimeFactory({
+        const runtime = yield* makeProductionRuntimeFactory({
           stateRoot: root,
           stackId,
           ownerSessionId: "owner",
@@ -1195,7 +1187,6 @@ describe("production runtime composition", () => {
           },
           bootstrapDatabase: () => Effect.void,
         });
-        const runtime = yield* factory.make(current.value);
         const result = yield* runtime
           .preflight({
             stackId,
@@ -1245,7 +1236,7 @@ describe("production runtime composition", () => {
           definition: compiled.definition,
         } satisfies PersistedStackState;
         const context = yield* Effect.context<FileSystem.FileSystem | Path.Path | Crypto.Crypto>();
-        const factory = yield* makeProductionRuntimeFactory({
+        const runtime = yield* makeProductionRuntimeFactory({
           stateRoot: root,
           stackId,
           ownerSessionId: "owner",
@@ -1266,7 +1257,6 @@ describe("production runtime composition", () => {
           logStore: memoryLogStore(entries),
           bootstrapDatabase: () => Effect.void,
         });
-        const runtime = yield* factory.make(current.value);
         yield* runtime.preflight({
           stackId,
           state: candidate,
@@ -1443,7 +1433,7 @@ describe("production runtime composition", () => {
         const createdSpecs: ContainerContainerSpec[] = [];
         const copiedFiles: Array<Readonly<{ source: string; destination: string }>> = [];
         const engine = ownerInputContainerEngine(createdSpecs, copiedFiles);
-        const factory = yield* makeProductionRuntimeFactory({
+        const runtime = yield* makeProductionRuntimeFactory({
           stateRoot: root,
           stackId,
           ownerSessionId: "owner",
@@ -1464,7 +1454,6 @@ describe("production runtime composition", () => {
           logStore: memoryLogStore([]),
           bootstrapDatabase: () => Effect.void,
         });
-        const runtime = yield* factory.make(current.value);
         const auth = compiled.executionPlan.workloads.find(
           (workload) => workload.id === "auth:auth",
         );
@@ -1672,7 +1661,7 @@ describe("production runtime composition", () => {
         } satisfies { value: PersistedStackState };
         const context = yield* Effect.context<FileSystem.FileSystem | Path.Path | Crypto.Crypto>();
         const createdSpecs: ContainerContainerSpec[] = [];
-        const factory = yield* makeProductionRuntimeFactory({
+        const runtime = yield* makeProductionRuntimeFactory({
           stateRoot: root,
           stackId,
           ownerSessionId: "owner",
@@ -1693,7 +1682,6 @@ describe("production runtime composition", () => {
           logStore: memoryLogStore([]),
           bootstrapDatabase: () => Effect.void,
         });
-        const runtime = yield* factory.make(current.value);
         const rest = compiled.executionPlan.workloads.find(
           (workload) => workload.id === "rest:rest",
         );
@@ -1732,7 +1720,7 @@ describe("production runtime composition", () => {
           content: "export default 1",
         });
         const context = yield* Effect.context<FileSystem.FileSystem | Path.Path | Crypto.Crypto>();
-        const factory = yield* makeProductionRuntimeFactory({
+        const runtime = yield* makeProductionRuntimeFactory({
           stateRoot: root,
           stackId,
           ownerSessionId: "owner",
@@ -1743,7 +1731,6 @@ describe("production runtime composition", () => {
           logStore: memoryLogStore([]),
           bootstrapDatabase: () => Effect.void,
         });
-        const runtime = yield* factory.make(current.value);
         yield* runtime.driver.stop({
           stackId,
           workloadId: "database:database",

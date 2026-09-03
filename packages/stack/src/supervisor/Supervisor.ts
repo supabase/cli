@@ -653,7 +653,8 @@ export const makeSupervisor = (
         // Capture lifecycle phase before reading the log store. A stopping snapshot stays live
         // and gives followers one more poll rather than racing a final batch.
         const phaseAtRead = yield* Ref.get(phase);
-        const cursor = query?.cursor?.opaque === "v1_0" ? undefined : query?.cursor;
+        const cursor =
+          query?.cursor?.opaque === EMPTY_LOG_CURSOR.opaque ? undefined : query?.cursor;
         const scanned = yield* runtime.logStore
           .read(cursor === undefined ? undefined : { cursor })
           .pipe(
@@ -661,7 +662,7 @@ export const makeSupervisor = (
               (error) => new StackStateInvalidError({ message: error.message, cause: error }),
             ),
           );
-        const selected = selectLogBatch(scanned, query, query?.cursor ?? EMPTY_LOG_CURSOR);
+        const selected = selectLogBatch(scanned, query);
         const running = phaseAtRead !== "stopped";
         return {
           ...selected,

@@ -1,7 +1,7 @@
 import { NodeServices } from "@effect/platform-node";
 import { describe, expect, it } from "@effect/vitest";
 import { Cause, Effect, Exit, FileSystem, Option, Path } from "effect";
-import { LogStoreError, makeLogStore } from "./LogStore.ts";
+import { LogStoreError, makeLogStore, selectLogBatch } from "./LogStore.ts";
 
 const withPlatform = <A, E, R>(effect: Effect.Effect<A, E, R>) =>
   Effect.scoped(effect).pipe(Effect.provide(NodeServices.layer));
@@ -38,8 +38,9 @@ describe("observability", () => {
           second.cursor,
           third.cursor,
         ]);
+        const scanned = yield* store.read();
         expect(
-          (yield* store.read({ capabilities: ["auth"] })).map((entry) => entry.message),
+          selectLogBatch(scanned, { capabilities: ["auth"] }).entries.map((entry) => entry.message),
         ).toEqual(["two"]);
         const invalidCursor = yield* store
           .read({ cursor: { opaque: "not-a-cursor" } })

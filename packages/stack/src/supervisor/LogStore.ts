@@ -2,10 +2,10 @@ import { Data, DateTime, Effect, FileSystem, Path, Predicate, Schema, Semaphore 
 import {
   StackLogEntrySchema,
   type LogCursor,
+  type LogQuery,
   type StackLogEntry,
   type StackLogSource,
 } from "../public/Logs.ts";
-import type { CapabilityName } from "../public/Capability.ts";
 import { redactKnownSecrets } from "../state/SecretStore.ts";
 
 const CURSOR_PREFIX = "v1_";
@@ -37,9 +37,7 @@ export interface LogRecord {
 
 /** Internal retained-log query. */
 interface LogStoreQuery {
-  readonly capabilities?: ReadonlyArray<CapabilityName>;
   readonly cursor?: LogCursor;
-  readonly tail?: number;
 }
 
 /** Cursor returned when a retained log file has no entries to advance to. */
@@ -48,8 +46,7 @@ export const EMPTY_LOG_CURSOR: LogCursor = { opaque: "v1_0" };
 /** Apply public log filtering and pagination to a retained read. */
 export const selectLogBatch = (
   scanned: ReadonlyArray<StackLogEntry>,
-  query?: Pick<LogStoreQuery, "capabilities" | "tail">,
-  cursor: LogCursor = EMPTY_LOG_CURSOR,
+  query?: Pick<LogQuery, "capabilities" | "cursor" | "tail">,
 ): { readonly entries: ReadonlyArray<StackLogEntry>; readonly cursor: LogCursor } => {
   const capabilities = query?.capabilities === undefined ? undefined : new Set(query.capabilities);
   const filtered = scanned.filter((entry) =>
@@ -67,14 +64,14 @@ export const selectLogBatch = (
         : filtered.slice(-Math.floor(query.tail));
   return {
     entries,
-    cursor: scanned.at(-1)?.cursor ?? cursor,
+    cursor: scanned.at(-1)?.cursor ?? query?.cursor ?? EMPTY_LOG_CURSOR,
   };
 };
 
 export interface LogStore {
   readonly path: string;
   readonly append: (record: LogRecord) => Effect.Effect<StackLogEntry, LogStoreError>;
-  /** Returns retained records selected by cursor and capability filter. */
+  /** Returns retained records after the supplied cursor. */
   readonly read: (
     options?: LogStoreQuery,
   ) => Effect.Effect<ReadonlyArray<StackLogEntry>, LogStoreError>;
@@ -119,17 +116,10 @@ const selected = (
   path: string,
 ): Effect.Effect<ReadonlyArray<StackLogEntry>, LogStoreError> =>
   Effect.map(decodeCursor(path, options?.cursor), (after) => {
-    const capabilities =
-      options?.capabilities === undefined ? undefined : new Set(options.capabilities);
     return entries.filter((entry) => {
       const value = Number.parseInt(entry.cursor.opaque.slice(CURSOR_PREFIX.length), 36);
       if (after !== undefined && value <= after) return false;
-      if (capabilities === undefined) return true;
-      return (
-        entry.source !== "gateway" &&
-        entry.source !== "supervisor" &&
-        capabilities.has(entry.source)
-      );
+      return true;
     });
   });
 

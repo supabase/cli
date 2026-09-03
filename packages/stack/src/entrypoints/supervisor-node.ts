@@ -14,7 +14,7 @@ import { makeSupervisor } from "../supervisor/Supervisor.ts";
 import { makeProductionRuntimeFactory } from "../runtime/ProductionRuntime.ts";
 import { startControlServer } from "../control/ControlServer.ts";
 import { STACK_RPC_RELEASE } from "../control/StackRpc.ts";
-import { StackOwnershipConflictError, StackStateInvalidError } from "../public/Errors.ts";
+import { StackOwnershipConflictError } from "../public/Errors.ts";
 import {
   SupervisorArgsSchema,
   SupervisorReadySchema,
@@ -91,7 +91,7 @@ const runSupervisor = (args: SupervisorArgs) =>
         environment,
       });
       const context = yield* Effect.context<FileSystem.FileSystem | Path.Path | Crypto.Crypto>();
-      const runtimeFactory = yield* makeProductionRuntimeFactory({
+      const runtime = yield* makeProductionRuntimeFactory({
         stateRoot: args.stateRoot,
         ...(args.artifactCacheRoot === undefined
           ? {}
@@ -101,15 +101,6 @@ const runSupervisor = (args: SupervisorArgs) =>
         stateStore: store,
         context,
       });
-      const initial = yield* store.read(args.stackId).pipe(
-        Effect.provideContext(context),
-        Effect.flatMap((state) =>
-          state === undefined
-            ? Effect.fail(new StackStateInvalidError({ message: "Stack state is missing" }))
-            : Effect.succeed(state),
-        ),
-      );
-      const runtime = yield* runtimeFactory.make(initial);
       const supervisor = yield* makeSupervisor({
         stackId: args.stackId,
         ownerSessionId,

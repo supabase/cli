@@ -583,7 +583,9 @@ export const makeHandle = (
           const options = {
             ...baseQuery,
             ...(first && query?.tail !== undefined ? { tail: query.tail } : {}),
-            ...(cursor === undefined || cursor.opaque === "v1_0" ? {} : { cursor }),
+            ...(cursor === undefined || cursor.opaque === EMPTY_LOG_CURSOR.opaque
+              ? {}
+              : { cursor }),
           };
           const request = logs(options);
           const delayed = first
@@ -825,12 +827,12 @@ const handleDependencies = (options: {
         readRetainedLogs(
           options.fileSystem,
           paths.logs,
-          query?.cursor === undefined || query.cursor.opaque === "v1_0"
+          query?.cursor === undefined || query.cursor.opaque === EMPTY_LOG_CURSOR.opaque
             ? undefined
             : { cursor: query.cursor },
         ).pipe(
           Effect.map((scanned) => {
-            const selected = selectLogBatch(scanned, query, query?.cursor ?? EMPTY_LOG_CURSOR);
+            const selected = selectLogBatch(scanned, query);
             return {
               ...selected,
               running: false,

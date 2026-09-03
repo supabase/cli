@@ -79,10 +79,6 @@ import {
 
 type RuntimeContext = FileSystem.FileSystem | Path.Path | Crypto.Crypto;
 
-interface SupervisorRuntimeFactory {
-  readonly make: (state: PersistedStackState) => Effect.Effect<SupervisorRuntime, StackError>;
-}
-
 export interface ProductionRuntimeFactoryOptions {
   readonly stateRoot: string;
   readonly artifactCacheRoot?: string;
@@ -467,7 +463,7 @@ export const withOwnedRuntimeFileCleanup = (
 export const makeProductionRuntimeFactory = (
   options: ProductionRuntimeFactoryOptions,
 ): Effect.Effect<
-  SupervisorRuntimeFactory,
+  SupervisorRuntime,
   StackError,
   | Scope.Scope
   | FileSystem.FileSystem
@@ -476,7 +472,7 @@ export const makeProductionRuntimeFactory = (
   | ChildProcessSpawner.ChildProcessSpawner
 > =>
   Effect.gen(function* () {
-    const initial = yield* currentStateReader(options);
+    const state = yield* currentStateReader(options);
     const fileSystem = yield* FileSystem.FileSystem;
     const pathService = yield* Path.Path;
     const childSpawner = yield* ChildProcessSpawner.ChildProcessSpawner;
@@ -541,15 +537,14 @@ export const makeProductionRuntimeFactory = (
         stateRoot: options.stateRoot,
         stackId: options.stackId,
       }));
-    const knownSecrets = yield* Ref.make<ReadonlySet<string>>(new Set(stateSecrets(initial)));
+    const knownSecrets = yield* Ref.make<ReadonlySet<string>>(new Set(stateSecrets(state)));
     const baseLogs =
       options.logStore ??
-      (yield* makeLogStore({ path: paths.logs, knownSecrets: stateSecrets(initial) }).pipe(
+      (yield* makeLogStore({ path: paths.logs, knownSecrets: stateSecrets(state) }).pipe(
         Effect.mapError((error) => preparationError("Unable to open stack logs", error)),
       ));
     const logs = dynamicLogStore(baseLogs, knownSecrets);
-    const selectedEngine =
-      initial.runtime.kind === "container" ? initial.runtime.engine : undefined;
+    const selectedEngine = state.runtime.kind === "container" ? state.runtime.engine : undefined;
     const containerEngine =
       options.containerEngine ??
       (selectedEngine === undefined
@@ -564,450 +559,418 @@ export const makeProductionRuntimeFactory = (
       (yield* makeProductionRuntimeArtifactPreparer({
         stateRoot: options.stateRoot,
         artifactCacheRoot: options.artifactCacheRoot,
-        runtime: initial.runtime,
+        runtime: state.runtime,
         ...(containerEngine === undefined ? {} : { containerEngine }),
       }));
     const serveTemplate = yield* Effect.cached(bootstrapContent);
     const bootstrapDatabase =
       options.bootstrapDatabase ?? ((state: PersistedStackState) => bootstrapDatabaseAt(state));
 
-    return {
-      make: (state: PersistedStackState): Effect.Effect<SupervisorRuntime, StackError> =>
-        Effect.gen(function* () {
-          const artifacts = new Map<string, PreparedWorkloadArtifact>();
-          const hostRoute = yield* Ref.make<ContainerHostRoute | undefined>(undefined);
+    const artifacts = new Map<string, PreparedWorkloadArtifact>();
+    const hostRoute = yield* Ref.make<ContainerHostRoute | undefined>(undefined);
 
-          const freshState = (key: Pick<RuntimeWorkloadKey, "stackId" | "workloadId">) =>
-            currentStateReader(options).pipe(
-              Effect.mapError((error) => mapDriverError(key, error)),
-              Effect.flatMap((fresh) =>
-                runtimeMatches(fresh.runtime, state.runtime)
-                  ? Effect.succeed(fresh)
-                  : Effect.fail(
-                      driverError(key, "Persisted runtime changed while owner was active"),
-                    ),
-              ),
-            );
-          const prepare = (runtime: StackRuntime, workload: PlannedWorkload) => {
-            const key = artifactKey(runtime, workload);
-            const cached = artifacts.get(key);
-            return cached === undefined
-              ? preparer.prepare(runtime, workload).pipe(
-                  Effect.mapError((error) =>
-                    error instanceof ArtifactIntegrityError || error instanceof ContainerPullError
-                      ? error
-                      : preparationError(`Unable to prepare ${workload.id}`, error),
-                  ),
-                  Effect.tap((prepared) => Effect.sync(() => artifacts.set(key, prepared))),
+    const freshState = (key: Pick<RuntimeWorkloadKey, "stackId" | "workloadId">) =>
+      currentStateReader(options).pipe(
+        Effect.mapError((error) => mapDriverError(key, error)),
+        Effect.flatMap((fresh) =>
+          runtimeMatches(fresh.runtime, state.runtime)
+            ? Effect.succeed(fresh)
+            : Effect.fail(driverError(key, "Persisted runtime changed while owner was active")),
+        ),
+      );
+    const prepare = (runtime: StackRuntime, workload: PlannedWorkload) => {
+      const key = artifactKey(runtime, workload);
+      const cached = artifacts.get(key);
+      return cached === undefined
+        ? preparer.prepare(runtime, workload).pipe(
+            Effect.mapError((error) =>
+              error instanceof ArtifactIntegrityError || error instanceof ContainerPullError
+                ? error
+                : preparationError(`Unable to prepare ${workload.id}`, error),
+            ),
+            Effect.tap((prepared) => Effect.sync(() => artifacts.set(key, prepared))),
+          )
+        : Effect.succeed(cached);
+    };
+    const prepareArtifacts = (runtime: StackRuntime, workloads: ReadonlyArray<PlannedWorkload>) =>
+      Effect.forEach(workloads, (workload) => prepare(runtime, workload), {
+        concurrency: 4,
+      });
+    const functionsPath = (): Effect.Effect<string, StackPreparationError> =>
+      serveTemplate.pipe(Effect.flatMap((content) => functionsBootstrap.write({ content })));
+    const runtimeInputs = (
+      workload: PlannedWorkload,
+      fresh: PersistedStackState,
+      host: ContainerHostRoute | undefined,
+    ): Effect.Effect<WorkloadRuntimeInputs, StackPreparationError> =>
+      Effect.gen(function* () {
+        const material = yield* inputOwner.resolve(fresh, {
+          includePooler: workload.id === "pooler:pooler",
+        });
+        const templates = material.auth?.templates;
+        const apiListener = fresh.definition?.listeners.api;
+        const apiAssignment = fresh.ports.find((assignment) => assignment.field === "api");
+        const templateBaseUrl =
+          workload.id !== "auth:auth" || templates === undefined || templates.length === 0
+            ? undefined
+            : apiListener?.enabled !== true || apiAssignment === undefined
+              ? yield* preparationError(
+                  "Configured Auth email templates require a public API listener",
                 )
-              : Effect.succeed(cached);
-          };
-          const prepareArtifacts = (
-            runtime: StackRuntime,
-            workloads: ReadonlyArray<PlannedWorkload>,
-          ) =>
-            Effect.forEach(workloads, (workload) => prepare(runtime, workload), {
-              concurrency: 4,
-            });
-          const functionsPath = (): Effect.Effect<string, StackPreparationError> =>
-            serveTemplate.pipe(Effect.flatMap((content) => functionsBootstrap.write({ content })));
-          const runtimeInputs = (
-            workload: PlannedWorkload,
-            fresh: PersistedStackState,
-            host: ContainerHostRoute | undefined,
-          ): Effect.Effect<WorkloadRuntimeInputs, StackPreparationError> =>
-            Effect.gen(function* () {
-              const material = yield* inputOwner.resolve(fresh, {
-                includePooler: workload.id === "pooler:pooler",
-              });
-              const templates = material.auth?.templates;
-              const apiListener = fresh.definition?.listeners.api;
-              const apiAssignment = fresh.ports.find((assignment) => assignment.field === "api");
-              const templateBaseUrl =
-                workload.id !== "auth:auth" || templates === undefined || templates.length === 0
-                  ? undefined
-                  : apiListener?.enabled !== true || apiAssignment === undefined
-                    ? yield* preparationError(
-                        "Configured Auth email templates require a public API listener",
-                      )
-                    : `http://${urlHost(host?.host ?? apiListener.address)}:${apiAssignment.port}`;
-              const auth =
-                material.auth === undefined
-                  ? undefined
-                  : {
-                      ...material.auth,
-                      ...(templateBaseUrl === undefined ? {} : { templateBaseUrl }),
-                    };
-              const functions =
-                workload.id === "functions:edge-runtime"
-                  ? {
-                      bootstrapPath: yield* functionsPath(),
-                      bootstrapContainerPath: FUNCTIONS_BOOTSTRAP_CONTAINER_PATH,
-                      ...(material.functions?.secrets === undefined
-                        ? {}
-                        : { secrets: material.functions.secrets }),
-                    }
-                  : undefined;
-              return {
-                ...(auth === undefined ? {} : { auth }),
-                ...(workload.id.startsWith("analytics:") && material.analytics !== undefined
-                  ? { analytics: material.analytics }
-                  : {}),
-                ...(workload.id === "pooler:pooler" && material.pooler !== undefined
-                  ? { pooler: material.pooler }
-                  : {}),
-                database: { dataPath: pathService.join(paths.data, "database") },
-                storage: { dataPath: pathService.join(paths.data, "storage") },
-                ...(functions === undefined ? {} : { functions }),
-                ...(host === undefined ? {} : { hostRoute: host }),
+              : `http://${urlHost(host?.host ?? apiListener.address)}:${apiAssignment.port}`;
+        const auth =
+          material.auth === undefined
+            ? undefined
+            : {
+                ...material.auth,
+                ...(templateBaseUrl === undefined ? {} : { templateBaseUrl }),
               };
-            });
-
-          const preflight = (input: LifecycleInput): Effect.Effect<void, StackError> =>
-            Effect.gen(function* () {
-              if (!runtimeMatches(input.state.runtime, state.runtime))
-                return yield* new StackRuntimeMismatchError({
-                  message: "Lifecycle runtime does not match persisted runtime",
-                });
-              // Remember candidate secrets before any runtime preflight work can emit logs.
-              yield* rememberSecrets(knownSecrets, input.state.secrets);
-              yield* rememberSecrets(knownSecrets, input.secrets);
-              // Eagerly validate the candidate before any engine/artifact work. Start-time checks
-              // below revalidate the fresh persisted definition because it is runtime authority.
-              yield* validateDatabaseReadinessBudget(input.definition, input.plan.workloads);
-              yield* Effect.forEach(input.plan.workloads, (workload) =>
-                validateMaterializedSecrets(input.state, workload.capability),
-              );
-              yield* Effect.forEach(input.plan.workloads, (workload) =>
-                Effect.gen(function* () {
-                  if (runtimeSpecFor(workload) === undefined)
-                    return yield* preparationError(
-                      `Unknown runtime specification for ${workload.id}`,
-                    );
-                  if (workload.selected.kind !== input.state.runtime.kind)
-                    return yield* preparationError(`Runtime artifact mismatch for ${workload.id}`);
-                }),
-              );
-              if (input.state.runtime.kind === "container") {
-                if (
-                  containerEngine === undefined ||
-                  containerEngine.kind !== input.state.runtime.engine
-                )
-                  return yield* preparationError("Selected container engine is unavailable");
-                const route = yield* containerEngine.preflight.pipe(
-                  Effect.mapError((error) =>
-                    preparationError("Container host route preflight failed", error),
-                  ),
-                );
-                yield* Ref.set(hostRoute, route);
+        const functions =
+          workload.id === "functions:edge-runtime"
+            ? {
+                bootstrapPath: yield* functionsPath(),
+                bootstrapContainerPath: FUNCTIONS_BOOTSTRAP_CONTAINER_PATH,
+                ...(material.functions?.secrets === undefined
+                  ? {}
+                  : { secrets: material.functions.secrets }),
               }
-              if (input.state.runtime.kind === "native") {
-                for (const assignment of input.state.ports) {
-                  const listener = input.definition.listeners[assignment.field];
-                  yield* checkHostPort(listener.address, assignment.port, assignment.field).pipe(
-                    Effect.mapError(
-                      (error) =>
-                        new PortUnavailableError({
-                          field: assignment.field,
-                          port: assignment.port,
-                          message: `Persisted ${assignment.field} port is unavailable`,
-                          cause: error,
-                        }),
-                    ),
-                  );
-                }
-                for (const assignment of input.state.privatePorts)
-                  yield* checkHostPort(
-                    "127.0.0.1",
-                    assignment.port,
-                    `${assignment.workloadId}:${assignment.binding}`,
-                  );
-                yield* checkNativeDatabaseLockEvidence(
-                  fileSystem,
-                  pathService.join(paths.data, "database", "postmaster.pid"),
-                );
-              }
-              const eager = eagerCapabilities(input.plan);
-              yield* prepareArtifacts(
-                input.state.runtime,
-                input.plan.workloads.filter((workload) => eager.has(workload.capability)),
-              );
-            });
+            : undefined;
+        return {
+          ...(auth === undefined ? {} : { auth }),
+          ...(workload.id.startsWith("analytics:") && material.analytics !== undefined
+            ? { analytics: material.analytics }
+            : {}),
+          ...(workload.id === "pooler:pooler" && material.pooler !== undefined
+            ? { pooler: material.pooler }
+            : {}),
+          database: { dataPath: pathService.join(paths.data, "database") },
+          storage: { dataPath: pathService.join(paths.data, "storage") },
+          ...(functions === undefined ? {} : { functions }),
+          ...(host === undefined ? {} : { hostRoute: host }),
+        };
+      });
 
-          const activate = (
-            capability: import("../public/Capability.ts").CapabilityName,
-            input: LifecycleInput,
-          ): Effect.Effect<
-            { readonly host: string; readonly port: number },
-            GatewayActivationError | StackError
-          > =>
-            Effect.gen(function* () {
-              const workload = input.plan.workloads.find(
-                (entry) =>
-                  entry.capability === capability && entry.readiness.portField !== undefined,
-              );
-              if (workload === undefined)
-                return yield* new GatewayActivationError({
-                  message: `Capability ${capability} has no workload`,
-                });
-              const fresh = yield* freshState({
-                stackId: options.stackId,
-                workloadId: workload.id,
-              }).pipe(
-                Effect.mapError((error) => new GatewayActivationError({ message: error.message })),
-              );
-              const spec = runtimeSpecFor(workload);
-              if (spec === undefined)
-                return yield* new GatewayActivationError({
-                  message: `Unknown runtime specification for ${workload.id}`,
-                });
-              yield* validatePrivateAssignments(fresh, workload).pipe(
-                Effect.mapError((error) => new GatewayActivationError({ message: error.message })),
-              );
-              const endpoint = spec.privateEndpoint(fresh, spec.readiness.binding, "native");
-              if (endpoint === undefined)
-                return yield* new GatewayActivationError({
-                  message: `Missing private endpoint for ${workload.id}`,
-                });
-              return endpoint;
-            });
-
-          const waitForReadiness = (key: RuntimeWorkloadKey, workload: PlannedWorkload) =>
-            freshState(key).pipe(
-              Effect.flatMap((fresh) => readinessFor(fresh, workload)),
-              Effect.mapError((error) => mapDriverError(key, error)),
-            );
-          const bootstrapWorkloadDatabase = (key: RuntimeWorkloadKey, workload: PlannedWorkload) =>
-            workload.bootstrap === "database"
-              ? freshState(key).pipe(
-                  Effect.flatMap((fresh) =>
-                    readinessDeadlineFor(fresh, workload).pipe(
-                      Effect.flatMap((deadline) =>
-                        Effect.timeout(
-                          Effect.retry(
-                            Effect.suspend(() => bootstrapDatabase(fresh)),
-                            {
-                              schedule: Schedule.spaced("100 millis"),
-                              while: (error) =>
-                                error instanceof DatabaseBootstrapError && error.retryable === true,
-                            },
-                          ),
-                          deadline,
-                        ),
-                      ),
-                    ),
-                  ),
-                  Effect.mapError((error) => mapDriverError(key, error)),
-                )
-              : Effect.void;
-
-          let driver: RuntimeDriver;
-          if (state.runtime.kind === "native") {
-            driver = yield* makeNativeRuntime({
-              resolveProcess: (key, workload) =>
-                freshState(key).pipe(
-                  Effect.flatMap((fresh) =>
-                    Effect.gen(function* () {
-                      const spec = runtimeSpecFor(workload);
-                      if (spec === undefined)
-                        return yield* driverError(
-                          key,
-                          `Unknown runtime specification for ${workload.id}`,
-                        );
-                      const readinessBudget = yield* readinessDeadlineFor(fresh, workload).pipe(
-                        Effect.mapError((error) => mapDriverError(key, error)),
-                      );
-                      // Revalidate the fresh persisted definition before spawning; preflight checks
-                      // the candidate definition, while this state is the runtime authority.
-                      const inputs = yield* runtimeInputs(workload, fresh, undefined).pipe(
-                        Effect.mapError((error) => mapDriverError(key, error)),
-                      );
-                      yield* validateWorkloadRuntimeInputs(fresh, workload, inputs).pipe(
-                        Effect.mapError((error) => mapDriverError(key, error)),
-                      );
-                      yield* validatePrivateAssignments(fresh, workload).pipe(
-                        Effect.mapError((error) => mapDriverError(key, error)),
-                      );
-                      const prepared = yield* prepare(fresh.runtime, workload).pipe(
-                        Effect.mapError((error) => mapDriverError(key, error)),
-                      );
-                      if (prepared.artifactRoot === undefined)
-                        return yield* driverError(
-                          key,
-                          `Native artifact root is unavailable for ${workload.id}`,
-                        );
-                      const endpoint = spec.privateEndpoint(
-                        fresh,
-                        spec.readiness.binding,
-                        "native",
-                      );
-                      if (endpoint === undefined)
-                        return yield* driverError(
-                          key,
-                          `Missing private port assignment for ${workload.id}`,
-                        );
-                      const resolvedNativeProcess = spec.nativeProcess(
-                        prepared.artifactRoot,
-                        fresh,
-                        workload,
-                        endpoint.port,
-                        inputs,
-                      );
-                      const environment = spec.env(
-                        fresh,
-                        workload,
-                        endpoint.port,
-                        "native",
-                        inputs,
-                      );
-                      let migration: NativeProcessSpec | undefined;
-                      if (isDatabaseWorkload(workload)) {
-                        const dataPath = inputs.database?.dataPath;
-                        if (dataPath === undefined)
-                          return yield* driverError(
-                            key,
-                            "Resolved database data path is unavailable for native migration",
-                          );
-                        migration = yield* prepareNativeDatabaseMigration({
-                          key,
-                          dataPath,
-                          artifactRoot: prepared.artifactRoot,
-                          environment,
-                          endpointPort: endpoint.port,
-                          fileSystem,
-                          pathService,
-                        });
-                      }
-                      return {
-                        startup: spec
-                          .nativeStartupProcesses(
-                            prepared.artifactRoot,
-                            fresh,
-                            workload,
-                            endpoint.port,
-                            inputs,
-                          )
-                          .map((startup: NativeProcessSpec) => ({
-                            ...startup,
-                            timeout:
-                              startup.timeout ??
-                              (isDatabaseWorkload(workload)
-                                ? readinessBudget
-                                : Duration.minutes(5)),
-                            env: { ...environment, ...startup.env },
-                          })),
-                        ...(migration === undefined ? {} : { postReadiness: [migration] }),
-                        main: { ...resolvedNativeProcess, env: environment },
-                      };
-                    }),
-                  ),
-                ),
-              waitForReadiness,
-              bootstrapDatabase: bootstrapWorkloadDatabase,
-              logStore: logs,
-            }).pipe(
-              Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, childSpawner),
-              Effect.provideService(Scope.Scope, ownerScope),
-              Effect.provideService(FileSystem.FileSystem, fileSystem),
-              Effect.provideService(Path.Path, pathService),
-              Effect.mapError((error) =>
-                preparationError("Unable to initialize native runtime", error),
+    const preflight = (input: LifecycleInput): Effect.Effect<void, StackError> =>
+      Effect.gen(function* () {
+        if (!runtimeMatches(input.state.runtime, state.runtime))
+          return yield* new StackRuntimeMismatchError({
+            message: "Lifecycle runtime does not match persisted runtime",
+          });
+        // Remember candidate secrets before any runtime preflight work can emit logs.
+        yield* rememberSecrets(knownSecrets, input.state.secrets);
+        yield* rememberSecrets(knownSecrets, input.secrets);
+        // Eagerly validate the candidate before any engine/artifact work. Start-time checks
+        // below revalidate the fresh persisted definition because it is runtime authority.
+        yield* validateDatabaseReadinessBudget(input.definition, input.plan.workloads);
+        yield* Effect.forEach(input.plan.workloads, (workload) =>
+          validateMaterializedSecrets(input.state, workload.capability),
+        );
+        yield* Effect.forEach(input.plan.workloads, (workload) =>
+          Effect.gen(function* () {
+            if (runtimeSpecFor(workload) === undefined)
+              return yield* preparationError(`Unknown runtime specification for ${workload.id}`);
+            if (workload.selected.kind !== input.state.runtime.kind)
+              return yield* preparationError(`Runtime artifact mismatch for ${workload.id}`);
+          }),
+        );
+        if (input.state.runtime.kind === "container") {
+          if (containerEngine === undefined || containerEngine.kind !== input.state.runtime.engine)
+            return yield* preparationError("Selected container engine is unavailable");
+          const route = yield* containerEngine.preflight.pipe(
+            Effect.mapError((error) =>
+              preparationError("Container host route preflight failed", error),
+            ),
+          );
+          yield* Ref.set(hostRoute, route);
+        }
+        if (input.state.runtime.kind === "native") {
+          for (const assignment of input.state.ports) {
+            const listener = input.definition.listeners[assignment.field];
+            yield* checkHostPort(listener.address, assignment.port, assignment.field).pipe(
+              Effect.mapError(
+                (error) =>
+                  new PortUnavailableError({
+                    field: assignment.field,
+                    port: assignment.port,
+                    message: `Persisted ${assignment.field} port is unavailable`,
+                    cause: error,
+                  }),
               ),
             );
-          } else {
-            if (containerEngine === undefined || containerEngine.kind !== state.runtime.engine)
-              return yield* preparationError("Selected container engine is unavailable");
-            driver = yield* makeContainerRuntime({
-              engine: containerEngine,
-              ownerSessionId: options.ownerSessionId,
-              resolveWorkload: (key, workload) =>
-                freshState(key).pipe(
-                  Effect.flatMap((fresh) =>
-                    Effect.gen(function* () {
-                      const spec = runtimeSpecFor(workload);
-                      if (spec === undefined)
-                        return yield* driverError(
-                          key,
-                          `Unknown runtime specification for ${workload.id}`,
-                        );
-                      // Revalidate the fresh persisted definition before creating a container;
-                      // preflight checks the candidate definition, while this state is authoritative.
-                      yield* readinessDeadlineFor(fresh, workload).pipe(
-                        Effect.mapError((error) => mapDriverError(key, error)),
-                      );
-                      let route = yield* Ref.get(hostRoute);
-                      if (route === undefined) {
-                        route = yield* containerEngine.preflight.pipe(
-                          Effect.mapError((error) => mapDriverError(key, error)),
-                        );
-                        yield* Ref.set(hostRoute, route);
-                      }
-                      const inputs = yield* runtimeInputs(workload, fresh, route).pipe(
-                        Effect.mapError((error) => mapDriverError(key, error)),
-                      );
-                      yield* validateWorkloadRuntimeInputs(fresh, workload, inputs).pipe(
-                        Effect.mapError((error) => mapDriverError(key, error)),
-                      );
-                      const resolution = yield* resolveContainerResolutionFor(
-                        fresh,
-                        workload,
-                        inputs,
-                      ).pipe(Effect.mapError((error) => mapDriverError(key, error)));
-                      if (resolution === undefined)
-                        return yield* driverError(
-                          key,
-                          `Unknown container runtime specification for ${workload.id}`,
-                        );
-                      const envFile = yield* envFiles
-                        .write({
-                          workloadId: workload.id,
-                          values: resolution.env,
-                        })
-                        .pipe(Effect.mapError((error) => mapDriverError(key, error)));
-                      const volume =
-                        workload.id === "database:database"
-                          ? { target: "/var/lib/postgresql/data", readOnly: false }
-                          : workload.id === "storage:storage"
-                            ? {
-                                target: "/mnt",
-                                readOnly: false,
-                                ownerWorkloadId: "storage:storage",
-                              }
-                            : workload.id === "storage:imgproxy"
-                              ? {
-                                  target: "/mnt",
-                                  readOnly: true,
-                                  ownerWorkloadId: "storage:storage",
-                                }
-                              : undefined;
-                      const { env: _env, ...withoutEnv } = resolution;
-                      return {
-                        ...withoutEnv,
-                        envFile,
-                        waitForReadiness,
-                        ...(volume === undefined ? {} : { volume }),
-                      } satisfies ContainerWorkloadResolution;
-                    }),
+          }
+          for (const assignment of input.state.privatePorts)
+            yield* checkHostPort(
+              "127.0.0.1",
+              assignment.port,
+              `${assignment.workloadId}:${assignment.binding}`,
+            );
+          yield* checkNativeDatabaseLockEvidence(
+            fileSystem,
+            pathService.join(paths.data, "database", "postmaster.pid"),
+          );
+        }
+        const eager = eagerCapabilities(input.plan);
+        yield* prepareArtifacts(
+          input.state.runtime,
+          input.plan.workloads.filter((workload) => eager.has(workload.capability)),
+        );
+      });
+
+    const activate = (
+      capability: import("../public/Capability.ts").CapabilityName,
+      input: LifecycleInput,
+    ): Effect.Effect<
+      { readonly host: string; readonly port: number },
+      GatewayActivationError | StackError
+    > =>
+      Effect.gen(function* () {
+        const workload = input.plan.workloads.find(
+          (entry) => entry.capability === capability && entry.readiness.portField !== undefined,
+        );
+        if (workload === undefined)
+          return yield* new GatewayActivationError({
+            message: `Capability ${capability} has no workload`,
+          });
+        const fresh = yield* freshState({
+          stackId: options.stackId,
+          workloadId: workload.id,
+        }).pipe(Effect.mapError((error) => new GatewayActivationError({ message: error.message })));
+        const spec = runtimeSpecFor(workload);
+        if (spec === undefined)
+          return yield* new GatewayActivationError({
+            message: `Unknown runtime specification for ${workload.id}`,
+          });
+        yield* validatePrivateAssignments(fresh, workload).pipe(
+          Effect.mapError((error) => new GatewayActivationError({ message: error.message })),
+        );
+        const endpoint = spec.privateEndpoint(fresh, spec.readiness.binding, "native");
+        if (endpoint === undefined)
+          return yield* new GatewayActivationError({
+            message: `Missing private endpoint for ${workload.id}`,
+          });
+        return endpoint;
+      });
+
+    const waitForReadiness = (key: RuntimeWorkloadKey, workload: PlannedWorkload) =>
+      freshState(key).pipe(
+        Effect.flatMap((fresh) => readinessFor(fresh, workload)),
+        Effect.mapError((error) => mapDriverError(key, error)),
+      );
+    const bootstrapWorkloadDatabase = (key: RuntimeWorkloadKey, workload: PlannedWorkload) =>
+      workload.bootstrap === "database"
+        ? freshState(key).pipe(
+            Effect.flatMap((fresh) =>
+              readinessDeadlineFor(fresh, workload).pipe(
+                Effect.flatMap((deadline) =>
+                  Effect.timeout(
+                    Effect.retry(
+                      Effect.suspend(() => bootstrapDatabase(fresh)),
+                      {
+                        schedule: Schedule.spaced("100 millis"),
+                        while: (error) =>
+                          error instanceof DatabaseBootstrapError && error.retryable === true,
+                      },
+                    ),
+                    deadline,
                   ),
                 ),
-              waitForReadiness,
-              bootstrapDatabase: bootstrapWorkloadDatabase,
-              logStore: logs,
-            }).pipe(Effect.provideService(Scope.Scope, ownerScope));
-          }
-          const baseDriver = withOwnedRuntimeFileCleanup(
-            driver,
-            envFiles,
-            functionsBootstrap,
-            inputOwner,
-          );
-          return {
-            driver: baseDriver,
-            preflight,
-            activate,
-            ingress,
-            logStore: logs,
-          } satisfies SupervisorRuntime;
-        }),
-    } satisfies SupervisorRuntimeFactory;
+              ),
+            ),
+            Effect.mapError((error) => mapDriverError(key, error)),
+          )
+        : Effect.void;
+
+    let driver: RuntimeDriver;
+    if (state.runtime.kind === "native") {
+      driver = yield* makeNativeRuntime({
+        resolveProcess: (key, workload) =>
+          freshState(key).pipe(
+            Effect.flatMap((fresh) =>
+              Effect.gen(function* () {
+                const spec = runtimeSpecFor(workload);
+                if (spec === undefined)
+                  return yield* driverError(
+                    key,
+                    `Unknown runtime specification for ${workload.id}`,
+                  );
+                const readinessBudget = yield* readinessDeadlineFor(fresh, workload).pipe(
+                  Effect.mapError((error) => mapDriverError(key, error)),
+                );
+                // Revalidate the fresh persisted definition before spawning; preflight checks
+                // the candidate definition, while this state is the runtime authority.
+                const inputs = yield* runtimeInputs(workload, fresh, undefined).pipe(
+                  Effect.mapError((error) => mapDriverError(key, error)),
+                );
+                yield* validateWorkloadRuntimeInputs(fresh, workload, inputs).pipe(
+                  Effect.mapError((error) => mapDriverError(key, error)),
+                );
+                yield* validatePrivateAssignments(fresh, workload).pipe(
+                  Effect.mapError((error) => mapDriverError(key, error)),
+                );
+                const prepared = yield* prepare(fresh.runtime, workload).pipe(
+                  Effect.mapError((error) => mapDriverError(key, error)),
+                );
+                if (prepared.artifactRoot === undefined)
+                  return yield* driverError(
+                    key,
+                    `Native artifact root is unavailable for ${workload.id}`,
+                  );
+                const endpoint = spec.privateEndpoint(fresh, spec.readiness.binding, "native");
+                if (endpoint === undefined)
+                  return yield* driverError(
+                    key,
+                    `Missing private port assignment for ${workload.id}`,
+                  );
+                const resolvedNativeProcess = spec.nativeProcess(
+                  prepared.artifactRoot,
+                  fresh,
+                  workload,
+                  endpoint.port,
+                  inputs,
+                );
+                const environment = spec.env(fresh, workload, endpoint.port, "native", inputs);
+                let migration: NativeProcessSpec | undefined;
+                if (isDatabaseWorkload(workload)) {
+                  const dataPath = inputs.database?.dataPath;
+                  if (dataPath === undefined)
+                    return yield* driverError(
+                      key,
+                      "Resolved database data path is unavailable for native migration",
+                    );
+                  migration = yield* prepareNativeDatabaseMigration({
+                    key,
+                    dataPath,
+                    artifactRoot: prepared.artifactRoot,
+                    environment,
+                    endpointPort: endpoint.port,
+                    fileSystem,
+                    pathService,
+                  });
+                }
+                return {
+                  startup: spec
+                    .nativeStartupProcesses(
+                      prepared.artifactRoot,
+                      fresh,
+                      workload,
+                      endpoint.port,
+                      inputs,
+                    )
+                    .map((startup: NativeProcessSpec) => ({
+                      ...startup,
+                      timeout:
+                        startup.timeout ??
+                        (isDatabaseWorkload(workload) ? readinessBudget : Duration.minutes(5)),
+                      env: { ...environment, ...startup.env },
+                    })),
+                  ...(migration === undefined ? {} : { postReadiness: [migration] }),
+                  main: { ...resolvedNativeProcess, env: environment },
+                };
+              }),
+            ),
+          ),
+        waitForReadiness,
+        bootstrapDatabase: bootstrapWorkloadDatabase,
+        logStore: logs,
+      }).pipe(
+        Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, childSpawner),
+        Effect.provideService(Scope.Scope, ownerScope),
+        Effect.provideService(FileSystem.FileSystem, fileSystem),
+        Effect.provideService(Path.Path, pathService),
+        Effect.mapError((error) => preparationError("Unable to initialize native runtime", error)),
+      );
+    } else {
+      if (containerEngine === undefined || containerEngine.kind !== state.runtime.engine)
+        return yield* preparationError("Selected container engine is unavailable");
+      driver = yield* makeContainerRuntime({
+        engine: containerEngine,
+        ownerSessionId: options.ownerSessionId,
+        resolveWorkload: (key, workload) =>
+          freshState(key).pipe(
+            Effect.flatMap((fresh) =>
+              Effect.gen(function* () {
+                const spec = runtimeSpecFor(workload);
+                if (spec === undefined)
+                  return yield* driverError(
+                    key,
+                    `Unknown runtime specification for ${workload.id}`,
+                  );
+                // Revalidate the fresh persisted definition before creating a container;
+                // preflight checks the candidate definition, while this state is authoritative.
+                yield* readinessDeadlineFor(fresh, workload).pipe(
+                  Effect.mapError((error) => mapDriverError(key, error)),
+                );
+                let route = yield* Ref.get(hostRoute);
+                if (route === undefined) {
+                  route = yield* containerEngine.preflight.pipe(
+                    Effect.mapError((error) => mapDriverError(key, error)),
+                  );
+                  yield* Ref.set(hostRoute, route);
+                }
+                const inputs = yield* runtimeInputs(workload, fresh, route).pipe(
+                  Effect.mapError((error) => mapDriverError(key, error)),
+                );
+                yield* validateWorkloadRuntimeInputs(fresh, workload, inputs).pipe(
+                  Effect.mapError((error) => mapDriverError(key, error)),
+                );
+                const resolution = yield* resolveContainerResolutionFor(
+                  fresh,
+                  workload,
+                  inputs,
+                ).pipe(Effect.mapError((error) => mapDriverError(key, error)));
+                if (resolution === undefined)
+                  return yield* driverError(
+                    key,
+                    `Unknown container runtime specification for ${workload.id}`,
+                  );
+                const envFile = yield* envFiles
+                  .write({
+                    workloadId: workload.id,
+                    values: resolution.env,
+                  })
+                  .pipe(Effect.mapError((error) => mapDriverError(key, error)));
+                const volume =
+                  workload.id === "database:database"
+                    ? { target: "/var/lib/postgresql/data", readOnly: false }
+                    : workload.id === "storage:storage"
+                      ? {
+                          target: "/mnt",
+                          readOnly: false,
+                          ownerWorkloadId: "storage:storage",
+                        }
+                      : workload.id === "storage:imgproxy"
+                        ? {
+                            target: "/mnt",
+                            readOnly: true,
+                            ownerWorkloadId: "storage:storage",
+                          }
+                        : undefined;
+                const { env: _env, ...withoutEnv } = resolution;
+                return {
+                  ...withoutEnv,
+                  envFile,
+                  waitForReadiness,
+                  ...(volume === undefined ? {} : { volume }),
+                } satisfies ContainerWorkloadResolution;
+              }),
+            ),
+          ),
+        waitForReadiness,
+        bootstrapDatabase: bootstrapWorkloadDatabase,
+        logStore: logs,
+      }).pipe(Effect.provideService(Scope.Scope, ownerScope));
+    }
+    const baseDriver = withOwnedRuntimeFileCleanup(
+      driver,
+      envFiles,
+      functionsBootstrap,
+      inputOwner,
+    );
+    return {
+      driver: baseDriver,
+      preflight,
+      activate,
+      ingress,
+      logStore: logs,
+    } satisfies SupervisorRuntime;
   });

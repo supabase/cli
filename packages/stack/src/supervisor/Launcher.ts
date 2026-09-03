@@ -77,8 +77,6 @@ type ChildResult =
   | { readonly kind: "ownership-conflict" }
   | { readonly kind: "failed"; readonly message: string };
 
-type LaunchPayload = SupervisorArgs;
-
 const mapFailure = (message: string) => new StackStateInvalidError({ message });
 const SUPERVISOR_READINESS_TIMEOUT_MS = 30_000;
 const SUPERVISOR_REREAD_INTERVAL_MS = 25;
@@ -94,7 +92,7 @@ export interface LauncherOptions {
 }
 
 const encodeLaunchPayload = (
-  payload: LaunchPayload,
+  payload: SupervisorArgs,
 ): Effect.Effect<string, StackStateInvalidError> =>
   Schema.encodeEffect(Schema.fromJsonString(Schema.Unknown))(payload).pipe(
     Effect.mapError(() => mapFailure("Unable to encode supervisor launch arguments")),
@@ -216,7 +214,7 @@ const observeOwner = (
 
 const launchAndAwait = (
   options: LauncherOptions,
-  payload: LaunchPayload,
+  payload: SupervisorArgs,
   paths: { readonly stackRoot: string },
 ): Effect.Effect<
   OwnerMetadata,
@@ -382,7 +380,7 @@ export const ensureSupervisor = (
         mapFailure(`Unable to allocate owner session id: ${error.message}`),
       ),
     );
-    const payload: LaunchPayload = {
+    const payload: SupervisorArgs = {
       stateRoot: options.environment.stateRoot,
       ...(options.environment.artifactCacheRoot === undefined
         ? {}
