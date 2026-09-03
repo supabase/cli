@@ -1032,7 +1032,7 @@ export ${name}="\${${name}%x}"`;
   await mkdir(hostEnvDir, { recursive: true, mode: 0o700 });
   // The value files hold secret env values, so keep them owner-only.
   await Promise.all(
-    env.map(([_, value], index) =>
+    env.map(([, value], index) =>
       writeFile(join(hostEnvDir, `env-${index}`), value, { mode: 0o600 }),
     ),
   );

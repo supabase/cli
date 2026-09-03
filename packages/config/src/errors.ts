@@ -157,3 +157,20 @@ export class DuplicateRemoteProjectIdError extends Data.TaggedError(
 export class InvalidRemoteProjectIdError extends Data.TaggedError("InvalidRemoteProjectIdError")<{
   readonly message: string;
 }> {}
+
+/**
+ * Replacing a config document's on-disk text failed inside
+ * `writeCliConfigDocumentText` (`./io.ts`) — the temp-file write, the mode
+ * copy, or the final rename onto {@link path}. `cause` carries the underlying
+ * `PlatformError`; `message` is a ready-to-surface human summary built at the
+ * construction site. `config pull`'s surgical edit
+ * (`applyConfigEdits`/`config-edit.ts`) is this error's primary producer —
+ * unlike `saveCliConfig`'s full-document regeneration (`writeFileAtomic`,
+ * which dies on failure), a caller replacing hand-authored text with a
+ * targeted edit needs a typed failure it can react to.
+ */
+export class CliConfigWriteError extends Data.TaggedError("CliConfigWriteError")<{
+  readonly path: string;
+  readonly cause: unknown;
+  readonly message: string;
+}> {}

@@ -145,6 +145,33 @@ export async function removeStorageLiveObject(
   }
 }
 
+/** Flags for experimental-gated live tests that address the shared project by
+ * ref rather than linking it (contrast `storageLiveFlags`). */
+export function experimentalProjectLiveFlags(project: LiveProject): ReadonlyArray<string> {
+  return ["--project-ref", project.ref, "--experimental"];
+}
+
+/**
+ * Exact-key cleanup for postgres-config live tests: removes one owned override
+ * without a database restart. Deleting an absent key is a no-op PUT, so the
+ * teardown stays idempotent.
+ */
+export async function removePostgresConfigLiveOverride(
+  cli: (args: string[]) => Promise<{ exitCode: number; stdout: string; stderr: string }>,
+  project: LiveProject,
+  key: string,
+): Promise<void> {
+  const removed = await cli([
+    "postgres-config",
+    "delete",
+    "--config",
+    key,
+    ...experimentalProjectLiveFlags(project),
+    "--no-restart",
+  ]);
+  requireLiveSuccess(removed, `postgres-config delete cleanup for ${key}`);
+}
+
 /**
  * Unique migration version for a live test: a sortable `YYYYMMDDHHMMSS` UTC
  * stamp plus four random digits, so it always orders after any conventional

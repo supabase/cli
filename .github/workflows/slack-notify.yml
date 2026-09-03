@@ -3,19 +3,34 @@ name: Reusable Slack Notification
 on:
   workflow_call:
     inputs:
+      package:
+        description: Display name of the released package (e.g. "Supabase CLI" or "@supabase/config")
+        required: true
+        type: string
       version:
         description: Released version (without the leading v, e.g. 1.2.3)
         required: true
         type: string
       channel:
-        description: Release channel (alpha | beta | stable), used to label the message
+        description: Release channel (alpha | beta | stable), used to label the message. Omit for packages that release without channels.
         required: false
         type: string
+        default: ""
       status:
-        description: Notification kind (success | failure). Failure messages report a broken release on any channel.
+        description: Notification kind (success | failure | awaiting-approval | declined)
         required: false
         type: string
         default: success
+      tag_prefix:
+        description: Git tag prefix used to build the changelog link (e.g. "v" or "config-v")
+        required: false
+        type: string
+        default: v
+      npm_package:
+        description: npm package name. When set, success messages link the npm version page.
+        required: false
+        type: string
+        default: ""
     secrets:
       SLACK_RELEASE_WEBHOOK:
         required: true
@@ -30,9 +45,12 @@ jobs:
         # untrusted strings into the shell — only github.run_id/github.sha are
         # inlined, and those are GitHub-controlled.
         env:
+          PACKAGE: ${{ inputs.package }}
           VERSION: ${{ inputs.version }}
           CHANNEL: ${{ inputs.channel }}
           STATUS: ${{ inputs.status }}
+          TAG_PREFIX: ${{ inputs.tag_prefix }}
+          NPM_PACKAGE: ${{ inputs.npm_package }}
           REPO: ${{ github.repository }}
           RUN_ID: ${{ github.run_id }}
           SHA: ${{ github.sha }}
@@ -43,18 +61,64 @@ jobs:
           SHORT_SHA="${SHA:0:7}"
           COMMIT_URL="https://github.com/${REPO}/commit/${SHA}"
           RUN_URL="https://github.com/${REPO}/actions/runs/${RUN_ID}"
+          CHANGELOG_URL="https://github.com/${REPO}/releases/tag/${TAG_PREFIX}${VERSION}"
 
-          if [[ "$STATUS" == "failure" ]]; then
-            # Failure pings fire on every channel. version/channel may be empty
-            # when the planning step itself failed, so fall back gracefully and
-            # lean on the workflow run link as the actionable detail.
-            HEADER="❌ Supabase CLI release failed (${CHANNEL:-unknown} channel)"
-            FALLBACK_TEXT="❌ Supabase CLI release failed on the ${CHANNEL:-unknown} channel"
-            DETAILS="*Channel:* ${CHANNEL:-unknown}\n*Commit:* <${COMMIT_URL}|${SHORT_SHA}>\n*Workflow run:* <${RUN_URL}|view failed run>"
-            if [[ -n "$VERSION" ]]; then
-              DETAILS="*Version:* v${VERSION}\n${DETAILS}"
-            fi
-            payload=$(cat <<EOF
+          CONTEXT_TEXT="${REPO}"
+          if [[ -n "$CHANNEL" ]]; then
+            CONTEXT_TEXT="Channel: ${CHANNEL} • ${REPO}"
+          fi
+
+          case "$STATUS" in
+            success)
+              HEADER="🚀 ${PACKAGE} v${VERSION} released"
+              if [[ "$CHANNEL" == "beta" ]]; then
+                HEADER="🚀 ${PACKAGE} v${VERSION} released (beta)"
+              fi
+              FALLBACK_TEXT="🚀 ${PACKAGE} v${VERSION} has been released"
+              DETAILS="*Changelog:* <${CHANGELOG_URL}|${TAG_PREFIX}${VERSION} release notes>\n*Commit:* <${COMMIT_URL}|${SHORT_SHA}>\n*Workflow run:* <${RUN_URL}|view run>"
+              if [[ -n "$NPM_PACKAGE" ]]; then
+                DETAILS="*npm:* <https://www.npmjs.com/package/${NPM_PACKAGE}/v/${VERSION}|${NPM_PACKAGE}@${VERSION}>\n${DETAILS}"
+              fi
+              ;;
+            failure)
+              # version/channel may be empty when the planning job itself failed, so
+              # fall back gracefully and lean on the workflow run link as the
+              # actionable detail.
+              HEADER="❌ ${PACKAGE} release failed"
+              FALLBACK_TEXT="❌ ${PACKAGE} release failed"
+              if [[ -n "$CHANNEL" ]]; then
+                HEADER="❌ ${PACKAGE} release failed (${CHANNEL} channel)"
+                FALLBACK_TEXT="❌ ${PACKAGE} release failed on the ${CHANNEL} channel"
+              fi
+              DETAILS="*Commit:* <${COMMIT_URL}|${SHORT_SHA}>\n*Workflow run:* <${RUN_URL}|view failed run>"
+              if [[ -n "$CHANNEL" ]]; then
+                DETAILS="*Channel:* ${CHANNEL}\n${DETAILS}"
+              fi
+              if [[ -n "$VERSION" ]]; then
+                DETAILS="*Version:* v${VERSION}\n${DETAILS}"
+              fi
+              ;;
+            awaiting-approval)
+              # The approval itself happens on the workflow run page (Approve button +
+              # the plan job's evidence summary) — an incoming webhook is one-way and
+              # cannot host an interactive approval, so this message is the pager, not
+              # the gate.
+              HEADER="⏳ ${PACKAGE} v${VERSION} awaiting release approval"
+              FALLBACK_TEXT="⏳ ${PACKAGE} v${VERSION} is awaiting release approval"
+              DETAILS="*Version:* v${VERSION}\n*Commit:* <${COMMIT_URL}|${SHORT_SHA}>\n*Review and approve:* <${RUN_URL}|workflow run>"
+              ;;
+            declined)
+              HEADER="🛑 ${PACKAGE} v${VERSION} release not approved"
+              FALLBACK_TEXT="🛑 ${PACKAGE} v${VERSION} release was not approved"
+              DETAILS="A reviewer rejected the pending deployment.\n*Version:* v${VERSION}\n*Commit:* <${COMMIT_URL}|${SHORT_SHA}>\n*Workflow run:* <${RUN_URL}|view run>"
+              ;;
+            *)
+              echo "Unknown status: ${STATUS}" >&2
+              exit 1
+              ;;
+          esac
+
+          payload=$(cat <<EOF
           {
             "text": "${FALLBACK_TEXT}",
             "blocks": [
@@ -69,46 +133,11 @@ jobs:
               {
                 "type": "context",
                 "elements": [
-                  { "type": "mrkdwn", "text": "${REPO}" }
+                  { "type": "mrkdwn", "text": "${CONTEXT_TEXT}" }
                 ]
               }
             ]
           }
           EOF
-            )
-          else
-            HEADER="🚀 Supabase CLI v${VERSION} released"
-            if [[ "$CHANNEL" == "beta" ]]; then
-              HEADER="🚀 Supabase CLI v${VERSION} released (beta)"
-            fi
-
-            CHANGELOG_URL="https://github.com/${REPO}/releases/tag/v${VERSION}"
-
-            payload=$(cat <<EOF
-          {
-            "text": "🚀 Supabase CLI Version ${VERSION} has been released",
-            "blocks": [
-              {
-                "type": "header",
-                "text": { "type": "plain_text", "text": "${HEADER}", "emoji": true }
-              },
-              {
-                "type": "section",
-                "text": {
-                  "type": "mrkdwn",
-                  "text": "*Changelog:* <${CHANGELOG_URL}|v${VERSION} release notes>\n*Commit:* <${COMMIT_URL}|${SHORT_SHA}>\n*Workflow run:* <${RUN_URL}|view run>"
-                }
-              },
-              {
-                "type": "context",
-                "elements": [
-                  { "type": "mrkdwn", "text": "Channel: ${CHANNEL:-n/a} • ${REPO}" }
-                ]
-              }
-            ]
-          }
-          EOF
-            )
-          fi
-
+          )
           curl -fsSL -X POST -H 'Content-type: application/json' --data "$payload" "$SLACK_WEBHOOK"

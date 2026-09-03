@@ -196,3 +196,41 @@ export const legacyResolveParentScopedProjectRef = Effect.fnUntraced(function* (
 
   return yield* resolver.resolve(Option.none());
 });
+
+/**
+ * A value made entirely of lowercase letters (but not 20 of them, or it would
+ * already have been treated as a ref) is a plausible ref typo. Appended to
+ * both {@link legacyParentNotLinkedMessage} and `link`'s own
+ * branch-not-found message — shared by every command that resolves a branch
+ * name/UUID under the currently-linked PARENT project (CLI-2167).
+ */
+export function legacyParentRefTypoHint(value: string): string {
+  if (!/^[a-z]+$/.test(value)) return "";
+  return `\n  If you meant a project ref: refs are exactly 20 lowercase letters ("${value}" has ${value.length}).`;
+}
+
+/**
+ * Shared "no project is linked to search for branches" message, produced when
+ * {@link legacyResolveLinkedParentRef} reports `"absent"` for a non-ref-shaped
+ * `--project-ref`/positional value. Used by both `link` and `config diff`
+ * (Hoist Before You Duplicate — ≥2 commands across families).
+ */
+export function legacyParentNotLinkedMessage(value: string): string {
+  return (
+    `Cannot resolve "${value}": it is not a project ref (refs are exactly 20 lowercase letters, ` +
+    "like `abcdefghijklmnopqrst`), so it was treated as a branch name — but no project is linked " +
+    "to search for branches.\n" +
+    "  If it is a branch name, link the parent project first: supabase link --project-ref <parent-ref>" +
+    legacyParentRefTypoHint(value)
+  );
+}
+
+/**
+ * Shared "the linked project ref is invalid" message, produced when
+ * {@link legacyResolveLinkedParentRef} reports `"invalid"` for a non-ref-shaped
+ * `--project-ref`/positional value. Used by both `link` and `config diff`
+ * (Hoist Before You Duplicate — ≥2 commands across families).
+ */
+export function legacyParentRefInvalidMessage(value: string): string {
+  return `Cannot resolve branch "${value}": the linked project ref is invalid (checked SUPABASE_PROJECT_ID, supabase/.temp/linked-project.json, supabase/.temp/project-ref). Relink the parent project first: supabase link --project-ref <parent-ref>`;
+}

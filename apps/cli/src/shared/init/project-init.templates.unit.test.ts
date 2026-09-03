@@ -2,6 +2,7 @@ import { readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
+import { applyConfigEdits, type ConfigEdit } from "@supabase/config/internal";
 import {
   INIT_GITIGNORE_TEMPLATE,
   INTELLIJ_DENO_TEMPLATE,
@@ -116,5 +117,126 @@ describe("project init templates", () => {
 
   it("matches the Go IntelliJ scaffold", () => {
     expect(INTELLIJ_DENO_TEMPLATE).toBe(readVendoredTemplate("idea-deno.xml"));
+  });
+});
+
+// ---------------------------------------------------------------------------
+// `config pull` (CLI-2064) surgical-editor round trip: `applyConfigEdits` (`@supabase/config`)
+// must edit the scaffold this module renders exactly as intended, and nothing else — line-level
+// diffing is what actually proves that, rather than trusting the editor's own report of what it
+// touched.
+// ---------------------------------------------------------------------------
+
+interface DiffOp {
+  readonly kind: "equal" | "removed" | "added";
+  readonly line: string;
+}
+
+function computeLcsLengths(
+  a: ReadonlyArray<string>,
+  b: ReadonlyArray<string>,
+): Array<Array<number>> {
+  const dp: Array<Array<number>> = Array.from({ length: a.length + 1 }, () =>
+    Array.from({ length: b.length + 1 }, () => 0),
+  );
+  for (let i = a.length - 1; i >= 0; i--) {
+    for (let j = b.length - 1; j >= 0; j--) {
+      const diag = dp[i + 1]?.[j + 1] ?? 0;
+      const down = dp[i + 1]?.[j] ?? 0;
+      const right = dp[i]?.[j + 1] ?? 0;
+      const row = dp[i];
+      if (row !== undefined) {
+        row[j] = a[i] === b[j] ? diag + 1 : Math.max(down, right);
+      }
+    }
+  }
+  return dp;
+}
+
+/** Line-level Myers-style diff (LCS-backed): every line of `a` and `b` is classified as
+ * `equal`, `removed` (only in `a`), or `added` (only in `b`), in document order. */
+function diffLines(a: ReadonlyArray<string>, b: ReadonlyArray<string>): ReadonlyArray<DiffOp> {
+  const dp = computeLcsLengths(a, b);
+  const ops: Array<DiffOp> = [];
+  let i = 0;
+  let j = 0;
+  while (i < a.length && j < b.length) {
+    const lineA = a[i];
+    const lineB = b[j];
+    if (lineA !== undefined && lineB !== undefined && lineA === lineB) {
+      ops.push({ kind: "equal", line: lineA });
+      i++;
+      j++;
+      continue;
+    }
+    const down = dp[i + 1]?.[j] ?? 0;
+    const right = dp[i]?.[j + 1] ?? 0;
+    if (down >= right) {
+      ops.push({ kind: "removed", line: lineA ?? "" });
+      i++;
+    } else {
+      ops.push({ kind: "added", line: lineB ?? "" });
+      j++;
+    }
+  }
+  while (i < a.length) {
+    ops.push({ kind: "removed", line: a[i] ?? "" });
+    i++;
+  }
+  while (j < b.length) {
+    ops.push({ kind: "added", line: b[j] ?? "" });
+    j++;
+  }
+  return ops;
+}
+
+describe("config pull surgical editor round trip over the rendered scaffold", () => {
+  it("applies a replace, an insert into an existing table, and a new [remotes.staging] block, touching only those lines", () => {
+    const source = renderCliConfigTemplate("demo", false);
+    const edits: ReadonlyArray<ConfigEdit> = [
+      // Replace: an already-declared scalar.
+      { path: ["api", "max_rows"], value: 500 },
+      // Insert: a new key into an existing table ([realtime] only declares `enabled`; the
+      // header's own example is commented out, so this isn't already declared).
+      { path: ["realtime", "max_header_length"], value: 8192 },
+      // Insert: a brand new [remotes.staging] block, created at EOF.
+      { path: ["remotes", "staging", "project_id"], value: "bbbbbbbbbbbbbbbbbbbb" },
+    ];
+
+    const outcome = applyConfigEdits(source, "toml", edits);
+    if (outcome.kind !== "applied") {
+      throw new Error(
+        `expected the edits to apply, got a refusal: ${JSON.stringify(outcome.refusal)}`,
+      );
+    }
+
+    const ops = diffLines(source.split("\n"), outcome.text.split("\n"));
+    // The trailing blank line the block insertion adds can be aligned by the LCS against the
+    // file's pre-existing final blank, so blank lines are excluded here; their exact placement
+    // is pinned byte-for-byte by the tail assertion below instead.
+    const changed = ops.filter((op) => op.kind !== "equal" && op.line !== "");
+
+    expect(changed).toEqual([
+      { kind: "removed", line: "max_rows = 1000" },
+      { kind: "added", line: "max_rows = 500" },
+      { kind: "added", line: "max_header_length = 8192" },
+      { kind: "added", line: "[remotes.staging]" },
+      { kind: "added", line: 'project_id = "bbbbbbbbbbbbbbbbbbbb"' },
+    ]);
+    expect(
+      outcome.text.endsWith('\n\n[remotes.staging]\nproject_id = "bbbbbbbbbbbbbbbbbbbb"\n'),
+    ).toBe(true);
+    expect(
+      outcome.text.endsWith('\n\n\n[remotes.staging]\nproject_id = "bbbbbbbbbbbbbbbbbbbb"\n'),
+    ).toBe(false);
+    expect(outcome.applied).toEqual([
+      { path: ["api", "max_rows"], action: "replaced", createdTables: [] },
+      { path: ["realtime", "max_header_length"], action: "inserted", createdTables: [] },
+      {
+        path: ["remotes", "staging", "project_id"],
+        action: "inserted",
+        createdTables: [["remotes", "staging"]],
+      },
+    ]);
   });
 });
