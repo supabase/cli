@@ -182,14 +182,14 @@ describe("managed stack handles", { timeout: 30_000 }, () => {
           endpoint: controlEndpointFor(stack.id, runtime),
           rpcRelease: STACK_RPC_RELEASE,
         };
-        yield* fs.writeFileString(paths.controlMetadata, JSON.stringify(owner));
-        const frame = new TextEncoder().encode(
-          `${JSON.stringify({
-            ok: false,
-            code: "ownership-conflict",
-            message: "Owner metadata exists without a lease lock; refusing recovery",
-          })}\n`,
-        );
+        const ownerJson = yield* Schema.encodeEffect(Schema.fromJsonString(Schema.Unknown))(owner);
+        yield* fs.writeFileString(paths.controlMetadata, ownerJson);
+        const frameJson = yield* Schema.encodeEffect(Schema.fromJsonString(Schema.Unknown))({
+          ok: false,
+          code: "ownership-conflict",
+          message: "Owner metadata exists without a lease lock; refusing recovery",
+        });
+        const frame = new TextEncoder().encode(`${frameJson}\n`);
         const spawner = ChildProcessSpawner.make(() =>
           Effect.succeed(
             ChildProcessSpawner.makeHandle({

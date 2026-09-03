@@ -127,10 +127,10 @@ const emptyLogs = () =>
 const makeTestHandle = (id: StackId, overrides: Partial<HandleDependencies> = {}) =>
   makeHandle(id, {
     resolveOwner: () => Effect.succeed(Option.none()),
-    readOfflineState: () => Effect.succeed(Option.none()),
-    readPersistedState: () => Effect.succeed(Option.none()),
+    readOfflineState: Effect.succeed(Option.none()),
+    readPersistedState: Effect.succeed(Option.none()),
     readLogs: emptyLogs,
-    waitForRelease: () => Effect.void,
+    waitForRelease: Effect.void,
     prepare: () =>
       Effect.fail(new StackPreparationError({ message: "test preparation unavailable" })),
     ...overrides,
@@ -327,7 +327,7 @@ describe("Effect stack lifecycle handoff", () => {
             Ref.get(ownerAvailable).pipe(
               Effect.map((available) => (available ? Option.some(owner) : Option.none())),
             ),
-          readOfflineState: () => Effect.succeed(Option.some(stoppedState())),
+          readOfflineState: Effect.succeed(Option.some(stoppedState())),
         });
         expect((yield* stack.start()).lifecycle).toBe("running");
         const first = yield* stack.logs({ capabilities: ["auth"], tail: 1 });
@@ -444,8 +444,8 @@ describe("Effect stack lifecycle handoff", () => {
         const burst = entries.slice(1);
         const stack = yield* makeTestHandle(stackId, {
           resolveOwner: () => Effect.succeed(Option.none()),
-          readPersistedState: () => Effect.succeed(Option.some(stoppedState())),
-          readOfflineState: () => Effect.succeed(Option.none()),
+          readPersistedState: Effect.succeed(Option.some(stoppedState())),
+          readOfflineState: Effect.succeed(Option.none()),
           readLogs: (query?: LogQuery) =>
             Ref.getAndUpdate(calls, (current) => current + 1).pipe(
               Effect.map((index) => {
@@ -522,7 +522,7 @@ describe("Effect stack lifecycle handoff", () => {
         });
         const stack = yield* makeTestHandle(stackId, {
           resolveOwner: () => Effect.succeed(Option.none()),
-          readOfflineState: () => Effect.fail(ownership),
+          readOfflineState: Effect.fail(ownership),
           readLogs: () => Effect.fail(ownership),
         });
         const status = yield* stack.status().pipe(Effect.exit);
@@ -551,10 +551,9 @@ describe("Effect stack lifecycle handoff", () => {
               ownerReads += 1;
               return ownerReads === 1 ? Option.some(owner) : Option.none();
             }),
-          readOfflineState: () =>
-            Effect.fail(
-              new StackOwnershipConflictError({ message: "Owner metadata still exists" }),
-            ),
+          readOfflineState: Effect.fail(
+            new StackOwnershipConflictError({ message: "Owner metadata still exists" }),
+          ),
         });
         const result = yield* stack.status().pipe(Effect.exit);
         expect(Exit.isFailure(result)).toBe(true);
@@ -576,7 +575,7 @@ describe("Effect stack lifecycle handoff", () => {
         });
         const stack = yield* makeTestHandle(stackId, {
           resolveOwner: () => Effect.succeed(Option.none()),
-          readPersistedState: () => Effect.succeed(Option.some(stoppedState())),
+          readPersistedState: Effect.succeed(Option.some(stoppedState())),
           readLogs: () =>
             Ref.getAndUpdate(attempts, (current) => current + 1).pipe(
               Effect.flatMap((attempt) =>

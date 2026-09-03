@@ -60,7 +60,7 @@ export type ContainerLabels =
   | ContainerWorkloadLabels
   | ContainerVolumeLabels;
 
-export const CONTAINER_LABEL_PREFIX = "com.supabase.stack";
+const CONTAINER_LABEL_PREFIX = "com.supabase.stack";
 export const CONTAINER_LABEL_KEYS = {
   stackId: `${CONTAINER_LABEL_PREFIX}.stackId`,
   ownerSessionId: `${CONTAINER_LABEL_PREFIX}.ownerSessionId`,

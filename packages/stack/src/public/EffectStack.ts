@@ -285,10 +285,10 @@ export interface HandleDependencies {
   readonly resolveOwner: (
     launch: boolean,
   ) => Effect.Effect<Option.Option<OwnerMetadata>, StackError>;
-  readonly readOfflineState: () => Effect.Effect<Option.Option<PersistedStackState>, StackError>;
-  readonly readPersistedState: () => Effect.Effect<Option.Option<PersistedStackState>, StackError>;
+  readonly readOfflineState: Effect.Effect<Option.Option<PersistedStackState>, StackError>;
+  readonly readPersistedState: Effect.Effect<Option.Option<PersistedStackState>, StackError>;
   readonly readLogs: (query?: LogQuery) => Effect.Effect<StackLogBatch, StackLogsError>;
-  readonly waitForRelease: () => Effect.Effect<void, StackStopError>;
+  readonly waitForRelease: Effect.Effect<void, StackStopError>;
   readonly prepare: (
     options?: PrepareStackOptions,
   ) => Effect.Effect<PrepareStackResult, PrepareStackError>;
@@ -413,7 +413,7 @@ export const makeHandle = (id: StackId, options: HandleDependencies): Effect.Eff
       const rpcStatus = invoke((rpc) => rpc.status(undefined), statusError);
       return rpcStatus.pipe(
         Effect.catchTag("StackOwnershipConflictError", (ownershipError) =>
-          options.readOfflineState().pipe(
+          options.readOfflineState.pipe(
             Effect.mapError(statusError),
             Effect.flatMap((state) =>
               Option.isNone(state)
@@ -441,10 +441,10 @@ export const makeHandle = (id: StackId, options: HandleDependencies): Effect.Eff
         true,
       ).pipe(
         Effect.tapError(() =>
-          options.readPersistedState().pipe(
+          options.readPersistedState.pipe(
             Effect.flatMap((state) =>
               Option.isSome(state) && isStoppedState(state.value)
-                ? options.waitForRelease().pipe(Effect.ignore)
+                ? options.waitForRelease.pipe(Effect.ignore)
                 : Effect.void,
             ),
             Effect.ignore,
@@ -482,14 +482,14 @@ export const makeHandle = (id: StackId, options: HandleDependencies): Effect.Eff
           return yield* new StackLifecycleConflictError({ message: response.value.error.message });
         }
         yield* Fiber.join(closeFiber).pipe(Effect.ignore);
-        yield* options.waitForRelease();
+        yield* options.waitForRelease;
       }).pipe(Effect.mapError(stopError));
     const stop = () =>
       resolveClient(false).pipe(
         Effect.mapError(stopError),
         Effect.flatMap(stopOwner),
         Effect.catchTag("StackOwnershipConflictError", () =>
-          options.readOfflineState().pipe(
+          options.readOfflineState.pipe(
             Effect.mapError(stopError),
             Effect.flatMap((state) =>
               Option.isSome(state) && isStoppedState(state.value)
@@ -511,7 +511,7 @@ export const makeHandle = (id: StackId, options: HandleDependencies): Effect.Eff
     const logs = (query?: LogQuery): Effect.Effect<StackLogBatch, StackLogsError> =>
       invoke((rpc) => rpc.logs(query ?? {}), logsError).pipe(
         Effect.catchTag("StackOwnershipConflictError", (ownershipError) => {
-          const ownerStopped = options.readPersistedState().pipe(Effect.mapError(logsStateError));
+          const ownerStopped = options.readPersistedState.pipe(Effect.mapError(logsStateError));
           return ownerStopped.pipe(
             Effect.flatMap((state) => {
               if (Option.isNone(state)) return Effect.fail(stackNotFound());
@@ -656,13 +656,11 @@ const handleDependencies = (options: {
             ),
       ),
     );
-  const readOfflineState = () =>
-    ensureOffline().pipe(
-      Effect.andThen(provide(options.store.read(options.id))),
-      Effect.map(optionOf),
-    );
-  const readPersistedState = () =>
-    provide(options.store.read(options.id)).pipe(Effect.map(optionOf));
+  const readOfflineState = ensureOffline().pipe(
+    Effect.andThen(provide(options.store.read(options.id))),
+    Effect.map(optionOf),
+  );
+  const readPersistedState = provide(options.store.read(options.id)).pipe(Effect.map(optionOf));
   const directPrepareError = (cause: unknown): PrepareStackError => {
     if (isStackError(cause) && isNarrowError(cause, PREPARE_STACK_ERROR_TAGS)) return cause;
     return new StackPreparationError({
@@ -798,29 +796,25 @@ const handleDependencies = (options: {
           : new StackStateInvalidError({ message: error.message, cause: error }),
       ),
     );
-  const waitForRelease = () =>
-    Effect.gen(function* () {
-      if (
-        (yield* readOwnerMetadata(
-          options.environment.stateRoot,
-          options.id,
-          options.environment,
-        )) !== undefined
-      )
-        return yield* new StackOwnershipConflictError({
-          message: "Supervisor is still shutting down",
-        });
-      if (yield* ownerLockExists(options.environment.stateRoot, options.id))
-        return yield* new StackOwnershipConflictError({
-          message: "Supervisor ownership lease is still held",
-        });
-    }).pipe(
-      Effect.retry(Schedule.spaced("25 millis").pipe(Schedule.upTo({ times: 200 }))),
-      Effect.mapError((error) => new StackOwnershipConflictError({ message: error.message })),
-      Effect.provideService(FileSystem.FileSystem, options.fileSystem),
-      Effect.provideService(Path.Path, options.path),
-      Effect.provideService(Crypto.Crypto, options.crypto),
-    );
+  const waitForRelease = Effect.gen(function* () {
+    if (
+      (yield* readOwnerMetadata(options.environment.stateRoot, options.id, options.environment)) !==
+      undefined
+    )
+      return yield* new StackOwnershipConflictError({
+        message: "Supervisor is still shutting down",
+      });
+    if (yield* ownerLockExists(options.environment.stateRoot, options.id))
+      return yield* new StackOwnershipConflictError({
+        message: "Supervisor ownership lease is still held",
+      });
+  }).pipe(
+    Effect.retry(Schedule.spaced("25 millis").pipe(Schedule.upTo({ times: 200 }))),
+    Effect.mapError((error) => new StackOwnershipConflictError({ message: error.message })),
+    Effect.provideService(FileSystem.FileSystem, options.fileSystem),
+    Effect.provideService(Path.Path, options.path),
+    Effect.provideService(Crypto.Crypto, options.crypto),
+  );
   return {
     resolveOwner,
     readOfflineState,
