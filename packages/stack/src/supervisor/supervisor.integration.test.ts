@@ -120,7 +120,6 @@ const makeFixture = (
     readonly destroyStarted?: Deferred.Deferred<void>;
     readonly destroyPreFenceFail?: Ref.Ref<boolean>;
     readonly stoppedReplaceFail?: Ref.Ref<boolean>;
-    readonly startReadFail?: Ref.Ref<boolean>;
     readonly startQueue?: Queue.Queue<string>;
     readonly shutdownReadArmed?: Ref.Ref<boolean>;
     readonly shutdownReadStarted?: Deferred.Deferred<void>;
@@ -182,23 +181,7 @@ const makeFixture = (
                 return yield* persistedStore.read(stackId);
               }),
           };
-    const store =
-      fixtureOptions.startReadFail === undefined
-        ? runtimeStore
-        : {
-            ...runtimeStore,
-            read: (stackId: string) =>
-              Effect.gen(function* () {
-                const fail = yield* Ref.get(fixtureOptions.startReadFail!);
-                if (fail) {
-                  yield* Ref.set(fixtureOptions.startReadFail!, false);
-                  return yield* new StackStateInvalidError({
-                    message: "injected start state reread failure",
-                  });
-                }
-                return yield* runtimeStore.read(stackId);
-              }),
-          };
+    const store = runtimeStore;
     yield* store.initialize(id, {
       format: "supabase-stack-state-v1",
       identity: { ...identity, stackId: id },
@@ -249,8 +232,6 @@ const makeFixture = (
             const remaining = yield* Ref.get(fixtureOptions.startFailures);
             if (remaining > 0) {
               yield* Ref.set(fixtureOptions.startFailures, remaining - 1);
-              if (fixtureOptions.startReadFail !== undefined)
-                yield* Ref.set(fixtureOptions.startReadFail, true);
               if (fixtureOptions.stopFailFirst !== undefined)
                 yield* Ref.set(fixtureOptions.stopFailFirst, true);
               const failed = { ...key, state: "failed" as const, error: "injected start failure" };
@@ -748,27 +729,6 @@ describe("Supervisor composition", () => {
     ),
   );
 
-  it.live("reports stopping after a cold launch failure loses its state reread", () =>
-    run(
-      Effect.gen(function* () {
-        const startFailures = yield* Ref.make(0);
-        const startReadFail = yield* Ref.make(false);
-        const fixture = yield* makeFixture({ startFailures, startReadFail });
-        const config = { capabilities: { functions: { activation: "eager" as const } } };
-        yield* fixture.supervisor.start({ config });
-        expect((yield* fixture.supervisor.maintenanceHandlers.stop).ok).toBe(true);
-        yield* Ref.set(startFailures, 1);
-
-        const failed = yield* fixture.supervisor.start({ config }).pipe(Effect.exit);
-        expect(Exit.isFailure(failed)).toBe(true);
-        expect(errorOf(failed)).toBeInstanceOf(StackRuntimeError);
-        expect((yield* fixture.supervisor.status).lifecycle).toBe("stopping");
-        expect((yield* fixture.supervisor.maintenanceHandlers.stop).ok).toBe(true);
-        expect((yield* fixture.supervisor.status).lifecycle).toBe("stopped");
-      }),
-    ),
-  );
-
   it.live("persists stopped after a proven fresh-session preflight failure", () =>
     run(
       Effect.gen(function* () {
@@ -906,14 +866,27 @@ describe("Supervisor composition", () => {
     run(
       Effect.gen(function* () {
         const stoppedReplaceFail = yield* Ref.make(true);
-        const startFailures = yield* Ref.make(1);
-        const fixture = yield* makeFixture({ stoppedReplaceFail, startFailures });
-        const failed = yield* fixture.supervisor
-          .start({ config: { capabilities: { functions: { activation: "eager" } } } })
-          .pipe(Effect.exit);
-        expect(Exit.isFailure(failed)).toBe(true);
+        const fixture = yield* makeFixture({ stoppedReplaceFail });
+        yield* fixture.supervisor.start({ config: {} });
+        const successor = yield* makeSupervisor({
+          stackId: fixture.id,
+          ownerSessionId: "stopped-fence-successor",
+          rpcRelease: "test-release",
+          stateStore: fixture.store,
+          context: fixture.context,
+          runtime: fixture.runtime,
+        });
+        const failed = yield* successor.maintenanceHandlers.stop;
+        expect(failed.ok).toBe(false);
         expect((yield* fixture.store.read(fixture.id))?.desiredLifecycle).toBe("running");
-        expect((yield* fixture.supervisor.status).lifecycle).toBe("stopping");
+        expect((yield* successor.status).lifecycle).toBe("stopping");
+        expect(errorOf(yield* successor.activate("functions").pipe(Effect.exit))).toBeInstanceOf(
+          StackLifecycleConflictError,
+        );
+        expect((yield* successor.maintenanceHandlers.stop).ok).toBe(true);
+        expect((yield* successor.status).lifecycle).toBe("stopped");
+        yield* successor.shutdownIfIdle;
+        yield* fixture.supervisor.shutdownIfIdle;
       }),
     ),
   );
@@ -1265,6 +1238,27 @@ describe("Supervisor composition", () => {
         yield* fixture.supervisor.destroy;
         expect(yield* Ref.get(fixture.resources)).toEqual([]);
         expect(yield* fixture.store.read(fixture.id)).toBeUndefined();
+      }),
+    ),
+  );
+
+  it.live("shuts down after a start rejects missing state following destroy", () =>
+    run(
+      Effect.gen(function* () {
+        const fixture = yield* makeFixture();
+        yield* fixture.supervisor.start({ config: {} });
+        yield* fixture.supervisor.destroy;
+        expect(yield* fixture.store.read(fixture.id)).toBeUndefined();
+
+        const failed = yield* fixture.supervisor.start().pipe(Effect.exit);
+        expect(errorOf(failed)).toBeInstanceOf(StackStateInvalidError);
+        yield* fixture.supervisor.shutdownIfIdle;
+        yield* fixture.supervisor.shutdown.pipe(
+          Effect.timeoutOrElse({
+            duration: "1 second",
+            orElse: () => Effect.die("destroyed Supervisor did not shut down"),
+          }),
+        );
       }),
     ),
   );

@@ -214,7 +214,7 @@ export const makeSupervisor = (
         if (state?.desiredLifecycle === "destroying") next = "destroying";
         else if (state?.desiredLifecycle === "running") {
           if (currentPhase === "running" || previous === "running") next = "running";
-          else next = "starting";
+          else next = "stopping";
         }
         yield* Ref.set(phase, next);
       });
@@ -592,8 +592,8 @@ export const makeSupervisor = (
             const canReportStopped =
               (yield* Ref.get(cleanupProven)) &&
               Exit.isSuccess(durable) &&
-              durable.value !== undefined &&
-              (durable.value.desiredLifecycle === "stopped" ||
+              (durable.value === undefined ||
+                durable.value.desiredLifecycle === "stopped" ||
                 durable.value.desiredLifecycle === "unconfigured");
             yield* Ref.set(phase, canReportStopped ? "stopped" : "stopping");
           } else yield* restorePhase(previous);

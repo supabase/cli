@@ -333,13 +333,7 @@ export const makeContainerRuntime = (
         Effect.mapError((error) =>
           toDriverError(resource.key, toContainerEngineError(options.engine.kind, error)),
         ),
-        Effect.catch((error) =>
-          reportFailure(
-            resource,
-            error,
-            `Container log stream failed for ${resource.key.workloadId}`,
-          ),
-        ),
+        Effect.catch((error) => reportFailure(resource, error)),
       );
       return Effect.gen(function* () {
         resource.logFiber = yield* Effect.forkIn(consume, runtimeScope);

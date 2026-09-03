@@ -499,6 +499,40 @@ describe("container runtime", () => {
     }),
   );
 
+  it.live("preserves the container engine cause when startup wait fails", () =>
+    Effect.gen(function* () {
+      const state: FakeContainerState = {
+        resources: [],
+        imagePresent: true,
+        calls: [],
+        createdSpecs: [],
+        nextId: 1,
+      };
+      const protocol = new ContainerEngineProtocolError({
+        operation: "wait-container",
+        message: "wait endpoint failed",
+      });
+      const base = fakeContainerEngine(state);
+      const runtime = yield* makeContainerRuntime({
+        engine: {
+          ...base,
+          waitContainer: () => Effect.fail(protocol),
+        },
+        ownerSessionId: "owner-session",
+        resolveWorkload: () =>
+          Effect.succeed({
+            startup: [{ entrypoint: "/usr/local/bin/auth", command: ["migrate"] }],
+          }),
+      });
+
+      const result = yield* runtime.start(key, workload()).pipe(Effect.exit);
+      expect(Exit.isFailure(result)).toBe(true);
+      const error = errorOf(result);
+      expect(error).toBeInstanceOf(RuntimeDriverError);
+      expect(error?.cause).toBeInstanceOf(ContainerEngineError);
+    }),
+  );
+
   it.live("publishes an unexpected container workload exit after readiness", () =>
     Effect.gen(function* () {
       const state: FakeContainerState = {
@@ -2298,6 +2332,7 @@ describe("container runtime", () => {
             expect(failure.value.message).toContain("follower disconnected before readiness");
           }
         }
+        expect((yield* supervisor.status).lifecycle).toBe("stopped");
         yield* supervisor.shutdownIfIdle;
         yield* supervisor.shutdown;
       }),
