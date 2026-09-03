@@ -12,6 +12,7 @@
     "test:unit": "pnpm exec turbo run test:unit:run --filter=!@supabase/cli-go --",
     "test:integration": "pnpm exec turbo run test:integration:run --",
     "test:e2e": "pnpm exec turbo run supabase#build && pnpm exec turbo run test:e2e:run --only --concurrency=1 --",
+    "test:vitest": "bun --bun vitest run --project '!supabase (live)'",
     "check:all": "pnpm exec turbo run types:check lint:check fmt:check knip:check lint:effect:check",
     "fix:all": "pnpm exec turbo run lint:fix fmt:fix knip:fix && pnpm run lint:effect:fix",
     "lint:check": "oxlint --config .oxlintrc.json",
