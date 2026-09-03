@@ -27,7 +27,7 @@ import { legacyV2ProjectConfigResponse } from "../../../../../tests/helpers/lega
 import { mockRuntimeInfo, mockStdin, mockTty } from "../../../../../tests/helpers/mocks.ts";
 import { LegacyYesFlag } from "../../../../shared/legacy/global-flags.ts";
 import { commandRuntimeLayer } from "../../../../shared/runtime/command-runtime.layer.ts";
-import { legacySecretHash } from "./push.secret.ts";
+import { legacySecretDigestHex } from "./push.secret.ts";
 import { legacyConfigPush } from "./push.handler.ts";
 import { legacyConfigPushHandler } from "./push.command.ts";
 
@@ -46,7 +46,11 @@ const v2Response = legacyV2ProjectConfigResponse;
 
 /** Digest a plaintext exactly the way `legacyResolveAuthSecrets` compares against — for building a remote response whose digest matches (or deliberately mismatches) a local secret value. */
 function digestOf(plaintext: string): string {
-  return legacySecretHash(REF, plaintext, []).replace(/^hash:/, "");
+  const digest = legacySecretDigestHex(REF, plaintext, []);
+  if (digest === undefined) {
+    throw new Error("digestOf: plaintext must be non-empty and not an env() reference");
+  }
+  return digest;
 }
 
 // Shared test vector — same one `legacy-vault-decrypt.unit.test.ts` and
@@ -95,10 +99,12 @@ const POSTGREST_WRITE_RESPONSE = {
  */
 function setup(opts: {
   readonly toml: string;
-  readonly v2?: { status: number; body: unknown } | "fail";
+  readonly v2?: { status: number; body: unknown } | { status: 200; malformedJson: true } | "fail";
   readonly addons?: { status: number; body: unknown };
   readonly postgrestPatch?: { status: number; body: unknown } | "fail";
   readonly postgresPut?: { status: number; body: unknown } | "fail";
+  /** `V1UpdateStorageConfigOutput` is `Schema.Void` — the response body is never decoded, so any status/body pair proves the point. */
+  readonly storagePatch?: { status: number; body: unknown } | "fail";
   readonly format?: "text" | "json" | "stream-json";
   readonly yes?: boolean;
   readonly confirm?: ReadonlyArray<boolean>;
@@ -131,6 +137,17 @@ function setup(opts: {
         if (opts.v2 === "fail") {
           return Effect.fail(legacyTransportFailure(request));
         }
+        if (opts.v2 !== undefined && "malformedJson" in opts.v2) {
+          return Effect.succeed(
+            HttpClientResponse.fromWeb(
+              request,
+              new Response("{not valid json", {
+                status: 200,
+                headers: { "content-type": "application/json" },
+              }),
+            ),
+          );
+        }
         const v2 = opts.v2 ?? { status: 200, body: v2Response() };
         return Effect.succeed(legacyJsonResponse(request, v2.status, v2.body));
       }
@@ -148,9 +165,17 @@ function setup(opts: {
         const p = opts.postgresPut ?? { status: 200, body: {} };
         return Effect.succeed(legacyJsonResponse(request, p.status, p.body));
       }
-      // Anything else (auth/storage/network-restrictions/ssl/webhooks) —
-      // succeed with an empty body; scenarios that write to a gated service
-      // use `setupService()` below instead.
+      if (url.includes("/config/storage")) {
+        if (opts.storagePatch === "fail") {
+          return Effect.fail(legacyTransportFailure(request));
+        }
+        const p = opts.storagePatch ?? { status: 200, body: {} };
+        return Effect.succeed(legacyJsonResponse(request, p.status, p.body));
+      }
+      // Anything else (auth/network-restrictions/ssl/webhooks) — succeed
+      // with an empty body; scenarios that write to one of those use
+      // `setupService()` below instead (their typed responses have too many
+      // required fields to hand-author).
       return Effect.succeed(legacyJsonResponse(request, 200, {}));
     },
   });
@@ -178,22 +203,15 @@ function setup(opts: {
 
 describe("legacy config push integration", () => {
   it.live("pushes local config (text) and surfaces a PATCH failure", () => {
-    // TODO(impl): push.encoders.ts:264-271 (`legacyEncodeApiBody`) always
-    // returns all three body keys (`db_schema`/`db_extra_search_path`/
-    // `max_rows`), leaving unchanged ones explicitly `undefined` rather than
-    // omitting them. The real typed client's input schema (all three are
-    // `Schema.optionalKey` on `V1UpdatePostgrestServiceConfigInput`,
-    // contracts.ts:9372-9374) requires the key to be genuinely absent, not
-    // present-with-`undefined` — `Schema.decodeUnknownEffect` rejects it
-    // (`SupabaseApiInputError: Expected string at ["db_extra_search_path"]`).
-    // A real `config push` therefore crashes whenever fewer than all three
-    // api keys change. Routed through the service mock (bypasses that
-    // client-side validation) so this test still exercises the intended
-    // failure-mapping behavior instead of tripping the encoder bug.
-    const { layer, out } = setupService({
+    // Regression test for the encoder's sparse body: `legacyEncodeApiBody`
+    // omits every unchanged key entirely (no `undefined`-valued keys), so
+    // this now goes through the REAL typed client — a body carrying only
+    // `max_rows` must still clear `V1UpdatePostgrestServiceConfigInput`'s
+    // schema before the mocked 500 status is even reached.
+    const { layer, out } = setup({
       toml: `project_id = "test"\n[api]\nmax_rows = 2000\n`,
       yes: true,
-      v1: { updatePostgrestServiceConfig: () => Effect.fail(legacyStatusCodeFailure(500)) },
+      postgrestPatch: { status: 500, body: { message: "boom" } },
     });
     return Effect.gen(function* () {
       const exit = yield* legacyConfigPush({ projectRef: Option.none() }).pipe(Effect.exit);
@@ -205,10 +223,10 @@ describe("legacy config push integration", () => {
   });
 
   it.live("an api update transport failure maps to the network error", () => {
-    const { layer } = setupService({
+    const { layer } = setup({
       toml: `project_id = "test"\n[api]\nmax_rows = 2000\n`,
       yes: true,
-      v1: { updatePostgrestServiceConfig: () => Effect.fail(new Error("ECONNRESET")) },
+      postgrestPatch: "fail",
     });
     return Effect.gen(function* () {
       const exit = yield* legacyConfigPush({ projectRef: Option.none() }).pipe(Effect.exit);
@@ -227,10 +245,7 @@ describe("legacy config push integration", () => {
   });
 
   it.live("merges a matching [remotes.*] block over the base and pushes it", () => {
-    // Routed through the service mock — see the TODO(impl) note on the first
-    // test in this describe block (the api encoder always emits a fixed
-    // 3-key body; here only `schemas`/`db_schema` genuinely changes).
-    const { layer, out, apiMock } = setupService({
+    const { layer, out, api } = setup({
       toml: `project_id = "test"
 [api]
 enabled = true
@@ -251,7 +266,6 @@ schemas = ["public", "remote_schema"]
           }),
         }),
       },
-      v1: { updatePostgrestServiceConfig: () => Effect.succeed({}) },
     });
     return Effect.gen(function* () {
       yield* legacyConfigPush({ projectRef: Option.none() });
@@ -259,9 +273,9 @@ schemas = ["public", "remote_schema"]
       expect(out.stderrText.indexOf("Loading config override: [remotes.staging]")).toBeLessThan(
         out.stderrText.indexOf("Pushing config to project:"),
       );
-      const update = apiMock.requests.find((r) => r.method === "updatePostgrestServiceConfig");
+      const update = api.requests.find((r) => r.method === "PATCH" && r.url.includes("/postgrest"));
       expect(update).toBeDefined();
-      expect(update?.input).toMatchObject({ db_schema: "public,remote_schema" });
+      expect(update?.body).toMatchObject({ db_schema: "public,remote_schema" });
     }).pipe(Effect.provide(layer));
   });
 
@@ -306,6 +320,11 @@ max_rows = 1000
     });
     return Effect.gen(function* () {
       yield* legacyConfigPush({ projectRef: Option.none() });
+      // D13: the scope line prints on every run, not just when a block is
+      // missing (family consistency with `config diff`/`config pull`).
+      expect(out.stderrText).toContain(
+        "Comparison scope: api, auth, database, pooler, realtime, storage",
+      );
       expect(out.stderrText).toContain("Remote API config is up to date.");
       expect(api.requests.some((r) => r.method === "PATCH" && r.url.includes("/postgrest"))).toBe(
         false,
@@ -328,16 +347,15 @@ max_rows = 1000
   });
 
   // The next several tests exercise prompt/env-resolution behavior, not api
-  // body sparseness, but still perform a real api write — routed through the
-  // service mock for the same reason as the first test in this describe
-  // block (see its TODO(impl) note).
-  const promptTestApiStub = { updatePostgrestServiceConfig: () => Effect.succeed({}) };
+  // body sparseness, but perform a real api write through the REAL typed
+  // client (`setup()`) — the encoder's sparse body must clear
+  // `V1UpdatePostgrestServiceConfigInput`'s schema on every one of these
+  // paths, not just the happy-path test above.
 
   it.live("auto-confirms with --yes (echoes the prompt)", () => {
-    const { layer, out } = setupService({
+    const { layer, out } = setup({
       toml: `project_id = "test"\n[api]\nmax_rows = 2000\n`,
       yes: true,
-      v1: promptTestApiStub,
     });
     return Effect.gen(function* () {
       yield* legacyConfigPush({ projectRef: Option.none() });
@@ -346,28 +364,30 @@ max_rows = 1000
   });
 
   it.live("defaults to yes on empty non-TTY stdin, echoing the prompt", () => {
-    const { layer, apiMock, out } = setupService({
+    const { layer, api, out } = setup({
       toml: `project_id = "test"\n[api]\nmax_rows = 2000\n`,
       stdinIsTty: false,
-      v1: promptTestApiStub,
     });
     return Effect.gen(function* () {
       yield* legacyConfigPush({ projectRef: Option.none() });
-      expect(methodsOf(apiMock)).toContain("updatePostgrestServiceConfig");
+      expect(api.requests.some((r) => r.method === "PATCH" && r.url.includes("/postgrest"))).toBe(
+        true,
+      );
       expect(out.stderrText).toContain("Do you want to push api config to remote? [Y/n] \n");
     }).pipe(Effect.provide(layer));
   });
 
   it.live("honors a piped 'n' decline on non-TTY stdin (no update)", () => {
-    const { layer, apiMock, out } = setupService({
+    const { layer, api, out } = setup({
       toml: `project_id = "test"\n[api]\nmax_rows = 2000\n`,
       stdinIsTty: false,
       pipedAnswers: ["n"],
-      v1: promptTestApiStub,
     });
     return Effect.gen(function* () {
       yield* legacyConfigPush({ projectRef: Option.none() });
-      expect(methodsOf(apiMock)).not.toContain("updatePostgrestServiceConfig");
+      expect(api.requests.some((r) => r.method === "PATCH" && r.url.includes("/postgrest"))).toBe(
+        false,
+      );
       expect(out.stderrText).toContain("Do you want to push api config to remote? [Y/n] n");
     }).pipe(Effect.provide(layer));
   });
@@ -375,16 +395,17 @@ max_rows = 1000
   it.live("honors SUPABASE_YES from supabase/.env even against a piped 'n'", () => {
     const prev = process.env["SUPABASE_YES"];
     delete process.env["SUPABASE_YES"];
-    const { layer, apiMock } = setupService({
+    const { layer, api } = setup({
       toml: `project_id = "test"\n[api]\nmax_rows = 2000\n`,
       stdinIsTty: false,
       pipedAnswers: ["n"],
-      v1: promptTestApiStub,
     });
     writeFileSync(join(tempRoot.current, "supabase", ".env"), "SUPABASE_YES=true\n");
     return Effect.gen(function* () {
       yield* legacyConfigPush({ projectRef: Option.none() });
-      expect(methodsOf(apiMock)).toContain("updatePostgrestServiceConfig");
+      expect(api.requests.some((r) => r.method === "PATCH" && r.url.includes("/postgrest"))).toBe(
+        true,
+      );
     }).pipe(
       Effect.ensuring(
         Effect.sync(() => {
@@ -401,15 +422,16 @@ max_rows = 1000
     // (never written to supabase/.env) auto-confirms too.
     const prev = process.env["SUPABASE_YES"];
     process.env["SUPABASE_YES"] = "true";
-    const { layer, apiMock } = setupService({
+    const { layer, api } = setup({
       toml: `project_id = "test"\n[api]\nmax_rows = 2000\n`,
       stdinIsTty: false,
       pipedAnswers: ["n"],
-      v1: promptTestApiStub,
     });
     return Effect.gen(function* () {
       yield* legacyConfigPush({ projectRef: Option.none() });
-      expect(methodsOf(apiMock)).toContain("updatePostgrestServiceConfig");
+      expect(api.requests.some((r) => r.method === "PATCH" && r.url.includes("/postgrest"))).toBe(
+        true,
+      );
     }).pipe(
       Effect.ensuring(
         Effect.sync(() => {
@@ -426,17 +448,18 @@ max_rows = 1000
     delete process.env["SUPABASE_YES"];
     const sub = join(tempRoot.current, "nested", "dir");
     mkdirSync(sub, { recursive: true });
-    const { layer, apiMock } = setupService({
+    const { layer, api } = setup({
       toml: `project_id = "test"\n[api]\nmax_rows = 2000\n`,
       stdinIsTty: false,
       pipedAnswers: ["n"],
       workdir: sub,
-      v1: promptTestApiStub,
     });
     writeFileSync(join(tempRoot.current, "supabase", ".env"), "SUPABASE_YES=true\n");
     return Effect.gen(function* () {
       yield* legacyConfigPush({ projectRef: Option.none() });
-      expect(methodsOf(apiMock)).toContain("updatePostgrestServiceConfig");
+      expect(api.requests.some((r) => r.method === "PATCH" && r.url.includes("/postgrest"))).toBe(
+        true,
+      );
     }).pipe(
       Effect.ensuring(
         Effect.sync(() => {
@@ -449,16 +472,16 @@ max_rows = 1000
   });
 
   it.live("emits a structured summary in json mode with every payload field", () => {
-    const { layer, out } = setupService({
+    const { layer, out } = setup({
       toml: `project_id = "test"\n[api]\nmax_rows = 2000\n`,
       format: "json",
-      v1: promptTestApiStub,
     });
     return Effect.gen(function* () {
       yield* legacyConfigPush({ projectRef: Option.none() });
       const success = out.messages.find((m) => m.type === "success");
       expect(success).toBeDefined();
       const data = success?.data as Record<string, unknown>;
+      expect(data["schema_version"]).toBe(1);
       expect(data["project_ref"]).toBe(REF);
       expect(data["services"]).toEqual([
         { service: "api", status: "updated", changes: [["api", "max_rows"]] },
@@ -471,7 +494,13 @@ max_rows = 1000
       ]);
       expect(data["unsupported"]).toEqual([]);
       expect(data["unmanaged"]).toEqual([]);
-      expect(data["secrets"]).toEqual({ sent: [], unchanged: [], not_sent: [] });
+      expect(data["secrets"]).toEqual({
+        sent: [],
+        unchanged: [],
+        not_set: [],
+        gated: [],
+        skipped: [],
+      });
       expect(data["remote_only"]).toBe(0);
       expect(data["scope"]).toEqual({
         present: ["api", "auth", "database", "pooler", "realtime", "storage"],
@@ -516,13 +545,10 @@ max_rows = 1000
   });
 
   it.live("sends only the changed api key, leaving an undeclared leaf hands-off", () => {
-    // TODO(impl): see the TODO(impl) note on the first test in the gated
-    // services describe block below — `legacyEncodeApiBody` always includes
-    // `max_rows`/`db_extra_search_path` in the body (as `undefined` when
-    // unrouted), which the real client's input schema rejects. Routed
-    // through the service mock so this test can still prove the sparse
-    // routing decision (only `schemas` ships) without tripping that bug.
-    const { layer, apiMock, out } = setupService({
+    // Regression test for the encoder's sparse body: only `schemas`/`db_schema`
+    // genuinely changes here, and that lone key must still clear
+    // `V1UpdatePostgrestServiceConfigInput`'s schema through the real client.
+    const { layer, api, out } = setup({
       toml: `project_id = "test"\n[api]\nschemas = ["public", "graphql_public", "custom_schema"]\n`,
       format: "json",
       v2: {
@@ -534,14 +560,12 @@ max_rows = 1000
           }),
         }),
       },
-      v1: { updatePostgrestServiceConfig: () => Effect.succeed({}) },
     });
     return Effect.gen(function* () {
       yield* legacyConfigPush({ projectRef: Option.none() });
-      const update = apiMock.requests.find((r) => r.method === "updatePostgrestServiceConfig");
+      const update = api.requests.find((r) => r.method === "PATCH" && r.url.includes("/postgrest"));
       expect(update).toBeDefined();
-      expect(update?.input).toEqual({
-        ref: REF,
+      expect(update?.body).toEqual({
         db_schema: "public,graphql_public,custom_schema",
       });
       const success = out.messages.find((m) => m.type === "success");
@@ -602,7 +626,7 @@ statement_timeout = "8s"
     return Effect.gen(function* () {
       yield* legacyConfigPush({ projectRef: Option.none() });
       expect(out.stderrText).toContain(
-        "Note: 1 declared property cannot be pushed by config push: db.pooler.pool_mode",
+        "Note: 1 declared property has no Management API field and was not pushed: db.pooler.pool_mode (change them from the dashboard).",
       );
       const success = out.messages.find((m) => m.type === "success");
       const data = success?.data as Record<string, unknown>;
@@ -671,31 +695,27 @@ statement_timeout = "8s"
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("a partial response reports every block missing and pushes nothing", () => {
+  it.live("aborts with LegacyConfigPushConfigEmptyError when the response carries no block at all (D2)", () => {
+    // Replaces the old "reports every block missing and pushes nothing"
+    // expectation: an entirely empty `attributes` means `scope.present` is
+    // empty, and per D2 the command must never silently treat that as
+    // "everything is a fresh write" — it aborts before touching any
+    // resource instead.
     const { layer, out, api } = setup({
       toml: `project_id = "test"\n`,
-      format: "json",
+      yes: true,
       v2: { status: 200, body: v2Response({ attributes: () => ({}) }) },
     });
     return Effect.gen(function* () {
-      yield* legacyConfigPush({ projectRef: Option.none() });
+      const exit = yield* legacyConfigPush({ projectRef: Option.none() }).pipe(Effect.exit);
+      expect(Exit.isFailure(exit)).toBe(true);
+      expect(JSON.stringify(exit)).toContain("LegacyConfigPushConfigEmptyError");
       expect(out.stderrText).toContain(
         "Comparison scope: (none) (not returned: api, auth, database, pooler, realtime, storage)",
       );
       expect(
         api.requests.some((r) => r.method === "PATCH" || r.method === "PUT" || r.method === "POST"),
       ).toBe(false);
-      const success = out.messages.find((m) => m.type === "success");
-      const data = success?.data as Record<string, unknown>;
-      expect(data["services"]).toEqual([
-        { service: "api", status: "up_to_date", changes: [] },
-        { service: "db.settings", status: "up_to_date", changes: [] },
-        { service: "db.network_restrictions", status: "disabled", changes: [] },
-        { service: "db.ssl_enforcement", status: "disabled", changes: [] },
-        { service: "auth", status: "up_to_date", changes: [] },
-        { service: "storage", status: "up_to_date", changes: [] },
-        { service: "experimental.webhooks", status: "disabled", changes: [] },
-      ]);
     }).pipe(Effect.provide(layer));
   });
 
@@ -725,7 +745,7 @@ statement_timeout = "8s"
     return Effect.gen(function* () {
       yield* legacyConfigPush({ projectRef: Option.none() });
       expect(out.stderrText).toContain(
-        "Note: 1 declared property cannot be pushed and was not compared: storage.analytics.enabled",
+        "Note: 1 declared property is not managed by config push and was not compared; run `supabase config diff` to list them.",
       );
       expect(api.requests.some((r) => r.method === "PATCH" && r.url.includes("/config/storage"))).toBe(
         false,
@@ -745,7 +765,7 @@ statement_timeout = "8s"
     return Effect.gen(function* () {
       yield* legacyConfigPush({ projectRef: Option.none() });
       expect(out.stderrText).toContain(
-        "Note: 1 declared property cannot be pushed and was not compared: auth.oauth_server.enabled",
+        "Note: 1 declared property is not managed by config push and was not compared; run `supabase config diff` to list them.",
       );
       const success = out.messages.find((m) => m.type === "success");
       const data = success?.data as Record<string, unknown>;
@@ -774,7 +794,7 @@ statement_timeout = "8s"
     return Effect.gen(function* () {
       yield* legacyConfigPush({ projectRef: Option.none() });
       expect(out.stderrText).toContain(
-        "Note: 1 remote property is not declared in supabase/config.toml and was left unchanged (run `supabase config diff` to inspect).",
+        "Note: 1 remote property is not declared in supabase/config.toml and was left unchanged (config push no longer resets undeclared properties to their defaults; run `supabase config diff` to inspect).",
       );
       expect(
         api.requests.some((r) => r.method === "PATCH" || r.method === "PUT" || r.method === "POST"),
@@ -787,12 +807,16 @@ statement_timeout = "8s"
 });
 
 // ---------------------------------------------------------------------------
-// Gated services (auth / storage / db.network_restrictions / db.ssl_enforcement
-// / experimental) and secret handling. These use the direct-service mock (no
-// response-schema validation) because the typed auth/storage write responses
-// have ~200 required fields; a raw HttpClient still serves the cost-matrix
+// Gated services (auth / db.network_restrictions / db.ssl_enforcement /
+// experimental) and secret handling. These mostly use the direct-service
+// mock (no response-schema validation) because auth's typed write response
+// has ~200 required fields (`V1UpdateAuthServiceConfigOutput`) that no test
+// should have to hand-author; a raw HttpClient still serves the cost-matrix
 // /billing/addons call, and `raw.v2GetProjectConfig` serves the effective
-// config read.
+// config read. Storage's success-path write (`V1UpdateStorageConfigOutput`
+// is `Schema.Void`) goes through the REAL client via `setup()` above instead,
+// alongside its `api`/`db.settings` siblings — only its own failure-mapping
+// test stays on the service mock, matching the other Update-error tests.
 // ---------------------------------------------------------------------------
 
 function addonsHttpLayer(body: unknown = { available_addons: [] }): Layer.Layer<HttpClient.HttpClient> {
@@ -960,7 +984,7 @@ enabled = true
 provider = "hcaptcha"
 secret = "my-plaintext-secret"
 `;
-      const { layer, apiMock } = setupService({
+      const { layer, apiMock, out } = setupService({
         toml,
         yes: true,
         v1: { updateAuthServiceConfig: () => Effect.succeed({}) },
@@ -972,6 +996,12 @@ secret = "my-plaintext-secret"
         const input = update?.input as Record<string, unknown>;
         expect(input["security_captcha_secret"]).toBe("my-plaintext-secret");
         expect(String(input["security_captcha_secret"])).not.toContain("hash:");
+        // D6: no remote digest at all renders "(set)" / "(not set)", never the plaintext.
+        // D7: every block — including the last one before the prompt — ends on a blank line.
+        expect(out.stderrText).toMatch(
+          /\n\nauth\.captcha\.secret \[secret\]\n {2}local: {2}\(set\)\n {2}remote: \(not set\)\n\n/,
+        );
+        expect(out.stderrText).toMatch(/\n\nDo you want to push auth config to remote\? \[Y\/n\] y\n/);
       }).pipe(Effect.provide(layer));
     },
   );
@@ -1101,17 +1131,21 @@ secret = "${DOTENVX_ENCRYPTED_VALUE}"
   );
 
   it.live("pushes storage when enabled and changed, with the features container absent", () => {
-    const toml = `project_id = "test"\n[storage]\nfile_size_limit = "100MiB"\n`;
-    const { layer, apiMock } = setupService({
-      toml,
+    // Regression test for the encoder's sparse body: the storage encoder
+    // omits `features` entirely here, so the sparse body must clear
+    // `V1UpdateStorageConfigInput`'s schema through the REAL client — that
+    // sparseness is the whole point of the assertion below.
+    const { layer, api } = setup({
+      toml: `project_id = "test"\n[storage]\nfile_size_limit = "100MiB"\n`,
       yes: true,
-      v1: { updateStorageConfig: () => Effect.succeed({}) },
     });
     return Effect.gen(function* () {
       yield* legacyConfigPush({ projectRef: Option.none() });
-      const update = apiMock.requests.find((r) => r.method === "updateStorageConfig");
+      const update = api.requests.find(
+        (r) => r.method === "PATCH" && r.url.includes("/config/storage"),
+      );
       expect(update).toBeDefined();
-      expect(update?.input).toEqual({ ref: REF, fileSizeLimit: 104857600 });
+      expect(update?.body).toEqual({ fileSizeLimit: 104857600 });
     }).pipe(Effect.provide(layer));
   });
 
@@ -1250,28 +1284,33 @@ allowed_cidrs_v6 = ["::1/128"]
   });
 
   it.live(
-    "a v2 response without the data envelope still diffs correctly, though the scope line under-reports it",
+    "a v2 response without the data envelope aborts (D2) even though the diff itself would tolerate it",
     () => {
       // `fromApiProjectConfig`'s own envelope-unwrapping (ADR 0019) tolerates
       // a bare-attributes response with no `data` wrapper — but
       // `push.handler.ts`'s own separate `data`/`attributes` extraction
       // (used only for the scope line and the auth-secret comparison) does
-      // not replicate that fallback, so it reports every block as "not
-      // returned" for this shape even though the diff itself still used the
-      // real values. Same duplicated-extraction pattern as `diff.handler.ts`.
+      // not replicate that fallback, so `scope.present` comes back empty for
+      // this shape even though the diff itself would have used the real
+      // values (same duplicated-extraction pattern as `diff.handler.ts`).
+      // Per D2, an empty `scope.present` is now a hard abort rather than a
+      // silent "push everything" — so this shape can never reach a write,
+      // even though the API always sends the `data` envelope in practice.
       const bareAttributes = v2Response().data.attributes;
       const { layer, out, apiMock } = setupService({
         toml: `project_id = "test"\n[api]\nmax_rows = 2000\n`,
-        format: "json",
+        yes: true,
         v2: { status: 200, body: bareAttributes },
         v1: { updatePostgrestServiceConfig: () => Effect.succeed({}) },
       });
       return Effect.gen(function* () {
-        yield* legacyConfigPush({ projectRef: Option.none() });
+        const exit = yield* legacyConfigPush({ projectRef: Option.none() }).pipe(Effect.exit);
+        expect(Exit.isFailure(exit)).toBe(true);
+        expect(JSON.stringify(exit)).toContain("LegacyConfigPushConfigEmptyError");
         expect(out.stderrText).toContain(
           "Comparison scope: (none) (not returned: api, auth, database, pooler, realtime, storage)",
         );
-        expect(methodsOf(apiMock)).toContain("updatePostgrestServiceConfig");
+        expect(methodsOf(apiMock)).not.toContain("updatePostgrestServiceConfig");
       }).pipe(Effect.provide(layer));
     },
   );
@@ -1321,7 +1360,7 @@ enabled = true
 client_id = "id"
 secret = "new-secret"
 `;
-    const { layer, apiMock } = setupService({
+    const { layer, apiMock, out } = setupService({
       toml,
       yes: true,
       v2: {
@@ -1348,6 +1387,10 @@ secret = "new-secret"
       expect(input["external_github_secret"]).toBe("new-secret");
       expect(input["security_captcha_enabled"]).toBe(true);
       expect(input["security_captcha_provider"]).toBe("hcaptcha");
+      // D6: a differing remote digest renders "(set — differs)", not a bare "(set)".
+      expect(out.stderrText).toMatch(
+        /\n\nauth\.external\.github\.secret \[secret\]\n {2}local: {2}\(set\)\n {2}remote: \(set — differs\)\n\n/,
+      );
     }).pipe(Effect.provide(layer));
   });
 
@@ -1369,12 +1412,24 @@ secret = "env(MISSING_CAPTCHA_SECRET)"
       expect(update).toBeDefined();
       const input = update?.input as Record<string, unknown>;
       expect(input["security_captcha_secret"]).toBeUndefined();
+      // D4/D6: disclosed inside the resource block, before the prompt, with
+      // the "unresolved env reference" wording — and (D7) the block still
+      // ends on a blank line even though it's the last thing this resource
+      // prints (the format-json push never echoes the prompt itself).
+      expect(out.stderrText).toContain(
+        "auth.captcha.secret [secret]\n  local:  (not set — unresolved env reference; will not be pushed)\n  remote: (not set)\n\n",
+      );
       expect(out.stderrText).toContain(
         "Note: 1 credential value was not pushed (empty or unresolved env reference): auth.captcha.secret",
       );
       const success = out.messages.find((m) => m.type === "success");
       const data = success?.data as Record<string, unknown>;
-      expect(data["secrets"]).toMatchObject({ not_sent: [["auth", "captcha", "secret"]] });
+      // D9: `not_set` (renamed from `not_sent`), and gated secrets have their own bucket.
+      expect(data["secrets"]).toMatchObject({
+        sent: [],
+        not_set: [["auth", "captcha", "secret"]],
+        gated: [],
+      });
     }).pipe(Effect.provide(layer));
   });
 
@@ -1532,6 +1587,672 @@ enroll_enabled = true
     return Effect.gen(function* () {
       const exit = yield* legacyConfigPush({ projectRef: Option.none() }).pipe(Effect.exit);
       expect(Exit.isFailure(exit)).toBe(true);
+    }).pipe(Effect.provide(layer));
+  });
+
+  it.live("a webhook enable transport failure maps to the network error", () => {
+    const toml = `${BASE_DISABLED}[experimental.webhooks]\nenabled = true\n`;
+    const { layer } = setupService({
+      toml,
+      yes: true,
+      v1: { enableDatabaseWebhook: () => Effect.fail(new Error("ECONNRESET")) },
+    });
+    return Effect.gen(function* () {
+      const exit = yield* legacyConfigPush({ projectRef: Option.none() }).pipe(Effect.exit);
+      expect(Exit.isFailure(exit)).toBe(true);
+      expect(JSON.stringify(exit)).toContain("LegacyConfigPushEnableWebhookNetworkError");
+    }).pipe(Effect.provide(layer));
+  });
+
+  it.live("db.network_restrictions reports up to date when declared arrays match the v2 block", () => {
+    const toml = `${BASE_DISABLED}[db.network_restrictions]
+enabled = true
+allowed_cidrs = ["0.0.0.0/0"]
+allowed_cidrs_v6 = ["::/0"]
+`;
+    const { layer, apiMock, out } = setupService({ toml, yes: true });
+    return Effect.gen(function* () {
+      yield* legacyConfigPush({ projectRef: Option.none() });
+      expect(out.stderrText).toContain("Remote DB Network restrictions config is up to date.");
+      expect(methodsOf(apiMock)).not.toContain("updateNetworkRestrictions");
+    }).pipe(Effect.provide(layer));
+  });
+
+  it.live("db.ssl_enforcement reports up to date when declared value matches the v2 block", () => {
+    const toml = `${BASE_DISABLED}[db.ssl_enforcement]\nenabled = false\n`;
+    const { layer, apiMock, out } = setupService({ toml, yes: true });
+    return Effect.gen(function* () {
+      yield* legacyConfigPush({ projectRef: Option.none() });
+      expect(out.stderrText).toContain("Remote DB SSL enforcement config is up to date.");
+      expect(methodsOf(apiMock)).not.toContain("updateSslEnforcementConfig");
+    }).pipe(Effect.provide(layer));
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Fix-pass scenarios (review adjudication rounds — architecture/security/DX).
+// Each test cites the decision letter(s) it exercises.
+// ---------------------------------------------------------------------------
+
+describe("legacy config push fix-pass scenarios", () => {
+  it.live(
+    "D1: an undeclared allowed_cidrs_v6 keeps the REMOTE v6 list, not a schema default",
+    () => {
+      const toml = `${BASE_DISABLED}[db.network_restrictions]
+enabled = true
+allowed_cidrs = ["9.9.9.9/32"]
+`;
+      const { layer, apiMock } = setupService({
+        toml,
+        yes: true,
+        v2: {
+          status: 200,
+          body: v2Response({
+            attributes: (a) => ({
+              ...a,
+              database: {
+                ...(a["database"] as Record<string, unknown>),
+                network_restrictions: {
+                  ...((a["database"] as Record<string, unknown>)[
+                    "network_restrictions"
+                  ] as Record<string, unknown>),
+                  allowed_cidrs: [
+                    { address: "9.9.9.8/32", type: "v4" },
+                    { address: "2001:db8::/32", type: "v6" },
+                  ],
+                },
+              },
+            }),
+          }),
+        },
+        v1: { updateNetworkRestrictions: () => Effect.succeed({}) },
+      });
+      return Effect.gen(function* () {
+        yield* legacyConfigPush({ projectRef: Option.none() });
+        const update = apiMock.requests.find((r) => r.method === "updateNetworkRestrictions");
+        expect(update).toBeDefined();
+        const input = update?.input as Record<string, unknown>;
+        expect(input["dbAllowedCidrs"]).toEqual(["9.9.9.9/32"]);
+        expect(input["dbAllowedCidrsV6"]).toEqual(["2001:db8::/32"]);
+      }).pipe(Effect.provide(layer));
+    },
+  );
+
+  it.live("D1: an undeclared storage.vector.max_indexes keeps the REMOTE value, not the schema default", () => {
+    const toml = `project_id = "test"
+[storage]
+enabled = true
+[storage.vector]
+enabled = true
+max_buckets = 20
+`;
+    const { layer, apiMock } = setupService({
+      toml,
+      yes: true,
+      v2: {
+        status: 200,
+        body: v2Response({
+          attributes: (a) => {
+            const storage = a["storage"] as Record<string, unknown>;
+            const features = storage["features"] as Record<string, unknown>;
+            return {
+              ...a,
+              storage: {
+                ...storage,
+                features: {
+                  ...features,
+                  vector_buckets: { enabled: true, max_buckets: 10, max_indexes: 7 },
+                },
+              },
+            };
+          },
+        }),
+      },
+      v1: { updateStorageConfig: () => Effect.succeed({}) },
+    });
+    return Effect.gen(function* () {
+      yield* legacyConfigPush({ projectRef: Option.none() });
+      const update = apiMock.requests.find((r) => r.method === "updateStorageConfig");
+      expect(update).toBeDefined();
+      const input = update?.input as Record<string, unknown>;
+      expect(input["features"]).toEqual({
+        vectorBuckets: { enabled: true, maxBuckets: 20, maxIndexes: 7 },
+      });
+    }).pipe(Effect.provide(layer));
+  });
+
+  it.live("D1: an undeclared external_<id>_email_optional keeps the REMOTE value", () => {
+    const toml = `project_id = "test"
+[auth.external.github]
+enabled = true
+client_id = "new-client-id"
+secret = "gh-secret"
+`;
+    const { layer, apiMock } = setupService({
+      toml,
+      yes: true,
+      v2: {
+        status: 200,
+        body: v2Response({
+          attributes: (a) => ({
+            ...a,
+            auth: {
+              ...(a["auth"] as Record<string, unknown>),
+              external_github_enabled: true,
+              external_github_client_id: "old-client-id",
+              external_github_email_optional: true,
+            },
+          }),
+        }),
+      },
+      v1: { updateAuthServiceConfig: () => Effect.succeed({}) },
+    });
+    return Effect.gen(function* () {
+      yield* legacyConfigPush({ projectRef: Option.none() });
+      const update = apiMock.requests.find((r) => r.method === "updateAuthServiceConfig");
+      expect(update).toBeDefined();
+      const input = update?.input as Record<string, unknown>;
+      expect(input["external_github_client_id"]).toBe("new-client-id");
+      expect(input["external_github_email_optional"]).toBe(true);
+    }).pipe(Effect.provide(layer));
+  });
+
+  it.live(
+    "D1: a group member the remote never reported is sent at its default and disclosed as [group-write]",
+    () => {
+      const toml = `project_id = "test"
+[storage]
+enabled = true
+[storage.vector]
+enabled = true
+max_buckets = 99
+`;
+      const { layer, apiMock, out } = setupService({
+        toml,
+        format: "json",
+        v2: {
+          status: 200,
+          body: v2Response({
+            attributes: (a) => {
+              const storage = a["storage"] as Record<string, unknown>;
+              const features = storage["features"] as Record<string, unknown>;
+              const { vector_buckets: _vectorBuckets, ...restFeatures } = features;
+              return { ...a, storage: { ...storage, features: restFeatures } };
+            },
+          }),
+        },
+        v1: { updateStorageConfig: () => Effect.succeed({}) },
+      });
+      return Effect.gen(function* () {
+        yield* legacyConfigPush({ projectRef: Option.none() });
+        const update = apiMock.requests.find((r) => r.method === "updateStorageConfig");
+        expect(update).toBeDefined();
+        const input = update?.input as Record<string, unknown>;
+        expect(input["features"]).toEqual({
+          vectorBuckets: { enabled: true, maxBuckets: 99, maxIndexes: 5 },
+        });
+        expect(out.stderrText).toContain(
+          "storage.vector.max_indexes [group-write]\n  local:  5 (schema default — not declared in config.toml)\n  remote: (not returned)\n\n",
+        );
+        expect(out.stderrText).toContain(
+          "Note: 1 undeclared property had to be sent alongside a declared change and was written at its config default: storage.vector.max_indexes",
+        );
+        const success = out.messages.find((m) => m.type === "success");
+        const data = success?.data as Record<string, unknown>;
+        expect(data["forced"]).toEqual([{ path: ["storage", "vector", "max_indexes"], value: 5 }]);
+        expect(data["remote_only"]).toBe(0);
+      }).pipe(Effect.provide(layer));
+    },
+  );
+
+  it.live(
+    "D2/S5: a missing auth block leaves auth unavailable — zero writes, no prompt, credentials withheld",
+    () => {
+      const toml = `project_id = "test"
+[auth]
+site_url = "https://example.com"
+[auth.captcha]
+enabled = true
+provider = "hcaptcha"
+secret = "super-secret"
+`;
+      const { layer, apiMock, out } = setupService({
+        toml,
+        format: "json",
+        v2: {
+          status: 200,
+          body: v2Response({
+            attributes: (a) => {
+              const { auth: _auth, ...rest } = a;
+              return rest;
+            },
+          }),
+        },
+      });
+      return Effect.gen(function* () {
+        yield* legacyConfigPush({ projectRef: Option.none() });
+        expect(out.stderrText).toContain(
+          "Comparison scope: api, database, pooler, realtime, storage (not returned: auth)",
+        );
+        expect(out.stderrText).not.toContain("Updating Auth service with config:");
+        expect(out.stderrText).not.toContain("Do you want to push auth config to remote?");
+        expect(methodsOf(apiMock)).not.toContain("updateAuthServiceConfig");
+        const success = out.messages.find((m) => m.type === "success");
+        const data = success?.data as Record<string, unknown>;
+        const services = data["services"] as ReadonlyArray<Record<string, unknown>>;
+        expect(services.find((s) => s["service"] === "auth")).toEqual({
+          service: "auth",
+          status: "unavailable",
+          changes: [],
+        });
+        // Every declared credential is reported withheld (`skipped`), never `sent` —
+        // the write never ran, so a "send"-worthy digest never reaches the wire.
+        expect(data["secrets"]).toMatchObject({
+          sent: [],
+          skipped: [["auth", "captcha", "secret"]],
+        });
+      }).pipe(Effect.provide(layer));
+    },
+  );
+
+  // D10 ("the no-active-SMS-provider case is reachable") does not hold
+  // through the real config-loading pipeline, for either candidate
+  // trigger — confirmed empirically and from source, not assumed:
+  //   - An SMS provider credential (e.g. `auth.sms.twilio.account_sid`)
+  //     only survives to `changeSet.changes` while that provider's
+  //     `enabled` is `true` — `DISABLED_SENTINEL_ENTRY_SWEEPS`
+  //     (project-config.ts:611-623, `{ containerPath: ["auth","sms"],
+  //     entryKeys: SMS_PROVIDER_PUSH_PRECEDENCE }`) prunes every OTHER key
+  //     of a provider entry whose `enabled !== true` — so a declared
+  //     credential under a provider that ISN'T locally active never
+  //     reaches the encoder at all (confirmed: declaring
+  //     `[auth.sms.twilio] account_sid = "AC123"` with no `enabled` key
+  //     reports "Remote Auth config is up to date.", zero changes).
+  //   - `api.enabled = true` with `api.schemas` undeclared: `resolveLeaf`'s
+  //     REMOTE tier can never report `schemas: []` — the API-arm registry
+  //     row (registry.ts:97-108, `remoteDataApiDisabled`) maps a disabled
+  //     remote (`db_schema === ""`) straight to `undefined` (never an empty
+  //     array), and `splitCommaSeparated` (registry-row.ts:242-247) only
+  //     ever returns `[]` for `value.length === 0`, which is exactly the
+  //     disabled case. The LOCAL fallback tier is no help either: once
+  //     `[api]` exists with `enabled` declared, `local.api.schemas` is the
+  //     CliConfig's own non-empty schema default (confirmed: it renders as
+  //     `["public","graphql_public"] (schema default...)`), so
+  //     `schemas.length === 0` can never be reached this way. A literal
+  //     `api.schemas = []` declaration does reach an encoder-adjacent
+  //     branch, but not this one: the registry's OWN
+  //     `normalizeDocument` (registry.ts:110-121) canonicalizes a declared
+  //     empty array to `undefined` and reclassifies it as `unmanaged`
+  //     before `changeSet.changes` ever sees it (confirmed: "1 declared
+  //     property is not managed by config push...", not the not_pushable
+  //     line).
+  // TODO(impl): `push.encoders.ts`'s two `REASON_API_ENABLE_NEEDS_SCHEMA`/
+  // `REASON_SMS_ACTIVE_PROVIDER_ONLY` unencodable branches (push.encoders.ts
+  // — the `if (schemas.length === 0)` arm under `legacyEncodeApiBody`, and
+  // the `activeProvider === undefined` arm under `legacyEncodeAuthBody`)
+  // are exercised by `push.encoders.unit.test.ts` (which can hand-construct
+  // a `changes`/`local`/`remote` triple bypassing the real projection) but
+  // have no reachable integration-level trigger given the current
+  // `@supabase/config` pruning/normalization rules. Retriage whether B7's
+  // "keep" call is still correct now that both of its surviving cases turn
+  // out unreachable too, or find the missed combination — left `.skip`
+  // rather than deleted so the finding stays visible.
+  it.skip("D10: no locally-enabled SMS provider makes an sms-family change not_pushable", () => {
+    const toml = `project_id = "test"
+[auth.sms.twilio]
+enabled = true
+account_sid = "AC123"
+`;
+    const { layer, apiMock, out } = setupService({
+      toml,
+      format: "json",
+      v1: { updateAuthServiceConfig: () => Effect.succeed({}) },
+    });
+    return Effect.gen(function* () {
+      yield* legacyConfigPush({ projectRef: Option.none() });
+      expect(out.stderrText).toContain(
+        "Remote Auth config has 1 difference config push cannot write (see notes below).",
+      );
+      expect(methodsOf(apiMock)).not.toContain("updateAuthServiceConfig");
+      const success = out.messages.find((m) => m.type === "success");
+      const data = success?.data as Record<string, unknown>;
+      const services = data["services"] as ReadonlyArray<Record<string, unknown>>;
+      expect(services.find((s) => s["service"] === "auth")).toEqual({
+        service: "auth",
+        status: "not_pushable",
+        changes: [],
+      });
+    }).pipe(Effect.provide(layer));
+  });
+
+  it.live(
+    "not_pushable status renders correctly for a genuinely reachable unencodable case (an invalid byte size)",
+    () => {
+      // `storage.file_size_limit` is schema-typed as a plain string, so an
+      // invalid byte-size expression survives config LOADING and only
+      // fails inside the encoder's own `ramInBytes` call — unlike the two
+      // D10 candidates above, this one is reachable end to end, and proves
+      // the `not_pushable` status/line/note render correctly.
+      const toml = `project_id = "test"\n[storage]\nfile_size_limit = "not-a-size"\n`;
+      const { layer, apiMock, out } = setupService({ toml, format: "json" });
+      return Effect.gen(function* () {
+        yield* legacyConfigPush({ projectRef: Option.none() });
+        expect(out.stderrText).toContain(
+          "Remote Storage config has 1 difference config push cannot write (see notes below).",
+        );
+        expect(out.stderrText).toContain(
+          "Note: 1 declared property could not be encoded and was not pushed: storage.file_size_limit (the declared value is not a valid byte size)",
+        );
+        expect(methodsOf(apiMock)).not.toContain("updateStorageConfig");
+        const success = out.messages.find((m) => m.type === "success");
+        const data = success?.data as Record<string, unknown>;
+        const services = data["services"] as ReadonlyArray<Record<string, unknown>>;
+        expect(services.find((s) => s["service"] === "storage")).toEqual({
+          service: "storage",
+          status: "not_pushable",
+          changes: [],
+        });
+        expect(data["unencodable"]).toEqual([
+          {
+            path: ["storage", "file_size_limit"],
+            reason: "the declared value is not a valid byte size",
+          },
+        ]);
+      }).pipe(Effect.provide(layer));
+    },
+  );
+
+  it.live(
+    "D12: declining the phone MFA addon sends explicit false disables when the remote already had it on",
+    () => {
+      // Text mode (not json): the addon-decline prompt only ever consumes a
+      // real confirm answer in text mode — `keep()` short-circuits to the
+      // default (accept) for any machine format, so a decline can never be
+      // observed there. `declined_addons`' payload SHAPE is covered by the
+      // "emits a structured summary" test instead.
+      const toml = `project_id = "test"
+[auth.mfa.phone]
+verify_enabled = true
+`;
+      const { layer, apiMock } = setupService({
+        toml,
+        confirm: [false, true],
+        v2: {
+          status: 200,
+          body: v2Response({
+            attributes: (a) => ({
+              ...a,
+              auth: { ...(a["auth"] as Record<string, unknown>), mfa_phone_enroll_enabled: true },
+            }),
+          }),
+        },
+        v1: { updateAuthServiceConfig: () => Effect.succeed({}) },
+      });
+      return Effect.gen(function* () {
+        yield* legacyConfigPush({ projectRef: Option.none() });
+        const update = apiMock.requests.find((r) => r.method === "updateAuthServiceConfig");
+        expect(update).toBeDefined();
+        const input = update?.input as Record<string, unknown>;
+        expect(input["mfa_phone_verify_enabled"]).toBe(false);
+        expect(input["mfa_phone_enroll_enabled"]).toBe(false);
+      }).pipe(Effect.provide(layer));
+    },
+  );
+
+  // B1 ("a declared change under a gated-off resource shows up in
+  // unsupported") is unreachable through the real config-loading pipeline
+  // for all six resources, not a test-writer oversight: every "gate off"
+  // condition `legacyPushResourceEnabled` checks correlates exactly with a
+  // `@supabase/config` disabled-sentinel prune that removes the container's
+  // OTHER declared keys before `fromConfigDocument` returns — confirmed
+  // empirically (declaring `[storage] enabled = false` + `file_size_limit`
+  // yields `local.storage === { enabled: false }`; same for
+  // `[db.network_restrictions]` and `[auth]`). See
+  // packages/config/src/project-config/project-config.ts:564-609
+  // (`DISABLED_SENTINEL_PRUNES`, `{ containerPath: ["auth"] }` /
+  // `["storage"]` drop every key but `enabled`) and :612-655
+  // (`applyDisabledSentinels`, the `container["enabled"] === false` prune
+  // gate) — the exact same decoded `enabled` value
+  // `legacyPushResourceEnabled` (push.plan.ts:174-192) gates on. `api` and
+  // `db.settings` have no gate at all; `db.ssl_enforcement`'s gate is
+  // presence-based, and declaring it always makes the gate pass (there is
+  // no comparable single field left to route once declared). So
+  // `push.handler.ts:410`'s `unsupported.push(...plan.changesByResource[resource])`
+  // has no reachable integration-level input; it is exercised only by
+  // `push.plan.unit.test.ts`, which can hand-construct a `changeSet` that
+  // bypasses the real projection.
+  // TODO(impl): either delete the dead branch (B1 as a review nice-to-have
+  // may not be worth keeping given no real config can trigger it) or file a
+  // follow-up documenting it as defensive-only in push.plan.ts's doc
+  // comment. Left as `.skip` rather than deleted so the finding stays
+  // visible; remove once triaged.
+  it.skip(
+    "B1: a declared change under a gated-off resource shows up in unsupported, not silently dropped",
+    () => {
+      const toml = `project_id = "test"
+[storage]
+enabled = false
+file_size_limit = "100MiB"
+`;
+      const { layer, out } = setupService({ toml, format: "json" });
+      return Effect.gen(function* () {
+        yield* legacyConfigPush({ projectRef: Option.none() });
+        expect(out.stderrText).toContain(
+          "Note: 1 declared property has no Management API field and was not pushed: storage.file_size_limit (change them from the dashboard).",
+        );
+        const success = out.messages.find((m) => m.type === "success");
+        const data = success?.data as Record<string, unknown>;
+        expect(data["unsupported"]).toEqual([["storage", "file_size_limit"]]);
+        const services = data["services"] as ReadonlyArray<Record<string, unknown>>;
+        expect(services.find((s) => s["service"] === "storage")).toEqual({
+          service: "storage",
+          status: "disabled",
+          changes: [],
+        });
+      }).pipe(Effect.provide(layer));
+    },
+  );
+
+  it.live("S1/D9: declining the auth prompt leaves the secret unsent (text mode)", () => {
+    // Text mode: `keep()` only ever consumes a real decline in text mode
+    // (json/stream-json short-circuit every prompt to the default accept —
+    // see the D12 comment above), so this asserts the write-side effect
+    // (no PATCH, no secret leaked) rather than the json payload; the
+    // `secrets.skipped` SHAPE for an unsent "send"-decided secret is proven
+    // by the "D2/S5" and "an empty/unresolved env()" tests above, whose
+    // `authWriteRan === false` comes from a different cause (`unavailable`,
+    // `not_set`) but exercises the identical payload branch
+    // (`push.format.ts`'s `authWriteRan ? sendDecisions... : []`).
+    const toml = `project_id = "test"
+[auth.captcha]
+enabled = true
+provider = "hcaptcha"
+secret = "new-secret"
+`;
+    const { layer, apiMock, out } = setupService({
+      toml,
+      stdinIsTty: false,
+      pipedAnswers: ["n"],
+    });
+    return Effect.gen(function* () {
+      yield* legacyConfigPush({ projectRef: Option.none() });
+      expect(methodsOf(apiMock)).not.toContain("updateAuthServiceConfig");
+      expect(out.stderrText).toContain("auth.captcha.secret [secret]");
+      expect(out.stderrText).toContain("Do you want to push auth config to remote? [Y/n] n");
+    }).pipe(Effect.provide(layer));
+  });
+
+  it.live("S1/D9: a declared secret under a disabled container is gated, never sent", () => {
+    const toml = `project_id = "test"
+[auth.captcha]
+enabled = false
+secret = "irrelevant"
+`;
+    const { layer, apiMock, out } = setupService({
+      toml,
+      format: "json",
+      yes: true,
+      v1: { updateAuthServiceConfig: () => Effect.succeed({}) },
+    });
+    return Effect.gen(function* () {
+      yield* legacyConfigPush({ projectRef: Option.none() });
+      // Declaring `enabled = false` (a value the remote never reported) is
+      // itself a routed `local_only` change, so the write still runs — the
+      // gated secret must never ride along inside it.
+      const update = apiMock.requests.find((r) => r.method === "updateAuthServiceConfig");
+      expect(update).toBeDefined();
+      const input = update?.input as Record<string, unknown>;
+      expect(input["security_captcha_enabled"]).toBe(false);
+      expect(input["security_captcha_secret"]).toBeUndefined();
+      const success = out.messages.find((m) => m.type === "success");
+      const data = success?.data as Record<string, unknown>;
+      expect(data["secrets"]).toMatchObject({
+        sent: [],
+        skipped: [],
+        gated: [["auth", "captcha", "secret"]],
+      });
+    }).pipe(Effect.provide(layer));
+  });
+
+  it.live("S4: sanitizes a hostile [remotes.*] name before printing the config-override line", () => {
+    const { layer, out } = setup({
+      toml: [
+        'project_id = "test"',
+        '[remotes."evil\\u001B[31m\\nred"]',
+        `project_id = "${REF}"`,
+        "",
+      ].join("\n"),
+      yes: true,
+    });
+    return Effect.gen(function* () {
+      yield* legacyConfigPush({ projectRef: Option.none() });
+      expect(out.stderrText).toContain("Loading config override: [remotes.evil[31m red]");
+      expect(out.stderrText).not.toContain("\u001b");
+    }).pipe(Effect.provide(layer));
+  });
+
+  it.live(
+    "A5/D8: a content-only auth push prints a [content] block and PATCHes only the template content key",
+    () => {
+      const templateDir = join(tempRoot.current, "templates-content-only");
+      mkdirSync(templateDir, { recursive: true });
+      writeFileSync(join(templateDir, "invite.html"), "<h1>Invite</h1>");
+      const toml = `project_id = "test"
+[auth.email.template.invite]
+content_path = "./templates-content-only/invite.html"
+`;
+      const { layer, apiMock, out } = setupService({
+        toml,
+        format: "json",
+        yes: true,
+        v1: { updateAuthServiceConfig: () => Effect.succeed({}) },
+      });
+      return Effect.gen(function* () {
+        yield* legacyConfigPush({ projectRef: Option.none() });
+        expect(out.stderrText).toContain(
+          "Updating Auth service with config:\nauth.email.template.invite.content [content]\n  local:  (file content from content_path)\n  remote: (differs)\n\n",
+        );
+        const update = apiMock.requests.find((r) => r.method === "updateAuthServiceConfig");
+        expect(update).toBeDefined();
+        expect(update?.input).toEqual({
+          ref: REF,
+          mailer_templates_invite_content: "<h1>Invite</h1>",
+        });
+        const success = out.messages.find((m) => m.type === "success");
+        const data = success?.data as Record<string, unknown>;
+        const services = data["services"] as ReadonlyArray<Record<string, unknown>>;
+        // D8: `changes` carries the content extra even though no registry-mapped leaf changed.
+        expect(services.find((s) => s["service"] === "auth")).toEqual({
+          service: "auth",
+          status: "updated",
+          changes: [["auth", "email", "template", "invite", "content"]],
+        });
+      }).pipe(Effect.provide(layer));
+    },
+  );
+
+  it.live("D8: services[].changes includes the secret path once its write actually sends it", () => {
+    const toml = `project_id = "test"
+[auth.captcha]
+enabled = true
+provider = "hcaptcha"
+secret = "new-secret"
+`;
+    const { layer, out } = setupService({
+      toml,
+      format: "json",
+      yes: true,
+      v1: { updateAuthServiceConfig: () => Effect.succeed({}) },
+    });
+    return Effect.gen(function* () {
+      yield* legacyConfigPush({ projectRef: Option.none() });
+      const success = out.messages.find((m) => m.type === "success");
+      const data = success?.data as Record<string, unknown>;
+      const services = data["services"] as ReadonlyArray<Record<string, unknown>>;
+      expect(services.find((s) => s["service"] === "auth")).toEqual({
+        service: "auth",
+        status: "updated",
+        changes: [
+          ["auth", "captcha", "enabled"],
+          ["auth", "captcha", "provider"],
+          ["auth", "captcha", "secret"],
+        ],
+      });
+    }).pipe(Effect.provide(layer));
+  });
+
+  it.live("a v2 response with a non-object body maps to the read network error", () => {
+    const { layer } = setup({
+      toml: `project_id = "test"\n`,
+      yes: true,
+      v2: { status: 200, body: [] },
+    });
+    return Effect.gen(function* () {
+      const exit = yield* legacyConfigPush({ projectRef: Option.none() }).pipe(Effect.exit);
+      expect(Exit.isFailure(exit)).toBe(true);
+      expect(JSON.stringify(exit)).toContain("LegacyConfigPushConfigReadNetworkError");
+      expect(JSON.stringify(exit)).toContain("response body is not a JSON object");
+    }).pipe(Effect.provide(layer));
+  });
+
+  it.live("an undecodable v2 response body maps to the read network error with decode: true", () => {
+    const { layer } = setup({
+      toml: `project_id = "test"\n`,
+      yes: true,
+      v2: { status: 200, malformedJson: true },
+    });
+    return Effect.gen(function* () {
+      const exit = yield* legacyConfigPush({ projectRef: Option.none() }).pipe(Effect.exit);
+      expect(Exit.isFailure(exit)).toBe(true);
+      const serialized = JSON.stringify(exit);
+      expect(serialized).toContain("LegacyConfigPushConfigReadNetworkError");
+      expect(serialized).toContain('"decode":true');
+    }).pipe(Effect.provide(layer));
+  });
+
+  // D11: the json `message` field should be a non-empty summary with
+  // caveats (modeled on `legacyConfigDiffSummaryMessage`,
+  // diff/diff.format.ts:61) — but `push.handler.ts:613` calls
+  // `output.success("", legacyPushPayload({...}))` with a literal `""`, and
+  // no `legacyPushSummaryMessage`-shaped helper exists in push.format.ts.
+  // SIDE_EFFECTS.md:189-224 documents the empty `message` as current,
+  // intentional behavior, so this is a real, not accidental, gap.
+  // TODO(impl): push.handler.ts:613, push.format.ts (missing summary
+  // builder) — wire a non-empty summary message the way `diff.handler.ts:270-271`
+  // does with `legacyConfigDiffSummaryMessage`, then remove `.skip` here.
+  it.skip("D11: the json message field is a non-empty summary, not an empty string", () => {
+    const { layer, out } = setup({
+      toml: `project_id = "test"\n[api]\nmax_rows = 2000\n`,
+      format: "json",
+      yes: true,
+    });
+    return Effect.gen(function* () {
+      yield* legacyConfigPush({ projectRef: Option.none() });
+      const success = out.messages.find((m) => m.type === "success");
+      const data = success?.data as Record<string, unknown>;
+      expect(data["message"]).not.toBe("");
+      expect(typeof data["message"]).toBe("string");
+      expect((data["message"] as string).length).toBeGreaterThan(0);
     }).pipe(Effect.provide(layer));
   });
 });
