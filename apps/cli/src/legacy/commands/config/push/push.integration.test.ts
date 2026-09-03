@@ -1398,7 +1398,17 @@ describe("legacy config push branch/project target detection (CLI-2168)", () => 
         const exit = yield* legacyConfigPush({ projectRef: Option.none() }).pipe(Effect.exit);
         expect(Exit.isFailure(exit)).toBe(true);
         if (Exit.isFailure(exit)) {
-          expect(JSON.stringify(exit.cause)).toContain("LegacyConfigPushCancelledError");
+          const rendered = JSON.stringify(exit.cause);
+          expect(rendered).toContain("LegacyConfigPushCancelledError");
+          // A machine-mode/non-TTY decline never renders the interactive
+          // prompt's own "(skip this check with --yes)" hint at all
+          // (`legacyPromptYesNo` returns the default silently) — the
+          // cancelled error's own `suggestion` field is the ONLY place a
+          // script/agent sees the --yes escape hatch. `normalizeCliError`
+          // reads `suggestion` generically off any tagged error, and
+          // `output.fail` threads it into the machine error envelope.
+          expect(rendered).toContain("--yes");
+          expect(rendered).toContain("SUPABASE_YES");
         }
         expect(out.messages.some((m) => m.type === "success")).toBe(false);
         expect(api.requests.some((r) => ["PATCH", "PUT", "POST"].includes(r.method))).toBe(false);
