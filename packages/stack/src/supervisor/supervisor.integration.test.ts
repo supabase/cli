@@ -24,6 +24,7 @@ import {
   GatewayActivationError,
   PortUnavailableError,
   StackLifecycleConflictError,
+  StackNotRunningError,
   StackReconciliationError,
   StackStateInvalidError,
   StackMustBeStoppedError,
@@ -1516,6 +1517,88 @@ describe("Supervisor composition", () => {
     ),
   );
 
+  it.live("fences fresh ingress when open failure cleanup is not proven", () =>
+    run(
+      Effect.gen(function* () {
+        const openCalls = yield* Ref.make(0);
+        const closeFailures = yield* Ref.make(0);
+        const fixture = yield* makeFixture({
+          ingress: {
+            acquire: () =>
+              Effect.succeed({
+                assignments: {},
+                privateAssignments: [],
+                hostListeners: [],
+                fresh: true,
+              }),
+            open: () =>
+              Ref.updateAndGet(openCalls, (count) => count + 1).pipe(
+                Effect.flatMap((count) =>
+                  count === 2
+                    ? Effect.fail(new GatewayActivationError({ message: "injected open failure" }))
+                    : Effect.void,
+                ),
+              ),
+            close: Effect.gen(function* () {
+              const remaining = yield* Ref.get(closeFailures);
+              if (remaining > 0) {
+                yield* Ref.set(closeFailures, remaining - 1);
+                return yield* new StackReconciliationError({ message: "injected close failure" });
+              }
+            }),
+          },
+        });
+        yield* fixture.supervisor.start({
+          config: { capabilities: { functions: { activation: "lazy" } } },
+        });
+        yield* Ref.set(closeFailures, 1);
+        expect(
+          Exit.isFailure(yield* fixture.supervisor.activate("functions").pipe(Effect.exit)),
+        ).toBe(true);
+        expect((yield* fixture.supervisor.status).lifecycle).toBe("stopping");
+        expect((yield* fixture.supervisor.maintenanceHandlers.stop).ok).toBe(true);
+        expect((yield* fixture.supervisor.status).lifecycle).toBe("stopped");
+      }),
+    ),
+  );
+
+  it.live("rolls back fresh ingress after activation failure and retries", () =>
+    run(
+      Effect.gen(function* () {
+        const activationFailFirst = yield* Ref.make(true);
+        const openCalls = yield* Ref.make(0);
+        const closeCalls = yield* Ref.make(0);
+        const fixture = yield* makeFixture({
+          activationFailFirst,
+          ingress: {
+            acquire: () =>
+              Effect.succeed({
+                assignments: {},
+                privateAssignments: [],
+                hostListeners: [],
+                fresh: true,
+              }),
+            open: () => Ref.update(openCalls, (count) => count + 1),
+            close: Ref.update(closeCalls, (count) => count + 1),
+          },
+        });
+        yield* fixture.supervisor.start({
+          config: { capabilities: { functions: { activation: "lazy" } } },
+        });
+        expect(
+          Exit.isFailure(yield* fixture.supervisor.activate("functions").pipe(Effect.exit)),
+        ).toBe(true);
+        expect(yield* Ref.get(closeCalls)).toBe(2);
+        expect(yield* Ref.get(fixture.resources)).toEqual([
+          expect.objectContaining({ workloadId: "database:database", state: "ready" }),
+        ]);
+        const retry = yield* fixture.supervisor.activate("functions");
+        expect(retry.endpoint).toEqual({ host: "127.0.0.1", port: 9999 });
+        expect(yield* Ref.get(openCalls)).toBe(3);
+      }),
+    ),
+  );
+
   it.live("fences the owner when lazy rollback cannot be proven", () =>
     run(
       Effect.gen(function* () {
@@ -1565,6 +1648,38 @@ describe("Supervisor composition", () => {
         expect((yield* fixture.supervisor.status).lifecycle).toBe("stopping");
         expect((yield* fixture.supervisor.maintenanceHandlers.stop).ok).toBe(true);
         expect((yield* fixture.supervisor.status).lifecycle).toBe("stopped");
+      }),
+    ),
+  );
+
+  it.live("validates lifecycle before cached lazy activation results", () =>
+    run(
+      Effect.gen(function* () {
+        const activationFailFirst = yield* Ref.make(false);
+        const workloadRemoveFailFirst = yield* Ref.make(false);
+        const fixture = yield* makeFixture({ activationFailFirst, workloadRemoveFailFirst });
+        yield* fixture.supervisor.start({
+          config: {
+            capabilities: {
+              functions: { activation: "lazy" },
+              auth: { activation: "lazy" },
+            },
+          },
+        });
+        yield* fixture.supervisor.activate("functions");
+        yield* Ref.set(activationFailFirst, true);
+        yield* Ref.set(workloadRemoveFailFirst, true);
+        expect(Exit.isFailure(yield* fixture.supervisor.activate("auth").pipe(Effect.exit))).toBe(
+          true,
+        );
+        expect((yield* fixture.supervisor.status).lifecycle).toBe("stopping");
+        expect(
+          errorOf(yield* fixture.supervisor.activate("functions").pipe(Effect.exit)),
+        ).toBeInstanceOf(StackLifecycleConflictError);
+        expect((yield* fixture.supervisor.maintenanceHandlers.stop).ok).toBe(true);
+        expect(
+          errorOf(yield* fixture.supervisor.activate("functions").pipe(Effect.exit)),
+        ).toBeInstanceOf(StackNotRunningError);
       }),
     ),
   );

@@ -40,11 +40,7 @@ import type { EffectStackCredentials } from "../public/Credentials.ts";
 import type { RuntimeDriver } from "../runtime/RuntimeDriver.ts";
 import type { PersistedStackState } from "../state/StackState.ts";
 import type { StackStateStore } from "../state/StackStateStore.ts";
-import {
-  makeSessionLauncher,
-  type SessionLaunch,
-  type SessionLauncher,
-} from "./SessionLauncher.ts";
+import { makeSessionLauncher, type SessionLauncher } from "./SessionLauncher.ts";
 import {
   makeLifecycleController,
   type LifecycleBackend,
@@ -60,6 +56,11 @@ import { statusFor, type ActualPhase } from "./StatusProjection.ts";
 interface ActivationResult {
   readonly capability: CapabilityName;
   readonly endpoint: { readonly host: string; readonly port: number };
+}
+
+interface SupervisorLaunchAttempt {
+  /** Rolls back only workloads and ingress acquired by this launch. */
+  readonly rollback: Effect.Effect<void, StackError>;
 }
 
 /** Runtime construction is injected so catalog/artifact resolution can evolve independently. */
@@ -241,6 +242,31 @@ export const makeSupervisor = (
       result: LifecycleResult;
     }>;
     const lifecycleActive = yield* Ref.make<ActiveLifecycle | undefined>(undefined);
+    const ensureActivationAllowed = (): Effect.Effect<
+      PersistedStackState,
+      GatewayActivationError | StackError
+    > =>
+      Effect.gen(function* () {
+        const lifecycle = yield* Ref.get(lifecycleActive);
+        if (lifecycle !== undefined)
+          return yield* new StackLifecycleConflictError({
+            stackId: options.stackId,
+            message: `Cannot activate while ${lifecycle.kind} is in progress`,
+          });
+        if ((yield* Ref.get(phase)) === "stopping")
+          return yield* new StackLifecycleConflictError({
+            stackId: options.stackId,
+            message: "Cannot activate while exact cleanup is pending; stop the stack first",
+          });
+        const state = yield* read();
+        if (state === undefined)
+          return yield* new StackStateInvalidError({ message: "Stack state is missing" });
+        if (state.desiredLifecycle !== "running")
+          return yield* new StackNotRunningError({
+            message: "Stack must be running before activation",
+          });
+        return state;
+      });
     const shutdownSignal = yield* Deferred.make<void, never>();
     const signalShutdown = Deferred.succeed(shutdownSignal, undefined).pipe(Effect.asVoid);
     const ensureAcceptingOperations = Deferred.poll(shutdownSignal).pipe(
@@ -307,7 +333,7 @@ export const makeSupervisor = (
       input: LifecycleInput,
       session: "fresh" | "current",
       selectedOverride?: ReadonlySet<CapabilityName>,
-    ): Effect.Effect<SessionLaunch | undefined, StackError> =>
+    ): Effect.Effect<SupervisorLaunchAttempt | undefined, StackError> =>
       Effect.gen(function* () {
         if (session === "fresh") yield* resetForSession(input);
         if (input.desiredLifecycle !== "running") return undefined;
@@ -336,20 +362,26 @@ export const makeSupervisor = (
           }
           return yield* Effect.failCause(cause);
         }
-        const opened = yield* runtime.ingress
-          .open(input, reservation, ingressActivate)
-          .pipe(Effect.exit);
-        if (Exit.isFailure(opened)) {
-          const rolledBack = yield* launched.value.rollback.pipe(
+        const rollback: Effect.Effect<void, StackError> = Effect.gen(function* () {
+          const workload = yield* launched.value.rollback.pipe(
             Effect.mapError(mapReconcileError),
             Effect.exit,
           );
           const closed = reservation.fresh
             ? yield* runtime.ingress.close.pipe(Effect.mapError(mapReconcileError), Effect.exit)
             : Exit.succeed(undefined);
+          let cause: Cause.Cause<StackError> = Cause.empty;
+          if (Exit.isFailure(workload)) cause = Cause.combine(cause, workload.cause);
+          if (Exit.isFailure(closed)) cause = Cause.combine(cause, closed.cause);
+          if (cause.reasons.length > 0) return yield* Effect.failCause(cause);
+        });
+        const opened = yield* runtime.ingress
+          .open(input, reservation, ingressActivate)
+          .pipe(Effect.exit);
+        if (Exit.isFailure(opened)) {
+          const rolledBack = yield* rollback.pipe(Effect.exit);
           let cause: Cause.Cause<StackError> = opened.cause;
           if (Exit.isFailure(rolledBack)) cause = Cause.combine(cause, rolledBack.cause);
-          if (Exit.isFailure(closed)) cause = Cause.combine(cause, closed.cause);
           if (Exit.isFailure(rolledBack)) {
             yield* Ref.set(cleanupProven, false);
             if (session === "current") {
@@ -359,7 +391,7 @@ export const makeSupervisor = (
           return yield* Effect.failCause(cause);
         }
         if (session === "fresh") yield* Ref.set(sessionInitialized, true);
-        return launched.value;
+        return { rollback } satisfies SupervisorLaunchAttempt;
       });
 
     const cleanupRuntime = (destroy: boolean): Effect.Effect<void, StackError> =>
@@ -406,24 +438,7 @@ export const makeSupervisor = (
       capability: CapabilityName,
     ): Effect.Effect<ActivationResult, GatewayActivationError | StackError> =>
       Effect.gen(function* () {
-        const lifecycle = yield* Ref.get(lifecycleActive);
-        if (lifecycle !== undefined)
-          return yield* new StackLifecycleConflictError({
-            stackId: options.stackId,
-            message: `Cannot activate while ${lifecycle.kind} is in progress`,
-          });
-        if ((yield* Ref.get(phase)) === "stopping")
-          return yield* new StackLifecycleConflictError({
-            stackId: options.stackId,
-            message: "Cannot activate while exact cleanup is pending; stop the stack first",
-          });
-        const state = yield* read();
-        if (state === undefined)
-          return yield* new StackStateInvalidError({ message: "Stack state is missing" });
-        if (state.desiredLifecycle !== "running")
-          return yield* new StackNotRunningError({
-            message: "Stack must be running before activation",
-          });
+        const state = yield* ensureActivationAllowed();
         const definition = state.definition;
         if (definition === undefined || !definition.capabilities[capability].enabled)
           return yield* new GatewayActivationError({
@@ -460,18 +475,10 @@ export const makeSupervisor = (
         if (Exit.isFailure(activated)) {
           yield* Ref.set(active, previousActive);
           if (launched !== undefined) {
-            const rolledBack = yield* launched.rollback.pipe(
-              Effect.mapError(mapReconcileError),
-              Effect.exit,
-            );
+            const rolledBack = yield* launched.rollback.pipe(Effect.exit);
             if (Exit.isFailure(rolledBack)) {
               yield* Ref.set(phase, "stopping");
-              const closed = yield* runtime.ingress.close.pipe(
-                Effect.mapError(mapReconcileError),
-                Effect.exit,
-              );
               let cause: Cause.Cause<StackError> = Cause.combine(activated.cause, rolledBack.cause);
-              if (Exit.isFailure(closed)) cause = Cause.combine(cause, closed.cause);
               return yield* Effect.failCause(cause);
             }
           }
@@ -503,14 +510,9 @@ export const makeSupervisor = (
       capability: CapabilityName,
     ): Effect.Effect<ActivationResult, GatewayActivationError | StackError> =>
       Effect.gen(function* () {
-        const lifecycle = yield* Ref.get(lifecycleActive);
-        if (lifecycle !== undefined)
-          return yield* new StackLifecycleConflictError({
-            stackId: options.stackId,
-            message: `Cannot activate while ${lifecycle.kind} is in progress`,
-          });
         const token = yield* admission.withPermit(
           Effect.gen(function* () {
+            yield* ensureActivationAllowed();
             const current = activationOwned.get(capability);
             if (current?._tag === "ready")
               return {
