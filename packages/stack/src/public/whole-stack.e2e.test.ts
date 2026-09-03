@@ -60,6 +60,21 @@ const OPTIONAL_STORAGE_ANALYTICS_WORKLOAD_IDS = [
   "storage:imgproxy",
   "storage:storage",
 ] as const;
+const ALL_EAGER_WORKLOAD_IDS = [
+  "analytics:analytics",
+  "analytics:vector",
+  "auth:auth",
+  "database:database",
+  "functions:edge-runtime",
+  "mail:mail",
+  "pooler:pooler",
+  "realtime:realtime",
+  "rest:rest",
+  "storage:imgproxy",
+  "storage:storage",
+  "studio:pgmeta",
+  "studio:studio",
+] as const;
 
 const dockerOwnedResourceCount = async (
   stackId: string,
@@ -493,6 +508,27 @@ const optionalWorkloadConfig = (
     storage: { settings: { image_transformation: { enabled: true } } },
     functions: { settings: { functions: { [functionSlug]: { verify_jwt: false } } } },
     analytics: { settings: { vector_port: 9001, api_key: analyticsApiKey } },
+  },
+  listeners: { smtp: { enabled: true } },
+});
+
+const allEagerConfig = (analyticsApiKey: string): PromiseStackConfig => ({
+  capabilities: {
+    rest: { activation: "eager" },
+    auth: { activation: "eager" },
+    realtime: { activation: "eager" },
+    storage: {
+      activation: "eager",
+      settings: { image_transformation: { enabled: true } },
+    },
+    functions: { activation: "eager" },
+    studio: { activation: "eager" },
+    mail: { activation: "eager" },
+    analytics: {
+      activation: "eager",
+      settings: { vector_port: 9001, api_key: analyticsApiKey },
+    },
+    pooler: { activation: "eager" },
   },
   listeners: { smtp: { enabled: true } },
 });
@@ -1047,28 +1083,36 @@ describe("managed Supabase stack whole-stack E2E", () => {
     );
 
     test(
-      `honors per-capability eager activation in ${mode.name} mode`,
+      `starts every capability eagerly in ${mode.name} mode`,
       { timeout: E2E_TIMEOUT_MS },
       async () => {
+        const analyticsApiKey = `analytics-key-${crypto.randomUUID()}`;
         await using stack: TestStack = await createTestStack({
           name: `stack-eager-${crypto.randomUUID().replaceAll("-", "").slice(0, 16)}`,
           runtime: mode.runtime,
-          config: {
-            capabilities: {
-              rest: { activation: "eager" },
-              auth: { activation: "eager" },
-            },
+          config: allEagerConfig(analyticsApiKey),
+          setupProject: async (root) => {
+            await mkdir(join(root, "supabase", "functions"), { recursive: true });
           },
         });
         const status = await stack.status();
-        expect(capabilityState(status, "database")).toBe("ready");
-        expect(capabilityState(status, "rest")).toBe("ready");
-        expect(capabilityState(status, "auth")).toBe("ready");
-        await expectOwnedWorkloads(mode, stack.id, ["database:database", "rest:rest", "auth:auth"]);
-        for (const name of CAPABILITY_NAMES) {
-          if (name === "database" || name === "rest" || name === "auth") continue;
-          expect(capabilityState(status, name), `${name} should remain dormant`).toBe("dormant");
-        }
+        expect(status.lifecycle).toBe("running");
+        expect(status.endpoints.smtp).toBeDefined();
+        expect(
+          status.capabilities.map(({ name, state, activation }) => ({ name, state, activation })),
+        ).toEqual(CAPABILITY_NAMES.map((name) => ({ name, state: "ready", activation: "eager" })));
+        await expectOwnedWorkloads(mode, stack.id, ALL_EAGER_WORKLOAD_IDS);
+
+        const credentials = await stack.credentials();
+        expect(await databaseQuery(credentials.database.url, "SELECT 1 AS value")).toEqual([
+          { value: 1 },
+        ]);
+
+        await stack.stop();
+        const stopped = await stack.status();
+        expect(stopped.lifecycle).toBe("stopped");
+        expect(stopped.capabilities.every(({ state }) => state === "stopped")).toBe(true);
+        await expectOwnedWorkloads(mode, stack.id, []);
       },
     );
 
