@@ -23,3 +23,6 @@ packages/cli-*/bin/
 
 # Turbo
 .turbo/
+
+# Vitest 5 artifact directory (blob reports, attachments, html/json output)
+.vitest/
