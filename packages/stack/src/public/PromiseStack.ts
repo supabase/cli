@@ -1,17 +1,5 @@
 import { NodeServices } from "@effect/platform-node";
-import {
-  Crypto,
-  Effect,
-  Exit,
-  FileSystem,
-  Layer,
-  Option,
-  Path,
-  Redacted,
-  Scope,
-  Schema,
-  Stream,
-} from "effect";
+import { Crypto, Effect, FileSystem, Layer, Option, Path, Redacted, Schema, Stream } from "effect";
 import { ChildProcessSpawner } from "effect/unstable/process";
 import {
   createStack as createEffectStack,
@@ -80,7 +68,6 @@ interface PromiseStackApi {
 
 type PlatformLayer = typeof NodeServices.layer;
 type RuntimeRequirements =
-  | Scope.Scope
   | FileSystem.FileSystem
   | Path.Path
   | Crypto.Crypto
@@ -168,8 +155,6 @@ export const adaptEffectStack = (effectStack: EffectStack): PromiseStack => {
   };
 };
 
-const makeScope = () => Effect.runPromise(Scope.make());
-
 export const makePromiseApi = (
   platformLayer: PlatformLayer = NodeServices.layer,
   runtimeEnvironment?: StackRuntimeEnvironmentValue,
@@ -178,19 +163,8 @@ export const makePromiseApi = (
     runtimeEnvironment === undefined
       ? platformLayer
       : Layer.mergeAll(platformLayer, Layer.succeed(StackRuntimeEnvironment, runtimeEnvironment));
-  const run = async <A, E>(
-    effect: Effect.Effect<A, E, RuntimeRequirements>,
-    scope?: Scope.Scope,
-  ): Promise<A> => {
-    const ownedScope = scope === undefined;
-    const actualScope = scope ?? (await makeScope());
-    try {
-      return await Effect.runPromise(
-        effect.pipe(Effect.provide(providedLayer), Effect.provideService(Scope.Scope, actualScope)),
-      );
-    } finally {
-      if (ownedScope) await Effect.runPromise(Scope.close(actualScope, Exit.void));
-    }
+  const run = async <A, E>(effect: Effect.Effect<A, E, RuntimeRequirements>): Promise<A> => {
+    return await Effect.runPromise(effect.pipe(Effect.provide(providedLayer)));
   };
 
   const createOrOpen = async (

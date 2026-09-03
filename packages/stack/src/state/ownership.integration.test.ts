@@ -387,6 +387,37 @@ describe("stack ownership", () => {
     ),
   );
 
+  it.live("removes a stale Unix control socket when no prior lease record exists", () =>
+    withPlatform(
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const root = yield* fs.makeTempDirectoryScoped({
+          prefix: "supabase-stack-no-lock-socket-",
+        });
+        const stackId = yield* deriveStackId(identity);
+        const environment: StackRuntimeEnvironmentValue = {
+          stateRoot: root,
+          tempRoot: root,
+          platform: "posix",
+        };
+        const paths = yield* resolveStackPaths({ stateRoot: root, stackId });
+        const endpoint = controlEndpointFor(stackId, environment);
+        if (endpoint.kind !== "unix") return yield* Effect.die("expected Unix endpoint");
+        yield* fs.makeDirectory(paths.runtime, { recursive: true });
+        yield* fs.writeFileString(endpoint.path, "stale socket");
+        const lease = yield* acquireOwnership({
+          stateRoot: root,
+          stackId,
+          ownerSessionId: "new-owner",
+          rpcRelease: "rpc",
+          environment,
+        });
+        expect(yield* fs.exists(endpoint.path)).toBe(false);
+        yield* lease.release;
+      }),
+    ),
+  );
+
   it.live("serializes concurrent recovery contenders", () =>
     withPlatform(
       Effect.gen(function* () {

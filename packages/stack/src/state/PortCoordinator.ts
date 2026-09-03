@@ -61,6 +61,12 @@ export interface PortReservation {
 export interface PortCoordinatorOptions {
   readonly stateRoot: string;
   readonly store: StackStateStore;
+  /** Probes a fresh automatic candidate without retaining a listener. */
+  readonly checkHostPort: (
+    address: string,
+    port: number,
+    field: string,
+  ) => Effect.Effect<void, PortUnavailableError>;
   /** Binds and retains a host listener. The enclosing Scope owns its release. */
   readonly bindHost?: (
     address: string,
@@ -90,6 +96,7 @@ const PRIVATE_PORT_MIN = 30_000;
 const PRIVATE_PORT_MAX = 39_999;
 const PUBLIC_PORT_MIN = 40_000;
 const PUBLIC_PORT_MAX = 65_535;
+const MAX_FAILED_HOST_PROBES = 16;
 
 const assignmentMap = (assignments: ReadonlyArray<HostPortAssignment>) =>
   new Map(assignments.map((assignment) => [assignment.field, assignment]));
@@ -188,6 +195,7 @@ export const makePortCoordinator = (options: PortCoordinatorOptions): PortCoordi
                 assignment = prior;
               } else {
                 let selected: number | undefined;
+                let failedHostProbes = 0;
                 for (let port = PUBLIC_PORT_MIN; port <= PUBLIC_PORT_MAX; port += 1) {
                   if (
                     !usedAutomaticPublic.has(port) &&
@@ -196,6 +204,17 @@ export const makePortCoordinator = (options: PortCoordinatorOptions): PortCoordi
                     !usedReservedPrivate.has(port) &&
                     !usedByThisStack.has(port)
                   ) {
+                    const available = yield* options
+                      .checkHostPort(intent.address, port, field)
+                      .pipe(
+                        Effect.as(true),
+                        Effect.catchTag("PortUnavailableError", () => Effect.succeed(false)),
+                      );
+                    if (!available) {
+                      failedHostProbes += 1;
+                      if (failedHostProbes >= MAX_FAILED_HOST_PROBES) break;
+                      continue;
+                    }
                     selected = port;
                     break;
                   }
@@ -243,6 +262,7 @@ export const makePortCoordinator = (options: PortCoordinatorOptions): PortCoordi
             let port: number | undefined;
             if (prior !== undefined && !usedPrivateByThisStack.has(prior.port)) port = prior.port;
             else {
+              let failedHostProbes = 0;
               for (
                 let candidate = PRIVATE_PORT_MIN;
                 candidate <= PRIVATE_PORT_MAX;
@@ -254,6 +274,17 @@ export const makePortCoordinator = (options: PortCoordinatorOptions): PortCoordi
                   !usedPrivateByThisStack.has(candidate) &&
                   !usedAllByThisStack.has(candidate)
                 ) {
+                  const available = yield* options
+                    .checkHostPort("127.0.0.1", candidate, `${intent.workloadId}:${intent.binding}`)
+                    .pipe(
+                      Effect.as(true),
+                      Effect.catchTag("PortUnavailableError", () => Effect.succeed(false)),
+                    );
+                  if (!available) {
+                    failedHostProbes += 1;
+                    if (failedHostProbes >= MAX_FAILED_HOST_PROBES) break;
+                    continue;
+                  }
                   port = candidate;
                   break;
                 }

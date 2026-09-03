@@ -105,7 +105,7 @@ interface ContainerVolumeRequest {
 
 interface ContainerRuntimeResourceIds {
   readonly container: string;
-  readonly state: "running" | "stopped" | "failed";
+  state: "starting" | "running" | "stopped" | "failed";
   readonly error?: string;
 }
 
@@ -392,11 +392,13 @@ export const makeContainerRuntime = (
                 state:
                   local?.state === "failed"
                     ? "failed"
-                    : entry.state === "running"
-                      ? "ready"
-                      : entry.state === "stopped"
-                        ? "stopped"
-                        : "starting",
+                    : local?.state === "starting"
+                      ? "starting"
+                      : entry.state === "running"
+                        ? "ready"
+                        : entry.state === "stopped"
+                          ? "stopped"
+                          : "starting",
                 ...(local?.error === undefined ? {} : { error: local.error }),
               };
             }),
@@ -748,7 +750,7 @@ export const makeContainerRuntime = (
                   workload,
                   ownerSessionId: options.ownerSessionId,
                   container: container.id,
-                  state: "running",
+                  state: "starting",
                   failure,
                   stopRequested: false,
                 };
@@ -795,6 +797,7 @@ export const makeContainerRuntime = (
             ? Effect.failCause(ready.cause)
             : Effect.failCause(Cause.combine(ready.cause, cleanupCause));
         }
+        resource.state = "running";
         const result: ObservedWorkload = { ...key, state: "ready" };
         return result;
       });

@@ -11,6 +11,7 @@ import { makeStackStateStore, type PersistedStackState } from "./StackStateStore
 import { bindHostListener } from "../supervisor/HostListener.ts";
 
 const layer = NodeServices.layer;
+const successfulHostPortCheck = (_address: string, _port: number, _field: string) => Effect.void;
 const intents = (port: "automatic" | number): ListenerIntents => ({
   api: { enabled: true, address: "127.0.0.1", port },
   database: { enabled: true, address: "127.0.0.1", port: "automatic" },
@@ -152,12 +153,39 @@ describe("sticky port coordination", () => {
         const b = yield* deriveStackId(bIdentity);
         yield* store.initialize(a, baseState(a, aIdentity));
         yield* store.initialize(b, baseState(b, bIdentity));
-        const coordinator = makePortCoordinator({ stateRoot: root, store });
+        const coordinator = makePortCoordinator({
+          stateRoot: root,
+          store,
+          checkHostPort: successfulHostPortCheck,
+        });
         const first = yield* coordinator.planAndReserve(a, intents("automatic"));
         const repeat = yield* coordinator.planAndReserve(a, intents("automatic"));
         expect(repeat.assignments).toEqual(first.assignments);
         const second = yield* coordinator.planAndReserve(b, intents("automatic"));
         expect(second.assignments.api?.port).not.toBe(first.assignments.api?.port);
+      }),
+    ),
+  );
+
+  it.live("skips foreign listeners while selecting fresh automatic ports", () =>
+    withPlatform(
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const root = yield* fs.makeTempDirectoryScoped({ prefix: "supabase-stack-port-probe-" });
+        const store = yield* makeStackStateStore({ stateRoot: root });
+        const identity = makeIdentity(root, "probe");
+        const id = yield* deriveStackId(identity);
+        yield* store.initialize(id, baseState(id, identity));
+        const checkHostPort = (address: string, port: number, field: string) =>
+          port === 40000 || port === 30000
+            ? Effect.fail(new PortUnavailableError({ address, port, field, message: "occupied" }))
+            : Effect.void;
+        const coordinator = makePortCoordinator({ stateRoot: root, store, checkHostPort });
+        const reservation = yield* coordinator.planAndReserve(id, intents("automatic"), {
+          privateBindings: [{ workloadId: "db", binding: "postgres" }],
+        });
+        expect(reservation.assignments.api?.port).toBe(40001);
+        expect(reservation.privateAssignments[0]?.port).toBe(30001);
       }),
     ),
   );
@@ -176,7 +204,11 @@ describe("sticky port coordination", () => {
         const b = yield* deriveStackId(bIdentity);
         yield* store.initialize(a, baseState(a, aIdentity));
         yield* store.initialize(b, baseState(b, bIdentity));
-        const coordinator = makePortCoordinator({ stateRoot: root, store });
+        const coordinator = makePortCoordinator({
+          stateRoot: root,
+          store,
+          checkHostPort: successfulHostPortCheck,
+        });
         const automatic = yield* coordinator.planAndReserve(a, intents("automatic"));
         const occupied = automatic.assignments.api?.port;
         expect(occupied).toBeTypeOf("number");
@@ -216,6 +248,7 @@ describe("sticky port coordination", () => {
         const coordinator = makePortCoordinator({
           stateRoot: root,
           store,
+          checkHostPort: successfulHostPortCheck,
           bindHost: makeTestHostListener,
         });
         const exactToDifferent = yield* coordinator.planAndReserve(exactId, {
@@ -251,6 +284,7 @@ describe("sticky port coordination", () => {
         const coordinator = makePortCoordinator({
           stateRoot: root,
           store,
+          checkHostPort: successfulHostPortCheck,
           bindHost: makeTestHostListener,
         });
         const result = yield* coordinator.planAndReserve(stackId, {
@@ -283,6 +317,7 @@ describe("sticky port coordination", () => {
         const coordinator = makePortCoordinator({
           stateRoot: root,
           store,
+          checkHostPort: successfulHostPortCheck,
           bindHost: makeTestHostListener,
         });
         const result = yield* coordinator.planAndReserve(
@@ -316,6 +351,7 @@ describe("sticky port coordination", () => {
         const coordinator = makePortCoordinator({
           stateRoot: root,
           store,
+          checkHostPort: successfulHostPortCheck,
           bindHost: makeTestHostListener,
         });
         const result = yield* coordinator.planAndReserve(stackId, disabledIntents(), {});
@@ -340,7 +376,11 @@ describe("sticky port coordination", () => {
           privatePorts: [],
         });
         yield* store.initialize(d, baseState(d, dIdentity));
-        const coordinator = makePortCoordinator({ stateRoot: root, store });
+        const coordinator = makePortCoordinator({
+          stateRoot: root,
+          store,
+          checkHostPort: successfulHostPortCheck,
+        });
         yield* coordinator.planAndReserve(d, intents(55432));
         const stopped = yield* store.read(d);
         if (stopped === undefined) return;
@@ -362,7 +402,11 @@ describe("sticky port coordination", () => {
         const identity = makeIdentity(root, "duplicate");
         const stackId = yield* deriveStackId(identity);
         yield* store.initialize(stackId, baseState(stackId, identity));
-        const coordinator = makePortCoordinator({ stateRoot: root, store });
+        const coordinator = makePortCoordinator({
+          stateRoot: root,
+          store,
+          checkHostPort: successfulHostPortCheck,
+        });
         const exit = yield* coordinator
           .planAndReserve(stackId, {
             ...disabledIntents(),
@@ -398,6 +442,7 @@ describe("sticky port coordination", () => {
         const coordinator = makePortCoordinator({
           stateRoot: root,
           store,
+          checkHostPort: successfulHostPortCheck,
           bindHost: bindHostListener,
         });
         const exit = yield* coordinator
@@ -437,6 +482,7 @@ describe("sticky port coordination", () => {
           const coordinator = makePortCoordinator({
             stateRoot: root,
             store,
+            checkHostPort: successfulHostPortCheck,
             bindHost: (address, port, field) =>
               bound.has(port)
                 ? Effect.fail(new PortUnavailableError({ port, field, message: "already bound" }))
@@ -480,6 +526,7 @@ describe("sticky port coordination", () => {
         const coordinator = makePortCoordinator({
           stateRoot: root,
           store,
+          checkHostPort: successfulHostPortCheck,
           bindHost: (address, port, field) => {
             attempts += 1;
             if (attempts === 2)
@@ -520,6 +567,7 @@ describe("sticky port coordination", () => {
         const coordinator = makePortCoordinator({
           stateRoot: root,
           store,
+          checkHostPort: successfulHostPortCheck,
           bindHost: (address, port, field) =>
             Effect.fail(new PortUnavailableError({ port, field, message: `race at ${address}` })),
         });
@@ -540,7 +588,11 @@ describe("sticky port coordination", () => {
         const identity = makeIdentity(root, "private");
         const stackId = yield* deriveStackId(identity);
         yield* store.initialize(stackId, baseState(stackId, identity));
-        const coordinator = makePortCoordinator({ stateRoot: root, store });
+        const coordinator = makePortCoordinator({
+          stateRoot: root,
+          store,
+          checkHostPort: successfulHostPortCheck,
+        });
         const bindings = [
           { workloadId: "mail:mail", binding: "ui" },
           { workloadId: "mail:mail", binding: "smtp" },
@@ -577,7 +629,11 @@ describe("sticky port coordination", () => {
         const b = yield* deriveStackId(bIdentity);
         yield* store.initialize(a, baseState(a, aIdentity));
         yield* store.initialize(b, baseState(b, bIdentity));
-        const coordinator = makePortCoordinator({ stateRoot: root, store });
+        const coordinator = makePortCoordinator({
+          stateRoot: root,
+          store,
+          checkHostPort: successfulHostPortCheck,
+        });
         const first = yield* coordinator.planAndReserve(a, disabledIntents(), {
           privateBindings: [{ workloadId: "database:database", binding: "primary" }],
         });

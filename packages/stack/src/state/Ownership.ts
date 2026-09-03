@@ -601,16 +601,12 @@ export const acquireOwnership = (options: {
                     : error,
                 ),
               );
-            // The old control document/socket can only be removed after the stale
+            // The old control document can only be removed after the stale
             // lease has been revalidated; the canonical lock remains until install.
             if (existing !== undefined) {
               yield* fs
                 .remove(paths.controlMetadata, { force: true })
                 .pipe(Effect.catchTag("PlatformError", () => Effect.void));
-              if (options.environment.platform === "posix" && metadata.endpoint.kind === "unix")
-                yield* fs
-                  .remove(metadata.endpoint.path, { force: true })
-                  .pipe(Effect.catchTag("PlatformError", () => Effect.void));
             }
             yield* installLease({
               fs,
@@ -627,6 +623,13 @@ export const acquireOwnership = (options: {
                   : error,
               ),
             );
+            // Only the process that atomically installed the canonical lock has
+            // lease authority to remove a stale Unix control socket. A loser
+            // must not unlink the winner's newly bound endpoint.
+            if (options.environment.platform === "posix" && metadata.endpoint.kind === "unix")
+              yield* fs
+                .remove(metadata.endpoint.path, { force: true })
+                .pipe(Effect.catchTag("PlatformError", () => Effect.void));
           });
           yield* installed.pipe(
             Effect.ensuring(

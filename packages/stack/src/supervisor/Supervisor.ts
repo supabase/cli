@@ -175,6 +175,17 @@ export const makeSupervisor = (
     // The ingress opens during an explicit lifecycle operation. A one-shot handoff keeps a request
     // waiting for the handler instead of exposing a construction-time race.
     const activationHandler = yield* Deferred.make<ActivationHandler, never>();
+    const activationOwned = new Map<
+      CapabilityName,
+      | {
+          readonly _tag: "pending";
+          readonly result: Deferred.Deferred<
+            Exit.Exit<ActivationResult, GatewayActivationError | StackError>,
+            never
+          >;
+        }
+      | { readonly _tag: "ready"; readonly result: ActivationResult }
+    >();
     const ingressActivate = (
       capability: CapabilityName,
     ): Effect.Effect<ActivationResult, GatewayActivationError | StackError> =>
@@ -467,17 +478,6 @@ export const makeSupervisor = (
         return { capability, endpoint };
       });
 
-    const activationOwned = new Map<
-      CapabilityName,
-      | {
-          readonly _tag: "pending";
-          readonly result: Deferred.Deferred<
-            Exit.Exit<ActivationResult, GatewayActivationError | StackError>,
-            never
-          >;
-        }
-      | { readonly _tag: "ready"; readonly result: ActivationResult }
-    >();
     type ActivationExit = Exit.Exit<ActivationResult, GatewayActivationError | StackError>;
     type ActivationToken =
       | { readonly _tag: "exit"; readonly result: ActivationExit }

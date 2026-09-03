@@ -24,7 +24,7 @@ import {
 import type { StackStateStore } from "../state/StackStateStore.ts";
 import { privateBindingIntentsFor } from "../runtime/WorkloadRuntimeSpec.ts";
 import type { PortField } from "../public/Status.ts";
-import { bindHostListener, isHttpPortField } from "./HostListener.ts";
+import { bindHostListener, checkHostPort, isHttpPortField } from "./HostListener.ts";
 import {
   AUTH_ANON_KEY_SLOT,
   AUTH_PUBLISHABLE_KEY_SLOT,
@@ -181,6 +181,7 @@ export const makeSupervisorIngress = (
       makePortCoordinator({
         stateRoot: options.stateRoot,
         store: options.store,
+        checkHostPort,
         bindHost: options.bindHost ?? bindHostListener,
       });
     const acquire = (

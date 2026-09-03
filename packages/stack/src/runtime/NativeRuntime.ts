@@ -397,19 +397,15 @@ export const makeNativeRuntime = (
                     );
                   }).pipe(Effect.exit);
             const closed = yield* Scope.close(startupScope, Exit.void).pipe(Effect.exit);
-            if (Exit.isFailure(result) && Exit.isFailure(terminated) && Exit.isFailure(closed))
-              return yield* Effect.failCause(
-                Cause.combine(result.cause, Cause.combine(terminated.cause, closed.cause)),
-              );
-            if (Exit.isFailure(result) && Exit.isFailure(terminated))
-              return yield* Effect.failCause(Cause.combine(result.cause, terminated.cause));
-            if (Exit.isFailure(result) && Exit.isFailure(closed))
-              return yield* Effect.failCause(Cause.combine(result.cause, closed.cause));
-            if (Exit.isFailure(terminated) && Exit.isFailure(closed))
-              return yield* Effect.failCause(Cause.combine(terminated.cause, closed.cause));
-            if (Exit.isFailure(result)) return yield* Effect.failCause(result.cause);
-            if (Exit.isFailure(terminated)) return yield* Effect.failCause(terminated.cause);
-            if (Exit.isFailure(closed)) return yield* Effect.failCause(closed.cause);
+            let failureCause: Cause.Cause<RuntimeDriverError> | undefined;
+            for (const candidate of [result, terminated, closed]) {
+              if (!Exit.isFailure(candidate)) continue;
+              failureCause =
+                failureCause === undefined
+                  ? candidate.cause
+                  : Cause.combine(failureCause, candidate.cause);
+            }
+            if (failureCause !== undefined) return yield* Effect.failCause(failureCause);
           }),
         );
       });

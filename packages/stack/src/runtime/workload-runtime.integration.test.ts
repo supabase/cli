@@ -224,13 +224,13 @@ describe("workload runtime catalog", () => {
         ports: [],
         privatePorts: [],
       });
-      const reservation = yield* makePortCoordinator({ stateRoot: root, store }).planAndReserve(
-        stackId,
-        disabledListenerIntents,
-        {
-          privateBindings: privateBindingIntentsFor(compiled.executionPlan),
-        },
-      );
+      const reservation = yield* makePortCoordinator({
+        stateRoot: root,
+        store,
+        checkHostPort: () => Effect.void,
+      }).planAndReserve(stackId, disabledListenerIntents, {
+        privateBindings: privateBindingIntentsFor(compiled.executionPlan),
+      });
       const pgmetaPrimary = reservation.privateAssignments.find(
         ({ workloadId, binding }) => workloadId === "studio:pgmeta" && binding === "primary",
       );

@@ -61,10 +61,11 @@ import {
   makeHandle,
   openStack,
   type EffectStack,
+  type HandleDependencies,
   type PrepareStackResult,
 } from "./EffectStack.ts";
 import { CAPABILITY_NAMES } from "./Capability.ts";
-import { StackIdSchema } from "./StackId.ts";
+import { StackIdSchema, type StackId } from "./StackId.ts";
 import type { StackStatus } from "./Status.ts";
 import { makeDockerEngine } from "../runtime/DockerEngine.ts";
 import {
@@ -122,6 +123,18 @@ const stoppedState = (): PersistedStackState => ({
 
 const emptyLogs = () =>
   Effect.succeed({ entries: [], cursor: { opaque: "v1_0" }, running: false } as const);
+
+const makeTestHandle = (id: StackId, overrides: Partial<HandleDependencies> = {}) =>
+  makeHandle(id, {
+    resolveOwner: () => Effect.succeed(Option.none()),
+    readOfflineState: () => Effect.succeed(Option.none()),
+    readPersistedState: () => Effect.succeed(Option.none()),
+    readLogs: emptyLogs,
+    waitForRelease: () => Effect.void,
+    prepare: () =>
+      Effect.fail(new StackPreparationError({ message: "test preparation unavailable" })),
+    ...overrides,
+  });
 
 const withRuntimeRoot = <A, E, R>(effect: (project: string) => Effect.Effect<A, E, R>) =>
   Effect.scoped(
@@ -194,7 +207,7 @@ describe("Effect stack lifecycle handoff", () => {
             }),
           },
         }).pipe(Effect.provideService(Scope.Scope, ownerScope));
-        const stack = yield* makeHandle(stackId, {
+        const stack = yield* makeTestHandle(stackId, {
           resolveOwner: () => Effect.succeed(Option.some(owner)),
         });
         const stopped = yield* stack.stop().pipe(Effect.exit);
@@ -309,7 +322,7 @@ describe("Effect stack lifecycle handoff", () => {
           },
           onShutdownReady: Deferred.succeed(stopped, undefined).pipe(Effect.asVoid),
         }).pipe(Effect.provideService(Scope.Scope, ownerScope));
-        const stack = yield* makeHandle(stackId, {
+        const stack = yield* makeTestHandle(stackId, {
           resolveOwner: () =>
             Ref.get(ownerAvailable).pipe(
               Effect.map((available) => (available ? Option.some(owner) : Option.none())),
@@ -380,7 +393,7 @@ describe("Effect stack lifecycle handoff", () => {
             stop: Effect.succeed({ ok: true, op: "stop" }),
           },
         }).pipe(Effect.provideService(Scope.Scope, ownerScope));
-        const stack = yield* makeHandle(stackId, {
+        const stack = yield* makeTestHandle(stackId, {
           resolveOwner: () => Effect.succeed(Option.some(owner)),
         });
         const result = yield* stack.logs({ cursor: { opaque: "not-a-cursor" } }).pipe(Effect.exit);
@@ -429,7 +442,7 @@ describe("Effect stack lifecycle handoff", () => {
           },
         ];
         const burst = entries.slice(1);
-        const stack = yield* makeHandle(stackId, {
+        const stack = yield* makeTestHandle(stackId, {
           resolveOwner: () => Effect.succeed(Option.none()),
           readPersistedState: () => Effect.succeed(Option.some(stoppedState())),
           readOfflineState: () => Effect.succeed(Option.none()),
@@ -507,7 +520,7 @@ describe("Effect stack lifecycle handoff", () => {
         const ownership = new StackOwnershipConflictError({
           message: `owner ${artifact} is still present`,
         });
-        const stack = yield* makeHandle(stackId, {
+        const stack = yield* makeTestHandle(stackId, {
           resolveOwner: () => Effect.succeed(Option.none()),
           readOfflineState: () => Effect.fail(ownership),
           readLogs: () => Effect.fail(ownership),
@@ -520,36 +533,66 @@ describe("Effect stack lifecycle handoff", () => {
     }).pipe(Effect.provide(NodeServices.layer)),
   );
 
+  it.live("preserves an unreachable owner error when offline status is still guarded", () =>
+    withRuntimeRoot((project) =>
+      Effect.gen(function* () {
+        const path = yield* Path.Path;
+        const owner = {
+          format: "supabase-stack-owner-v1" as const,
+          stackId,
+          endpoint: { kind: "unix" as const, path: path.join(project, "missing-owner.sock") },
+          ownerSessionId: "unreachable-owner",
+          rpcRelease: STACK_RPC_RELEASE,
+        };
+        let ownerReads = 0;
+        const stack = yield* makeTestHandle(stackId, {
+          resolveOwner: () =>
+            Effect.sync(() => {
+              ownerReads += 1;
+              return ownerReads === 1 ? Option.some(owner) : Option.none();
+            }),
+          readOfflineState: () =>
+            Effect.fail(
+              new StackOwnershipConflictError({ message: "Owner metadata still exists" }),
+            ),
+        });
+        const result = yield* stack.status().pipe(Effect.exit);
+        expect(Exit.isFailure(result)).toBe(true);
+        if (Exit.isFailure(result)) {
+          const error = Option.getOrUndefined(Cause.findErrorOption(result.cause));
+          expect(error).toBeInstanceOf(StackOwnershipConflictError);
+          expect(error?.message).toContain("Stack owner is unreachable");
+        }
+      }),
+    ),
+  );
+
   it.live("waits for owner teardown before falling back to offline logs", () =>
     withRuntimeRoot((_project) =>
       Effect.gen(function* () {
         const attempts = yield* Ref.make(0);
-        const readAttempts = yield* Ref.make(0);
         const ownership = new StackOwnershipConflictError({
           message: "Supervisor is still shutting down",
         });
-        const stack = yield* makeHandle(stackId, {
+        const stack = yield* makeTestHandle(stackId, {
           resolveOwner: () => Effect.succeed(Option.none()),
           readPersistedState: () => Effect.succeed(Option.some(stoppedState())),
-          readOfflineState: () =>
-            Ref.getAndUpdate(readAttempts, (current) => current + 1).pipe(
-              Effect.flatMap((attempt) =>
-                attempt === 0 ? Effect.fail(ownership) : Effect.succeed(Option.none()),
-              ),
-            ),
           readLogs: () =>
-            Ref.update(attempts, (current) => current + 1).pipe(
-              Effect.as({
-                entries: [],
-                cursor: { opaque: "v1_0" },
-                running: false,
-              }),
+            Ref.getAndUpdate(attempts, (current) => current + 1).pipe(
+              Effect.flatMap((attempt) =>
+                attempt === 0
+                  ? Effect.fail(ownership)
+                  : Effect.succeed({
+                      entries: [],
+                      cursor: { opaque: "v1_0" },
+                      running: false,
+                    }),
+              ),
             ),
         });
         const batch = yield* stack.logs();
         expect(batch.entries).toEqual([]);
-        expect(yield* Ref.get(attempts)).toBe(1);
-        expect(yield* Ref.get(readAttempts)).toBe(2);
+        expect(yield* Ref.get(attempts)).toBe(2);
       }),
     ),
   );
@@ -860,7 +903,7 @@ describe("Effect stack lifecycle handoff", () => {
               stop: Effect.succeed({ ok: true, op: "stop" }),
             },
           }).pipe(Effect.provideService(Scope.Scope, ownerScope));
-          const stack = yield* makeHandle(stackId, {
+          const stack = yield* makeTestHandle(stackId, {
             resolveOwner: () => Effect.succeed(Option.some(owner)),
           });
           const result = yield* stack.start().pipe(Effect.exit);
@@ -934,7 +977,7 @@ describe("Effect stack lifecycle handoff", () => {
             stop: Effect.succeed({ ok: true, op: "stop" }),
           },
         }).pipe(Effect.provideService(Scope.Scope, ownerScope));
-        const stack = yield* makeHandle(stackId, {
+        const stack = yield* makeTestHandle(stackId, {
           resolveOwner: () => Effect.succeed(Option.some(owner)),
         });
         const first = yield* Effect.forkChild(stack.start(), { startImmediately: true });
@@ -1107,7 +1150,7 @@ describe("Effect stack lifecycle handoff", () => {
           ownerSessionId,
           rpcRelease: STACK_RPC_RELEASE,
         };
-        const stack = yield* makeHandle(stackId, {
+        const stack = yield* makeTestHandle(stackId, {
           resolveOwner: () => Effect.succeed(Option.some(owner)),
         });
         yield* stack.start();
@@ -1155,7 +1198,7 @@ describe("Effect stack lifecycle handoff", () => {
           },
         });
         let launched = false;
-        const stack = yield* makeHandle(stackId, {
+        const stack = yield* makeTestHandle(stackId, {
           resolveOwner: (launch) =>
             Effect.sync(() => {
               launched ||= launch;
@@ -1203,7 +1246,7 @@ describe("Effect stack lifecycle handoff", () => {
           maintenanceHandlers,
           onShutdownReady: Deferred.succeed(responseSent, undefined).pipe(Effect.asVoid),
         }).pipe(Effect.provideService(Scope.Scope, ownerScope));
-        const stack = yield* makeHandle(stackId, {
+        const stack = yield* makeTestHandle(stackId, {
           resolveOwner: () =>
             Effect.succeed(
               Option.some({
@@ -1230,7 +1273,7 @@ describe("Effect stack lifecycle handoff", () => {
         const fs = yield* FileSystem.FileSystem;
         const path = yield* Path.Path;
         const root = yield* fs.makeTempDirectoryScoped({ prefix: "supabase-effect-stack-" });
-        const stack = yield* makeHandle(stackId, {
+        const stack = yield* makeTestHandle(stackId, {
           resolveOwner: () =>
             Effect.succeed(
               Option.some({

@@ -890,6 +890,37 @@ describe("container runtime", () => {
     }),
   );
 
+  it.live("reports a running container as starting until readiness completes", () =>
+    Effect.gen(function* () {
+      const state: FakeContainerState = {
+        resources: [],
+        imagePresent: true,
+        calls: [],
+        createdSpecs: [],
+        nextId: 1,
+      };
+      const readinessEntered = yield* Deferred.make<void>();
+      const readinessRelease = yield* Deferred.make<void>();
+      const runtime = yield* makeContainerRuntime({
+        engine: fakeContainerEngine(state),
+        ownerSessionId: "owner-session",
+        waitForReadiness: () =>
+          Effect.gen(function* () {
+            yield* Deferred.succeed(readinessEntered, undefined);
+            yield* Deferred.await(readinessRelease);
+          }),
+      });
+      const starting = yield* runtime
+        .start(key, workload())
+        .pipe(Effect.forkChild({ startImmediately: true }));
+      yield* Deferred.await(readinessEntered);
+      const observed = yield* runtime.observe(stackId);
+      expect(observed).toEqual([{ ...key, state: "starting" }]);
+      yield* Deferred.succeed(readinessRelease, undefined);
+      expect((yield* Fiber.join(starting)).state).toBe("ready");
+    }),
+  );
+
   it.live("allows stop to interrupt a blocked container readiness", () =>
     Effect.gen(function* () {
       const state: FakeContainerState = {

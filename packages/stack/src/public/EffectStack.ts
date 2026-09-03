@@ -11,7 +11,6 @@ import {
   Path,
   Predicate,
   Schedule,
-  Scope,
   Schema,
   Stream,
 } from "effect";
@@ -282,53 +281,42 @@ const destroyError = (error: ControlError): DestroyStackError =>
   narrowError(error, DESTROY_STACK_ERROR_TAGS, (message) => new StackDestructionError({ message }));
 
 /** Internal control-transport seam used by public lifecycle integration tests. */
-export const makeHandle = (
-  id: StackId,
-  options: {
-    readonly resolveOwner?: (
-      launch: boolean,
-    ) => Effect.Effect<Option.Option<OwnerMetadata>, StackError>;
-    readonly readOfflineState?: () => Effect.Effect<Option.Option<PersistedStackState>, StackError>;
-    readonly readPersistedState?: () => Effect.Effect<
-      Option.Option<PersistedStackState>,
-      StackError
-    >;
-    readonly readLogs?: (query?: LogQuery) => Effect.Effect<StackLogBatch, StackLogsError>;
-    readonly waitForRelease?: () => Effect.Effect<void, StackStopError>;
-    readonly prepare?: (
-      options?: PrepareStackOptions,
-    ) => Effect.Effect<PrepareStackResult, PrepareStackError>;
-  } = {},
-): Effect.Effect<EffectStack> =>
+export interface HandleDependencies {
+  readonly resolveOwner: (
+    launch: boolean,
+  ) => Effect.Effect<Option.Option<OwnerMetadata>, StackError>;
+  readonly readOfflineState: () => Effect.Effect<Option.Option<PersistedStackState>, StackError>;
+  readonly readPersistedState: () => Effect.Effect<Option.Option<PersistedStackState>, StackError>;
+  readonly readLogs: (query?: LogQuery) => Effect.Effect<StackLogBatch, StackLogsError>;
+  readonly waitForRelease: () => Effect.Effect<void, StackStopError>;
+  readonly prepare: (
+    options?: PrepareStackOptions,
+  ) => Effect.Effect<PrepareStackResult, PrepareStackError>;
+}
+
+export const makeHandle = (id: StackId, options: HandleDependencies): Effect.Effect<EffectStack> =>
   Effect.sync(() => {
-    const readOfflineState = options.readOfflineState;
-    const readPersistedState = options.readPersistedState;
-    const readLogs = options.readLogs;
     const isStoppedState = (state: PersistedStackState): boolean =>
       state.desiredLifecycle === "stopped" || state.desiredLifecycle === "unconfigured";
     const stackNotFound = () => new StackNotFoundError({ message: "Stack state was not found" });
     const resolveClient = (
       launch: boolean,
     ): Effect.Effect<ReturnType<typeof makeControlClient>, StackError> =>
-      options.resolveOwner !== undefined
-        ? options.resolveOwner(launch).pipe(
-            Effect.flatMap((owner) =>
-              Option.isSome(owner)
-                ? Effect.succeed(
-                    makeControlClient(owner.value.endpoint, {
-                      stackId: id,
-                      ownerSessionId: owner.value.ownerSessionId,
-                      rpcRelease: owner.value.rpcRelease,
-                    }),
-                  )
-                : Effect.fail(
-                    new StackOwnershipConflictError({ message: "No Supervisor owns this stack" }),
-                  ),
-            ),
-          )
-        : Effect.fail(
-            new StackOwnershipConflictError({ message: "No Supervisor owns this stack" }),
-          );
+      options.resolveOwner(launch).pipe(
+        Effect.flatMap((owner) =>
+          Option.isSome(owner)
+            ? Effect.succeed(
+                makeControlClient(owner.value.endpoint, {
+                  stackId: id,
+                  ownerSessionId: owner.value.ownerSessionId,
+                  rpcRelease: owner.value.rpcRelease,
+                }),
+              )
+            : Effect.fail(
+                new StackOwnershipConflictError({ message: "No Supervisor owns this stack" }),
+              ),
+        ),
+      );
     const mapRpcClientFailure = <E extends StackError>(
       error: RpcClientError,
       mapError: (error: ControlError) => E,
@@ -423,10 +411,9 @@ export const makeHandle = (
     );
     const status = () => {
       const rpcStatus = invoke((rpc) => rpc.status(undefined), statusError);
-      if (readOfflineState === undefined) return rpcStatus;
       return rpcStatus.pipe(
-        Effect.catchTag("StackOwnershipConflictError", () =>
-          readOfflineState().pipe(
+        Effect.catchTag("StackOwnershipConflictError", (ownershipError) =>
+          options.readOfflineState().pipe(
             Effect.mapError(statusError),
             Effect.flatMap((state) =>
               Option.isNone(state)
@@ -439,13 +426,12 @@ export const makeHandle = (
                       new StackOwnershipConflictError({ message: "No Supervisor owns this stack" }),
                     ),
             ),
+            Effect.catchTag("StackOwnershipConflictError", () => Effect.fail(ownershipError)),
           ),
         ),
       );
     };
     const start = (startOptions?: StartStackOptions) => {
-      const waitForRelease = options.waitForRelease;
-      const readPersistedState = options.readPersistedState;
       return invoke(
         (rpc) =>
           startOptions?.config === undefined
@@ -455,16 +441,14 @@ export const makeHandle = (
         true,
       ).pipe(
         Effect.tapError(() =>
-          waitForRelease === undefined || readPersistedState === undefined
-            ? Effect.void
-            : readPersistedState().pipe(
-                Effect.flatMap((state) =>
-                  Option.isSome(state) && isStoppedState(state.value)
-                    ? waitForRelease().pipe(Effect.ignore)
-                    : Effect.void,
-                ),
-                Effect.ignore,
-              ),
+          options.readPersistedState().pipe(
+            Effect.flatMap((state) =>
+              Option.isSome(state) && isStoppedState(state.value)
+                ? options.waitForRelease().pipe(Effect.ignore)
+                : Effect.void,
+            ),
+            Effect.ignore,
+          ),
         ),
       );
     };
@@ -498,29 +482,20 @@ export const makeHandle = (
           return yield* new StackLifecycleConflictError({ message: response.value.error.message });
         }
         yield* Fiber.join(closeFiber).pipe(Effect.ignore);
-        if (options.waitForRelease !== undefined) yield* options.waitForRelease();
+        yield* options.waitForRelease();
       }).pipe(Effect.mapError(stopError));
     const stop = () =>
       resolveClient(false).pipe(
         Effect.mapError(stopError),
         Effect.flatMap(stopOwner),
         Effect.catchTag("StackOwnershipConflictError", () =>
-          (readOfflineState === undefined
-            ? Effect.fail(
-                new StackOwnershipConflictError({ message: "No Supervisor owns this stack" }),
-              )
-            : readOfflineState().pipe(
-                Effect.mapError(stopError),
-                Effect.flatMap((state) =>
-                  Option.isSome(state) && isStoppedState(state.value)
-                    ? Effect.void
-                    : resolveClient(true).pipe(
-                        Effect.mapError(stopError),
-                        Effect.flatMap(stopOwner),
-                      ),
-                ),
-              )
-          ).pipe(
+          options.readOfflineState().pipe(
+            Effect.mapError(stopError),
+            Effect.flatMap((state) =>
+              Option.isSome(state) && isStoppedState(state.value)
+                ? Effect.void
+                : resolveClient(true).pipe(Effect.mapError(stopError), Effect.flatMap(stopOwner)),
+            ),
             // Ownership artifacts that block the offline fast path may be
             // stale. Let ensureSupervisor arbitrate the lease; a live owner
             // remains protected and returns a typed conflict.
@@ -532,20 +507,11 @@ export const makeHandle = (
       );
     const prepare = (
       prepareOptions?: PrepareStackOptions,
-    ): Effect.Effect<PrepareStackResult, PrepareStackError> =>
-      options.prepare === undefined
-        ? Effect.fail(new StackPreparationError({ message: "Stack preparation is unavailable" }))
-        : options.prepare(prepareOptions);
+    ): Effect.Effect<PrepareStackResult, PrepareStackError> => options.prepare(prepareOptions);
     const logs = (query?: LogQuery): Effect.Effect<StackLogBatch, StackLogsError> =>
       invoke((rpc) => rpc.logs(query ?? {}), logsError).pipe(
         Effect.catchTag("StackOwnershipConflictError", (ownershipError) => {
-          if (readLogs === undefined)
-            return Effect.fail(
-              new StackOwnershipConflictError({ message: "No Supervisor owns this stack" }),
-            );
-          if (readOfflineState === undefined || readPersistedState === undefined)
-            return Effect.fail(ownershipError);
-          const ownerStopped = readPersistedState().pipe(Effect.mapError(logsStateError));
+          const ownerStopped = options.readPersistedState().pipe(Effect.mapError(logsStateError));
           return ownerStopped.pipe(
             Effect.flatMap((state) => {
               if (Option.isNone(state)) return Effect.fail(stackNotFound());
@@ -555,10 +521,7 @@ export const makeHandle = (
                 // During an owner stop the control socket can close before its metadata/lease are
                 // released. Re-check ownership before each read and retry only that typed
                 // transition; a live owner or other log failure remains visible.
-                readOfflineState().pipe(
-                  Effect.mapError(logsStateError),
-                  Effect.andThen(readLogs(query)),
-                ),
+                options.readLogs(query),
               ).pipe(
                 Effect.retry({
                   schedule: Schedule.spaced("25 millis").pipe(Schedule.upTo({ times: 200 })),
@@ -870,7 +833,7 @@ export const createStack = (
 ): Effect.Effect<
   EffectStack,
   CreateStackError,
-  Scope.Scope | FileSystem.FileSystem | Path.Path | Crypto.Crypto | ChildProcessSpawnerService
+  FileSystem.FileSystem | Path.Path | Crypto.Crypto | ChildProcessSpawnerService
 > =>
   Effect.gen(function* () {
     const env = yield* environment();
@@ -924,7 +887,7 @@ export const openStack = (
 ): Effect.Effect<
   EffectStack,
   OpenStackError,
-  Scope.Scope | FileSystem.FileSystem | Path.Path | Crypto.Crypto | ChildProcessSpawnerService
+  FileSystem.FileSystem | Path.Path | Crypto.Crypto | ChildProcessSpawnerService
 > =>
   Effect.gen(function* () {
     const env = yield* environment();

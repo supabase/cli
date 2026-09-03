@@ -59,6 +59,40 @@ export type ContainerLabels =
   | ContainerNetworkLabels
   | ContainerWorkloadLabels
   | ContainerVolumeLabels;
+
+export const CONTAINER_LABEL_PREFIX = "com.supabase.stack";
+export const CONTAINER_LABEL_KEYS = {
+  stackId: `${CONTAINER_LABEL_PREFIX}.stackId`,
+  ownerSessionId: `${CONTAINER_LABEL_PREFIX}.ownerSessionId`,
+  workloadId: `${CONTAINER_LABEL_PREFIX}.workloadId`,
+  startup: `${CONTAINER_LABEL_PREFIX}.startup`,
+  role: `${CONTAINER_LABEL_PREFIX}.role`,
+};
+
+/** Shapes byte-identical label argv for Docker and Podman. */
+export const containerLabels = (value: ContainerLabels): ReadonlyArray<string> => {
+  const pairs: ReadonlyArray<readonly [string, string]> =
+    value.role === "network"
+      ? [
+          ["stackId", value.stackId],
+          ["ownerSessionId", value.ownerSessionId],
+          ["role", value.role],
+        ]
+      : value.role === "volume"
+        ? [
+            ["stackId", value.stackId],
+            ["workloadId", value.workloadId],
+            ["role", value.role],
+          ]
+        : [
+            ["stackId", value.stackId],
+            ["ownerSessionId", value.ownerSessionId],
+            ["workloadId", value.workloadId],
+            ["startup", value.startup === true ? "true" : "false"],
+            ["role", value.role],
+          ];
+  return pairs.flatMap(([key, label]) => ["--label", `${CONTAINER_LABEL_PREFIX}.${key}=${label}`]);
+};
 export interface ContainerResource {
   readonly id: string;
   readonly name: string;

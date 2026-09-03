@@ -24,6 +24,9 @@ Docker modes. It begins from the PostgreSQL-only default, progressively activate
 realistic traffic, and verifies stop/start cycles, stable ports, and persistent data. The
 CLI is not involved in these runtime tests.
 
+Podman is supported only on local Linux hosts and must be selected explicitly; the runtime does not
+auto-detect container engines.
+
 Callers can warm selected native artifacts or container images with `stack.prepare(...)` while a
 stack is stopped; preparation is cache-only and cancellation does not affect completed entries.
 Each capability may opt into eager activation in `StackConfig`; omitted settings keep every

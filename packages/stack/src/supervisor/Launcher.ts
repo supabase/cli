@@ -69,12 +69,12 @@ export const defaultRuntimeEnvironment = (): StackRuntimeEnvironmentValue => {
 
 type ReadinessResult =
   | { readonly kind: "ready"; readonly stackId: StackId; readonly ownerSessionId: string }
-  | { readonly kind: "ownership-conflict" }
+  | { readonly kind: "ownership-conflict"; readonly message: string }
   | { readonly kind: "failed"; readonly message: string };
 
 type ChildResult =
   | { readonly kind: "ready"; readonly metadata: OwnerMetadata }
-  | { readonly kind: "ownership-conflict" }
+  | { readonly kind: "ownership-conflict"; readonly message: string }
   | { readonly kind: "failed"; readonly message: string };
 
 const mapFailure = (message: string) => new StackStateInvalidError({ message });
@@ -112,7 +112,7 @@ const decodeReady = (bytes: Uint8Array): Effect.Effect<ReadinessResult, StackSta
           ownerSessionId: value.ownerSessionId,
         })
       : value.code === "ownership-conflict"
-        ? Effect.succeed({ kind: "ownership-conflict" })
+        ? Effect.succeed({ kind: "ownership-conflict", message: value.message })
         : Effect.succeed({ kind: "failed", message: value.message });
   return Schema.decodeEffect(Schema.fromJsonString(SupervisorReadySchema))(text).pipe(
     Effect.mapError(() => mapFailure("Invalid supervisor readiness frame")),
@@ -301,14 +301,22 @@ const launchAndAwait = (
         yield* Fiber.interrupt(ownerFiber);
         return yield* validateCompatibleOwner(options, current).pipe(
           Effect.as(current),
-          Effect.catchTag("StackStateInvalidError", () =>
-            Effect.fail(
-              new StackOwnershipConflictError({
-                message: "A live Supervisor owns this stack but is not responding",
-                stackId: options.stackId,
-              }),
-            ),
-          ),
+          Effect.catchTags({
+            StackStateInvalidError: () =>
+              Effect.fail(
+                new StackOwnershipConflictError({
+                  message: childResult.message,
+                  stackId: options.stackId,
+                }),
+              ),
+            StackOwnershipConflictError: () =>
+              Effect.fail(
+                new StackOwnershipConflictError({
+                  message: childResult.message,
+                  stackId: options.stackId,
+                }),
+              ),
+          }),
         );
       }
       return yield* Fiber.join(ownerFiber).pipe(

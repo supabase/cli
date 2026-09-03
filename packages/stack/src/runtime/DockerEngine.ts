@@ -1,43 +1,14 @@
 import {
   makeContainerEngineCodecs,
   makeContainerEngineCore,
+  CONTAINER_LABEL_KEYS,
+  containerLabels,
   type ContainerCommand,
   type ContainerEngine,
   type ContainerEngineOptions,
   type ContainerLogOptions,
-  type ContainerLabels,
   type ContainerProcessRequest,
 } from "./ContainerEngine.ts";
-
-const stackLabel = "com.supabase.stack.stackId";
-const ownerLabel = "com.supabase.stack.ownerSessionId";
-const workloadLabel = "com.supabase.stack.workloadId";
-const startupLabel = "com.supabase.stack.startup";
-const roleLabel = "com.supabase.stack.role";
-
-const labels = (value: ContainerLabels): ReadonlyArray<string> => {
-  const pairs =
-    value.role === "network"
-      ? [
-          ["stackId", value.stackId],
-          ["ownerSessionId", value.ownerSessionId],
-          ["role", value.role],
-        ]
-      : value.role === "volume"
-        ? [
-            ["stackId", value.stackId],
-            ["workloadId", value.workloadId],
-            ["role", value.role],
-          ]
-        : [
-            ["stackId", value.stackId],
-            ["ownerSessionId", value.ownerSessionId],
-            ["workloadId", value.workloadId],
-            ["startup", value.startup === true ? "true" : "false"],
-            ["role", value.role],
-          ];
-  return pairs.flatMap(([key, label]) => ["--label", `com.supabase.stack.${key}=${String(label)}`]);
-};
 
 const jsonLabel = (label: string): string => `{{json (.Label "${label}")}}`;
 
@@ -46,29 +17,26 @@ const jsonLabel = (label: string): string => `{{json (.Label "${label}")}}`;
 const containerFormat = [
   "{{json .ID}}",
   "{{json .Names}}",
-  jsonLabel(stackLabel),
-  jsonLabel(ownerLabel),
-  jsonLabel(workloadLabel),
-  jsonLabel(startupLabel),
-  jsonLabel(roleLabel),
+  jsonLabel(CONTAINER_LABEL_KEYS.stackId),
+  jsonLabel(CONTAINER_LABEL_KEYS.ownerSessionId),
+  jsonLabel(CONTAINER_LABEL_KEYS.workloadId),
+  jsonLabel(CONTAINER_LABEL_KEYS.startup),
+  jsonLabel(CONTAINER_LABEL_KEYS.role),
   "{{json .State}}",
 ].join("\\t");
 const networkFormat = [
   "{{json .ID}}",
   "{{json .Name}}",
-  jsonLabel(stackLabel),
-  jsonLabel(ownerLabel),
-  jsonLabel(roleLabel),
+  jsonLabel(CONTAINER_LABEL_KEYS.stackId),
+  jsonLabel(CONTAINER_LABEL_KEYS.ownerSessionId),
+  jsonLabel(CONTAINER_LABEL_KEYS.role),
 ].join("\\t");
 const volumeFormat = [
   "{{json .Name}}",
-  jsonLabel(stackLabel),
-  jsonLabel(workloadLabel),
-  jsonLabel(roleLabel),
+  jsonLabel(CONTAINER_LABEL_KEYS.stackId),
+  jsonLabel(CONTAINER_LABEL_KEYS.workloadId),
+  jsonLabel(CONTAINER_LABEL_KEYS.role),
 ].join("\\t");
-
-const commandLabels = (spec: { readonly labels: ContainerLabels }): ReadonlyArray<string> =>
-  labels(spec.labels);
 
 export const serializeDockerCommand = (command: ContainerCommand): ContainerProcessRequest => {
   switch (command.operation) {
@@ -86,7 +54,7 @@ export const serializeDockerCommand = (command: ContainerCommand): ContainerProc
           "ps",
           "--all",
           "--filter",
-          `label=${stackLabel}=${command.stackId}`,
+          `label=${CONTAINER_LABEL_KEYS.stackId}=${command.stackId}`,
           "--format",
           containerFormat,
         ],
@@ -97,7 +65,7 @@ export const serializeDockerCommand = (command: ContainerCommand): ContainerProc
           "network",
           "ls",
           "--filter",
-          `label=${stackLabel}=${command.stackId}`,
+          `label=${CONTAINER_LABEL_KEYS.stackId}=${command.stackId}`,
           "--format",
           networkFormat,
         ],
@@ -108,17 +76,21 @@ export const serializeDockerCommand = (command: ContainerCommand): ContainerProc
           "volume",
           "ls",
           "--filter",
-          `label=${stackLabel}=${command.stackId}`,
+          `label=${CONTAINER_LABEL_KEYS.stackId}=${command.stackId}`,
           "--format",
           volumeFormat,
         ],
       };
     case "create-network":
-      return { args: ["network", "create", ...commandLabels(command.spec), command.spec.name] };
+      return {
+        args: ["network", "create", ...containerLabels(command.spec.labels), command.spec.name],
+      };
     case "remove-network":
       return { args: ["network", "rm", command.id] };
     case "create-volume":
-      return { args: ["volume", "create", ...commandLabels(command.spec), command.spec.name] };
+      return {
+        args: ["volume", "create", ...containerLabels(command.spec.labels), command.spec.name],
+      };
     case "remove-volume":
       return { args: ["volume", "rm", command.id] };
     case "create-container": {
@@ -154,7 +126,7 @@ export const serializeDockerCommand = (command: ContainerCommand): ContainerProc
           "--network",
           command.spec.network,
           ...networkAliases,
-          ...commandLabels(command.spec),
+          ...containerLabels(command.spec.labels),
           ...bindMounts,
           ...volumeMounts,
           ...publications,
