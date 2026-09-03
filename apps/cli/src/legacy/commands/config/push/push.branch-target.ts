@@ -1,4 +1,5 @@
 import { Effect, FileSystem, Option, Path } from "effect";
+import * as HttpClientError from "effect/unstable/http/HttpClientError";
 
 import { LegacyPlatformApi } from "../../../auth/legacy-platform-api.service.ts";
 import { LegacyCliSettings } from "../../../config/legacy-cli-settings.service.ts";
@@ -20,10 +21,19 @@ import { Output } from "../../../../shared/output/output.service.ts";
  *
  *   - `"project"` — `ref` is the linked project itself. `name` is present
  *     when the live probe below found it.
- *   - `"branch"` — `ref` is a preview branch. `parentRef`/`parentName`/
- *     `branch` are each present only when they could actually be determined
- *     — "assumed branch, nothing else known" is exactly this shape with all
- *     three absent.
+ *   - `"branch"` — `ref` is CONFIRMED to be a preview branch (an explicit
+ *     `--project-ref <name-or-uuid>`, or a live 404). `parentRef`/
+ *     `parentName`/`branch` are each present only when they could actually
+ *     be determined — "confirmed branch, nothing else known" is exactly this
+ *     shape with all three absent.
+ *   - `"unknown"` — the live probe couldn't tell (a timeout, a transport
+ *     failure, or a non-200/404 status, e.g. a scoped token that can write
+ *     service config but can't read the project record). Never asserted as
+ *     a branch: an uncertain outcome must not gate a plain, everyday push
+ *     behind a confirmation that then auto-declines (and FAILS — see
+ *     `push.handler.ts`) an unattended run over nothing more than network
+ *     jitter. Never asserted as a project either — the target-echo line
+ *     says plainly that it doesn't know.
  */
 export type LegacyConfigPushTarget =
   | { readonly kind: "project"; readonly ref: string; readonly name?: string }
@@ -33,31 +43,28 @@ export type LegacyConfigPushTarget =
       readonly parentRef?: string;
       readonly parentName?: string;
       readonly branch?: string;
-    };
+    }
+  | { readonly kind: "unknown"; readonly ref: string };
 
 /**
- * What the caller already knows about `ref` being a branch (CLI-2289's
+ * A branch name/UUID the caller already resolved `ref` from (CLI-2289's
  * `--project-ref <name-or-uuid>` path) — this makes the caller's knowledge
- * that `ref` is a branch CERTAIN, so {@link legacyResolveConfigPushTarget}
- * never runs the live `getProject` probe for it, regardless of which fields
- * are present:
+ * that `ref` is a branch DEFINITIVE, so {@link legacyResolveConfigPushTarget}
+ * never runs the live `getProject` probe for it:
  *
- *   - `{branchName, parentRef}` both present — a NAME target: both were
- *     resolved eagerly, nothing more to recover.
- *   - `{}` (both absent) — a UUID target: certain to be a branch, but a UUID
- *     carries no display name and never forces its parent, so neither field
- *     is known yet. Runs the SAME best-effort cache recovery the bare-404
- *     path uses, to fill in whatever it can.
+ *   - `"name"` — both fields were resolved eagerly, nothing more to recover.
+ *   - `"uuid"` — certain to be a branch, but a UUID carries no display name
+ *     and never forces its parent (`GET /v1/branches/{id}` alone resolves
+ *     it), so it runs the SAME best-effort cache recovery a live 404 does,
+ *     to fill in whatever it can. A discriminated union rather than an
+ *     all-optional shape: the only two states a real caller ever produces
+ *     are "both known" and "neither known" — a partial state (a parent
+ *     without a name, or vice versa) is not a shape this resolver needs to
+ *     handle, so it doesn't exist to be handled incorrectly.
  */
-export interface LegacyConfigPushKnownBranch {
-  readonly branchName?: string;
-  readonly parentRef?: string;
-}
-
-type LegacyConfigPushProbeOutcome =
-  | { readonly kind: "project"; readonly name: string | undefined }
-  | { readonly kind: "branch-uncertain" }
-  | { readonly kind: "timeout" };
+export type LegacyConfigPushKnownBranch =
+  | { readonly kind: "name"; readonly branchName: string; readonly parentRef: string }
+  | { readonly kind: "uuid" };
 
 /** `V1GetProjectOutput.name`/a branch's `name` are unconstrained strings — an
  * empty (or empty-after-sanitization-adjacent) live value must render as "no
@@ -67,63 +74,63 @@ function normalizeApiName(name: string | undefined): string | undefined {
   return name !== undefined && name.length > 0 ? name : undefined;
 }
 
+function isNotFound(cause: unknown): boolean {
+  return (
+    HttpClientError.isHttpClientError(cause) &&
+    cause.response !== undefined &&
+    cause.response.status === 404
+  );
+}
+
 /**
  * Resolves what `ref` actually is, so `config push` can tell the user
  * whether they're pushing to the linked project or one of its branches
- * (CLI-2168), and so a branch push can be gated behind confirmation.
+ * (CLI-2168), and so a branch push can be gated behind confirmation. NEVER
+ * FAILS — matching `legacyFindBranchName`'s own best-effort contract, this
+ * probe is diagnostic-only and must never abort a push that would otherwise
+ * succeed.
  *
- *   - `opts.knownBranch` has both `branchName`/`parentRef` (a NAME target,
- *     CLI-2289): no probe, no recovery — just enrich the parent's NAME from
- *     `.temp/linked-project.json` when its `ref` matches `parentRef`.
- *   - `opts.knownBranch` is present but incomplete (a UUID target — `{}`):
- *     no probe either (the target is CERTAIN to be a branch), but falls into
- *     the SAME best-effort recovery below a bare 404 uses, to try to
- *     correlate a real name/parent from cache.
- *   - `opts.knownBranch` is absent: `GET /v1/projects/{ref}` (via
- *     `opts.classifyLookupError`, `legacyClassifyProjectLookupError`'s
- *     contract), bounded at {@link LEGACY_BRANCH_LOOKUP_TIMEOUT} and wrapped
- *     in a `"Checking project..."` task. A 200 is a plain project; a
- *     TIMEOUT degrades directly to the bare `{ kind: "branch", ref }` shape
- *     (uncertain, but must never silently default to "project" and skip the
- *     confirmation gate, nor hard-abort the whole command over a slow read);
- *     a 404 means `ref` is a branch whose name/parent are not yet known, so
- *     it falls into the same best-effort recovery as the incomplete-
- *     `knownBranch` case above:
- *       1. Read + parse `.temp/linked-project.json` — `cached`. No
- *          ref-pattern-valid, non-self-referential `cached.ref` (and no
- *          `opts.knownBranch?.parentRef` either) → the bare
- *          `{ kind: "branch", ref }` shape, no further filesystem or API
- *          calls at all.
- *       2. Otherwise, read `.temp/project-ref` — `fileRef` — and best-effort
- *          look up the branch's own name among the candidate parent's
- *          branches ({@link legacyFindBranchName}), unless `opts.knownBranch`
- *          already carries a name.
- *       3. A parent the CALLER already certified (the UUID path) is trusted
- *          outright. A cache-derived candidate still needs the SAME positive
- *          confirmation the bare-404 path always required: the branch-list
- *          lookup positively confirmed it, OR `ref` is literally what
- *          `.temp/project-ref` currently holds — inheriting that file's own
- *          link-completed invariant (the same reasoning `legacy-linked-state.ts`
- *          documents for its own analogous case, restated here for a
- *          caller-supplied ref instead of a self-resolved one). Untrusted →
- *          the bare `{ kind: "branch", ref }` shape, no parent claim at all.
+ *   - `opts.knownBranch?.kind === "name"`: no probe, no recovery — just
+ *     enrich the parent's NAME from `.temp/linked-project.json` when its
+ *     `ref` matches `parentRef`.
+ *   - `opts.knownBranch?.kind === "uuid"`, or a live 404: `ref` is
+ *     CONFIRMED a branch; run the shared best-effort recovery below.
+ *   - Otherwise (`opts.knownBranch` absent): `GET /v1/projects/{ref}`,
+ *     bounded at {@link LEGACY_BRANCH_LOOKUP_TIMEOUT} and wrapped in a
+ *     `"Checking project..."` task. A 200 is a plain project. A TIMEOUT, a
+ *     transport failure, or any status other than 200/404 is `"unknown"` —
+ *     the task is marked failed (this diagnostic step genuinely didn't
+ *     complete), but the push itself is never blocked by it. A 404 confirms
+ *     a branch and falls into the same recovery as the `"uuid"` case.
+ *
+ * Shared best-effort recovery (a confirmed branch whose name/parent aren't
+ * fully known yet):
+ *   1. Read + parse `.temp/linked-project.json` — `cached`. No
+ *      ref-pattern-valid, non-self-referential `cached.ref` → the bare
+ *      `{ kind: "branch", ref }` shape, no further filesystem or API calls.
+ *   2. Otherwise, read `.temp/project-ref` — `fileRef` — and best-effort
+ *      look up the branch's own name among the candidate parent's branches
+ *      ({@link legacyFindBranchName}).
+ *   3. The branch-list lookup positively confirming the parent, OR `ref`
+ *      being literally what `.temp/project-ref` currently holds —
+ *      inheriting that file's own link-completed invariant (the same
+ *      reasoning `legacy-linked-state.ts` documents for its own analogous
+ *      case, restated here for a caller-supplied ref instead of a
+ *      self-resolved one) — is what lets the parent claim stand. Neither →
+ *      the bare `{ kind: "branch", ref }` shape, no parent claim at all.
  */
-export function legacyResolveConfigPushTarget<E>(
+export function legacyResolveConfigPushTarget(
   ref: string,
-  opts: {
-    readonly classifyLookupError: (cause: unknown) => Effect.Effect<Option.Option<never>, E>;
-    readonly knownBranch?: LegacyConfigPushKnownBranch;
-  },
+  opts: { readonly knownBranch?: LegacyConfigPushKnownBranch },
 ): Effect.Effect<
   LegacyConfigPushTarget,
-  E,
+  never,
   LegacyPlatformApi | LegacyCliSettings | FileSystem.FileSystem | Path.Path | Output
 > {
   return Effect.gen(function* () {
     const cliSettings = yield* LegacyCliSettings;
     const fs = yield* FileSystem.FileSystem;
     const path = yield* Path.Path;
-    const output = yield* Output;
     const linkedProjectCachePath = legacyTempPaths(path, cliSettings.workdir).linkedProjectCache;
     const readCachedParent = fs.readFileString(linkedProjectCachePath).pipe(
       Effect.map(legacyParseCachedLinkedProject),
@@ -133,7 +140,7 @@ export function legacyResolveConfigPushTarget<E>(
     // Cheap path (a NAME target, CLI-2289): both fields already known — no
     // probe, no best-effort recovery, just enrich the parent's NAME from
     // cache when it happens to match.
-    if (opts.knownBranch?.branchName !== undefined && opts.knownBranch.parentRef !== undefined) {
+    if (opts.knownBranch?.kind === "name") {
       const { branchName, parentRef } = opts.knownBranch;
       const cached = yield* readCachedParent;
       const parentName =
@@ -147,54 +154,67 @@ export function legacyResolveConfigPushTarget<E>(
       };
     }
 
-    // `opts.knownBranch` present at all (even empty — a UUID target) means
-    // the caller already knows FOR CERTAIN `ref` is a branch: skip the live
-    // probe entirely and fall straight into the shared recovery below.
+    // `opts.knownBranch?.kind === "uuid"` means the caller already knows FOR
+    // CERTAIN `ref` is a branch: skip the live probe entirely. Otherwise,
+    // run the probe — its only two "certain" outcomes are 200 (return
+    // immediately) and 404 (fall through to the shared recovery below).
     if (opts.knownBranch === undefined) {
       const api = yield* LegacyPlatformApi;
+      const output = yield* Output;
       const probing =
         output.format === "text" ? yield* output.task("Checking project...") : undefined;
-      const probe: LegacyConfigPushProbeOutcome = yield* Effect.timeoutOrElse(
+
+      type ProbeOutcome =
+        | { readonly kind: "project"; readonly name: string | undefined }
+        | { readonly kind: "branch" }
+        | { readonly kind: "unknown" };
+
+      const probe: ProbeOutcome = yield* Effect.timeoutOrElse(
         api.v1.getProject({ ref }).pipe(
-          Effect.map((project): LegacyConfigPushProbeOutcome => ({
+          Effect.map((project): ProbeOutcome => ({
             kind: "project",
             name: normalizeApiName(project.name),
           })),
           Effect.catch((cause) =>
-            Effect.map(opts.classifyLookupError(cause), (): LegacyConfigPushProbeOutcome => ({
-              kind: "branch-uncertain",
-            })),
+            Effect.succeed<ProbeOutcome>(
+              isNotFound(cause) ? { kind: "branch" } : { kind: "unknown" },
+            ),
           ),
         ),
         {
           duration: LEGACY_BRANCH_LOOKUP_TIMEOUT,
-          orElse: () => Effect.succeed<LegacyConfigPushProbeOutcome>({ kind: "timeout" }),
+          orElse: () => Effect.succeed<ProbeOutcome>({ kind: "unknown" }),
         },
-      ).pipe(Effect.ensuring(probing?.clear() ?? Effect.void));
+      );
+      // A definitive answer (200 or 404) clears the task normally; an
+      // uncertain one (timeout, transport failure, or an unexpected status)
+      // marks it failed — the diagnostic step genuinely didn't complete,
+      // even though the push itself proceeds regardless.
+      yield* (probe.kind === "unknown" ? probing?.fail() : probing?.clear()) ?? Effect.void;
 
       if (probe.kind === "project") {
         return { kind: "project", ref, ...(probe.name === undefined ? {} : { name: probe.name }) };
       }
-      if (probe.kind === "timeout") {
-        return { kind: "branch", ref };
+      if (probe.kind === "unknown") {
+        return { kind: "unknown", ref };
       }
-      // probe.kind === "branch-uncertain" (404) — fall into the shared
-      // recovery below, same as a CERTAIN-but-incomplete `knownBranch`.
+      // probe.kind === "branch" (404) — fall into the shared recovery
+      // below, same as a CONFIRMED-but-incomplete `knownBranch` (a UUID
+      // target).
     }
 
-    // Best-effort recovery — shared by the live probe's 404 and a
-    // CERTAIN-but-incomplete `knownBranch` (a UUID target). Reads
-    // `.temp/project-ref` only once there's an actual cache candidate to
-    // correlate it against, so the common "cache absent" degradation path
-    // never touches the filesystem a second time.
+    // Shared recovery — a CONFIRMED branch (a UUID target, or a live 404)
+    // whose name/parent aren't known yet. Reads `.temp/project-ref` only
+    // once there's an actual cache candidate to correlate it against, so
+    // the common "cache absent" degradation path never touches the
+    // filesystem a second time.
     const cached = yield* readCachedParent;
-    const cachedCandidateParentRef =
+    const candidateParentRef =
       Option.isSome(cached) &&
       cached.value.ref !== ref &&
       LEGACY_BRANCH_PROJECT_REF_PATTERN.test(cached.value.ref)
         ? cached.value.ref
         : undefined;
-    const candidateParentRef = opts.knownBranch?.parentRef ?? cachedCandidateParentRef;
     if (candidateParentRef === undefined) {
       return { kind: "branch", ref };
     }
@@ -202,19 +222,12 @@ export function legacyResolveConfigPushTarget<E>(
     const fileRef = yield* legacyReadProjectRefFile(fs, path, cliSettings.workdir).pipe(
       Effect.orElseSucceed(() => Option.none<string>()),
     );
-    let branchName: string | undefined;
-    if (opts.knownBranch?.branchName !== undefined) {
-      branchName = opts.knownBranch.branchName;
-    } else {
-      branchName = normalizeApiName(yield* legacyFindBranchName(candidateParentRef, ref));
-    }
-    // A parent the CALLER already certified is trusted outright — nothing
-    // left to verify. A cache-derived candidate still needs the SAME
-    // positive confirmation the bare-404 path always required.
-    const trusted =
-      opts.knownBranch?.parentRef !== undefined ||
-      branchName !== undefined ||
-      (Option.isSome(fileRef) && fileRef.value === ref);
+    const branchName = normalizeApiName(
+      yield* legacyFindBranchName(candidateParentRef, ref, {
+        spinnerLabel: "Checking branch name...",
+      }),
+    );
+    const trusted = branchName !== undefined || (Option.isSome(fileRef) && fileRef.value === ref);
     if (!trusted) {
       return { kind: "branch", ref };
     }

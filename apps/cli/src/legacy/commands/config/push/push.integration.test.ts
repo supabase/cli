@@ -391,11 +391,18 @@ describe("legacy config push integration", () => {
   });
 
   it.live(
-    "aborts on malformed config.toml before the branch-name/UUID resolution's own network call, with a branch target",
+    "a branch name/UUID target resolves (or fails resolving) BEFORE a malformed config.toml is ever read",
     () => {
-      // Step 1 (config load) must fail before step 2 (branch/UUID target
-      // resolution) ever gets a chance to fire its own network call — a
-      // broken TOML must not burn a branch-resolution round trip.
+      // Branch/UUID resolution runs before the config load (unlike a
+      // ref-shaped/absent target, which never needs a network call to
+      // resolve at all) — a `[remotes.<name>]` overlay is merged INSIDE
+      // `loadCliConfig` itself, before its one full schema decode, so
+      // resolving the target first and loading exactly once is the only way
+      // to both avoid a double-decode and let a base config that's only
+      // valid once the matching remote applies still succeed. The accepted
+      // tradeoff: an unresolvable branch name costs a network round trip
+      // even though the local config.toml is malformed and would abort
+      // anyway once reached.
       const { layer, api } = setup({ toml: "malformed", yes: true });
       return Effect.gen(function* () {
         const exit = yield* legacyConfigPush({ projectRef: Option.some("somebranch") }).pipe(
@@ -403,10 +410,9 @@ describe("legacy config push integration", () => {
         );
         expect(Exit.isFailure(exit)).toBe(true);
         const rendered = JSON.stringify(exit);
-        expect(rendered).toContain("LegacyConfigPushLoadConfigError");
-        expect(rendered).not.toContain("LegacyConfigPushBranchNotFoundError");
-        expect(rendered).not.toContain("LegacyConfigPushBranchNotLinkedError");
-        expect(api.requests).toHaveLength(0);
+        expect(rendered).toContain("LegacyConfigPushBranchNotFoundError");
+        expect(rendered).not.toContain("LegacyConfigPushLoadConfigError");
+        expect(api.requests.some((r) => r.url.includes("/branches"))).toBe(true);
       }).pipe(Effect.provide(layer));
     },
   );
@@ -1479,71 +1485,131 @@ describe("legacy config push branch/project target detection (CLI-2168)", () => 
   });
 
   it.live(
-    "a transport failure probing the live target aborts before any further network call",
+    "a transport failure probing the live target degrades to unknown rather than aborting the push",
     () => {
-      const { layer, api } = setup({
-        toml: API_ONLY_TOML,
-        yes: true,
-        projectId: Option.some(PROBE_REF),
-        routes: { project: "fail" },
-      });
-      return Effect.gen(function* () {
-        const exit = yield* legacyConfigPush({ projectRef: Option.none() }).pipe(Effect.exit);
-        expect(Exit.isFailure(exit)).toBe(true);
-        const rendered = JSON.stringify(exit);
-        expect(rendered).toContain("LegacyConfigPushProjectLookupNetworkError");
-        expect(rendered).toContain("failed to retrieve project status");
-        expect(api.requests.some((r) => r.url.includes("/billing/addons"))).toBe(false);
-        expect(api.requests.some((r) => r.url.includes("/postgrest"))).toBe(false);
-      }).pipe(Effect.provide(layer));
-    },
-  );
-
-  it.live(
-    "a broken .temp/project-ref (a directory, not a file) degrades to a bare branch instead of failing",
-    () => {
-      // Mirrors the established `legacyReadProjectRefFile` EISDIR regression
-      // technique (`legacy-temp-paths.unit.test.ts`) — the target-detection
-      // recovery's own best-effort read must swallow a real read failure
-      // (not just a missing file) into "unknown", not propagate it.
-      mkdirSync(join(tempRoot.current, "supabase", ".temp", "project-ref"), { recursive: true });
-      const { layer, out } = setup({
+      // The target-detection probe is diagnostic-only (CLI-2168 review
+      // finding): a transport failure must never abort a push that would
+      // otherwise succeed — including for a plain project whose token can
+      // write service config but happens to fail this one informational
+      // read. It degrades to "unknown" (never "branch" — that would
+      // wrongly gate an ordinary push behind a confirmation that
+      // auto-declines, and fails, in an unattended run) and the push
+      // proceeds.
+      const { layer, out, api } = setup({
         toml: API_ONLY_TOML,
         yes: true,
         projectId: Option.some(PROBE_REF),
         routes: {
-          project: { status: 404, body: {} },
+          project: "fail",
           postgrestGet: { status: 200, body: POSTGREST_DISABLED },
           postgresGet: { status: 200, body: {} },
         },
       });
       return Effect.gen(function* () {
         yield* legacyConfigPush({ projectRef: Option.none() });
-        expect(out.stderrText).toContain(`Pushing config to branch: ${PROBE_REF}`);
+        expect(out.stderrText).toContain(
+          `Pushing config to: ${PROBE_REF} (could not determine whether this is a branch or the main project)`,
+        );
+        expect(out.stderrText).not.toContain("Do you want to push config to branch");
+        expect(api.requests.some((r) => r.url.includes("/branches"))).toBe(false);
+        expect(api.requests.some((r) => r.method === "PATCH" && r.url.includes("/postgrest"))).toBe(
+          true,
+        );
       }).pipe(Effect.provide(layer));
     },
   );
 
-  it.live("a 500 probing the live target surfaces the unexpected-status message", () => {
-    const { layer, api } = setup({
+  it.live(
+    "a broken .temp/project-ref (a directory, not a file) degrades gracefully instead of failing",
+    () => {
+      // Mirrors the established `legacyReadProjectRefFile` EISDIR regression
+      // technique (`legacy-temp-paths.unit.test.ts`) — the target-detection
+      // recovery's own best-effort read must swallow a real read failure
+      // (not just a missing file), not propagate it. A cache candidate (with
+      // a branch-list response that does NOT confirm this ref) is required
+      // so recovery actually reaches the `.temp/project-ref` read at all —
+      // with no cache candidate at all, it returns before ever attempting
+      // that read.
+      mkdirSync(join(tempRoot.current, "supabase", ".temp", "project-ref"), { recursive: true });
+      writeLinkedProjectCacheFile({ ref: PARENT_REF });
+      const { layer, out, api } = setup({
+        toml: API_ONLY_TOML,
+        yes: true,
+        projectId: Option.some(PROBE_REF),
+        routes: {
+          project: { status: 404, body: {} },
+          branchList: { status: 200, body: [] },
+          postgrestGet: { status: 200, body: POSTGREST_DISABLED },
+          postgresGet: { status: 200, body: {} },
+        },
+      });
+      return Effect.gen(function* () {
+        yield* legacyConfigPush({ projectRef: Option.none() });
+        expect(
+          api.requests.some((r) => r.url.includes(`/v1/projects/${PARENT_REF}/branches`)),
+        ).toBe(true);
+        // The EISDIR read degrades to "no file ref", so the fallback trust
+        // check (`fileRef.value === ref`) can't fire either — same bare
+        // shape a genuinely absent file would produce.
+        expect(out.stderrText).toContain(`Pushing config to branch: ${PROBE_REF}`);
+        expect(out.stderrText).not.toContain("Parent project:");
+      }).pipe(Effect.provide(layer));
+    },
+  );
+
+  it.live("a 500 probing the live target degrades to unknown rather than aborting the push", () => {
+    const { layer, out, api } = setup({
       toml: API_ONLY_TOML,
       yes: true,
       projectId: Option.some(PROBE_REF),
-      routes: { project: { status: 500, body: { message: "boom" } } },
+      routes: {
+        project: { status: 500, body: { message: "boom" } },
+        postgrestGet: { status: 200, body: POSTGREST_DISABLED },
+        postgresGet: { status: 200, body: {} },
+      },
     });
     return Effect.gen(function* () {
-      const exit = yield* legacyConfigPush({ projectRef: Option.none() }).pipe(Effect.exit);
-      expect(Exit.isFailure(exit)).toBe(true);
-      const rendered = JSON.stringify(exit);
-      expect(rendered).toContain("LegacyConfigPushProjectLookupStatusError");
-      expect(rendered).toContain("unexpected project lookup status 500");
-      expect(api.requests.some((r) => r.url.includes("/billing/addons"))).toBe(false);
+      yield* legacyConfigPush({ projectRef: Option.none() });
+      expect(out.stderrText).toContain(
+        `Pushing config to: ${PROBE_REF} (could not determine whether this is a branch or the main project)`,
+      );
+      expect(api.requests.some((r) => r.method === "PATCH" && r.url.includes("/postgrest"))).toBe(
+        true,
+      );
     }).pipe(Effect.provide(layer));
   });
 
-  // A `TestClock`-driven proof of the `LEGACY_BRANCH_LOOKUP_TIMEOUT`
-  // degradation (a live probe that hangs forever) was deliberately NOT
-  // added here — see the test-report notes for why: `legacyConfigPush` does
+  it.live(
+    "an unknown target (a live probe failure) never carries is_branch in the machine payload",
+    () => {
+      const { layer, out } = setup({
+        toml: API_ONLY_TOML,
+        yes: true,
+        format: "json",
+        projectId: Option.some(PROBE_REF),
+        routes: {
+          project: { status: 500, body: {} },
+          postgrestGet: { status: 200, body: POSTGREST_DISABLED },
+          postgresGet: { status: 200, body: {} },
+        },
+      });
+      return Effect.gen(function* () {
+        yield* legacyConfigPush({ projectRef: Option.none() });
+        const success = out.messages.find((m) => m.type === "success");
+        expect(success?.data?.project_ref).toBe(PROBE_REF);
+        expect("is_branch" in (success?.data ?? {})).toBe(false);
+      }).pipe(Effect.provide(layer));
+    },
+  );
+
+  // The "transport failure"/"500" tests above cover the `"unknown"` outcome
+  // for a genuine probe error; only the TIMEOUT-specific sub-case (a live
+  // probe that hangs rather than erroring) remains untested — both reach
+  // the identical `{ kind: "unknown" }` outcome, so this is a coverage gap
+  // in HOW `"unknown"` is reached, not in the behavior itself. A
+  // `TestClock`-driven proof of the `LEGACY_BRANCH_LOOKUP_TIMEOUT`
+  // degradation was deliberately NOT added here — see the test-report notes
+  // for why: `legacyConfigPush` does
   // substantial real, unmocked filesystem I/O (project-root discovery,
   // config.toml read, `.env` load) via `BunFileSystem` before it ever
   // reaches the probe's `Effect.timeoutOrElse`, and that I/O settles on a

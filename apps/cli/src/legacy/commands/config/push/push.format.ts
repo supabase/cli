@@ -26,6 +26,9 @@ export function legacyConfigPushTargetLines(target: LegacyConfigPushTarget): str
   if (target.kind === "project") {
     return `Pushing config to project: ${legacyFormatNamedRef(target.name, target.ref)}\n`;
   }
+  if (target.kind === "unknown") {
+    return `Pushing config to: ${legacySanitizeInlineName(target.ref)} (could not determine whether this is a branch or the main project)\n`;
+  }
 
   const lines: Array<string> = [
     `Pushing config to branch: ${legacyFormatNamedRef(target.branch, target.ref)}`,
@@ -51,12 +54,18 @@ export function legacyConfigPushBranchPromptLabel(
     : `Do you want to push config to branch "${legacySanitizeInlineName(target.branch)}" (${ref})?${hint}`;
 }
 
-/** Additive machine-payload fields describing the resolved target (CLI-2168/CLI-2289). */
+/** Additive machine-payload fields describing the resolved target
+ * (CLI-2168/CLI-2289). `is_branch` is omitted (not `false`) when the target
+ * couldn't be determined at all — asserting `false` would be as dishonest as
+ * asserting `true`; an absent key is the correct "we don't know" signal. */
 export function legacyConfigPushPayloadFields(target: LegacyConfigPushTarget): {
-  readonly is_branch: boolean;
+  readonly is_branch?: boolean;
   readonly branch?: string;
   readonly parent_project_ref?: string;
 } {
+  if (target.kind === "unknown") {
+    return {};
+  }
   return {
     is_branch: target.kind === "branch",
     ...(target.kind === "branch" && target.branch !== undefined ? { branch: target.branch } : {}),

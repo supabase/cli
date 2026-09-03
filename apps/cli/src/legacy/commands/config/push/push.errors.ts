@@ -125,31 +125,14 @@ export class LegacyConfigPushBranchResolveStatusError extends Data.TaggedError(
 
 // --- live branch detection (CLI-2168) ---------------------------------------
 //
-// Hard-failure path for the `getProject` probe that tells the user whether
-// `ref` is the linked project or one of its branches (a 404 is not an error —
-// it's the branch signal, handled by `legacyClassifyProjectLookupError`).
-
-export class LegacyConfigPushProjectLookupNetworkError extends Data.TaggedError(
-  "LegacyConfigPushProjectLookupNetworkError",
-)<DecodableNetworkErrorArgs> {
-  get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
-    return this.decode === true
-      ? { ...actionability.apiStatus, fingerprint_suffix: "api_response" }
-      : actionability.externalNetwork;
-  }
-}
-
-export class LegacyConfigPushProjectLookupStatusError extends Data.TaggedError(
-  "LegacyConfigPushProjectLookupStatusError",
-)<StatusErrorArgs> {
-  get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
-    // A 404 on this specific probe can never reach this class — it's
-    // intercepted upstream as the branch signal (`legacyClassifyProjectLookupError`
-    // resolves it to `None` instead of failing) — so `notFoundIsInvalidInput`
-    // would be dead weight here.
-    return statusCodeActionability(this.status);
-  }
-}
+// The `getProject` probe that tells the user whether `ref` is the linked
+// project or one of its branches is entirely best-effort: a 404 is the
+// branch signal (handled by `legacyClassifyProjectLookupError`), and any
+// OTHER outcome — a timeout, a transport failure, or a non-200/404 status
+// (e.g. a scoped token that can write service config but can't read the
+// project record) — degrades to an uncertain target rather than aborting the
+// push. There is deliberately no error class for this probe: it never fails
+// the command.
 
 // --- branch confirmation gate (CLI-2168) ------------------------------------
 
@@ -157,11 +140,16 @@ export class LegacyConfigPushProjectLookupStatusError extends Data.TaggedError(
  * delete`/`db reset`'s identical top-level "are you sure" cancellation
  * shape — declining now FAILS (exit 1), matching every other top-level
  * confirmation gate in this codebase; the per-service `keep()` prompts below
- * are unrelated and still exit 0 on decline. */
+ * are unrelated and still exit 0 on decline. `suggestion` always names the
+ * `--yes`/`SUPABASE_YES` escape hatch — the interactive prompt label already
+ * carries an inline hint, but a machine-mode or non-TTY decline never renders
+ * that label at all (`legacyPromptYesNo` returns the default silently), so
+ * this is the only place those callers see it. */
 export class LegacyConfigPushCancelledError extends Data.TaggedError(
   "LegacyConfigPushCancelledError",
 )<{
   readonly message: string;
+  readonly suggestion?: string;
 }> {
   get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
     return actionability.cancelled;

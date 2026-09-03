@@ -1756,7 +1756,7 @@ content_path = "./supabase/templates/password_changed_notification.html"
     });
 
     it.live(
-      "a branch lookup that never resolves times out and degrades to the RICH block (real 5s wait — LEGACY_LINKED_STATE_LOOKUP_TIMEOUT is a module-private constant in legacy-linked-state.ts, not monkey-patchable; accepted as a real-time test for this one scenario, PR #6168 review)",
+      "a branch lookup that never resolves times out and degrades to the RICH block (real 5s wait — LEGACY_BRANCH_LOOKUP_TIMEOUT is an exported constant in legacy-branch-target.ts, but its VALUE isn't overridable without changing the source; accepted as a real-time test for this one scenario, PR #6168 review)",
       () => {
         const { layer, out, workdir } = setup();
         writeProjectRefFile(workdir, LINKED_BRANCH_REF);
