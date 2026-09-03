@@ -675,8 +675,6 @@ describe("Effect stack lifecycle handoff", () => {
           ...defaults,
           stateRoot,
           artifactCacheRoot,
-          tempRoot: "/tmp",
-          platform: "posix",
         };
         const stack = yield* createStack({
           projectRoot: project,

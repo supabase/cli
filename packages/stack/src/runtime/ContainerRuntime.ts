@@ -546,11 +546,7 @@ export const makeContainerRuntime = (
       const startEffect = Effect.gen(function* () {
         yield* guard;
         const existing = resources.get(resourceKey(key));
-        if (
-          existing !== undefined &&
-          existing.ownerSessionId === options.ownerSessionId &&
-          existing.state === "running"
-        )
+        if (existing !== undefined && existing.state === "running")
           return { ...key, state: "ready" } satisfies ObservedWorkload;
         if (existing !== undefined && existing.state !== "running") {
           existing.stopRequested = true;

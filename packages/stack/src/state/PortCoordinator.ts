@@ -1,4 +1,4 @@
-import { Crypto, Effect, Exit, FileSystem, Path, Scope, Schema } from "effect";
+import { Cause, Crypto, Effect, Exit, FileSystem, Option, Path, Scope, Schema } from "effect";
 // oxlint-disable-next-line effecttsgo/node-builtin-import
 import type { Server as HttpServer } from "node:http";
 // oxlint-disable-next-line effecttsgo/node-builtin-import
@@ -145,68 +145,152 @@ const readAuthoritativeStates = (options: PortCoordinatorOptions) =>
 export const makePortCoordinator = (options: PortCoordinatorOptions): PortCoordinator => ({
   planAndReserve: (stackId, listenerIntents, planOptions = {}) =>
     Effect.gen(function* () {
-      const committed = yield* withRegistryLock(
-        options.stateRoot,
-        Effect.gen(function* () {
-          const current = yield* options.store.read(stackId);
-          if (current === undefined)
-            return yield* new StackStateInvalidError({
-              message: "Cannot allocate ports for an unconfigured stack",
-            });
-          const lifecycle = current.desiredLifecycle === "running" ? "running" : "stopped";
-          const allStates = yield* readAuthoritativeStates(options);
-          const usedAutomaticPublic = new Set<number>();
-          const usedLivePublic = new Set<number>();
-          const usedReservedPublic = new Set<number>();
-          const usedReservedPrivate = new Set<number>();
-          for (const entry of allStates) {
-            if (entry.stackId === stackId) continue;
-            for (const assignment of entry.state.ports) {
-              usedReservedPublic.add(assignment.port);
-              if (assignment.intent === "automatic") usedAutomaticPublic.add(assignment.port);
-              if (entry.state.desiredLifecycle === "running") usedLivePublic.add(assignment.port);
+      const excludedFreshPublic = new Set<number>();
+      let failedBindAttempts = 0;
+      while (true) {
+        const committed = yield* withRegistryLock(
+          options.stateRoot,
+          Effect.gen(function* () {
+            const current = yield* options.store.read(stackId);
+            if (current === undefined)
+              return yield* new StackStateInvalidError({
+                message: "Cannot allocate ports for an unconfigured stack",
+              });
+            const lifecycle = current.desiredLifecycle === "running" ? "running" : "stopped";
+            const allStates = yield* readAuthoritativeStates(options);
+            const usedAutomaticPublic = new Set<number>();
+            const usedLivePublic = new Set<number>();
+            const usedReservedPublic = new Set<number>();
+            const usedReservedPrivate = new Set<number>();
+            for (const entry of allStates) {
+              if (entry.stackId === stackId) continue;
+              for (const assignment of entry.state.ports) {
+                usedReservedPublic.add(assignment.port);
+                if (assignment.intent === "automatic") usedAutomaticPublic.add(assignment.port);
+                if (entry.state.desiredLifecycle === "running") usedLivePublic.add(assignment.port);
+              }
+              for (const assignment of entry.state.privatePorts)
+                usedReservedPrivate.add(assignment.port);
             }
-            for (const assignment of entry.state.privatePorts)
-              usedReservedPrivate.add(assignment.port);
-          }
 
-          const existing = assignmentMap(current.ports);
-          const requestedPrivate = planOptions.privateBindings;
-          const privateIntents: ReadonlyArray<PrivatePortIntent> =
-            requestedPrivate ??
-            current.privatePorts.map(({ workloadId, binding }) => ({
-              workloadId,
-              binding,
-            }));
-          const existingPrivate = new Map(
-            current.privatePorts.map((entry) => [bindingKey(entry), entry]),
-          );
+            const existing = assignmentMap(current.ports);
+            const requestedPrivate = planOptions.privateBindings;
+            const privateIntents: ReadonlyArray<PrivatePortIntent> =
+              requestedPrivate ??
+              current.privatePorts.map(({ workloadId, binding }) => ({
+                workloadId,
+                binding,
+              }));
+            const existingPrivate = new Map(
+              current.privatePorts.map((entry) => [bindingKey(entry), entry]),
+            );
 
-          const assignments: HostPortAssignment[] = [];
-          const byField: Partial<Record<PortField, HostPortAssignment>> = {};
-          const usedByThisStack = new Set<number>();
-          for (const field of fields) {
-            const intent = listenerIntents[field];
-            if (!intent.enabled) continue;
-            const prior = existing.get(field);
-            let assignment: HostPortAssignment;
-            if (intent.port === "automatic") {
-              if (prior?.intent === "automatic" && !usedByThisStack.has(prior.port)) {
-                assignment = prior;
+            const assignments: HostPortAssignment[] = [];
+            const byField: Partial<Record<PortField, HostPortAssignment>> = {};
+            const usedByThisStack = new Set<number>();
+            for (const field of fields) {
+              const intent = listenerIntents[field];
+              if (!intent.enabled) continue;
+              const prior = existing.get(field);
+              let assignment: HostPortAssignment;
+              if (intent.port === "automatic") {
+                if (prior?.intent === "automatic" && !usedByThisStack.has(prior.port)) {
+                  assignment = prior;
+                } else {
+                  let selected: number | undefined;
+                  let failedHostProbes = 0;
+                  let probeBudgetExhausted = false;
+                  for (let port = PUBLIC_PORT_MIN; port <= PUBLIC_PORT_MAX; port += 1) {
+                    if (
+                      !usedAutomaticPublic.has(port) &&
+                      !usedLivePublic.has(port) &&
+                      !usedReservedPublic.has(port) &&
+                      !usedReservedPrivate.has(port) &&
+                      !usedByThisStack.has(port) &&
+                      !excludedFreshPublic.has(port)
+                    ) {
+                      const available = yield* options
+                        .checkHostPort(intent.address, port, field)
+                        .pipe(
+                          Effect.as(true),
+                          Effect.catchTag("PortUnavailableError", () => Effect.succeed(false)),
+                        );
+                      if (!available) {
+                        failedHostProbes += 1;
+                        if (failedHostProbes >= MAX_FAILED_HOST_PROBES) {
+                          probeBudgetExhausted = true;
+                          break;
+                        }
+                        continue;
+                      }
+                      selected = port;
+                      break;
+                    }
+                  }
+                  if (selected === undefined)
+                    return yield* new PortAllocationError({
+                      field,
+                      message: probeBudgetExhausted
+                        ? `No automatic public host port is available after ${MAX_FAILED_HOST_PROBES} occupied candidates`
+                        : "No automatic host port is available",
+                    });
+                  assignment = { field, port: selected, intent: "automatic" };
+                  usedAutomaticPublic.add(selected);
+                }
               } else {
-                let selected: number | undefined;
+                if (!validPort(intent.port)) return yield* unavailable(intent.port, field);
+                if (usedAutomaticPublic.has(intent.port))
+                  return yield* automaticConflict(intent.port, field);
+                if (usedReservedPrivate.has(intent.port))
+                  return yield* unavailable(intent.port, field);
+                if (usedByThisStack.has(intent.port)) return yield* unavailable(intent.port, field);
+                if (lifecycle === "running" && usedLivePublic.has(intent.port))
+                  return yield* unavailable(intent.port, field);
+                assignment = { field, port: intent.port, intent: "exact" };
+              }
+              assignments.push(assignment);
+              byField[field] = assignment;
+              usedByThisStack.add(assignment.port);
+            }
+
+            const privateAssignments: PrivatePortAssignment[] = [];
+            const usedPrivateByThisStack = new Set<number>();
+            const usedAllByThisStack = new Set(usedByThisStack);
+            for (const intent of privateIntents) {
+              if (intent.workloadId.length === 0 || intent.binding.length === 0)
+                return yield* new PortAllocationError({
+                  field: `${intent.workloadId}:${intent.binding}`,
+                  message: "Private workload binding is invalid",
+                });
+              const key = bindingKey(intent);
+              if (privateAssignments.some((entry) => bindingKey(entry) === key))
+                return yield* new PortAllocationError({
+                  field: `${intent.workloadId}:${intent.binding}`,
+                  message: "Duplicate private workload binding",
+                });
+              const prior = existingPrivate.get(key);
+              let port: number | undefined;
+              let probeBudgetExhausted = false;
+              if (prior !== undefined && !usedPrivateByThisStack.has(prior.port)) port = prior.port;
+              else {
                 let failedHostProbes = 0;
-                let probeBudgetExhausted = false;
-                for (let port = PUBLIC_PORT_MIN; port <= PUBLIC_PORT_MAX; port += 1) {
+                for (
+                  let candidate = PRIVATE_PORT_MIN;
+                  candidate <= PRIVATE_PORT_MAX;
+                  candidate += 1
+                ) {
                   if (
-                    !usedAutomaticPublic.has(port) &&
-                    !usedLivePublic.has(port) &&
-                    !usedReservedPublic.has(port) &&
-                    !usedReservedPrivate.has(port) &&
-                    !usedByThisStack.has(port)
+                    !usedReservedPrivate.has(candidate) &&
+                    !usedReservedPublic.has(candidate) &&
+                    !usedPrivateByThisStack.has(candidate) &&
+                    !usedAllByThisStack.has(candidate)
                   ) {
                     const available = yield* options
-                      .checkHostPort(intent.address, port, field)
+                      .checkHostPort(
+                        "127.0.0.1",
+                        candidate,
+                        `${intent.workloadId}:${intent.binding}`,
+                      )
                       .pipe(
                         Effect.as(true),
                         Effect.catchTag("PortUnavailableError", () => Effect.succeed(false)),
@@ -219,172 +303,126 @@ export const makePortCoordinator = (options: PortCoordinatorOptions): PortCoordi
                       }
                       continue;
                     }
-                    selected = port;
+                    port = candidate;
                     break;
                   }
                 }
-                if (selected === undefined)
-                  return yield* new PortAllocationError({
-                    field,
-                    message: probeBudgetExhausted
-                      ? `No automatic public host port is available after ${MAX_FAILED_HOST_PROBES} occupied candidates`
-                      : "No automatic host port is available",
-                  });
-                assignment = { field, port: selected, intent: "automatic" };
-                usedAutomaticPublic.add(selected);
               }
-            } else {
-              if (!validPort(intent.port)) return yield* unavailable(intent.port, field);
-              if (usedAutomaticPublic.has(intent.port))
-                return yield* automaticConflict(intent.port, field);
-              if (usedReservedPrivate.has(intent.port))
-                return yield* unavailable(intent.port, field);
-              if (usedByThisStack.has(intent.port)) return yield* unavailable(intent.port, field);
-              if (lifecycle === "running" && usedLivePublic.has(intent.port))
-                return yield* unavailable(intent.port, field);
-              assignment = { field, port: intent.port, intent: "exact" };
-            }
-            assignments.push(assignment);
-            byField[field] = assignment;
-            usedByThisStack.add(assignment.port);
-          }
-
-          const privateAssignments: PrivatePortAssignment[] = [];
-          const usedPrivateByThisStack = new Set<number>();
-          const usedAllByThisStack = new Set(usedByThisStack);
-          for (const intent of privateIntents) {
-            if (intent.workloadId.length === 0 || intent.binding.length === 0)
-              return yield* new PortAllocationError({
-                field: `${intent.workloadId}:${intent.binding}`,
-                message: "Private workload binding is invalid",
+              if (port === undefined)
+                return yield* new PortAllocationError({
+                  field: `${intent.workloadId}:${intent.binding}`,
+                  message: probeBudgetExhausted
+                    ? `No automatic private port is available after ${MAX_FAILED_HOST_PROBES} occupied candidates`
+                    : "No automatic private port is available",
+                });
+              privateAssignments.push({
+                workloadId: intent.workloadId,
+                binding: intent.binding,
+                port,
               });
-            const key = bindingKey(intent);
-            if (privateAssignments.some((entry) => bindingKey(entry) === key))
-              return yield* new PortAllocationError({
-                field: `${intent.workloadId}:${intent.binding}`,
-                message: "Duplicate private workload binding",
-              });
-            const prior = existingPrivate.get(key);
-            let port: number | undefined;
-            let probeBudgetExhausted = false;
-            if (prior !== undefined && !usedPrivateByThisStack.has(prior.port)) port = prior.port;
-            else {
-              let failedHostProbes = 0;
-              for (
-                let candidate = PRIVATE_PORT_MIN;
-                candidate <= PRIVATE_PORT_MAX;
-                candidate += 1
-              ) {
-                if (
-                  !usedReservedPrivate.has(candidate) &&
-                  !usedReservedPublic.has(candidate) &&
-                  !usedPrivateByThisStack.has(candidate) &&
-                  !usedAllByThisStack.has(candidate)
-                ) {
-                  const available = yield* options
-                    .checkHostPort("127.0.0.1", candidate, `${intent.workloadId}:${intent.binding}`)
-                    .pipe(
-                      Effect.as(true),
-                      Effect.catchTag("PortUnavailableError", () => Effect.succeed(false)),
-                    );
-                  if (!available) {
-                    failedHostProbes += 1;
-                    if (failedHostProbes >= MAX_FAILED_HOST_PROBES) {
-                      probeBudgetExhausted = true;
-                      break;
-                    }
-                    continue;
-                  }
-                  port = candidate;
-                  break;
-                }
-              }
+              usedPrivateByThisStack.add(port);
+              usedAllByThisStack.add(port);
             }
-            if (port === undefined)
-              return yield* new PortAllocationError({
-                field: `${intent.workloadId}:${intent.binding}`,
-                message: probeBudgetExhausted
-                  ? `No automatic private port is available after ${MAX_FAILED_HOST_PROBES} occupied candidates`
-                  : "No automatic private port is available",
-              });
-            privateAssignments.push({
-              workloadId: intent.workloadId,
-              binding: intent.binding,
-              port,
-            });
-            usedPrivateByThisStack.add(port);
-            usedAllByThisStack.add(port);
-          }
 
-          const next: PersistedStackState = {
-            ...current,
-            // Lifecycle is owned by Supervisor; port planning never mutates it.
-            desiredLifecycle: current.desiredLifecycle,
-            ports: assignments,
-            privatePorts: privateAssignments,
-          };
-          yield* options.store.replaceUnlocked(stackId, next);
-          return { current, next, lifecycle, byField, privateAssignments };
-        }),
-      );
-
-      const hostListeners: HostListener[] = [];
-      const enabledAssignments = fields.flatMap((field) => {
-        const intent = listenerIntents[field];
-        const assignment = committed.byField[field];
-        return intent.enabled && assignment !== undefined ? [{ field, intent, assignment }] : [];
-      });
-      const rollbackFreshAutomatic = withRegistryLock(
-        options.stateRoot,
-        Effect.gen(function* () {
-          const latest = yield* options.store.read(stackId);
-          if (latest === undefined)
-            return yield* new StackStateInvalidError({ message: "Stack state disappeared" });
-          const priorByField = new Map(
-            committed.current.ports.map((entry) => [entry.field, entry]),
-          );
-          const ports = committed.next.ports.filter(
-            (entry) => entry.intent !== "automatic" || priorByField.has(entry.field),
-          );
-          const priorBindings = new Set(committed.current.privatePorts.map(bindingKey));
-          const privatePorts = committed.next.privatePorts.filter((entry) =>
-            priorBindings.has(bindingKey(entry)),
-          );
-          yield* options.store.replaceUnlocked(stackId, { ...latest, ports, privatePorts });
-        }),
-      );
-      if (committed.lifecycle === "running") {
-        const parentScope = yield* Scope.Scope;
-        const acquired = yield* Effect.uninterruptibleMask((restore) =>
-          Effect.gen(function* () {
-            const listenerScope = yield* Scope.fork(parentScope, "sequential");
-            const bound = yield* Effect.exit(
-              restore(
-                Effect.forEach(enabledAssignments, ({ field, intent, assignment }) =>
-                  options.bindHost(intent.address, assignment.port, field).pipe(
-                    Effect.catchTag("PortUnavailableError", () =>
-                      Effect.fail(unavailable(assignment.port, field)),
-                    ),
-                    Effect.provideService(Scope.Scope, listenerScope),
-                  ),
-                ),
-              ),
-            );
-            if (Exit.isFailure(bound)) {
-              yield* Scope.close(listenerScope, bound);
-              yield* rollbackFreshAutomatic;
-              return yield* Effect.failCause(bound.cause);
-            }
-            return bound.value;
+            const next: PersistedStackState = {
+              ...current,
+              // Lifecycle is owned by Supervisor; port planning never mutates it.
+              desiredLifecycle: current.desiredLifecycle,
+              ports: assignments,
+              privatePorts: privateAssignments,
+            };
+            yield* options.store.replaceUnlocked(stackId, next);
+            return { current, next, lifecycle, byField, privateAssignments };
           }),
         );
-        hostListeners.push(...acquired);
-      }
 
-      return {
-        assignments: committed.byField,
-        privateAssignments: committed.privateAssignments,
-        hostListeners,
-      };
+        const hostListeners: HostListener[] = [];
+        const enabledAssignments = fields.flatMap((field) => {
+          const intent = listenerIntents[field];
+          const assignment = committed.byField[field];
+          return intent.enabled && assignment !== undefined ? [{ field, intent, assignment }] : [];
+        });
+        const priorByField = new Map(committed.current.ports.map((entry) => [entry.field, entry]));
+        const rollbackFreshAutomatic = withRegistryLock(
+          options.stateRoot,
+          Effect.gen(function* () {
+            const latest = yield* options.store.read(stackId);
+            if (latest === undefined)
+              return yield* new StackStateInvalidError({ message: "Stack state disappeared" });
+            const ports = committed.next.ports.filter((entry) => {
+              if (entry.intent !== "automatic") return true;
+              const prior = priorByField.get(entry.field);
+              return prior?.intent === "automatic" && prior.port === entry.port;
+            });
+            const priorBindings = new Set(committed.current.privatePorts.map(bindingKey));
+            const privatePorts = committed.next.privatePorts.filter((entry) =>
+              priorBindings.has(bindingKey(entry)),
+            );
+            yield* options.store.replaceUnlocked(stackId, { ...latest, ports, privatePorts });
+          }),
+        );
+        if (committed.lifecycle === "running") {
+          const parentScope = yield* Scope.Scope;
+          const bindingResult = yield* Effect.uninterruptibleMask((restore) =>
+            Effect.gen(function* () {
+              const listenerScope = yield* Scope.fork(parentScope, "sequential");
+              const bound = yield* Effect.exit(
+                restore(
+                  Effect.forEach(enabledAssignments, ({ field, intent, assignment }) =>
+                    options.bindHost(intent.address, assignment.port, field).pipe(
+                      Effect.catchTag("PortUnavailableError", () =>
+                        Effect.fail(unavailable(assignment.port, field)),
+                      ),
+                      Effect.provideService(Scope.Scope, listenerScope),
+                    ),
+                  ),
+                ),
+              );
+              if (Exit.isFailure(bound)) {
+                yield* Scope.close(listenerScope, bound);
+                const bindError = Option.getOrUndefined(Cause.findErrorOption(bound.cause));
+                const failedAssignment =
+                  bindError instanceof PortUnavailableError
+                    ? enabledAssignments.find(
+                        ({ field, assignment }) =>
+                          field === bindError.field && assignment.port === bindError.port,
+                      )
+                    : undefined;
+                const prior =
+                  failedAssignment === undefined
+                    ? undefined
+                    : priorByField.get(failedAssignment.field);
+                if (
+                  failedAssignment !== undefined &&
+                  failedAssignment.assignment.intent === "automatic" &&
+                  (prior === undefined ||
+                    prior.intent !== "automatic" ||
+                    prior.port !== failedAssignment.assignment.port) &&
+                  failedBindAttempts < MAX_FAILED_HOST_PROBES
+                ) {
+                  const failedPort = failedAssignment.assignment.port;
+                  yield* rollbackFreshAutomatic;
+                  return { retryPort: failedPort };
+                }
+                yield* rollbackFreshAutomatic;
+                return yield* Effect.failCause(bound.cause);
+              }
+              return { listeners: bound.value };
+            }),
+          );
+          if ("retryPort" in bindingResult && bindingResult.retryPort !== undefined) {
+            excludedFreshPublic.add(bindingResult.retryPort);
+            failedBindAttempts += 1;
+            continue;
+          }
+          hostListeners.push(...bindingResult.listeners);
+        }
+
+        return {
+          assignments: committed.byField,
+          privateAssignments: committed.privateAssignments,
+          hostListeners,
+        };
+      }
     }),
 });

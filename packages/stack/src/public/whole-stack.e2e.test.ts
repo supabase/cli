@@ -601,7 +601,7 @@ const runWholeStackScenario = async (mode: (typeof RUNTIME_CASES)[number]): Prom
 
   // Preparation is an explicit cache-only operation. It runs after the helper's
   // initial session is stopped, so the test proves it creates no owner, listener,
-  // or workload and that the next start can reuse the warmed REST artifact.
+  // or workload.
   await stack.stop();
   const warmed = await stack.prepare({ capabilities: ["rest"] });
   expect(warmed.capabilities).toEqual(
