@@ -1,3 +1,4 @@
+import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "@effect/vitest";
 import { Duration, Effect, Fiber, Layer, Option, Queue, Ref, Stream } from "effect";
 import { TestClock } from "effect/testing";
@@ -80,6 +81,31 @@ describe("stdinLayer readLine", () => {
         yield* Queue.offer(queue, enc("c\nd\n"));
         expect(yield* stdin.readLine(10_000)).toStrictEqual(Option.some("abc"));
         expect(yield* stdin.readLine(10_000)).toStrictEqual(Option.some("d"));
+      }).pipe(Effect.provide(layer));
+    }),
+  );
+
+  it.live("lets one prompt at a time pull from the pipe", () =>
+    Effect.gen(function* () {
+      // Two prompts wait at once. The second must get `2`, held back from the chunk the first
+      // one pulled, instead of pulling a chunk of its own and skipping it. Each pull yields
+      // once, so a second pull could slip in while the first is in flight.
+      let pulls = 0;
+      const layer = withStdin(
+        Stream.fromEffectRepeat(
+          Effect.suspend(() => {
+            pulls += 1;
+            return Effect.yieldNow.pipe(Effect.as(enc(`${2 * pulls - 1}\n${2 * pulls}\n`)));
+          }),
+        ),
+      );
+      yield* Effect.gen(function* () {
+        const stdin = yield* Stdin;
+        const answers = yield* Effect.all([stdin.readLine(10_000), stdin.readLine(10_000)], {
+          concurrency: "unbounded",
+        });
+        expect(answers.map(Option.getOrThrow).sort()).toStrictEqual(["1", "2"]);
+        expect(yield* stdin.readLine(10_000)).toStrictEqual(Option.some("3"));
       }).pipe(Effect.provide(layer));
     }),
   );
@@ -175,4 +201,54 @@ describe("stdinLayer readLine", () => {
       expect(yield* Fiber.join(reading)).toStrictEqual(Option.none());
     }).pipe(Effect.provide(layer));
   });
+});
+
+describe("stdinLayer over fd 0", () => {
+  it("answers prompts from a flooded pipe and leaves the rest for a child inheriting fd 0", async () => {
+    // The production adapter in a real process: 2 MiB of lines are piped in, three prompts
+    // take the first three, then a child inheriting fd 0 counts what is left in the pipe.
+    // A reader that drained stdin would leave it nothing; this one reads a chunk ahead.
+    const bun = Bun.which("bun");
+    if (!bun) throw new Error("Bun executable not found");
+    const here = (file: string) => JSON.stringify(fileURLToPath(new URL(file, import.meta.url)));
+    const payload = enc(Array.from({ length: 200_000 }, (_, index) => `line-${index}\n`).join(""));
+    const child = Bun.spawn(
+      [
+        bun,
+        "-e",
+        `import { Effect, Layer, Option } from "effect";
+         import { Stdin } from ${here("./stdin.service.ts")};
+         import { stdinLayer } from ${here("./stdin.layer.ts")};
+         import { ttyLayer } from ${here("./tty.layer.ts")};
+         const program = Effect.gen(function* () {
+           const stdin = yield* Stdin;
+           const answers = [];
+           for (let index = 0; index < 3; index++) {
+             answers.push(Option.getOrElse(yield* stdin.readLine(5_000), () => "<none>"));
+           }
+           console.log(answers.join(" "));
+           const rest = Bun.spawn(
+             [process.execPath, "-e", "let n = 0; for await (const c of Bun.stdin.stream()) n += c.length; console.log(n);"],
+             { stdin: "inherit", stdout: "pipe" },
+           );
+           console.log(yield* Effect.promise(() => new Response(rest.stdout).text()));
+         });
+         Effect.runPromise(program.pipe(Effect.provide(stdinLayer.pipe(Layer.provide(ttyLayer))))).then(
+           () => process.exit(0),
+         );`,
+      ],
+      // Prompts give up after 3 x 5 s; a child that hangs anyway is killed at 20 s, ahead of
+      // vitest's 30 s guard, so the failure still carries its stderr.
+      { cwd: import.meta.dirname, stdin: payload, stdout: "pipe", stderr: "pipe", timeout: 20_000 },
+    );
+    const [exitCode, stdout, stderr] = await Promise.all([
+      child.exited,
+      new Response(child.stdout).text(),
+      new Response(child.stderr).text(),
+    ]);
+    expect(exitCode, stderr).toBe(0);
+    const [answers, left] = stdout.trim().split("\n");
+    expect(answers).toBe("line-0 line-1 line-2");
+    expect(payload.length - Number(left)).toBeLessThanOrEqual(256 * 1024);
+  }, 30_000);
 });

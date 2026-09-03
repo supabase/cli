@@ -1,6 +1,6 @@
 import { createReadStream } from "node:fs";
 import { BunStream } from "@effect/platform-bun";
-import { Duration, Effect, Layer, Option, Scope, Stream } from "effect";
+import { Channel, Duration, Effect, Layer, Option, Scope, Stream } from "effect";
 import { systemError, type PlatformError } from "effect/PlatformError";
 
 import { Tty } from "./tty.service.ts";
@@ -66,22 +66,17 @@ const makeStdin = Effect.fnUntraced(function* (stdin: Stream.Stream<Uint8Array, 
   const lineStream = stdin.pipe(boundPendingLine, Stream.decodeText(), Stream.splitLines);
 
   const lineReader = Effect.gen(function* () {
-    const pull = yield* Stream.toPull(lineStream).pipe(Scope.provide(scope));
+    // One line per pull: `flattenArray` holds the rest of a multi-line chunk for the next
+    // pull, and `toPull` serializes pulls, so prompts running at once still take turns.
+    const pull = yield* Channel.toPull(Channel.flattenArray(Stream.toChannel(lineStream))).pipe(
+      Scope.provide(scope),
+    );
     // EOF, read errors and the line bound arrive as typed failures and become the prompt's
     // default; a defect or an interrupt propagates rather than silently answering a prompt.
-    const nextChunk = pull.pipe(Effect.orElseSucceed(() => []));
-    // The last pulled chunk (a single pull may yield several lines) and the next line in it.
-    let lines: ReadonlyArray<string> = [];
-    let next = 0;
-    return Effect.gen(function* () {
-      if (next >= lines.length) {
-        lines = yield* nextChunk;
-        next = 0;
-      }
-      const line = lines[next];
-      next += 1;
-      return Option.fromUndefinedOr(line);
-    });
+    return pull.pipe(
+      Effect.map(Option.some),
+      Effect.orElseSucceed(() => Option.none<string>()),
+    );
   });
 
   // Persistent, lazily-opened line reader shared by every `readLine` call, so a
