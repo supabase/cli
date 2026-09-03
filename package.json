@@ -40,7 +40,8 @@
     "turbo": "catalog:",
     "typescript": "catalog:",
     "verdaccio": "^6.10.0",
-    "vite": "^8.2.2"
+    "vite": "^8.2.2",
+    "vitest": "catalog:"
   },
   "devEngines": {
     "packageManager": {
