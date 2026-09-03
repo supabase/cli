@@ -109,19 +109,22 @@ describe("legacyConfigFileHasUncommittedChanges", () => {
     );
   });
 
-  it.live("runs `git status --porcelain -- <basename>` with cwd set to the file's directory", () => {
-    const mock = mockSpawner({ stdout: "" });
-    return legacyConfigFileHasUncommittedChanges("/repo/supabase/config.toml").pipe(
-      Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, mock.spawner),
-      Effect.map(() => {
-        expect(mock.spawned).toEqual([
-          {
-            command: "git",
-            args: ["status", "--porcelain", "--", "config.toml"],
-            cwd: "/repo/supabase",
-          },
-        ]);
-      }),
-    );
-  });
+  it.live(
+    "runs `git status --porcelain -- <basename>` with cwd set to the file's directory",
+    () => {
+      const mock = mockSpawner({ stdout: "" });
+      return legacyConfigFileHasUncommittedChanges("/repo/supabase/config.toml").pipe(
+        Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, mock.spawner),
+        Effect.map(() => {
+          expect(mock.spawned).toEqual([
+            {
+              command: "git",
+              args: ["status", "--porcelain", "--", "config.toml"],
+              cwd: "/repo/supabase",
+            },
+          ]);
+        }),
+      );
+    },
+  );
 });
