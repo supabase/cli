@@ -2,6 +2,7 @@ import { describe, expect, it } from "@effect/vitest";
 import { Effect, Exit, Layer, Option, Stdio } from "effect";
 import { mkdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
+import { vi } from "vitest";
 
 import {
   mockContextualAnalytics,
@@ -522,6 +523,41 @@ describe("legacy config diff integration", () => {
       expect(out.stdoutText).toContain("No config differences found.");
     }).pipe(Effect.provide(layer));
   });
+
+  it.live(
+    "an env()-resolving [remotes.*] project_id does not match the target and does not double-warn (CLI-2287)",
+    () => {
+      // The raw `project_id = "env(REMOTE_REF)"` literal never equals the
+      // resolved ref, even though the INTERPOLATED value does — matching the
+      // resolved value would both compare against the WRONG operand (Go's
+      // `loadFromFile` selection loop reads viper's raw values, before
+      // `env(...)` resolves) and reload the file a second time, printing the
+      // `[inbucket]` deprecation warning twice.
+      const { layer, out } = setup({
+        toml: [
+          'project_id = "test"',
+          "[inbucket]",
+          "enabled = true",
+          "port = 12345",
+          "[remotes.x]",
+          'project_id = "env(REMOTE_REF)"',
+          "",
+        ].join("\n"),
+        dotenv: `REMOTE_REF=${LEGACY_VALID_REF}\n`,
+      });
+      const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+      return Effect.gen(function* () {
+        yield* legacyConfigDiff(noFlags);
+        expect(out.stderrText).toContain(
+          `Comparing against project ${LEGACY_VALID_REF} using base config`,
+        );
+        const inbucketWarnings = errorSpy.mock.calls.filter((call) =>
+          String(call[0]).includes("[inbucket] is deprecated"),
+        );
+        expect(inbucketWarnings).toHaveLength(1);
+      }).pipe(Effect.provide(layer), Effect.ensuring(Effect.sync(() => errorSpy.mockRestore())));
+    },
+  );
 
   it.live("a branch-named --project-ref resolves via the parent project", () => {
     const { layer, out, api } = setup({

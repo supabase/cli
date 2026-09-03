@@ -24,11 +24,29 @@ export {
   type DiffProjectConfigOptions,
   diffProjectConfig,
 } from "./config-diff.ts";
+export {
+  type AppliedConfigEdit,
+  applyConfigEdits,
+  type ConfigEdit,
+  type ConfigEditOutcome,
+  type ConfigEditRefusal,
+  type ConfigEditRefusalReason,
+  type ConfigEditValue,
+} from "./config-edit.ts";
 export { projectConfigApiBlockKeys } from "./project-config/api-attributes.ts";
+export { dualScopeProjectConfigPaths } from "./project-config/project-config.ts";
 export { AUTH_HOOK_NAMES, unmappedSecretApiPaths } from "./project-config/registry-auth.ts";
 export { projectConfigMappingRows } from "./project-config/registry.ts";
 export { type ProjectConfigMappingRow } from "./project-config/registry-row.ts";
 export { type ProjectConfigApiAttributes } from "./project-config/api-attributes.ts";
 export { type InternalLoadCliConfigOptions } from "./config-document.ts";
 export { resolveCliConfigValue, resolveCliConfigSubtree } from "./project.ts";
-export { loadCliConfig } from "./io.ts";
+export {
+  loadCliConfig,
+  remoteNameForProjectRef,
+  remoteProjectIdEntries,
+  writeCliConfigDocumentText,
+  decodeCliConfigDocumentForValidationEffect,
+  type DecodeCliConfigDocumentForValidationEffectOptions,
+} from "./io.ts";
+export { CliConfigWriteError } from "./errors.ts";
