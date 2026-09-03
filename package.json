@@ -39,7 +39,8 @@
     "pkg-pr-new": "0.0.88",
     "turbo": "catalog:",
     "typescript": "catalog:",
-    "verdaccio": "^6.10.0"
+    "verdaccio": "^6.10.0",
+    "vitest": "catalog:"
   },
   "devEngines": {
     "packageManager": {
