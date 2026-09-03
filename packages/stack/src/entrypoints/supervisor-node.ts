@@ -11,7 +11,7 @@ import {
 } from "../state/Ownership.ts";
 import { makeStackStateStore } from "../state/StackStateStore.ts";
 import { makeSupervisor } from "../supervisor/Supervisor.ts";
-import { makeProductionRuntimeFactory } from "../runtime/ProductionRuntime.ts";
+import { makeProductionRuntime } from "../runtime/ProductionRuntime.ts";
 import { startControlServer } from "../control/ControlServer.ts";
 import { STACK_RPC_RELEASE } from "../control/StackRpc.ts";
 import { StackOwnershipConflictError } from "../public/Errors.ts";
@@ -91,7 +91,7 @@ const runSupervisor = (args: SupervisorArgs) =>
         environment,
       });
       const context = yield* Effect.context<FileSystem.FileSystem | Path.Path | Crypto.Crypto>();
-      const runtime = yield* makeProductionRuntimeFactory({
+      const runtime = yield* makeProductionRuntime({
         stateRoot: args.stateRoot,
         ...(args.artifactCacheRoot === undefined
           ? {}

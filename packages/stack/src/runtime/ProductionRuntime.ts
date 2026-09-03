@@ -79,7 +79,7 @@ import {
 
 type RuntimeContext = FileSystem.FileSystem | Path.Path | Crypto.Crypto;
 
-export interface ProductionRuntimeFactoryOptions {
+export interface ProductionRuntimeOptions {
   readonly stateRoot: string;
   readonly artifactCacheRoot?: string;
   readonly stackId: StackId;
@@ -118,7 +118,7 @@ const stateSecrets = (state: PersistedStackState): ReadonlyArray<string> =>
     .map((entry) => entry.value)
     .filter((value) => value.length > 0);
 
-const currentStateReader = (options: ProductionRuntimeFactoryOptions) =>
+const currentStateReader = (options: ProductionRuntimeOptions) =>
   options.stateStore.read(options.stackId).pipe(
     Effect.provideContext(options.context),
     Effect.flatMap((state) =>
@@ -460,8 +460,8 @@ export const withOwnedRuntimeFileCleanup = (
 };
 
 /** Composes concrete runtime owners around one persisted stack identity. */
-export const makeProductionRuntimeFactory = (
-  options: ProductionRuntimeFactoryOptions,
+export const makeProductionRuntime = (
+  options: ProductionRuntimeOptions,
 ): Effect.Effect<
   SupervisorRuntime,
   StackError,

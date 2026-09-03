@@ -115,13 +115,13 @@ const selected = (
   options: LogStoreQuery | undefined,
   path: string,
 ): Effect.Effect<ReadonlyArray<StackLogEntry>, LogStoreError> =>
-  Effect.map(decodeCursor(path, options?.cursor), (after) => {
-    return entries.filter((entry) => {
-      const value = Number.parseInt(entry.cursor.opaque.slice(CURSOR_PREFIX.length), 36);
-      if (after !== undefined && value <= after) return false;
-      return true;
-    });
-  });
+  Effect.map(decodeCursor(path, options?.cursor), (after) =>
+    after === undefined
+      ? entries
+      : entries.filter(
+          (entry) => Number.parseInt(entry.cursor.opaque.slice(CURSOR_PREFIX.length), 36) > after,
+        ),
+  );
 
 const validateDocument = (
   path: string,

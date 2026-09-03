@@ -29,7 +29,7 @@ import type { SupervisorIngress } from "../supervisor/Ingress.ts";
 import type { LogStore } from "../supervisor/LogStore.ts";
 import type { LifecycleInput } from "../supervisor/Lifecycle.ts";
 import {
-  makeProductionRuntimeFactory,
+  makeProductionRuntime,
   NATIVE_DATABASE_MIGRATION_MARKER,
   readinessDeadlineFor,
   withOwnedRuntimeFileCleanup,
@@ -297,7 +297,7 @@ const ownerInputContainerEngine = (
   };
 };
 
-describe("production runtime composition", () => {
+describe("production runtime", () => {
   it.live("retries a transient database bootstrap connection failure", () =>
     Effect.scoped(
       Effect.gen(function* () {
@@ -344,7 +344,7 @@ describe("production runtime composition", () => {
         const createdSpecs: ContainerContainerSpec[] = [];
         let attempts = 0;
         const context = yield* Effect.context<FileSystem.FileSystem | Path.Path | Crypto.Crypto>();
-        const runtime = yield* makeProductionRuntimeFactory({
+        const runtime = yield* makeProductionRuntime({
           stateRoot: root,
           stackId,
           ownerSessionId: "owner",
@@ -437,7 +437,7 @@ describe("production runtime composition", () => {
         if (database === undefined) return yield* Effect.die("Expected database workload");
         let attempts = 0;
         const context = yield* Effect.context<FileSystem.FileSystem | Path.Path | Crypto.Crypto>();
-        const runtime = yield* makeProductionRuntimeFactory({
+        const runtime = yield* makeProductionRuntime({
           stateRoot: root,
           stackId,
           ownerSessionId: "owner",
@@ -523,7 +523,7 @@ describe("production runtime composition", () => {
           },
         } satisfies { value: PersistedStackState };
         const context = yield* Effect.context<FileSystem.FileSystem | Path.Path | Crypto.Crypto>();
-        const runtime = yield* makeProductionRuntimeFactory({
+        const runtime = yield* makeProductionRuntime({
           stateRoot: root,
           stackId,
           ownerSessionId: "owner",
@@ -605,7 +605,7 @@ describe("production runtime composition", () => {
           },
         } satisfies { value: PersistedStackState };
         const context = yield* Effect.context<FileSystem.FileSystem | Path.Path | Crypto.Crypto>();
-        const runtime = yield* makeProductionRuntimeFactory({
+        const runtime = yield* makeProductionRuntime({
           stateRoot: root,
           stackId,
           ownerSessionId: "owner",
@@ -693,7 +693,7 @@ describe("production runtime composition", () => {
             ),
           );
         const context = yield* Effect.context<FileSystem.FileSystem | Path.Path | Crypto.Crypto>();
-        const runtime = yield* makeProductionRuntimeFactory({
+        const runtime = yield* makeProductionRuntime({
           stateRoot: root,
           stackId,
           ownerSessionId: "owner",
@@ -810,7 +810,7 @@ describe("production runtime composition", () => {
           const context = yield* Effect.context<
             FileSystem.FileSystem | Path.Path | Crypto.Crypto
           >();
-          const runtime = yield* makeProductionRuntimeFactory({
+          const runtime = yield* makeProductionRuntime({
             stateRoot: root,
             stackId,
             ownerSessionId: "owner",
@@ -1015,7 +1015,7 @@ describe("production runtime composition", () => {
         expect(yield* fs.exists(functionsRoot)).toBe(false);
         const prepared: string[] = [];
         const context = yield* Effect.context<FileSystem.FileSystem | Path.Path | Crypto.Crypto>();
-        const runtime = yield* makeProductionRuntimeFactory({
+        const runtime = yield* makeProductionRuntime({
           stateRoot: root,
           stackId,
           ownerSessionId: "owner",
@@ -1090,7 +1090,7 @@ describe("production runtime composition", () => {
           },
         } satisfies { value: PersistedStackState };
         const context = yield* Effect.context<FileSystem.FileSystem | Path.Path | Crypto.Crypto>();
-        const runtime = yield* makeProductionRuntimeFactory({
+        const runtime = yield* makeProductionRuntime({
           stateRoot: root,
           stackId,
           ownerSessionId: "owner",
@@ -1166,7 +1166,7 @@ describe("production runtime composition", () => {
           `${process.pid}\n`,
         );
         const context = yield* Effect.context<FileSystem.FileSystem | Path.Path | Crypto.Crypto>();
-        const runtime = yield* makeProductionRuntimeFactory({
+        const runtime = yield* makeProductionRuntime({
           stateRoot: root,
           stackId,
           ownerSessionId: "owner",
@@ -1236,7 +1236,7 @@ describe("production runtime composition", () => {
           definition: compiled.definition,
         } satisfies PersistedStackState;
         const context = yield* Effect.context<FileSystem.FileSystem | Path.Path | Crypto.Crypto>();
-        const runtime = yield* makeProductionRuntimeFactory({
+        const runtime = yield* makeProductionRuntime({
           stateRoot: root,
           stackId,
           ownerSessionId: "owner",
@@ -1433,7 +1433,7 @@ describe("production runtime composition", () => {
         const createdSpecs: ContainerContainerSpec[] = [];
         const copiedFiles: Array<Readonly<{ source: string; destination: string }>> = [];
         const engine = ownerInputContainerEngine(createdSpecs, copiedFiles);
-        const runtime = yield* makeProductionRuntimeFactory({
+        const runtime = yield* makeProductionRuntime({
           stateRoot: root,
           stackId,
           ownerSessionId: "owner",
@@ -1661,7 +1661,7 @@ describe("production runtime composition", () => {
         } satisfies { value: PersistedStackState };
         const context = yield* Effect.context<FileSystem.FileSystem | Path.Path | Crypto.Crypto>();
         const createdSpecs: ContainerContainerSpec[] = [];
-        const runtime = yield* makeProductionRuntimeFactory({
+        const runtime = yield* makeProductionRuntime({
           stateRoot: root,
           stackId,
           ownerSessionId: "owner",
@@ -1720,7 +1720,7 @@ describe("production runtime composition", () => {
           content: "export default 1",
         });
         const context = yield* Effect.context<FileSystem.FileSystem | Path.Path | Crypto.Crypto>();
-        const runtime = yield* makeProductionRuntimeFactory({
+        const runtime = yield* makeProductionRuntime({
           stateRoot: root,
           stackId,
           ownerSessionId: "owner",
