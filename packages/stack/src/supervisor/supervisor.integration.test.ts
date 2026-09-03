@@ -96,6 +96,7 @@ const makeFixture = (
     readonly stopGate?: Deferred.Deferred<void>;
     readonly stopStarted?: Deferred.Deferred<void>;
     readonly workloadStopFailFirst?: Ref.Ref<boolean>;
+    readonly workloadRemoveFailFirst?: Ref.Ref<boolean>;
     readonly stopFailFirst?: Ref.Ref<boolean>;
     readonly destroyGate?: Deferred.Deferred<void>;
     readonly destroyStarted?: Deferred.Deferred<void>;
@@ -237,9 +238,22 @@ const makeFixture = (
           );
         }),
       remove: (key) =>
-        Ref.update(resources, (current) =>
-          current.filter((entry) => entry.workloadId !== key.workloadId),
-        ),
+        Effect.gen(function* () {
+          if (fixtureOptions.workloadRemoveFailFirst !== undefined) {
+            const fail = yield* Ref.get(fixtureOptions.workloadRemoveFailFirst);
+            if (fail) {
+              yield* Ref.set(fixtureOptions.workloadRemoveFailFirst, false);
+              return yield* new RuntimeDriverError({
+                message: "injected workload remove failure",
+                stackId: key.stackId,
+                workloadId: key.workloadId,
+              });
+            }
+          }
+          yield* Ref.update(resources, (current) =>
+            current.filter((entry) => entry.workloadId !== key.workloadId),
+          );
+        }),
       cleanup: ({ destroy }) =>
         Effect.gen(function* () {
           if (destroy && (yield* Ref.get(failDestroy)))
@@ -649,7 +663,40 @@ describe("Supervisor composition", () => {
     ),
   );
 
-  it.live("keeps stopping when publishing the stopped fence fails", () =>
+  it.live("keeps stopping when fresh-ingress cleanup fails, then recovers on explicit stop", () =>
+    run(
+      Effect.gen(function* () {
+        const closeFailures = yield* Ref.make(2);
+        const fixture = yield* makeFixture({
+          ingress: {
+            acquire: () =>
+              Effect.succeed({
+                assignments: {},
+                privateAssignments: [],
+                hostListeners: [],
+                fresh: true,
+              }),
+            open: () => Effect.void,
+            close: Effect.gen(function* () {
+              const remaining = yield* Ref.get(closeFailures);
+              if (remaining > 0) {
+                yield* Ref.set(closeFailures, remaining - 1);
+                return yield* new StackReconciliationError({ message: "injected close failure" });
+              }
+            }),
+          },
+        });
+        const failed = yield* fixture.supervisor.start({ config: {} }).pipe(Effect.exit);
+        expect(Exit.isFailure(failed)).toBe(true);
+        expect((yield* fixture.supervisor.status).lifecycle).toBe("stopping");
+        expect((yield* fixture.supervisor.maintenanceHandlers.stop).ok).toBe(false);
+        expect((yield* fixture.supervisor.maintenanceHandlers.stop).ok).toBe(true);
+        expect((yield* fixture.supervisor.status).lifecycle).toBe("unconfigured");
+      }),
+    ),
+  );
+
+  it.live("keeps stopping when persisting the stopped fence fails", () =>
     run(
       Effect.gen(function* () {
         const stoppedReplaceFail = yield* Ref.make(true);
@@ -883,7 +930,7 @@ describe("Supervisor composition", () => {
     ),
   );
 
-  it.live("publishes stopping while stop cleanup is still in progress", () =>
+  it.live("reports stopping while stop cleanup is still in progress", () =>
     run(
       Effect.gen(function* () {
         const stopGate = yield* Deferred.make<void>();
@@ -978,7 +1025,7 @@ describe("Supervisor composition", () => {
     ),
   );
 
-  it.live("publishes destroying while persistent data cleanup is in progress", () =>
+  it.live("reports destroying while persistent data cleanup is in progress", () =>
     run(
       Effect.gen(function* () {
         const destroyGate = yield* Deferred.make<void>();
@@ -992,6 +1039,20 @@ describe("Supervisor composition", () => {
 
         yield* Deferred.succeed(destroyGate, undefined);
         yield* Fiber.join(destroy);
+        expect(yield* fixture.store.read(fixture.id)).toBeUndefined();
+      }),
+    ),
+  );
+
+  it.live("destroys observed remnants from an unconfigured supervisor", () =>
+    run(
+      Effect.gen(function* () {
+        const fixture = yield* makeFixture();
+        yield* Ref.set(fixture.resources, [
+          { stackId: fixture.id, workloadId: "database:database", state: "ready" },
+        ]);
+        yield* fixture.supervisor.destroy;
+        expect(yield* Ref.get(fixture.resources)).toEqual([]);
         expect(yield* fixture.store.read(fixture.id)).toBeUndefined();
       }),
     ),
@@ -1098,20 +1159,25 @@ describe("Supervisor composition", () => {
     ),
   );
 
-  it.live("retries unproven stopped cleanup before starting again", () =>
+  it.live("requires explicit stop cleanup before starting again", () =>
     run(
       Effect.gen(function* () {
         const stopFailFirst = yield* Ref.make(false);
         const fixture = yield* makeFixture({ stopFailFirst });
         yield* fixture.supervisor.start({ config: { capabilities: { rest: {} } } });
         yield* Ref.set(stopFailFirst, true);
-        yield* fixture.supervisor.maintenanceHandlers.stop;
-        yield* Ref.set(fixture.calls, []);
+        const failedStop = yield* fixture.supervisor.maintenanceHandlers.stop;
+        expect(failedStop.ok).toBe(false);
 
+        expect(errorOf(yield* fixture.supervisor.start().pipe(Effect.exit))).toBeInstanceOf(
+          StackLifecycleConflictError,
+        );
+        expect((yield* fixture.supervisor.maintenanceHandlers.stop).ok).toBe(true);
+        yield* Ref.set(fixture.calls, []);
         const started = yield* fixture.supervisor.start();
 
         expect(started.lifecycle).toBe("running");
-        expect(yield* Ref.get(fixture.calls)).toEqual(["cleanup:stop", "start:database:database"]);
+        expect(yield* Ref.get(fixture.calls)).toContain("start:database:database");
       }),
     ),
   );
@@ -1465,7 +1531,40 @@ describe("Supervisor composition", () => {
         expect(
           errorOf(yield* fixture.supervisor.activate("functions").pipe(Effect.exit)),
         ).toBeInstanceOf(StackLifecycleConflictError);
+        expect(errorOf(yield* fixture.supervisor.start().pipe(Effect.exit))).toBeInstanceOf(
+          StackLifecycleConflictError,
+        );
         expect((yield* fixture.supervisor.maintenanceHandlers.stop).ok).toBe(true);
+        yield* fixture.supervisor.shutdown;
+        const successor = yield* makeSupervisor({
+          identity,
+          stackId: fixture.id,
+          ownerSessionId: "successor-session",
+          rpcRelease: "test-release",
+          stateStore: fixture.store,
+          context: fixture.context,
+          runtime: fixture.runtime,
+        });
+        expect((yield* successor.start()).lifecycle).toBe("running");
+        expect((yield* successor.maintenanceHandlers.stop).ok).toBe(true);
+      }),
+    ),
+  );
+
+  it.live("fences the owner when lazy rollback remove fails", () =>
+    run(
+      Effect.gen(function* () {
+        const activationFailFirst = yield* Ref.make(true);
+        const workloadRemoveFailFirst = yield* Ref.make(true);
+        const fixture = yield* makeFixture({ activationFailFirst, workloadRemoveFailFirst });
+        yield* fixture.supervisor.start({
+          config: { capabilities: { functions: { activation: "lazy" } } },
+        });
+        const failed = yield* fixture.supervisor.activate("functions").pipe(Effect.exit);
+        expect(Exit.isFailure(failed)).toBe(true);
+        expect((yield* fixture.supervisor.status).lifecycle).toBe("stopping");
+        expect((yield* fixture.supervisor.maintenanceHandlers.stop).ok).toBe(true);
+        expect((yield* fixture.supervisor.status).lifecycle).toBe("stopped");
       }),
     ),
   );
