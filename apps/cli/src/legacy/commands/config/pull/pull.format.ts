@@ -191,6 +191,8 @@ function humanizeSkipReason(reason: LegacyConfigPullSkipReason): string {
   switch (reason) {
     case "env_reference":
       return "env() reference";
+    case "remote_env_reference":
+      return "remote value looks like env() — not written";
     case "unwritable":
       return "not representable";
     case "local_only":

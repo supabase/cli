@@ -419,6 +419,65 @@ describe("legacyConfigPullPayload", () => {
     });
   });
 
+  test("a remote-env-reference-skipped change carries skipped_reason remote_env_reference in the payload", () => {
+    const change: ConfigChange = {
+      path: ["auth", "site_url"],
+      class: "update",
+      local: "https://local.example.com",
+      remote: "env(SUPABASE_ACCESS_TOKEN)",
+      declared: true,
+    };
+    const changeSet: ConfigChangeSet = {
+      changes: [change],
+      masked: [],
+      unmanaged: [],
+      counts: { update: 1, remote_only: 0, local_only: 0, total: 1 },
+    };
+    const plan: LegacyConfigPullPlan = {
+      writes: [],
+      skipped: [{ change, reason: "remote_env_reference" }],
+      warnings: [],
+      createdTable: undefined,
+    };
+    const context: LegacyConfigPullContext = {
+      projectRef: PROJECT_REF,
+      branch: undefined,
+      configSchema: "https://example.com/schema.json",
+      configPath: "supabase/config.toml",
+      format: "toml",
+      appliedRemote: undefined,
+      destination: { kind: "root" },
+    };
+
+    const payload = legacyConfigPullPayload(
+      changeSet,
+      { present: [], missing: [] },
+      plan,
+      context,
+      NOT_DECLINED,
+    );
+    expect(payload["changes"]).toEqual([
+      {
+        path: ["auth", "site_url"],
+        class: "update",
+        declared: true,
+        local: "https://local.example.com",
+        remote: "env(SUPABASE_ACCESS_TOKEN)",
+        written: false,
+        skipped_reason: "remote_env_reference",
+      },
+    ]);
+    expect(payload["wrote"]).toBe(false);
+    expect(payload["counts"]).toEqual({
+      update: 1,
+      remote_only: 0,
+      local_only: 0,
+      total: 1,
+      written: 0,
+      skipped: 1,
+    });
+  });
+
   test("a dry-run outcome reports every planned write as skipped_reason dry_run", () => {
     const change: ConfigChange = {
       path: ["api", "max_rows"],
@@ -811,6 +870,38 @@ describe("legacyRenderConfigPullText", () => {
     );
     expect(text).toContain(
       "auth.sms.twilio.enabled [update, skip: requires values pull cannot write]",
+    );
+  });
+
+  test("a remote_env_reference-skipped change renders its own humanized reason, distinct from the local env_reference wording", () => {
+    const change: ConfigChange = {
+      path: ["auth", "site_url"],
+      class: "update",
+      local: "https://local.example.com",
+      remote: "env(SUPABASE_ACCESS_TOKEN)",
+      declared: true,
+    };
+    const changeSet: ConfigChangeSet = {
+      changes: [change],
+      masked: [],
+      unmanaged: [],
+      counts: { update: 1, remote_only: 0, local_only: 0, total: 1 },
+    };
+    const plan: LegacyConfigPullPlan = {
+      writes: [],
+      skipped: [{ change, reason: "remote_env_reference" }],
+      warnings: [],
+      createdTable: undefined,
+    };
+    const text = legacyRenderConfigPullText(
+      changeSet,
+      { present: [], missing: [] },
+      plan,
+      PROJECT_REF,
+      "supabase/config.toml",
+    );
+    expect(text).toContain(
+      "auth.site_url [update, skip: remote value looks like env() — not written]",
     );
   });
 

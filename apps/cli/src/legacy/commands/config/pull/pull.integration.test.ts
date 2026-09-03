@@ -1047,6 +1047,58 @@ describe("legacy config pull integration", () => {
     },
   );
 
+  it.live(
+    "a REMOTE value spelled as env() is never written — the loader would resolve it against the LOCAL environment on the next load (CLI-2064 security finding)",
+    () => {
+      const before = [
+        'project_id = "test"',
+        "[auth]",
+        'site_url = "https://local.example.com"',
+        "[api]",
+        "max_rows = 500",
+        "",
+      ].join("\n");
+      const { layer, out } = setup({
+        toml: before,
+        format: "json",
+        yes: true,
+        v2: {
+          status: 200,
+          body: v2Response({
+            attributes: (attributes) => ({
+              ...attributes,
+              auth: {
+                ...(attributes["auth"] as Record<string, unknown>),
+                site_url: "env(SUPABASE_ACCESS_TOKEN)",
+              },
+            }),
+          }),
+        },
+      });
+      return Effect.gen(function* () {
+        yield* legacyConfigPull(noFlags);
+        const after = readFileSync(configPath(), "utf8");
+        // The `site_url` key stays byte-identical — the remote's env()-spelled
+        // value is never written — while the unrelated `max_rows` change,
+        // which carries no such risk, is written normally.
+        expect(after).toContain('site_url = "https://local.example.com"');
+        expect(after).toContain("max_rows = 1000");
+        const success = out.messages.find((message) => message.type === "success");
+        const data = success?.data as Record<string, unknown>;
+        const changes = data["changes"] as ReadonlyArray<Record<string, unknown>>;
+        const siteUrlChange = changes.find(
+          (change) => (change["path"] as Array<string>).join(".") === "auth.site_url",
+        );
+        expect(siteUrlChange).toMatchObject({
+          written: false,
+          skipped_reason: "remote_env_reference",
+        });
+        const counts = data["counts"] as Record<string, unknown>;
+        expect(counts["skipped"]).toBeGreaterThanOrEqual(1);
+      }).pipe(Effect.provide(layer));
+    },
+  );
+
   // -------------------------------------------------------------------------
   // Warnings (CLI-2064 §1.3, ADR 0023).
   // -------------------------------------------------------------------------

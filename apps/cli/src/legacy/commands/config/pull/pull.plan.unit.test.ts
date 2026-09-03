@@ -148,6 +148,101 @@ describe("legacyPlanConfigPull", () => {
     expect(plan.skipped).toEqual([{ change: c, reason: "unwritable" }]);
   });
 
+  test("a remote value spelled as env() is skipped as remote_env_reference, never written verbatim (CLI-2064 security finding)", () => {
+    const path = ["auth", "site_url"];
+    const c = change({
+      path,
+      class: "update",
+      local: "https://local.example.com",
+      remote: "env(SUPABASE_ACCESS_TOKEN)",
+      declared: true,
+    });
+    const plan = legacyPlanConfigPull({
+      changeSet: changeSet([c]),
+      destination: ROOT,
+      rootDocument: {},
+      projectRef: "ref",
+    });
+    expect(plan.writes).toEqual([]);
+    expect(plan.skipped).toEqual([{ change: c, reason: "remote_env_reference" }]);
+  });
+
+  test("a remote array containing one env()-spelled element is skipped as remote_env_reference", () => {
+    const path = ["auth", "additional_redirect_urls"];
+    const c = change({
+      path,
+      class: "update",
+      local: ["https://local.example.com/callback"],
+      remote: ["https://prod.example.com/callback", "env(EXTRA_REDIRECT)"],
+      declared: true,
+    });
+    const plan = legacyPlanConfigPull({
+      changeSet: changeSet([c]),
+      destination: ROOT,
+      rootDocument: {},
+      projectRef: "ref",
+    });
+    expect(plan.writes).toEqual([]);
+    expect(plan.skipped).toEqual([{ change: c, reason: "remote_env_reference" }]);
+  });
+
+  test("a remote object whose nested leaf is env()-spelled is skipped as remote_env_reference (defensive — diff leaves are scalar/array today, never nested)", () => {
+    const path = ["auth", "sms", "test_otp"];
+    const c = change({
+      path,
+      class: "update",
+      local: { "+15551234": "000000" },
+      remote: { "+15551234": "000000", "+15555678": "env(TEST_OTP_CODE)" },
+      declared: true,
+    });
+    const plan = legacyPlanConfigPull({
+      changeSet: changeSet([c]),
+      destination: ROOT,
+      rootDocument: {},
+      projectRef: "ref",
+    });
+    expect(plan.writes).toEqual([]);
+    expect(plan.skipped).toEqual([{ change: c, reason: "remote_env_reference" }]);
+  });
+
+  test("a substring mention of env(...) does not match the anchored regex — written normally", () => {
+    const path = ["auth", "site_url"];
+    const c = change({
+      path,
+      class: "update",
+      local: "https://local.example.com",
+      remote: "see env(FOO) docs",
+      declared: true,
+    });
+    const plan = legacyPlanConfigPull({
+      changeSet: changeSet([c]),
+      destination: ROOT,
+      rootDocument: {},
+      projectRef: "ref",
+    });
+    expect(plan.writes).toEqual([{ change: c, documentPath: path, value: "see env(FOO) docs" }]);
+    expect(plan.skipped).toEqual([]);
+  });
+
+  test("the remote-env guard uses the lenient regex — any variable spelling matches, not just SCREAMING_SNAKE_CASE", () => {
+    const path = ["auth", "site_url"];
+    const c = change({
+      path,
+      class: "update",
+      local: "https://local.example.com",
+      remote: "env(foo-bar)",
+      declared: true,
+    });
+    const plan = legacyPlanConfigPull({
+      changeSet: changeSet([c]),
+      destination: ROOT,
+      rootDocument: {},
+      projectRef: "ref",
+    });
+    expect(plan.writes).toEqual([]);
+    expect(plan.skipped).toEqual([{ change: c, reason: "remote_env_reference" }]);
+  });
+
   test("a write's documentPath is prefixed with the destination's remotes label", () => {
     const path = ["api", "max_rows"];
     const c = change({ path, class: "update", local: 500, remote: 1000, declared: true });

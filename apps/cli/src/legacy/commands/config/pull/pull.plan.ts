@@ -39,6 +39,7 @@ import type { LegacyConfigPullDestination } from "./pull.scope.ts";
 export type LegacyConfigPullSkipReason =
   | "env_reference"
   | "local_only"
+  | "remote_env_reference"
   | "unwritable"
   | "would_invalidate";
 
@@ -197,6 +198,34 @@ function isConfigEditValue(value: unknown): value is ConfigEditValue {
   return false;
 }
 
+/**
+ * True when `value` — or any element/leaf inside it — is itself spelled as an
+ * unresolved `env(VAR)` reference. Guards the REMOTE value's own spelling,
+ * distinct from `change.envVariables` (which flags the LOCAL declaration):
+ * the loader interpolates `env(VAR)` against THIS machine's environment on
+ * every subsequent load (`goViperCompat`'s lenient, unanchored-variable-name
+ * `ENV_CAPTURE_REGEX`), so writing a remote-controlled `env(...)` string
+ * verbatim would let the platform smuggle a request to read whatever this
+ * machine's environment happens to hold at that variable name — `config
+ * diff` would then render the resolved local secret, and `config push` would
+ * send it back to the platform (accepted security finding). Recurses into
+ * arrays and nested objects for defense in depth, even though a diff leaf is
+ * scalar/array today, never nested. The regex is anchored (`^env\(...\)$`),
+ * so a substring mention (`"see env(FOO) docs"`) does not match.
+ */
+function containsRemoteEnvReference(value: ConfigEditValue): boolean {
+  if (typeof value === "string") {
+    return ENV_CAPTURE_REGEX.test(value);
+  }
+  if (typeof value === "number" || typeof value === "boolean") {
+    return false;
+  }
+  if (Array.isArray(value)) {
+    return value.some((item) => typeof item === "string" && ENV_CAPTURE_REGEX.test(item));
+  }
+  return Object.values(value).some((child) => containsRemoteEnvReference(child));
+}
+
 const dualScopePathKeys: ReadonlySet<string> = new Set(dualScopeProjectConfigPaths.map(pathKey));
 
 /**
@@ -226,10 +255,15 @@ function documentPathFor(
  * a `local_only` change never has a remote value to write; an `env_reference`
  * change (the local declared value resolved from `env()`) is NEVER replaced,
  * regardless of class, so the user's env-var indirection is never silently
- * erased; the remaining `unwritable` case only arises for a remote value
- * `applyConfigEdits` cannot represent (`undefined`/`null`, or a shape outside
- * `ConfigEditValue`) — expected to be rare given the registry's mapped
- * value domains, but never assumed impossible.
+ * erased; the `unwritable` case arises for a remote value `applyConfigEdits`
+ * cannot represent (`undefined`/`null`, or a shape outside `ConfigEditValue`)
+ * — expected to be rare given the registry's mapped value domains, but never
+ * assumed impossible; finally, a `remote_env_reference` change — the REMOTE
+ * value itself (only ever checked once it's already representable) is
+ * spelled as an unresolved `env(VAR)` reference — is never written either,
+ * since the loader would interpolate it against the LOCAL environment on the
+ * next load, turning a remote-controlled string into a local
+ * secret-exfiltration channel ({@link containsRemoteEnvReference}).
  *
  * `masked`/`unmanaged` paths never reach `changeSet.changes` by construction
  * (`diffProjectConfig` excludes both before classification), so they never
@@ -250,6 +284,10 @@ export function legacyPlanConfigPull(input: LegacyPlanConfigPullInput): LegacyCo
     }
     if (!isConfigEditValue(change.remote)) {
       skipped.push({ change, reason: "unwritable" });
+      continue;
+    }
+    if (containsRemoteEnvReference(change.remote)) {
+      skipped.push({ change, reason: "remote_env_reference" });
       continue;
     }
     writes.push({
@@ -322,6 +360,14 @@ export function deepSetAtPath(root: unknown, path: ReadonlyArray<string>, value:
   return { ...base, [head]: deepSetAtPath(base[head], rest, value) };
 }
 
+/**
+ * Intentionally does NOT also check {@link containsRemoteEnvReference}: this
+ * predicate only gates what gets PROJECTED onto the fixpoint's own internal
+ * `config`/`document` simulation below, never what actually reaches disk —
+ * `legacyPlanConfigPull`, called once by the caller over the fixpoint's
+ * merged `changeSet`, is the sole gate for that, and every change observed
+ * here (including a `remote_env_reference` one) still reaches it via `seen`.
+ */
 function isWritableChange(change: ConfigChange): boolean {
   return (
     change.class !== "local_only" &&

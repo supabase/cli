@@ -61,14 +61,15 @@ locally via the file write above).
 
 ## Environment Variables
 
-| Variable                | Purpose                                                                                                                                 | Required?                                               |
-| ----------------------- | --------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------- |
-| `SUPABASE_PROJECT_ID`   | project ref (flag → this → `.temp/project-ref` → prompt)                                                                                | no                                                      |
-| `SUPABASE_ACCESS_TOKEN` | auth token (bypasses credential file/keyring lookup)                                                                                    | no (falls back to keyring → `~/.supabase/access-token`) |
-| `SUPABASE_PROFILE`      | API profile selection                                                                                                                   | no                                                      |
-| `SUPABASE_WORKDIR`      | working directory `config.toml`/`.json` is read from and written to (`--workdir` flag takes priority)                                   | no (defaults to the current directory)                  |
-| `SUPABASE_YES`          | answers the confirmation prompt "yes" (same effect as `--yes`); does **not** bypass the uncommitted-changes guard — only `--force` does | no                                                      |
-| `env(VAR)` references   | interpolated into `config.toml` values at load; a change whose LOCAL value resolved from `env()` is always skipped, never overwritten   | no                                                      |
+| Variable                | Purpose                                                                                                                                                                                                                                                                                                              | Required?                                               |
+| ----------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------- |
+| `SUPABASE_PROJECT_ID`   | project ref (flag → this → `.temp/project-ref` → prompt)                                                                                                                                                                                                                                                             | no                                                      |
+| `SUPABASE_ACCESS_TOKEN` | auth token (bypasses credential file/keyring lookup)                                                                                                                                                                                                                                                                 | no (falls back to keyring → `~/.supabase/access-token`) |
+| `SUPABASE_PROFILE`      | API profile selection                                                                                                                                                                                                                                                                                                | no                                                      |
+| `SUPABASE_WORKDIR`      | working directory `config.toml`/`.json` is read from and written to (`--workdir` flag takes priority)                                                                                                                                                                                                                | no (defaults to the current directory)                  |
+| `SUPABASE_YES`          | answers the confirmation prompt "yes" (same effect as `--yes`); does **not** bypass the uncommitted-changes guard — only `--force` does                                                                                                                                                                              | no                                                      |
+| `env(VAR)` references   | interpolated into `config.toml` values at load; a change whose LOCAL value resolved from `env()` is always skipped, never overwritten                                                                                                                                                                                | no                                                      |
+| `env(VAR)` references   | a change whose REMOTE value is itself spelled `env(VAR)` is also always skipped (`remote_env_reference`), never written verbatim — the loader would resolve it against THIS machine's environment on the next load, which would otherwise let a remote value smuggle a local secret into `config diff`/`config push` | no                                                      |
 
 ## Exit Codes
 
@@ -148,9 +149,10 @@ contains `config_schema`, `config_path`, `format`, `target` (`project_ref`, opti
 brand-new `[remotes.*]` block since there is nothing to overlay yet), `destination` (`scope`,
 optional `label`, `created` — WHERE this run writes, independent of `target.local_scope`),
 `dry_run`, `wrote`, `scope` (`{present, missing}`), `changes[]` (`config diff`'s own change shape
-plus `written` and, when unwritten, `skipped_reason`: `env_reference | local_only | unwritable |
-would_invalidate | declined | dry_run`; a change with `written: true` ALSO carries
-`document_path` — the exact destination-prefixed segment path `applyConfigEdits` wrote to, e.g.
+plus `written` and, when unwritten, `skipped_reason`: `env_reference | local_only |
+remote_env_reference | unwritable | would_invalidate | declined | dry_run`; a change with
+`written: true` ALSO carries `document_path` — the exact destination-prefixed segment path
+`applyConfigEdits` wrote to, e.g.
 `["remotes", "staging", "api", "max_rows"]` — absent from every unwritten entry, since nothing
 landed anywhere for those), `warnings[]` (`{kind, path?, missing_fields?}` — `missing_fields` only
 on a `would_invalidate` warning: `[{path, env_variable?}]`, the field(s) the schema-validation gate
