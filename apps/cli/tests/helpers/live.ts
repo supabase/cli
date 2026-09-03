@@ -145,9 +145,9 @@ export async function removeStorageLiveObject(
   }
 }
 
-/** Flags every postgres-config live test passes: the family is
- * experimental-gated and addresses the shared project by ref. */
-export function postgresConfigLiveFlags(project: LiveProject): ReadonlyArray<string> {
+/** Flags for experimental-gated live tests that address the shared project by
+ * ref rather than linking it (contrast `storageLiveFlags`). */
+export function experimentalProjectLiveFlags(project: LiveProject): ReadonlyArray<string> {
   return ["--project-ref", project.ref, "--experimental"];
 }
 
@@ -166,7 +166,7 @@ export async function removePostgresConfigLiveOverride(
     "delete",
     "--config",
     key,
-    ...postgresConfigLiveFlags(project),
+    ...experimentalProjectLiveFlags(project),
     "--no-restart",
   ]);
   requireLiveSuccess(removed, `postgres-config delete cleanup for ${key}`);
