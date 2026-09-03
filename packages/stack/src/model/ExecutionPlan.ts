@@ -74,15 +74,26 @@ export interface ExecutionPlan {
   readonly workloads: ReadonlyArray<PlannedWorkload>;
 }
 
-export const eagerCapabilities = (plan: ExecutionPlan): Set<CapabilityName> => {
-  const active = new Set<CapabilityName>();
+/** Return the requested capabilities and every transitive dependency. */
+export const dependencyClosure = (
+  plan: ExecutionPlan,
+  roots: Iterable<CapabilityName>,
+): Set<CapabilityName> => {
+  const closure = new Set<CapabilityName>();
   const visit = (name: CapabilityName): void => {
-    if (active.has(name)) return;
-    active.add(name);
+    if (closure.has(name)) return;
+    closure.add(name);
     for (const dependency of plan.dependencies[name]) visit(dependency);
   };
-  for (const name of CAPABILITY_NAMES) if (plan.activation[name] === "eager") visit(name);
-  return active;
+  for (const root of roots) visit(root);
+  return closure;
+};
+
+export const eagerCapabilities = (plan: ExecutionPlan): Set<CapabilityName> => {
+  return dependencyClosure(
+    plan,
+    CAPABILITY_NAMES.filter((name) => plan.activation[name] === "eager"),
+  );
 };
 
 export const activeExecutionPlan = (

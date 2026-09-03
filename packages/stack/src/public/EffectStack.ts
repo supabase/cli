@@ -22,7 +22,7 @@ import type { ChildProcessSpawner as ChildProcessSpawnerService } from "effect/u
 import type { StackIdentity } from "../identity/Identity.ts";
 import { resolveStackIdentity, deriveStackId } from "../identity/Identity.ts";
 import { compileStack, rebuildExecutionPlan, type StackDefinition } from "../model/Compiler.ts";
-import type { ExecutionPlan } from "../model/ExecutionPlan.ts";
+import { dependencyClosure, type ExecutionPlan } from "../model/ExecutionPlan.ts";
 import type { PersistedStackIdentity, PersistedStackState } from "../state/StackState.ts";
 import { toPersistedIdentity } from "../state/StackState.ts";
 import { makeStackStateStore, type StackStateStore } from "../state/StackStateStore.ts";
@@ -101,17 +101,8 @@ import {
   ContainerEngineResolver,
   type ContainerEngineResolverShape,
 } from "../runtime/ContainerEngineResolver.ts";
-import {
-  ContainerEngineProtocolError,
-  makeProcessCommandRunner,
-  type ContainerEngineKind,
-  type ContainerPlatform,
-  type ContainerEngine,
-} from "../runtime/ContainerEngine.ts";
 import { statusFor } from "../supervisor/StatusProjection.ts";
-import { makeDockerEngine } from "../runtime/DockerEngine.ts";
-import { makePodmanEngine } from "../runtime/PodmanEngine.ts";
-import { readRetainedLogs } from "../supervisor/LogStore.ts";
+import { EMPTY_LOG_CURSOR, readRetainedLogs, selectLogBatch } from "../supervisor/LogStore.ts";
 import {
   makeProductionRuntimeArtifactPreparer,
   type PreparedWorkloadArtifact,
@@ -170,43 +161,6 @@ export interface EffectStack {
 
 const optionOf = <A>(value: A | undefined): Option.Option<A> =>
   value === undefined ? Option.none() : Option.some(value);
-
-const defaultContainerPlatform = (): ContainerPlatform => {
-  // Host details are read only at this composition boundary. The real
-  // container adapters reject unsupported Podman routing during preflight.
-  if (process.platform === "darwin") return { os: "darwin", desktop: true };
-  if (process.platform === "win32") return { os: "windows", desktop: true };
-  return { os: "linux", desktop: false };
-};
-
-const defaultContainerEngineResolver = (): ContainerEngineResolverShape => ({
-  resolve: (kind) =>
-    Effect.gen(function* () {
-      const platform = defaultContainerPlatform();
-      const runner = yield* makeProcessCommandRunner({ executable: kind });
-      return kind === "docker"
-        ? makeDockerEngine({ runner, platform })
-        : makePodmanEngine({ runner, platform });
-    }),
-});
-
-const resolveContainerEngine = (
-  kind: ContainerEngineKind,
-  resolver: ContainerEngineResolverShape | undefined,
-  spawner: ChildProcessSpawnerValue,
-): Effect.Effect<ContainerEngine, ContainerEngineError> =>
-  (resolver ?? defaultContainerEngineResolver()).resolve(kind).pipe(
-    Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner),
-    Effect.mapError(
-      (error) =>
-        new ContainerEngineError({
-          message:
-            error instanceof ContainerEngineProtocolError
-              ? `${error.operation}: ${error.message}`
-              : error.message,
-        }),
-    ),
-  );
 
 const descriptor = (state: PersistedStackState): StackDescriptor => ({
   id: StackIdSchema.make(state.identity.stackId),
@@ -333,11 +287,6 @@ const destroyError = (error: ControlError): DestroyStackError =>
 /** Internal control-transport seam used by public lifecycle integration tests. */
 export const makeHandle = (
   id: StackId,
-  metadata: {
-    readonly endpoint?: Parameters<typeof makeControlClient>[0];
-    readonly ownerSessionId?: string;
-    readonly rpcRelease?: string;
-  },
   options: {
     readonly resolveOwner?: (
       launch: boolean,
@@ -352,23 +301,12 @@ export const makeHandle = (
     readonly prepare?: (
       options?: PrepareStackOptions,
     ) => Effect.Effect<PrepareStackResult, PrepareStackError>;
-    readonly containerEngineResolver?: ContainerEngineResolverShape;
   } = {},
 ): Effect.Effect<EffectStack> =>
   Effect.sync(() => {
     const readOfflineState = options.readOfflineState;
     const readPersistedState = options.readPersistedState;
     const readLogs = options.readLogs;
-    const client: ReturnType<typeof makeControlClient> | undefined =
-      metadata.endpoint !== undefined &&
-      metadata.ownerSessionId !== undefined &&
-      metadata.rpcRelease !== undefined
-        ? makeControlClient(metadata.endpoint, {
-            stackId: id,
-            ownerSessionId: metadata.ownerSessionId,
-            rpcRelease: metadata.rpcRelease,
-          })
-        : undefined;
     const resolveClient = (
       launch: boolean,
     ): Effect.Effect<ReturnType<typeof makeControlClient>, StackError> =>
@@ -388,11 +326,9 @@ export const makeHandle = (
                   ),
             ),
           )
-        : client !== undefined
-          ? Effect.succeed(client)
-          : Effect.fail(
-              new StackOwnershipConflictError({ message: "No Supervisor owns this stack" }),
-            );
+        : Effect.fail(
+            new StackOwnershipConflictError({ message: "No Supervisor owns this stack" }),
+          );
     const mapRpcClientFailure = <E extends StackError>(
       error: RpcClientError,
       mapError: (error: ControlError) => E,
@@ -815,24 +751,11 @@ const handleDependencies = (options: {
           plan = compiled.executionPlan;
         }
         const selected = new Set<CapabilityName>();
-        const visit = (name: CapabilityName): Effect.Effect<void, StackPreparationError> => {
-          if (selected.has(name)) return Effect.void;
-          const capability = definition.capabilities[name];
-          if (!capability.enabled)
-            return Effect.fail(
-              new StackPreparationError({
-                stackId: options.id,
-                capability: name,
-                message: `Capability ${name} is disabled`,
-              }),
-            );
-          selected.add(name);
-          return Effect.forEach(plan.dependencies[name], visit, { discard: true });
-        };
         if (prepareOptions?.capabilities === undefined) {
           for (const name of CAPABILITY_NAMES)
             if (definition.capabilities[name].enabled) selected.add(name);
         } else {
+          const requested: CapabilityName[] = [];
           for (const name of prepareOptions.capabilities) {
             if (!isCapabilityName(name))
               return yield* new StackPreparationError({
@@ -840,22 +763,25 @@ const handleDependencies = (options: {
                 capability: String(name),
                 message: `Unknown capability ${String(name)}`,
               });
-            yield* visit(name);
+            requested.push(name);
+          }
+          for (const name of dependencyClosure(plan, requested)) {
+            if (!definition.capabilities[name].enabled)
+              return yield* new StackPreparationError({
+                stackId: options.id,
+                capability: name,
+                message: `Capability ${name} is disabled`,
+              });
+            selected.add(name);
           }
         }
         const workloads = plan.workloads.filter((workload) => selected.has(workload.capability));
-        const containerEngine =
-          state.runtime.kind === "container"
-            ? yield* resolveContainerEngine(
-                state.runtime.engine,
-                options.containerEngineResolver,
-                options.spawner,
-              )
-            : undefined;
         const preparer = yield* makeProductionRuntimeArtifactPreparer({
           stateRoot: options.environment.stateRoot,
           runtime: state.runtime,
-          ...(containerEngine === undefined ? {} : { containerEngine }),
+          ...(options.containerEngineResolver === undefined
+            ? {}
+            : { containerEngineResolver: options.containerEngineResolver }),
         }).pipe(
           Effect.provideService(FileSystem.FileSystem, options.fileSystem),
           Effect.provideService(Path.Path, options.path),
@@ -904,24 +830,9 @@ const handleDependencies = (options: {
             : { cursor: query.cursor },
         ).pipe(
           Effect.map((scanned) => {
-            const capabilities =
-              query?.capabilities === undefined ? undefined : new Set(query.capabilities);
-            const filtered = scanned.filter((entry) =>
-              capabilities === undefined
-                ? true
-                : entry.source !== "gateway" &&
-                  entry.source !== "supervisor" &&
-                  capabilities.has(entry.source),
-            );
-            const entries =
-              query?.tail === undefined
-                ? filtered
-                : query.tail <= 0
-                  ? []
-                  : filtered.slice(-Math.floor(query.tail));
+            const selected = selectLogBatch(scanned, query, query?.cursor ?? EMPTY_LOG_CURSOR);
             return {
-              entries,
-              cursor: scanned.at(-1)?.cursor ?? query?.cursor ?? { opaque: "v1_0" },
+              ...selected,
               running: false,
             } satisfies StackLogBatch;
           }),
@@ -1017,7 +928,7 @@ export const createStack = (
       spawner,
       containerEngineResolver,
     });
-    return yield* makeHandle(stackId, {}, dependencies);
+    return yield* makeHandle(stackId, dependencies);
   });
 
 export const openStack = (
@@ -1052,7 +963,7 @@ export const openStack = (
       spawner,
       containerEngineResolver,
     });
-    return yield* makeHandle(id, {}, dependencies);
+    return yield* makeHandle(id, dependencies);
   });
 
 export const findStack = (

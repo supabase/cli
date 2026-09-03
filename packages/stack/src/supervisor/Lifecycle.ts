@@ -122,7 +122,6 @@ const materializeCandidate = (
   state: PersistedStackState,
   runtime: StackRuntime,
   config: StackConfig | undefined,
-  secretLifecycle: PersistedStackState["desiredLifecycle"] = state.desiredLifecycle,
 ): Effect.Effect<Candidate, StackError, LifecycleRequirements> =>
   Effect.gen(function* () {
     if (config === undefined && state.definition !== undefined) {
@@ -130,7 +129,7 @@ const materializeCandidate = (
       const resolved = yield* resolveSecrets(
         declarationsFromPersisted(state.secrets),
         state.desiredLifecycle === "unconfigured" ? undefined : state.secrets,
-        secretLifecycle,
+        state.desiredLifecycle,
       );
       return {
         definition: state.definition,
@@ -149,7 +148,7 @@ const materializeCandidate = (
     const resolved = yield* resolveSecrets(
       declarationsFromCompiled(compiled),
       state.desiredLifecycle === "unconfigured" ? undefined : state.secrets,
-      secretLifecycle,
+      state.desiredLifecycle,
     );
     return {
       definition: compiled.definition,

@@ -41,7 +41,7 @@ import { makeSupervisorIngress, type SupervisorIngress } from "../supervisor/Ing
 import { checkHostPort } from "../supervisor/HostListener.ts";
 import { makeLogStore, type LogStore, type LogRecord } from "../supervisor/LogStore.ts";
 import type { LifecycleInput } from "../supervisor/Lifecycle.ts";
-import type { SupervisorRuntime, SupervisorRuntimeFactory } from "../supervisor/Supervisor.ts";
+import type { SupervisorRuntime } from "../supervisor/Supervisor.ts";
 import {
   makeProductionRuntimeArtifactPreparer,
   type PreparedWorkloadArtifact,
@@ -67,6 +67,7 @@ import { makeContainerRuntime, type ContainerWorkloadResolution } from "./Contai
 import { DEFAULT_READINESS_DEADLINE, probeReadiness } from "./ReadinessProbe.ts";
 import { parseGoDuration } from "../model/capabilities/database.ts";
 import type { ContainerEngine, ContainerHostRoute } from "./ContainerEngine.ts";
+import { resolveContainerEngine } from "./ContainerEngineResolver.ts";
 import { bootstrapDatabaseAt } from "./PostgresDatabaseSession.ts";
 import { DatabaseBootstrapError } from "../model/DatabaseBootstrap.ts";
 import { validateMaterializedSecrets } from "../state/MaterializedSettings.ts";
@@ -77,6 +78,10 @@ import {
 } from "./RuntimeDriver.ts";
 
 type RuntimeContext = FileSystem.FileSystem | Path.Path | Crypto.Crypto;
+
+interface SupervisorRuntimeFactory {
+  readonly make: (state: PersistedStackState) => Effect.Effect<SupervisorRuntime, StackError>;
+}
 
 export interface ProductionRuntimeFactoryOptions {
   readonly stateRoot: string;
@@ -543,23 +548,25 @@ export const makeProductionRuntimeFactory = (
         Effect.mapError((error) => preparationError("Unable to open stack logs", error)),
       ));
     const logs = dynamicLogStore(baseLogs, knownSecrets);
+    const selectedEngine =
+      initial.runtime.kind === "container" ? initial.runtime.engine : undefined;
+    const containerEngine =
+      options.containerEngine ??
+      (selectedEngine === undefined
+        ? undefined
+        : yield* resolveContainerEngine(selectedEngine).pipe(
+            Effect.mapError((error) =>
+              preparationError(`Unable to configure ${selectedEngine} artifact engine`, error),
+            ),
+          ));
     const preparer =
       options.artifactPreparer ??
       (yield* makeProductionRuntimeArtifactPreparer({
         stateRoot: options.stateRoot,
         artifactCacheRoot: options.artifactCacheRoot,
         runtime: initial.runtime,
-        platform: {
-          os:
-            process.platform === "darwin"
-              ? "darwin"
-              : process.platform === "win32"
-                ? "windows"
-                : "linux",
-          desktop: process.platform === "darwin",
-        },
+        ...(containerEngine === undefined ? {} : { containerEngine }),
       }));
-    const containerEngine = options.containerEngine ?? preparer.containerEngine;
     const serveTemplate = yield* Effect.cached(bootstrapContent);
     const bootstrapDatabase =
       options.bootstrapDatabase ?? ((state: PersistedStackState) => bootstrapDatabaseAt(state));
@@ -996,7 +1003,6 @@ export const makeProductionRuntimeFactory = (
           );
           return {
             driver: baseDriver,
-            prepare: prepareArtifacts,
             preflight,
             activate,
             ingress,

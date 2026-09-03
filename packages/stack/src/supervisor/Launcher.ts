@@ -29,6 +29,11 @@ import { makeControlClient } from "../control/ControlServer.ts";
 import { isMaintenanceTransportFailure } from "../control/MaintenanceProtocol.ts";
 import { STACK_RPC_RELEASE } from "../control/StackRpc.ts";
 import {
+  SupervisorReadySchema,
+  type SupervisorReady,
+  type SupervisorArgs,
+} from "./LaunchProtocol.ts";
+import {
   StackOwnershipConflictError,
   StackStateInvalidError,
   StackUpgradeRequiredError,
@@ -62,19 +67,6 @@ export const defaultRuntimeEnvironment = (): StackRuntimeEnvironmentValue => {
   };
 };
 
-const ReadySchema = Schema.Union([
-  Schema.Struct({
-    ok: Schema.Literal(true),
-    stackId: StackIdSchema,
-    ownerSessionId: Schema.String,
-  }),
-  Schema.Struct({
-    ok: Schema.Literal(false),
-    code: Schema.Literals(["ownership-conflict", "failed"] as const),
-    message: Schema.String,
-  }),
-]);
-type ReadyMessage = Schema.Schema.Type<typeof ReadySchema>;
 type ReadinessResult =
   | { readonly kind: "ready"; readonly stackId: StackId; readonly ownerSessionId: string }
   | { readonly kind: "ownership-conflict" }
@@ -85,16 +77,7 @@ type ChildResult =
   | { readonly kind: "ownership-conflict" }
   | { readonly kind: "failed"; readonly message: string };
 
-interface LaunchPayload {
-  readonly stateRoot: string;
-  readonly artifactCacheRoot?: string;
-  readonly tempRoot: string;
-  readonly platform: "posix" | "windows";
-  readonly stackId: StackId;
-  readonly ownerSessionId: string;
-  readonly rpcRelease: string;
-  readonly identity: StackIdentity;
-}
+type LaunchPayload = SupervisorArgs;
 
 const mapFailure = (message: string) => new StackStateInvalidError({ message });
 const SUPERVISOR_READINESS_TIMEOUT_MS = 30_000;
@@ -123,7 +106,7 @@ const decodeReady = (bytes: Uint8Array): Effect.Effect<ReadinessResult, StackSta
   const text = new TextDecoder().decode(bytes);
   if (text.trim().length === 0)
     return Effect.succeed({ kind: "failed", message: "Supervisor exited before readiness" });
-  const classify = (value: ReadyMessage): Effect.Effect<ReadinessResult> =>
+  const classify = (value: SupervisorReady): Effect.Effect<ReadinessResult> =>
     value.ok
       ? Effect.succeed({
           kind: "ready",
@@ -133,7 +116,7 @@ const decodeReady = (bytes: Uint8Array): Effect.Effect<ReadinessResult, StackSta
       : value.code === "ownership-conflict"
         ? Effect.succeed({ kind: "ownership-conflict" })
         : Effect.succeed({ kind: "failed", message: value.message });
-  return Schema.decodeEffect(Schema.fromJsonString(ReadySchema))(text).pipe(
+  return Schema.decodeEffect(Schema.fromJsonString(SupervisorReadySchema))(text).pipe(
     Effect.mapError(() => mapFailure("Invalid supervisor readiness frame")),
     Effect.flatMap(classify),
   );

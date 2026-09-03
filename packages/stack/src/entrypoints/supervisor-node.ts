@@ -10,49 +10,16 @@ import {
   type StackRuntimeEnvironmentValue,
 } from "../state/Ownership.ts";
 import { makeStackStateStore } from "../state/StackStateStore.ts";
-import { StackIdSchema } from "../public/StackId.ts";
 import { makeSupervisor } from "../supervisor/Supervisor.ts";
 import { makeProductionRuntimeFactory } from "../runtime/ProductionRuntime.ts";
 import { startControlServer } from "../control/ControlServer.ts";
 import { STACK_RPC_RELEASE } from "../control/StackRpc.ts";
-import { OwnerSessionIdSchema } from "../control/MaintenanceProtocol.ts";
-import { StackOwnershipConflictError } from "../public/Errors.ts";
-
-const IdentitySchema = Schema.Struct({
-  projectRoot: Schema.String,
-  checkoutRoot: Schema.String,
-  workspaceId: Schema.String,
-  checkoutId: Schema.String,
-  branchContext: Schema.String,
-  localProjectKey: Schema.String,
-  stackName: Schema.String,
-});
-
-const SupervisorArgsSchema = Schema.Struct({
-  stateRoot: Schema.String,
-  artifactCacheRoot: Schema.optional(Schema.String),
-  tempRoot: Schema.String,
-  platform: Schema.Literals(["posix", "windows"] as const),
-  stackId: StackIdSchema,
-  ownerSessionId: OwnerSessionIdSchema,
-  rpcRelease: Schema.String,
-  identity: IdentitySchema,
-});
-
-const ReadySchema = Schema.Union([
-  Schema.Struct({
-    ok: Schema.Literal(true),
-    stackId: StackIdSchema,
-    ownerSessionId: Schema.String,
-  }),
-  Schema.Struct({
-    ok: Schema.Literal(false),
-    code: Schema.Literals(["ownership-conflict", "failed"] as const),
-    message: Schema.String,
-  }),
-]);
-
-type SupervisorArgs = Schema.Schema.Type<typeof SupervisorArgsSchema>;
+import { StackOwnershipConflictError, StackStateInvalidError } from "../public/Errors.ts";
+import {
+  SupervisorArgsSchema,
+  SupervisorReadySchema,
+  type SupervisorArgs,
+} from "../supervisor/LaunchProtocol.ts";
 
 class SupervisorReadinessError extends Data.TaggedError("SupervisorReadinessError")<{
   readonly message: string;
@@ -66,7 +33,7 @@ const reportSupervisorFailure = (error: unknown): void => {
     // written directly at this standalone process boundary.
     NodeFs.writeSync(
       3,
-      `${Schema.encodeSync(Schema.fromJsonString(ReadySchema))({ ok: false, code: conflict ? "ownership-conflict" : "failed", message: error instanceof Error ? error.message : "Supervisor failed" })}\n`,
+      `${Schema.encodeSync(Schema.fromJsonString(SupervisorReadySchema))({ ok: false, code: conflict ? "ownership-conflict" : "failed", message: error instanceof Error ? error.message : "Supervisor failed" })}\n`,
     );
     NodeFs.closeSync(3);
   } catch {
@@ -76,10 +43,12 @@ const reportSupervisorFailure = (error: unknown): void => {
 };
 
 const writeReadiness = (
-  value: Schema.Schema.Type<typeof ReadySchema>,
+  value: Schema.Schema.Type<typeof SupervisorReadySchema>,
 ): Effect.Effect<void, SupervisorReadinessError> =>
   Effect.gen(function* () {
-    const encoded = yield* Schema.encodeEffect(Schema.fromJsonString(ReadySchema))(value).pipe(
+    const encoded = yield* Schema.encodeEffect(Schema.fromJsonString(SupervisorReadySchema))(
+      value,
+    ).pipe(
       Effect.mapError(
         (cause) =>
           new SupervisorReadinessError({
@@ -132,14 +101,22 @@ const runSupervisor = (args: SupervisorArgs) =>
         stateStore: store,
         context,
       });
+      const initial = yield* store.read(args.stackId).pipe(
+        Effect.provideContext(context),
+        Effect.flatMap((state) =>
+          state === undefined
+            ? Effect.fail(new StackStateInvalidError({ message: "Stack state is missing" }))
+            : Effect.succeed(state),
+        ),
+      );
+      const runtime = yield* runtimeFactory.make(initial);
       const supervisor = yield* makeSupervisor({
-        identity: args.identity,
         stackId: args.stackId,
         ownerSessionId,
         rpcRelease: args.rpcRelease || STACK_RPC_RELEASE,
         stateStore: store,
         context,
-        runtimeFactory,
+        runtime,
       });
       yield* startControlServer({
         endpoint: lease.metadata.endpoint,

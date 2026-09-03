@@ -79,9 +79,6 @@ const makeFixture = (
     readonly ingress?: SupervisorIngress;
     readonly timeline?: Ref.Ref<ReadonlyArray<string>>;
     readonly runtime?: StackRuntime;
-    readonly prepareOutcome?: "cached" | "downloaded" | "pulled";
-    readonly prepareGate?: Deferred.Deferred<void>;
-    readonly prepareStarted?: Deferred.Deferred<void>;
     readonly startGate?: Deferred.Deferred<void>;
     readonly startStarted?: Deferred.Deferred<void>;
     readonly startFinished?: Deferred.Deferred<void>;
@@ -290,23 +287,6 @@ const makeFixture = (
     };
     const runtime: SupervisorRuntime = {
       driver,
-      prepare: (_runtime, workloads) =>
-        Effect.gen(function* () {
-          if (fixtureOptions.prepareStarted !== undefined)
-            yield* Deferred.succeed(fixtureOptions.prepareStarted, undefined);
-          if (fixtureOptions.prepareGate !== undefined)
-            yield* Deferred.await(fixtureOptions.prepareGate);
-          return yield* Effect.forEach(workloads, (workload) =>
-            Ref.update(calls, (current) => [...current, `prepare:${workload.id}`]).pipe(
-              Effect.as({
-                workloadId: workload.id,
-                capability: workload.capability,
-                version: "test",
-                outcome: fixtureOptions.prepareOutcome ?? "cached",
-              }),
-            ),
-          );
-        }),
       preflight: (_input) =>
         Effect.gen(function* () {
           if (fixtureOptions.preflightCalls !== undefined)
@@ -365,7 +345,6 @@ const makeFixture = (
       FileSystem.FileSystem | Path.Path | import("effect").Crypto.Crypto
     >();
     const supervisor = yield* makeSupervisor({
-      identity,
       stackId: id,
       ownerSessionId: "owner-session",
       rpcRelease: "test-release",
@@ -567,7 +546,6 @@ describe("Supervisor composition", () => {
         ]);
 
         const successor = yield* makeSupervisor({
-          identity,
           stackId: fixture.id,
           ownerSessionId: "successor-session",
           rpcRelease: "test-release",
@@ -600,7 +578,6 @@ describe("Supervisor composition", () => {
         expect(yield* Ref.get(preflightCalls)).toBe(1);
 
         const successor = yield* makeSupervisor({
-          identity,
           stackId: fixture.id,
           ownerSessionId: "successor-session",
           rpcRelease: "test-release",
@@ -1637,7 +1614,6 @@ describe("Supervisor composition", () => {
         yield* fixture.supervisor.shutdownIfIdle;
         yield* fixture.supervisor.shutdown;
         const successor = yield* makeSupervisor({
-          identity,
           stackId: fixture.id,
           ownerSessionId: "successor-session",
           rpcRelease: "test-release",

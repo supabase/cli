@@ -236,7 +236,9 @@ describe("Effect stack lifecycle handoff", () => {
           },
           onShutdownReady: Deferred.succeed(stopped, undefined).pipe(Effect.asVoid),
         }).pipe(Effect.provideService(Scope.Scope, ownerScope));
-        const stack = yield* makeHandle(stackId, owner);
+        const stack = yield* makeHandle(stackId, {
+          resolveOwner: () => Effect.succeed(Option.some(owner)),
+        });
         const first = yield* stack.logs({ capabilities: ["auth"], tail: 1 });
         expect(first.entries).toEqual([initialAuth]);
         expect(first.cursor).toEqual(unrelatedDatabase.cursor);
@@ -294,30 +296,26 @@ describe("Effect stack lifecycle handoff", () => {
           },
         ];
         const burst = entries.slice(1);
-        const stack = yield* makeHandle(
-          stackId,
-          {},
-          {
-            resolveOwner: () => Effect.succeed(Option.none()),
-            readPersistedState: () => Effect.succeed(Option.some(stoppedState())),
-            readOfflineState: () => Effect.succeed(Option.none()),
-            readLogs: (query?: LogQuery) =>
-              Ref.getAndUpdate(calls, (current) => current + 1).pipe(
-                Effect.map((index) => {
-                  const batchEntries = index === 0 ? [entries[0]] : burst;
-                  const visibleEntries =
-                    query?.tail === undefined
-                      ? batchEntries
-                      : batchEntries.slice(-Math.floor(query.tail));
-                  return {
-                    entries: visibleEntries,
-                    cursor: entries.at(index === 0 ? 0 : 3)?.cursor ?? { opaque: "v1_0" },
-                    running: index === 0,
-                  };
-                }),
-              ),
-          },
-        );
+        const stack = yield* makeHandle(stackId, {
+          resolveOwner: () => Effect.succeed(Option.none()),
+          readPersistedState: () => Effect.succeed(Option.some(stoppedState())),
+          readOfflineState: () => Effect.succeed(Option.none()),
+          readLogs: (query?: LogQuery) =>
+            Ref.getAndUpdate(calls, (current) => current + 1).pipe(
+              Effect.map((index) => {
+                const batchEntries = index === 0 ? [entries[0]] : burst;
+                const visibleEntries =
+                  query?.tail === undefined
+                    ? batchEntries
+                    : batchEntries.slice(-Math.floor(query.tail));
+                return {
+                  entries: visibleEntries,
+                  cursor: entries.at(index === 0 ? 0 : 3)?.cursor ?? { opaque: "v1_0" },
+                  running: index === 0,
+                };
+              }),
+            ),
+        });
         const followed = yield* stack
           .followLogs({ capabilities: ["auth"], tail: 1 })
           .pipe(Stream.runCollect, Effect.exit);
@@ -370,15 +368,11 @@ describe("Effect stack lifecycle handoff", () => {
         const ownership = new StackOwnershipConflictError({
           message: `owner ${artifact} is still present`,
         });
-        const stack = yield* makeHandle(
-          stackId,
-          {},
-          {
-            resolveOwner: () => Effect.succeed(Option.none()),
-            readOfflineState: () => Effect.fail(ownership),
-            readLogs: () => Effect.fail(ownership),
-          },
-        );
+        const stack = yield* makeHandle(stackId, {
+          resolveOwner: () => Effect.succeed(Option.none()),
+          readOfflineState: () => Effect.fail(ownership),
+          readLogs: () => Effect.fail(ownership),
+        });
         const status = yield* stack.status().pipe(Effect.exit);
         expect(Exit.isFailure(status)).toBe(true);
         const logs = yield* stack.logs().pipe(Effect.exit);
@@ -395,28 +389,24 @@ describe("Effect stack lifecycle handoff", () => {
         const ownership = new StackOwnershipConflictError({
           message: "Supervisor is still shutting down",
         });
-        const stack = yield* makeHandle(
-          stackId,
-          {},
-          {
-            resolveOwner: () => Effect.succeed(Option.none()),
-            readPersistedState: () => Effect.succeed(Option.some(stoppedState())),
-            readOfflineState: () =>
-              Ref.getAndUpdate(readAttempts, (current) => current + 1).pipe(
-                Effect.flatMap((attempt) =>
-                  attempt === 0 ? Effect.fail(ownership) : Effect.succeed(Option.none()),
-                ),
+        const stack = yield* makeHandle(stackId, {
+          resolveOwner: () => Effect.succeed(Option.none()),
+          readPersistedState: () => Effect.succeed(Option.some(stoppedState())),
+          readOfflineState: () =>
+            Ref.getAndUpdate(readAttempts, (current) => current + 1).pipe(
+              Effect.flatMap((attempt) =>
+                attempt === 0 ? Effect.fail(ownership) : Effect.succeed(Option.none()),
               ),
-            readLogs: () =>
-              Ref.update(attempts, (current) => current + 1).pipe(
-                Effect.as({
-                  entries: [],
-                  cursor: { opaque: "v1_0" },
-                  running: false,
-                }),
-              ),
-          },
-        );
+            ),
+          readLogs: () =>
+            Ref.update(attempts, (current) => current + 1).pipe(
+              Effect.as({
+                entries: [],
+                cursor: { opaque: "v1_0" },
+                running: false,
+              }),
+            ),
+        });
         const batch = yield* stack.logs();
         expect(batch.entries).toEqual([]);
         expect(yield* Ref.get(attempts)).toBe(1);
@@ -762,10 +752,15 @@ describe("Effect stack lifecycle handoff", () => {
             stop: Effect.succeed({ ok: true, op: "stop" } as const),
           },
         });
-        const stack = yield* makeHandle(stackId, {
+        const owner = {
+          format: "supabase-stack-owner-v1" as const,
+          stackId,
           endpoint,
           ownerSessionId,
           rpcRelease: STACK_RPC_RELEASE,
+        };
+        const stack = yield* makeHandle(stackId, {
+          resolveOwner: () => Effect.succeed(Option.some(owner)),
         });
         yield* stack.start();
         yield* stack.start({ config: {} });
@@ -812,17 +807,13 @@ describe("Effect stack lifecycle handoff", () => {
           },
         });
         let launched = false;
-        const stack = yield* makeHandle(
-          stackId,
-          {},
-          {
-            resolveOwner: (launch) =>
-              Effect.sync(() => {
-                launched ||= launch;
-                return launched ? Option.some(owner) : Option.none();
-              }),
-          },
-        );
+        const stack = yield* makeHandle(stackId, {
+          resolveOwner: (launch) =>
+            Effect.sync(() => {
+              launched ||= launch;
+              return launched ? Option.some(owner) : Option.none();
+            }),
+        });
         expect((yield* stack.start()).lifecycle).toBe("running");
         expect(launched).toBe(true);
       }).pipe(Effect.provide(NodeServices.layer)),
@@ -865,9 +856,16 @@ describe("Effect stack lifecycle handoff", () => {
           onShutdownReady: Deferred.succeed(responseSent, undefined).pipe(Effect.asVoid),
         }).pipe(Effect.provideService(Scope.Scope, ownerScope));
         const stack = yield* makeHandle(stackId, {
-          endpoint,
-          ownerSessionId,
-          rpcRelease: STACK_RPC_RELEASE,
+          resolveOwner: () =>
+            Effect.succeed(
+              Option.some({
+                format: "supabase-stack-owner-v1" as const,
+                stackId,
+                endpoint,
+                ownerSessionId,
+                rpcRelease: STACK_RPC_RELEASE,
+              }),
+            ),
         });
         const destroyFiber = yield* Effect.forkChild(stack.destroy(), { startImmediately: true });
         yield* Deferred.await(responseSent);
@@ -885,9 +883,16 @@ describe("Effect stack lifecycle handoff", () => {
         const path = yield* Path.Path;
         const root = yield* fs.makeTempDirectoryScoped({ prefix: "supabase-effect-stack-" });
         const stack = yield* makeHandle(stackId, {
-          endpoint: { kind: "unix", path: path.join(root, "missing.sock") },
-          ownerSessionId: "session",
-          rpcRelease: STACK_RPC_RELEASE,
+          resolveOwner: () =>
+            Effect.succeed(
+              Option.some({
+                format: "supabase-stack-owner-v1" as const,
+                stackId,
+                endpoint: { kind: "unix", path: path.join(root, "missing.sock") },
+                ownerSessionId: "session",
+                rpcRelease: STACK_RPC_RELEASE,
+              }),
+            ),
         });
         const result = yield* stack.destroy().pipe(Effect.exit);
         expect(Exit.isFailure(result)).toBe(true);

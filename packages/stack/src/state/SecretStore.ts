@@ -9,6 +9,12 @@ import {
 import type { DesiredStackLifecycle } from "../public/Status.ts";
 import type { PersistedSecretValues } from "./StackState.ts";
 
+export const AUTH_PUBLISHABLE_KEY_SLOT = "secret:auth.settings.publishable_key";
+export const AUTH_SECRET_KEY_SLOT = "secret:auth.settings.secret_key";
+export const AUTH_ANON_KEY_SLOT = "secret:auth.settings.anon_key";
+export const AUTH_SERVICE_ROLE_KEY_SLOT = "secret:auth.settings.service_role_key";
+export const AUTH_JWT_SECRET_SLOT = "secret:auth.settings.jwt_secret";
+
 type SecretPolicy = "managed" | "passthrough";
 
 export type SecretJwtSigning =
@@ -58,7 +64,6 @@ const readSecret = (value: Redacted.Redacted<unknown>): string => {
 };
 const validSlot = (slot: string): boolean => /^[A-Za-z0-9_.:/-]+$/.test(slot);
 
-const AUTH_JWT_SECRET_SLOT = "secret:auth.settings.jwt_secret";
 const JWT_ISSUER = "supabase-demo";
 const JWT_HMAC_EXPIRY = 1_983_812_996;
 const JWT_ASYMMETRIC_EXPIRY_SECONDS = 60 * 60 * 24 * 365 * 10;

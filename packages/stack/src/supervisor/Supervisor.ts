@@ -14,17 +14,15 @@ import {
   Semaphore,
   Scope,
 } from "effect";
-import type { StackIdentity } from "../identity/Identity.ts";
 import { rebuildExecutionPlan } from "../model/Compiler.ts";
 import {
   activeExecutionPlan,
+  dependencyClosure,
   eagerCapabilities,
   type ExecutionPlan,
-  type PlannedWorkload,
 } from "../model/ExecutionPlan.ts";
 import type { CapabilityName } from "../public/Capability.ts";
 import type { StackConfig } from "../public/Config.ts";
-import type { StackRuntime } from "../public/Runtime.ts";
 import {
   GatewayActivationError,
   StackLifecycleConflictError,
@@ -47,17 +45,19 @@ import {
   type LifecycleBackend,
   type LifecycleInput,
 } from "./Lifecycle.ts";
-import type { LogStore } from "./LogStore.ts";
+import { EMPTY_LOG_CURSOR, selectLogBatch, type LogStore } from "./LogStore.ts";
 import type { SupervisorIngress } from "./Ingress.ts";
 import { StackRpcGroup, type StackRpcError, type StackRpcHandlers } from "../control/StackRpc.ts";
 import type { MaintenanceResponse } from "../control/MaintenanceProtocol.ts";
-import type { PreparedWorkloadArtifact } from "../preparation/RuntimeArtifacts.ts";
 import { statusFor, type ActualPhase } from "./StatusProjection.ts";
+import {
+  AUTH_ANON_KEY_SLOT,
+  AUTH_PUBLISHABLE_KEY_SLOT,
+  AUTH_SECRET_KEY_SLOT,
+  AUTH_SERVICE_ROLE_KEY_SLOT,
+} from "../state/SecretStore.ts";
 
-interface ActivationResult {
-  readonly capability: CapabilityName;
-  readonly endpoint: { readonly host: string; readonly port: number };
-}
+import type { ActivationResult } from "../gateway/Gateway.ts";
 
 interface SupervisorLaunchAttempt {
   /** Rolls back only workloads and ingress acquired by this launch. */
@@ -67,11 +67,6 @@ interface SupervisorLaunchAttempt {
 /** Runtime construction is injected so catalog/artifact resolution can evolve independently. */
 export interface SupervisorRuntime {
   readonly driver: RuntimeDriver;
-  /** Verifies and prepares immutable workload artifacts without changing lifecycle state. */
-  readonly prepare: (
-    runtime: StackRuntime,
-    workloads: ReadonlyArray<PlannedWorkload>,
-  ) => Effect.Effect<ReadonlyArray<PreparedWorkloadArtifact>, StackError>;
   readonly preflight: (input: LifecycleInput) => Effect.Effect<void, StackError>;
   readonly activate: (
     capability: CapabilityName,
@@ -82,14 +77,7 @@ export interface SupervisorRuntime {
   readonly logStore: LogStore;
 }
 
-export interface SupervisorRuntimeFactory {
-  readonly make: (state: PersistedStackState) => Effect.Effect<SupervisorRuntime, StackError>;
-}
-
 export interface Supervisor {
-  readonly identity: StackIdentity;
-  readonly stackId: StackId;
-  readonly ownerSessionId: string;
   readonly status: Effect.Effect<StackStatus, StackError>;
   readonly start: (options?: {
     readonly config?: StackConfig;
@@ -110,24 +98,14 @@ export interface Supervisor {
   readonly rpcHandlers: StackRpcHandlers;
 }
 
-type SupervisorRuntimeInput =
-  | {
-      readonly runtime: SupervisorRuntime;
-      readonly runtimeFactory?: never;
-    }
-  | {
-      readonly runtimeFactory: SupervisorRuntimeFactory;
-      readonly runtime?: never;
-    };
-
 export type SupervisorOptions = {
-  readonly identity: StackIdentity;
   readonly stackId: StackId;
   readonly ownerSessionId: string;
   readonly rpcRelease: string;
   readonly stateStore: StackStateStore;
   readonly context: Context.Context<FileSystem.FileSystem | Path.Path | Crypto.Crypto>;
-} & SupervisorRuntimeInput;
+  readonly runtime: SupervisorRuntime;
+};
 
 const rpcError = (tag: StackRpcError["tag"], message: string): StackRpcError => ({ tag, message });
 const stateErrorMessage = (error: StackError | { readonly message?: string }): string =>
@@ -164,10 +142,7 @@ export const makeSupervisor = (
     const initial = yield* read();
     if (initial === undefined)
       return yield* new StackStateInvalidError({ message: "Stack state is missing" });
-    const runtime =
-      options.runtimeFactory !== undefined
-        ? yield* options.runtimeFactory.make(initial)
-        : options.runtime;
+    const runtime = options.runtime;
     const launcher: SessionLauncher = yield* makeSessionLauncher({
       stackId: options.stackId,
       driver: runtime.driver,
@@ -451,13 +426,7 @@ export const makeSupervisor = (
           ),
         );
         const previousActive = yield* Ref.get(active);
-        const next = new Set(previousActive);
-        const visit = (name: CapabilityName): void => {
-          if (next.has(name)) return;
-          next.add(name);
-          for (const dependency of plan.dependencies[name]) visit(dependency);
-        };
-        visit(capability);
+        const next = new Set([...previousActive, ...dependencyClosure(plan, [capability])]);
         const input: LifecycleInput = {
           stackId: options.stackId,
           state,
@@ -692,25 +661,10 @@ export const makeSupervisor = (
               (error) => new StackStateInvalidError({ message: error.message, cause: error }),
             ),
           );
-        const capabilities =
-          query?.capabilities === undefined ? undefined : new Set(query.capabilities);
-        const filtered = scanned.filter((entry) =>
-          capabilities === undefined
-            ? true
-            : entry.source !== "gateway" &&
-              entry.source !== "supervisor" &&
-              capabilities.has(entry.source),
-        );
-        const entries =
-          query?.tail === undefined
-            ? filtered
-            : query.tail <= 0
-              ? []
-              : filtered.slice(-Math.floor(query.tail));
+        const selected = selectLogBatch(scanned, query, query?.cursor ?? EMPTY_LOG_CURSOR);
         const running = phaseAtRead !== "stopped";
         return {
-          entries,
-          cursor: scanned.at(-1)?.cursor ?? query?.cursor ?? { opaque: "v1_0" },
+          ...selected,
           running,
         } satisfies StackLogBatch;
       });
@@ -782,10 +736,10 @@ export const makeSupervisor = (
           databasePassword,
         )}@${databaseHost}:${databaseAssignment.port}/postgres`;
 
-        const publishableKey = yield* requiredSecret("secret:auth.settings.publishable_key");
-        const secretKey = yield* requiredSecret("secret:auth.settings.secret_key");
-        const anonJwt = yield* requiredSecret("secret:auth.settings.anon_key");
-        const serviceRoleJwt = yield* requiredSecret("secret:auth.settings.service_role_key");
+        const publishableKey = yield* requiredSecret(AUTH_PUBLISHABLE_KEY_SLOT);
+        const secretKey = yield* requiredSecret(AUTH_SECRET_KEY_SLOT);
+        const anonJwt = yield* requiredSecret(AUTH_ANON_KEY_SLOT);
+        const serviceRoleJwt = yield* requiredSecret(AUTH_SERVICE_ROLE_KEY_SLOT);
 
         const base: EffectStackCredentials = {
           database: {
@@ -844,9 +798,6 @@ export const makeSupervisor = (
       logs: (query: LogQuery) => operation(logs(query)),
     });
     return {
-      identity: options.identity,
-      stackId: options.stackId,
-      ownerSessionId: options.ownerSessionId,
       status,
       start,
       destroy,

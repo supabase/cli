@@ -26,6 +26,12 @@ import type { StackStateStore } from "../state/StackStateStore.ts";
 import { privateBindingIntentsFor } from "../runtime/WorkloadRuntimeSpec.ts";
 import type { PortField } from "../public/Status.ts";
 import { bindHostListener, isHttpPortField } from "./HostListener.ts";
+import {
+  AUTH_ANON_KEY_SLOT,
+  AUTH_PUBLISHABLE_KEY_SLOT,
+  AUTH_SECRET_KEY_SLOT,
+  AUTH_SERVICE_ROLE_KEY_SLOT,
+} from "../state/SecretStore.ts";
 
 interface SupervisorIngressReservation extends PortReservation {
   /** False when this accepted definition already owns the exact listeners and gateway. */
@@ -92,10 +98,10 @@ const defaultApiMaterial = (
   state: LifecycleInput["state"],
 ): Effect.Effect<GatewayApiMaterial, StackPreparationError> => {
   const get = (slot: string): string | undefined => state.secrets[slot]?.value;
-  const publishableKey = get("secret:auth.settings.publishable_key");
-  const secretKey = get("secret:auth.settings.secret_key");
-  const anonJwt = get("secret:auth.settings.anon_key");
-  const serviceRoleJwt = get("secret:auth.settings.service_role_key");
+  const publishableKey = get(AUTH_PUBLISHABLE_KEY_SLOT);
+  const secretKey = get(AUTH_SECRET_KEY_SLOT);
+  const anonJwt = get(AUTH_ANON_KEY_SLOT);
+  const serviceRoleJwt = get(AUTH_SERVICE_ROLE_KEY_SLOT);
   if (
     publishableKey === undefined ||
     secretKey === undefined ||

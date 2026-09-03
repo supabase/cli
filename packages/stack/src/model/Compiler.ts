@@ -39,6 +39,7 @@ import type {
   MaterializedSettings,
 } from "./CapabilityModule.ts";
 import type { SecretGenerator, SecretJwtSigning } from "../state/SecretStore.ts";
+import { AUTH_JWT_SECRET_SLOT } from "../state/SecretStore.ts";
 
 interface SecretSlot {
   readonly slot: string;
@@ -91,8 +92,6 @@ export interface SecretSlotInput {
   /** Private lifecycle-only generator metadata; never materialized into StackDefinition. */
   readonly generator?: SecretGenerator;
 }
-
-const AUTH_JWT_SECRET_SLOT = "secret:auth.settings.jwt_secret";
 
 /** Internal credentials are not user settings but still need durable managed slots. */
 const INTERNAL_MANAGED_SECRET_SLOTS = ["secret:database.internal.password"] as const;

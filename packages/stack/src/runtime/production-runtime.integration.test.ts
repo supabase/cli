@@ -42,7 +42,6 @@ import {
 } from "../public/Errors.ts";
 import { DatabaseBootstrapError } from "../model/DatabaseBootstrap.ts";
 import type { RuntimeArtifactPreparer } from "../preparation/RuntimeArtifacts.ts";
-import type { PlannedWorkload } from "../model/ExecutionPlan.ts";
 import { compileStack } from "../model/Compiler.ts";
 import type {
   ContainerContainerSpec,
@@ -80,25 +79,6 @@ const stateFor = (
   ports: [],
   privatePorts: [],
   secrets,
-});
-
-const workloadFor = (
-  id: string,
-  capability: PlannedWorkload["capability"],
-  selected: PlannedWorkload["selected"],
-): PlannedWorkload => ({
-  id,
-  capability,
-  dependencies: [],
-  readiness: { mode: "tcp" },
-  artifacts: {
-    native: { kind: "native", release: "17.6.1.167" },
-    container: {
-      kind: "container",
-      image: "ghcr.io/supabase/cli/postgres:17.6.1.167",
-    },
-  },
-  selected,
 });
 
 const stateStoreFor = (
@@ -1003,65 +983,6 @@ describe("production runtime composition", () => {
         );
       }
     }).pipe(Effect.provide(NodeServices.layer)),
-  );
-
-  it.live("exposes artifact-only preparation without starting workloads or mutating state", () =>
-    Effect.scoped(
-      Effect.gen(function* () {
-        const fs = yield* FileSystem.FileSystem;
-        const root = yield* fs.makeTempDirectoryScoped({ prefix: "supabase-production-prepare-" });
-        const current = { value: stateFor({}) };
-        const preparedCalls: string[] = [];
-        const preparer: RuntimeArtifactPreparer = {
-          prepare: (_runtime, workload) =>
-            Effect.sync(() => {
-              preparedCalls.push(workload.id);
-              return {
-                workloadId: workload.id,
-                capability: workload.capability,
-                version: "17.6.1.167",
-                outcome: workload.id.endsWith("download")
-                  ? ("downloaded" as const)
-                  : ("cached" as const),
-                artifactRoot: "/tmp/prepared",
-              };
-            }),
-        };
-        const context = yield* Effect.context<FileSystem.FileSystem | Path.Path | Crypto.Crypto>();
-        const factory = yield* makeProductionRuntimeFactory({
-          stateRoot: root,
-          stackId,
-          ownerSessionId: "owner",
-          stateStore: stateStoreFor(current),
-          context,
-          ingress,
-          artifactPreparer: preparer,
-          envFileOwner: envFiles,
-          functionsBootstrapOwner: bootstrap,
-          logStore: memoryLogStore([]),
-          bootstrapDatabase: () => Effect.void,
-        });
-        const runtime = yield* factory.make(current.value);
-        if (runtime.prepare === undefined) return yield* Effect.die("prepare seam missing");
-        const before = current.value;
-        const result = yield* runtime.prepare({ kind: "native" }, [
-          workloadFor("database:database", "database", {
-            kind: "native",
-            release: "17.6.1.167",
-          }),
-          workloadFor("rest:download", "rest", {
-            kind: "native",
-            release: "17.6.1.167",
-          }),
-        ]);
-        expect(result.map(({ workloadId, outcome }) => [workloadId, outcome])).toEqual([
-          ["database:database", "cached"],
-          ["rest:download", "downloaded"],
-        ]);
-        expect(preparedCalls).toEqual(["database:database", "rest:download"]);
-        expect(current.value).toEqual(before);
-      }).pipe(Effect.provide(NodeServices.layer)),
-    ),
   );
 
   it.live("does not create the Functions root during preflight", () =>

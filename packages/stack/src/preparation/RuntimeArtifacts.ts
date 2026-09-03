@@ -14,14 +14,11 @@ import {
   type PreparedArtifact,
 } from "./ArtifactStore.ts";
 import { makeSlimServicesSource, slimServicesChecksum } from "./SlimServicesSource.ts";
+import { type ContainerEngine, type ContainerEngineKind } from "../runtime/ContainerEngine.ts";
 import {
-  makeProcessCommandRunner,
-  type ContainerEngine,
-  type ContainerPlatform,
-  type ContainerEngineKind,
-} from "../runtime/ContainerEngine.ts";
-import { makeDockerEngine } from "../runtime/DockerEngine.ts";
-import { makePodmanEngine } from "../runtime/PodmanEngine.ts";
+  resolveContainerEngine,
+  type ContainerEngineResolverShape,
+} from "../runtime/ContainerEngineResolver.ts";
 
 /** Result of preparing one workload's immutable runtime artifact. */
 export interface PreparedWorkloadArtifact {
@@ -40,8 +37,6 @@ export interface RuntimeArtifactPreparer {
     runtime: StackRuntime,
     workload: PlannedWorkload,
   ) => Effect.Effect<PreparedWorkloadArtifact, RuntimeArtifactPreparationError>;
-  /** Selected production container engine, when this preparer was built for containers. */
-  readonly containerEngine?: ContainerEngine;
 }
 
 export type RuntimeArtifactPreparationError =
@@ -186,10 +181,11 @@ export const makeProductionRuntimeArtifactPreparer = (options: {
   readonly stateRoot: string;
   /** Optional cache root shared across disposable stack state roots. */
   readonly artifactCacheRoot?: string;
-  readonly platform?: ContainerPlatform;
   readonly runtime?: StackRuntime;
-  /** Optional already-selected engine for caller-owned preparation. */
+  /** Optional already-selected engine owned by the production runtime. */
   readonly containerEngine?: ContainerEngine;
+  /** Test seam for caller-owned preparation when no engine was supplied. */
+  readonly containerEngineResolver?: ContainerEngineResolverShape;
 }): Effect.Effect<
   RuntimeArtifactPreparer,
   RuntimeArtifactPreparationError,
@@ -221,30 +217,14 @@ export const makeProductionRuntimeArtifactPreparer = (options: {
       artifacts.set(artifactKey(artifact), artifact);
       return slimServicesChecksum(artifact);
     };
-    const platform =
-      options.platform ??
-      ({
-        os:
-          process.platform === "darwin"
-            ? "darwin"
-            : process.platform === "win32"
-              ? "windows"
-              : "linux",
-        desktop: process.platform === "darwin",
-      } satisfies ContainerPlatform);
     const selectedEngine =
       options.runtime?.kind === "container" ? options.runtime.engine : undefined;
     const containerEngine =
       options.containerEngine ??
       (selectedEngine === undefined
         ? undefined
-        : yield* makeProcessCommandRunner({ executable: selectedEngine }).pipe(
+        : yield* resolveContainerEngine(selectedEngine, options.containerEngineResolver).pipe(
             Effect.mapError(() => error(`Unable to configure ${selectedEngine} artifact engine`)),
-            Effect.map((runner) =>
-              selectedEngine === "docker"
-                ? makeDockerEngine({ runner, platform })
-                : makePodmanEngine({ runner, platform }),
-            ),
           ));
     const containers =
       selectedEngine === undefined || containerEngine === undefined
@@ -256,5 +236,5 @@ export const makeProductionRuntimeArtifactPreparer = (options: {
       ...(store === undefined ? {} : { native: { store, checksum } }),
       containers,
     });
-    return containerEngine === undefined ? preparer : { ...preparer, containerEngine };
+    return preparer;
   });

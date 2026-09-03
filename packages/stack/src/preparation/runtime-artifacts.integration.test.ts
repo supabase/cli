@@ -74,17 +74,15 @@ describe("runtime artifact preparation", () => {
         const fs = yield* FileSystem.FileSystem;
         const path = yield* Path.Path;
         const root = yield* fs.makeTempDirectoryScoped({ prefix: "supabase-artifact-runtime-" });
-        const preparer = yield* makeProductionRuntimeArtifactPreparer({
+        yield* makeProductionRuntimeArtifactPreparer({
           stateRoot: root,
           runtime: { kind: "container", engine: "podman" },
         });
-        expect(preparer.containerEngine?.kind).toBe("podman");
         expect(yield* fs.exists(path.join(root, "artifacts"))).toBe(false);
-        const native = yield* makeProductionRuntimeArtifactPreparer({
+        yield* makeProductionRuntimeArtifactPreparer({
           stateRoot: root,
           runtime: { kind: "native" },
         });
-        expect(native.containerEngine).toBeUndefined();
         const sharedRoot = path.join(root, "shared-artifacts");
         const isolatedStateRoot = path.join(root, "isolated-state");
         yield* makeProductionRuntimeArtifactPreparer({

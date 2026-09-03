@@ -42,6 +42,35 @@ interface LogStoreQuery {
   readonly tail?: number;
 }
 
+/** Cursor returned when a retained log file has no entries to advance to. */
+export const EMPTY_LOG_CURSOR: LogCursor = { opaque: "v1_0" };
+
+/** Apply public log filtering and pagination to a retained read. */
+export const selectLogBatch = (
+  scanned: ReadonlyArray<StackLogEntry>,
+  query?: Pick<LogStoreQuery, "capabilities" | "tail">,
+  cursor: LogCursor = EMPTY_LOG_CURSOR,
+): { readonly entries: ReadonlyArray<StackLogEntry>; readonly cursor: LogCursor } => {
+  const capabilities = query?.capabilities === undefined ? undefined : new Set(query.capabilities);
+  const filtered = scanned.filter((entry) =>
+    capabilities === undefined
+      ? true
+      : entry.source !== "gateway" &&
+        entry.source !== "supervisor" &&
+        capabilities.has(entry.source),
+  );
+  const entries =
+    query?.tail === undefined
+      ? filtered
+      : query.tail <= 0
+        ? []
+        : filtered.slice(-Math.floor(query.tail));
+  return {
+    entries,
+    cursor: scanned.at(-1)?.cursor ?? cursor,
+  };
+};
+
 export interface LogStore {
   readonly path: string;
   readonly append: (record: LogRecord) => Effect.Effect<StackLogEntry, LogStoreError>;
