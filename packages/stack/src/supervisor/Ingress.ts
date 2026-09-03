@@ -16,14 +16,11 @@ import { routeCatalogFor, type GatewayApiMaterial } from "../gateway/RouteCatalo
 import { GatewayRouteNotFoundError, makeGateway } from "../gateway/Gateway.ts";
 import {
   makePortCoordinator,
-  type HostListener,
   type ListenerIntents,
-  type PortCoordinator,
   type PortReservation,
 } from "../state/PortCoordinator.ts";
 import type { StackStateStore } from "../state/StackStateStore.ts";
 import { privateBindingIntentsFor } from "../runtime/WorkloadRuntimeSpec.ts";
-import type { PortField } from "../public/Status.ts";
 import { bindHostListener, checkHostPort, isHttpPortField } from "./HostListener.ts";
 import {
   AUTH_ANON_KEY_SLOT,
@@ -60,7 +57,6 @@ export interface SupervisorIngressOptions {
   readonly stackId: string;
   readonly stateRoot: string;
   readonly store: StackStateStore;
-  readonly portCoordinator?: PortCoordinator;
   readonly context: Context.Context<Crypto.Crypto | FileSystem.FileSystem | Path.Path>;
   /** Resolver may be replaced by the production credential owner. */
   readonly apiMaterial?: (
@@ -75,11 +71,6 @@ export interface SupervisorIngressOptions {
     }>,
     StackPreparationError
   >;
-  readonly bindHost?: (
-    address: string,
-    port: number,
-    field: PortField,
-  ) => Effect.Effect<HostListener, import("../public/Errors.ts").PortUnavailableError, Scope.Scope>;
 }
 
 const listenerIntents = (input: LifecycleInput): ListenerIntents => ({
@@ -176,14 +167,12 @@ export const makeSupervisorIngress = (
         }
       | undefined
     >(undefined);
-    const coordinator =
-      options.portCoordinator ??
-      makePortCoordinator({
-        stateRoot: options.stateRoot,
-        store: options.store,
-        checkHostPort,
-        bindHost: options.bindHost ?? bindHostListener,
-      });
+    const coordinator = makePortCoordinator({
+      stateRoot: options.stateRoot,
+      store: options.store,
+      checkHostPort,
+      bindHost: bindHostListener,
+    });
     const acquire = (
       input: LifecycleInput,
     ): Effect.Effect<SupervisorIngressReservation, StackError> =>

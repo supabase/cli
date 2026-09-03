@@ -660,6 +660,36 @@ describe("Effect stack lifecycle handoff", () => {
     ),
   );
 
+  it.live("applies the configured artifact cache root during handle preparation", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const root = yield* fs.makeTempDirectoryScoped({ prefix: "supabase-effect-stack-cache-" });
+        const project = path.join(root, "project");
+        yield* fs.makeDirectory(project);
+        const defaults = defaultRuntimeEnvironment();
+        const stateRoot = path.join(root, "managed", "stacks");
+        const artifactCacheRoot = path.join(root, "shared-artifacts");
+        const configuredEnvironment: StackRuntimeEnvironmentValue = {
+          ...defaults,
+          stateRoot,
+          artifactCacheRoot,
+          tempRoot: "/tmp",
+          platform: "posix",
+        };
+        const stack = yield* createStack({
+          projectRoot: project,
+          runtime: { kind: "native" },
+        }).pipe(Effect.provideService(StackRuntimeEnvironment, configuredEnvironment));
+        const prepared = yield* stack.prepare({ capabilities: [] });
+        expect(prepared.capabilities).toEqual([]);
+        expect(yield* fs.exists(artifactCacheRoot)).toBe(true);
+        expect(yield* fs.exists(path.join(stateRoot, "artifacts"))).toBe(false);
+      }).pipe(Effect.provide(NodeServices.layer)),
+    ),
+  );
+
   it.live("preserves input and version errors from prepare", () =>
     withRuntimeRoot((project) =>
       Effect.gen(function* () {

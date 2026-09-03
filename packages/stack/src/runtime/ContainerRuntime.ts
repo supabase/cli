@@ -690,8 +690,6 @@ export const makeContainerRuntime = (
           });
         yield* guard;
 
-        let created = false;
-        let startedByUs = false;
         const container = yield* withEngine(
           key,
           options.engine.createContainer({
@@ -712,7 +710,6 @@ export const makeContainerRuntime = (
             ...(resolution.command === undefined ? {} : { command: resolution.command }),
           } satisfies ContainerContainerSpec),
         );
-        created = true;
         if (resolution.bootstrap !== undefined) {
           const copied = yield* Effect.exit(
             withEngine(
@@ -738,26 +735,21 @@ export const makeContainerRuntime = (
         }
         yield* guard;
         yield* withEngine(key, options.engine.startContainer(container.id));
-        startedByUs = true;
-        const current = resources.get(resourceKey(key));
-        const resource =
-          current !== undefined && current.container === container.id && current.state === "running"
-            ? current
-            : yield* Effect.gen(function* () {
-                const failure = yield* Deferred.make<never, RuntimeDriverError>();
-                const createdResource: ContainerRuntimeResource = {
-                  key,
-                  workload,
-                  ownerSessionId: options.ownerSessionId,
-                  container: container.id,
-                  state: "starting",
-                  failure,
-                  stopRequested: false,
-                };
-                resources.set(resourceKey(key), createdResource);
-                return createdResource;
-              });
-        if (resource.logFiber === undefined) yield* attachLogs(resource, created ? "all" : 0);
+        const resource = yield* Effect.gen(function* () {
+          const failure = yield* Deferred.make<never, RuntimeDriverError>();
+          const createdResource: ContainerRuntimeResource = {
+            key,
+            workload,
+            ownerSessionId: options.ownerSessionId,
+            container: container.id,
+            state: "starting",
+            failure,
+            stopRequested: false,
+          };
+          resources.set(resourceKey(key), createdResource);
+          return createdResource;
+        });
+        yield* attachLogs(resource, "all");
         yield* attachExitWatcher(resource);
         const readiness =
           resolution.waitForReadiness === undefined
@@ -781,13 +773,12 @@ export const makeContainerRuntime = (
           resource.stopRequested = true;
           yield* stopLogs(resource);
           yield* stopExitWatcher(resource);
-          const stopExit =
-            startedByUs || workload.bootstrap === "database"
-              ? yield* Effect.exit(withEngine(key, options.engine.stopContainer(container.id)))
-              : Exit.succeed(undefined);
-          const removeExit = created
-            ? yield* Effect.exit(withEngine(key, options.engine.removeContainer(container.id)))
-            : Exit.succeed(undefined);
+          const stopExit = yield* Effect.exit(
+            withEngine(key, options.engine.stopContainer(container.id)),
+          );
+          const removeExit = yield* Effect.exit(
+            withEngine(key, options.engine.removeContainer(container.id)),
+          );
           let cleanupCause: Cause.Cause<RuntimeDriverError> = Cause.empty;
           if (Exit.isFailure(stopExit)) cleanupCause = Cause.combine(cleanupCause, stopExit.cause);
           if (Exit.isFailure(removeExit))

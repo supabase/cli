@@ -730,6 +730,9 @@ const handleDependencies = (options: {
         const preparer = yield* makeProductionRuntimeArtifactPreparer({
           stateRoot: options.environment.stateRoot,
           runtime: state.runtime,
+          ...(options.environment.artifactCacheRoot === undefined
+            ? {}
+            : { artifactCacheRoot: options.environment.artifactCacheRoot }),
           ...(options.containerEngineResolver === undefined
             ? {}
             : { containerEngineResolver: options.containerEngineResolver }),
