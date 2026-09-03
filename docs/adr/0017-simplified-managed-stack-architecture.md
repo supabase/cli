@@ -63,11 +63,12 @@ current Supervisor intentionally owns. Cold recovery never adopts those
 resources.
 
 Every managed document records one concrete runtime selection. Native and
-container runtimes never mix. Container callers select Docker or Podman
-explicitly; state records that exact engine and never stores an unresolved or
-mode-less choice. Capability releases and workload artifacts are persisted as
-exact version pins (including their concrete native release and container image)
-rather than ranges or floating tags.
+container runtimes never mix. Omission defaults to Docker; callers may
+explicitly select Docker or Podman. There is no probing or auto-detection, and
+persisted state records the resolved exact engine. Capability releases and
+workload artifacts are persisted as exact version pins (including their
+concrete native release and container image) rather than ranges or floating
+tags.
 
 Read-only discovery never acquires ownership. Owner metadata points to a Unix
 domain socket on POSIX or a named pipe on Windows, and the ownership lock is the
