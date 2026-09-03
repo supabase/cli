@@ -921,7 +921,16 @@ export const makeProductionRuntime = (
                 let route = yield* Ref.get(hostRoute);
                 if (route === undefined) {
                   route = yield* containerEngine.preflight.pipe(
-                    Effect.mapError((error) => mapDriverError(key, error)),
+                    Effect.mapError((error) =>
+                      mapDriverError(
+                        key,
+                        containerEngineError(
+                          containerEngine.kind,
+                          "Container host route preflight failed",
+                          error,
+                        ),
+                      ),
+                    ),
                   );
                   yield* Ref.set(hostRoute, route);
                 }

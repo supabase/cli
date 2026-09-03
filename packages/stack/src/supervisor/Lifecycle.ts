@@ -196,6 +196,32 @@ export const makeLifecycleController = (
               : Effect.succeed(state),
           ),
         );
+    const persistStoppedAfterFailure = (
+      primary: Cause.Cause<StackError>,
+      cleanup: boolean,
+    ): Effect.Effect<never, StackError, LifecycleRequirements> =>
+      Effect.gen(function* () {
+        const current = yield* options.stateStore.read(options.stackId).pipe(Effect.exit);
+        let cause = primary;
+        if (Exit.isFailure(current)) {
+          cause = Cause.combine(cause, current.cause);
+        } else if (current.value === undefined) {
+          cause = Cause.combine(cause, Cause.fail(missingState(options.stackId)));
+        } else {
+          const persisted = yield* options.stateStore
+            .replace(options.stackId, {
+              ...current.value,
+              desiredLifecycle: "stopped" as const,
+            })
+            .pipe(Effect.exit);
+          if (Exit.isFailure(persisted)) cause = Cause.combine(cause, persisted.cause);
+        }
+        if (cleanup) {
+          const cleaned = yield* options.backend.cleanup.pipe(Effect.exit);
+          if (Exit.isFailure(cleaned)) cause = Cause.combine(cause, cleaned.cause);
+        }
+        return yield* Effect.failCause(cause);
+      });
 
     const start = (
       startOptions?: LifecycleStartOptions,
@@ -208,33 +234,6 @@ export const makeLifecycleController = (
 
         const freshSession =
           initial.desiredLifecycle === "running" && startOptions?.freshSession === true;
-        const persistStoppedAfterFailure = (
-          primary: Cause.Cause<StackError>,
-          cleanup: boolean,
-        ): Effect.Effect<never, StackError, LifecycleRequirements> =>
-          Effect.gen(function* () {
-            const current = yield* options.stateStore.read(options.stackId).pipe(Effect.exit);
-            let cause = primary;
-            if (Exit.isFailure(current)) {
-              cause = Cause.combine(cause, current.cause);
-            } else if (current.value === undefined) {
-              cause = Cause.combine(cause, Cause.fail(missingState(options.stackId)));
-            } else {
-              const persisted = yield* options.stateStore
-                .replace(options.stackId, {
-                  ...current.value,
-                  desiredLifecycle: "stopped" as const,
-                })
-                .pipe(Effect.exit);
-              if (Exit.isFailure(persisted)) cause = Cause.combine(cause, persisted.cause);
-            }
-            if (cleanup) {
-              const cleaned = yield* options.backend.cleanup.pipe(Effect.exit);
-              if (Exit.isFailure(cleaned)) cause = Cause.combine(cause, cleaned.cause);
-            }
-            return yield* Effect.failCause(cause);
-          });
-
         const materialized = yield* materializeCandidate(initial, initial.runtime, supplied).pipe(
           Effect.exit,
         );

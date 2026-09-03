@@ -4,6 +4,7 @@ import {
   Effect,
   Exit,
   Fiber,
+  Option,
   Ref,
   Scope,
   Semaphore,
@@ -289,12 +290,15 @@ export const makeContainerRuntime = (
       const current = resources.get(resourceKey(resource.key));
       if (resource.stopRequested || current !== resource || resource.state === "failed")
         return Effect.void;
-      const failure = new RuntimeDriverError({
-        message,
-        stackId: resource.key.stackId,
-        workloadId: resource.key.workloadId,
-        cause: error,
-      });
+      const failure =
+        error instanceof RuntimeDriverError
+          ? error
+          : new RuntimeDriverError({
+              message,
+              stackId: resource.key.stackId,
+              workloadId: resource.key.workloadId,
+              cause: error,
+            });
       resources.set(resourceKey(resource.key), {
         ...resource,
         state: "failed",
@@ -355,7 +359,10 @@ export const makeContainerRuntime = (
             : reportFailure(
                 resource,
                 Exit.isFailure(result)
-                  ? result.cause
+                  ? Option.getOrElse(
+                      Cause.findErrorOption(result.cause),
+                      () => new Error("Container wait failed"),
+                    )
                   : new Error(`Container exited with code ${String(result.value)}`),
               ),
         ),

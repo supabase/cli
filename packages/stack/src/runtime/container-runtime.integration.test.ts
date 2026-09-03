@@ -1,5 +1,16 @@
 import { describe, expect, it } from "@effect/vitest";
-import { Cause, Deferred, Effect, Exit, Fiber, Option, Stream } from "effect";
+import {
+  Cause,
+  Crypto,
+  Deferred,
+  Effect,
+  Exit,
+  Fiber,
+  FileSystem,
+  Option,
+  Path,
+  Stream,
+} from "effect";
 import * as TestClock from "effect/testing/TestClock";
 import { NodeServices } from "@effect/platform-node";
 import type { PlannedWorkload } from "../model/ExecutionPlan.ts";
@@ -26,6 +37,10 @@ import { makeContainerRuntime } from "./ContainerRuntime.ts";
 import { RuntimeDriverError, type RuntimeWorkloadKey } from "./RuntimeDriver.ts";
 import { LogStoreError, type LogRecord, type LogStore } from "../supervisor/LogStore.ts";
 import { ContainerEngineError } from "../public/Errors.ts";
+import { makeStackStateStore } from "../state/StackStateStore.ts";
+import { makeSupervisor, type SupervisorRuntime } from "../supervisor/Supervisor.ts";
+import type { SupervisorIngress } from "../supervisor/Ingress.ts";
+import { deriveStackId } from "../identity/Identity.ts";
 
 const makeControlledCommandRunner = (
   options: Omit<ContainerCommandRunner, "executable"> & { readonly executable?: string },
@@ -1242,7 +1257,8 @@ describe("container runtime", () => {
         expect(Option.isSome(error)).toBe(true);
         if (Option.isSome(error)) {
           expect(error.value).toBeInstanceOf(RuntimeDriverError);
-          expect(error.value.message).toContain("Container log stream failed");
+          expect(error.value.message).toBe("restart-session follower disconnected");
+          expect(error.value.cause).toBeInstanceOf(ContainerEngineError);
         }
       }
       expect(state.resources.some((resource) => resource.kind === "workload")).toBe(false);
@@ -2184,5 +2200,107 @@ describe("container runtime", () => {
       expect(failure?.cause).toBeInstanceOf(ContainerEngineError);
       expect(failure?.cause).toMatchObject({ message: "daemon rejected image inspection" });
     }),
+  );
+
+  it.live("reports container engine identity when a log follower fails before readiness", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const root = yield* fs.makeTempDirectoryScoped({ prefix: "supabase-container-follower-" });
+        const testStackId = yield* deriveStackId({
+          projectRoot: root,
+          checkoutRoot: root,
+          workspaceId: root,
+          checkoutId: root,
+          branchContext: "ordinary-workspace",
+          localProjectKey: ".",
+          stackName: "container-follower",
+        });
+        const store = yield* makeStackStateStore({ stateRoot: root });
+        yield* store.initialize(testStackId, {
+          format: "supabase-stack-state-v1",
+          identity: {
+            stackId: testStackId,
+            projectRoot: root,
+            checkoutRoot: root,
+            workspaceId: root,
+            checkoutId: root,
+            branchContext: "ordinary-workspace",
+            localProjectKey: ".",
+            stackName: "container-follower",
+          },
+          runtime: { kind: "container", engine: "docker" },
+          desiredLifecycle: "unconfigured",
+          ports: [],
+          privatePorts: [],
+          secrets: {},
+        });
+        const state: FakeContainerState = {
+          resources: [],
+          imagePresent: true,
+          calls: [],
+          createdSpecs: [],
+          nextId: 1,
+        };
+        const engine: ContainerEngine = {
+          ...fakeContainerEngine(state),
+          waitContainer: () => Effect.never,
+          streamLogs: () =>
+            Stream.fail(
+              new ContainerEngineProtocolError({
+                operation: "logs",
+                message: "follower disconnected before readiness",
+              }),
+            ),
+        };
+        const logStore = memoryLogStore([]);
+        const driver = yield* makeContainerRuntime({
+          engine,
+          ownerSessionId: "owner-session",
+          logStore,
+          resolveWorkload: () => Effect.succeed({ waitForReadiness: () => Effect.never }),
+        });
+        const ingress: SupervisorIngress = {
+          acquire: () =>
+            Effect.succeed({
+              assignments: {},
+              privateAssignments: [],
+              hostListeners: [],
+              fresh: false,
+              ownershipToken: Symbol(),
+            }),
+          open: () => Effect.void,
+          close: Effect.void,
+        };
+        const runtime: SupervisorRuntime = {
+          driver,
+          preflight: () => Effect.void,
+          activate: () => Effect.succeed({ host: "127.0.0.1", port: 9999 }),
+          ingress,
+          logStore,
+        };
+        const context = yield* Effect.context<FileSystem.FileSystem | Path.Path | Crypto.Crypto>();
+        const supervisor = yield* makeSupervisor({
+          stackId: testStackId,
+          ownerSessionId: "owner-session",
+          rpcRelease: "test-release",
+          stateStore: store,
+          context,
+          runtime,
+        });
+        const result = yield* supervisor.start().pipe(Effect.exit);
+        expect(Exit.isFailure(result)).toBe(true);
+        if (Exit.isFailure(result)) {
+          const failure = Cause.findErrorOption(result.cause);
+          expect(Option.isSome(failure)).toBe(true);
+          if (Option.isSome(failure)) {
+            expect(failure.value).toBeInstanceOf(ContainerEngineError);
+            expect(failure.value.message).toContain("follower disconnected before readiness");
+          }
+        }
+        yield* supervisor.shutdownIfIdle;
+        yield* supervisor.shutdown;
+      }),
+    ).pipe(Effect.provide(NodeServices.layer)),
   );
 });

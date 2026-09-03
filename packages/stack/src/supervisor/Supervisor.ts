@@ -587,7 +587,7 @@ export const makeSupervisor = (
           })
           .pipe(Effect.provideContext(options.context), Effect.exit);
         if (Exit.isFailure(started)) {
-          if (freshSession) {
+          if (freshSession || previous === "stopped") {
             const durable = yield* read().pipe(Effect.exit);
             const canReportStopped =
               (yield* Ref.get(cleanupProven)) &&

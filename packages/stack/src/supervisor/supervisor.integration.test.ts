@@ -120,6 +120,7 @@ const makeFixture = (
     readonly destroyStarted?: Deferred.Deferred<void>;
     readonly destroyPreFenceFail?: Ref.Ref<boolean>;
     readonly stoppedReplaceFail?: Ref.Ref<boolean>;
+    readonly startReadFail?: Ref.Ref<boolean>;
     readonly startQueue?: Queue.Queue<string>;
     readonly shutdownReadArmed?: Ref.Ref<boolean>;
     readonly shutdownReadStarted?: Deferred.Deferred<void>;
@@ -161,7 +162,7 @@ const makeFixture = (
                 return yield* baseStore.replace(stackId, state);
               }),
           };
-    const store =
+    const runtimeStore =
       fixtureOptions.shutdownReadArmed === undefined ||
       fixtureOptions.shutdownReadStarted === undefined ||
       fixtureOptions.shutdownReadGate === undefined
@@ -179,6 +180,23 @@ const makeFixture = (
                   yield* Deferred.await(fixtureOptions.shutdownReadGate!);
                 }
                 return yield* persistedStore.read(stackId);
+              }),
+          };
+    const store =
+      fixtureOptions.startReadFail === undefined
+        ? runtimeStore
+        : {
+            ...runtimeStore,
+            read: (stackId: string) =>
+              Effect.gen(function* () {
+                const fail = yield* Ref.get(fixtureOptions.startReadFail!);
+                if (fail) {
+                  yield* Ref.set(fixtureOptions.startReadFail!, false);
+                  return yield* new StackStateInvalidError({
+                    message: "injected start state reread failure",
+                  });
+                }
+                return yield* runtimeStore.read(stackId);
               }),
           };
     yield* store.initialize(id, {
@@ -231,6 +249,8 @@ const makeFixture = (
             const remaining = yield* Ref.get(fixtureOptions.startFailures);
             if (remaining > 0) {
               yield* Ref.set(fixtureOptions.startFailures, remaining - 1);
+              if (fixtureOptions.startReadFail !== undefined)
+                yield* Ref.set(fixtureOptions.startReadFail, true);
               if (fixtureOptions.stopFailFirst !== undefined)
                 yield* Ref.set(fixtureOptions.stopFailFirst, true);
               const failed = { ...key, state: "failed" as const, error: "injected start failure" };
@@ -724,6 +744,27 @@ describe("Supervisor composition", () => {
         expect((yield* fixture.supervisor.status).lifecycle).toBe("stopped");
         yield* fixture.supervisor.shutdownIfIdle;
         yield* fixture.supervisor.shutdown;
+      }),
+    ),
+  );
+
+  it.live("reports stopping after a cold launch failure loses its state reread", () =>
+    run(
+      Effect.gen(function* () {
+        const startFailures = yield* Ref.make(0);
+        const startReadFail = yield* Ref.make(false);
+        const fixture = yield* makeFixture({ startFailures, startReadFail });
+        const config = { capabilities: { functions: { activation: "eager" as const } } };
+        yield* fixture.supervisor.start({ config });
+        expect((yield* fixture.supervisor.maintenanceHandlers.stop).ok).toBe(true);
+        yield* Ref.set(startFailures, 1);
+
+        const failed = yield* fixture.supervisor.start({ config }).pipe(Effect.exit);
+        expect(Exit.isFailure(failed)).toBe(true);
+        expect(errorOf(failed)).toBeInstanceOf(StackRuntimeError);
+        expect((yield* fixture.supervisor.status).lifecycle).toBe("stopping");
+        expect((yield* fixture.supervisor.maintenanceHandlers.stop).ok).toBe(true);
+        expect((yield* fixture.supervisor.status).lifecycle).toBe("stopped");
       }),
     ),
   );
