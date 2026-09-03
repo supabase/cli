@@ -1,4 +1,4 @@
-import { type ConfigChange, type ConfigChangeSet } from "@supabase/config";
+import type { ConfigChange, ConfigChangeSet } from "@supabase/config";
 import { projectConfigApiBlockKeys } from "@supabase/config/internal";
 
 import { LEGACY_BRANCH_UUID_PATTERN } from "../../../shared/legacy-ref-patterns.ts";

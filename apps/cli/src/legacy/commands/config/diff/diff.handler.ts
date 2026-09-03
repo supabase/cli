@@ -3,7 +3,7 @@ import {
   diffProjectConfig,
   fromApiProjectConfig,
   ProjectConfigParseError,
-} from "@supabase/config";
+} from "@supabase/config/effect";
 import { loadCliConfig } from "@supabase/config/internal";
 import { operationDefinitions } from "@supabase/api/effect";
 import { Effect, Option } from "effect";
