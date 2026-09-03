@@ -27,9 +27,11 @@ interface StdinShape {
    * {@link readPipedText} (a whole-stream collect), this reads line by line, so it
    * works for an interactive terminal as well as a pipe.
    *
-   * stdin is read only as far as the prompts ask, so a producer that outruns them stays in
-   * the pipe. A read error, or more than 64 KiB without a line break (see `stdin.layer.ts`),
-   * ends line reading the way EOF does: that prompt and every later one get `None`.
+   * stdin is pulled a chunk (64 KiB) at a time and only when a prompt needs a line, so a
+   * producer that outruns the prompts stays in the pipe apart from the chunk or two the reader
+   * holds for later prompts. A read error, or a pull that finds more than 64 KiB pending
+   * without a line break (see `stdin.layer.ts`), ends line reading the way EOF does: that
+   * prompt and every later one get `None`.
    */
   readonly readLine: (timeoutMillis: number) => Effect.Effect<Option.Option<string>>;
 }
