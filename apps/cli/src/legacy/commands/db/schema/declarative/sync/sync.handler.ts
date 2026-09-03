@@ -524,14 +524,19 @@ export const legacyDbSchemaDeclarativeSync = Effect.fn("legacy.db.schema.declara
           implementation: engine.implementation,
           manifestPresent: result.manifestPresent,
           removals: result.removals,
+          declaredExtensions: result.declaredExtensions,
         });
         if (compatibility.recommendedAction === "none") break;
+        // `--allow-removals` is the scripted form of "Continue with removals": the
+        // planned removals are reviewed as destructive changes below instead of
+        // being refused as legacy-export evidence.
+        if (flags.allowRemovals) break;
 
         // Both recommended actions mean the same thing to the user — the tree is a
         // legacy export — so they render one shared template and differ only in the
-        // choices offered. Non-interactively there is exactly one recovery: the
-        // staged regenerate, carried on `suggestion` so `Output.fail` prints it
-        // instead of the "rerun with --debug" footer.
+        // choices offered. Non-interactively the recoveries are the staged
+        // regenerate and `--allow-removals`, carried on `suggestion` so `Output.fail`
+        // prints them instead of the "rerun with --debug" footer.
         const gate = legacyFormatDeclarativeUpgradeGate({
           evidence: legacyFormatDeclarativeGapEvidence(compatibility),
           context: {
@@ -539,6 +544,7 @@ export const legacyDbSchemaDeclarativeSync = Effect.fn("legacy.db.schema.declara
             schema: flags.schema,
             platform: legacyCurrentShellPlatform(),
           },
+          offerAllowRemovals: true,
         });
         if (!tty.stdinIsTty || yes) {
           return yield* Effect.fail(
@@ -557,8 +563,10 @@ export const legacyDbSchemaDeclarativeSync = Effect.fn("legacy.db.schema.declara
               label: `Generate next export to ${stagedDirRel}`,
               hint: "recommended",
             },
+            { value: "continue", label: "Continue with removals" },
             { value: "cancel", label: "Cancel" },
           ]);
+          if (choice === "continue") break;
           if (choice === "stage") yield* stageNextExport();
           return;
         }

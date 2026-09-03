@@ -47,6 +47,13 @@ const config = {
     ),
     Flag.optional,
   ),
+  // Deliberately separate from `--yes`: `--yes` already auto-confirms every prompt,
+  // so it must not double as the override for a plan that drops extensions.
+  allowRemovals: Flag.boolean("allow-removals").pipe(
+    Flag.withDescription(
+      "Continue when the planned removals make the declarative tree look like a legacy pg-delta export, reviewing them as destructive changes instead of refusing the sync.",
+    ),
+  ),
 } as const;
 
 // `--no-cache` is a shared flag on the `declarative` group (read from the parent),
@@ -58,7 +65,7 @@ export type LegacyDbSchemaDeclarativeSyncFlags = CliCommand.Command.Config.Infer
 
 export const legacyDbSchemaDeclarativeSyncCommand = Command.make("sync", config).pipe(
   Command.withDescription(
-    "Compares the supabase/migrations baseline with the complete declarative schema tree and writes the difference as migration files. When a legacy export omits known implicit extensions, interactive sync can add declarations and re-plan before writing. Use --no-apply for non-interactive generation without changing the local database; --apply or global --yes applies locally and updates local migration history.",
+    "Compares the supabase/migrations baseline with the complete declarative schema tree and writes the difference as migration files. When a legacy export omits known implicit extensions, interactive sync can add declarations and re-plan before writing; --allow-removals accepts the removals as destructive changes instead. Use --no-apply for non-interactive generation without changing the local database; --apply or global --yes applies locally and updates local migration history.",
   ),
   Command.withShortDescription("Generate a new migration from declarative schema"),
   Command.withHandler((flags) =>
@@ -80,6 +87,7 @@ export const legacyDbSchemaDeclarativeSyncCommand = Command.make("sync", config)
             name: merged.name,
             apply: merged.apply,
             "no-apply": merged.noApply,
+            "allow-removals": merged.allowRemovals,
           },
           // Go registers `--schema`/`-s` (StringSliceVarP) and `--file`/`-f`
           // (StringVarP) (`cmd/db_schema_declarative.go:484-485`); telemetry reports

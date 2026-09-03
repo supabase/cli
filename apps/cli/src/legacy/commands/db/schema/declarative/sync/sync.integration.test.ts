@@ -401,15 +401,31 @@ const flags = (
   name: over.name ?? Option.none(),
   apply: over.apply ?? Option.none(),
   noApply: over.noApply ?? Option.none(),
+  allowRemovals: over.allowRemovals ?? false,
 });
 
 const failError = (exit: Exit.Exit<unknown, unknown>) =>
   Exit.isFailure(exit) ? exit.cause.reasons.find(Cause.isFailReason)?.error : undefined;
 
-const seedDeclarative = (workdir: string) => {
+const seedDeclarative = (workdir: string, sql = "create table a();") => {
   const dir = join(workdir, "supabase", "schemas");
   mkdirSync(dir, { recursive: true });
-  writeFileSync(join(dir, "public.sql"), "create table a();");
+  writeFileSync(join(dir, "public.sql"), sql);
+};
+
+/** A maintained, converged tree that declares the extensions whose objects it manages. */
+const MAINTAINED_TREE_SQL = [
+  "create extension if not exists pg_cron with schema pg_catalog;",
+  "create extension if not exists pgmq;",
+  "create table a();",
+  "",
+].join("\n");
+
+const migrationSql = (workdir: string) => {
+  const dir = join(workdir, "supabase", "migrations");
+  const [file] = readdirSync(dir);
+  expect(file).toBeDefined();
+  return readFileSync(join(dir, file ?? ""), "utf8");
 };
 
 const seedLegacyUuidDeclarative = (workdir: string, directory = "schemas") => {
@@ -1250,8 +1266,110 @@ describe("legacy db schema declarative sync integration", () => {
       });
       expect(failError(exit)).toMatchObject({
         message: expect.stringContaining("  Extension-managed objects: pg_cron job refresh"),
+        // The scripted escape for intentional removals rides on the suggestion too.
+        suggestion: expect.stringContaining(
+          "supabase db schema declarative sync --no-apply --allow-removals --experimental",
+        ),
       });
       expect(existsSync(join(tmp.current, "supabase", "migrations"))).toBe(false);
+    }).pipe(Effect.provide(s.layer));
+  });
+
+  it.effect("honours deleting a pgmq queue from a maintained tree as a destructive change", () => {
+    // Dogfooding scenario (CLI-2282): the tree declares pgmq, one queue declaration
+    // is removed alongside unrelated schema work. Previously the whole sync — the
+    // unrelated work included — was refused as a legacy export.
+    seedDeclarative(tmp.current, MAINTAINED_TREE_SQL);
+    const s = setup(tmp.current, {
+      engineImplementation: "next",
+      yes: true,
+      diffSql: "ALTER TABLE a ADD COLUMN b int;\nselect pgmq.drop_queue('emails');\n",
+      removals: {
+        extensions: [],
+        extensionIntents: [{ extension: "pgmq", intentKind: "queue", key: "emails" }],
+      },
+    });
+    return Effect.gen(function* () {
+      yield* legacyDbSchemaDeclarativeSync(flags({ noApply: Option.some(true) }));
+      expect(migrationSql(tmp.current)).toContain("pgmq.drop_queue('emails')");
+      const stderr = stripAnsi(s.out.stderrText);
+      expect(stderr).not.toContain("looks like a legacy pg-delta export");
+      expect(stderr).toContain(
+        "Found destructive changes in schema diff. Please double check if these are expected:\npgmq queue emails",
+      );
+    }).pipe(Effect.provide(s.layer));
+  });
+
+  it.effect("renames a pg_cron job on a maintained tree without refusing", () => {
+    seedDeclarative(tmp.current, MAINTAINED_TREE_SQL);
+    const s = setup(tmp.current, {
+      engineImplementation: "next",
+      yes: true,
+      diffSql: [
+        "select cron.unschedule('refresh metrics');",
+        "select cron.schedule('refresh download metrics', '0 * * * *', $$select 1$$);",
+        "",
+      ].join("\n"),
+      removals: {
+        extensions: [],
+        extensionIntents: [{ extension: "pg_cron", intentKind: "job", key: "refresh metrics" }],
+      },
+    });
+    return Effect.gen(function* () {
+      yield* legacyDbSchemaDeclarativeSync(flags({ noApply: Option.some(true) }));
+      const sql = migrationSql(tmp.current);
+      expect(sql).toContain("cron.unschedule('refresh metrics')");
+      expect(sql).toContain("cron.schedule('refresh download metrics'");
+      expect(stripAnsi(s.out.stderrText)).toContain("pg_cron job refresh metrics");
+    }).pipe(Effect.provide(s.layer));
+  });
+
+  it.effect(
+    "--allow-removals downgrades the non-interactive gate to the destructive warning",
+    () => {
+      seedDeclarative(tmp.current);
+      const s = setup(tmp.current, {
+        engineImplementation: "next",
+        diffSql: "select cron.unschedule('refresh metrics');\nDROP EXTENSION \"postgis\";\n",
+        removals: {
+          extensions: ["postgis"],
+          extensionIntents: [{ extension: "pg_cron", intentKind: "job", key: "refresh metrics" }],
+        },
+      });
+      return Effect.gen(function* () {
+        yield* legacyDbSchemaDeclarativeSync(
+          flags({ noApply: Option.some(true), allowRemovals: true }),
+        );
+        expect(migrationSql(tmp.current)).toContain('DROP EXTENSION "postgis"');
+        const stderr = stripAnsi(s.out.stderrText);
+        expect(stderr).not.toContain("looks like a legacy pg-delta export");
+        expect(stderr).toContain("Found destructive changes in schema diff");
+        expect(stderr).toContain('DROP EXTENSION "postgis"');
+        expect(stderr).toContain("pg_cron job refresh metrics");
+        expect(s.out.promptSelectCalls).toHaveLength(0);
+      }).pipe(Effect.provide(s.layer));
+    },
+  );
+
+  it.effect("offers to continue with removals from the staged-export prompt", () => {
+    seedDeclarative(tmp.current);
+    const s = setup(tmp.current, {
+      engineImplementation: "next",
+      stdinIsTty: true,
+      diffSql: 'DROP EXTENSION "postgis";\n',
+      removals: { extensions: ["postgis"], extensionIntents: [] },
+      promptSelectResponses: ["continue"],
+    });
+    return Effect.gen(function* () {
+      yield* legacyDbSchemaDeclarativeSync(flags({ noApply: Option.some(true) }));
+      expect((s.out.promptSelectCalls[0]?.options ?? []).map((o) => o.value)).toEqual([
+        "stage",
+        "continue",
+        "cancel",
+      ]);
+      expect(migrationSql(tmp.current)).toContain('DROP EXTENSION "postgis"');
+      expect(existsSync(join(tmp.current, "supabase", "schemas-next"))).toBe(false);
+      expect(stripAnsi(s.out.stderrText)).toContain("Found destructive changes in schema diff");
     }).pipe(Effect.provide(s.layer));
   });
 

@@ -34,7 +34,9 @@ import {
 import {
   legacyClassifyDeclarativeLoadCompatibility,
   legacyCurrentShellPlatform,
+  legacyDeclaredExtensions,
   legacyFormatDeclarativeUpgradeGate,
+  legacyFormatExtensionIntentRemoval,
   type LegacyDeclarativeLoadCompatibilityFinding,
   type LegacyDeclarativeUpgradeGateText,
 } from "./declarative.flow.ts";
@@ -60,9 +62,16 @@ export interface LegacyDeclarativeSyncResult {
   readonly files: ReadonlyArray<LegacyPgDeltaRenderedFile>;
   readonly sourceRef: string;
   readonly targetRef: string;
+  /**
+   * Lines for the destructive-changes warning: the engine's data-loss actions (or,
+   * under the legacy engine, its DROP statements) followed by one line per
+   * extension-managed object removal (`pg_cron job <name>`, `pgmq queue <name>`).
+   */
   readonly dropWarnings: ReadonlyArray<string>;
   readonly manifestPresent: boolean;
   readonly removals: LegacyPgDeltaRemovalSummary;
+  /** Lower-cased extension names the loaded declarative tree declares. */
+  readonly declaredExtensions: ReadonlySet<string>;
 }
 
 const declarativeError = (message: string) => new LegacyDeclarativeDiffError({ message });
@@ -157,17 +166,25 @@ export const legacyDiffDeclarativeToMigrations = Effect.fnUntraced(function* (
         });
       }),
     );
+  const removals = result.removals ?? { extensions: [], extensionIntents: [] };
   return {
     diffSQL: result.sql,
     files: result.files,
     sourceRef: result.sourceRef,
     targetRef: result.targetRef,
-    dropWarnings:
-      engine.implementation === "next" && result.hazards !== undefined
+    // pg-delta's hazard report does not flag `cron.unschedule` as data loss and
+    // cannot name the object a data-loss action removes, so every extension-managed
+    // object removal is appended in words — the same confirmation path a DROP
+    // COLUMN takes, whether or not the tree carries an export manifest (CLI-2282).
+    dropWarnings: [
+      ...(engine.implementation === "next" && result.hazards !== undefined
         ? result.hazards.dataLoss.map((action) => action.sql)
-        : legacyFindDropStatements(result.sql),
+        : legacyFindDropStatements(result.sql)),
+      ...removals.extensionIntents.map(legacyFormatExtensionIntentRemoval),
+    ],
     manifestPresent: manifest !== undefined,
-    removals: result.removals ?? { extensions: [], extensionIntents: [] },
+    removals,
+    declaredExtensions: legacyDeclaredExtensions(files),
   } satisfies LegacyDeclarativeSyncResult;
 });
 
