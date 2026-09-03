@@ -12,6 +12,7 @@ import { Effect, Option, Schedule, Schema } from "effect";
 import * as HttpClient from "effect/unstable/http/HttpClient";
 import * as HttpClientError from "effect/unstable/http/HttpClientError";
 import * as HttpClientRequest from "effect/unstable/http/HttpClientRequest";
+import { CLI_UPGRADE_GUIDE_URL } from "../cli/version.ts";
 import {
   WorkerBuildTimeoutError,
   WorkersApiNetworkError,
@@ -193,7 +194,7 @@ const decodeBody = <A, I>(
         new WorkersApiUnexpectedStatusError({
           status,
           detail: `The Workers API returned a response this CLI could not read while trying to ${operation}: ${error.message}.`,
-          suggestion: "Update the CLI with `supabase update`, then retry.",
+          suggestion: `Update the CLI, then retry: ${CLI_UPGRADE_GUIDE_URL}`,
         }),
     ),
   );
@@ -453,6 +454,13 @@ export const awaitWorkerBuild = Effect.fnUntraced(function* (
     readonly retrySchedule?: Schedule.Schedule<unknown>;
     /** Called with each poll's result, for progress reporting. */
     readonly onPoll?: (worker: WorkerRecord) => Effect.Effect<void>;
+    /**
+     * ` --project-ref <ref>` to append to the suggestion below, when the caller
+     * reached this project through the flag rather than the link. The suggestion
+     * is copy-pasted verbatim, so dropping it re-resolves against whatever this
+     * checkout happens to be linked to.
+     */
+    readonly refSuffix?: string;
   } = {},
 ) {
   const poll = Effect.gen(function* () {
@@ -483,7 +491,7 @@ export const awaitWorkerBuild = Effect.fnUntraced(function* (
     return yield* Effect.fail(
       new WorkerBuildTimeoutError({
         detail: `"${name}" was still building when this command stopped waiting.`,
-        suggestion: `Check on it with \`supabase experimental workers status ${name}\`.`,
+        suggestion: `Check on it with \`supabase experimental workers status ${name}${options.refSuffix ?? ""}\`.`,
       }),
     );
   }

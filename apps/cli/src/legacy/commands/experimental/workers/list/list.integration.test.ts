@@ -70,7 +70,9 @@ describe("legacy workers list", () => {
       expect(rows).toHaveLength(3);
       // Sorted by name, so `api`, `box`, then the scaffolded-but-undeployed `old`.
       expect(rows[0]).toContain("2gb (1 vCPU)");
-      expect(rows[0]).toContain(`https://${WORKERS_PROJECT_REF}.supabase.co/workers/v1/api`);
+      // The URL is deliberately not a column: one derivable field pushed the
+      // table past 130 columns. The machine payload still carries it.
+      expect(stdout).not.toContain("https://");
       expect(rows[1]).toContain("sandbox");
       expect(rows[2]).toContain("not deployed");
     }).pipe(Effect.provide(layer), Effect.ensuring(Effect.sync(repo.cleanup)));
@@ -119,6 +121,63 @@ describe("legacy workers list", () => {
 
       expect(out.stderrText).toContain("stray");
       expect(out.stderrText).toContain("guess the runtime");
+    }).pipe(Effect.provide(layer), Effect.ensuring(Effect.sync(repo.cleanup)));
+  });
+
+  // Two of them, so the advisory has to read as a list rather than as one name
+  // with a stray verb.
+  it.live("calls out every deployed worker config.toml does not know about", () => {
+    const created = makeWorkersProject({
+      "supabase/config.toml": `project_id = "demo"\n`,
+      "supabase/workers/stray/index.js": "export default {};\n",
+      "supabase/workers/spare/index.js": "export default {};\n",
+    });
+    const repo = {
+      dir: created.dir,
+      cleanup: () => rmSync(created.dir, { recursive: true, force: true }),
+    };
+    const { layer, out } = setupLegacyWorkers({
+      workdir: repo.dir,
+      routes: {
+        [listRoute]: {
+          status: 200,
+          body: {
+            data: [
+              workerResource({ name: "stray", runtime: "node" }),
+              workerResource({ name: "spare", runtime: "node" }),
+            ],
+          },
+        },
+      },
+    });
+
+    return Effect.gen(function* () {
+      yield* legacyWorkersList({ projectRef: Option.none() });
+
+      expect(out.stderrText).toContain("spare, stray are deployed but not in");
+      expect(out.stderrText).toContain("guess the runtime");
+    }).pipe(Effect.provide(layer), Effect.ensuring(Effect.sync(repo.cleanup)));
+  });
+
+  // Deletion is asynchronous, so a worker can be listed while it is being torn
+  // down. Reporting its build state would show `active` for something on its
+  // way out.
+  it.live("shows a worker being torn down as deleting", () => {
+    const repo = project(`project_id = "demo"\n\n[workers.api]\nruntime = "node"\n`);
+    const { layer, out } = setupLegacyWorkers({
+      workdir: repo.dir,
+      routes: {
+        [listRoute]: {
+          status: 200,
+          body: { data: [workerResource({ name: "api", runtime: "node", deleting: true })] },
+        },
+      },
+    });
+
+    return Effect.gen(function* () {
+      yield* legacyWorkersList({ projectRef: Option.none() });
+
+      expect(out.stdoutText).toContain("deleting");
     }).pipe(Effect.provide(layer), Effect.ensuring(Effect.sync(repo.cleanup)));
   });
 
@@ -386,10 +445,33 @@ describe("legacy workers list", () => {
     }).pipe(Effect.provide(layer), Effect.ensuring(Effect.sync(repo.cleanup)));
   });
 
+  it.live("encodes YAML when -o yaml asks for it", () => {
+    const repo = project();
+    const { layer, out } = setupLegacyWorkers({
+      workdir: repo.dir,
+      goOutput: "yaml",
+      routes: {
+        [listRoute]: {
+          status: 200,
+          body: { data: [workerResource({ name: "api", runtime: "node" })] },
+        },
+      },
+    });
+
+    return Effect.gen(function* () {
+      yield* legacyWorkersList({ projectRef: Option.none() });
+
+      expect(out.stdoutText).toContain("project_ref:");
+      expect(out.stdoutText).toContain("name: api");
+      // The table would have gone to stdout too, and broken the document.
+      expect(out.stdoutText).not.toContain("NAME");
+    }).pipe(Effect.provide(layer), Effect.ensuring(Effect.sync(repo.cleanup)));
+  });
+
   // `pretty` is the human default; `table` and `csv` are accepted by the global
   // flag for `db query`'s benefit, and every resource command is meant to ignore
-  // them and render text. All three used to fall through to the TOML encoder,
-  // which is the trap the payload allowlist closes.
+  // them and render text. Falling through to the TOML encoder is the trap the
+  // payload allowlist closes.
   it.live.each(["pretty", "table", "csv"] as const)(
     "renders text rather than TOML for -o %s",
     (goOutput) => {

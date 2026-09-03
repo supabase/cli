@@ -72,13 +72,14 @@ describe("legacy workers delete", () => {
       // Nothing local is touched — that is what makes `push` a one-command undo.
       expect(existsSync(join(repo.dir, "supabase", "workers", "api", "index.js"))).toBe(true);
       expect(readFileSync(join(repo.dir, "supabase", "config.toml"), "utf8")).toBe(CONFIG);
-      expect(out.stdoutText).toContain("supabase experimental workers push api");
+      // The redeploy hint is a success trailer, which lands on stderr.
+      expect(out.stderrText).toContain("supabase experimental workers push api");
     }).pipe(Effect.provide(layer), Effect.ensuring(Effect.sync(repo.cleanup)));
   });
 
-  // The refusal used to live at emit time, which on this command is *after* the
-  // DELETE: `--yes -o env` removed the worker and then exited non-zero with no
-  // payload, which a script reads as "the delete failed" and may retry.
+  // The refusal has to precede the DELETE. At emit time `--yes -o env` would
+  // remove the worker and then exit non-zero with no payload, which a script
+  // reads as "the delete failed" and may retry.
   // Deletion never touches local files, so a malformed local config has no
   // business standing between the user and a worker they named explicitly.
   it.live("deletes a remote worker despite an unparseable local config", () => {
@@ -327,8 +328,8 @@ describe("legacy workers delete", () => {
     }).pipe(Effect.provide(layer), Effect.ensuring(Effect.sync(repo.cleanup)));
   });
 
-  // `interactive` follows stdout, so a plain `>` redirect reaches this branch
-  // even from a live terminal — the case that used to delete without asking.
+  // `interactive` follows stdout, so a plain `>` redirect reaches this branch even
+  // from a live terminal — the case where deleting without asking would be worst.
   it.live("refuses when stdout is redirected and no --yes was given", () => {
     const repo = project();
     const { layer, http } = setupLegacyWorkers({
@@ -541,6 +542,63 @@ describe("legacy workers delete", () => {
     }).pipe(Effect.provide(layer), Effect.ensuring(Effect.sync(repo.cleanup)));
   });
 
+  it.live("pluralizes the live instance count in the confirmation", () => {
+    const repo = project();
+    const { layer, out } = setupLegacyWorkers({
+      workdir: repo.dir,
+      promptTextResponses: ["api"],
+      routes: {
+        ...routes,
+        [getRoute]: {
+          status: 200,
+          body: {
+            data: workerResource({
+              name: "api",
+              instances: 3,
+              instanceCounts: { declared: 3, live: 2, ready: 2, stale: 0 },
+            }),
+          },
+        },
+      },
+    });
+
+    return Effect.gen(function* () {
+      yield* legacyWorkersDelete({ name: "api", projectRef: Option.none() });
+
+      expect(out.stdoutText).toContain("2 running instances will be terminated");
+    }).pipe(Effect.provide(layer), Effect.ensuring(Effect.sync(repo.cleanup)));
+  });
+
+  // Scaled to zero: there is a tally, and it says nothing is running. Warning
+  // about terminated instances there would invent a consequence.
+  it.live("promises no terminations when nothing is running", () => {
+    const repo = project();
+    const { layer, out } = setupLegacyWorkers({
+      workdir: repo.dir,
+      promptTextResponses: ["api"],
+      routes: {
+        ...routes,
+        [getRoute]: {
+          status: 200,
+          body: {
+            data: workerResource({
+              name: "api",
+              instances: 2,
+              instanceCounts: { declared: 2, live: 0, ready: 0, stale: 0 },
+            }),
+          },
+        },
+      },
+    });
+
+    return Effect.gen(function* () {
+      yield* legacyWorkersDelete({ name: "api", projectRef: Option.none() });
+
+      expect(out.stdoutText).toContain("permanently deletes");
+      expect(out.stdoutText).not.toContain("will be terminated");
+    }).pipe(Effect.provide(layer), Effect.ensuring(Effect.sync(repo.cleanup)));
+  });
+
   // An orphan — deployed from another checkout — has no local entry and no local
   // directory, so there is nothing that was "kept" and `push` has no source to
   // redeploy from.
@@ -604,7 +662,7 @@ describe("legacy workers delete", () => {
     }).pipe(Effect.provide(layer), Effect.ensuring(Effect.sync(repo.cleanup)));
   });
 
-  // Deletion never reads the local source, so a `source` that no longer resolves
+  // Deletion never reads the local source, so a `source` that does not resolve
   // inside the project must not block removing the remote worker.
   it.live("deletes the remote worker even when the configured source is unusable", () => {
     const repo = project('project_id = "demo"\n\n[workers.api]\nsource = "../../elsewhere"\n');

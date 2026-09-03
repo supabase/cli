@@ -12,8 +12,8 @@ import { LegacyWorkersEnvNotSupportedError } from "./workers.errors.ts";
  * machine-readable.
  *
  * The struct-shaped encoders elsewhere reproduce a payload shape their command
- * already shipped. `workers` has none to match, so it serialises through the
- * generic encoders and shapes its payload as the command reads best.
+ * is required to match. `workers` has none, so it serialises through the generic
+ * encoders and shapes its payload as the command reads best.
  *
  * Returns whether it emitted anything, so the caller can skip its text
  * rendering — `output.success` writes to stdout in text mode and would corrupt
@@ -108,6 +108,13 @@ export const legacyRejectWorkersEnvOutput = Effect.fnUntraced(function* () {
  *
  * Keyed off the flag rather than the resolved ref: when the link supplied it,
  * appending it again is noise on a command that already resolves correctly.
+ *
+ * An empty `--project-ref ""` counts as "not supplied", the same reading
+ * `LegacyProjectRefResolver` gives it before falling back to the environment or
+ * the linked-project file. Carrying it through would suggest a command ending
+ * in a valueless `--project-ref`, which cannot be pasted back.
  */
 export const legacyWorkersProjectRefSuffix = (projectRef: Option.Option<string>): string =>
-  Option.isSome(projectRef) ? ` --project-ref ${projectRef.value}` : "";
+  Option.isSome(projectRef) && projectRef.value.length > 0
+    ? ` --project-ref ${projectRef.value}`
+    : "";

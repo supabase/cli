@@ -5487,6 +5487,7 @@ func (e V1GetJitAccessConfig200JSONResponseBody0State) Valid() bool {
 
 // Defines values for V1GetJitAccessConfig200JSONResponseBody1UnavailableReason.
 const (
+	V1GetJitAccessConfig200JSONResponseBody1UnavailableReasonPlatformUnsupported     V1GetJitAccessConfig200JSONResponseBody1UnavailableReason = "platform_unsupported"
 	V1GetJitAccessConfig200JSONResponseBody1UnavailableReasonPostgresUpgradeRequired V1GetJitAccessConfig200JSONResponseBody1UnavailableReason = "postgres_upgrade_required"
 	V1GetJitAccessConfig200JSONResponseBody1UnavailableReasonSslEnforcementRequired  V1GetJitAccessConfig200JSONResponseBody1UnavailableReason = "ssl_enforcement_required"
 	V1GetJitAccessConfig200JSONResponseBody1UnavailableReasonTemporarilyUnavailable  V1GetJitAccessConfig200JSONResponseBody1UnavailableReason = "temporarily_unavailable"
@@ -5495,6 +5496,8 @@ const (
 // Valid indicates whether the value is a known member of the V1GetJitAccessConfig200JSONResponseBody1UnavailableReason enum.
 func (e V1GetJitAccessConfig200JSONResponseBody1UnavailableReason) Valid() bool {
 	switch e {
+	case V1GetJitAccessConfig200JSONResponseBody1UnavailableReasonPlatformUnsupported:
+		return true
 	case V1GetJitAccessConfig200JSONResponseBody1UnavailableReasonPostgresUpgradeRequired:
 		return true
 	case V1GetJitAccessConfig200JSONResponseBody1UnavailableReasonSslEnforcementRequired:
@@ -5526,6 +5529,7 @@ func (e V1UpdateJitAccessConfig200JSONResponseBody0State) Valid() bool {
 
 // Defines values for V1UpdateJitAccessConfig200JSONResponseBody1UnavailableReason.
 const (
+	V1UpdateJitAccessConfig200JSONResponseBody1UnavailableReasonPlatformUnsupported     V1UpdateJitAccessConfig200JSONResponseBody1UnavailableReason = "platform_unsupported"
 	V1UpdateJitAccessConfig200JSONResponseBody1UnavailableReasonPostgresUpgradeRequired V1UpdateJitAccessConfig200JSONResponseBody1UnavailableReason = "postgres_upgrade_required"
 	V1UpdateJitAccessConfig200JSONResponseBody1UnavailableReasonSslEnforcementRequired  V1UpdateJitAccessConfig200JSONResponseBody1UnavailableReason = "ssl_enforcement_required"
 	V1UpdateJitAccessConfig200JSONResponseBody1UnavailableReasonTemporarilyUnavailable  V1UpdateJitAccessConfig200JSONResponseBody1UnavailableReason = "temporarily_unavailable"
@@ -5534,6 +5538,8 @@ const (
 // Valid indicates whether the value is a known member of the V1UpdateJitAccessConfig200JSONResponseBody1UnavailableReason enum.
 func (e V1UpdateJitAccessConfig200JSONResponseBody1UnavailableReason) Valid() bool {
 	switch e {
+	case V1UpdateJitAccessConfig200JSONResponseBody1UnavailableReasonPlatformUnsupported:
+		return true
 	case V1UpdateJitAccessConfig200JSONResponseBody1UnavailableReasonPostgresUpgradeRequired:
 		return true
 	case V1UpdateJitAccessConfig200JSONResponseBody1UnavailableReasonSslEnforcementRequired:
@@ -8113,20 +8119,20 @@ type UpdateCustomHostnameResponseOutput struct {
 			CustomOriginServer    string `json:"custom_origin_server"`
 			Hostname              string `json:"hostname"`
 			Id                    string `json:"id"`
-			OwnershipVerification struct {
+			OwnershipVerification *struct {
 				Name  string `json:"name"`
 				Type  string `json:"type"`
 				Value string `json:"value"`
-			} `json:"ownership_verification"`
+			} `json:"ownership_verification,omitempty"`
 			Ssl struct {
 				Status           string `json:"status"`
 				ValidationErrors *[]struct {
 					Message string `json:"message"`
 				} `json:"validation_errors,omitempty"`
-				ValidationRecords []struct {
+				ValidationRecords *[]struct {
 					TxtName  string `json:"txt_name"`
 					TxtValue string `json:"txt_value"`
-				} `json:"validation_records"`
+				} `json:"validation_records,omitempty"`
 			} `json:"ssl"`
 			Status             string    `json:"status"`
 			VerificationErrors *[]string `json:"verification_errors,omitempty"`

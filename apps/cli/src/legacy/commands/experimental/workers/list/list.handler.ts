@@ -1,5 +1,7 @@
 import { Effect } from "effect";
 import { Output } from "../../../../../shared/output/output.service.ts";
+import { legacyAqua, legacyYellow } from "../../../../shared/legacy-colors.ts";
+import { displayPath } from "../../../../../shared/workers/worker-paths.ts";
 import { renderGlamourTable } from "../../../../output/legacy-glamour-table.ts";
 import { legacyEmitWorkersMachineOutput, legacyRejectWorkersEnvOutput } from "../workers.output.ts";
 import { LegacyPlatformApi } from "../../../../auth/legacy-platform-api.service.ts";
@@ -28,7 +30,15 @@ import type { LegacyWorkersListFlags } from "./list.command.ts";
  * count from the spec. `status` is where the live tally lives.
  */
 
-const HEADERS = ["NAME", "RUNTIME", "SIZE", "STATE", "INSTANCES", "URL"] as const;
+/**
+ * No URL column. Every worker's URL is the same 40-odd characters of host and
+ * prefix with the name on the end, which pushed the table past 130 columns to
+ * carry one derivable field — `renderGlamourTable` sizes each column to its
+ * widest cell and never wraps. `workers status` renders it, vertically, for the
+ * same reason (see `workers.format.ts`), and every machine format still carries
+ * `url` per worker.
+ */
+const HEADERS = ["NAME", "RUNTIME", "SIZE", "STATE", "INSTANCES"] as const;
 
 interface WorkerRow {
   readonly name: string;
@@ -68,6 +78,14 @@ function runtimeLabel(row: WorkerRow): string {
   return runtimeLabelFor(row) ?? "-";
 }
 
+/**
+ * `api is` / `api, box are` — the subject of both advisories below, which only
+ * ever differ in the verb.
+ */
+function nameList(names: ReadonlyArray<string>): string {
+  return `${names.join(", ")} ${names.length === 1 ? "is" : "are"}`;
+}
+
 function toCells(row: WorkerRow): ReadonlyArray<string> {
   return [
     row.name,
@@ -75,7 +93,6 @@ function toCells(row: WorkerRow): ReadonlyArray<string> {
     row.deployed === undefined ? "-" : formatApiSize(row.deployed.spec.size),
     stateLabel(row),
     row.deployed === undefined ? "-" : String(row.deployed.spec.instances),
-    row.url ?? "-",
   ];
 }
 
@@ -165,7 +182,7 @@ export const legacyWorkersList = Effect.fn("legacy.experimental.workers.list")(f
 
     if (rows.length === 0) {
       yield* output.raw(
-        "No workers found. Scaffold one with supabase experimental workers new <name>.\n",
+        `No workers found. Scaffold one with ${legacyAqua("supabase experimental workers new <name>", process.stdout)}.\n`,
       );
       return;
     }
@@ -178,14 +195,20 @@ export const legacyWorkersList = Effect.fn("legacy.experimental.workers.list")(f
     // the source directory *before* inferring a runtime and fails with
     // `WorkerSourceMissingError`, so telling that user about runtime guessing
     // points them at the wrong prerequisite.
+    //
+    // Both are written the way this shell writes every other heads-up that is
+    // not a failure: a yellow `WARNING:` prefix, then the consequence on its own
+    // line (`start`'s Docker-on-Windows notice is the same two-line shape). A
+    // single long sentence re-flows differently at every terminal width, right
+    // under a table that lines its columns up.
     const unconfigured = rows
       .filter((row) => row.deployed !== undefined && !row.configured && row.local)
       .map((row) => row.name);
     if (unconfigured.length > 0) {
+      const configDisplay = displayPath(project.projectRoot, project.configPath);
       yield* output.raw(
-        `${unconfigured.join(", ")} ${
-          unconfigured.length === 1 ? "is" : "are"
-        } deployed but absent from supabase/config.toml: pushing from here would have to guess the runtime.\n`,
+        `${legacyYellow("WARNING:")} ${nameList(unconfigured)} deployed but not in ${configDisplay}.\n` +
+          `Pushing from here would have to guess the runtime.\n`,
         "stderr",
       );
     }
@@ -195,9 +218,8 @@ export const legacyWorkersList = Effect.fn("legacy.experimental.workers.list")(f
       .map((row) => row.name);
     if (remoteOnly.length > 0) {
       yield* output.raw(
-        `${remoteOnly.join(", ")} ${
-          remoteOnly.length === 1 ? "is" : "are"
-        } deployed but ${remoteOnly.length === 1 ? "has" : "have"} no source in this project: scaffold or restore it before pushing from here.\n`,
+        `${legacyYellow("WARNING:")} ${nameList(remoteOnly)} deployed with no source in this project.\n` +
+          `Scaffold or restore before pushing from here.\n`,
         "stderr",
       );
     }

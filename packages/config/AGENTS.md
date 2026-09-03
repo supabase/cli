@@ -149,7 +149,9 @@ elsewhere in the monorepo never releases `@supabase/config`, and vice versa.
   a human approves the `config-release` GitHub environment (reviewing the plan job's step summary:
   release notes + type-surface diff); then an OIDC/provenance publish job publishes **that exact
   tarball** (`npm publish <tgz> --ignore-scripts` — no rebuild, no repack, no lifecycle scripts:
-  the approved bytes are the published bytes).
+  the approved bytes are the published bytes). After publishing, the job verifies the version is
+  registry-visible with the reviewed tarball's integrity and the expected dist-tag before pushing
+  the `config-v*` tag.
 - **`package.json`'s committed `version` (`0.1.0`) is a placeholder.** The real version is stamped
   into the tarball at pack time (`npm pkg set version` in the plan job) from the computed version —
   never hand-bump the committed field, and never hand-push a `config-v*` tag.
@@ -182,3 +184,7 @@ release fails unexpectedly, and restore them if repo or npm settings are ever re
    tokens from). The last `config-v*` tag is the version oracle: a stray hand-pushed tag
    permanently skews versioning, and a deleted tag wedges the next plan on an already-published
    version.
+5. **The `SLACK_RELEASE_WEBHOOK` repo secret** (shared with the CLI release train — the
+   cli-deployer-notifier Slack app) backs the release notifications: approval-needed ping, success,
+   and failure/declined. If it's missing or rotated, the notify jobs fail and the run shows red, but
+   the release itself still completes since nothing depends on the notify jobs.
