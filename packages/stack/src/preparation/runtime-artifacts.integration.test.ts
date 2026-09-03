@@ -19,7 +19,6 @@ const nativeWorkload = (selected: PlannedWorkload["selected"]): PlannedWorkload 
   capability: "database",
   dependencies: [],
   readiness: { mode: "tcp" },
-  restart: { maxAttempts: 1, backoffMs: 0 },
   artifacts: {
     native: { kind: "native", release: "17.6.1.167" },
     container: {
@@ -28,7 +27,6 @@ const nativeWorkload = (selected: PlannedWorkload["selected"]): PlannedWorkload 
     },
   },
   selected,
-  specHash: "hash",
 });
 
 const prepared = (request: ArtifactRequest): PreparedArtifact => ({

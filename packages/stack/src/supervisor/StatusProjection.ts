@@ -62,9 +62,9 @@ const stackLifecycle = (
   phase: ActualPhase,
   activeStates: ReadonlyArray<CapabilityStatus>,
 ): StackStatus["lifecycle"] => {
+  if (phase === "stopping") return "stopping";
   if (state.desiredLifecycle === "unconfigured") return "unconfigured";
   if (phase === "destroying" || state.desiredLifecycle === "destroying") return "destroying";
-  if (phase === "stopping") return "stopping";
   if (phase === "starting") return "starting";
   if (state.desiredLifecycle === "stopped") return "stopped";
   if (phase === "running") return "running";

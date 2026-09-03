@@ -91,7 +91,6 @@ const workloadFor = (
   capability,
   dependencies: [],
   readiness: { mode: "tcp" },
-  restart: { maxAttempts: 1, backoffMs: 0 },
   artifacts: {
     native: { kind: "native", release: "17.6.1.167" },
     container: {
@@ -100,7 +99,6 @@ const workloadFor = (
     },
   },
   selected,
-  specHash: `hash-${id}`,
 });
 
 const stateStoreFor = (
@@ -403,7 +401,6 @@ describe("production runtime composition", () => {
           {
             stackId,
             workloadId: database.id,
-            specHash: database.specHash,
           },
           database,
         );
@@ -412,7 +409,6 @@ describe("production runtime composition", () => {
         yield* runtime.driver.stop({
           stackId,
           workloadId: database.id,
-          specHash: database.specHash,
         });
       }),
     ).pipe(Effect.provide(NodeServices.layer)),
@@ -493,7 +489,6 @@ describe("production runtime composition", () => {
             {
               stackId,
               workloadId: database.id,
-              specHash: database.specHash,
             },
             database,
           )
@@ -663,7 +658,6 @@ describe("production runtime composition", () => {
         const key = {
           stackId,
           workloadId: realtime.id,
-          specHash: realtime.specHash,
         };
         const ready = yield* runtime.driver.start(key, realtime);
         expect(ready.state).toBe("ready");
@@ -754,7 +748,6 @@ describe("production runtime composition", () => {
           {
             stackId,
             workloadId: database.id,
-            specHash: database.specHash,
           },
           database,
         );
@@ -773,7 +766,6 @@ describe("production runtime composition", () => {
         yield* runtime.driver.stop({
           stackId,
           workloadId: database.id,
-          specHash: database.specHash,
         });
       }),
     ).pipe(Effect.provide(NodeServices.layer)),
@@ -875,7 +867,6 @@ describe("production runtime composition", () => {
               {
                 stackId,
                 workloadId: database.id,
-                specHash: database.specHash,
               },
               database,
             )
@@ -889,7 +880,6 @@ describe("production runtime composition", () => {
             {
               stackId,
               workloadId: database.id,
-              specHash: database.specHash,
             },
             database,
           );
@@ -902,14 +892,12 @@ describe("production runtime composition", () => {
           yield* runtime.driver.stop({
             stackId,
             workloadId: database.id,
-            specHash: database.specHash,
           });
           yield* fs.writeFileString(eventsPath, "");
           yield* runtime.driver.start(
             {
               stackId,
               workloadId: database.id,
-              specHash: database.specHash,
             },
             database,
           );
@@ -917,7 +905,6 @@ describe("production runtime composition", () => {
           yield* runtime.driver.stop({
             stackId,
             workloadId: database.id,
-            specHash: database.specHash,
           });
         }),
       ).pipe(Effect.provide(NodeServices.layer)),
@@ -1587,7 +1574,6 @@ describe("production runtime composition", () => {
           {
             stackId,
             workloadId: auth.id,
-            specHash: auth.specHash,
           },
           auth,
         );
@@ -1611,7 +1597,6 @@ describe("production runtime composition", () => {
           {
             stackId,
             workloadId: functions.id,
-            specHash: functions.specHash,
           },
           functions,
         );
@@ -1630,7 +1615,6 @@ describe("production runtime composition", () => {
           {
             stackId,
             workloadId: analytics.id,
-            specHash: analytics.specHash,
           },
           analytics,
         );
@@ -1644,18 +1628,14 @@ describe("production runtime composition", () => {
           {
             stackId,
             workloadId: pooler.id,
-            specHash: pooler.specHash,
           },
           pooler,
         );
         const poolerSpec = createdSpecs.find(
-          (spec) =>
-            spec.labels.workloadId === pooler.id && spec.labels.specHash === pooler.specHash,
+          (spec) => spec.labels.workloadId === pooler.id && spec.labels.startup !== true,
         );
         const poolerStartupSpecs = createdSpecs.filter(
-          (spec) =>
-            spec.labels.workloadId === pooler.id &&
-            spec.labels.specHash.startsWith(`${pooler.specHash}:startup:`),
+          (spec) => spec.labels.workloadId === pooler.id && spec.labels.startup === true,
         );
         expect(poolerSpec?.mounts).toContainEqual({
           source: expect.stringContaining("pooler_tenant.exs"),
@@ -1676,7 +1656,6 @@ describe("production runtime composition", () => {
         yield* runtime.driver.stop({
           stackId,
           workloadId: pooler.id,
-          specHash: pooler.specHash,
         });
         // Runtime inputs are session-owned and remain available across an individual workload
         // restart; the owner cleanup at session end removes the flat path.
@@ -1685,7 +1664,6 @@ describe("production runtime composition", () => {
           {
             stackId,
             workloadId: pooler.id,
-            specHash: pooler.specHash,
           },
           pooler,
         );
@@ -1703,7 +1681,6 @@ describe("production runtime composition", () => {
           {
             stackId,
             workloadId: functions.id,
-            specHash: functions.specHash,
           },
           functions,
         );
@@ -1822,13 +1799,10 @@ describe("production runtime composition", () => {
         );
         if (rest === undefined || auth === undefined)
           return yield* Effect.die("Expected REST and Auth workloads");
-        yield* runtime.driver.start(
-          { stackId, workloadId: rest.id, specHash: rest.specHash },
-          rest,
-        );
+        yield* runtime.driver.start({ stackId, workloadId: rest.id }, rest);
         expect(createdSpecs.some((spec) => spec.labels.workloadId === rest.id)).toBe(true);
         const authStart = yield* runtime.driver
-          .start({ stackId, workloadId: auth.id, specHash: auth.specHash }, auth)
+          .start({ stackId, workloadId: auth.id }, auth)
           .pipe(Effect.exit);
         expect(Exit.isFailure(authStart)).toBe(true);
         expect(createdSpecs.some((spec) => spec.labels.workloadId === auth.id)).toBe(false);
@@ -1870,7 +1844,6 @@ describe("production runtime composition", () => {
         yield* runtime.driver.stop({
           stackId,
           workloadId: "database:database",
-          specHash: "stale",
         });
         expect(yield* fs.exists(envPath)).toBe(true);
         expect(yield* fs.exists(bootstrapPath)).toBe(true);
@@ -1888,7 +1861,6 @@ describe("production runtime composition", () => {
       stackId,
     });
     const driver: RuntimeDriver = {
-      watchFailures: Stream.empty,
       observe: () => Effect.succeed([]),
       start: () => Effect.die("unused"),
       stop: () => Effect.void,
@@ -1916,7 +1888,6 @@ describe("production runtime composition", () => {
   it("continues owner cleanup when one file owner fails", () => {
     const calls: string[] = [];
     const driver: RuntimeDriver = {
-      watchFailures: Stream.empty,
       observe: () => Effect.succeed([]),
       start: () => Effect.die("unused"),
       stop: () => Effect.void,

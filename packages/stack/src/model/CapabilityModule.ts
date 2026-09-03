@@ -21,7 +21,6 @@ export interface WorkloadSpec {
   readonly bootstrap?: "database";
   readonly dependencies: ReadonlyArray<string>;
   readonly readiness: Readonly<{ readonly mode: "http" | "tcp"; readonly portField?: PortField }>;
-  readonly restart: Readonly<{ readonly maxAttempts: number; readonly backoffMs: number }>;
   /** Exact artifacts selected for this workload release. */
   readonly artifacts: Readonly<{
     readonly native: NativeArtifact;
@@ -87,7 +86,6 @@ export const workload = (
     readonly bootstrap?: WorkloadSpec["bootstrap"];
     readonly dependencies?: ReadonlyArray<string>;
     readonly readiness?: WorkloadSpec["readiness"];
-    readonly restart?: WorkloadSpec["restart"];
   } = {},
 ): WorkloadSpec => {
   const catalog = catalogEntryFor(`${capability}:${name}`);
@@ -103,7 +101,6 @@ export const workload = (
     ...(options.bootstrap === undefined ? {} : { bootstrap: options.bootstrap }),
     dependencies: options.dependencies ?? [],
     readiness: options.readiness ?? { mode: "tcp" },
-    restart: options.restart ?? { maxAttempts: 5, backoffMs: 250 },
     artifacts,
   };
 };

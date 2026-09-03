@@ -35,6 +35,7 @@ interface BackendState {
   readonly calls: Array<string>;
   readonly preflight: Array<LifecycleInput>;
   failPreflight?: boolean;
+  failReconcile?: boolean;
   failDestroyData?: boolean;
   failCleanupOnce?: boolean;
   gate?: Deferred.Deferred<void>;
@@ -69,6 +70,8 @@ const backend = (state: BackendState): LifecycleBackend => ({
         if (state.stopReconcileGate !== undefined) yield* Deferred.await(state.stopReconcileGate);
       }
       if (state.waitBeforeReconcile !== undefined) yield* Deferred.await(state.waitBeforeReconcile);
+      if (state.failReconcile)
+        return yield* new StackReconciliationError({ message: "reconcile failed" });
     }),
   cleanup: Effect.gen(function* () {
     state.calls.push(`cleanup:${state.lastLifecycle ?? "invalid"}`);
@@ -151,6 +154,21 @@ describe("durable lifecycle controller", () => {
         const second = yield* fixture.controller.start({ config: { capabilities: { rest: {} } } });
         expect(second).toEqual(first);
         expect(fixture.state.calls).toEqual(["reconcile:running"]);
+      }),
+    ),
+  );
+
+  it.live("persists stopped when a fresh running session cannot launch", () =>
+    run(
+      Effect.gen(function* () {
+        const fixture = yield* makeFixture();
+        yield* fixture.controller.start();
+        fixture.state.failReconcile = true;
+
+        const failed = yield* fixture.controller.start({ freshSession: true }).pipe(Effect.exit);
+        expect(errorOf(failed)).toBeInstanceOf(StackReconciliationError);
+        expect((yield* fixture.store.read(fixture.id))?.desiredLifecycle).toBe("stopped");
+        expect(fixture.state.calls.at(-1)).toBe("cleanup:running");
       }),
     ),
   );

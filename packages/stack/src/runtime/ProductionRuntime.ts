@@ -134,7 +134,7 @@ const currentStateReader = (options: ProductionRuntimeFactoryOptions) =>
   );
 
 const artifactKey = (runtime: StackRuntime, workload: PlannedWorkload): string =>
-  `${runtime.kind}:${runtime.kind === "container" ? runtime.engine : ""}:${workload.id}:${workload.specHash}:${workload.selected.kind === "native" ? workload.selected.release : workload.selected.image}`;
+  `${runtime.kind}:${runtime.kind === "container" ? runtime.engine : ""}:${workload.id}:${workload.selected.kind === "native" ? workload.selected.release : workload.selected.image}`;
 
 const runtimeMatches = (left: StackRuntime, right: StackRuntime): boolean => {
   if (left.kind !== right.kind) return false;

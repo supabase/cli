@@ -1,4 +1,5 @@
 import {
+  Cause,
   Context,
   Crypto,
   Deferred,
@@ -12,7 +13,6 @@ import {
   Ref,
   Semaphore,
   Scope,
-  Stream,
 } from "effect";
 import type { StackIdentity } from "../identity/Identity.ts";
 import { rebuildExecutionPlan } from "../model/Compiler.ts";
@@ -37,10 +37,10 @@ import type { StackStatus } from "../public/Status.ts";
 import type { StackId } from "../public/StackId.ts";
 import type { LogQuery, StackLogBatch } from "../public/Logs.ts";
 import type { EffectStackCredentials } from "../public/Credentials.ts";
-import type { RuntimeDriver, ObservedWorkload } from "../runtime/RuntimeDriver.ts";
+import type { RuntimeDriver } from "../runtime/RuntimeDriver.ts";
 import type { PersistedStackState } from "../state/StackState.ts";
 import type { StackStateStore } from "../state/StackStateStore.ts";
-import { makeReconciler, type Reconciler } from "./Reconciler.ts";
+import { makeSessionLauncher, type SessionLauncher } from "./SessionLauncher.ts";
 import {
   makeLifecycleController,
   type LifecycleBackend,
@@ -157,11 +157,15 @@ export const makeSupervisor = (
       options.runtimeFactory !== undefined
         ? yield* options.runtimeFactory.make(initial)
         : options.runtime;
-    const reconciler: Reconciler = yield* makeReconciler({
+    const launcher: SessionLauncher = yield* makeSessionLauncher({
+      stackId: options.stackId,
       driver: runtime.driver,
     });
     const active = yield* Ref.make<ReadonlySet<CapabilityName>>(new Set());
     const phase = yield* Ref.make<ActualPhase>("stopped");
+    // A failed cleanup leaves the owner in `stopping` so callers can retry an exact cleanup.
+    // This marker is set by the backend cleanup boundary and read only by start failure handling.
+    const cleanupProven = yield* Ref.make(true);
     // A Supervisor created after a crash must clean exact runtime ephemera once before its first
     // fresh start. The marker is session-local and only advances after cleanup succeeds.
     const sessionInitialized = yield* Ref.make(false);
@@ -179,6 +183,7 @@ export const makeSupervisor = (
     const resetForSession = (input: LifecycleInput) =>
       Effect.gen(function* () {
         activationOwned.clear();
+        yield* launcher.clear;
         yield* initializeActivation(input.plan);
       });
     const observe = () =>
@@ -217,10 +222,9 @@ export const makeSupervisor = (
       });
 
     // Admission rejects every overlapping lifecycle operation while execution serializes
-    // lifecycle and activation work against background failure supervision.
+    // lifecycle and activation work against runtime access.
     const admission = yield* Semaphore.make(1);
-    // Background failure supervision shares the execution gate with explicit lifecycle operations.
-    // This prevents a failure event from reconciling against a concurrently stopping lifecycle.
+    // Activation and lifecycle operations share one execution gate so they cannot race cleanup.
     const execution = yield* Semaphore.make(1);
     const supervisorScope = yield* Effect.scope;
     const ownedFibers = yield* FiberSet.make().pipe(
@@ -281,6 +285,7 @@ export const makeSupervisor = (
                   // cannot make the next lifecycle request look like a conflict.
                   yield* release;
                   yield* Deferred.succeed(deferred, result);
+                  yield* shutdownIfIdle;
                 }).pipe(Effect.ensuring(release));
                 yield* FiberSet.run(ownedFibers, owner, { startImmediately: true });
                 return deferred;
@@ -296,74 +301,63 @@ export const makeSupervisor = (
         return yield* joinExit(result);
       });
 
-    const reconcileBackend = (
+    const launchBackend = (
       input: LifecycleInput,
       session: "fresh" | "current",
       selectedOverride?: ReadonlySet<CapabilityName>,
     ): Effect.Effect<void, StackError> =>
       Effect.gen(function* () {
         if (session === "fresh") yield* resetForSession(input);
-        const reservation =
-          input.desiredLifecycle === "running" ? yield* runtime.ingress.acquire(input) : undefined;
-        if (input.desiredLifecycle !== "running") yield* runtime.ingress.close;
-        if (session === "fresh") yield* Ref.set(sessionInitialized, true);
+        if (input.desiredLifecycle !== "running") return;
         const selected = selectedOverride ?? (yield* Ref.get(active));
-        const plan =
-          input.desiredLifecycle === "running"
-            ? activeExecutionPlan(input.plan, selected)
-            : input.plan;
-        const reconciled = yield* reconciler
-          .reconcile({
-            stackId: options.stackId,
-            desiredLifecycle: input.desiredLifecycle,
-            plan,
-          })
+        const plan = activeExecutionPlan(input.plan, selected);
+        const reservation = yield* runtime.ingress.acquire(input);
+        const launched = yield* launcher
+          .launch(plan)
           .pipe(Effect.mapError(mapReconcileError), Effect.exit);
-        if (Exit.isFailure(reconciled)) {
-          if (reservation?.fresh === true) yield* runtime.ingress.close.pipe(Effect.ignore);
-          return yield* Effect.failCause(reconciled.cause);
+        if (Exit.isFailure(launched)) {
+          if (reservation.fresh) yield* runtime.ingress.close.pipe(Effect.ignore);
+          return yield* Effect.failCause(launched.cause);
         }
-        const result = reconciled.value;
-        if (reservation !== undefined) {
-          const opened = yield* runtime.ingress
-            .open(input, reservation, ingressActivate)
-            .pipe(Effect.exit);
-          if (Exit.isFailure(opened)) {
-            if (reservation.fresh) yield* runtime.ingress.close.pipe(Effect.ignore);
-            return yield* Effect.failCause(opened.cause);
-          }
+        const opened = yield* runtime.ingress
+          .open(input, reservation, ingressActivate)
+          .pipe(Effect.exit);
+        if (Exit.isFailure(opened)) {
+          if (reservation.fresh) yield* runtime.ingress.close.pipe(Effect.ignore);
+          return yield* Effect.failCause(opened.cause);
         }
-        if (result.failed.length > 0) {
-          // Keep independent workloads and the gateway reachable. The failed capability remains
-          // visible through status while start reports a typed reconciliation failure.
-          yield* Ref.set(phase, "running");
-          yield* publish().pipe(Effect.ignore);
-          return yield* new StackReconciliationError({
-            message: result.failed
-              .map(({ workloadId, error }) => `${workloadId}: ${error.message}`)
-              .join("; "),
-          });
-        }
+        if (session === "fresh") yield* Ref.set(sessionInitialized, true);
         yield* publish();
       });
 
+    const cleanupRuntime = (destroy: boolean): Effect.Effect<void, StackError> =>
+      Effect.gen(function* () {
+        yield* Ref.set(cleanupProven, true);
+        const ingress = yield* runtime.ingress.close.pipe(
+          Effect.mapError(mapReconcileError),
+          Effect.exit,
+        );
+        const launched = yield* launcher.stop.pipe(Effect.mapError(mapReconcileError), Effect.exit);
+        const driver = yield* runtime.driver
+          .cleanup({ stackId: options.stackId, destroy })
+          .pipe(Effect.mapError(mapReconcileError), Effect.exit);
+        let cause: Cause.Cause<StackError> = Cause.empty;
+        for (const result of [ingress, launched, driver])
+          if (Exit.isFailure(result)) cause = Cause.combine(cause, result.cause);
+        if (cause.reasons.length > 0) {
+          yield* Ref.set(cleanupProven, false);
+          return yield* Effect.failCause(cause);
+        }
+        if (!destroy) {
+          yield* Ref.set(active, new Set());
+          yield* publish();
+        }
+      });
     const backend: LifecycleBackend = {
       preflight: runtime.preflight,
-      reconcile: reconcileBackend,
-      cleanup: Effect.gen(function* () {
-        yield* runtime.ingress.close;
-        yield* runtime.driver
-          .cleanup({ stackId: options.stackId, destroy: false })
-          .pipe(Effect.mapError(mapReconcileError));
-        yield* Ref.set(active, new Set());
-        yield* publish();
-      }),
-      destroyData: Effect.gen(function* () {
-        yield* runtime.ingress.close;
-        yield* runtime.driver
-          .cleanup({ stackId: options.stackId, destroy: true })
-          .pipe(Effect.mapError(mapReconcileError));
-      }),
+      reconcile: launchBackend,
+      cleanup: cleanupRuntime(false),
+      destroyData: cleanupRuntime(true),
     };
     const controller = yield* makeLifecycleController({
       stackId: options.stackId,
@@ -416,52 +410,15 @@ export const makeSupervisor = (
           secrets: state.secrets,
           plan,
         };
-        // Activation is accepted for this lifecycle session before reconciliation begins. This keeps a
-        // failed lazy start visible as failed rather than leaving the capability dormant.
+        // Activation is accepted for this lifecycle session before launching its dependency closure.
+        // A failed attempt removes only newly-created resources; the capability remains retryable.
         yield* Ref.set(active, next);
-        yield* reconcileBackend(input, "current", next);
+        yield* launchBackend(input, "current", next);
         yield* Ref.set(phase, "running");
         yield* publish().pipe(Effect.ignore);
         const endpoint = yield* runtime.activate(capability, input);
         return { capability, endpoint };
       });
-
-    const superviseFailure = (failure: ObservedWorkload): Effect.Effect<void, never> =>
-      execution
-        .withPermit(
-          Effect.gen(function* () {
-            // Explicit lifecycle transitions own the execution gate. Failure events are consumed
-            // only while the accepted lifecycle is fully running; stopping sessions
-            // are fenced by the durable lifecycle and therefore skipped safely.
-            if ((yield* Ref.get(phase)) !== "running") return;
-            const state = yield* read().pipe(Effect.orElseSucceed(() => undefined));
-            if (
-              state === undefined ||
-              state.desiredLifecycle !== "running" ||
-              failure.state !== "failed" ||
-              state.definition === undefined
-            )
-              return;
-            const plan = yield* rebuildExecutionPlan(state.runtime, state.definition).pipe(
-              Effect.provideContext(options.context),
-              Effect.mapError(
-                (error) => new StackStateInvalidError({ message: error.message, cause: error }),
-              ),
-              Effect.orElseSucceed(() => undefined),
-            );
-            if (plan === undefined) return;
-            const input: LifecycleInput = {
-              stackId: options.stackId,
-              desiredLifecycle: "running",
-              state,
-              definition: state.definition,
-              secrets: state.secrets,
-              plan,
-            };
-            yield* reconcileBackend(input, "current").pipe(Effect.ignore);
-          }),
-        )
-        .pipe(Effect.ignoreCause);
 
     const activationOwned = new Map<
       CapabilityName,
@@ -566,19 +523,28 @@ export const makeSupervisor = (
         const previous = yield* Ref.get(phase);
         const freshSession = !(yield* Ref.get(sessionInitialized));
         if (freshSession || previous === "stopping") {
-          yield* backend.cleanup;
+          const cleaned = yield* backend.cleanup.pipe(Effect.exit);
+          if (Exit.isFailure(cleaned)) {
+            yield* Ref.set(phase, "stopping");
+            yield* publish().pipe(Effect.ignore);
+            return yield* Effect.failCause(cleaned.cause);
+          }
           yield* Ref.set(phase, "starting");
           yield* publish().pipe(Effect.ignore);
         }
-        yield* controller
+        const started = yield* controller
           .start({
             config: startOptions?.config,
             freshSession,
           })
-          .pipe(
-            Effect.provideContext(options.context),
-            Effect.tapError(() => restorePhase(previous)),
-          );
+          .pipe(Effect.provideContext(options.context), Effect.exit);
+        if (Exit.isFailure(started)) {
+          if (freshSession) {
+            yield* Ref.set(phase, (yield* Ref.get(cleanupProven)) ? "stopped" : "stopping");
+            yield* publish().pipe(Effect.ignore);
+          } else yield* restorePhase(previous);
+          return yield* Effect.failCause(started.cause);
+        }
         yield* Ref.set(phase, "running");
         yield* publish();
       });
@@ -817,11 +783,6 @@ export const makeSupervisor = (
       destroy: () => operation(destroy),
       logs: (query: LogQuery) => operation(logs(query)),
     });
-    yield* FiberSet.run(
-      ownedFibers,
-      runtime.driver.watchFailures.pipe(Stream.runForEach(superviseFailure)),
-      { startImmediately: true },
-    );
     return {
       identity: options.identity,
       stackId: options.stackId,

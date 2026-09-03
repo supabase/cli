@@ -51,13 +51,11 @@ export interface PlannedWorkload {
   readonly bootstrap?: WorkloadSpec["bootstrap"];
   readonly dependencies: ReadonlyArray<string>;
   readonly readiness: WorkloadSpec["readiness"];
-  readonly restart: WorkloadSpec["restart"];
   readonly artifacts: Readonly<{
     readonly native: NativeArtifact;
     readonly container: ContainerArtifact;
   }>;
   readonly selected: NativeArtifact | ContainerArtifact;
-  readonly specHash: string;
 }
 
 export interface ExecutionPlan {
@@ -147,7 +145,6 @@ const selectedWorkloads = (
 export const createExecutionPlan = (
   runtime: StackRuntime,
   enabled: Readonly<{ [Name in CapabilityName]: EnabledCapability }>,
-  specHashes: ReadonlyMap<string, string>,
   versions: Readonly<{ [Name in CapabilityName]: string }>,
   settings: PlanSettings,
   modules: typeof CAPABILITY_MODULES = CAPABILITY_MODULES,
@@ -229,25 +226,14 @@ export const createExecutionPlan = (
     const selectedEntries = selectedWorkloads(name, modules, settings, release.workloads);
     for (const entry of selectedEntries) {
       const id = `${name}:${entry.name}`;
-      const specHash = specHashes.get(id);
-      if (specHash === undefined || specHash.length === 0)
-        return Effect.fail(
-          new InvalidStackConfigError({
-            message: `Missing workload spec hash ${id}`,
-            capability: name,
-            workload: id,
-          }),
-        );
       declaredWorkloads.push({
         id,
         capability: name,
         ...(entry.bootstrap === undefined ? {} : { bootstrap: entry.bootstrap }),
         dependencies: entry.dependencies,
         readiness: entry.readiness,
-        restart: entry.restart,
         artifacts: entry.artifacts,
         selected: runtime.kind === "native" ? entry.artifacts.native : entry.artifacts.container,
-        specHash,
       });
     }
   }

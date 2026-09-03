@@ -38,7 +38,6 @@ const stackId = StackIdSchema.make("a".repeat(64));
 const key: RuntimeWorkloadKey = {
   stackId,
   workloadId: "database:database",
-  specHash: "hash-7",
 };
 
 const containerArtifact: ContainerArtifact = {
@@ -51,13 +50,11 @@ const workload = (selected: PlannedWorkload["selected"] = containerArtifact): Pl
   capability: key.workloadId.startsWith("functions:") ? "functions" : "database",
   dependencies: [],
   readiness: { mode: "tcp" },
-  restart: { maxAttempts: 1, backoffMs: 0 },
   artifacts: {
     native: { kind: "native", release: "1" },
     container: containerArtifact,
   },
   selected,
-  specHash: key.specHash,
 });
 
 const commandResult = (value: unknown): ContainerCommandResult => ({
@@ -278,7 +275,6 @@ describe("container runtime", () => {
           stackId,
           ownerSessionId: "owner",
           workloadId: "auth:auth",
-          specHash: key.specHash,
           role: "workload",
         },
         network: "private",
@@ -506,19 +502,12 @@ describe("container runtime", () => {
         },
         ownerSessionId: "owner-session",
       });
-      const failures = runtime.watchFailures;
-      expect(failures).toBeDefined();
-      if (failures === undefined) return;
-      const eventFiber = yield* failures.pipe(
-        Stream.take(1),
-        Stream.runCollect,
-        Effect.forkChild({ startImmediately: true }),
-      );
       const ready = yield* runtime.start(key, workload());
       expect(ready.state).toBe("ready");
       yield* Deferred.succeed(exit, 17);
-      const events = yield* Fiber.join(eventFiber);
-      expect(events).toEqual([
+      yield* Effect.yieldNow;
+      const observed = yield* runtime.observe(stackId);
+      expect(observed).toEqual([
         expect.objectContaining({ workloadId: key.workloadId, state: "failed" }),
       ]);
       yield* runtime.remove(key);
@@ -826,7 +815,7 @@ describe("container runtime", () => {
             streamStates.push(resource?.state);
             return resource?.state === "running" &&
               resource.labels.role === "workload" &&
-              resource.labels.specHash.includes(":startup:")
+              resource.labels.startup === true
               ? Stream.fromIterable([
                   { stream: "stdout", message: "migrated" } satisfies ContainerLogLine,
                   { stream: "stderr", message: "notice" } satisfies ContainerLogLine,
@@ -972,7 +961,6 @@ describe("container runtime", () => {
           stackId,
           ownerSessionId: "owner-session",
           workloadId: key.workloadId,
-          specHash: key.specHash,
           role: "workload",
         },
       };
@@ -1009,7 +997,7 @@ describe("container runtime", () => {
           stackId,
           ownerSessionId: "owner-session",
           workloadId: key.workloadId,
-          specHash: `${key.specHash}:startup:0`,
+          startup: true,
           role: "workload",
         },
       };
@@ -1172,11 +1160,8 @@ describe("container runtime", () => {
       yield* Deferred.await(firstAppended);
       yield* runtime.cleanup({ stackId: key.stackId, destroy: false });
 
-      const restartedKey: RuntimeWorkloadKey = { ...key, specHash: "hash-8" };
-      const restartedWorkload: PlannedWorkload = {
-        ...workload(),
-        specHash: restartedKey.specHash,
-      };
+      const restartedKey: RuntimeWorkloadKey = key;
+      const restartedWorkload: PlannedWorkload = workload();
       yield* runtime.start(restartedKey, restartedWorkload);
       yield* Deferred.await(secondAppended);
 
@@ -1200,14 +1185,13 @@ describe("container runtime", () => {
       const readiness = yield* Deferred.make<void>();
       const followerAttached = yield* Deferred.make<void>();
       const followerFailure = yield* Deferred.make<never, ContainerEngineProtocolError>();
-      const restartedKey: RuntimeWorkloadKey = { ...key, specHash: "hash-9" };
-      const restartedWorkload: PlannedWorkload = {
-        ...workload(),
-        specHash: restartedKey.specHash,
-      };
+      const restartedKey: RuntimeWorkloadKey = key;
+      const restartedWorkload: PlannedWorkload = workload();
+      let starts = 0;
       let followerCalls = 0;
       const engine: ContainerEngine = {
         ...fakeContainerEngine(state),
+        waitContainer: () => Effect.never,
         streamLogs: () => {
           followerCalls += 1;
           return followerCalls === 1
@@ -1227,8 +1211,11 @@ describe("container runtime", () => {
         resolveWorkload: (requestKey) =>
           Effect.succeed({
             waitForReadiness:
-              requestKey.specHash === restartedKey.specHash
-                ? () => Deferred.await(readiness)
+              requestKey.workloadId === restartedKey.workloadId
+                ? () => {
+                    starts += 1;
+                    return starts === 1 ? Effect.void : Deferred.await(readiness);
+                  }
                 : undefined,
           }),
       });
@@ -1378,7 +1365,6 @@ describe("container runtime", () => {
             stackId,
             ownerSessionId: "owner-session",
             workloadId: "database:database",
-            specHash: "hash",
             role: "workload",
           },
           network: "private",
@@ -1408,7 +1394,7 @@ describe("container runtime", () => {
                     ? "not-json\n"
                     : ""
                 : request.args[0] === "ps"
-                  ? `${dockerJsonRow(["container-id", "backend", stackId, "owner", key.workloadId, key.specHash, "workload", "running"])}\n`
+                  ? `${dockerJsonRow(["container-id", "backend", stackId, "owner", key.workloadId, "false", "workload", "running"])}\n`
                   : request.args[0] === "network" && request.args[1] === "create"
                     ? "created-id\nsecond\n"
                     : request.args[0] === "network"
@@ -1455,7 +1441,6 @@ describe("container runtime", () => {
           stackId,
           ownerSessionId: "owner",
           workloadId: "backend",
-          specHash: key.specHash,
           role: "workload" as const,
         },
         network: "private",
@@ -1527,7 +1512,7 @@ describe("container runtime", () => {
                       ? "bad\trow\n"
                       : ""
                   : request.args[0] === "ps"
-                    ? `container-id\tbackend\t${stackId}\towner\t${key.workloadId}\t${key.specHash}\tworkload\trunning\n`
+                    ? `container-id\tbackend\t${stackId}\towner\t${key.workloadId}\tfalse\tworkload\trunning\n`
                     : request.args[0] === "network"
                       ? `network-id\tprivate\t${stackId}\towner\tnetwork\n`
                       : request.args[0] === "volume"
@@ -1704,16 +1689,6 @@ describe("container runtime", () => {
       expect(state.calls).toContain("create-container");
       expect(state.calls.some((call) => call.startsWith("stop:"))).toBe(true);
       expect(state.calls.some((call) => call.startsWith("remove:"))).toBe(true);
-
-      const staleKey = { ...key, specHash: "hash-new" };
-      state.calls.length = 0;
-      yield* runtime.start(staleKey, workload({ ...containerArtifact }));
-      const stopIndex = state.calls.findIndex((call) => call.startsWith("stop:"));
-      const removeIndex = state.calls.findIndex((call) => call.startsWith("remove:"));
-      const createIndex = state.calls.indexOf("create-container");
-      expect(stopIndex).toBeGreaterThanOrEqual(0);
-      expect(removeIndex).toBeGreaterThan(stopIndex);
-      expect(createIndex).toBeGreaterThan(removeIndex);
     }),
   );
 
@@ -1776,7 +1751,6 @@ describe("container runtime", () => {
               stackId: foreignStackId,
               ownerSessionId: "other-session",
               workloadId: foreignKey.workloadId,
-              specHash: foreignKey.specHash,
               role: "workload",
             },
           },
@@ -1798,8 +1772,8 @@ describe("container runtime", () => {
       expect(state.calls).not.toContain("create-container");
       expect(state.resources[0]?.id).toBe("foreign-container");
 
-      const firstKey = { ...key, workloadId: "foo/bar", specHash: "first" };
-      const secondKey = { ...key, workloadId: "foo?bar", specHash: "second" };
+      const firstKey = { ...key, workloadId: "foo/bar" };
+      const secondKey = { ...key, workloadId: "foo?bar" };
       state.resources = [];
       state.calls.length = 0;
       yield* runtime.start(firstKey, workload());
@@ -1887,12 +1861,10 @@ describe("container runtime", () => {
       const ownerKey: RuntimeWorkloadKey = {
         ...key,
         workloadId: "storage:storage",
-        specHash: "storage-hash",
       };
       const secondaryKey: RuntimeWorkloadKey = {
         ...key,
         workloadId: "storage:imgproxy",
-        specHash: "imgproxy-hash",
       };
       const ownerWorkload = {
         ...workload(),
@@ -2000,15 +1972,8 @@ describe("container runtime", () => {
           Effect.succeed({ waitForReadiness: () => Effect.sync(() => order.push("readiness")) }),
         bootstrapDatabase: () => Effect.sync(() => order.push("bootstrap")),
       });
-      const ready = yield* runtime.start(key, workload());
-      expect(ready.state).toBe("ready");
-      order.length = 0;
-
       const databaseWorkload = { ...workload(), bootstrap: "database" as const };
-      const databaseReady = yield* runtime.start(
-        { ...key, specHash: "database-bootstrap" },
-        databaseWorkload,
-      );
+      const databaseReady = yield* runtime.start(key, databaseWorkload);
       expect(databaseReady.state).toBe("ready");
       expect(order).toEqual(["readiness", "bootstrap"]);
     }),

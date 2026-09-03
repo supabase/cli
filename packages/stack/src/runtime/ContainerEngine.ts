@@ -47,7 +47,7 @@ export interface ContainerNetworkLabels extends ContainerIdentityLabels {
 }
 export interface ContainerWorkloadLabels extends ContainerIdentityLabels {
   readonly workloadId: string;
-  readonly specHash: string;
+  readonly startup?: boolean;
   readonly role: "workload";
 }
 export interface ContainerVolumeLabels {
@@ -429,15 +429,15 @@ export const makeContainerEngineCodecs = (options: {
     );
   };
   const workloadLabels = (operation: string, values: ReadonlyArray<string>) => {
-    const [stack, owner, workload, hash, role] = values;
-    if (owner === undefined || workload === undefined || hash === undefined || role !== "workload")
+    const [stack, owner, workload, startup, role] = values;
+    if (owner === undefined || workload === undefined || role !== "workload")
       return Effect.fail(protocol(operation));
     return decodeIdentity(operation, stack).pipe(
       Effect.map((stackId) => ({
         stackId,
         ownerSessionId: owner,
         workloadId: workload,
-        specHash: hash,
+        ...(startup === "true" ? { startup: true } : {}),
         role: "workload" as const,
       })),
     );
@@ -453,19 +453,24 @@ export const makeContainerEngineCodecs = (options: {
     );
   const decodeContainers: ContainerEngineCodecs["decodeContainers"] = (result) =>
     decodeRows("inspect-containers", result.stdout, 8, (values) => {
-      const [id, name, stack, owner, workload, hash, role, state] = values;
+      const [id, name, stack, owner, workload, startup, role, state] = values;
       if (
         id === undefined ||
         name === undefined ||
         stack === undefined ||
         owner === undefined ||
         workload === undefined ||
-        hash === undefined ||
         role !== "workload" ||
         state === undefined
       )
         return Effect.fail(protocol("inspect-containers"));
-      return workloadLabels("inspect-containers", [stack, owner, workload, hash, role]).pipe(
+      return workloadLabels("inspect-containers", [
+        stack,
+        owner,
+        workload,
+        startup ?? "",
+        role,
+      ]).pipe(
         Effect.map((labels): ContainerResource => ({
           id,
           name,

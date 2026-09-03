@@ -1,4 +1,4 @@
-import { Crypto, Effect, Exit, FileSystem, Path, Redacted } from "effect";
+import { Cause, Crypto, Effect, Exit, FileSystem, Path, Redacted } from "effect";
 import type { StackDefinition, CompiledStack, SecretSlotInput } from "../model/Compiler.ts";
 import { compileStack, rebuildExecutionPlan, sameDefinition } from "../model/Compiler.ts";
 import type { ExecutionPlan } from "../model/ExecutionPlan.ts";
@@ -252,15 +252,30 @@ export const makeLifecycleController = (
               message: "Running stack secrets changed; stop the stack before applying them",
               guidance: "Use stop() followed by start() to apply stopped-time changes",
             });
-          if (startOptions?.freshSession === true)
+          const freshSession = startOptions?.freshSession === true;
+          if (freshSession)
             yield* options.backend.preflight(
               lifecycleInput(options.stackId, initial, candidate),
               "cold",
             );
-          yield* options.backend.reconcile(
-            lifecycleInput(options.stackId, initial, candidate),
-            startOptions?.freshSession === true ? "fresh" : "current",
-          );
+          const reconciled = yield* options.backend
+            .reconcile(
+              lifecycleInput(options.stackId, initial, candidate),
+              freshSession ? "fresh" : "current",
+            )
+            .pipe(Effect.exit);
+          if (Exit.isFailure(reconciled) && freshSession) {
+            const stopped = { ...initial, desiredLifecycle: "stopped" as const };
+            const persisted = yield* options.stateStore
+              .replace(options.stackId, stopped)
+              .pipe(Effect.exit);
+            const cleaned = yield* options.backend.cleanup.pipe(Effect.exit);
+            let cause = reconciled.cause;
+            if (Exit.isFailure(persisted)) cause = Cause.combine(cause, persisted.cause);
+            if (Exit.isFailure(cleaned)) cause = Cause.combine(cause, cleaned.cause);
+            return yield* Effect.failCause(cause);
+          }
+          if (Exit.isFailure(reconciled)) return yield* Effect.failCause(reconciled.cause);
           return initial;
         }
 
@@ -270,15 +285,35 @@ export const makeLifecycleController = (
         );
         const next = stateWithCandidate(initial, candidate, "running");
         yield* options.stateStore.replace(options.stackId, next);
-        yield* options.backend.reconcile(lifecycleInput(options.stackId, next, candidate), "fresh");
-        return next;
+        const started = yield* options.backend
+          .reconcile(lifecycleInput(options.stackId, next, candidate), "fresh")
+          .pipe(Effect.exit);
+        if (Exit.isSuccess(started)) return next;
+
+        // A failed cold launch never leaves a durable running intent behind. Cleanup is attempted
+        // before publishing the stopped state; if cleanup is not proven, the stopped fence remains
+        // durable and the Supervisor stays available for an explicit retry.
+        const stopped = { ...next, desiredLifecycle: "stopped" as const };
+        const persisted = yield* options.stateStore
+          .replace(options.stackId, stopped)
+          .pipe(Effect.exit);
+        const cleaned = yield* options.backend.cleanup.pipe(Effect.exit);
+        let cause = started.cause;
+        if (Exit.isFailure(persisted)) cause = Cause.combine(cause, persisted.cause);
+        if (Exit.isFailure(cleaned)) cause = Cause.combine(cause, cleaned.cause);
+        return yield* Effect.failCause(cause);
       });
     };
 
     const stop = (): Effect.Effect<PersistedStackState, StackError, LifecycleRequirements> =>
       Effect.gen(function* () {
         const current = yield* read();
-        if (current.desiredLifecycle === "unconfigured") return current;
+        if (current.desiredLifecycle === "unconfigured") {
+          // Even an unconfigured stack may have exact runtime remnants from an interrupted
+          // first start. Stop is the explicit retry boundary for that cleanup.
+          yield* options.backend.cleanup;
+          return current;
+        }
         if (current.desiredLifecycle === "destroying")
           return yield* lifecycleConflict("Stack is being destroyed");
         const candidate = yield* Effect.exit(

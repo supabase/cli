@@ -33,7 +33,7 @@ interface SupervisorIngressReservation extends PortReservation {
 }
 
 export interface SupervisorIngress {
-  /** Reserve durable ports and bind public listeners before workload reconciliation. */
+  /** Reserve durable ports and bind public listeners before workload launch. */
   readonly acquire: (
     input: LifecycleInput,
   ) => Effect.Effect<SupervisorIngressReservation, StackError>;

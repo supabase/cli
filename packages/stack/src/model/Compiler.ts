@@ -1,4 +1,4 @@
-import { Crypto, Duration, Effect, Path, Redacted, Schema } from "effect";
+import { Duration, Effect, Path, Redacted, Schema } from "effect";
 import { InvalidStackConfigError, StackVersionUnsupportedError } from "../public/Errors.ts";
 import { StackConfigSchema, type StackConfig } from "../public/Config.ts";
 import type {
@@ -14,7 +14,7 @@ import type {
   PoolerSettings,
   JwtSigning,
 } from "../public/Config.ts";
-import { CAPABILITY_NAMES, type CapabilityName } from "../public/Capability.ts";
+import type { CapabilityName } from "../public/Capability.ts";
 import type { PortField } from "../public/Status.ts";
 import type { StackRuntime } from "../public/Runtime.ts";
 import {
@@ -351,9 +351,6 @@ function materializeFunctionsRoot(
   return Effect.succeed({ ...settings, functions_root: resolvedRoot });
 }
 
-const digestHex = (bytes: Uint8Array): string =>
-  [...bytes].map((byte) => byte.toString(16).padStart(2, "0")).join("");
-
 const decodeConfig = (config: unknown): Effect.Effect<StackConfig, InvalidStackConfigError> =>
   Schema.decodeUnknownEffect(StackConfigSchema)(config, { onExcessProperty: "error" }).pipe(
     Effect.mapError(
@@ -529,15 +526,13 @@ const materializeCapability = <T>(
   raw: unknown,
   projectRoot: string,
   path: Path.Path,
-  crypto: Crypto.Crypto,
   slots: SecretSlotInput[],
-  specHashes: Map<string, string>,
   normalizeFunctions: boolean,
   previousVersion?: string,
 ): Effect.Effect<
   MaterializedCapability<T> & { readonly release: CapabilityRelease },
   InvalidStackConfigError | StackVersionUnsupportedError,
-  Path.Path | Crypto.Crypto
+  Path.Path
 > => {
   const selected = enabledSettings(module.name, { [module.name]: raw });
   const mergedInput = merge(module.defaultSettings, selected.settings);
@@ -552,15 +547,6 @@ const materializeCapability = <T>(
     const completeSettings = ensureManagedSlots(slotted, module, selected.enabled, slots);
     const selectedRelease = yield* releaseFor(module, selected.raw, previousVersion);
     const version = selectedRelease.version;
-    for (const entry of selectedRelease.workloads) {
-      const bytes = yield* crypto.digest(
-        "SHA-256",
-        new TextEncoder().encode(
-          canonical({ workload: entry, version, settings: completeSettings }),
-        ),
-      );
-      specHashes.set(`${module.name}:${entry.name}`, digestHex(bytes));
-    }
     return {
       enabled: selected.enabled,
       activation: selected.activation,
@@ -568,11 +554,7 @@ const materializeCapability = <T>(
       settings: completeSettings,
       release: selectedRelease,
     };
-  }).pipe(
-    Effect.catchTag("PlatformError", (error) =>
-      Effect.fail(new InvalidStackConfigError({ message: error.message })),
-    ),
-  );
+  });
 };
 
 const withoutRelease = <T>(
@@ -584,46 +566,9 @@ const withoutRelease = <T>(
   settings: capability.settings,
 });
 
-const hashDefinitionWorkloads = (
-  definition: StackDefinition,
-  crypto: Crypto.Crypto,
-  specHashes: Map<string, string>,
-): Effect.Effect<void, StackVersionUnsupportedError | InvalidStackConfigError> =>
-  Effect.gen(function* () {
-    for (const name of CAPABILITY_NAMES) {
-      const capability = definition.capabilities[name];
-      const module = CAPABILITY_MODULES[name];
-      const selectedRelease = module.releases[capability.version];
-      if (selectedRelease === undefined)
-        return yield* new StackVersionUnsupportedError({
-          capability: name,
-          version: capability.version,
-          message: `Unsupported ${name} version: ${capability.version}`,
-        });
-      for (const entry of selectedRelease.workloads) {
-        const bytes = yield* crypto
-          .digest(
-            "SHA-256",
-            new TextEncoder().encode(
-              canonical({
-                workload: entry,
-                version: capability.version,
-                settings: capability.settings,
-              }),
-            ),
-          )
-          .pipe(
-            Effect.mapError((error) => new InvalidStackConfigError({ message: error.message })),
-          );
-        specHashes.set(`${name}:${entry.name}`, digestHex(bytes));
-      }
-    }
-  });
-
 const planForDefinition = (
   runtime: StackRuntime,
   definition: StackDefinition,
-  crypto: Crypto.Crypto,
 ): Effect.Effect<ExecutionPlan, InvalidStackConfigError | StackVersionUnsupportedError> => {
   const enabled = {
     database: {
@@ -691,27 +636,15 @@ const planForDefinition = (
     analytics: definition.capabilities.analytics.settings,
     pooler: definition.capabilities.pooler.settings,
   };
-  const specHashes = new Map<string, string>();
-  return hashDefinitionWorkloads(definition, crypto, specHashes).pipe(
-    Effect.flatMap(() =>
-      createExecutionPlan(runtime, enabled, specHashes, versions, settings, CAPABILITY_MODULES),
-    ),
-  );
+  return createExecutionPlan(runtime, enabled, versions, settings, CAPABILITY_MODULES);
 };
 
 /** Rebuilds the private execution plan from a persisted, fully materialized definition. */
 export const rebuildExecutionPlan = (
   runtime: StackRuntime,
   definition: StackDefinition,
-): Effect.Effect<
-  ExecutionPlan,
-  InvalidStackConfigError | StackVersionUnsupportedError,
-  Crypto.Crypto
-> =>
-  Effect.gen(function* () {
-    const crypto = yield* Crypto.Crypto;
-    return yield* planForDefinition(runtime, definition, crypto);
-  });
+): Effect.Effect<ExecutionPlan, InvalidStackConfigError | StackVersionUnsupportedError> =>
+  planForDefinition(runtime, definition);
 
 export const compileStack = (
   input: CompileStackInput,
@@ -719,11 +652,10 @@ export const compileStack = (
 ): Effect.Effect<
   CompiledStack,
   InvalidStackConfigError | StackVersionUnsupportedError,
-  Crypto.Crypto | Path.Path
+  Path.Path
 > =>
   Effect.gen(function* () {
     const path = yield* Path.Path;
-    const crypto = yield* Crypto.Crypto;
     yield* validateFunctionKeys(input.config ?? {});
     const config = yield* decodeConfig(input.config ?? {});
     yield* validateDatabaseHealthTimeout(config);
@@ -733,15 +665,12 @@ export const compileStack = (
     const rawCapabilities = isRecord(config.capabilities) ? config.capabilities : {};
     const slots: SecretSlotInput[] = [];
     for (const slot of INTERNAL_MANAGED_SECRET_SLOTS) slots.push({ slot, policy: "managed" });
-    const specHashes = new Map<string, string>();
     const databaseResult = yield* materializeCapability(
       DatabaseModule,
       extract(rawCapabilities, "database"),
       input.projectRoot,
       path,
-      crypto,
       slots,
-      specHashes,
       false,
       previous?.definition.capabilities.database.version,
     );
@@ -750,9 +679,7 @@ export const compileStack = (
       extract(rawCapabilities, "rest"),
       input.projectRoot,
       path,
-      crypto,
       slots,
-      specHashes,
       false,
       previous?.definition.capabilities.rest.version,
     );
@@ -761,9 +688,7 @@ export const compileStack = (
       extract(rawCapabilities, "auth"),
       input.projectRoot,
       path,
-      crypto,
       slots,
-      specHashes,
       false,
       previous?.definition.capabilities.auth.version,
     );
@@ -778,9 +703,7 @@ export const compileStack = (
       extract(rawCapabilities, "realtime"),
       input.projectRoot,
       path,
-      crypto,
       slots,
-      specHashes,
       false,
       previous?.definition.capabilities.realtime.version,
     );
@@ -789,9 +712,7 @@ export const compileStack = (
       extract(rawCapabilities, "storage"),
       input.projectRoot,
       path,
-      crypto,
       slots,
-      specHashes,
       false,
       previous?.definition.capabilities.storage.version,
     );
@@ -800,9 +721,7 @@ export const compileStack = (
       extract(rawCapabilities, "functions"),
       input.projectRoot,
       path,
-      crypto,
       slots,
-      specHashes,
       true,
       previous?.definition.capabilities.functions.version,
     );
@@ -811,9 +730,7 @@ export const compileStack = (
       extract(rawCapabilities, "studio"),
       input.projectRoot,
       path,
-      crypto,
       slots,
-      specHashes,
       false,
       previous?.definition.capabilities.studio.version,
     );
@@ -822,9 +739,7 @@ export const compileStack = (
       extract(rawCapabilities, "mail"),
       input.projectRoot,
       path,
-      crypto,
       slots,
-      specHashes,
       false,
       previous?.definition.capabilities.mail.version,
     );
@@ -833,9 +748,7 @@ export const compileStack = (
       extract(rawCapabilities, "analytics"),
       input.projectRoot,
       path,
-      crypto,
       slots,
-      specHashes,
       false,
       previous?.definition.capabilities.analytics.version,
     );
@@ -844,9 +757,7 @@ export const compileStack = (
       extract(rawCapabilities, "pooler"),
       input.projectRoot,
       path,
-      crypto,
       slots,
-      specHashes,
       false,
       previous?.definition.capabilities.pooler.version,
     );
@@ -928,7 +839,6 @@ export const compileStack = (
     const executionPlan = yield* createExecutionPlan(
       input.runtime,
       enabled,
-      specHashes,
       versions,
       {
         database: database.settings,

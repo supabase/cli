@@ -12,7 +12,7 @@ import {
 const stackLabel = "com.supabase.stack.stackId";
 const ownerLabel = "com.supabase.stack.ownerSessionId";
 const workloadLabel = "com.supabase.stack.workloadId";
-const hashLabel = "com.supabase.stack.specHash";
+const startupLabel = "com.supabase.stack.startup";
 const roleLabel = "com.supabase.stack.role";
 
 const labels = (value: ContainerLabels): ReadonlyArray<string> => {
@@ -33,7 +33,7 @@ const labels = (value: ContainerLabels): ReadonlyArray<string> => {
             ["stackId", value.stackId],
             ["ownerSessionId", value.ownerSessionId],
             ["workloadId", value.workloadId],
-            ["specHash", value.specHash],
+            ["startup", value.startup === true ? "true" : "false"],
             ["role", value.role],
           ];
   return pairs.flatMap(([key, label]) => ["--label", `com.supabase.stack.${key}=${String(label)}`]);
@@ -50,7 +50,7 @@ const containerFormat = [
   templateLabel(stackLabel),
   templateLabel(ownerLabel),
   templateLabel(workloadLabel),
-  templateLabel(hashLabel),
+  templateLabel(startupLabel),
   templateLabel(roleLabel),
   "{{.State}}",
 ].join("\\t");

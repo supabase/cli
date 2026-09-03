@@ -30,19 +30,16 @@ const workload = (id: string, bootstrap?: "database"): PlannedWorkload => ({
   ...(bootstrap === undefined ? {} : { bootstrap }),
   dependencies: [],
   readiness: { mode: "tcp" },
-  restart: { maxAttempts: 1, backoffMs: 0 },
   artifacts: {
     native: { kind: "native", release: "test" },
     container: { kind: "container", image: `test/${id}` },
   },
   selected: { kind: "native", release: "test" },
-  specHash: id,
 });
 
 const keyFor = (id: string): RuntimeWorkloadKey => ({
   stackId,
   workloadId: `database:${id}`,
-  specHash: id,
 });
 
 const fixtureProcess = (message: string) => ({
@@ -147,24 +144,17 @@ describe("native runtime", { timeout: 15_000 }, () => {
               startedProcess = process;
             }),
         });
-        const failures = runtime.watchFailures;
-        expect(failures).toBeDefined();
-        if (failures === undefined) return;
-        const eventFiber = yield* failures.pipe(
-          Stream.take(1),
-          Stream.runCollect,
-          Effect.forkChild({ startImmediately: true }),
-        );
         const ready = yield* runtime.start(keyFor("watch"), workload("watch"));
         expect(ready.state).toBe("ready");
         expect(startedProcess).toBeDefined();
-        if (startedProcess !== undefined) yield* startedProcess.kill;
-        const events = yield* Fiber.join(eventFiber);
-        expect(events).toEqual([
-          expect.objectContaining({
-            workloadId: keyFor("watch").workloadId,
-            state: "failed",
-          }),
+        if (startedProcess !== undefined) {
+          yield* startedProcess.kill;
+          yield* startedProcess.exitCode.pipe(Effect.exit);
+          yield* Effect.yieldNow;
+        }
+        const observed = yield* runtime.observe(stackId);
+        expect(observed).toEqual([
+          expect.objectContaining({ workloadId: keyFor("watch").workloadId, state: "failed" }),
         ]);
         yield* runtime.remove(keyFor("watch"));
       }),

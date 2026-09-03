@@ -90,19 +90,16 @@ const planned = (id: string): PlannedWorkload => {
   const separator = id.indexOf(":");
   const capability = CAPABILITY_NAMES.find((name) => name === id.slice(0, separator));
   if (capability === undefined) throw new Error(`Missing test capability: ${id}`);
-  const name = id.slice(separator + 1);
   return {
     id,
     capability,
     dependencies: [],
     readiness: { mode: "tcp" },
-    restart: { maxAttempts: 1, backoffMs: 0 },
     artifacts: {
       native: { kind: "native", release: entry.nativeVersion },
       container: { kind: "container", image: entry.containerImage },
     },
     selected: { kind: "native", release: entry.nativeVersion },
-    specHash: `${capability}:${name}`,
   };
 };
 

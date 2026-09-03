@@ -4,7 +4,6 @@ import {
   Effect,
   Exit,
   Fiber,
-  PubSub,
   Ref,
   Scope,
   Semaphore,
@@ -118,8 +117,7 @@ interface ContainerRuntimeResource extends ContainerRuntimeResourceIds {
   stopRequested: boolean;
 }
 
-const resourceKey = (key: RuntimeWorkloadKey): string =>
-  `${key.stackId}:${key.workloadId}:${key.specHash}`;
+const resourceKey = (key: RuntimeWorkloadKey): string => `${key.stackId}:${key.workloadId}`;
 
 const nameFor = (key: RuntimeWorkloadKey, role: ContainerResourceRole): string =>
   role === "network"
@@ -141,16 +139,14 @@ const workloadLabelsFor = (
   stackId: key.stackId,
   ownerSessionId,
   workloadId: key.workloadId,
-  specHash: key.specHash,
   role: "workload",
 });
 const startupLabelsFor = (
   key: RuntimeWorkloadKey,
   ownerSessionId: string,
-  index: number,
 ): ContainerWorkloadLabels => ({
   ...workloadLabelsFor(key, ownerSessionId),
-  specHash: `${key.specHash}:startup:${index}`,
+  startup: true,
 });
 const volumeOwnerFor = (key: RuntimeWorkloadKey, request: ContainerVolumeRequest): string =>
   request.ownerWorkloadId ?? key.workloadId;
@@ -189,19 +185,14 @@ const sameLabels = (left: ContainerLabels, right: ContainerLabels): boolean =>
       "ownerSessionId" in right &&
       left.ownerSessionId === right.ownerSessionId &&
       (left.role === "network" ||
-        ("workloadId" in left &&
-          "workloadId" in right &&
-          left.workloadId === right.workloadId &&
-          "specHash" in left &&
-          "specHash" in right &&
-          left.specHash === right.specHash)));
+        ("workloadId" in left && "workloadId" in right && left.workloadId === right.workloadId)));
 
 /** Workload identity deliberately excludes ownerSessionId; stack ownership is fenced externally. */
 const sameWorkloadIdentity = (left: ContainerLabels, right: ContainerWorkloadLabels): boolean =>
   left.role === "workload" &&
   left.stackId === right.stackId &&
   left.workloadId === right.workloadId &&
-  left.specHash === right.specHash;
+  left.startup !== true;
 
 /** Networks are identified by stack identity. */
 const sameNetworkIdentity = (left: ContainerLabels, right: ContainerNetworkLabels): boolean =>
@@ -229,9 +220,9 @@ const isWorkloadResource = (
 ): entry is ContainerResource & { readonly labels: ContainerWorkloadLabels } =>
   entry.kind === "workload" && entry.labels.role === "workload";
 
-/** Startup containers use the deterministic suffix emitted by startupLabelsFor. */
+/** Startup containers are marked by the startup label. */
 const isStartupContainer = (entry: ContainerResource): boolean =>
-  isWorkloadResource(entry) && /^.+:startup:(?:0|[1-9]\d*)$/.test(entry.labels.specHash);
+  isWorkloadResource(entry) && entry.labels.startup === true;
 
 const isNetworkResource = (
   entry: ContainerResource,
@@ -262,7 +253,6 @@ export const makeContainerRuntime = (
     const resources = new Map<string, ContainerRuntimeResource>();
     const startGuards = new Map<string, Ref.Ref<boolean>>();
     const startFibers = new Map<string, Fiber.Fiber<ObservedWorkload, RuntimeDriverError>>();
-    const failures = yield* PubSub.unbounded<ObservedWorkload>();
 
     const withEngine = <A>(
       key: Pick<RuntimeWorkloadKey, "stackId" | "workloadId">,
@@ -295,14 +285,7 @@ export const makeContainerRuntime = (
         state: "failed",
         error: failure.message,
       });
-      return Effect.all([
-        PubSub.publish(failures, {
-          ...resource.key,
-          state: "failed",
-          error: failure.message,
-        }),
-        Deferred.fail(resource.failure, failure),
-      ]).pipe(Effect.asVoid);
+      return Deferred.fail(resource.failure, failure).pipe(Effect.asVoid);
     };
 
     const attachLogs = (
@@ -384,7 +367,6 @@ export const makeContainerRuntime = (
               const key: RuntimeWorkloadKey = {
                 stackId: entry.labels.stackId,
                 workloadId: entry.labels.workloadId,
-                specHash: entry.labels.specHash,
               };
               const local = resources.get(resourceKey(key));
               return {
@@ -407,7 +389,6 @@ export const makeContainerRuntime = (
       key: RuntimeWorkloadKey,
       workload: PlannedWorkload,
       startupProcess: ContainerStartupProcess,
-      index: number,
       context: Readonly<{
         readonly artifact: ContainerArtifact;
         readonly network: ContainerResource;
@@ -415,7 +396,7 @@ export const makeContainerRuntime = (
         readonly volumeRequest?: ContainerVolumeRequest;
       }>,
     ): Effect.Effect<void, RuntimeDriverError> => {
-      const labels = startupLabelsFor(key, options.ownerSessionId, index);
+      const labels = startupLabelsFor(key, options.ownerSessionId);
       const specification: ContainerContainerSpec = {
         // Reuse the main name so crash-orphaned init containers are exact collisions to clean up.
         name: nameFor(key, "workload"),
@@ -678,8 +659,8 @@ export const makeContainerRuntime = (
           yield* withEngine(key, options.engine.removeContainer(collision.id));
         }
 
-        for (const [index, startup] of (resolution.startup ?? []).entries())
-          yield* runStartupProcess(key, workload, startup, index, {
+        for (const startup of resolution.startup ?? [])
+          yield* runStartupProcess(key, workload, startup, {
             artifact,
             network: networkResource,
             resolution,
@@ -988,14 +969,7 @@ export const makeContainerRuntime = (
         }),
       );
 
-    const watchFailures = Stream.unwrap(
-      PubSub.subscribe(failures).pipe(
-        Effect.map((subscription) => Stream.fromEffectRepeat(PubSub.take(subscription))),
-      ),
-    ).pipe(Stream.scoped);
-
     return {
-      watchFailures,
       observe,
       start,
       stop,

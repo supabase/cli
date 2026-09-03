@@ -100,9 +100,7 @@ const makeFixture = (
     readonly destroyGate?: Deferred.Deferred<void>;
     readonly destroyStarted?: Deferred.Deferred<void>;
     readonly destroyPreFenceFail?: Ref.Ref<boolean>;
-    readonly failureQueue?: Queue.Queue<ObservedWorkload>;
     readonly startQueue?: Queue.Queue<string>;
-    readonly failureObserved?: Deferred.Deferred<void>;
   } = {},
 ) =>
   Effect.gen(function* () {
@@ -159,19 +157,7 @@ const makeFixture = (
     const failDestroy = yield* Ref.make(false);
     let gateStopCleanup = false;
     const driver: RuntimeDriver = {
-      watchFailures:
-        fixtureOptions.failureQueue === undefined
-          ? Stream.empty
-          : Stream.fromQueue(fixtureOptions.failureQueue),
-      observe: () =>
-        Ref.get(resources).pipe(
-          Effect.tap((current) =>
-            fixtureOptions.failureObserved === undefined ||
-            !current.some((entry) => entry.state === "failed")
-              ? Effect.void
-              : Deferred.succeed(fixtureOptions.failureObserved, undefined),
-          ),
-        ),
+      observe: () => Ref.get(resources),
       start: (key, workload: PlannedWorkload) =>
         Effect.gen(function* () {
           gateStopCleanup = true;
@@ -192,6 +178,8 @@ const makeFixture = (
             const remaining = yield* Ref.get(fixtureOptions.startFailures);
             if (remaining > 0) {
               yield* Ref.set(fixtureOptions.startFailures, remaining - 1);
+              if (fixtureOptions.stopFailFirst !== undefined)
+                yield* Ref.set(fixtureOptions.stopFailFirst, true);
               const failed = { ...key, state: "failed" as const, error: "injected start failure" };
               yield* Ref.update(resources, (current) => [
                 ...current.filter((entry) => entry.workloadId !== key.workloadId),
@@ -394,7 +382,7 @@ describe("Supervisor composition", () => {
     ),
   );
 
-  it.live("keeps post-commit startup failure observable as starting", () =>
+  it.live("persists stopped after startup ingress failure", () =>
     run(
       Effect.gen(function* () {
         const fixture = yield* makeFixture({
@@ -415,13 +403,13 @@ describe("Supervisor composition", () => {
           Exit.isFailure(yield* fixture.supervisor.start({ config: {} }).pipe(Effect.exit)),
         ).toBe(true);
         const status = yield* fixture.supervisor.status;
-        expect(status.desiredLifecycle).toBe("running");
-        expect(status.lifecycle).toBe("starting");
+        expect(status.desiredLifecycle).toBe("stopped");
+        expect(status.lifecycle).toBe("stopped");
       }),
     ),
   );
 
-  it.live("keeps post-commit start failure observable as starting", () =>
+  it.live("persists stopped after a restart ingress failure", () =>
     run(
       Effect.gen(function* () {
         const acquireCalls = yield* Ref.make(0);
@@ -455,20 +443,19 @@ describe("Supervisor composition", () => {
 
         expect(Exit.isFailure(yield* fixture.supervisor.start().pipe(Effect.exit))).toBe(true);
         const status = yield* fixture.supervisor.status;
-        expect(status.desiredLifecycle).toBe("running");
-        expect(status.lifecycle).toBe("starting");
+        expect(status.desiredLifecycle).toBe("stopped");
+        expect(status.lifecycle).toBe("stopped");
         expect(errorOf(yield* invokeCredentials(fixture.supervisor).pipe(Effect.exit))?.tag).toBe(
           "StackNotRunningError",
         );
-        const recovered = yield* fixture.supervisor.start();
-        expect(recovered.lifecycle).toBe("running");
-        expect(recovered.capabilities.find(({ name }) => name === "database")?.state).toBe("ready");
+        const retry = yield* fixture.supervisor.start().pipe(Effect.exit);
+        expect(errorOf(retry)).toBeInstanceOf(StackLifecycleConflictError);
         expect(yield* Ref.get(fixture.calls)).toContain("start:database:database");
       }),
     ),
   );
 
-  it.live("recovers a stopped live owner after fresh ingress acquisition fails", () =>
+  it.live("exits after a stopped-owner restart ingress failure", () =>
     run(
       Effect.gen(function* () {
         const acquireCalls = yield* Ref.make(0);
@@ -501,10 +488,10 @@ describe("Supervisor composition", () => {
         expect((yield* fixture.supervisor.maintenanceHandlers.stop).ok).toBe(true);
 
         expect(Exit.isFailure(yield* fixture.supervisor.start().pipe(Effect.exit))).toBe(true);
-        expect((yield* fixture.supervisor.status).lifecycle).toBe("starting");
-        const recovered = yield* fixture.supervisor.start();
-        expect(recovered.lifecycle).toBe("running");
-        expect(recovered.capabilities.find(({ name }) => name === "database")?.state).toBe("ready");
+        expect((yield* fixture.supervisor.status).lifecycle).toBe("stopped");
+        expect(errorOf(yield* fixture.supervisor.start().pipe(Effect.exit))).toBeInstanceOf(
+          StackLifecycleConflictError,
+        );
       }),
     ),
   );
@@ -545,7 +532,6 @@ describe("Supervisor composition", () => {
           {
             stackId: fixture.id,
             workloadId: "database:database",
-            specHash: "stale",
             state: "ready",
           },
         ]);
@@ -597,7 +583,7 @@ describe("Supervisor composition", () => {
     ),
   );
 
-  it.live("keeps first-start cleanup retryable when cleanup fails", () =>
+  it.live("keeps the owner for retryable first-start cleanup", () =>
     run(
       Effect.gen(function* () {
         const stopFailFirst = yield* Ref.make(true);
@@ -605,11 +591,32 @@ describe("Supervisor composition", () => {
         const failed = yield* fixture.supervisor.start({ config: {} }).pipe(Effect.exit);
         expect(Exit.isFailure(failed)).toBe(true);
         expect((yield* fixture.store.read(fixture.id))?.desiredLifecycle).toBe("unconfigured");
+        expect((yield* fixture.supervisor.status).lifecycle).toBe("stopping");
         expect(yield* Ref.get(fixture.calls)).toEqual([]);
+        expect((yield* fixture.supervisor.maintenanceHandlers.stop).ok).toBe(true);
+        expect((yield* fixture.supervisor.status).lifecycle).toBe("unconfigured");
+      }),
+    ),
+  );
 
-        const status = yield* fixture.supervisor.start({ config: {} });
-        expect(status.lifecycle).toBe("running");
-        expect(yield* Ref.get(fixture.calls)).toEqual(["cleanup:stop", "start:database:database"]);
+  it.live("keeps the owner when eager launch cleanup is unproven", () =>
+    run(
+      Effect.gen(function* () {
+        const startFailures = yield* Ref.make(1);
+        const stopFailFirst = yield* Ref.make(false);
+        const fixture = yield* makeFixture({ startFailures, stopFailFirst });
+        const failed = yield* fixture.supervisor
+          .start({ config: { capabilities: { functions: { activation: "eager" } } } })
+          .pipe(Effect.exit);
+
+        expect(Exit.isFailure(failed)).toBe(true);
+        expect((yield* fixture.store.read(fixture.id))?.desiredLifecycle).toBe("stopped");
+        expect((yield* fixture.supervisor.status).lifecycle).toBe("stopping");
+        expect(yield* Ref.get(fixture.calls)).toContain("cleanup:stop");
+
+        const retry = yield* fixture.supervisor.maintenanceHandlers.stop;
+        expect(retry.ok).toBe(true);
+        expect((yield* fixture.supervisor.status).lifecycle).toBe("stopped");
       }),
     ),
   );
@@ -618,7 +625,9 @@ describe("Supervisor composition", () => {
     run(
       Effect.gen(function* () {
         const fixture = yield* makeFixture();
-        yield* fixture.supervisor.start({ config: { capabilities: { rest: {} } } });
+        yield* fixture.supervisor.start({
+          config: { capabilities: { rest: { activation: "eager" } } },
+        });
         const running = yield* fixture.store
           .read(fixture.id)
           .pipe(Effect.provideContext(fixture.context));
@@ -867,6 +876,44 @@ describe("Supervisor composition", () => {
     ),
   );
 
+  it.live("attempts runtime cleanup when session workload stop fails", () =>
+    run(
+      Effect.gen(function* () {
+        const workloadStopFailFirst = yield* Ref.make(true);
+        const fixture = yield* makeFixture({ workloadStopFailFirst });
+        yield* fixture.supervisor.start({
+          config: { capabilities: { rest: { activation: "eager" } } },
+        });
+        yield* Ref.set(fixture.calls, []);
+
+        const response = yield* fixture.supervisor.maintenanceHandlers.stop;
+        expect(response.ok).toBe(false);
+        expect(yield* Ref.get(fixture.calls)).toContain("cleanup:stop");
+        expect((yield* fixture.supervisor.status).lifecycle).toBe("stopping");
+      }),
+    ),
+  );
+
+  it.live("stops the launched session in reverse dependency order", () =>
+    run(
+      Effect.gen(function* () {
+        const timeline = yield* Ref.make<ReadonlyArray<string>>([]);
+        const fixture = yield* makeFixture({ timeline });
+        yield* fixture.supervisor.start({
+          config: { capabilities: { rest: { activation: "eager" } } },
+        });
+        yield* Ref.set(timeline, []);
+
+        expect((yield* fixture.supervisor.maintenanceHandlers.stop).ok).toBe(true);
+        expect(yield* Ref.get(timeline)).toEqual([
+          "stop:rest:rest",
+          "stop:database:database",
+          "cleanup:stop",
+        ]);
+      }),
+    ),
+  );
+
   it.live("keeps stopping state while an explicit stop is active", () =>
     run(
       Effect.gen(function* () {
@@ -881,8 +928,8 @@ describe("Supervisor composition", () => {
         yield* Deferred.succeed(stopGate, undefined);
         yield* Fiber.join(stopping);
         expect((yield* fixture.supervisor.status).lifecycle).toBe("stopped");
-        yield* fixture.supervisor.start();
-        expect((yield* fixture.supervisor.status).lifecycle).toBe("running");
+        const restart = yield* fixture.supervisor.start().pipe(Effect.exit);
+        expect(errorOf(restart)).toBeInstanceOf(StackLifecycleConflictError);
       }),
     ),
   );
@@ -1243,114 +1290,32 @@ describe("Supervisor composition", () => {
     ),
   );
 
-  it.live("restarts a failed eager workload without removing an active lazy workload", () =>
-    run(
-      Effect.gen(function* () {
-        const failures = yield* Queue.unbounded<ObservedWorkload>();
-        const starts = yield* Queue.unbounded<string>();
-        const fixture = yield* makeFixture({ failureQueue: failures, startQueue: starts });
-        yield* fixture.supervisor.start({ config: { capabilities: { functions: {} } } });
-        expect(yield* Queue.take(starts)).toBe("database:database");
-        yield* fixture.supervisor.activate("functions");
-        expect(yield* Queue.take(starts)).toBe("functions:edge-runtime");
-        yield* Ref.set(fixture.calls, []);
-        const database = (yield* Ref.get(fixture.resources)).find(
-          ({ workloadId }) => workloadId === "database:database",
-        );
-        if (database === undefined) return yield* Effect.die("database did not start");
-        yield* Ref.update(fixture.resources, (current) =>
-          current.map((entry) =>
-            entry.workloadId === database.workloadId
-              ? { ...entry, state: "failed" as const, error: "crashed" }
-              : entry,
-          ),
-        );
-
-        yield* Queue.offer(failures, { ...database, state: "failed", error: "crashed" });
-        expect(yield* Queue.take(starts)).toBe("database:database");
-
-        const resources = yield* Ref.get(fixture.resources);
-        expect(
-          resources.find(({ workloadId }) => workloadId === "functions:edge-runtime")?.state,
-        ).toBe("ready");
-        expect(yield* Ref.get(fixture.calls)).not.toContain("stop:functions:edge-runtime");
-      }),
-    ),
-  );
-
-  it.live("restarts a ready workload after an owner-scoped runtime failure", () =>
-    run(
-      Effect.gen(function* () {
-        const failures = yield* Queue.unbounded<ObservedWorkload>();
-        const starts = yield* Queue.unbounded<string>();
-        const fixture = yield* makeFixture({ failureQueue: failures, startQueue: starts });
-        yield* fixture.supervisor.start({ config: { capabilities: { rest: {} } } });
-        yield* Queue.take(starts);
-        const ready = (yield* Ref.get(fixture.resources)).find(
-          (entry) => entry.workloadId === "database:database",
-        );
-        if (ready === undefined) return yield* Effect.die("database did not start");
-        yield* Ref.update(fixture.resources, (current) =>
-          current.map((entry) =>
-            entry.workloadId === ready.workloadId ? { ...entry, state: "failed" as const } : entry,
-          ),
-        );
-        yield* Queue.offer(failures, { ...ready, state: "failed", error: "crashed" });
-        expect(yield* Queue.take(starts)).toBe("database:database");
-        expect(
-          (yield* Ref.get(fixture.resources)).find(
-            (entry) => entry.workloadId === "database:database",
-          )?.state,
-        ).toBe("ready");
-      }),
-    ),
-  );
-
-  it.live("keeps a post-readiness crash budget exhausted and visible in status", () =>
-    run(
-      Effect.gen(function* () {
-        const failures = yield* Queue.unbounded<ObservedWorkload>();
-        const starts = yield* Queue.unbounded<string>();
-        const failureObserved = yield* Deferred.make<void, never>();
-        const fixture = yield* makeFixture({
-          failureQueue: failures,
-          startQueue: starts,
-          failureObserved,
-        });
-        yield* fixture.supervisor.start({ config: { capabilities: { rest: {} } } });
-        const initialWorkload = yield* Queue.take(starts);
-        const ready = (yield* Ref.get(fixture.resources)).find(
-          (entry) => entry.workloadId === initialWorkload,
-        );
-        if (ready === undefined) return yield* Effect.die("workload did not start");
-        // The catalog default allows five post-ready attempts; the sixth crash is terminal.
-        for (let attempt = 0; attempt < 5; attempt += 1) {
+  it.live(
+    "reports a post-ready workload failure without restarting it or stopping unrelated services",
+    () =>
+      run(
+        Effect.gen(function* () {
+          const starts = yield* Queue.unbounded<string>();
+          const fixture = yield* makeFixture({ startQueue: starts });
+          yield* fixture.supervisor.start({
+            config: { capabilities: { rest: { activation: "eager" } } },
+          });
+          yield* Queue.take(starts);
+          yield* Queue.take(starts);
+          yield* Ref.set(fixture.calls, []);
           yield* Ref.update(fixture.resources, (current) =>
             current.map((entry) =>
-              entry.workloadId === ready.workloadId
+              entry.workloadId === "database:database"
                 ? { ...entry, state: "failed" as const, error: "crashed" }
                 : entry,
             ),
           );
-          yield* Queue.offer(failures, { ...ready, state: "failed", error: "crashed" });
-          yield* Queue.take(starts);
-        }
-        yield* Ref.update(fixture.resources, (current) =>
-          current.map((entry) =>
-            entry.workloadId === ready.workloadId
-              ? { ...entry, state: "failed" as const, error: "crashed" }
-              : entry,
-          ),
-        );
-        yield* Queue.offer(failures, { ...ready, state: "failed", error: "crashed" });
-        // oxlint-disable-next-line effecttsgo/any-unknown-in-error-context -- fixture event seam
-        yield* Deferred.await(failureObserved);
-        const status = yield* fixture.supervisor.status;
-        const capability = status.capabilities.find(({ name }) => name === "database");
-        expect(capability?.state).toBe("failed");
-        expect(capability?.error).toContain("crashed");
-      }),
-    ),
+          const status = yield* fixture.supervisor.status;
+          expect(status.capabilities.find(({ name }) => name === "database")?.state).toBe("failed");
+          expect(status.capabilities.find(({ name }) => name === "rest")?.state).toBe("ready");
+          expect(yield* Ref.get(fixture.calls)).toEqual([]);
+        }),
+      ),
   );
 
   it.live("allows a failed activation to retry", () =>
@@ -1371,10 +1336,10 @@ describe("Supervisor composition", () => {
     ),
   );
 
-  it.live("reports a failed lazy activation as failed instead of dormant", () =>
+  it.live("reports a failed lazy activation as stopped until it is retried", () =>
     run(
       Effect.gen(function* () {
-        const startFailures = yield* Ref.make(5);
+        const startFailures = yield* Ref.make(1);
         const fixture = yield* makeFixture({ startFailures });
         yield* fixture.supervisor.start({ config: { capabilities: { functions: {} } } });
 
@@ -1384,7 +1349,13 @@ describe("Supervisor composition", () => {
         expect(
           (yield* fixture.supervisor.status).capabilities.find(({ name }) => name === "functions")
             ?.state,
-        ).toBe("failed");
+        ).toBe("stopped");
+        const retry = yield* fixture.supervisor.activate("functions");
+        expect(retry.endpoint).toEqual({ host: "127.0.0.1", port: 9999 });
+        expect(
+          (yield* fixture.supervisor.status).capabilities.find(({ name }) => name === "functions")
+            ?.state,
+        ).toBe("ready");
       }),
     ),
   );

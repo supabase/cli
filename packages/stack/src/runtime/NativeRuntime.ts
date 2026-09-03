@@ -6,7 +6,6 @@ import {
   Fiber,
   FileSystem,
   Path,
-  PubSub,
   Ref,
   Scope,
   Semaphore,
@@ -93,12 +92,10 @@ interface Resource {
 }
 
 const resourceKey = (key: RuntimeWorkloadKey): string =>
-  JSON.stringify([key.stackId, key.workloadId, key.specHash]);
+  JSON.stringify([key.stackId, key.workloadId]);
 
 const sameKey = (left: RuntimeWorkloadKey, right: RuntimeWorkloadKey): boolean =>
-  left.stackId === right.stackId &&
-  left.workloadId === right.workloadId &&
-  left.specHash === right.specHash;
+  left.stackId === right.stackId && left.workloadId === right.workloadId;
 
 const driverError = (
   key: Pick<RuntimeWorkloadKey, "stackId" | "workloadId">,
@@ -184,7 +181,6 @@ export const makeNativeRuntime = (
     const runtimeScope = yield* Scope.fork(parentScope, "parallel");
     const lifecycle = yield* Semaphore.make(1);
     const resources = new Map<string, Resource>();
-    const failures = yield* PubSub.unbounded<ObservedWorkload>();
 
     const cleanup = (resource: Resource): Effect.Effect<void, never> =>
       Scope.close(resource.scope, Exit.void).pipe(
@@ -220,14 +216,11 @@ export const makeNativeRuntime = (
         yield* Ref.update(resource.state, (current): ObservedWorkload =>
           current.state === "failed" ? current : next,
         );
-        if (!resource.stopRequested) {
-          yield* PubSub.publish(failures, next);
-          if (Exit.isFailure(result))
-            yield* Deferred.fail(
-              resource.failure,
-              driverError(resource.key, `Native workload exited before readiness`, result.cause),
-            );
-        }
+        if (!resource.stopRequested && Exit.isFailure(result))
+          yield* Deferred.fail(
+            resource.failure,
+            driverError(resource.key, `Native workload exited before readiness`, result.cause),
+          );
       }).pipe(Effect.ignore);
 
     const reportLogFailure = (
@@ -247,16 +240,7 @@ export const makeNativeRuntime = (
         return [true, next] satisfies readonly [boolean, ObservedWorkload];
       }).pipe(
         Effect.flatMap((changed) =>
-          changed
-            ? Effect.all([
-                PubSub.publish(failures, {
-                  ...resource.key,
-                  state: "failed",
-                  error: failure.message,
-                }),
-                Deferred.fail(resource.failure, failure),
-              ]).pipe(Effect.asVoid)
-            : Effect.void,
+          changed ? Deferred.fail(resource.failure, failure).pipe(Effect.asVoid) : Effect.void,
         ),
       );
     };
@@ -667,14 +651,7 @@ export const makeNativeRuntime = (
         }),
       );
 
-    const watchFailures = Stream.unwrap(
-      PubSub.subscribe(failures).pipe(
-        Effect.map((subscription) => Stream.fromEffectRepeat(PubSub.take(subscription))),
-      ),
-    ).pipe(Stream.scoped);
-
     return {
-      watchFailures,
       observe,
       start,
       stop,

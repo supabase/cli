@@ -1,4 +1,4 @@
-import { Data, Effect, Stream } from "effect";
+import { Data, Effect } from "effect";
 import type { StackId } from "../public/StackId.ts";
 import type { PlannedWorkload } from "../model/ExecutionPlan.ts";
 
@@ -6,17 +6,16 @@ import type { PlannedWorkload } from "../model/ExecutionPlan.ts";
 export interface RuntimeWorkloadKey {
   readonly stackId: StackId;
   readonly workloadId: string;
-  readonly specHash: string;
 }
 
-/** Exact stack-wide runtime cleanup requested after reconciliation or owner recovery. */
+/** Exact stack-wide runtime cleanup requested after lifecycle failure or owner recovery. */
 export interface RuntimeCleanupRequest {
   readonly stackId: StackId;
   /** Remove persistent runtime volumes in addition to ephemeral containers/networks. */
   readonly destroy: boolean;
 }
 
-/** A driver only reports states that can be acted on by the reconciler. */
+/** Runtime states projected to callers and status inspection. */
 type ObservedWorkloadState = "absent" | "starting" | "ready" | "stopped" | "failed";
 
 export interface ObservedWorkload extends RuntimeWorkloadKey {
@@ -27,8 +26,6 @@ export interface ObservedWorkload extends RuntimeWorkloadKey {
 type RuntimeWorkload = PlannedWorkload;
 
 export interface RuntimeDriver {
-  /** Unexpected post-readiness failures, scoped to this driver owner. */
-  readonly watchFailures: Stream.Stream<ObservedWorkload, RuntimeDriverError>;
   /** Enumerates only private resources owned by this exact stack identity. */
   readonly observe: (
     stackId: StackId,
@@ -54,13 +51,4 @@ export class RuntimeDriverError extends Data.TaggedError("RuntimeDriverError")<{
   readonly stackId?: StackId;
   readonly workloadId?: string;
   readonly cause?: unknown;
-}> {}
-
-export class RuntimeRestartBudgetExceededError extends Data.TaggedError(
-  "RuntimeRestartBudgetExceededError",
-)<{
-  readonly message: string;
-  readonly stackId: StackId;
-  readonly workloadId: string;
-  readonly attempts: number;
 }> {}
