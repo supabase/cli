@@ -145,6 +145,43 @@ export function legacyConfigChangePayloadEntry(change: ConfigChange): Record<str
   };
 }
 
+function renderLocalChangeValue(change: ConfigChange): string {
+  const value = legacyConfigRenderValue(change.local, "(unset)");
+  // A populated local value on an undeclared path is the schema default the
+  // projection materialized — the value a `config push` would write. Say so,
+  // or "[remote-only]" reads as "this key exists only remotely", which is
+  // false for anything with a schema default (and the user will grep their
+  // file for a value that isn't there).
+  return change.local !== undefined && !change.declared
+    ? `${value} (schema default — not declared in config.toml)`
+    : value;
+}
+
+/**
+ * The per-property change-block renderer shared by `config diff`'s text body
+ * and `config push`'s per-resource `Updating … with config:` blocks: one
+ * `<path> [<class>]` / `  local:  <value>` / `  remote: <value>` block per
+ * change, each followed by a blank line — including after the last change, so
+ * a caller may append its own content (a note, a `[secret]` block) directly
+ * after this string without checking whether it ends in a newline itself.
+ */
+export function legacyConfigRenderChangeLines(changes: ReadonlyArray<ConfigChange>): string {
+  return changes
+    .map((change) => {
+      const env =
+        change.envVariables === undefined
+          ? ""
+          : ` (from env ${legacySanitizeInlineName(change.envVariables.join(", "))})`;
+      const block = [
+        `${legacyConfigRenderPath(change.path)} [${LEGACY_CONFIG_CLASS_LABELS[change.class]}]`,
+        `  local:  ${renderLocalChangeValue(change)}${env}`,
+        `  remote: ${legacyConfigRenderValue(change.remote, "(not returned)")}`,
+      ].join("\n");
+      return `${block}\n\n`;
+    })
+    .join("");
+}
+
 export function legacyConfigMaskedCaveat(masked: ReadonlyArray<ReadonlyArray<string>>): string {
   return `${legacyConfigPlural(masked.length, "credential value", "credential values")} not compared (masked by the API): ${masked.map(legacyConfigRenderPath).join(", ")}`;
 }

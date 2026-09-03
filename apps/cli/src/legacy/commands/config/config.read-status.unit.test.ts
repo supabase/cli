@@ -1,8 +1,16 @@
 import { describe, expect, test } from "vitest";
 
-import { legacyConfigReadStatusMessage } from "./config.read-status.ts";
+import { legacyConfigReadStatusMessage, legacyUnexpectedStatusMessage } from "./config.read-status.ts";
 
 const REF = "abcdefghijklmnopqrst";
+
+describe("legacyUnexpectedStatusMessage", () => {
+  test("shapes the generic unexpected-status message", () => {
+    expect(legacyUnexpectedStatusMessage(500, '{"message":"boom"}')).toBe(
+      'unexpected status 500: {"message":"boom"}',
+    );
+  });
+});
 
 describe("legacyConfigReadStatusMessage", () => {
   test("401 points at re-authenticating", () => {

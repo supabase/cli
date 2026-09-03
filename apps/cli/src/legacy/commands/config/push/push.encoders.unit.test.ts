@@ -17,6 +17,7 @@ import {
   legacyEncodeStorageBody,
   type LegacyAuthEncoderInput,
   type LegacyPushEncoderInput,
+  type LegacyStorageEncoderInput,
 } from "./push.encoders.ts";
 import type { LegacyPushSecretDecision } from "./push.secrets.ts";
 
@@ -24,13 +25,25 @@ function change(path: ReadonlyArray<string>, local: unknown, remote: unknown = "
   return { path, class: "update", local, remote, declared: true };
 }
 
+function secretDecision(overrides: Partial<LegacyPushSecretDecision> = {}): LegacyPushSecretDecision {
+  return { path: [], apiKey: "", status: "unchanged", remoteState: "absent", ...overrides };
+}
+
 const EMPTY_EMAIL_CONTENT: LegacyAuthEmailContent = { template: {}, notification: {} };
+
+function input(overrides: Partial<LegacyPushEncoderInput> = {}): LegacyPushEncoderInput {
+  return { changes: [], local: {}, remote: {}, ...overrides };
+}
+
+function storageInput(overrides: Partial<LegacyStorageEncoderInput> = {}): LegacyStorageEncoderInput {
+  return { changes: [], local: {}, remote: {}, config: getDefaultCliConfig(), ...overrides };
+}
 
 function authInput(overrides: Partial<LegacyAuthEncoderInput> = {}): LegacyAuthEncoderInput {
   return {
     changes: [],
     local: {},
-    config: getDefaultCliConfig(),
+    remote: {},
     secrets: [],
     emailContent: EMPTY_EMAIL_CONTENT,
     remoteAuthAttributes: {},
@@ -40,33 +53,39 @@ function authInput(overrides: Partial<LegacyAuthEncoderInput> = {}): LegacyAuthE
 }
 
 describe("legacyEncodeApiBody", () => {
-  function input(overrides: Partial<LegacyPushEncoderInput> = {}): LegacyPushEncoderInput {
-    return { changes: [], local: {}, config: getDefaultCliConfig(), ...overrides };
-  }
-
   it("is up to date (body undefined) when nothing routed to it changed", () => {
     const result = legacyEncodeApiBody(input());
     expect(result.body).toBeUndefined();
     expect(result.encoded).toEqual([]);
     expect(result.unencodable).toEqual([]);
+    expect(result.forced).toEqual([]);
   });
 
-  it("ships only the changed key (max_rows)", () => {
+  it("ships only the changed key (max_rows) — sparse body", () => {
     const result = legacyEncodeApiBody(input({ changes: [change(["api", "max_rows"], 2000)] }));
     expect(result.body).toEqual({ max_rows: 2000 });
+    expect(Object.keys(result.body ?? {})).toEqual(["max_rows"]);
     expect(result.encoded).toEqual([["api", "max_rows"]]);
+  });
+
+  it("ships max_rows unconditionally, even a value <= 0 (upstream already normalizes that to unmanaged)", () => {
+    const result = legacyEncodeApiBody(input({ changes: [change(["api", "max_rows"], 0)] }));
+    expect(result.body).toEqual({ max_rows: 0 });
+    expect(result.unencodable).toEqual([]);
   });
 
   it("joins extra_search_path, empty allowed", () => {
     const result = legacyEncodeApiBody(input({ changes: [change(["api", "extra_search_path"], [])] }));
     expect(result.body).toEqual({ db_extra_search_path: "" });
+    expect(Object.keys(result.body ?? {})).toEqual(["db_extra_search_path"]);
   });
 
-  it("disabling sends db_schema: '' ", () => {
+  it("disabling sends db_schema: '' alone", () => {
     const result = legacyEncodeApiBody(
       input({ changes: [change(["api", "enabled"], false)], local: { api: { enabled: false } } }),
     );
     expect(result.body).toEqual({ db_schema: "" });
+    expect(Object.keys(result.body ?? {})).toEqual(["db_schema"]);
     expect(result.encoded).toEqual([["api", "enabled"]]);
   });
 
@@ -90,18 +109,7 @@ describe("legacyEncodeApiBody", () => {
     expect(result.body).toEqual({ db_schema: "public,private" });
   });
 
-  it("empty schemas is unencodable", () => {
-    const result = legacyEncodeApiBody(
-      input({
-        changes: [change(["api", "schemas"], [])],
-        local: { api: { enabled: true, schemas: [] } },
-      }),
-    );
-    expect(result.body).toBeUndefined();
-    expect(result.unencodable).toEqual([["api", "schemas"]]);
-  });
-
-  it("enabling with no schemas is unencodable", () => {
+  it("enabling with no schemas anywhere is unencodable, with the D5 reason", () => {
     const result = legacyEncodeApiBody(
       input({
         changes: [change(["api", "enabled"], true)],
@@ -109,37 +117,67 @@ describe("legacyEncodeApiBody", () => {
       }),
     );
     expect(result.body).toBeUndefined();
-    expect(result.unencodable).toEqual([["api", "enabled"]]);
+    expect(result.unencodable).toEqual([
+      {
+        path: ["api", "enabled"],
+        reason: "enabling the Data API needs at least one schema in api.schemas",
+      },
+    ]);
   });
 
-  it("max_rows <= 0 is unencodable", () => {
-    const result = legacyEncodeApiBody(input({ changes: [change(["api", "max_rows"], 0)] }));
-    expect(result.body).toBeUndefined();
-    expect(result.unencodable).toEqual([["api", "max_rows"]]);
+  it("prefers the remote's current enabled state over local's default when only schemas changed", () => {
+    const result = legacyEncodeApiBody(
+      input({
+        changes: [change(["api", "schemas"], ["public", "private"])],
+        local: { api: { enabled: false, schemas: ["public", "private"] } },
+        remote: { api: { enabled: true, schemas: ["public"] } },
+      }),
+    );
+    // remote says enabled=true, so schemas ship even though local's own
+    // `enabled` (a schema default the file never declared) says false.
+    expect(result.body).toEqual({ db_schema: "public,private" });
+    expect(result.forced).toEqual([]);
+  });
+
+  it("discloses a forced fallback to local when remote reports nothing for the enabled companion", () => {
+    const result = legacyEncodeApiBody(
+      input({
+        changes: [change(["api", "schemas"], ["public", "private"])],
+        local: { api: { enabled: true, schemas: ["public", "private"] } },
+        remote: {},
+      }),
+    );
+    expect(result.body).toEqual({ db_schema: "public,private" });
+    expect(result.forced).toEqual([{ path: ["api", "enabled"], value: true }]);
   });
 });
 
 describe("legacyEncodeDbSettingsBody", () => {
-  it("ships only the changed keys", () => {
-    const result = legacyEncodeDbSettingsBody({
-      changes: [
-        change(["db", "settings", "shared_buffers"], "256MB"),
-        change(["db", "settings", "max_connections"], 100),
-        change(["db", "settings", "track_commit_timestamp"], true),
-      ],
-      local: {},
-      config: getDefaultCliConfig(),
-    });
+  it("ships only the changed keys — sparse body", () => {
+    const result = legacyEncodeDbSettingsBody(
+      input({
+        changes: [
+          change(["db", "settings", "shared_buffers"], "256MB"),
+          change(["db", "settings", "max_connections"], 100),
+          change(["db", "settings", "track_commit_timestamp"], true),
+        ],
+      }),
+    );
     expect(result.body).toEqual({
       shared_buffers: "256MB",
       max_connections: 100,
       track_commit_timestamp: true,
     });
+    expect(Object.keys(result.body ?? {}).sort()).toEqual([
+      "max_connections",
+      "shared_buffers",
+      "track_commit_timestamp",
+    ]);
     expect(result.encoded).toHaveLength(3);
   });
 
   it("is up to date when nothing changed", () => {
-    const result = legacyEncodeDbSettingsBody({ changes: [], local: {}, config: getDefaultCliConfig() });
+    const result = legacyEncodeDbSettingsBody(input());
     expect(result.body).toBeUndefined();
   });
 });
@@ -149,81 +187,102 @@ describe("legacyEncodeNetworkRestrictionsBody", () => {
     const local: ProjectConfig = {
       db: { network_restrictions: { allowed_cidrs: ["10.0.0.0/8"], allowed_cidrs_v6: ["::/0"] } },
     };
-    const result = legacyEncodeNetworkRestrictionsBody({
-      changes: [change(["db", "network_restrictions", "allowed_cidrs"], ["10.0.0.0/8"])],
-      local,
-      config: getDefaultCliConfig(),
-    });
+    const result = legacyEncodeNetworkRestrictionsBody(
+      input({ changes: [change(["db", "network_restrictions", "allowed_cidrs"], ["10.0.0.0/8"])], local }),
+    );
     expect(result.body).toEqual({ dbAllowedCidrs: ["10.0.0.0/8"], dbAllowedCidrsV6: ["::/0"] });
     expect(result.encoded).toEqual([["db", "network_restrictions", "allowed_cidrs"]]);
   });
 
-  it("is up to date when nothing changed", () => {
-    const result = legacyEncodeNetworkRestrictionsBody({
-      changes: [],
-      local: {},
-      config: getDefaultCliConfig(),
+  it("keeps the remote's allowed_cidrs_v6 when it is undeclared locally", () => {
+    const remote: ProjectConfig = {
+      db: { network_restrictions: { allowed_cidrs: ["1.2.3.0/24"], allowed_cidrs_v6: ["2001:db8::/32"] } },
+    };
+    const local: ProjectConfig = { db: { network_restrictions: { allowed_cidrs: ["10.0.0.0/8"] } } };
+    const result = legacyEncodeNetworkRestrictionsBody(
+      input({
+        changes: [change(["db", "network_restrictions", "allowed_cidrs"], ["10.0.0.0/8"])],
+        local,
+        remote,
+      }),
+    );
+    expect(result.body).toEqual({
+      dbAllowedCidrs: ["10.0.0.0/8"],
+      dbAllowedCidrsV6: ["2001:db8::/32"],
     });
+    expect(result.forced).toEqual([]);
+  });
+
+  it("discloses a forced fallback to local's allowed_cidrs_v6 when remote reports nothing for it", () => {
+    const local: ProjectConfig = {
+      db: { network_restrictions: { allowed_cidrs: ["10.0.0.0/8"], allowed_cidrs_v6: ["::/0"] } },
+    };
+    const remote: ProjectConfig = { db: { network_restrictions: {} } };
+    const result = legacyEncodeNetworkRestrictionsBody(
+      input({
+        changes: [change(["db", "network_restrictions", "allowed_cidrs"], ["10.0.0.0/8"])],
+        local,
+        remote,
+      }),
+    );
+    expect(result.body).toEqual({ dbAllowedCidrs: ["10.0.0.0/8"], dbAllowedCidrsV6: ["::/0"] });
+    expect(result.forced).toEqual([{ path: ["db", "network_restrictions", "allowed_cidrs_v6"], value: ["::/0"] }]);
+  });
+
+  it("is up to date when nothing changed", () => {
+    const result = legacyEncodeNetworkRestrictionsBody(input());
     expect(result.body).toBeUndefined();
   });
 });
 
 describe("legacyEncodeSslEnforcementBody", () => {
   it("wraps the boolean in requestedConfig.database", () => {
-    const result = legacyEncodeSslEnforcementBody({
-      changes: [change(["db", "ssl_enforcement", "enabled"], true)],
-      local: {},
-      config: getDefaultCliConfig(),
-    });
+    const result = legacyEncodeSslEnforcementBody(
+      input({ changes: [change(["db", "ssl_enforcement", "enabled"], true)] }),
+    );
     expect(result.body).toEqual({ requestedConfig: { database: true } });
     expect(result.encoded).toEqual([["db", "ssl_enforcement", "enabled"]]);
   });
 
   it("is up to date when nothing changed", () => {
-    const result = legacyEncodeSslEnforcementBody({
-      changes: [],
-      local: {},
-      config: getDefaultCliConfig(),
-    });
+    const result = legacyEncodeSslEnforcementBody(input());
     expect(result.body).toBeUndefined();
   });
 });
 
 describe("legacyEncodeStorageBody", () => {
   it("ships file_size_limit alone with features absent (sparseness proof)", () => {
-    const result = legacyEncodeStorageBody({
-      changes: [change(["storage", "file_size_limit"], "100MiB")],
-      local: {},
-      config: getDefaultCliConfig(),
-    });
-    expect(result.body).toEqual({ fileSizeLimit: 104_857_600, features: undefined });
+    const result = legacyEncodeStorageBody(
+      storageInput({ changes: [change(["storage", "file_size_limit"], "100MiB")] }),
+    );
+    expect(result.body).toEqual({ fileSizeLimit: 104_857_600 });
+    expect(Object.keys(result.body ?? {})).toEqual(["fileSizeLimit"]);
     expect(result.encoded).toEqual([["storage", "file_size_limit"]]);
   });
 
-  it("wraps image_transformation/s3_protocol as single-key containers", () => {
-    const result = legacyEncodeStorageBody({
-      changes: [
-        change(["storage", "image_transformation", "enabled"], true),
-        change(["storage", "s3_protocol", "enabled"], false),
-      ],
-      local: {},
-      config: getDefaultCliConfig(),
-    });
+  it("wraps image_transformation/s3_protocol as single-key containers, with fileSizeLimit absent", () => {
+    const result = legacyEncodeStorageBody(
+      storageInput({
+        changes: [
+          change(["storage", "image_transformation", "enabled"], true),
+          change(["storage", "s3_protocol", "enabled"], false),
+        ],
+      }),
+    );
     expect(result.body).toEqual({
-      fileSizeLimit: undefined,
       features: { imageTransformation: { enabled: true }, s3Protocol: { enabled: false } },
     });
+    expect(Object.keys(result.body ?? {})).toEqual(["features"]);
+    expect(Object.keys(result.body?.features ?? {}).sort()).toEqual(["imageTransformation", "s3Protocol"]);
   });
 
   it("ships the whole analytics (iceberg) container when any of its keys changed", () => {
     const local: ProjectConfig = {
       storage: { analytics: { enabled: true, max_namespaces: 5, max_tables: 10, max_catalogs: 2 } },
     };
-    const result = legacyEncodeStorageBody({
-      changes: [change(["storage", "analytics", "max_tables"], 10)],
-      local,
-      config: getDefaultCliConfig(),
-    });
+    const result = legacyEncodeStorageBody(
+      storageInput({ changes: [change(["storage", "analytics", "max_tables"], 10)], local }),
+    );
     expect(result.body?.features?.icebergCatalog).toEqual({
       enabled: true,
       maxNamespaces: 5,
@@ -237,11 +296,9 @@ describe("legacyEncodeStorageBody", () => {
     const local: ProjectConfig = {
       storage: { vector: { enabled: true, max_buckets: 10, max_indexes: 5 } },
     };
-    const result = legacyEncodeStorageBody({
-      changes: [change(["storage", "vector", "enabled"], true)],
-      local,
-      config: getDefaultCliConfig(),
-    });
+    const result = legacyEncodeStorageBody(
+      storageInput({ changes: [change(["storage", "vector", "enabled"], true)], local }),
+    );
     expect(result.body?.features?.vectorBuckets).toEqual({
       enabled: true,
       maxBuckets: 10,
@@ -249,27 +306,47 @@ describe("legacyEncodeStorageBody", () => {
     });
   });
 
-  it("emits {enabled:false, ...} for analytics, falling back to `config` for max_* the projection pruned", () => {
+  it("keeps the remote's vector.max_indexes when only enabled changed", () => {
+    const local: ProjectConfig = { storage: { vector: { enabled: true } } };
+    const remote: ProjectConfig = { storage: { vector: { enabled: false, max_buckets: 7, max_indexes: 99 } } };
+    const result = legacyEncodeStorageBody(
+      storageInput({ changes: [change(["storage", "vector", "enabled"], true)], local, remote }),
+    );
+    expect(result.body?.features?.vectorBuckets).toEqual({
+      enabled: true,
+      maxBuckets: 7,
+      maxIndexes: 99,
+    });
+    expect(result.forced).toEqual([]);
+  });
+
+  it("emits {enabled:false, ...} for analytics, falling back to `config` for max_* the projection pruned, and discloses it as forced", () => {
     const base = getDefaultCliConfig();
     const config: CliConfig = {
       ...base,
-      storage: { ...base.storage, analytics: { enabled: false, max_namespaces: 7, max_tables: 3, max_catalogs: 1, buckets: {} } },
+      storage: {
+        ...base.storage,
+        analytics: { enabled: false, max_namespaces: 7, max_tables: 3, max_catalogs: 1, buckets: {} },
+      },
     };
     // The real pipeline drops a disabled `storage.analytics` from the local
     // projection entirely (`applyPushUnmanagedOmissions`) — this directly
     // exercises the encoder with that pruned shape, as a change constructed
     // by hand rather than through the full diff pipeline (CLI-2314 note).
-    const result = legacyEncodeStorageBody({
-      changes: [change(["storage", "analytics", "enabled"], false)],
-      local: {},
-      config,
-    });
+    const result = legacyEncodeStorageBody(
+      storageInput({ changes: [change(["storage", "analytics", "enabled"], false)], config }),
+    );
     expect(result.body?.features?.icebergCatalog).toEqual({
       enabled: false,
       maxNamespaces: 7,
       maxTables: 3,
       maxCatalogs: 1,
     });
+    expect(result.forced).toEqual([
+      { path: ["storage", "analytics", "max_catalogs"], value: 1 },
+      { path: ["storage", "analytics", "max_namespaces"], value: 7 },
+      { path: ["storage", "analytics", "max_tables"], value: 3 },
+    ]);
   });
 
   it("emits {enabled:false, ...} for vector, falling back to `config` for max_* the projection pruned", () => {
@@ -278,11 +355,9 @@ describe("legacyEncodeStorageBody", () => {
       ...base,
       storage: { ...base.storage, vector: { enabled: false, max_buckets: 11, max_indexes: 6, buckets: {} } },
     };
-    const result = legacyEncodeStorageBody({
-      changes: [change(["storage", "vector", "enabled"], false)],
-      local: {},
-      config,
-    });
+    const result = legacyEncodeStorageBody(
+      storageInput({ changes: [change(["storage", "vector", "enabled"], false)], config }),
+    );
     expect(result.body?.features?.vectorBuckets).toEqual({
       enabled: false,
       maxBuckets: 11,
@@ -291,7 +366,7 @@ describe("legacyEncodeStorageBody", () => {
   });
 
   it("is up to date when nothing changed", () => {
-    const result = legacyEncodeStorageBody({ changes: [], local: {}, config: getDefaultCliConfig() });
+    const result = legacyEncodeStorageBody(storageInput());
     expect(result.body).toBeUndefined();
   });
 });
@@ -301,13 +376,16 @@ describe("legacyEncodeAuthBody", () => {
     const result = legacyEncodeAuthBody(authInput());
     expect(result.body).toBeUndefined();
     expect(result.encoded).toEqual([]);
+    expect(result.extras).toEqual([]);
+    expect(result.forced).toEqual([]);
   });
 
-  it("joins additional_redirect_urls with a comma", () => {
+  it("joins additional_redirect_urls with a comma, alone", () => {
     const result = legacyEncodeAuthBody(
       authInput({ changes: [change(["auth", "additional_redirect_urls"], ["a", "b"])] }),
     );
     expect(result.body).toEqual({ uri_allow_list: "a,b" });
+    expect(Object.keys(result.body ?? {})).toEqual(["uri_allow_list"]);
   });
 
   it("inverts enable_signup into disable_signup", () => {
@@ -389,6 +467,48 @@ describe("legacyEncodeAuthBody", () => {
       });
     });
 
+    it("prefers the remote's current companion values over local schema defaults", () => {
+      const local: ProjectConfig = {
+        auth: {
+          email: {
+            smtp: {
+              enabled: true,
+              host: "smtp.example.com",
+              port: 0,
+              user: "",
+              admin_email: "",
+              sender_name: "",
+            },
+          },
+        },
+      };
+      const remote: ProjectConfig = {
+        auth: {
+          email: {
+            smtp: {
+              enabled: true,
+              host: "smtp.example.com",
+              port: 2525,
+              user: "remote-user",
+              admin_email: "remote@example.com",
+              sender_name: "Remote Sender",
+            },
+          },
+        },
+      };
+      const result = legacyEncodeAuthBody(
+        authInput({ changes: [change(["auth", "email", "smtp", "host"], "smtp.example.com")], local, remote }),
+      );
+      expect(result.body).toEqual({
+        smtp_host: "smtp.example.com",
+        smtp_port: "2525",
+        smtp_user: "remote-user",
+        smtp_admin_email: "remote@example.com",
+        smtp_sender_name: "Remote Sender",
+      });
+      expect(result.forced).toEqual([]);
+    });
+
     it("triggered purely by a secret 'send' decision, with no ordinary field change", () => {
       const local: ProjectConfig = {
         auth: {
@@ -405,7 +525,12 @@ describe("legacyEncodeAuthBody", () => {
         },
       };
       const secrets: ReadonlyArray<LegacyPushSecretDecision> = [
-        { path: ["auth", "email", "smtp", "pass"], apiKey: "smtp_pass", status: "send", plaintext: "hunter2" },
+        secretDecision({
+          path: ["auth", "email", "smtp", "pass"],
+          apiKey: "smtp_pass",
+          status: "send",
+          plaintext: "hunter2",
+        }),
       ];
       const result = legacyEncodeAuthBody(authInput({ local, secrets }));
       expect(result.body).toEqual({
@@ -423,12 +548,26 @@ describe("legacyEncodeAuthBody", () => {
     it("withholds smtp_pass while unchanged/gated/not_set", () => {
       const local: ProjectConfig = { auth: { email: { smtp: { enabled: true, host: "h", port: 1 } } } };
       const secrets: ReadonlyArray<LegacyPushSecretDecision> = [
-        { path: ["auth", "email", "smtp", "pass"], apiKey: "smtp_pass", status: "unchanged" },
+        secretDecision({ path: ["auth", "email", "smtp", "pass"], apiKey: "smtp_pass", status: "unchanged" }),
       ];
       const result = legacyEncodeAuthBody(
         authInput({ changes: [change(["auth", "email", "smtp", "host"], "h")], local, secrets }),
       );
       expect(result.body).not.toHaveProperty("smtp_pass");
+    });
+
+    it("routes the container's changes to unencodable when its enabled state cannot be determined", () => {
+      const local: ProjectConfig = { auth: { email: { smtp: {} } } };
+      const result = legacyEncodeAuthBody(
+        authInput({ changes: [change(["auth", "email", "smtp", "host"], "h")], local }),
+      );
+      expect(result.body).toBeUndefined();
+      expect(result.unencodable).toEqual([
+        {
+          path: ["auth", "email", "smtp", "host"],
+          reason: "the container's enabled state could not be determined from the declared config",
+        },
+      ]);
     });
   });
 
@@ -446,12 +585,12 @@ describe("legacyEncodeAuthBody", () => {
     it("enabled → provider ships, secret ships only while status is 'send'", () => {
       const local: ProjectConfig = { auth: { captcha: { enabled: true, provider: "hcaptcha" } } };
       const secrets: ReadonlyArray<LegacyPushSecretDecision> = [
-        {
+        secretDecision({
           path: ["auth", "captcha", "secret"],
           apiKey: "security_captcha_secret",
           status: "send",
           plaintext: "shh",
-        },
+        }),
       ];
       const result = legacyEncodeAuthBody(
         authInput({ changes: [change(["auth", "captcha", "provider"], "hcaptcha")], local, secrets }),
@@ -480,12 +619,12 @@ describe("legacyEncodeAuthBody", () => {
         auth: { hook: { send_email: { enabled: true, uri: "https://example.com/hook" } } },
       };
       const secrets: ReadonlyArray<LegacyPushSecretDecision> = [
-        {
+        secretDecision({
           path: ["auth", "hook", "send_email", "secrets"],
           apiKey: "hook_send_email_secrets",
           status: "send",
           plaintext: "v1,whsec_abc",
-        },
+        }),
       ];
       const result = legacyEncodeAuthBody(
         authInput({
@@ -541,12 +680,12 @@ describe("legacyEncodeAuthBody", () => {
         auth: { external: { github: { enabled: true, client_id: "id", email_optional: true } } },
       };
       const secrets: ReadonlyArray<LegacyPushSecretDecision> = [
-        {
+        secretDecision({
           path: ["auth", "external", "github", "secret"],
           apiKey: "external_github_secret",
           status: "send",
           plaintext: "gh-secret",
-        },
+        }),
       ];
       const result = legacyEncodeAuthBody(
         authInput({ changes: [change(["auth", "external", "github", "client_id"], "id")], local, secrets }),
@@ -557,6 +696,33 @@ describe("legacyEncodeAuthBody", () => {
         external_github_secret: "gh-secret",
         external_github_email_optional: true,
       });
+    });
+
+    it("keeps the remote's email_optional when it is undeclared locally", () => {
+      const local: ProjectConfig = { auth: { external: { github: { enabled: true } } } };
+      const remote: ProjectConfig = {
+        auth: { external: { github: { enabled: true, client_id: "id", email_optional: true } } },
+      };
+      const result = legacyEncodeAuthBody(
+        authInput({
+          changes: [change(["auth", "external", "github", "client_id"], "id")],
+          local,
+          remote,
+        }),
+      );
+      expect(result.body).toMatchObject({ external_github_email_optional: true });
+      expect(result.forced).toEqual([]);
+    });
+
+    it("never emits email_optional for workos (no such API field)", () => {
+      const local: ProjectConfig = {
+        auth: { external: { workos: { enabled: true, client_id: "id", url: "https://workos.example.com" } } },
+      };
+      const result = legacyEncodeAuthBody(
+        authInput({ changes: [change(["auth", "external", "workos", "client_id"], "id")], local }),
+      );
+      expect(result.body).not.toHaveProperty("external_workos_email_optional");
+      expect(result.body).toMatchObject({ external_workos_url: "https://workos.example.com" });
     });
 
     it("ships url only for azure/gitlab/keycloak/workos", () => {
@@ -625,12 +791,12 @@ describe("legacyEncodeAuthBody", () => {
         auth: { external: { github: { enabled: true, client_id: "id", email_optional: false } } },
       };
       const secrets: ReadonlyArray<LegacyPushSecretDecision> = [
-        {
+        secretDecision({
           path: ["auth", "external", "github", "secret"],
           apiKey: "external_github_secret",
           status: "send",
           plaintext: "gh-secret",
-        },
+        }),
       ];
       const result = legacyEncodeAuthBody(authInput({ local, secrets }));
       expect(result.body).toEqual({
@@ -688,12 +854,12 @@ describe("legacyEncodeAuthBody", () => {
         },
       };
       const secrets: ReadonlyArray<LegacyPushSecretDecision> = [
-        {
+        secretDecision({
           path: ["auth", "sms", "twilio", "auth_token"],
           apiKey: "sms_twilio_auth_token",
           status: "send",
           plaintext: "token",
-        },
+        }),
       ];
       const result = legacyEncodeAuthBody(
         authInput({
@@ -724,18 +890,24 @@ describe("legacyEncodeAuthBody", () => {
       });
     });
 
-    it("no provider enabled is unencodable", () => {
+    it("no provider enabled is unencodable, with the D5 reason", () => {
       const local: ProjectConfig = { auth: { sms: { twilio: { enabled: false } } } };
       const result = legacyEncodeAuthBody(
         authInput({ changes: [change(["auth", "sms", "twilio", "enabled"], false)], local }),
       );
       expect(result.body).toBeUndefined();
-      expect(result.unencodable).toEqual([["auth", "sms", "twilio", "enabled"]]);
+      expect(result.unencodable).toEqual([
+        {
+          path: ["auth", "sms", "twilio", "enabled"],
+          reason:
+            "config push can switch between SMS providers but cannot turn the active provider off; disable phone sign-in or use the dashboard",
+        },
+      ]);
     });
   });
 
   describe("push-only mailer content", () => {
-    it("ships template content that differs from the remote key", () => {
+    it("ships template content that differs from the remote key, as an extra rather than an encoded change", () => {
       const result = legacyEncodeAuthBody(
         authInput({
           emailContent: { template: { invite: "<h1>Invite</h1>" }, notification: {} },
@@ -743,7 +915,10 @@ describe("legacyEncodeAuthBody", () => {
         }),
       );
       expect(result.body).toEqual({ mailer_templates_invite_content: "<h1>Invite</h1>" });
-      expect(result.encoded).toEqual([["auth", "email", "template", "invite", "content"]]);
+      expect(result.encoded).toEqual([]);
+      expect(result.extras).toEqual([
+        { path: ["auth", "email", "template", "invite", "content"], label: "content" },
+      ]);
     });
 
     it("omits template content that already matches the remote key", () => {
@@ -754,9 +929,10 @@ describe("legacyEncodeAuthBody", () => {
         }),
       );
       expect(result.body).toBeUndefined();
+      expect(result.extras).toEqual([]);
     });
 
-    it("ships notification content only when loaded (enabled)", () => {
+    it("ships notification content only when loaded (enabled), as an extra", () => {
       const result = legacyEncodeAuthBody(
         authInput({
           emailContent: { template: {}, notification: { password_changed: "<p>Changed</p>" } },
@@ -766,8 +942,9 @@ describe("legacyEncodeAuthBody", () => {
       expect(result.body).toEqual({
         mailer_templates_password_changed_notification_content: "<p>Changed</p>",
       });
-      expect(result.encoded).toEqual([
-        ["auth", "email", "notification", "password_changed", "content"],
+      expect(result.encoded).toEqual([]);
+      expect(result.extras).toEqual([
+        { path: ["auth", "email", "notification", "password_changed", "content"], label: "content" },
       ]);
     });
   });

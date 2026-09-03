@@ -1,34 +1,55 @@
 import type { ConfigChange } from "@supabase/config/internal";
 
 import {
-  legacyConfigDiffUnmanagedCaveat,
-  legacyRenderConfigChangeLines,
-  type LegacyConfigDiffScope,
-} from "../diff/diff.format.ts";
-import { legacySanitizeInlineName } from "../../../shared/legacy-http-errors.ts";
+  legacyConfigPlural,
+  legacyConfigRenderChangeLines,
+  legacyConfigRenderPath,
+  legacyConfigRenderValue,
+  type LegacyConfigApiScope,
+} from "../config.format.ts";
 import type { LegacyPushResource } from "./push.plan.ts";
-import type { LegacyPushSecretDecision } from "./push.secrets.ts";
+import type { LegacyPushSecretReport } from "./push.secrets.ts";
 
 /**
  * Pure formatters and payload builders for `config push` — no Effect, no
- * services, unit-testable in isolation. Mirrors `diff/diff.format.ts`'s
- * shape: every non-constant string interpolated into TEXT output goes
- * through `legacySanitizeInlineName` (path segments are unconstrained
- * declared-config-key strings — an `sms.test_otp` phone number or a
- * `[remotes.*]` name — so a hostile value could otherwise emit raw ANSI or
- * forge output lines). Secret VALUES never reach this module: callers pass
- * only the `status`/`path` shell of a secret decision, never `plaintext`.
+ * services, unit-testable in isolation. Consumes only the shapes an
+ * encoder's `LegacyPushEncoded` result carries (`encoded`/`unencodable`/
+ * `extras`/`forced`, declared structurally below rather than imported, so
+ * this module never depends on `push.encoders.ts`), `LegacyPushSecretReport`,
+ * `LegacyPushResource`, and `../config.format.ts`'s shared helpers.
+ *
+ * Every non-constant string interpolated into TEXT output goes through
+ * `legacyConfigRenderPath` (which itself sanitizes via
+ * `legacySanitizeInlineName`) — path segments are unconstrained
+ * declared-config-key strings (an `sms.test_otp` phone number, a
+ * `[remotes.*]` name), so a hostile value could otherwise emit raw ANSI or
+ * forge output lines. Secret VALUES never reach this module: every secret
+ * input is typed `LegacyPushSecretReport` (`LegacyPushSecretDecision` with
+ * `plaintext` omitted) — callers cannot even accidentally pass a plaintext
+ * through.
+ *
+ * `service`/`LegacyPushResource` values are OPAQUE IDENTIFIERS (dotted keys
+ * mirroring `config.toml` paths, plus the fixed `"experimental.webhooks"`),
+ * never themselves a config path — never rendered through
+ * `legacyConfigRenderPath`.
  */
 
-export type { LegacyPushResource, LegacyPushSecretDecision };
-
-/** Display-only join — a change/secret path is segment-array everywhere else. */
-function renderPath(path: ReadonlyArray<string>): string {
-  return legacySanitizeInlineName(path.join("."));
+/** A declared change this encoder could not structurally express, with why. */
+export interface LegacyPushUnencodable {
+  readonly path: ReadonlyArray<string>;
+  readonly reason: string;
 }
 
-function plural(count: number, singular: string, pluralForm: string): string {
-  return `${count} ${count === 1 ? singular : pluralForm}`;
+/** A template/notification body this encoder sent that has no registry row of its own. */
+export interface LegacyPushExtra {
+  readonly path: ReadonlyArray<string>;
+  readonly label: "content";
+}
+
+/** An undeclared companion value sent alongside a declared change, at its config default. */
+export interface LegacyPushForced {
+  readonly path: ReadonlyArray<string>;
+  readonly value: unknown;
 }
 
 const PUSH_UPDATING_PREFIX: Readonly<Record<LegacyPushResource, string>> = {
@@ -40,62 +61,132 @@ const PUSH_UPDATING_PREFIX: Readonly<Record<LegacyPushResource, string>> = {
   storage: "Updating Storage service with config:",
 };
 
-const PUSH_UP_TO_DATE_LINE: Readonly<Record<LegacyPushResource, string>> = {
-  api: "Remote API config is up to date.\n",
-  "db.settings": "Remote DB config is up to date.\n",
-  "db.network_restrictions": "Remote DB Network restrictions config is up to date.\n",
-  "db.ssl_enforcement": "Remote DB SSL enforcement config is up to date.\n",
-  auth: "Remote Auth config is up to date.\n",
-  storage: "Remote Storage config is up to date.\n",
+const RESOURCE_DISPLAY_NAME: Readonly<Record<LegacyPushResource, string>> = {
+  api: "API",
+  "db.settings": "DB",
+  "db.network_restrictions": "DB Network restrictions",
+  "db.ssl_enforcement": "DB SSL enforcement",
+  auth: "Auth",
+  storage: "Storage",
 };
 
-/**
- * The `[secret]` counterpart to `legacyRenderConfigChangeLines` — same
- * 4-line-per-entry, blank-line-separated shape, so appending it directly
- * after `legacyRenderConfigChangeLines`'s output (which already ends on a
- * single trailing `\n`) never introduces a spurious blank line. Only
- * `status === "send"` secrets render; the plaintext never appears, and
- * neither does the actual digest — both sides are fixed descriptive text.
- */
-function renderSecretLines(secrets: ReadonlyArray<LegacyPushSecretDecision>): string {
-  const lines: Array<string> = [];
-  for (const secret of secrets) {
-    if (secret.status !== "send") {
-      continue;
-    }
-    lines.push(`${renderPath(secret.path)} [secret]`);
-    lines.push("  local:  (set; differs from the remote digest)");
-    lines.push("  remote: (digest)");
-    lines.push("");
-  }
-  return lines.join("\n");
+/** One `<path> [<label>]` / `local:` / `remote:` block, always followed by a blank line — the
+ * same shape `legacyConfigRenderChangeLines` uses for ordinary property changes, so appending any
+ * mix of these directly after that renderer's output never introduces (or omits) a blank line. */
+function renderBlock(path: ReadonlyArray<string>, label: string, local: string, remote: string): string {
+  return `${legacyConfigRenderPath(path)} [${label}]\n  local:  ${local}\n  remote: ${remote}\n\n`;
 }
 
 /**
- * The `Updating <resource> service with config:` block for a resource with
- * at least one pushable change. `changes` renders through the same
- * per-property format `config diff` uses; `secrets` is the resource's full
- * secret-decision list (only `send` entries render, so callers may pass an
- * unfiltered list — non-auth resources simply pass `[]`).
+ * `[secret]` blocks — rendered BEFORE the confirmation prompt, so a credential
+ * that will not be sent (`not_set`) is disclosed alongside one that will
+ * (`send`), inside the same resource block. `unchanged`/`gated` decisions
+ * never render (nothing changed, or the secret's container is off — already
+ * silent the same way a `disabled` resource status is).
  */
-export function legacyPushUpdatingLine(
-  resource: LegacyPushResource,
-  changes: ReadonlyArray<ConfigChange>,
-  secrets: ReadonlyArray<LegacyPushSecretDecision>,
-): string {
-  return `${PUSH_UPDATING_PREFIX[resource]}\n${legacyRenderConfigChangeLines(changes)}${renderSecretLines(secrets)}`;
+function renderSecretBlocks(secrets: ReadonlyArray<LegacyPushSecretReport>): string {
+  return secrets
+    .map((secret) => {
+      if (secret.status === "send") {
+        return renderBlock(
+          secret.path,
+          "secret",
+          "(set)",
+          secret.remoteState === "absent" ? "(not set)" : "(set — differs)",
+        );
+      }
+      if (secret.status === "not_set") {
+        return renderBlock(
+          secret.path,
+          "secret",
+          "(not set — unresolved env reference; will not be pushed)",
+          "(not set)",
+        );
+      }
+      return "";
+    })
+    .join("");
 }
 
-/** The `Remote <resource> config is up to date.` line for a resource with no pushable change. */
+/** `[content]` blocks for template/notification bodies with no registry row of their own. */
+function renderExtraBlocks(extras: ReadonlyArray<LegacyPushExtra>): string {
+  return extras
+    .map((extra) => renderBlock(extra.path, "content", "(file content from content_path)", "(differs)"))
+    .join("");
+}
+
+/** `[group-write]` blocks — an undeclared companion the target endpoint required alongside a
+ * declared change, sent at its config schema default because the remote didn't return a current
+ * value for it (see `legacyPushNotes`' matching note). */
+function renderForcedBlocks(forced: ReadonlyArray<LegacyPushForced>): string {
+  return forced
+    .map((entry) =>
+      renderBlock(
+        entry.path,
+        "group-write",
+        `${legacyConfigRenderValue(entry.value, "(unset)")} (schema default — not declared in config.toml)`,
+        "(not returned)",
+      ),
+    )
+    .join("");
+}
+
+export interface LegacyPushUpdatingLineInput {
+  readonly resource: LegacyPushResource;
+  /** The routed changes this write actually communicated (already narrowed by the caller). */
+  readonly changes: ReadonlyArray<ConfigChange>;
+  /** The resource's full secret-decision list; only `send`/`not_set` entries render. Callers with
+   *  no secrets (every resource but `auth`) simply pass `[]`. */
+  readonly secrets: ReadonlyArray<LegacyPushSecretReport>;
+  readonly extras: ReadonlyArray<LegacyPushExtra>;
+  readonly forced: ReadonlyArray<LegacyPushForced>;
+}
+
+/**
+ * The `Updating <resource> service with config:` block for a resource with at
+ * least one pushable difference. `changes` renders through the same
+ * per-property format `config diff` uses; secret/content/group-write blocks
+ * follow, each in the same 3-line-plus-blank-line shape, so the combined
+ * block always ends on a blank line (there is always at least one line item,
+ * since callers only reach this when there is something to write).
+ */
+export function legacyPushUpdatingLine(input: LegacyPushUpdatingLineInput): string {
+  return (
+    `${PUSH_UPDATING_PREFIX[input.resource]}\n` +
+    legacyConfigRenderChangeLines(input.changes) +
+    renderSecretBlocks(input.secrets) +
+    renderExtraBlocks(input.extras) +
+    renderForcedBlocks(input.forced)
+  );
+}
+
+/** The `Remote <resource> config is up to date.` line — no pushable difference existed. */
 export function legacyPushUpToDateLine(resource: LegacyPushResource): string {
-  return PUSH_UP_TO_DATE_LINE[resource];
+  return `Remote ${RESOURCE_DISPLAY_NAME[resource]} config is up to date.\n`;
+}
+
+/**
+ * The `Remote <resource> config has N difference(s) config push cannot
+ * write...` line — a pushable difference existed, but every one of it ended
+ * up `unencodable` (`count`), so nothing was written and no prompt ran.
+ */
+export function legacyPushNotPushableLine(resource: LegacyPushResource, count: number): string {
+  return `Remote ${RESOURCE_DISPLAY_NAME[resource]} config has ${legacyConfigPlural(count, "difference", "differences")} config push cannot write (see notes below).\n`;
 }
 
 export interface LegacyPushNotesInput {
-  /** Pushable-class changes with no v1 write path (`plan.unsupported` ∪ every encoder's `unencodable`). */
+  /** Declared paths with no Management API field at all — the fixed unsupported-prefix list
+   *  (`db.pooler.*`, `auth.oauth_server.*`, `db.major_version`) plus every routed change belonging
+   *  to a resource whose local gate is off. */
   readonly unsupported: ReadonlyArray<ReadonlyArray<string>>;
-  /** `changeSet.unmanaged` — declared paths the projection dropped, so push cannot express them either. */
-  readonly unmanaged: ReadonlyArray<ReadonlyArray<string>>;
+  /** Declared paths an encoder could not structurally express, with why. */
+  readonly unencodable: ReadonlyArray<LegacyPushUnencodable>;
+  /** Count of `changeSet.unmanaged` entries NOT already covered by a disabled resource's own
+   *  `Note:`-free `disabled` status — count only, the full list stays in the payload. */
+  readonly unmanagedCount: number;
+  /** Undeclared companion values actually written at their config default (only from resources
+   *  whose write ran). */
+  readonly forced: ReadonlyArray<LegacyPushForced>;
   /** Declared secrets gated to `status === "not_set"` (empty value or unresolved `env(...)`). */
   readonly secretsNotSet: ReadonlyArray<ReadonlyArray<string>>;
   /** `changeSet.counts.remote_only` — hands-off, informational only. */
@@ -109,27 +200,52 @@ export interface LegacyPushNotesInput {
  */
 export function legacyPushNotes(input: LegacyPushNotesInput): string {
   const lines: Array<string> = [];
+
   if (input.unsupported.length > 0) {
+    const n = input.unsupported.length;
     lines.push(
-      `Note: ${plural(input.unsupported.length, "declared property", "declared properties")} cannot be pushed by config push: ${input.unsupported.map(renderPath).join(", ")}`,
+      `Note: ${legacyConfigPlural(n, "declared property", "declared properties")} ${n === 1 ? "has" : "have"} no Management API field and ${n === 1 ? "was" : "were"} not pushed: ${input.unsupported.map(legacyConfigRenderPath).join(", ")} (change them from the dashboard).`,
     );
   }
-  if (input.unmanaged.length > 0) {
-    lines.push(`Note: ${legacyConfigDiffUnmanagedCaveat(input.unmanaged)}`);
+
+  if (input.unencodable.length > 0) {
+    const n = input.unencodable.length;
+    const rendered = input.unencodable
+      .map((entry) => `${legacyConfigRenderPath(entry.path)} (${entry.reason})`)
+      .join(", ");
+    lines.push(
+      `Note: ${legacyConfigPlural(n, "declared property", "declared properties")} could not be encoded and ${n === 1 ? "was" : "were"} not pushed: ${rendered}`,
+    );
   }
+
+  if (input.unmanagedCount > 0) {
+    const n = input.unmanagedCount;
+    lines.push(
+      `Note: ${legacyConfigPlural(n, "declared property", "declared properties")} ${n === 1 ? "is" : "are"} not managed by config push and ${n === 1 ? "was" : "were"} not compared; run \`supabase config diff\` to list them.`,
+    );
+  }
+
+  if (input.forced.length > 0) {
+    const n = input.forced.length;
+    lines.push(
+      `Note: ${legacyConfigPlural(n, "undeclared property", "undeclared properties")} had to be sent alongside a declared change and ${n === 1 ? "was" : "were"} written at ${n === 1 ? "its" : "their"} config default: ${input.forced.map((entry) => legacyConfigRenderPath(entry.path)).join(", ")}`,
+    );
+  }
+
   if (input.secretsNotSet.length > 0) {
-    const was = input.secretsNotSet.length === 1 ? "was" : "were";
+    const n = input.secretsNotSet.length;
     lines.push(
-      `Note: ${plural(input.secretsNotSet.length, "credential value", "credential values")} ${was} not pushed (empty or unresolved env reference): ${input.secretsNotSet.map(renderPath).join(", ")}`,
+      `Note: ${legacyConfigPlural(n, "credential value", "credential values")} ${n === 1 ? "was" : "were"} not pushed (empty or unresolved env reference): ${input.secretsNotSet.map(legacyConfigRenderPath).join(", ")}`,
     );
   }
+
   if (input.remoteOnly > 0) {
-    const is = input.remoteOnly === 1 ? "is" : "are";
-    const was = input.remoteOnly === 1 ? "was" : "were";
+    const n = input.remoteOnly;
     lines.push(
-      `Note: ${plural(input.remoteOnly, "remote property", "remote properties")} ${is} not declared in supabase/config.toml and ${was} left unchanged (run \`supabase config diff\` to inspect).`,
+      `Note: ${legacyConfigPlural(n, "remote property", "remote properties")} ${n === 1 ? "is" : "are"} not declared in supabase/config.toml and ${n === 1 ? "was" : "were"} left unchanged (config push no longer resets undeclared properties to their defaults; run \`supabase config diff\` to inspect).`,
     );
   }
+
   return lines.length === 0 ? "" : `${lines.join("\n")}\n`;
 }
 
@@ -142,17 +258,24 @@ export interface LegacyPushPayloadServiceResult {
 export interface LegacyPushPayloadInput {
   readonly projectRef: string;
   readonly services: ReadonlyArray<LegacyPushPayloadServiceResult>;
-  /** Pushable-class changes with no v1 write path — same set `legacyPushNotes` reports. */
+  /** Same set `legacyPushNotes`'s first note reports — unfiltered. */
   readonly unsupported: ReadonlyArray<ReadonlyArray<string>>;
-  /** `changeSet.unmanaged`. */
+  readonly unencodable: ReadonlyArray<LegacyPushUnencodable>;
+  readonly forced: ReadonlyArray<LegacyPushForced>;
+  /** `changeSet.unmanaged`, unfiltered — the note above is count-only, the payload keeps the
+   *  full list (including paths under a gated-off resource). */
   readonly unmanaged: ReadonlyArray<ReadonlyArray<string>>;
-  /** Every declared secret's decision, unfiltered — bucketed by status below. `"gated"` decisions
-   *  are omitted from every bucket: the secret's parent container is off, so there is nothing to
-   *  report (the same silence a `disabled` resource status already carries). */
-  readonly secrets: ReadonlyArray<LegacyPushSecretDecision>;
-  /** `changeSet.counts.remote_only`. */
+  /** Every declared secret's decision, unfiltered — partitions `changeSet.masked` across all
+   *  five buckets below (`gated` is now included, unlike the pre-fix-pass payload). */
+  readonly secrets: ReadonlyArray<LegacyPushSecretReport>;
+  /** Whether the auth resource's write actually ran — decides whether a `status: "send"` secret
+   *  lands in `sent` (write ran) or `skipped` (declined, or auth not written for any other
+   *  reason): the payload reports what was OBSERVED to happen, not the pre-prompt decision. */
+  readonly authWriteRan: boolean;
+  /** Addon cost prompts (`auth_mfa_phone`, `auth_mfa_web_authn`) declined this run. */
+  readonly declinedAddons: ReadonlyArray<string>;
   readonly remoteOnly: number;
-  readonly scope: LegacyConfigDiffScope;
+  readonly scope: LegacyConfigApiScope;
 }
 
 /**
@@ -162,10 +285,12 @@ export interface LegacyPushPayloadInput {
  * key may itself contain a `.`.
  */
 export function legacyPushPayload(input: LegacyPushPayloadInput): Record<string, unknown> {
-  const byStatus = (status: LegacyPushSecretDecision["status"]) =>
+  const byStatus = (status: LegacyPushSecretReport["status"]) =>
     input.secrets.filter((secret) => secret.status === status).map((secret) => secret.path);
+  const sendDecisions = input.secrets.filter((secret) => secret.status === "send");
 
   return {
+    schema_version: 1,
     project_ref: input.projectRef,
     services: input.services.map((service) => ({
       service: service.service,
@@ -173,12 +298,17 @@ export function legacyPushPayload(input: LegacyPushPayloadInput): Record<string,
       changes: service.changes,
     })),
     unsupported: input.unsupported,
+    unencodable: input.unencodable.map((entry) => ({ path: entry.path, reason: entry.reason })),
+    forced: input.forced.map((entry) => ({ path: entry.path, value: entry.value })),
     unmanaged: input.unmanaged,
     secrets: {
-      sent: byStatus("send"),
+      sent: input.authWriteRan ? sendDecisions.map((secret) => secret.path) : [],
       unchanged: byStatus("unchanged"),
-      not_sent: byStatus("not_set"),
+      not_set: byStatus("not_set"),
+      gated: byStatus("gated"),
+      skipped: input.authWriteRan ? [] : sendDecisions.map((secret) => secret.path),
     },
+    declined_addons: input.declinedAddons,
     remote_only: input.remoteOnly,
     scope: { present: input.scope.present, missing: input.scope.missing },
   };

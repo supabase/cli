@@ -7,14 +7,17 @@ import { getDefaultCliConfig } from "@supabase/config";
 import { projectConfigMappingRows } from "@supabase/config/internal";
 import { describe, expect, it } from "vitest";
 
-import { legacySecretHash } from "./push.secret.ts";
+import { legacySecretDigestHex } from "./push.secret.ts";
 import { legacyResolveAuthSecrets } from "./push.secrets.ts";
 
 const PROJECT_REF = "abcdefghijklmnopqrst";
 
 function hex(value: string): string {
-  const digest = legacySecretHash(PROJECT_REF, value, []);
-  return digest.startsWith("hash:") ? digest.slice("hash:".length) : digest;
+  const digest = legacySecretDigestHex(PROJECT_REF, value, []);
+  if (digest === undefined) {
+    throw new Error("test fixture value must hash to a digest");
+  }
+  return digest;
 }
 
 /** A fully-enabled fixture: every one of the 5 secret-bearing families turned on with a distinct value. */
@@ -182,16 +185,21 @@ describe("legacyResolveAuthSecrets", () => {
       dotenvPrivateKeys: [],
     });
     expect(decisions).toEqual([
-      { path: ["auth", "captcha", "secret"], apiKey: "security_captcha_secret", status: "unchanged" },
+      {
+        path: ["auth", "captcha", "secret"],
+        apiKey: "security_captcha_secret",
+        status: "unchanged",
+        remoteState: "present",
+      },
     ]);
   });
 
-  it.each<[string, unknown]>([
-    ["a differing digest", hex("some-other-value")],
-    ["null", null],
-    ["an empty string", ""],
-    ["absent", undefined],
-  ])("sends the plaintext when the remote attribute is %s", (_label, remoteValue) => {
+  it.each<[string, unknown, "absent" | "present"]>([
+    ["a differing digest", hex("some-other-value"), "present"],
+    ["null", null, "absent"],
+    ["an empty string", "", "absent"],
+    ["absent", undefined, "absent"],
+  ])("sends the plaintext when the remote attribute is %s", (_label, remoteValue, remoteState) => {
     const config = buildFullyEnabledConfig();
     const local = fullyEnabledLocal();
     const remoteAuthAttributes: Record<string, unknown> =
@@ -209,6 +217,7 @@ describe("legacyResolveAuthSecrets", () => {
         path: ["auth", "captcha", "secret"],
         apiKey: "security_captcha_secret",
         status: "send",
+        remoteState,
         plaintext: "captcha-secret",
       },
     ]);
@@ -230,7 +239,12 @@ describe("legacyResolveAuthSecrets", () => {
       dotenvPrivateKeys: [],
     });
     expect(decisions).toEqual([
-      { path: ["auth", "captcha", "secret"], apiKey: "security_captcha_secret", status: "not_set" },
+      {
+        path: ["auth", "captcha", "secret"],
+        apiKey: "security_captcha_secret",
+        status: "not_set",
+        remoteState: "absent",
+      },
     ]);
   });
 
@@ -253,7 +267,12 @@ describe("legacyResolveAuthSecrets", () => {
       dotenvPrivateKeys: [],
     });
     expect(decisions).toEqual([
-      { path: ["auth", "captcha", "secret"], apiKey: "security_captcha_secret", status: "not_set" },
+      {
+        path: ["auth", "captcha", "secret"],
+        apiKey: "security_captcha_secret",
+        status: "not_set",
+        remoteState: "absent",
+      },
     ]);
   });
 
@@ -303,6 +322,29 @@ describe("legacyResolveAuthSecrets", () => {
       expect(decisions[0]?.status).toBe("gated");
       expect(decisions[0]?.plaintext).toBeUndefined();
     });
+
+    it("gates when the container is present but its `enabled` field is not a boolean (never coerced to eligible)", () => {
+      const config = buildFullyEnabledConfig();
+      // No `enabled` key at all on the captcha container — an undetermined
+      // state, not an eligible one.
+      const local: ProjectConfig = { auth: { captcha: {} } };
+      const decisions = legacyResolveAuthSecrets({
+        maskedPaths: [["auth", "captcha", "secret"]],
+        config,
+        local,
+        remoteAuthAttributes: {},
+        projectRef: PROJECT_REF,
+        dotenvPrivateKeys: [],
+      });
+      expect(decisions).toEqual([
+        {
+          path: ["auth", "captcha", "secret"],
+          apiKey: "security_captcha_secret",
+          status: "gated",
+          remoteState: "absent",
+        },
+      ]);
+    });
   });
 
   describe("dotenvx encrypted: values", () => {
@@ -330,6 +372,7 @@ describe("legacyResolveAuthSecrets", () => {
           path: ["auth", "captcha", "secret"],
           apiKey: "security_captcha_secret",
           status: "send",
+          remoteState: "absent",
           plaintext: "value",
         },
       ]);
@@ -351,7 +394,12 @@ describe("legacyResolveAuthSecrets", () => {
         dotenvPrivateKeys: [PRIVATE_KEY],
       });
       expect(decisions).toEqual([
-        { path: ["auth", "captcha", "secret"], apiKey: "security_captcha_secret", status: "unchanged" },
+        {
+          path: ["auth", "captcha", "secret"],
+          apiKey: "security_captcha_secret",
+          status: "unchanged",
+          remoteState: "present",
+        },
       ]);
     });
   });

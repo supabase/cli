@@ -21,7 +21,7 @@ import {
  * services and are intentionally not redeclared here.
  */
 
-interface NetworkErrorArgs {
+interface MessageOnlyArgs {
   readonly message: string;
 }
 
@@ -45,7 +45,7 @@ interface StatusErrorArgs {
 /** TOML parse failure (rewraps the packages/config parse error). Aborts before any network call. */
 export class LegacyConfigPushLoadConfigError extends Data.TaggedError(
   "LegacyConfigPushLoadConfigError",
-)<NetworkErrorArgs> {
+)<MessageOnlyArgs> {
   get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
     return actionability.invalidConfig;
   }
@@ -101,6 +101,22 @@ export class LegacyConfigPushConfigReadStatusError extends Data.TaggedError(
 )<StatusErrorArgs> {
   get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
     return statusCodeActionability(this.status, { notFoundIsInvalidInput: true });
+  }
+}
+
+/**
+ * The effective project config read returned 200 with NO block populated at
+ * all (`scope.present` empty) — a scoped or otherwise restricted token most
+ * plausibly produces this. Pushing against an empty remote view would mean
+ * treating every locally declared property as a fresh write with no remote
+ * value to compare against, so this aborts before touching any resource
+ * rather than risk that.
+ */
+export class LegacyConfigPushConfigEmptyError extends Data.TaggedError(
+  "LegacyConfigPushConfigEmptyError",
+)<MessageOnlyArgs> {
+  get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
+    return actionability.accountAccess;
   }
 }
 

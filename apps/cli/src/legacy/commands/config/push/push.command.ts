@@ -39,7 +39,9 @@ export const legacyConfigPushHandler = (flags: LegacyConfigPushFlags) =>
   );
 
 export const legacyConfigPushCommand = Command.make("push", config).pipe(
-  Command.withDescription("Pushes local config.toml to the linked project."),
+  Command.withDescription(
+    "Pushes the properties your local config.toml declares to the linked project. Properties the file does not declare are left unchanged; run `supabase config diff` to preview.",
+  ),
   Command.withShortDescription("Push local config to linked project"),
   Command.withExamples([
     {

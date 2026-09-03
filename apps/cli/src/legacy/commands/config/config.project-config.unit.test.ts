@@ -1,23 +1,24 @@
 /**
- * Unit tests for push.handler.ts's exported try-helper.
+ * Unit tests for `legacyConfigProjectConfigTry` — the shared try-helper for
+ * `@supabase/config`'s convergence calls (`config.project-config.ts`).
  *
- * `legacyConfigPush` itself is covered end to end by
- * `push.integration.test.ts`; `legacyPushProjectConfigTry` is the one branch
- * that integration coverage cannot exercise directly (the defect arm), so it
- * gets its own focused test here.
+ * Every real call site (`config diff`, `config pull`, `config push`) is
+ * covered end to end by its own integration suite; the one branch integration
+ * coverage cannot exercise directly is the defect arm, so it gets its own
+ * focused test here.
  */
 
 import { describe, expect, it } from "@effect/vitest";
 import { Cause, Effect, Exit } from "effect";
 import { ProjectConfigParseError } from "@supabase/config";
 
-import { legacyPushProjectConfigTry } from "./push.handler.ts";
+import { legacyConfigProjectConfigTry } from "./config.project-config.ts";
 
-describe("legacyPushProjectConfigTry", () => {
+describe("legacyConfigProjectConfigTry", () => {
   it.effect("keeps a ProjectConfigParseError as a typed failure", () => {
     const error = new ProjectConfigParseError({ message: "boom", cause: undefined });
     return Effect.gen(function* () {
-      const exit = yield* legacyPushProjectConfigTry(() => {
+      const exit = yield* legacyConfigProjectConfigTry(() => {
         throw error;
       }).pipe(Effect.exit);
       expect(Exit.isFailure(exit)).toBe(true);
@@ -30,14 +31,14 @@ describe("legacyPushProjectConfigTry", () => {
 
   it.effect("succeeds with the thunk's value when it does not throw", () => {
     return Effect.gen(function* () {
-      const result = yield* legacyPushProjectConfigTry(() => 42);
+      const result = yield* legacyConfigProjectConfigTry(() => 42);
       expect(result).toBe(42);
     });
   });
 
   it.effect("dies on any other thrown value", () => {
     return Effect.gen(function* () {
-      const exit = yield* legacyPushProjectConfigTry(() => {
+      const exit = yield* legacyConfigProjectConfigTry(() => {
         throw new Error("not a ProjectConfigParseError");
       }).pipe(Effect.exit);
       expect(Exit.isFailure(exit)).toBe(true);

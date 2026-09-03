@@ -1,7 +1,6 @@
 import {
   CLI_CONFIG_SCHEMA_URL,
   fromApiProjectConfig,
-  ProjectConfigParseError,
   type CliConfigParseError,
   type ConfigFormat,
   type LoadedCliConfig,
@@ -46,6 +45,8 @@ import {
   legacyConfigRenderPath,
   legacyConfigScopeLine,
 } from "../config.format.ts";
+import { legacyConfigProjectConfigTry } from "../config.project-config.ts";
+import { legacyConfigReadStatusMessage, legacyUnexpectedStatusMessage } from "../config.read-status.ts";
 import {
   legacyConfigPullCreatedBlockLabel,
   legacyConfigPullDestinationLine,
@@ -116,13 +117,11 @@ import type { LegacyConfigPullFlags } from "./pull.command.ts";
  * (see {@link LegacyConfigPullSource}'s own doc comment).
  */
 
-const readStatusMessage = (status: number, body: string) => `unexpected status ${status}: ${body}`;
-
 const mapBranchResolveError = mapLegacyHttpError({
   networkError: LegacyConfigPullReadNetworkError,
   statusError: LegacyConfigPullReadStatusError,
   networkMessage: (cause) => `failed to resolve branch: ${cause}`,
-  statusMessage: readStatusMessage,
+  statusMessage: legacyUnexpectedStatusMessage,
 });
 
 /** Error construction for `legacyResolveConfigTarget` (`../config.target.ts`),
@@ -143,25 +142,6 @@ const configTargetErrors = {
     }),
   mapResolveError: mapBranchResolveError,
 };
-
-/**
- * Purpose-written messages for the config-read status codes a wrong or
- * inaccessible ref most plausibly produces — copied verbatim from `config
- * diff` (`../diff/diff.handler.ts`); every other status keeps the generic
- * `unexpected status N: body` shape.
- */
-function configReadStatusMessage(status: number, body: string, ref: string): string {
-  if (status === 401) {
-    return "Authentication failed: your access token is invalid or has expired. Run `supabase login` to re-authenticate.";
-  }
-  if (status === 403) {
-    return `Access denied for project ${legacySanitizeInlineName(ref)}: your account does not have permission to view its configuration.`;
-  }
-  if (status === 404) {
-    return `Project ${legacySanitizeInlineName(ref)} not found. Check the project ref, or run \`supabase projects list\` to see the projects you have access to.`;
-  }
-  return readStatusMessage(status, body);
-}
 
 /**
  * The collision message (`LegacyConfigPullRemoteLabelCollisionError`) —
@@ -811,7 +791,7 @@ export const legacyRunConfigPull = Effect.fnUntraced(function* (input: LegacyCon
     return yield* new LegacyConfigPullReadStatusError({
       status: response.status,
       body,
-      message: configReadStatusMessage(response.status, body, ref),
+      message: legacyConfigReadStatusMessage(response.status, body, ref),
     });
   }
   const responseJson = yield* response.json.pipe(
@@ -827,22 +807,11 @@ export const legacyRunConfigPull = Effect.fnUntraced(function* (input: LegacyCon
   yield* fetching?.clear() ?? Effect.void;
 
   // Project the response through CLI-2230's convergence normalizer (ADR
-  // 0021) and classify — same typed/defect boundary as `config diff`.
-  const remote = yield* Effect.try({
-    try: () => fromApiProjectConfig(responseJson),
-    catch: (cause) => cause,
-  }).pipe(
-    Effect.catch((cause) =>
-      cause instanceof ProjectConfigParseError ? Effect.fail(cause) : Effect.die(cause),
-    ),
-  );
-  const initialChangeSet = yield* Effect.try({
-    try: () => diffProjectConfig({ local: loaded, remote }),
-    catch: (cause) => cause,
-  }).pipe(
-    Effect.catch((cause) =>
-      cause instanceof ProjectConfigParseError ? Effect.fail(cause) : Effect.die(cause),
-    ),
+  // 0021) and classify — same typed/defect boundary as `config diff`
+  // (`legacyConfigProjectConfigTry`, shared across the `config` family).
+  const remote = yield* legacyConfigProjectConfigTry(() => fromApiProjectConfig(responseJson));
+  const initialChangeSet = yield* legacyConfigProjectConfigTry(() =>
+    diffProjectConfig({ local: loaded, remote }),
   );
 
   const data = isRecord(responseJson) ? responseJson["data"] : undefined;
@@ -860,20 +829,14 @@ export const legacyRunConfigPull = Effect.fnUntraced(function* (input: LegacyCon
   // surface unpushable notes against the fixpoint's own residual (unchanged
   // from before), then run the schema-validation gate (layer 2): pull must
   // never write a file the CLI itself cannot load.
-  const fixpoint = yield* Effect.try({
-    try: () =>
-      legacyExpandConfigPullChangeSet({
-        initialChangeSet,
-        baseConfig: loaded.config,
-        baseDocument: loaded.document ?? {},
-        valueOrigins: loaded.valueOrigins,
-        remote,
-      }),
-    catch: (cause) => cause,
-  }).pipe(
-    Effect.catch((cause) =>
-      cause instanceof ProjectConfigParseError ? Effect.fail(cause) : Effect.die(cause),
-    ),
+  const fixpoint = yield* legacyConfigProjectConfigTry(() =>
+    legacyExpandConfigPullChangeSet({
+      initialChangeSet,
+      baseConfig: loaded.config,
+      baseDocument: loaded.document ?? {},
+      valueOrigins: loaded.valueOrigins,
+      remote,
+    }),
   );
   const changeSet = fixpoint.changeSet;
   const plan = legacyPlanConfigPull({

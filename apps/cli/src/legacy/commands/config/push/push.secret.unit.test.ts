@@ -2,12 +2,12 @@
  * Unit tests for push.secret.ts.
  *
  * The HMAC keys/values below were captured from the same `createHmac` the
- * implementation uses; they lock the exact `hash:<sha256hex>` serialisation.
+ * implementation uses; they lock the exact bare-hex digest.
  */
 
 import { describe, expect, it } from "vitest";
 
-import { legacySecretHash, legacySecretPlaintext } from "./push.secret.ts";
+import { legacySecretDigestHex, legacySecretPlaintext } from "./push.secret.ts";
 
 // Shared test vector — same one `legacy-vault-decrypt.unit.test.ts` uses.
 // Decrypts to the plaintext "value".
@@ -16,58 +16,60 @@ const ENCRYPTED_VALUE =
   "encrypted:BKiXH15AyRzeohGyUrmB6cGjSklCrrBjdesQlX1VcXo/Xp20Bi2gGZ3AlIqxPQDmjVAALnhZamKnuY73l8Dz1P+BYiZUgxTSLzdCvdYUyVbNekj2UudbdUizBViERtZkuQwZHIv/";
 const WRONG_KEY = "11".repeat(32);
 
-describe("legacySecretHash", () => {
-  it("returns the hash:<hmac> form for a plaintext secret", () => {
-    expect(legacySecretHash("abcdefghijklmnopqrst", "my-secret", [])).toBe(
-      "hash:64800db722cc0be9e1d816d5aed626805e91a939d2dbcbc5239cd31eeef763e9",
+describe("legacySecretDigestHex", () => {
+  it("returns the bare hmac hex for a plaintext secret", () => {
+    expect(legacySecretDigestHex("abcdefghijklmnopqrst", "my-secret", [])).toBe(
+      "64800db722cc0be9e1d816d5aed626805e91a939d2dbcbc5239cd31eeef763e9",
     );
-    expect(legacySecretHash("test", "topsecret", [])).toBe(
-      "hash:8eed2826599c798e072951884ced30954f8322fa1c3648506634e8376a740d72",
+    expect(legacySecretDigestHex("test", "topsecret", [])).toBe(
+      "8eed2826599c798e072951884ced30954f8322fa1c3648506634e8376a740d72",
     );
   });
 
   it("keys the HMAC on the project ref (same value, different ref → different hash)", () => {
-    expect(legacySecretHash("ref-a", "same", [])).not.toBe(legacySecretHash("ref-b", "same", []));
+    expect(legacySecretDigestHex("ref-a", "same", [])).not.toBe(
+      legacySecretDigestHex("ref-b", "same", []),
+    );
   });
 
-  it("returns '' for an empty value", () => {
-    expect(legacySecretHash("abcdefghijklmnopqrst", "", [])).toBe("");
+  it("returns undefined for an empty value", () => {
+    expect(legacySecretDigestHex("abcdefghijklmnopqrst", "", [])).toBeUndefined();
   });
 
-  it("returns '' for an unresolved env() reference", () => {
-    expect(legacySecretHash("abcdefghijklmnopqrst", "env(MY_SECRET)", [])).toBe("");
-    expect(legacySecretHash("abcdefghijklmnopqrst", "env()", [])).toBe("");
+  it("returns undefined for an unresolved env() reference", () => {
+    expect(legacySecretDigestHex("abcdefghijklmnopqrst", "env(MY_SECRET)", [])).toBeUndefined();
+    expect(legacySecretDigestHex("abcdefghijklmnopqrst", "env()", [])).toBeUndefined();
   });
 
   it("hashes a value that merely contains (but does not start with) 'encrypted:'", () => {
     // Only the dotenvx prefix is special; an embedded substring is a real secret.
-    expect(legacySecretHash("test", "not-encrypted:value", [])).toBe(
-      legacySecretHash("test", "not-encrypted:value", []),
+    expect(legacySecretDigestHex("test", "not-encrypted:value", [])).toBe(
+      legacySecretDigestHex("test", "not-encrypted:value", []),
     );
-    expect(legacySecretHash("test", "not-encrypted:value", []).startsWith("hash:")).toBe(true);
+    expect(legacySecretDigestHex("test", "not-encrypted:value", [])).toMatch(/^[0-9a-f]+$/);
   });
 
   describe("dotenvx encrypted: values", () => {
     it("decrypts before hashing (hash matches the decrypted plaintext, not the ciphertext)", () => {
-      expect(legacySecretHash("abcdefghijklmnopqrst", ENCRYPTED_VALUE, [PRIVATE_KEY])).toBe(
-        legacySecretHash("abcdefghijklmnopqrst", "value", []),
+      expect(legacySecretDigestHex("abcdefghijklmnopqrst", ENCRYPTED_VALUE, [PRIVATE_KEY])).toBe(
+        legacySecretDigestHex("abcdefghijklmnopqrst", "value", []),
       );
     });
 
     it("tries each key and the first working one wins", () => {
-      expect(legacySecretHash("test", ENCRYPTED_VALUE, [WRONG_KEY, PRIVATE_KEY])).toBe(
-        legacySecretHash("test", "value", []),
+      expect(legacySecretDigestHex("test", ENCRYPTED_VALUE, [WRONG_KEY, PRIVATE_KEY])).toBe(
+        legacySecretDigestHex("test", "value", []),
       );
     });
 
     it("throws 'failed to parse config: missing private key' with no keys", () => {
-      expect(() => legacySecretHash("test", ENCRYPTED_VALUE, [])).toThrow(
+      expect(() => legacySecretDigestHex("test", ENCRYPTED_VALUE, [])).toThrow(
         "failed to parse config: missing private key",
       );
     });
 
     it("throws 'failed to parse config: failed to decrypt secret: ...' for a wrong key", () => {
-      expect(() => legacySecretHash("test", ENCRYPTED_VALUE, [WRONG_KEY])).toThrow(
+      expect(() => legacySecretDigestHex("test", ENCRYPTED_VALUE, [WRONG_KEY])).toThrow(
         /^failed to parse config: failed to decrypt secret:/,
       );
     });

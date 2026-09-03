@@ -2,21 +2,43 @@
  * Pure encoders that turn the changes routed to one `config push` resource
  * into a v1 update-request body.
  *
- * Encoders take the whole local projection, not just the changed leaves,
- * because several endpoints need companion values the API requires
- * together (`db_schema` when enabling the Data API, both CIDR arrays, the
- * iceberg/vector containers' required inner keys, the active SMS provider's
- * credential set). The change list decides *which* keys ship; the
- * projection supplies the *values*.
+ * Encoders take the whole local AND remote projections, not just the
+ * changed leaves, because several endpoints need companion values the API
+ * requires together (`db_schema` when enabling the Data API, both CIDR
+ * arrays, the iceberg/vector containers' required inner keys, the active SMS
+ * provider's credential set). The change list decides *which* keys ship; a
+ * companion's value always prefers the project's CURRENT (`remote`) value
+ * over a schema-materialized local default, so an undeclared companion never
+ * gets clobbered with a default the user never asked for. Only when `remote`
+ * doesn't report a companion at all does resolution fall through to `local`
+ * (and, for the storage feature containers only, the decoded `config`) — and
+ * that fallback is disclosed via `forced`, never applied silently.
  */
 
 import type { CliConfig, ProjectConfig } from "@supabase/config";
 import type { ConfigChange } from "@supabase/config/internal";
-import { AUTH_HOOK_NAMES, projectConfigMappingRows } from "@supabase/config/internal";
+import { AUTH_HOOK_NAMES } from "@supabase/config/internal";
 
 import { ramInBytes } from "../../../shared/legacy-size-units.ts";
 import { legacyPasswordRequirementsToChar } from "../../../shared/legacy-password-requirements.ts";
 import { legacyParseDuration } from "./push.duration.ts";
+import {
+  legacyComparePaths,
+  legacyContainerEnabled,
+  legacyIsPrefixOf,
+  legacyIsRecord,
+  legacySamePath,
+  legacyValueAtPath,
+} from "./push.paths.ts";
+import {
+  LEGACY_EMAIL_NOTIFICATION_NAMES,
+  LEGACY_EMAIL_TEMPLATE_NAMES,
+  LEGACY_EXTERNAL_PROVIDER_IDS,
+  LEGACY_PROVIDERS_WITH_EMAIL_OPTIONAL,
+  LEGACY_PROVIDERS_WITH_SKIP_NONCE_CHECK,
+  LEGACY_PROVIDERS_WITH_URL,
+  LEGACY_SMS_PROVIDER_NAMES,
+} from "./push.registry-names.ts";
 import type { LegacyAuthEmailContent } from "./push.auth-email-content.ts";
 import type { LegacyPushSecretDecision } from "./push.secrets.ts";
 
@@ -25,20 +47,31 @@ export interface LegacyPushEncoderInput {
   readonly changes: ReadonlyArray<ConfigChange>;
   /** `fromConfigDocument(loaded)` — canonical, presence-masked, sentinel-pruned. */
   readonly local: ProjectConfig;
-  /**
-   * The decoded config, used ONLY as the fallback source for required-together
-   * keys the projection prunes (the storage feature containers' `max_*`).
-   */
+  /** `fromApiProjectConfig(response)` — the project's current effective config. */
+  readonly remote: ProjectConfig;
+}
+
+/**
+ * The storage encoder's own input: adds the decoded `config` as the LAST
+ * resort for the `storage.analytics`/`storage.vector` containers' required
+ * inner keys, which the local projection prunes entirely once disabled
+ * (CLI-2314 readiness). No other encoder needs this fourth tier.
+ */
+export interface LegacyStorageEncoderInput extends LegacyPushEncoderInput {
   readonly config: CliConfig;
 }
 
 export interface LegacyPushEncoded<Body> {
   /** `undefined` = nothing to write for this resource. */
   readonly body: Body | undefined;
-  /** Change paths this body communicates (drives per-service `changes`). */
+  /** Change paths this body communicated, sorted. */
   readonly encoded: ReadonlyArray<ReadonlyArray<string>>;
-  /** Pushable changes this endpoint structurally cannot express. */
-  readonly unencodable: ReadonlyArray<ReadonlyArray<string>>;
+  /** Pushable changes this endpoint structurally cannot express, sorted. */
+  readonly unencodable: ReadonlyArray<{ readonly path: ReadonlyArray<string>; readonly reason: string }>;
+  /** Push-only content paths (mailer template/notification HTML) this body communicated — never a registry-comparable change. */
+  readonly extras: ReadonlyArray<{ readonly path: ReadonlyArray<string>; readonly label: "content" }>;
+  /** Undeclared companions the request had to send at a local/schema-default value because `remote` didn't report them, sorted. */
+  readonly forced: ReadonlyArray<{ readonly path: ReadonlyArray<string>; readonly value: unknown }>;
 }
 
 export interface LegacyApiUpdateBody {
@@ -84,72 +117,108 @@ export interface LegacyAuthEncoderInput extends LegacyPushEncoderInput {
   readonly now: Date;
 }
 
+// --- shared reasons (D5; everything else is a defensive fallback that the
+// mapping registry's own schema validation should make unreachable) --------
+
+const REASON_API_ENABLE_NEEDS_SCHEMA =
+  "enabling the Data API needs at least one schema in api.schemas";
+const REASON_SMS_ACTIVE_PROVIDER_ONLY =
+  "config push can switch between SMS providers but cannot turn the active provider off; disable phone sign-in or use the dashboard";
+const REASON_CONTAINER_STATE_UNKNOWN =
+  "the container's enabled state could not be determined from the declared config";
+const REASON_BYTES_SIZE = "the declared value is not a valid byte size";
+const REASON_GROUP_INCOMPLETE =
+  "one or more of this group's required fields could not be resolved";
+const REASON_VALUE_NOT_REPRESENTABLE = "the declared value could not be represented in the request";
+
 // --- generic path/value helpers ---------------------------------------------
-
-function isRecord(value: unknown): value is Readonly<Record<string, unknown>> {
-  return typeof value === "object" && value !== null && !Array.isArray(value);
-}
-
-function valueAtPath(root: unknown, path: ReadonlyArray<string>): unknown {
-  let current: unknown = root;
-  for (const segment of path) {
-    if (!isRecord(current)) return undefined;
-    current = current[segment];
-  }
-  return current;
-}
-
-function samePath(a: ReadonlyArray<string>, b: ReadonlyArray<string>): boolean {
-  return a.length === b.length && a.every((segment, index) => segment === b[index]);
-}
-
-function isPrefixOf(prefix: ReadonlyArray<string>, path: ReadonlyArray<string>): boolean {
-  return prefix.length <= path.length && prefix.every((segment, index) => path[index] === segment);
-}
 
 function findChange(
   changes: ReadonlyArray<ConfigChange>,
   path: ReadonlyArray<string>,
 ): ConfigChange | undefined {
-  return changes.find((change) => samePath(change.path, path));
+  return changes.find((change) => legacySamePath(change.path, path));
 }
 
 function changesUnderPrefix(
   changes: ReadonlyArray<ConfigChange>,
   prefix: ReadonlyArray<string>,
 ): ReadonlyArray<ConfigChange> {
-  return changes.filter((change) => isPrefixOf(prefix, change.path));
+  return changes.filter((change) => legacyIsPrefixOf(prefix, change.path));
+}
+
+type LeafSource = "change" | "remote" | "local" | "config" | "none";
+
+interface LeafResolution {
+  readonly value: unknown;
+  readonly source: LeafSource;
 }
 
 /**
- * Resolves a companion value for a container/whole write: the matching
- * change's own local value first (correct even when the projection later
- * prunes the container this leaf belonged to), then the local projection,
- * then the decoded config as a last resort (the storage feature containers'
- * `max_*`, which the projection prunes entirely once disabled).
+ * Resolves a companion value in preference order: the matching routed
+ * change's own new value, then the project's current (`remote`) value, then
+ * the local projection (which may hold a schema-materialized default rather
+ * than a declared value). See this module's header comment for why the
+ * order is this way.
  */
 function resolveLeaf(
   changes: ReadonlyArray<ConfigChange>,
   path: ReadonlyArray<string>,
-  local: unknown,
-  config: unknown,
-): unknown {
+  remote: ProjectConfig,
+  local: ProjectConfig,
+): LeafResolution {
   const change = findChange(changes, path);
   if (change !== undefined) {
-    return change.local;
+    return { value: change.local, source: "change" };
   }
-  const fromLocal = valueAtPath(local, path);
+  const fromRemote = legacyValueAtPath(remote, path);
+  if (fromRemote !== undefined) {
+    return { value: fromRemote, source: "remote" };
+  }
+  const fromLocal = legacyValueAtPath(local, path);
   if (fromLocal !== undefined) {
-    return fromLocal;
+    return { value: fromLocal, source: "local" };
   }
-  return valueAtPath(config, path);
+  return { value: undefined, source: "none" };
+}
+
+/**
+ * {@link resolveLeaf}, with a fourth fallback tier for the storage feature
+ * containers only: the decoded `config`'s schema-materialized value, for the
+ * `max_*` keys the local projection prunes entirely once a feature is
+ * disabled.
+ */
+function resolveStorageFeatureLeaf(
+  changes: ReadonlyArray<ConfigChange>,
+  path: ReadonlyArray<string>,
+  remote: ProjectConfig,
+  local: ProjectConfig,
+  prunedFallback: CliConfig,
+): LeafResolution {
+  const resolved = resolveLeaf(changes, path, remote, local);
+  if (resolved.source !== "none") {
+    return resolved;
+  }
+  const fromConfig = legacyValueAtPath(prunedFallback, path);
+  return fromConfig === undefined ? resolved : { value: fromConfig, source: "config" };
+}
+
+/** Records a companion as `forced` when it was NOT itself a routed change AND `remote` didn't report it. */
+function pushForced(
+  forced: Array<{ path: ReadonlyArray<string>; value: unknown }>,
+  path: ReadonlyArray<string>,
+  resolved: LeafResolution,
+): void {
+  if (resolved.source === "local" || resolved.source === "config") {
+    forced.push({ path, value: resolved.value });
+  }
 }
 
 function findSecretDecision(
   secrets: ReadonlyArray<LegacyPushSecretDecision>,
   path: ReadonlyArray<string>,
 ): LegacyPushSecretDecision | undefined {
-  return secrets.find((decision) => samePath(decision.path, path));
+  return secrets.find((decision) => legacySamePath(decision.path, path));
 }
 
 function asString(value: unknown): string | undefined {
@@ -171,7 +240,7 @@ function asStringArray(value: unknown): ReadonlyArray<string> | undefined {
 }
 
 function asStringRecord(value: unknown): Readonly<Record<string, string>> | undefined {
-  if (!isRecord(value)) {
+  if (!legacyIsRecord(value)) {
     return undefined;
   }
   const result: Record<string, string> = {};
@@ -184,12 +253,18 @@ function asStringRecord(value: unknown): Readonly<Record<string, string>> | unde
   return result;
 }
 
+function sortByPath<T extends { readonly path: ReadonlyArray<string> }>(
+  entries: ReadonlyArray<T>,
+): ReadonlyArray<T> {
+  return [...entries].sort((a, b) => legacyComparePaths(a.path, b.path));
+}
+
 /** Adds one leaf mapping to `body` when `path` has a routed change; `transform` returning `undefined` marks it unencodable instead. */
 function makeLeafAdder(
   changes: ReadonlyArray<ConfigChange>,
   body: Record<string, unknown>,
   encoded: Array<ReadonlyArray<string>>,
-  unencodable: Array<ReadonlyArray<string>>,
+  unencodable: Array<{ path: ReadonlyArray<string>; reason: string }>,
 ) {
   return (
     path: ReadonlyArray<string>,
@@ -202,7 +277,7 @@ function makeLeafAdder(
     }
     const value = transform(change.local);
     if (value === undefined) {
-      unencodable.push(change.path);
+      unencodable.push({ path: change.path, reason: REASON_VALUE_NOT_REPRESENTABLE });
       return;
     }
     body[apiKey] = value;
@@ -215,29 +290,37 @@ function makeLeafAdder(
 export function legacyEncodeApiBody(
   input: LegacyPushEncoderInput,
 ): LegacyPushEncoded<LegacyApiUpdateBody> {
-  const { changes, local, config } = input;
+  const { changes, local, remote } = input;
   const encoded: Array<ReadonlyArray<string>> = [];
-  const unencodable: Array<ReadonlyArray<string>> = [];
+  const unencodable: Array<{ path: ReadonlyArray<string>; reason: string }> = [];
+  const forced: Array<{ path: ReadonlyArray<string>; value: unknown }> = [];
 
   let dbSchema: string | undefined;
   const enabledChange = findChange(changes, ["api", "enabled"]);
   const schemasChange = findChange(changes, ["api", "schemas"]);
   if (enabledChange !== undefined || schemasChange !== undefined) {
-    const triggerPaths: Array<ReadonlyArray<string>> = [];
-    if (enabledChange !== undefined) triggerPaths.push(enabledChange.path);
-    if (schemasChange !== undefined) triggerPaths.push(schemasChange.path);
+    const triggerPaths = [enabledChange, schemasChange]
+      .filter((change): change is ConfigChange => change !== undefined)
+      .map((change) => change.path);
 
-    const enabled = resolveLeaf(changes, ["api", "enabled"], local, config);
+    const enabledResolved = resolveLeaf(changes, ["api", "enabled"], remote, local);
+    const enabled = asBoolean(enabledResolved.value);
     if (enabled === false) {
       dbSchema = "";
       encoded.push(...triggerPaths);
+      pushForced(forced, ["api", "enabled"], enabledResolved);
     } else {
-      const schemas = asStringArray(resolveLeaf(changes, ["api", "schemas"], local, config)) ?? [];
+      const schemasResolved = resolveLeaf(changes, ["api", "schemas"], remote, local);
+      const schemas = asStringArray(schemasResolved.value) ?? [];
       if (schemas.length === 0) {
-        unencodable.push(...triggerPaths);
+        for (const path of triggerPaths) {
+          unencodable.push({ path, reason: REASON_API_ENABLE_NEEDS_SCHEMA });
+        }
       } else {
         dbSchema = schemas.join(",");
         encoded.push(...triggerPaths);
+        pushForced(forced, ["api", "enabled"], enabledResolved);
+        pushForced(forced, ["api", "schemas"], schemasResolved);
       }
     }
   }
@@ -253,21 +336,27 @@ export function legacyEncodeApiBody(
   const maxRowsChange = findChange(changes, ["api", "max_rows"]);
   if (maxRowsChange !== undefined) {
     const value = asNumber(maxRowsChange.local);
-    if (value !== undefined && value > 0) {
+    if (value !== undefined) {
       maxRows = value;
       encoded.push(maxRowsChange.path);
     } else {
-      unencodable.push(maxRowsChange.path);
+      unencodable.push({ path: maxRowsChange.path, reason: REASON_VALUE_NOT_REPRESENTABLE });
     }
   }
 
+  const body: LegacyApiUpdateBody = {
+    ...(dbSchema !== undefined ? { db_schema: dbSchema } : {}),
+    ...(dbExtraSearchPath !== undefined ? { db_extra_search_path: dbExtraSearchPath } : {}),
+    ...(maxRows !== undefined ? { max_rows: maxRows } : {}),
+  };
   const hasBody = dbSchema !== undefined || dbExtraSearchPath !== undefined || maxRows !== undefined;
+
   return {
-    body: hasBody
-      ? { db_schema: dbSchema, db_extra_search_path: dbExtraSearchPath, max_rows: maxRows }
-      : undefined,
-    encoded,
-    unencodable,
+    body: hasBody ? body : undefined,
+    encoded: [...encoded].sort(legacyComparePaths),
+    unencodable: sortByPath(unencodable),
+    extras: [],
+    forced: sortByPath(forced),
   };
 }
 
@@ -279,7 +368,7 @@ export function legacyEncodeDbSettingsBody(
   const { changes } = input;
   const body: Record<string, string | number | boolean> = {};
   const encoded: Array<ReadonlyArray<string>> = [];
-  const unencodable: Array<ReadonlyArray<string>> = [];
+  const unencodable: Array<{ path: ReadonlyArray<string>; reason: string }> = [];
 
   for (const change of changes) {
     const key = change.path.at(-1);
@@ -291,11 +380,17 @@ export function legacyEncodeDbSettingsBody(
       body[key] = value;
       encoded.push(change.path);
     } else {
-      unencodable.push(change.path);
+      unencodable.push({ path: change.path, reason: REASON_VALUE_NOT_REPRESENTABLE });
     }
   }
 
-  return { body: Object.keys(body).length > 0 ? body : undefined, encoded, unencodable };
+  return {
+    body: Object.keys(body).length > 0 ? body : undefined,
+    encoded: [...encoded].sort(legacyComparePaths),
+    unencodable: sortByPath(unencodable),
+    extras: [],
+    forced: [],
+  };
 }
 
 // --- db.network_restrictions -----------------------------------------------
@@ -303,24 +398,37 @@ export function legacyEncodeDbSettingsBody(
 export function legacyEncodeNetworkRestrictionsBody(
   input: LegacyPushEncoderInput,
 ): LegacyPushEncoded<LegacyNetworkRestrictionsUpdateBody> {
-  const { changes, local, config } = input;
+  const { changes, local, remote } = input;
   const relevant = changesUnderPrefix(changes, ["db", "network_restrictions"]);
   if (relevant.length === 0) {
-    return { body: undefined, encoded: [], unencodable: [] };
+    return { body: undefined, encoded: [], unencodable: [], extras: [], forced: [] };
   }
 
-  const allowedCidrs =
-    asStringArray(resolveLeaf(changes, ["db", "network_restrictions", "allowed_cidrs"], local, config)) ??
-    [];
-  const allowedCidrsV6 =
-    asStringArray(
-      resolveLeaf(changes, ["db", "network_restrictions", "allowed_cidrs_v6"], local, config),
-    ) ?? [];
+  const forced: Array<{ path: ReadonlyArray<string>; value: unknown }> = [];
+  const cidrsResolved = resolveLeaf(
+    changes,
+    ["db", "network_restrictions", "allowed_cidrs"],
+    remote,
+    local,
+  );
+  const cidrsV6Resolved = resolveLeaf(
+    changes,
+    ["db", "network_restrictions", "allowed_cidrs_v6"],
+    remote,
+    local,
+  );
+  pushForced(forced, ["db", "network_restrictions", "allowed_cidrs"], cidrsResolved);
+  pushForced(forced, ["db", "network_restrictions", "allowed_cidrs_v6"], cidrsV6Resolved);
+
+  const allowedCidrs = asStringArray(cidrsResolved.value) ?? [];
+  const allowedCidrsV6 = asStringArray(cidrsV6Resolved.value) ?? [];
 
   return {
     body: { dbAllowedCidrs: allowedCidrs, dbAllowedCidrsV6: allowedCidrsV6 },
-    encoded: relevant.map((change) => change.path),
+    encoded: relevant.map((change) => change.path).sort(legacyComparePaths),
     unencodable: [],
+    extras: [],
+    forced: sortByPath(forced),
   };
 }
 
@@ -332,16 +440,24 @@ export function legacyEncodeSslEnforcementBody(
   const { changes } = input;
   const change = findChange(changes, ["db", "ssl_enforcement", "enabled"]);
   if (change === undefined) {
-    return { body: undefined, encoded: [], unencodable: [] };
+    return { body: undefined, encoded: [], unencodable: [], extras: [], forced: [] };
   }
   const enabled = asBoolean(change.local);
   if (enabled === undefined) {
-    return { body: undefined, encoded: [], unencodable: [change.path] };
+    return {
+      body: undefined,
+      encoded: [],
+      unencodable: [{ path: change.path, reason: REASON_VALUE_NOT_REPRESENTABLE }],
+      extras: [],
+      forced: [],
+    };
   }
   return {
     body: { requestedConfig: { database: enabled } },
     encoded: [change.path],
     unencodable: [],
+    extras: [],
+    forced: [],
   };
 }
 
@@ -361,11 +477,12 @@ interface LegacyStorageVectorBucketsBody {
 }
 
 export function legacyEncodeStorageBody(
-  input: LegacyPushEncoderInput,
+  input: LegacyStorageEncoderInput,
 ): LegacyPushEncoded<LegacyStorageUpdateBody> {
-  const { changes, local, config } = input;
+  const { changes, local, remote, config } = input;
   const encoded: Array<ReadonlyArray<string>> = [];
-  const unencodable: Array<ReadonlyArray<string>> = [];
+  const unencodable: Array<{ path: ReadonlyArray<string>; reason: string }> = [];
+  const forced: Array<{ path: ReadonlyArray<string>; value: unknown }> = [];
 
   let fileSizeLimit: number | undefined;
   const fileSizeLimitChange = findChange(changes, ["storage", "file_size_limit"]);
@@ -376,10 +493,10 @@ export function legacyEncodeStorageBody(
         fileSizeLimit = ramInBytes(raw);
         encoded.push(fileSizeLimitChange.path);
       } catch {
-        unencodable.push(fileSizeLimitChange.path);
+        unencodable.push({ path: fileSizeLimitChange.path, reason: REASON_BYTES_SIZE });
       }
     } else {
-      unencodable.push(fileSizeLimitChange.path);
+      unencodable.push({ path: fileSizeLimitChange.path, reason: REASON_BYTES_SIZE });
     }
   }
 
@@ -388,7 +505,10 @@ export function legacyEncodeStorageBody(
   if (imageTransformationChange !== undefined) {
     const enabled = asBoolean(imageTransformationChange.local);
     if (enabled === undefined) {
-      unencodable.push(imageTransformationChange.path);
+      unencodable.push({
+        path: imageTransformationChange.path,
+        reason: REASON_VALUE_NOT_REPRESENTABLE,
+      });
     } else {
       imageTransformation = { enabled };
       encoded.push(imageTransformationChange.path);
@@ -400,7 +520,7 @@ export function legacyEncodeStorageBody(
   if (s3ProtocolChange !== undefined) {
     const enabled = asBoolean(s3ProtocolChange.local);
     if (enabled === undefined) {
-      unencodable.push(s3ProtocolChange.path);
+      unencodable.push({ path: s3ProtocolChange.path, reason: REASON_VALUE_NOT_REPRESENTABLE });
     } else {
       s3Protocol = { enabled };
       encoded.push(s3ProtocolChange.path);
@@ -411,16 +531,38 @@ export function legacyEncodeStorageBody(
   const analyticsChanges = changesUnderPrefix(changes, ["storage", "analytics"]);
   if (analyticsChanges.length > 0) {
     const analyticsPaths = analyticsChanges.map((change) => change.path);
-    const enabled = asBoolean(resolveLeaf(changes, ["storage", "analytics", "enabled"], local, config));
-    const maxNamespaces = asNumber(
-      resolveLeaf(changes, ["storage", "analytics", "max_namespaces"], local, config),
+    const enabledR = resolveStorageFeatureLeaf(
+      changes,
+      ["storage", "analytics", "enabled"],
+      remote,
+      local,
+      config,
     );
-    const maxTables = asNumber(
-      resolveLeaf(changes, ["storage", "analytics", "max_tables"], local, config),
+    const maxNamespacesR = resolveStorageFeatureLeaf(
+      changes,
+      ["storage", "analytics", "max_namespaces"],
+      remote,
+      local,
+      config,
     );
-    const maxCatalogs = asNumber(
-      resolveLeaf(changes, ["storage", "analytics", "max_catalogs"], local, config),
+    const maxTablesR = resolveStorageFeatureLeaf(
+      changes,
+      ["storage", "analytics", "max_tables"],
+      remote,
+      local,
+      config,
     );
+    const maxCatalogsR = resolveStorageFeatureLeaf(
+      changes,
+      ["storage", "analytics", "max_catalogs"],
+      remote,
+      local,
+      config,
+    );
+    const enabled = asBoolean(enabledR.value);
+    const maxNamespaces = asNumber(maxNamespacesR.value);
+    const maxTables = asNumber(maxTablesR.value);
+    const maxCatalogs = asNumber(maxCatalogsR.value);
     if (
       enabled !== undefined &&
       maxNamespaces !== undefined &&
@@ -429,8 +571,14 @@ export function legacyEncodeStorageBody(
     ) {
       icebergCatalog = { enabled, maxNamespaces, maxTables, maxCatalogs };
       encoded.push(...analyticsPaths);
+      pushForced(forced, ["storage", "analytics", "enabled"], enabledR);
+      pushForced(forced, ["storage", "analytics", "max_namespaces"], maxNamespacesR);
+      pushForced(forced, ["storage", "analytics", "max_tables"], maxTablesR);
+      pushForced(forced, ["storage", "analytics", "max_catalogs"], maxCatalogsR);
     } else {
-      unencodable.push(...analyticsPaths);
+      for (const path of analyticsPaths) {
+        unencodable.push({ path, reason: REASON_GROUP_INCOMPLETE });
+      }
     }
   }
 
@@ -438,39 +586,62 @@ export function legacyEncodeStorageBody(
   const vectorChanges = changesUnderPrefix(changes, ["storage", "vector"]);
   if (vectorChanges.length > 0) {
     const vectorPaths = vectorChanges.map((change) => change.path);
-    const enabled = asBoolean(resolveLeaf(changes, ["storage", "vector", "enabled"], local, config));
-    const maxBuckets = asNumber(
-      resolveLeaf(changes, ["storage", "vector", "max_buckets"], local, config),
+    const enabledR = resolveStorageFeatureLeaf(
+      changes,
+      ["storage", "vector", "enabled"],
+      remote,
+      local,
+      config,
     );
-    const maxIndexes = asNumber(
-      resolveLeaf(changes, ["storage", "vector", "max_indexes"], local, config),
+    const maxBucketsR = resolveStorageFeatureLeaf(
+      changes,
+      ["storage", "vector", "max_buckets"],
+      remote,
+      local,
+      config,
     );
+    const maxIndexesR = resolveStorageFeatureLeaf(
+      changes,
+      ["storage", "vector", "max_indexes"],
+      remote,
+      local,
+      config,
+    );
+    const enabled = asBoolean(enabledR.value);
+    const maxBuckets = asNumber(maxBucketsR.value);
+    const maxIndexes = asNumber(maxIndexesR.value);
     if (enabled !== undefined && maxBuckets !== undefined && maxIndexes !== undefined) {
       vectorBuckets = { enabled, maxBuckets, maxIndexes };
       encoded.push(...vectorPaths);
+      pushForced(forced, ["storage", "vector", "enabled"], enabledR);
+      pushForced(forced, ["storage", "vector", "max_buckets"], maxBucketsR);
+      pushForced(forced, ["storage", "vector", "max_indexes"], maxIndexesR);
     } else {
-      unencodable.push(...vectorPaths);
+      for (const path of vectorPaths) {
+        unencodable.push({ path, reason: REASON_GROUP_INCOMPLETE });
+      }
     }
   }
 
-  const hasFeatures =
-    imageTransformation !== undefined ||
-    s3Protocol !== undefined ||
-    icebergCatalog !== undefined ||
-    vectorBuckets !== undefined;
+  const features: NonNullable<LegacyStorageUpdateBody["features"]> = {
+    ...(imageTransformation !== undefined ? { imageTransformation } : {}),
+    ...(s3Protocol !== undefined ? { s3Protocol } : {}),
+    ...(icebergCatalog !== undefined ? { icebergCatalog } : {}),
+    ...(vectorBuckets !== undefined ? { vectorBuckets } : {}),
+  };
+  const hasFeatures = Object.keys(features).length > 0;
+  const body: LegacyStorageUpdateBody = {
+    ...(fileSizeLimit !== undefined ? { fileSizeLimit } : {}),
+    ...(hasFeatures ? { features } : {}),
+  };
   const hasBody = fileSizeLimit !== undefined || hasFeatures;
 
   return {
-    body: hasBody
-      ? {
-          fileSizeLimit,
-          features: hasFeatures
-            ? { imageTransformation, s3Protocol, icebergCatalog, vectorBuckets }
-            : undefined,
-        }
-      : undefined,
-    encoded,
-    unencodable,
+    body: hasBody ? body : undefined,
+    encoded: [...encoded].sort(legacyComparePaths),
+    unencodable: sortByPath(unencodable),
+    extras: [],
+    forced: sortByPath(forced),
   };
 }
 
@@ -513,115 +684,40 @@ function tenYearsFromNow(now: Date): Date {
   return validUntil;
 }
 
-function hasRegistryRowAt(path: ReadonlyArray<string>): boolean {
-  return projectConfigMappingRows.some((row) => samePath(row.configPath, path));
-}
-
-/** The 19 external-provider ids, derived from every `["auth","external",id,"enabled"]` registry row. */
-const EXTERNAL_PROVIDER_IDS: ReadonlyArray<string> = (() => {
-  const ids: Array<string> = [];
-  for (const row of projectConfigMappingRows) {
-    if (
-      row.configPath.length === 4 &&
-      row.configPath[0] === "auth" &&
-      row.configPath[1] === "external" &&
-      row.configPath[3] === "enabled"
-    ) {
-      const id = row.configPath[2];
-      if (id !== undefined) ids.push(id);
-    }
-  }
-  return ids;
-})();
-
-/** Providers with an `external_<id>_url` field — derived from the registry's own `url` rows. */
-const PROVIDERS_WITH_URL: ReadonlySet<string> = new Set(
-  EXTERNAL_PROVIDER_IDS.filter((id) => hasRegistryRowAt(["auth", "external", id, "url"])),
-);
-
-/** Providers with an `external_<id>_skip_nonce_check` field — google only, derived from its registry row. */
-const PROVIDERS_WITH_SKIP_NONCE_CHECK: ReadonlySet<string> = new Set(
-  EXTERNAL_PROVIDER_IDS.filter((id) => hasRegistryRowAt(["auth", "external", id, "skip_nonce_check"])),
-);
-
-/** The 5 SMS provider names, in the registry's own (precedence) order. */
-const SMS_PROVIDER_NAMES: ReadonlyArray<string> = (() => {
-  const names: Array<string> = [];
-  for (const row of projectConfigMappingRows) {
-    if (
-      row.configPath.length === 4 &&
-      row.configPath[0] === "auth" &&
-      row.configPath[1] === "sms" &&
-      row.configPath[3] === "enabled" &&
-      row.apiPath.length === 2 &&
-      row.apiPath[0] === "auth" &&
-      row.apiPath[1] === "sms_provider"
-    ) {
-      const name = row.configPath[2];
-      if (name !== undefined) names.push(name);
-    }
-  }
-  return names;
-})();
-
-/** The 6 email template names, derived from the registry's `subject` rows. */
-const EMAIL_TEMPLATE_NAMES: ReadonlyArray<string> = (() => {
-  const names: Array<string> = [];
-  for (const row of projectConfigMappingRows) {
-    if (
-      row.configPath.length === 5 &&
-      row.configPath[0] === "auth" &&
-      row.configPath[1] === "email" &&
-      row.configPath[2] === "template" &&
-      row.configPath[4] === "subject"
-    ) {
-      const name = row.configPath[3];
-      if (name !== undefined) names.push(name);
-    }
-  }
-  return names;
-})();
-
-/** The 7 email notification names, derived from the registry's `enabled` rows. */
-const EMAIL_NOTIFICATION_NAMES: ReadonlyArray<string> = (() => {
-  const names: Array<string> = [];
-  for (const row of projectConfigMappingRows) {
-    if (
-      row.configPath.length === 5 &&
-      row.configPath[0] === "auth" &&
-      row.configPath[1] === "email" &&
-      row.configPath[2] === "notification" &&
-      row.configPath[4] === "enabled"
-    ) {
-      const name = row.configPath[3];
-      if (name !== undefined) names.push(name);
-    }
-  }
-  return names;
-})();
-
 function encodeSmtpContainer(
   changes: ReadonlyArray<ConfigChange>,
+  remote: ProjectConfig,
   local: ProjectConfig,
-  config: CliConfig,
   secrets: ReadonlyArray<LegacyPushSecretDecision>,
-): Record<string, unknown> {
-  const enabled = asBoolean(resolveLeaf(changes, ["auth", "email", "smtp", "enabled"], local, config)) ?? false;
+  forced: Array<{ path: ReadonlyArray<string>; value: unknown }>,
+): Record<string, unknown> | undefined {
+  const containerPath = ["auth", "email", "smtp"];
+  const enabled = legacyContainerEnabled(local, containerPath);
+  if (enabled === undefined) {
+    return undefined;
+  }
   if (!enabled) {
     return { smtp_host: "" };
   }
+  const hostR = resolveLeaf(changes, [...containerPath, "host"], remote, local);
+  const portR = resolveLeaf(changes, [...containerPath, "port"], remote, local);
+  const userR = resolveLeaf(changes, [...containerPath, "user"], remote, local);
+  const adminEmailR = resolveLeaf(changes, [...containerPath, "admin_email"], remote, local);
+  const senderNameR = resolveLeaf(changes, [...containerPath, "sender_name"], remote, local);
+  pushForced(forced, [...containerPath, "host"], hostR);
+  pushForced(forced, [...containerPath, "port"], portR);
+  pushForced(forced, [...containerPath, "user"], userR);
+  pushForced(forced, [...containerPath, "admin_email"], adminEmailR);
+  pushForced(forced, [...containerPath, "sender_name"], senderNameR);
+
   const body: Record<string, unknown> = {
-    smtp_host: asString(resolveLeaf(changes, ["auth", "email", "smtp", "host"], local, config)) ?? "",
-    smtp_port: String(
-      asNumber(resolveLeaf(changes, ["auth", "email", "smtp", "port"], local, config)) ?? 0,
-    ),
-    smtp_user: asString(resolveLeaf(changes, ["auth", "email", "smtp", "user"], local, config)) ?? "",
-    smtp_admin_email:
-      asString(resolveLeaf(changes, ["auth", "email", "smtp", "admin_email"], local, config)) ?? "",
-    smtp_sender_name:
-      asString(resolveLeaf(changes, ["auth", "email", "smtp", "sender_name"], local, config)) ?? "",
+    smtp_host: asString(hostR.value) ?? "",
+    smtp_port: String(asNumber(portR.value) ?? 0),
+    smtp_user: asString(userR.value) ?? "",
+    smtp_admin_email: asString(adminEmailR.value) ?? "",
+    smtp_sender_name: asString(senderNameR.value) ?? "",
   };
-  const secret = findSecretDecision(secrets, ["auth", "email", "smtp", "pass"]);
+  const secret = findSecretDecision(secrets, [...containerPath, "pass"]);
   if (secret?.status === "send") {
     body[secret.apiKey] = secret.plaintext;
   }
@@ -630,21 +726,27 @@ function encodeSmtpContainer(
 
 function encodeCaptchaContainer(
   changes: ReadonlyArray<ConfigChange>,
+  remote: ProjectConfig,
   local: ProjectConfig,
-  config: CliConfig,
   secrets: ReadonlyArray<LegacyPushSecretDecision>,
-): Record<string, unknown> {
-  const enabled =
-    asBoolean(resolveLeaf(changes, ["auth", "captcha", "enabled"], local, config)) ?? false;
+  forced: Array<{ path: ReadonlyArray<string>; value: unknown }>,
+): Record<string, unknown> | undefined {
+  const containerPath = ["auth", "captcha"];
+  const enabled = legacyContainerEnabled(local, containerPath);
+  if (enabled === undefined) {
+    return undefined;
+  }
   const body: Record<string, unknown> = { security_captcha_enabled: enabled };
   if (!enabled) {
     return body;
   }
-  const provider = asString(resolveLeaf(changes, ["auth", "captcha", "provider"], local, config));
+  const providerR = resolveLeaf(changes, [...containerPath, "provider"], remote, local);
+  pushForced(forced, [...containerPath, "provider"], providerR);
+  const provider = asString(providerR.value);
   if (provider !== undefined) {
     body["security_captcha_provider"] = provider;
   }
-  const secret = findSecretDecision(secrets, ["auth", "captcha", "secret"]);
+  const secret = findSecretDecision(secrets, [...containerPath, "secret"]);
   if (secret?.status === "send") {
     body[secret.apiKey] = secret.plaintext;
   }
@@ -654,18 +756,24 @@ function encodeCaptchaContainer(
 function encodeHookContainer(
   name: string,
   changes: ReadonlyArray<ConfigChange>,
+  remote: ProjectConfig,
   local: ProjectConfig,
-  config: CliConfig,
   secrets: ReadonlyArray<LegacyPushSecretDecision>,
-): Record<string, unknown> {
-  const enabled =
-    asBoolean(resolveLeaf(changes, ["auth", "hook", name, "enabled"], local, config)) ?? false;
+  forced: Array<{ path: ReadonlyArray<string>; value: unknown }>,
+): Record<string, unknown> | undefined {
+  const containerPath = ["auth", "hook", name];
+  const enabled = legacyContainerEnabled(local, containerPath);
+  if (enabled === undefined) {
+    return undefined;
+  }
   const body: Record<string, unknown> = { [`hook_${name}_enabled`]: enabled };
   if (!enabled) {
     return body;
   }
-  body[`hook_${name}_uri`] = asString(resolveLeaf(changes, ["auth", "hook", name, "uri"], local, config)) ?? "";
-  const secret = findSecretDecision(secrets, ["auth", "hook", name, "secrets"]);
+  const uriR = resolveLeaf(changes, [...containerPath, "uri"], remote, local);
+  pushForced(forced, [...containerPath, "uri"], uriR);
+  body[`hook_${name}_uri`] = asString(uriR.value) ?? "";
+  const secret = findSecretDecision(secrets, [...containerPath, "secrets"]);
   if (secret?.status === "send") {
     body[secret.apiKey] = secret.plaintext;
   }
@@ -675,13 +783,17 @@ function encodeHookContainer(
 function encodeExternalProviderContainer(
   id: string,
   changes: ReadonlyArray<ConfigChange>,
+  remote: ProjectConfig,
   local: ProjectConfig,
-  config: CliConfig,
   secrets: ReadonlyArray<LegacyPushSecretDecision>,
-): Record<string, unknown> {
+  forced: Array<{ path: ReadonlyArray<string>; value: unknown }>,
+): Record<string, unknown> | undefined {
+  const containerPath = ["auth", "external", id];
   const key = `external_${id}`;
-  const enabled =
-    asBoolean(resolveLeaf(changes, ["auth", "external", id, "enabled"], local, config)) ?? false;
+  const enabled = legacyContainerEnabled(local, containerPath);
+  if (enabled === undefined) {
+    return undefined;
+  }
   const body: Record<string, unknown> = { [`${key}_enabled`]: enabled };
   if (!enabled) {
     return body;
@@ -689,21 +801,27 @@ function encodeExternalProviderContainer(
   // Verbatim — even a comma-containing value (apple/google fold an
   // `additional_client_ids` sibling into this on the pull side; the push
   // body has no such key, so nothing here splits it back apart).
-  body[`${key}_client_id`] =
-    asString(resolveLeaf(changes, ["auth", "external", id, "client_id"], local, config)) ?? "";
-  const secret = findSecretDecision(secrets, ["auth", "external", id, "secret"]);
+  const clientIdR = resolveLeaf(changes, [...containerPath, "client_id"], remote, local);
+  pushForced(forced, [...containerPath, "client_id"], clientIdR);
+  body[`${key}_client_id`] = asString(clientIdR.value) ?? "";
+  const secret = findSecretDecision(secrets, [...containerPath, "secret"]);
   if (secret?.status === "send") {
     body[secret.apiKey] = secret.plaintext;
   }
-  if (PROVIDERS_WITH_URL.has(id)) {
-    body[`${key}_url`] = asString(resolveLeaf(changes, ["auth", "external", id, "url"], local, config)) ?? "";
+  if (LEGACY_PROVIDERS_WITH_URL.includes(id)) {
+    const urlR = resolveLeaf(changes, [...containerPath, "url"], remote, local);
+    pushForced(forced, [...containerPath, "url"], urlR);
+    body[`${key}_url`] = asString(urlR.value) ?? "";
   }
-  body[`${key}_email_optional`] =
-    asBoolean(resolveLeaf(changes, ["auth", "external", id, "email_optional"], local, config)) ?? false;
-  if (PROVIDERS_WITH_SKIP_NONCE_CHECK.has(id)) {
-    body[`${key}_skip_nonce_check`] =
-      asBoolean(resolveLeaf(changes, ["auth", "external", id, "skip_nonce_check"], local, config)) ??
-      false;
+  if (LEGACY_PROVIDERS_WITH_EMAIL_OPTIONAL.includes(id)) {
+    const emailOptionalR = resolveLeaf(changes, [...containerPath, "email_optional"], remote, local);
+    pushForced(forced, [...containerPath, "email_optional"], emailOptionalR);
+    body[`${key}_email_optional`] = asBoolean(emailOptionalR.value) ?? false;
+  }
+  if (LEGACY_PROVIDERS_WITH_SKIP_NONCE_CHECK.includes(id)) {
+    const skipNonceCheckR = resolveLeaf(changes, [...containerPath, "skip_nonce_check"], remote, local);
+    pushForced(forced, [...containerPath, "skip_nonce_check"], skipNonceCheckR);
+    body[`${key}_skip_nonce_check`] = asBoolean(skipNonceCheckR.value) ?? false;
   }
   return body;
 }
@@ -711,13 +829,17 @@ function encodeExternalProviderContainer(
 function encodeActiveSmsProviderBody(
   provider: string,
   changes: ReadonlyArray<ConfigChange>,
+  remote: ProjectConfig,
   local: ProjectConfig,
-  config: CliConfig,
   secrets: ReadonlyArray<LegacyPushSecretDecision>,
+  forced: Array<{ path: ReadonlyArray<string>; value: unknown }>,
 ): Record<string, unknown> {
   const body: Record<string, unknown> = { sms_provider: provider };
-  const field = (key: string) =>
-    asString(resolveLeaf(changes, ["auth", "sms", provider, key], local, config)) ?? "";
+  const field = (key: string): string => {
+    const resolved = resolveLeaf(changes, ["auth", "sms", provider, key], remote, local);
+    pushForced(forced, ["auth", "sms", provider, key], resolved);
+    return asString(resolved.value) ?? "";
+  };
   const secretFor = (key: string) => findSecretDecision(secrets, ["auth", "sms", provider, key]);
   const applySecret = (key: string) => {
     const secret = secretFor(key);
@@ -757,10 +879,12 @@ function encodeActiveSmsProviderBody(
 export function legacyEncodeAuthBody(
   input: LegacyAuthEncoderInput,
 ): LegacyPushEncoded<Readonly<Record<string, unknown>>> {
-  const { changes, local, config, secrets, emailContent, remoteAuthAttributes, now } = input;
+  const { changes, local, remote, secrets, emailContent, remoteAuthAttributes, now } = input;
   const body: Record<string, unknown> = {};
   const encoded: Array<ReadonlyArray<string>> = [];
-  const unencodable: Array<ReadonlyArray<string>> = [];
+  const unencodable: Array<{ path: ReadonlyArray<string>; reason: string }> = [];
+  const extras: Array<{ path: ReadonlyArray<string>; label: "content" }> = [];
+  const forced: Array<{ path: ReadonlyArray<string>; value: unknown }> = [];
   const leaf = makeLeafAdder(changes, body, encoded, unencodable);
 
   const invert = (value: unknown): boolean | undefined => {
@@ -835,12 +959,19 @@ export function legacyEncodeAuthBody(
   const smtpSecretSend =
     findSecretDecision(secrets, ["auth", "email", "smtp", "pass"])?.status === "send";
   if (smtpChanges.length > 0 || smtpSecretSend) {
-    Object.assign(body, encodeSmtpContainer(changes, local, config, secrets));
-    encoded.push(...smtpChanges.map((change) => change.path));
+    const smtpBody = encodeSmtpContainer(changes, remote, local, secrets, forced);
+    if (smtpBody === undefined) {
+      for (const change of smtpChanges) {
+        unencodable.push({ path: change.path, reason: REASON_CONTAINER_STATE_UNKNOWN });
+      }
+    } else {
+      Object.assign(body, smtpBody);
+      encoded.push(...smtpChanges.map((change) => change.path));
+    }
   }
 
-  // email templates (subjects, leaf) + template content (push-only leaf)
-  for (const name of EMAIL_TEMPLATE_NAMES) {
+  // email templates (subjects, leaf) + template content (push-only, extras)
+  for (const name of LEGACY_EMAIL_TEMPLATE_NAMES) {
     leaf(["auth", "email", "template", name, "subject"], `mailer_subjects_${name}`, asString);
     const content = emailContent.template[name];
     if (content === undefined) {
@@ -852,11 +983,11 @@ export function legacyEncodeAuthBody(
       continue;
     }
     body[apiKey] = content;
-    encoded.push(["auth", "email", "template", name, "content"]);
+    extras.push({ path: ["auth", "email", "template", name, "content"], label: "content" });
   }
 
-  // notifications (enabled + subject, leaf) + notification content (push-only leaf)
-  for (const name of EMAIL_NOTIFICATION_NAMES) {
+  // notifications (enabled + subject, leaf) + notification content (push-only, extras)
+  for (const name of LEGACY_EMAIL_NOTIFICATION_NAMES) {
     leaf(
       ["auth", "email", "notification", name, "enabled"],
       `mailer_notifications_${name}_enabled`,
@@ -877,7 +1008,7 @@ export function legacyEncodeAuthBody(
       continue;
     }
     body[apiKey] = content;
-    encoded.push(["auth", "email", "notification", name, "content"]);
+    extras.push({ path: ["auth", "email", "notification", name, "content"], label: "content" });
   }
 
   // captcha (container)
@@ -885,8 +1016,15 @@ export function legacyEncodeAuthBody(
   const captchaSecretSend =
     findSecretDecision(secrets, ["auth", "captcha", "secret"])?.status === "send";
   if (captchaChanges.length > 0 || captchaSecretSend) {
-    Object.assign(body, encodeCaptchaContainer(changes, local, config, secrets));
-    encoded.push(...captchaChanges.map((change) => change.path));
+    const captchaBody = encodeCaptchaContainer(changes, remote, local, secrets, forced);
+    if (captchaBody === undefined) {
+      for (const change of captchaChanges) {
+        unencodable.push({ path: change.path, reason: REASON_CONTAINER_STATE_UNKNOWN });
+      }
+    } else {
+      Object.assign(body, captchaBody);
+      encoded.push(...captchaChanges.map((change) => change.path));
+    }
   }
 
   // hooks (container per hook)
@@ -897,8 +1035,15 @@ export function legacyEncodeAuthBody(
     if (hookChanges.length === 0 && !hookSecretSend) {
       continue;
     }
-    Object.assign(body, encodeHookContainer(name, changes, local, config, secrets));
-    encoded.push(...hookChanges.map((change) => change.path));
+    const hookBody = encodeHookContainer(name, changes, remote, local, secrets, forced);
+    if (hookBody === undefined) {
+      for (const change of hookChanges) {
+        unencodable.push({ path: change.path, reason: REASON_CONTAINER_STATE_UNKNOWN });
+      }
+    } else {
+      Object.assign(body, hookBody);
+      encoded.push(...hookChanges.map((change) => change.path));
+    }
   }
 
   // sms base
@@ -907,38 +1052,46 @@ export function legacyEncodeAuthBody(
   leaf(["auth", "sms", "enable_confirmations"], "sms_autoconfirm", asBoolean);
   leaf(["auth", "sms", "template"], "sms_template", asString);
 
-  // sms test otp (whole)
+  // sms test otp (whole; the record is always local-authoritative — there is
+  // no "current remote value" for a push-only credential map)
   const testOtpChanges = changesUnderPrefix(changes, ["auth", "sms", "test_otp"]);
   if (testOtpChanges.length > 0) {
-    const record = asStringRecord(valueAtPath(local, ["auth", "sms", "test_otp"]));
+    const record = asStringRecord(legacyValueAtPath(local, ["auth", "sms", "test_otp"]));
     const otpString = record === undefined ? "" : mapRecordToEnvString(record);
     if (otpString.length > 0) {
       body["sms_test_otp"] = otpString;
       body["sms_test_otp_valid_until"] = tenYearsFromNow(now).toISOString();
       encoded.push(...testOtpChanges.map((change) => change.path));
     } else {
-      unencodable.push(...testOtpChanges.map((change) => change.path));
+      for (const change of testOtpChanges) {
+        unencodable.push({ path: change.path, reason: REASON_VALUE_NOT_REPRESENTABLE });
+      }
     }
   }
 
   // sms providers (whole — active provider only)
-  const smsProviderChanges = SMS_PROVIDER_NAMES.flatMap((provider) =>
+  const smsProviderChanges = LEGACY_SMS_PROVIDER_NAMES.flatMap((provider) =>
     changesUnderPrefix(changes, ["auth", "sms", provider]),
   );
-  const smsProviderSecretSend = SMS_PROVIDER_NAMES.some((provider) =>
+  const smsProviderSecretSend = LEGACY_SMS_PROVIDER_NAMES.some((provider) =>
     secrets.some(
-      (decision) => decision.status === "send" && isPrefixOf(["auth", "sms", provider], decision.path),
+      (decision) =>
+        decision.status === "send" && legacyIsPrefixOf(["auth", "sms", provider], decision.path),
     ),
   );
   if (smsProviderChanges.length > 0 || smsProviderSecretSend) {
-    const activeProvider = SMS_PROVIDER_NAMES.find(
-      (provider) =>
-        asBoolean(resolveLeaf(changes, ["auth", "sms", provider, "enabled"], local, config)) === true,
+    const activeProvider = LEGACY_SMS_PROVIDER_NAMES.find(
+      (provider) => legacyContainerEnabled(local, ["auth", "sms", provider]) === true,
     );
     if (activeProvider === undefined) {
-      unencodable.push(...smsProviderChanges.map((change) => change.path));
+      for (const change of smsProviderChanges) {
+        unencodable.push({ path: change.path, reason: REASON_SMS_ACTIVE_PROVIDER_ONLY });
+      }
     } else {
-      Object.assign(body, encodeActiveSmsProviderBody(activeProvider, changes, local, config, secrets));
+      Object.assign(
+        body,
+        encodeActiveSmsProviderBody(activeProvider, changes, remote, local, secrets, forced),
+      );
       encoded.push(...smsProviderChanges.map((change) => change.path));
     }
   }
@@ -947,7 +1100,7 @@ export function legacyEncodeAuthBody(
   const triggeredProviderIds = new Set<string>();
   for (const change of changesUnderPrefix(changes, ["auth", "external"])) {
     const id = change.path[2];
-    if (id !== undefined && EXTERNAL_PROVIDER_IDS.includes(id)) {
+    if (id !== undefined && LEGACY_EXTERNAL_PROVIDER_IDS.includes(id)) {
       triggeredProviderIds.add(id);
     }
   }
@@ -962,13 +1115,20 @@ export function legacyEncodeAuthBody(
       if (id !== undefined) triggeredProviderIds.add(id);
     }
   }
-  for (const id of EXTERNAL_PROVIDER_IDS) {
+  for (const id of LEGACY_EXTERNAL_PROVIDER_IDS) {
     if (!triggeredProviderIds.has(id)) {
       continue;
     }
     const providerChanges = changesUnderPrefix(changes, ["auth", "external", id]);
-    Object.assign(body, encodeExternalProviderContainer(id, changes, local, config, secrets));
-    encoded.push(...providerChanges.map((change) => change.path));
+    const providerBody = encodeExternalProviderContainer(id, changes, remote, local, secrets, forced);
+    if (providerBody === undefined) {
+      for (const change of providerChanges) {
+        unencodable.push({ path: change.path, reason: REASON_CONTAINER_STATE_UNKNOWN });
+      }
+    } else {
+      Object.assign(body, providerBody);
+      encoded.push(...providerChanges.map((change) => change.path));
+    }
   }
 
   // web3
@@ -977,7 +1137,9 @@ export function legacyEncodeAuthBody(
 
   return {
     body: Object.keys(body).length > 0 ? body : undefined,
-    encoded,
-    unencodable,
+    encoded: [...encoded].sort(legacyComparePaths),
+    unencodable: sortByPath(unencodable),
+    extras: sortByPath(extras),
+    forced: sortByPath(forced),
   };
 }

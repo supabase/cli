@@ -1,8 +1,4 @@
-import {
-  CLI_CONFIG_SCHEMA_URL,
-  fromApiProjectConfig,
-  ProjectConfigParseError,
-} from "@supabase/config";
+import { CLI_CONFIG_SCHEMA_URL, fromApiProjectConfig } from "@supabase/config";
 import {
   diffProjectConfig,
   loadCliConfig,
@@ -30,6 +26,8 @@ import {
 } from "../../../shared/legacy-http-errors.ts";
 import { legacyResolveConfigTarget } from "../config.target.ts";
 import { legacyConfigApiScope, legacyConfigScopeLine } from "../config.format.ts";
+import { legacyConfigProjectConfigTry } from "../config.project-config.ts";
+import { legacyConfigReadStatusMessage, legacyUnexpectedStatusMessage } from "../config.read-status.ts";
 import {
   legacyConfigDiffComparisonLine,
   legacyConfigDiffPayload,
@@ -51,13 +49,11 @@ import {
 } from "./diff.errors.ts";
 import type { LegacyConfigDiffFlags } from "./diff.command.ts";
 
-const readStatusMessage = (status: number, body: string) => `unexpected status ${status}: ${body}`;
-
 const mapBranchResolveError = mapLegacyHttpError({
   networkError: LegacyConfigDiffBranchResolveNetworkError,
   statusError: LegacyConfigDiffBranchResolveStatusError,
   networkMessage: (cause) => `failed to resolve branch: ${cause}`,
-  statusMessage: readStatusMessage,
+  statusMessage: legacyUnexpectedStatusMessage,
 });
 
 /** Error construction for `legacyResolveConfigTarget` (`../config.target.ts`),
@@ -77,25 +73,6 @@ const configTargetErrors = {
     }),
   mapResolveError: mapBranchResolveError,
 };
-
-/**
- * Purpose-written messages for the config-read status codes a wrong or
- * inaccessible ref most plausibly produces; every other status keeps the
- * generic `unexpected status N: body` shape. TS-only surface (no Go
- * counterpart for this endpoint).
- */
-function configReadStatusMessage(status: number, body: string, ref: string): string {
-  if (status === 401) {
-    return "Authentication failed: your access token is invalid or has expired. Run `supabase login` to re-authenticate.";
-  }
-  if (status === 403) {
-    return `Access denied for project ${legacySanitizeInlineName(ref)}: your account does not have permission to view its configuration.`;
-  }
-  if (status === 404) {
-    return `Project ${legacySanitizeInlineName(ref)} not found. Check the project ref, or run \`supabase projects list\` to see the projects you have access to.`;
-  }
-  return readStatusMessage(status, body);
-}
 
 function isRecord(value: unknown): value is Readonly<Record<string, unknown>> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
@@ -246,7 +223,7 @@ export const legacyConfigDiff = Effect.fn("legacy.config.diff")(function* (
       return yield* new LegacyConfigDiffReadStatusError({
         status: response.status,
         body,
-        message: configReadStatusMessage(response.status, body, ref),
+        message: legacyConfigReadStatusMessage(response.status, body, ref),
       });
     }
     const responseJson = yield* response.json.pipe(
@@ -268,27 +245,16 @@ export const legacyConfigDiff = Effect.fn("legacy.config.diff")(function* (
     // `suggestion` and its purpose-built actionability adapter
     // (`externalActionabilityByTag` splits caller misuse from genuine
     // response problems). Anything else escaping the normalizer would be a
-    // bug in this package pairing, so it stays a defect.
-    const remote = yield* Effect.try({
-      try: () => fromApiProjectConfig(responseJson),
-      catch: (cause) => cause,
-    }).pipe(
-      Effect.catch((cause) =>
-        cause instanceof ProjectConfigParseError ? Effect.fail(cause) : Effect.die(cause),
-      ),
-    );
+    // bug in this package pairing, so it stays a defect
+    // (`legacyConfigProjectConfigTry`, shared with `config pull`/`config push`).
+    const remote = yield* legacyConfigProjectConfigTry(() => fromApiProjectConfig(responseJson));
 
     // 7. Classify. The loaded pair carries the raw merged document (declared
     // keys) and the env-var origins; `diffProjectConfig` derives the local
     // convergence projection from it, so the same `ProjectConfigParseError`
     // boundary applies here.
-    const changeSet = yield* Effect.try({
-      try: () => diffProjectConfig({ local: loaded, remote }),
-      catch: (cause) => cause,
-    }).pipe(
-      Effect.catch((cause) =>
-        cause instanceof ProjectConfigParseError ? Effect.fail(cause) : Effect.die(cause),
-      ),
+    const changeSet = yield* legacyConfigProjectConfigTry(() =>
+      diffProjectConfig({ local: loaded, remote }),
     );
 
     const data = isRecord(responseJson) ? responseJson["data"] : undefined;

@@ -1,4 +1,4 @@
-import type { ConfigChange, ConfigChangeSet } from "@supabase/config/internal";
+import type { ConfigChangeSet } from "@supabase/config/internal";
 
 import { legacySanitizeInlineName } from "../../../shared/legacy-http-errors.ts";
 import {
@@ -7,8 +7,7 @@ import {
   legacyConfigMaskedCaveat,
   legacyConfigNotReturnedCaveat,
   legacyConfigPlural,
-  legacyConfigRenderPath,
-  legacyConfigRenderValue,
+  legacyConfigRenderChangeLines,
   legacyConfigTargetPhrase,
   legacyConfigUnmanagedCaveat,
 } from "../config.format.ts";
@@ -39,12 +38,6 @@ export interface LegacyConfigDiffContext {
  * and per-repo.
  */
 export const LEGACY_CONFIG_DIFF_PAYLOAD_VERSION = 1;
-
-const CLASS_LABELS: Record<ConfigChange["class"], string> = {
-  update: "update",
-  remote_only: "remote-only",
-  local_only: "local-only",
-};
 
 function localScope(context: LegacyConfigDiffContext): string {
   return context.appliedRemote === undefined
@@ -87,35 +80,19 @@ export function legacyConfigDiffSummaryMessage(
   return parts.join(" ");
 }
 
-function renderLocal(change: ConfigChange): string {
-  const value = legacyConfigRenderValue(change.local, "(unset)");
-  // A populated local value on an undeclared path is the schema default the
-  // projection materialized — the value a `config push` would write. Say so,
-  // or "[remote-only]" reads as "this key exists only remotely", which is
-  // false for anything with a schema default (and the user will grep their
-  // file for a value that isn't there).
-  return change.local !== undefined && !change.declared
-    ? `${value} (schema default — not declared in config.toml)`
-    : value;
-}
-
-/** Human-readable diff body for text mode (stdout). */
+/**
+ * Human-readable diff body for text mode (stdout). The per-change blocks are
+ * rendered by `legacyConfigRenderChangeLines` (`../config.format.ts`, shared
+ * with `config push`'s per-resource change blocks); this function only adds
+ * the trailing counts/notes lines.
+ */
 export function legacyRenderConfigDiffText(
   changeSet: ConfigChangeSet,
   scope: LegacyConfigApiScope,
 ): string {
-  const lines: Array<string> = [];
-  for (const change of changeSet.changes) {
-    lines.push(`${legacyConfigRenderPath(change.path)} [${CLASS_LABELS[change.class]}]`);
-    const env =
-      change.envVariables === undefined
-        ? ""
-        : ` (from env ${legacySanitizeInlineName(change.envVariables.join(", "))})`;
-    lines.push(`  local:  ${renderLocal(change)}${env}`);
-    lines.push(`  remote: ${legacyConfigRenderValue(change.remote, "(not returned)")}`);
-    lines.push("");
-  }
+  const changeLines = legacyConfigRenderChangeLines(changeSet.changes);
 
+  const lines: Array<string> = [];
   const { update, remote_only, local_only, total } = changeSet.counts;
   if (total === 0) {
     lines.push("No config differences found.");
@@ -133,7 +110,7 @@ export function legacyRenderConfigDiffText(
   if (changeSet.unmanaged.length > 0) {
     lines.push(`Note: ${legacyConfigUnmanagedCaveat(changeSet.unmanaged)}`);
   }
-  return `${lines.join("\n")}\n`;
+  return `${changeLines}${lines.join("\n")}\n`;
 }
 
 /**
