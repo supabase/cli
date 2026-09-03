@@ -70,19 +70,6 @@ export const PACKAGE_PATH_PREFIX = "packages/config/";
  * nothing too — `--root` closes that gap by diffing it against the empty
  * tree (merge behavior is unaffected).
  */
-/**
- * Whether a write failed because the reader is gone.
- *
- * Node and Bun both tag this as `EPIPE` on the error object; the message text
- * differs between them and is not matched.
- */
-function isBrokenPipe(cause: unknown): boolean {
-  if (typeof cause !== "object" || cause === null || !("code" in cause)) {
-    return false;
-  }
-  return cause.code === "EPIPE";
-}
-
 export async function filterCommitsToPackage<T extends { hash: string }>(
   commits: readonly T[],
   cwd: string,
@@ -120,21 +107,8 @@ export async function filterCommitsToPackage<T extends { hash: string }>(
   // is one runtime port away — don't rely on the buffering behavior.
   const stdoutText = new Response(proc.stdout).text();
   const stderrText = new Response(proc.stderr).text();
-  // A `git` that rejects its arguments — a `cwd` outside any repository, say —
-  // exits before it reads a single hash, and writing to a process that has
-  // already gone raises EPIPE. Whether that happens is a race against process
-  // startup, so surfacing it would make the failure mode nondeterministic:
-  // sometimes `EPIPE: broken pipe, send`, sometimes the real diagnosis. The
-  // exit code and stderr below are the diagnosis, so a broken pipe here is
-  // dropped and the reporting left to them.
-  try {
-    await proc.stdin.write(`${hashes.join("\n")}\n`);
-    await proc.stdin.end();
-  } catch (cause) {
-    if (!isBrokenPipe(cause)) {
-      throw cause;
-    }
-  }
+  await proc.stdin.write(`${hashes.join("\n")}\n`);
+  await proc.stdin.end();
 
   const [exitCode, stdout, stderr] = await Promise.all([proc.exited, stdoutText, stderrText]);
   if (exitCode !== 0) {
