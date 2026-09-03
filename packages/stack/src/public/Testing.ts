@@ -30,7 +30,11 @@ export interface CreateTestStackOptions {
   readonly setupProject?: (projectRoot: string) => Promise<void>;
 }
 
-export type TestStack = PromiseStack & AsyncDisposable;
+export type TestStack = PromiseStack &
+  AsyncDisposable & {
+    /** Ephemeral coordination state root shared by overlapping helpers in this process. */
+    readonly stateRoot: string;
+  };
 
 export interface TestStackOperations {
   readonly createRoot: () => Promise<string>;
@@ -39,6 +43,9 @@ export interface TestStackOperations {
     environment?: StackRuntimeEnvironmentValue,
   ) => Promise<PromiseStack>;
   readonly removeRoot: (root: string) => Promise<void>;
+  /** Enables an ephemeral coordination root for the default and explicit real-stack operations. */
+  readonly createStateRoot?: () => Promise<string>;
+  readonly removeStateRoot?: (root: string) => Promise<void>;
 }
 
 const defaultOperations: TestStackOperations = {
@@ -46,16 +53,82 @@ const defaultOperations: TestStackOperations = {
   createStack: (options, environment) =>
     makePromiseApi(NodeServices.layer, environment).createStack(options),
   removeRoot: (root) => rm(root, { recursive: true, force: true }),
+  createStateRoot: () => mkdtemp(join(tmpdir(), "supabase-stack-test-state-")),
+  removeStateRoot: (root) => rm(root, { recursive: true, force: true }),
+};
+
+interface StateRootLease {
+  readonly root: string;
+  references: number;
+}
+
+interface StateRootLeaseState {
+  lease: StateRootLease | undefined;
+  creating: Promise<StateRootLease> | undefined;
+}
+
+const stateRootLeases = new WeakMap<TestStackOperations, StateRootLeaseState>();
+
+const leaseStateFor = (operations: TestStackOperations): StateRootLeaseState => {
+  const existing = stateRootLeases.get(operations);
+  if (existing !== undefined) return existing;
+  const state: StateRootLeaseState = { lease: undefined, creating: undefined };
+  stateRootLeases.set(operations, state);
+  return state;
+};
+
+const acquireStateRoot = async (operations: TestStackOperations): Promise<string | undefined> => {
+  if (operations.createStateRoot === undefined || operations.removeStateRoot === undefined)
+    return undefined;
+  const state = leaseStateFor(operations);
+  if (state.lease !== undefined) {
+    state.lease.references += 1;
+    return state.lease.root;
+  }
+  if (state.creating === undefined) {
+    state.creating = operations
+      .createStateRoot()
+      .then((root) => {
+        const lease = { root, references: 0 } satisfies StateRootLease;
+        state.lease = lease;
+        return lease;
+      })
+      .finally(() => {
+        state.creating = undefined;
+      });
+  }
+  const lease = await state.creating;
+  lease.references += 1;
+  return lease.root;
+};
+
+const releaseStateRoot = async (operations: TestStackOperations, root: string): Promise<void> => {
+  const state = stateRootLeases.get(operations);
+  const lease = state?.lease;
+  if (state === undefined || lease === undefined || lease.root !== root) return;
+  lease.references -= 1;
+  if (lease.references > 0) return;
+  state.lease = undefined;
+  const removeStateRoot = operations.removeStateRoot;
+  if (removeStateRoot === undefined) return;
+  try {
+    await removeStateRoot(root);
+  } catch (error) {
+    throw new Error(`Unable to remove shared test state root ${root}`, { cause: error });
+  }
 };
 
 // Native slim-services artifacts are immutable and expensive to download. Keep one
 // shared cache for test stacks while each stack's state/data roots remain disposable.
 const testArtifactCacheRoot = join(tmpdir(), "supabase-stack-test-artifacts");
 
-const isolatedEnvironment = (projectRoot: string): StackRuntimeEnvironmentValue => ({
+const isolatedEnvironment = (
+  projectRoot: string,
+  stateRoot = join(projectRoot, ".supabase", "managed", "stacks"),
+): StackRuntimeEnvironmentValue => ({
   ...defaultRuntimeEnvironment(),
   artifactCacheRoot: testArtifactCacheRoot,
-  stateRoot: join(projectRoot, ".supabase", "managed", "stacks"),
+  stateRoot,
 });
 
 const validateStartedStatus = (
@@ -132,6 +205,7 @@ const cleanup = async (
   stack: PromiseStack | undefined,
   root: string,
   operations: TestStackOperations,
+  stateRoot?: string,
   primary?: unknown,
 ) => {
   let failure = primary;
@@ -152,6 +226,13 @@ const cleanup = async (
       if (failure === undefined) failure = error;
     }
   }
+  if (rootCanBeRemoved && stateRoot !== undefined) {
+    try {
+      await releaseStateRoot(operations, stateRoot);
+    } catch (error) {
+      if (failure === undefined) failure = error;
+    }
+  }
   if (!rootCanBeRemoved) {
     const reason = failure instanceof Error ? failure.message : String(failure);
     throw new Error(`${reason}; retained test stack root ${root}`, { cause: failure });
@@ -166,15 +247,18 @@ export const createTestStackWith = async (
 ): Promise<TestStack> => {
   const projectRoot = await operations.createRoot();
   let stack: PromiseStack | undefined;
+  let stateRoot: string | undefined;
   try {
     if (options.setupProject !== undefined) await options.setupProject(projectRoot);
+    stateRoot = await acquireStateRoot(operations);
+    const runtimeEnvironment = isolatedEnvironment(projectRoot, stateRoot);
     stack = await operations.createStack(
       {
         projectRoot,
         name: options.name,
         runtime: options.runtime,
       },
-      isolatedEnvironment(projectRoot),
+      runtimeEnvironment,
     );
     const started = await stack.start(
       options.config === undefined
@@ -190,10 +274,11 @@ export const createTestStackWith = async (
     const resource = stack;
     return {
       ...resource,
-      [Symbol.asyncDispose]: () => cleanup(resource, projectRoot, operations),
+      stateRoot: runtimeEnvironment.stateRoot,
+      [Symbol.asyncDispose]: () => cleanup(resource, projectRoot, operations, stateRoot),
     };
   } catch (error) {
-    await cleanup(stack, projectRoot, operations, error);
+    await cleanup(stack, projectRoot, operations, stateRoot, error);
     throw error;
   }
 };

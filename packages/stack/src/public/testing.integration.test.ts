@@ -330,4 +330,83 @@ describe("test stack resource", () => {
     await expect(createTestStackWith({}, operations)).rejects.toThrow("stopping");
     expect(events).toEqual(["start", "destroy"]);
   });
+
+  it("shares one coordination state root while test stacks overlap", async () => {
+    const roots = ["/tmp/stack-test-shared-a", "/tmp/stack-test-shared-b"];
+    const environments: Array<Parameters<NonNullable<TestStackOperations["createStack"]>>[1]> = [];
+    const removedRoots: Array<string> = [];
+    const removedStateRoots: Array<string> = [];
+    let stateRootCreations = 0;
+    const operations: TestStackOperations = {
+      createRoot: async () => {
+        const root = roots.shift();
+        if (root === undefined) throw new Error("No test root available");
+        return root;
+      },
+      createStateRoot: async () => {
+        stateRootCreations += 1;
+        return "/tmp/stack-test-shared-state";
+      },
+      createStack: async (_options, environment) => {
+        environments.push(environment);
+        return fakeStack([]);
+      },
+      removeRoot: async (root) => {
+        removedRoots.push(root);
+      },
+      removeStateRoot: async (root) => {
+        removedStateRoots.push(root);
+      },
+    };
+    const [first, second] = await Promise.all([
+      createTestStackWith({}, operations),
+      createTestStackWith({}, operations),
+    ]);
+    expect(stateRootCreations).toBe(1);
+    expect(environments.map((environment) => environment?.stateRoot)).toEqual([
+      "/tmp/stack-test-shared-state",
+      "/tmp/stack-test-shared-state",
+    ]);
+    await first[Symbol.asyncDispose]();
+    expect(removedStateRoots).toEqual([]);
+    await second[Symbol.asyncDispose]();
+    expect(removedRoots).toEqual(["/tmp/stack-test-shared-a", "/tmp/stack-test-shared-b"]);
+    expect(removedStateRoots).toEqual(["/tmp/stack-test-shared-state"]);
+  });
+
+  it("retains shared coordination state when one stack destroy fails", async () => {
+    const roots = ["/tmp/stack-test-retained-a", "/tmp/stack-test-retained-b"];
+    const removedRoots: Array<string> = [];
+    const removedStateRoots: Array<string> = [];
+    const operations: TestStackOperations = {
+      createRoot: async () => {
+        const root = roots.shift();
+        if (root === undefined) throw new Error("No test root available");
+        return root;
+      },
+      createStateRoot: async () => "/tmp/stack-test-retained-state",
+      createStack: async (options) => ({
+        ...fakeStack([]),
+        destroy: async () => {
+          if (options.projectRoot.endsWith("-a")) throw new Error("destroy a failed");
+        },
+      }),
+      removeRoot: async (root) => {
+        removedRoots.push(root);
+      },
+      removeStateRoot: async (root) => {
+        removedStateRoots.push(root);
+      },
+    };
+    const [first, second] = await Promise.all([
+      createTestStackWith({}, operations),
+      createTestStackWith({}, operations),
+    ]);
+    await expect(first[Symbol.asyncDispose]()).rejects.toThrow(
+      "destroy a failed; retained test stack root /tmp/stack-test-retained-a",
+    );
+    await second[Symbol.asyncDispose]();
+    expect(removedRoots).toEqual(["/tmp/stack-test-retained-b"]);
+    expect(removedStateRoots).toEqual([]);
+  });
 });

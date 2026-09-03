@@ -1041,26 +1041,13 @@ describe("managed Supabase stack whole-stack E2E", () => {
     "recovers the native database after abrupt Supervisor termination",
     { timeout: E2E_TIMEOUT_MS },
     async () => {
-      let projectRoot = "";
       await using stack: TestStack = await createTestStack({
         name: `stack-crash-recovery-${crypto.randomUUID().replaceAll("-", "").slice(0, 16)}`,
         runtime: { kind: "native" },
-        setupProject: async (root) => {
-          projectRoot = root;
-        },
       });
       const before = await stack.status();
       const database = endpoint(before, "database");
-      const lockPath = join(
-        projectRoot,
-        ".supabase",
-        "managed",
-        "stacks",
-        stack.id,
-        "data",
-        "database",
-        "postmaster.pid",
-      );
+      const lockPath = join(stack.stateRoot, stack.id, "data", "database", "postmaster.pid");
       const databasePid = Number((await readFile(lockPath, "utf8")).split("\n", 1)[0]);
       if (!Number.isSafeInteger(databasePid) || databasePid <= 0)
         throw new Error("Native database lock did not contain a valid PID");
@@ -1078,6 +1065,76 @@ describe("managed Supabase stack whole-stack E2E", () => {
   );
 
   for (const mode of RUNTIME_CASES) {
+    test(
+      `coordinates concurrent isolated stacks in ${mode.name} mode`,
+      { timeout: E2E_TIMEOUT_MS },
+      async () => {
+        const identity = crypto.randomUUID().replaceAll("-", "").slice(0, 16);
+        const [firstStack, secondStack] = await Promise.all([
+          createTestStack({
+            name: `stack-concurrent-a-${identity}`,
+            runtime: mode.runtime,
+          }),
+          createTestStack({
+            name: `stack-concurrent-b-${identity}`,
+            runtime: mode.runtime,
+          }),
+        ]);
+        await using first: TestStack = firstStack;
+        await using second: TestStack = secondStack;
+
+        const [firstStatus, secondStatus] = await Promise.all([first.status(), second.status()]);
+        expect(firstStatus.lifecycle).toBe("running");
+        expect(secondStatus.lifecycle).toBe("running");
+        const firstApi = endpoint(firstStatus, "api");
+        const secondApi = endpoint(secondStatus, "api");
+        expect(firstApi.port).not.toBe(secondApi.port);
+
+        const [firstCredentials, secondCredentials] = await Promise.all([
+          first.credentials(),
+          second.credentials(),
+        ]);
+        const firstTable = `concurrent_${identity}_a`;
+        const secondTable = `concurrent_${identity}_b`;
+        const firstMarker = `marker-a-${identity}`;
+        const secondMarker = `marker-b-${identity}`;
+        await Promise.all([
+          databaseQuery(
+            firstCredentials.database.url,
+            `CREATE TABLE public."${firstTable}" (payload text NOT NULL)`,
+          ),
+          databaseQuery(
+            secondCredentials.database.url,
+            `CREATE TABLE public."${secondTable}" (payload text NOT NULL)`,
+          ),
+        ]);
+        await Promise.all([
+          databaseQuery(
+            firstCredentials.database.url,
+            `INSERT INTO public."${firstTable}" (payload) VALUES ($1)`,
+            [firstMarker],
+          ),
+          databaseQuery(
+            secondCredentials.database.url,
+            `INSERT INTO public."${secondTable}" (payload) VALUES ($1)`,
+            [secondMarker],
+          ),
+        ]);
+        const [firstRows, secondRows] = await Promise.all([
+          databaseQuery(
+            firstCredentials.database.url,
+            `SELECT payload FROM public."${firstTable}"`,
+          ),
+          databaseQuery(
+            secondCredentials.database.url,
+            `SELECT payload FROM public."${secondTable}"`,
+          ),
+        ]);
+        expect(firstRows).toEqual([{ payload: firstMarker }]);
+        expect(secondRows).toEqual([{ payload: secondMarker }]);
+      },
+    );
+
     test(`supports the complete user flow in ${mode.name} mode`, { timeout: E2E_TIMEOUT_MS }, () =>
       runWholeStackScenario(mode),
     );

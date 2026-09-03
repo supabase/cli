@@ -27,6 +27,11 @@ CLI is not involved in these runtime tests.
 Podman is supported only on local Linux hosts and must be selected explicitly; the runtime does not
 auto-detect container engines.
 
+`createTestStack` gives each test stack an isolated project root and identity-scoped state. Concurrent
+helpers in one process share a temporary coordination state root so automatic ports remain
+exclusive, and the root is removed after the last successful `await using` disposal. A failed
+destroy retains the affected project and shared coordination state for recovery.
+
 Callers can warm selected native artifacts or container images with `stack.prepare(...)` while a
 stack is stopped; preparation is cache-only and cancellation does not affect completed entries.
 Each capability may opt into eager activation in `StackConfig`; omitted settings keep every

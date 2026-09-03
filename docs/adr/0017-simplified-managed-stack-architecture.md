@@ -20,7 +20,12 @@ available from `@supabase/stack/effect`, while the package root exposes the
 Promise handle and root Promise functions (`createStack`, `openStack`,
 `findStack`, `listStacks`, and `inspectStack`). Test callers use the public
 `createTestStack` helper from `@supabase/stack/testing`; it owns an isolated
-project root and exact-identity cleanup through `await using`.
+project root and exact-identity cleanup through `await using`. Overlapping test
+helpers share one process-scoped ephemeral coordination state root so automatic
+ports coordinate like production while each project root and identity-scoped
+data remain isolated. The coordination root is reference-counted and removed
+after every owned stack has destroyed successfully; a failed destroy retains
+its exact project and coordination state for recovery.
 
 The managed document is private, unreleased state under the user-level managed
 root. It is not a repository contract, service registry, compatibility facade,
@@ -60,7 +65,10 @@ unclassifiable owner PID fails closed; a lock naming a process that no longer
 exists is left for PostgreSQL's own stale-lock recovery. A live stop/start
 composition preflights configuration without trying to bind ports that the
 current Supervisor intentionally owns. Cold recovery never adopts those
-resources.
+resources. If an authoritative bind loses a race for a fresh automatic public
+assignment, planning retries with a bounded exclusion set; exact assignments
+and previously persisted sticky automatic ports remain hard failures and are
+never silently moved.
 
 Every managed document records one concrete runtime selection. Native and
 container runtimes never mix. Omission defaults to Docker; callers may
