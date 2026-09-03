@@ -1,11 +1,8 @@
 import type { ConfigChangeSet } from "@supabase/config";
 import { describe, expect, test } from "vitest";
 
-import {
-  legacyConfigDiffScope,
-  legacyConfigDiffScopeLine,
-  legacyConfigDiffSummaryMessage,
-} from "./diff.format.ts";
+import { legacyConfigApiScope, legacyConfigScopeLine } from "../config.format.ts";
+import { legacyConfigDiffSummaryMessage } from "./diff.format.ts";
 
 const EMPTY_CHANGE_SET: ConfigChangeSet = {
   changes: [],
@@ -14,14 +11,14 @@ const EMPTY_CHANGE_SET: ConfigChangeSet = {
   counts: { update: 0, remote_only: 0, local_only: 0, total: 0 },
 };
 
-describe("legacyConfigDiffScope", () => {
+describe("legacyConfigApiScope", () => {
   test("lists record blocks the response carried, dropping non-records and empty records", () => {
     // An EMPTY block record is how a permission-truncated response most
     // plausibly reports a block it could not read — claiming it was
     // "compared" while all its keys render (not returned) would be false,
     // and with --exit-code that is a permanently red CI no file edit fixes.
     expect(
-      legacyConfigDiffScope({
+      legacyConfigApiScope({
         api: { max_rows: 5 },
         auth: {},
         database: null,
@@ -35,10 +32,10 @@ describe("legacyConfigDiffScope", () => {
   });
 });
 
-describe("legacyConfigDiffScopeLine", () => {
+describe("legacyConfigScopeLine", () => {
   test("calls out blocks the response did not return", () => {
     expect(
-      legacyConfigDiffScopeLine({
+      legacyConfigScopeLine({
         present: ["api", "auth"],
         missing: ["database", "pooler", "realtime", "storage"],
       }),
@@ -47,7 +44,7 @@ describe("legacyConfigDiffScopeLine", () => {
 
   test("an empty response scope renders (none)", () => {
     expect(
-      legacyConfigDiffScopeLine({
+      legacyConfigScopeLine({
         present: [],
         missing: ["api", "auth", "database", "pooler", "realtime", "storage"],
       }),

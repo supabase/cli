@@ -514,13 +514,20 @@ describe("src/internal.ts export surface", () => {
     expect(Object.keys(internalEntrypoint).sort()).toMatchInlineSnapshot(`
       [
         "AUTH_HOOK_NAMES",
+        "CliConfigWriteError",
         "ENV_CAPTURE_REGEX",
+        "applyConfigEdits",
+        "decodeCliConfigDocumentForValidationEffect",
+        "dualScopeProjectConfigPaths",
         "loadCliConfig",
         "projectConfigApiBlockKeys",
         "projectConfigMappingRows",
+        "remoteNameForProjectRef",
+        "remoteProjectIdEntries",
         "resolveCliConfigSubtree",
         "resolveCliConfigValue",
         "unmappedSecretApiPaths",
+        "writeCliConfigDocumentText",
       ]
     `);
   });

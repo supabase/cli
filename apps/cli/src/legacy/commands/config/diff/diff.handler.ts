@@ -4,40 +4,32 @@ import {
   fromApiProjectConfig,
   ProjectConfigParseError,
 } from "@supabase/config/effect";
-import { loadCliConfig } from "@supabase/config/internal";
+import { loadCliConfig, remoteNameForProjectRef } from "@supabase/config/internal";
 import { operationDefinitions } from "@supabase/api/effect";
 import { Effect, Option } from "effect";
 
 import { LegacyPlatformApi } from "../../../auth/legacy-platform-api.service.ts";
 import { LegacyCliSettings } from "../../../config/legacy-cli-settings.service.ts";
-import { LegacyProjectRefResolver } from "../../../config/legacy-project-ref.service.ts";
 import {
   legacyParentNotLinkedMessage,
   legacyParentRefInvalidMessage,
   legacyParentRefTypoHint,
-  legacyResolveLinkedParentRef,
-  legacyResolveParentScopedProjectRef,
 } from "../../../shared/legacy-parent-project-ref.ts";
 import { LegacyLinkedProjectCache } from "../../../telemetry/legacy-linked-project-cache.service.ts";
 import { LegacyTelemetryState } from "../../../telemetry/legacy-telemetry-state.service.ts";
 import { LegacyOutputFlag } from "../../../../shared/legacy/global-flags.ts";
 import { Output } from "../../../../shared/output/output.service.ts";
 import { ProcessControl } from "../../../../shared/runtime/process-control.service.ts";
-import { legacyResolveBranchProjectRef } from "../../../shared/legacy-branch-ref.resolver.ts";
-import {
-  LEGACY_BRANCH_PROJECT_REF_PATTERN,
-  LEGACY_BRANCH_UUID_PATTERN,
-} from "../../../shared/legacy-ref-patterns.ts";
 import {
   legacySanitizeInlineName,
   mapLegacyHttpError,
   sanitizeLegacyErrorBody,
 } from "../../../shared/legacy-http-errors.ts";
+import { legacyResolveConfigTarget } from "../config.target.ts";
+import { legacyConfigApiScope, legacyConfigScopeLine } from "../config.format.ts";
 import {
   legacyConfigDiffComparisonLine,
   legacyConfigDiffPayload,
-  legacyConfigDiffScope,
-  legacyConfigDiffScopeLine,
   legacyConfigDiffSummaryMessage,
   legacyRenderConfigDiffText,
   type LegacyConfigDiffContext,
@@ -64,6 +56,24 @@ const mapBranchResolveError = mapLegacyHttpError({
   networkMessage: (cause) => `failed to resolve branch: ${cause}`,
   statusMessage: readStatusMessage,
 });
+
+/** Error construction for `legacyResolveConfigTarget` (`../config.target.ts`),
+ * keeping `config diff`'s own tagged error classes and message wording. */
+const configTargetErrors = {
+  notLinked: (target: string) =>
+    new LegacyConfigDiffBranchNotLinkedError({ message: legacyParentNotLinkedMessage(target) }),
+  parentRefInvalid: (target: string) =>
+    new LegacyConfigDiffParentRefInvalidError({ message: legacyParentRefInvalidMessage(target) }),
+  branchNotFound: (target: string) =>
+    new LegacyConfigDiffBranchNotFoundError({
+      message: `Branch "${legacySanitizeInlineName(target)}" not found. Run \`supabase branches list\` to see available branches.${legacyParentRefTypoHint(target)}`,
+    }),
+  branchNotReady: (target: string) =>
+    new LegacyConfigDiffBranchNotReadyError({
+      message: `Branch "${legacySanitizeInlineName(target)}" has no project ref yet. Wait for it to finish provisioning, then retry.`,
+    }),
+  mapResolveError: mapBranchResolveError,
+};
 
 /**
  * Purpose-written messages for the config-read status codes a wrong or
@@ -93,7 +103,6 @@ export const legacyConfigDiff = Effect.fn("legacy.config.diff")(function* (
 ) {
   const output = yield* Output;
   const api = yield* LegacyPlatformApi;
-  const resolver = yield* LegacyProjectRefResolver;
   const linkedProjectCache = yield* LegacyLinkedProjectCache;
   const telemetryState = yield* LegacyTelemetryState;
   const cliSettings = yield* LegacyCliSettings;
@@ -174,97 +183,28 @@ export const legacyConfigDiff = Effect.fn("legacy.config.diff")(function* (
     // ref, so a config that declares remotes is reloaded in step 4.
     let loaded = yield* loadLocalConfig(undefined);
 
-    // 3. Resolve the comparison target. `--project-ref` accepts a project
-    // ref, or the name (or UUID) of a branch of the linked project —
-    // `link`'s settled vocabulary (CLI-2167). A ref-shaped value (exactly 20
-    // lowercase letters) is always treated as a project ref.
-    //
-    // A UUID target resolves through `GET /v1/branches/{id}` directly, which
-    // needs no parent ref at all, so it keeps the fully lazy parent
-    // resolution below — the parent-scoped resolver is never evaluated for
-    // it, which is exactly what lets it work in an unlinked directory.
-    //
-    // A NAME target, by contrast, needs the parent project ref to search
-    // under, so it is resolved eagerly, BEFORE any spinner starts —
-    // mirroring `link` (link.handler.ts:198-213): an unlinked directory (or
-    // a corrupt/stale linked ref) must fail immediately with a link-grade
-    // error naming the value the user passed, rather than falling through to
-    // `resolver.resolve`'s interactive project picker rendering under a live
-    // "Resolving branch..." spinner.
-    let ref: string;
-    let branch: string | undefined;
-    if (Option.isSome(requested) && !LEGACY_BRANCH_PROJECT_REF_PATTERN.test(requested.value)) {
-      const target = requested.value;
-      branch = target;
-
-      let parentRef: ReturnType<typeof legacyResolveParentScopedProjectRef>;
-      if (LEGACY_BRANCH_UUID_PATTERN.test(target)) {
-        parentRef = legacyResolveParentScopedProjectRef(Option.none());
-      } else {
-        const parent = yield* legacyResolveLinkedParentRef();
-        if (parent.kind === "absent") {
-          return yield* new LegacyConfigDiffBranchNotLinkedError({
-            message: legacyParentNotLinkedMessage(target),
-          });
-        }
-        if (parent.kind === "invalid") {
-          return yield* new LegacyConfigDiffParentRefInvalidError({
-            message: legacyParentRefInvalidMessage(target),
-          });
-        }
-        parentRef = Effect.succeed(parent.ref);
-      }
-
-      const resolving =
-        output.format === "text" ? yield* output.task("Resolving branch...") : undefined;
-      ref = yield* legacyResolveBranchProjectRef(target, parentRef, {
-        mapGetError: mapBranchResolveError,
-        mapFindError: mapBranchResolveError,
-      }).pipe(
-        Effect.tapError(() => resolving?.fail() ?? Effect.void),
-        Effect.catchTag(
-          "LegacyConfigDiffBranchResolveStatusError",
-          (
-            cause,
-          ): Effect.Effect<
-            never,
-            LegacyConfigDiffBranchNotFoundError | LegacyConfigDiffBranchResolveStatusError
-          > =>
-            cause.status === 404
-              ? Effect.fail(
-                  new LegacyConfigDiffBranchNotFoundError({
-                    message: `Branch "${legacySanitizeInlineName(target)}" not found. Run \`supabase branches list\` to see available branches.${legacyParentRefTypoHint(target)}`,
-                  }),
-                )
-              : Effect.fail(cause),
-        ),
-      );
-      yield* resolving?.clear() ?? Effect.void;
-
-      // The resolved branch might not have a project ref yet (still
-      // provisioning) — never let an empty/placeholder ref reach
-      // `/v2/projects//config` (mirrors link.handler.ts:248-256's guard).
-      if (!LEGACY_BRANCH_PROJECT_REF_PATTERN.test(ref)) {
-        return yield* new LegacyConfigDiffBranchNotReadyError({
-          message: `Branch "${legacySanitizeInlineName(target)}" has no project ref yet. Wait for it to finish provisioning, then retry.`,
-        });
-      }
-    } else {
-      ref = yield* resolver.resolve(requested);
-    }
+    // 3. Resolve the comparison target — hoisted into `legacyResolveConfigTarget`
+    // (`../config.target.ts`, shared with `config pull`, CLI-2064). See that
+    // function's doc comment for the full eager-parent-ref-before-any-spinner
+    // and lazy-UUID-parent-resolution rules this preserves.
+    const { ref, branch } = yield* legacyResolveConfigTarget(requested, configTargetErrors);
     resolvedRef = ref;
 
     // 4. Apply the matching `[remotes.*]` overlay (ADR 0018) now that the
     // target ref is known. Only a config whose remotes actually MATCH the
-    // resolved ref reloads (checked on the already-loaded, env-interpolated
-    // document) — every other config keeps the step-2 load, so load-time
-    // deprecation warnings don't repeat. The narrow remaining double-print
-    // (a matching remote AND a deprecated section) is the price of
-    // validating before the network call, which is worse to give up.
-    const remotes = loaded.document?.["remotes"];
+    // resolved ref reloads — matched against the RAW, pre-`env()`-
+    // interpolation `project_id` literal (`rawDocument`), mirroring
+    // `@supabase/config`'s own remote-selection rule. An `env(REF)`-spelled
+    // `[remotes.*].project_id` that happens to RESOLVE to `ref` must not
+    // match here (CLI-2287): matching the resolved value would both apply an
+    // overlay the loader itself would never select, and force a second
+    // `loadLocalConfig` reload whose load-time deprecation warnings would
+    // then print twice. Every other config keeps the step-2 load. The narrow
+    // remaining double-print (a matching remote AND a deprecated section) is
+    // the price of validating before the network call, which is worse to
+    // give up.
     const remoteMatchesRef =
-      isRecord(remotes) &&
-      Object.values(remotes).some((remote) => isRecord(remote) && remote["project_id"] === ref);
+      remoteNameForProjectRef(loaded.rawDocument?.["remotes"], ref) !== undefined;
     if (remoteMatchesRef) {
       loaded = yield* loadLocalConfig(ref);
     }
@@ -349,10 +289,10 @@ export const legacyConfigDiff = Effect.fn("legacy.config.diff")(function* (
     );
 
     const data = isRecord(responseJson) ? responseJson["data"] : undefined;
-    const scope = legacyConfigDiffScope(
+    const scope = legacyConfigApiScope(
       isRecord(data) && isRecord(data["attributes"]) ? data["attributes"] : {},
     );
-    yield* output.raw(legacyConfigDiffScopeLine(scope), "stderr");
+    yield* output.raw(legacyConfigScopeLine(scope), "stderr");
 
     // 8. Emit: `--output-format json|stream-json` structured payload, or
     // text. `-o/--output` never reaches here — step 1 rejects it outright,
