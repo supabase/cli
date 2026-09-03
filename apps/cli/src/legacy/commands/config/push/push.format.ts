@@ -1,5 +1,6 @@
 import type { ConfigChange } from "@supabase/config/internal";
 
+import { legacySanitizeInlineName } from "../../../shared/legacy-http-errors.ts";
 import {
   legacyConfigPlural,
   legacyConfigRenderChangeLines,
@@ -276,6 +277,72 @@ export interface LegacyPushPayloadInput {
   readonly declinedAddons: ReadonlyArray<string>;
   readonly remoteOnly: number;
   readonly scope: LegacyConfigApiScope;
+}
+
+/**
+ * One-line json/stream-json `message` summarizing what a push did, with a
+ * caveat sentence appended for anything withheld — modeled on
+ * `legacyConfigDiffSummaryMessage` (`../diff/diff.format.ts`), so an agent
+ * echoing `.message` never reports success while some declared property was
+ * left unpushed. Caveats are appended in a fixed order, one sentence per
+ * non-empty category.
+ */
+export function legacyPushSummaryMessage(input: LegacyPushPayloadInput): string {
+  const updated = input.services.filter((service) => service.status === "updated");
+  let base: string;
+  if (updated.length > 0) {
+    const n = updated.reduce((sum, service) => sum + service.changes.length, 0);
+    base = `${legacyConfigPlural(n, "property", "properties")} pushed to ${legacySanitizeInlineName(input.projectRef)}.`;
+  } else if (
+    input.services.every((service) => service.status === "up_to_date" || service.status === "disabled")
+  ) {
+    base = "Nothing to push: the project already matches the declared properties.";
+  } else {
+    base = "Nothing was pushed.";
+  }
+
+  const parts = [base];
+
+  const unpushable = input.unsupported.length + input.unencodable.length;
+  if (unpushable > 0) {
+    parts.push(`${legacyConfigPlural(unpushable, "declared property", "declared properties")} could not be pushed.`);
+  }
+
+  if (input.unmanaged.length > 0) {
+    const n = input.unmanaged.length;
+    parts.push(
+      `${legacyConfigPlural(n, "declared property", "declared properties")} ${n === 1 ? "is" : "are"} not managed by config push.`,
+    );
+  }
+
+  if (input.scope.missing.length > 0) {
+    const n = input.scope.missing.length;
+    parts.push(
+      `${legacyConfigPlural(n, "block", "blocks")} ${n === 1 ? "was" : "were"} not returned by the API.`,
+    );
+  }
+
+  const skipped = input.services.filter((service) => service.status === "skipped").length;
+  if (skipped > 0) {
+    parts.push(
+      `${legacyConfigPlural(skipped, "service", "services")} ${skipped === 1 ? "was" : "were"} skipped at the prompt.`,
+    );
+  }
+
+  const notSet = input.secrets.filter((secret) => secret.status === "not_set").length;
+  if (notSet > 0) {
+    parts.push(
+      `${legacyConfigPlural(notSet, "credential value", "credential values")} ${notSet === 1 ? "was" : "were"} not pushed.`,
+    );
+  }
+
+  if (input.declinedAddons.length > 0) {
+    parts.push(
+      `${legacyConfigPlural(input.declinedAddons.length, "add-on prompt", "add-on prompts")} declined.`,
+    );
+  }
+
+  return parts.join(" ");
 }
 
 /**

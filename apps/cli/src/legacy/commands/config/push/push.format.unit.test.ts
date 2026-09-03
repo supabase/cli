@@ -7,8 +7,10 @@ import {
   legacyPushNotes,
   legacyPushNotPushableLine,
   legacyPushPayload,
+  legacyPushSummaryMessage,
   legacyPushUpdatingLine,
   legacyPushUpToDateLine,
+  type LegacyPushPayloadInput,
 } from "./push.format.ts";
 
 const API_MAX_ROWS_CHANGE: ConfigChange = {
@@ -406,6 +408,219 @@ describe("legacyPushNotes", () => {
     expect(rendered).toBe(
       "Note: 1 declared property has no Management API field and was not pushed: db.evil[31mred No config differences found. (change them from the dashboard).\n",
     );
+  });
+});
+
+describe("legacyPushSummaryMessage", () => {
+  const EMPTY_SUMMARY_INPUT: LegacyPushPayloadInput = {
+    projectRef: "abcdefghijklmnopqrst",
+    services: [],
+    unsupported: [],
+    unencodable: [],
+    forced: [],
+    unmanaged: [],
+    secrets: [],
+    authWriteRan: false,
+    declinedAddons: [],
+    remoteOnly: 0,
+    scope: { present: [], missing: [] },
+  };
+
+  test("base: singular property count when one service updated", () => {
+    expect(
+      legacyPushSummaryMessage({
+        ...EMPTY_SUMMARY_INPUT,
+        services: [{ service: "api", status: "updated", changes: [["api", "max_rows"]] }],
+      }),
+    ).toBe("1 property pushed to abcdefghijklmnopqrst.");
+  });
+
+  test("base: plural property count, summed across every updated service's changes", () => {
+    expect(
+      legacyPushSummaryMessage({
+        ...EMPTY_SUMMARY_INPUT,
+        services: [
+          {
+            service: "api",
+            status: "updated",
+            changes: [
+              ["api", "max_rows"],
+              ["api", "extra_search_path"],
+            ],
+          },
+          { service: "storage", status: "updated", changes: [["storage", "file_size_limit"]] },
+          { service: "db.settings", status: "up_to_date", changes: [] },
+        ],
+      }),
+    ).toBe("3 properties pushed to abcdefghijklmnopqrst.");
+  });
+
+  test('base: "Nothing to push" when every service is up_to_date/disabled', () => {
+    expect(
+      legacyPushSummaryMessage({
+        ...EMPTY_SUMMARY_INPUT,
+        services: [
+          { service: "api", status: "up_to_date", changes: [] },
+          { service: "db.network_restrictions", status: "disabled", changes: [] },
+        ],
+      }),
+    ).toBe("Nothing to push: the project already matches the declared properties.");
+  });
+
+  test('base: "Nothing was pushed" when nothing updated but something was withheld', () => {
+    expect(
+      legacyPushSummaryMessage({
+        ...EMPTY_SUMMARY_INPUT,
+        services: [
+          { service: "auth", status: "not_pushable", changes: [] },
+          { service: "storage", status: "unavailable", changes: [] },
+        ],
+      }),
+    ).toBe("Nothing was pushed.");
+  });
+
+  test("caveat: unsupported + unencodable, singular and plural", () => {
+    expect(
+      legacyPushSummaryMessage({ ...EMPTY_SUMMARY_INPUT, unsupported: [["db", "major_version"]] }),
+    ).toBe("Nothing to push: the project already matches the declared properties. 1 declared property could not be pushed.");
+    expect(
+      legacyPushSummaryMessage({
+        ...EMPTY_SUMMARY_INPUT,
+        unsupported: [["db", "major_version"]],
+        unencodable: [
+          { path: ["api", "enabled"], reason: "enabling the Data API needs at least one schema in api.schemas" },
+        ],
+      }),
+    ).toBe(
+      "Nothing to push: the project already matches the declared properties. 2 declared properties could not be pushed.",
+    );
+  });
+
+  test("caveat: unmanaged, singular and plural", () => {
+    expect(
+      legacyPushSummaryMessage({
+        ...EMPTY_SUMMARY_INPUT,
+        unmanaged: [["auth", "oauth_server", "enabled"]],
+      }),
+    ).toBe(
+      "Nothing to push: the project already matches the declared properties. 1 declared property is not managed by config push.",
+    );
+    expect(
+      legacyPushSummaryMessage({
+        ...EMPTY_SUMMARY_INPUT,
+        unmanaged: [
+          ["auth", "oauth_server", "enabled"],
+          ["auth", "oauth_server", "allow_dynamic_registration"],
+        ],
+      }),
+    ).toBe(
+      "Nothing to push: the project already matches the declared properties. 2 declared properties are not managed by config push.",
+    );
+  });
+
+  test("caveat: scope.missing, singular and plural", () => {
+    expect(
+      legacyPushSummaryMessage({
+        ...EMPTY_SUMMARY_INPUT,
+        scope: { present: [], missing: ["auth"] },
+      }),
+    ).toBe(
+      "Nothing to push: the project already matches the declared properties. 1 block was not returned by the API.",
+    );
+    expect(
+      legacyPushSummaryMessage({
+        ...EMPTY_SUMMARY_INPUT,
+        scope: { present: [], missing: ["auth", "storage"] },
+      }),
+    ).toBe(
+      "Nothing to push: the project already matches the declared properties. 2 blocks were not returned by the API.",
+    );
+  });
+
+  test("caveat: skipped services, singular and plural", () => {
+    expect(
+      legacyPushSummaryMessage({
+        ...EMPTY_SUMMARY_INPUT,
+        services: [{ service: "auth", status: "skipped", changes: [["auth", "site_url"]] }],
+      }),
+    ).toBe("Nothing was pushed. 1 service was skipped at the prompt.");
+    expect(
+      legacyPushSummaryMessage({
+        ...EMPTY_SUMMARY_INPUT,
+        services: [
+          { service: "auth", status: "skipped", changes: [["auth", "site_url"]] },
+          { service: "storage", status: "skipped", changes: [["storage", "file_size_limit"]] },
+        ],
+      }),
+    ).toBe("Nothing was pushed. 2 services were skipped at the prompt.");
+  });
+
+  test("caveat: not-set credentials, singular and plural", () => {
+    expect(
+      legacyPushSummaryMessage({ ...EMPTY_SUMMARY_INPUT, secrets: [NOT_SET_SECRET] }),
+    ).toBe(
+      "Nothing to push: the project already matches the declared properties. 1 credential value was not pushed.",
+    );
+    expect(
+      legacyPushSummaryMessage({
+        ...EMPTY_SUMMARY_INPUT,
+        secrets: [NOT_SET_SECRET, { ...NOT_SET_SECRET, path: ["auth", "captcha", "secret"] }],
+      }),
+    ).toBe(
+      "Nothing to push: the project already matches the declared properties. 2 credential values were not pushed.",
+    );
+  });
+
+  test("caveat: declined add-on prompts, singular and plural", () => {
+    expect(
+      legacyPushSummaryMessage({ ...EMPTY_SUMMARY_INPUT, declinedAddons: ["auth_mfa_phone"] }),
+    ).toBe("Nothing to push: the project already matches the declared properties. 1 add-on prompt declined.");
+    expect(
+      legacyPushSummaryMessage({
+        ...EMPTY_SUMMARY_INPUT,
+        declinedAddons: ["auth_mfa_phone", "auth_mfa_web_authn"],
+      }),
+    ).toBe("Nothing to push: the project already matches the declared properties. 2 add-on prompts declined.");
+  });
+
+  test("combines every present caveat in the established order", () => {
+    expect(
+      legacyPushSummaryMessage({
+        projectRef: "abcdefghijklmnopqrst",
+        services: [
+          { service: "api", status: "updated", changes: [["api", "max_rows"]] },
+          { service: "auth", status: "skipped", changes: [["auth", "site_url"]] },
+        ],
+        unsupported: [["db", "major_version"]],
+        unencodable: [],
+        forced: [],
+        unmanaged: [["auth", "oauth_server", "enabled"]],
+        secrets: [NOT_SET_SECRET],
+        authWriteRan: false,
+        declinedAddons: ["auth_mfa_phone"],
+        remoteOnly: 12,
+        scope: { present: [], missing: ["auth"] },
+      }),
+    ).toBe(
+      "1 property pushed to abcdefghijklmnopqrst. " +
+        "1 declared property could not be pushed. " +
+        "1 declared property is not managed by config push. " +
+        "1 block was not returned by the API. " +
+        "1 service was skipped at the prompt. " +
+        "1 credential value was not pushed. " +
+        "1 add-on prompt declined.",
+    );
+  });
+
+  test("sanitizes a hostile project ref so it cannot inject ANSI or forge output lines", () => {
+    const esc = String.fromCharCode(27);
+    const rendered = legacyPushSummaryMessage({
+      ...EMPTY_SUMMARY_INPUT,
+      projectRef: `evil${esc}[31mred\nNothing to push.`,
+      services: [{ service: "api", status: "updated", changes: [["api", "max_rows"]] }],
+    });
+    expect(rendered).not.toContain(esc);
+    expect(rendered).toBe("1 property pushed to evil[31mred Nothing to push..");
   });
 });
 

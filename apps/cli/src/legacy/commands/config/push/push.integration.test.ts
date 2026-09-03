@@ -1855,76 +1855,6 @@ secret = "super-secret"
     },
   );
 
-  // D10 ("the no-active-SMS-provider case is reachable") does not hold
-  // through the real config-loading pipeline, for either candidate
-  // trigger — confirmed empirically and from source, not assumed:
-  //   - An SMS provider credential (e.g. `auth.sms.twilio.account_sid`)
-  //     only survives to `changeSet.changes` while that provider's
-  //     `enabled` is `true` — `DISABLED_SENTINEL_ENTRY_SWEEPS`
-  //     (project-config.ts:611-623, `{ containerPath: ["auth","sms"],
-  //     entryKeys: SMS_PROVIDER_PUSH_PRECEDENCE }`) prunes every OTHER key
-  //     of a provider entry whose `enabled !== true` — so a declared
-  //     credential under a provider that ISN'T locally active never
-  //     reaches the encoder at all (confirmed: declaring
-  //     `[auth.sms.twilio] account_sid = "AC123"` with no `enabled` key
-  //     reports "Remote Auth config is up to date.", zero changes).
-  //   - `api.enabled = true` with `api.schemas` undeclared: `resolveLeaf`'s
-  //     REMOTE tier can never report `schemas: []` — the API-arm registry
-  //     row (registry.ts:97-108, `remoteDataApiDisabled`) maps a disabled
-  //     remote (`db_schema === ""`) straight to `undefined` (never an empty
-  //     array), and `splitCommaSeparated` (registry-row.ts:242-247) only
-  //     ever returns `[]` for `value.length === 0`, which is exactly the
-  //     disabled case. The LOCAL fallback tier is no help either: once
-  //     `[api]` exists with `enabled` declared, `local.api.schemas` is the
-  //     CliConfig's own non-empty schema default (confirmed: it renders as
-  //     `["public","graphql_public"] (schema default...)`), so
-  //     `schemas.length === 0` can never be reached this way. A literal
-  //     `api.schemas = []` declaration does reach an encoder-adjacent
-  //     branch, but not this one: the registry's OWN
-  //     `normalizeDocument` (registry.ts:110-121) canonicalizes a declared
-  //     empty array to `undefined` and reclassifies it as `unmanaged`
-  //     before `changeSet.changes` ever sees it (confirmed: "1 declared
-  //     property is not managed by config push...", not the not_pushable
-  //     line).
-  // TODO(impl): `push.encoders.ts`'s two `REASON_API_ENABLE_NEEDS_SCHEMA`/
-  // `REASON_SMS_ACTIVE_PROVIDER_ONLY` unencodable branches (push.encoders.ts
-  // — the `if (schemas.length === 0)` arm under `legacyEncodeApiBody`, and
-  // the `activeProvider === undefined` arm under `legacyEncodeAuthBody`)
-  // are exercised by `push.encoders.unit.test.ts` (which can hand-construct
-  // a `changes`/`local`/`remote` triple bypassing the real projection) but
-  // have no reachable integration-level trigger given the current
-  // `@supabase/config` pruning/normalization rules. Retriage whether B7's
-  // "keep" call is still correct now that both of its surviving cases turn
-  // out unreachable too, or find the missed combination — left `.skip`
-  // rather than deleted so the finding stays visible.
-  it.skip("D10: no locally-enabled SMS provider makes an sms-family change not_pushable", () => {
-    const toml = `project_id = "test"
-[auth.sms.twilio]
-enabled = true
-account_sid = "AC123"
-`;
-    const { layer, apiMock, out } = setupService({
-      toml,
-      format: "json",
-      v1: { updateAuthServiceConfig: () => Effect.succeed({}) },
-    });
-    return Effect.gen(function* () {
-      yield* legacyConfigPush({ projectRef: Option.none() });
-      expect(out.stderrText).toContain(
-        "Remote Auth config has 1 difference config push cannot write (see notes below).",
-      );
-      expect(methodsOf(apiMock)).not.toContain("updateAuthServiceConfig");
-      const success = out.messages.find((m) => m.type === "success");
-      const data = success?.data as Record<string, unknown>;
-      const services = data["services"] as ReadonlyArray<Record<string, unknown>>;
-      expect(services.find((s) => s["service"] === "auth")).toEqual({
-        service: "auth",
-        status: "not_pushable",
-        changes: [],
-      });
-    }).pipe(Effect.provide(layer));
-  });
-
   it.live(
     "not_pushable status renders correctly for a genuinely reachable unencodable case (an invalid byte size)",
     () => {
@@ -1995,60 +1925,6 @@ verify_enabled = true
         const input = update?.input as Record<string, unknown>;
         expect(input["mfa_phone_verify_enabled"]).toBe(false);
         expect(input["mfa_phone_enroll_enabled"]).toBe(false);
-      }).pipe(Effect.provide(layer));
-    },
-  );
-
-  // B1 ("a declared change under a gated-off resource shows up in
-  // unsupported") is unreachable through the real config-loading pipeline
-  // for all six resources, not a test-writer oversight: every "gate off"
-  // condition `legacyPushResourceEnabled` checks correlates exactly with a
-  // `@supabase/config` disabled-sentinel prune that removes the container's
-  // OTHER declared keys before `fromConfigDocument` returns — confirmed
-  // empirically (declaring `[storage] enabled = false` + `file_size_limit`
-  // yields `local.storage === { enabled: false }`; same for
-  // `[db.network_restrictions]` and `[auth]`). See
-  // packages/config/src/project-config/project-config.ts:564-609
-  // (`DISABLED_SENTINEL_PRUNES`, `{ containerPath: ["auth"] }` /
-  // `["storage"]` drop every key but `enabled`) and :612-655
-  // (`applyDisabledSentinels`, the `container["enabled"] === false` prune
-  // gate) — the exact same decoded `enabled` value
-  // `legacyPushResourceEnabled` (push.plan.ts:174-192) gates on. `api` and
-  // `db.settings` have no gate at all; `db.ssl_enforcement`'s gate is
-  // presence-based, and declaring it always makes the gate pass (there is
-  // no comparable single field left to route once declared). So
-  // `push.handler.ts:410`'s `unsupported.push(...plan.changesByResource[resource])`
-  // has no reachable integration-level input; it is exercised only by
-  // `push.plan.unit.test.ts`, which can hand-construct a `changeSet` that
-  // bypasses the real projection.
-  // TODO(impl): either delete the dead branch (B1 as a review nice-to-have
-  // may not be worth keeping given no real config can trigger it) or file a
-  // follow-up documenting it as defensive-only in push.plan.ts's doc
-  // comment. Left as `.skip` rather than deleted so the finding stays
-  // visible; remove once triaged.
-  it.skip(
-    "B1: a declared change under a gated-off resource shows up in unsupported, not silently dropped",
-    () => {
-      const toml = `project_id = "test"
-[storage]
-enabled = false
-file_size_limit = "100MiB"
-`;
-      const { layer, out } = setupService({ toml, format: "json" });
-      return Effect.gen(function* () {
-        yield* legacyConfigPush({ projectRef: Option.none() });
-        expect(out.stderrText).toContain(
-          "Note: 1 declared property has no Management API field and was not pushed: storage.file_size_limit (change them from the dashboard).",
-        );
-        const success = out.messages.find((m) => m.type === "success");
-        const data = success?.data as Record<string, unknown>;
-        expect(data["unsupported"]).toEqual([["storage", "file_size_limit"]]);
-        const services = data["services"] as ReadonlyArray<Record<string, unknown>>;
-        expect(services.find((s) => s["service"] === "storage")).toEqual({
-          service: "storage",
-          status: "disabled",
-          changes: [],
-        });
       }).pipe(Effect.provide(layer));
     },
   );
@@ -2230,17 +2106,7 @@ secret = "new-secret"
     }).pipe(Effect.provide(layer));
   });
 
-  // D11: the json `message` field should be a non-empty summary with
-  // caveats (modeled on `legacyConfigDiffSummaryMessage`,
-  // diff/diff.format.ts:61) — but `push.handler.ts:613` calls
-  // `output.success("", legacyPushPayload({...}))` with a literal `""`, and
-  // no `legacyPushSummaryMessage`-shaped helper exists in push.format.ts.
-  // SIDE_EFFECTS.md:189-224 documents the empty `message` as current,
-  // intentional behavior, so this is a real, not accidental, gap.
-  // TODO(impl): push.handler.ts:613, push.format.ts (missing summary
-  // builder) — wire a non-empty summary message the way `diff.handler.ts:270-271`
-  // does with `legacyConfigDiffSummaryMessage`, then remove `.skip` here.
-  it.skip("D11: the json message field is a non-empty summary, not an empty string", () => {
+  it.live("D11: the json message field is a non-empty summary, not an empty string", () => {
     const { layer, out } = setup({
       toml: `project_id = "test"\n[api]\nmax_rows = 2000\n`,
       format: "json",
@@ -2249,10 +2115,7 @@ secret = "new-secret"
     return Effect.gen(function* () {
       yield* legacyConfigPush({ projectRef: Option.none() });
       const success = out.messages.find((m) => m.type === "success");
-      const data = success?.data as Record<string, unknown>;
-      expect(data["message"]).not.toBe("");
-      expect(typeof data["message"]).toBe("string");
-      expect((data["message"] as string).length).toBeGreaterThan(0);
+      expect(success?.message).toBe(`1 property pushed to ${REF}.`);
     }).pipe(Effect.provide(layer));
   });
 });

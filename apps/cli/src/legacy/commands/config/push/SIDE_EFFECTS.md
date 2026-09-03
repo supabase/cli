@@ -186,10 +186,10 @@ through the same control-character sanitizing `config diff` uses.
 ### `--output-format json` / `stream-json`
 
 Per-service diagnostics stay on stderr; prompts auto-confirm (default yes). A
-structured summary is emitted on stdout via `output.success("", data)`.
+structured summary is emitted on stdout via `output.success(message, data)`.
 
-`json` mode — one flat object (note the empty `message` field added by
-`output.success`):
+`json` mode — one flat object (`message` is a one-sentence summary, with a
+caveat sentence appended for anything withheld — see below):
 
 ```jsonc
 {
@@ -212,15 +212,25 @@ structured summary is emitted on stdout via `output.success("", data)`.
   "declined_addons": [],
   "remote_only": 12,
   "scope": { "present": ["api", "auth", "database", "pooler", "realtime", "storage"], "missing": [] },
-  "message": ""
+  "message": "1 property pushed to abcdefghijklmnopqrst. 2 declared properties could not be pushed. 1 declared property is not managed by config push."
 }
 ```
+
+`message`'s base sentence is `N property/properties pushed to <ref>.` when at
+least one service updated (`N` is the total size of every `updated`
+service's `changes`), `Nothing to push: the project already matches the
+declared properties.` when every service is `up_to_date`/`disabled`, or
+`Nothing was pushed.` otherwise. A caveat sentence is appended, in this
+fixed order, for each non-empty category: unsupported+unencodable, unmanaged,
+`scope.missing`, skipped services, not-set credentials, declined add-on
+prompts — so an agent echoing just `.message` never reports success while
+something declared was withheld.
 
 `stream-json` mode — an NDJSON `result` event with the payload nested under
 `data` (consumers read `result.data.project_ref`, not `result.project_ref`):
 
 ```jsonc
-{ "type": "result", "data": { "project_ref": "…", "services": […], "message": "" }, "timestamp": "…" }
+{ "type": "result", "data": { "project_ref": "…", "services": […], "message": "1 property pushed to abcdefghijklmnopqrst." }, "timestamp": "…" }
 ```
 
 `status ∈ "updated" | "up_to_date" | "skipped" | "disabled" | "unavailable" |

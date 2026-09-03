@@ -63,6 +63,7 @@ import {
   legacyPushNotes,
   legacyPushNotPushableLine,
   legacyPushPayload,
+  legacyPushSummaryMessage,
   legacyPushUpdatingLine,
   legacyPushUpToDateLine,
   type LegacyPushForced,
@@ -407,6 +408,10 @@ export const legacyConfigPush = Effect.fn("legacy.config.push")(function* (
         continue;
       }
       if (!resourceEnabled[resource]) {
+        // Defensive: the projection's disabled-sentinel prune removes a
+        // gated-off resource's other declared keys before diffing, so
+        // `plan.changesByResource[resource]` is not expected to be non-empty
+        // here — this route exists for changes the projection leaves behind.
         unsupported.push(...plan.changesByResource[resource].map((change) => change.path));
         services.push({ service: resource, status: "disabled", changes: [] });
         continue;
@@ -610,21 +615,22 @@ export const legacyConfigPush = Effect.fn("legacy.config.push")(function* (
 
     // 9. Machine-readable summary in `json` / `stream-json` mode.
     if (output.format !== "text") {
+      const payloadInput = {
+        projectRef: ref,
+        services,
+        unsupported,
+        unencodable,
+        forced,
+        unmanaged: changeSet.unmanaged,
+        secrets: secrets.map(toSecretReport),
+        authWriteRan,
+        declinedAddons,
+        remoteOnly: plan.remoteOnly,
+        scope,
+      };
       yield* output.success(
-        "",
-        legacyPushPayload({
-          projectRef: ref,
-          services,
-          unsupported,
-          unencodable,
-          forced,
-          unmanaged: changeSet.unmanaged,
-          secrets: secrets.map(toSecretReport),
-          authWriteRan,
-          declinedAddons,
-          remoteOnly: plan.remoteOnly,
-          scope,
-        }),
+        legacyPushSummaryMessage(payloadInput),
+        legacyPushPayload(payloadInput),
       );
     }
   }).pipe(Effect.ensuring(linkedProjectCache.cache(ref)), Effect.ensuring(telemetryState.flush));
