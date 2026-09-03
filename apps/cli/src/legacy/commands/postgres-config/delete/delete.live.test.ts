@@ -1,7 +1,7 @@
 import { expect } from "vitest";
 
 import {
-  postgresConfigLiveFlags,
+  experimentalProjectLiveFlags,
   removePostgresConfigLiveOverride,
   requireLiveSuccess,
   test,
@@ -12,7 +12,7 @@ import {
 // assertion cannot be satisfied by the pre-seed state. Teardown removes the
 // seeded key only when the test did not already prove it gone.
 test("removes the test-seeded override and get proves it is gone", async ({ cli, project }) => {
-  const flags = postgresConfigLiveFlags(project);
+  const flags = experimentalProjectLiveFlags(project);
   let targetError: unknown;
   const cleanupErrors: Array<unknown> = [];
   let cleanupNeeded = true;

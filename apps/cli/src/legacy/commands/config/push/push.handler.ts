@@ -14,10 +14,20 @@ import {
   legacyAssertDecryptableSecrets,
   legacyLoadProjectEnv,
 } from "../../../shared/legacy-db-config.toml-read.ts";
-import { mapLegacyHttpError } from "../../../shared/legacy-http-errors.ts";
+import {
+  legacyParentNotLinkedMessage,
+  legacyParentRefInvalidMessage,
+  legacyParentRefTypoHint,
+  legacyResolveLinkedParentRef,
+} from "../../../shared/legacy-parent-project-ref.ts";
+import { LEGACY_BRANCH_UUID_PATTERN } from "../../../shared/legacy-ref-patterns.ts";
+import {
+  legacySanitizeInlineName,
+  mapLegacyHttpError,
+} from "../../../shared/legacy-http-errors.ts";
 import { legacyPromptYesNo } from "../../../../shared/legacy/legacy-prompt-yes-no.ts";
 import { legacyCollectDotenvPrivateKeys } from "../../../shared/legacy-vault-decrypt.ts";
-import { legacyResolveConfigTargetRef } from "../config.branch-target.ts";
+import { legacyResolveConfigTarget } from "../config.target.ts";
 import { apiSubsetFromConfig, apiToUpdateBody, diffApiWithRemote } from "./config-sync/api.sync.ts";
 import {
   applyRemoteAuthConfig,
@@ -107,6 +117,25 @@ const mapPushBranchResolveError = mapLegacyHttpError({
   statusMessage: readStatusMessage,
 });
 
+/** Error construction for `legacyResolveConfigTarget` (`../config.target.ts`,
+ * shared with `config diff`/`config pull`), keeping `config push`'s own
+ * tagged error classes and message wording. */
+const configTargetErrors = {
+  notLinked: (target: string) =>
+    new LegacyConfigPushBranchNotLinkedError({ message: legacyParentNotLinkedMessage(target) }),
+  parentRefInvalid: (target: string) =>
+    new LegacyConfigPushParentRefInvalidError({ message: legacyParentRefInvalidMessage(target) }),
+  branchNotFound: (target: string) =>
+    new LegacyConfigPushBranchNotFoundError({
+      message: `Branch "${legacySanitizeInlineName(target)}" not found. Run \`supabase branches list\` to see available branches.${legacyParentRefTypoHint(target)}`,
+    }),
+  branchNotReady: (target: string) =>
+    new LegacyConfigPushBranchNotReadyError({
+      message: `Branch "${legacySanitizeInlineName(target)}" has no project ref yet. Wait for it to finish provisioning, then retry.`,
+    }),
+  mapResolveError: mapPushBranchResolveError,
+};
+
 export const legacyConfigPush = Effect.fn("legacy.config.push")(function* (
   flags: LegacyConfigPushFlags,
 ) {
@@ -185,11 +214,12 @@ export const legacyConfigPush = Effect.fn("legacy.config.push")(function* (
   yield* Effect.gen(function* () {
     // 1. Resolve the push target. `--project-ref` accepts a project ref, or
     // the name (or UUID) of a branch of the linked project (CLI-2167/CLI-2289) —
-    // hoisted to `config.branch-target.ts` (Hoist Before You Duplicate,
-    // shared with `config diff`). This is ALSO where `resolvedRef` is set,
-    // so every one of the hoisted resolver's failure paths (not linked,
-    // invalid parent, not found, not ready, network/status) still flushes
-    // telemetry and, once a ref is known, writes the linked-project cache.
+    // `legacyResolveConfigTarget` (`../config.target.ts`, Hoist Before You
+    // Duplicate, shared with `config diff`/`config pull`). This is ALSO
+    // where `resolvedRef` is set, so every one of the shared resolver's
+    // failure paths (not linked, invalid parent, not found, not ready,
+    // network/status) still flushes telemetry and, once a ref is known,
+    // writes the linked-project cache.
     //
     // Deliberately runs BEFORE the config load below (unlike `config diff`,
     // whose read-only contract makes a load-before-resolve split safe): a
@@ -204,17 +234,7 @@ export const legacyConfigPush = Effect.fn("legacy.config.push")(function* (
     // malformed `config.toml` is caught — an accepted, narrow tradeoff
     // (matches this command's own pre-CLI-2168 behavior, which always
     // resolved before loading).
-    const resolved = yield* legacyResolveConfigTargetRef(requestedRef, {
-      notLinkedError: (opts) => new LegacyConfigPushBranchNotLinkedError(opts),
-      parentRefInvalidError: (opts) => new LegacyConfigPushParentRefInvalidError(opts),
-      branchNotFoundError: (opts) => new LegacyConfigPushBranchNotFoundError(opts),
-      branchNotReadyError: (opts) => new LegacyConfigPushBranchNotReadyError(opts),
-      mapResolveError: {
-        mapGetError: mapPushBranchResolveError,
-        mapFindError: mapPushBranchResolveError,
-      },
-    });
-    const ref = resolved.ref;
+    const { ref, branch } = yield* legacyResolveConfigTarget(requestedRef, configTargetErrors);
     resolvedRef = ref;
 
     // 2. Load config.toml with the resolved ref (TOML parse error aborts
@@ -288,25 +308,34 @@ export const legacyConfigPush = Effect.fn("legacy.config.push")(function* (
     // and, for a CONFIRMED branch, gate the push behind an explicit
     // confirmation before any further network call — including the cost
     // matrix below (CLI-2168). A target resolved from an EXPLICIT
-    // `--project-ref <name-or-uuid>` this invocation (`resolved.branchResolution`)
-    // skips the prompt: the user already expressed same-invocation intent,
-    // so re-confirming the exact string they just typed is friction with no
-    // safety benefit. `config.branch-target.ts`'s shared resolution result
-    // is a loose `{branchName?, parentRef?}` (also used by `config diff`,
-    // which has no equivalent "certain vs. uuid" distinction to make); push
-    // narrows it to its own discriminated `LegacyConfigPushKnownBranch`
-    // here. The target-echo line below always prints regardless of kind.
-    const knownBranch: LegacyConfigPushKnownBranch | undefined =
-      resolved.branchResolution === undefined
-        ? undefined
-        : resolved.branchResolution.branchName !== undefined &&
-            resolved.branchResolution.parentRef !== undefined
-          ? {
-              kind: "name",
-              branchName: resolved.branchResolution.branchName,
-              parentRef: resolved.branchResolution.parentRef,
-            }
-          : { kind: "uuid" };
+    // `--project-ref <name-or-uuid>` this invocation (`branch`, from the
+    // shared resolver above) skips the prompt: the user already expressed
+    // same-invocation intent, so re-confirming the exact string they just
+    // typed is friction with no safety benefit. The target-echo line below
+    // always prints regardless of kind.
+    //
+    // `legacyResolveConfigTarget` (shared with `config diff`/`config pull`,
+    // neither of which needs a branch's PARENT ref) returns only the raw
+    // `branch` string the user named, not its resolved parent. A UUID
+    // target genuinely has no parent to give (`GET /v1/branches/{id}`
+    // resolves it alone) — `{kind: "uuid"}`. A NAME target's parent WAS
+    // resolved internally to look it up, just not returned; re-deriving it
+    // here via `legacyResolveLinkedParentRef()` is a second LOCAL-ONLY read
+    // (env/cache/file, no network) of the exact same chain that just
+    // resolved moments ago, so it can only disagree if something rewrote
+    // the linked state mid-command — safe to treat as unreachable.
+    let knownBranch: LegacyConfigPushKnownBranch | undefined;
+    if (branch !== undefined) {
+      if (LEGACY_BRANCH_UUID_PATTERN.test(branch)) {
+        knownBranch = { kind: "uuid" };
+      } else {
+        const parent = yield* legacyResolveLinkedParentRef();
+        knownBranch =
+          parent.kind === "resolved"
+            ? { kind: "name", branchName: branch, parentRef: parent.ref }
+            : { kind: "uuid" };
+      }
+    }
     const target = yield* legacyResolveConfigPushTarget(ref, { knownBranch });
     yield* output.raw(legacyConfigPushTargetLines(target), "stderr");
     if (target.kind === "branch" && knownBranch === undefined) {

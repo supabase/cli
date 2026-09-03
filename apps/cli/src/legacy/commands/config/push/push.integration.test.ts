@@ -1664,9 +1664,9 @@ describe("legacy config push --project-ref branch name/UUID resolution (CLI-2289
   it.live(
     "--project-ref <branch-name> skips the branch confirmation prompt, with no --yes and no queued answer",
     () => {
-      // `resolved.branchResolution` carries `{branchName, parentRef}` for a
-      // NAME target, so push.handler.ts's `resolved.branchResolution ===
-      // undefined` gate is never entered — no prompt at all. `yes: false`
+      // `knownBranch` is `{kind: "name", branchName, parentRef}` for a NAME
+      // target, so push.handler.ts's `knownBranch === undefined` gate is
+      // never entered — no prompt at all. `yes: false`
       // with no `confirm`/`pipedAnswers` queued at all means the mock's own
       // "no more queued answers" fallback (`promptConfirmResponses.shift()
       // ?? true`) would silently mask a wrongly-shown prompt if we only
@@ -1786,11 +1786,11 @@ describe("legacy config push --project-ref branch name/UUID resolution (CLI-2289
   it.live(
     "--project-ref <uuid> never shows the branch confirmation prompt, on an unattended run with no --yes",
     () => {
-      // `resolved.branchResolution` is `{}` (defined, not `undefined`) for a
-      // UUID target (config.branch-target.ts) — the same "explicit target
-      // this invocation" shape a branch NAME target gets, so
-      // push.handler.ts's `target.kind === "branch" && resolved.branchResolution
-      // === undefined` gate is never entered: no prompt at all, even on a
+      // `knownBranch` is `{kind: "uuid"}` (defined, not `undefined`) for a
+      // UUID target — the same "explicit target this invocation" shape a
+      // branch NAME target gets, so push.handler.ts's `target.kind ===
+      // "branch" && knownBranch === undefined` gate is never entered: no
+      // prompt at all, even on a
       // fully unattended run (no `--yes`, non-TTY, empty stdin). Checking
       // `out.stderrText` for the exact branch-prompt label (rather than
       // relying on `--yes`'s own echo, which the existing UUID regression
@@ -1930,7 +1930,7 @@ describe("legacy config push --project-ref branch name/UUID resolution (CLI-2289
       expect(rendered).toContain("LegacyConfigPushBranchNotReadyError");
       expect(rendered).toContain("has no project ref yet");
       expect(api.requests.some((r) => r.url.includes("/billing/addons"))).toBe(false);
-      // This fails inside `legacyResolveConfigTargetRef` itself (the
+      // This fails inside `legacyResolveConfigTarget` itself (the
       // placeholder ref is rejected before it's ever assigned to the
       // handler's `resolvedRef`), so the cache write is still a no-op.
       expect(telemetry.flushed).toBe(true);

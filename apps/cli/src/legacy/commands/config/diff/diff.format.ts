@@ -1,65 +1,25 @@
-import {
-  type ConfigChange,
-  type ConfigChangeSet,
-  projectConfigApiBlockKeys,
-} from "@supabase/config/internal";
+import type { ConfigChange, ConfigChangeSet } from "@supabase/config/internal";
 
-import { LEGACY_BRANCH_UUID_PATTERN } from "../../../shared/legacy-ref-patterns.ts";
 import { legacySanitizeInlineName } from "../../../shared/legacy-http-errors.ts";
+import {
+  legacyConfigChangePayloadEntry,
+  type LegacyConfigApiScope,
+  legacyConfigMaskedCaveat,
+  legacyConfigNotReturnedCaveat,
+  legacyConfigPlural,
+  legacyConfigRenderPath,
+  legacyConfigRenderValue,
+  legacyConfigTargetPhrase,
+  legacyConfigUnmanagedCaveat,
+} from "../config.format.ts";
 
 /**
  * Pure formatters, payload builders, and input adapters for `config diff` —
- * no Effect, no services, unit-testable in isolation.
- *
- * Every non-constant string interpolated into TEXT output goes through
- * `legacySanitizeInlineName`: path segments (`[remotes.*]` names,
- * `sms.test_otp` record keys) and env-var names are unconstrained
- * user/API-controlled strings, so a hostile value could otherwise emit raw
- * ANSI or forge output lines (e.g. a name ending `\nNo config differences
- * found.`). JSON output needs no sanitizing — `JSON.stringify` escapes
- * control characters.
+ * no Effect, no services, unit-testable in isolation. The API-scope
+ * classification, target-naming phrase, value/path rendering, and
+ * masked/unmanaged/not-returned caveat wording shared with `config pull` live
+ * in `../config.format.ts` (hoisted, CLI-2064).
  */
-
-/**
- * The per-service blocks of the v2 project-config resource — owned by
- * `@supabase/config` (derived from its response mirror), never hand-copied
- * here, so a block the package learns is never reported "not returned"
- * forever.
- */
-const REMOTE_CONFIG_BLOCKS: ReadonlyArray<string> = projectConfigApiBlockKeys;
-
-export interface LegacyConfigDiffScope {
-  /** Blocks the response's `data.attributes` carried with at least one key. */
-  readonly present: ReadonlyArray<string>;
-  /** Blocks absent from the response — or present but EMPTY, which is how a
-   * permission-truncated response most plausibly reports a block it could
-   * not read; claiming an empty block was "compared" would be false. */
-  readonly missing: ReadonlyArray<string>;
-}
-
-function isPopulatedBlockRecord(value: unknown): value is Readonly<Record<string, unknown>> {
-  return (
-    typeof value === "object" &&
-    value !== null &&
-    !Array.isArray(value) &&
-    Object.keys(value).length > 0
-  );
-}
-
-/**
- * Which per-service blocks the response's `data.attributes` actually carried
- * — echoed to the user so a partially-populated response is never mistaken
- * for a clean bill of health.
- */
-export function legacyConfigDiffScope(
-  attributes: Readonly<Record<string, unknown>>,
-): LegacyConfigDiffScope {
-  const present = REMOTE_CONFIG_BLOCKS.filter((block) => isPopulatedBlockRecord(attributes[block]));
-  return {
-    present,
-    missing: REMOTE_CONFIG_BLOCKS.filter((block) => !present.includes(block)),
-  };
-}
 
 export interface LegacyConfigDiffContext {
   /** The resolved comparison target's project ref. */
@@ -86,25 +46,6 @@ const CLASS_LABELS: Record<ConfigChange["class"], string> = {
   local_only: "local-only",
 };
 
-function renderValue(value: unknown, absent: string): string {
-  if (value === undefined) {
-    return absent;
-  }
-  if (typeof value === "number" || typeof value === "boolean") {
-    return String(value);
-  }
-  return JSON.stringify(value);
-}
-
-/** Display-only join — `ConfigChange.path` is segment-array everywhere else. */
-function renderPath(path: ReadonlyArray<string>): string {
-  return legacySanitizeInlineName(path.join("."));
-}
-
-function plural(count: number, singular: string, pluralForm: string): string {
-  return `${count} ${count === 1 ? singular : pluralForm}`;
-}
-
 function localScope(context: LegacyConfigDiffContext): string {
   return context.appliedRemote === undefined
     ? "base config"
@@ -113,49 +54,7 @@ function localScope(context: LegacyConfigDiffContext): string {
 
 /** The target-echo line, printed to stderr before any comparison output. */
 export function legacyConfigDiffComparisonLine(context: LegacyConfigDiffContext): string {
-  // A UUID target is an identifier, not a display name — quoting it as
-  // `'1111…'` would imply the branch is literally named that.
-  const projectRef = legacySanitizeInlineName(context.projectRef);
-  const target =
-    context.branch === undefined
-      ? `project ${projectRef}`
-      : LEGACY_BRANCH_UUID_PATTERN.test(context.branch)
-        ? `branch ${legacySanitizeInlineName(context.branch)} (project ref ${projectRef})`
-        : `'${legacySanitizeInlineName(context.branch)}' (branch ${projectRef})`;
-  return `Comparing against ${target} using ${localScope(context)}\n`;
-}
-
-/** The scope-echo line, printed to stderr once the response arrived. */
-export function legacyConfigDiffScopeLine(scope: LegacyConfigDiffScope): string {
-  const present = scope.present.length === 0 ? "(none)" : scope.present.join(", ");
-  const suffix = scope.missing.length === 0 ? "" : ` (not returned: ${scope.missing.join(", ")})`;
-  return `Comparison scope: ${present}${suffix}\n`;
-}
-
-function maskedCaveat(masked: ReadonlyArray<ReadonlyArray<string>>): string {
-  return `${plural(masked.length, "credential value", "credential values")} not compared (masked by the API): ${masked.map(renderPath).join(", ")}`;
-}
-
-function unmanagedCaveat(unmanaged: ReadonlyArray<ReadonlyArray<string>>): string {
-  const phrase =
-    unmanaged.length === 1
-      ? "1 declared property cannot be pushed and was not compared"
-      : `${unmanaged.length} declared properties cannot be pushed and were not compared`;
-  return `${phrase}: ${unmanaged.map(renderPath).join(", ")}`;
-}
-
-/**
- * Block names come from `REMOTE_CONFIG_BLOCKS` (the schema-derived list), not
- * from the response body, so — unlike the masked/unmanaged path lists — there
- * is no sanitization concern here; still styled the same way as those two
- * caveats for consistency.
- */
-function notReturnedCaveat(missing: ReadonlyArray<string>): string {
-  const phrase =
-    missing.length === 1
-      ? "1 block was not returned by the API and was not compared"
-      : `${missing.length} blocks were not returned by the API and were not compared`;
-  return `${phrase}: ${missing.join(", ")}`;
+  return `Comparing against ${legacyConfigTargetPhrase(context)} using ${localScope(context)}\n`;
 }
 
 /**
@@ -168,28 +67,28 @@ function notReturnedCaveat(missing: ReadonlyArray<string>): string {
  */
 export function legacyConfigDiffSummaryMessage(
   changeSet: ConfigChangeSet,
-  scope: LegacyConfigDiffScope,
+  scope: LegacyConfigApiScope,
 ): string {
   const total = changeSet.counts.total;
   const base =
     total === 0
       ? "No config differences found."
-      : `${plural(total, "config difference", "config differences")} found.`;
+      : `${legacyConfigPlural(total, "config difference", "config differences")} found.`;
   const parts = [base];
   if (scope.missing.length > 0) {
-    parts.push(`${notReturnedCaveat(scope.missing)}.`);
+    parts.push(`${legacyConfigNotReturnedCaveat(scope.missing)}.`);
   }
   if (changeSet.masked.length > 0) {
-    parts.push(`${maskedCaveat(changeSet.masked)}.`);
+    parts.push(`${legacyConfigMaskedCaveat(changeSet.masked)}.`);
   }
   if (changeSet.unmanaged.length > 0) {
-    parts.push(`${unmanagedCaveat(changeSet.unmanaged)}.`);
+    parts.push(`${legacyConfigUnmanagedCaveat(changeSet.unmanaged)}.`);
   }
   return parts.join(" ");
 }
 
 function renderLocal(change: ConfigChange): string {
-  const value = renderValue(change.local, "(unset)");
+  const value = legacyConfigRenderValue(change.local, "(unset)");
   // A populated local value on an undeclared path is the schema default the
   // projection materialized — the value a `config push` would write. Say so,
   // or "[remote-only]" reads as "this key exists only remotely", which is
@@ -203,17 +102,17 @@ function renderLocal(change: ConfigChange): string {
 /** Human-readable diff body for text mode (stdout). */
 export function legacyRenderConfigDiffText(
   changeSet: ConfigChangeSet,
-  scope: LegacyConfigDiffScope,
+  scope: LegacyConfigApiScope,
 ): string {
   const lines: Array<string> = [];
   for (const change of changeSet.changes) {
-    lines.push(`${renderPath(change.path)} [${CLASS_LABELS[change.class]}]`);
+    lines.push(`${legacyConfigRenderPath(change.path)} [${CLASS_LABELS[change.class]}]`);
     const env =
       change.envVariables === undefined
         ? ""
         : ` (from env ${legacySanitizeInlineName(change.envVariables.join(", "))})`;
     lines.push(`  local:  ${renderLocal(change)}${env}`);
-    lines.push(`  remote: ${renderValue(change.remote, "(not returned)")}`);
+    lines.push(`  remote: ${legacyConfigRenderValue(change.remote, "(not returned)")}`);
     lines.push("");
   }
 
@@ -222,17 +121,17 @@ export function legacyRenderConfigDiffText(
     lines.push("No config differences found.");
   } else {
     lines.push(
-      `${plural(total, "difference", "differences")} found (${update} update, ${remote_only} remote-only, ${local_only} local-only).`,
+      `${legacyConfigPlural(total, "difference", "differences")} found (${update} update, ${remote_only} remote-only, ${local_only} local-only).`,
     );
   }
   if (scope.missing.length > 0) {
-    lines.push(`Note: ${notReturnedCaveat(scope.missing)}`);
+    lines.push(`Note: ${legacyConfigNotReturnedCaveat(scope.missing)}`);
   }
   if (changeSet.masked.length > 0) {
-    lines.push(`Note: ${maskedCaveat(changeSet.masked)}`);
+    lines.push(`Note: ${legacyConfigMaskedCaveat(changeSet.masked)}`);
   }
   if (changeSet.unmanaged.length > 0) {
-    lines.push(`Note: ${unmanagedCaveat(changeSet.unmanaged)}`);
+    lines.push(`Note: ${legacyConfigUnmanagedCaveat(changeSet.unmanaged)}`);
   }
   return `${lines.join("\n")}\n`;
 }
@@ -247,13 +146,9 @@ export function legacyRenderConfigDiffText(
  */
 export function legacyConfigDiffPayload(
   changeSet: ConfigChangeSet,
-  scope: LegacyConfigDiffScope,
+  scope: LegacyConfigApiScope,
   context: LegacyConfigDiffContext,
 ): Record<string, unknown> {
-  const valueEntry = (key: string, value: unknown): Record<string, unknown> => ({
-    [key]: value === undefined ? null : value,
-  });
-
   return {
     // The payload contract's own version — what a forward-compat consumer
     // gates on. The user's `$schema` document reference is `config_schema`:
@@ -269,14 +164,7 @@ export function legacyConfigDiffPayload(
         context.appliedRemote === undefined ? "base" : `remotes.${context.appliedRemote}`,
     },
     scope: { present: scope.present, missing: scope.missing },
-    changes: changeSet.changes.map((change) => ({
-      path: change.path,
-      class: change.class,
-      declared: change.declared,
-      ...valueEntry("local", change.local),
-      ...valueEntry("remote", change.remote),
-      ...(change.envVariables === undefined ? {} : { env_variables: change.envVariables }),
-    })),
+    changes: changeSet.changes.map(legacyConfigChangePayloadEntry),
     masked: changeSet.masked,
     unmanaged: changeSet.unmanaged,
     counts: changeSet.counts,
