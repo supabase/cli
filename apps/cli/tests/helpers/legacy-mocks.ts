@@ -1381,7 +1381,7 @@ export function mockLegacyDockerDaemonCliSpawner(
 // Layer.mergeAll" — centralising the subgraph here removes a recurring footgun).
 // ---------------------------------------------------------------------------
 
-type GoOutputValue = "env" | "pretty" | "json" | "toml" | "yaml";
+type GoOutputValue = "env" | "pretty" | "json" | "toml" | "yaml" | "table" | "csv";
 
 // ---------------------------------------------------------------------------
 // Analytics mock lives in `./mocks.ts` (`mockAnalytics`) — same shape we used

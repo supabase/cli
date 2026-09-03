@@ -55,12 +55,7 @@ export const ApiKeyResponse = Schema.Struct({
   api_key: Schema.optionalKey(Schema.Union([Schema.String, Schema.Null])),
   id: Schema.optionalKey(Schema.Union([Schema.String, Schema.Null])),
   type: Schema.optionalKey(
-    Schema.Union([
-      Schema.Literal("legacy"),
-      Schema.Literal("publishable"),
-      Schema.Literal("secret"),
-      Schema.Null,
-    ]),
+    Schema.Union([Schema.Literals(["legacy", "publishable", "secret"]), Schema.Null]),
   ),
   prefix: Schema.optionalKey(Schema.Union([Schema.String, Schema.Null])),
   name: Schema.String,
@@ -68,11 +63,7 @@ export const ApiKeyResponse = Schema.Struct({
   hash: Schema.optionalKey(Schema.Union([Schema.String, Schema.Null])),
   secret_jwt_template: Schema.optionalKey(
     Schema.Union([
-      Schema.Record(Schema.String, Schema.Json.annotate({ expected: "JSON value" })).check(
-        Schema.isPropertyNames(Schema.String).annotate({
-          expected: "an object with property names matching the schema",
-        }),
-      ),
+      Schema.Record(Schema.String, Schema.Json.annotate({ expected: "JSON value" })),
       Schema.Null,
     ]),
   ),
@@ -331,12 +322,8 @@ export const ThirdPartyAuth = Schema.Struct({
   type: Schema.String,
   oidc_issuer_url: Schema.optionalKey(Schema.Union([Schema.String, Schema.Null])),
   jwks_url: Schema.optionalKey(Schema.Union([Schema.String, Schema.Null])),
-  custom_jwks: Schema.optionalKey(
-    Schema.Union([Schema.Json.annotate({ expected: "JSON value" }), Schema.Null]),
-  ),
-  resolved_jwks: Schema.optionalKey(
-    Schema.Union([Schema.Json.annotate({ expected: "JSON value" }), Schema.Null]),
-  ),
+  custom_jwks: Schema.optionalKey(Schema.Json.annotate({ expected: "JSON value" })),
+  resolved_jwks: Schema.optionalKey(Schema.Json.annotate({ expected: "JSON value" })),
   inserted_at: Schema.String,
   updated_at: Schema.String,
   resolved_at: Schema.optionalKey(Schema.Union([Schema.String, Schema.Null])),
@@ -351,11 +338,9 @@ export type UpdateCustomHostnameResponseJsonValue =
   | { readonly [x: string]: UpdateCustomHostnameResponseJsonValue };
 export const UpdateCustomHostnameResponseJsonValue = Schema.Union([
   Schema.Union([
-    Schema.Union([
-      Schema.String,
-      Schema.Number.check(Schema.isFinite().annotate({ expected: "a finite number" })),
-      Schema.Boolean,
-    ]),
+    Schema.String,
+    Schema.Number.check(Schema.isFinite().annotate({ expected: "a finite number" })),
+    Schema.Boolean,
     Schema.Null,
   ]),
   Schema.Array(
@@ -384,11 +369,9 @@ export type ListProjectAddonsResponseJsonValue =
   | { readonly [x: string]: ListProjectAddonsResponseJsonValue };
 export const ListProjectAddonsResponseJsonValue = Schema.Union([
   Schema.Union([
-    Schema.Union([
-      Schema.String,
-      Schema.Number.check(Schema.isFinite().annotate({ expected: "a finite number" })),
-      Schema.Boolean,
-    ]),
+    Schema.String,
+    Schema.Number.check(Schema.isFinite().annotate({ expected: "a finite number" })),
+    Schema.Boolean,
     Schema.Null,
   ]),
   Schema.Array(
@@ -1437,7 +1420,7 @@ export const V1CreateLegacySigningKeyOutput = Schema.Struct({
   ),
   algorithm: Schema.Literals(["EdDSA", "ES256", "RS256", "HS256"]),
   status: Schema.Literals(["in_use", "previously_used", "revoked", "standby"]),
-  public_jwk: Schema.Union([Schema.Json.annotate({ expected: "JSON value" }), Schema.Null]),
+  public_jwk: Schema.Json.annotate({ expected: "JSON value" }),
   created_at: Schema.String.annotate({ format: "date-time" }),
   updated_at: Schema.String.annotate({ format: "date-time" }),
 });
@@ -1495,11 +1478,7 @@ export const V1CreateProjectApiKeyInput = Schema.Struct({
   description: Schema.optionalKey(Schema.Union([Schema.String, Schema.Null])),
   secret_jwt_template: Schema.optionalKey(
     Schema.Union([
-      Schema.Record(Schema.String, Schema.Json.annotate({ expected: "JSON value" })).check(
-        Schema.isPropertyNames(Schema.String).annotate({
-          expected: "an object with property names matching the schema",
-        }),
-      ),
+      Schema.Record(Schema.String, Schema.Json.annotate({ expected: "JSON value" })),
       Schema.Null,
     ]),
   ),
@@ -1508,12 +1487,7 @@ export const V1CreateProjectApiKeyOutput = Schema.Struct({
   api_key: Schema.optionalKey(Schema.Union([Schema.String, Schema.Null])),
   id: Schema.optionalKey(Schema.Union([Schema.String, Schema.Null])),
   type: Schema.optionalKey(
-    Schema.Union([
-      Schema.Literal("legacy"),
-      Schema.Literal("publishable"),
-      Schema.Literal("secret"),
-      Schema.Null,
-    ]),
+    Schema.Union([Schema.Literals(["legacy", "publishable", "secret"]), Schema.Null]),
   ),
   prefix: Schema.optionalKey(Schema.Union([Schema.String, Schema.Null])),
   name: Schema.String,
@@ -1521,11 +1495,7 @@ export const V1CreateProjectApiKeyOutput = Schema.Struct({
   hash: Schema.optionalKey(Schema.Union([Schema.String, Schema.Null])),
   secret_jwt_template: Schema.optionalKey(
     Schema.Union([
-      Schema.Record(Schema.String, Schema.Json.annotate({ expected: "JSON value" })).check(
-        Schema.isPropertyNames(Schema.String).annotate({
-          expected: "an object with property names matching the schema",
-        }),
-      ),
+      Schema.Record(Schema.String, Schema.Json.annotate({ expected: "JSON value" })),
       Schema.Null,
     ]),
   ),
@@ -1722,7 +1692,7 @@ export const V1CreateProjectSigningKeyOutput = Schema.Struct({
   ),
   algorithm: Schema.Literals(["EdDSA", "ES256", "RS256", "HS256"]),
   status: Schema.Literals(["in_use", "previously_used", "revoked", "standby"]),
-  public_jwk: Schema.Union([Schema.Json.annotate({ expected: "JSON value" }), Schema.Null]),
+  public_jwk: Schema.Json.annotate({ expected: "JSON value" }),
   created_at: Schema.String.annotate({ format: "date-time" }),
   updated_at: Schema.String.annotate({ format: "date-time" }),
 });
@@ -1754,12 +1724,8 @@ export const V1CreateProjectTpaIntegrationOutput = Schema.Struct({
   type: Schema.String,
   oidc_issuer_url: Schema.optionalKey(Schema.Union([Schema.String, Schema.Null])),
   jwks_url: Schema.optionalKey(Schema.Union([Schema.String, Schema.Null])),
-  custom_jwks: Schema.optionalKey(
-    Schema.Union([Schema.Json.annotate({ expected: "JSON value" }), Schema.Null]),
-  ),
-  resolved_jwks: Schema.optionalKey(
-    Schema.Union([Schema.Json.annotate({ expected: "JSON value" }), Schema.Null]),
-  ),
+  custom_jwks: Schema.optionalKey(Schema.Json.annotate({ expected: "JSON value" })),
+  resolved_jwks: Schema.optionalKey(Schema.Json.annotate({ expected: "JSON value" })),
   inserted_at: Schema.String,
   updated_at: Schema.String,
   resolved_at: Schema.optionalKey(Schema.Union([Schema.String, Schema.Null])),
@@ -2039,12 +2005,7 @@ export const V1DeleteProjectApiKeyOutput = Schema.Struct({
   api_key: Schema.optionalKey(Schema.Union([Schema.String, Schema.Null])),
   id: Schema.optionalKey(Schema.Union([Schema.String, Schema.Null])),
   type: Schema.optionalKey(
-    Schema.Union([
-      Schema.Literal("legacy"),
-      Schema.Literal("publishable"),
-      Schema.Literal("secret"),
-      Schema.Null,
-    ]),
+    Schema.Union([Schema.Literals(["legacy", "publishable", "secret"]), Schema.Null]),
   ),
   prefix: Schema.optionalKey(Schema.Union([Schema.String, Schema.Null])),
   name: Schema.String,
@@ -2052,11 +2013,7 @@ export const V1DeleteProjectApiKeyOutput = Schema.Struct({
   hash: Schema.optionalKey(Schema.Union([Schema.String, Schema.Null])),
   secret_jwt_template: Schema.optionalKey(
     Schema.Union([
-      Schema.Record(Schema.String, Schema.Json.annotate({ expected: "JSON value" })).check(
-        Schema.isPropertyNames(Schema.String).annotate({
-          expected: "an object with property names matching the schema",
-        }),
-      ),
+      Schema.Record(Schema.String, Schema.Json.annotate({ expected: "JSON value" })),
       Schema.Null,
     ]),
   ),
@@ -2113,12 +2070,8 @@ export const V1DeleteProjectTpaIntegrationOutput = Schema.Struct({
   type: Schema.String,
   oidc_issuer_url: Schema.optionalKey(Schema.Union([Schema.String, Schema.Null])),
   jwks_url: Schema.optionalKey(Schema.Union([Schema.String, Schema.Null])),
-  custom_jwks: Schema.optionalKey(
-    Schema.Union([Schema.Json.annotate({ expected: "JSON value" }), Schema.Null]),
-  ),
-  resolved_jwks: Schema.optionalKey(
-    Schema.Union([Schema.Json.annotate({ expected: "JSON value" }), Schema.Null]),
-  ),
+  custom_jwks: Schema.optionalKey(Schema.Json.annotate({ expected: "JSON value" })),
+  resolved_jwks: Schema.optionalKey(Schema.Json.annotate({ expected: "JSON value" })),
   inserted_at: Schema.String,
   updated_at: Schema.String,
   resolved_at: Schema.optionalKey(Schema.Union([Schema.String, Schema.Null])),
@@ -2719,9 +2672,7 @@ export const V1GetActionRunOutput = Schema.Struct({
       updated_at: Schema.String,
     }),
   ),
-  git_config: Schema.optionalKey(
-    Schema.Union([Schema.Json.annotate({ expected: "JSON value" }), Schema.Null]),
-  ),
+  git_config: Schema.optionalKey(Schema.Json.annotate({ expected: "JSON value" })),
   workdir: Schema.Union([Schema.String, Schema.Null]),
   check_run_id: Schema.Union([
     Schema.Number.check(Schema.isFinite().annotate({ expected: "a finite number" })),
@@ -2935,11 +2886,7 @@ export const V1GetAuthServiceConfigOutput = Schema.Struct({
       ),
     Schema.Null,
   ]),
-  db_max_pool_size_unit: Schema.Union([
-    Schema.Literal("connections"),
-    Schema.Literal("percent"),
-    Schema.Null,
-  ]),
+  db_max_pool_size_unit: Schema.Union([Schema.Literals(["connections", "percent"]), Schema.Null]),
   disable_signup: Schema.Union([Schema.Boolean, Schema.Null]),
   external_anonymous_users_enabled: Schema.Union([Schema.Boolean, Schema.Null]),
   external_apple_additional_client_ids: Schema.Union([Schema.String, Schema.Null]),
@@ -3213,12 +3160,12 @@ export const V1GetAuthServiceConfigOutput = Schema.Struct({
     Schema.Null,
   ]),
   password_required_characters: Schema.Union([
-    Schema.Literal("abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ:0123456789"),
-    Schema.Literal("abcdefghijklmnopqrstuvwxyz:ABCDEFGHIJKLMNOPQRSTUVWXYZ:0123456789"),
-    Schema.Literal(
+    Schema.Literals([
+      "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ:0123456789",
+      "abcdefghijklmnopqrstuvwxyz:ABCDEFGHIJKLMNOPQRSTUVWXYZ:0123456789",
       "abcdefghijklmnopqrstuvwxyz:ABCDEFGHIJKLMNOPQRSTUVWXYZ:0123456789:!@#$%^&*()_+-=[]{};'\\\\:\"|<>?,./`~",
-    ),
-    Schema.Literal(""),
+      "",
+    ]),
     Schema.Null,
   ]),
   rate_limit_anonymous_users: Schema.Union([
@@ -3326,8 +3273,7 @@ export const V1GetAuthServiceConfigOutput = Schema.Struct({
   security_sb_forwarded_for_enabled: Schema.Union([Schema.Boolean, Schema.Null]),
   security_captcha_enabled: Schema.Union([Schema.Boolean, Schema.Null]),
   security_captcha_provider: Schema.Union([
-    Schema.Literal("turnstile"),
-    Schema.Literal("hcaptcha"),
+    Schema.Literals(["turnstile", "hcaptcha"]),
     Schema.Null,
   ]),
   security_captcha_secret: Schema.Union([Schema.String, Schema.Null]),
@@ -3401,11 +3347,7 @@ export const V1GetAuthServiceConfigOutput = Schema.Struct({
       }),
     ),
   sms_provider: Schema.Union([
-    Schema.Literal("messagebird"),
-    Schema.Literal("textlocal"),
-    Schema.Literal("twilio"),
-    Schema.Literal("twilio_verify"),
-    Schema.Literal("vonage"),
+    Schema.Literals(["messagebird", "textlocal", "twilio", "twilio_verify", "vonage"]),
     Schema.Null,
   ]),
   sms_template: Schema.Union([Schema.String, Schema.Null]),
@@ -3898,7 +3840,7 @@ export const V1GetLegacySigningKeyOutput = Schema.Struct({
   ),
   algorithm: Schema.Literals(["EdDSA", "ES256", "RS256", "HS256"]),
   status: Schema.Literals(["in_use", "previously_used", "revoked", "standby"]),
-  public_jwk: Schema.Union([Schema.Json.annotate({ expected: "JSON value" }), Schema.Null]),
+  public_jwk: Schema.Json.annotate({ expected: "JSON value" }),
   created_at: Schema.String.annotate({ format: "date-time" }),
   updated_at: Schema.String.annotate({ format: "date-time" }),
 });
@@ -4052,11 +3994,7 @@ export const V1GetOrganizationProjectClaimOutput = Schema.Struct({
     ),
     source_subscription_plan: Schema.Literals(["free", "pro", "team", "enterprise", "platform"]),
     target_subscription_plan: Schema.Union([
-      Schema.Literal("free"),
-      Schema.Literal("pro"),
-      Schema.Literal("team"),
-      Schema.Literal("enterprise"),
-      Schema.Literal("platform"),
+      Schema.Literals(["free", "pro", "team", "enterprise", "platform"]),
       Schema.Null,
     ]),
   }),
@@ -4701,12 +4639,7 @@ export const V1GetProjectApiKeyOutput = Schema.Struct({
   api_key: Schema.optionalKey(Schema.Union([Schema.String, Schema.Null])),
   id: Schema.optionalKey(Schema.Union([Schema.String, Schema.Null])),
   type: Schema.optionalKey(
-    Schema.Union([
-      Schema.Literal("legacy"),
-      Schema.Literal("publishable"),
-      Schema.Literal("secret"),
-      Schema.Null,
-    ]),
+    Schema.Union([Schema.Literals(["legacy", "publishable", "secret"]), Schema.Null]),
   ),
   prefix: Schema.optionalKey(Schema.Union([Schema.String, Schema.Null])),
   name: Schema.String,
@@ -4714,11 +4647,7 @@ export const V1GetProjectApiKeyOutput = Schema.Struct({
   hash: Schema.optionalKey(Schema.Union([Schema.String, Schema.Null])),
   secret_jwt_template: Schema.optionalKey(
     Schema.Union([
-      Schema.Record(Schema.String, Schema.Json.annotate({ expected: "JSON value" })).check(
-        Schema.isPropertyNames(Schema.String).annotate({
-          expected: "an object with property names matching the schema",
-        }),
-      ),
+      Schema.Record(Schema.String, Schema.Json.annotate({ expected: "JSON value" })),
       Schema.Null,
     ]),
   ),
@@ -5061,7 +4990,7 @@ export const V1GetProjectSigningKeyOutput = Schema.Struct({
   ),
   algorithm: Schema.Literals(["EdDSA", "ES256", "RS256", "HS256"]),
   status: Schema.Literals(["in_use", "previously_used", "revoked", "standby"]),
-  public_jwk: Schema.Union([Schema.Json.annotate({ expected: "JSON value" }), Schema.Null]),
+  public_jwk: Schema.Json.annotate({ expected: "JSON value" }),
   created_at: Schema.String.annotate({ format: "date-time" }),
   updated_at: Schema.String.annotate({ format: "date-time" }),
 });
@@ -5091,7 +5020,7 @@ export const V1GetProjectSigningKeysOutput = Schema.Struct({
       ),
       algorithm: Schema.Literals(["EdDSA", "ES256", "RS256", "HS256"]),
       status: Schema.Literals(["in_use", "previously_used", "revoked", "standby"]),
-      public_jwk: Schema.Union([Schema.Json.annotate({ expected: "JSON value" }), Schema.Null]),
+      public_jwk: Schema.Json.annotate({ expected: "JSON value" }),
       created_at: Schema.String.annotate({ format: "date-time" }),
       updated_at: Schema.String.annotate({ format: "date-time" }),
     }),
@@ -5132,12 +5061,8 @@ export const V1GetProjectTpaIntegrationOutput = Schema.Struct({
   type: Schema.String,
   oidc_issuer_url: Schema.optionalKey(Schema.Union([Schema.String, Schema.Null])),
   jwks_url: Schema.optionalKey(Schema.Union([Schema.String, Schema.Null])),
-  custom_jwks: Schema.optionalKey(
-    Schema.Union([Schema.Json.annotate({ expected: "JSON value" }), Schema.Null]),
-  ),
-  resolved_jwks: Schema.optionalKey(
-    Schema.Union([Schema.Json.annotate({ expected: "JSON value" }), Schema.Null]),
-  ),
+  custom_jwks: Schema.optionalKey(Schema.Json.annotate({ expected: "JSON value" })),
+  resolved_jwks: Schema.optionalKey(Schema.Json.annotate({ expected: "JSON value" })),
   inserted_at: Schema.String,
   updated_at: Schema.String,
   resolved_at: Schema.optionalKey(Schema.Union([Schema.String, Schema.Null])),
@@ -5898,9 +5823,7 @@ export const V1ListActionRunsOutput = Schema.Array(
         updated_at: Schema.String,
       }),
     ),
-    git_config: Schema.optionalKey(
-      Schema.Union([Schema.Json.annotate({ expected: "JSON value" }), Schema.Null]),
-    ),
+    git_config: Schema.optionalKey(Schema.Json.annotate({ expected: "JSON value" })),
     workdir: Schema.Union([Schema.String, Schema.Null]),
     check_run_id: Schema.Union([
       Schema.Number.check(Schema.isFinite().annotate({ expected: "a finite number" })),
@@ -6807,7 +6730,7 @@ export const V1RemoveProjectSigningKeyOutput = Schema.Struct({
   ),
   algorithm: Schema.Literals(["EdDSA", "ES256", "RS256", "HS256"]),
   status: Schema.Literals(["in_use", "previously_used", "revoked", "standby"]),
-  public_jwk: Schema.Union([Schema.Json.annotate({ expected: "JSON value" }), Schema.Null]),
+  public_jwk: Schema.Json.annotate({ expected: "JSON value" }),
   created_at: Schema.String.annotate({ format: "date-time" }),
   updated_at: Schema.String.annotate({ format: "date-time" }),
 });
@@ -7586,7 +7509,7 @@ export const V1UpdateAuthServiceConfigInput = Schema.Struct({
   ),
   security_captcha_enabled: Schema.optionalKey(Schema.Union([Schema.Boolean, Schema.Null])),
   security_captcha_provider: Schema.optionalKey(
-    Schema.Union([Schema.Literal("turnstile"), Schema.Literal("hcaptcha"), Schema.Null]),
+    Schema.Union([Schema.Literals(["turnstile", "hcaptcha"]), Schema.Null]),
   ),
   security_captcha_secret: Schema.optionalKey(Schema.Union([Schema.String, Schema.Null])),
   sessions_timebox: Schema.optionalKey(
@@ -7758,12 +7681,12 @@ export const V1UpdateAuthServiceConfigInput = Schema.Struct({
   ),
   password_required_characters: Schema.optionalKey(
     Schema.Union([
-      Schema.Literal("abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ:0123456789"),
-      Schema.Literal("abcdefghijklmnopqrstuvwxyz:ABCDEFGHIJKLMNOPQRSTUVWXYZ:0123456789"),
-      Schema.Literal(
+      Schema.Literals([
+        "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ:0123456789",
+        "abcdefghijklmnopqrstuvwxyz:ABCDEFGHIJKLMNOPQRSTUVWXYZ:0123456789",
         "abcdefghijklmnopqrstuvwxyz:ABCDEFGHIJKLMNOPQRSTUVWXYZ:0123456789:!@#$%^&*()_+-=[]{};'\\\\:\"|<>?,./`~",
-      ),
-      Schema.Literal(""),
+        "",
+      ]),
       Schema.Null,
     ]),
   ),
@@ -7862,11 +7785,7 @@ export const V1UpdateAuthServiceConfigInput = Schema.Struct({
   ),
   sms_provider: Schema.optionalKey(
     Schema.Union([
-      Schema.Literal("messagebird"),
-      Schema.Literal("textlocal"),
-      Schema.Literal("twilio"),
-      Schema.Literal("twilio_verify"),
-      Schema.Literal("vonage"),
+      Schema.Literals(["messagebird", "textlocal", "twilio", "twilio_verify", "vonage"]),
       Schema.Null,
     ]),
   ),
@@ -8053,7 +7972,7 @@ export const V1UpdateAuthServiceConfigInput = Schema.Struct({
     ]),
   ),
   db_max_pool_size_unit: Schema.optionalKey(
-    Schema.Union([Schema.Literal("connections"), Schema.Literal("percent"), Schema.Null]),
+    Schema.Union([Schema.Literals(["connections", "percent"]), Schema.Null]),
   ),
   api_max_request_duration: Schema.optionalKey(
     Schema.Union([
@@ -8152,11 +8071,7 @@ export const V1UpdateAuthServiceConfigOutput = Schema.Struct({
       ),
     Schema.Null,
   ]),
-  db_max_pool_size_unit: Schema.Union([
-    Schema.Literal("connections"),
-    Schema.Literal("percent"),
-    Schema.Null,
-  ]),
+  db_max_pool_size_unit: Schema.Union([Schema.Literals(["connections", "percent"]), Schema.Null]),
   disable_signup: Schema.Union([Schema.Boolean, Schema.Null]),
   external_anonymous_users_enabled: Schema.Union([Schema.Boolean, Schema.Null]),
   external_apple_additional_client_ids: Schema.Union([Schema.String, Schema.Null]),
@@ -8430,12 +8345,12 @@ export const V1UpdateAuthServiceConfigOutput = Schema.Struct({
     Schema.Null,
   ]),
   password_required_characters: Schema.Union([
-    Schema.Literal("abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ:0123456789"),
-    Schema.Literal("abcdefghijklmnopqrstuvwxyz:ABCDEFGHIJKLMNOPQRSTUVWXYZ:0123456789"),
-    Schema.Literal(
+    Schema.Literals([
+      "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ:0123456789",
+      "abcdefghijklmnopqrstuvwxyz:ABCDEFGHIJKLMNOPQRSTUVWXYZ:0123456789",
       "abcdefghijklmnopqrstuvwxyz:ABCDEFGHIJKLMNOPQRSTUVWXYZ:0123456789:!@#$%^&*()_+-=[]{};'\\\\:\"|<>?,./`~",
-    ),
-    Schema.Literal(""),
+      "",
+    ]),
     Schema.Null,
   ]),
   rate_limit_anonymous_users: Schema.Union([
@@ -8543,8 +8458,7 @@ export const V1UpdateAuthServiceConfigOutput = Schema.Struct({
   security_sb_forwarded_for_enabled: Schema.Union([Schema.Boolean, Schema.Null]),
   security_captcha_enabled: Schema.Union([Schema.Boolean, Schema.Null]),
   security_captcha_provider: Schema.Union([
-    Schema.Literal("turnstile"),
-    Schema.Literal("hcaptcha"),
+    Schema.Literals(["turnstile", "hcaptcha"]),
     Schema.Null,
   ]),
   security_captcha_secret: Schema.Union([Schema.String, Schema.Null]),
@@ -8618,11 +8532,7 @@ export const V1UpdateAuthServiceConfigOutput = Schema.Struct({
       }),
     ),
   sms_provider: Schema.Union([
-    Schema.Literal("messagebird"),
-    Schema.Literal("textlocal"),
-    Schema.Literal("twilio"),
-    Schema.Literal("twilio_verify"),
-    Schema.Literal("vonage"),
+    Schema.Literals(["messagebird", "textlocal", "twilio", "twilio_verify", "vonage"]),
     Schema.Null,
   ]),
   sms_template: Schema.Union([Schema.String, Schema.Null]),
@@ -9583,11 +9493,7 @@ export const V1UpdateProjectApiKeyInput = Schema.Struct({
   description: Schema.optionalKey(Schema.Union([Schema.String, Schema.Null])),
   secret_jwt_template: Schema.optionalKey(
     Schema.Union([
-      Schema.Record(Schema.String, Schema.Json.annotate({ expected: "JSON value" })).check(
-        Schema.isPropertyNames(Schema.String).annotate({
-          expected: "an object with property names matching the schema",
-        }),
-      ),
+      Schema.Record(Schema.String, Schema.Json.annotate({ expected: "JSON value" })),
       Schema.Null,
     ]),
   ),
@@ -9596,12 +9502,7 @@ export const V1UpdateProjectApiKeyOutput = Schema.Struct({
   api_key: Schema.optionalKey(Schema.Union([Schema.String, Schema.Null])),
   id: Schema.optionalKey(Schema.Union([Schema.String, Schema.Null])),
   type: Schema.optionalKey(
-    Schema.Union([
-      Schema.Literal("legacy"),
-      Schema.Literal("publishable"),
-      Schema.Literal("secret"),
-      Schema.Null,
-    ]),
+    Schema.Union([Schema.Literals(["legacy", "publishable", "secret"]), Schema.Null]),
   ),
   prefix: Schema.optionalKey(Schema.Union([Schema.String, Schema.Null])),
   name: Schema.String,
@@ -9609,11 +9510,7 @@ export const V1UpdateProjectApiKeyOutput = Schema.Struct({
   hash: Schema.optionalKey(Schema.Union([Schema.String, Schema.Null])),
   secret_jwt_template: Schema.optionalKey(
     Schema.Union([
-      Schema.Record(Schema.String, Schema.Json.annotate({ expected: "JSON value" })).check(
-        Schema.isPropertyNames(Schema.String).annotate({
-          expected: "an object with property names matching the schema",
-        }),
-      ),
+      Schema.Record(Schema.String, Schema.Json.annotate({ expected: "JSON value" })),
       Schema.Null,
     ]),
   ),
@@ -9672,7 +9569,7 @@ export const V1UpdateProjectSigningKeyOutput = Schema.Struct({
   ),
   algorithm: Schema.Literals(["EdDSA", "ES256", "RS256", "HS256"]),
   status: Schema.Literals(["in_use", "previously_used", "revoked", "standby"]),
-  public_jwk: Schema.Union([Schema.Json.annotate({ expected: "JSON value" }), Schema.Null]),
+  public_jwk: Schema.Json.annotate({ expected: "JSON value" }),
   created_at: Schema.String.annotate({ format: "date-time" }),
   updated_at: Schema.String.annotate({ format: "date-time" }),
 });

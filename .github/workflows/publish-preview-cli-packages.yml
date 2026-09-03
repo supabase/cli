@@ -131,6 +131,9 @@ jobs:
           PREVIEW_URL: ${{ steps.preview-metadata.outputs.preview_url }}
         run: |
           set -euo pipefail
+          # Run outside the checkout: npm enforces the root package.json's
+          # devEngines.packageManager (pnpm) against itself and would refuse.
+          cd "${RUNNER_TEMP}"
           npx --yes "${PREVIEW_URL}" --version
 
   comment:

@@ -6,9 +6,9 @@
  * inside any of those is not mistaken for a statement separator. This matters
  * for declarative diffs, which contain `CREATE FUNCTION` bodies full of `;`.
  *
- * Operates on Unicode code points (JS strings) rather than raw bytes; for the
- * ASCII delimiters the FSM keys on (`/*`, `*​/`, `;`, quotes, `$`), suffix
- * comparison is identical to Go's byte-window logic.
+ * Operates on Unicode code points (JS strings) rather than raw bytes; the ASCII
+ * delimiters are described as slash-star, star-slash, semicolon, quotes, and
+ * dollar signs; suffix comparison is identical to Go's byte-window logic.
  */
 
 interface State {

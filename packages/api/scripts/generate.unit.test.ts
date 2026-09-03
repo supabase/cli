@@ -115,6 +115,34 @@ describe("generate", () => {
     ).not.toContain("isPattern");
   });
 
+  test("removes tautological propertyNames schemas without dropping a property named propertyNames", () => {
+    expect(
+      sanitizeOpenApiSchema({
+        type: "object",
+        propertyNames: { type: "string" },
+        properties: {
+          propertyNames: { type: "string" },
+        },
+      }),
+    ).toEqual({
+      type: "object",
+      properties: {
+        propertyNames: { type: "string" },
+      },
+    });
+  });
+
+  test("preserves null in nullable anyOf JSON values without an explicit type", () => {
+    expect(
+      renderOpenApiSchema({
+        anyOf: [{ type: "string" }, { type: "number" }, { type: "boolean" }],
+        nullable: true,
+      }),
+    ).toBe(
+      'Schema.Union([Schema.String, Schema.Number.check(Schema.isFinite().annotate({ "expected": "a finite number" })), Schema.Boolean, Schema.Null])',
+    );
+  });
+
   test("accepts booleans for string-encoded boolean query parameters", () => {
     expect(
       normalizeQueryParameterSchema(
