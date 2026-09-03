@@ -13,14 +13,6 @@ export const LogQuerySchema = Schema.Struct({
 });
 export type LogQuery = Schema.Schema.Type<typeof LogQuerySchema>;
 
-export const LogOptionsSchema = Schema.Struct({
-  capabilities: Schema.optionalKey(Schema.Array(CapabilityNameSchema)),
-  follow: Schema.optionalKey(Schema.Boolean),
-  cursor: Schema.optionalKey(LogCursorSchema),
-  tail: Schema.optionalKey(Schema.Finite),
-});
-export type LogOptions = Schema.Schema.Type<typeof LogOptionsSchema>;
-
 export const StackLogEntrySchema = Schema.Struct({
   cursor: LogCursorSchema,
   timestamp: Schema.String,

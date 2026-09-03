@@ -365,7 +365,7 @@ describe("Effect stack lifecycle handoff", () => {
             return yield* new StackOwnershipConflictError({
               message: "temporary Supervisor is still shutting down",
             });
-        }).pipe(Effect.retry(Schedule.spaced("25 millis").pipe(Schedule.upTo({ times: 200 }))));
+        }).pipe(Effect.retry(Schedule.recurs(200)));
         expect((yield* stack.status()).lifecycle).toBe("unconfigured");
       }),
     ),

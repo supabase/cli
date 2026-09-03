@@ -13,10 +13,10 @@ import {
 import {
   StackLogEntrySchema,
   type LogCursor,
-  type LogOptions,
   type StackLogEntry,
   type StackLogSource,
 } from "../public/Logs.ts";
+import type { CapabilityName } from "../public/Capability.ts";
 import { redactKnownSecrets } from "../state/SecretStore.ts";
 
 const CURSOR_PREFIX = "v1_";
@@ -46,19 +46,27 @@ export interface LogRecord {
   readonly message: string;
 }
 
+/** Internal retained-log query; follow is only used by the Supervisor log store stream. */
+interface LogStoreQuery {
+  readonly capabilities?: ReadonlyArray<CapabilityName>;
+  readonly follow?: boolean;
+  readonly cursor?: LogCursor;
+  readonly tail?: number;
+}
+
 export interface LogStore {
   readonly path: string;
   readonly append: (record: LogRecord) => Effect.Effect<StackLogEntry, LogStoreError>;
   /** Returns retained records selected by cursor and capability filter. */
   readonly read: (
-    options?: LogOptions,
+    options?: LogStoreQuery,
   ) => Effect.Effect<ReadonlyArray<StackLogEntry>, LogStoreError>;
   /**
    * Returns retained records followed by live records when `follow` is true.
    * Subscription creation and retained snapshotting happen in one critical
    * section with append, so no entry can be lost or observed twice at handoff.
    */
-  readonly stream: (options?: LogOptions) => Stream.Stream<StackLogEntry, LogStoreError>;
+  readonly stream: (options?: LogStoreQuery) => Stream.Stream<StackLogEntry, LogStoreError>;
 }
 
 interface LogDocument {
@@ -96,7 +104,7 @@ const decodeCursor = (
 
 const selected = (
   entries: ReadonlyArray<StackLogEntry>,
-  options: LogOptions | undefined,
+  options: LogStoreQuery | undefined,
   path: string,
 ): Effect.Effect<ReadonlyArray<StackLogEntry>, LogStoreError> =>
   Effect.map(decodeCursor(path, options?.cursor), (after) => {
@@ -182,7 +190,7 @@ const readDocument = (
 export const readRetainedLogs = (
   fs: FileSystem.FileSystem,
   path: string,
-  options?: LogOptions,
+  options?: LogStoreQuery,
 ): Effect.Effect<ReadonlyArray<StackLogEntry>, LogStoreError> =>
   readDocument(fs, path).pipe(
     Effect.flatMap((document) => selected(document.entries, options, path)),
@@ -379,10 +387,10 @@ export const makeLogStore = (
         }),
       );
 
-    const read = (readOptions?: LogOptions) =>
+    const read = (readOptions?: LogStoreQuery) =>
       semaphore.withPermit(selected(document.entries, readOptions, options.path));
 
-    const stream = (streamOptions?: LogOptions): Stream.Stream<StackLogEntry, LogStoreError> =>
+    const stream = (streamOptions?: LogStoreQuery): Stream.Stream<StackLogEntry, LogStoreError> =>
       Stream.unwrap(
         Effect.gen(function* () {
           const handoff = yield* semaphore.withPermit(

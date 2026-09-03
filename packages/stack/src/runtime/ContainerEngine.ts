@@ -16,7 +16,7 @@ export interface ContainerHostRoute {
   readonly host: string;
   readonly gateway?: string;
 }
-export class ContainerExecutableNotFoundError extends Data.TaggedError(
+class ContainerExecutableNotFoundError extends Data.TaggedError(
   "ContainerExecutableNotFoundError",
 )<{ readonly executable: string; readonly message: string }> {}
 class ContainerRoutingUnsupportedError extends Data.TaggedError(

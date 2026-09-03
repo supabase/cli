@@ -24,7 +24,7 @@ export interface SessionLauncher {
 }
 
 /** Resources created by one launch attempt and a rollback scoped to that attempt. */
-export interface SessionLaunch {
+interface SessionLaunch {
   readonly rollback: Effect.Effect<void, RuntimeDriverError>;
 }
 

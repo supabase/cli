@@ -24,5 +24,11 @@ Docker modes. It begins from the PostgreSQL-only default, progressively activate
 realistic traffic, and verifies stop/start cycles, stable ports, and persistent data. The
 CLI is not involved in these runtime tests.
 
+Callers can warm selected native artifacts or container images with `stack.prepare(...)` while a
+stack is stopped; preparation is cache-only and cancellation does not affect completed entries.
+Each capability may opt into eager activation in `StackConfig`; omitted settings keep every
+non-PostgreSQL capability lazy. `followLogs(...)` provides filterable live entries through a
+stateless client-polled cursor.
+
 Database reset is intentionally outside the current API. Applying migrations, declarative schemas,
 and seeds remains the caller's responsibility.

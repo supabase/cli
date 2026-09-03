@@ -32,28 +32,28 @@ The same handle lazily launches a fresh Supervisor on its next start.
 A Supervisor launched for a mutation also exits when that mutation cannot leave
 running intent behind. In particular, a failed start before the running state is
 committed releases its control endpoint and ownership lease after reporting the
-failure. A successful start keeps the Supervisor alive; an idempotent start joins
-that current session without resetting lazy activation or publishing a synthetic
-starting transition.
+failure. A successful start keeps the Supervisor alive; a sequential idempotent
+start returns the current status without resetting lazy activation or publishing
+a synthetic starting transition.
 
-A restart that has committed stopped intent retries exact runtime cleanup before
-its temporary Supervisor may exit. If cleanup still cannot be proven, status
-remains `stopping` and the owner stays available for a retryable `stop()`; a
-cleaned stopped stack never retains that owner.
+If exact runtime cleanup cannot be proven, status remains `stopping` and the
+owner stays available for a retryable `stop()`; a cleaned stopped stack never
+retains that owner.
 
 There is no durable generation counter and runtime resources are never adopted
 across owner sessions. The exclusive stack lease and `ownerSessionId` identify
-the only writer and current ephemeral resources. Explicit start, restart, stop,
-or destroy first removes exact stack-owned remnants and creates fresh resources;
+the only writer and current ephemeral resources. Explicit start, stop, or destroy
+first removes exact stack-owned remnants and creates fresh resources;
 failure to complete or validate cleanup fails closed. Persistent data, sticky
 ports, secrets, definitions, logs, and artifacts remain identity-scoped.
 
 Before a native cold start creates anything, it verifies every persisted public
 and private port is bindable. PostgreSQL lock evidence containing a live or
 unclassifiable owner PID fails closed; a lock naming a process that no longer
-exists is left for PostgreSQL's own stale-lock recovery. A live restart
-preflights configuration without trying to bind ports that the current
-Supervisor intentionally owns. Cold recovery never adopts those resources.
+exists is left for PostgreSQL's own stale-lock recovery. A live stop/start
+composition preflights configuration without trying to bind ports that the
+current Supervisor intentionally owns. Cold recovery never adopts those
+resources.
 
 Every managed document records one concrete runtime selection. Native and
 container runtimes never mix. Container state records the selected Docker or
@@ -66,20 +66,21 @@ when both metadata and lock are absent. Mutations use the live owner or acquire
 the lease and launch a fresh Supervisor. Ambiguous ownership fails closed.
 
 The stable maintenance protocol contains only probe and stop. Same-release
-callers use Effect RPC for status, logs, preparation, activation, start,
-restart, and destroy. An incompatible owner can always be stopped; explicit
-restart may stop it, wait for lease release, launch the current Supervisor, and
-start again. The first admitted lifecycle operation runs to completion;
-equivalent callers join it and conflicting callers fail immediately rather than
-queueing.
+callers use Effect RPC for status, logs, activation, start, and destroy; artifact
+preparation runs directly in the caller scope and never uses the Supervisor. An
+incompatible owner can always be stopped, after which the caller may launch the
+current Supervisor and start again. The first admitted lifecycle operation runs
+to completion; concurrent lifecycle mutations fail immediately with a conflict
+rather than joining or queueing.
 
 PostgreSQL is the only eager capability by default. Start prepares and launches
 only the eager dependency closure. Every other enabled capability prepares and
 starts when traffic first reaches its stable gateway route. Explicit
 `stack.prepare(...)` remains available for callers that intentionally want to
 warm selected artifacts, but it is not part of ordinary CLI start. Preparation
-is owned by a temporary Supervisor, survives cancellation of the caller that
-requested it, and releases control and ownership after the transfer completes.
+is caller-owned: cancellation stops that caller's unfinished transfers while
+completed cache entries remain. It never acquires control or ownership and does
+not create runtime resources.
 
 ## Why this replaces ADR-0015
 
@@ -94,11 +95,11 @@ Tests follow consumed boundaries:
 
 - stack integration covers identity, sticky ports, durable lifecycle,
   ownership, stale-owner recovery, and interrupted cleanup;
-- supervisor integration covers detached ownership, RPC, stop, restart, and
+- supervisor integration covers detached ownership, RPC, stop, and
   destroy; and
 - one shared stack-package E2E journey runs in native and Docker modes, starts
   with PostgreSQL alone, activates every other service through realistic
-  traffic, verifies cross-service behavior and migrations, then exercises
+  traffic, verifies cross-service behavior, then exercises
   stop/start and retained offline observability.
 
 CLI handler integration covers only argument translation, output, telemetry,

@@ -19,7 +19,6 @@ export type CapabilityName = Schema.Schema.Type<typeof CapabilityNameSchema>;
 export const CapabilityStateSchema = Schema.Literals([
   "disabled",
   "dormant",
-  "preparing",
   "starting",
   "ready",
   "stopping",

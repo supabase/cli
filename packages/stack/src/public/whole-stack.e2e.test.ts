@@ -59,9 +59,9 @@ const dockerOwnedResourceCount = async (
   return result.stdout.trim().length === 0 ? 0 : result.stdout.trim().split("\n").length;
 };
 
-const supervisorPid = async (stackId: string): Promise<number> => {
+const supervisorPids = async (stackId: string): Promise<ReadonlyArray<number>> => {
   const result = await execFile("ps", ["-axo", "pid=,command="], { encoding: "utf8" });
-  const matches = result.stdout.split("\n").flatMap((line) => {
+  return result.stdout.split("\n").flatMap((line) => {
     const match = /^\s*(\d+)\s+(.+)$/u.exec(line);
     if (match === null) return [];
     const pid = Number(match[1]);
@@ -71,6 +71,10 @@ const supervisorPid = async (stackId: string): Promise<number> => {
       ? [pid]
       : [];
   });
+};
+
+const supervisorPid = async (stackId: string): Promise<number> => {
+  const matches = await supervisorPids(stackId);
   if (matches.length !== 1)
     throw new Error(`Expected one Supervisor process for ${stackId}, found ${matches.length}`);
   const pid = matches[0];
@@ -473,8 +477,29 @@ const runWholeStackScenario = async (mode: (typeof RUNTIME_CASES)[number]): Prom
     },
   });
 
+  const initialRunning = await stack.status();
+  expect(initialRunning.runtime).toEqual(mode.runtime);
+  expect(projectRoot.length).toBeGreaterThan(0);
+  expectDefaultLazyState(initialRunning);
+
+  // Preparation is an explicit cache-only operation. It runs after the helper's
+  // initial session is stopped, so the test proves it creates no owner, listener,
+  // or workload and that the next start can reuse the warmed REST artifact.
+  await stack.stop();
+  const warmed = await stack.prepare({ capabilities: ["rest"] });
+  expect(warmed.capabilities).toEqual(
+    expect.arrayContaining([expect.objectContaining({ capability: "rest" })]),
+  );
+  expect((await stack.status()).lifecycle).toBe("stopped");
+  expect(await supervisorPids(stack.id)).toHaveLength(0);
+  await expectEndpointsRefused(
+    Object.values(initialRunning.endpoints).filter(
+      (value): value is StackEndpoint => value !== undefined,
+    ),
+  );
+  const initial = await stack.start();
+  expectDefaultLazyState(initial);
   const credentials = await stack.credentials();
-  const initial = await stack.status();
   const api = endpoint(initial, "api");
   const pooler = endpoint(initial, "pooler");
   const studio = endpoint(initial, "studio");
@@ -483,9 +508,8 @@ const runWholeStackScenario = async (mode: (typeof RUNTIME_CASES)[number]): Prom
     (value): value is StackEndpoint => value !== undefined,
   );
 
-  expect(initial.runtime).toEqual(mode.runtime);
-  expect(projectRoot.length).toBeGreaterThan(0);
-  expectDefaultLazyState(initial);
+  // The warmed capability remains lazy: only its artifact is cached, not its
+  // workload. The first request below still performs the normal activation.
 
   // Direct SQL creates the table and enables Realtime's publication for it.
   await databaseQuery(
@@ -506,6 +530,18 @@ const runWholeStackScenario = async (mode: (typeof RUNTIME_CASES)[number]): Prom
     [markers.first],
   );
   expect(directRows).toEqual([{ id: 1, payload: markers.first }]);
+
+  // Log following is a filtered, client-polled view over the same retained
+  // cursor API. Consume one database entry and explicitly cancel the iterator;
+  // no server-side subscription or handle-owned resource is involved.
+  expect((await stack.logs({ capabilities: ["database"], tail: 1 })).entries).not.toHaveLength(0);
+  const logIterator = stack
+    .followLogs({ capabilities: ["database"], tail: 1 })
+    [Symbol.asyncIterator]();
+  const logEntry = await logIterator.next();
+  expect(logEntry.done).toBe(false);
+  if (!logEntry.done) expect(logEntry.value.source).toBe("database");
+  await logIterator.return?.();
 
   // PostgREST reads the SQL-created row, then writes through the authenticated user token.
   const restPath = `/rest/v1/${table}?select=id,payload&order=id`;
@@ -894,6 +930,31 @@ describe("managed Supabase stack whole-stack E2E", () => {
     );
 
     test(
+      `honors per-capability eager activation in ${mode.name} mode`,
+      { timeout: E2E_TIMEOUT_MS },
+      async () => {
+        await using stack: TestStack = await createTestStack({
+          name: `stack-eager-${crypto.randomUUID().replaceAll("-", "").slice(0, 16)}`,
+          runtime: mode.runtime,
+          config: {
+            capabilities: {
+              rest: { activation: "eager" },
+              auth: { activation: "eager" },
+            },
+          },
+        });
+        const status = await stack.status();
+        expect(capabilityState(status, "database")).toBe("ready");
+        expect(capabilityState(status, "rest")).toBe("ready");
+        expect(capabilityState(status, "auth")).toBe("ready");
+        for (const name of CAPABILITY_NAMES) {
+          if (name === "database" || name === "rest" || name === "auth") continue;
+          expect(capabilityState(status, name), `${name} should remain dormant`).toBe("dormant");
+        }
+      },
+    );
+
+    test(
       `supports optional image and vector workloads in ${mode.name} mode`,
       { timeout: E2E_TIMEOUT_MS },
       async () => {
@@ -1024,6 +1085,7 @@ describe("managed Supabase stack whole-stack E2E", () => {
             const stopped = await stack.status();
             expect(stopped.lifecycle).toBe("stopped");
             expect(stopped.capabilities.every(({ state }) => state === "stopped")).toBe(true);
+            expect(await supervisorPids(stack.id)).toHaveLength(0);
             await expectRuntimeInputsAbsent(projectRoot, stack.id);
             await expectEndpointsRefused(endpointSnapshot);
             if (mode.runtime.kind === "container") {
