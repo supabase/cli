@@ -15,7 +15,6 @@ import {
   ensureImage,
   resolveDeadline,
 } from "../../../../../tests/helpers/docker-image.ts";
-import { resolvePgmetaImage } from "./types.shared.ts";
 
 const TYPEGEN_LANGS = ["typescript", "go", "swift", "python"] as const;
 type TypegenLang = (typeof TYPEGEN_LANGS)[number];
@@ -209,26 +208,12 @@ async function waitForLocalPostgres(containerName: string) {
   );
 }
 
-// `gen types` starts pg-meta itself (local AND remote non-ts languages) via a
-// single-registry rewrite with no fallback (`resolvePgmetaImage`), so pre-resolve
-// it and retag the winning candidate onto the exact reference the CLI will run.
-async function ensurePgmetaImage(deadline?: number) {
-  const expected = resolvePgmetaImage();
-  const resolved = await ensureImage(dockerfileServiceImage("pgmeta"), deadline);
-  if (resolved !== expected) {
-    await expectDockerSucceeded(["tag", resolved, expected], 30_000);
-  }
-}
-
 async function startLocalPostgres(input: { readonly projectId: string; readonly dbPort: number }) {
   const containerName = localDbContainerId(input.projectId);
   const networkName = localNetworkId(input.projectId);
-  // One shared window (already counted in the local test's timeout), with
-  // pg-meta's slice reserved up front: Postgres may spend the window only up
-  // to the point that still leaves pg-meta the default budget.
+  // One shared window, already counted in the local test's timeout.
   const imageDeadline = resolveDeadline(LOCAL_IMAGE_BUDGET_MS);
   const postgresImage = await ensureImage(LOCAL_POSTGRES_IMAGE, imageDeadline - RESOLVE_BUDGET_MS);
-  await ensurePgmetaImage(imageDeadline);
 
   await expectDockerSucceeded(["network", "create", networkName], 30_000);
   await expectDockerSucceeded(
@@ -403,8 +388,6 @@ describe("legacy gen types e2e", () => {
           `Set ${REMOTE_E2E_FLAG}=1, ${REMOTE_PROJECT_REF_ENV}, and SUPABASE_ACCESS_TOKEN to run remote typegen e2e.`,
         );
       }
-
-      await ensurePgmetaImage();
 
       for (const lang of TYPEGEN_LANGS) {
         const result = await runSupabase(

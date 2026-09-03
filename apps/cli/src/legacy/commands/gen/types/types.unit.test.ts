@@ -1,260 +1,129 @@
+import { createRequire } from "node:module";
+import { readFileSync } from "node:fs";
+import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "@effect/vitest";
 import { Effect, Exit } from "effect";
-import { dockerfileServiceImageRaw } from "../../../../shared/services/dockerfile-images.ts";
-import { toSlimImage } from "../../../../shared/services/slim-images.ts";
-import { legacyGetHostname } from "../../../shared/legacy-hostname.ts";
-import { legacyParseSchemaFlags } from "../../../shared/legacy-schema-flags.ts";
 import {
-  buildPostgresUrl,
+  applyProbedSslMode,
+  applyQueryTimeouts,
   defaultSchemas,
-  legacyRootCaBundle,
-  localDbContainerId,
-  localDbPassword,
-  localNetworkId,
-  parseDatabaseUrl,
+  legacyGenTypesNetworkIdUnusedWarning,
   parseQueryTimeoutSeconds,
-  resolvePgmetaImage,
 } from "./types.shared.ts";
 
-const currentPgmeta = dockerfileServiceImageRaw("pgmeta");
-const currentPgmetaTag = currentPgmeta.split(":")[1] ?? "";
-
-function withEnv<T>(key: string, value: string | undefined, run: () => T): T {
-  const previous = process.env[key];
-  if (value === undefined) {
-    delete process.env[key];
-  } else {
-    process.env[key] = value;
-  }
-  try {
-    return run();
-  } finally {
-    if (previous === undefined) {
-      delete process.env[key];
-    } else {
-      process.env[key] = previous;
-    }
+function expectInvalidDuration(exit: Exit.Exit<unknown, unknown>, raw: string) {
+  expect(Exit.isFailure(exit)).toBe(true);
+  if (Exit.isFailure(exit)) {
+    expect(String(exit.cause)).toContain(`invalid duration ${JSON.stringify(raw)}`);
   }
 }
 
+const BASE_CONN = {
+  host: "db.example.com",
+  port: 5432,
+  user: "postgres",
+  password: "secret",
+  database: "postgres",
+};
+
 describe("parseQueryTimeoutSeconds", () => {
-  it.effect("parses compound Go durations", () =>
+  it.effect("accepts Go's bare 0 as disable", () =>
     Effect.gen(function* () {
-      expect(yield* parseQueryTimeoutSeconds("15s")).toBe(15);
-      expect(yield* parseQueryTimeoutSeconds("1h")).toBe(3600);
-      expect(yield* parseQueryTimeoutSeconds("1m30s")).toBe(90);
-      expect(yield* parseQueryTimeoutSeconds("2h30m")).toBe(9000);
+      expect(yield* parseQueryTimeoutSeconds("0")).toBe(0);
+      expect(yield* parseQueryTimeoutSeconds("0s")).toBe(0);
+      expect(yield* parseQueryTimeoutSeconds("0ms")).toBe(0);
     }),
   );
 
-  it.effect("rounds sub-second durations to whole seconds", () =>
+  it.effect("rounds 500ms up to a still-applied 1s bound", () =>
     Effect.gen(function* () {
       expect(yield* parseQueryTimeoutSeconds("500ms")).toBe(1);
-      expect(yield* parseQueryTimeoutSeconds("400ms")).toBe(0);
     }),
   );
 
-  it.effect("rejects an empty duration", () =>
+  it.effect("rejects a positive duration that would disable the timeout", () =>
     Effect.gen(function* () {
-      const exit = yield* parseQueryTimeoutSeconds("  ").pipe(Effect.exit);
-      expect(Exit.isFailure(exit)).toBe(true);
-    }),
-  );
-
-  it.effect("rejects a duration with a leading non-duration prefix", () =>
-    Effect.gen(function* () {
-      const exit = yield* parseQueryTimeoutSeconds("x15s").pipe(Effect.exit);
-      expect(Exit.isFailure(exit)).toBe(true);
-    }),
-  );
-
-  it.effect("rejects a duration with trailing junk", () =>
-    Effect.gen(function* () {
-      const exit = yield* parseQueryTimeoutSeconds("15s30").pipe(Effect.exit);
-      expect(Exit.isFailure(exit)).toBe(true);
-    }),
-  );
-
-  it.effect("rejects a string with no recognizable units", () =>
-    Effect.gen(function* () {
-      const exit = yield* parseQueryTimeoutSeconds("abc").pipe(Effect.exit);
-      expect(Exit.isFailure(exit)).toBe(true);
-    }),
-  );
-
-  it.effect("rejects a negative duration", () =>
-    Effect.gen(function* () {
-      const exit = yield* parseQueryTimeoutSeconds("-5s").pipe(Effect.exit);
-      expect(Exit.isFailure(exit)).toBe(true);
+      for (const raw of ["1ms", "400ms", `15${"µ"}s`, `15${"μ"}s`]) {
+        expectInvalidDuration(yield* parseQueryTimeoutSeconds(raw).pipe(Effect.exit), raw);
+      }
     }),
   );
 });
 
-describe("parseDatabaseUrl", () => {
-  it.effect("parses a full postgresql url", () =>
-    Effect.gen(function* () {
-      const result = yield* parseDatabaseUrl("postgresql://user:pw@example.com:6543/mydb");
-      expect(result.host).toBe("example.com");
-      expect(result.port).toBe(6543);
-      expect(result.networkMode).toBe("host");
-      expect(result.url).toContain("/mydb");
-    }),
-  );
-
-  it.effect("accepts the postgres:// scheme and defaults the database", () =>
-    Effect.gen(function* () {
-      const result = yield* parseDatabaseUrl("postgres://user:pw@example.com/");
-      expect(result.url).toContain("/postgres");
-    }),
-  );
-
-  it.effect("defaults the port to 5432 when omitted", () =>
-    Effect.gen(function* () {
-      const result = yield* parseDatabaseUrl("postgresql://user:pw@example.com/db");
-      expect(result.port).toBe(5432);
-    }),
-  );
-
-  it.effect("rejects an unsupported scheme", () =>
-    Effect.gen(function* () {
-      const exit = yield* parseDatabaseUrl("mysql://user:pw@example.com/db").pipe(Effect.exit);
-      expect(Exit.isFailure(exit)).toBe(true);
-    }),
-  );
-
-  it.effect("rejects a malformed connection string", () =>
-    Effect.gen(function* () {
-      const exit = yield* parseDatabaseUrl("not a url").pipe(Effect.exit);
-      expect(Exit.isFailure(exit)).toBe(true);
-    }),
-  );
-});
-
-describe("resolvePgmetaImage", () => {
-  it("uses the default pgmeta version when no override is given", () => {
-    const image = withEnv("SUPABASE_USE_SLIM_IMAGES", undefined, () =>
-      withEnv("SUPABASE_INTERNAL_IMAGE_REGISTRY", undefined, () => resolvePgmetaImage()),
+describe("applyQueryTimeouts", () => {
+  it("writes statement_timeout last so the flag overrides a DSN value", () => {
+    const conn = applyQueryTimeouts(
+      { ...BASE_CONN, runtimeParams: { statement_timeout: "0", search_path: "public" } },
+      15,
     );
-    expect(image).toContain("postgres-meta");
+    expect(conn.runtimeParams).toEqual({
+      statement_timeout: "15000",
+      search_path: "public",
+    });
+    expect(conn.connectTimeoutSeconds).toBe(15);
   });
 
-  it("strips a leading v from a version override", () => {
-    const image = withEnv("SUPABASE_INTERNAL_IMAGE_REGISTRY", "docker.io", () =>
-      resolvePgmetaImage("v1.2.3"),
-    );
-    expect(image).toBe("supabase/postgres-meta:v1.2.3");
+  it("leaves connect timeout unset when the query timeout is zero", () => {
+    const conn = applyQueryTimeouts(BASE_CONN, 0);
+    expect(conn.connectTimeoutSeconds).toBeUndefined();
+    expect(conn.runtimeParams).toEqual({ statement_timeout: "0" });
   });
 
-  it("falls back to the default when the override is blank", () => {
-    const withOverride = withEnv("SUPABASE_INTERNAL_IMAGE_REGISTRY", "docker.io", () =>
-      resolvePgmetaImage("   "),
-    );
-    const withoutOverride = withEnv("SUPABASE_INTERNAL_IMAGE_REGISTRY", "docker.io", () =>
-      resolvePgmetaImage(),
-    );
-    expect(withOverride).toBe(withoutOverride);
-  });
-
-  it("uses the supabase registry for any non docker.io registry", () => {
-    const image = withEnv("SUPABASE_INTERNAL_IMAGE_REGISTRY", undefined, () =>
-      resolvePgmetaImage("1.2.3"),
-    );
-    expect(image).not.toBe("supabase/postgres-meta:v1.2.3");
-    expect(image).toContain("postgres-meta:v1.2.3");
-  });
-
-  it("defaults to the ECR mirror when no registry override is set", () => {
-    const image = withEnv("SUPABASE_INTERNAL_IMAGE_REGISTRY", undefined, () =>
-      resolvePgmetaImage("1.2.3"),
-    );
-    expect(image).toBe("public.ecr.aws/supabase/postgres-meta:v1.2.3");
-  });
-
-  it("honors SUPABASE_INTERNAL_IMAGE_REGISTRY for a non docker.io registry (e.g. ghcr.io)", () => {
-    // Regression: setup-cli exports `ghcr.io` on shared CI runners to dodge ECR
-    // rate limits, but gen types used to ignore it and still pull from ECR.
-    const image = withEnv("SUPABASE_INTERNAL_IMAGE_REGISTRY", "ghcr.io", () =>
-      resolvePgmetaImage("1.2.3"),
-    );
-    expect(image).toBe("ghcr.io/supabase/postgres-meta:v1.2.3");
-  });
-
-  it("rewrites to an arbitrary configured mirror registry", () => {
-    const image = withEnv("SUPABASE_INTERNAL_IMAGE_REGISTRY", "my.registry.example", () =>
-      resolvePgmetaImage("1.2.3"),
-    );
-    expect(image).toBe("my.registry.example/supabase/postgres-meta:v1.2.3");
-  });
-
-  it("slim-translates the current pin and skips registry rewrite", () => {
-    const image = withEnv("SUPABASE_USE_SLIM_IMAGES", "1", () =>
-      withEnv("SUPABASE_INTERNAL_IMAGE_REGISTRY", undefined, () =>
-        resolvePgmetaImage(currentPgmetaTag),
-      ),
-    );
-    expect(image).toBe(toSlimImage("pgmeta", currentPgmeta));
-  });
-
-  it("keeps a historical pg-meta pin on docker.io under the slim flag", () => {
-    const image = withEnv("SUPABASE_USE_SLIM_IMAGES", "1", () =>
-      withEnv("SUPABASE_INTERNAL_IMAGE_REGISTRY", "docker.io", () => resolvePgmetaImage("1.2.3")),
-    );
-    expect(image).toBe("supabase/postgres-meta:v1.2.3");
+  it("keeps an explicit DSN connect_timeout", () => {
+    const conn = applyQueryTimeouts({ ...BASE_CONN, connectTimeoutSeconds: 30 }, 15);
+    expect(conn.connectTimeoutSeconds).toBe(30);
   });
 });
 
-describe("schema and id helpers", () => {
-  it("normalizes comma separated and repeated schema flags", () => {
-    // pflag's StringSlice parses each value via encoding/csv with NO
-    // trimming, and an empty value yields no field. Whitespace is preserved
-    // verbatim.
-    expect(legacyParseSchemaFlags(["public, auth", " storage ", ""])).toEqual([
-      "public",
-      " auth",
-      " storage ",
-    ]);
+describe("applyProbedSslMode", () => {
+  it("disables TLS when the probe reports a plain-TCP server", () => {
+    expect(applyProbedSslMode(BASE_CONN, false).sslmode).toBe("disable");
   });
 
+  it("pins require plus the CA path when the probe reports TLS", () => {
+    expect(applyProbedSslMode(BASE_CONN, true, "/tmp/root.crt")).toMatchObject({
+      sslmode: "require",
+      sslrootcert: "/tmp/root.crt",
+    });
+  });
+
+  it("leaves an explicit sslmode unchanged", () => {
+    const conn = { ...BASE_CONN, sslmode: "verify-full" };
+    expect(applyProbedSslMode(conn, true, "/tmp/root.crt")).toBe(conn);
+  });
+});
+
+describe("schema helpers", () => {
   it("prepends public and removes duplicates from default schemas", () => {
     expect(defaultSchemas(["auth", "public", "storage"])).toEqual(["public", "auth", "storage"]);
     expect(defaultSchemas()).toEqual(["public"]);
   });
+});
 
-  it("derives sanitized docker ids from the project id", () => {
-    expect(localDbContainerId("..my project")).toBe("supabase_db_my_project");
-    expect(localNetworkId("..my project")).toBe("supabase_network_my_project");
+describe("legacyGenTypesNetworkIdUnusedWarning", () => {
+  it("uses a placeholder when the flag value is empty", () => {
+    expect(legacyGenTypesNetworkIdUnusedWarning("")).toContain("--network <network-id>");
   });
+});
 
-  it("truncates an over-long project id to 40 characters", () => {
-    const longId = "a".repeat(60);
-    expect(localDbContainerId(longId)).toBe(`supabase_db_${"a".repeat(40)}`);
-  });
-
-  it("reads the services hostname and db password from the environment", () => {
-    expect(
-      withEnv("DOCKER_HOST", undefined, () =>
-        withEnv("SUPABASE_SERVICES_HOSTNAME", undefined, () => legacyGetHostname()),
-      ),
-    ).toBe("127.0.0.1");
-    expect(withEnv("SUPABASE_SERVICES_HOSTNAME", "db.internal", () => legacyGetHostname())).toBe(
-      "db.internal",
+describe("oxfmt binding pin", () => {
+  it("stays on the oxfmt version postgrest-typegen resolves", () => {
+    const cliPackageJson = fileURLToPath(new URL("../../../../../package.json", import.meta.url));
+    const cliPkg = JSON.parse(readFileSync(cliPackageJson, "utf8")) as {
+      readonly devDependencies: Readonly<Record<string, string>>;
+    };
+    const typegenReq = createRequire(cliPackageJson);
+    const typegenPkg = typegenReq("@supabase/postgrest-typegen/package.json") as {
+      readonly dependencies: Readonly<Record<string, string>>;
+    };
+    const oxfmtVersion = typegenPkg.dependencies["oxfmt"];
+    expect(oxfmtVersion).toEqual(expect.stringMatching(/^\d+\.\d+\.\d+/));
+    const bindingPins = Object.entries(cliPkg.devDependencies).filter(([name]) =>
+      name.startsWith("@oxfmt/binding-"),
     );
-    expect(withEnv("SUPABASE_DB_PASSWORD", undefined, () => localDbPassword())).toBe("postgres");
-    expect(withEnv("SUPABASE_DB_PASSWORD", "secret", () => localDbPassword())).toBe("secret");
-  });
-
-  it("brackets ipv6 hosts in the generated postgres url", () => {
-    const url = buildPostgresUrl({
-      host: "::1",
-      port: 5432,
-      user: "postgres",
-      password: "pw",
-      database: "postgres",
-    });
-    expect(url).toContain("@[::1]:5432/");
-  });
-
-  it("bundles the staging and production CA certificates", () => {
-    expect(legacyRootCaBundle().length).toBeGreaterThan(0);
+    expect(bindingPins.length).toBeGreaterThan(0);
+    for (const [, version] of bindingPins) {
+      expect(version).toBe(oxfmtVersion);
+    }
   });
 });

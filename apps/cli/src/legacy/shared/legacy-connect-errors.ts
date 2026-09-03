@@ -31,10 +31,13 @@ export function legacyIpv6Suggestion(): string {
 // `ipv6LiteralPattern`: an IPv6 address in brackets
 // (Go dial form) or parens (libpq form). Run against the original-case message.
 const IPV6_LITERAL_PATTERN = /(?:\[[0-9a-fA-F:]+\]|\([0-9a-fA-F:]+\))/;
-// Node's dial-failure shape (`connect ENETUNREACH 2600:…:5432`). The port may be
-// followed by whitespace, end-of-string, or a closing paren — the connect-failure
-// message renders the driver cause parenthesized (pgconn `dial error (…)` form).
-const NODE_ENETUNREACH_PATTERN = /\benetunreach\s+([0-9a-fA-F:]+):\d+(?:[\s)]|$)/i;
+// Node's dial-failure shape (`connect EHOSTUNREACH 2600:…:5432`). The port may
+// be followed by whitespace, end-of-string, or a closing paren — the
+// connect-failure message renders the driver cause parenthesized (pgconn
+// `dial error (…)` form). ENETUNREACH / EHOSTUNREACH / EADDRNOTAVAIL are the
+// IPv6-unreachable errnos; LegacyDbConnectError keeps only this rendered text.
+const NODE_IPV6_DIAL_PATTERN =
+  /\b(?:enetunreach|ehostunreach|eaddrnotavail)\s+([0-9a-fA-F:]+):\d+(?:[\s)]|$)/i;
 
 /**
  * Port of `isIPv6ConnectivityError`. Lower-cases the
@@ -48,8 +51,8 @@ export function legacyIsIPv6ConnectivityError(message: string): boolean {
   if (lower.includes("address family for hostname not supported")) return true;
   if (lower.includes("no address associated with hostname")) return true;
   if (lower.includes("network is unreachable")) return true;
-  const nodeEnetunreachMatch = NODE_ENETUNREACH_PATTERN.exec(message);
-  if (nodeEnetunreachMatch?.[1] !== undefined) return isIPv6(nodeEnetunreachMatch[1]);
+  const nodeIpv6DialMatch = NODE_IPV6_DIAL_PATTERN.exec(message);
+  if (nodeIpv6DialMatch?.[1] !== undefined) return isIPv6(nodeIpv6DialMatch[1]);
   if (lower.includes("no route to host") || lower.includes("cannot assign requested address")) {
     return IPV6_LITERAL_PATTERN.test(message);
   }
@@ -455,6 +458,10 @@ function hasStringCode(error: unknown): error is {
  * Used by the container-level pooler fallback (`gen types` / `db dump`); the
  * connect-suggestion path uses the narrower `legacyHasIPv6DialCause` instead,
  * which must not treat a DNS miss as IPv6.
+ *
+ * Native connect errors drop `code`/`cause` and render
+ * `hostname resolving error (getaddrinfo ENOTFOUND)` — the message fallback
+ * must recognize that shape. Do not add it to `legacyIsIPv6ConnectivityError`.
  */
 export function legacyIsIPv6ConnectivityErrorCause(error: unknown): boolean {
   if (error instanceof AggregateError) {
@@ -487,5 +494,8 @@ export function legacyIsIPv6ConnectivityErrorCause(error: unknown): boolean {
     }
   }
 
-  return legacyIsIPv6ConnectivityError(error instanceof Error ? error.message : String(error));
+  const text = error instanceof Error ? error.message : String(error);
+  if (legacyIsIPv6ConnectivityError(text)) return true;
+  const lower = text.toLowerCase();
+  return lower.includes("hostname resolving error") && lower.includes("enotfound");
 }

@@ -39,12 +39,26 @@ export class LegacyInvalidGenTypesDurationError extends Data.TaggedError(
   }
 }
 
-export class LegacyInvalidGenTypesDatabaseUrlError extends Data.TaggedError(
-  "LegacyInvalidGenTypesDatabaseUrlError",
-)<{
+/**
+ * A `postgrest-typegen` introspection query failed against a live database
+ * the CLI successfully connected to. Schema-derived, so a database finding.
+ */
+export class LegacyGenTypesMetadataError extends Data.TaggedError("LegacyGenTypesMetadataError")<{
   readonly message: string;
 }> {
   get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
-    return actionability.provideFlags;
+    return actionability.dbFinding;
+  }
+}
+
+/**
+ * Language generation or formatting failed after introspection succeeded —
+ * a CLI packaging / formatter / template defect, not a user schema finding.
+ */
+export class LegacyGenTypesGenerateError extends Data.TaggedError("LegacyGenTypesGenerateError")<{
+  readonly message: string;
+}> {
+  get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
+    return actionability.internalPanic;
   }
 }

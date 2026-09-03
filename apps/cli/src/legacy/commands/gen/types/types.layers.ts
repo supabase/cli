@@ -12,7 +12,6 @@ import { LegacyDbConfigResolver } from "../../../shared/legacy-db-config.service
 import { legacyDbConnectionLayer } from "../../../shared/legacy-db-connection.layer.ts";
 import { legacyDebugLoggerLayer } from "../../../shared/legacy-debug-logger.layer.ts";
 import { legacyPgDeltaSslProbeLayer } from "../../../shared/legacy-pgdelta-ssl-probe.layer.ts";
-import { LegacyPgDeltaSslProbe } from "../../../shared/legacy-pgdelta-ssl-probe.service.ts";
 import {
   LegacyIdentityStitch,
   legacyIdentityStitchLayer,
@@ -24,6 +23,8 @@ import { legacyTelemetryStateLayer } from "../../../telemetry/legacy-telemetry-s
 import { LegacyTelemetryState } from "../../../telemetry/legacy-telemetry-state.service.ts";
 import { commandRuntimeLayer } from "../../../../shared/runtime/command-runtime.layer.ts";
 import { CommandRuntime } from "../../../../shared/runtime/command-runtime.service.ts";
+import { legacyGenTypesGeneratorLayer } from "./types.generator.layer.ts";
+import { LegacyGenTypesGenerator } from "./types.generator.ts";
 
 /**
  * `gen types --local` and `--db-url` do not use the Management API, so this
@@ -66,7 +67,7 @@ export const legacyGenTypesRuntimeLayer = (() => {
       Layer.provide(httpClient),
       Layer.provide(legacyIdentityStitchLayer),
     ),
-    legacyPgDeltaSslProbeLayer,
+    legacyGenTypesGeneratorLayer.pipe(Layer.provide(legacyPgDeltaSslProbeLayer)),
     legacyTelemetryStateLayer,
     // The one per-command identity stitcher, exposed at top level so
     // `withLegacyCommandInstrumentation` can read
@@ -91,7 +92,7 @@ type LegacyGenTypesServices =
   | LegacyCliSettings
   | LegacyProjectRefResolver
   | LegacyDbConfigResolver
-  | LegacyPgDeltaSslProbe
+  | LegacyGenTypesGenerator
   | LegacyLinkedProjectCache
   | LegacyTelemetryState
   | LegacyIdentityStitch

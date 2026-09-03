@@ -1,0 +1,17 @@
+{
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    // typegen's `bun` export is unbuilt source and fails under our
+    // noUncheckedIndexedAccess. Keep this pin off the bun-visible
+    // tsconfig — bun cannot resolve the `.d.ts` `./go.ts` re-exports.
+    "paths": {
+      "@supabase/pg-topo": ["./node_modules/@supabase/pg-topo/dist/index.d.ts"],
+      "@supabase/postgrest-typegen/generation": [
+        "./node_modules/@supabase/postgrest-typegen/dist/generation/index.d.ts"
+      ],
+      "@supabase/postgrest-typegen/introspection": [
+        "./node_modules/@supabase/postgrest-typegen/dist/introspection/index.d.ts"
+      ]
+    }
+  }
+}

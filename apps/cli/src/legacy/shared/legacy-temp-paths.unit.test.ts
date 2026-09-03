@@ -37,7 +37,6 @@ describe("legacyTempPaths", () => {
       expect(paths.gotrueVersion).toBe(path.join(tempDir, "gotrue-version"));
       expect(paths.storageVersion).toBe(path.join(tempDir, "storage-version"));
       expect(paths.storageMigration).toBe(path.join(tempDir, "storage-migration"));
-      expect(paths.pgmetaVersion).toBe(path.join(tempDir, "pgmeta-version"));
       expect(paths.linkedProjectCache).toBe(path.join(tempDir, "linked-project.json"));
     }).pipe(Effect.provide(BunServices.layer)),
   );

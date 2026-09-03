@@ -5,6 +5,7 @@ import path from "node:path";
 import process from "node:process";
 import { parseArgs } from "node:util";
 import { bundleServeMainTemplate } from "../src/shared/functions/serve-main-bundler.ts";
+import { oxfmtExternalArgs } from "./bundle-externals.ts";
 import { darwinBinariesForShell, MACOS_IDENTIFIERS } from "./macos-signing.ts";
 
 const MUSL_TARGETS = [
@@ -152,6 +153,7 @@ async function buildTarget(target: (typeof TARGETS)[number]) {
     `--define=SUPABASE_LIBC=${JSON.stringify(libc)}`,
     serveMainTemplateDefine,
     ...posthogBuildDefines,
+    ...oxfmtExternalArgs,
     `--outfile=${outfile}`,
   ]);
   console.log(`[${target.pkg}] Done.`);
@@ -301,6 +303,7 @@ async function buildMuslBinaries() {
         `--define=SUPABASE_LIBC=${JSON.stringify(libc)}`,
         serveMainTemplateDefine,
         ...posthogBuildDefines,
+        ...oxfmtExternalArgs,
         `--outfile=${outfile}`,
       ]);
 

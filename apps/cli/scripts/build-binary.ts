@@ -2,6 +2,7 @@ import { $ } from "bun";
 import process from "node:process";
 
 import { bundleServeMainTemplate } from "../src/shared/functions/serve-main-bundler.ts";
+import { oxfmtExternalArgs } from "./bundle-externals.ts";
 
 /**
  * Compile a single CLI shell to a standalone binary, embedding the pre-bundled
@@ -30,4 +31,4 @@ const defineArg = `--define=SUPABASE_FUNCTIONS_SERVE_MAIN_TEMPLATE=${JSON.string
   await bundleServeMainTemplate(),
 )}`;
 
-await $`bun build ${entrypoint} --compile ${versionDefine} ${defineArg} --outfile ${outfile}`;
+await $`bun build ${entrypoint} --compile ${versionDefine} ${defineArg} ${oxfmtExternalArgs} --outfile ${outfile}`;

@@ -1,152 +1,102 @@
 import { Effect } from "effect";
-import { dockerfileServiceImageRaw } from "../../../../shared/services/dockerfile-images.ts";
-import { slimImageForCurrentPin } from "../../../../shared/services/slim-images.ts";
-import { legacyGetRegistryImageUrl } from "../../../shared/legacy-docker-registry.ts";
-import {
-  LegacyInvalidGenTypesDatabaseUrlError,
-  LegacyInvalidGenTypesDurationError,
-} from "./types.errors.ts";
-import caProd2021 from "./templates/prod-ca-2021.ts";
-import caProd2025 from "./templates/prod-ca-2025.ts";
-import caStaging2021 from "./templates/staging-ca-2021.ts";
 
-// Local Docker resource ids are hoisted to `legacy/shared` so the declarative seam
-// can derive the same `supabase_db_<id>` name when checking the local stack.
-export { localDbContainerId, localNetworkId } from "../../../shared/legacy-docker-ids.ts";
+import type { LegacyPgConnInput } from "../../../shared/legacy-db-connection.service.ts";
+import { legacyParseGoDuration } from "../../../shared/legacy-go-duration.ts";
+import { LegacyInvalidGenTypesDurationError } from "./types.errors.ts";
 
-const LEGACY_DEFAULT_CONNECT_TIMEOUT_SECONDS = 10;
-
-const DURATION_UNITS_TO_MILLIS = {
-  ns: 1 / 1_000_000,
-  us: 1 / 1_000,
-  "\u00b5s": 1 / 1_000,
-  "\u03bcs": 1 / 1_000,
-  ms: 1,
-  s: 1_000,
-  m: 60_000,
-  h: 3_600_000,
-} as const;
-
-const DURATION_PART_PATTERN = new RegExp(
-  String.raw`([+-]?(?:\d+\.?\d*|\.\d+))(ns|us|\u00b5s|\u03bcs|ms|s|m|h)`,
-  "g",
-);
-
-export interface LegacyGenTypesDbTarget {
-  readonly url: string;
-  readonly host: string;
-  readonly port: number;
-  readonly networkMode: "host" | (string & {});
-}
+// The local Docker container id is hoisted to `legacy/shared` so the declarative
+// seam can derive the same `supabase_db_<id>` name when checking the local stack.
+export { localDbContainerId } from "../../../shared/legacy-docker-ids.ts";
 
 export function defaultSchemas(extraSchemas: ReadonlyArray<string> = []) {
   return [...new Set(["public", ...extraSchemas])];
 }
 
+function invalidQueryTimeout(raw: string, detail?: string) {
+  return new LegacyInvalidGenTypesDurationError({
+    message:
+      detail === undefined
+        ? `invalid duration ${JSON.stringify(raw)}`
+        : `invalid duration ${JSON.stringify(raw)}: ${detail}`,
+  });
+}
+
 export function parseQueryTimeoutSeconds(
   raw: string,
 ): Effect.Effect<number, LegacyInvalidGenTypesDurationError> {
-  return Effect.gen(function* () {
-    const input = raw.trim();
-    if (input.length === 0) {
-      return yield* Effect.fail(
-        new LegacyInvalidGenTypesDurationError({
-          message: `invalid duration ${JSON.stringify(raw)}`,
-        }),
-      );
-    }
-
-    let totalMillis = 0;
-    let consumed = 0;
-    DURATION_PART_PATTERN.lastIndex = 0;
-    for (const match of input.matchAll(DURATION_PART_PATTERN)) {
-      const [token, rawNumber, rawUnit] = match;
-      if (
-        token === undefined ||
-        rawNumber === undefined ||
-        rawUnit === undefined ||
-        match.index === undefined
-      ) {
-        continue;
+  return Effect.try({
+    try: () => legacyParseGoDuration(raw),
+    catch: () => invalidQueryTimeout(raw),
+  }).pipe(
+    Effect.flatMap((nanos) => {
+      if (nanos < 0) {
+        return Effect.fail(invalidQueryTimeout(raw));
       }
-      if (match.index !== consumed) {
-        return yield* Effect.fail(
-          new LegacyInvalidGenTypesDurationError({
-            message: `invalid duration ${JSON.stringify(raw)}`,
-          }),
-        );
+      // Whole-second `statement_timeout` / client bound. `0` is the disable
+      // sentinel — a positive duration that rounds into it would silently
+      // drop the user's requested cap.
+      const seconds = Math.round(nanos / 1_000_000_000);
+      if (seconds === 0 && nanos !== 0) {
+        return Effect.fail(invalidQueryTimeout(raw, "use 0 to disable, or at least 500ms"));
       }
-      const amount = Number.parseFloat(rawNumber);
-      const unitMillis = DURATION_UNITS_TO_MILLIS[rawUnit as keyof typeof DURATION_UNITS_TO_MILLIS];
-      totalMillis += amount * unitMillis;
-      consumed += token.length;
-    }
-
-    if (!Number.isFinite(totalMillis) || consumed !== input.length || totalMillis < 0) {
-      return yield* Effect.fail(
-        new LegacyInvalidGenTypesDurationError({
-          message: `invalid duration ${JSON.stringify(raw)}`,
-        }),
-      );
-    }
-
-    return Math.round(totalMillis / 1_000);
-  });
+      return Effect.succeed(seconds);
+    }),
+  );
 }
 
 export function localDbPassword() {
   return process.env["SUPABASE_DB_PASSWORD"] ?? "postgres";
 }
 
-export function parseDatabaseUrl(
-  url: string,
-): Effect.Effect<LegacyGenTypesDbTarget, LegacyInvalidGenTypesDatabaseUrlError> {
-  return Effect.try({
-    try: () => {
-      const parsed = new URL(url);
-      if (parsed.protocol !== "postgresql:" && parsed.protocol !== "postgres:") {
-        throw new Error(`unsupported scheme ${parsed.protocol}`);
-      }
-      if (parsed.pathname.length === 0 || parsed.pathname === "/") {
-        parsed.pathname = "/postgres";
-      }
-      return {
-        url: parsed.toString(),
-        host: parsed.hostname,
-        port: parsed.port.length > 0 ? Number.parseInt(parsed.port, 10) : 5432,
-        networkMode: "host" as const,
-      } satisfies LegacyGenTypesDbTarget;
-    },
-    catch: (cause) =>
-      new LegacyInvalidGenTypesDatabaseUrlError({
-        message: `failed to parse connection string: ${cause instanceof Error ? cause.message : String(cause)}`,
-      }),
-  });
+/**
+ * `--query-timeout` parity with the retired pg-meta envs: the flag becomes
+ * session `statement_timeout` (milliseconds; `0` disables) and, when the DSN
+ * has no `connect_timeout` and the flag is positive, the connect timeout.
+ * Zero must not become `connectTimeoutSeconds: 0` — the driver treats that as
+ * an immediate `Effect.timeout` rather than "disabled".
+ */
+export function applyQueryTimeouts(
+  conn: LegacyPgConnInput,
+  queryTimeoutSeconds: number,
+): LegacyPgConnInput {
+  const runtimeParams = {
+    ...conn.runtimeParams,
+    statement_timeout: `${queryTimeoutSeconds * 1000}`,
+  };
+  if (queryTimeoutSeconds > 0 && conn.connectTimeoutSeconds === undefined) {
+    return { ...conn, connectTimeoutSeconds: queryTimeoutSeconds, runtimeParams };
+  }
+  return { ...conn, runtimeParams };
 }
 
-export function buildPostgresUrl(input: {
-  readonly host: string;
-  readonly port: number;
-  readonly user: string;
-  readonly password: string;
-  readonly database: string;
-}) {
-  const host =
-    input.host.includes(":") && !input.host.startsWith("[") ? `[${input.host}]` : input.host;
+/**
+ * When the DSN omitted `sslmode`, the SSLRequest probe decides: no TLS →
+ * `disable`; TLS → `require` plus the embedded CA path so the driver promotes
+ * to `verify-ca` (the retired `PG_META_DB_SSL_ROOT_CERT` injection).
+ */
+export function applyProbedSslMode(
+  conn: LegacyPgConnInput,
+  useTls: boolean,
+  sslrootcert?: string,
+): LegacyPgConnInput {
+  if (conn.sslmode !== undefined) return conn;
+  if (!useTls) return { ...conn, sslmode: "disable" };
+  return {
+    ...conn,
+    sslmode: "require",
+    ...(sslrootcert !== undefined && sslrootcert.length > 0 ? { sslrootcert } : {}),
+  };
+}
+
+/**
+ * `--network-id` cannot attach the in-process generator to a Docker network.
+ * Point at a host-reachable DSN, or run the CLI inside that network.
+ */
+export function legacyGenTypesNetworkIdUnusedWarning(networkId: string): string {
+  const network = networkId.length > 0 ? networkId : "<network-id>";
   return (
-    `postgresql://${encodeURIComponent(input.user)}:${encodeURIComponent(input.password)}` +
-    `@${host}:${input.port}/${encodeURIComponent(input.database)}` +
-    `?connect_timeout=${LEGACY_DEFAULT_CONNECT_TIMEOUT_SECONDS}`
+    "--network-id is unused: gen types no longer runs inside a container and cannot join a Docker network.\n" +
+    "To reach a hostname that exists only on that network:\n" +
+    `  docker run --rm --network ${network} node:lts npx --yes supabase gen types --db-url <url>`
   );
-}
-
-export function resolvePgmetaImage(versionOverride?: string) {
-  const raw = dockerfileServiceImageRaw("pgmeta");
-  const trimmed = versionOverride?.trim() ?? "";
-  const pin = trimmed.length > 0 ? `v${trimmed.replace(/^v/i, "")}` : undefined;
-  return legacyGetRegistryImageUrl(slimImageForCurrentPin("pgmeta", raw, pin));
-}
-
-export function legacyRootCaBundle() {
-  return `${caStaging2021}${caProd2021}${caProd2025}`;
 }
