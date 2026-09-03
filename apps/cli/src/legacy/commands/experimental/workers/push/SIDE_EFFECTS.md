@@ -33,9 +33,9 @@
 | `GET`  | `/v1/projects/{ref}`                         | Bearer token                                | none                                                | linked-project cache miss only — name, org, region     |
 
 `GET /v2/projects/{ref}/workers/{name}` is polled until `build_state` leaves
-`building`. It is **not** requested under `--no-wait`: that run returns on the
-deploy response, which carries the accepted spec and a `build_state` of
-`building`.
+`building`. It is skipped entirely in two cases: under `--no-wait`, and when
+the deploy response already carried a terminal `build_state`. Either way the
+run reports the accepted spec the deploy response returned.
 
 ## Exit Codes
 

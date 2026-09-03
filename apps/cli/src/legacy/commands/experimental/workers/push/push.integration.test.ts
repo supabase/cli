@@ -185,6 +185,56 @@ describe("legacy workers push", () => {
     }).pipe(Effect.provide(layer), Effect.ensuring(Effect.sync(repo.cleanup)));
   });
 
+  // `V2DeployAWorkerOutput` permits a terminal state on the deploy response
+  // itself, and that verdict is this deploy's. A poll on top of it can only
+  // contradict it — `awaitWorkerBuild` reads a post-deploy 404 as "still
+  // building", so an already-settled deploy would burn the poll budget and
+  // surface as a timeout instead of the answer the platform already gave.
+  describe("honours a terminal deploy response instead of polling", () => {
+    const settledOnDeploy = (repoDir: string, state: "active" | "failed") =>
+      setupLegacyWorkers({
+        workdir: repoDir,
+        routes: routes({
+          [`POST ${workersRoute("/api/deploy")}`]: {
+            status: 202,
+            body: {
+              data: workerResource({
+                name: "api",
+                runtime: "node",
+                buildState: state,
+                ...(state === "active" ? { imageVersion: "v1" } : {}),
+              }),
+            },
+          },
+        }),
+      });
+
+    it.live("reports a deploy that came back already active", () => {
+      const repo = project();
+      const { layer, out, http } = settledOnDeploy(repo.dir, "active");
+
+      return Effect.gen(function* () {
+        yield* push();
+
+        expect(http.routeKeys).not.toContain(`GET ${workersRoute("/api")}`);
+        expect(out.stdoutText).toContain("Deployed Worker api");
+        expect(out.stdoutText).toContain("v1");
+      }).pipe(Effect.provide(layer), Effect.ensuring(Effect.sync(repo.cleanup)));
+    });
+
+    it.live("fails on a deploy that came back already failed", () => {
+      const repo = project();
+      const { layer, http } = settledOnDeploy(repo.dir, "failed");
+
+      return Effect.gen(function* () {
+        const error = yield* push().pipe(Effect.flip);
+
+        expect(error).toBeInstanceOf(WorkerBuildFailedError);
+        expect(http.routeKeys).not.toContain(`GET ${workersRoute("/api")}`);
+      }).pipe(Effect.provide(layer), Effect.ensuring(Effect.sync(repo.cleanup)));
+    });
+  });
+
   it.live("omits the runtime for a Dockerfile worker and builds from the uploaded context", () => {
     const repo = project({
       "supabase/config.toml": `project_id = "demo"\n\n[workers.api]\nruntime = "dockerfile"\n`,

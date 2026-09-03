@@ -343,19 +343,30 @@ const deployOneWorker = Effect.fnUntraced(function* (input: {
     Effect.tapError(() => deploying.fail()),
   );
 
-  const settled = input.noWait
-    ? accepted
-    : yield* awaitWorkerBuild(api, projectRef, name, {
-        schedule: input.pollSchedule,
-        retrySchedule: input.pollRetrySchedule,
-        refSuffix: input.refSuffix,
-        onPoll: (polled) =>
-          polled.buildState === "building" ? deploying.message("Building worker...") : Effect.void,
-      }).pipe(Effect.tapError(() => deploying.fail()));
+  // Polled only when the deploy response left the build unresolved.
+  // `V2DeployAWorkerOutput` permits a terminal `active` or `failed` on the
+  // deploy itself, and that verdict is this deploy's — a fresh `GET` can only
+  // contradict it: `awaitWorkerBuild` reads a post-deploy 404 as "still
+  // building", so an already-`failed` deploy could burn the whole poll budget
+  // and surface as a timeout, and a concurrent deployment could answer with a
+  // state that belongs to someone else's build.
+  const settled =
+    input.noWait || accepted.buildState !== "building"
+      ? accepted
+      : yield* awaitWorkerBuild(api, projectRef, name, {
+          schedule: input.pollSchedule,
+          retrySchedule: input.pollRetrySchedule,
+          refSuffix: input.refSuffix,
+          onPoll: (polled) =>
+            polled.buildState === "building"
+              ? deploying.message("Building worker...")
+              : Effect.void,
+        }).pipe(Effect.tapError(() => deploying.fail()));
 
-  // Checked whether or not the build was waited on. Under `--no-wait` a deploy
-  // answered with a spec already in `failed` is a refusal the command should
-  // report as one, rather than exiting zero on a worker that will never come up.
+  // Checked whether or not the build was waited on: the verdict can arrive on
+  // the deploy response as readily as on a poll. A spec already in `failed` is
+  // a refusal the command should report as one, rather than exiting zero on a
+  // worker that will never come up.
   if (settled.buildState === "failed") {
     yield* deploying.clear();
     return yield* Effect.fail(
