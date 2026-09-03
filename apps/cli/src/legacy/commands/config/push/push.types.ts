@@ -9,12 +9,14 @@
  *   - `skipped`     — a diff existed but the user declined the prompt.
  *   - `disabled`    — the service's local gate was off, so it was not touched.
  *
- * Go has no machine output for `config push`; this shape backs the TS
- * `json` / `stream-json` modes only.
+ * There is no machine output for the previous per-service-subset `config
+ * push`; this shape backs the TS `json` / `stream-json` modes only.
  */
 type LegacyConfigPushServiceStatus = "updated" | "up_to_date" | "skipped" | "disabled";
 
 export interface LegacyConfigPushServiceResult {
   readonly service: string;
   readonly status: LegacyConfigPushServiceStatus;
+  /** Change paths this service's write communicated (empty for `up_to_date`/`disabled`). */
+  readonly changes: ReadonlyArray<ReadonlyArray<string>>;
 }

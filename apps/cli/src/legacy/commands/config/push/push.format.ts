@@ -6,6 +6,8 @@ import {
   type LegacyConfigDiffScope,
 } from "../diff/diff.format.ts";
 import { legacySanitizeInlineName } from "../../../shared/legacy-http-errors.ts";
+import type { LegacyPushResource } from "./push.plan.ts";
+import type { LegacyPushSecretDecision } from "./push.secrets.ts";
 
 /**
  * Pure formatters and payload builders for `config push` — no Effect, no
@@ -18,22 +20,7 @@ import { legacySanitizeInlineName } from "../../../shared/legacy-http-errors.ts"
  * only the `status`/`path` shell of a secret decision, never `plaintext`.
  */
 
-// TODO(shard-3): import from ./push.plan.ts
-export type LegacyPushResource =
-  | "api"
-  | "db.settings"
-  | "db.network_restrictions"
-  | "db.ssl_enforcement"
-  | "auth"
-  | "storage";
-
-// TODO(shard-3): import from ./push.secrets.ts
-export interface LegacyPushSecretDecision {
-  readonly path: ReadonlyArray<string>;
-  readonly apiKey: string;
-  readonly status: "send" | "unchanged" | "not_set" | "gated";
-  readonly plaintext?: string;
-}
+export type { LegacyPushResource, LegacyPushSecretDecision };
 
 /** Display-only join — a change/secret path is segment-array everywhere else. */
 function renderPath(path: ReadonlyArray<string>): string {

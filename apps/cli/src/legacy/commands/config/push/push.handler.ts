@@ -1,7 +1,9 @@
 import { dirname } from "node:path";
+import { fromApiProjectConfig, fromConfigDocument, ProjectConfigParseError } from "@supabase/config";
+import { diffProjectConfig, loadCliConfig, type ConfigChange } from "@supabase/config/internal";
 import { findCliProjectRoot } from "@supabase/config/effect";
-import { loadCliConfig } from "@supabase/config/internal";
-import { Effect, FileSystem, Path } from "effect";
+import { operationDefinitions } from "@supabase/api/effect";
+import { Clock, Effect, FileSystem, Path } from "effect";
 
 import { LegacyPlatformApi } from "../../../auth/legacy-platform-api.service.ts";
 import { LegacyCliSettings } from "../../../config/legacy-cli-settings.service.ts";
@@ -10,78 +12,126 @@ import { LegacyLinkedProjectCache } from "../../../telemetry/legacy-linked-proje
 import { LegacyTelemetryState } from "../../../telemetry/legacy-telemetry-state.service.ts";
 import { legacyResolveYesWithProjectEnv } from "../../../../shared/legacy/global-flags.ts";
 import { Output } from "../../../../shared/output/output.service.ts";
+import { Stdin } from "../../../../shared/runtime/stdin.service.ts";
+import { Tty } from "../../../../shared/runtime/tty.service.ts";
 import {
   legacyAssertDecryptableSecrets,
   legacyLoadProjectEnv,
 } from "../../../shared/legacy-db-config.toml-read.ts";
-import { mapLegacyHttpError } from "../../../shared/legacy-http-errors.ts";
+import {
+  legacySanitizeInlineName,
+  mapLegacyHttpError,
+  sanitizeLegacyErrorBody,
+} from "../../../shared/legacy-http-errors.ts";
 import { legacyPromptYesNo } from "../../../../shared/legacy/legacy-prompt-yes-no.ts";
 import { legacyCollectDotenvPrivateKeys } from "../../../shared/legacy-vault-decrypt.ts";
-import { apiSubsetFromConfig, apiToUpdateBody, diffApiWithRemote } from "./config-sync/api.sync.ts";
-import {
-  applyRemoteAuthConfig,
-  authEnabled,
-  authSubsetFromConfig,
-  authToUpdateBody,
-  diffAuth,
-  disableMfaPhone,
-  disableMfaWebauthn,
-  mfaPhoneNewlyEnabled,
-  mfaWebauthnNewlyEnabled,
-} from "./config-sync/auth.sync.ts";
-import {
-  dbSettingsFromConfig,
-  dbSettingsToUpdateBody,
-  diffDbSettingsWithRemote,
-  diffNetworkRestrictionsWithRemote,
-  diffSslEnforcementWithRemote,
-  networkRestrictionsFromConfig,
-  networkRestrictionsToUpdateBody,
-  sslEnforcementFromConfig,
-  sslEnforcementToUpdateBody,
-} from "./config-sync/db.sync.ts";
-import { experimentalWebhooksEnabled } from "./config-sync/experimental.sync.ts";
-import {
-  diffStorageWithRemote,
-  storageSubsetFromConfig,
-  storageToUpdateBody,
-} from "./config-sync/storage.sync.ts";
-import { loadAuthEmailContent } from "./config-sync/config-sync.auth-email-content.ts";
+import { legacyConfigDiffScope, legacyConfigDiffScopeLine } from "../diff/diff.format.ts";
+import { legacyConfigReadStatusMessage } from "../config.read-status.ts";
+import { legacyLoadAuthEmailContent } from "./push.auth-email-content.ts";
 import { getCostMatrix } from "./push.cost-matrix.ts";
-import { legacyPresenceIn } from "./push.raw-presence.ts";
 import {
-  LegacyConfigPushApiReadNetworkError,
-  LegacyConfigPushApiReadStatusError,
+  legacyEncodeApiBody,
+  legacyEncodeAuthBody,
+  legacyEncodeDbSettingsBody,
+  legacyEncodeNetworkRestrictionsBody,
+  legacyEncodeSslEnforcementBody,
+  legacyEncodeStorageBody,
+  type LegacyPushEncoded,
+} from "./push.encoders.ts";
+import {
   LegacyConfigPushApiUpdateNetworkError,
   LegacyConfigPushApiUpdateStatusError,
-  LegacyConfigPushAuthReadNetworkError,
-  LegacyConfigPushAuthReadStatusError,
   LegacyConfigPushAuthUpdateNetworkError,
   LegacyConfigPushAuthUpdateStatusError,
-  LegacyConfigPushDbReadNetworkError,
-  LegacyConfigPushDbReadStatusError,
+  LegacyConfigPushConfigReadNetworkError,
+  LegacyConfigPushConfigReadStatusError,
   LegacyConfigPushDbUpdateNetworkError,
   LegacyConfigPushDbUpdateStatusError,
   LegacyConfigPushEnableWebhookNetworkError,
   LegacyConfigPushEnableWebhookStatusError,
   LegacyConfigPushLoadConfigError,
-  LegacyConfigPushNetworkRestrictionsReadNetworkError,
-  LegacyConfigPushNetworkRestrictionsReadStatusError,
   LegacyConfigPushNetworkRestrictionsUpdateNetworkError,
   LegacyConfigPushNetworkRestrictionsUpdateStatusError,
-  LegacyConfigPushSslEnforcementReadNetworkError,
-  LegacyConfigPushSslEnforcementReadStatusError,
   LegacyConfigPushSslEnforcementUpdateNetworkError,
   LegacyConfigPushSslEnforcementUpdateStatusError,
-  LegacyConfigPushStorageReadNetworkError,
-  LegacyConfigPushStorageReadStatusError,
   LegacyConfigPushStorageUpdateNetworkError,
   LegacyConfigPushStorageUpdateStatusError,
 } from "./push.errors.ts";
+import {
+  legacyPushNotes,
+  legacyPushPayload,
+  legacyPushUpdatingLine,
+  legacyPushUpToDateLine,
+} from "./push.format.ts";
+import {
+  legacyPlanConfigPush,
+  legacyPushPromptKey,
+  type LegacyPushResource,
+} from "./push.plan.ts";
+import { legacyResolveAuthSecrets, type LegacyPushSecretDecision } from "./push.secrets.ts";
 import type { LegacyConfigPushFlags } from "./push.command.ts";
 import type { LegacyConfigPushServiceResult } from "./push.types.ts";
 
+// Every update path shares this generic status-message shape; list-addons and
+// enable-webhook keep their own prefixes (see push.errors.ts).
 const readStatusMessage = (status: number, body: string) => `unexpected status ${status}: ${body}`;
+
+function isRecord(value: unknown): value is Readonly<Record<string, unknown>> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+function samePath(a: ReadonlyArray<string>, b: ReadonlyArray<string>): boolean {
+  return a.length === b.length && a.every((segment, index) => segment === b[index]);
+}
+
+function pathIn(path: ReadonlyArray<string>, paths: ReadonlyArray<ReadonlyArray<string>>): boolean {
+  return paths.some((candidate) => samePath(candidate, path));
+}
+
+/** The routed change list, narrowed to the paths a resource's body actually communicated. */
+function changesCommunicated(
+  changes: ReadonlyArray<ConfigChange>,
+  encoded: ReadonlyArray<ReadonlyArray<string>>,
+): ReadonlyArray<ConfigChange> {
+  return changes.filter((change) => pathIn(change.path, encoded));
+}
+
+/**
+ * Drops a paid MFA addon's `verify_enabled`/`enroll_enabled` changes from the
+ * routed auth change list — used when the cost-aware prompt for that addon is
+ * declined. Omitting the pair leaves the remote's current (already disabled)
+ * state untouched, rather than sending an explicit disable.
+ */
+function dropMfaAddonChanges(
+  changes: ReadonlyArray<ConfigChange>,
+  addon: "phone" | "web_authn",
+): ReadonlyArray<ConfigChange> {
+  const verifyPath = ["auth", "mfa", addon, "verify_enabled"];
+  const enrollPath = ["auth", "mfa", addon, "enroll_enabled"];
+  return changes.filter(
+    (change) => !samePath(change.path, verifyPath) && !samePath(change.path, enrollPath),
+  );
+}
+
+/**
+ * Wraps one of `@supabase/config`'s three convergence calls
+ * (`fromApiProjectConfig`, `fromConfigDocument`, `diffProjectConfig`), each of
+ * which throws a typed `ProjectConfigParseError` on an out-of-domain
+ * response/document the mapping registry cannot canonicalize. Anything else
+ * escaping one of these calls would be a bug in this package pairing, so it
+ * stays a defect — mirrors `diff/diff.handler.ts`'s inline `Effect.try` +
+ * `Effect.catch` pattern, hoisted here since three call sites in this handler
+ * share it.
+ */
+export function legacyPushProjectConfigTry<A>(
+  thunk: () => A,
+): Effect.Effect<A, ProjectConfigParseError> {
+  return Effect.try({ try: thunk, catch: (cause) => cause }).pipe(
+    Effect.catch((cause) =>
+      cause instanceof ProjectConfigParseError ? Effect.fail(cause) : Effect.die(cause),
+    ),
+  );
+}
 
 export const legacyConfigPush = Effect.fn("legacy.config.push")(function* (
   flags: LegacyConfigPushFlags,
@@ -130,9 +180,7 @@ export const legacyConfigPush = Effect.fn("legacy.config.push")(function* (
     // NOTE (CLI-1489): `config push` needs the fully decoded config (every
     // service subset), so it uses `loadCliConfig` rather than the tolerant
     // `legacy-db-config.toml-read.ts` subtree reader. `loadCliConfig` raises
-    // `CliConfigParseError` on `env(...)` refs over numeric/bool fields,
-    // which Go resolves transparently. Switch to the fixed decoder once
-    // CLI-1489 lands; until then this is the conscious tradeoff for this command.
+    // `CliConfigParseError` on `env(...)` refs over numeric/bool fields.
     // Pass `ref` so a matching `[remotes.*]` block is merged over the base
     // config before decode. A duplicate `project_id` across remotes surfaces
     // an established error message.
@@ -161,7 +209,6 @@ export const legacyConfigPush = Effect.fn("legacy.config.push")(function* (
     if (loaded.appliedRemote !== undefined) {
       yield* output.raw(`Loading config override: [remotes.${loaded.appliedRemote}]\n`, "stderr");
     }
-    const projectId = ref;
     const config = loaded.config;
 
     // 1b. Assert every `config.Secret`-typed `encrypted:` value in the
@@ -191,20 +238,13 @@ export const legacyConfigPush = Effect.fn("legacy.config.push")(function* (
       return yield* new LegacyConfigPushLoadConfigError({ message: secretError });
     }
 
-    // Optional `*pointer` sections (ssl_enforcement, image_transformation,
-    // s3_protocol) are defaulted-present by @supabase/config and cannot be
-    // recovered from the decoded config, so we inspect the raw (merged)
-    // document to restore nil-pointer skip semantics — including sections a
-    // matching `[remotes.*]` block introduces.
-    const presence = legacyPresenceIn(loaded.document);
-
     // Config lives at <projectRoot>/supabase/config.{toml,json}.
-    const projectRoot = dirname(dirname(loaded.path));
+    const configProjectRoot = dirname(dirname(loaded.path));
 
     // Email content validation runs during config load, before any network call.
-    const authEmailContent = authEnabled(config)
+    const authEmailContent = config.auth.enabled
       ? yield* Effect.try({
-          try: () => loadAuthEmailContent(projectRoot, config.auth.email),
+          try: () => legacyLoadAuthEmailContent(configProjectRoot, config.auth.email),
           catch: (cause) =>
             new LegacyConfigPushLoadConfigError({
               message: cause instanceof Error ? cause.message : String(cause),
@@ -212,10 +252,11 @@ export const legacyConfigPush = Effect.fn("legacy.config.push")(function* (
         })
       : { template: {}, notification: {} };
 
-    // 2. Cost matrix (drives cost-aware prompts).
+    // 2. Cost matrix (drives cost-aware prompts) — still fetched before the
+    // effective-config read below.
     const cost = yield* getCostMatrix(ref);
 
-    yield* output.raw(`Pushing config to project: ${projectId}\n`, "stderr");
+    yield* output.raw(`Pushing config to project: ${ref}\n`, "stderr");
 
     // keep(name): the shared confirmation-prompt helper handles all modes,
     // including scanning piped stdin on a non-TTY before falling back to
@@ -230,29 +271,107 @@ export const legacyConfigPush = Effect.fn("legacy.config.push")(function* (
         return yield* legacyPromptYesNo(output, yes, title, true);
       });
 
-    const services: Array<LegacyConfigPushServiceResult> = [];
-
-    // 3a. api
-    {
-      const local = apiSubsetFromConfig(config);
-      const remote = yield* api.v1.getPostgrestServiceConfig({ ref }).pipe(
-        Effect.catch(
-          mapLegacyHttpError({
-            networkError: LegacyConfigPushApiReadNetworkError,
-            statusError: LegacyConfigPushApiReadStatusError,
-            networkMessage: (cause) => `failed to read API config: ${cause}`,
-            statusMessage: readStatusMessage,
+    // 3. Read the project's effective configuration once — replaces the
+    // former five per-service `GET /v1/...` calls. No spinner (matches the
+    // rest of this command's stderr progress lines).
+    const response = yield* api.executeRaw(operationDefinitions.v2GetProjectConfig, { ref }).pipe(
+      Effect.mapError(
+        (cause) =>
+          new LegacyConfigPushConfigReadNetworkError({
+            message: `failed to read project config: ${cause}`,
           }),
-        ),
+      ),
+    );
+    if (response.status !== 200) {
+      const body = sanitizeLegacyErrorBody(
+        yield* response.text.pipe(Effect.orElseSucceed(() => "")),
       );
-      const d = diffApiWithRemote(local, remote);
-      if (d.length === 0) {
-        yield* output.raw("Remote API config is up to date.\n", "stderr");
-        services.push({ service: "api", status: "up_to_date" });
-      } else {
-        yield* output.raw(`Updating API service with config: ${d}\n`, "stderr");
-        if (yield* keep("api")) {
-          yield* api.v1.updatePostgrestServiceConfig({ ref, ...apiToUpdateBody(local) }).pipe(
+      return yield* new LegacyConfigPushConfigReadStatusError({
+        status: response.status,
+        body,
+        message: legacyConfigReadStatusMessage(response.status, body, ref),
+      });
+    }
+    const responseJson = yield* response.json.pipe(
+      Effect.mapError(
+        (cause) =>
+          new LegacyConfigPushConfigReadNetworkError({
+            message: `failed to read project config: ${cause}`,
+            decode: true,
+          }),
+      ),
+    );
+
+    // 4. Convert the response and classify against the local projection.
+    // A response the registry cannot narrow, or a local document it cannot
+    // canonicalize, is a typed `ProjectConfigParseError`; anything else is a
+    // defect (see `legacyPushProjectConfigTry`).
+    const remote = yield* legacyPushProjectConfigTry(() => fromApiProjectConfig(responseJson));
+
+    const data = isRecord(responseJson) ? responseJson["data"] : undefined;
+    const attributes = isRecord(data) && isRecord(data["attributes"]) ? data["attributes"] : {};
+    const scope = legacyConfigDiffScope(attributes);
+    if (scope.missing.length > 0) {
+      yield* output.raw(legacyConfigDiffScopeLine(scope), "stderr");
+    }
+    const remoteAuthAttributes = isRecord(attributes["auth"]) ? attributes["auth"] : {};
+
+    const local = yield* legacyPushProjectConfigTry(() => fromConfigDocument(loaded));
+    const changeSet = yield* legacyPushProjectConfigTry(() =>
+      diffProjectConfig({ local: loaded, remote }),
+    );
+
+    // 5. Route pushable changes to their v1 write endpoint and resolve every
+    // declared secret's send/unchanged/not_set/gated status.
+    const plan = legacyPlanConfigPush(changeSet);
+    const secrets = legacyResolveAuthSecrets({
+      maskedPaths: changeSet.masked,
+      config,
+      local,
+      remoteAuthAttributes,
+      projectRef: ref,
+      dotenvPrivateKeys,
+    });
+    const now = new Date(yield* Clock.currentTimeMillis);
+
+    const services: Array<LegacyConfigPushServiceResult> = [];
+    const unsupported: Array<ReadonlyArray<string>> = [...plan.unsupported];
+
+    // 6. Prints the resource's `Updating ... with config:` block (or the
+    // up-to-date line), prompts, writes, and returns the service's result.
+    // `secretsForResource` is the resource's full (unfiltered) secret list —
+    // `legacyPushUpdatingLine` renders only `status === "send"` entries, so
+    // non-auth resources simply pass `[]`.
+    function applyResource<Body, E, R>(
+      resource: LegacyPushResource,
+      changes: ReadonlyArray<ConfigChange>,
+      encoded: LegacyPushEncoded<Body>,
+      secretsForResource: ReadonlyArray<LegacyPushSecretDecision>,
+      write: (body: Body) => Effect.Effect<unknown, E, R>,
+    ): Effect.Effect<LegacyConfigPushServiceResult, E, R | Tty | Stdin> {
+      return Effect.gen(function* () {
+        if (encoded.body === undefined) {
+          yield* output.raw(legacyPushUpToDateLine(resource), "stderr");
+          return { service: resource, status: "up_to_date", changes: [] };
+        }
+        const body = encoded.body;
+        const communicated = changesCommunicated(changes, encoded.encoded);
+        yield* output.raw(legacyPushUpdatingLine(resource, communicated, secretsForResource), "stderr");
+        if (yield* keep(legacyPushPromptKey(resource))) {
+          yield* write(body);
+          return { service: resource, status: "updated", changes: encoded.encoded };
+        }
+        return { service: resource, status: "skipped", changes: encoded.encoded };
+      });
+    }
+
+    // 7a. api (no gate — `api.enabled` itself is a pushable leaf).
+    {
+      const changes = plan.changesByResource.get("api") ?? [];
+      const encoded = legacyEncodeApiBody({ changes, local, config });
+      services.push(
+        yield* applyResource("api", changes, encoded, [], (body) =>
+          api.v1.updatePostgrestServiceConfig({ ref, ...body }).pipe(
             Effect.catch(
               mapLegacyHttpError({
                 networkError: LegacyConfigPushApiUpdateNetworkError,
@@ -261,38 +380,19 @@ export const legacyConfigPush = Effect.fn("legacy.config.push")(function* (
                 statusMessage: readStatusMessage,
               }),
             ),
-          );
-          services.push({ service: "api", status: "updated" });
-        } else {
-          services.push({ service: "api", status: "skipped" });
-        }
-      }
-    }
-
-    // 3b. db.settings (no gate — always processed)
-    {
-      const local = dbSettingsFromConfig(config);
-      const response = yield* api.v1.getPostgresConfig({ ref }).pipe(
-        Effect.catch(
-          mapLegacyHttpError({
-            networkError: LegacyConfigPushDbReadNetworkError,
-            statusError: LegacyConfigPushDbReadStatusError,
-            networkMessage: (cause) => `failed to read DB config: ${cause}`,
-            statusMessage: readStatusMessage,
-          }),
+          ),
         ),
       );
-      const remote: Readonly<Record<string, string | number | boolean | undefined>> = {
-        ...response,
-      };
-      const d = diffDbSettingsWithRemote(local, remote);
-      if (d.length === 0) {
-        yield* output.raw("Remote DB config is up to date.\n", "stderr");
-        services.push({ service: "db.settings", status: "up_to_date" });
-      } else {
-        yield* output.raw(`Updating DB service with config: ${d}\n`, "stderr");
-        if (yield* keep("db")) {
-          yield* api.v1.updatePostgresConfig({ ref, ...dbSettingsToUpdateBody(local) }).pipe(
+      unsupported.push(...encoded.unencodable);
+    }
+
+    // 7b. db.settings (no gate — always processed).
+    {
+      const changes = plan.changesByResource.get("db.settings") ?? [];
+      const encoded = legacyEncodeDbSettingsBody({ changes, local, config });
+      services.push(
+        yield* applyResource("db.settings", changes, encoded, [], (body) =>
+          api.v1.updatePostgresConfig({ ref, ...body }).pipe(
             Effect.catch(
               mapLegacyHttpError({
                 networkError: LegacyConfigPushDbUpdateNetworkError,
@@ -301,234 +401,177 @@ export const legacyConfigPush = Effect.fn("legacy.config.push")(function* (
                 statusMessage: readStatusMessage,
               }),
             ),
-          );
-          services.push({ service: "db.settings", status: "updated" });
-        } else {
-          services.push({ service: "db.settings", status: "skipped" });
-        }
-      }
-    }
-
-    // 3c. db.network_restrictions (gated on local enabled)
-    {
-      const local = networkRestrictionsFromConfig(config);
-      if (!local.enabled) {
-        services.push({ service: "db.network_restrictions", status: "disabled" });
-      } else {
-        const remote = yield* api.v1.getNetworkRestrictions({ ref }).pipe(
-          Effect.catch(
-            mapLegacyHttpError({
-              networkError: LegacyConfigPushNetworkRestrictionsReadNetworkError,
-              statusError: LegacyConfigPushNetworkRestrictionsReadStatusError,
-              networkMessage: (cause) => `failed to read network restrictions config: ${cause}`,
-              statusMessage: readStatusMessage,
-            }),
           ),
-        );
-        const d = diffNetworkRestrictionsWithRemote(local, remote);
-        if (d.length === 0) {
-          yield* output.raw("Remote DB Network restrictions config is up to date.\n", "stderr");
-          services.push({ service: "db.network_restrictions", status: "up_to_date" });
-        } else {
-          yield* output.raw(`Updating network restrictions with config: ${d}\n`, "stderr");
-          if (yield* keep("db")) {
-            yield* api.v1
-              .updateNetworkRestrictions({ ref, ...networkRestrictionsToUpdateBody(local) })
-              .pipe(
-                Effect.catch(
-                  mapLegacyHttpError({
-                    networkError: LegacyConfigPushNetworkRestrictionsUpdateNetworkError,
-                    statusError: LegacyConfigPushNetworkRestrictionsUpdateStatusError,
-                    networkMessage: (cause) =>
-                      `failed to update network restrictions config: ${cause}`,
-                    statusMessage: readStatusMessage,
-                  }),
-                ),
-              );
-            services.push({ service: "db.network_restrictions", status: "updated" });
-          } else {
-            services.push({ service: "db.network_restrictions", status: "skipped" });
-          }
-        }
-      }
+        ),
+      );
+      unsupported.push(...encoded.unencodable);
     }
 
-    // 3d. db.ssl_enforcement (only when locally configured)
-    {
-      const local = sslEnforcementFromConfig(config, presence.sslEnforcement);
-      if (local === undefined) {
-        services.push({ service: "db.ssl_enforcement", status: "disabled" });
-      } else {
-        const remote = yield* api.v1.getSslEnforcementConfig({ ref }).pipe(
-          Effect.catch(
-            mapLegacyHttpError({
-              networkError: LegacyConfigPushSslEnforcementReadNetworkError,
-              statusError: LegacyConfigPushSslEnforcementReadStatusError,
-              networkMessage: (cause) => `failed to read SSL enforcement config: ${cause}`,
-              statusMessage: readStatusMessage,
-            }),
-          ),
-        );
-        const d = diffSslEnforcementWithRemote(local, remote);
-        if (d.length === 0) {
-          yield* output.raw("Remote DB SSL enforcement config is up to date.\n", "stderr");
-          services.push({ service: "db.ssl_enforcement", status: "up_to_date" });
-        } else {
-          yield* output.raw(`Updating SSL enforcement with config: ${d}\n`, "stderr");
-          if (yield* keep("db")) {
-            yield* api.v1
-              .updateSslEnforcementConfig({ ref, ...sslEnforcementToUpdateBody(local) })
-              .pipe(
-                Effect.catch(
-                  mapLegacyHttpError({
-                    networkError: LegacyConfigPushSslEnforcementUpdateNetworkError,
-                    statusError: LegacyConfigPushSslEnforcementUpdateStatusError,
-                    networkMessage: (cause) => `failed to update SSL enforcement config: ${cause}`,
-                    statusMessage: readStatusMessage,
-                  }),
-                ),
-              );
-            services.push({ service: "db.ssl_enforcement", status: "updated" });
-          } else {
-            services.push({ service: "db.ssl_enforcement", status: "skipped" });
-          }
-        }
-      }
-    }
-
-    // 3e. auth (gated on local enabled; MFA addon cost filter)
-    {
-      if (!authEnabled(config)) {
-        services.push({ service: "auth", status: "disabled" });
-      } else {
-        const remote = yield* api.v1.getAuthServiceConfig({ ref }).pipe(
-          Effect.catch(
-            mapLegacyHttpError({
-              networkError: LegacyConfigPushAuthReadNetworkError,
-              statusError: LegacyConfigPushAuthReadStatusError,
-              networkMessage: (cause) => `failed to read Auth config: ${cause}`,
-              statusMessage: readStatusMessage,
-            }),
-          ),
-        );
-        // `dotenvPrivateKeys` decrypts any `encrypted:` auth secret before it's
-        // hashed/copied into the update body. The document-wide check above
-        // (step 1b) already scanned every `config.Secret` path — including every
-        // field `authSubsetFromConfig` reads — and would have aborted by now if
-        // any were undecryptable, so the decrypt calls inside it are unreachable
-        // failure paths here, not a real branch to guard with `Effect.try`.
-        let local = authSubsetFromConfig(
-          config,
-          projectId,
-          presence.auth,
-          authEmailContent,
-          dotenvPrivateKeys,
-        );
-        const projected = applyRemoteAuthConfig(local, remote);
-        // MFA phone/webauthn are paid addons: confirm cost before enabling.
-        if (mfaPhoneNewlyEnabled(local, projected) && !(yield* keep("auth_mfa_phone"))) {
-          local = disableMfaPhone(local);
-        }
-        if (mfaWebauthnNewlyEnabled(local, projected) && !(yield* keep("auth_mfa_web_authn"))) {
-          local = disableMfaWebauthn(local);
-        }
-        const d = diffAuth(projected, local);
-        if (d.length === 0) {
-          yield* output.raw("Remote Auth config is up to date.\n", "stderr");
-          services.push({ service: "auth", status: "up_to_date" });
-        } else {
-          yield* output.raw(`Updating Auth service with config: ${d}\n`, "stderr");
-          if (yield* keep("auth")) {
-            yield* api.v1.updateAuthServiceConfig({ ref, ...authToUpdateBody(local) }).pipe(
-              Effect.catch(
-                mapLegacyHttpError({
-                  networkError: LegacyConfigPushAuthUpdateNetworkError,
-                  statusError: LegacyConfigPushAuthUpdateStatusError,
-                  networkMessage: (cause) => `failed to update Auth config: ${cause}`,
-                  statusMessage: readStatusMessage,
-                }),
-              ),
-            );
-            services.push({ service: "auth", status: "updated" });
-          } else {
-            services.push({ service: "auth", status: "skipped" });
-          }
-        }
-      }
-    }
-
-    // 3f. storage (gated on local enabled)
-    {
-      const local = storageSubsetFromConfig(config, {
-        imageTransformation: presence.imageTransformation,
-        s3Protocol: presence.s3Protocol,
-      });
-      if (!local.enabled) {
-        services.push({ service: "storage", status: "disabled" });
-      } else {
-        const remote = yield* api.v1.getStorageConfig({ ref }).pipe(
-          Effect.catch(
-            mapLegacyHttpError({
-              networkError: LegacyConfigPushStorageReadNetworkError,
-              statusError: LegacyConfigPushStorageReadStatusError,
-              networkMessage: (cause) => `failed to read Storage config: ${cause}`,
-              statusMessage: readStatusMessage,
-            }),
-          ),
-        );
-        const d = diffStorageWithRemote(local, remote);
-        if (d.length === 0) {
-          yield* output.raw("Remote Storage config is up to date.\n", "stderr");
-          services.push({ service: "storage", status: "up_to_date" });
-        } else {
-          yield* output.raw(`Updating Storage service with config: ${d}\n`, "stderr");
-          if (yield* keep("storage")) {
-            yield* api.v1.updateStorageConfig({ ref, ...storageToUpdateBody(local) }).pipe(
-              Effect.catch(
-                mapLegacyHttpError({
-                  networkError: LegacyConfigPushStorageUpdateNetworkError,
-                  statusError: LegacyConfigPushStorageUpdateStatusError,
-                  networkMessage: (cause) => `failed to update Storage config: ${cause}`,
-                  statusMessage: readStatusMessage,
-                }),
-              ),
-            );
-            services.push({ service: "storage", status: "updated" });
-          } else {
-            services.push({ service: "storage", status: "skipped" });
-          }
-        }
-      }
-    }
-
-    // 3g. experimental.webhooks (no GET / diff)
-    {
-      if (!experimentalWebhooksEnabled(config)) {
-        services.push({ service: "experimental.webhooks", status: "disabled" });
-      } else {
-        yield* output.raw(`Enabling webhooks for project: ${ref}\n`, "stderr");
-        if (yield* keep("webhooks")) {
-          yield* api.v1.enableDatabaseWebhook({ ref }).pipe(
+    // 7c. db.network_restrictions (gated on the decoded config's `enabled`).
+    if (!config.db.network_restrictions.enabled) {
+      services.push({ service: "db.network_restrictions", status: "disabled", changes: [] });
+    } else {
+      const changes = plan.changesByResource.get("db.network_restrictions") ?? [];
+      const encoded = legacyEncodeNetworkRestrictionsBody({ changes, local, config });
+      services.push(
+        yield* applyResource("db.network_restrictions", changes, encoded, [], (body) =>
+          api.v1.updateNetworkRestrictions({ ref, ...body }).pipe(
             Effect.catch(
               mapLegacyHttpError({
-                networkError: LegacyConfigPushEnableWebhookNetworkError,
-                statusError: LegacyConfigPushEnableWebhookStatusError,
-                networkMessage: (cause) => `failed to enable webhooks: ${cause}`,
-                statusMessage: (status, body) =>
-                  `unexpected enable webhook status ${status}: ${body}`,
+                networkError: LegacyConfigPushNetworkRestrictionsUpdateNetworkError,
+                statusError: LegacyConfigPushNetworkRestrictionsUpdateStatusError,
+                networkMessage: (cause) => `failed to update network restrictions config: ${cause}`,
+                statusMessage: readStatusMessage,
               }),
             ),
-          );
-          services.push({ service: "experimental.webhooks", status: "updated" });
-        } else {
-          services.push({ service: "experimental.webhooks", status: "skipped" });
-        }
+          ),
+        ),
+      );
+      unsupported.push(...encoded.unencodable);
+    }
+
+    // 7d. db.ssl_enforcement (gated on the local projection's presence —
+    // `local.db?.ssl_enforcement` is only defined when `[db.ssl_enforcement]`
+    // is declared).
+    if (local.db?.ssl_enforcement === undefined) {
+      services.push({ service: "db.ssl_enforcement", status: "disabled", changes: [] });
+    } else {
+      const changes = plan.changesByResource.get("db.ssl_enforcement") ?? [];
+      const encoded = legacyEncodeSslEnforcementBody({ changes, local, config });
+      services.push(
+        yield* applyResource("db.ssl_enforcement", changes, encoded, [], (body) =>
+          api.v1.updateSslEnforcementConfig({ ref, ...body }).pipe(
+            Effect.catch(
+              mapLegacyHttpError({
+                networkError: LegacyConfigPushSslEnforcementUpdateNetworkError,
+                statusError: LegacyConfigPushSslEnforcementUpdateStatusError,
+                networkMessage: (cause) => `failed to update SSL enforcement config: ${cause}`,
+                statusMessage: readStatusMessage,
+              }),
+            ),
+          ),
+        ),
+      );
+      unsupported.push(...encoded.unencodable);
+    }
+
+    // 7e. auth (gated on the decoded config's `enabled`; MFA addon cost
+    // filter runs before anything about auth is printed).
+    if (!config.auth.enabled) {
+      services.push({ service: "auth", status: "disabled", changes: [] });
+    } else {
+      let changes = plan.changesByResource.get("auth") ?? [];
+      const phoneVerify = changes.find((change) =>
+        samePath(change.path, ["auth", "mfa", "phone", "verify_enabled"]),
+      );
+      if (phoneVerify?.local === true && !(yield* keep("auth_mfa_phone"))) {
+        changes = dropMfaAddonChanges(changes, "phone");
+      }
+      const webAuthnVerify = changes.find((change) =>
+        samePath(change.path, ["auth", "mfa", "web_authn", "verify_enabled"]),
+      );
+      if (webAuthnVerify?.local === true && !(yield* keep("auth_mfa_web_authn"))) {
+        changes = dropMfaAddonChanges(changes, "web_authn");
+      }
+
+      const encoded = legacyEncodeAuthBody({
+        changes,
+        local,
+        config,
+        secrets,
+        emailContent: authEmailContent,
+        remoteAuthAttributes,
+        now,
+      });
+      services.push(
+        yield* applyResource("auth", changes, encoded, secrets, (body) =>
+          api.v1.updateAuthServiceConfig({ ref, ...body }).pipe(
+            Effect.catch(
+              mapLegacyHttpError({
+                networkError: LegacyConfigPushAuthUpdateNetworkError,
+                statusError: LegacyConfigPushAuthUpdateStatusError,
+                networkMessage: (cause) => `failed to update Auth config: ${cause}`,
+                statusMessage: readStatusMessage,
+              }),
+            ),
+          ),
+        ),
+      );
+      unsupported.push(...encoded.unencodable);
+    }
+
+    // 7f. storage (gated on the decoded config's `enabled`).
+    if (!config.storage.enabled) {
+      services.push({ service: "storage", status: "disabled", changes: [] });
+    } else {
+      const changes = plan.changesByResource.get("storage") ?? [];
+      const encoded = legacyEncodeStorageBody({ changes, local, config });
+      services.push(
+        yield* applyResource("storage", changes, encoded, [], (body) =>
+          api.v1.updateStorageConfig({ ref, ...body }).pipe(
+            Effect.catch(
+              mapLegacyHttpError({
+                networkError: LegacyConfigPushStorageUpdateNetworkError,
+                statusError: LegacyConfigPushStorageUpdateStatusError,
+                networkMessage: (cause) => `failed to update Storage config: ${cause}`,
+                statusMessage: readStatusMessage,
+              }),
+            ),
+          ),
+        ),
+      );
+      unsupported.push(...encoded.unencodable);
+    }
+
+    // 7g. experimental.webhooks (no read/diff — a fixed enable-only POST).
+    if (config.experimental?.webhooks?.enabled !== true) {
+      services.push({ service: "experimental.webhooks", status: "disabled", changes: [] });
+    } else {
+      yield* output.raw(`Enabling webhooks for project: ${ref}\n`, "stderr");
+      if (yield* keep("webhooks")) {
+        yield* api.v1.enableDatabaseWebhook({ ref }).pipe(
+          Effect.catch(
+            mapLegacyHttpError({
+              networkError: LegacyConfigPushEnableWebhookNetworkError,
+              statusError: LegacyConfigPushEnableWebhookStatusError,
+              networkMessage: (cause) => `failed to enable webhooks: ${cause}`,
+              statusMessage: (status, body) => `unexpected enable webhook status ${status}: ${body}`,
+            }),
+          ),
+        );
+        services.push({ service: "experimental.webhooks", status: "updated", changes: [] });
+      } else {
+        services.push({ service: "experimental.webhooks", status: "skipped", changes: [] });
       }
     }
 
-    // 4. Machine-readable summary (Go has none; text mode emits nothing extra).
+    // 8. Notes (stderr, after the resource loop) — declared-but-unpushable
+    // properties, declared-but-unmanaged properties, empty/unresolved
+    // credentials, and the hands-off remote-only count.
+    const notes = legacyPushNotes({
+      unsupported,
+      unmanaged: changeSet.unmanaged,
+      secretsNotSet: secrets.filter((secret) => secret.status === "not_set").map((secret) => secret.path),
+      remoteOnly: plan.remoteOnly,
+    });
+    if (notes !== "") {
+      yield* output.raw(notes, "stderr");
+    }
+
+    // 9. Machine-readable summary in `json` / `stream-json` mode.
     if (output.format !== "text") {
-      yield* output.success("", { project_ref: projectId, services });
+      yield* output.success(
+        "",
+        legacyPushPayload({
+          projectRef: ref,
+          services,
+          unsupported,
+          unmanaged: changeSet.unmanaged,
+          secrets,
+          remoteOnly: plan.remoteOnly,
+          scope,
+        }),
+      );
     }
   }).pipe(Effect.ensuring(linkedProjectCache.cache(ref)), Effect.ensuring(telemetryState.flush));
 });
