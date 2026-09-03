@@ -12,7 +12,7 @@ notes below). A property your file doesn't declare is never written.
 ## Files Read
 
 | Path                                           | Format                    | When                                                                                                                                                                  |
-| ---------------------------------------------- | ------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| ---------------------------------------------- | ------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `<workdir>/supabase/config.toml`               | TOML                      | always, before any network call (parse error aborts, exit 1)                                                                                                          |
 | `<workdir>/supabase/.env`, `.env.local`        | dotenv                    | always, to resolve `env(VAR)` references inside `config.toml` and to collect `DOTENV_PRIVATE_KEY`(`_*`) values for decrypting `encrypted:` secrets                    |
 | Auth email template HTML (`content_path`)      | HTML                      | when `auth.enabled`; paths resolved per the rules below                                                                                                               |
@@ -23,7 +23,7 @@ notes below). A property your file doesn't declare is never written.
 ## Files Written
 
 | Path                                           | Format | When                                                                   |
-| ----------------------------------------------- | ------ | ----------------------------------------------------------------------- |
+| ---------------------------------------------- | ------ | ---------------------------------------------------------------------- |
 | `<workdir>/supabase/.temp/linked-project.json` | JSON   | `Effect.ensuring` after run (success **and** failure), if ref resolved |
 | `~/.supabase/telemetry.json`                   | JSON   | `Effect.ensuring` after run (success **and** failure)                  |
 
@@ -36,17 +36,17 @@ resource has no pushable difference, when its response block was omitted
 from the read, when the resource's local gate is off, or when the user
 declines the confirmation prompt.
 
-| #   | Resource                  | Method | Path                                             | Success | Notes                                                                                                                                                                                                     |
-| --- | -------------------------- | ------ | ------------------------------------------------- | ------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| 0   | cost matrix                | GET    | `/v1/projects/{ref}/billing/addons`               | 200     | raw HTTP; cost map for 1-variant addons; unchanged, still fetched first                                                                                                                                    |
-| 1   | effective project config   | GET    | `/v2/projects/{ref}/config`                       | 200     | the ONLY read this command makes — see below                                                                                                                                                              |
-| 2   | api                         | PATCH  | `/v1/projects/{ref}/postgrest`                    | 200     | only when `api` has a pushable change, its response block was returned, and the change is kept                                                                                                             |
-| 3   | db.settings                 | PUT    | `/v1/projects/{ref}/config/database/postgres`     | 200     | same conditions (this resource's own local gate is "always on")                                                                                                                                            |
-| 4   | db.network_restrictions     | POST   | `/v1/projects/{ref}/network-restrictions/apply`   | 201     | same conditions, plus `db.network_restrictions.enabled` locally; body always carries both CIDR arrays together                                                                                            |
-| 5   | db.ssl_enforcement          | PUT    | `/v1/projects/{ref}/ssl-enforcement`              | 200     | same conditions, plus `[db.ssl_enforcement]` declared locally                                                                                                                                              |
-| 6   | auth                        | PATCH  | `/v1/projects/{ref}/config/auth`                  | 2xx     | same conditions, plus `auth.enabled` locally; MFA phone/webauthn gated by addon cost prompt                                                                                                                |
-| 7   | storage                     | PATCH  | `/v1/projects/{ref}/config/storage`               | 2xx     | same conditions, plus `storage.enabled` locally                                                                                                                                                            |
-| 8   | experimental.webhooks       | POST   | `/v1/projects/{ref}/database/webhooks/enable`     | 2xx     | only if local `webhooks.enabled`; no GET/diff                                                                                                                                                              |
+| #   | Resource                 | Method | Path                                            | Success | Notes                                                                                                          |
+| --- | ------------------------ | ------ | ----------------------------------------------- | ------- | -------------------------------------------------------------------------------------------------------------- |
+| 0   | cost matrix              | GET    | `/v1/projects/{ref}/billing/addons`             | 200     | raw HTTP; cost map for 1-variant addons; unchanged, still fetched first                                        |
+| 1   | effective project config | GET    | `/v2/projects/{ref}/config`                     | 200     | the ONLY read this command makes — see below                                                                   |
+| 2   | api                      | PATCH  | `/v1/projects/{ref}/postgrest`                  | 200     | only when `api` has a pushable change, its response block was returned, and the change is kept                 |
+| 3   | db.settings              | PUT    | `/v1/projects/{ref}/config/database/postgres`   | 200     | same conditions (this resource's own local gate is "always on")                                                |
+| 4   | db.network_restrictions  | POST   | `/v1/projects/{ref}/network-restrictions/apply` | 201     | same conditions, plus `db.network_restrictions.enabled` locally; body always carries both CIDR arrays together |
+| 5   | db.ssl_enforcement       | PUT    | `/v1/projects/{ref}/ssl-enforcement`            | 200     | same conditions, plus `[db.ssl_enforcement]` declared locally                                                  |
+| 6   | auth                     | PATCH  | `/v1/projects/{ref}/config/auth`                | 2xx     | same conditions, plus `auth.enabled` locally; MFA phone/webauthn gated by addon cost prompt                    |
+| 7   | storage                  | PATCH  | `/v1/projects/{ref}/config/storage`             | 2xx     | same conditions, plus `storage.enabled` locally                                                                |
+| 8   | experimental.webhooks    | POST   | `/v1/projects/{ref}/database/webhooks/enable`   | 2xx     | only if local `webhooks.enabled`; no GET/diff                                                                  |
 
 **Row 1 is the only `GET` this command makes** — no per-service `GET /v1/…`
 request remains anywhere in this table; row 1's single response is every
@@ -94,7 +94,7 @@ locally enabled while an SMS-family value changed — reported in their own
 ## Environment Variables
 
 | Variable                                     | Purpose                                                                                                   | Required?                                                                                                                                                                                 |
-| --------------------------------------------- | --------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| -------------------------------------------- | --------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `SUPABASE_PROJECT_ID`                        | project ref (flag → this → `.temp/project-ref` → prompt)                                                  | no                                                                                                                                                                                        |
 | `SUPABASE_YES`                               | auto-confirm prompts (`--yes`)                                                                            | no                                                                                                                                                                                        |
 | `SUPABASE_ACCESS_TOKEN`                      | auth token (bypasses credential file/keyring lookup)                                                      | no (falls back to keyring → `~/.supabase/access-token`)                                                                                                                                   |
@@ -104,18 +104,18 @@ locally enabled while an SMS-family value changed — reported in their own
 
 ## Exit Codes
 
-| Code | Condition                                                                                            |
-| ---- | ------------------------------------------------------------------------------------------------------ |
-| `0`  | success, **including** declining a confirmation prompt                                                |
-| `1`  | malformed `config.toml`                                                                                |
-| `1`  | an `encrypted:` (dotenvx) secret anywhere in the document cannot be decrypted (see below)              |
-| `1`  | invalid `auth.email.*.content_path` (missing/unreadable template file when `auth.enabled`)             |
-| `1`  | two `[remotes.*]` blocks declare the same `project_id` as the target ref                               |
-| `1`  | list-addons failure (network or non-200)                                                               |
+| Code | Condition                                                                                                                                                             |
+| ---- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `0`  | success, **including** declining a confirmation prompt                                                                                                                |
+| `1`  | malformed `config.toml`                                                                                                                                               |
+| `1`  | an `encrypted:` (dotenvx) secret anywhere in the document cannot be decrypted (see below)                                                                             |
+| `1`  | invalid `auth.email.*.content_path` (missing/unreadable template file when `auth.enabled`)                                                                            |
+| `1`  | two `[remotes.*]` blocks declare the same `project_id` as the target ref                                                                                              |
+| `1`  | list-addons failure (network or non-200)                                                                                                                              |
 | `1`  | effective-project-config read failure (network, decode, or unexpected status) — one failure mode now covers what used to be six independent per-service read failures |
-| `1`  | the API's effective project configuration fails to parse                                               |
-| `1`  | the effective-project-config response carried no block at all (`LegacyConfigPushConfigEmptyError`) — nothing was pushed |
-| `1`  | any per-service update failure or webhook-enable failure (network or unexpected status)                |
+| `1`  | the API's effective project configuration fails to parse                                                                                                              |
+| `1`  | the effective-project-config response carried no block at all (`LegacyConfigPushConfigEmptyError`) — nothing was pushed                                               |
+| `1`  | any per-service update failure or webhook-enable failure (network or unexpected status)                                                                               |
 
 ## Output
 
@@ -195,11 +195,14 @@ caveat sentence appended for anything withheld — see below):
 {
   "schema_version": 1,
   "project_ref": "abcdefghijklmnopqrst",
-  "services": [
-    { "service": "api", "status": "updated", "changes": [["api", "max_rows"]] }
-  ],
+  "services": [{ "service": "api", "status": "updated", "changes": [["api", "max_rows"]] }],
   "unsupported": [["db", "pooler", "pool_mode"]],
-  "unencodable": [{ "path": ["api", "enabled"], "reason": "enabling the Data API needs at least one schema in api.schemas" }],
+  "unencodable": [
+    {
+      "path": ["api", "enabled"],
+      "reason": "enabling the Data API needs at least one schema in api.schemas",
+    },
+  ],
   "forced": [{ "path": ["db", "network_restrictions", "allowed_cidrs_v6"], "value": [] }],
   "unmanaged": [["auth", "oauth_server", "enabled"]],
   "secrets": {
@@ -207,12 +210,15 @@ caveat sentence appended for anything withheld — see below):
     "unchanged": [],
     "not_set": [],
     "gated": [],
-    "skipped": []
+    "skipped": [],
   },
   "declined_addons": [],
   "remote_only": 12,
-  "scope": { "present": ["api", "auth", "database", "pooler", "realtime", "storage"], "missing": [] },
-  "message": "1 property pushed to abcdefghijklmnopqrst. 2 declared properties could not be pushed. 1 declared property is not managed by config push."
+  "scope": {
+    "present": ["api", "auth", "database", "pooler", "realtime", "storage"],
+    "missing": [],
+  },
+  "message": "1 property pushed to abcdefghijklmnopqrst. 2 declared properties could not be pushed. 1 declared property is not managed by config push.",
 }
 ```
 

@@ -74,7 +74,12 @@ const RESOURCE_DISPLAY_NAME: Readonly<Record<LegacyPushResource, string>> = {
 /** One `<path> [<label>]` / `local:` / `remote:` block, always followed by a blank line — the
  * same shape `legacyConfigRenderChangeLines` uses for ordinary property changes, so appending any
  * mix of these directly after that renderer's output never introduces (or omits) a blank line. */
-function renderBlock(path: ReadonlyArray<string>, label: string, local: string, remote: string): string {
+function renderBlock(
+  path: ReadonlyArray<string>,
+  label: string,
+  local: string,
+  remote: string,
+): string {
   return `${legacyConfigRenderPath(path)} [${label}]\n  local:  ${local}\n  remote: ${remote}\n\n`;
 }
 
@@ -112,7 +117,9 @@ function renderSecretBlocks(secrets: ReadonlyArray<LegacyPushSecretReport>): str
 /** `[content]` blocks for template/notification bodies with no registry row of their own. */
 function renderExtraBlocks(extras: ReadonlyArray<LegacyPushExtra>): string {
   return extras
-    .map((extra) => renderBlock(extra.path, "content", "(file content from content_path)", "(differs)"))
+    .map((extra) =>
+      renderBlock(extra.path, "content", "(file content from content_path)", "(differs)"),
+    )
     .join("");
 }
 
@@ -294,7 +301,9 @@ export function legacyPushSummaryMessage(input: LegacyPushPayloadInput): string 
     const n = updated.reduce((sum, service) => sum + service.changes.length, 0);
     base = `${legacyConfigPlural(n, "property", "properties")} pushed to ${legacySanitizeInlineName(input.projectRef)}.`;
   } else if (
-    input.services.every((service) => service.status === "up_to_date" || service.status === "disabled")
+    input.services.every(
+      (service) => service.status === "up_to_date" || service.status === "disabled",
+    )
   ) {
     base = "Nothing to push: the project already matches the declared properties.";
   } else {
@@ -305,7 +314,9 @@ export function legacyPushSummaryMessage(input: LegacyPushPayloadInput): string 
 
   const unpushable = input.unsupported.length + input.unencodable.length;
   if (unpushable > 0) {
-    parts.push(`${legacyConfigPlural(unpushable, "declared property", "declared properties")} could not be pushed.`);
+    parts.push(
+      `${legacyConfigPlural(unpushable, "declared property", "declared properties")} could not be pushed.`,
+    );
   }
 
   if (input.unmanaged.length > 0) {

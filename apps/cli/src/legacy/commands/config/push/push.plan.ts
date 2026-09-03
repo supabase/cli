@@ -107,7 +107,9 @@ export function legacyPushResourceForPath(
       return "unsupported";
     }
   }
-  let best: { readonly prefix: ReadonlyArray<string>; readonly resource: LegacyPushResource } | undefined;
+  let best:
+    | { readonly prefix: ReadonlyArray<string>; readonly resource: LegacyPushResource }
+    | undefined;
   for (const entry of LEGACY_PUSH_RESOURCE_PREFIXES) {
     if (
       legacyIsPrefixOf(entry.prefix, path) &&
@@ -236,7 +238,9 @@ export function legacyApplyMfaAddonDecline(
   remote: ProjectConfig,
 ): ReadonlyArray<ConfigChange> {
   const withoutGate = changes.filter(
-    (change) => !legacySamePath(change.path, gate.verifyPath) && !legacySamePath(change.path, gate.enrollPath),
+    (change) =>
+      !legacySamePath(change.path, gate.verifyPath) &&
+      !legacySamePath(change.path, gate.enrollPath),
   );
   const remoteVerify = legacyValueAtPath(remote, gate.verifyPath);
   const remoteEnroll = legacyValueAtPath(remote, gate.enrollPath);

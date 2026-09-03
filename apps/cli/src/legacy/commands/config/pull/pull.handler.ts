@@ -46,7 +46,10 @@ import {
   legacyConfigScopeLine,
 } from "../config.format.ts";
 import { legacyConfigProjectConfigTry } from "../config.project-config.ts";
-import { legacyConfigReadStatusMessage, legacyUnexpectedStatusMessage } from "../config.read-status.ts";
+import {
+  legacyConfigReadStatusMessage,
+  legacyUnexpectedStatusMessage,
+} from "../config.read-status.ts";
 import {
   legacyConfigPullCreatedBlockLabel,
   legacyConfigPullDestinationLine,

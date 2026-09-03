@@ -65,7 +65,11 @@ function buildFullyEnabledConfig(): CliConfig {
       },
       hook: {
         mfa_verification_attempt: { enabled: true, uri: "https://x", secrets: "hook-secret-1" },
-        password_verification_attempt: { enabled: true, uri: "https://x", secrets: "hook-secret-2" },
+        password_verification_attempt: {
+          enabled: true,
+          uri: "https://x",
+          secrets: "hook-secret-2",
+        },
         custom_access_token: { enabled: true, uri: "https://x", secrets: "hook-secret-3" },
         send_sms: { enabled: true, uri: "https://x", secrets: "hook-secret-4" },
         send_email: { enabled: true, uri: "https://x", secrets: "hook-secret-5" },
@@ -278,7 +282,11 @@ describe("legacyResolveAuthSecrets", () => {
 
   describe("gating — disabled or absent parent, across all five families", () => {
     it.each<[string, ReadonlyArray<string>, ProjectConfig]>([
-      ["captcha (disabled)", ["auth", "captcha", "secret"], { auth: { captcha: { enabled: false } } }],
+      [
+        "captcha (disabled)",
+        ["auth", "captcha", "secret"],
+        { auth: { captcha: { enabled: false } } },
+      ],
       ["captcha (absent)", ["auth", "captcha", "secret"], { auth: {} }],
       [
         "smtp (disabled)",
@@ -356,7 +364,10 @@ describe("legacyResolveAuthSecrets", () => {
       const base = getDefaultCliConfig();
       const config: CliConfig = {
         ...base,
-        auth: { ...base.auth, captcha: { enabled: true, provider: "hcaptcha", secret: ENCRYPTED_VALUE } },
+        auth: {
+          ...base.auth,
+          captcha: { enabled: true, provider: "hcaptcha", secret: ENCRYPTED_VALUE },
+        },
       };
       const local: ProjectConfig = { auth: { captcha: { enabled: true } } };
       const decisions = legacyResolveAuthSecrets({
@@ -382,7 +393,10 @@ describe("legacyResolveAuthSecrets", () => {
       const base = getDefaultCliConfig();
       const config: CliConfig = {
         ...base,
-        auth: { ...base.auth, captcha: { enabled: true, provider: "hcaptcha", secret: ENCRYPTED_VALUE } },
+        auth: {
+          ...base.auth,
+          captcha: { enabled: true, provider: "hcaptcha", secret: ENCRYPTED_VALUE },
+        },
       };
       const local: ProjectConfig = { auth: { captcha: { enabled: true } } };
       const decisions = legacyResolveAuthSecrets({

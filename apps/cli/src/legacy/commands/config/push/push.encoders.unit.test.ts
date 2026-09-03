@@ -21,11 +21,17 @@ import {
 } from "./push.encoders.ts";
 import type { LegacyPushSecretDecision } from "./push.secrets.ts";
 
-function change(path: ReadonlyArray<string>, local: unknown, remote: unknown = "remote"): ConfigChange {
+function change(
+  path: ReadonlyArray<string>,
+  local: unknown,
+  remote: unknown = "remote",
+): ConfigChange {
   return { path, class: "update", local, remote, declared: true };
 }
 
-function secretDecision(overrides: Partial<LegacyPushSecretDecision> = {}): LegacyPushSecretDecision {
+function secretDecision(
+  overrides: Partial<LegacyPushSecretDecision> = {},
+): LegacyPushSecretDecision {
   return { path: [], apiKey: "", status: "unchanged", remoteState: "absent", ...overrides };
 }
 
@@ -35,7 +41,9 @@ function input(overrides: Partial<LegacyPushEncoderInput> = {}): LegacyPushEncod
   return { changes: [], local: {}, remote: {}, ...overrides };
 }
 
-function storageInput(overrides: Partial<LegacyStorageEncoderInput> = {}): LegacyStorageEncoderInput {
+function storageInput(
+  overrides: Partial<LegacyStorageEncoderInput> = {},
+): LegacyStorageEncoderInput {
   return { changes: [], local: {}, remote: {}, config: getDefaultCliConfig(), ...overrides };
 }
 
@@ -75,7 +83,9 @@ describe("legacyEncodeApiBody", () => {
   });
 
   it("joins extra_search_path, empty allowed", () => {
-    const result = legacyEncodeApiBody(input({ changes: [change(["api", "extra_search_path"], [])] }));
+    const result = legacyEncodeApiBody(
+      input({ changes: [change(["api", "extra_search_path"], [])] }),
+    );
     expect(result.body).toEqual({ db_extra_search_path: "" });
     expect(Object.keys(result.body ?? {})).toEqual(["db_extra_search_path"]);
   });
@@ -188,7 +198,10 @@ describe("legacyEncodeNetworkRestrictionsBody", () => {
       db: { network_restrictions: { allowed_cidrs: ["10.0.0.0/8"], allowed_cidrs_v6: ["::/0"] } },
     };
     const result = legacyEncodeNetworkRestrictionsBody(
-      input({ changes: [change(["db", "network_restrictions", "allowed_cidrs"], ["10.0.0.0/8"])], local }),
+      input({
+        changes: [change(["db", "network_restrictions", "allowed_cidrs"], ["10.0.0.0/8"])],
+        local,
+      }),
     );
     expect(result.body).toEqual({ dbAllowedCidrs: ["10.0.0.0/8"], dbAllowedCidrsV6: ["::/0"] });
     expect(result.encoded).toEqual([["db", "network_restrictions", "allowed_cidrs"]]);
@@ -196,9 +209,16 @@ describe("legacyEncodeNetworkRestrictionsBody", () => {
 
   it("keeps the remote's allowed_cidrs_v6 when it is undeclared locally", () => {
     const remote: ProjectConfig = {
-      db: { network_restrictions: { allowed_cidrs: ["1.2.3.0/24"], allowed_cidrs_v6: ["2001:db8::/32"] } },
+      db: {
+        network_restrictions: {
+          allowed_cidrs: ["1.2.3.0/24"],
+          allowed_cidrs_v6: ["2001:db8::/32"],
+        },
+      },
     };
-    const local: ProjectConfig = { db: { network_restrictions: { allowed_cidrs: ["10.0.0.0/8"] } } };
+    const local: ProjectConfig = {
+      db: { network_restrictions: { allowed_cidrs: ["10.0.0.0/8"] } },
+    };
     const result = legacyEncodeNetworkRestrictionsBody(
       input({
         changes: [change(["db", "network_restrictions", "allowed_cidrs"], ["10.0.0.0/8"])],
@@ -226,7 +246,9 @@ describe("legacyEncodeNetworkRestrictionsBody", () => {
       }),
     );
     expect(result.body).toEqual({ dbAllowedCidrs: ["10.0.0.0/8"], dbAllowedCidrsV6: ["::/0"] });
-    expect(result.forced).toEqual([{ path: ["db", "network_restrictions", "allowed_cidrs_v6"], value: ["::/0"] }]);
+    expect(result.forced).toEqual([
+      { path: ["db", "network_restrictions", "allowed_cidrs_v6"], value: ["::/0"] },
+    ]);
   });
 
   it("is up to date when nothing changed", () => {
@@ -273,7 +295,10 @@ describe("legacyEncodeStorageBody", () => {
       features: { imageTransformation: { enabled: true }, s3Protocol: { enabled: false } },
     });
     expect(Object.keys(result.body ?? {})).toEqual(["features"]);
-    expect(Object.keys(result.body?.features ?? {}).sort()).toEqual(["imageTransformation", "s3Protocol"]);
+    expect(Object.keys(result.body?.features ?? {}).sort()).toEqual([
+      "imageTransformation",
+      "s3Protocol",
+    ]);
   });
 
   it("ships the whole analytics (iceberg) container when any of its keys changed", () => {
@@ -308,7 +333,9 @@ describe("legacyEncodeStorageBody", () => {
 
   it("keeps the remote's vector.max_indexes when only enabled changed", () => {
     const local: ProjectConfig = { storage: { vector: { enabled: true } } };
-    const remote: ProjectConfig = { storage: { vector: { enabled: false, max_buckets: 7, max_indexes: 99 } } };
+    const remote: ProjectConfig = {
+      storage: { vector: { enabled: false, max_buckets: 7, max_indexes: 99 } },
+    };
     const result = legacyEncodeStorageBody(
       storageInput({ changes: [change(["storage", "vector", "enabled"], true)], local, remote }),
     );
@@ -326,7 +353,13 @@ describe("legacyEncodeStorageBody", () => {
       ...base,
       storage: {
         ...base.storage,
-        analytics: { enabled: false, max_namespaces: 7, max_tables: 3, max_catalogs: 1, buckets: {} },
+        analytics: {
+          enabled: false,
+          max_namespaces: 7,
+          max_tables: 3,
+          max_catalogs: 1,
+          buckets: {},
+        },
       },
     };
     // The real pipeline drops a disabled `storage.analytics` from the local
@@ -353,7 +386,10 @@ describe("legacyEncodeStorageBody", () => {
     const base = getDefaultCliConfig();
     const config: CliConfig = {
       ...base,
-      storage: { ...base.storage, vector: { enabled: false, max_buckets: 11, max_indexes: 6, buckets: {} } },
+      storage: {
+        ...base.storage,
+        vector: { enabled: false, max_buckets: 11, max_indexes: 6, buckets: {} },
+      },
     };
     const result = legacyEncodeStorageBody(
       storageInput({ changes: [change(["storage", "vector", "enabled"], false)], config }),
@@ -389,7 +425,9 @@ describe("legacyEncodeAuthBody", () => {
   });
 
   it("inverts enable_signup into disable_signup", () => {
-    const result = legacyEncodeAuthBody(authInput({ changes: [change(["auth", "enable_signup"], true)] }));
+    const result = legacyEncodeAuthBody(
+      authInput({ changes: [change(["auth", "enable_signup"], true)] }),
+    );
     expect(result.body).toEqual({ disable_signup: false });
   });
 
@@ -456,7 +494,10 @@ describe("legacyEncodeAuthBody", () => {
         },
       };
       const result = legacyEncodeAuthBody(
-        authInput({ changes: [change(["auth", "email", "smtp", "host"], "smtp.example.com")], local }),
+        authInput({
+          changes: [change(["auth", "email", "smtp", "host"], "smtp.example.com")],
+          local,
+        }),
       );
       expect(result.body).toEqual({
         smtp_host: "smtp.example.com",
@@ -497,7 +538,11 @@ describe("legacyEncodeAuthBody", () => {
         },
       };
       const result = legacyEncodeAuthBody(
-        authInput({ changes: [change(["auth", "email", "smtp", "host"], "smtp.example.com")], local, remote }),
+        authInput({
+          changes: [change(["auth", "email", "smtp", "host"], "smtp.example.com")],
+          local,
+          remote,
+        }),
       );
       expect(result.body).toEqual({
         smtp_host: "smtp.example.com",
@@ -546,9 +591,15 @@ describe("legacyEncodeAuthBody", () => {
     });
 
     it("withholds smtp_pass while unchanged/gated/not_set", () => {
-      const local: ProjectConfig = { auth: { email: { smtp: { enabled: true, host: "h", port: 1 } } } };
+      const local: ProjectConfig = {
+        auth: { email: { smtp: { enabled: true, host: "h", port: 1 } } },
+      };
       const secrets: ReadonlyArray<LegacyPushSecretDecision> = [
-        secretDecision({ path: ["auth", "email", "smtp", "pass"], apiKey: "smtp_pass", status: "unchanged" }),
+        secretDecision({
+          path: ["auth", "email", "smtp", "pass"],
+          apiKey: "smtp_pass",
+          status: "unchanged",
+        }),
       ];
       const result = legacyEncodeAuthBody(
         authInput({ changes: [change(["auth", "email", "smtp", "host"], "h")], local, secrets }),
@@ -593,7 +644,11 @@ describe("legacyEncodeAuthBody", () => {
         }),
       ];
       const result = legacyEncodeAuthBody(
-        authInput({ changes: [change(["auth", "captcha", "provider"], "hcaptcha")], local, secrets }),
+        authInput({
+          changes: [change(["auth", "captcha", "provider"], "hcaptcha")],
+          local,
+          secrets,
+        }),
       );
       expect(result.body).toEqual({
         security_captcha_enabled: true,
@@ -688,7 +743,11 @@ describe("legacyEncodeAuthBody", () => {
         }),
       ];
       const result = legacyEncodeAuthBody(
-        authInput({ changes: [change(["auth", "external", "github", "client_id"], "id")], local, secrets }),
+        authInput({
+          changes: [change(["auth", "external", "github", "client_id"], "id")],
+          local,
+          secrets,
+        }),
       );
       expect(result.body).toEqual({
         external_github_enabled: true,
@@ -716,7 +775,11 @@ describe("legacyEncodeAuthBody", () => {
 
     it("never emits email_optional for workos (no such API field)", () => {
       const local: ProjectConfig = {
-        auth: { external: { workos: { enabled: true, client_id: "id", url: "https://workos.example.com" } } },
+        auth: {
+          external: {
+            workos: { enabled: true, client_id: "id", url: "https://workos.example.com" },
+          },
+        },
       };
       const result = legacyEncodeAuthBody(
         authInput({ changes: [change(["auth", "external", "workos", "client_id"], "id")], local }),
@@ -729,7 +792,12 @@ describe("legacyEncodeAuthBody", () => {
       const local: ProjectConfig = {
         auth: {
           external: {
-            azure: { enabled: true, client_id: "id", url: "https://azure.example.com", email_optional: false },
+            azure: {
+              enabled: true,
+              client_id: "id",
+              url: "https://azure.example.com",
+              email_optional: false,
+            },
             github: { enabled: true, client_id: "id", email_optional: false },
           },
         },
@@ -753,7 +821,12 @@ describe("legacyEncodeAuthBody", () => {
       const local: ProjectConfig = {
         auth: {
           external: {
-            google: { enabled: true, client_id: "id", email_optional: false, skip_nonce_check: true },
+            google: {
+              enabled: true,
+              client_id: "id",
+              email_optional: false,
+              skip_nonce_check: true,
+            },
             github: { enabled: true, client_id: "id", email_optional: false },
           },
         },
@@ -780,7 +853,10 @@ describe("legacyEncodeAuthBody", () => {
         },
       };
       const result = legacyEncodeAuthBody(
-        authInput({ changes: [change(["auth", "external", "apple", "client_id"], "id-1,id-2")], local }),
+        authInput({
+          changes: [change(["auth", "external", "apple", "client_id"], "id-1,id-2")],
+          local,
+        }),
       );
       expect(result.body).toMatchObject({ external_apple_client_id: "id-1,id-2" });
       expect(result.body).not.toHaveProperty("external_apple_additional_client_ids");
@@ -944,7 +1020,10 @@ describe("legacyEncodeAuthBody", () => {
       });
       expect(result.encoded).toEqual([]);
       expect(result.extras).toEqual([
-        { path: ["auth", "email", "notification", "password_changed", "content"], label: "content" },
+        {
+          path: ["auth", "email", "notification", "password_changed", "content"],
+          label: "content",
+        },
       ]);
     });
   });

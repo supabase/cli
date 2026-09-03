@@ -298,7 +298,12 @@ describe("legacyPushNotes", () => {
     expect(
       legacyPushNotes({
         ...EMPTY_NOTES,
-        unencodable: [{ path: ["api", "enabled"], reason: "enabling the Data API needs at least one schema in api.schemas" }],
+        unencodable: [
+          {
+            path: ["api", "enabled"],
+            reason: "enabling the Data API needs at least one schema in api.schemas",
+          },
+        ],
       }),
     ).toBe(
       "Note: 1 declared property could not be encoded and was not pushed: api.enabled (enabling the Data API needs at least one schema in api.schemas)\n",
@@ -307,8 +312,15 @@ describe("legacyPushNotes", () => {
       legacyPushNotes({
         ...EMPTY_NOTES,
         unencodable: [
-          { path: ["api", "enabled"], reason: "enabling the Data API needs at least one schema in api.schemas" },
-          { path: ["auth", "sms", "twilio", "enabled"], reason: "config push can switch between SMS providers but cannot turn the active provider off; disable phone sign-in or use the dashboard" },
+          {
+            path: ["api", "enabled"],
+            reason: "enabling the Data API needs at least one schema in api.schemas",
+          },
+          {
+            path: ["auth", "sms", "twilio", "enabled"],
+            reason:
+              "config push can switch between SMS providers but cannot turn the active provider off; disable phone sign-in or use the dashboard",
+          },
         ],
       }),
     ).toBe(
@@ -382,7 +394,12 @@ describe("legacyPushNotes", () => {
     expect(
       legacyPushNotes({
         unsupported: [["db", "major_version"]],
-        unencodable: [{ path: ["api", "enabled"], reason: "enabling the Data API needs at least one schema in api.schemas" }],
+        unencodable: [
+          {
+            path: ["api", "enabled"],
+            reason: "enabling the Data API needs at least one schema in api.schemas",
+          },
+        ],
         unmanagedCount: 1,
         forced: [{ path: ["db", "network_restrictions", "allowed_cidrs_v6"], value: [] }],
         secretsNotSet: [["auth", "captcha", "secret"]],
@@ -482,13 +499,18 @@ describe("legacyPushSummaryMessage", () => {
   test("caveat: unsupported + unencodable, singular and plural", () => {
     expect(
       legacyPushSummaryMessage({ ...EMPTY_SUMMARY_INPUT, unsupported: [["db", "major_version"]] }),
-    ).toBe("Nothing to push: the project already matches the declared properties. 1 declared property could not be pushed.");
+    ).toBe(
+      "Nothing to push: the project already matches the declared properties. 1 declared property could not be pushed.",
+    );
     expect(
       legacyPushSummaryMessage({
         ...EMPTY_SUMMARY_INPUT,
         unsupported: [["db", "major_version"]],
         unencodable: [
-          { path: ["api", "enabled"], reason: "enabling the Data API needs at least one schema in api.schemas" },
+          {
+            path: ["api", "enabled"],
+            reason: "enabling the Data API needs at least one schema in api.schemas",
+          },
         ],
       }),
     ).toBe(
@@ -556,9 +578,7 @@ describe("legacyPushSummaryMessage", () => {
   });
 
   test("caveat: not-set credentials, singular and plural", () => {
-    expect(
-      legacyPushSummaryMessage({ ...EMPTY_SUMMARY_INPUT, secrets: [NOT_SET_SECRET] }),
-    ).toBe(
+    expect(legacyPushSummaryMessage({ ...EMPTY_SUMMARY_INPUT, secrets: [NOT_SET_SECRET] })).toBe(
       "Nothing to push: the project already matches the declared properties. 1 credential value was not pushed.",
     );
     expect(
@@ -574,13 +594,17 @@ describe("legacyPushSummaryMessage", () => {
   test("caveat: declined add-on prompts, singular and plural", () => {
     expect(
       legacyPushSummaryMessage({ ...EMPTY_SUMMARY_INPUT, declinedAddons: ["auth_mfa_phone"] }),
-    ).toBe("Nothing to push: the project already matches the declared properties. 1 add-on prompt declined.");
+    ).toBe(
+      "Nothing to push: the project already matches the declared properties. 1 add-on prompt declined.",
+    );
     expect(
       legacyPushSummaryMessage({
         ...EMPTY_SUMMARY_INPUT,
         declinedAddons: ["auth_mfa_phone", "auth_mfa_web_authn"],
       }),
-    ).toBe("Nothing to push: the project already matches the declared properties. 2 add-on prompts declined.");
+    ).toBe(
+      "Nothing to push: the project already matches the declared properties. 2 add-on prompts declined.",
+    );
   });
 
   test("combines every present caveat in the established order", () => {
@@ -629,7 +653,12 @@ describe("legacyPushPayload", () => {
     projectRef: "abcdefghijklmnopqrst",
     services: [{ service: "api", status: "updated", changes: [["api", "max_rows"]] }],
     unsupported: [["db", "pooler", "pool_mode"]],
-    unencodable: [{ path: ["api", "enabled"], reason: "enabling the Data API needs at least one schema in api.schemas" }],
+    unencodable: [
+      {
+        path: ["api", "enabled"],
+        reason: "enabling the Data API needs at least one schema in api.schemas",
+      },
+    ],
     forced: [{ path: ["db", "network_restrictions", "allowed_cidrs_v6"], value: [] }],
     unmanaged: [["auth", "oauth_server", "enabled"]],
     secrets: [SENT_SECRET, UNCHANGED_SECRET, NOT_SET_SECRET, GATED_SECRET],
@@ -645,7 +674,12 @@ describe("legacyPushPayload", () => {
       project_ref: "abcdefghijklmnopqrst",
       services: [{ service: "api", status: "updated", changes: [["api", "max_rows"]] }],
       unsupported: [["db", "pooler", "pool_mode"]],
-      unencodable: [{ path: ["api", "enabled"], reason: "enabling the Data API needs at least one schema in api.schemas" }],
+      unencodable: [
+        {
+          path: ["api", "enabled"],
+          reason: "enabling the Data API needs at least one schema in api.schemas",
+        },
+      ],
       forced: [{ path: ["db", "network_restrictions", "allowed_cidrs_v6"], value: [] }],
       unmanaged: [["auth", "oauth_server", "enabled"]],
       secrets: {

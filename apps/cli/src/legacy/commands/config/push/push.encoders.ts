@@ -67,9 +67,15 @@ export interface LegacyPushEncoded<Body> {
   /** Change paths this body communicated, sorted. */
   readonly encoded: ReadonlyArray<ReadonlyArray<string>>;
   /** Pushable changes this endpoint structurally cannot express, sorted. */
-  readonly unencodable: ReadonlyArray<{ readonly path: ReadonlyArray<string>; readonly reason: string }>;
+  readonly unencodable: ReadonlyArray<{
+    readonly path: ReadonlyArray<string>;
+    readonly reason: string;
+  }>;
   /** Push-only content paths (mailer template/notification HTML) this body communicated — never a registry-comparable change. */
-  readonly extras: ReadonlyArray<{ readonly path: ReadonlyArray<string>; readonly label: "content" }>;
+  readonly extras: ReadonlyArray<{
+    readonly path: ReadonlyArray<string>;
+    readonly label: "content";
+  }>;
   /** Undeclared companions the request had to send at a local/schema-default value because `remote` didn't report them, sorted. */
   readonly forced: ReadonlyArray<{ readonly path: ReadonlyArray<string>; readonly value: unknown }>;
 }
@@ -127,8 +133,7 @@ const REASON_SMS_ACTIVE_PROVIDER_ONLY =
 const REASON_CONTAINER_STATE_UNKNOWN =
   "the container's enabled state could not be determined from the declared config";
 const REASON_BYTES_SIZE = "the declared value is not a valid byte size";
-const REASON_GROUP_INCOMPLETE =
-  "one or more of this group's required fields could not be resolved";
+const REASON_GROUP_INCOMPLETE = "one or more of this group's required fields could not be resolved";
 const REASON_VALUE_NOT_REPRESENTABLE = "the declared value could not be represented in the request";
 
 // --- generic path/value helpers ---------------------------------------------
@@ -349,7 +354,8 @@ export function legacyEncodeApiBody(
     ...(dbExtraSearchPath !== undefined ? { db_extra_search_path: dbExtraSearchPath } : {}),
     ...(maxRows !== undefined ? { max_rows: maxRows } : {}),
   };
-  const hasBody = dbSchema !== undefined || dbExtraSearchPath !== undefined || maxRows !== undefined;
+  const hasBody =
+    dbSchema !== undefined || dbExtraSearchPath !== undefined || maxRows !== undefined;
 
   return {
     body: hasBody ? body : undefined,
@@ -501,7 +507,11 @@ export function legacyEncodeStorageBody(
   }
 
   let imageTransformation: { readonly enabled: boolean } | undefined;
-  const imageTransformationChange = findChange(changes, ["storage", "image_transformation", "enabled"]);
+  const imageTransformationChange = findChange(changes, [
+    "storage",
+    "image_transformation",
+    "enabled",
+  ]);
   if (imageTransformationChange !== undefined) {
     const enabled = asBoolean(imageTransformationChange.local);
     if (enabled === undefined) {
@@ -814,12 +824,22 @@ function encodeExternalProviderContainer(
     body[`${key}_url`] = asString(urlR.value) ?? "";
   }
   if (LEGACY_PROVIDERS_WITH_EMAIL_OPTIONAL.includes(id)) {
-    const emailOptionalR = resolveLeaf(changes, [...containerPath, "email_optional"], remote, local);
+    const emailOptionalR = resolveLeaf(
+      changes,
+      [...containerPath, "email_optional"],
+      remote,
+      local,
+    );
     pushForced(forced, [...containerPath, "email_optional"], emailOptionalR);
     body[`${key}_email_optional`] = asBoolean(emailOptionalR.value) ?? false;
   }
   if (LEGACY_PROVIDERS_WITH_SKIP_NONCE_CHECK.includes(id)) {
-    const skipNonceCheckR = resolveLeaf(changes, [...containerPath, "skip_nonce_check"], remote, local);
+    const skipNonceCheckR = resolveLeaf(
+      changes,
+      [...containerPath, "skip_nonce_check"],
+      remote,
+      local,
+    );
     pushForced(forced, [...containerPath, "skip_nonce_check"], skipNonceCheckR);
     body[`${key}_skip_nonce_check`] = asBoolean(skipNonceCheckR.value) ?? false;
   }
@@ -902,11 +922,7 @@ export function legacyEncodeAuthBody(
   leaf(["auth", "additional_redirect_urls"], "uri_allow_list", joinCsv);
   leaf(["auth", "jwt_expiry"], "jwt_exp", asNumber);
   leaf(["auth", "enable_refresh_token_rotation"], "refresh_token_rotation_enabled", asBoolean);
-  leaf(
-    ["auth", "refresh_token_reuse_interval"],
-    "security_refresh_token_reuse_interval",
-    asNumber,
-  );
+  leaf(["auth", "refresh_token_reuse_interval"], "security_refresh_token_reuse_interval", asNumber);
   leaf(["auth", "enable_manual_linking"], "security_manual_linking_enabled", asBoolean);
   leaf(["auth", "enable_signup"], "disable_signup", invert);
   leaf(["auth", "enable_anonymous_sign_ins"], "external_anonymous_users_enabled", asBoolean);
@@ -943,7 +959,11 @@ export function legacyEncodeAuthBody(
 
   // email base
   leaf(["auth", "email", "enable_signup"], "external_email_enabled", asBoolean);
-  leaf(["auth", "email", "double_confirm_changes"], "mailer_secure_email_change_enabled", asBoolean);
+  leaf(
+    ["auth", "email", "double_confirm_changes"],
+    "mailer_secure_email_change_enabled",
+    asBoolean,
+  );
   leaf(["auth", "email", "enable_confirmations"], "mailer_autoconfirm", invert);
   leaf(["auth", "email", "otp_length"], "mailer_otp_length", asNumber);
   leaf(["auth", "email", "otp_expiry"], "mailer_otp_exp", asNumber);
@@ -1120,7 +1140,14 @@ export function legacyEncodeAuthBody(
       continue;
     }
     const providerChanges = changesUnderPrefix(changes, ["auth", "external", id]);
-    const providerBody = encodeExternalProviderContainer(id, changes, remote, local, secrets, forced);
+    const providerBody = encodeExternalProviderContainer(
+      id,
+      changes,
+      remote,
+      local,
+      secrets,
+      forced,
+    );
     if (providerBody === undefined) {
       for (const change of providerChanges) {
         unencodable.push({ path: change.path, reason: REASON_CONTAINER_STATE_UNKNOWN });

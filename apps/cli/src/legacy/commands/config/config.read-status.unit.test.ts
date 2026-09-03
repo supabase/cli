@@ -1,6 +1,9 @@
 import { describe, expect, test } from "vitest";
 
-import { legacyConfigReadStatusMessage, legacyUnexpectedStatusMessage } from "./config.read-status.ts";
+import {
+  legacyConfigReadStatusMessage,
+  legacyUnexpectedStatusMessage,
+} from "./config.read-status.ts";
 
 const REF = "abcdefghijklmnopqrst";
 

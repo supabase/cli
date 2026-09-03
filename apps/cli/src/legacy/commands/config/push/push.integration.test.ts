@@ -634,32 +634,35 @@ statement_timeout = "8s"
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("401 / 403 / 404 on the config read get purpose-written messages; other statuses stay generic", () => {
-    const cases: ReadonlyArray<{ status: number; expect: ReadonlyArray<string> }> = [
-      { status: 401, expect: ["Authentication failed", "supabase login"] },
-      { status: 403, expect: ["Access denied for project", REF] },
-      { status: 404, expect: [`Project ${REF} not found`, "supabase projects list"] },
-      { status: 500, expect: [`unexpected status 500: {"message":"boom"}`] },
-    ];
-    return Effect.gen(function* () {
-      for (const testCase of cases) {
-        const { layer } = setup({
-          toml: `project_id = "test"\n`,
-          yes: true,
-          v2: { status: testCase.status, body: { message: "boom" } },
-        });
-        const message = yield* legacyConfigPush({ projectRef: Option.none() }).pipe(
-          Effect.catchTag("LegacyConfigPushConfigReadStatusError", (error) =>
-            Effect.succeed(error.message),
-          ),
-          Effect.provide(layer),
-        );
-        for (const fragment of testCase.expect) {
-          expect(message).toContain(fragment);
+  it.live(
+    "401 / 403 / 404 on the config read get purpose-written messages; other statuses stay generic",
+    () => {
+      const cases: ReadonlyArray<{ status: number; expect: ReadonlyArray<string> }> = [
+        { status: 401, expect: ["Authentication failed", "supabase login"] },
+        { status: 403, expect: ["Access denied for project", REF] },
+        { status: 404, expect: [`Project ${REF} not found`, "supabase projects list"] },
+        { status: 500, expect: [`unexpected status 500: {"message":"boom"}`] },
+      ];
+      return Effect.gen(function* () {
+        for (const testCase of cases) {
+          const { layer } = setup({
+            toml: `project_id = "test"\n`,
+            yes: true,
+            v2: { status: testCase.status, body: { message: "boom" } },
+          });
+          const message = yield* legacyConfigPush({ projectRef: Option.none() }).pipe(
+            Effect.catchTag("LegacyConfigPushConfigReadStatusError", (error) =>
+              Effect.succeed(error.message),
+            ),
+            Effect.provide(layer),
+          );
+          for (const fragment of testCase.expect) {
+            expect(message).toContain(fragment);
+          }
         }
-      }
-    });
-  });
+      });
+    },
+  );
 
   it.live("a config-read transport failure maps to the read network error", () => {
     const { layer, telemetry } = setup({ toml: `project_id = "test"\n`, yes: true, v2: "fail" });
@@ -671,91 +674,109 @@ statement_timeout = "8s"
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("an out-of-domain mapped value in the response keeps its typed parse error and pushes nothing", () => {
-    const { layer, api } = setup({
-      toml: `project_id = "test"\n`,
-      yes: true,
-      v2: {
-        status: 200,
-        body: v2Response({
-          attributes: (a) => ({
-            ...a,
-            storage: { ...(a["storage"] as Record<string, unknown>), file_size_limit: -1 },
+  it.live(
+    "an out-of-domain mapped value in the response keeps its typed parse error and pushes nothing",
+    () => {
+      const { layer, api } = setup({
+        toml: `project_id = "test"\n`,
+        yes: true,
+        v2: {
+          status: 200,
+          body: v2Response({
+            attributes: (a) => ({
+              ...a,
+              storage: { ...(a["storage"] as Record<string, unknown>), file_size_limit: -1 },
+            }),
           }),
-        }),
-      },
-    });
-    return Effect.gen(function* () {
-      const exit = yield* legacyConfigPush({ projectRef: Option.none() }).pipe(Effect.exit);
-      expect(Exit.isFailure(exit)).toBe(true);
-      expect(JSON.stringify(exit)).toContain("ProjectConfigParseError");
-      expect(
-        api.requests.some((r) => r.method === "PATCH" || r.method === "PUT" || r.method === "POST"),
-      ).toBe(false);
-    }).pipe(Effect.provide(layer));
-  });
+        },
+      });
+      return Effect.gen(function* () {
+        const exit = yield* legacyConfigPush({ projectRef: Option.none() }).pipe(Effect.exit);
+        expect(Exit.isFailure(exit)).toBe(true);
+        expect(JSON.stringify(exit)).toContain("ProjectConfigParseError");
+        expect(
+          api.requests.some(
+            (r) => r.method === "PATCH" || r.method === "PUT" || r.method === "POST",
+          ),
+        ).toBe(false);
+      }).pipe(Effect.provide(layer));
+    },
+  );
 
-  it.live("aborts with LegacyConfigPushConfigEmptyError when the response carries no block at all (D2)", () => {
-    // Replaces the old "reports every block missing and pushes nothing"
-    // expectation: an entirely empty `attributes` means `scope.present` is
-    // empty, and per D2 the command must never silently treat that as
-    // "everything is a fresh write" — it aborts before touching any
-    // resource instead.
-    const { layer, out, api } = setup({
-      toml: `project_id = "test"\n`,
-      yes: true,
-      v2: { status: 200, body: v2Response({ attributes: () => ({}) }) },
-    });
-    return Effect.gen(function* () {
-      const exit = yield* legacyConfigPush({ projectRef: Option.none() }).pipe(Effect.exit);
-      expect(Exit.isFailure(exit)).toBe(true);
-      expect(JSON.stringify(exit)).toContain("LegacyConfigPushConfigEmptyError");
-      expect(out.stderrText).toContain(
-        "Comparison scope: (none) (not returned: api, auth, database, pooler, realtime, storage)",
-      );
-      expect(
-        api.requests.some((r) => r.method === "PATCH" || r.method === "PUT" || r.method === "POST"),
-      ).toBe(false);
-    }).pipe(Effect.provide(layer));
-  });
+  it.live(
+    "aborts with LegacyConfigPushConfigEmptyError when the response carries no block at all (D2)",
+    () => {
+      // Replaces the old "reports every block missing and pushes nothing"
+      // expectation: an entirely empty `attributes` means `scope.present` is
+      // empty, and per D2 the command must never silently treat that as
+      // "everything is a fresh write" — it aborts before touching any
+      // resource instead.
+      const { layer, out, api } = setup({
+        toml: `project_id = "test"\n`,
+        yes: true,
+        v2: { status: 200, body: v2Response({ attributes: () => ({}) }) },
+      });
+      return Effect.gen(function* () {
+        const exit = yield* legacyConfigPush({ projectRef: Option.none() }).pipe(Effect.exit);
+        expect(Exit.isFailure(exit)).toBe(true);
+        expect(JSON.stringify(exit)).toContain("LegacyConfigPushConfigEmptyError");
+        expect(out.stderrText).toContain(
+          "Comparison scope: (none) (not returned: api, auth, database, pooler, realtime, storage)",
+        );
+        expect(
+          api.requests.some(
+            (r) => r.method === "PATCH" || r.method === "PUT" || r.method === "POST",
+          ),
+        ).toBe(false);
+      }).pipe(Effect.provide(layer));
+    },
+  );
 
-  it.live("a disabled storage.analytics whose remote is enabled surfaces as unmanaged, not pushed", () => {
-    const { layer, out, api } = setup({
-      toml: `project_id = "test"\n[storage.analytics]\nenabled = false\n`,
-      format: "json",
-      v2: {
-        status: 200,
-        body: v2Response({
-          attributes: (a) => ({
-            ...a,
-            storage: {
-              ...(a["storage"] as Record<string, unknown>),
-              features: {
-                ...((a["storage"] as Record<string, unknown>)["features"] as Record<
-                  string,
-                  unknown
-                >),
-                iceberg_catalog: { enabled: true, max_namespaces: 5, max_tables: 10, max_catalogs: 2 },
+  it.live(
+    "a disabled storage.analytics whose remote is enabled surfaces as unmanaged, not pushed",
+    () => {
+      const { layer, out, api } = setup({
+        toml: `project_id = "test"\n[storage.analytics]\nenabled = false\n`,
+        format: "json",
+        v2: {
+          status: 200,
+          body: v2Response({
+            attributes: (a) => ({
+              ...a,
+              storage: {
+                ...(a["storage"] as Record<string, unknown>),
+                features: {
+                  ...((a["storage"] as Record<string, unknown>)["features"] as Record<
+                    string,
+                    unknown
+                  >),
+                  iceberg_catalog: {
+                    enabled: true,
+                    max_namespaces: 5,
+                    max_tables: 10,
+                    max_catalogs: 2,
+                  },
+                },
               },
-            },
+            }),
           }),
-        }),
-      },
-    });
-    return Effect.gen(function* () {
-      yield* legacyConfigPush({ projectRef: Option.none() });
-      expect(out.stderrText).toContain(
-        "Note: 1 declared property is not managed by config push and was not compared; run `supabase config diff` to list them.",
-      );
-      expect(api.requests.some((r) => r.method === "PATCH" && r.url.includes("/config/storage"))).toBe(
-        false,
-      );
-      const success = out.messages.find((m) => m.type === "success");
-      const data = success?.data as Record<string, unknown>;
-      expect(data["unmanaged"]).toEqual([["storage", "analytics", "enabled"]]);
-      expect(data["unsupported"]).toEqual([]);
-    }).pipe(Effect.provide(layer));
-  });
+        },
+      });
+      return Effect.gen(function* () {
+        yield* legacyConfigPush({ projectRef: Option.none() });
+        expect(out.stderrText).toContain(
+          "Note: 1 declared property is not managed by config push and was not compared; run `supabase config diff` to list them.",
+        );
+        expect(
+          api.requests.some((r) => r.method === "PATCH" && r.url.includes("/config/storage")),
+        ).toBe(false);
+        const success = out.messages.find((m) => m.type === "success");
+        const data = success?.data as Record<string, unknown>;
+        expect(data["unmanaged"]).toEqual([["storage", "analytics", "enabled"]]);
+        expect(data["unsupported"]).toEqual([]);
+      }).pipe(Effect.provide(layer));
+    },
+  );
 
   it.live("a declared auth.oauth_server surfaces as unmanaged, never as unsupported", () => {
     const { layer, out } = setup({
@@ -819,7 +840,9 @@ statement_timeout = "8s"
 // test stays on the service mock, matching the other Update-error tests.
 // ---------------------------------------------------------------------------
 
-function addonsHttpLayer(body: unknown = { available_addons: [] }): Layer.Layer<HttpClient.HttpClient> {
+function addonsHttpLayer(
+  body: unknown = { available_addons: [] },
+): Layer.Layer<HttpClient.HttpClient> {
   return Layer.succeed(
     HttpClient.HttpClient,
     HttpClient.make((request) =>
@@ -860,7 +883,7 @@ function setupService(opts: {
     v1: opts.v1 ?? {},
     raw: {
       v2GetProjectConfig:
-        opts.v2 === "fail" ? "fail" : opts.v2 ?? { status: 200, body: v2Response() },
+        opts.v2 === "fail" ? "fail" : (opts.v2 ?? { status: 200, body: v2Response() }),
     },
   });
   const telemetry = mockLegacyTelemetryStateTracked();
@@ -1001,7 +1024,9 @@ secret = "my-plaintext-secret"
         expect(out.stderrText).toMatch(
           /\n\nauth\.captcha\.secret \[secret\]\n {2}local: {2}\(set\)\n {2}remote: \(not set\)\n\n/,
         );
-        expect(out.stderrText).toMatch(/\n\nDo you want to push auth config to remote\? \[Y\/n\] y\n/);
+        expect(out.stderrText).toMatch(
+          /\n\nDo you want to push auth config to remote\? \[Y\/n\] y\n/,
+        );
       }).pipe(Effect.provide(layer));
     },
   );
@@ -1604,19 +1629,22 @@ enroll_enabled = true
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("db.network_restrictions reports up to date when declared arrays match the v2 block", () => {
-    const toml = `${BASE_DISABLED}[db.network_restrictions]
+  it.live(
+    "db.network_restrictions reports up to date when declared arrays match the v2 block",
+    () => {
+      const toml = `${BASE_DISABLED}[db.network_restrictions]
 enabled = true
 allowed_cidrs = ["0.0.0.0/0"]
 allowed_cidrs_v6 = ["::/0"]
 `;
-    const { layer, apiMock, out } = setupService({ toml, yes: true });
-    return Effect.gen(function* () {
-      yield* legacyConfigPush({ projectRef: Option.none() });
-      expect(out.stderrText).toContain("Remote DB Network restrictions config is up to date.");
-      expect(methodsOf(apiMock)).not.toContain("updateNetworkRestrictions");
-    }).pipe(Effect.provide(layer));
-  });
+      const { layer, apiMock, out } = setupService({ toml, yes: true });
+      return Effect.gen(function* () {
+        yield* legacyConfigPush({ projectRef: Option.none() });
+        expect(out.stderrText).toContain("Remote DB Network restrictions config is up to date.");
+        expect(methodsOf(apiMock)).not.toContain("updateNetworkRestrictions");
+      }).pipe(Effect.provide(layer));
+    },
+  );
 
   it.live("db.ssl_enforcement reports up to date when declared value matches the v2 block", () => {
     const toml = `${BASE_DISABLED}[db.ssl_enforcement]\nenabled = false\n`;
@@ -1653,9 +1681,10 @@ allowed_cidrs = ["9.9.9.9/32"]
               database: {
                 ...(a["database"] as Record<string, unknown>),
                 network_restrictions: {
-                  ...((a["database"] as Record<string, unknown>)[
-                    "network_restrictions"
-                  ] as Record<string, unknown>),
+                  ...((a["database"] as Record<string, unknown>)["network_restrictions"] as Record<
+                    string,
+                    unknown
+                  >),
                   allowed_cidrs: [
                     { address: "9.9.9.8/32", type: "v4" },
                     { address: "2001:db8::/32", type: "v6" },
@@ -1678,48 +1707,51 @@ allowed_cidrs = ["9.9.9.9/32"]
     },
   );
 
-  it.live("D1: an undeclared storage.vector.max_indexes keeps the REMOTE value, not the schema default", () => {
-    const toml = `project_id = "test"
+  it.live(
+    "D1: an undeclared storage.vector.max_indexes keeps the REMOTE value, not the schema default",
+    () => {
+      const toml = `project_id = "test"
 [storage]
 enabled = true
 [storage.vector]
 enabled = true
 max_buckets = 20
 `;
-    const { layer, apiMock } = setupService({
-      toml,
-      yes: true,
-      v2: {
-        status: 200,
-        body: v2Response({
-          attributes: (a) => {
-            const storage = a["storage"] as Record<string, unknown>;
-            const features = storage["features"] as Record<string, unknown>;
-            return {
-              ...a,
-              storage: {
-                ...storage,
-                features: {
-                  ...features,
-                  vector_buckets: { enabled: true, max_buckets: 10, max_indexes: 7 },
+      const { layer, apiMock } = setupService({
+        toml,
+        yes: true,
+        v2: {
+          status: 200,
+          body: v2Response({
+            attributes: (a) => {
+              const storage = a["storage"] as Record<string, unknown>;
+              const features = storage["features"] as Record<string, unknown>;
+              return {
+                ...a,
+                storage: {
+                  ...storage,
+                  features: {
+                    ...features,
+                    vector_buckets: { enabled: true, max_buckets: 10, max_indexes: 7 },
+                  },
                 },
-              },
-            };
-          },
-        }),
-      },
-      v1: { updateStorageConfig: () => Effect.succeed({}) },
-    });
-    return Effect.gen(function* () {
-      yield* legacyConfigPush({ projectRef: Option.none() });
-      const update = apiMock.requests.find((r) => r.method === "updateStorageConfig");
-      expect(update).toBeDefined();
-      const input = update?.input as Record<string, unknown>;
-      expect(input["features"]).toEqual({
-        vectorBuckets: { enabled: true, maxBuckets: 20, maxIndexes: 7 },
+              };
+            },
+          }),
+        },
+        v1: { updateStorageConfig: () => Effect.succeed({}) },
       });
-    }).pipe(Effect.provide(layer));
-  });
+      return Effect.gen(function* () {
+        yield* legacyConfigPush({ projectRef: Option.none() });
+        const update = apiMock.requests.find((r) => r.method === "updateStorageConfig");
+        expect(update).toBeDefined();
+        const input = update?.input as Record<string, unknown>;
+        expect(input["features"]).toEqual({
+          vectorBuckets: { enabled: true, maxBuckets: 20, maxIndexes: 7 },
+        });
+      }).pipe(Effect.provide(layer));
+    },
+  );
 
   it.live("D1: an undeclared external_<id>_email_optional keeps the REMOTE value", () => {
     const toml = `project_id = "test"
@@ -1990,22 +2022,25 @@ secret = "irrelevant"
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("S4: sanitizes a hostile [remotes.*] name before printing the config-override line", () => {
-    const { layer, out } = setup({
-      toml: [
-        'project_id = "test"',
-        '[remotes."evil\\u001B[31m\\nred"]',
-        `project_id = "${REF}"`,
-        "",
-      ].join("\n"),
-      yes: true,
-    });
-    return Effect.gen(function* () {
-      yield* legacyConfigPush({ projectRef: Option.none() });
-      expect(out.stderrText).toContain("Loading config override: [remotes.evil[31m red]");
-      expect(out.stderrText).not.toContain("\u001b");
-    }).pipe(Effect.provide(layer));
-  });
+  it.live(
+    "S4: sanitizes a hostile [remotes.*] name before printing the config-override line",
+    () => {
+      const { layer, out } = setup({
+        toml: [
+          'project_id = "test"',
+          '[remotes."evil\\u001B[31m\\nred"]',
+          `project_id = "${REF}"`,
+          "",
+        ].join("\n"),
+        yes: true,
+      });
+      return Effect.gen(function* () {
+        yield* legacyConfigPush({ projectRef: Option.none() });
+        expect(out.stderrText).toContain("Loading config override: [remotes.evil[31m red]");
+        expect(out.stderrText).not.toContain("\u001b");
+      }).pipe(Effect.provide(layer));
+    },
+  );
 
   it.live(
     "A5/D8: a content-only auth push prints a [content] block and PATCHes only the template content key",
@@ -2047,35 +2082,38 @@ content_path = "./templates-content-only/invite.html"
     },
   );
 
-  it.live("D8: services[].changes includes the secret path once its write actually sends it", () => {
-    const toml = `project_id = "test"
+  it.live(
+    "D8: services[].changes includes the secret path once its write actually sends it",
+    () => {
+      const toml = `project_id = "test"
 [auth.captcha]
 enabled = true
 provider = "hcaptcha"
 secret = "new-secret"
 `;
-    const { layer, out } = setupService({
-      toml,
-      format: "json",
-      yes: true,
-      v1: { updateAuthServiceConfig: () => Effect.succeed({}) },
-    });
-    return Effect.gen(function* () {
-      yield* legacyConfigPush({ projectRef: Option.none() });
-      const success = out.messages.find((m) => m.type === "success");
-      const data = success?.data as Record<string, unknown>;
-      const services = data["services"] as ReadonlyArray<Record<string, unknown>>;
-      expect(services.find((s) => s["service"] === "auth")).toEqual({
-        service: "auth",
-        status: "updated",
-        changes: [
-          ["auth", "captcha", "enabled"],
-          ["auth", "captcha", "provider"],
-          ["auth", "captcha", "secret"],
-        ],
+      const { layer, out } = setupService({
+        toml,
+        format: "json",
+        yes: true,
+        v1: { updateAuthServiceConfig: () => Effect.succeed({}) },
       });
-    }).pipe(Effect.provide(layer));
-  });
+      return Effect.gen(function* () {
+        yield* legacyConfigPush({ projectRef: Option.none() });
+        const success = out.messages.find((m) => m.type === "success");
+        const data = success?.data as Record<string, unknown>;
+        const services = data["services"] as ReadonlyArray<Record<string, unknown>>;
+        expect(services.find((s) => s["service"] === "auth")).toEqual({
+          service: "auth",
+          status: "updated",
+          changes: [
+            ["auth", "captcha", "enabled"],
+            ["auth", "captcha", "provider"],
+            ["auth", "captcha", "secret"],
+          ],
+        });
+      }).pipe(Effect.provide(layer));
+    },
+  );
 
   it.live("a v2 response with a non-object body maps to the read network error", () => {
     const { layer } = setup({
@@ -2091,20 +2129,23 @@ secret = "new-secret"
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("an undecodable v2 response body maps to the read network error with decode: true", () => {
-    const { layer } = setup({
-      toml: `project_id = "test"\n`,
-      yes: true,
-      v2: { status: 200, malformedJson: true },
-    });
-    return Effect.gen(function* () {
-      const exit = yield* legacyConfigPush({ projectRef: Option.none() }).pipe(Effect.exit);
-      expect(Exit.isFailure(exit)).toBe(true);
-      const serialized = JSON.stringify(exit);
-      expect(serialized).toContain("LegacyConfigPushConfigReadNetworkError");
-      expect(serialized).toContain('"decode":true');
-    }).pipe(Effect.provide(layer));
-  });
+  it.live(
+    "an undecodable v2 response body maps to the read network error with decode: true",
+    () => {
+      const { layer } = setup({
+        toml: `project_id = "test"\n`,
+        yes: true,
+        v2: { status: 200, malformedJson: true },
+      });
+      return Effect.gen(function* () {
+        const exit = yield* legacyConfigPush({ projectRef: Option.none() }).pipe(Effect.exit);
+        expect(Exit.isFailure(exit)).toBe(true);
+        const serialized = JSON.stringify(exit);
+        expect(serialized).toContain("LegacyConfigPushConfigReadNetworkError");
+        expect(serialized).toContain('"decode":true');
+      }).pipe(Effect.provide(layer));
+    },
+  );
 
   it.live("D11: the json message field is a non-empty summary, not an empty string", () => {
     const { layer, out } = setup({

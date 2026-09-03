@@ -27,7 +27,10 @@ import { legacyPromptYesNo } from "../../../../shared/legacy/legacy-prompt-yes-n
 import { legacyCollectDotenvPrivateKeys } from "../../../shared/legacy-vault-decrypt.ts";
 import { legacyConfigApiScope, legacyConfigScopeLine } from "../config.format.ts";
 import { legacyConfigProjectConfigTry } from "../config.project-config.ts";
-import { legacyConfigReadStatusMessage, legacyUnexpectedStatusMessage } from "../config.read-status.ts";
+import {
+  legacyConfigReadStatusMessage,
+  legacyUnexpectedStatusMessage,
+} from "../config.read-status.ts";
 import { legacyLoadAuthEmailContent } from "./push.auth-email-content.ts";
 import { getCostMatrix } from "./push.cost-matrix.ts";
 import {
@@ -335,7 +338,11 @@ export const legacyConfigPush = Effect.fn("legacy.config.push")(function* (
     const resourceEnabled: Readonly<Record<LegacyPushResource, boolean>> = {
       api: legacyPushResourceEnabled("api", config, local),
       "db.settings": legacyPushResourceEnabled("db.settings", config, local),
-      "db.network_restrictions": legacyPushResourceEnabled("db.network_restrictions", config, local),
+      "db.network_restrictions": legacyPushResourceEnabled(
+        "db.network_restrictions",
+        config,
+        local,
+      ),
       "db.ssl_enforcement": legacyPushResourceEnabled("db.ssl_enforcement", config, local),
       auth: legacyPushResourceEnabled("auth", config, local),
       storage: legacyPushResourceEnabled("storage", config, local),
@@ -363,7 +370,10 @@ export const legacyConfigPush = Effect.fn("legacy.config.push")(function* (
       return Effect.gen(function* () {
         if (encoded.body === undefined) {
           if (encoded.unencodable.length > 0) {
-            yield* output.raw(legacyPushNotPushableLine(resource, encoded.unencodable.length), "stderr");
+            yield* output.raw(
+              legacyPushNotPushableLine(resource, encoded.unencodable.length),
+              "stderr",
+            );
             return { service: resource, status: "not_pushable", changes: [] };
           }
           yield* output.raw(legacyPushUpToDateLine(resource), "stderr");
@@ -392,7 +402,11 @@ export const legacyConfigPush = Effect.fn("legacy.config.push")(function* (
             changes: legacyPushServiceChanges(encoded, sentSecretPaths),
           };
         }
-        return { service: resource, status: "skipped", changes: legacyPushServiceChanges(encoded, []) };
+        return {
+          service: resource,
+          status: "skipped",
+          changes: legacyPushServiceChanges(encoded, []),
+        };
       });
     }
 
@@ -472,7 +486,8 @@ export const legacyConfigPush = Effect.fn("legacy.config.push")(function* (
                   mapLegacyHttpError({
                     networkError: LegacyConfigPushNetworkRestrictionsUpdateNetworkError,
                     statusError: LegacyConfigPushNetworkRestrictionsUpdateStatusError,
-                    networkMessage: (cause) => `failed to update network restrictions config: ${cause}`,
+                    networkMessage: (cause) =>
+                      `failed to update network restrictions config: ${cause}`,
                     statusMessage: legacyUnexpectedStatusMessage,
                   }),
                 ),
@@ -510,7 +525,9 @@ export const legacyConfigPush = Effect.fn("legacy.config.push")(function* (
           // (`legacyApplyMfaAddonDecline`, D12).
           let changes = plan.changesByResource.auth;
           for (const gate of LEGACY_PUSH_ADDON_GATES) {
-            const verifyChange = changes.find((change) => legacySamePath(change.path, gate.verifyPath));
+            const verifyChange = changes.find((change) =>
+              legacySamePath(change.path, gate.verifyPath),
+            );
             if (verifyChange?.local === true && !(yield* keep(gate.costKey))) {
               changes = legacyApplyMfaAddonDecline(changes, gate, remote);
               declinedAddons.push(gate.costKey);
@@ -582,7 +599,8 @@ export const legacyConfigPush = Effect.fn("legacy.config.push")(function* (
               networkError: LegacyConfigPushEnableWebhookNetworkError,
               statusError: LegacyConfigPushEnableWebhookStatusError,
               networkMessage: (cause) => `failed to enable webhooks: ${cause}`,
-              statusMessage: (status, body) => `unexpected enable webhook status ${status}: ${body}`,
+              statusMessage: (status, body) =>
+                `unexpected enable webhook status ${status}: ${body}`,
             }),
           ),
         );
@@ -606,7 +624,9 @@ export const legacyConfigPush = Effect.fn("legacy.config.push")(function* (
       unencodable,
       unmanagedCount,
       forced,
-      secretsNotSet: secrets.filter((secret) => secret.status === "not_set").map((secret) => secret.path),
+      secretsNotSet: secrets
+        .filter((secret) => secret.status === "not_set")
+        .map((secret) => secret.path),
       remoteOnly: plan.remoteOnly,
     });
     if (notes !== "") {

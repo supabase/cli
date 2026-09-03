@@ -132,7 +132,8 @@ describe("legacyPushResourceForPath", () => {
     for (const path of comparableProjectConfigPaths) {
       const resource = legacyPushResourceForPath(path);
       const isIntentionallyUnsupported = LEGACY_PUSH_UNSUPPORTED_PREFIXES.some(
-        (prefix) => prefix.length <= path.length && prefix.every((segment, index) => path[index] === segment),
+        (prefix) =>
+          prefix.length <= path.length && prefix.every((segment, index) => path[index] === segment),
       );
       expect(
         resource !== "unsupported" || isIntentionallyUnsupported,
@@ -286,7 +287,9 @@ describe("legacyApplyMfaAddonDecline", () => {
       change(gate.verifyPath, "update", true, false),
       change(gate.enrollPath, "update", true, false),
     ];
-    const remote: ProjectConfig = { auth: { mfa: { phone: { verify_enabled: false, enroll_enabled: false } } } };
+    const remote: ProjectConfig = {
+      auth: { mfa: { phone: { verify_enabled: false, enroll_enabled: false } } },
+    };
     const result = legacyApplyMfaAddonDecline(changes, gate, remote);
     expect(result.map((c) => c.path)).toEqual([["auth", "site_url"]]);
   });

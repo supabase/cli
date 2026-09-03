@@ -138,7 +138,12 @@ describe("legacyRenderConfigDiffText", () => {
   test("no differences renders the empty-state line with no leading blank", () => {
     expect(
       legacyRenderConfigDiffText(
-        { changes: [], masked: [], unmanaged: [], counts: { update: 0, remote_only: 0, local_only: 0, total: 0 } },
+        {
+          changes: [],
+          masked: [],
+          unmanaged: [],
+          counts: { update: 0, remote_only: 0, local_only: 0, total: 0 },
+        },
         { present: ["api"], missing: [] },
       ),
     ).toBe("No config differences found.\n");
