@@ -68,7 +68,7 @@ export interface PortCoordinatorOptions {
     field: string,
   ) => Effect.Effect<void, PortUnavailableError>;
   /** Binds and retains a host listener. The enclosing Scope owns its release. */
-  readonly bindHost?: (
+  readonly bindHost: (
     address: string,
     port: number,
     field: PortField,
@@ -196,6 +196,7 @@ export const makePortCoordinator = (options: PortCoordinatorOptions): PortCoordi
               } else {
                 let selected: number | undefined;
                 let failedHostProbes = 0;
+                let probeBudgetExhausted = false;
                 for (let port = PUBLIC_PORT_MIN; port <= PUBLIC_PORT_MAX; port += 1) {
                   if (
                     !usedAutomaticPublic.has(port) &&
@@ -212,7 +213,10 @@ export const makePortCoordinator = (options: PortCoordinatorOptions): PortCoordi
                       );
                     if (!available) {
                       failedHostProbes += 1;
-                      if (failedHostProbes >= MAX_FAILED_HOST_PROBES) break;
+                      if (failedHostProbes >= MAX_FAILED_HOST_PROBES) {
+                        probeBudgetExhausted = true;
+                        break;
+                      }
                       continue;
                     }
                     selected = port;
@@ -222,7 +226,9 @@ export const makePortCoordinator = (options: PortCoordinatorOptions): PortCoordi
                 if (selected === undefined)
                   return yield* new PortAllocationError({
                     field,
-                    message: "No automatic host port is available",
+                    message: probeBudgetExhausted
+                      ? `No automatic public host port is available after ${MAX_FAILED_HOST_PROBES} occupied candidates`
+                      : "No automatic host port is available",
                   });
                 assignment = { field, port: selected, intent: "automatic" };
                 usedAutomaticPublic.add(selected);
@@ -260,6 +266,7 @@ export const makePortCoordinator = (options: PortCoordinatorOptions): PortCoordi
               });
             const prior = existingPrivate.get(key);
             let port: number | undefined;
+            let probeBudgetExhausted = false;
             if (prior !== undefined && !usedPrivateByThisStack.has(prior.port)) port = prior.port;
             else {
               let failedHostProbes = 0;
@@ -282,7 +289,10 @@ export const makePortCoordinator = (options: PortCoordinatorOptions): PortCoordi
                     );
                   if (!available) {
                     failedHostProbes += 1;
-                    if (failedHostProbes >= MAX_FAILED_HOST_PROBES) break;
+                    if (failedHostProbes >= MAX_FAILED_HOST_PROBES) {
+                      probeBudgetExhausted = true;
+                      break;
+                    }
                     continue;
                   }
                   port = candidate;
@@ -293,7 +303,9 @@ export const makePortCoordinator = (options: PortCoordinatorOptions): PortCoordi
             if (port === undefined)
               return yield* new PortAllocationError({
                 field: `${intent.workloadId}:${intent.binding}`,
-                message: "No automatic private port is available",
+                message: probeBudgetExhausted
+                  ? `No automatic private port is available after ${MAX_FAILED_HOST_PROBES} occupied candidates`
+                  : "No automatic private port is available",
               });
             privateAssignments.push({
               workloadId: intent.workloadId,
@@ -342,11 +354,6 @@ export const makePortCoordinator = (options: PortCoordinatorOptions): PortCoordi
         }),
       );
       if (committed.lifecycle === "running") {
-        const bindHost = options.bindHost;
-        if (bindHost === undefined) {
-          const first = enabledAssignments[0];
-          return yield* unavailable(first?.assignment.port ?? 0, first?.field ?? "api");
-        }
         const parentScope = yield* Scope.Scope;
         const acquired = yield* Effect.uninterruptibleMask((restore) =>
           Effect.gen(function* () {
@@ -354,7 +361,7 @@ export const makePortCoordinator = (options: PortCoordinatorOptions): PortCoordi
             const bound = yield* Effect.exit(
               restore(
                 Effect.forEach(enabledAssignments, ({ field, intent, assignment }) =>
-                  bindHost(intent.address, assignment.port, field).pipe(
+                  options.bindHost(intent.address, assignment.port, field).pipe(
                     Effect.catchTag("PortUnavailableError", () =>
                       Effect.fail(unavailable(assignment.port, field)),
                     ),

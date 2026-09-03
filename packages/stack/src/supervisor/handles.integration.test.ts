@@ -13,10 +13,11 @@ import {
   Redacted,
   Result,
   Schema,
+  Sink,
   Scope,
   Stream,
 } from "effect";
-import { ChildProcess } from "effect/unstable/process";
+import { ChildProcess, ChildProcessSpawner } from "effect/unstable/process";
 import { CAPABILITY_NAMES } from "../public/Capability.ts";
 import {
   createStack,
@@ -29,6 +30,7 @@ import type { StackStatus } from "../public/Status.ts";
 import { deriveStackId, resolveStackIdentity } from "../identity/Identity.ts";
 import {
   defaultRuntimeEnvironment,
+  ensureSupervisor,
   SUPERVISOR_DISPATCH_SENTINEL,
   supervisorEntrypointFor,
   type StackRuntimeEnvironmentValue,
@@ -37,6 +39,7 @@ import { StackIdSchema } from "../public/StackId.ts";
 import type { StackId } from "../public/StackId.ts";
 import {
   acquireOwnership,
+  controlEndpointFor,
   publishOwnership,
   readOwnerMetadata,
   StackRuntimeEnvironment,
@@ -45,7 +48,11 @@ import { makeStackStateStore } from "../state/StackStateStore.ts";
 import { makeControlClient, startControlServer } from "../control/ControlServer.ts";
 import { resolveStackPaths } from "../state/Paths.ts";
 import { STACK_RPC_RELEASE, type StackRpcHandlers } from "../control/StackRpc.ts";
-import { StackPreparationError, StackRuntimeMismatchError } from "../public/Errors.ts";
+import {
+  StackOwnershipConflictError,
+  StackPreparationError,
+  StackRuntimeMismatchError,
+} from "../public/Errors.ts";
 import type { ContainerEngine } from "../runtime/ContainerEngine.ts";
 import { ContainerEngineResolver } from "../runtime/ContainerEngineResolver.ts";
 
@@ -153,6 +160,75 @@ describe("managed stack handles", { timeout: 30_000 }, () => {
     ).toBe(SUPERVISOR_DISPATCH_SENTINEL);
     expect(supervisorEntrypointFor(import.meta.url)).not.toBe(SUPERVISOR_DISPATCH_SENTINEL);
   });
+
+  it.live("preserves the child ownership detail for metadata without a lease lock", () =>
+    withRuntimeRoot((project) =>
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const env = yield* StackRuntimeEnvironment;
+        const runtime: StackRuntimeEnvironmentValue = {
+          ...env,
+          platform: "windows",
+          tempRoot: project,
+        };
+        const stack = yield* createStack({ projectRoot: project });
+        const identity = yield* resolveStackIdentity({ projectRoot: project });
+        const store = yield* makeStackStateStore({ stateRoot: env.stateRoot });
+        const paths = yield* resolveStackPaths({ stateRoot: env.stateRoot, stackId: stack.id });
+        const owner = {
+          format: "supabase-stack-owner-v1" as const,
+          stackId: stack.id,
+          ownerSessionId: "stale-owner",
+          endpoint: controlEndpointFor(stack.id, runtime),
+          rpcRelease: STACK_RPC_RELEASE,
+        };
+        yield* fs.writeFileString(paths.controlMetadata, JSON.stringify(owner));
+        const frame = new TextEncoder().encode(
+          `${JSON.stringify({
+            ok: false,
+            code: "ownership-conflict",
+            message: "Owner metadata exists without a lease lock; refusing recovery",
+          })}\n`,
+        );
+        const spawner = ChildProcessSpawner.make(() =>
+          Effect.succeed(
+            ChildProcessSpawner.makeHandle({
+              pid: ChildProcessSpawner.ProcessId(1),
+              exitCode: Effect.succeed(ChildProcessSpawner.ExitCode(0)),
+              isRunning: Effect.succeed(false),
+              kill: () => Effect.void,
+              stdin: Sink.drain,
+              stdout: Stream.empty,
+              stderr: Stream.empty,
+              all: Stream.empty,
+              getInputFd: () => Sink.drain,
+              getOutputFd: (fd) => (fd === 3 ? Stream.succeed(frame) : Stream.empty),
+              unref: Effect.succeed(Effect.void),
+            }),
+          ),
+        );
+        const result = yield* ensureSupervisor({
+          identity,
+          stackId: stack.id,
+          stateStore: store,
+          environment: runtime,
+        }).pipe(
+          Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner),
+          Effect.exit,
+        );
+        yield* fs.remove(paths.controlMetadata, { force: true });
+        expect(Exit.isFailure(result)).toBe(true);
+        if (Exit.isFailure(result)) {
+          const failure = Cause.findErrorOption(result.cause);
+          expect(Option.isSome(failure)).toBe(true);
+          if (Option.isSome(failure)) {
+            expect(failure.value).toBeInstanceOf(StackOwnershipConflictError);
+            expect(failure.value.message).toContain("without a lease lock");
+          }
+        }
+      }),
+    ),
+  );
 
   it.live("persists Docker for an omitted container engine without probing", () =>
     withRuntimeRoot((project) =>

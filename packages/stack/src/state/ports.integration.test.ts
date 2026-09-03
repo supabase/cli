@@ -157,6 +157,7 @@ describe("sticky port coordination", () => {
           stateRoot: root,
           store,
           checkHostPort: successfulHostPortCheck,
+          bindHost: makeTestHostListener,
         });
         const first = yield* coordinator.planAndReserve(a, intents("automatic"));
         const repeat = yield* coordinator.planAndReserve(a, intents("automatic"));
@@ -180,12 +181,82 @@ describe("sticky port coordination", () => {
           port === 40000 || port === 30000
             ? Effect.fail(new PortUnavailableError({ address, port, field, message: "occupied" }))
             : Effect.void;
-        const coordinator = makePortCoordinator({ stateRoot: root, store, checkHostPort });
+        const coordinator = makePortCoordinator({
+          stateRoot: root,
+          store,
+          checkHostPort,
+          bindHost: makeTestHostListener,
+        });
         const reservation = yield* coordinator.planAndReserve(id, intents("automatic"), {
           privateBindings: [{ workloadId: "db", binding: "postgres" }],
         });
         expect(reservation.assignments.api?.port).toBe(40001);
         expect(reservation.privateAssignments[0]?.port).toBe(30001);
+      }),
+    ),
+  );
+
+  it.live("reports public probe-budget exhaustion distinctly", () =>
+    withPlatform(
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const root = yield* fs.makeTempDirectoryScoped({
+          prefix: "supabase-stack-port-probe-limit-",
+        });
+        const store = yield* makeStackStateStore({ stateRoot: root });
+        const identity = makeIdentity(root, "public-probe-limit");
+        const id = yield* deriveStackId(identity);
+        yield* store.initialize(id, baseState(id, identity));
+        const checkHostPort = (address: string, port: number, field: string) =>
+          Effect.fail(new PortUnavailableError({ address, port, field, message: "occupied" }));
+        const coordinator = makePortCoordinator({
+          stateRoot: root,
+          store,
+          checkHostPort,
+          bindHost: makeTestHostListener,
+        });
+        const result = yield* coordinator
+          .planAndReserve(id, {
+            ...disabledIntents(),
+            api: { enabled: true, address: "127.0.0.1", port: "automatic" },
+          })
+          .pipe(Effect.exit);
+        const error = errorOf(result);
+        expect(error).toBeInstanceOf(PortAllocationError);
+        expect(error?.message).toContain("public");
+        expect(error?.message).toContain("16");
+      }),
+    ),
+  );
+
+  it.live("reports private probe-budget exhaustion distinctly", () =>
+    withPlatform(
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const root = yield* fs.makeTempDirectoryScoped({
+          prefix: "supabase-stack-private-probe-limit-",
+        });
+        const store = yield* makeStackStateStore({ stateRoot: root });
+        const identity = makeIdentity(root, "private-probe-limit");
+        const id = yield* deriveStackId(identity);
+        yield* store.initialize(id, baseState(id, identity));
+        const checkHostPort = (address: string, port: number, field: string) =>
+          Effect.fail(new PortUnavailableError({ address, port, field, message: "occupied" }));
+        const coordinator = makePortCoordinator({
+          stateRoot: root,
+          store,
+          checkHostPort,
+          bindHost: makeTestHostListener,
+        });
+        const result = yield* coordinator
+          .planAndReserve(id, disabledIntents(), {
+            privateBindings: [{ workloadId: "db", binding: "postgres" }],
+          })
+          .pipe(Effect.exit);
+        const error = errorOf(result);
+        expect(error).toBeInstanceOf(PortAllocationError);
+        expect(error?.message).toContain("private");
+        expect(error?.message).toContain("16");
       }),
     ),
   );
@@ -208,6 +279,7 @@ describe("sticky port coordination", () => {
           stateRoot: root,
           store,
           checkHostPort: successfulHostPortCheck,
+          bindHost: makeTestHostListener,
         });
         const automatic = yield* coordinator.planAndReserve(a, intents("automatic"));
         const occupied = automatic.assignments.api?.port;
@@ -380,6 +452,7 @@ describe("sticky port coordination", () => {
           stateRoot: root,
           store,
           checkHostPort: successfulHostPortCheck,
+          bindHost: makeTestHostListener,
         });
         yield* coordinator.planAndReserve(d, intents(55432));
         const stopped = yield* store.read(d);
@@ -406,6 +479,7 @@ describe("sticky port coordination", () => {
           stateRoot: root,
           store,
           checkHostPort: successfulHostPortCheck,
+          bindHost: makeTestHostListener,
         });
         const exit = yield* coordinator
           .planAndReserve(stackId, {
@@ -592,6 +666,7 @@ describe("sticky port coordination", () => {
           stateRoot: root,
           store,
           checkHostPort: successfulHostPortCheck,
+          bindHost: makeTestHostListener,
         });
         const bindings = [
           { workloadId: "mail:mail", binding: "ui" },
@@ -633,6 +708,7 @@ describe("sticky port coordination", () => {
           stateRoot: root,
           store,
           checkHostPort: successfulHostPortCheck,
+          bindHost: makeTestHostListener,
         });
         const first = yield* coordinator.planAndReserve(a, disabledIntents(), {
           privateBindings: [{ workloadId: "database:database", binding: "primary" }],

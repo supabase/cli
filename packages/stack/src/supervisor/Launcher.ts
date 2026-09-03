@@ -299,23 +299,16 @@ const launchAndAwait = (
       if (current !== undefined) {
         // The watcher is only a launch-time helper once the winner is visible.
         yield* Fiber.interrupt(ownerFiber);
+        const childConflict = new StackOwnershipConflictError({
+          message: childResult.message,
+          stackId: options.stackId,
+        });
+        const preserveChildConflict = () => Effect.fail(childConflict);
         return yield* validateCompatibleOwner(options, current).pipe(
           Effect.as(current),
           Effect.catchTags({
-            StackStateInvalidError: () =>
-              Effect.fail(
-                new StackOwnershipConflictError({
-                  message: childResult.message,
-                  stackId: options.stackId,
-                }),
-              ),
-            StackOwnershipConflictError: () =>
-              Effect.fail(
-                new StackOwnershipConflictError({
-                  message: childResult.message,
-                  stackId: options.stackId,
-                }),
-              ),
+            StackStateInvalidError: preserveChildConflict,
+            StackOwnershipConflictError: preserveChildConflict,
           }),
         );
       }

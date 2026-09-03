@@ -6,6 +6,7 @@ import type { PlannedWorkload } from "../model/ExecutionPlan.ts";
 import { deriveStackId } from "../identity/Identity.ts";
 import type { PersistedStackState } from "../state/StackState.ts";
 import { makePortCoordinator, type ListenerIntents } from "../state/PortCoordinator.ts";
+import { bindHostListener } from "../supervisor/HostListener.ts";
 import { makeStackStateStore } from "../state/StackStateStore.ts";
 import { CAPABILITY_NAMES } from "../public/Capability.ts";
 import { compileStack } from "../model/Compiler.ts";
@@ -228,6 +229,7 @@ describe("workload runtime catalog", () => {
         stateRoot: root,
         store,
         checkHostPort: () => Effect.void,
+        bindHost: bindHostListener,
       }).planAndReserve(stackId, disabledListenerIntents, {
         privateBindings: privateBindingIntentsFor(compiled.executionPlan),
       });
