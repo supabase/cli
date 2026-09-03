@@ -111,7 +111,7 @@ describe("verified native artifact preparation", () => {
     ),
   );
 
-  it.live("rejects a tampered required executable on a cache hit", () =>
+  it.live("reuses a cache hit after required file contents are modified", () =>
     withPlatform(
       Effect.gen(function* () {
         const fs = yield* FileSystem.FileSystem;
@@ -121,13 +121,13 @@ describe("verified native artifact preparation", () => {
         const store = yield* makeArtifactStore({ cacheRoot: root, source: sourceWriting() });
         const published = yield* store.prepare(request);
         yield* fs.writeFileString(`${published.path}/bin/postgres`, "tampered executable");
-        const exit = yield* store.prepare(request).pipe(Effect.exit);
-        expect(errorOf(exit)).toBeInstanceOf(ArtifactIntegrityError);
+        const cached = yield* store.prepare(request);
+        expect(cached.outcome).toBe("cached");
       }),
     ),
   );
 
-  it.live("verifies required directory contents and internal symlinks on a cache hit", () =>
+  it.live("reuses cached directories without hashing their contents", () =>
     withPlatform(
       Effect.gen(function* () {
         const fs = yield* FileSystem.FileSystem;
@@ -163,7 +163,89 @@ describe("verified native artifact preparation", () => {
         expect((yield* store.prepare(directoryRequest)).outcome).toBe("cached");
 
         yield* fs.writeFileString(`${prepared.path}/share/runtime/config`, "tampered config");
-        const exit = yield* store.prepare(directoryRequest).pipe(Effect.exit);
+        expect((yield* store.prepare(directoryRequest)).outcome).toBe("cached");
+      }),
+    ),
+  );
+
+  it.live("rejects a missing required path on a cache hit", () =>
+    withPlatform(
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const root = yield* fs.makeTempDirectoryScoped({
+          prefix: "supabase-stack-artifact-cache-missing-",
+        });
+        const store = yield* makeArtifactStore({ cacheRoot: root, source: sourceWriting() });
+        const published = yield* store.prepare(request);
+        yield* fs.remove(`${published.path}/etc/postgres.conf`);
+
+        const exit = yield* store.prepare(request).pipe(Effect.exit);
+
+        expect(errorOf(exit)).toBeInstanceOf(ArtifactIntegrityError);
+      }),
+    ),
+  );
+
+  it.live("rejects a required path whose basic kind changes on a cache hit", () =>
+    withPlatform(
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const root = yield* fs.makeTempDirectoryScoped({
+          prefix: "supabase-stack-artifact-cache-kind-",
+        });
+        const store = yield* makeArtifactStore({ cacheRoot: root, source: sourceWriting() });
+        const published = yield* store.prepare(request);
+        yield* fs.remove(`${published.path}/bin/postgres`);
+        yield* fs.makeDirectory(`${published.path}/bin/postgres`);
+
+        const exit = yield* store.prepare(request).pipe(Effect.exit);
+
+        expect(errorOf(exit)).toBeInstanceOf(ArtifactIntegrityError);
+      }),
+    ),
+  );
+
+  it.live("rejects a cache-hit symlink that escapes the artifact root", () =>
+    withPlatform(
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const root = yield* fs.makeTempDirectoryScoped({
+          prefix: "supabase-stack-artifact-cache-link-escape-",
+        });
+        const outside = yield* fs.makeTempDirectoryScoped({
+          prefix: "supabase-stack-artifact-cache-link-outside-",
+        });
+        const outsideExecutable = `${outside}/postgres`;
+        yield* fs.writeFileString(outsideExecutable, "outside");
+        const symlinkRequest: ArtifactRequest = {
+          ...request,
+          key: "database/postgres-cache-link",
+        };
+        const source: ArtifactSource = {
+          materialize: (_entry, destination) =>
+            Effect.gen(function* () {
+              yield* fs.makeDirectory(`${destination}/bin`, { recursive: true });
+              yield* fs.makeDirectory(`${destination}/etc`, { recursive: true });
+              yield* fs.writeFileString(`${destination}/bin/postgres.real`, "native postgres");
+              yield* fs.symlink("postgres.real", `${destination}/bin/postgres`);
+              yield* fs.writeFileString(`${destination}/etc/postgres.conf`, "config");
+              return archive;
+            }).pipe(
+              Effect.mapError(
+                (cause) =>
+                  new StackPreparationError({
+                    message: `materialization failed: ${cause.message}`,
+                    cause,
+                  }),
+              ),
+            ),
+        };
+        const store = yield* makeArtifactStore({ cacheRoot: root, source });
+        const published = yield* store.prepare(symlinkRequest);
+        yield* fs.remove(`${published.path}/bin/postgres`);
+        yield* fs.symlink(outsideExecutable, `${published.path}/bin/postgres`);
+
+        const exit = yield* store.prepare(symlinkRequest).pipe(Effect.exit);
 
         expect(errorOf(exit)).toBeInstanceOf(ArtifactIntegrityError);
       }),
@@ -316,6 +398,50 @@ describe("verified native artifact preparation", () => {
         expect(errorOf(exit)).toBeInstanceOf(ArtifactIntegrityError);
         expect(yield* fs.exists(outsideExecutable)).toBe(true);
         expect(yield* fs.exists(`${root}/database/postgres`)).toBe(false);
+      }),
+    ),
+  );
+
+  it.live("rejects an escaping symlink nested in a fresh required directory", () =>
+    withPlatform(
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const root = yield* fs.makeTempDirectoryScoped({
+          prefix: "supabase-stack-artifact-nested-link-escape-",
+        });
+        const outside = yield* fs.makeTempDirectoryScoped({
+          prefix: "supabase-stack-artifact-nested-link-outside-",
+        });
+        const outsideConfig = `${outside}/config`;
+        yield* fs.writeFileString(outsideConfig, "outside");
+        const directoryRequest: ArtifactRequest = {
+          ...request,
+          key: "database/postgres-nested-link",
+          requiredRuntimePaths: ["bin/postgres", "share/runtime"],
+        };
+        const source: ArtifactSource = {
+          materialize: (_entry, destination) =>
+            Effect.gen(function* () {
+              yield* fs.makeDirectory(`${destination}/bin`, { recursive: true });
+              yield* fs.makeDirectory(`${destination}/share/runtime`, { recursive: true });
+              yield* fs.writeFileString(`${destination}/bin/postgres`, "native postgres");
+              yield* fs.symlink(outsideConfig, `${destination}/share/runtime/config`);
+              return archive;
+            }).pipe(
+              Effect.mapError(
+                (cause) =>
+                  new StackPreparationError({
+                    message: `materialization failed: ${cause.message}`,
+                    cause,
+                  }),
+              ),
+            ),
+        };
+        const store = yield* makeArtifactStore({ cacheRoot: root, source });
+        const exit = yield* store.prepare(directoryRequest).pipe(Effect.exit);
+
+        expect(errorOf(exit)).toBeInstanceOf(ArtifactIntegrityError);
+        expect(yield* fs.exists(`${root}/database/postgres-nested-link`)).toBe(false);
       }),
     ),
   );
