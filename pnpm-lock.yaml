@@ -37,8 +37,8 @@ catalogs:
       specifier: 4.0.0-rc.112
       version: 4.0.0-rc.112
     knip:
-      specifier: ^6.32.2
-      version: 6.32.2
+      specifier: ^6.32.3
+      version: 6.32.3
     oxfmt:
       specifier: ^0.65.0
       version: 0.65.0
@@ -85,7 +85,7 @@ importers:
         version: 1.4.0
       knip:
         specifier: 'catalog:'
-        version: 6.32.2
+        version: 6.32.3
       oxfmt:
         specifier: 'catalog:'
         version: 0.65.0
@@ -105,8 +105,8 @@ importers:
         specifier: 'catalog:'
         version: 7.0.2
       verdaccio:
-        specifier: ^6.10.0
-        version: 6.10.0(typanion@3.14.0)
+        specifier: ^6.10.1
+        version: 6.10.1(typanion@3.14.0)
 
   apps/cli:
     dependencies:
@@ -118,11 +118,11 @@ importers:
         version: 6.2.10
     devDependencies:
       '@anthropic-ai/claude-agent-sdk':
-        specifier: ^0.3.246
-        version: 0.3.246(@anthropic-ai/sdk@0.120.0(zod@4.4.3))(@modelcontextprotocol/sdk@1.30.0(zod@4.4.3))(zod@4.4.3)
+        specifier: ^0.3.247
+        version: 0.3.247(@anthropic-ai/sdk@0.121.0(zod@4.4.3))(@modelcontextprotocol/sdk@1.30.0(zod@4.4.3))(zod@4.4.3)
       '@anthropic-ai/sdk':
-        specifier: ^0.120.0
-        version: 0.120.0(zod@4.4.3)
+        specifier: ^0.121.0
+        version: 0.121.0(zod@4.4.3)
       '@clack/prompts':
         specifier: ^1.7.0
         version: 1.7.0
@@ -317,14 +317,14 @@ importers:
   apps/docs:
     dependencies:
       fumadocs-core:
-        specifier: ^16.15.1
-        version: 16.15.1(@mdx-js/mdx@3.1.1)(@types/estree-jsx@1.0.5)(@types/hast@3.0.5)(@types/mdast@4.0.4)(@types/react@19.2.18)(lucide-react@1.34.0(react@19.2.8))(next@16.3.3(@types/node@26.3.0)(react-dom@19.2.8(react@19.2.8))(react@19.2.8))(react-dom@19.2.8(react@19.2.8))(react@19.2.8)(zod@4.4.3)
+        specifier: ^16.15.2
+        version: 16.15.2(@mdx-js/mdx@3.1.1)(@types/estree-jsx@1.0.5)(@types/hast@3.0.5)(@types/mdast@4.0.4)(@types/react@19.2.18)(lucide-react@1.34.0(react@19.2.8))(next@16.3.3(@types/node@26.3.0)(react-dom@19.2.8(react@19.2.8))(react@19.2.8))(react-dom@19.2.8(react@19.2.8))(react@19.2.8)(zod@4.4.3)
       fumadocs-mdx:
         specifier: ^15.3.1
-        version: 15.3.1(@types/mdast@4.0.4)(@types/mdx@2.0.14)(@types/react@19.2.18)(fumadocs-core@16.15.1(@mdx-js/mdx@3.1.1)(@types/estree-jsx@1.0.5)(@types/hast@3.0.5)(@types/mdast@4.0.4)(@types/react@19.2.18)(lucide-react@1.34.0(react@19.2.8))(next@16.3.3(@types/node@26.3.0)(react-dom@19.2.8(react@19.2.8))(react@19.2.8))(react-dom@19.2.8(react@19.2.8))(react@19.2.8)(zod@4.4.3))(next@16.3.3(@types/node@26.3.0)(react-dom@19.2.8(react@19.2.8))(react@19.2.8))(react@19.2.8)(rolldown@1.2.5)(vite@8.2.2(@types/node@26.3.0)(esbuild@0.28.2)(jiti@2.7.0)(yaml@2.9.0))
+        version: 15.3.1(@types/mdast@4.0.4)(@types/mdx@2.0.14)(@types/react@19.2.18)(fumadocs-core@16.15.2(@mdx-js/mdx@3.1.1)(@types/estree-jsx@1.0.5)(@types/hast@3.0.5)(@types/mdast@4.0.4)(@types/react@19.2.18)(lucide-react@1.34.0(react@19.2.8))(next@16.3.3(@types/node@26.3.0)(react-dom@19.2.8(react@19.2.8))(react@19.2.8))(react-dom@19.2.8(react@19.2.8))(react@19.2.8)(zod@4.4.3))(next@16.3.3(@types/node@26.3.0)(react-dom@19.2.8(react@19.2.8))(react@19.2.8))(react@19.2.8)(rolldown@1.2.5)(vite@8.2.2(@types/node@26.3.0)(esbuild@0.28.2)(jiti@2.7.0)(yaml@2.9.0))
       fumadocs-ui:
-        specifier: ^16.15.1
-        version: 16.15.1(@types/mdx@2.0.14)(@types/react-dom@19.2.5(@types/react@19.2.18))(@types/react@19.2.18)(fumadocs-core@16.15.1(@mdx-js/mdx@3.1.1)(@types/estree-jsx@1.0.5)(@types/hast@3.0.5)(@types/mdast@4.0.4)(@types/react@19.2.18)(lucide-react@1.34.0(react@19.2.8))(next@16.3.3(@types/node@26.3.0)(react-dom@19.2.8(react@19.2.8))(react@19.2.8))(react-dom@19.2.8(react@19.2.8))(react@19.2.8)(zod@4.4.3))(next@16.3.3(@types/node@26.3.0)(react-dom@19.2.8(react@19.2.8))(react@19.2.8))(react-dom@19.2.8(react@19.2.8))(react@19.2.8)
+        specifier: ^16.15.2
+        version: 16.15.2(@types/mdx@2.0.14)(@types/react-dom@19.2.5(@types/react@19.2.18))(@types/react@19.2.18)(fumadocs-core@16.15.2(@mdx-js/mdx@3.1.1)(@types/estree-jsx@1.0.5)(@types/hast@3.0.5)(@types/mdast@4.0.4)(@types/react@19.2.18)(lucide-react@1.34.0(react@19.2.8))(next@16.3.3(@types/node@26.3.0)(react-dom@19.2.8(react@19.2.8))(react@19.2.8))(react-dom@19.2.8(react@19.2.8))(react@19.2.8)(zod@4.4.3))(next@16.3.3(@types/node@26.3.0)(react-dom@19.2.8(react@19.2.8))(react@19.2.8))(react-dom@19.2.8(react@19.2.8))(react@19.2.8)
       next:
         specifier: 16.3.3
         version: 16.3.3(@types/node@26.3.0)(react-dom@19.2.8(react@19.2.8))(react@19.2.8)
@@ -548,60 +548,60 @@ packages:
     resolution: {integrity: sha512-p+CMKJ93HFmLkjXKlXiVGlMQEuRb6H0MokBSwUsX+S6BRX8eV5naFZpQJFfJHjRZY0Hmnqy1/r6UWl3x+19zYA==}
     engines: {node: '>=18'}
 
-  '@anthropic-ai/claude-agent-sdk-darwin-arm64@0.3.246':
-    resolution: {integrity: sha512-pYDv2RT+UVOvEapMEWKf7Gm5a87Si1Zf+XR23IMGYbG5mESatNJ8Gz2PmkrwfTezZknb0ljWZe8zgcTFITM3dA==}
+  '@anthropic-ai/claude-agent-sdk-darwin-arm64@0.3.247':
+    resolution: {integrity: sha512-vvCMAXy2KmiGHbJuThv+W6a+49qjofMR6S71FM8FTbkAAKg62cYcEyzVMVM3pNpBM5PtkMe8lRCqKnT9NUo6ng==}
     cpu: [arm64]
     os: [darwin]
 
-  '@anthropic-ai/claude-agent-sdk-darwin-x64@0.3.246':
-    resolution: {integrity: sha512-yl+gMMFUQ8++SBaxUe2JxBqU0LOJO4HZTsWWTOrH5kRlTRhdQDF/lESsoNXCHgfF/+77YNKgef0h+rl/D12Jfg==}
+  '@anthropic-ai/claude-agent-sdk-darwin-x64@0.3.247':
+    resolution: {integrity: sha512-742ZXrdAxHvw+vzMFJMMvfbH8mWWCBajQH27BT+3fQU3Frjqu9gXKvA63dvQgxwjqO1gYU9TSy/A6PKq7zujaQ==}
     cpu: [x64]
     os: [darwin]
 
-  '@anthropic-ai/claude-agent-sdk-linux-arm64-musl@0.3.246':
-    resolution: {integrity: sha512-AeiDXveuA9dVRDouSRiQzL40P3dOuJPfZOlwwsFNbVUN0D+06WtwgmeWYnyRG4dxsM67Pf4lYcRZ0x9pfEZUwQ==}
+  '@anthropic-ai/claude-agent-sdk-linux-arm64-musl@0.3.247':
+    resolution: {integrity: sha512-8UNRQcSy9lpLhknXryid5cTfxHxBZft4oK5R0XIIZUXY/tXvsNP3+kVYAHQUNyc1J8IDa15sd19iKkMJMqFodA==}
     cpu: [arm64]
     os: [linux]
     libc: [musl]
 
-  '@anthropic-ai/claude-agent-sdk-linux-arm64@0.3.246':
-    resolution: {integrity: sha512-t7AEewD7bcjZYMmrfFLjsUSxPo4z+5J5O5cC9V2zOvAhNkefdMeGWI2/1cdqZxuaOiFVt46byjlZuiNNunF+bQ==}
+  '@anthropic-ai/claude-agent-sdk-linux-arm64@0.3.247':
+    resolution: {integrity: sha512-5/3ZQ9vOwrLv6w0CFjdbaTxPFyabHNLAEojkeiYmKzqlZ/taXG58/kVKgjqgx2qQhjcHCzy9JXDw5kp3RKJoGw==}
     cpu: [arm64]
     os: [linux]
     libc: [glibc]
 
-  '@anthropic-ai/claude-agent-sdk-linux-x64-musl@0.3.246':
-    resolution: {integrity: sha512-+3PrWX3qXgakO3tZImr7keKFry5XIkbHBEaUxgi3/RtPmxGwS+JdVAr0xxzOoC2F6Y66Kn0lUnztRnZHORBc+Q==}
+  '@anthropic-ai/claude-agent-sdk-linux-x64-musl@0.3.247':
+    resolution: {integrity: sha512-iMLjkVHbcxQ5WY2WwieOJK57kD4c8Cc2tpHwpEmdTDsnWLfmNt3XFuJdmeROwyra+tcVA52oHL0dWr51+V50Pg==}
     cpu: [x64]
     os: [linux]
     libc: [musl]
 
-  '@anthropic-ai/claude-agent-sdk-linux-x64@0.3.246':
-    resolution: {integrity: sha512-BIbBlJ6x7Cys6UFvahUfce26H+U+Q4tLWjKRD39AaV7JvRav8/vfdFytzWq6E+h9hT1OOWYuPYx2gMn5vDhZhQ==}
+  '@anthropic-ai/claude-agent-sdk-linux-x64@0.3.247':
+    resolution: {integrity: sha512-+tEIHgblLvBF+datSZb9WwnODXsFI7JxSFvm++oliH0eQO5zGDq0LD0hbY6h/A3nqODnBbIwVVBykwXMn68GPg==}
     cpu: [x64]
     os: [linux]
     libc: [glibc]
 
-  '@anthropic-ai/claude-agent-sdk-win32-arm64@0.3.246':
-    resolution: {integrity: sha512-JV8b28OJ8d+EMVEVIWlN3aEkT8uSehO3ZN/PJzXFG7Jgn56oVYUew4aY9vK4jao/4E4mdfzvs358w4HcTBUzVw==}
+  '@anthropic-ai/claude-agent-sdk-win32-arm64@0.3.247':
+    resolution: {integrity: sha512-Sni6U2xR55bUEJRv7Eikm6oC27IOn3rlVJZAzXRFCAgkf9+aBqq/dEUJiIcRT2xbXOIe5QdPGUmpnYfU1BsHMw==}
     cpu: [arm64]
     os: [win32]
 
-  '@anthropic-ai/claude-agent-sdk-win32-x64@0.3.246':
-    resolution: {integrity: sha512-omI65bYGynLpE1Ybijk56K1wBnt0H6WujNwlg1LzIdeHrYmpUxoqncK92xKH5kb9XWUz3byHqArbv7wsT+M/2A==}
+  '@anthropic-ai/claude-agent-sdk-win32-x64@0.3.247':
+    resolution: {integrity: sha512-yWfZo2ER3EIS/3pv6EX1M/VrZXu+zFzKhgWJjGgFSlcupbaCAxrVBRTdCyfv5UYBKWH9kl5HjgV2HhLHq67LSw==}
     cpu: [x64]
     os: [win32]
 
-  '@anthropic-ai/claude-agent-sdk@0.3.246':
-    resolution: {integrity: sha512-FtR0HoHHNqeqJWjZN8qLUAzZVFUI9ztXYNPPwv98Ecmv9qq2QTauI8IzkY26CC0mleWAqb9RQEW2C0OtiUliug==}
+  '@anthropic-ai/claude-agent-sdk@0.3.247':
+    resolution: {integrity: sha512-T9BDPloZxABkGREDRbWA7TVa9SLBMWI5GQXw39+XotQLCIX3McRic9OJdUnAdXa7sutwQ4nNrXwTSazN4IphjA==}
     engines: {node: '>=18.0.0'}
     peerDependencies:
       '@anthropic-ai/sdk': '>=0.93.0'
       '@modelcontextprotocol/sdk': ^1.29.0
       zod: ^4.0.0
 
-  '@anthropic-ai/sdk@0.120.0':
-    resolution: {integrity: sha512-ZlvmNFT/iIF6JD13rxbbMWD8nvGR0RaUp6yMQnoc+4Af0YjVVe/bIdW1XSQQsoxXAtg1NaT6Vak0LKFlJ4d37Q==}
+  '@anthropic-ai/sdk@0.121.0':
+    resolution: {integrity: sha512-WFzwcH8l49CZHv0vQ9QQT51VJ1/DLDQfNSs9awpGlnKBdaSnqtdZa+tw/3cxxosTPIgK8uw1GqsJ2dSbCBD1Lg==}
     hasBin: true
     peerDependencies:
       zod: ^3.25.0 || ^4.0.0
@@ -1999,28 +1999,24 @@ packages:
     engines: {node: '>= 10.0.0'}
     cpu: [arm64]
     os: [linux]
-    libc: [glibc]
 
   '@parcel/watcher-linux-arm64-musl@2.6.0':
     resolution: {integrity: sha512-WhB2e/V7rqdHHWZusBSPuy5Ei8S6lSz6FE5TKKQz5h3a0O+C+mhY7vxU9b/stqvMb8beLnPY82ZrFTLKs+SrKA==}
     engines: {node: '>= 10.0.0'}
     cpu: [arm64]
     os: [linux]
-    libc: [musl]
 
   '@parcel/watcher-linux-x64-glibc@2.6.0':
     resolution: {integrity: sha512-ulGE6x6Oz6iAwg75T8YQSoguBWasniIbX+QWpaYPcCnDOpdWX3k+4xbEYPZVLxOuoJI+svJJPD3sEj8G7lrQ3A==}
     engines: {node: '>= 10.0.0'}
     cpu: [x64]
     os: [linux]
-    libc: [glibc]
 
   '@parcel/watcher-linux-x64-musl@2.6.0':
     resolution: {integrity: sha512-tkBYKt7YQrjIJWYDnto2YgO8MRkjlMTSNoRHzsXinBqbLdeOM3L32wPZJvIZxqaLMfSlS/4sUjH/6STVP/XDLw==}
     engines: {node: '>= 10.0.0'}
     cpu: [x64]
     os: [linux]
-    libc: [musl]
 
   '@parcel/watcher-win32-arm64@2.6.0':
     resolution: {integrity: sha512-gIZAP23jaHjGWasY/TY6yL7NHFClf0Ga7FN+iINvk+KN94rhm94lYZhFsbYFNcA04/onvGD9kKmiJLJB2HbNwQ==}
@@ -2948,86 +2944,82 @@ packages:
     cpu: [x64]
     os: [win32]
 
-  '@ungap/structured-clone@1.3.3':
-    resolution: {integrity: sha512-60YRaenCQcVjYEKOcG824+DRGGIQ3VKErcBoAEDJZz5bKIs2ZG+X/H9Nk+Q6EVkwJk5QNApxbrc5QtBSwtrXAg==}
+  '@ungap/structured-clone@1.3.4':
+    resolution: {integrity: sha512-JL+CF0GeLHyPWI0rXu7UnxgiuOm9UQWzadi0OYOJNhNO2q6EZElpwlgXkNkfU1PzANDHq3YcwKVZprdvS+BrbQ==}
 
   '@vercel/detect-agent@1.2.5':
     resolution: {integrity: sha512-0krENrjuitlW8s6TJu0MlqCevyCU7K7JK63jZAf7xZ6n17tx+vUEwzHT3sTxawtwZxaW21hu+oFUpoOrm49FsQ==}
     engines: {node: '>=14'}
 
-  '@verdaccio/auth@8.1.2':
-    resolution: {integrity: sha512-ts5k0Z7kkxOKTVg9U8gVIFxmvytqIEl/eU2zTD/w0CrBT3vkEzvwQ9K0kHDV4VR1dCWhX1nqJtIlqtWewZQr8A==}
+  '@verdaccio/auth@8.1.3':
+    resolution: {integrity: sha512-6fI5jKyu7p8qRDLhGgNAa+gwqe+AEpXOcmVUUv6GLQBPY+lovKgfl5Sui72CTRzrkKPg7zNWS+T2tvODR6nIBw==}
     engines: {node: '>=22'}
 
-  '@verdaccio/config@8.2.2':
-    resolution: {integrity: sha512-1rLGFg/qTRgHVq1llx5fW+FtYijV4MeXBRc82aSy2TUQ4fy+4yEckI1+GCAm7fIvl5+YOzW9PcABtZOeEkeu7Q==}
+  '@verdaccio/config@8.3.0':
+    resolution: {integrity: sha512-kzjh1p/VmXjeJQ3X8D630OU+q8QUjhECaWZs0O1AzpSVjWJhQP4jjQmVBtF7a/oNGLFzJ+RnU5KUh+lERRkSRQ==}
     engines: {node: '>=22'}
 
-  '@verdaccio/core@8.2.2':
-    resolution: {integrity: sha512-BSCCR5cFkepjL3HnosKUi6aRezwgHu1FihFtes63yxIiDXkMclVi5IekTH6SCeW/7MO1Uyp58kh1updbB6VW4w==}
+  '@verdaccio/core@8.3.0':
+    resolution: {integrity: sha512-axlsbrXnENRM1+VeTNbTrR0VOD+9pBxA8sN+41rpt9UfThIQhDgf89YPPlCfu/ks/LH1KTcSzhR7nZuDYypeCw==}
     engines: {node: '>=22'}
 
   '@verdaccio/file-locking@13.1.0':
     resolution: {integrity: sha512-rGFfdyCZdgpbkROJJfjOA01R5BFtzrnDAhNIkxxc/yWZ6Cir+MRHpEbN2weOEPAwYDke9Wms4JKhpsStu+iV8Q==}
     engines: {node: '>=22'}
 
-  '@verdaccio/hooks@8.1.3':
-    resolution: {integrity: sha512-aCdLrzZAZB2zLmqImZQsQOK+7gIJsPv0cy4O34SenOJJ2kWESbacQVwcDGjv+EWIjbQy0EPCjgjqwryIkvdy8g==}
+  '@verdaccio/hooks@8.1.4':
+    resolution: {integrity: sha512-B55gNADad6uoo0tAn6cCuE/feXMhUJruE//o814SZqy7X50gbqa+d4+I/RqTgANmvkN+Pvowe0IMCbHH69V8Dw==}
     engines: {node: '>=22'}
 
-  '@verdaccio/loaders@8.1.2':
-    resolution: {integrity: sha512-3NrHUaspgJUmTbKF4jQeHOo22zfa7XsYL5MD+PbviLg42OxERHXiuLBIBf2FE9KU3dhcuB+5WZqOLfS2U7WRSA==}
+  '@verdaccio/loaders@8.1.3':
+    resolution: {integrity: sha512-07Iz4Ar4sZUuWoS7/gr5CHuxEvao6Bhs8ZcvoIpxP0DS02QQK18LrDKn6BXCz8nQs3BbPXEghaQk/2kpC1EzpA==}
     engines: {node: '>=22'}
 
-  '@verdaccio/local-storage-legacy@11.4.2':
-    resolution: {integrity: sha512-ay/Hs6itET+8YKHDUds7UWlyTpLMDmsmtKCKF67obF2fwPd9RRoiLFWiVyY0H5gsqSiEGOpOMw5JlFRYnf+row==}
+  '@verdaccio/local-storage-legacy@11.4.3':
+    resolution: {integrity: sha512-TV8hQ8E+meh0pnQ1IhP7B3psOcUd5RDwITrCtf3FLKL18FlBJHiZZqZYG0JuTR4fCzmw5RX6ppQTDuWl7KJ8xw==}
     engines: {node: '>=22'}
 
-  '@verdaccio/logger-commons@8.1.2':
-    resolution: {integrity: sha512-vw6QuRS2c6NmsJvjfZjHik8bTyqj9i2kAlJHSoDwPAlQ/njyfjmI9Sa+yoz5fKJX4aGA/LoIqHSYEW2Sf+5rjw==}
+  '@verdaccio/logger-commons@8.1.3':
+    resolution: {integrity: sha512-e8W0Ac8/nq+BBn8nKbD30X6XbEszVQKtO8PTjvOXzzVqbVq8O+P4dTeAGqCH9FOurOQY3xhJfSV6DT2ODK1gUg==}
     engines: {node: '>=22'}
 
   '@verdaccio/logger-prettify@8.1.0':
     resolution: {integrity: sha512-Mriivx1LPx8/8ux0MlNoj/FtxQiQmf5BG2casfWEf9R7jzBDAUCqQJUR4s0PaV2Mlc9cdHcETOucx3RGPuWHeQ==}
     engines: {node: '>=22'}
 
-  '@verdaccio/logger@8.1.2':
-    resolution: {integrity: sha512-9FDPtTNH4b1ZBW2jXGk+5ud+omkKZiBRAUGumDX99R3+vW6HGqVjo0DjwmBP0sGxseLdh/q2S7A2Z91EvUpgYw==}
+  '@verdaccio/logger@8.1.3':
+    resolution: {integrity: sha512-+VucLvCr8ic08kJsOmYsv1FQ5hfvI1vbu61bGPlf8tnwJGdCvtw4DupzShbuvgwjmsix1t0kxGF3ipWVODrMEw==}
     engines: {node: '>=22'}
 
-  '@verdaccio/middleware@8.1.2':
-    resolution: {integrity: sha512-JIMDFIkEVP7py9QxW7vBy1N2/PUMESE0SJ3tZGHtEVzUCCsUmpby7vuEDJ3STk6yzkqtqk2lTWYAcUbqwI/7sQ==}
+  '@verdaccio/middleware@8.1.3':
+    resolution: {integrity: sha512-R2ApL57L7TKM1iPOUmYpVoLm1xA0C4x6gvyKUfuGFEf0xYtlaUbway+O8bzIjzJ9h0+uss3ZCEeOFxvFVIY+Zg==}
     engines: {node: '>=22'}
 
-  '@verdaccio/package-filter@13.2.0':
-    resolution: {integrity: sha512-RrauvQMklcJMiV9iuklhBj7+K+R8w99nzlQbLoY/GqAvGdLZ3VRDWR3e/81Fcdy0fyL7E5NI7i8aA9iNZsm/LA==}
+  '@verdaccio/package-filter@13.2.1':
+    resolution: {integrity: sha512-AnuHwDAzFXdtV6bpWwgTsCoLuZiHSKC161RH7HwA+0yU2KUrvKpADU8l0CxScQmhz+2yd1+orPZNVigjYMyz7A==}
     engines: {node: '>=22'}
 
   '@verdaccio/search-indexer@8.1.0':
     resolution: {integrity: sha512-N0vHWnSCZVEU3ffvbH/g4cRvGkXO+FJQcNggdY1wxT8LP7K6NJ0F6aq7jSF3ebW5IokdQMJuqWTNx18h8dgrsg==}
     engines: {node: '>=22'}
 
-  '@verdaccio/signature@8.1.2':
-    resolution: {integrity: sha512-aa4FUz7f4Bj241PFZnI69ofZIcgJg1AHfkB4D8GG49rgwahpuEO9E81I0m46bqpe2gWAGib57KYkb9NOYCg/ig==}
+  '@verdaccio/signature@8.1.3':
+    resolution: {integrity: sha512-h1HwxOXEf7gdjvuxeLH3R2ppoAXI16YV846YpdLZCEFekmhnwJO2Zb4mnvptIoyWdpDABq+sKJGF3O8mJOTwGQ==}
     engines: {node: '>=22'}
 
   '@verdaccio/streams@10.3.0':
     resolution: {integrity: sha512-MARQAzAgS42GIawkrBVMTV81vRf2yqZmwonnQb9FWeGj+tsMcgpT/f2fWMQm/UubLpWxBBH6oCkmhFd29R2xGA==}
     engines: {node: '>=22', npm: '>=5'}
 
-  '@verdaccio/tarball@13.1.2':
-    resolution: {integrity: sha512-0xk52gcW776safIt+FLUTuv2wDb0zd4f4DxOYMMW4+5CRwa6QiiolLz4ImBWrC4O4WnZpbQ0mzLDyFaLd48LkQ==}
+  '@verdaccio/tarball@13.1.3':
+    resolution: {integrity: sha512-Up/Dz+bWt+658cq9wdrC5qZrMxQx1FHlfivJJdlzJiS95kaiMqUFaT7NOoYWp7fhkbPYmLXgXdfsTW/NdZuCTA==}
     engines: {node: '>=22'}
 
-  '@verdaccio/ui-theme@9.0.0-next-9.26':
-    resolution: {integrity: sha512-qF5q16SOhmQhYWZoq+q5QW3yxzEQ7knSXW6N7hJKjFf/5FD+RcTHMALXH08iGxk6fHuuNKUq6KR9uRkHUNF9Yg==}
+  '@verdaccio/ui-theme@9.0.0-next-9.28':
+    resolution: {integrity: sha512-VVI4dhEsQnHa1cikKHATZAuhbldu/qkrng0VSeoDe9ylyvcNOaQGQWWVxMEmpOAr0EO4R49O448eP9o4Vf4kGQ==}
 
-  '@verdaccio/url@13.1.2':
-    resolution: {integrity: sha512-AvaMN3BJnHk9zDDL5oT+VOAIoUoXqoOEWVe3hsfa8T/IDLcl6nyYJd75Gt4U0huOXLdCpOwjVUl4zpxOvvThZg==}
-    engines: {node: '>=22'}
-
-  '@verdaccio/utils@8.2.2':
-    resolution: {integrity: sha512-RWS2h1yXeaF7txXD7jK/v1aecMrTCGFGRMDH3qjcvM0FMXYs5rleGo/MooiXHuOGFC4D7xNqt3hERXQweNlf2Q==}
+  '@verdaccio/url@13.1.3':
+    resolution: {integrity: sha512-NansR8Pnp42DGTmuqU+hS14y+AESO6kACuD26oRsRFi6ngvX3WsNHnsSrH4sCdBCzOAQ06jgk7GAwn361eFnEg==}
     engines: {node: '>=22'}
 
   '@vitest/coverage-istanbul@4.1.11':
@@ -3283,8 +3275,8 @@ packages:
     resolution: {integrity: sha512-BLrgEcRTwX2o6gGxGOCNyMvGSp35YofuYzw9h1IMTRmKqttAZZVU67bdb9Pr2vUHA8+j3i2tJfjO6C6+4myGTA==}
     engines: {node: 18 || 20 || >=22}
 
-  bare-events@2.9.1:
-    resolution: {integrity: sha512-Z0oHEHAFDZkffN8Qc39zNZjQlMDkPJRyyyZieU1VH7u8c5S+qHZ2S8ixdKIAxEjfHO7FJxXmJWgteOghVanIsg==}
+  bare-events@2.9.2:
+    resolution: {integrity: sha512-AIPKioV7/Y/8KfZ3AAhjPJxLLbY49S64Ym5DakZlUg75qQiTgUq9hEJoEwa4eUezPUlXRy/i5NpsKvo9jgKmoA==}
     peerDependencies:
       bare-abort-controller: '*'
     peerDependenciesMeta:
@@ -3303,8 +3295,8 @@ packages:
   bare-path@3.1.1:
     resolution: {integrity: sha512-JprUlveX3QjApC1cTpsUOiscADftCGVWkzitbHsRqv84hzYwYHw2mbluddsq5TvI8mH/8Ov1f4BiMAdcB0oYnQ==}
 
-  bare-stream@2.13.3:
-    resolution: {integrity: sha512-Kc+brLqvEqGkjyfiwJmImAOqLZL7OsoLKuavx+hJjgVV3nLTOjloJyPMFxjUPerGGHrNH0fLU06jjykMLWrERQ==}
+  bare-stream@2.13.4:
+    resolution: {integrity: sha512-PcrQ8lVLbiJscNm1Kez+Yp4Gy4AHGcN1lzwjvf5NybWen7VvEgUfyfnXYJ2zNqWnzOfCb1Abq6lH8ti0syQszA==}
     peerDependencies:
       bare-abort-controller: '*'
       bare-buffer: '*'
@@ -4058,8 +4050,8 @@ packages:
     engines: {node: ^8.16.0 || ^10.6.0 || >=11.0.0}
     os: [darwin]
 
-  fumadocs-core@16.15.1:
-    resolution: {integrity: sha512-p/NpwQZAUsXUD/wD9MiBGH3/Gy53SmiFGwamhnZoKT9twcGTR8MpFi65ebmf4IEAc3da3S+GStP1fqHYOPEflw==}
+  fumadocs-core@16.15.2:
+    resolution: {integrity: sha512-Hs3v4cntHQVnQJLOIWZNxMFxRxKmAupNEpI0ssxXZRDuAhyA/9dajB883gF45y5pfDib8xTXZRVXcoufXqu5Pg==}
     peerDependencies:
       '@mdx-js/mdx': '*'
       '@mixedbread/sdk': 0.x.x
@@ -4154,12 +4146,12 @@ packages:
       vite:
         optional: true
 
-  fumadocs-ui@16.15.1:
-    resolution: {integrity: sha512-3TEiWSPBr1cyAbFfVTBCAMuGWeW4XaTYa3fXfd9O9fi3doW8mHzRQE8tS0+mcPKYf7kmcBTwB7rW1T770Qt18Q==}
+  fumadocs-ui@16.15.2:
+    resolution: {integrity: sha512-tKeB7Q6ZSdMVEtMErVLJDWJgLL8lgV8KJLWlp8oRxnMB2wRDII7LXIpRmOff89METwMtJiiWNOMwJvfgHLtMgg==}
     peerDependencies:
       '@types/mdx': '*'
       '@types/react': '*'
-      fumadocs-core: 16.15.1
+      fumadocs-core: 16.15.2
       next: 16.x.x
       react: ^19.2.0
       react-dom: ^19.2.0
@@ -4634,8 +4626,8 @@ packages:
   keyv@5.6.0:
     resolution: {integrity: sha512-CYDD3SOtsHtyXeEORYRx2qBtpDJFjRTGXUtmNEMGyzYOKj1TE3tycdlho7kA1Ufx9OYWZzg52QFBGALTirzDSw==}
 
-  knip@6.32.2:
-    resolution: {integrity: sha512-WXTXbmocrw7gqm1A1TQvFN0OgJ7hUSU6E1g6SPRIzzHFogUBhXByc7cYeOFVtJ2uODg7DP4VbESYBYnfbtBYsg==}
+  knip@6.32.3:
+    resolution: {integrity: sha512-wOJ1Av8PwKqFO0wU7F64vzIcUjxhrieA3Tc2lmeK9C9prpxq+TeG2ewNH5tCaBVZwXNPp6lJkrr+IhZ20iqkMA==}
     engines: {node: ^20.19.0 || >=22.12.0}
     hasBin: true
 
@@ -6501,16 +6493,16 @@ packages:
     resolution: {integrity: sha512-BNGbWLfd0eUPabhkXUVm0j8uuvREyTh5ovRa/dyow/BqAbZJyC+5fU+IzQOzmAKzYqYRAISoRhdQr3eIZ/PXqg==}
     engines: {node: '>= 0.8'}
 
-  verdaccio-audit@13.1.2:
-    resolution: {integrity: sha512-2nHSt8qRQcCCUQX6QO72eC1D1RoqCBZVPTotVdS/CGpMtE+jUHIDnOSWWMQxtN53PHa6wjjheySJCcuEpmtJsQ==}
+  verdaccio-audit@13.1.3:
+    resolution: {integrity: sha512-chCJw1+72wBS4heJgL7a08ACNgZEDoQMz3oZo/4nF4mqanV6pny3xU6BwEru8cRQHOiBvmmvMVDfWNVB6HDJ+A==}
     engines: {node: '>=22'}
 
-  verdaccio-htpasswd@13.1.2:
-    resolution: {integrity: sha512-37/V2zidmJWpJp78PFMAHEpDPMAdFiIRevV/CshJydyiglIJd0CJi0W4LGsbgXy2pSqYbu22dVzq6JV/MR5xYw==}
+  verdaccio-htpasswd@13.1.3:
+    resolution: {integrity: sha512-q2od2foCPblMasnUdKPLcNYXN5iXW0Q9Imh58qTpNsvCeYGtlfMqyC+aO+/0wtTGkD+H+mWfbqtb/8G9TMc0DQ==}
     engines: {node: '>=22'}
 
-  verdaccio@6.10.0:
-    resolution: {integrity: sha512-kY/wz65nE5P3aJkVvIsM/5XqyuQgLjQ9vBKlnGSsgetT4d3nkPI/NAKkI02aSm00D0Ene1SOPNJ/oITELPrM/g==}
+  verdaccio@6.10.1:
+    resolution: {integrity: sha512-pcZOrQ44P76y3UrS0S7CiQkHJaA9v5vOQ79zFv0FyQyGpCMvmnBDAeed/iGJZQo/qW38hSqrJizOWBXqC8LqBg==}
     engines: {node: '>=22'}
     hasBin: true
 
@@ -6778,46 +6770,46 @@ snapshots:
       ansi-styles: 6.2.3
       is-fullwidth-code-point: 5.1.0
 
-  '@anthropic-ai/claude-agent-sdk-darwin-arm64@0.3.246':
+  '@anthropic-ai/claude-agent-sdk-darwin-arm64@0.3.247':
     optional: true
 
-  '@anthropic-ai/claude-agent-sdk-darwin-x64@0.3.246':
+  '@anthropic-ai/claude-agent-sdk-darwin-x64@0.3.247':
     optional: true
 
-  '@anthropic-ai/claude-agent-sdk-linux-arm64-musl@0.3.246':
+  '@anthropic-ai/claude-agent-sdk-linux-arm64-musl@0.3.247':
     optional: true
 
-  '@anthropic-ai/claude-agent-sdk-linux-arm64@0.3.246':
+  '@anthropic-ai/claude-agent-sdk-linux-arm64@0.3.247':
     optional: true
 
-  '@anthropic-ai/claude-agent-sdk-linux-x64-musl@0.3.246':
+  '@anthropic-ai/claude-agent-sdk-linux-x64-musl@0.3.247':
     optional: true
 
-  '@anthropic-ai/claude-agent-sdk-linux-x64@0.3.246':
+  '@anthropic-ai/claude-agent-sdk-linux-x64@0.3.247':
     optional: true
 
-  '@anthropic-ai/claude-agent-sdk-win32-arm64@0.3.246':
+  '@anthropic-ai/claude-agent-sdk-win32-arm64@0.3.247':
     optional: true
 
-  '@anthropic-ai/claude-agent-sdk-win32-x64@0.3.246':
+  '@anthropic-ai/claude-agent-sdk-win32-x64@0.3.247':
     optional: true
 
-  '@anthropic-ai/claude-agent-sdk@0.3.246(@anthropic-ai/sdk@0.120.0(zod@4.4.3))(@modelcontextprotocol/sdk@1.30.0(zod@4.4.3))(zod@4.4.3)':
+  '@anthropic-ai/claude-agent-sdk@0.3.247(@anthropic-ai/sdk@0.121.0(zod@4.4.3))(@modelcontextprotocol/sdk@1.30.0(zod@4.4.3))(zod@4.4.3)':
     dependencies:
-      '@anthropic-ai/sdk': 0.120.0(zod@4.4.3)
+      '@anthropic-ai/sdk': 0.121.0(zod@4.4.3)
       '@modelcontextprotocol/sdk': 1.30.0(zod@4.4.3)
       zod: 4.4.3
     optionalDependencies:
-      '@anthropic-ai/claude-agent-sdk-darwin-arm64': 0.3.246
-      '@anthropic-ai/claude-agent-sdk-darwin-x64': 0.3.246
-      '@anthropic-ai/claude-agent-sdk-linux-arm64': 0.3.246
-      '@anthropic-ai/claude-agent-sdk-linux-arm64-musl': 0.3.246
-      '@anthropic-ai/claude-agent-sdk-linux-x64': 0.3.246
-      '@anthropic-ai/claude-agent-sdk-linux-x64-musl': 0.3.246
-      '@anthropic-ai/claude-agent-sdk-win32-arm64': 0.3.246
-      '@anthropic-ai/claude-agent-sdk-win32-x64': 0.3.246
+      '@anthropic-ai/claude-agent-sdk-darwin-arm64': 0.3.247
+      '@anthropic-ai/claude-agent-sdk-darwin-x64': 0.3.247
+      '@anthropic-ai/claude-agent-sdk-linux-arm64': 0.3.247
+      '@anthropic-ai/claude-agent-sdk-linux-arm64-musl': 0.3.247
+      '@anthropic-ai/claude-agent-sdk-linux-x64': 0.3.247
+      '@anthropic-ai/claude-agent-sdk-linux-x64-musl': 0.3.247
+      '@anthropic-ai/claude-agent-sdk-win32-arm64': 0.3.247
+      '@anthropic-ai/claude-agent-sdk-win32-x64': 0.3.247
 
-  '@anthropic-ai/sdk@0.120.0(zod@4.4.3)':
+  '@anthropic-ai/sdk@0.121.0(zod@4.4.3)':
     dependencies:
       json-schema-to-ts: 3.1.1
       standardwebhooks: 1.0.0
@@ -8703,36 +8695,37 @@ snapshots:
   '@typescript/typescript-win32-x64@7.0.2':
     optional: true
 
-  '@ungap/structured-clone@1.3.3': {}
+  '@ungap/structured-clone@1.3.4': {}
 
   '@vercel/detect-agent@1.2.5': {}
 
-  '@verdaccio/auth@8.1.2':
+  '@verdaccio/auth@8.1.3':
     dependencies:
-      '@verdaccio/config': 8.2.2
-      '@verdaccio/core': 8.2.2
-      '@verdaccio/loaders': 8.1.2
-      '@verdaccio/signature': 8.1.2
+      '@verdaccio/config': 8.3.0
+      '@verdaccio/core': 8.3.0
+      '@verdaccio/loaders': 8.1.3
+      '@verdaccio/signature': 8.1.3
       debug: 4.4.3
       lodash: 4.18.1
-      verdaccio-htpasswd: 13.1.2
+      verdaccio-htpasswd: 13.1.3
     transitivePeerDependencies:
       - supports-color
 
-  '@verdaccio/config@8.2.2':
+  '@verdaccio/config@8.3.0':
     dependencies:
-      '@verdaccio/core': 8.2.2
+      '@verdaccio/core': 8.3.0
       debug: 4.4.3
       js-yaml: 5.2.2
       lodash: 4.18.1
     transitivePeerDependencies:
       - supports-color
 
-  '@verdaccio/core@8.2.2':
+  '@verdaccio/core@8.3.0':
     dependencies:
       ajv: 8.20.0
       http-errors: 2.0.1
       http-status-codes: 2.3.0
+      lodash: 4.18.1
       minimatch: 10.2.6
       process-warning: 1.0.0
       semver: 7.8.5
@@ -8741,27 +8734,27 @@ snapshots:
     dependencies:
       lockfile: 1.0.4
 
-  '@verdaccio/hooks@8.1.3':
+  '@verdaccio/hooks@8.1.4':
     dependencies:
-      '@verdaccio/core': 8.2.2
-      '@verdaccio/logger': 8.1.2
+      '@verdaccio/core': 8.3.0
+      '@verdaccio/logger': 8.1.3
       debug: 4.4.3
       got: 15.1.0
       handlebars: 4.7.9
     transitivePeerDependencies:
       - supports-color
 
-  '@verdaccio/loaders@8.1.2':
+  '@verdaccio/loaders@8.1.3':
     dependencies:
-      '@verdaccio/core': 8.2.2
+      '@verdaccio/core': 8.3.0
       debug: 4.4.3
       lodash: 4.18.1
     transitivePeerDependencies:
       - supports-color
 
-  '@verdaccio/local-storage-legacy@11.4.2':
+  '@verdaccio/local-storage-legacy@11.4.3':
     dependencies:
-      '@verdaccio/core': 8.2.2
+      '@verdaccio/core': 8.3.0
       '@verdaccio/file-locking': 13.1.0
       '@verdaccio/streams': 10.3.0
       debug: 4.4.3
@@ -8773,9 +8766,9 @@ snapshots:
     transitivePeerDependencies:
       - supports-color
 
-  '@verdaccio/logger-commons@8.1.2':
+  '@verdaccio/logger-commons@8.1.3':
     dependencies:
-      '@verdaccio/core': 8.2.2
+      '@verdaccio/core': 8.3.0
       '@verdaccio/logger-prettify': 8.1.0
       colorette: 2.0.20
       debug: 4.4.3
@@ -8791,18 +8784,18 @@ snapshots:
       pino-abstract-transport: 1.2.0
       sonic-boom: 3.8.1
 
-  '@verdaccio/logger@8.1.2':
+  '@verdaccio/logger@8.1.3':
     dependencies:
-      '@verdaccio/logger-commons': 8.1.2
+      '@verdaccio/logger-commons': 8.1.3
       pino: 9.14.0
     transitivePeerDependencies:
       - supports-color
 
-  '@verdaccio/middleware@8.1.2':
+  '@verdaccio/middleware@8.1.3':
     dependencies:
-      '@verdaccio/config': 8.2.2
-      '@verdaccio/core': 8.2.2
-      '@verdaccio/url': 13.1.2
+      '@verdaccio/config': 8.3.0
+      '@verdaccio/core': 8.3.0
+      '@verdaccio/url': 13.1.3
       debug: 4.4.3
       express: 4.22.2
       express-rate-limit: 5.5.1
@@ -8811,9 +8804,9 @@ snapshots:
     transitivePeerDependencies:
       - supports-color
 
-  '@verdaccio/package-filter@13.2.0':
+  '@verdaccio/package-filter@13.2.1':
     dependencies:
-      '@verdaccio/core': 8.2.2
+      '@verdaccio/core': 8.3.0
       debug: 4.4.3
       semver: 7.8.5
     transitivePeerDependencies:
@@ -8826,10 +8819,10 @@ snapshots:
     transitivePeerDependencies:
       - supports-color
 
-  '@verdaccio/signature@8.1.2':
+  '@verdaccio/signature@8.1.3':
     dependencies:
-      '@verdaccio/config': 8.2.2
-      '@verdaccio/core': 8.2.2
+      '@verdaccio/config': 8.3.0
+      '@verdaccio/core': 8.3.0
       debug: 4.4.3
       jsonwebtoken: 9.0.3
     transitivePeerDependencies:
@@ -8837,10 +8830,10 @@ snapshots:
 
   '@verdaccio/streams@10.3.0': {}
 
-  '@verdaccio/tarball@13.1.2':
+  '@verdaccio/tarball@13.1.3':
     dependencies:
-      '@verdaccio/core': 8.2.2
-      '@verdaccio/url': 13.1.2
+      '@verdaccio/core': 8.3.0
+      '@verdaccio/url': 13.1.3
       debug: 4.4.3
       gunzip-maybe: 1.4.2
       tar-stream: 3.2.0
@@ -8850,25 +8843,19 @@ snapshots:
       - react-native-b4a
       - supports-color
 
-  '@verdaccio/ui-theme@9.0.0-next-9.26':
+  '@verdaccio/ui-theme@9.0.0-next-9.28':
     dependencies:
       debug: 4.4.3
     transitivePeerDependencies:
       - supports-color
 
-  '@verdaccio/url@13.1.2':
+  '@verdaccio/url@13.1.3':
     dependencies:
-      '@verdaccio/core': 8.2.2
+      '@verdaccio/core': 8.3.0
       debug: 4.4.3
       validator: 13.15.26
     transitivePeerDependencies:
       - supports-color
-
-  '@verdaccio/utils@8.2.2':
-    dependencies:
-      '@verdaccio/core': 8.2.2
-      lodash: 4.18.1
-      minimatch: 10.2.6
 
   '@vitest/coverage-istanbul@4.1.11(vitest@4.1.11)':
     dependencies:
@@ -9078,13 +9065,13 @@ snapshots:
 
   balanced-match@4.0.4: {}
 
-  bare-events@2.9.1: {}
+  bare-events@2.9.2: {}
 
   bare-fs@4.8.1:
     dependencies:
-      bare-events: 2.9.1
+      bare-events: 2.9.2
       bare-path: 3.1.1
-      bare-stream: 2.13.3(bare-events@2.9.1)
+      bare-stream: 2.13.4(bare-events@2.9.2)
       bare-url: 2.5.2
       fast-fifo: 1.3.2
     transitivePeerDependencies:
@@ -9093,13 +9080,13 @@ snapshots:
 
   bare-path@3.1.1: {}
 
-  bare-stream@2.13.3(bare-events@2.9.1):
+  bare-stream@2.13.4(bare-events@2.9.2):
     dependencies:
       b4a: 1.8.1
       streamx: 2.28.1
       teex: 1.0.1
     optionalDependencies:
-      bare-events: 2.9.1
+      bare-events: 2.9.2
     transitivePeerDependencies:
       - react-native-b4a
 
@@ -9677,7 +9664,7 @@ snapshots:
 
   events-universal@1.0.1:
     dependencies:
-      bare-events: 2.9.1
+      bare-events: 2.9.2
     transitivePeerDependencies:
       - bare-abort-controller
 
@@ -9839,9 +9826,9 @@ snapshots:
     dependencies:
       walk-up-path: 4.0.0
 
-  fdir@6.5.0(picomatch@4.0.5):
+  fdir@6.5.0(picomatch@4.0.7):
     optionalDependencies:
-      picomatch: 4.0.5
+      picomatch: 4.0.7
 
   figures@2.0.0:
     dependencies:
@@ -9927,7 +9914,7 @@ snapshots:
   fsevents@2.3.3:
     optional: true
 
-  fumadocs-core@16.15.1(@mdx-js/mdx@3.1.1)(@types/estree-jsx@1.0.5)(@types/hast@3.0.5)(@types/mdast@4.0.4)(@types/react@19.2.18)(lucide-react@1.34.0(react@19.2.8))(next@16.3.3(@types/node@26.3.0)(react-dom@19.2.8(react@19.2.8))(react@19.2.8))(react-dom@19.2.8(react@19.2.8))(react@19.2.8)(zod@4.4.3):
+  fumadocs-core@16.15.2(@mdx-js/mdx@3.1.1)(@types/estree-jsx@1.0.5)(@types/hast@3.0.5)(@types/mdast@4.0.4)(@types/react@19.2.18)(lucide-react@1.34.0(react@19.2.8))(next@16.3.3(@types/node@26.3.0)(react-dom@19.2.8(react@19.2.8))(react@19.2.8))(react-dom@19.2.8(react@19.2.8))(react@19.2.8)(zod@4.4.3):
     dependencies:
       '@fumari/image-size': 0.1.0
       estree-util-value-to-estree: 3.5.0
@@ -9962,14 +9949,14 @@ snapshots:
     transitivePeerDependencies:
       - supports-color
 
-  fumadocs-mdx@15.3.1(@types/mdast@4.0.4)(@types/mdx@2.0.14)(@types/react@19.2.18)(fumadocs-core@16.15.1(@mdx-js/mdx@3.1.1)(@types/estree-jsx@1.0.5)(@types/hast@3.0.5)(@types/mdast@4.0.4)(@types/react@19.2.18)(lucide-react@1.34.0(react@19.2.8))(next@16.3.3(@types/node@26.3.0)(react-dom@19.2.8(react@19.2.8))(react@19.2.8))(react-dom@19.2.8(react@19.2.8))(react@19.2.8)(zod@4.4.3))(next@16.3.3(@types/node@26.3.0)(react-dom@19.2.8(react@19.2.8))(react@19.2.8))(react@19.2.8)(rolldown@1.2.5)(vite@8.2.2(@types/node@26.3.0)(esbuild@0.28.2)(jiti@2.7.0)(yaml@2.9.0)):
+  fumadocs-mdx@15.3.1(@types/mdast@4.0.4)(@types/mdx@2.0.14)(@types/react@19.2.18)(fumadocs-core@16.15.2(@mdx-js/mdx@3.1.1)(@types/estree-jsx@1.0.5)(@types/hast@3.0.5)(@types/mdast@4.0.4)(@types/react@19.2.18)(lucide-react@1.34.0(react@19.2.8))(next@16.3.3(@types/node@26.3.0)(react-dom@19.2.8(react@19.2.8))(react@19.2.8))(react-dom@19.2.8(react@19.2.8))(react@19.2.8)(zod@4.4.3))(next@16.3.3(@types/node@26.3.0)(react-dom@19.2.8(react@19.2.8))(react@19.2.8))(react@19.2.8)(rolldown@1.2.5)(vite@8.2.2(@types/node@26.3.0)(esbuild@0.28.2)(jiti@2.7.0)(yaml@2.9.0)):
     dependencies:
       '@mdx-js/mdx': 3.1.1
       '@standard-schema/spec': 1.1.0
       chokidar: 5.0.0
       esbuild: 0.28.2
       estree-util-value-to-estree: 3.5.0
-      fumadocs-core: 16.15.1(@mdx-js/mdx@3.1.1)(@types/estree-jsx@1.0.5)(@types/hast@3.0.5)(@types/mdast@4.0.4)(@types/react@19.2.18)(lucide-react@1.34.0(react@19.2.8))(next@16.3.3(@types/node@26.3.0)(react-dom@19.2.8(react@19.2.8))(react@19.2.8))(react-dom@19.2.8(react@19.2.8))(react@19.2.8)(zod@4.4.3)
+      fumadocs-core: 16.15.2(@mdx-js/mdx@3.1.1)(@types/estree-jsx@1.0.5)(@types/hast@3.0.5)(@types/mdast@4.0.4)(@types/react@19.2.18)(lucide-react@1.34.0(react@19.2.8))(next@16.3.3(@types/node@26.3.0)(react-dom@19.2.8(react@19.2.8))(react@19.2.8))(react-dom@19.2.8(react@19.2.8))(react@19.2.8)(zod@4.4.3)
       github-slugger: 2.0.0
       magic-string: 1.2.2
       mdast-util-mdx: 3.0.0
@@ -9995,7 +9982,7 @@ snapshots:
     transitivePeerDependencies:
       - supports-color
 
-  fumadocs-ui@16.15.1(@types/mdx@2.0.14)(@types/react-dom@19.2.5(@types/react@19.2.18))(@types/react@19.2.18)(fumadocs-core@16.15.1(@mdx-js/mdx@3.1.1)(@types/estree-jsx@1.0.5)(@types/hast@3.0.5)(@types/mdast@4.0.4)(@types/react@19.2.18)(lucide-react@1.34.0(react@19.2.8))(next@16.3.3(@types/node@26.3.0)(react-dom@19.2.8(react@19.2.8))(react@19.2.8))(react-dom@19.2.8(react@19.2.8))(react@19.2.8)(zod@4.4.3))(next@16.3.3(@types/node@26.3.0)(react-dom@19.2.8(react@19.2.8))(react@19.2.8))(react-dom@19.2.8(react@19.2.8))(react@19.2.8):
+  fumadocs-ui@16.15.2(@types/mdx@2.0.14)(@types/react-dom@19.2.5(@types/react@19.2.18))(@types/react@19.2.18)(fumadocs-core@16.15.2(@mdx-js/mdx@3.1.1)(@types/estree-jsx@1.0.5)(@types/hast@3.0.5)(@types/mdast@4.0.4)(@types/react@19.2.18)(lucide-react@1.34.0(react@19.2.8))(next@16.3.3(@types/node@26.3.0)(react-dom@19.2.8(react@19.2.8))(react@19.2.8))(react-dom@19.2.8(react@19.2.8))(react@19.2.8)(zod@4.4.3))(next@16.3.3(@types/node@26.3.0)(react-dom@19.2.8(react@19.2.8))(react@19.2.8))(react-dom@19.2.8(react@19.2.8))(react@19.2.8):
     dependencies:
       '@fuma-translate/react': 1.0.2(@types/react@19.2.18)(react-dom@19.2.8(react@19.2.8))(react@19.2.8)
       '@fumadocs/tailwind': 0.1.1
@@ -10011,7 +9998,7 @@ snapshots:
       '@radix-ui/react-tabs': 1.1.21(@types/react-dom@19.2.5(@types/react@19.2.18))(@types/react@19.2.18)(react-dom@19.2.8(react@19.2.8))(react@19.2.8)
       class-variance-authority: 0.7.1
       cnfast: 0.1.0
-      fumadocs-core: 16.15.1(@mdx-js/mdx@3.1.1)(@types/estree-jsx@1.0.5)(@types/hast@3.0.5)(@types/mdast@4.0.4)(@types/react@19.2.18)(lucide-react@1.34.0(react@19.2.8))(next@16.3.3(@types/node@26.3.0)(react-dom@19.2.8(react@19.2.8))(react@19.2.8))(react-dom@19.2.8(react@19.2.8))(react@19.2.8)(zod@4.4.3)
+      fumadocs-core: 16.15.2(@mdx-js/mdx@3.1.1)(@types/estree-jsx@1.0.5)(@types/hast@3.0.5)(@types/mdast@4.0.4)(@types/react@19.2.18)(lucide-react@1.34.0(react@19.2.8))(next@16.3.3(@types/node@26.3.0)(react-dom@19.2.8(react@19.2.8))(react@19.2.8))(react-dom@19.2.8(react@19.2.8))(react@19.2.8)(zod@4.4.3)
       lucide-react: 1.34.0(react@19.2.8)
       motion: 13.1.1(react-dom@19.2.8(react@19.2.8))(react@19.2.8)
       next-themes: 0.4.6(react-dom@19.2.8(react@19.2.8))(react@19.2.8)
@@ -10175,7 +10162,7 @@ snapshots:
     dependencies:
       '@types/hast': 3.0.5
       '@types/unist': 3.0.3
-      '@ungap/structured-clone': 1.3.3
+      '@ungap/structured-clone': 1.3.4
       hast-util-from-parse5: 8.0.3
       hast-util-to-parse5: 8.0.1
       html-void-elements: 3.0.0
@@ -10577,15 +10564,15 @@ snapshots:
     dependencies:
       '@keyv/serialize': 1.1.1
 
-  knip@6.32.2:
+  knip@6.32.3:
     dependencies:
-      fdir: 6.5.0(picomatch@4.0.5)
+      fdir: 6.5.0(picomatch@4.0.7)
       formatly: 0.3.0
       get-tsconfig: 4.14.1
       jiti: 2.7.0
       oxc-parser: 0.143.0
       oxc-resolver: 11.24.2
-      picomatch: 4.0.5
+      picomatch: 4.0.7
       smol-toml: 1.8.0
       strip-json-comments: 5.0.3
       tinyglobby: 0.2.17
@@ -10896,7 +10883,7 @@ snapshots:
     dependencies:
       '@types/hast': 3.0.5
       '@types/mdast': 4.0.4
-      '@ungap/structured-clone': 1.3.3
+      '@ungap/structured-clone': 1.3.4
       devlop: 1.1.0
       micromark-util-sanitize-uri: 2.0.1
       trim-lines: 3.0.1
@@ -12582,8 +12569,8 @@ snapshots:
 
   tinyglobby@0.2.17:
     dependencies:
-      fdir: 6.5.0(picomatch@4.0.5)
-      picomatch: 4.0.5
+      fdir: 6.5.0(picomatch@4.0.7)
+      picomatch: 4.0.7
 
   tinypool@2.1.0: {}
 
@@ -12807,10 +12794,10 @@ snapshots:
 
   vary@1.1.2: {}
 
-  verdaccio-audit@13.1.2:
+  verdaccio-audit@13.1.3:
     dependencies:
-      '@verdaccio/config': 8.2.2
-      '@verdaccio/core': 8.2.2
+      '@verdaccio/config': 8.3.0
+      '@verdaccio/core': 8.3.0
       express: 4.22.2
       https-proxy-agent: 5.0.1
       node-fetch: 2.6.7
@@ -12818,9 +12805,9 @@ snapshots:
       - encoding
       - supports-color
 
-  verdaccio-htpasswd@13.1.2:
+  verdaccio-htpasswd@13.1.3:
     dependencies:
-      '@verdaccio/core': 8.2.2
+      '@verdaccio/core': 8.3.0
       '@verdaccio/file-locking': 13.1.0
       apache-md5: 1.1.8
       bcryptjs: 2.4.3
@@ -12830,25 +12817,24 @@ snapshots:
     transitivePeerDependencies:
       - supports-color
 
-  verdaccio@6.10.0(typanion@3.14.0):
+  verdaccio@6.10.1(typanion@3.14.0):
     dependencies:
       '@cypress/request': 4.0.1
-      '@verdaccio/auth': 8.1.2
-      '@verdaccio/config': 8.2.2
-      '@verdaccio/core': 8.2.2
-      '@verdaccio/hooks': 8.1.3
-      '@verdaccio/loaders': 8.1.2
-      '@verdaccio/local-storage-legacy': 11.4.2
-      '@verdaccio/logger': 8.1.2
-      '@verdaccio/middleware': 8.1.2
-      '@verdaccio/package-filter': 13.2.0
+      '@verdaccio/auth': 8.1.3
+      '@verdaccio/config': 8.3.0
+      '@verdaccio/core': 8.3.0
+      '@verdaccio/hooks': 8.1.4
+      '@verdaccio/loaders': 8.1.3
+      '@verdaccio/local-storage-legacy': 11.4.3
+      '@verdaccio/logger': 8.1.3
+      '@verdaccio/middleware': 8.1.3
+      '@verdaccio/package-filter': 13.2.1
       '@verdaccio/search-indexer': 8.1.0
-      '@verdaccio/signature': 8.1.2
+      '@verdaccio/signature': 8.1.3
       '@verdaccio/streams': 10.3.0
-      '@verdaccio/tarball': 13.1.2
-      '@verdaccio/ui-theme': 9.0.0-next-9.26
-      '@verdaccio/url': 13.1.2
-      '@verdaccio/utils': 8.2.2
+      '@verdaccio/tarball': 13.1.3
+      '@verdaccio/ui-theme': 9.0.0-next-9.28
+      '@verdaccio/url': 13.1.3
       JSONStream: 1.3.5
       async: 3.2.6
       clipanion: 4.0.0-rc.4(typanion@3.14.0)
@@ -12861,8 +12847,8 @@ snapshots:
       lru-cache: 7.18.3
       mime: 3.0.0
       semver: 7.8.5
-      verdaccio-audit: 13.1.2
-      verdaccio-htpasswd: 13.1.2
+      verdaccio-audit: 13.1.3
+      verdaccio-htpasswd: 13.1.3
     transitivePeerDependencies:
       - bare-abort-controller
       - bare-buffer
