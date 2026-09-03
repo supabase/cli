@@ -1138,10 +1138,17 @@ describe("Supervisor composition", () => {
         const stop = yield* Effect.forkChild(fixture.supervisor.maintenanceHandlers.stop);
         yield* Deferred.await(stopStarted);
         expect((yield* fixture.supervisor.status).lifecycle).toBe("stopping");
+        const duringStop = yield* fixture.supervisor.logs();
+        expect(duringStop.running).toBe(true);
+        expect(duringStop.entries).toHaveLength(1);
 
         yield* Deferred.succeed(stopGate, undefined);
         expect((yield* Fiber.join(stop)).ok).toBe(true);
         expect((yield* fixture.supervisor.status).lifecycle).toBe("stopped");
+        const afterStop = yield* fixture.supervisor.logs();
+        expect(afterStop.running).toBe(false);
+        expect(afterStop.entries).toHaveLength(2);
+        expect(afterStop.entries.filter(({ message }) => message === "stopped")).toHaveLength(1);
       }),
     ),
   );
