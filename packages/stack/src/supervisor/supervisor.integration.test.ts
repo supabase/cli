@@ -1631,7 +1631,9 @@ describe("Supervisor composition", () => {
           context: fixture.context,
           runtime: fixture.runtime,
         });
+        yield* Ref.set(fixture.calls, []);
         expect((yield* successor.start()).lifecycle).toBe("running");
+        expect(yield* Ref.get(fixture.calls)).toContain("start:database:database");
         expect((yield* successor.maintenanceHandlers.stop).ok).toBe(true);
       }),
     ),
