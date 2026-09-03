@@ -406,25 +406,10 @@ const flags = (
 const failError = (exit: Exit.Exit<unknown, unknown>) =>
   Exit.isFailure(exit) ? exit.cause.reasons.find(Cause.isFailReason)?.error : undefined;
 
-const seedDeclarative = (workdir: string, sql = "create table a();") => {
+const seedDeclarative = (workdir: string) => {
   const dir = join(workdir, "supabase", "schemas");
   mkdirSync(dir, { recursive: true });
-  writeFileSync(join(dir, "public.sql"), sql);
-};
-
-/** A maintained, converged tree that declares the extensions whose objects it manages. */
-const MAINTAINED_TREE_SQL = [
-  "create extension if not exists pg_cron with schema pg_catalog;",
-  "create extension if not exists pgmq;",
-  "create table a();",
-  "",
-].join("\n");
-
-const migrationSql = (workdir: string) => {
-  const dir = join(workdir, "supabase", "migrations");
-  const [file] = readdirSync(dir);
-  expect(file).toBeDefined();
-  return readFileSync(join(dir, file ?? ""), "utf8");
+  writeFileSync(join(dir, "public.sql"), "create table a();");
 };
 
 const seedLegacyUuidDeclarative = (workdir: string, directory = "schemas") => {
@@ -1245,7 +1230,7 @@ describe("legacy db schema declarative sync integration", () => {
       diffSql:
         "select cron.unschedule('refresh download metrics');\nDROP EXTENSION \"pgcrypto\";\n",
       removals: {
-        extensions: ["pgcrypto", "uuid-ossp"],
+        extensions: ["pg_cron", "pgcrypto", "uuid-ossp"],
         extensionIntents: [
           { extension: "pg_cron", intentKind: "job", key: "refresh download metrics" },
         ],
@@ -1270,74 +1255,28 @@ describe("legacy db schema declarative sync integration", () => {
     }).pipe(Effect.provide(s.layer));
   });
 
-  it.effect("honours deleting a pgmq queue from a maintained tree as a destructive change", () => {
-    // Dogfooding scenario (CLI-2282): the tree declares pgmq, one queue declaration
-    // is removed alongside unrelated schema work. Previously the whole sync — the
-    // unrelated work included — was refused as a legacy export.
-    seedDeclarative(tmp.current, MAINTAINED_TREE_SQL);
-    const s = setup(tmp.current, {
-      engineImplementation: "next",
-      yes: true,
-      diffSql: "ALTER TABLE a ADD COLUMN b int;\nselect pgmq.drop_queue('emails');\n",
-      removals: {
-        extensions: [],
-        extensionIntents: [{ extension: "pgmq", intentKind: "queue", key: "emails" }],
-      },
-    });
-    return Effect.gen(function* () {
-      yield* legacyDbSchemaDeclarativeSync(flags({ noApply: Option.some(true) }));
-      expect(migrationSql(tmp.current)).toContain("pgmq.drop_queue('emails')");
-      const stderr = stripAnsi(s.out.stderrText);
-      expect(stderr).not.toContain("looks like a legacy pg-delta export");
-      expect(stderr).toContain(
-        "Found destructive changes in schema diff. Please double check if these are expected:\npgmq queue emails",
-      );
-    }).pipe(Effect.provide(s.layer));
-  });
-
-  it.effect("renames a pg_cron job on a maintained tree without refusing", () => {
-    seedDeclarative(tmp.current, MAINTAINED_TREE_SQL);
-    const s = setup(tmp.current, {
-      engineImplementation: "next",
-      yes: true,
-      diffSql: [
-        "select cron.unschedule('refresh metrics');",
-        "select cron.schedule('refresh download metrics', '0 * * * *', $$select 1$$);",
-        "",
-      ].join("\n"),
-      removals: {
-        extensions: [],
-        extensionIntents: [{ extension: "pg_cron", intentKind: "job", key: "refresh metrics" }],
-      },
-    });
-    return Effect.gen(function* () {
-      yield* legacyDbSchemaDeclarativeSync(flags({ noApply: Option.some(true) }));
-      const sql = migrationSql(tmp.current);
-      expect(sql).toContain("cron.unschedule('refresh metrics')");
-      expect(sql).toContain("cron.schedule('refresh download metrics'");
-      expect(stripAnsi(s.out.stderrText)).toContain("pg_cron job refresh metrics");
-    }).pipe(Effect.provide(s.layer));
-  });
-
-  it.effect("offers to continue with removals from the staged-export prompt", () => {
+  it.effect("writes cron job and pgmq queue removals without a legacy-export refusal", () => {
     seedDeclarative(tmp.current);
     const s = setup(tmp.current, {
       engineImplementation: "next",
-      stdinIsTty: true,
-      diffSql: 'DROP EXTENSION "postgis";\n',
-      removals: { extensions: ["postgis"], extensionIntents: [] },
-      promptSelectResponses: ["continue"],
+      yes: true,
+      diffSql: "select cron.unschedule('refresh metrics');\nselect pgmq.drop_queue('emails');\n",
+      removals: {
+        extensions: [],
+        extensionIntents: [
+          { extension: "pg_cron", intentKind: "job", key: "refresh metrics" },
+          { extension: "pgmq", intentKind: "queue", key: "emails" },
+        ],
+      },
     });
     return Effect.gen(function* () {
       yield* legacyDbSchemaDeclarativeSync(flags({ noApply: Option.some(true) }));
-      expect((s.out.promptSelectCalls[0]?.options ?? []).map((o) => o.value)).toEqual([
-        "stage",
-        "continue",
-        "cancel",
-      ]);
-      expect(migrationSql(tmp.current)).toContain('DROP EXTENSION "postgis"');
-      expect(existsSync(join(tmp.current, "supabase", "schemas-next"))).toBe(false);
-      expect(stripAnsi(s.out.stderrText)).toContain("Found destructive changes in schema diff");
+      const migrationsDir = join(tmp.current, "supabase", "migrations");
+      const [migration] = readdirSync(migrationsDir);
+      const sql = readFileSync(join(migrationsDir, migration ?? ""), "utf8");
+      expect(sql).toContain("cron.unschedule('refresh metrics')");
+      expect(sql).toContain("pgmq.drop_queue('emails')");
+      expect(stripAnsi(s.out.stderrText)).not.toContain("legacy pg-delta export");
     }).pipe(Effect.provide(s.layer));
   });
 

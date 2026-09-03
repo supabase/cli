@@ -73,7 +73,7 @@ disabling safe compaction.
 | `1`  | no declarative schema files found                                                                   |
 | `1`  | shadow-database / selected pg-delta engine / diff failure                                           |
 | `1`  | apply failure (when applied) — propagated from the native migration apply (`applyMigrationToLocal`) |
-| `1`  | legacy extension omissions in non-interactive mode                                                  |
+| `1`  | repairable legacy extension omissions in non-interactive mode                                       |
 
 The pg-delta gate and the mutex check are both raised before any side effects run,
 but the gate wins when both conditions apply simultaneously: the gate check runs
@@ -92,31 +92,22 @@ without prompting; both override the global `--yes`. `--no-apply` and `--apply`
 are mutually exclusive.
 
 A manifest-less legacy tree is refused by two compatibility gates — one when the
-tree fails to load on the bundled engine's shadow, one when the plan removes an
-extension the tree no longer declares (`CREATE EXTENSION` missing). Both render
-the same message (`This <declarative-dir> tree looks like a legacy pg-delta
-export.` plus an indented evidence block, which for the plan gate enumerates the
-extensions and the extension-managed objects — cron jobs, pgmq queues — at risk)
-and both carry the staged-upgrade recipe on the error's suggestion, so the
-generic `Try rerunning the command with --debug` footer is **not** printed.
-Non-interactive execution (including `--yes`) stops there and modifies nothing;
-the only recommended recovery is regenerating into `<declarative-dir>-next`,
-reviewing it, and adopting it.
-
-Removing or renaming an extension-managed object (a `pg_cron` job, a `pgmq`
-queue) whose owning extension the tree still declares is an intentional change
-on a maintained tree, not legacy-export evidence: it never trips the gate. The
-generated migration carries the `cron.unschedule`/`pgmq.drop_queue` call and the
-destructive-changes warning lists it in words (`pg_cron job <name>`,
-`pgmq queue <name>`) after the engine's data-loss statements — with or without an
-export manifest.
+tree fails to load on the bundled engine's shadow, one when the plan drops an
+extension the tree no longer declares (removing or renaming a `pg_cron` job or
+`pgmq` queue declaration is an ordinary change and is never refused). Both render the
+same message (`This <declarative-dir> tree looks like a legacy pg-delta export.`
+plus an indented evidence block) and both carry the staged-upgrade recipe on the
+error's suggestion, so the generic `Try rerunning the command with --debug`
+footer is **not** printed. Non-interactive execution (including `--yes`) stops
+there and modifies nothing; the only recommended recovery is regenerating into
+`<declarative-dir>-next`, reviewing it, and adopting it.
 
 In a TTY both gates additionally offer to generate that staged export
-(recommended), to continue with the removals, or cancel; when the gap is only
-`pgcrypto`, `uuid-ossp`, or `pg_net` the plan gate also offers to append those
-declarations to `<declarative-dir>/extension.sql` and re-plan. The in-place
-repair is an advanced choice (it may surface another gap on the next plan); it
-never overwrites existing SQL or creates an export manifest.
+(recommended), and — when the gap is only `pgcrypto`, `uuid-ossp`, or `pg_net` —
+to append those declarations to `<declarative-dir>/extension.sql` and re-plan, or
+to continue with the removals, or cancel. The in-place repair is an advanced
+choice (it may surface another gap on the next plan); it never overwrites
+existing SQL or creates an export manifest.
 
 ## Notes
 

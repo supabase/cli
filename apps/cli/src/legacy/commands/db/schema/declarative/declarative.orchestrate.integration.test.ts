@@ -245,17 +245,13 @@ describe("legacyDiffDeclarativeToMigrations", () => {
           expect(calls[0]?.noCache).toBe(true);
           expect(calls[0]?.strictCoverage).toBe(true);
           expect(result.manifestPresent).toBe(true);
-          // Data-loss actions first, then every extension-managed object removal in
-          // words — pg-delta does not flag `cron.unschedule` as data loss itself.
           expect(result.dropWarnings).toEqual([
             "ALTER TABLE public.accounts ALTER COLUMN email TYPE text;",
-            "pg_cron job refresh metrics",
           ]);
           expect(result.removals).toEqual({
             extensions: ["pgcrypto"],
             extensionIntents: [{ extension: "pg_cron", intentKind: "job", key: "refresh metrics" }],
           });
-          expect(result.declaredExtensions).toEqual(new Set());
           rmSync(dir, { recursive: true, force: true });
         }),
       ),

@@ -84,6 +84,13 @@ describe("db schema declarative sync (e2e)", () => {
         `CREATE EXTENSION IF NOT EXISTS "${extension}" WITH SCHEMA "extensions";\n`,
       );
     }
+    // Both install into a fixed schema, so no `WITH SCHEMA` clause.
+    for (const extension of ["pg_cron", "pgmq"]) {
+      writeFileSync(
+        path.join(extensionsDir, `${extension}.sql`),
+        `CREATE EXTENSION IF NOT EXISTS "${extension}";\n`,
+      );
+    }
 
     const start = await runSupabase(
       [
@@ -169,6 +176,57 @@ describe("db schema declarative sync (e2e)", () => {
       );
       expect(converged.exitCode, commandFailure(converged)).toBe(0);
       expect(`${converged.stdout}${converged.stderr}`).toContain("No schema changes found");
+    },
+  );
+
+  test(
+    "renames a cron job and drops a pgmq queue declared in the tree",
+    { timeout: SCENARIO_TIMEOUT_MS },
+    async () => {
+      const projectDir = project?.dir;
+      if (projectDir === undefined) throw new Error("declarative sync project was not initialized");
+      const jobsPath = path.join(projectDir, "supabase", "schemas", "jobs.sql");
+      const sync = (name: string) =>
+        runSupabase(
+          ["db", "schema", "declarative", "sync", "--no-apply", "--name", name, "--experimental"],
+          {
+            entrypoint: "legacy",
+            cwd: projectDir,
+            env: NEXT_ENV,
+            exitTimeoutMs: SCENARIO_COMMAND_TIMEOUT_MS,
+          },
+        );
+      const latestMigrationSql = () => {
+        const latest = migrationFiles(projectDir).at(-1);
+        if (latest === undefined) throw new Error("sync did not write a migration");
+        return readFileSync(path.join(projectDir, "supabase", "migrations", latest), "utf8");
+      };
+
+      writeFileSync(
+        jobsPath,
+        [
+          "select cron.schedule('nightly_cleanup', '0 3 * * *', $$delete from public.disposable_note$$);",
+          "select pgmq.create('emails');",
+          "",
+        ].join("\n"),
+      );
+      const added = await sync("add_jobs");
+      expect(added.exitCode, commandFailure(added)).toBe(0);
+      expect(latestMigrationSql()).toContain("cron.schedule('nightly_cleanup'");
+      expect(latestMigrationSql()).toContain("pgmq.create('emails')");
+
+      // Rename the job and drop the queue: previously refused as a legacy export.
+      writeFileSync(
+        jobsPath,
+        "select cron.schedule('weekly_cleanup', '0 3 * * 0', $$delete from public.disposable_note$$);\n",
+      );
+      const removed = await sync("rename_job_drop_queue");
+      expect(removed.exitCode, commandFailure(removed)).toBe(0);
+      expect(`${removed.stdout}${removed.stderr}`).not.toContain("legacy pg-delta export");
+      const sql = latestMigrationSql();
+      expect(sql).toContain("cron.unschedule('nightly_cleanup')");
+      expect(sql).toContain("cron.schedule('weekly_cleanup'");
+      expect(sql).toContain("pgmq.drop_queue('emails')");
     },
   );
 });

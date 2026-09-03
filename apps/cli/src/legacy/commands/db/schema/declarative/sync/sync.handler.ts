@@ -524,7 +524,6 @@ export const legacyDbSchemaDeclarativeSync = Effect.fn("legacy.db.schema.declara
           implementation: engine.implementation,
           manifestPresent: result.manifestPresent,
           removals: result.removals,
-          declaredExtensions: result.declaredExtensions,
         });
         if (compatibility.recommendedAction === "none") break;
 
@@ -558,10 +557,8 @@ export const legacyDbSchemaDeclarativeSync = Effect.fn("legacy.db.schema.declara
               label: `Generate next export to ${stagedDirRel}`,
               hint: "recommended",
             },
-            { value: "continue", label: "Continue with removals" },
             { value: "cancel", label: "Cancel" },
           ]);
-          if (choice === "continue") break;
           if (choice === "stage") yield* stageNextExport();
           return;
         }

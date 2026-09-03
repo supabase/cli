@@ -6,7 +6,6 @@ import {
   legacyExtensionDeclaration,
   legacyFormatDeclarativeGapEvidence,
   legacyFormatDeclarativeUpgradeGate,
-  legacyFormatExtensionIntentRemoval,
   legacyFormatStagedExportAdoption,
   legacyResolveDeclarativeMigrationName,
   legacyResolveDeclarativeSyncApplyDecision,
@@ -19,12 +18,12 @@ const stuck = (message: string) => ({
   message,
 });
 
-const cronJob = { extension: "pg_cron", intentKind: "job", key: "refresh download metrics" };
-const pgmqQueue = { extension: "pgmq", intentKind: "queue", key: "emails" };
-
 const removals = {
-  extensions: ["pgcrypto", "uuid-ossp"],
-  extensionIntents: [cronJob, pgmqQueue],
+  extensions: ["pg_cron", "pgcrypto", "pgmq", "uuid-ossp"],
+  extensionIntents: [
+    { extension: "pg_cron", intentKind: "job", key: "refresh download metrics" },
+    { extension: "pgmq", intentKind: "queue", key: "emails" },
+  ],
 };
 
 const classifyGap = (
@@ -34,7 +33,6 @@ const classifyGap = (
     implementation: "next",
     manifestPresent: false,
     removals,
-    declaredExtensions: new Set(),
     ...overrides,
   });
 
@@ -74,62 +72,25 @@ describe("legacyClassifyDeclarativeCompatibilityGap", () => {
       },
     },
     {
-      name: "stages extension intents whose owning extension the tree does not declare",
-      overrides: { removals: { extensions: [], extensionIntents: [cronJob] } },
+      name: "stages dropped extensions along with the objects they manage",
+      overrides: {},
       expected: {
         recommendedAction: "stage-next-export",
-        repairableExtensions: [],
-        ambiguousRemovals: [],
-        extensionIntents: [cronJob],
+        ambiguousRemovals: ["pg_cron", "pgmq"],
+        extensionIntents: removals.extensionIntents,
       },
     },
     {
-      name: "does not gate an intent removal whose owning extension the tree declares",
+      name: "ignores cron job and pgmq queue removals whose extension stays",
       overrides: {
-        removals: { extensions: [], extensionIntents: [cronJob, pgmqQueue] },
-        declaredExtensions: new Set(["pg_cron", "pgmq"]),
+        removals: { extensions: ["pgcrypto"], extensionIntents: removals.extensionIntents },
       },
-      expected: { recommendedAction: "none", extensionIntents: [] },
+      expected: { recommendedAction: "repair-extensions", extensionIntents: [] },
     },
     {
-      name: "matches declared owners case-insensitively",
-      overrides: {
-        removals: { extensions: [], extensionIntents: [{ ...cronJob, extension: "PG_CRON" }] },
-        declaredExtensions: new Set(["pg_cron"]),
-      },
+      name: "never gates on cron job and pgmq queue removals alone",
+      overrides: { removals: { extensions: [], extensionIntents: removals.extensionIntents } },
       expected: { recommendedAction: "none" },
-    },
-    {
-      name: "gates a mix of declared and undeclared owners on the undeclared ones only",
-      overrides: {
-        removals: { extensions: [], extensionIntents: [cronJob, pgmqQueue] },
-        declaredExtensions: new Set(["pg_cron"]),
-      },
-      expected: { recommendedAction: "stage-next-export", extensionIntents: [pgmqQueue] },
-    },
-    {
-      name: "keeps the whole-extension gate when a declared-owner intent is also removed",
-      overrides: {
-        removals: { extensions: ["postgis"], extensionIntents: [cronJob] },
-        declaredExtensions: new Set(["pg_cron"]),
-      },
-      expected: {
-        recommendedAction: "stage-next-export",
-        ambiguousRemovals: ["postgis"],
-        extensionIntents: [],
-      },
-    },
-    {
-      name: "still offers the in-place repair when only declared-owner intents accompany it",
-      overrides: {
-        removals: { extensions: ["pgcrypto"], extensionIntents: [cronJob] },
-        declaredExtensions: new Set(["pg_cron"]),
-      },
-      expected: {
-        recommendedAction: "repair-extensions",
-        repairableExtensions: ["pgcrypto"],
-        extensionIntents: [],
-      },
     },
     {
       name: "trusts a next export manifest",
@@ -161,24 +122,6 @@ describe("legacyClassifyDeclarativeCompatibilityGap", () => {
     expect(suggestion).toContain(
       "generate --local --overwrite \\\n    --output-dir supabase/schemas-next --experimental",
     );
-  });
-
-  it("formats an extension-managed object removal as a destructive-changes line", () => {
-    expect(legacyFormatExtensionIntentRemoval(cronJob)).toBe(
-      "pg_cron job refresh download metrics",
-    );
-    expect(legacyFormatExtensionIntentRemoval(pgmqQueue)).toBe("pgmq queue emails");
-  });
-
-  it("omits declared-owner intent removals from the gate evidence", () => {
-    expect(
-      legacyFormatDeclarativeGapEvidence(
-        classifyGap({
-          removals: { extensions: ["postgis"], extensionIntents: [cronJob, pgmqQueue] },
-          declaredExtensions: new Set(["pg_cron"]),
-        }),
-      ),
-    ).toEqual(["Extensions: postgis", "Extension-managed objects: pgmq queue emails"]);
   });
 
   it("derives staged-export commands from a custom declarative path", () => {
@@ -226,6 +169,7 @@ describe("legacyFormatDeclarativeUpgradeGate", () => {
         "platform extensions and extension-managed objects like cron jobs.",
         "",
         "  Legacy-implicit extensions: pgcrypto, uuid-ossp",
+        "  Extensions: pg_cron, pgmq",
         "  Extension-managed objects: pg_cron job refresh download metrics, pgmq queue emails",
         "",
         "Do not apply a sync generated from this tree — it can drop extensions or unschedule jobs.",

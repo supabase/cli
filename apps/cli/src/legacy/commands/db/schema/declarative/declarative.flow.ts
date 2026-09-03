@@ -35,25 +35,10 @@ type LegacyDeclarativeCompatibilityAction = "none" | "repair-extensions" | "stag
 
 export interface LegacyDeclarativeCompatibilityGap {
   readonly repairableExtensions: ReadonlyArray<string>;
-  /**
-   * Extension-managed object removals (cron jobs, pgmq queues) whose owning
-   * extension the tree does not declare. A removal whose owner IS declared is an
-   * intentional delete on a maintained tree and never appears here — it flows
-   * through the destructive-changes warning instead.
-   */
   readonly extensionIntents: LegacyPgDeltaRemovalSummary["extensionIntents"];
   readonly ambiguousRemovals: ReadonlyArray<string>;
   readonly recommendedAction: LegacyDeclarativeCompatibilityAction;
 }
-
-/**
- * The destructive-changes warning line for an extension-managed object removal
- * (`pg_cron job <name>`, `pgmq queue <name>`); also the evidence form the
- * plan-refuse gate enumerates.
- */
-export const legacyFormatExtensionIntentRemoval = (
-  intent: LegacyPgDeltaRemovalSummary["extensionIntents"][number],
-): string => `${intent.extension} ${intent.intentKind} ${intent.key}`;
 
 /**
  * Pure control-flow helpers ported from the legacy Go implementation (deleted
@@ -88,23 +73,11 @@ const emptyCompatibilityGap = (): LegacyDeclarativeCompatibilityGap => ({
   recommendedAction: "none",
 });
 
-/**
- * Classifies manifest-less pg-delta next removals without performing any I/O.
- *
- * Only a missing `CREATE EXTENSION` declaration is legacy-export evidence: legacy
- * exports omitted platform extensions wholesale, and a tree that omits `pg_cron`
- * also plans the pg_cron *extension* removal, so the gate still fires for it and
- * still enumerates the jobs at risk. An extension-managed object removal whose
- * owner the tree declares (`declaredExtensions`, from the loaded SQL files) is an
- * intentional delete or rename on a maintained tree and must not trip the gate
- * (CLI-2282); the caller surfaces it through the destructive-changes warning.
- */
+/** Classifies manifest-less pg-delta next removals without performing any I/O. */
 export function legacyClassifyDeclarativeCompatibilityGap(opts: {
   readonly implementation: LegacyPgDeltaImplementation;
   readonly manifestPresent: boolean;
   readonly removals: LegacyPgDeltaRemovalSummary;
-  /** Lower-cased extension names the declarative tree declares. */
-  readonly declaredExtensions: ReadonlySet<string>;
 }): LegacyDeclarativeCompatibilityGap {
   if (opts.implementation !== "next" || opts.manifestPresent) return emptyCompatibilityGap();
 
@@ -115,15 +88,16 @@ export function legacyClassifyDeclarativeCompatibilityGap(opts: {
   const ambiguousRemovals = extensions.filter(
     (extension) => !LEGACY_IMPLICIT_EXTENSIONS.some((implicit) => implicit === extension),
   );
-  const extensionIntents = opts.removals.extensionIntents.filter(
-    (intent) => !opts.declaredExtensions.has(intent.extension.toLowerCase()),
+  // Removing a pg_cron job or pgmq queue declaration is an ordinary delete or
+  // rename on a maintained tree, not legacy-export evidence: only a dropped
+  // extension trips the gate (CLI-2282). Their removals are kept as evidence
+  // solely to enumerate the objects a dropped owning extension takes with it.
+  const extensionIntents = opts.removals.extensionIntents.filter((intent) =>
+    extensions.includes(intent.extension),
   );
 
-  if (extensions.length === 0 && extensionIntents.length === 0) return emptyCompatibilityGap();
-  const repairable =
-    repairableExtensions.length > 0 &&
-    ambiguousRemovals.length === 0 &&
-    extensionIntents.length === 0;
+  if (extensions.length === 0) return emptyCompatibilityGap();
+  const repairable = repairableExtensions.length > 0 && ambiguousRemovals.length === 0;
   return {
     repairableExtensions,
     extensionIntents,
@@ -396,7 +370,7 @@ export function legacyFormatDeclarativeGapEvidence(
     ...(gap.extensionIntents.length > 0
       ? [
           `Extension-managed objects: ${gap.extensionIntents
-            .map(legacyFormatExtensionIntentRemoval)
+            .map((intent) => `${intent.extension} ${intent.intentKind} ${intent.key}`)
             .join(", ")}`,
         ]
       : []),
@@ -419,7 +393,7 @@ export interface LegacyDeclarativeUpgradeGateText {
  * regenerate. Telling a non-interactive user to hand-add an extension
  * declaration is a false trail — on a real legacy tree each declaration only
  * unlocks the next refusal. Interactive flows still offer the repair as an
- * advanced choice, and — for the plan-refuse gate — continuing with the removals.
+ * advanced choice.
  */
 export function legacyFormatDeclarativeUpgradeGate(opts: {
   readonly evidence: ReadonlyArray<string>;
