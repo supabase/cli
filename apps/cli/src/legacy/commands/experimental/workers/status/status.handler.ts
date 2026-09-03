@@ -1,5 +1,7 @@
 import { Effect, Option } from "effect";
 import { Output } from "../../../../../shared/output/output.service.ts";
+import { emitSuccessTrailer } from "../../../../../shared/cli/success-trailer.ts";
+import { legacyAqua } from "../../../../shared/legacy-colors.ts";
 import { legacyRenderWorkerDetails } from "../workers.format.ts";
 import {
   legacyEmitWorkersMachineOutput,
@@ -151,8 +153,10 @@ export const legacyWorkersStatus = Effect.fn("legacy.experimental.workers.status
     // Not while it is being torn down: deletion is asynchronous, so a push here
     // races the tombstone or resurrects the very worker the user is removing.
     if (record.buildState === "failed" && record.deleting !== true) {
-      yield* output.raw(
-        `Fix the issue, then re-run supabase experimental workers push ${name}${refSuffix}.\n`,
+      // Trailer, like every other "what to run next" line in this shell: the
+      // command reports a failed build but exits 0, so the trailer flushes.
+      yield* emitSuccessTrailer(
+        `Fix the issue, then re-run ${legacyAqua(`supabase experimental workers push ${name}${refSuffix}`)}.\n`,
       );
     }
   }).pipe(

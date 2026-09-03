@@ -454,6 +454,13 @@ export const awaitWorkerBuild = Effect.fnUntraced(function* (
     readonly retrySchedule?: Schedule.Schedule<unknown>;
     /** Called with each poll's result, for progress reporting. */
     readonly onPoll?: (worker: WorkerRecord) => Effect.Effect<void>;
+    /**
+     * ` --project-ref <ref>` to append to the suggestion below, when the caller
+     * reached this project through the flag rather than the link. The suggestion
+     * is copy-pasted verbatim, so dropping it re-resolves against whatever this
+     * checkout happens to be linked to.
+     */
+    readonly refSuffix?: string;
   } = {},
 ) {
   const poll = Effect.gen(function* () {
@@ -484,7 +491,7 @@ export const awaitWorkerBuild = Effect.fnUntraced(function* (
     return yield* Effect.fail(
       new WorkerBuildTimeoutError({
         detail: `"${name}" was still building when this command stopped waiting.`,
-        suggestion: `Check on it with \`supabase experimental workers status ${name}\`.`,
+        suggestion: `Check on it with \`supabase experimental workers status ${name}${options.refSuffix ?? ""}\`.`,
       }),
     );
   }
