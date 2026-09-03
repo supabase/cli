@@ -4,8 +4,14 @@ import { Effect, FileSystem, Path } from "effect";
 import { LegacyPlatformApiFactory } from "../auth/legacy-platform-api-factory.service.ts";
 import { LegacyCliSettings } from "../config/legacy-cli-settings.service.ts";
 import { legacyResolveApiExternalUrl } from "./legacy-api-url.ts";
+import { legacyLoadProjectEnv } from "./legacy-db-config.toml-read.ts";
 import { legacyMapTenantApiKeysError } from "./legacy-get-tenant-api-keys.ts";
 import { legacyGetHostname } from "./legacy-hostname.ts";
+import {
+  legacyEnvOverride,
+  legacyEnvOverrideBool,
+  legacyEnvOverridePort,
+} from "./legacy-local-config-values.ts";
 import { KONG_LOCAL_CA_CERT } from "./kong-local-ca-cert.ts";
 import { legacyExtractServiceKeys } from "./legacy-tenant-keys.ts";
 import {
@@ -21,8 +27,10 @@ import {
  * Shared by `seed buckets` and `storage ls/cp/mv/rm`.
  *
  * - `projectRef === ""` (local): base URL from `api.external_url` (else
- * `<scheme>://<host>:<api.port>`), service-role key derived from
- * `auth.{service_role_key,jwt_secret}`, and the Kong CA when the URL is https.
+ * `<scheme>://<host>:<api.port>`), with the `SUPABASE_API_*` env/dotenv
+ * overrides folded in first (see {@link resolveLocalApiConfig}), service-role
+ * key derived from `auth.{service_role_key,jwt_secret}`, and the Kong CA when
+ * the URL is https.
  * - remote: base URL `https://<ref>.<projectHost>`; key from
  * `SUPABASE_AUTH_SERVICE_ROLE_KEY` else `tenant.GetApiKeys`.
  *
@@ -97,7 +105,8 @@ export const legacyResolveStorageCredentials = Effect.fnUntraced(function* (opts
 
   const fs = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
-  const baseUrl = resolveLocalBaseUrl(opts.config);
+  const api = yield* resolveLocalApiConfig(fs, path, cliSettings.workdir, opts.config.api);
+  const baseUrl = legacyResolveApiExternalUrl(api, legacyGetHostname());
   const apiKey = yield* resolveLocalServiceRoleKey(opts.config.auth);
 
   // `status.NewKongClient` installs unconditionally for the local client; its
@@ -107,13 +116,13 @@ export const legacyResolveStorageCredentials = Effect.fnUntraced(function* (opts
   // (the scheme derives from `api.tls.enabled` alone).
   let localKongCa: string | undefined;
   const validatedCa =
-    opts.config.api.enabled && opts.config.api.tls.enabled
+    api.enabled && api.tls.enabled
       ? yield* validateLocalKongTls(
           fs,
           path,
           cliSettings.workdir,
-          opts.config.api.tls.cert_path,
-          opts.config.api.tls.key_path,
+          api.tls.cert_path,
+          api.tls.key_path,
         )
       : undefined;
   if (baseUrl.startsWith("https:")) {
@@ -123,12 +132,75 @@ export const legacyResolveStorageCredentials = Effect.fnUntraced(function* (opts
 });
 
 /**
- * Local API URL: `legacyResolveApiExternalUrl` with `legacyGetHostname` (Go's
- * `utils.GetHostname`) supplying the host when `api.external_url` is unset.
+ * Fold the `SUPABASE_API_*` env/dotenv overrides into the `[api]` fields the
+ * local gateway derives its base URL and TLS material from. Every other local
+ * consumer of these fields already reads them post-override
+ * (`legacy-local-config-values.ts`'s resolvers, `start.handler.ts`'s
+ * `effectiveLocalStorageConfig`); without this fold, a stack brought up with
+ * e.g. `SUPABASE_API_PORT=54331` is unreachable here because the gateway URL
+ * falls back to the raw `config.toml` port (#6452). Loads the nested project
+ * dotenv files itself so a value set only in `supabase/.env`(.local) counts,
+ * matching the `projectEnvValues` the sibling resolvers consume; a caller that
+ * already folded these overrides (`start`) re-resolves to the same values, so
+ * the fold is idempotent. A malformed port/bool override or an unreadable env
+ * file is an invalid-config hard failure, same as the sibling resolvers.
+ * `[remotes.*]` never merges on the local path (`loadCliConfig` receives no
+ * `projectRef` here), so the remote-over-env precedence those resolvers apply
+ * does not arise.
  */
-function resolveLocalBaseUrl(config: LegacyStorageConfigView): string {
-  return legacyResolveApiExternalUrl(config.api, legacyGetHostname());
-}
+const resolveLocalApiConfig = Effect.fnUntraced(function* (
+  fs: FileSystem.FileSystem,
+  path: Path.Path,
+  workdir: string,
+  api: LegacyStorageConfigView["api"],
+) {
+  const projectEnvValues = yield* legacyLoadProjectEnv(fs, path, workdir).pipe(
+    Effect.mapError((cause) => new LegacyStorageConfigError({ message: cause.message })),
+  );
+  return yield* Effect.try({
+    try: () =>
+      ({
+        enabled: legacyEnvOverrideBool(
+          "SUPABASE_API_ENABLED",
+          api.enabled,
+          "api.enabled",
+          projectEnvValues,
+        ),
+        external_url: legacyEnvOverride(
+          "SUPABASE_API_EXTERNAL_URL",
+          api.external_url,
+          projectEnvValues,
+        ),
+        port: legacyEnvOverridePort("SUPABASE_API_PORT", api.port, "api.port", projectEnvValues),
+        tls: {
+          enabled: legacyEnvOverrideBool(
+            "SUPABASE_API_TLS_ENABLED",
+            api.tls.enabled,
+            "api.tls.enabled",
+            projectEnvValues,
+          ),
+          cert_path: legacyEnvOverride(
+            "SUPABASE_API_TLS_CERT_PATH",
+            api.tls.cert_path,
+            projectEnvValues,
+          ),
+          key_path: legacyEnvOverride(
+            "SUPABASE_API_TLS_KEY_PATH",
+            api.tls.key_path,
+            projectEnvValues,
+          ),
+        },
+      }) satisfies LegacyStorageConfigView["api"],
+    // A malformed port/bool override collapses into the tagged storage config
+    // error, preserving the helper's message — the same collapse every other
+    // consumer of these throwing helpers applies (`wrapDbConfigOverride` →
+    // `LegacyDbConfigLoadError`), keeping this Effect error channel tagged.
+    catch: (cause) =>
+      new LegacyStorageConfigError({
+        message: cause instanceof Error ? cause.message : String(cause),
+      }),
+  });
+});
 
 /**
  * Resolve the service-role key for the local Storage gateway, mirroring Go's

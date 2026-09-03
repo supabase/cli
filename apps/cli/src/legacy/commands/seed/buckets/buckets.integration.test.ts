@@ -1061,6 +1061,177 @@ describe("legacy seed buckets", () => {
     );
   });
 
+  it.live("calls the gateway on the SUPABASE_API_PORT override, not the config.toml port", () => {
+    // #6452: the resolved api.port must reach the storage gateway like every
+    // other consumer of that setting.
+    const previous = process.env["SUPABASE_API_PORT"];
+    process.env["SUPABASE_API_PORT"] = "55511";
+    const { layer, requests } = setupLegacySeedBuckets(tmp.current, {
+      toml: "[api]\nport = 54321\n[storage.buckets.images]\npublic = true\n",
+      routes: [
+        { method: "GET", match: "/storage/v1/bucket", body: [] },
+        { method: "POST", match: "/storage/v1/bucket", body: { name: "images" } },
+      ],
+    });
+    return Effect.gen(function* () {
+      const exit = yield* legacySeedBuckets(DEFAULT_FLAGS).pipe(Effect.provide(layer), Effect.exit);
+      expect(Exit.isSuccess(exit)).toBe(true);
+      expect(requests.length).toBeGreaterThan(0);
+      expect(requests.map((r) => new URL(r.url).port)).toEqual(requests.map(() => "55511"));
+    }).pipe(
+      Effect.ensuring(
+        Effect.sync(() => {
+          if (previous === undefined) delete process.env["SUPABASE_API_PORT"];
+          else process.env["SUPABASE_API_PORT"] = previous;
+        }),
+      ),
+    );
+  });
+
+  it.live("honors a SUPABASE_API_PORT set only in supabase/.env", () => {
+    // The dotenv walk participates in the override, same as the other
+    // `projectEnvValues` consumers — no ambient env needed.
+    const { layer, requests } = setupLegacySeedBuckets(tmp.current, {
+      toml: "[api]\nport = 54321\n[storage.buckets.images]\npublic = true\n",
+      files: { "supabase/.env": "SUPABASE_API_PORT=55512\n" },
+      routes: [
+        { method: "GET", match: "/storage/v1/bucket", body: [] },
+        { method: "POST", match: "/storage/v1/bucket", body: { name: "images" } },
+      ],
+    });
+    return Effect.gen(function* () {
+      const exit = yield* legacySeedBuckets(DEFAULT_FLAGS).pipe(Effect.provide(layer), Effect.exit);
+      expect(Exit.isSuccess(exit)).toBe(true);
+      expect(requests.length).toBeGreaterThan(0);
+      expect(requests.map((r) => new URL(r.url).port)).toEqual(requests.map(() => "55512"));
+    });
+  });
+
+  it.live(
+    "switches the gateway to https when SUPABASE_API_TLS_ENABLED overrides the config",
+    () => {
+      const { layer, requests } = setupLegacySeedBuckets(tmp.current, {
+        toml: "[api]\nport = 54321\n[storage.buckets.images]\npublic = true\n",
+        files: { "supabase/.env": "SUPABASE_API_TLS_ENABLED=true\n" },
+        routes: [
+          { method: "GET", match: "/storage/v1/bucket", body: [] },
+          { method: "POST", match: "/storage/v1/bucket", body: { name: "images" } },
+        ],
+      });
+      return Effect.gen(function* () {
+        const exit = yield* legacySeedBuckets(DEFAULT_FLAGS).pipe(
+          Effect.provide(layer),
+          Effect.exit,
+        );
+        expect(Exit.isSuccess(exit)).toBe(true);
+        expect(requests.length).toBeGreaterThan(0);
+        expect(requests.every((r) => r.url.startsWith("https:"))).toBe(true);
+      });
+    },
+  );
+
+  it.live("hard-fails on a malformed SUPABASE_API_PORT override before any gateway call", () => {
+    const { layer, requests } = setupLegacySeedBuckets(tmp.current, {
+      toml: "[api]\nport = 54321\n[storage.buckets.images]\npublic = true\n",
+      files: { "supabase/.env": "SUPABASE_API_PORT=not-a-port\n" },
+      routes: [{ method: "GET", match: "/storage/v1/bucket", body: [] }],
+    });
+    return Effect.gen(function* () {
+      const exit = yield* legacySeedBuckets(DEFAULT_FLAGS).pipe(Effect.provide(layer), Effect.exit);
+      expect(Exit.isFailure(exit)).toBe(true);
+      expect(JSON.stringify(exit)).toContain("Invalid config for api.port: cannot parse");
+      expect(JSON.stringify(exit)).toContain("not-a-port");
+      expect(requests).toHaveLength(0);
+    });
+  });
+
+  it.live("honors a SUPABASE_API_EXTERNAL_URL set only in supabase/.env", () => {
+    const { layer, requests } = setupLegacySeedBuckets(tmp.current, {
+      toml: "[api]\nport = 54321\n[storage.buckets.images]\npublic = true\n",
+      files: { "supabase/.env": "SUPABASE_API_EXTERNAL_URL=http://127.0.0.1:55513\n" },
+      routes: [
+        { method: "GET", match: "/storage/v1/bucket", body: [] },
+        { method: "POST", match: "/storage/v1/bucket", body: { name: "images" } },
+      ],
+    });
+    return Effect.gen(function* () {
+      const exit = yield* legacySeedBuckets(DEFAULT_FLAGS).pipe(Effect.provide(layer), Effect.exit);
+      expect(Exit.isSuccess(exit)).toBe(true);
+      expect(requests.length).toBeGreaterThan(0);
+      expect(requests.every((r) => r.url.startsWith("http://127.0.0.1:55513/"))).toBe(true);
+    });
+  });
+
+  it.live("skips TLS cert validation when SUPABASE_API_ENABLED=false overrides the config", () => {
+    // cert_path without key_path fails validation when the gate is on; the
+    // env-overridden `api.enabled` must switch that gate off, exactly like the
+    // raw config value would.
+    const { layer, requests } = setupLegacySeedBuckets(tmp.current, {
+      toml: '[api.tls]\nenabled = true\ncert_path = "kong.crt"\n[storage.buckets.images]\npublic = true\n',
+      files: { "supabase/.env": "SUPABASE_API_ENABLED=false\n" },
+      routes: [
+        { method: "GET", match: "/storage/v1/bucket", body: [] },
+        { method: "POST", match: "/storage/v1/bucket", body: { name: "images" } },
+      ],
+    });
+    return Effect.gen(function* () {
+      const exit = yield* legacySeedBuckets(DEFAULT_FLAGS).pipe(Effect.provide(layer), Effect.exit);
+      expect(Exit.isSuccess(exit)).toBe(true);
+      // tls.enabled still picks the scheme; only the cert/key validation is gated.
+      expect(requests.every((r) => r.url.startsWith("https:"))).toBe(true);
+    });
+  });
+
+  it.live("reads TLS cert/key paths supplied through env overrides", () => {
+    const { layer, requests } = setupLegacySeedBuckets(tmp.current, {
+      toml: "[api.tls]\nenabled = true\n[storage.buckets.images]\npublic = true\n",
+      files: {
+        "supabase/.env":
+          "SUPABASE_API_TLS_CERT_PATH=kong.crt\nSUPABASE_API_TLS_KEY_PATH=kong.key\n",
+        "supabase/kong.crt": "-----BEGIN CERTIFICATE-----\nstub\n-----END CERTIFICATE-----\n",
+        "supabase/kong.key": "-----BEGIN PRIVATE KEY-----\nstub\n-----END PRIVATE KEY-----\n",
+      },
+      routes: [
+        { method: "GET", match: "/storage/v1/bucket", body: [] },
+        { method: "POST", match: "/storage/v1/bucket", body: { name: "images" } },
+      ],
+    });
+    return Effect.gen(function* () {
+      const exit = yield* legacySeedBuckets(DEFAULT_FLAGS).pipe(Effect.provide(layer), Effect.exit);
+      expect(Exit.isSuccess(exit)).toBe(true);
+      expect(requests.every((r) => r.url.startsWith("https:"))).toBe(true);
+    });
+  });
+
+  it.live("fails on an env-supplied cert path without a key path", () => {
+    const { layer, requests } = setupLegacySeedBuckets(tmp.current, {
+      toml: "[api.tls]\nenabled = true\n[storage.buckets.images]\npublic = true\n",
+      files: { "supabase/.env": "SUPABASE_API_TLS_CERT_PATH=kong.crt\n" },
+      routes: [{ method: "GET", match: "/storage/v1/bucket", body: [] }],
+    });
+    return Effect.gen(function* () {
+      const exit = yield* legacySeedBuckets(DEFAULT_FLAGS).pipe(Effect.provide(layer), Effect.exit);
+      expect(Exit.isFailure(exit)).toBe(true);
+      expect(JSON.stringify(exit)).toContain("Missing required field in config: api.tls.key_path");
+      expect(requests).toHaveLength(0);
+    });
+  });
+
+  it.live("hard-fails on a malformed SUPABASE_API_TLS_ENABLED override", () => {
+    const { layer, requests } = setupLegacySeedBuckets(tmp.current, {
+      toml: "[storage.buckets.images]\npublic = true\n",
+      files: { "supabase/.env": "SUPABASE_API_TLS_ENABLED=notabool\n" },
+      routes: [{ method: "GET", match: "/storage/v1/bucket", body: [] }],
+    });
+    return Effect.gen(function* () {
+      const exit = yield* legacySeedBuckets(DEFAULT_FLAGS).pipe(Effect.provide(layer), Effect.exit);
+      expect(Exit.isFailure(exit)).toBe(true);
+      expect(JSON.stringify(exit)).toContain("Invalid config for api.tls.enabled: cannot parse");
+      expect(JSON.stringify(exit)).toContain("notabool");
+      expect(requests).toHaveLength(0);
+    });
+  });
+
   it.live("tolerates bucket entries with a missing field (Go zero value)", () => {
     const { layer, requests } = setupLegacySeedBuckets(tmp.current, {
       toml: "[storage.buckets.images]\npublic = true\n",

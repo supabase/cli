@@ -1926,16 +1926,14 @@ export const legacyStart = Effect.fn("legacy.start")(function* (flags: LegacySta
         // raw values) so a `SUPABASE_API_ENABLED`/`SUPABASE_API_PORT`/
         // `SUPABASE_API_TLS_{ENABLED,CERT_PATH,KEY_PATH}`/`SUPABASE_API_EXTERNAL_URL`
         // override that actually brought Kong up on a different port/TLS/cert/
-        // external URL also reaches every local Storage-gateway caller below —
-        // otherwise `resolveLocalBaseUrl` derives its URL from the un-overridden
-        // `config.api.{port,tls.enabled,external_url}` and points at a
-        // port/scheme/host nothing is actually listening on, and
-        // `validateLocalKongTls`'s own `opts.config.api.enabled &&
-        // opts.config.api.tls.enabled` gate (`legacy-storage-credentials.ts`)
-        // validates against a cert/key path Kong itself isn't actually serving
-        // from when `api.enabled` disagrees with the raw config (Kong's own spec
-        // uses these same resolved `apiEnabled`/`apiTlsCertPath`/`apiTlsKeyPath`
-        // locals). Also folds in the
+        // external URL also reaches every local Storage-gateway caller below.
+        // `legacyResolveStorageCredentials` now folds the same `SUPABASE_API_*`
+        // overrides itself (`resolveLocalApiConfig`,
+        // `legacy-storage-credentials.ts` — #6452) and re-resolves this
+        // pre-folded config to identical values, so the api fold here is what
+        // guarantees the exact resolved-URL/TLS/cert locals Kong's own spec used
+        // (`apiEnabled`/`apiTlsCertPath`/`apiTlsKeyPath`) are the ones handed
+        // on. Also folds in the
         // already-resolved `values.jwtSecret`/`values.serviceRoleKey` (decrypted,
         // env/dotenv-overridden — the same values the real GoTrue/Storage containers
         // were started with) instead of the raw `config.auth.*`

@@ -6,14 +6,14 @@ stack is used; with `--linked` the remote project is used.
 
 ## Files Read
 
-| Path                                          | Format      | When                                                                                                                                                                                                                                                                        |
-| --------------------------------------------- | ----------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `<workdir>/supabase/config.toml`              | TOML        | always, to read `[storage.buckets]` / `[storage.vector]` config; on `--linked`, the matching `[remotes.<name>]` block (whose `project_id` equals the resolved project ref) is merged over the base config before decode, so remote-specific storage config takes effect     |
-| `<workdir>/supabase/<objects_path>/**`        | any (bytes) | per configured bucket with a non-empty `objects_path`, recursively; a relative `objects_path` resolves under `supabase/`, an absolute path is used as-is                                                                                                                    |
-| `<workdir>/supabase/<api.tls.cert_path>`      | PEM text    | local runs only, when `[api.tls] enabled = true` AND `api.tls.cert_path` is set; the file is read to obtain the CA certificate for trusting the local Kong HTTPS gateway. If `cert_path` is not set, the embedded `kong.local.crt` constant is used instead (no file read). |
-| `<workdir>/supabase/<api.tls.key_path>`       | PEM text    | local runs only, when `[api.tls] enabled = true` AND `api.tls.key_path` is set; read purely to validate the cert/key pairing — the key content is not used by the CLI. If `cert_path` is set without `key_path` (or vice-versa), the command exits `1`.                     |
-| `<workdir>/supabase/.temp/project-ref`        | plain text  | `--linked` only, to resolve the ref — skipped when `--project-ref` (or `SUPABASE_PROJECT_ID`) is set                                                                                                                                                                        |
-| `<workdir>/supabase/.env*`, `<workdir>/.env*` | dotenv      | when no pre-resolved `yes` is passed in (the standalone command; `db reset --local` passes its own), to resolve `SUPABASE_YES` for the overwrite/prune prompts (CLI-1878)                                                                                                   |
+| Path                                          | Format      | When                                                                                                                                                                                                                                                                                                                                                              |
+| --------------------------------------------- | ----------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `<workdir>/supabase/config.toml`              | TOML        | always, to read `[storage.buckets]` / `[storage.vector]` config; on `--linked`, the matching `[remotes.<name>]` block (whose `project_id` equals the resolved project ref) is merged over the base config before decode, so remote-specific storage config takes effect                                                                                           |
+| `<workdir>/supabase/<objects_path>/**`        | any (bytes) | per configured bucket with a non-empty `objects_path`, recursively; a relative `objects_path` resolves under `supabase/`, an absolute path is used as-is                                                                                                                                                                                                          |
+| `<workdir>/supabase/<api.tls.cert_path>`      | PEM text    | local runs only, when `[api.tls] enabled = true` AND `api.tls.cert_path` is set; the file is read to obtain the CA certificate for trusting the local Kong HTTPS gateway. If `cert_path` is not set, the embedded `kong.local.crt` constant is used instead (no file read).                                                                                       |
+| `<workdir>/supabase/<api.tls.key_path>`       | PEM text    | local runs only, when `[api.tls] enabled = true` AND `api.tls.key_path` is set; read purely to validate the cert/key pairing — the key content is not used by the CLI. If `cert_path` is set without `key_path` (or vice-versa), the command exits `1`.                                                                                                           |
+| `<workdir>/supabase/.temp/project-ref`        | plain text  | `--linked` only, to resolve the ref — skipped when `--project-ref` (or `SUPABASE_PROJECT_ID`) is set                                                                                                                                                                                                                                                              |
+| `<workdir>/supabase/.env*`, `<workdir>/.env*` | dotenv      | when no pre-resolved `yes` is passed in (the standalone command; `db reset --local` passes its own), to resolve `SUPABASE_YES` for the overwrite/prune prompts (CLI-1878); additionally on local runs that reach the Storage gateway (not the empty-config short-circuit), to resolve the `SUPABASE_API_*` overrides for the gateway URL and TLS material (#6452) |
 
 ## Files Written
 
@@ -26,7 +26,11 @@ stack is used; with `--linked` the remote project is used.
 ### Storage gateway routes (local and remote)
 
 **Local:** `api.external_url` (default `http://<host>:54321`, where `<host>` resolves as:
-`SUPABASE_SERVICES_HOSTNAME` → TCP `DOCKER_HOST` → `127.0.0.1`).
+`SUPABASE_SERVICES_HOSTNAME` → TCP `DOCKER_HOST` → `127.0.0.1`). The
+`api.{enabled,external_url,port}` and `api.tls.{enabled,cert_path,key_path}`
+values are resolved with their `SUPABASE_API_*` shell/dotenv overrides applied
+first, so the gateway targets the same port/scheme the stack was actually
+brought up on (#6452).
 
 **Remote (`--linked`):** `https://<ref>.<projectHost>` (default host: `supabase.co`).
 
@@ -66,29 +70,31 @@ Analytics bucket routes (`/storage/v1/iceberg/...`) are only reached when
 
 ## Environment Variables
 
-| Variable                         | Purpose                                                                                                                                                                                | Required? |
-| -------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | --------- |
-| `SUPABASE_SERVICES_HOSTNAME`     | override the local services host (highest precedence)                                                                                                                                  | no        |
-| `DOCKER_HOST`                    | when a `tcp://host:port` endpoint, the local services host falls back to it before `127.0.0.1`                                                                                         | no        |
-| `SUPABASE_AUTH_SERVICE_ROLE_KEY` | when set and non-empty: for `--linked`, used as the service-role key (skips Management API key fetch); for local runs, used as the service-role key instead of `auth.service_role_key` | no        |
-| `SUPABASE_AUTH_JWT_SECRET`       | local runs only: when set and non-empty, overrides `auth.jwt_secret` for service-role key derivation                                                                                   | no        |
-| `SUPABASE_YES`                   | auto-confirms the overwrite/prune prompts, same as `--yes`; read from the shell env OR the project `.env`/`.env.local`/`.env.<env>[.local]` files (shell wins; CLI-1878)               | no        |
+| Variable                                                                                                                                                        | Purpose                                                                                                                                                                                | Required? |
+| --------------------------------------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | --------- |
+| `SUPABASE_SERVICES_HOSTNAME`                                                                                                                                    | override the local services host (highest precedence)                                                                                                                                  | no        |
+| `DOCKER_HOST`                                                                                                                                                   | when a `tcp://host:port` endpoint, the local services host falls back to it before `127.0.0.1`                                                                                         | no        |
+| `SUPABASE_AUTH_SERVICE_ROLE_KEY`                                                                                                                                | when set and non-empty: for `--linked`, used as the service-role key (skips Management API key fetch); for local runs, used as the service-role key instead of `auth.service_role_key` | no        |
+| `SUPABASE_AUTH_JWT_SECRET`                                                                                                                                      | local runs only: when set and non-empty, overrides `auth.jwt_secret` for service-role key derivation                                                                                   | no        |
+| `SUPABASE_YES`                                                                                                                                                  | auto-confirms the overwrite/prune prompts, same as `--yes`; read from the shell env OR the project `.env`/`.env.local`/`.env.<env>[.local]` files (shell wins; CLI-1878)               | no        |
+| `SUPABASE_API_PORT`, `SUPABASE_API_EXTERNAL_URL`, `SUPABASE_API_TLS_ENABLED`, `SUPABASE_API_TLS_CERT_PATH`, `SUPABASE_API_TLS_KEY_PATH`, `SUPABASE_API_ENABLED` | local runs only: override the matching `[api]` config fields for the gateway URL derivation and TLS validation, shell env OR project dotenv files (shell wins; #6452)                  | no        |
 
 ## Exit Codes
 
-| Code | Condition                                                                                                     |
-| ---- | ------------------------------------------------------------------------------------------------------------- |
-| `0`  | success (including the empty-config short-circuit)                                                            |
-| `1`  | `supabase/config.toml` parse failure                                                                          |
-| `1`  | `auth.jwt_secret` (or `SUPABASE_AUTH_JWT_SECRET`) set but shorter than 16 characters                          |
-| `1`  | `[storage.buckets]` entry has an invalid name (contains characters outside the allowed bucket-name pattern)   |
-| `1`  | `api.tls.cert_path` set without `api.tls.key_path` (or vice-versa) when `api.tls.enabled = true` (local only) |
-| `1`  | `api.tls.cert_path` or `api.tls.key_path` points to an unreadable file (local TLS only)                       |
-| `1`  | Storage API error (non-2xx) other than vector-unavailable                                                     |
-| `1`  | network / connection failure to the Storage gateway                                                           |
-| `1`  | malformed list response (a 200 body whose shape doesn't decode)                                               |
-| `1`  | unreadable `objects_path` (filesystem error during walk/upload)                                               |
-| `1`  | `--project-ref` set without `--linked` (see Notes)                                                            |
+| Code | Condition                                                                                                                                                 |
+| ---- | --------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `0`  | success (including the empty-config short-circuit)                                                                                                        |
+| `1`  | `supabase/config.toml` parse failure                                                                                                                      |
+| `1`  | `auth.jwt_secret` (or `SUPABASE_AUTH_JWT_SECRET`) set but shorter than 16 characters                                                                      |
+| `1`  | `[storage.buckets]` entry has an invalid name (contains characters outside the allowed bucket-name pattern)                                               |
+| `1`  | `api.tls.cert_path` set without `api.tls.key_path` (or vice-versa) when `api.tls.enabled = true` (local only)                                             |
+| `1`  | malformed `SUPABASE_API_PORT` / `SUPABASE_API_ENABLED` / `SUPABASE_API_TLS_ENABLED` override, or an unreadable/malformed project dotenv file (local only) |
+| `1`  | `api.tls.cert_path` or `api.tls.key_path` points to an unreadable file (local TLS only)                                                                   |
+| `1`  | Storage API error (non-2xx) other than vector-unavailable                                                                                                 |
+| `1`  | network / connection failure to the Storage gateway                                                                                                       |
+| `1`  | malformed list response (a 200 body whose shape doesn't decode)                                                                                           |
+| `1`  | unreadable `objects_path` (filesystem error during walk/upload)                                                                                           |
+| `1`  | `--project-ref` set without `--linked` (see Notes)                                                                                                        |
 
 ## Telemetry Events Fired
 
