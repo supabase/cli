@@ -764,6 +764,7 @@ describe("sticky port coordination", () => {
         const stackId = yield* deriveStackId(identity);
         yield* store.initialize(stackId, baseState(stackId, identity, "running"));
         const attempts: number[] = [];
+        const bindCause = new Error("simulated host bind cause");
         const coordinator = makePortCoordinator({
           stateRoot: root,
           store,
@@ -771,7 +772,12 @@ describe("sticky port coordination", () => {
           bindHost: (_address, port, field) => {
             attempts.push(port);
             return Effect.fail(
-              new PortUnavailableError({ port, field, message: "always occupied" }),
+              new PortUnavailableError({
+                port,
+                field,
+                message: "always occupied",
+                cause: bindCause,
+              }),
             );
           },
         });
@@ -781,7 +787,14 @@ describe("sticky port coordination", () => {
             api: { enabled: true, address: "127.0.0.1", port: "automatic" },
           })
           .pipe(Effect.exit);
-        expect(errorOf(result)).toBeInstanceOf(PortUnavailableError);
+        const error = errorOf(result);
+        expect(error).toBeInstanceOf(PortUnavailableError);
+        expect(error?.message).toContain(
+          "Could not bind an automatic public host port for api after 17 candidates",
+        );
+        expect(error?.field).toBe("api");
+        expect(error?.port).toBe(40_016);
+        expect(error?.cause).toMatchObject({ cause: bindCause });
         expect(attempts).toHaveLength(17);
         expect(attempts.at(-1)).toBe(40_016);
         expect((yield* store.read(stackId))?.ports).toEqual([]);

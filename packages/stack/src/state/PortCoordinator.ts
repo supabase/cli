@@ -97,6 +97,7 @@ const PRIVATE_PORT_MAX = 39_999;
 const PUBLIC_PORT_MIN = 40_000;
 const PUBLIC_PORT_MAX = 65_535;
 const MAX_FAILED_HOST_PROBES = 16;
+const MAX_FRESH_BIND_RETRIES = 16;
 
 const assignmentMap = (assignments: ReadonlyArray<HostPortAssignment>) =>
   new Map(assignments.map((assignment) => [assignment.field, assignment]));
@@ -363,15 +364,25 @@ export const makePortCoordinator = (options: PortCoordinatorOptions): PortCoordi
         );
         if (committed.lifecycle === "running") {
           const parentScope = yield* Scope.Scope;
-          const bindingResult = yield* Effect.uninterruptibleMask((restore) =>
+          type BindingResult =
+            | { readonly retryPort: number }
+            | { readonly listeners: ReadonlyArray<HostListener> };
+          const bindingResult: BindingResult = yield* Effect.uninterruptibleMask((restore) =>
             Effect.gen(function* () {
               const listenerScope = yield* Scope.fork(parentScope, "sequential");
               const bound = yield* Effect.exit(
                 restore(
                   Effect.forEach(enabledAssignments, ({ field, intent, assignment }) =>
                     options.bindHost(intent.address, assignment.port, field).pipe(
-                      Effect.catchTag("PortUnavailableError", () =>
-                        Effect.fail(unavailable(assignment.port, field)),
+                      Effect.catchTag("PortUnavailableError", (error) =>
+                        Effect.fail(
+                          new PortUnavailableError({
+                            field,
+                            port: assignment.port,
+                            message: error.message,
+                            ...(error.cause === undefined ? {} : { cause: error.cause }),
+                          }),
+                        ),
                       ),
                       Effect.provideService(Scope.Scope, listenerScope),
                     ),
@@ -392,25 +403,34 @@ export const makePortCoordinator = (options: PortCoordinatorOptions): PortCoordi
                   failedAssignment === undefined
                     ? undefined
                     : priorByField.get(failedAssignment.field);
-                if (
+                const freshAutomaticFailure =
                   failedAssignment !== undefined &&
                   failedAssignment.assignment.intent === "automatic" &&
                   (prior === undefined ||
                     prior.intent !== "automatic" ||
-                    prior.port !== failedAssignment.assignment.port) &&
-                  failedBindAttempts < MAX_FAILED_HOST_PROBES
-                ) {
-                  const failedPort = failedAssignment.assignment.port;
+                    prior.port !== failedAssignment.assignment.port)
+                    ? failedAssignment
+                    : undefined;
+                if (freshAutomaticFailure && failedBindAttempts < MAX_FRESH_BIND_RETRIES) {
+                  const failedPort = freshAutomaticFailure.assignment.port;
                   yield* rollbackFreshAutomatic;
                   return { retryPort: failedPort };
                 }
                 yield* rollbackFreshAutomatic;
+                if (freshAutomaticFailure) {
+                  return yield* new PortUnavailableError({
+                    field: freshAutomaticFailure.field,
+                    port: freshAutomaticFailure.assignment.port,
+                    message: `Could not bind an automatic public host port for ${freshAutomaticFailure.field} after ${MAX_FRESH_BIND_RETRIES + 1} candidates`,
+                    cause: bindError,
+                  });
+                }
                 return yield* Effect.failCause(bound.cause);
               }
               return { listeners: bound.value };
             }),
           );
-          if ("retryPort" in bindingResult && bindingResult.retryPort !== undefined) {
+          if ("retryPort" in bindingResult) {
             excludedFreshPublic.add(bindingResult.retryPort);
             failedBindAttempts += 1;
             continue;

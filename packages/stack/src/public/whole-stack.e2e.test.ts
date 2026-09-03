@@ -1070,7 +1070,7 @@ describe("managed Supabase stack whole-stack E2E", () => {
       { timeout: E2E_TIMEOUT_MS },
       async () => {
         const identity = crypto.randomUUID().replaceAll("-", "").slice(0, 16);
-        const [firstStack, secondStack] = await Promise.all([
+        const creations = await Promise.allSettled([
           createTestStack({
             name: `stack-concurrent-a-${identity}`,
             runtime: mode.runtime,
@@ -1080,6 +1080,22 @@ describe("managed Supabase stack whole-stack E2E", () => {
             runtime: mode.runtime,
           }),
         ]);
+        const firstResult = creations[0];
+        const secondResult = creations[1];
+        if (firstResult?.status !== "fulfilled" || secondResult?.status !== "fulfilled") {
+          await Promise.allSettled(
+            creations.flatMap((result) =>
+              result.status === "fulfilled" ? [result.value[Symbol.asyncDispose]()] : [],
+            ),
+          );
+          const firstRejection = creations.find(
+            (result): result is PromiseRejectedResult => result.status === "rejected",
+          );
+          if (firstRejection !== undefined) throw firstRejection.reason;
+          throw new Error("Concurrent test stack creation returned an incomplete result");
+        }
+        const firstStack = firstResult.value;
+        const secondStack = secondResult.value;
         await using first: TestStack = firstStack;
         await using second: TestStack = secondStack;
 
