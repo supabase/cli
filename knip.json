@@ -3,10 +3,11 @@
   "exclude": ["catalogReferences"],
   "workspaces": {
     ".": {
-      "entry": [".github/scripts/**/*.ts", "tools/*.ts", "tools/release/*.ts"],
+      "entry": [".github/scripts/**/*.ts", "tools/*.ts", "tools/release/*.ts", "vitest.config.mts"],
       "ignore": [".repos/**", "apps/cli-go/**"],
       "ignoreBinaries": ["go"],
-      "ignoreDependencies": ["verdaccio"]
+      "ignoreDependencies": ["verdaccio"],
+      "vitest": false
     },
     "apps/cli": {
       "entry": [
