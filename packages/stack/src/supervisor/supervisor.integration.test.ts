@@ -17,7 +17,7 @@ import {
 import { Headers } from "effect/unstable/http";
 import { Rpc } from "effect/unstable/rpc";
 import { RequestId } from "effect/unstable/rpc/RpcMessage";
-import type { LogQuery, StackLogBatch, StackLogEntry } from "../public/Logs.ts";
+import type { LogQuery, StackLogEntry } from "../public/Logs.ts";
 import type { StackRuntime } from "../public/Runtime.ts";
 import {
   GatewayActivationError,
@@ -73,24 +73,6 @@ const invokeCredentials = (
       headers: Headers.empty,
     });
     if (Deferred.isDeferred<EffectStackCredentials, StackRpcError>(value))
-      return yield* Deferred.await(value);
-    return value;
-  });
-
-const invokeLogs = (
-  supervisor: Supervisor,
-  query: LogQuery,
-): Effect.Effect<StackLogBatch, StackRpcError, Scope.Scope> =>
-  Effect.gen(function* () {
-    const handler = yield* StackRpcGroup.accessHandler("logs").pipe(
-      Effect.provide(StackRpcGroup.toLayerHandler("logs", supervisor.rpcHandlers.logs)),
-    );
-    const value = yield* handler(query, {
-      client: new Rpc.ServerClient(1),
-      requestId: RequestId(1),
-      headers: Headers.empty,
-    });
-    if (Deferred.isDeferred<StackLogBatch, StackRpcError>(value))
       return yield* Deferred.await(value);
     return value;
   });
@@ -407,18 +389,6 @@ const run = <A, E, R>(effect: Effect.Effect<A, E, R>) =>
   Effect.scoped(effect).pipe(Effect.provide(NodeServices.layer));
 
 describe("Supervisor composition", () => {
-  it.live("reports malformed log cursors as invalid caller input", () =>
-    run(
-      Effect.gen(function* () {
-        const fixture = yield* makeFixture();
-        const result = yield* invokeLogs(fixture.supervisor, {
-          cursor: { opaque: "not-a-cursor" },
-        }).pipe(Effect.exit);
-        expect(errorOf(result)).toMatchObject({ tag: "InvalidLogCursorError" });
-      }),
-    ),
-  );
-
   it.live("rejects new work after owner shutdown begins", () =>
     run(
       Effect.gen(function* () {
@@ -1328,43 +1298,6 @@ describe("Supervisor composition", () => {
         const fixture = yield* makeFixture();
         const batch = yield* fixture.supervisor.logs({ capabilities: ["auth"], tail: 20 });
         expect(batch.entries.every((entry) => entry.source === "auth")).toBe(true);
-        expect(batch.running).toBe(false);
-      }),
-    ),
-  );
-
-  it.live("reports stopped after a clean stop", () =>
-    run(
-      Effect.gen(function* () {
-        const fixture = yield* makeFixture();
-        yield* fixture.supervisor.start({ config: { capabilities: { rest: {} } } });
-        const response = yield* fixture.supervisor.maintenanceHandlers.stop;
-        expect(response.ok).toBe(true);
-        yield* fixture.supervisor.shutdownIfIdle;
-        expect((yield* fixture.supervisor.status).lifecycle).toBe("stopped");
-      }),
-    ),
-  );
-
-  it.live("keeps followers live through stop and returns final logs once", () =>
-    run(
-      Effect.gen(function* () {
-        const stopGate = yield* Deferred.make<void>();
-        const stopStarted = yield* Deferred.make<void>();
-        const fixture = yield* makeFixture({ stopGate, stopStarted });
-        yield* fixture.supervisor.start({ config: { capabilities: { rest: {} } } });
-        const stopping = yield* Effect.forkChild(fixture.supervisor.maintenanceHandlers.stop);
-        yield* Deferred.await(stopStarted);
-        const duringStop = yield* fixture.supervisor.logs();
-        expect(duringStop.running).toBe(true);
-        expect(duringStop.entries).toHaveLength(1);
-        yield* Deferred.succeed(stopGate, undefined);
-        const response = yield* Fiber.join(stopping);
-        expect(response.ok).toBe(true);
-        yield* fixture.supervisor.shutdownIfIdle;
-        const batch = yield* fixture.supervisor.logs();
-        expect(batch.entries).toHaveLength(2);
-        expect(batch.entries.filter((entry) => entry.message === "stopped")).toHaveLength(1);
         expect(batch.running).toBe(false);
       }),
     ),

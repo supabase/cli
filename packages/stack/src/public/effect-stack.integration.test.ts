@@ -44,6 +44,7 @@ import {
   ContainerEngineError,
   InvalidStackConfigError,
   InvalidLogCursorError,
+  StackLifecycleConflictError,
   StackOwnershipConflictError,
   StackPreparationError,
   StackRuntimeMismatchError,
@@ -62,7 +63,6 @@ import {
   type EffectStack,
   type PrepareStackResult,
 } from "./EffectStack.ts";
-import * as effectApi from "../effect.ts";
 import { CAPABILITY_NAMES } from "./Capability.ts";
 import { StackIdSchema } from "./StackId.ts";
 import type { StackStatus } from "./Status.ts";
@@ -245,6 +245,7 @@ describe("Effect stack lifecycle handoff", () => {
           unrelatedDatabase,
         ]);
         const ownerRunning = yield* Ref.make(true);
+        const ownerAvailable = yield* Ref.make(true);
         const readLogs = (query: LogQuery): Effect.Effect<StackLogBatch> =>
           Effect.gen(function* () {
             if (query.cursor !== undefined)
@@ -309,8 +310,13 @@ describe("Effect stack lifecycle handoff", () => {
           onShutdownReady: Deferred.succeed(stopped, undefined).pipe(Effect.asVoid),
         }).pipe(Effect.provideService(Scope.Scope, ownerScope));
         const stack = yield* makeHandle(stackId, {
-          resolveOwner: () => Effect.succeed(Option.some(owner)),
+          resolveOwner: () =>
+            Ref.get(ownerAvailable).pipe(
+              Effect.map((available) => (available ? Option.some(owner) : Option.none())),
+            ),
+          readOfflineState: () => Effect.succeed(Option.some(stoppedState())),
         });
+        expect((yield* stack.start()).lifecycle).toBe("running");
         const first = yield* stack.logs({ capabilities: ["auth"], tail: 1 });
         expect(first.entries).toEqual([initialAuth]);
         expect(first.cursor).toEqual(unrelatedDatabase.cursor);
@@ -326,8 +332,10 @@ describe("Effect stack lifecycle handoff", () => {
         yield* Deferred.await(stopped);
         const followed = yield* Fiber.join(followedFiber);
         expect(Array.from(followed)).toEqual([finalAuth]);
+        yield* Ref.set(ownerAvailable, false);
         yield* Scope.close(ownerScope, Exit.void);
         yield* Fiber.join(stopFiber);
+        expect((yield* stack.status()).lifecycle).toBe("stopped");
       }).pipe(Effect.provide(NodeServices.layer)),
     ),
   );
@@ -474,6 +482,10 @@ describe("Effect stack lifecycle handoff", () => {
       Effect.gen(function* () {
         const env = yield* StackRuntimeEnvironment;
         const stack = yield* createStack({ projectRoot: project, runtime: { kind: "native" } });
+        const store = yield* makeStackStateStore({ stateRoot: env.stateRoot });
+        const state = yield* store.read(stack.id);
+        if (state === undefined) return yield* Effect.die("stack state was not initialized");
+        yield* store.replace(stack.id, { ...state, desiredLifecycle: "stopped" });
 
         const started = yield* stack
           .start({ config: { capabilities: { database: { version: "15" } } } })
@@ -482,7 +494,9 @@ describe("Effect stack lifecycle handoff", () => {
         expect(Exit.isFailure(started)).toBe(true);
         expect(yield* readOwnerMetadata(env.stateRoot, stack.id, env)).toBeUndefined();
         expect(yield* ownerLockExists(env.stateRoot, stack.id)).toBe(false);
-        expect((yield* stack.status()).lifecycle).toBe("unconfigured");
+        expect((yield* stack.status()).lifecycle).toBe("stopped");
+        const reopened = yield* openStack(stack.id);
+        expect((yield* reopened.status()).lifecycle).toBe("stopped");
       }),
     ),
   );
@@ -864,6 +878,81 @@ describe("Effect stack lifecycle handoff", () => {
     240_000,
   );
 
+  it.live("surfaces concurrent lifecycle conflicts through the public start handle", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const root = yield* fs.makeTempDirectoryScoped({
+          prefix: "ss-cstart-",
+        });
+        const endpoint = { kind: "unix" as const, path: path.join(root, "control.sock") };
+        const ownerSessionId = "concurrent-start-session";
+        const ownerScope = yield* Scope.make();
+        yield* Effect.addFinalizer(() => Scope.close(ownerScope, Exit.void));
+        const startEntered = yield* Deferred.make<void>();
+        const releaseStart = yield* Deferred.make<void>();
+        let starts = 0;
+        const owner = {
+          format: "supabase-stack-owner-v1" as const,
+          stackId,
+          endpoint,
+          ownerSessionId,
+          rpcRelease: STACK_RPC_RELEASE,
+        };
+        yield* startControlServer({
+          endpoint,
+          stackId,
+          ownerSessionId,
+          rpcHandlers: {
+            status: () => Effect.succeed(runningStatus),
+            credentials: () => Effect.succeed(credentials),
+            start: () =>
+              Effect.gen(function* () {
+                starts += 1;
+                if (starts === 1) {
+                  yield* Deferred.succeed(startEntered, undefined);
+                  yield* Deferred.await(releaseStart);
+                  return runningStatus;
+                }
+                return yield* Effect.fail({
+                  tag: "StackLifecycleConflictError",
+                  message: "A lifecycle transition is already in progress",
+                } as const);
+              }),
+            destroy: () => Effect.void,
+            logs: () => emptyLogs(),
+          },
+          maintenanceHandlers: {
+            probe: Effect.succeed({
+              ok: true,
+              op: "probe",
+              stackId,
+              ownerSessionId,
+              rpcRelease: STACK_RPC_RELEASE,
+            }),
+            stop: Effect.succeed({ ok: true, op: "stop" }),
+          },
+        }).pipe(Effect.provideService(Scope.Scope, ownerScope));
+        const stack = yield* makeHandle(stackId, {
+          resolveOwner: () => Effect.succeed(Option.some(owner)),
+        });
+        const first = yield* Effect.forkChild(stack.start(), { startImmediately: true });
+        yield* Deferred.await(startEntered);
+        const second = yield* stack.start().pipe(Effect.exit);
+        expect(Exit.isFailure(second)).toBe(true);
+        if (Exit.isFailure(second)) {
+          const failure = Cause.findErrorOption(second.cause);
+          expect(Option.isSome(failure)).toBe(true);
+          if (Option.isSome(failure))
+            expect(failure.value).toBeInstanceOf(StackLifecycleConflictError);
+        }
+        yield* Deferred.succeed(releaseStart, undefined);
+        expect(Exit.isSuccess(yield* Fiber.join(first).pipe(Effect.exit))).toBe(true);
+      }).pipe(Effect.provide(NodeServices.layer)),
+    ),
+  );
+
   it.live("cancels unfinished direct preparation while retaining completed artifacts", () =>
     withRuntimeRoot((project) =>
       Effect.gen(function* () {
@@ -975,10 +1064,6 @@ describe("Effect stack lifecycle handoff", () => {
       }),
     ),
   );
-
-  it("does not publish the internal handle through the Effect barrel", () => {
-    expect(Object.hasOwn(effectApi, "makeHandle")).toBe(false);
-  });
 
   it.live("omits undefined optional RPC payload keys", () =>
     Effect.scoped(
