@@ -1061,16 +1061,8 @@ describe("Effect stack lifecycle handoff", () => {
               Effect.gen(function* () {
                 yield* replaced.stop();
                 yield* replaced.destroy();
-                yield* Effect.gen(function* () {
-                  const owner = yield* readOwnerMetadata(env.stateRoot, openId, env);
-                  const locked = yield* ownerLockExists(env.stateRoot, openId);
-                  if (owner !== undefined || locked)
-                    return yield* new StackOwnershipConflictError({
-                      message: "recovered owner did not release ownership",
-                    });
-                }).pipe(
-                  Effect.retry(Schedule.spaced("25 millis").pipe(Schedule.upTo({ times: 200 }))),
-                );
+                expect(yield* readOwnerMetadata(env.stateRoot, openId, env)).toBeUndefined();
+                expect(yield* ownerLockExists(env.stateRoot, openId)).toBe(false);
               }),
             ),
           );
@@ -1086,8 +1078,6 @@ describe("Effect stack lifecycle handoff", () => {
           );
           expect(yield* ownerLockExists(env.stateRoot, openId)).toBe(true);
           yield* cleanupRecovered;
-          expect(yield* readOwnerMetadata(env.stateRoot, openId, env)).toBeUndefined();
-          expect(yield* ownerLockExists(env.stateRoot, openId)).toBe(false);
         }),
       ),
     300_000,
