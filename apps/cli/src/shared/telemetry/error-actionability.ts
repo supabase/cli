@@ -850,7 +850,6 @@ const externalActionabilityByTag: Record<string, ErrorActionabilityAdapter> = {
   StackStateFormatUnsupportedError: () => actionability.invalidConfig,
   StackStateGenerationMismatchError: () => actionability.startStack,
   StackUpgradeRequiredError: () => actionability.startStack,
-  StackUpgradeReplacementError: () => actionability.startStack,
   StackSecretMismatchError: () => actionability.invalidConfig,
   InvalidJwtSigningMaterialError: () => actionability.invalidConfig,
   PortUnavailableError: () => actionability.invalidConfig,

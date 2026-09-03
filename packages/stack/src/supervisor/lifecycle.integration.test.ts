@@ -157,7 +157,7 @@ describe("durable lifecycle controller", () => {
     ),
   );
 
-  it.live("requires restart for pass-through secret changes", () =>
+  it.live("requires stop before applying pass-through secret changes", () =>
     run(
       Effect.gen(function* () {
         const fixture = yield* makeFixture();
@@ -182,7 +182,8 @@ describe("durable lifecycle controller", () => {
         yield* fixture.controller.start({ config: original });
         const running = yield* fixture.controller.start({ config: changed }).pipe(Effect.exit);
         expect(errorOf(running)).toBeInstanceOf(StackMustBeStoppedError);
-        const restarted = yield* fixture.controller.restart({ config: changed });
+        yield* fixture.controller.stop();
+        const restarted = yield* fixture.controller.start({ config: changed });
         expect(restarted.desiredLifecycle).toBe("running");
         expect(restarted.secrets).toMatchObject({
           "secret:functions.settings.functions.hello.env.TOKEN": { value: "two" },
@@ -260,21 +261,6 @@ describe("durable lifecycle controller", () => {
           definition: first.definition,
           inputFingerprint: first.inputFingerprint,
         });
-        expect(fixture.state.calls).toEqual(["preflight"]);
-      }),
-    ),
-  );
-
-  it.live("keeps the running intent when restart preflight fails", () =>
-    run(
-      Effect.gen(function* () {
-        const fixture = yield* makeFixture();
-        const running = yield* fixture.controller.start();
-        fixture.state.calls.length = 0;
-        fixture.state.failPreflight = true;
-        const exit = yield* fixture.controller.restart().pipe(Effect.exit);
-        expect(errorOf(exit)).toBeInstanceOf(StackReconciliationError);
-        expect(yield* fixture.store.read(fixture.id)).toEqual(running);
         expect(fixture.state.calls).toEqual(["preflight"]);
       }),
     ),

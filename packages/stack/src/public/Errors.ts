@@ -50,10 +50,6 @@ export class StackStateFormatUnsupportedError extends Data.TaggedError(
 export class StackUpgradeRequiredError extends Data.TaggedError(
   "StackUpgradeRequiredError",
 )<StackErrorFields> {}
-export class StackUpgradeReplacementError extends Data.TaggedError(
-  "StackUpgradeReplacementError",
-)<StackErrorFields> {}
-
 export class StackSecretMismatchError extends Data.TaggedError(
   "StackSecretMismatchError",
 )<StackErrorFields> {}
@@ -113,7 +109,6 @@ export const STACK_ERROR_TAGS = [
   "StackStateInvalidError",
   "StackStateFormatUnsupportedError",
   "StackUpgradeRequiredError",
-  "StackUpgradeReplacementError",
   "StackSecretMismatchError",
   "InvalidJwtSigningMaterialError",
   "PortAllocationError",
@@ -150,7 +145,6 @@ export type StackError =
   | StackStateInvalidError
   | StackStateFormatUnsupportedError
   | StackUpgradeRequiredError
-  | StackUpgradeReplacementError
   | StackSecretMismatchError
   | InvalidJwtSigningMaterialError
   | PortAllocationError
@@ -230,7 +224,6 @@ export type StackStartError =
   | ServiceStartError
   | ServiceReadinessError
   | ContainerEngineError;
-export type StackRestartError = StackStartError | StackUpgradeReplacementError;
 /** Stable maintenance stop reports cleanup failures as lifecycle conflicts with their message. */
 export type StackStopError = StackOwnershipConflictError | StackLifecycleConflictError;
 export type StackLogsError =

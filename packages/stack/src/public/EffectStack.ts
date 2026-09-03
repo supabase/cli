@@ -10,7 +10,6 @@ import {
   Option,
   Path,
   Predicate,
-  Ref,
   Schedule,
   Scope,
   Schema,
@@ -54,7 +53,6 @@ import {
   ServiceStartError,
   ServiceReadinessError,
   ContainerEngineError,
-  StackUpgradeReplacementError,
   StackStateInvalidError,
   StackStateFormatUnsupportedError,
   StackUpgradeRequiredError,
@@ -70,7 +68,6 @@ import {
   type StackCredentialsError,
   type PrepareStackError,
   type StackStartError,
-  type StackRestartError,
   type StackStopError,
   type StackLogsError,
   type DestroyStackError,
@@ -127,10 +124,6 @@ export interface FindStackOptions {
   readonly projectRoot: string;
   readonly name?: string;
 }
-export interface OpenStackOptions {
-  /** Explicit restart path used to replace an owner from an older RPC release. */
-  readonly replaceIncompatibleOwner?: boolean;
-}
 export interface ListStacksOptions {
   readonly projectRoot?: string;
 }
@@ -156,8 +149,6 @@ export interface EffectStack {
   ) => Effect.Effect<PrepareStackResult, PrepareStackError>;
   // oxlint-disable-next-line effecttsgo/lazy-effect
   readonly start: (options?: StartStackOptions) => Effect.Effect<StackStatus, StackStartError>;
-  // oxlint-disable-next-line effecttsgo/lazy-effect
-  readonly restart: (options?: StartStackOptions) => Effect.Effect<StackStatus, StackRestartError>;
   // oxlint-disable-next-line effecttsgo/lazy-effect
   readonly stop: () => Effect.Effect<void, StackStopError>;
   // oxlint-disable-next-line effecttsgo/lazy-effect
@@ -257,7 +248,6 @@ const stackErrorFactories = {
   StackStateFormatUnsupportedError: (message: string) =>
     new StackStateFormatUnsupportedError({ message }),
   StackUpgradeRequiredError: (message: string) => new StackUpgradeRequiredError({ message }),
-  StackUpgradeReplacementError: (message: string) => new StackUpgradeReplacementError({ message }),
   StackSecretMismatchError: (message: string) => new StackSecretMismatchError({ message }),
   InvalidJwtSigningMaterialError: (message: string) =>
     new InvalidJwtSigningMaterialError({ message }),
@@ -280,7 +270,8 @@ const errorForRpc = (error: ControlError): StackError => {
     Predicate.isTagged(error, "StackOwnershipConflictError") ||
     Predicate.isTagged(error, "StackLifecycleConflictError") ||
     Predicate.isTagged(error, "StackStateInvalidError") ||
-    Predicate.isTagged(error, "StackStateFormatUnsupportedError")
+    Predicate.isTagged(error, "StackStateFormatUnsupportedError") ||
+    Predicate.isTagged(error, "StackUpgradeRequiredError")
   )
     return error;
   if (
@@ -368,37 +359,6 @@ const startError = (error: ControlError): StackStartError => {
     : new StackStateInvalidError({ message: mapped.message });
 };
 
-const restartError = (error: ControlError): StackRestartError => {
-  const mapped = errorForRpc(error);
-  return mapped instanceof StackUpgradeReplacementError ? mapped : startError(error);
-};
-
-const restartErrorFromStack = (error: StackError): StackRestartError =>
-  error instanceof StackUpgradeReplacementError ||
-  error instanceof InvalidStackConfigError ||
-  error instanceof StackDefinitionRequiredError ||
-  error instanceof StackVersionUnsupportedError ||
-  error instanceof StackOwnershipConflictError ||
-  error instanceof StackNotRunningError ||
-  error instanceof StackMustBeStoppedError ||
-  error instanceof StackLifecycleConflictError ||
-  error instanceof StackStateInvalidError ||
-  error instanceof StackStateFormatUnsupportedError ||
-  error instanceof StackUpgradeRequiredError ||
-  error instanceof StackSecretMismatchError ||
-  error instanceof InvalidJwtSigningMaterialError ||
-  error instanceof PortAllocationError ||
-  error instanceof PortUnavailableError ||
-  error instanceof StackPreparationError ||
-  error instanceof ArtifactIntegrityError ||
-  error instanceof ContainerPullError ||
-  error instanceof StackReconciliationError ||
-  error instanceof ServiceStartError ||
-  error instanceof ServiceReadinessError ||
-  error instanceof ContainerEngineError
-    ? error
-    : new StackLifecycleConflictError({ message: error.message });
-
 const stopError = (error: ControlError): StackStopError => {
   const mapped = errorForRpc(error);
   return mapped instanceof StackOwnershipConflictError ||
@@ -448,16 +408,12 @@ export const makeHandle = (
     >;
     readonly readLogs?: (query?: LogQuery) => Effect.Effect<StackLogBatch, StackLogsError>;
     readonly waitForRelease?: () => Effect.Effect<void, StackStopError>;
-    readonly replacement?: (options?: StartStackOptions) => Effect.Effect<StackStatus, StackError>;
   } = {},
 ): Effect.Effect<EffectStack> =>
-  Effect.gen(function* () {
+  Effect.sync(() => {
     const readOfflineState = options.readOfflineState;
     const readPersistedState = options.readPersistedState;
     const readLogs = options.readLogs;
-    let replacement = options.replacement;
-    type ReplacementExit = Exit.Exit<StackStatus, StackRestartError>;
-    const replacementActive = yield* Ref.make(false);
     const client: ReturnType<typeof makeControlClient> | undefined =
       metadata.endpoint !== undefined &&
       metadata.ownerSessionId !== undefined &&
@@ -506,7 +462,7 @@ export const makeHandle = (
           ) {
             const mismatch: StackRpcError = {
               tag: "StackRpcProtocolError",
-              message: `Stack owner release ${probe.value.rpcRelease} requires explicit restart`,
+              message: `Stack owner release ${probe.value.rpcRelease} requires stop before start`,
             };
             return Effect.fail(mapError(mismatch));
           }
@@ -697,7 +653,7 @@ export const makeHandle = (
                           new StackOwnershipConflictError({
                             stackId: id,
                             message:
-                              "Stack has running intent without a reachable Supervisor; restart it before preparing",
+                              "Stack has running intent without a reachable Supervisor; stop it before preparing",
                           }),
                         )
                       : Effect.succeed(false),
@@ -787,48 +743,6 @@ export const makeHandle = (
       credentials: () => invoke((rpc) => rpc.credentials(undefined), credentialsError),
       prepare,
       start,
-      restart: (options) =>
-        Effect.gen(function* () {
-          if (replacement !== undefined) {
-            const admitted = yield* Ref.modify(replacementActive, (active) =>
-              active ? [false, true] : [true, true],
-            );
-            if (!admitted)
-              return yield* new StackLifecycleConflictError({
-                message: "A replacement restart is already active",
-              });
-            const result = yield* Deferred.make<ReplacementExit>();
-            const ownerFiber = replacement(options).pipe(
-              Effect.mapError(restartErrorFromStack),
-              Effect.exit,
-              Effect.tap((exit) =>
-                (Exit.isSuccess(exit)
-                  ? Effect.sync(() => {
-                      replacement = undefined;
-                    })
-                  : Effect.void
-                ).pipe(
-                  Effect.andThen(Ref.set(replacementActive, false)),
-                  Effect.andThen(Deferred.succeed(result, exit)),
-                ),
-              ),
-            );
-            // Replacement owns a stop/start handoff. It must finish even when the initiating
-            // request is interrupted, while later callers receive an explicit conflict.
-            yield* ownerFiber.pipe(Effect.forkDetach);
-            const exit = yield* Deferred.await(result);
-            if (Exit.isFailure(exit)) return yield* Effect.failCause(exit.cause);
-            return exit.value;
-          }
-          return yield* invoke(
-            (rpc) =>
-              options?.config === undefined
-                ? rpc.restart({})
-                : rpc.restart({ config: options.config }),
-            restartError,
-            true,
-          );
-        }),
       stop,
       destroy: () => destroyAndAwaitOwner,
       logs,
@@ -859,98 +773,6 @@ export const makeHandle = (
           );
         }),
     } satisfies EffectStack;
-  });
-
-const replaceIncompatibleOwner = (
-  id: StackId,
-  state: PersistedStackState,
-  owner: OwnerMetadata,
-  env: StackRuntimeEnvironmentValue,
-  store: StackStateStore,
-): Effect.Effect<
-  EffectStack,
-  OpenStackError,
-  Scope.Scope | FileSystem.FileSystem | Path.Path | Crypto.Crypto | ChildProcessSpawnerService
-> =>
-  Effect.gen(function* () {
-    const client = makeControlClient(owner.endpoint, {
-      stackId: id,
-      ownerSessionId: owner.ownerSessionId,
-    });
-    const probeExit = yield* client.probe().pipe(Effect.exit);
-    if (Exit.isFailure(probeExit)) {
-      const failure = Cause.findErrorOption(probeExit.cause);
-      const transportFailure =
-        Option.isSome(failure) && isMaintenanceTransportFailure(failure.value);
-      if (!transportFailure)
-        return yield* new StackOwnershipConflictError({
-          stackId: id,
-          message: Option.isSome(failure)
-            ? `Unable to probe incompatible stack owner: ${failure.value.message}`
-            : "Unable to probe incompatible stack owner",
-        });
-      const currentOwner = yield* ensureSupervisor({
-        identity: runtimeIdentity(state.identity),
-        stackId: id,
-        stateStore: store,
-        environment: env,
-      });
-      return yield* makeHandle(id, currentOwner);
-    }
-    // Stable maintenance stop is supported across RPC releases and fully shuts down
-    // the previous owner before replacement is launched.
-    const responseExit = yield* client.stop().pipe(Effect.exit);
-    if (Exit.isFailure(responseExit)) {
-      const failure = Cause.findErrorOption(responseExit.cause);
-      const transportFailure =
-        Option.isSome(failure) && isMaintenanceTransportFailure(failure.value);
-      if (!transportFailure)
-        return yield* new StackOwnershipConflictError({
-          stackId: id,
-          message: Option.isSome(failure)
-            ? `Unable to stop incompatible stack owner: ${failure.value.message}`
-            : "Unable to stop incompatible stack owner",
-        });
-      return yield* new StackOwnershipConflictError({
-        stackId: id,
-        message: "Live incompatible stack owner stopped responding during stop",
-      });
-    }
-    const response = responseExit.value;
-    if (!response.ok)
-      return yield* new StackOwnershipConflictError({
-        stackId: id,
-        message: response.error.message,
-      });
-
-    const released = Effect.gen(function* () {
-      const current = yield* readOwnerMetadata(env.stateRoot, id, env);
-      if (current !== undefined)
-        return yield* new StackOwnershipConflictError({
-          stackId: id,
-          message: "Previous stack owner is still shutting down",
-        });
-      if (yield* ownerLockExists(env.stateRoot, id))
-        return yield* new StackOwnershipConflictError({
-          stackId: id,
-          message: "Previous stack ownership lease is still held",
-        });
-    }).pipe(
-      Effect.retry(Schedule.spaced("25 millis").pipe(Schedule.upTo({ times: 200 }))),
-      Effect.mapError((error) =>
-        error instanceof StackOwnershipConflictError
-          ? error
-          : new StackStateInvalidError({ message: String(error) }),
-      ),
-    );
-    yield* released;
-    const currentOwner = yield* ensureSupervisor({
-      identity: runtimeIdentity(state.identity),
-      stackId: id,
-      stateStore: store,
-      environment: env,
-    });
-    return yield* makeHandle(id, currentOwner);
   });
 
 const stateInitial = (
@@ -1171,7 +993,6 @@ export const createStack = (
 
 export const openStack = (
   id: StackId,
-  options: OpenStackOptions = {},
 ): Effect.Effect<
   EffectStack,
   OpenStackError,
@@ -1198,37 +1019,6 @@ export const openStack = (
       crypto,
       spawner,
     });
-    const owner = yield* readOwnerMetadata(env.stateRoot, id, env);
-    if (
-      owner !== undefined &&
-      owner.rpcRelease !== STACK_RPC_RELEASE &&
-      options.replaceIncompatibleOwner
-    ) {
-      // Defer the entire maintenance handoff until restart is invoked. This
-      // keeps stop, owner release, replacement launch, and start in one
-      // package-owned operation with no cancellable gap after openStack().
-      const replacement = (
-        startOptions?: StartStackOptions,
-      ): Effect.Effect<StackStatus, StackError> =>
-        Effect.scoped(
-          replaceIncompatibleOwner(id, state, owner, env, store).pipe(
-            Effect.flatMap((handle) => handle.start(startOptions)),
-          ),
-        ).pipe(
-          Effect.provideService(FileSystem.FileSystem, fs),
-          Effect.provideService(Path.Path, path),
-          Effect.provideService(Crypto.Crypto, crypto),
-          Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner),
-        );
-      return yield* makeHandle(
-        id,
-        {},
-        {
-          ...dependencies,
-          replacement,
-        },
-      );
-    }
     return yield* makeHandle(id, {}, dependencies);
   });
 

@@ -179,7 +179,7 @@ const validateCompatibleOwner = (
       (metadata.rpcRelease !== STACK_RPC_RELEASE || probe.rpcRelease !== STACK_RPC_RELEASE)
     )
       return yield* new StackUpgradeRequiredError({
-        message: `Stack owner release ${probe.rpcRelease} requires explicit restart`,
+        message: `Stack owner release ${probe.rpcRelease} requires stop before start`,
         expectedRelease: STACK_RPC_RELEASE,
         actualRelease: probe.rpcRelease,
       });

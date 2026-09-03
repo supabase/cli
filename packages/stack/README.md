@@ -21,7 +21,7 @@ Functions, Studio, Mail, Analytics, or Pooler on demand for the current running 
 
 The package's end-to-end contract is exercised through the same public Stack API in native and
 Docker modes. It begins from the PostgreSQL-only default, progressively activates every service with
-realistic traffic, and verifies stop/start/restart behavior, stable ports, and persistent data. The
+realistic traffic, and verifies stop/start cycles, stable ports, and persistent data. The
 CLI is not involved in these runtime tests.
 
 Database reset is intentionally outside the current API. Applying migrations, declarative schemas,

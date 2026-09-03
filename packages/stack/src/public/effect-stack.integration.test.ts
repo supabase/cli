@@ -37,10 +37,10 @@ import { startControlServer } from "../control/ControlServer.ts";
 import { STACK_RPC_RELEASE, type StackRpcHandlers } from "../control/StackRpc.ts";
 import {
   StackDestructionError,
-  StackLifecycleConflictError,
   StackOwnershipConflictError,
   StackPreparationError,
   StackStateInvalidError,
+  StackUpgradeRequiredError,
 } from "./Errors.ts";
 import type { LogQuery, StackLogBatch, StackLogEntry } from "./Logs.ts";
 import {
@@ -210,7 +210,6 @@ describe("Effect stack lifecycle handoff", () => {
             credentials: () => Effect.succeed(credentials),
             prepare: () => Effect.succeed({ capabilities: [] }),
             start: () => Effect.succeed(runningStatus),
-            restart: () => Effect.succeed(runningStatus),
             destroy: () => Effect.void,
             logs: (query) => readLogs(query),
           },
@@ -332,7 +331,7 @@ describe("Effect stack lifecycle handoff", () => {
         const offline = yield* stack.status();
         expect(offline.lifecycle).toBe("unconfigured");
         expect(offline.capabilities.every(({ state }) => state === "disabled")).toBe(true);
-        yield* openStack(stack.id, { replaceIncompatibleOwner: true });
+        yield* openStack(stack.id);
         expect(yield* readOwnerMetadata(env.stateRoot, stack.id, env)).toBeUndefined();
         yield* stack.stop();
         expect((yield* stack.status()).lifecycle).toBe("unconfigured");
@@ -491,7 +490,6 @@ describe("Effect stack lifecycle handoff", () => {
           credentials: () => Effect.succeed(credentials),
           prepare: () => Effect.fail({ tag: "StackRpcProtocolError", message: "prepare failed" }),
           start: () => Effect.succeed(runningStatus),
-          restart: () => Effect.succeed(runningStatus),
           destroy: () => Effect.void,
           logs: emptyLogs,
         };
@@ -562,7 +560,6 @@ describe("Effect stack lifecycle handoff", () => {
             credentials: () => Effect.succeed(credentials),
             prepare: () => Effect.succeed({ capabilities: [] }),
             start: () => Effect.succeed(runningStatus),
-            restart: () => Effect.succeed(runningStatus),
             destroy: () => Effect.void,
             logs: emptyLogs,
           },
@@ -650,11 +647,9 @@ describe("Effect stack lifecycle handoff", () => {
         const payloads: {
           prepare: Array<unknown>;
           start: Array<unknown>;
-          restart: Array<unknown>;
         } = {
           prepare: [],
           start: [],
-          restart: [],
         };
         const rpcHandlers: StackRpcHandlers = {
           status: () => Effect.succeed(runningStatus),
@@ -665,10 +660,6 @@ describe("Effect stack lifecycle handoff", () => {
           },
           start: (payload) => {
             payloads.start.push(payload);
-            return Effect.succeed(runningStatus);
-          },
-          restart: (payload) => {
-            payloads.restart.push(payload);
             return Effect.succeed(runningStatus);
           },
           destroy: () => Effect.void,
@@ -697,25 +688,22 @@ describe("Effect stack lifecycle handoff", () => {
         });
         yield* stack.prepare();
         yield* stack.start();
-        yield* stack.restart();
         yield* stack.prepare({ config: {} });
         yield* stack.start({ config: {} });
-        yield* stack.restart({ config: {} });
         expect(payloads.prepare).toEqual([{}, { config: {} }]);
         expect(payloads.start).toEqual([{}, { config: {} }]);
-        expect(payloads.restart).toEqual([{}, { config: {} }]);
       }).pipe(Effect.provide(NodeServices.layer)),
     ),
   );
 
-  it.live("launches a compatible Supervisor when restart finds no live owner", () =>
+  it.live("launches a compatible Supervisor when start finds no live owner", () =>
     Effect.scoped(
       Effect.gen(function* () {
         const fs = yield* FileSystem.FileSystem;
         const path = yield* Path.Path;
-        const root = yield* fs.makeTempDirectoryScoped({ prefix: "supabase-effect-restart-" });
+        const root = yield* fs.makeTempDirectoryScoped({ prefix: "supabase-effect-stack-start-" });
         const endpoint = { kind: "unix" as const, path: path.join(root, "control.sock") };
-        const ownerSessionId = "restart-session";
+        const ownerSessionId = "start-session";
         const owner = {
           format: "supabase-stack-owner-v1" as const,
           stackId,
@@ -732,7 +720,6 @@ describe("Effect stack lifecycle handoff", () => {
             credentials: () => Effect.succeed(credentials),
             prepare: () => Effect.succeed({ capabilities: [] }),
             start: () => Effect.succeed(runningStatus),
-            restart: () => Effect.succeed(runningStatus),
             destroy: () => Effect.void,
             logs: emptyLogs,
           },
@@ -759,7 +746,7 @@ describe("Effect stack lifecycle handoff", () => {
               }),
           },
         );
-        expect((yield* stack.restart()).lifecycle).toBe("running");
+        expect((yield* stack.start()).lifecycle).toBe("running");
         expect(launched).toBe(true);
       }).pipe(Effect.provide(NodeServices.layer)),
     ),
@@ -780,7 +767,6 @@ describe("Effect stack lifecycle handoff", () => {
           credentials: () => Effect.succeed(credentials),
           prepare: () => Effect.succeed({ capabilities: [] }),
           start: () => Effect.succeed(runningStatus),
-          restart: () => Effect.succeed(runningStatus),
           destroy: () => Effect.void,
           logs: emptyLogs,
         };
@@ -816,44 +802,6 @@ describe("Effect stack lifecycle handoff", () => {
     ),
   );
 
-  it.live("continues an explicit replacement after the restart waiter is interrupted", () =>
-    Effect.scoped(
-      Effect.gen(function* () {
-        const started = yield* Deferred.make<void>();
-        const release = yield* Deferred.make<void>();
-        const completed = yield* Deferred.make<void>();
-        const endpoint = { kind: "unix" as const, path: "/tmp/unreachable-replacement.sock" };
-        const owner = {
-          format: "supabase-stack-owner-v1" as const,
-          stackId,
-          endpoint,
-          ownerSessionId: "replacement-owner",
-          rpcRelease: STACK_RPC_RELEASE,
-        };
-        const stack = yield* makeHandle(stackId, owner, {
-          replacement: () =>
-            Effect.gen(function* () {
-              yield* Deferred.succeed(started, undefined);
-              yield* Deferred.await(release);
-              yield* Deferred.succeed(completed, undefined);
-              return runningStatus;
-            }),
-        });
-        const first = yield* Effect.forkChild(stack.restart(), { startImmediately: true });
-        yield* Deferred.await(started);
-        const concurrent = yield* stack.restart().pipe(Effect.exit);
-        expect(Exit.isFailure(concurrent)).toBe(true);
-        if (Exit.isFailure(concurrent)) {
-          const error = Option.getOrUndefined(Cause.findErrorOption(concurrent.cause));
-          expect(error).toBeInstanceOf(StackLifecycleConflictError);
-        }
-        yield* Fiber.interrupt(first);
-        yield* Deferred.succeed(release, undefined);
-        yield* Deferred.await(completed);
-      }).pipe(Effect.provide(NodeServices.layer)),
-    ),
-  );
-
   it.live("fails destroy when the owner control endpoint is unavailable", () =>
     Effect.scoped(
       Effect.gen(function* () {
@@ -880,7 +828,7 @@ describe("Effect stack lifecycle handoff", () => {
   );
 
   it.live(
-    "replaces an incompatible owner only through explicit restart",
+    "stops an incompatible owner before starting a replacement",
     () =>
       withRuntimeRoot((project) =>
         Effect.gen(function* () {
@@ -917,17 +865,26 @@ describe("Effect stack lifecycle handoff", () => {
           expect(Exit.isFailure(yield* oldOwner.status().pipe(Effect.exit))).toBe(true);
           const ordinaryCreate = yield* createStack({ projectRoot: project });
           expect(ordinaryCreate.id).toBe(stack.id);
-          const restarted = yield* openStack(stack.id, { replaceIncompatibleOwner: true });
+          const restarted = yield* openStack(stack.id);
           yield* Effect.addFinalizer(() => restarted.destroy().pipe(Effect.ignore));
-          const status = yield* restarted.restart({ config: { capabilities: {} } });
+          const directStart = yield* restarted
+            .start({ config: { capabilities: {} } })
+            .pipe(Effect.exit);
+          expect(Exit.isFailure(directStart)).toBe(true);
+          if (Exit.isFailure(directStart)) {
+            const failure = Cause.findErrorOption(directStart.cause);
+            expect(Option.isSome(failure)).toBe(true);
+            if (Option.isSome(failure))
+              expect(failure.value).toBeInstanceOf(StackUpgradeRequiredError);
+          }
+          yield* restarted.stop();
+          const status = yield* restarted.start({ config: { capabilities: {} } });
           const currentOwner = yield* readOwnerMetadata(env.stateRoot, stack.id, env);
           expect(currentOwner?.rpcRelease).toBe(STACK_RPC_RELEASE);
           expect(currentOwner?.ownerSessionId).not.toBe(owner.ownerSessionId);
           expect(status.id).toBe(stack.id);
           expect(status.runtime).toEqual({ kind: "native" });
           expect((yield* restarted.status()).lifecycle).toBe("running");
-          const secondStatus = yield* restarted.restart({ config: { capabilities: {} } });
-          expect(secondStatus.lifecycle).toBe("running");
           yield* restarted.stop();
           expect(yield* readOwnerMetadata(env.stateRoot, stack.id, env)).toBeUndefined();
           expect(yield* ownerLockExists(env.stateRoot, stack.id)).toBe(false);
@@ -940,7 +897,7 @@ describe("Effect stack lifecycle handoff", () => {
   );
 
   it.live(
-    "reclaims a dead incompatible owner through create and explicit replacement",
+    "reclaims a dead incompatible owner through create and start",
     () =>
       withRuntimeRoot((project) =>
         Effect.gen(function* () {
@@ -1059,9 +1016,9 @@ describe("Effect stack lifecycle handoff", () => {
           expect(yield* ownerLockExists(env.stateRoot, createId)).toBe(false);
 
           const openId = yield* makeDeadOwner(openProject, "stack-rpc-v0@0.0.1");
-          const replaced = yield* openStack(openId, { replaceIncompatibleOwner: true });
+          const replaced = yield* openStack(openId);
           yield* Effect.addFinalizer(() => replaced.destroy().pipe(Effect.ignore));
-          yield* replaced.restart({ config: { capabilities: {} } });
+          yield* replaced.start({ config: { capabilities: {} } });
           expect((yield* readOwnerMetadata(env.stateRoot, openId, env))?.rpcRelease).toBe(
             STACK_RPC_RELEASE,
           );

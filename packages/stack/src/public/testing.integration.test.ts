@@ -90,7 +90,6 @@ const fakeStack = (
     if (failStart) throw new Error("startup failed");
     return status("starting", includeApi, functionsState);
   },
-  restart: async () => status("running"),
   stop: async () => undefined,
   destroy: async () => {
     events.push("destroy");

@@ -10,13 +10,12 @@ import {
   Path,
   Redacted,
   Ref,
-  Schema,
   Semaphore,
   Scope,
   Stream,
 } from "effect";
 import type { StackIdentity } from "../identity/Identity.ts";
-import { canonicalize, compileStack, rebuildExecutionPlan } from "../model/Compiler.ts";
+import { compileStack, rebuildExecutionPlan } from "../model/Compiler.ts";
 import {
   activeExecutionPlan,
   eagerCapabilities,
@@ -24,11 +23,10 @@ import {
   type PlannedWorkload,
 } from "../model/ExecutionPlan.ts";
 import { CAPABILITY_NAMES, type CapabilityName } from "../public/Capability.ts";
-import { StackConfigSchema, type StackConfig } from "../public/Config.ts";
+import type { StackConfig } from "../public/Config.ts";
 import type { StackRuntime } from "../public/Runtime.ts";
 import {
   GatewayActivationError,
-  InvalidStackConfigError,
   StackDefinitionRequiredError,
   StackLifecycleConflictError,
   StackNotRunningError,
@@ -95,9 +93,6 @@ export interface Supervisor {
   readonly start: (options?: {
     readonly config?: StackConfig;
   }) => Effect.Effect<StackStatus, StackError>;
-  readonly restart: (options?: {
-    readonly config?: StackConfig;
-  }) => Effect.Effect<StackStatus, StackError>;
   readonly destroy: Effect.Effect<void, StackError>;
   /** Completes after a successful stop or destroy shutdown signal. */
   readonly shutdown: Effect.Effect<void>;
@@ -139,18 +134,6 @@ const stateErrorMessage = (error: StackError | { readonly message?: string }): s
 
 const credentialHost = (address: string): string =>
   address.includes(":") && !address.startsWith("[") ? `[${address}]` : address;
-
-const revealRedacted = (value: unknown): unknown => {
-  if (Redacted.isRedacted(value)) return Redacted.value(value);
-  if (Array.isArray(value)) return value.map(revealRedacted);
-  if (typeof value !== "object" || value === null) return value;
-  return Object.fromEntries(
-    Object.entries(value).map(([key, entry]) => [key, revealRedacted(entry)]),
-  );
-};
-
-const digestHex = (bytes: Uint8Array): string =>
-  [...bytes].map((byte) => byte.toString(16).padStart(2, "0")).join("");
 
 const mapReconcileError = (error: unknown): StackError => {
   if (error instanceof StackStateInvalidError) return error;
@@ -235,8 +218,8 @@ export const makeSupervisor = (
         yield* publish().pipe(Effect.ignore);
       });
 
-    // Admission joins equivalent operations while execution serializes lifecycle and activation
-    // work against background failure supervision.
+    // Admission rejects every overlapping lifecycle operation while execution serializes
+    // lifecycle and activation work against background failure supervision.
     const admission = yield* Semaphore.make(1);
     // Background failure supervision shares the execution gate with explicit lifecycle operations.
     // This prevents a failure event from reconciling against a concurrently stopping lifecycle.
@@ -247,11 +230,10 @@ export const makeSupervisor = (
     );
     const joinExit = <A, E>(result: Exit.Exit<A, E>): Effect.Effect<A, E> =>
       Exit.isSuccess(result) ? Effect.succeed(result.value) : Effect.failCause(result.cause);
-    type LifecycleKind = "start" | "restart" | "stop" | "destroy";
+    type LifecycleKind = "start" | "stop" | "destroy";
     type LifecycleResult = Deferred.Deferred<Exit.Exit<void, StackError>, never>;
     type ActiveLifecycle = Readonly<{
       kind: LifecycleKind;
-      key: string;
       result: LifecycleResult;
     }>;
     const lifecycleActive = yield* Ref.make<ActiveLifecycle | undefined>(undefined);
@@ -273,7 +255,6 @@ export const makeSupervisor = (
 
     const submitLifecycle = (
       kind: LifecycleKind,
-      key: string,
       effect: Effect.Effect<void, StackError>,
       onWaiterInterrupt?: (owned: LifecycleResult) => Effect.Effect<void>,
     ): Effect.Effect<void, StackError> =>
@@ -285,14 +266,13 @@ export const makeSupervisor = (
                 yield* ensureAcceptingOperations;
                 const current = yield* Ref.get(lifecycleActive);
                 if (current !== undefined) {
-                  if (current.kind === kind && current.key === key) return current.result;
                   return yield* new StackLifecycleConflictError({
                     stackId: options.stackId,
                     message: `Lifecycle operation ${current.kind} is already active`,
                   });
                 }
                 const deferred = yield* Deferred.make<Exit.Exit<void, StackError>, never>();
-                yield* Ref.set(lifecycleActive, { kind, key, result: deferred });
+                yield* Ref.set(lifecycleActive, { kind, result: deferred });
                 const release = admission.withPermit(
                   Ref.update(lifecycleActive, (current) =>
                     current?.result === deferred ? undefined : current,
@@ -370,7 +350,6 @@ export const makeSupervisor = (
         yield* publish();
       });
 
-    const cleanupEpoch = yield* Ref.make(0);
     const backend: LifecycleBackend = {
       preflight: runtime.preflight,
       reconcile: reconcileBackend,
@@ -380,7 +359,6 @@ export const makeSupervisor = (
           .cleanup({ stackId: options.stackId, destroy: false })
           .pipe(Effect.mapError(mapReconcileError));
         yield* Ref.set(active, new Set());
-        yield* Ref.update(cleanupEpoch, (epoch) => epoch + 1);
         yield* publish();
       }),
       destroyData: Effect.gen(function* () {
@@ -457,7 +435,7 @@ export const makeSupervisor = (
         .withPermit(
           Effect.gen(function* () {
             // Explicit lifecycle transitions own the execution gate. Failure events are consumed
-            // only while the accepted lifecycle is fully running; stopping/restarting sessions
+            // only while the accepted lifecycle is fully running; stopping sessions
             // are fenced by the durable lifecycle and therefore skipped safely.
             if ((yield* Ref.get(phase)) !== "running") return;
             const state = yield* read().pipe(Effect.orElseSucceed(() => undefined));
@@ -609,109 +587,9 @@ export const makeSupervisor = (
         yield* Ref.set(phase, "running");
         yield* publish();
       });
-    const operationKey = (config: StackConfig | undefined): Effect.Effect<string, StackError> =>
-      Effect.gen(function* () {
-        const state = yield* read();
-        if (state === undefined)
-          return yield* new StackStateInvalidError({ message: "Stack state is missing" });
-        yield* Schema.encodeEffect(StackConfigSchema)(config ?? {}).pipe(
-          Effect.mapError(
-            (error) =>
-              new InvalidStackConfigError({
-                stackId: options.stackId,
-                message: `Invalid stack configuration: ${String(error)}`,
-                cause: error,
-              }),
-          ),
-        );
-        const compiled =
-          config === undefined &&
-          state.definition !== undefined &&
-          state.inputFingerprint !== undefined
-            ? undefined
-            : yield* compileStack({
-                projectRoot: state.identity.projectRoot,
-                runtime: state.runtime,
-                config,
-              }).pipe(Effect.provideContext(options.context));
-        const fingerprint = compiled?.inputFingerprint ?? state.inputFingerprint;
-        if (fingerprint === undefined)
-          return yield* new StackStateInvalidError({
-            stackId: options.stackId,
-            message: "Persisted stack definition fingerprint is missing",
-          });
-        // The compiler fingerprint captures caller semantics. Include only explicitly supplied
-        // secret values; generated managed values are persisted during start and must not make an
-        // equivalent concurrent request conflict with its owner.
-        const secretIdentity: Record<string, { readonly policy: string; readonly value: string }> =
-          {};
-        if (compiled === undefined) {
-          for (const [slot, entry] of Object.entries(state.secrets))
-            if (entry.value !== undefined)
-              secretIdentity[slot] = { policy: entry.policy, value: entry.value };
-        } else {
-          for (const declaration of compiled.secrets) {
-            if (declaration.value === undefined) continue;
-            secretIdentity[declaration.slot] = {
-              policy: declaration.policy,
-              value: String(Redacted.value(declaration.value)),
-            };
-          }
-        }
-        const crypto = yield* Crypto.Crypto;
-        const digest = yield* crypto
-          .digest(
-            "SHA-256",
-            new TextEncoder().encode(canonicalize(revealRedacted({ fingerprint, secretIdentity }))),
-          )
-          .pipe(
-            Effect.mapError(
-              (error) =>
-                new InvalidStackConfigError({
-                  stackId: options.stackId,
-                  message: `Unable to digest stack configuration: ${error.message}`,
-                  cause: error,
-                }),
-            ),
-          );
-        return digestHex(digest);
-      }).pipe(Effect.provideContext(options.context));
     const start = (startOptions?: { readonly config?: StackConfig }) =>
       Effect.gen(function* () {
-        const key = yield* operationKey(startOptions?.config);
-        yield* submitLifecycle("start", key, startOperation(startOptions), continueShutdown);
-        return yield* snapshot();
-      });
-    const restartOperation = (startOptions?: { readonly config?: StackConfig }) =>
-      Effect.gen(function* () {
-        const previous = yield* Ref.get(phase);
-        const freshSession = !(yield* Ref.get(sessionInitialized));
-        if (freshSession) yield* backend.cleanup;
-        const cleanupBeforeRestart = yield* Ref.get(cleanupEpoch);
-        yield* Ref.set(phase, "starting");
-        yield* publish().pipe(Effect.ignore);
-        const restarted = yield* controller
-          .restart({ config: startOptions?.config, freshSession })
-          .pipe(Effect.provideContext(options.context), Effect.exit);
-        if (Exit.isFailure(restarted)) {
-          const state = yield* read().pipe(Effect.orElseSucceed(() => undefined));
-          if (state?.desiredLifecycle === "stopped") {
-            const cleanup = yield* backend.cleanup.pipe(Effect.exit);
-            yield* Ref.set(phase, Exit.isSuccess(cleanup) ? "stopped" : "stopping");
-            yield* publish().pipe(Effect.ignore);
-          } else {
-            const tornDown = (yield* Ref.get(cleanupEpoch)) > cleanupBeforeRestart;
-            yield* restorePhase(tornDown ? "starting" : previous);
-          }
-          return yield* Effect.failCause(restarted.cause);
-        }
-        yield* Ref.set(phase, "running");
-        yield* publish();
-      });
-    const restart = (startOptions?: { readonly config?: StackConfig }) =>
-      Effect.gen(function* () {
-        const key = yield* operationKey(startOptions?.config);
-        yield* submitLifecycle("restart", key, restartOperation(startOptions), continueShutdown);
+        yield* submitLifecycle("start", startOperation(startOptions), continueShutdown);
         return yield* snapshot();
       });
     const stopOperation = () =>
@@ -760,7 +638,7 @@ export const makeSupervisor = (
         startImmediately: true,
       }).pipe(Effect.asVoid);
     // An interrupted stop waiter still requests shutdown after the owned operation succeeds.
-    const stopWithShutdown = submitLifecycle("stop", "stop", stopOperation(), continueShutdown);
+    const stopWithShutdown = submitLifecycle("stop", stopOperation(), continueShutdown);
     const operation = <A>(effect: Effect.Effect<A, StackError>) =>
       effect.pipe(Effect.mapError((error) => rpcError(rpcTag(error), stateErrorMessage(error))));
     const destroyOperation = Effect.gen(function* () {
@@ -778,7 +656,7 @@ export const makeSupervisor = (
       yield* publish().pipe(Effect.ignore);
       return result.value;
     });
-    const destroy = submitLifecycle("destroy", "destroy", destroyOperation, continueShutdown).pipe(
+    const destroy = submitLifecycle("destroy", destroyOperation, continueShutdown).pipe(
       Effect.asVoid,
     );
     const logs = (query?: LogQuery): Effect.Effect<StackLogBatch, StackError> =>
@@ -1066,7 +944,6 @@ export const makeSupervisor = (
       prepare: ({ config, capabilities }) =>
         operation(submitPreparation(prepareOperation({ config, capabilities }))),
       start: ({ config }: { readonly config?: StackConfig }) => operation(start({ config })),
-      restart: ({ config }: { readonly config?: StackConfig }) => operation(restart({ config })),
       destroy: () => operation(destroy),
       logs: (query: LogQuery) => operation(logs(query)),
     });
@@ -1081,7 +958,6 @@ export const makeSupervisor = (
       ownerSessionId: options.ownerSessionId,
       status,
       start,
-      restart,
       destroy,
       shutdown: Deferred.await(shutdownSignal),
       shutdownIfIdle,

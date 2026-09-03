@@ -21,7 +21,6 @@ import {
   openStack as openEffectStack,
   type EffectStack,
   type CreateStackOptions,
-  type OpenStackOptions,
   type FindStackOptions,
   type ListStacksOptions,
   type PrepareStackOptions,
@@ -65,7 +64,6 @@ export interface PromiseStack {
   readonly credentials: () => Promise<PromiseStackCredentials>;
   readonly prepare: (options?: PromisePrepareStackOptions) => Promise<PrepareStackResult>;
   readonly start: (options?: PromiseStartStackOptions) => Promise<StackStatus>;
-  readonly restart: (options?: PromiseStartStackOptions) => Promise<StackStatus>;
   readonly stop: () => Promise<void>;
   readonly destroy: () => Promise<void>;
   readonly logs: (query?: LogQuery) => Promise<StackLogBatch>;
@@ -74,7 +72,7 @@ export interface PromiseStack {
 
 export interface PromiseStackApi {
   readonly createStack: (options: CreateStackOptions) => Promise<PromiseStack>;
-  readonly openStack: (id: StackId, options?: OpenStackOptions) => Promise<PromiseStack>;
+  readonly openStack: (id: StackId) => Promise<PromiseStack>;
   readonly findStack: (options: FindStackOptions) => Promise<StackDescriptor | undefined>;
   readonly listStacks: (options?: ListStacksOptions) => Promise<ReadonlyArray<StackDescriptor>>;
   readonly inspectStack: (id: StackId) => Promise<StackInspection>;
@@ -163,14 +161,6 @@ export const adaptEffectStack = (effectStack: EffectStack): PromiseStack => {
             : effectStack.start(config === undefined ? {} : { config }),
         ),
       ),
-    restart: (options) =>
-      invoke(
-        withConfig(options, (config) =>
-          options === undefined
-            ? effectStack.restart()
-            : effectStack.restart(config === undefined ? {} : { config }),
-        ),
-      ),
     stop: () => invoke(effectStack.stop()),
     destroy: () => invoke(effectStack.destroy()),
     logs: (query) => invoke(effectStack.logs(query)),
@@ -208,7 +198,7 @@ export const makePromiseApi = (
   ): Promise<PromiseStack> => adaptEffectStack(await run(effect));
   return {
     createStack: (options) => createOrOpen(createEffectStack(options)),
-    openStack: (id, options) => createOrOpen(openEffectStack(id, options)),
+    openStack: (id) => createOrOpen(openEffectStack(id)),
     findStack: (options) =>
       run(findEffectStack(options)).then((value) => Option.getOrUndefined(value)),
     listStacks: (options) => run(listEffectStacks(options)),

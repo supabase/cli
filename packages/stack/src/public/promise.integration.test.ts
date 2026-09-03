@@ -60,7 +60,6 @@ const effectStack = (): EffectStack =>
       }),
     prepare: (_options?: PrepareStackOptions) => Effect.succeed({ capabilities: [] }),
     start: () => Effect.succeed(status),
-    restart: () => Effect.succeed(status),
     stop: () => Effect.void,
     destroy: () => Effect.void,
     logs: () => Effect.succeed({ entries: [], cursor: { opaque: "v1_0" }, running: false }),
@@ -145,10 +144,9 @@ describe("Promise stack facade", () => {
     ).rejects.toBeInstanceOf(InvalidStackConfigError);
   });
 
-  it("redacts nested config secrets for prepare, start, and restart", async () => {
+  it("redacts nested config secrets for prepare and start", async () => {
     let preparedConfig: StartStackOptions["config"] | undefined;
     let startedConfig: StartStackOptions["config"] | undefined;
-    let restartedConfig: StartStackOptions["config"] | undefined;
     const source: EffectStack = {
       ...effectStack(),
       prepare: (options?: PrepareStackOptions) =>
@@ -159,11 +157,6 @@ describe("Promise stack facade", () => {
       start: (options?: StartStackOptions) =>
         Effect.sync(() => {
           startedConfig = options?.config;
-          return status;
-        }),
-      restart: (options?: StartStackOptions) =>
-        Effect.sync(() => {
-          restartedConfig = options?.config;
           return status;
         }),
     };
@@ -186,8 +179,7 @@ describe("Promise stack facade", () => {
 
     await stack.prepare({ config });
     await stack.start({ config });
-    await stack.restart({ config });
-    for (const value of [preparedConfig, startedConfig, restartedConfig]) {
+    for (const value of [preparedConfig, startedConfig]) {
       const database = value?.capabilities?.database?.settings;
       const auth = value?.capabilities?.auth;
       const functions = value?.capabilities?.functions;

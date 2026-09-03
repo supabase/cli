@@ -7,7 +7,6 @@ import {
   openStack,
   type EffectStack,
   type FindStackOptions,
-  type OpenStackOptions,
 } from "@supabase/stack/effect";
 import type { StackDescriptor, StackId, StackStatus } from "@supabase/stack/effect";
 import { CliProjectHome } from "../../config/cli-project-home.service.ts";
@@ -23,15 +22,12 @@ type RestartRuntime =
   | Crypto.Crypto
   | ChildProcessSpawner.ChildProcessSpawner;
 
-export type RestartStack = Pick<EffectStack, "restart">;
+export type RestartStack = Pick<EffectStack, "start" | "stop">;
 export interface RestartOperations {
   readonly findStack: (
     options: FindStackOptions,
   ) => Effect.Effect<Option.Option<StackDescriptor>, unknown, RestartRuntime>;
-  readonly openStack: (
-    id: StackId,
-    options?: OpenStackOptions,
-  ) => Effect.Effect<RestartStack, unknown, RestartRuntime>;
+  readonly openStack: (id: StackId) => Effect.Effect<RestartStack, unknown, RestartRuntime>;
   readonly loadConfig: (
     cwd: string,
   ) => Effect.Effect<CliConfig | undefined, unknown, FileSystem.FileSystem | Path.Path>;
@@ -60,10 +56,9 @@ export const restart = Effect.fnUntraced(function* (
   const config = yield* toStartStackConfig(loadedConfig, flags.exclude);
   yield* Effect.scoped(
     Effect.gen(function* () {
-      const stack = yield* operations.openStack(descriptor.value.id, {
-        replaceIncompatibleOwner: true,
-      });
-      const status: StackStatus = yield* stack.restart({ config });
+      const stack = yield* operations.openStack(descriptor.value.id);
+      yield* stack.stop();
+      const status: StackStatus = yield* stack.start({ config });
       yield* output.success(
         status.lifecycle === "running"
           ? "Local Supabase stack restarted."

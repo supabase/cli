@@ -809,8 +809,8 @@ const runWholeStackScenario = async (mode: (typeof RUNTIME_CASES)[number]): Prom
   ).toEqual([{ payload: markers.first }]);
   await reactivate();
 
-  await stack.restart();
-  const restarted = await stack.status();
+  await stack.stop();
+  const restarted = await stack.start();
   expectDefaultLazyState(restarted);
   expect(
     Object.fromEntries(

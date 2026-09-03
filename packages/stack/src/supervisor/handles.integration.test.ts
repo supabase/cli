@@ -388,7 +388,6 @@ describe("managed stack handles", { timeout: 30_000 }, () => {
           prepare: () => Effect.succeed({ capabilities: [] }),
           start: () =>
             Effect.fail({ tag: "StackPreparationError", message: "artifact is incomplete" }),
-          restart: () => Effect.succeed(status),
           destroy: () => Effect.void,
           logs: () => Effect.succeed({ entries: [], cursor: { opaque: "v1_0" }, running: false }),
         };
@@ -489,7 +488,6 @@ describe("managed stack handles", { timeout: 30_000 }, () => {
               Effect.fail({ tag: "StackNotRunningError" as const, message: "not running" }),
             prepare: () => Effect.succeed({ capabilities: [] }),
             start: () => Effect.succeed(status),
-            restart: () => Effect.succeed(status),
             destroy: () =>
               Deferred.succeed(destroyStarted, undefined).pipe(
                 Effect.andThen(Deferred.await(responseRelease)),

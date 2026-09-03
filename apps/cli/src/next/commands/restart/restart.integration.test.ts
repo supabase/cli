@@ -24,13 +24,18 @@ const status: StackStatus = {
 };
 
 describe("restart handler", () => {
-  it.live("restarts the managed stack with translated config", () => {
+  it.live("stops before starting the managed stack with translated config", () => {
+    const events: Array<string> = [];
     let receivedConfig: unknown;
-    let receivedOptions: unknown;
     const output = mockOutput({ interactive: false });
     const stack: RestartStack = {
-      restart: (options) =>
+      stop: () =>
         Effect.sync(() => {
+          events.push("stop");
+        }),
+      start: (options) =>
+        Effect.sync(() => {
+          events.push("start");
           receivedConfig = options?.config;
           return status;
         }),
@@ -47,9 +52,8 @@ describe("restart handler", () => {
             desiredLifecycle: "running" as const,
           }),
         ),
-      openStack: (_id, options) =>
+      openStack: () =>
         Effect.sync(() => {
-          receivedOptions = options;
           return stack;
         }),
       loadConfig: () => Effect.succeed(undefined),
@@ -64,10 +68,10 @@ describe("restart handler", () => {
       ),
       Effect.tap(() =>
         Effect.sync(() => {
+          expect(events).toEqual(["stop", "start"]);
           expect(receivedConfig).toMatchObject({
             capabilities: { auth: { enabled: false } },
           });
-          expect(receivedOptions).toEqual({ replaceIncompatibleOwner: true });
           expect(output.messages).toContainEqual(
             expect.objectContaining({ message: "Local Supabase stack restarted." }),
           );
@@ -92,7 +96,8 @@ describe("restart handler", () => {
         ),
       openStack: () =>
         Effect.succeed({
-          restart: () =>
+          stop: () => Effect.void,
+          start: () =>
             Effect.fail(new StackUpgradeRequiredError({ message: "owner upgrade required" })),
         }),
       loadConfig: () => Effect.succeed(undefined),

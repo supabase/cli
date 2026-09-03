@@ -9,7 +9,7 @@ import { LogQuerySchema, StackLogBatchSchema } from "../public/Logs.ts";
 import { StackStatusSchema } from "../public/Status.ts";
 import { STACK_ERROR_TAGS } from "../public/Errors.ts";
 
-/** Pinned release identifier. A changed release must go through explicit restart. */
+/** Pinned release identifier used to detect incompatible live owners. */
 export const STACK_RPC_RELEASE = "stack-rpc-v1@0.1.0" as const;
 
 export class StackRpcProtocolError extends Data.TaggedError("StackRpcProtocolError")<{
@@ -58,11 +58,6 @@ const StackRpc = {
     success: StackStatusSchema,
     error: StackRpcErrorSchema,
   }),
-  restart: Rpc.make("restart", {
-    payload: Schema.Struct({ config: Schema.optionalKey(StackConfigSchema) }),
-    success: StackStatusSchema,
-    error: StackRpcErrorSchema,
-  }),
   destroy: Rpc.make("destroy", { success: Schema.Void, error: StackRpcErrorSchema }),
   logs: Rpc.make("logs", {
     payload: LogQuerySchema,
@@ -76,7 +71,6 @@ export const StackRpcGroup = RpcGroup.make(
   StackRpc.credentials,
   StackRpc.prepare,
   StackRpc.start,
-  StackRpc.restart,
   StackRpc.destroy,
   StackRpc.logs,
 );

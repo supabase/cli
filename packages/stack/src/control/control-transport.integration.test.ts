@@ -134,7 +134,6 @@ const withServer = <A, E, R>(
         prepare: () =>
           Ref.update(prepareCalls, (count) => count + 1).pipe(Effect.as({ capabilities: [] })),
         start: () => Effect.succeed(status),
-        restart: () => Effect.succeed(status),
         destroy: () => Effect.void,
         logs: () => Effect.succeed({ entries: [], cursor: { opaque: "v1_0" }, running: false }),
       };
@@ -307,28 +306,6 @@ describe("control transport", () => {
             Effect.fail({
               tag: "StackPreparationError",
               message: "injected start failure",
-            } satisfies StackRpcError),
-        },
-        onShutdownReady: Deferred.succeed(completion, undefined).pipe(Effect.asVoid),
-      }),
-    ),
-  );
-
-  it.live("reevaluates owner shutdown after a failed restart response", () =>
-    withServer(
-      ({ endpoint, stackId, ownerSessionId, completion }) =>
-        Effect.gen(function* () {
-          const client = makeControlClient(endpoint, { stackId, ownerSessionId });
-          const rpc = yield* client.rpc;
-          expect(Exit.isFailure(yield* rpc.restart({}).pipe(Effect.exit))).toBe(true);
-          yield* Deferred.await(completion);
-        }),
-      ({ completion }) => ({
-        rpcHandlers: {
-          restart: () =>
-            Effect.fail({
-              tag: "StackReconciliationError",
-              message: "injected restart failure",
             } satisfies StackRpcError),
         },
         onShutdownReady: Deferred.succeed(completion, undefined).pipe(Effect.asVoid),

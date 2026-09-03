@@ -9,7 +9,6 @@ import {
   StackDefinitionRequiredError,
   StackLifecycleConflictError,
   StackMustBeStoppedError,
-  StackNotRunningError,
   StackStateInvalidError,
   type StackError,
 } from "../public/Errors.ts";
@@ -65,9 +64,6 @@ export interface LifecycleController {
   // Each invocation builds a fresh read/transition effect while sharing the controller semaphore.
   // oxlint-disable-next-line effecttsgo/lazy-effect
   readonly stop: () => Effect.Effect<PersistedStackState, StackError, LifecycleRequirements>;
-  readonly restart: (
-    options?: LifecycleStartOptions,
-  ) => Effect.Effect<PersistedStackState, StackError, LifecycleRequirements>;
   // oxlint-disable-next-line effecttsgo/lazy-effect
   readonly destroy: () => Effect.Effect<void, StackError, LifecycleRequirements>;
 }
@@ -261,14 +257,14 @@ export const makeLifecycleController = (
           if (supplied !== undefined && candidate.inputFingerprint !== initial.inputFingerprint)
             return yield* new StackMustBeStoppedError({
               stackId: options.stackId,
-              message: "Running stack input changed; call restart explicitly to apply it",
-              guidance: "Use restart() to apply stopped-time changes",
+              message: "Running stack input changed; stop the stack before applying it",
+              guidance: "Use stop() followed by start() to apply stopped-time changes",
             });
           if (supplied !== undefined && !sameSecrets(candidate.secrets, initial.secrets))
             return yield* new StackMustBeStoppedError({
               stackId: options.stackId,
-              message: "Running stack secrets changed; call restart explicitly to apply them",
-              guidance: "Use restart() to apply stopped-time changes",
+              message: "Running stack secrets changed; stop the stack before applying them",
+              guidance: "Use stop() followed by start() to apply stopped-time changes",
             });
           if (startOptions?.freshSession === true)
             yield* options.backend.preflight(
@@ -316,47 +312,6 @@ export const makeLifecycleController = (
         return stopped;
       });
 
-    const restart = (
-      restartOptions?: LifecycleStartOptions,
-    ): Effect.Effect<PersistedStackState, StackError, LifecycleRequirements> =>
-      Effect.gen(function* () {
-        const initial = yield* read();
-        if (initial.desiredLifecycle !== "running")
-          return yield* new StackNotRunningError({
-            stackId: options.stackId,
-            message: "Stack must be running before restart",
-          });
-        if (initial.definition === undefined || initial.inputFingerprint === undefined)
-          return yield* invalidDefinition(options.stackId);
-        const candidate = yield* materializeCandidate(
-          initial,
-          initial.runtime,
-          restartOptions?.config,
-          "stopped",
-        );
-        yield* options.backend.preflight(
-          lifecycleInput(options.stackId, initial, candidate),
-          restartOptions?.freshSession === true ? "cold" : "live",
-        );
-        const stopped: PersistedStackState = { ...initial, desiredLifecycle: "stopped" };
-        yield* options.stateStore.replace(options.stackId, stopped);
-        const stoppedCandidate = yield* persistedCandidate(
-          options.stackId,
-          initial,
-          initial.runtime,
-        );
-        const stopInput = lifecycleInput(options.stackId, stopped, stoppedCandidate, "stopped");
-        yield* options.backend.reconcile(stopInput, "current");
-        yield* options.backend.cleanup;
-        const next = stateWithCandidate(stopped, candidate, "running");
-        yield* options.stateStore.replace(options.stackId, next);
-        yield* options.backend.reconcile(
-          lifecycleInput(options.stackId, next, candidate, "running"),
-          "fresh",
-        );
-        return next;
-      });
-
     const destroy = (): Effect.Effect<void, StackError, LifecycleRequirements> =>
       Effect.gen(function* () {
         const current = yield* read();
@@ -395,5 +350,5 @@ export const makeLifecycleController = (
         yield* options.stateStore.cleanup(options.stackId);
       });
 
-    return { start, stop, restart, destroy } satisfies LifecycleController;
+    return { start, stop, destroy } satisfies LifecycleController;
   });

@@ -25,7 +25,6 @@ import {
   GatewayActivationError,
   PortUnavailableError,
   StackLifecycleConflictError,
-  StackNotRunningError,
   StackReconciliationError,
   StackStateInvalidError,
   StackMustBeStoppedError,
@@ -643,7 +642,7 @@ describe("Supervisor composition", () => {
     ),
   );
 
-  it.live("keeps post-commit restart failure observable as starting", () =>
+  it.live("keeps post-commit start failure observable as starting", () =>
     run(
       Effect.gen(function* () {
         const acquireCalls = yield* Ref.make(0);
@@ -663,7 +662,7 @@ describe("Supervisor composition", () => {
                         new PortUnavailableError({
                           field: "api",
                           port: 54_321,
-                          message: "injected restart ingress failure",
+                          message: "injected start ingress failure",
                         }),
                       ),
                 ),
@@ -673,8 +672,9 @@ describe("Supervisor composition", () => {
           },
         });
         yield* fixture.supervisor.start({ config: {} });
+        yield* fixture.supervisor.maintenanceHandlers.stop;
 
-        expect(Exit.isFailure(yield* fixture.supervisor.restart().pipe(Effect.exit))).toBe(true);
+        expect(Exit.isFailure(yield* fixture.supervisor.start().pipe(Effect.exit))).toBe(true);
         const status = yield* fixture.supervisor.status;
         expect(status.desiredLifecycle).toBe("running");
         expect(status.lifecycle).toBe("starting");
@@ -790,7 +790,7 @@ describe("Supervisor composition", () => {
     ),
   );
 
-  it.live("uses cold preflight only when a fresh Supervisor performs restart", () =>
+  it.live("uses cold preflight when starting after a stop", () =>
     run(
       Effect.gen(function* () {
         const preflightModes = yield* Ref.make<ReadonlyArray<"cold" | "live">>([]);
@@ -798,8 +798,9 @@ describe("Supervisor composition", () => {
         yield* fixture.supervisor.start({ config: {} });
         yield* Ref.set(preflightModes, []);
 
-        yield* fixture.supervisor.restart();
-        expect(yield* Ref.get(preflightModes)).toEqual(["live"]);
+        yield* fixture.supervisor.maintenanceHandlers.stop;
+        yield* fixture.supervisor.start();
+        expect(yield* Ref.get(preflightModes)).toEqual(["cold"]);
 
         const successor = yield* makeSupervisor({
           identity,
@@ -811,7 +812,7 @@ describe("Supervisor composition", () => {
           runtime: fixture.runtime,
         });
         yield* Ref.set(preflightModes, []);
-        yield* successor.restart();
+        yield* successor.start();
         expect(yield* Ref.get(preflightModes)).toEqual(["cold"]);
       }),
     ),
@@ -1087,7 +1088,7 @@ describe("Supervisor composition", () => {
     ),
   );
 
-  it.live("keeps restart in starting state across its internal stop leg", () =>
+  it.live("keeps stopping state while an explicit stop is active", () =>
     run(
       Effect.gen(function* () {
         const stopGate = yield* Deferred.make<void>();
@@ -1095,11 +1096,13 @@ describe("Supervisor composition", () => {
         const fixture = yield* makeFixture({ stopGate, stopStarted });
         yield* fixture.supervisor.start({ config: { capabilities: { rest: {} } } });
 
-        const restarting = yield* Effect.forkChild(fixture.supervisor.restart());
+        const stopping = yield* Effect.forkChild(fixture.supervisor.maintenanceHandlers.stop);
         yield* Deferred.await(stopStarted);
-        expect((yield* fixture.supervisor.status).lifecycle).toBe("starting");
+        expect((yield* fixture.supervisor.status).lifecycle).toBe("stopping");
         yield* Deferred.succeed(stopGate, undefined);
-        yield* Fiber.join(restarting);
+        yield* Fiber.join(stopping);
+        expect((yield* fixture.supervisor.status).lifecycle).toBe("stopped");
+        yield* fixture.supervisor.start();
         expect((yield* fixture.supervisor.status).lifecycle).toBe("running");
       }),
     ),
@@ -1183,7 +1186,7 @@ describe("Supervisor composition", () => {
     ),
   );
 
-  it.live("keeps running state and explicit restart guidance for changed start input", () =>
+  it.live("keeps running state and explicit stop guidance for changed start input", () =>
     run(
       Effect.gen(function* () {
         const fixture = yield* makeFixture();
@@ -1197,31 +1200,16 @@ describe("Supervisor composition", () => {
     ),
   );
 
-  it.live("rejects restart while stopped without relaunching resources", () =>
+  it.live("keeps the owner when stop cannot prove its cleanup", () =>
     run(
       Effect.gen(function* () {
-        const fixture = yield* makeFixture();
-        yield* fixture.supervisor.start({ config: { capabilities: { rest: {} } } });
-        yield* fixture.supervisor.maintenanceHandlers.stop;
-        const failed = yield* fixture.supervisor.restart().pipe(Effect.exit);
-        expect(errorOf(failed)).toBeInstanceOf(StackNotRunningError);
-        expect((yield* fixture.supervisor.status).lifecycle).toBe("stopped");
-      }),
-    ),
-  );
-
-  it.live("keeps the owner when restart cannot prove its stopped cleanup", () =>
-    run(
-      Effect.gen(function* () {
-        const workloadStopFailFirst = yield* Ref.make(false);
         const stopFailFirst = yield* Ref.make(false);
-        const fixture = yield* makeFixture({ workloadStopFailFirst, stopFailFirst });
+        const fixture = yield* makeFixture({ stopFailFirst });
         yield* fixture.supervisor.start({ config: { capabilities: { rest: {} } } });
-        yield* Ref.set(workloadStopFailFirst, true);
         yield* Ref.set(stopFailFirst, true);
 
-        const restarted = yield* fixture.supervisor.restart().pipe(Effect.exit);
-        expect(errorOf(restarted)).toBeInstanceOf(StackReconciliationError);
+        const stopped = yield* fixture.supervisor.maintenanceHandlers.stop;
+        expect(stopped.ok).toBe(false);
         expect((yield* fixture.supervisor.status).lifecycle).toBe("stopping");
         expect((yield* fixture.store.read(fixture.id))?.desiredLifecycle).toBe("stopped");
 
@@ -1231,8 +1219,8 @@ describe("Supervisor composition", () => {
         yield* fixture.supervisor.shutdownIfIdle;
         expect(shutdown.pollUnsafe()).toBeUndefined();
 
-        const stopped = yield* fixture.supervisor.maintenanceHandlers.stop;
-        expect(stopped.ok).toBe(true);
+        const stoppedAgain = yield* fixture.supervisor.maintenanceHandlers.stop;
+        expect(stoppedAgain.ok).toBe(true);
         yield* fixture.supervisor.shutdownIfIdle;
         yield* Fiber.join(shutdown);
         expect(yield* Ref.get(fixture.resources)).toEqual([]);
@@ -1243,13 +1231,11 @@ describe("Supervisor composition", () => {
   it.live("retries unproven stopped cleanup before starting again", () =>
     run(
       Effect.gen(function* () {
-        const workloadStopFailFirst = yield* Ref.make(false);
         const stopFailFirst = yield* Ref.make(false);
-        const fixture = yield* makeFixture({ workloadStopFailFirst, stopFailFirst });
+        const fixture = yield* makeFixture({ stopFailFirst });
         yield* fixture.supervisor.start({ config: { capabilities: { rest: {} } } });
-        yield* Ref.set(workloadStopFailFirst, true);
         yield* Ref.set(stopFailFirst, true);
-        yield* fixture.supervisor.restart().pipe(Effect.exit);
+        yield* fixture.supervisor.maintenanceHandlers.stop;
         yield* Ref.set(fixture.calls, []);
 
         const started = yield* fixture.supervisor.start();
@@ -1291,28 +1277,6 @@ describe("Supervisor composition", () => {
     ),
   );
 
-  it.live("keeps accepted start work alive when its waiter is interrupted", () =>
-    run(
-      Effect.gen(function* () {
-        const gate = yield* Deferred.make<void>();
-        const started = yield* Deferred.make<void>();
-        const fixture = yield* makeFixture({ startGate: gate, startStarted: started });
-        const config = {
-          capabilities: { rest: { activation: "eager" } },
-        } satisfies import("../public/Config.ts").StackConfig;
-        const waiter = yield* Effect.forkChild(fixture.supervisor.start({ config }));
-        yield* Deferred.await(started);
-        yield* Fiber.interrupt(waiter);
-        yield* Deferred.succeed(gate, undefined);
-        const status = yield* fixture.supervisor.start({ config });
-        expect(status.lifecycle).toBe("running");
-        const starts = (yield* Ref.get(fixture.calls)).filter((call) => call.startsWith("start:"));
-        expect(starts).toContain("start:database:database");
-        expect(starts).toContain("start:rest:rest");
-      }),
-    ),
-  );
-
   it.live("shuts down after an interrupted pre-commit start later fails", () =>
     run(
       Effect.gen(function* () {
@@ -1338,7 +1302,7 @@ describe("Supervisor composition", () => {
     ),
   );
 
-  it.live("joins concurrent compiler-equivalent starts", () =>
+  it.live("rejects concurrent starts even with identical input", () =>
     run(
       Effect.gen(function* () {
         const preflightFailFirst = yield* Ref.make(true);
@@ -1349,20 +1313,17 @@ describe("Supervisor composition", () => {
           preflightGate,
           preflightStarted,
         });
-        const firstConfig = {};
-        const equivalentConfig = { capabilities: {} };
+        const firstConfig = { capabilities: {} };
         const first = yield* Effect.forkChild(fixture.supervisor.start({ config: firstConfig }));
         yield* Deferred.await(preflightStarted);
-        const second = yield* Effect.forkChild(
-          fixture.supervisor.start({ config: equivalentConfig }),
-        );
+        const second = yield* Effect.forkChild(fixture.supervisor.start({ config: firstConfig }));
         yield* Deferred.succeed(preflightGate, undefined);
         const [firstExit, secondExit] = yield* Effect.all([
           Fiber.join(first).pipe(Effect.exit),
           Fiber.join(second).pipe(Effect.exit),
         ]);
         expect(Exit.isFailure(firstExit)).toBe(true);
-        expect(Exit.isFailure(secondExit)).toBe(true);
+        expect(errorOf(secondExit)).toBeInstanceOf(StackLifecycleConflictError);
         expect(yield* Ref.get(preflightFailFirst)).toBe(false);
       }),
     ),
