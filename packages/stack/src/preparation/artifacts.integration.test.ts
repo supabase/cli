@@ -1,6 +1,6 @@
 import { NodeServices } from "@effect/platform-node";
 import { describe, expect, it } from "@effect/vitest";
-import { Cause, Deferred, Effect, Exit, Fiber, FileSystem, Option } from "effect";
+import { Cause, Deferred, Effect, Exit, Fiber, FileSystem, Option, PlatformError } from "effect";
 import { ArtifactIntegrityError, StackPreparationError } from "../public/Errors.ts";
 import { makeArtifactStore, type ArtifactRequest, type ArtifactSource } from "./ArtifactStore.ts";
 
@@ -164,6 +164,103 @@ describe("verified native artifact preparation", () => {
 
         yield* fs.writeFileString(`${prepared.path}/share/runtime/config`, "tampered config");
         expect((yield* store.prepare(directoryRequest)).outcome).toBe("cached");
+      }),
+    ),
+  );
+
+  it.live("rejects a non-EINVAL readLink failure on a cache hit", () =>
+    withPlatform(
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const root = yield* fs.makeTempDirectoryScoped({
+          prefix: "supabase-stack-artifact-cache-readlink-error-",
+        });
+        const publisher = yield* makeArtifactStore({ cacheRoot: root, source: sourceWriting() });
+        yield* publisher.prepare(request);
+        const failingFs: FileSystem.FileSystem = {
+          ...fs,
+          readLink: (candidate) =>
+            candidate.endsWith("/bin/postgres")
+              ? Effect.fail(
+                  PlatformError.systemError({
+                    _tag: "PermissionDenied",
+                    module: "FileSystem",
+                    method: "readLink",
+                    pathOrDescriptor: candidate,
+                    cause: { code: "EACCES" },
+                  }),
+                )
+              : fs.readLink(candidate),
+        };
+        const checker = yield* makeArtifactStore({
+          cacheRoot: root,
+          source: sourceWriting(),
+        }).pipe(Effect.provideService(FileSystem.FileSystem, failingFs));
+
+        const exit = yield* checker.prepare(request).pipe(Effect.exit);
+        const error = errorOf(exit);
+
+        expect(error).toBeInstanceOf(ArtifactIntegrityError);
+        expect(error?.message).toContain("Unable to inspect required runtime path");
+      }),
+    ),
+  );
+
+  it.live("does not recursively enumerate required directories on a cache hit", () =>
+    withPlatform(
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const root = yield* fs.makeTempDirectoryScoped({
+          prefix: "supabase-stack-artifact-cache-no-recursion-",
+        });
+        const directoryRequest: ArtifactRequest = {
+          ...request,
+          key: "database/postgres-cache-no-recursion",
+          requiredRuntimePaths: ["bin/postgres", "share/runtime"],
+        };
+        const source: ArtifactSource = {
+          materialize: (_entry, destination) =>
+            Effect.gen(function* () {
+              yield* fs.makeDirectory(`${destination}/bin`, { recursive: true });
+              yield* fs.makeDirectory(`${destination}/share/runtime`, { recursive: true });
+              yield* fs.writeFileString(`${destination}/bin/postgres`, "native postgres");
+              yield* fs.writeFileString(`${destination}/share/runtime/config`, "config");
+              return archive;
+            }).pipe(
+              Effect.mapError(
+                (cause) =>
+                  new StackPreparationError({
+                    message: `materialization failed: ${cause.message}`,
+                    cause,
+                  }),
+              ),
+            ),
+        };
+        const publisher = yield* makeArtifactStore({ cacheRoot: root, source });
+        yield* publisher.prepare(directoryRequest);
+        const guardedFs: FileSystem.FileSystem = {
+          ...fs,
+          readDirectory: (candidate, options) =>
+            candidate.endsWith("/share/runtime")
+              ? Effect.fail(
+                  PlatformError.systemError({
+                    _tag: "Busy",
+                    module: "FileSystem",
+                    method: "readDirectory",
+                    pathOrDescriptor: candidate,
+                    cause: { code: "EBUSY" },
+                  }),
+                )
+              : fs.readDirectory(candidate, options),
+        };
+        const checker = yield* makeArtifactStore({
+          cacheRoot: root,
+          source,
+        }).pipe(Effect.provideService(FileSystem.FileSystem, guardedFs));
+
+        const cached = yield* checker.prepare(directoryRequest);
+
+        expect(cached.outcome).toBe("cached");
       }),
     ),
   );

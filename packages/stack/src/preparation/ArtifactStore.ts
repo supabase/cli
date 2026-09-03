@@ -73,6 +73,12 @@ const EXECUTABLE_MODE = 0o755;
 
 type ArtifactPathKind = "file" | "directory" | "symlink";
 
+type InspectedArtifactPath = {
+  readonly kind: ArtifactPathKind;
+  readonly realPath: string;
+  readonly linkText?: string;
+};
+
 const artifactError = (message: string, fields: Readonly<Record<string, unknown>> = {}) =>
   new StackPreparationError({ ...fields, message });
 
@@ -270,20 +276,46 @@ const ensureSafeRoot = (
     return realRoot;
   });
 
+const hasErrnoCode = (value: unknown): value is { readonly code?: unknown } =>
+  typeof value === "object" && value !== null && "code" in value;
+
+const isReadLinkNonSymlink = (cause: PlatformError.PlatformError): boolean =>
+  cause instanceof PlatformError.PlatformError &&
+  cause.reason instanceof PlatformError.SystemError &&
+  cause.reason.method === "readLink" &&
+  hasErrnoCode(cause.reason.cause) &&
+  cause.reason.cause.code === "EINVAL";
+
 const inspectBasicKind = (
   fs: FileSystem.FileSystem,
   candidate: string,
-): Effect.Effect<ArtifactPathKind, ArtifactIntegrityError> =>
+): Effect.Effect<InspectedArtifactPath, ArtifactIntegrityError> =>
   fs.readLink(candidate).pipe(
-    Effect.as("symlink" as const),
-    Effect.catch(() =>
-      fs.stat(candidate).pipe(
-        Effect.mapError((cause) =>
+    Effect.map((linkText): InspectedArtifactPath => ({
+      kind: "symlink",
+      realPath: candidate,
+      linkText,
+    })),
+    Effect.catch((cause): Effect.Effect<InspectedArtifactPath, ArtifactIntegrityError> => {
+      if (!isReadLinkNonSymlink(cause))
+        return Effect.fail(
           metadataError("Unable to inspect required runtime path", { path: candidate, cause }),
+        );
+      return fs.stat(candidate).pipe(
+        Effect.mapError((statCause) =>
+          metadataError("Unable to inspect required runtime path", {
+            path: candidate,
+            cause: statCause,
+          }),
         ),
         Effect.flatMap((info) => {
-          if (info.type === "File") return Effect.succeed("file" as const);
-          if (info.type === "Directory") return Effect.succeed("directory" as const);
+          if (info.type === "File")
+            return Effect.succeed<InspectedArtifactPath>({ kind: "file", realPath: candidate });
+          if (info.type === "Directory")
+            return Effect.succeed<InspectedArtifactPath>({
+              kind: "directory",
+              realPath: candidate,
+            });
           return Effect.fail(
             metadataError("Required runtime path must be a file or directory", {
               path: candidate,
@@ -291,8 +323,8 @@ const inspectBasicKind = (
             }),
           );
         }),
-      ),
-    ),
+      );
+    }),
   );
 
 const resolveContainedPath = (
@@ -318,18 +350,18 @@ const resolveContainedPath = (
 
 const ensureSymlinkTargetShape = (
   fs: FileSystem.FileSystem,
-  candidate: string,
+  realPath: string,
 ): Effect.Effect<void, ArtifactIntegrityError> =>
-  fs.stat(candidate).pipe(
+  fs.stat(realPath).pipe(
     Effect.mapError((cause) =>
-      metadataError("Unable to inspect required runtime path target", { path: candidate, cause }),
+      metadataError("Unable to inspect required runtime path target", { path: realPath, cause }),
     ),
     Effect.flatMap((info) =>
       info.type === "File" || info.type === "Directory"
         ? Effect.void
         : Effect.fail(
             metadataError("Required runtime path must resolve to a file or directory", {
-              path: candidate,
+              path: realPath,
               type: info.type,
             }),
           ),
@@ -341,12 +373,26 @@ const inspectFreshPath = (
   path: Path.Path,
   candidate: string,
   realRoot: string,
-): Effect.Effect<ArtifactPathKind, ArtifactIntegrityError> =>
+): Effect.Effect<InspectedArtifactPath, ArtifactIntegrityError> =>
   Effect.gen(function* () {
-    const kind = yield* inspectBasicKind(fs, candidate);
-    yield* resolveContainedPath(fs, path, candidate, realRoot);
-    if (kind === "symlink") yield* ensureSymlinkTargetShape(fs, candidate);
-    return kind;
+    const inspected = yield* inspectBasicKind(fs, candidate);
+    const realPath = yield* resolveContainedPath(fs, path, candidate, realRoot);
+    if (inspected.kind === "symlink") {
+      yield* ensureSymlinkTargetShape(fs, realPath);
+      const linkText = yield* fs.readLink(candidate).pipe(
+        Effect.mapError((cause) =>
+          metadataError("Required runtime path symlink changed during validation", {
+            path: candidate,
+            cause,
+          }),
+        ),
+      );
+      if (linkText !== inspected.linkText)
+        return yield* metadataError("Required runtime path symlink changed during validation", {
+          path: candidate,
+        });
+    }
+    return { ...inspected, realPath };
   });
 
 const validateFreshRuntimePaths = (
@@ -355,19 +401,19 @@ const validateFreshRuntimePaths = (
   root: string,
   realRoot: string,
   relativePaths: ReadonlyArray<string>,
-): Effect.Effect<Readonly<Record<string, ArtifactPathKind>>, ArtifactIntegrityError> =>
+): Effect.Effect<Readonly<Record<string, InspectedArtifactPath>>, ArtifactIntegrityError> =>
   Effect.gen(function* () {
     const inspectDirectory = (relative: string) =>
       Effect.gen(function* () {
         const candidate = path.resolve(root, relative);
-        const kind = yield* inspectFreshPath(fs, path, candidate, realRoot);
+        const inspected = yield* inspectFreshPath(fs, path, candidate, realRoot);
         const traversable =
-          kind === "directory" ||
-          (kind === "symlink" &&
-            (yield* fs.stat(candidate).pipe(
+          inspected.kind === "directory" ||
+          (inspected.kind === "symlink" &&
+            (yield* fs.stat(inspected.realPath).pipe(
               Effect.mapError((cause) =>
                 metadataError("Unable to inspect required runtime path target", {
-                  path: candidate,
+                  path: inspected.realPath,
                   cause,
                 }),
               ),
@@ -383,10 +429,10 @@ const validateFreshRuntimePaths = (
             ),
           );
           for (const child of children.sort()) {
-            yield* inspectFreshPath(fs, path, path.join(candidate, child), realRoot);
+            yield* inspectFreshPath(fs, path, path.join(inspected.realPath, child), realRoot);
           }
         }
-        return [relative, kind] as const;
+        return [relative, inspected] as const;
       });
     const entries = yield* Effect.forEach(relativePaths, inspectDirectory);
     return Object.fromEntries(entries);
@@ -399,8 +445,9 @@ const ensureSafePaths = (
   realRoot: string,
   metadata: ArtifactMetadata,
   relativePaths: ReadonlyArray<string>,
-): Effect.Effect<void, ArtifactIntegrityError> =>
+): Effect.Effect<Readonly<Record<string, InspectedArtifactPath>>, ArtifactIntegrityError> =>
   Effect.gen(function* () {
+    const entries: Array<readonly [string, InspectedArtifactPath]> = [];
     for (const relative of relativePaths) {
       const candidate = path.resolve(root, relative);
       if (!pathWithin(path.resolve(root), candidate, path.sep))
@@ -418,26 +465,23 @@ const ensureSafePaths = (
         return yield* metadataError("Cached artifact is missing a required runtime path", {
           path: relative,
         });
-      const actualKind = yield* inspectBasicKind(fs, candidate);
-      yield* resolveContainedPath(fs, path, candidate, realRoot);
-      if (actualKind === "symlink") yield* ensureSymlinkTargetShape(fs, candidate);
+      const inspected = yield* inspectFreshPath(fs, path, candidate, realRoot);
       const expectedKind = metadata.requiredRuntimeKinds[relative];
-      if (expectedKind === undefined || actualKind !== expectedKind)
+      if (expectedKind === undefined || inspected.kind !== expectedKind)
         return yield* metadataError("Cached artifact runtime path changed basic kind", {
           path: relative,
           expected: expectedKind,
-          actual: actualKind,
+          actual: inspected.kind,
         });
+      entries.push([relative, inspected]);
     }
+    return Object.fromEntries(entries);
   });
 
 const ensureExecutableFile = (
   fs: FileSystem.FileSystem,
-  path: Path.Path,
-  root: string,
-  relative: string,
+  executable: string,
 ): Effect.Effect<void, ArtifactIntegrityError> => {
-  const executable = path.resolve(root, relative);
   return fs.stat(executable).pipe(
     Effect.mapError((cause) =>
       metadataError("Cached artifact executable cannot be inspected", {
@@ -567,19 +611,21 @@ const makeArtifactOperation = (
         // Published content is intentionally not rehashed on cache hits. Metadata and cheap
         // structural checks protect the cache boundary; content tampering may execute or fail
         // later when the workload starts.
-        yield* ensureSafePaths(fs, path, target, realRoot, metadata, request.requiredRuntimePaths);
+        const safePaths = yield* ensureSafePaths(
+          fs,
+          path,
+          target,
+          realRoot,
+          metadata,
+          request.requiredRuntimePaths,
+        );
         if (request.executablePath !== undefined) {
-          yield* ensureExecutableFile(fs, path, target, request.executablePath);
-          const executable = path.resolve(target, request.executablePath);
-          yield* mapFs(
-            executable,
-            "set executable artifact mode",
-            fs.chmod(executable, EXECUTABLE_MODE),
-          ).pipe(
-            Effect.mapError((error) =>
-              metadataError(error.message, { path: executable, cause: error }),
-            ),
-          );
+          const executable = safePaths[request.executablePath];
+          if (executable === undefined)
+            return yield* metadataError("Cached artifact executable path is not recorded", {
+              path: request.executablePath,
+            });
+          yield* ensureExecutableFile(fs, executable.realPath);
         }
         return {
           key: request.key,
@@ -624,12 +670,15 @@ const makeArtifactOperation = (
           }),
         ),
       );
-      const runtimeKinds = yield* validateFreshRuntimePaths(
+      const runtimePaths = yield* validateFreshRuntimePaths(
         fs,
         path,
         temporary,
         temporaryRoot,
         request.requiredRuntimePaths,
+      );
+      const runtimeKinds = Object.fromEntries(
+        Object.entries(runtimePaths).map(([relative, inspected]) => [relative, inspected.kind]),
       );
       yield* writeMetadataSync(
         fs,
@@ -637,12 +686,16 @@ const makeArtifactOperation = (
         metadataFor(request, expectedSha256, runtimeKinds),
       );
       if (request.executablePath !== undefined) {
-        yield* ensureExecutableFile(fs, path, temporary, request.executablePath);
-        const executable = path.resolve(temporary, request.executablePath);
+        const executable = runtimePaths[request.executablePath];
+        if (executable === undefined)
+          return yield* metadataError("Fresh artifact executable path is not recorded", {
+            path: request.executablePath,
+          });
+        yield* ensureExecutableFile(fs, executable.realPath);
         yield* mapFs(
-          executable,
+          executable.realPath,
           "set executable artifact mode",
-          fs.chmod(executable, EXECUTABLE_MODE),
+          fs.chmod(executable.realPath, EXECUTABLE_MODE),
         );
       }
       const nowExists = yield* mapFs(target, "inspect concurrent artifact", fs.exists(target));
