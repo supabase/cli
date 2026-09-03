@@ -1,29 +1,29 @@
 import { describe, expect, it } from "@effect/vitest";
-import { Effect, Layer, Option, Stdio, Stream } from "effect";
+import { Cause, Effect, Exit, Layer, Option, Stream } from "effect";
+import { systemError, type PlatformError } from "effect/PlatformError";
 import { mockTty } from "../../../tests/helpers/mocks.ts";
 import { Stdin } from "./stdin.service.ts";
-import { stdinLayer } from "./stdin.layer.ts";
+import { stdinLayerFrom } from "./stdin.layer.ts";
 
 const encoder = new TextEncoder();
 
-function makeStdioLayer(stdin: Stream.Stream<Uint8Array>) {
-  return Layer.succeed(
-    Stdio.Stdio,
-    Stdio.make({
-      args: Effect.succeed([]),
-      stdin,
-      stdout: { stream: Stream.empty, sink: { stream: Stream.empty } } as any,
-      stderr: { stream: Stream.empty, sink: { stream: Stream.empty } } as any,
-    }),
-  );
-}
+const readError = Stream.fail(
+  systemError({
+    module: "Stdin",
+    method: "read",
+    _tag: "Unknown",
+    description: "EAGAIN: resource temporarily unavailable, read",
+    cause: new Error("EAGAIN: resource temporarily unavailable, read"),
+  }),
+);
+
+const withStdin = (stdin: Stream.Stream<Uint8Array, PlatformError>, stdinIsTty = false) =>
+  stdinLayerFrom(stdin).pipe(Layer.provide(mockTty({ stdinIsTty })));
 
 describe("Stdin", () => {
   describe("isTTY", () => {
     it.effect("returns true when Tty.stdinIsTty is true", () => {
-      const layer = stdinLayer.pipe(
-        Layer.provide(Layer.mergeAll(makeStdioLayer(Stream.empty), mockTty({ stdinIsTty: true }))),
-      );
+      const layer = withStdin(Stream.empty, true);
       return Effect.gen(function* () {
         const { isTTY } = yield* Stdin;
         expect(isTTY).toBe(true);
@@ -31,9 +31,7 @@ describe("Stdin", () => {
     });
 
     it.effect("returns false when Tty.stdinIsTty is false", () => {
-      const layer = stdinLayer.pipe(
-        Layer.provide(Layer.mergeAll(makeStdioLayer(Stream.empty), mockTty({ stdinIsTty: false }))),
-      );
+      const layer = withStdin(Stream.empty);
       return Effect.gen(function* () {
         const { isTTY } = yield* Stdin;
         expect(isTTY).toBe(false);
@@ -45,9 +43,7 @@ describe("Stdin", () => {
     it.effect("returns Some(bytes) for valid input", () => {
       const expected = encoder.encode("  my-token-123  \n");
       const stdin = Stream.fromIterable([expected]);
-      const layer = stdinLayer.pipe(
-        Layer.provide(Layer.mergeAll(makeStdioLayer(stdin), mockTty({ stdinIsTty: false }))),
-      );
+      const layer = withStdin(stdin);
       return Effect.gen(function* () {
         const { readPipedBytes } = yield* Stdin;
         const result = yield* readPipedBytes;
@@ -56,9 +52,7 @@ describe("Stdin", () => {
     });
 
     it.effect("returns None for empty stream", () => {
-      const layer = stdinLayer.pipe(
-        Layer.provide(Layer.mergeAll(makeStdioLayer(Stream.empty), mockTty({ stdinIsTty: false }))),
-      );
+      const layer = withStdin(Stream.empty);
       return Effect.gen(function* () {
         const { readPipedBytes } = yield* Stdin;
         const result = yield* readPipedBytes;
@@ -67,10 +61,7 @@ describe("Stdin", () => {
     });
 
     it.effect("returns None on stream error", () => {
-      const stdin = Stream.fail(new Error("read error")) as unknown as Stream.Stream<Uint8Array>;
-      const layer = stdinLayer.pipe(
-        Layer.provide(Layer.mergeAll(makeStdioLayer(stdin), mockTty({ stdinIsTty: false }))),
-      );
+      const layer = withStdin(readError);
       return Effect.gen(function* () {
         const { readPipedBytes } = yield* Stdin;
         const result = yield* readPipedBytes;
@@ -85,9 +76,7 @@ describe("Stdin", () => {
         encoder.encode("-chunk2"),
         encoder.encode("-chunk3"),
       ]);
-      const layer = stdinLayer.pipe(
-        Layer.provide(Layer.mergeAll(makeStdioLayer(stdin), mockTty({ stdinIsTty: false }))),
-      );
+      const layer = withStdin(stdin);
       return Effect.gen(function* () {
         const { readPipedBytes } = yield* Stdin;
         const result = yield* readPipedBytes;
@@ -98,9 +87,7 @@ describe("Stdin", () => {
     it.effect("preserves whitespace-only input", () => {
       const expected = encoder.encode("   \n  \t  ");
       const stdin = Stream.fromIterable([expected]);
-      const layer = stdinLayer.pipe(
-        Layer.provide(Layer.mergeAll(makeStdioLayer(stdin), mockTty({ stdinIsTty: false }))),
-      );
+      const layer = withStdin(stdin);
       return Effect.gen(function* () {
         const { readPipedBytes } = yield* Stdin;
         const result = yield* readPipedBytes;
@@ -112,9 +99,7 @@ describe("Stdin", () => {
   describe("readPipedText", () => {
     it.effect("returns Some(trimmed) for valid input", () => {
       const stdin = Stream.fromIterable([encoder.encode("  my-token-123  \n")]);
-      const layer = stdinLayer.pipe(
-        Layer.provide(Layer.mergeAll(makeStdioLayer(stdin), mockTty({ stdinIsTty: false }))),
-      );
+      const layer = withStdin(stdin);
       return Effect.gen(function* () {
         const { readPipedText } = yield* Stdin;
         const result = yield* readPipedText;
@@ -123,9 +108,7 @@ describe("Stdin", () => {
     });
 
     it.effect("returns None for empty stream", () => {
-      const layer = stdinLayer.pipe(
-        Layer.provide(Layer.mergeAll(makeStdioLayer(Stream.empty), mockTty({ stdinIsTty: false }))),
-      );
+      const layer = withStdin(Stream.empty);
       return Effect.gen(function* () {
         const { readPipedText } = yield* Stdin;
         const result = yield* readPipedText;
@@ -134,10 +117,7 @@ describe("Stdin", () => {
     });
 
     it.effect("returns None on stream error", () => {
-      const stdin = Stream.fail(new Error("read error")) as unknown as Stream.Stream<Uint8Array>;
-      const layer = stdinLayer.pipe(
-        Layer.provide(Layer.mergeAll(makeStdioLayer(stdin), mockTty({ stdinIsTty: false }))),
-      );
+      const layer = withStdin(readError);
       return Effect.gen(function* () {
         const { readPipedText } = yield* Stdin;
         const result = yield* readPipedText;
@@ -151,9 +131,7 @@ describe("Stdin", () => {
         encoder.encode("-chunk2"),
         encoder.encode("-chunk3"),
       ]);
-      const layer = stdinLayer.pipe(
-        Layer.provide(Layer.mergeAll(makeStdioLayer(stdin), mockTty({ stdinIsTty: false }))),
-      );
+      const layer = withStdin(stdin);
       return Effect.gen(function* () {
         const { readPipedText } = yield* Stdin;
         const result = yield* readPipedText;
@@ -163,13 +141,42 @@ describe("Stdin", () => {
 
     it.effect("returns None for whitespace-only input", () => {
       const stdin = Stream.fromIterable([encoder.encode("   \n  \t  ")]);
-      const layer = stdinLayer.pipe(
-        Layer.provide(Layer.mergeAll(makeStdioLayer(stdin), mockTty({ stdinIsTty: false }))),
-      );
+      const layer = withStdin(stdin);
       return Effect.gen(function* () {
         const { readPipedText } = yield* Stdin;
         const result = yield* readPipedText;
         expect(result).toEqual(Option.none());
+      }).pipe(Effect.provide(layer));
+    });
+  });
+
+  describe("readLine", () => {
+    it.effect("returns None at EOF", () => {
+      const layer = withStdin(Stream.empty);
+      return Effect.gen(function* () {
+        const { readLine } = yield* Stdin;
+        const result = yield* readLine(10_000);
+        expect(result).toEqual(Option.none());
+      }).pipe(Effect.provide(layer));
+    });
+
+    it.effect("returns None on a read error, for every prompt", () => {
+      const layer = withStdin(readError);
+      return Effect.gen(function* () {
+        const { readLine } = yield* Stdin;
+        const first = yield* readLine(10_000);
+        const second = yield* readLine(10_000);
+        expect(first).toEqual(Option.none());
+        expect(second).toEqual(Option.none());
+      }).pipe(Effect.provide(layer));
+    });
+
+    it.effect("propagates a defect instead of answering the prompt", () => {
+      const layer = withStdin(Stream.die(new Error("boom")));
+      return Effect.gen(function* () {
+        const { readLine } = yield* Stdin;
+        const exit = yield* readLine(10_000).pipe(Effect.exit);
+        expect(Exit.isFailure(exit) && Cause.hasDies(exit.cause)).toBe(true);
       }).pipe(Effect.provide(layer));
     });
   });
