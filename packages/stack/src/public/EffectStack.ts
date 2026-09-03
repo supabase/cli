@@ -21,6 +21,8 @@ import { ChildProcessSpawner } from "effect/unstable/process";
 import type { ChildProcessSpawner as ChildProcessSpawnerService } from "effect/unstable/process/ChildProcessSpawner";
 import type { StackIdentity } from "../identity/Identity.ts";
 import { resolveStackIdentity, deriveStackId } from "../identity/Identity.ts";
+import { compileStack, rebuildExecutionPlan, type StackDefinition } from "../model/Compiler.ts";
+import type { ExecutionPlan } from "../model/ExecutionPlan.ts";
 import type { PersistedStackIdentity, PersistedStackState } from "../state/StackState.ts";
 import { toPersistedIdentity } from "../state/StackState.ts";
 import { makeStackStateStore, type StackStateStore } from "../state/StackStateStore.ts";
@@ -29,7 +31,7 @@ import { StackIdSchema, type StackId } from "./StackId.ts";
 import type { StackRuntime, StackRuntimePreference } from "./Runtime.ts";
 import type { StackConfig } from "./Config.ts";
 import { type StackStatus, type StackDescriptor, type StackInspection } from "./Status.ts";
-import type { CapabilityName } from "./Capability.ts";
+import { CAPABILITY_NAMES, type CapabilityName } from "./Capability.ts";
 import type { LogQuery, StackLogBatch, StackLogEntry } from "./Logs.ts";
 import type { EffectStackCredentials } from "./Credentials.ts";
 import {
@@ -99,14 +101,18 @@ import {
 import {
   ContainerEngineProtocolError,
   makeProcessCommandRunner,
-  selectContainerEngine,
   type ContainerEngineKind,
   type ContainerPlatform,
+  type ContainerEngine,
 } from "../runtime/ContainerEngine.ts";
 import { statusFor } from "../supervisor/StatusProjection.ts";
 import { makeDockerEngine } from "../runtime/DockerEngine.ts";
 import { makePodmanEngine } from "../runtime/PodmanEngine.ts";
 import { readRetainedLogs } from "../supervisor/LogStore.ts";
+import {
+  makeProductionRuntimeArtifactPreparer,
+  type PreparedWorkloadArtifact,
+} from "../preparation/RuntimeArtifacts.ts";
 
 export interface StartStackOptions {
   readonly config?: StackConfig;
@@ -159,11 +165,6 @@ export interface EffectStack {
   readonly followLogs: (query?: LogQuery) => Stream.Stream<StackLogEntry, StackLogsError>;
 }
 
-const containerRuntime = (engine: ContainerEngineKind): StackRuntime => ({
-  kind: "container",
-  engine,
-});
-
 const optionOf = <A>(value: A | undefined): Option.Option<A> =>
   value === undefined ? Option.none() : Option.some(value);
 
@@ -176,40 +177,33 @@ const defaultContainerPlatform = (): ContainerPlatform => {
 };
 
 const defaultContainerEngineResolver = (): ContainerEngineResolverShape => ({
-  resolve: (preference) =>
+  resolve: (kind) =>
     Effect.gen(function* () {
       const platform = defaultContainerPlatform();
-      const dockerRunner = yield* makeProcessCommandRunner({ executable: "docker" });
-      const podmanRunner = yield* makeProcessCommandRunner({ executable: "podman" });
-      const docker = makeDockerEngine({ runner: dockerRunner, platform });
-      const podman = makePodmanEngine({ runner: podmanRunner, platform });
-      const selected = yield* selectContainerEngine({ preference, docker, podman });
-      yield* selected.preflight;
-      return selected.kind;
+      const runner = yield* makeProcessCommandRunner({ executable: kind });
+      return kind === "docker"
+        ? makeDockerEngine({ runner, platform })
+        : makePodmanEngine({ runner, platform });
     }),
 });
 
-const resolveRuntime = (
-  preference: StackRuntimePreference | undefined,
-): Effect.Effect<StackRuntime, ContainerEngineError, ChildProcessSpawnerService> =>
-  preference?.kind !== "container"
-    ? Effect.succeed({ kind: "native" })
-    : Effect.serviceOption(ContainerEngineResolver).pipe(
-        Effect.map((service) =>
-          Option.isSome(service) ? service.value : defaultContainerEngineResolver(),
-        ),
-        Effect.flatMap((resolver) => resolver.resolve(preference.engine ?? "auto")),
-        Effect.map(containerRuntime),
-        Effect.mapError(
-          (error) =>
-            new ContainerEngineError({
-              message:
-                error instanceof ContainerEngineProtocolError
-                  ? `${error.operation}: ${error.message}`
-                  : error.message,
-            }),
-        ),
-      );
+const resolveContainerEngine = (
+  kind: ContainerEngineKind,
+  resolver: ContainerEngineResolverShape | undefined,
+  spawner: ChildProcessSpawnerValue,
+): Effect.Effect<ContainerEngine, ContainerEngineError> =>
+  (resolver ?? defaultContainerEngineResolver()).resolve(kind).pipe(
+    Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner),
+    Effect.mapError(
+      (error) =>
+        new ContainerEngineError({
+          message:
+            error instanceof ContainerEngineProtocolError
+              ? `${error.operation}: ${error.message}`
+              : error.message,
+        }),
+    ),
+  );
 
 const descriptor = (state: PersistedStackState): StackDescriptor => ({
   id: StackIdSchema.make(state.identity.stackId),
@@ -320,18 +314,6 @@ const credentialsError = (error: ControlError): StackCredentialsError => {
     : new StackNotRunningError({ message: mapped.message });
 };
 
-const prepareError = (error: ControlError): PrepareStackError => {
-  const mapped = errorForRpc(error);
-  return mapped instanceof StackPreparationError ||
-    mapped instanceof ArtifactIntegrityError ||
-    mapped instanceof ContainerPullError ||
-    mapped instanceof StackOwnershipConflictError ||
-    mapped instanceof StackStateInvalidError ||
-    mapped instanceof StackLifecycleConflictError
-    ? mapped
-    : new StackPreparationError({ message: mapped.message });
-};
-
 const startError = (error: ControlError): StackStartError => {
   const mapped = errorForRpc(error);
   return mapped instanceof InvalidStackConfigError ||
@@ -408,6 +390,10 @@ export const makeHandle = (
     >;
     readonly readLogs?: (query?: LogQuery) => Effect.Effect<StackLogBatch, StackLogsError>;
     readonly waitForRelease?: () => Effect.Effect<void, StackStopError>;
+    readonly prepare?: (
+      options?: PrepareStackOptions,
+    ) => Effect.Effect<PrepareStackResult, PrepareStackError>;
+    readonly containerEngineResolver?: ContainerEngineResolverShape;
   } = {},
 ): Effect.Effect<EffectStack> =>
   Effect.sync(() => {
@@ -622,82 +608,12 @@ export const makeHandle = (
           ),
         ),
       );
-    const prepare = (prepareOptions?: PrepareStackOptions) =>
-      Effect.gen(function* () {
-        const ownerBefore = yield* resolveClient(false).pipe(
-          Effect.mapError(prepareError),
-          Effect.flatMap((owner) =>
-            owner.probe().pipe(
-              Effect.flatMap((response) =>
-                response.ok
-                  ? Effect.succeed(true)
-                  : Effect.fail(new StackPreparationError({ message: response.error.message })),
-              ),
-              Effect.mapError((error) =>
-                isMaintenanceTransportFailure(error)
-                  ? new StackOwnershipConflictError({
-                      message: "The existing Supervisor is unreachable",
-                    })
-                  : prepareError(error),
-              ),
-            ),
-          ),
-          Effect.catchTag("StackOwnershipConflictError", () =>
-            readPersistedState === undefined
-              ? Effect.succeed(false)
-              : readPersistedState().pipe(
-                  Effect.mapError(prepareError),
-                  Effect.flatMap((state) =>
-                    Option.isSome(state) && state.value.desiredLifecycle === "running"
-                      ? Effect.fail(
-                          new StackOwnershipConflictError({
-                            stackId: id,
-                            message:
-                              "Stack has running intent without a reachable Supervisor; stop it before preparing",
-                          }),
-                        )
-                      : Effect.succeed(false),
-                  ),
-                ),
-          ),
-        );
-        const result = yield* Effect.exit(
-          invoke(
-            (rpc) =>
-              prepareOptions === undefined
-                ? rpc.prepare({})
-                : rpc.prepare({
-                    ...(prepareOptions.config === undefined
-                      ? {}
-                      : { config: prepareOptions.config }),
-                    ...(prepareOptions.capabilities === undefined
-                      ? {}
-                      : { capabilities: prepareOptions.capabilities }),
-                  }),
-            prepareError,
-            true,
-          ),
-        );
-        if (!ownerBefore && options.waitForRelease !== undefined) {
-          const released = yield* Effect.uninterruptible(options.waitForRelease()).pipe(
-            Effect.mapError(prepareError),
-            Effect.exit,
-          );
-          if (Exit.isFailure(released)) {
-            if (Exit.isSuccess(result)) {
-              const retainedOwner = yield* resolveClient(false).pipe(
-                Effect.flatMap((owner) => owner.probe()),
-                Effect.exit,
-              );
-              if (Exit.isSuccess(retainedOwner) && retainedOwner.value.ok) return result.value;
-            }
-            return yield* Effect.failCause(released.cause);
-          }
-        }
-        return yield* Exit.isSuccess(result)
-          ? Effect.succeed(result.value)
-          : Effect.failCause(result.cause);
-      });
+    const prepare = (
+      prepareOptions?: PrepareStackOptions,
+    ): Effect.Effect<PrepareStackResult, PrepareStackError> =>
+      options.prepare === undefined
+        ? Effect.fail(new StackPreparationError({ message: "Stack preparation is unavailable" }))
+        : options.prepare(prepareOptions);
     const logs = (query?: LogQuery): Effect.Effect<StackLogBatch, StackLogsError> =>
       invoke((rpc) => rpc.logs(query ?? {}), logsError).pipe(
         Effect.catchTag("StackOwnershipConflictError", (ownershipError) => {
@@ -807,6 +723,7 @@ const handleDependencies = (options: {
   readonly path: Path.Path;
   readonly crypto: Crypto.Crypto;
   readonly spawner: ChildProcessSpawnerValue;
+  readonly containerEngineResolver?: ContainerEngineResolverShape;
 }) => {
   const provide = <A, E>(
     effect: Effect.Effect<A, E, FileSystem.FileSystem | Path.Path | Crypto.Crypto>,
@@ -865,6 +782,123 @@ const handleDependencies = (options: {
     );
   const readPersistedState = () =>
     provide(options.store.read(options.id)).pipe(Effect.map(optionOf));
+  const directPrepareError = (cause: unknown): PrepareStackError =>
+    cause instanceof StackPreparationError ||
+    cause instanceof ArtifactIntegrityError ||
+    cause instanceof ContainerPullError ||
+    cause instanceof StackOwnershipConflictError ||
+    cause instanceof StackStateInvalidError ||
+    cause instanceof StackLifecycleConflictError
+      ? cause
+      : new StackPreparationError({
+          stackId: options.id,
+          message: cause instanceof Error ? cause.message : String(cause),
+          cause,
+        });
+  const prepare = (
+    prepareOptions?: PrepareStackOptions,
+  ): Effect.Effect<PrepareStackResult, PrepareStackError> =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const state = yield* options.store
+          .read(options.id)
+          .pipe(
+            Effect.provideService(FileSystem.FileSystem, options.fileSystem),
+            Effect.provideService(Path.Path, options.path),
+            Effect.provideService(Crypto.Crypto, options.crypto),
+            Effect.mapError(directPrepareError),
+          );
+        if (state === undefined)
+          return yield* new StackStateInvalidError({
+            stackId: options.id,
+            message: "Stack state is missing",
+          });
+        let definition: StackDefinition;
+        let plan: ExecutionPlan;
+        if (prepareOptions?.config === undefined && state.definition !== undefined) {
+          definition = state.definition;
+          plan = yield* rebuildExecutionPlan(state.runtime, definition).pipe(
+            Effect.provideService(Crypto.Crypto, options.crypto),
+          );
+        } else {
+          const compiled = yield* compileStack({
+            projectRoot: state.identity.projectRoot,
+            runtime: state.runtime,
+            config: prepareOptions?.config,
+          }).pipe(
+            Effect.provideService(Path.Path, options.path),
+            Effect.provideService(Crypto.Crypto, options.crypto),
+          );
+          definition = compiled.definition;
+          plan = compiled.executionPlan;
+        }
+        const selected = new Set<CapabilityName>();
+        const visit = (name: CapabilityName): Effect.Effect<void, StackPreparationError> => {
+          if (selected.has(name)) return Effect.void;
+          const capability = definition.capabilities[name];
+          if (!capability.enabled)
+            return Effect.fail(
+              new StackPreparationError({
+                stackId: options.id,
+                capability: name,
+                message: `Capability ${name} is disabled`,
+              }),
+            );
+          selected.add(name);
+          return Effect.forEach(plan.dependencies[name], visit, { discard: true });
+        };
+        if (prepareOptions?.capabilities === undefined) {
+          for (const name of CAPABILITY_NAMES)
+            if (definition.capabilities[name].enabled) selected.add(name);
+        } else {
+          for (const name of new Set(prepareOptions.capabilities)) yield* visit(name);
+        }
+        const workloads = plan.workloads.filter((workload) => selected.has(workload.capability));
+        const containerEngine =
+          state.runtime.kind === "container"
+            ? yield* resolveContainerEngine(
+                state.runtime.engine,
+                options.containerEngineResolver,
+                options.spawner,
+              )
+            : undefined;
+        const preparer = yield* makeProductionRuntimeArtifactPreparer({
+          stateRoot: options.environment.stateRoot,
+          runtime: state.runtime,
+          ...(containerEngine === undefined ? {} : { containerEngine }),
+        }).pipe(
+          Effect.provideService(FileSystem.FileSystem, options.fileSystem),
+          Effect.provideService(Path.Path, options.path),
+          Effect.provideService(Crypto.Crypto, options.crypto),
+          Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, options.spawner),
+        );
+        const artifacts = yield* Effect.forEach(
+          workloads,
+          (workload) => preparer.prepare(state.runtime, workload),
+          { concurrency: 4 },
+        );
+        const byCapability = new Map<CapabilityName, ReadonlyArray<PreparedWorkloadArtifact>>();
+        for (const artifact of artifacts) {
+          const existing = byCapability.get(artifact.capability) ?? [];
+          byCapability.set(artifact.capability, [...existing, artifact]);
+        }
+        return {
+          capabilities: plan.startOrder
+            .filter((name) => selected.has(name))
+            .map((name): PreparedCapability => {
+              const outcome: PreparedCapability["outcome"] =
+                state.runtime.kind === "native"
+                  ? byCapability.get(name)?.some((entry) => entry.outcome === "downloaded")
+                    ? "downloaded"
+                    : "cached"
+                  : byCapability.get(name)?.some((entry) => entry.outcome === "pulled")
+                    ? "pulled"
+                    : "cached";
+              return { capability: name, version: definition.capabilities[name].version, outcome };
+            }),
+        };
+      }),
+    ).pipe(Effect.mapError(directPrepareError));
   const readLogs = (query?: LogQuery) =>
     ensureOffline().pipe(
       Effect.andThen(
@@ -932,7 +966,14 @@ const handleDependencies = (options: {
       Effect.provideService(Path.Path, options.path),
       Effect.provideService(Crypto.Crypto, options.crypto),
     );
-  return { resolveOwner, readOfflineState, readPersistedState, readLogs, waitForRelease };
+  return {
+    resolveOwner,
+    readOfflineState,
+    readPersistedState,
+    readLogs,
+    waitForRelease,
+    prepare,
+  };
 };
 
 export const createStack = (
@@ -950,25 +991,20 @@ export const createStack = (
     });
     const stackId = yield* deriveStackId(identity);
     const store = yield* makeStackStateStore({ stateRoot: env.stateRoot });
-    const current =
+    const requestedRuntime: StackRuntime =
       options.runtime?.kind === "container"
-        ? yield* Effect.gen(function* () {
-            const existing = yield* store.read(stackId);
-            const runtime =
-              existing === undefined ? yield* resolveRuntime(options.runtime) : existing.runtime;
-            return (
-              existing ??
-              (yield* store.initialize(stackId, stateInitial(identity, stackId, runtime)))
-            );
-          })
-        : yield* store.initialize(stackId, stateInitial(identity, stackId, { kind: "native" }));
+        ? { kind: "container", engine: options.runtime.engine ?? "docker" }
+        : { kind: "native" };
+    const current = yield* store.initialize(
+      stackId,
+      stateInitial(identity, stackId, requestedRuntime),
+    );
     const runtimeMismatch =
       options.runtime !== undefined &&
       (current.runtime.kind !== options.runtime.kind ||
         (options.runtime.kind === "container" &&
           current.runtime.kind === "container" &&
           options.runtime.engine !== undefined &&
-          options.runtime.engine !== "auto" &&
           current.runtime.engine !== options.runtime.engine));
     if (runtimeMismatch)
       return yield* new StackRuntimeMismatchError({
@@ -978,6 +1014,9 @@ export const createStack = (
     const path = yield* Path.Path;
     const crypto = yield* Crypto.Crypto;
     const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
+    const containerEngineResolver = yield* Effect.serviceOption(ContainerEngineResolver).pipe(
+      Effect.map(Option.getOrUndefined),
+    );
     const dependencies = handleDependencies({
       environment: env,
       store,
@@ -987,6 +1026,7 @@ export const createStack = (
       path,
       crypto,
       spawner,
+      containerEngineResolver,
     });
     return yield* makeHandle(stackId, {}, dependencies);
   });
@@ -1008,6 +1048,9 @@ export const openStack = (
     const path = yield* Path.Path;
     const crypto = yield* Crypto.Crypto;
     const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
+    const containerEngineResolver = yield* Effect.serviceOption(ContainerEngineResolver).pipe(
+      Effect.map(Option.getOrUndefined),
+    );
     const identity = runtimeIdentity(state.identity);
     const dependencies = handleDependencies({
       environment: env,
@@ -1018,6 +1061,7 @@ export const openStack = (
       path,
       crypto,
       spawner,
+      containerEngineResolver,
     });
     return yield* makeHandle(id, {}, dependencies);
   });

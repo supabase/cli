@@ -1,6 +1,10 @@
 import { Context, Effect } from "effect";
 import type { ChildProcessSpawner } from "effect/unstable/process/ChildProcessSpawner";
-import type { ContainerEngineFailure, ContainerEngineKind } from "./ContainerEngine.ts";
+import type {
+  ContainerEngine,
+  ContainerEngineFailure,
+  ContainerEngineKind,
+} from "./ContainerEngine.ts";
 
 /**
  * Host-composition seam for selecting one concrete container engine. The
@@ -9,8 +13,8 @@ import type { ContainerEngineFailure, ContainerEngineKind } from "./ContainerEng
  */
 export interface ContainerEngineResolverShape {
   readonly resolve: (
-    preference: "auto" | ContainerEngineKind,
-  ) => Effect.Effect<ContainerEngineKind, ContainerEngineFailure, ChildProcessSpawner>;
+    preference: ContainerEngineKind,
+  ) => Effect.Effect<ContainerEngine, ContainerEngineFailure, ChildProcessSpawner>;
 }
 
 export class ContainerEngineResolver extends Context.Service<

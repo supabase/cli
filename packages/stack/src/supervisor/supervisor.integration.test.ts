@@ -19,7 +19,6 @@ import { Headers } from "effect/unstable/http";
 import { Rpc } from "effect/unstable/rpc";
 import { RequestId } from "effect/unstable/rpc/RpcMessage";
 import type { LogQuery, StackLogEntry } from "../public/Logs.ts";
-import type { CapabilityName } from "../public/Capability.ts";
 import type { StackRuntime } from "../public/Runtime.ts";
 import {
   GatewayActivationError,
@@ -70,48 +69,6 @@ const invokeCredentials = (
       headers: Headers.empty,
     });
     if (Deferred.isDeferred<EffectStackCredentials, StackRpcError>(value))
-      return yield* Deferred.await(value);
-    return value;
-  });
-
-const invokePrepare = (
-  supervisor: Supervisor,
-  payload: {
-    readonly config?: import("../public/Config.ts").StackConfig;
-    readonly capabilities?: ReadonlyArray<CapabilityName>;
-  } = {},
-): Effect.Effect<
-  {
-    readonly capabilities: ReadonlyArray<{
-      readonly capability: CapabilityName;
-      readonly version: string;
-      readonly outcome: "cached" | "downloaded" | "pulled";
-    }>;
-  },
-  StackRpcError,
-  Scope.Scope
-> =>
-  Effect.gen(function* () {
-    const handler = yield* StackRpcGroup.accessHandler("prepare").pipe(
-      Effect.provide(StackRpcGroup.toLayerHandler("prepare", supervisor.rpcHandlers.prepare)),
-    );
-    const value = yield* handler(payload, {
-      client: new Rpc.ServerClient(1),
-      requestId: RequestId(1),
-      headers: Headers.empty,
-    });
-    if (
-      Deferred.isDeferred<
-        {
-          readonly capabilities: ReadonlyArray<{
-            readonly capability: CapabilityName;
-            readonly version: string;
-            readonly outcome: "cached" | "downloaded" | "pulled";
-          }>;
-        },
-        StackRpcError
-      >(value)
-    )
       return yield* Deferred.await(value);
     return value;
   });
@@ -410,63 +367,6 @@ const run = <A, E, R>(effect: Effect.Effect<A, E, R>) =>
   Effect.scoped(effect).pipe(Effect.provide(NodeServices.layer));
 
 describe("Supervisor composition", () => {
-  it.live("prepares a prospective config without mutating state or starting resources", () =>
-    run(
-      Effect.gen(function* () {
-        const fixture = yield* makeFixture();
-        const before = yield* fixture.store
-          .read(fixture.id)
-          .pipe(Effect.provideContext(fixture.context));
-        const result = yield* invokePrepare(fixture.supervisor, {
-          config: {
-            capabilities: {
-              rest: {},
-              auth: { enabled: false },
-              realtime: { enabled: false },
-              storage: { enabled: false },
-              functions: { enabled: false },
-              studio: { enabled: false },
-              mail: { enabled: false },
-              analytics: { enabled: false },
-              pooler: { enabled: false },
-            },
-          },
-        });
-        expect(result.capabilities).toEqual([
-          { capability: "database", version: expect.any(String), outcome: "cached" },
-          { capability: "rest", version: expect.any(String), outcome: "cached" },
-        ]);
-        expect(yield* fixture.store.read(fixture.id)).toEqual(before);
-        expect(yield* Ref.get(fixture.calls)).toEqual([
-          "prepare:database:database",
-          "prepare:rest:rest",
-        ]);
-      }),
-    ),
-  );
-
-  it.live("keeps interrupted preparation owned until it completes, then shuts down", () =>
-    run(
-      Effect.gen(function* () {
-        const prepareGate = yield* Deferred.make<void>();
-        const prepareStarted = yield* Deferred.make<void>();
-        const fixture = yield* makeFixture({ prepareGate, prepareStarted });
-        const preparing = yield* Effect.forkChild(invokePrepare(fixture.supervisor, {}), {
-          startImmediately: true,
-        });
-        yield* Deferred.await(prepareStarted);
-        const shutdown = yield* Effect.forkChild(fixture.supervisor.shutdown, {
-          startImmediately: true,
-        });
-        yield* Fiber.interrupt(preparing);
-        yield* fixture.supervisor.shutdownIfIdle;
-        expect(shutdown.pollUnsafe()).toBeUndefined();
-        yield* Deferred.succeed(prepareGate, undefined);
-        yield* Fiber.join(shutdown);
-      }),
-    ),
-  );
-
   it.live("rejects new work after owner shutdown begins", () =>
     run(
       Effect.gen(function* () {
@@ -474,131 +374,7 @@ describe("Supervisor composition", () => {
         yield* fixture.supervisor.shutdownIfIdle;
 
         const start = yield* fixture.supervisor.start().pipe(Effect.exit);
-        const prepare = yield* invokePrepare(fixture.supervisor).pipe(Effect.exit);
-
         expect(errorOf(start)).toBeInstanceOf(StackLifecycleConflictError);
-        expect(errorOf(prepare)?.tag).toBe("StackLifecycleConflictError");
-      }),
-    ),
-  );
-
-  it.live("prepares persisted pins and includes dependency closure in start order", () =>
-    run(
-      Effect.gen(function* () {
-        const fixture = yield* makeFixture();
-        yield* fixture.supervisor.start({
-          config: {
-            capabilities: {
-              rest: {},
-              auth: { enabled: false },
-              realtime: { enabled: false },
-              storage: { enabled: false },
-              functions: { enabled: false },
-              studio: { enabled: false },
-              mail: { enabled: false },
-              analytics: { enabled: false },
-              pooler: { enabled: false },
-            },
-          },
-        });
-        yield* Ref.set(fixture.calls, []);
-        const result = yield* invokePrepare(fixture.supervisor, { capabilities: ["rest", "rest"] });
-        expect(result.capabilities.map(({ capability }) => capability)).toEqual([
-          "database",
-          "rest",
-        ]);
-        expect(yield* Ref.get(fixture.calls)).toEqual([
-          "prepare:database:database",
-          "prepare:rest:rest",
-        ]);
-      }),
-    ),
-  );
-
-  it.live("reports a native capability as downloaded when any workload was downloaded", () =>
-    run(
-      Effect.gen(function* () {
-        const fixture = yield* makeFixture({ prepareOutcome: "downloaded" });
-        const result = yield* invokePrepare(fixture.supervisor, {
-          config: {
-            capabilities: {
-              rest: {},
-              auth: { enabled: false },
-              realtime: { enabled: false },
-              storage: { enabled: false },
-              functions: { enabled: false },
-              studio: { enabled: false },
-              mail: { enabled: false },
-              analytics: { enabled: false },
-              pooler: { enabled: false },
-            },
-          },
-        });
-        expect(result.capabilities).toEqual([
-          { capability: "database", version: expect.any(String), outcome: "downloaded" },
-          { capability: "rest", version: expect.any(String), outcome: "downloaded" },
-        ]);
-      }),
-    ),
-  );
-
-  it.live("reports cached and pulled container preparation outcomes", () =>
-    run(
-      Effect.gen(function* () {
-        const config = {
-          capabilities: {
-            rest: {},
-            auth: { enabled: false },
-            realtime: { enabled: false },
-            storage: { enabled: false },
-            functions: { enabled: false },
-            studio: { enabled: false },
-            mail: { enabled: false },
-            analytics: { enabled: false },
-            pooler: { enabled: false },
-          },
-        };
-        const present = yield* makeFixture({
-          runtime: { kind: "container", engine: "docker" },
-          prepareOutcome: "cached",
-        });
-        const presentResult = yield* invokePrepare(present.supervisor, { config });
-        expect(presentResult.capabilities.every(({ outcome }) => outcome === "cached")).toBe(true);
-
-        const pulled = yield* makeFixture({
-          runtime: { kind: "container", engine: "docker" },
-          prepareOutcome: "pulled",
-        });
-        const pulledResult = yield* invokePrepare(pulled.supervisor, { config });
-        expect(pulledResult.capabilities).toEqual([
-          { capability: "database", version: expect.any(String), outcome: "pulled" },
-          { capability: "rest", version: expect.any(String), outcome: "pulled" },
-        ]);
-      }),
-    ),
-  );
-
-  it.live("rejects a request for a disabled capability before preparing anything", () =>
-    run(
-      Effect.gen(function* () {
-        const fixture = yield* makeFixture();
-        const failed = yield* invokePrepare(fixture.supervisor, {
-          config: {
-            capabilities: {
-              auth: { enabled: false },
-              realtime: { enabled: false },
-              storage: { enabled: false },
-              functions: { enabled: false },
-              studio: { enabled: false },
-              mail: { enabled: false },
-              analytics: { enabled: false },
-              pooler: { enabled: false },
-            },
-          },
-          capabilities: ["auth"],
-        }).pipe(Effect.exit);
-        expect(errorOf(failed)?.tag).toBe("StackPreparationError");
-        expect(yield* Ref.get(fixture.calls)).toEqual([]);
       }),
     ),
   );

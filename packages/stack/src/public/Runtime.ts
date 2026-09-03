@@ -13,7 +13,7 @@ export const StackRuntimePreferenceSchema = Schema.Union([
   Schema.Struct({ kind: Schema.Literal("native") }),
   Schema.Struct({
     kind: Schema.Literal("container"),
-    engine: Schema.optionalKey(Schema.Literals(["docker", "podman", "auto"] as const)),
+    engine: Schema.optionalKey(RuntimeEngineSchema),
   }),
 ]);
 export type StackRuntimePreference = Schema.Schema.Type<typeof StackRuntimePreferenceSchema>;

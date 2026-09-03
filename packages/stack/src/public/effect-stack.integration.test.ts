@@ -2,6 +2,7 @@ import { NodeServices } from "@effect/platform-node";
 import { describe, expect, it } from "@effect/vitest";
 import {
   Cause,
+  Crypto,
   Deferred,
   Effect,
   Exit,
@@ -40,7 +41,6 @@ import { compileStack } from "../model/Compiler.ts";
 import {
   StackDestructionError,
   StackOwnershipConflictError,
-  StackPreparationError,
   StackStateInvalidError,
   StackUpgradeRequiredError,
 } from "./Errors.ts";
@@ -56,6 +56,9 @@ import * as effectApi from "../effect.ts";
 import { CAPABILITY_NAMES } from "./Capability.ts";
 import { StackIdSchema } from "./StackId.ts";
 import type { StackStatus } from "./Status.ts";
+import { makeDockerEngine } from "../runtime/DockerEngine.ts";
+import type { ContainerCommandResult, ContainerCommandRunner } from "../runtime/ContainerEngine.ts";
+import { ContainerEngineResolver } from "../runtime/ContainerEngineResolver.ts";
 
 const stackId = StackIdSchema.make(
   "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
@@ -210,7 +213,6 @@ describe("Effect stack lifecycle handoff", () => {
           rpcHandlers: {
             status: () => Effect.succeed(runningStatus),
             credentials: () => Effect.succeed(credentials),
-            prepare: () => Effect.succeed({ capabilities: [] }),
             start: () => Effect.succeed(runningStatus),
             destroy: () => Effect.void,
             logs: (query) => readLogs(query),
@@ -469,149 +471,124 @@ describe("Effect stack lifecycle handoff", () => {
     60_000,
   );
 
-  it.live("waits for server-owned temporary Supervisor shutdown after prepare", () =>
-    Effect.scoped(
+  it.live("prepares cache-only without an owner or state mutation", () =>
+    withRuntimeRoot((project) =>
       Effect.gen(function* () {
-        const fs = yield* FileSystem.FileSystem;
-        const path = yield* Path.Path;
-        const root = yield* fs.makeTempDirectoryScoped({
-          prefix: "supabase-effect-stack-prepare-",
-        });
-        const endpoint = { kind: "unix" as const, path: path.join(root, "control.sock") };
-        const ownerSessionId = "prepare-session";
-        const shutdownReady = yield* Deferred.make<void>();
-        const owner = {
-          format: "supabase-stack-owner-v1" as const,
-          stackId,
-          endpoint,
-          ownerSessionId,
-          rpcRelease: STACK_RPC_RELEASE,
-        };
-        const rpcHandlers: StackRpcHandlers = {
-          status: () => Effect.succeed(runningStatus),
-          credentials: () => Effect.succeed(credentials),
-          prepare: () => Effect.fail({ tag: "StackRpcProtocolError", message: "prepare failed" }),
-          start: () => Effect.succeed(runningStatus),
-          destroy: () => Effect.void,
-          logs: emptyLogs,
-        };
-        yield* startControlServer({
-          endpoint,
-          stackId,
-          ownerSessionId,
-          rpcHandlers,
-          maintenanceHandlers: {
-            probe: Effect.succeed({
-              ok: true,
-              op: "probe",
-              stackId,
-              ownerSessionId,
-              rpcRelease: STACK_RPC_RELEASE,
-            }),
-            stop: Effect.succeed({ ok: true, op: "stop" }),
-          },
-          onShutdownReady: Deferred.succeed(shutdownReady, undefined).pipe(Effect.asVoid),
-        });
-        let launched = false;
-        const stack = yield* makeHandle(
-          stackId,
-          {},
-          {
-            resolveOwner: (launch) =>
-              Effect.sync(() => {
-                if (launch) launched = true;
-                return launched ? Option.some(owner) : Option.none();
-              }),
-            waitForRelease: () => Deferred.await(shutdownReady),
-          },
+        const env = yield* StackRuntimeEnvironment;
+        const stack = yield* createStack({ projectRoot: project });
+        const store = yield* makeStackStateStore({ stateRoot: env.stateRoot });
+        const state = yield* store.read(stack.id);
+        if (state === undefined) return yield* Effect.die("stack state was not initialized");
+        const paths = yield* resolveStackPaths({ stateRoot: env.stateRoot, stackId: stack.id });
+        const before = yield* (yield* FileSystem.FileSystem).readFileString(paths.stateDocument);
+        const prepared = yield* stack.prepare({ capabilities: [] });
+        expect(prepared.capabilities).toEqual([]);
+        expect(yield* readOwnerMetadata(env.stateRoot, stack.id, env)).toBeUndefined();
+        expect(yield* ownerLockExists(env.stateRoot, stack.id)).toBe(false);
+        expect(yield* (yield* FileSystem.FileSystem).readFileString(paths.stateDocument)).toBe(
+          before,
         );
-        const result = yield* stack.prepare().pipe(Effect.exit);
-        expect(Exit.isFailure(result)).toBe(true);
-        if (Exit.isFailure(result)) {
-          const error = Cause.findErrorOption(result.cause);
-          expect(Option.isSome(error)).toBe(true);
-          if (Option.isSome(error)) expect(error.value).toBeInstanceOf(StackPreparationError);
-        }
-      }).pipe(Effect.provide(NodeServices.layer)),
+      }),
     ),
   );
 
-  it.live("classifies successful prepare by whether the temporary owner remains live", () =>
-    Effect.scoped(
+  it.live("cancels unfinished direct preparation while retaining completed artifacts", () =>
+    withRuntimeRoot((project) =>
       Effect.gen(function* () {
+        const env = yield* StackRuntimeEnvironment;
         const fs = yield* FileSystem.FileSystem;
-        const path = yield* Path.Path;
-        const root = yield* fs.makeTempDirectoryScoped({
-          prefix: "supabase-effect-stack-prepare-start-",
-        });
-        const endpoint = { kind: "unix" as const, path: path.join(root, "control.sock") };
-        const ownerSessionId = "prepare-start-session";
-        const owner = {
-          format: "supabase-stack-owner-v1" as const,
-          stackId,
-          endpoint,
-          ownerSessionId,
-          rpcRelease: STACK_RPC_RELEASE,
-        };
-        yield* startControlServer({
-          endpoint,
-          stackId,
-          ownerSessionId,
-          rpcHandlers: {
-            status: () => Effect.succeed(runningStatus),
-            credentials: () => Effect.succeed(credentials),
-            prepare: () => Effect.succeed({ capabilities: [] }),
-            start: () => Effect.succeed(runningStatus),
-            destroy: () => Effect.void,
-            logs: emptyLogs,
+        const crypto = {
+          ...(yield* Effect.service(Crypto.Crypto)),
+          randomBytes: () => {
+            throw new Error("direct preparation must not generate managed secrets");
           },
-          maintenanceHandlers: {
-            probe: Effect.succeed({
-              ok: true,
-              op: "probe",
-              stackId,
-              ownerSessionId,
-              rpcRelease: STACK_RPC_RELEASE,
-            }),
-            stop: Effect.succeed({ ok: true, op: "stop" }),
-          },
-        });
-        for (const retained of [true, false]) {
-          let launched = false;
-          const stack = yield* makeHandle(
-            stackId,
-            {},
-            {
-              resolveOwner: (launch) =>
-                Effect.sync(() => {
-                  if (launch) {
-                    launched = true;
-                    return Option.some(owner);
-                  }
-                  return retained && launched ? Option.some(owner) : Option.none();
-                }),
-              waitForRelease: () =>
-                Effect.fail(
-                  new StackOwnershipConflictError({
-                    message: "Supervisor is still shutting down",
+        } satisfies Crypto.Crypto;
+        const firstPublished = yield* Deferred.make<void>();
+        const secondStarted = yield* Deferred.make<void>();
+        const secondCancelled = yield* Deferred.make<void>();
+        const secondRelease = yield* Deferred.make<void>();
+        const present = new Set<string>();
+        const runner: ContainerCommandRunner = {
+          executable: "controlled-docker",
+          run: (request) => {
+            const [command, subcommand, image] = request.args;
+            if (command === "version")
+              return Effect.succeed<ContainerCommandResult>({
+                stdout: '"1"\n',
+                stderr: "",
+                exitCode: 0,
+              });
+            if (command === "image" && subcommand === "ls" && image !== undefined) {
+              if (image.includes("postgrest"))
+                return Deferred.succeed(secondStarted, undefined).pipe(
+                  Effect.andThen(Deferred.await(secondRelease)),
+                  Effect.onInterrupt(() => Deferred.succeed(secondCancelled, undefined)),
+                  Effect.as({ stdout: "", stderr: "", exitCode: 0 }),
+                );
+              return Effect.succeed({
+                stdout: present.has(image) ? '"cached"\n' : "",
+                stderr: "",
+                exitCode: 0,
+              });
+            }
+            if (command === "image" && subcommand === "pull" && image !== undefined)
+              return Effect.yieldNow.pipe(
+                Effect.andThen(
+                  Effect.sync(() => {
+                    present.add(image);
+                    return { stdout: "", stderr: "", exitCode: 0 };
                   }),
                 ),
-            },
-          );
-
-          const prepared = yield* stack.prepare().pipe(Effect.exit);
-          expect(Exit.isSuccess(prepared)).toBe(retained);
-          if (Exit.isFailure(prepared)) {
-            const error = Option.getOrUndefined(Cause.findErrorOption(prepared.cause));
-            expect(error).toBeInstanceOf(StackOwnershipConflictError);
-            expect(error?.message).toBe("Supervisor is still shutting down");
-          }
-        }
-      }).pipe(Effect.provide(NodeServices.layer)),
+                Effect.andThen(
+                  image.includes("postgres")
+                    ? Deferred.succeed(firstPublished, undefined)
+                    : Effect.void,
+                ),
+                Effect.as({ stdout: "", stderr: "", exitCode: 0 }),
+              );
+            return Effect.succeed({ stdout: "", stderr: "", exitCode: 0 });
+          },
+        };
+        const engine = makeDockerEngine({
+          runner,
+          platform: { os: "linux" },
+        });
+        const resolver = {
+          resolve: () => Effect.succeed(engine),
+        };
+        const stack = yield* createStack({
+          projectRoot: project,
+          runtime: { kind: "container", engine: "docker" },
+        }).pipe(
+          Effect.provideService(ContainerEngineResolver, resolver),
+          Effect.provideService(Crypto.Crypto, crypto),
+        );
+        const stateStore = yield* makeStackStateStore({ stateRoot: env.stateRoot });
+        const paths = yield* resolveStackPaths({ stateRoot: env.stateRoot, stackId: stack.id });
+        const before = yield* fs.readFileString(paths.stateDocument);
+        const preparation = yield* Effect.forkChild(
+          stack.prepare({ capabilities: ["database", "rest"] }),
+          { startImmediately: true },
+        );
+        yield* Deferred.await(firstPublished).pipe(Effect.timeout("5 seconds"), Effect.orDie);
+        yield* Deferred.await(secondStarted).pipe(Effect.timeout("5 seconds"), Effect.orDie);
+        yield* Fiber.interrupt(preparation);
+        yield* Deferred.await(secondCancelled).pipe(Effect.timeout("5 seconds"), Effect.orDie);
+        const canceled = yield* Fiber.join(preparation).pipe(Effect.exit);
+        expect(Exit.isFailure(canceled)).toBe(true);
+        const cached = yield* stack.prepare({ capabilities: ["database"] });
+        expect(cached.capabilities).toEqual([
+          { capability: "database", version: "17.6.1.167", outcome: "cached" },
+        ]);
+        expect(yield* fs.readFileString(paths.stateDocument)).toBe(before);
+        expect(yield* readOwnerMetadata(env.stateRoot, stack.id, env)).toBeUndefined();
+        expect(yield* ownerLockExists(env.stateRoot, stack.id)).toBe(false);
+        expect(yield* stateStore.read(stack.id)).toBeDefined();
+      }),
     ),
   );
 
-  it.live("does not change crashed running intent while preparing", () =>
+  it.live("prepares while running without consulting Supervisor ownership", () =>
     withRuntimeRoot((project) =>
       Effect.gen(function* () {
         const env = yield* StackRuntimeEnvironment;
@@ -620,14 +597,7 @@ describe("Effect stack lifecycle handoff", () => {
         const state = yield* store.read(stack.id);
         if (state === undefined) return yield* Effect.die("stack state was not initialized");
         yield* store.replace(stack.id, { ...state, desiredLifecycle: "running" });
-
-        const prepared = yield* stack.prepare().pipe(Effect.exit);
-
-        expect(Exit.isFailure(prepared)).toBe(true);
-        if (Exit.isFailure(prepared)) {
-          const error = Option.getOrUndefined(Cause.findErrorOption(prepared.cause));
-          expect(error).toBeInstanceOf(StackOwnershipConflictError);
-        }
+        expect((yield* stack.prepare({ capabilities: [] })).capabilities).toEqual([]);
         expect((yield* store.read(stack.id))?.desiredLifecycle).toBe("running");
         expect(yield* readOwnerMetadata(env.stateRoot, stack.id, env)).toBeUndefined();
       }),
@@ -646,20 +616,10 @@ describe("Effect stack lifecycle handoff", () => {
         const root = yield* fs.makeTempDirectoryScoped({ prefix: "supabase-effect-stack-rpc-" });
         const endpoint = { kind: "unix" as const, path: path.join(root, "control.sock") };
         const ownerSessionId = "session";
-        const payloads: {
-          prepare: Array<unknown>;
-          start: Array<unknown>;
-        } = {
-          prepare: [],
-          start: [],
-        };
+        const payloads: { start: Array<unknown> } = { start: [] };
         const rpcHandlers: StackRpcHandlers = {
           status: () => Effect.succeed(runningStatus),
           credentials: () => Effect.succeed(credentials),
-          prepare: (payload) => {
-            payloads.prepare.push(payload);
-            return Effect.succeed({ capabilities: [] });
-          },
           start: (payload) => {
             payloads.start.push(payload);
             return Effect.succeed(runningStatus);
@@ -688,11 +648,8 @@ describe("Effect stack lifecycle handoff", () => {
           ownerSessionId,
           rpcRelease: STACK_RPC_RELEASE,
         });
-        yield* stack.prepare();
         yield* stack.start();
-        yield* stack.prepare({ config: {} });
         yield* stack.start({ config: {} });
-        expect(payloads.prepare).toEqual([{}, { config: {} }]);
         expect(payloads.start).toEqual([{}, { config: {} }]);
       }).pipe(Effect.provide(NodeServices.layer)),
     ),
@@ -720,7 +677,6 @@ describe("Effect stack lifecycle handoff", () => {
           rpcHandlers: {
             status: () => Effect.succeed(runningStatus),
             credentials: () => Effect.succeed(credentials),
-            prepare: () => Effect.succeed({ capabilities: [] }),
             start: () => Effect.succeed(runningStatus),
             destroy: () => Effect.void,
             logs: emptyLogs,
@@ -767,7 +723,6 @@ describe("Effect stack lifecycle handoff", () => {
         const rpcHandlers: StackRpcHandlers = {
           status: () => Effect.succeed(runningStatus),
           credentials: () => Effect.succeed(credentials),
-          prepare: () => Effect.succeed({ capabilities: [] }),
           start: () => Effect.succeed(runningStatus),
           destroy: () => Effect.void,
           logs: emptyLogs,
@@ -1041,18 +996,9 @@ describe("Effect stack lifecycle handoff", () => {
           const openProject = path.join(project, "open");
           yield* fs.makeDirectory(createProject);
           yield* fs.makeDirectory(openProject);
-          const createId = yield* makeDeadOwner(createProject, "stack-rpc-v0@0.0.1");
           const created = yield* createStack({ projectRoot: createProject });
-          yield* Effect.addFinalizer(() => created.destroy().pipe(Effect.ignore));
-          expect(created.id).toBe(createId);
-          // Creating a handle is intentionally lightweight; prepare probes the
-          // stale owner, reclaims it, and cleans up its temporary Supervisor.
-          yield* created.prepare({
-            capabilities: [],
-            config: { listeners: { api: { enabled: false } } },
-          });
-          expect(yield* readOwnerMetadata(env.stateRoot, createId, env)).toBeUndefined();
-          expect(yield* ownerLockExists(env.stateRoot, createId)).toBe(false);
+          expect(yield* readOwnerMetadata(env.stateRoot, created.id, env)).toBeUndefined();
+          expect(yield* ownerLockExists(env.stateRoot, created.id)).toBe(false);
 
           const openId = yield* makeDeadOwner(openProject, "stack-rpc-v0@0.0.1", "running");
           const replaced = yield* openStack(openId);

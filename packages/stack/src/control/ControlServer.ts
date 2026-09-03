@@ -442,8 +442,7 @@ export const startControlServer = (
       Effect.provideService(SocketServer.SocketServer, server),
       Effect.provideService(RpcSerialization.RpcSerialization, RpcSerialization.json),
     );
-    const isCompletionRequest = (tag: string): boolean =>
-      tag === "prepare" || tag === "start" || tag === "destroy";
+    const isCompletionRequest = (tag: string): boolean => tag === "start" || tag === "destroy";
     const completionRequests = new Set<string>();
     const startShutdown = (completion: Effect.Effect<void>) =>
       Effect.uninterruptible(

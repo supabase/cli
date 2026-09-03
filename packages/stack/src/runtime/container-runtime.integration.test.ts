@@ -6,7 +6,6 @@ import type { PlannedWorkload } from "../model/ExecutionPlan.ts";
 import type { ContainerArtifact } from "../model/CapabilityModule.ts";
 import { StackIdSchema } from "../public/StackId.ts";
 import {
-  ContainerExecutableNotFoundError,
   ContainerCommandError,
   ContainerEngineProtocolError,
   makeProcessCommandRunner,
@@ -235,47 +234,38 @@ describe("container runtime", () => {
     }).pipe(Effect.provide(NodeServices.layer)),
   );
 
-  it.live("selects explicit engines and only falls back on missing executable", () =>
+  it.live("selects only the explicitly requested engine without probing", () =>
     Effect.gen(function* () {
-      const missing = makeControlledCommandRunner({
-        run: () =>
-          Effect.fail(
-            new ContainerExecutableNotFoundError({
-              executable: "docker",
-              message: "docker executable was not found",
+      const dockerCalls: string[] = [];
+      const podmanCalls: string[] = [];
+      const docker = makeDockerEngine({
+        runner: makeControlledCommandRunner({
+          run: (request) =>
+            Effect.sync(() => {
+              dockerCalls.push(request.args[0] ?? "");
+              return commandResult({ ok: true });
             }),
-          ),
-      });
-      const podman = makeControlledCommandRunner({
-        run: () => Effect.succeed(commandResult({ ok: true })),
-      });
-      const selected = yield* selectContainerEngine({
-        preference: "auto",
-        docker: makeDockerEngine({ runner: missing, platform: { os: "linux", desktop: false } }),
-        podman: makePodmanEngine({ runner: podman, platform: { os: "linux", rootless: true } }),
-      });
-      expect(selected.kind).toBe("podman");
-      const daemonFailure = makeControlledCommandRunner({
-        run: () =>
-          Effect.fail(
-            new ContainerEngineProtocolError({ operation: "probe", message: "daemon unavailable" }),
-          ),
-      });
-      const failure = yield* selectContainerEngine({
-        preference: "auto",
-        docker: makeDockerEngine({
-          runner: daemonFailure,
-          platform: { os: "linux", desktop: false },
         }),
-        podman: makePodmanEngine({ runner: podman, platform: { os: "linux", rootless: true } }),
-      }).pipe(Effect.exit);
-      expect(Exit.isFailure(failure)).toBe(true);
-      if (Exit.isFailure(failure)) {
-        const error = Cause.findErrorOption(failure.cause);
-        expect(Option.isSome(error)).toBe(true);
-        if (Option.isSome(error))
-          expect(error.value).not.toBeInstanceOf(ContainerExecutableNotFoundError);
-      }
+        platform: { os: "linux", desktop: false },
+      });
+      const podman = makePodmanEngine({
+        runner: makeControlledCommandRunner({
+          run: (request) =>
+            Effect.sync(() => {
+              podmanCalls.push(request.args[0] ?? "");
+              return commandResult({ ok: true });
+            }),
+        }),
+        platform: { os: "linux", rootless: true },
+      });
+      expect((yield* selectContainerEngine({ preference: "docker", docker, podman })).kind).toBe(
+        "docker",
+      );
+      expect((yield* selectContainerEngine({ preference: "podman", docker, podman })).kind).toBe(
+        "podman",
+      );
+      expect(dockerCalls).toEqual([]);
+      expect(podmanCalls).toEqual([]);
     }),
   );
 

@@ -188,6 +188,8 @@ export const makeProductionRuntimeArtifactPreparer = (options: {
   readonly artifactCacheRoot?: string;
   readonly platform?: ContainerPlatform;
   readonly runtime?: StackRuntime;
+  /** Optional already-selected engine for caller-owned preparation. */
+  readonly containerEngine?: ContainerEngine;
 }): Effect.Effect<
   RuntimeArtifactPreparer,
   RuntimeArtifactPreparationError,
@@ -233,7 +235,8 @@ export const makeProductionRuntimeArtifactPreparer = (options: {
     const selectedEngine =
       options.runtime?.kind === "container" ? options.runtime.engine : undefined;
     const containerEngine =
-      selectedEngine === undefined
+      options.containerEngine ??
+      (selectedEngine === undefined
         ? undefined
         : yield* makeProcessCommandRunner({ executable: selectedEngine }).pipe(
             Effect.mapError(() => error(`Unable to configure ${selectedEngine} artifact engine`)),
@@ -242,7 +245,7 @@ export const makeProductionRuntimeArtifactPreparer = (options: {
                 ? makeDockerEngine({ runner, platform })
                 : makePodmanEngine({ runner, platform }),
             ),
-          );
+          ));
     const containers =
       selectedEngine === undefined || containerEngine === undefined
         ? undefined

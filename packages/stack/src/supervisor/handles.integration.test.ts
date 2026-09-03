@@ -45,12 +45,8 @@ import { makeStackStateStore } from "../state/StackStateStore.ts";
 import { makeControlClient, startControlServer } from "../control/ControlServer.ts";
 import { resolveStackPaths } from "../state/Paths.ts";
 import { STACK_RPC_RELEASE, type StackRpcHandlers } from "../control/StackRpc.ts";
-import {
-  ContainerEngineError,
-  StackPreparationError,
-  StackRuntimeMismatchError,
-} from "../public/Errors.ts";
-import { ContainerEngineProtocolError } from "../runtime/ContainerEngine.ts";
+import { StackPreparationError, StackRuntimeMismatchError } from "../public/Errors.ts";
+import type { ContainerEngine } from "../runtime/ContainerEngine.ts";
 import { ContainerEngineResolver } from "../runtime/ContainerEngineResolver.ts";
 
 const withRuntimeRoot = <A, E, R>(effect: (project: string) => Effect.Effect<A, E, R>) =>
@@ -121,6 +117,35 @@ const stopOwner = (id: StackId) =>
 const quoteModuleSpecifier = (value: string): string =>
   `'${value.replaceAll("\\", "\\\\").replaceAll("'", "\\'")}'`;
 
+const fakeContainerEngine = (kind: "docker" | "podman", calls: string[]): ContainerEngine => ({
+  kind,
+  executable: kind,
+  preflight: Effect.succeed({ host: "host.containers.internal" }),
+  probe: Effect.sync(() => {
+    calls.push(`${kind}:probe`);
+  }),
+  inspectImage: (image) =>
+    Effect.sync(() => {
+      calls.push(`${kind}:inspect:${image}`);
+      return { present: true };
+    }),
+  pullImage: (image) =>
+    Effect.sync(() => {
+      calls.push(`${kind}:pull:${image}`);
+    }),
+  listResources: () => Effect.succeed([]),
+  createNetwork: () => Effect.die("unused"),
+  removeNetwork: () => Effect.void,
+  createVolume: () => Effect.die("unused"),
+  removeVolume: () => Effect.void,
+  createContainer: () => Effect.die("unused"),
+  copyToContainer: () => Effect.void,
+  startContainer: () => Effect.void,
+  waitContainer: () => Effect.succeed(0),
+  stopContainer: () => Effect.void,
+  removeContainer: () => Effect.void,
+});
+
 describe("managed stack handles", { timeout: 30_000 }, () => {
   it("selects the private dispatch marker only for compiled Bun paths", () => {
     expect(
@@ -129,22 +154,13 @@ describe("managed stack handles", { timeout: 30_000 }, () => {
     expect(supervisorEntrypointFor(import.meta.url)).not.toBe(SUPERVISOR_DISPATCH_SENTINEL);
   });
 
-  it.live("resolves a new automatic container identity and persists Docker", () =>
+  it.live("persists Docker for an omitted container engine without probing", () =>
     withRuntimeRoot((project) =>
       Effect.gen(function* () {
-        const calls: string[] = [];
-        const resolver = {
-          resolve: (preference: "auto" | "docker" | "podman") =>
-            Effect.sync(() => {
-              calls.push(preference);
-              return "docker" as const;
-            }),
-        };
-        yield* createStack({
-          projectRoot: project,
-          runtime: { kind: "container", engine: "auto" },
-        }).pipe(Effect.provideService(ContainerEngineResolver, resolver));
-        expect(calls).toEqual(["auto"]);
+        const resolver = { resolve: () => Effect.die("resolver must not be called") };
+        yield* createStack({ projectRoot: project, runtime: { kind: "container" } }).pipe(
+          Effect.provideService(ContainerEngineResolver, resolver),
+        );
         expect(
           (yield* findStack({ projectRoot: project })).pipe(Option.getOrUndefined)?.runtime,
         ).toEqual({ kind: "container", engine: "docker" });
@@ -152,22 +168,14 @@ describe("managed stack handles", { timeout: 30_000 }, () => {
     ),
   );
 
-  it.live("selects and persists Podman when the automatic resolver falls back", () =>
+  it.live("persists explicit Podman without probing", () =>
     withRuntimeRoot((project) =>
       Effect.gen(function* () {
-        const calls: string[] = [];
-        const resolver = {
-          resolve: (preference: "auto" | "docker" | "podman") =>
-            Effect.sync(() => {
-              calls.push(preference);
-              return "podman" as const;
-            }),
-        };
+        const resolver = { resolve: () => Effect.die("resolver must not be called") };
         yield* createStack({
           projectRoot: project,
-          runtime: { kind: "container", engine: "auto" },
+          runtime: { kind: "container", engine: "podman" },
         }).pipe(Effect.provideService(ContainerEngineResolver, resolver));
-        expect(calls).toEqual(["auto"]);
         expect(
           (yield* findStack({ projectRoot: project })).pipe(Option.getOrUndefined)?.runtime,
         ).toEqual({ kind: "container", engine: "podman" });
@@ -175,91 +183,43 @@ describe("managed stack handles", { timeout: 30_000 }, () => {
     ),
   );
 
-  it.live("maps an automatic engine daemon failure and does not fall through in createStack", () =>
+  it.live("prepares through only the explicitly selected Podman engine", () =>
     withRuntimeRoot((project) =>
       Effect.gen(function* () {
         const calls: string[] = [];
+        const dockerCalls: string[] = [];
         const resolver = {
-          resolve: (preference: "auto" | "docker" | "podman") =>
-            Effect.sync(() => {
-              calls.push(preference);
-            }).pipe(
-              Effect.andThen(
-                Effect.fail(
-                  new ContainerEngineProtocolError({
-                    operation: "probe",
-                    message: "Docker daemon unavailable",
-                  }),
-                ),
-              ),
+          resolve: (kind: "docker" | "podman") =>
+            Effect.succeed(
+              kind === "podman"
+                ? fakeContainerEngine(kind, calls)
+                : fakeContainerEngine(kind, dockerCalls),
             ),
         };
-        const result = yield* createStack({
-          projectRoot: project,
-          runtime: { kind: "container", engine: "auto" },
-        }).pipe(Effect.provideService(ContainerEngineResolver, resolver), Effect.exit);
-        expect(Exit.isFailure(result)).toBe(true);
-        if (Exit.isFailure(result)) {
-          const error = Option.getOrUndefined(Cause.findErrorOption(result.cause));
-          expect(error).toBeInstanceOf(ContainerEngineError);
-        }
-        expect(calls).toEqual(["auto"]);
-      }),
-    ),
-  );
-
-  it.live("probes only explicitly requested Podman", () =>
-    withRuntimeRoot((project) =>
-      Effect.gen(function* () {
-        const calls: string[] = [];
-        const resolver = {
-          resolve: (preference: "auto" | "docker" | "podman") =>
-            Effect.sync(() => {
-              calls.push(preference);
-              return "podman" as const;
-            }),
-        };
-        yield* createStack({
+        const stack = yield* createStack({
           projectRoot: project,
           runtime: { kind: "container", engine: "podman" },
         }).pipe(Effect.provideService(ContainerEngineResolver, resolver));
-        expect(calls).toEqual(["podman"]);
+        const prepared = yield* stack.prepare({ capabilities: ["database"] });
+        expect(prepared.capabilities).toHaveLength(1);
+        expect(calls).toEqual([
+          "podman:probe",
+          "podman:inspect:ghcr.io/supabase/cli/postgres:17.6.1.167",
+        ]);
+        expect(dockerCalls).toEqual([]);
       }),
     ),
   );
 
-  it.live("reuses a persisted engine for automatic create without probing again", () =>
+  it.live("does not probe a persisted container engine when reopening", () =>
     withRuntimeRoot((project) =>
       Effect.gen(function* () {
-        const firstCalls: string[] = [];
-        const firstResolver = {
-          resolve: (preference: "auto" | "docker" | "podman") =>
-            Effect.sync(() => {
-              firstCalls.push(preference);
-              return "podman" as const;
-            }),
-        };
-        yield* createStack({
-          projectRoot: project,
-          runtime: { kind: "container", engine: "podman" },
-        }).pipe(Effect.provideService(ContainerEngineResolver, firstResolver));
-        const secondCalls: string[] = [];
-        const secondResolver = {
-          resolve: (preference: "auto" | "docker" | "podman") =>
-            Effect.sync(() => {
-              secondCalls.push(preference);
-              return "docker" as const;
-            }),
-        };
-        yield* createStack({
-          projectRoot: project,
-          runtime: { kind: "container", engine: "auto" },
-        }).pipe(Effect.provideService(ContainerEngineResolver, secondResolver));
-        expect(firstCalls).toEqual(["podman"]);
-        expect(secondCalls).toEqual([]);
-        expect(
-          (yield* findStack({ projectRoot: project })).pipe(Option.getOrUndefined)?.runtime,
-        ).toEqual({ kind: "container", engine: "podman" });
+        yield* createStack({ projectRoot: project, runtime: { kind: "container" } });
+        const resolver = { resolve: () => Effect.die("resolver must not be called") };
+        const stack = yield* createStack({ projectRoot: project }).pipe(
+          Effect.provideService(ContainerEngineResolver, resolver),
+        );
+        expect((yield* stack.status()).runtime).toEqual({ kind: "container", engine: "docker" });
       }),
     ),
   );
@@ -270,22 +230,13 @@ describe("managed stack handles", { timeout: 30_000 }, () => {
         yield* createStack({
           projectRoot: project,
           runtime: { kind: "container", engine: "docker" },
-        }).pipe(
-          Effect.provideService(ContainerEngineResolver, {
-            resolve: () => Effect.succeed("docker" as const),
-          }),
-        );
-        const calls: string[] = [];
+        });
         const result = yield* createStack({
           projectRoot: project,
           runtime: { kind: "container", engine: "podman" },
         }).pipe(
           Effect.provideService(ContainerEngineResolver, {
-            resolve: (preference: "auto" | "docker" | "podman") =>
-              Effect.sync(() => {
-                calls.push(preference);
-                return "podman" as const;
-              }),
+            resolve: () => Effect.die("resolver must not be called"),
           }),
           Effect.exit,
         );
@@ -294,29 +245,13 @@ describe("managed stack handles", { timeout: 30_000 }, () => {
           const error = Option.getOrUndefined(Cause.findErrorOption(result.cause));
           expect(error).toBeInstanceOf(StackRuntimeMismatchError);
         }
-        expect(calls).toEqual([]);
       }),
     ),
   );
 
   it.live("does not probe an explicitly native identity", () =>
     withRuntimeRoot((project) =>
-      Effect.gen(function* () {
-        const calls: string[] = [];
-        yield* createStack({
-          projectRoot: project,
-          runtime: { kind: "native" },
-        }).pipe(
-          Effect.provideService(ContainerEngineResolver, {
-            resolve: (preference: "auto" | "docker" | "podman") =>
-              Effect.sync(() => {
-                calls.push(preference);
-                return "docker" as const;
-              }),
-          }),
-        );
-        expect(calls).toEqual([]);
-      }),
+      createStack({ projectRoot: project, runtime: { kind: "native" } }),
     ),
   );
 
@@ -385,7 +320,6 @@ describe("managed stack handles", { timeout: 30_000 }, () => {
                 serviceRoleJwt: Redacted.make("service"),
               },
             }),
-          prepare: () => Effect.succeed({ capabilities: [] }),
           start: () =>
             Effect.fail({ tag: "StackPreparationError", message: "artifact is incomplete" }),
           destroy: () => Effect.void,
@@ -486,7 +420,6 @@ describe("managed stack handles", { timeout: 30_000 }, () => {
             status: () => Effect.succeed(status),
             credentials: () =>
               Effect.fail({ tag: "StackNotRunningError" as const, message: "not running" }),
-            prepare: () => Effect.succeed({ capabilities: [] }),
             start: () => Effect.succeed(status),
             destroy: () =>
               Deferred.succeed(destroyStarted, undefined).pipe(
@@ -616,9 +549,15 @@ describe("managed stack handles", { timeout: 30_000 }, () => {
               bytes.set(value, offset);
               offset += value.byteLength;
             }
-            const stderr = new TextDecoder().decode(
-              new Uint8Array(stderrChunks.reduce((sum, value) => sum + value.byteLength, 0)),
+            const stderrBytes = new Uint8Array(
+              stderrChunks.reduce((sum, value) => sum + value.byteLength, 0),
             );
+            offset = 0;
+            for (const value of stderrChunks) {
+              stderrBytes.set(value, offset);
+              offset += value.byteLength;
+            }
+            const stderr = new TextDecoder().decode(stderrBytes);
             return { id: new TextDecoder().decode(bytes), code, stderr };
           });
         const [first, second] = yield* Effect.all([spawnCaller(), spawnCaller()], {

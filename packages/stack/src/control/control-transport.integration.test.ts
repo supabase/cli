@@ -68,7 +68,6 @@ const withServer = <A, E, R>(
     readonly completionStarted: Deferred.Deferred<void>;
     readonly completionRelease: Deferred.Deferred<void>;
     readonly stopCalls: Ref.Ref<number>;
-    readonly prepareCalls: Ref.Ref<number>;
     readonly maintenanceStarted: Deferred.Deferred<void>;
     readonly maintenanceRelease: Deferred.Deferred<void>;
   }) => Effect.Effect<A, E, R>,
@@ -81,7 +80,6 @@ const withServer = <A, E, R>(
     readonly completionStarted: Deferred.Deferred<void>;
     readonly completionRelease: Deferred.Deferred<void>;
     readonly stopCalls: Ref.Ref<number>;
-    readonly prepareCalls: Ref.Ref<number>;
     readonly maintenanceStarted: Deferred.Deferred<void>;
     readonly maintenanceRelease: Deferred.Deferred<void>;
   }) => ServerOverrides,
@@ -99,7 +97,6 @@ const withServer = <A, E, R>(
       const completionStarted = yield* Deferred.make<void>();
       const completionRelease = yield* Deferred.make<void>();
       const stopCalls = yield* Ref.make(0);
-      const prepareCalls = yield* Ref.make(0);
       const maintenanceStarted = yield* Deferred.make<void>();
       const maintenanceRelease = yield* Deferred.make<void>();
       const endpoint: ControlEndpoint = { kind: "unix", path: path.join(root, "control.sock") };
@@ -131,8 +128,6 @@ const withServer = <A, E, R>(
               serviceRoleJwt: Redacted.make("service"),
             },
           }),
-        prepare: () =>
-          Ref.update(prepareCalls, (count) => count + 1).pipe(Effect.as({ capabilities: [] })),
         start: () => Effect.succeed(status),
         destroy: () => Effect.void,
         logs: () => Effect.succeed({ entries: [], cursor: { opaque: "v1_0" }, running: false }),
@@ -157,7 +152,6 @@ const withServer = <A, E, R>(
           completionStarted,
           completionRelease,
           stopCalls,
-          prepareCalls,
           maintenanceStarted,
           maintenanceRelease,
         }) ?? {};
@@ -181,7 +175,6 @@ const withServer = <A, E, R>(
         completionStarted,
         completionRelease,
         stopCalls,
-        prepareCalls,
         maintenanceStarted,
         maintenanceRelease,
       });
@@ -245,24 +238,6 @@ const sendRawSequenceAndReadFrame = (
     return yield* decodeFrame(frame);
   });
 
-const makePrepareRequestFrame = (
-  capabilities: ReadonlyArray<string>,
-): Effect.Effect<Uint8Array, MaintenanceProtocolError> =>
-  Effect.gen(function* () {
-    const parser = RpcSerialization.json.makeUnsafe();
-    const encoded = parser.encode({
-      _tag: "Request",
-      id: "1",
-      tag: "prepare",
-      payload: { capabilities },
-      headers: [],
-    });
-    if (encoded === undefined) {
-      return yield* new MaintenanceProtocolError({ message: "RPC request could not be encoded" });
-    }
-    return yield* encodeRawFrame(encoded);
-  });
-
 const makeDestroyRequestFrame = (): Effect.Effect<Uint8Array, MaintenanceProtocolError> =>
   Effect.gen(function* () {
     const parser = RpcSerialization.json.makeUnsafe();
@@ -308,21 +283,6 @@ describe("control transport", () => {
               message: "injected start failure",
             } satisfies StackRpcError),
         },
-        onShutdownReady: Deferred.succeed(completion, undefined).pipe(Effect.asVoid),
-      }),
-    ),
-  );
-
-  it.live("reevaluates owner shutdown after a prepare response", () =>
-    withServer(
-      ({ endpoint, stackId, ownerSessionId, completion }) =>
-        Effect.gen(function* () {
-          const client = makeControlClient(endpoint, { stackId, ownerSessionId });
-          const rpc = yield* client.rpc;
-          yield* rpc.prepare({});
-          yield* Deferred.await(completion);
-        }),
-      ({ completion }) => ({
         onShutdownReady: Deferred.succeed(completion, undefined).pipe(Effect.asVoid),
       }),
     ),
@@ -462,26 +422,6 @@ describe("control transport", () => {
         expect(Exit.isFailure(incomplete)).toBe(true);
         const complete = yield* decodePreface(preface);
         expect(complete.consumed).toBe(preface.byteLength);
-      }),
-    ),
-  );
-
-  it.live("forwards a fragmented preface and same-write large typed RPC payload", () =>
-    withServer(({ endpoint, stackId, ownerSessionId, prepareCalls }) =>
-      Effect.gen(function* () {
-        const preface = encodePreface({
-          kind: "rpc",
-          release: "stack-rpc-v1@0.1.0",
-          stackId,
-          ownerSessionId,
-        });
-        const frame = yield* makePrepareRequestFrame(Array.from({ length: 100 }, () => "database"));
-        const response = yield* sendRawSequenceAndReadFrame(endpoint, [
-          preface.slice(0, 3),
-          concatBytes(preface.slice(3), frame),
-        ]);
-        expect(response).toMatchObject({ _tag: "Exit", requestId: "1" });
-        expect(yield* Ref.get(prepareCalls)).toBe(1);
       }),
     ),
   );

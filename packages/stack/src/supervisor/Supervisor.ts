@@ -15,23 +15,21 @@ import {
   Stream,
 } from "effect";
 import type { StackIdentity } from "../identity/Identity.ts";
-import { compileStack, rebuildExecutionPlan } from "../model/Compiler.ts";
+import { rebuildExecutionPlan } from "../model/Compiler.ts";
 import {
   activeExecutionPlan,
   eagerCapabilities,
   type ExecutionPlan,
   type PlannedWorkload,
 } from "../model/ExecutionPlan.ts";
-import { CAPABILITY_NAMES, type CapabilityName } from "../public/Capability.ts";
+import type { CapabilityName } from "../public/Capability.ts";
 import type { StackConfig } from "../public/Config.ts";
 import type { StackRuntime } from "../public/Runtime.ts";
 import {
   GatewayActivationError,
-  StackDefinitionRequiredError,
   StackLifecycleConflictError,
   StackNotRunningError,
   StackReconciliationError,
-  StackPreparationError,
   StackStateInvalidError,
   type StackError,
 } from "../public/Errors.ts";
@@ -237,7 +235,6 @@ export const makeSupervisor = (
       result: LifecycleResult;
     }>;
     const lifecycleActive = yield* Ref.make<ActiveLifecycle | undefined>(undefined);
-    const preparationsActive = yield* Ref.make(0);
     const shutdownSignal = yield* Deferred.make<void, never>();
     const signalShutdown = Deferred.succeed(shutdownSignal, undefined).pipe(Effect.asVoid);
     const ensureAcceptingOperations = Deferred.poll(shutdownSignal).pipe(
@@ -620,11 +617,9 @@ export const makeSupervisor = (
         const state = yield* read().pipe(Effect.exit);
         if (Exit.isFailure(state)) return;
         const lifecycle = yield* Ref.get(lifecycleActive);
-        const preparations = yield* Ref.get(preparationsActive);
         const currentPhase = yield* Ref.get(phase);
         if (
           lifecycle === undefined &&
-          preparations === 0 &&
           currentPhase !== "stopping" &&
           (state.value === undefined ||
             state.value.desiredLifecycle === "stopped" ||
@@ -817,132 +812,9 @@ export const makeSupervisor = (
         } satisfies EffectStackCredentials;
       },
     );
-    const prepareOperation = (prepareOptions?: {
-      readonly config?: StackConfig;
-      readonly capabilities?: ReadonlyArray<CapabilityName>;
-    }) =>
-      Effect.gen(function* () {
-        // Preparation is deliberately based on one fresh state read and never writes it. A
-        // supplied config is compiled only to validate/materialize a prospective plan; its secret
-        // declarations are intentionally not resolved here.
-        const state = yield* read();
-        if (state === undefined)
-          return yield* new StackStateInvalidError({ message: "Stack state is missing" });
-
-        let definition: import("../model/Compiler.ts").StackDefinition;
-        let plan: ExecutionPlan;
-        if (prepareOptions?.config === undefined && state.definition !== undefined) {
-          if (state.inputFingerprint === undefined)
-            return yield* new StackStateInvalidError({
-              stackId: options.stackId,
-              message: "Persisted stack definition fingerprint is missing",
-            });
-          definition = state.definition;
-          plan = yield* rebuildExecutionPlan(state.runtime, definition).pipe(
-            Effect.provideContext(options.context),
-          );
-        } else {
-          if (
-            prepareOptions?.config === undefined &&
-            state.desiredLifecycle !== "unconfigured" &&
-            state.definition === undefined
-          )
-            return yield* new StackDefinitionRequiredError({
-              stackId: options.stackId,
-              message: "A complete stack definition is required",
-            });
-          const compiled = yield* compileStack({
-            projectRoot: state.identity.projectRoot,
-            runtime: state.runtime,
-            config: prepareOptions?.config,
-          }).pipe(Effect.provideContext(options.context));
-          definition = compiled.definition;
-          plan = compiled.executionPlan;
-        }
-
-        const selected = new Set<CapabilityName>();
-        const visit = (name: CapabilityName): Effect.Effect<void, StackPreparationError> => {
-          if (selected.has(name)) return Effect.void;
-          const capability = definition.capabilities[name];
-          if (!capability.enabled)
-            return Effect.fail(
-              new StackPreparationError({
-                stackId: options.stackId,
-                capability: name,
-                message: `Capability ${name} is disabled`,
-              }),
-            );
-          selected.add(name);
-          return Effect.forEach(plan.dependencies[name], visit, { discard: true });
-        };
-        if (prepareOptions?.capabilities === undefined) {
-          for (const name of CAPABILITY_NAMES)
-            if (definition.capabilities[name].enabled) selected.add(name);
-        } else {
-          for (const name of new Set(prepareOptions.capabilities)) yield* visit(name);
-        }
-
-        const workloads = plan.workloads.filter((workload) => selected.has(workload.capability));
-        const artifacts = yield* runtime.prepare(state.runtime, workloads);
-        const byCapability = new Map<CapabilityName, ReadonlyArray<PreparedWorkloadArtifact>>();
-        for (const artifact of artifacts) {
-          const existing = byCapability.get(artifact.capability) ?? [];
-          byCapability.set(artifact.capability, [...existing, artifact]);
-        }
-        const capabilities = plan.startOrder
-          .filter((name) => selected.has(name))
-          .map((name) => {
-            const entries = byCapability.get(name) ?? [];
-            const outcome: "cached" | "downloaded" | "pulled" =
-              state.runtime.kind === "native"
-                ? entries.some((entry) => entry.outcome === "downloaded")
-                  ? "downloaded"
-                  : "cached"
-                : entries.some((entry) => entry.outcome === "pulled")
-                  ? "pulled"
-                  : "cached";
-            return {
-              capability: name,
-              version: definition.capabilities[name].version,
-              outcome,
-            };
-          });
-        return { capabilities };
-      }).pipe(Effect.provideContext(options.context));
-    const submitPreparation = <A>(
-      effect: Effect.Effect<A, StackError>,
-    ): Effect.Effect<A, StackError> =>
-      Effect.uninterruptibleMask((restore) =>
-        Effect.gen(function* () {
-          const result = yield* Deferred.make<Exit.Exit<A, StackError>, never>();
-          const released = yield* Ref.make(false);
-          const release = Ref.getAndSet(released, true).pipe(
-            Effect.flatMap((alreadyReleased) =>
-              alreadyReleased ? Effect.void : Ref.update(preparationsActive, (count) => count - 1),
-            ),
-          );
-          const owner = Effect.gen(function* () {
-            const exit = yield* Effect.exit(effect);
-            yield* release;
-            yield* Deferred.succeed(result, exit);
-          }).pipe(Effect.ensuring(release));
-          yield* admission.withPermit(
-            ensureAcceptingOperations.pipe(
-              Effect.andThen(Ref.update(preparationsActive, (count) => count + 1)),
-              Effect.andThen(FiberSet.run(ownedFibers, owner, { startImmediately: true })),
-            ),
-          );
-          const awaitResult = Deferred.await(result).pipe(
-            Effect.onInterrupt(() => continueShutdown(result)),
-          );
-          return yield* restore(awaitResult).pipe(Effect.flatMap(joinExit));
-        }),
-      );
     const rpcHandlers: StackRpcHandlers = StackRpcGroup.of({
       status: () => operation(status),
       credentials: () => credentials,
-      prepare: ({ config, capabilities }) =>
-        operation(submitPreparation(prepareOperation({ config, capabilities }))),
       start: ({ config }: { readonly config?: StackConfig }) => operation(start({ config })),
       destroy: () => operation(destroy),
       logs: (query: LogQuery) => operation(logs(query)),

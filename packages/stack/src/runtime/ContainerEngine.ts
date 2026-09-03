@@ -730,24 +730,11 @@ export const makeContainerEngineCore = (options: ContainerEngineOptions): Contai
   };
 };
 export interface SelectContainerEngineOptions {
-  readonly preference: "auto" | ContainerEngineKind;
+  readonly preference: ContainerEngineKind;
   readonly docker: ContainerEngine;
   readonly podman: ContainerEngine;
 }
 export const selectContainerEngine = (
   options: SelectContainerEngineOptions,
-): Effect.Effect<ContainerEngine, ContainerEngineFailure> => {
-  const explicit =
-    options.preference === "docker"
-      ? options.docker
-      : options.preference === "podman"
-        ? options.podman
-        : undefined;
-  if (explicit !== undefined) return explicit.probe.pipe(Effect.as(explicit));
-  return options.docker.probe.pipe(
-    Effect.as(options.docker),
-    Effect.catchTag("ContainerExecutableNotFoundError", () =>
-      options.podman.probe.pipe(Effect.as(options.podman)),
-    ),
-  );
-};
+): Effect.Effect<ContainerEngine, ContainerEngineFailure> =>
+  options.preference === "docker" ? Effect.succeed(options.docker) : Effect.succeed(options.podman);
