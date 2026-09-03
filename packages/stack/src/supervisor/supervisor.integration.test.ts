@@ -1555,6 +1555,9 @@ describe("Supervisor composition", () => {
         expect(
           Exit.isFailure(yield* fixture.supervisor.activate("functions").pipe(Effect.exit)),
         ).toBe(true);
+        expect(yield* Ref.get(fixture.resources)).toEqual([
+          expect.objectContaining({ workloadId: "database:database", state: "ready" }),
+        ]);
         expect((yield* fixture.supervisor.status).lifecycle).toBe("stopping");
         expect((yield* fixture.supervisor.maintenanceHandlers.stop).ok).toBe(true);
         expect((yield* fixture.supervisor.status).lifecycle).toBe("stopped");
