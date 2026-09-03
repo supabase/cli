@@ -52,6 +52,122 @@ export class LegacyConfigPushLoadConfigError extends Data.TaggedError(
   }
 }
 
+// --- branch/UUID resolution (CLI-2289) --------------------------------------
+//
+// `--project-ref` accepts a project ref, or the name (or UUID) of one of its
+// branches — mirrors `config diff`'s own error set 1:1, under push's own
+// names (`diff.errors.ts`).
+
+/** `--project-ref` named a branch the parent project does not have. */
+export class LegacyConfigPushBranchNotFoundError extends Data.TaggedError(
+  "LegacyConfigPushBranchNotFoundError",
+)<{ readonly message: string }> {
+  get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
+    return actionability.invalidInput;
+  }
+}
+
+/**
+ * `--project-ref` named a branch (by name), but no project is linked to
+ * search for branches under — none of `SUPABASE_PROJECT_ID`,
+ * `supabase/.temp/linked-project.json`, or `supabase/.temp/project-ref`
+ * yielded a candidate.
+ */
+export class LegacyConfigPushBranchNotLinkedError extends Data.TaggedError(
+  "LegacyConfigPushBranchNotLinkedError",
+)<{ readonly message: string }> {
+  get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
+    return actionability.projectNotLinked;
+  }
+}
+
+/**
+ * `--project-ref` named a branch (by name), and a parent-project candidate
+ * exists but is not ref-shaped — corrupt or stale linked state.
+ */
+export class LegacyConfigPushParentRefInvalidError extends Data.TaggedError(
+  "LegacyConfigPushParentRefInvalidError",
+)<{ readonly message: string }> {
+  get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
+    return actionability.relinkProject;
+  }
+}
+
+/**
+ * The resolved branch has no project ref yet (still provisioning) — guards
+ * against an empty/placeholder ref reaching a push target.
+ */
+export class LegacyConfigPushBranchNotReadyError extends Data.TaggedError(
+  "LegacyConfigPushBranchNotReadyError",
+)<{ readonly message: string }> {
+  get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
+    return { ...actionability.apiStatus, fingerprint_suffix: "branch_not_ready" };
+  }
+}
+
+export class LegacyConfigPushBranchResolveNetworkError extends Data.TaggedError(
+  "LegacyConfigPushBranchResolveNetworkError",
+)<DecodableNetworkErrorArgs> {
+  get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
+    return this.decode === true
+      ? { ...actionability.apiStatus, fingerprint_suffix: "api_response" }
+      : actionability.externalNetwork;
+  }
+}
+
+export class LegacyConfigPushBranchResolveStatusError extends Data.TaggedError(
+  "LegacyConfigPushBranchResolveStatusError",
+)<StatusErrorArgs> {
+  get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
+    return statusCodeActionability(this.status, { notFoundIsInvalidInput: true });
+  }
+}
+
+// --- live branch detection (CLI-2168) ---------------------------------------
+//
+// Hard-failure path for the `getProject` probe that tells the user whether
+// `ref` is the linked project or one of its branches (a 404 is not an error —
+// it's the branch signal, handled by `legacyClassifyProjectLookupError`).
+
+export class LegacyConfigPushProjectLookupNetworkError extends Data.TaggedError(
+  "LegacyConfigPushProjectLookupNetworkError",
+)<DecodableNetworkErrorArgs> {
+  get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
+    return this.decode === true
+      ? { ...actionability.apiStatus, fingerprint_suffix: "api_response" }
+      : actionability.externalNetwork;
+  }
+}
+
+export class LegacyConfigPushProjectLookupStatusError extends Data.TaggedError(
+  "LegacyConfigPushProjectLookupStatusError",
+)<StatusErrorArgs> {
+  get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
+    // A 404 on this specific probe can never reach this class — it's
+    // intercepted upstream as the branch signal (`legacyClassifyProjectLookupError`
+    // resolves it to `None` instead of failing) — so `notFoundIsInvalidInput`
+    // would be dead weight here.
+    return statusCodeActionability(this.status);
+  }
+}
+
+// --- branch confirmation gate (CLI-2168) ------------------------------------
+
+/** The user declined the branch confirmation gate. Mirrors `projects
+ * delete`/`db reset`'s identical top-level "are you sure" cancellation
+ * shape — declining now FAILS (exit 1), matching every other top-level
+ * confirmation gate in this codebase; the per-service `keep()` prompts below
+ * are unrelated and still exit 0 on decline. */
+export class LegacyConfigPushCancelledError extends Data.TaggedError(
+  "LegacyConfigPushCancelledError",
+)<{
+  readonly message: string;
+}> {
+  get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
+    return actionability.cancelled;
+  }
+}
+
 // --- cost matrix (list addons) ---------------------------------------------
 
 export class LegacyConfigPushListAddonsNetworkError extends Data.TaggedError(

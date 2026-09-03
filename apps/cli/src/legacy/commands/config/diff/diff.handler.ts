@@ -9,29 +9,18 @@ import { Effect, Option } from "effect";
 
 import { LegacyPlatformApi } from "../../../auth/legacy-platform-api.service.ts";
 import { LegacyCliSettings } from "../../../config/legacy-cli-settings.service.ts";
-import { LegacyProjectRefResolver } from "../../../config/legacy-project-ref.service.ts";
-import {
-  legacyParentNotLinkedMessage,
-  legacyParentRefInvalidMessage,
-  legacyParentRefTypoHint,
-  legacyResolveLinkedParentRef,
-  legacyResolveParentScopedProjectRef,
-} from "../../../shared/legacy-parent-project-ref.ts";
 import { LegacyLinkedProjectCache } from "../../../telemetry/legacy-linked-project-cache.service.ts";
 import { LegacyTelemetryState } from "../../../telemetry/legacy-telemetry-state.service.ts";
 import { LegacyOutputFlag } from "../../../../shared/legacy/global-flags.ts";
 import { Output } from "../../../../shared/output/output.service.ts";
 import { ProcessControl } from "../../../../shared/runtime/process-control.service.ts";
-import { legacyResolveBranchProjectRef } from "../../../shared/legacy-branch-ref.resolver.ts";
-import {
-  LEGACY_BRANCH_PROJECT_REF_PATTERN,
-  LEGACY_BRANCH_UUID_PATTERN,
-} from "../../../shared/legacy-ref-patterns.ts";
+import { LEGACY_BRANCH_PROJECT_REF_PATTERN } from "../../../shared/legacy-ref-patterns.ts";
 import {
   legacySanitizeInlineName,
   mapLegacyHttpError,
   sanitizeLegacyErrorBody,
 } from "../../../shared/legacy-http-errors.ts";
+import { legacyResolveConfigTargetRef } from "../config.branch-target.ts";
 import {
   legacyConfigDiffComparisonLine,
   legacyConfigDiffPayload,
@@ -92,7 +81,6 @@ export const legacyConfigDiff = Effect.fn("legacy.config.diff")(function* (
 ) {
   const output = yield* Output;
   const api = yield* LegacyPlatformApi;
-  const resolver = yield* LegacyProjectRefResolver;
   const linkedProjectCache = yield* LegacyLinkedProjectCache;
   const telemetryState = yield* LegacyTelemetryState;
   const cliSettings = yield* LegacyCliSettings;
@@ -175,82 +163,26 @@ export const legacyConfigDiff = Effect.fn("legacy.config.diff")(function* (
 
     // 3. Resolve the comparison target. `--project-ref` accepts a project
     // ref, or the name (or UUID) of a branch of the linked project —
-    // `link`'s settled vocabulary (CLI-2167). A ref-shaped value (exactly 20
-    // lowercase letters) is always treated as a project ref.
-    //
-    // A UUID target resolves through `GET /v1/branches/{id}` directly, which
-    // needs no parent ref at all, so it keeps the fully lazy parent
-    // resolution below — the parent-scoped resolver is never evaluated for
-    // it, which is exactly what lets it work in an unlinked directory.
-    //
-    // A NAME target, by contrast, needs the parent project ref to search
-    // under, so it is resolved eagerly, BEFORE any spinner starts —
-    // mirroring `link` (link.handler.ts:198-213): an unlinked directory (or
-    // a corrupt/stale linked ref) must fail immediately with a link-grade
-    // error naming the value the user passed, rather than falling through to
-    // `resolver.resolve`'s interactive project picker rendering under a live
-    // "Resolving branch..." spinner.
-    let ref: string;
-    let branch: string | undefined;
-    if (Option.isSome(requested) && !LEGACY_BRANCH_PROJECT_REF_PATTERN.test(requested.value)) {
-      const target = requested.value;
-      branch = target;
-
-      let parentRef: ReturnType<typeof legacyResolveParentScopedProjectRef>;
-      if (LEGACY_BRANCH_UUID_PATTERN.test(target)) {
-        parentRef = legacyResolveParentScopedProjectRef(Option.none());
-      } else {
-        const parent = yield* legacyResolveLinkedParentRef();
-        if (parent.kind === "absent") {
-          return yield* new LegacyConfigDiffBranchNotLinkedError({
-            message: legacyParentNotLinkedMessage(target),
-          });
-        }
-        if (parent.kind === "invalid") {
-          return yield* new LegacyConfigDiffParentRefInvalidError({
-            message: legacyParentRefInvalidMessage(target),
-          });
-        }
-        parentRef = Effect.succeed(parent.ref);
-      }
-
-      const resolving =
-        output.format === "text" ? yield* output.task("Resolving branch...") : undefined;
-      ref = yield* legacyResolveBranchProjectRef(target, parentRef, {
-        mapGetError: mapBranchResolveError,
-        mapFindError: mapBranchResolveError,
-      }).pipe(
-        Effect.tapError(() => resolving?.fail() ?? Effect.void),
-        Effect.catchTag(
-          "LegacyConfigDiffBranchResolveStatusError",
-          (
-            cause,
-          ): Effect.Effect<
-            never,
-            LegacyConfigDiffBranchNotFoundError | LegacyConfigDiffBranchResolveStatusError
-          > =>
-            cause.status === 404
-              ? Effect.fail(
-                  new LegacyConfigDiffBranchNotFoundError({
-                    message: `Branch "${legacySanitizeInlineName(target)}" not found. Run \`supabase branches list\` to see available branches.${legacyParentRefTypoHint(target)}`,
-                  }),
-                )
-              : Effect.fail(cause),
-        ),
-      );
-      yield* resolving?.clear() ?? Effect.void;
-
-      // The resolved branch might not have a project ref yet (still
-      // provisioning) — never let an empty/placeholder ref reach
-      // `/v2/projects//config` (mirrors link.handler.ts:248-256's guard).
-      if (!LEGACY_BRANCH_PROJECT_REF_PATTERN.test(ref)) {
-        return yield* new LegacyConfigDiffBranchNotReadyError({
-          message: `Branch "${legacySanitizeInlineName(target)}" has no project ref yet. Wait for it to finish provisioning, then retry.`,
-        });
-      }
-    } else {
-      ref = yield* resolver.resolve(requested);
-    }
+    // `link`'s settled vocabulary (CLI-2167). Hoisted to
+    // `config.branch-target.ts` (Hoist Before You Duplicate — shared with
+    // `config push`, CLI-2289); see that module's doc comment for the exact
+    // UUID/NAME resolution semantics preserved here byte-for-byte.
+    const resolved = yield* legacyResolveConfigTargetRef(requested, {
+      notLinkedError: (opts) => new LegacyConfigDiffBranchNotLinkedError(opts),
+      parentRefInvalidError: (opts) => new LegacyConfigDiffParentRefInvalidError(opts),
+      branchNotFoundError: (opts) => new LegacyConfigDiffBranchNotFoundError(opts),
+      branchNotReadyError: (opts) => new LegacyConfigDiffBranchNotReadyError(opts),
+      mapResolveError: { mapGetError: mapBranchResolveError, mapFindError: mapBranchResolveError },
+    });
+    const ref = resolved.ref;
+    // Diff only needs the raw target string (name or UUID) for its own
+    // comparison-line display (`legacyConfigDiffComparisonLine` tells them
+    // apart itself) — `resolved.branchResolution` is push-specific
+    // (branch-gate) enrichment that diff has no use for.
+    const branch =
+      Option.isSome(requested) && !LEGACY_BRANCH_PROJECT_REF_PATTERN.test(requested.value)
+        ? requested.value
+        : undefined;
     resolvedRef = ref;
 
     // 4. Apply the matching `[remotes.*]` overlay (ADR 0018) now that the

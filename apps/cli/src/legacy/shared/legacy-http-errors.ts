@@ -40,6 +40,20 @@ export function legacySanitizeInlineName(input: string): string {
   return sanitizeLegacyErrorBody(input).replace(/[\n\t]+/g, " ");
 }
 
+/**
+ * Renders `name (ref)` when `name` is known and non-empty after
+ * sanitization, or bare `ref` otherwise — both sanitized via
+ * {@link legacySanitizeInlineName}. Computing the sanitized name FIRST (and
+ * gating on ITS length, not the raw input's) is defense-in-depth: a name
+ * that's entirely control characters must degrade to the bare-ref form, not
+ * render as `` (ref)`` with a phantom leading space.
+ */
+export function legacyFormatNamedRef(name: string | undefined, ref: string): string {
+  const safeRef = legacySanitizeInlineName(ref);
+  const safeName = name === undefined ? undefined : legacySanitizeInlineName(name);
+  return safeName === undefined || safeName.length === 0 ? safeRef : `${safeName} (${safeRef})`;
+}
+
 // Strip ASCII control characters from the response body before embedding it in an error
 // message. The Management API is trusted, but defence-in-depth: a body containing `\r\n`
 // could fracture a structured log line, and `\x00` could truncate output in shells that

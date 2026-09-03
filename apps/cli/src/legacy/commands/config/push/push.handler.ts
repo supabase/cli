@@ -1,22 +1,24 @@
 import { dirname } from "node:path";
 import { findCliProjectRoot } from "@supabase/config/effect";
 import { loadCliConfig } from "@supabase/config/internal";
-import { Effect, FileSystem, Path } from "effect";
+import { Effect, FileSystem, Option, Path } from "effect";
 
 import { LegacyPlatformApi } from "../../../auth/legacy-platform-api.service.ts";
 import { LegacyCliSettings } from "../../../config/legacy-cli-settings.service.ts";
-import { LegacyProjectRefResolver } from "../../../config/legacy-project-ref.service.ts";
 import { LegacyLinkedProjectCache } from "../../../telemetry/legacy-linked-project-cache.service.ts";
 import { LegacyTelemetryState } from "../../../telemetry/legacy-telemetry-state.service.ts";
 import { legacyResolveYesWithProjectEnv } from "../../../../shared/legacy/global-flags.ts";
+import { CONTEXT_CANCELED_MESSAGE } from "../../../../shared/output/errors.ts";
 import { Output } from "../../../../shared/output/output.service.ts";
 import {
   legacyAssertDecryptableSecrets,
   legacyLoadProjectEnv,
 } from "../../../shared/legacy-db-config.toml-read.ts";
+import { legacyClassifyProjectLookupError } from "../../../shared/legacy-branch-target.ts";
 import { mapLegacyHttpError } from "../../../shared/legacy-http-errors.ts";
 import { legacyPromptYesNo } from "../../../../shared/legacy/legacy-prompt-yes-no.ts";
 import { legacyCollectDotenvPrivateKeys } from "../../../shared/legacy-vault-decrypt.ts";
+import { legacyResolveConfigTargetRef } from "../config.branch-target.ts";
 import { apiSubsetFromConfig, apiToUpdateBody, diffApiWithRemote } from "./config-sync/api.sync.ts";
 import {
   applyRemoteAuthConfig,
@@ -47,6 +49,12 @@ import {
   storageToUpdateBody,
 } from "./config-sync/storage.sync.ts";
 import { loadAuthEmailContent } from "./config-sync/config-sync.auth-email-content.ts";
+import {
+  legacyConfigPushBranchPromptLabel,
+  legacyConfigPushPayloadFields,
+  legacyConfigPushTargetLines,
+} from "./push.format.ts";
+import { legacyResolveConfigPushTarget } from "./push.branch-target.ts";
 import { getCostMatrix } from "./push.cost-matrix.ts";
 import { legacyPresenceIn } from "./push.raw-presence.ts";
 import {
@@ -58,6 +66,12 @@ import {
   LegacyConfigPushAuthReadStatusError,
   LegacyConfigPushAuthUpdateNetworkError,
   LegacyConfigPushAuthUpdateStatusError,
+  LegacyConfigPushBranchNotFoundError,
+  LegacyConfigPushBranchNotLinkedError,
+  LegacyConfigPushBranchNotReadyError,
+  LegacyConfigPushBranchResolveNetworkError,
+  LegacyConfigPushBranchResolveStatusError,
+  LegacyConfigPushCancelledError,
   LegacyConfigPushDbReadNetworkError,
   LegacyConfigPushDbReadStatusError,
   LegacyConfigPushDbUpdateNetworkError,
@@ -69,6 +83,9 @@ import {
   LegacyConfigPushNetworkRestrictionsReadStatusError,
   LegacyConfigPushNetworkRestrictionsUpdateNetworkError,
   LegacyConfigPushNetworkRestrictionsUpdateStatusError,
+  LegacyConfigPushParentRefInvalidError,
+  LegacyConfigPushProjectLookupNetworkError,
+  LegacyConfigPushProjectLookupStatusError,
   LegacyConfigPushSslEnforcementReadNetworkError,
   LegacyConfigPushSslEnforcementReadStatusError,
   LegacyConfigPushSslEnforcementUpdateNetworkError,
@@ -83,12 +100,33 @@ import type { LegacyConfigPushServiceResult } from "./push.types.ts";
 
 const readStatusMessage = (status: number, body: string) => `unexpected status ${status}: ${body}`;
 
+const mapPushBranchResolveError = mapLegacyHttpError({
+  networkError: LegacyConfigPushBranchResolveNetworkError,
+  statusError: LegacyConfigPushBranchResolveStatusError,
+  networkMessage: (cause) => `failed to resolve branch: ${cause}`,
+  statusMessage: readStatusMessage,
+});
+
+// Classify a `getProject` failure for the target-echo probe (CLI-2168): a
+// 404 means `ref` is a branch (resolves to `None`, `legacyResolveConfigPushTarget`
+// continues its own best-effort recovery); any other status/network failure
+// is a hard failure for this command.
+const classifyPushProjectLookupError = legacyClassifyProjectLookupError({
+  networkError: LegacyConfigPushProjectLookupNetworkError,
+  statusError: LegacyConfigPushProjectLookupStatusError,
+  networkMessage: (cause) => `failed to retrieve project status: ${cause}`,
+  statusMessage: (status, body) => `unexpected project lookup status ${status}: ${body}`,
+});
+
+function isRecord(value: unknown): value is Readonly<Record<string, unknown>> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
 export const legacyConfigPush = Effect.fn("legacy.config.push")(function* (
   flags: LegacyConfigPushFlags,
 ) {
   const output = yield* Output;
   const api = yield* LegacyPlatformApi;
-  const resolver = yield* LegacyProjectRefResolver;
   const cliSettings = yield* LegacyCliSettings;
   const linkedProjectCache = yield* LegacyLinkedProjectCache;
   const telemetryState = yield* LegacyTelemetryState;
@@ -122,24 +160,21 @@ export const legacyConfigPush = Effect.fn("legacy.config.push")(function* (
   const secretEnvLookup = (name: string): string | undefined =>
     process.env[name] ?? projectEnv[name];
 
-  const ref = yield* resolver.resolve(flags.projectRef);
+  // `--project-ref` accepts a project ref, or the name (or UUID) of a branch
+  // of the linked project — `link`'s/`config diff`'s settled vocabulary
+  // (CLI-2167/CLI-2289). An empty `--project-ref` value is absent, mirroring
+  // the resolver's own rule.
+  const requestedRef = Option.filter(flags.projectRef, (value) => value.length > 0);
 
-  yield* Effect.gen(function* () {
-    // 1. Load config.toml (TOML parse error aborts before any network call).
-    //
-    // NOTE (CLI-1489): `config push` needs the fully decoded config (every
-    // service subset), so it uses `loadCliConfig` rather than the tolerant
-    // `legacy-db-config.toml-read.ts` subtree reader. `loadCliConfig` raises
-    // `CliConfigParseError` on `env(...)` refs over numeric/bool fields,
-    // which Go resolves transparently. Switch to the fixed decoder once
-    // CLI-1489 lands; until then this is the conscious tradeoff for this command.
-    // Pass `ref` so a matching `[remotes.*]` block is merged over the base
-    // config before decode. A duplicate `project_id` across remotes surfaces
-    // an established error message.
-    const loaded = yield* loadCliConfig(cliSettings.workdir, {
-      projectRef: ref,
-      goViperCompat: true,
-    }).pipe(
+  // Written once ref resolution succeeds, so the linked-project cache
+  // finalizer below only fires for invocations that got that far — mirrors
+  // `diff.handler.ts`'s `resolvedRef` pattern (Legacy Shell Invariant #1):
+  // every failure path from here on, including branch/UUID resolution,
+  // stays inside this file's single `Effect.ensuring`-wrapped block below.
+  let resolvedRef: string | undefined;
+
+  const loadPushConfig = (projectRef: string | undefined) =>
+    loadCliConfig(cliSettings.workdir, { projectRef, goViperCompat: true }).pipe(
       Effect.catchTag(
         "CliConfigParseError",
         (cause) =>
@@ -151,20 +186,72 @@ export const legacyConfigPush = Effect.fn("legacy.config.push")(function* (
         "DuplicateRemoteProjectIdError",
         (cause) => new LegacyConfigPushLoadConfigError({ message: cause.message }),
       ),
+      Effect.flatMap((loaded) =>
+        loaded === null
+          ? Effect.fail(
+              new LegacyConfigPushLoadConfigError({
+                message: "failed to read supabase/config.toml: file not found",
+              }),
+            )
+          : Effect.succeed(loaded),
+      ),
     );
-    if (loaded === null) {
-      return yield* new LegacyConfigPushLoadConfigError({
-        message: "failed to read supabase/config.toml: file not found",
-      });
+
+  yield* Effect.gen(function* () {
+    // 1. Load config.toml with no ref override (TOML parse error aborts
+    // before any network call — including the branch/UUID resolution
+    // below).
+    //
+    // NOTE (CLI-1489): `config push` needs the fully decoded config (every
+    // service subset), so it uses `loadCliConfig` rather than the tolerant
+    // `legacy-db-config.toml-read.ts` subtree reader. `loadCliConfig` raises
+    // `CliConfigParseError` on `env(...)` refs over numeric/bool fields,
+    // which Go resolves transparently. Switch to the fixed decoder once
+    // CLI-1489 lands; until then this is the conscious tradeoff for this command.
+    let loaded = yield* loadPushConfig(undefined);
+
+    // 2. Resolve the push target. `--project-ref` accepts a project ref, or
+    // the name (or UUID) of a branch of the linked project (CLI-2167/CLI-2289) —
+    // hoisted to `config.branch-target.ts` (Hoist Before You Duplicate,
+    // shared with `config diff`). This is ALSO where `resolvedRef` is set,
+    // so every one of the hoisted resolver's failure paths (not linked,
+    // invalid parent, not found, not ready, network/status) still flushes
+    // telemetry and, once a ref is known, writes the linked-project cache.
+    const resolved = yield* legacyResolveConfigTargetRef(requestedRef, {
+      notLinkedError: (opts) => new LegacyConfigPushBranchNotLinkedError(opts),
+      parentRefInvalidError: (opts) => new LegacyConfigPushParentRefInvalidError(opts),
+      branchNotFoundError: (opts) => new LegacyConfigPushBranchNotFoundError(opts),
+      branchNotReadyError: (opts) => new LegacyConfigPushBranchNotReadyError(opts),
+      mapResolveError: {
+        mapGetError: mapPushBranchResolveError,
+        mapFindError: mapPushBranchResolveError,
+      },
+    });
+    const ref = resolved.ref;
+    resolvedRef = ref;
+
+    // 3. Apply the matching `[remotes.<name>]` overlay (ADR 0018) now that
+    // the target ref is known. Only a config whose remotes actually MATCH
+    // the resolved ref reloads (checked on the already-loaded,
+    // env-interpolated document) — every other config keeps the step-1
+    // load. A duplicate `project_id` across remotes surfaces an established
+    // error message.
+    const remotes = loaded.document?.["remotes"];
+    const remoteMatchesRef =
+      isRecord(remotes) &&
+      Object.values(remotes).some((remote) => isRecord(remote) && remote["project_id"] === ref);
+    if (remoteMatchesRef) {
+      loaded = yield* loadPushConfig(ref);
     }
-    // Printed from inside config load, before any command output.
+    // Printed once the final (possibly reloaded) config is known, before any
+    // other command output.
     if (loaded.appliedRemote !== undefined) {
       yield* output.raw(`Loading config override: [remotes.${loaded.appliedRemote}]\n`, "stderr");
     }
     const projectId = ref;
     const config = loaded.config;
 
-    // 1b. Assert every `config.Secret`-typed `encrypted:` value in the
+    // 3b. Assert every `config.Secret`-typed `encrypted:` value in the
     // document (not just auth.*) can be decrypted — this must run before the
     // cost matrix is fetched or any service is touched. An undecryptable
     // secret anywhere in the document (even one `config push` never itself
@@ -212,10 +299,38 @@ export const legacyConfigPush = Effect.fn("legacy.config.push")(function* (
         })
       : { template: {}, notification: {} };
 
-    // 2. Cost matrix (drives cost-aware prompts).
-    const cost = yield* getCostMatrix(ref);
+    // 4. Determine the push target (plain project vs. branch) and, for a
+    // branch, gate the push behind an explicit confirmation before any
+    // further network call — including the cost matrix below (CLI-2168). A
+    // target resolved from an EXPLICIT `--project-ref <name-or-uuid>` this
+    // invocation (`resolved.branchResolution`) skips the prompt: the user
+    // already expressed same-invocation intent, so re-confirming the exact
+    // string they just typed is friction with no safety benefit — the
+    // target-echo line below still always prints regardless.
+    const target = yield* legacyResolveConfigPushTarget(ref, {
+      classifyLookupError: classifyPushProjectLookupError,
+      knownBranch: resolved.branchResolution,
+    });
+    yield* output.raw(legacyConfigPushTargetLines(target), "stderr");
+    if (target.kind === "branch" && resolved.branchResolution === undefined) {
+      const proceed = yield* legacyPromptYesNo(
+        output,
+        yes,
+        legacyConfigPushBranchPromptLabel(target),
+        // Deliberately `false` (unlike this file's other prompts, which
+        // default `true`): an unattended run (CI, an agent, a script)
+        // without `--yes` must safely decline a branch mutation rather than
+        // silently proceed. `--yes`/`SUPABASE_YES` (`yes`, resolved above)
+        // is the intended override.
+        false,
+      );
+      if (!proceed) {
+        return yield* new LegacyConfigPushCancelledError({ message: CONTEXT_CANCELED_MESSAGE });
+      }
+    }
 
-    yield* output.raw(`Pushing config to project: ${projectId}\n`, "stderr");
+    // 5. Cost matrix (drives cost-aware prompts).
+    const cost = yield* getCostMatrix(ref);
 
     // keep(name): the shared confirmation-prompt helper handles all modes,
     // including scanning piped stdin on a non-TTY before falling back to
@@ -232,7 +347,7 @@ export const legacyConfigPush = Effect.fn("legacy.config.push")(function* (
 
     const services: Array<LegacyConfigPushServiceResult> = [];
 
-    // 3a. api
+    // 6a. api
     {
       const local = apiSubsetFromConfig(config);
       const remote = yield* api.v1.getPostgrestServiceConfig({ ref }).pipe(
@@ -269,7 +384,7 @@ export const legacyConfigPush = Effect.fn("legacy.config.push")(function* (
       }
     }
 
-    // 3b. db.settings (no gate — always processed)
+    // 6b. db.settings (no gate — always processed)
     {
       const local = dbSettingsFromConfig(config);
       const response = yield* api.v1.getPostgresConfig({ ref }).pipe(
@@ -309,7 +424,7 @@ export const legacyConfigPush = Effect.fn("legacy.config.push")(function* (
       }
     }
 
-    // 3c. db.network_restrictions (gated on local enabled)
+    // 6c. db.network_restrictions (gated on local enabled)
     {
       const local = networkRestrictionsFromConfig(config);
       if (!local.enabled) {
@@ -353,7 +468,7 @@ export const legacyConfigPush = Effect.fn("legacy.config.push")(function* (
       }
     }
 
-    // 3d. db.ssl_enforcement (only when locally configured)
+    // 6d. db.ssl_enforcement (only when locally configured)
     {
       const local = sslEnforcementFromConfig(config, presence.sslEnforcement);
       if (local === undefined) {
@@ -396,7 +511,7 @@ export const legacyConfigPush = Effect.fn("legacy.config.push")(function* (
       }
     }
 
-    // 3e. auth (gated on local enabled; MFA addon cost filter)
+    // 6e. auth (gated on local enabled; MFA addon cost filter)
     {
       if (!authEnabled(config)) {
         services.push({ service: "auth", status: "disabled" });
@@ -413,7 +528,7 @@ export const legacyConfigPush = Effect.fn("legacy.config.push")(function* (
         );
         // `dotenvPrivateKeys` decrypts any `encrypted:` auth secret before it's
         // hashed/copied into the update body. The document-wide check above
-        // (step 1b) already scanned every `config.Secret` path — including every
+        // (step 3b) already scanned every `config.Secret` path — including every
         // field `authSubsetFromConfig` reads — and would have aborted by now if
         // any were undecryptable, so the decrypt calls inside it are unreachable
         // failure paths here, not a real branch to guard with `Effect.try`.
@@ -457,7 +572,7 @@ export const legacyConfigPush = Effect.fn("legacy.config.push")(function* (
       }
     }
 
-    // 3f. storage (gated on local enabled)
+    // 6f. storage (gated on local enabled)
     {
       const local = storageSubsetFromConfig(config, {
         imageTransformation: presence.imageTransformation,
@@ -501,7 +616,7 @@ export const legacyConfigPush = Effect.fn("legacy.config.push")(function* (
       }
     }
 
-    // 3g. experimental.webhooks (no GET / diff)
+    // 6g. experimental.webhooks (no GET / diff)
     {
       if (!experimentalWebhooksEnabled(config)) {
         services.push({ service: "experimental.webhooks", status: "disabled" });
@@ -526,9 +641,20 @@ export const legacyConfigPush = Effect.fn("legacy.config.push")(function* (
       }
     }
 
-    // 4. Machine-readable summary (Go has none; text mode emits nothing extra).
+    // 7. Machine-readable summary (Go has none; text mode emits nothing extra).
     if (output.format !== "text") {
-      yield* output.success("", { project_ref: projectId, services });
+      yield* output.success("", {
+        project_ref: projectId,
+        ...legacyConfigPushPayloadFields(target),
+        services,
+      });
     }
-  }).pipe(Effect.ensuring(linkedProjectCache.cache(ref)), Effect.ensuring(telemetryState.flush));
+  }).pipe(
+    Effect.ensuring(
+      Effect.suspend(() =>
+        resolvedRef === undefined ? Effect.void : linkedProjectCache.cache(resolvedRef),
+      ),
+    ),
+    Effect.ensuring(telemetryState.flush),
+  );
 });
