@@ -326,9 +326,8 @@ function schemaArguments(schema: ReadonlyArray<string>, platform: LegacyShellPla
 export const legacyFormatDeclarativeSyncCommand = (
   schema: ReadonlyArray<string>,
   platform: LegacyShellPlatform,
-  options: { readonly allowRemovals?: boolean } = {},
 ): string =>
-  `  supabase db schema declarative sync --no-apply${options.allowRemovals === true ? " --allow-removals" : ""}${schemaArguments(schema, platform)} --experimental`;
+  `  supabase db schema declarative sync --no-apply${schemaArguments(schema, platform)} --experimental`;
 
 const adoptionCommand = (
   declarativeDir: string,
@@ -416,23 +415,17 @@ export interface LegacyDeclarativeUpgradeGateText {
  * `suggestion` so `Output.fail` prints them instead of the generic
  * "rerun with --debug" footer — a deliberate gate is not a crash.
  *
- * Deliberately offers exactly ONE non-interactive recovery for the legacy-tree
- * reading: the staged regenerate. Telling a non-interactive user to hand-add an
- * extension declaration is a false trail — on a real legacy tree each
- * declaration only unlocks the next refusal. Interactive flows still offer the
- * repair as an advanced choice.
- *
- * The plan-refuse gate additionally names `--allow-removals` (`offerAllowRemovals`)
- * for the other reading — the removals are intentional — which downgrades the
- * gate to the destructive-changes warning. The load-fail gate cannot offer it:
- * a tree that does not load has nothing to sync.
+ * Deliberately offers exactly ONE non-interactive recovery: the staged
+ * regenerate. Telling a non-interactive user to hand-add an extension
+ * declaration is a false trail — on a real legacy tree each declaration only
+ * unlocks the next refusal. Interactive flows still offer the repair as an
+ * advanced choice, and — for the plan-refuse gate — continuing with the removals.
  */
 export function legacyFormatDeclarativeUpgradeGate(opts: {
   readonly evidence: ReadonlyArray<string>;
   readonly context: LegacyStagedExportContext;
-  readonly offerAllowRemovals?: boolean;
 }): LegacyDeclarativeUpgradeGateText {
-  const { declarativeDir, schema, platform } = opts.context;
+  const { declarativeDir } = opts.context;
   return {
     message: [
       `This ${declarativeDir} tree looks like a legacy pg-delta export.`,
@@ -446,14 +439,6 @@ export function legacyFormatDeclarativeUpgradeGate(opts: {
       `Upgrade without changing the active ${declarativeDir} tree:`,
       "",
       ...stagedExportCommands(opts.context),
-      ...(opts.offerAllowRemovals === true
-        ? [
-            "",
-            "If these removals are intentional, keep the tree and rerun with --allow-removals to review them as destructive changes:",
-            "",
-            legacyFormatDeclarativeSyncCommand(schema, platform, { allowRemovals: true }),
-          ]
-        : []),
     ].join("\n"),
   };
 }

@@ -73,7 +73,7 @@ disabling safe compaction.
 | `1`  | no declarative schema files found                                                                   |
 | `1`  | shadow-database / selected pg-delta engine / diff failure                                           |
 | `1`  | apply failure (when applied) — propagated from the native migration apply (`applyMigrationToLocal`) |
-| `1`  | legacy extension omissions in non-interactive mode (unless `--allow-removals`)                      |
+| `1`  | legacy extension omissions in non-interactive mode                                                  |
 
 The pg-delta gate and the mutex check are both raised before any side effects run,
 but the gate wins when both conditions apply simultaneously: the gate check runs
@@ -99,11 +99,9 @@ export.` plus an indented evidence block, which for the plan gate enumerates the
 extensions and the extension-managed objects — cron jobs, pgmq queues — at risk)
 and both carry the staged-upgrade recipe on the error's suggestion, so the
 generic `Try rerunning the command with --debug` footer is **not** printed.
-Non-interactive execution (including `--yes`) stops there and modifies nothing.
-The recommended recovery is regenerating into `<declarative-dir>-next`, reviewing
-it, and adopting it; the plan gate's suggestion additionally names
-`--allow-removals`, which keeps the tree and downgrades that gate to the
-destructive-changes warning below (`--yes` never doubles as this override).
+Non-interactive execution (including `--yes`) stops there and modifies nothing;
+the only recommended recovery is regenerating into `<declarative-dir>-next`,
+reviewing it, and adopting it.
 
 Removing or renaming an extension-managed object (a `pg_cron` job, a `pgmq`
 queue) whose owning extension the tree still declares is an intentional change

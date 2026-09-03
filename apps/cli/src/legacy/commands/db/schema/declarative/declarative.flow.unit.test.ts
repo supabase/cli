@@ -244,33 +244,6 @@ describe("legacyFormatDeclarativeUpgradeGate", () => {
     );
   });
 
-  it("names --allow-removals only when the plan-refuse gate offers it", () => {
-    const context = {
-      declarativeDir: "supabase/schemas",
-      schema: ["app"],
-      platform: "posix" as const,
-    };
-    const evidence = legacyFormatDeclarativeGapEvidence(classifyGap());
-    const offered = legacyFormatDeclarativeUpgradeGate({
-      evidence,
-      context,
-      offerAllowRemovals: true,
-    });
-    expect(
-      offered.suggestion.endsWith(
-        [
-          "",
-          "If these removals are intentional, keep the tree and rerun with --allow-removals to review them as destructive changes:",
-          "",
-          "  supabase db schema declarative sync --no-apply --allow-removals --schema app --experimental",
-        ].join("\n"),
-      ),
-    ).toBe(true);
-    // The load-fail gate renders the same template but cannot honour the flag.
-    const withheld = legacyFormatDeclarativeUpgradeGate({ evidence, context });
-    expect(withheld.suggestion).not.toContain("--allow-removals");
-  });
-
   it("offers no extension.sql alternative — the staged upgrade is the only recovery", () => {
     const gate = legacyFormatDeclarativeUpgradeGate({
       evidence: [

@@ -401,7 +401,6 @@ const flags = (
   name: over.name ?? Option.none(),
   apply: over.apply ?? Option.none(),
   noApply: over.noApply ?? Option.none(),
-  allowRemovals: over.allowRemovals ?? false,
 });
 
 const failError = (exit: Exit.Exit<unknown, unknown>) =>
@@ -1266,10 +1265,6 @@ describe("legacy db schema declarative sync integration", () => {
       });
       expect(failError(exit)).toMatchObject({
         message: expect.stringContaining("  Extension-managed objects: pg_cron job refresh"),
-        // The scripted escape for intentional removals rides on the suggestion too.
-        suggestion: expect.stringContaining(
-          "supabase db schema declarative sync --no-apply --allow-removals --experimental",
-        ),
       });
       expect(existsSync(join(tmp.current, "supabase", "migrations"))).toBe(false);
     }).pipe(Effect.provide(s.layer));
@@ -1323,33 +1318,6 @@ describe("legacy db schema declarative sync integration", () => {
       expect(stripAnsi(s.out.stderrText)).toContain("pg_cron job refresh metrics");
     }).pipe(Effect.provide(s.layer));
   });
-
-  it.effect(
-    "--allow-removals downgrades the non-interactive gate to the destructive warning",
-    () => {
-      seedDeclarative(tmp.current);
-      const s = setup(tmp.current, {
-        engineImplementation: "next",
-        diffSql: "select cron.unschedule('refresh metrics');\nDROP EXTENSION \"postgis\";\n",
-        removals: {
-          extensions: ["postgis"],
-          extensionIntents: [{ extension: "pg_cron", intentKind: "job", key: "refresh metrics" }],
-        },
-      });
-      return Effect.gen(function* () {
-        yield* legacyDbSchemaDeclarativeSync(
-          flags({ noApply: Option.some(true), allowRemovals: true }),
-        );
-        expect(migrationSql(tmp.current)).toContain('DROP EXTENSION "postgis"');
-        const stderr = stripAnsi(s.out.stderrText);
-        expect(stderr).not.toContain("looks like a legacy pg-delta export");
-        expect(stderr).toContain("Found destructive changes in schema diff");
-        expect(stderr).toContain('DROP EXTENSION "postgis"');
-        expect(stderr).toContain("pg_cron job refresh metrics");
-        expect(s.out.promptSelectCalls).toHaveLength(0);
-      }).pipe(Effect.provide(s.layer));
-    },
-  );
 
   it.effect("offers to continue with removals from the staged-export prompt", () => {
     seedDeclarative(tmp.current);
