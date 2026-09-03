@@ -7,6 +7,7 @@ import {
   legacyEmitWorkersMachineOutput,
   legacyRejectWorkersEnvOutput,
   legacyWorkersMachineOutputRequested,
+  legacyWorkersProjectRefSuffix,
 } from "../workers.output.ts";
 import { legacyAqua } from "../../../../shared/legacy-colors.ts";
 import { LegacyPlatformApi } from "../../../../auth/legacy-platform-api.service.ts";
@@ -20,13 +21,17 @@ import { displayPath } from "../../../../../shared/workers/worker-paths.ts";
 import type { WorkerEntry } from "../../../../../shared/workers/worker-config.ts";
 import {
   apiSizeFor,
+  DEFAULT_WORKER_EXPOSURE,
   DEFAULT_WORKER_INSTANCES,
   DEFAULT_WORKER_SIZE,
   formatApiSize,
+  parseWorkerExposure,
   parseWorkerRuntime,
   parseWorkerSize,
+  WORKER_EXPOSURES,
   WORKER_RUNTIMES,
   WORKER_SIZES,
+  type WorkerExposure,
 } from "../../../../../shared/workers/worker-runtimes.ts";
 import { workerUrl } from "../../../../../shared/workers/worker-url.ts";
 import {
@@ -38,6 +43,7 @@ import {
 } from "../../../../../shared/workers/workers-api.ts";
 import {
   NoWorkersToDeployError,
+  UnknownWorkerExposureError,
   UnknownWorkerRuntimeError,
   UnknownWorkerSizeError,
   WorkerBuildFailedError,
@@ -60,8 +66,8 @@ import type { LegacyWorkersPushFlags } from "./push.command.ts";
  * deploy the worker into the linked project. Registered under `deploy` as an
  * alias, for anyone reaching for the `supabase functions` verb out of habit.
  *
- * The runtime, size and source directory come from `[workers.<name>]` in
- * `supabase/config.toml`. A directory pushed without ever running `new` gets
+ * The runtime, size, exposure and source directory come from `[workers.<name>]`
+ * in `supabase/config.toml`. A directory pushed without ever running `new` gets
  * its runtime guessed from marker files instead — reported, with a nudge to pin
  * it down rather than re-guess on every push.
  *
@@ -142,6 +148,40 @@ function resolveInstances(options: {
 }
 
 /**
+ * `--exposure` for one deploy, then the recorded exposure, then
+ * {@link DEFAULT_WORKER_EXPOSURE}. Never left unset, because every deploy sends a
+ * complete spec and an omitted exposure would re-expose a worker somebody had
+ * deliberately made private.
+ *
+ * `--exposure` is a `Flag.choice`, so only a recorded value can be unrecognized
+ * — and that is refused rather than coerced, the same way `resolveSize` treats a
+ * size it does not know: silently deploying a `private`-typo'd worker as public
+ * is the one outcome nobody asked for.
+ */
+const resolveExposure = Effect.fnUntraced(function* (options: {
+  readonly name: string;
+  readonly recorded: string | undefined;
+  readonly override: Option.Option<WorkerExposure>;
+}) {
+  if (Option.isSome(options.override)) {
+    return options.override.value;
+  }
+  if (options.recorded === undefined) {
+    return DEFAULT_WORKER_EXPOSURE;
+  }
+  const recorded = parseWorkerExposure(options.recorded);
+  if (recorded === undefined) {
+    return yield* Effect.fail(
+      new UnknownWorkerExposureError({
+        detail: `supabase/config.toml records an unknown exposure "${options.recorded}" for "${options.name}".`,
+        suggestion: `Set [workers.${options.name}] exposure to one of: ${WORKER_EXPOSURES.join(", ")}.`,
+      }),
+    );
+  }
+  return recorded;
+});
+
+/**
  * What to do about a worker whose source directory is not there at all.
  *
  * `supabase experimental workers new` is only an answer for a name the config has never
@@ -184,7 +224,14 @@ const deployOneWorker = Effect.fnUntraced(function* (input: {
   readonly project: LegacyWorkersProject;
   readonly name: string;
   readonly projectRef: string;
+  /**
+   * ` --project-ref <ref>` when the flag supplied the ref, `""` when the link
+   * did — the follow-up hint below is copy-pasted verbatim, so it has to carry
+   * whatever the user typed to reach this project.
+   */
+  readonly refSuffix: string;
   readonly instances: Option.Option<number>;
+  readonly exposure: Option.Option<WorkerExposure>;
   /** `--wait`: block on the server-side build instead of returning once it starts. */
   readonly wait: boolean;
   readonly pollSchedule?: Schedule.Schedule<unknown>;
@@ -277,6 +324,15 @@ const deployOneWorker = Effect.fnUntraced(function* (input: {
     override: input.instances,
   });
 
+  // Resolved before anything is packaged or uploaded, alongside the runtime and
+  // size, so a config that records an exposure this CLI does not know is refused
+  // while the refusal is still free.
+  const exposure = yield* resolveExposure({
+    name,
+    recorded: worker.entry?.exposure,
+    override: input.exposure,
+  });
+
   let contextUploadId: string;
   {
     const packaging = yield* output.task("Packaging worker...");
@@ -319,9 +375,7 @@ const deployOneWorker = Effect.fnUntraced(function* (input: {
     // context carries its own Dockerfile and is built as-is.
     ...(runtime === "dockerfile" ? {} : { runtime }),
     size: apiSizeFor(size),
-    // Every runtime offered today serves HTTP. A sandbox runtime would need a
-    // branch here.
-    exposure: "public",
+    exposure,
     instances,
   };
 
@@ -338,6 +392,7 @@ const deployOneWorker = Effect.fnUntraced(function* (input: {
     ? yield* awaitWorkerBuild(api, projectRef, name, {
         schedule: input.pollSchedule,
         retrySchedule: input.pollRetrySchedule,
+        refSuffix: input.refSuffix,
         onPoll: (polled) =>
           polled.buildState === "building" ? deploying.message("Building worker...") : Effect.void,
       }).pipe(Effect.tapError(() => deploying.fail()))
@@ -353,7 +408,7 @@ const deployOneWorker = Effect.fnUntraced(function* (input: {
         detail: `The build for "${name}" failed${
           settled.stateReason === undefined ? "" : `: ${settled.stateReason}`
         }.`,
-        suggestion: `Fix the issue, then re-run \`supabase experimental workers push ${name}\`.`,
+        suggestion: `Fix the issue, then re-run \`supabase experimental workers push ${name}${input.refSuffix}\`.`,
       }),
     );
   }
@@ -404,7 +459,7 @@ const deployOneWorker = Effect.fnUntraced(function* (input: {
       // width and buried both commands mid-sentence.
       yield* emitSuccessTrailer(
         `\nYour build was submitted successfully.\n` +
-          `Run ${legacyAqua(`supabase experimental workers status ${name}`)} to check on it.\n` +
+          `Run ${legacyAqua(`supabase experimental workers status ${name}${input.refSuffix}`)} to check on it.\n` +
           `Add ${legacyAqua("--wait")} to block on the build next time.\n`,
       );
     }
@@ -507,15 +562,24 @@ export const legacyWorkersPush = Effect.fn("legacy.experimental.workers.push")(f
     yield* legacyRejectWorkersEnvOutput();
 
     const machineOutput = yield* legacyWorkersMachineOutputRequested();
+    // Computed once for the whole run, the way `status` and `delete` do: an
+    // explicit `--project-ref` has to survive into every hint this push emits.
+    const refSuffix = legacyWorkersProjectRefSuffix(flags.projectRef);
     const deployed: Array<Record<string, unknown>> = [];
     for (const [index, name] of names.entries()) {
-      if (names.length > 1 && !machineOutput) {
+      if (names.length > 1 && !machineOutput && output.format === "text") {
         // stderr, unblanked and labelled, the way `functions deploy` announces
         // each function: a bare name with a leading blank line put a section
         // header into whatever was consuming stdout.
         //
         // Counted, because each worker's package/upload/build takes minutes and
         // the name alone says nothing about how much of the run is left.
+        //
+        // Text only, on both axes: `machineOutput` tracks `-o`, which leaves
+        // `output.format` as `text`, so neither check covers the other. This is
+        // progress rather than an outcome, and `--output-format json` asked for
+        // a stream of events — unlike the unattempted-workers report below,
+        // which every format gets because it says what still needs deploying.
         yield* output.raw(
           `Deploying Worker ${index + 1}/${names.length}: ${legacyAqua(name)}\n`,
           "stderr",
@@ -526,7 +590,9 @@ export const legacyWorkersPush = Effect.fn("legacy.experimental.workers.push")(f
           project,
           name,
           projectRef,
+          refSuffix,
           instances: flags.instances,
+          exposure: flags.exposure,
           wait: flags.wait,
           machineOutput,
           ...(options.pollSchedule === undefined ? {} : { pollSchedule: options.pollSchedule }),

@@ -58,9 +58,17 @@ export function tomlKey(key: string): string {
   return isBareKey(key) ? key : quote(key);
 }
 
-/** `key = "value"` — every value the worker commands write is a string. */
-function renderPair(key: string, value: string): string {
-  return `${tomlKey(key)} = ${quote(value)}`;
+/**
+ * `key = "value"`, or `key = value` for a number.
+ *
+ * A number has to be rendered bare: quoting it would write a TOML string, and
+ * the config schema types `[workers.<name>] instances` as a number — so a quoted
+ * count produces a `config.toml` that no longer loads at all. Callers pass whole
+ * numbers; anything else renders as a token TOML does not accept, which
+ * `planWorkerEntry`'s re-parse catches before the file is written.
+ */
+function renderPair(key: string, value: string | number): string {
+  return `${tomlKey(key)} = ${typeof value === "number" ? String(value) : quote(value)}`;
 }
 
 /**
@@ -74,7 +82,7 @@ function renderPair(key: string, value: string): string {
 export function appendTomlSection(
   text: string,
   header: string,
-  values: Readonly<Record<string, string>>,
+  values: Readonly<Record<string, string | number>>,
 ): string {
   const block = [
     `[${header}]`,

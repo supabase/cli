@@ -129,7 +129,7 @@ func (s *storage) ToUpdateStorageConfigBody() v1API.UpdateStorageConfigBody {
 	return body
 }
 
-func (s *storage) FromRemoteStorageConfig(remoteConfig v1API.StorageConfigResponse) {
+func (s *storage) FromRemoteStorageConfig(remoteConfig v1API.StorageConfigResponseOutput) {
 	s.FileSizeLimit = sizeInBytes(remoteConfig.FileSizeLimit)
 	s.TargetMigration = remoteConfig.MigrationVersion
 	// When local config is not set, we assume platform defaults should not change
@@ -152,7 +152,7 @@ func (s *storage) FromRemoteStorageConfig(remoteConfig v1API.StorageConfigRespon
 	}
 }
 
-func (s *storage) DiffWithRemote(remoteConfig v1API.StorageConfigResponse) ([]byte, error) {
+func (s *storage) DiffWithRemote(remoteConfig v1API.StorageConfigResponseOutput) ([]byte, error) {
 	copy := s.Clone()
 	// Convert the config values into easily comparable remoteConfig values
 	currentValue, err := ToTomlBytes(copy)

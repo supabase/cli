@@ -198,9 +198,9 @@ export const legacyWorkersList = Effect.fn("legacy.experimental.workers.list")(f
     //
     // Both are written the way this shell writes every other heads-up that is
     // not a failure: a yellow `WARNING:` prefix, then the consequence on its own
-    // line (`start`'s Docker-on-Windows notice is the same two-line shape). The
-    // single long sentence each of these used to be re-flowed differently at
-    // every terminal width, right under a table that lines its columns up.
+    // line (`start`'s Docker-on-Windows notice is the same two-line shape). A
+    // single long sentence re-flows differently at every terminal width, right
+    // under a table that lines its columns up.
     const unconfigured = rows
       .filter((row) => row.deployed !== undefined && !row.configured && row.local)
       .map((row) => row.name);

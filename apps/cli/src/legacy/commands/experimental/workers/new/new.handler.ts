@@ -10,6 +10,7 @@ import {
 } from "../workers.output.ts";
 import { LegacyTelemetryState } from "../../../../telemetry/legacy-telemetry-state.service.ts";
 import { RuntimeInfo } from "../../../../../shared/runtime/runtime-info.service.ts";
+import { Tty } from "../../../../../shared/runtime/tty.service.ts";
 import {
   commitWorkerEntry,
   planWorkerEntry,
@@ -21,15 +22,21 @@ import {
   resolveWorkerSource,
 } from "../../../../../shared/workers/worker-paths.ts";
 import {
+  DEFAULT_WORKER_EXPOSURE,
+  DEFAULT_WORKER_INSTANCES,
   DEFAULT_WORKER_RUNTIME,
   DEFAULT_WORKER_SIZE,
+  parseWorkerExposure,
   parseWorkerRuntime,
   parseWorkerSize,
   validateWorkerNameMessage,
   vcpuForSize,
+  WORKER_EXPOSURE_DESCRIPTIONS,
+  WORKER_EXPOSURES,
   WORKER_RUNTIME_DESCRIPTIONS,
   WORKER_RUNTIMES,
   WORKER_SIZES,
+  type WorkerExposure,
   type WorkerRuntime,
   type WorkerSize,
 } from "../../../../../shared/workers/worker-runtimes.ts";
@@ -50,8 +57,10 @@ import type { LegacyWorkersNewFlags } from "./new.command.ts";
  * chosen runtime's starter files and record the choice in `config.toml`.
  * Nothing is deployed; this is entirely local-disk work.
  *
- * The name, runtime and size are all resolved *before* anything is written, so a
- * cancelled prompt leaves nothing behind for this worker at all.
+ * The name, runtime, size and exposure are all resolved *before* anything is
+ * written, so a cancelled prompt leaves nothing behind for this worker at all.
+ * `--instances` is recorded rather than resolved: it has no prompt, and it only
+ * reaches `config.toml` when it differs from the default.
  */
 
 /** `values`, with `defaultValue` first, so a prompt pre-selects what it shows first. */
@@ -60,27 +69,47 @@ function defaultFirst<T>(values: ReadonlyArray<T>, defaultValue: T): Array<T> {
 }
 
 /**
+ * Whether this run has a terminal to ask on.
+ *
+ * `-o json|yaml|toml|env` leaves `output.format` as `text`, and the prompts go
+ * through Clack, which writes its terminal UI to stdout with no stream
+ * override — so a machine format is as non-interactive as a redirected stdout,
+ * whichever flag asked for it.
+ *
+ * `output.interactive` only tracks *stdout*, so on its own it still let
+ * `printf 'api\n' | supabase experimental workers new` feed the pipe straight
+ * into the name prompt instead of taking the documented non-interactive path. A
+ * prompt is only answerable from a keyboard, so stdin has to be a terminal too
+ * — the same pair `workers delete` guards its confirmation with.
+ */
+const canPromptFor = Effect.fnUntraced(function* (machineOutput: boolean) {
+  const output = yield* Output;
+  const tty = yield* Tty;
+  return output.format === "text" && output.interactive && !machineOutput && tty.stdinIsTty;
+});
+
+/**
  * The worker name, asked for when the command line did not carry one.
  *
  * The name is the one input here that cannot be defaulted — it is the
  * directory, the `config.toml` key and the hostname — so a bare
- * `supabase experimental workers new` asks rather than failing the parse. The prompt
- * validates against everything the command would otherwise refuse a moment
- * later, so a mistyped or already-recorded name is corrected in place instead
- * of ending the run.
+ * `supabase experimental workers new` asks rather than failing the parse. The
+ * prompt validates against everything the command would otherwise refuse a
+ * moment later, so a mistyped or already-recorded name is corrected in place
+ * instead of ending the run.
  */
 const resolveName = Effect.fnUntraced(function* (options: {
   readonly explicit: Option.Option<string>;
-  /** `-o json|yaml|toml|env` — stdout belongs to the payload, so do not prompt. */
-  readonly machineOutput: boolean;
+  /** Whether there is a terminal to ask on — see `canPromptFor`. */
+  readonly canPrompt: boolean;
   readonly project: LegacyWorkersProject;
 }) {
   if (Option.isSome(options.explicit)) {
     return options.explicit.value;
   }
 
-  const output = yield* Output;
-  if (output.format === "text" && output.interactive && !options.machineOutput) {
+  if (options.canPrompt) {
+    const output = yield* Output;
     return yield* output.promptText("What should this worker be called?", {
       validate: (value) => {
         const invalid = validateWorkerNameMessage(value);
@@ -104,8 +133,8 @@ const resolveName = Effect.fnUntraced(function* (options: {
 
 const resolveRuntime = Effect.fnUntraced(function* (options: {
   readonly explicit: Option.Option<WorkerRuntime>;
-  /** `-o json|yaml|toml|env` — stdout belongs to the payload, so do not prompt. */
-  readonly machineOutput: boolean;
+  /** Whether there is a terminal to ask on — see `canPromptFor`. */
+  readonly canPrompt: boolean;
 }) {
   // `--runtime` is a choice flag, so the parser has already rejected anything
   // outside the catalog by the time it gets here.
@@ -113,8 +142,8 @@ const resolveRuntime = Effect.fnUntraced(function* (options: {
     return options.explicit.value;
   }
 
-  const output = yield* Output;
-  if (output.format === "text" && output.interactive && !options.machineOutput) {
+  if (options.canPrompt) {
+    const output = yield* Output;
     const selected = yield* output.promptSelect(
       "Which runtime should this worker use?",
       defaultFirst([...WORKER_RUNTIMES], DEFAULT_WORKER_RUNTIME).map((runtime) => ({
@@ -131,15 +160,15 @@ const resolveRuntime = Effect.fnUntraced(function* (options: {
 
 const resolveSize = Effect.fnUntraced(function* (options: {
   readonly explicit: Option.Option<WorkerSize>;
-  /** `-o json|yaml|toml|env` — stdout belongs to the payload, so do not prompt. */
-  readonly machineOutput: boolean;
+  /** Whether there is a terminal to ask on — see `canPromptFor`. */
+  readonly canPrompt: boolean;
 }) {
   if (Option.isSome(options.explicit)) {
     return options.explicit.value;
   }
 
-  const output = yield* Output;
-  if (output.format === "text" && output.interactive && !options.machineOutput) {
+  if (options.canPrompt) {
+    const output = yield* Output;
     const selected = yield* output.promptSelect(
       "Which instance size should this worker use?",
       defaultFirst([...WORKER_SIZES], DEFAULT_WORKER_SIZE).map((size) => ({
@@ -152,6 +181,55 @@ const resolveSize = Effect.fnUntraced(function* (options: {
 
   return DEFAULT_WORKER_SIZE;
 });
+
+/**
+ * Recorded on every scaffold, not just when it is asked for: `push` sends a
+ * complete spec each time, so a worker whose `exposure` is absent from
+ * `config.toml` is deployed public by the next bare `push`. Writing the value
+ * down — default included, the way `runtime` and `size` are — is what makes
+ * `--exposure private` stick past the deploy that chose it.
+ */
+const resolveExposure = Effect.fnUntraced(function* (options: {
+  readonly explicit: Option.Option<WorkerExposure>;
+  /** Whether there is a terminal to ask on — see `canPromptFor`. */
+  readonly canPrompt: boolean;
+}) {
+  if (Option.isSome(options.explicit)) {
+    return options.explicit.value;
+  }
+
+  if (options.canPrompt) {
+    const output = yield* Output;
+    const selected = yield* output.promptSelect(
+      "Should this worker be reachable from the internet?",
+      defaultFirst([...WORKER_EXPOSURES], DEFAULT_WORKER_EXPOSURE).map((exposure) => ({
+        value: exposure,
+        label: exposure,
+        hint: WORKER_EXPOSURE_DESCRIPTIONS[exposure],
+      })),
+    );
+    return parseWorkerExposure(selected) ?? DEFAULT_WORKER_EXPOSURE;
+  }
+
+  return DEFAULT_WORKER_EXPOSURE;
+});
+
+/**
+ * The instance count to record, and whether to record it at all.
+ *
+ * Not prompted for, unlike the other dials: how many instances a worker needs is
+ * an operational answer nobody has while scaffolding it, so the flag records
+ * one when it is given and the file stays quiet when it is not.
+ *
+ * `undefined` — meaning "write no key" — for the default count, because an
+ * absent `instances` and `instances = 1` mean the same thing to `push`, and a
+ * scaffold should not commit a line that says nothing. A `0` is not that: it
+ * scales the worker to nothing, so it is written like any other explicit count.
+ */
+function recordedInstances(explicit: Option.Option<number>): number | undefined {
+  const instances = Option.getOrUndefined(explicit);
+  return instances === undefined || instances === DEFAULT_WORKER_INSTANCES ? undefined : instances;
+}
 
 /**
  * Whether the destination is free for a scaffold: nothing there, or an empty
@@ -183,14 +261,12 @@ export const legacyWorkersNew = Effect.fn("legacy.experimental.workers.new")(fun
   yield* Effect.gen(function* () {
     const project = yield* legacyLoadWorkersProjectForEntryWrite();
 
-    // `-o` leaves `output.format` as `text`, and the prompts go through Clack,
-    // which writes its terminal UI to stdout with no stream override — so a
-    // prompt would land in front of the payload just as the notices did. Read
-    // before the first prompt rather than beside the last, since the name is
-    // now asked for too.
+    // Decided once, before the first prompt rather than beside the last, since
+    // the name is now asked for too — every prompt below shares the answer.
     const machineOutput = yield* legacyWorkersMachineOutputRequested();
+    const canPrompt = yield* canPromptFor(machineOutput);
 
-    const name = yield* resolveName({ explicit: flags.name, machineOutput, project });
+    const name = yield* resolveName({ explicit: flags.name, canPrompt, project });
     yield* legacyValidateWorkerName(name);
 
     // Refused before anything is asked or written. `new` creates a worker;
@@ -207,11 +283,13 @@ export const legacyWorkersNew = Effect.fn("legacy.experimental.workers.new")(fun
       );
     }
 
-    // Resolved before anything is written, so cancelling either prompt leaves
-    // nothing behind — the name included. With a machine format requested there
-    // is nowhere to ask, so the defaults stand.
-    const runtime = yield* resolveRuntime({ explicit: flags.runtime, machineOutput });
-    const size = yield* resolveSize({ explicit: flags.size, machineOutput });
+    // Resolved before anything is written, so cancelling any prompt leaves
+    // nothing behind — the name included. With nowhere to ask, the defaults
+    // stand; only the name has nothing to fall back to.
+    const runtime = yield* resolveRuntime({ explicit: flags.runtime, canPrompt });
+    const size = yield* resolveSize({ explicit: flags.size, canPrompt });
+    const exposure = yield* resolveExposure({ explicit: flags.exposure, canPrompt });
+    const instances = recordedInstances(flags.instances);
 
     // Validated before anything is written: this is the directory the starter
     // files land in, so a value naming the project root, `supabase/`, or
@@ -270,6 +348,8 @@ export const legacyWorkersNew = Effect.fn("legacy.experimental.workers.new")(fun
       patch: {
         runtime,
         size,
+        exposure,
+        ...(instances === undefined ? {} : { instances }),
         ...(source === undefined ? {} : { source }),
       },
     });
@@ -291,6 +371,11 @@ export const legacyWorkersNew = Effect.fn("legacy.experimental.workers.new")(fun
       runtime,
       size,
       vcpu: vcpuForSize(size),
+      exposure,
+      // The count a deploy will use, whether or not it was written down — a
+      // payload that omitted it for the default would read as "unknown" rather
+      // than "one".
+      instances: instances ?? DEFAULT_WORKER_INSTANCES,
       source: sourceDisplay,
       config_path: project.configPath,
     };
@@ -316,7 +401,10 @@ export const legacyWorkersNew = Effect.fn("legacy.experimental.workers.new")(fun
       legacyRenderWorkerDetails([
         ["Runtime", runtime],
         ["Size", `${size} (${vcpuForSize(size)} vCPU)`],
-        ["Access", "public"],
+        ["Access", exposure],
+        // `declared`, the way `workers status` labels the same number: nothing
+        // is running yet, so a bare count would read as a live tally.
+        ["Instances", `${instances ?? DEFAULT_WORKER_INSTANCES} declared`],
       ]),
     );
     // On the success trailer rather than inline, the way `bootstrap` emits its

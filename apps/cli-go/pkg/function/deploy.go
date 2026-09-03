@@ -67,7 +67,7 @@ func (s *EdgeRuntimeAPI) Deploy(ctx context.Context, functionConfig config.Funct
 	return s.bulkUpload(ctx, toDeploy, fsys)
 }
 
-func (s *EdgeRuntimeAPI) listRemoteFunctionsForVerifyJwt(ctx context.Context, functionConfig config.FunctionConfig) (map[string]api.FunctionResponse, error) {
+func (s *EdgeRuntimeAPI) listRemoteFunctionsForVerifyJwt(ctx context.Context, functionConfig config.FunctionConfig) (map[string]api.FunctionResponseOutput, error) {
 	needsRemote := false
 	for _, fc := range functionConfig {
 		if fc.Enabled && fc.VerifyJWT == nil {
@@ -84,7 +84,7 @@ func (s *EdgeRuntimeAPI) listRemoteFunctionsForVerifyJwt(ctx context.Context, fu
 	} else if resp.JSON200 == nil {
 		return nil, errors.Errorf("unexpected list functions status %d: %s", resp.StatusCode(), string(resp.Body))
 	}
-	remoteFunctions := make(map[string]api.FunctionResponse, len(*resp.JSON200))
+	remoteFunctions := make(map[string]api.FunctionResponseOutput, len(*resp.JSON200))
 	for _, function := range *resp.JSON200 {
 		remoteFunctions[function.Slug] = function
 	}
@@ -167,7 +167,7 @@ func (s *EdgeRuntimeAPI) bulkUpload(ctx context.Context, toDeploy []FunctionDepl
 	}
 }
 
-func (s *EdgeRuntimeAPI) upload(ctx context.Context, param api.V1DeployAFunctionParams, meta FunctionDeployMetadata, fsys fs.FS) (*api.DeployFunctionResponse, error) {
+func (s *EdgeRuntimeAPI) upload(ctx context.Context, param api.V1DeployAFunctionParams, meta FunctionDeployMetadata, fsys fs.FS) (*api.DeployFunctionResponseOutput, error) {
 	for attempt := 0; ; attempt++ {
 		resp, err := s.uploadOnce(ctx, param, meta, fsys)
 		if resp != nil && resp.JSON201 != nil {

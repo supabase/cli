@@ -21,6 +21,7 @@ import { appendTomlSection, tomlKey } from "./toml-section.ts";
 export interface WorkerEntry {
   readonly runtime?: string;
   readonly size?: string;
+  readonly exposure?: string;
   readonly instances?: number;
   readonly source?: string;
 }
@@ -107,6 +108,10 @@ export function readWorkersSection(workers: unknown): WorkersSection {
     entries[key] = {
       runtime: stringOrUndefined(value["runtime"]),
       size: stringOrUndefined(value["size"]),
+      // Left as whatever string was written, like `runtime` and `size`: `push`
+      // is what names the accepted values, and dropping an unrecognized one here
+      // would silently deploy a worker at the default exposure instead.
+      exposure: stringOrUndefined(value["exposure"]),
       instances: instanceCountOrUndefined(value["instances"]),
       source: stringOrUndefined(value["source"]),
     };
@@ -131,7 +136,8 @@ export interface WorkerEntryWrite {
 export const planWorkerEntry = Effect.fnUntraced(function* (options: {
   readonly configPath: string;
   readonly name: string;
-  readonly patch: Readonly<Record<string, string>>;
+  /** Rendered as written: strings are quoted, numbers are not. */
+  readonly patch: Readonly<Record<string, string | number>>;
   /** The already-parsed config — the authority on whether an entry exists. */
   readonly existingWorkers: Readonly<Record<string, WorkerEntry>>;
 }) {

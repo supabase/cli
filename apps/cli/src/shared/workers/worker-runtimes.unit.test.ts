@@ -2,6 +2,7 @@ import { describe, expect, test } from "vitest";
 import {
   apiSizeFor,
   formatApiSize,
+  parseWorkerExposure,
   parseWorkerRuntime,
   parseWorkerSize,
   validateWorkerNameMessage,
@@ -43,6 +44,21 @@ describe("sizes", () => {
     expect(parseWorkerSize("  2gb ")).toBe("2gb");
     expect(parseWorkerSize("64gb")).toBeUndefined();
     expect(parseWorkerSize("")).toBeUndefined();
+  });
+});
+
+describe("parseWorkerExposure", () => {
+  test("accepts both exposures case-insensitively, and canonicalizes them", () => {
+    expect(parseWorkerExposure("Public")).toBe("public");
+    expect(parseWorkerExposure("  PRIVATE ")).toBe("private");
+  });
+
+  // A typo here would otherwise read as the default and put a worker somebody
+  // meant to keep private on the internet, so nothing near-miss is accepted.
+  test("rejects anything outside the pair, including near misses", () => {
+    expect(parseWorkerExposure("privat")).toBeUndefined();
+    expect(parseWorkerExposure("internal")).toBeUndefined();
+    expect(parseWorkerExposure("")).toBeUndefined();
   });
 });
 

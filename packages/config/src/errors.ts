@@ -134,10 +134,6 @@ export class CliProjectEnvParseError extends Data.TaggedError("CliProjectEnvPars
   readonly line: number;
 }> {}
 
-export class MissingCliConfigValueError extends Data.TaggedError("MissingCliConfigValueError")<{
-  readonly configPath: string;
-}> {}
-
 /**
  * Two `[remotes.*]` blocks declare the same `project_id` as the requested
  * `projectRef`. Mirrors Go's `loadFromFile` guard

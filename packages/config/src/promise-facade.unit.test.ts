@@ -14,12 +14,12 @@ import * as nodeFacade from "./node.ts";
 import { makeCliConfigIo } from "./promise-facade.ts";
 
 const {
-  findCliProjectPathsFor,
-  findCliProjectRootFor,
-  loadFunctionsManifest,
+  findCliProjectPaths,
+  findCliProjectRoot,
+  inferFunctionsManifest,
   loadCliConfig,
   loadCliConfigFile,
-  loadCliProjectEnvironmentFor,
+  loadCliProjectEnvironment,
   saveCliConfig,
 } = bunFacade;
 
@@ -86,7 +86,7 @@ describe("promise-facade via the Bun entrypoint", () => {
     }
   });
 
-  test("findCliProjectRootFor and findCliProjectPathsFor resolve from a nested cwd inside a temp project", async () => {
+  test("findCliProjectRoot and findCliProjectPaths resolve from a nested cwd inside a temp project", async () => {
     const cwd = makeTempProject();
     const nested = join(cwd, "apps", "web", "src", "components");
 
@@ -95,8 +95,8 @@ describe("promise-facade via the Bun entrypoint", () => {
       await mkdir(nested, { recursive: true });
       await writeFile(join(cwd, "supabase", "config.toml"), 'project_id = "nested-ref"\n');
 
-      const root = await findCliProjectRootFor(nested);
-      const paths = await findCliProjectPathsFor(nested);
+      const root = await findCliProjectRoot(nested);
+      const paths = await findCliProjectPaths(nested);
 
       expect(root).toBe(cwd);
       expect(paths).toEqual({
@@ -111,18 +111,18 @@ describe("promise-facade via the Bun entrypoint", () => {
     }
   });
 
-  test("findCliProjectRootFor and findCliProjectPathsFor resolve to null when there is no project", async () => {
+  test("findCliProjectRoot and findCliProjectPaths resolve to null when there is no project", async () => {
     const cwd = makeTempProject();
 
     try {
-      await expect(findCliProjectRootFor(cwd)).resolves.toBeNull();
-      await expect(findCliProjectPathsFor(cwd)).resolves.toBeNull();
+      await expect(findCliProjectRoot(cwd)).resolves.toBeNull();
+      await expect(findCliProjectPaths(cwd)).resolves.toBeNull();
     } finally {
       await rm(cwd, { recursive: true, force: true });
     }
   });
 
-  test("loadCliProjectEnvironmentFor reads supabase/.env layered under an explicit baseEnv", async () => {
+  test("loadCliProjectEnvironment reads supabase/.env layered under an explicit baseEnv", async () => {
     const cwd = makeTempProject();
 
     try {
@@ -133,7 +133,7 @@ describe("promise-facade via the Bun entrypoint", () => {
       // `baseEnv` is passed explicitly (never the default `process.env`) so
       // this assertion can't be satisfied by an unrelated variable leaking in
       // from the real process environment.
-      const projectEnv = await loadCliProjectEnvironmentFor({ cwd, baseEnv: {} });
+      const projectEnv = await loadCliProjectEnvironment({ cwd, baseEnv: {} });
 
       expect(projectEnv?.values.GREETING).toBe("hello-from-dotenv");
       expect(projectEnv?.sources.GREETING).toBe(".env");
@@ -143,7 +143,7 @@ describe("promise-facade via the Bun entrypoint", () => {
     }
   });
 
-  test("loadCliProjectEnvironmentFor honors an explicit baseEnv instead of silently defaulting to process.env", async () => {
+  test("loadCliProjectEnvironment honors an explicit baseEnv instead of silently defaulting to process.env", async () => {
     const cwd = makeTempProject();
 
     try {
@@ -151,7 +151,7 @@ describe("promise-facade via the Bun entrypoint", () => {
       await writeFile(join(cwd, "supabase", "config.toml"), 'project_id = "env-ref"\n');
       await writeFile(join(cwd, "supabase", ".env"), "GREETING=from-dotenv\n");
 
-      const projectEnv = await loadCliProjectEnvironmentFor({
+      const projectEnv = await loadCliProjectEnvironment({
         cwd,
         baseEnv: { GREETING: "from-explicit-base-env" },
       });
@@ -163,14 +163,14 @@ describe("promise-facade via the Bun entrypoint", () => {
     }
   });
 
-  test("loadFunctionsManifest resolves an empty manifest when no functions directory exists", async () => {
+  test("inferFunctionsManifest resolves an empty manifest when no functions directory exists", async () => {
     const cwd = makeTempProject();
 
     try {
       await mkdir(join(cwd, "supabase"), { recursive: true });
       await writeFile(join(cwd, "supabase", "config.toml"), 'project_id = "functions-ref"\n');
 
-      await expect(loadFunctionsManifest(cwd)).resolves.toEqual({});
+      await expect(inferFunctionsManifest(cwd)).resolves.toEqual({});
     } finally {
       await rm(cwd, { recursive: true, force: true });
     }
@@ -203,12 +203,12 @@ describe("promise-facade via the Bun entrypoint", () => {
 });
 
 const expectedFacadeFunctionNames = [
-  "findCliProjectPathsFor",
-  "findCliProjectRootFor",
-  "loadFunctionsManifest",
+  "findCliProjectPaths",
+  "findCliProjectRoot",
+  "inferFunctionsManifest",
   "loadCliConfig",
   "loadCliConfigFile",
-  "loadCliProjectEnvironmentFor",
+  "loadCliProjectEnvironment",
   "saveCliConfig",
 ];
 
@@ -295,8 +295,8 @@ describe("promise-facade singleton runtime", () => {
       );
       const io = makeCliConfigIo(countingLayer);
 
-      await io.findCliProjectRootFor(cwd);
-      await io.findCliProjectRootFor(cwd);
+      await io.findCliProjectRoot(cwd);
+      await io.findCliProjectRoot(cwd);
 
       expect(builds).toBe(1);
     } finally {

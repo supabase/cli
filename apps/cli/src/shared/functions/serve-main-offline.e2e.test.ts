@@ -65,14 +65,35 @@ const KONG_FUNCTIONS_CONFIG = JSON.stringify({
       FUNCTION_SECRET: "must-not-appear-in-debug-logs",
     },
   },
+  "custom-alias": {
+    entrypointPath: "/app/functions/custom/index.ts",
+    importMapPath: "",
+    staticFiles: [],
+    verifyJWT: false,
+  },
+  "nested-worker-path": {
+    entrypointPath: "/app/functions/custom/.supabase-worker/custom/index.ts",
+    importMapPath: "",
+    staticFiles: [],
+    verifyJWT: false,
+  },
 });
-const CUSTOM_FUNCTION = `Deno.serve(() => new Response("ok", {
+const CUSTOM_FUNCTION = `import { sharedValue } from "../_shared/value.ts";
+
+Deno.serve(() => new Response("ok", {
   headers: {
     "X-Custom-Id": "abc123",
+    "X-Function-Slug": Deno.env.get("SUPABASE_FUNCTION_SLUG") ?? "",
+    "X-Shared-Import": sharedValue,
     "X-Shared": Deno.env.get("SHARED") ?? "",
     "X-Function-Only": Deno.env.get("FUNCTION_ONLY") ?? "",
     "X-Global-Only": Deno.env.get("GLOBAL_ONLY") ?? "",
     "Access-Control-Expose-Headers": "X-Custom-Id",
+  },
+}));`;
+const NESTED_FUNCTION = `Deno.serve(() => new Response("ok", {
+  headers: {
+    "X-Function-Slug": Deno.env.get("SUPABASE_FUNCTION_SLUG") ?? "",
   },
 }));`;
 
@@ -123,6 +144,46 @@ const authFailureCases = [
 function containerLogs(container: string): string {
   const result = spawnSync("docker", ["logs", container], { encoding: "utf8" });
   return `${result.stdout ?? ""}\n${result.stderr ?? ""}`;
+}
+
+async function fetchColdFunction(
+  url: string,
+  diagnosticContainers: readonly string[],
+  init?: RequestInit,
+): Promise<Response> {
+  // Runtime health does not start user workers, and Edge Runtime exposes no
+  // per-worker readiness signal. A cold worker can briefly disconnect or
+  // return 502/503, so retry only those transient outcomes.
+  const deadline = Date.now() + SERVE_OFFLINE_STARTUP_TIMEOUT_MS;
+  let lastError: unknown;
+
+  for (;;) {
+    try {
+      const response = await fetch(url, {
+        ...init,
+        signal: AbortSignal.timeout(Math.max(1, deadline - Date.now())),
+      });
+      if (response.status !== 502 && response.status !== 503) {
+        return response;
+      }
+      lastError = new Error(`Received ${response.status} from ${url}`);
+      await response.body?.cancel();
+    } catch (error) {
+      lastError = error;
+    }
+
+    const remainingMs = deadline - Date.now();
+    if (remainingMs <= 0) {
+      const diagnostics = diagnosticContainers
+        .map((container) => `${container} logs:\n${containerLogs(container)}`)
+        .join("\n");
+      throw new Error(`Function at ${url} did not become ready.\n${diagnostics}`, {
+        cause: lastError,
+      });
+    }
+
+    await Bun.sleep(Math.min(250, remainingMs));
+  }
 }
 
 async function writeKongConfig(dir: string, edgeRuntimeContainer: string) {
@@ -303,7 +364,19 @@ describe("functions serve runtime template (offline)", () => {
       try {
         await writeFile(join(dir, "index.ts"), await bundleServeMainTemplate());
         await mkdir(join(dir, "functions", "custom"), { recursive: true });
+        await mkdir(join(dir, "functions", "_shared"), { recursive: true });
+        await mkdir(join(dir, "functions", "custom", ".supabase-worker", "custom"), {
+          recursive: true,
+        });
         await writeFile(join(dir, "functions", "custom", "index.ts"), CUSTOM_FUNCTION);
+        await writeFile(
+          join(dir, "functions", "custom", ".supabase-worker", "custom", "index.ts"),
+          NESTED_FUNCTION,
+        );
+        await writeFile(
+          join(dir, "functions", "_shared", "value.ts"),
+          'export const sharedValue = "shared-import-ok";\n',
+        );
         await writeKongConfig(dir, runtimeContainer);
 
         const createNetwork = spawnSync("docker", ["network", "create", network], {
@@ -405,17 +478,29 @@ describe("functions serve runtime template (offline)", () => {
           true,
         );
 
-        const customResponse = await fetch(`${functionsUrl}/custom`, {
-          headers: { Origin: "http://localhost:3000" },
-        });
+        const diagnosticContainers = [kongContainer, runtimeContainer] as const;
+        const [customResponse, aliasResponse, nestedResponse] = await Promise.all([
+          fetchColdFunction(`${functionsUrl}/custom`, diagnosticContainers, {
+            headers: { Origin: "http://localhost:3000" },
+          }),
+          fetchColdFunction(`${functionsUrl}/custom-alias`, diagnosticContainers),
+          fetchColdFunction(`${functionsUrl}/nested-worker-path`, diagnosticContainers),
+        ]);
         expect(customResponse.status).toBe(200);
         expect(customResponse.headers.get("x-custom-id")).toBe("abc123");
+        expect(customResponse.headers.get("x-function-slug")).toBe("custom");
+        expect(customResponse.headers.get("x-shared-import")).toBe("shared-import-ok");
         expect(customResponse.headers.get("x-shared")).toBe("function");
         expect(customResponse.headers.get("x-function-only")).toBe("function");
         expect(customResponse.headers.get("x-global-only")).toBe("global");
         expect(customResponse.headers.get("access-control-expose-headers")?.toLowerCase()).toBe(
           "x-custom-id",
         );
+        expect(aliasResponse.status).toBe(200);
+        expect(aliasResponse.headers.get("x-function-slug")).toBe("custom-alias");
+        expect(aliasResponse.headers.get("x-shared-import")).toBe("shared-import-ok");
+        expect(nestedResponse.status).toBe(200);
+        expect(nestedResponse.headers.get("x-function-slug")).toBe("nested-worker-path");
         const runtimeLogs = containerLogs(runtimeContainer);
         expect(runtimeLogs).toContain("Functions config:");
         expect(runtimeLogs).toContain('"custom"');
@@ -433,6 +518,10 @@ describe("functions serve runtime template (offline)", () => {
           message: "Missing authorization header",
           msg: "Missing authorization header",
         });
+
+        const reusedCustomResponse = await fetch(`${functionsUrl}/custom`);
+        expect(reusedCustomResponse.status).toBe(200);
+        expect(reusedCustomResponse.headers.get("x-function-slug")).toBe("custom");
       } finally {
         spawnSync("docker", ["rm", "-f", kongContainer, runtimeContainer], {
           stdio: "ignore",

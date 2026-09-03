@@ -1,9 +1,5 @@
-import {
-  loadCliConfig,
-  type LoadCliConfigOptions,
-  CliConfigSchema,
-  type CliConfig,
-} from "@supabase/config/effect";
+import { CliConfigSchema, type CliConfig } from "@supabase/config/effect";
+import { loadCliConfig, type InternalLoadCliConfigOptions } from "@supabase/config/internal";
 import { Effect, Schema } from "effect";
 import { FetchHttpClient } from "effect/unstable/http";
 
@@ -49,7 +45,7 @@ export const legacyLoadStorageConfig = Effect.fnUntraced(function* (
   workdir: string,
   projectRef: string,
 ) {
-  const loadOptions: LoadCliConfigOptions =
+  const loadOptions: InternalLoadCliConfigOptions =
     projectRef !== "" ? { projectRef, goViperCompat: true } : { goViperCompat: true };
   const loaded = yield* loadCliConfig(workdir, loadOptions).pipe(
     Effect.catchTag(
