@@ -171,6 +171,29 @@ describe("Supervisor ingress", () => {
         const response = yield* request(api.port);
         expect(response.status).toBe(200);
         expect(response.body).toBe("forwarded");
+        const reused = yield* ingress.acquire(input);
+        expect(reused.fresh).toBe(false);
+        yield* ingress.open(input, reused, (capability) =>
+          Effect.succeed({
+            capability,
+            endpoint: { host: "127.0.0.1", port: backendAddress.port },
+          }),
+        );
+        const reusedResponse = yield* request(api.port);
+        expect(reusedResponse.status).toBe(200);
+        expect(reusedResponse.body).toBe("forwarded");
+        yield* ingress.close;
+        const reacquired = yield* ingress.acquire(input);
+        expect(reacquired.fresh).toBe(true);
+        const stale = yield* ingress
+          .open(input, reservation, (capability) =>
+            Effect.succeed({
+              capability,
+              endpoint: { host: "127.0.0.1", port: backendAddress.port },
+            }),
+          )
+          .pipe(Effect.exit);
+        expect(Exit.isFailure(stale)).toBe(true);
         yield* ingress.close;
       }),
     ),

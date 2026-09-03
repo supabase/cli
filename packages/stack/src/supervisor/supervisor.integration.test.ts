@@ -347,6 +347,7 @@ const makeFixture = (
             privateAssignments: [],
             hostListeners: [],
             fresh: false,
+            ownershipToken: Symbol(),
           }),
         open: () => Effect.void,
         close: Effect.void,
@@ -450,6 +451,7 @@ describe("Supervisor composition", () => {
                         privateAssignments: [],
                         hostListeners: [],
                         fresh: true,
+                        ownershipToken: Symbol(),
                       })
                     : Effect.fail(
                         new PortUnavailableError({
@@ -496,6 +498,7 @@ describe("Supervisor composition", () => {
                         privateAssignments: [],
                         hostListeners: [],
                         fresh: true,
+                        ownershipToken: Symbol(),
                       })
                     : Effect.fail(
                         new PortUnavailableError({
@@ -676,6 +679,7 @@ describe("Supervisor composition", () => {
                 privateAssignments: [],
                 hostListeners: [],
                 fresh: true,
+                ownershipToken: Symbol(),
               }),
             open: () => Effect.void,
             close: Effect.gen(function* () {
@@ -1489,6 +1493,7 @@ describe("Supervisor composition", () => {
                 privateAssignments: [],
                 hostListeners: [],
                 fresh: true,
+                ownershipToken: Symbol(),
               }),
             open: () =>
               Ref.updateAndGet(openCalls, (count) => count + 1).pipe(
@@ -1530,6 +1535,7 @@ describe("Supervisor composition", () => {
                 privateAssignments: [],
                 hostListeners: [],
                 fresh: true,
+                ownershipToken: Symbol(),
               }),
             open: () =>
               Ref.updateAndGet(openCalls, (count) => count + 1).pipe(
@@ -1580,6 +1586,7 @@ describe("Supervisor composition", () => {
                 privateAssignments: [],
                 hostListeners: [],
                 fresh: true,
+                ownershipToken: Symbol(),
               }),
             open: () => Ref.update(openCalls, (count) => count + 1),
             close: Ref.update(closeCalls, (count) => count + 1),
