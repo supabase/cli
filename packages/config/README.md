@@ -163,14 +163,14 @@ Every runtime and type export of the pure `.` entrypoint, grouped by category:
 
 **Config diff classification**
 
-| Export                       | What it is                                                                                                    |
-| ----------------------------- | -------------------------------------------------------------------------------------------------------------- |
-| `diffProjectConfig`           | Pure, synchronous classification between a local and remote `ProjectConfig` projection (see ADR 0022).         |
-| `DiffProjectConfigOptions`    | The `{ local, remote }` options `diffProjectConfig` accepts.                                                   |
-| `ConfigChange`                | A single classified path-level difference.                                                                     |
-| `ConfigChangeClass`           | `"update" \| "remote_only" \| "local_only"`.                                                                   |
-| `ConfigChangeCounts`          | Per-class counts summarizing a `ConfigChangeSet`.                                                              |
-| `ConfigChangeSet`             | `diffProjectConfig`'s result: classified changes plus the `masked`/`unmanaged` visibility buckets and counts.  |
+| Export                     | What it is                                                                                                    |
+| -------------------------- | ------------------------------------------------------------------------------------------------------------- |
+| `diffProjectConfig`        | Pure, synchronous classification between a local and remote `ProjectConfig` projection (see ADR 0022).        |
+| `DiffProjectConfigOptions` | The `{ local, remote }` options `diffProjectConfig` accepts.                                                  |
+| `ConfigChange`             | A single classified path-level difference.                                                                    |
+| `ConfigChangeClass`        | `"update" \| "remote_only" \| "local_only"`.                                                                  |
+| `ConfigChangeCounts`       | Per-class counts summarizing a `ConfigChangeSet`.                                                             |
+| `ConfigChangeSet`          | `diffProjectConfig`'s result: classified changes plus the `masked`/`unmanaged` visibility buckets and counts. |
 
 **JSON Schema generators + URLs**
 
