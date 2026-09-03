@@ -41,16 +41,18 @@ import type { ConfigFormat } from "./config-format.ts";
  *
  * `ConfigEditValue` intentionally allows nested-object values (e.g. rewriting an entire
  * `auth.sms.test_otp` map in one call): such an edit is flattened into one leaf edit per
- * scalar/array field before planning, so it composes with every rule above without a special
- * "replace a whole table" code path. The WRITTEN text only ever touches the leaves the object
- * actually mentions — it never deletes a sibling key the object left out, matching this
- * module's "never delete" invariant. Mandatory verification (rule 1) holds that written result
- * to a stricter standard, though: it's compared against `deepSet`, which — unlike the
- * flattened write — REPLACES the whole destination subtree with the given object. So an
- * object-valued edit that omits an existing sibling key `verification_mismatch`-refuses (the
- * sibling the write left untouched disagrees with the replaced-away expectation) unless the
- * object already covers every key the destination table currently declares, or the
- * destination doesn't exist yet.
+ * scalar/array field before it's applied, in BOTH formats, so it composes with every rule
+ * above without a special "replace a whole table" code path. The WRITTEN text only ever
+ * touches the leaves the object actually mentions — it never deletes a sibling key the object
+ * left out, matching this module's "never delete" invariant, in TOML and JSON alike. Mandatory
+ * verification (rule 1) holds that written result to a stricter standard, though: it's compared
+ * against `deepSet`, which — unlike the flattened write — REPLACES the whole destination
+ * subtree with the given object. So an object-valued edit that omits an existing sibling key
+ * `verification_mismatch`-refuses (the sibling the write left untouched disagrees with the
+ * replaced-away expectation) unless the object already covers every key the destination table
+ * currently declares, or the destination doesn't exist yet. This contract — merge mentioned
+ * leaves, refuse rather than silently drop an unmentioned sibling — is identical across both
+ * formats.
  */
 
 export type ConfigEditValue =
@@ -215,13 +217,27 @@ function deepSetOne(root: unknown, path: ReadonlyArray<string>, value: unknown):
   return { ...base, [head]: deepSetOne(existingChild, rest, value) };
 }
 
-/** Applies every edit's `path`/`value` on top of `root`, immutably. This is the expected-value
- * side of mandatory verification, and (for JSON) the mutation itself. */
-function deepSet(root: unknown, edits: ReadonlyArray<ConfigEdit>): unknown {
-  return edits.reduce<unknown>(
-    (accumulator, edit) => deepSetOne(accumulator, edit.path, edit.value),
+/** Applies one `path`/`value` pair per entry on top of `root`, immutably. Shared by `deepSet`
+ * (the verification ORACLE, built from the original un-flattened edits) and JSON's actual
+ * per-leaf MUTATION (built from `flattenEdits`'s output instead) — the two callers intentionally
+ * pass different entry sets; see this file's header comment for why they must differ for an
+ * object-valued edit. */
+function applyPathEntries(
+  root: unknown,
+  entries: ReadonlyArray<{ readonly path: ReadonlyArray<string>; readonly value: unknown }>,
+): unknown {
+  return entries.reduce<unknown>(
+    (accumulator, entry) => deepSetOne(accumulator, entry.path, entry.value),
     root,
   );
+}
+
+/** Applies every edit's `path`/`value` on top of `root`, immutably — REPLACING the whole
+ * destination subtree for an object-valued edit. This is the expected-value side of mandatory
+ * verification for both formats; it is never the mutation itself (see `applyPathEntries` for
+ * that, and this file's header comment for why the two must differ). */
+function deepSet(root: unknown, edits: ReadonlyArray<ConfigEdit>): unknown {
+  return applyPathEntries(root, edits);
 }
 
 function describeError(cause: unknown): string {
@@ -1270,18 +1286,25 @@ function applyJsonEdits(source: string, edits: ReadonlyArray<ConfigEdit>): Confi
     return unchangedOutcome(source, edits);
   }
 
-  for (const edit of edits) {
-    if (isEnvReferenceValue(valueAtPath(parsed, edit.path))) {
+  // Flattened to one leaf edit per scalar/array field (same as the TOML arm's own
+  // `flattenEdits` call) so an object-valued edit only ever merges the leaves it mentions —
+  // never deletes an unmentioned sibling. The env-reference check runs per LEAF for the same
+  // reason: an object edit's own top-level path is never itself a string, so checking there
+  // (the previous behavior) could never catch a leaf that shadows an existing `env(...)` value.
+  const leaves = flattenEdits(edits);
+
+  for (const leaf of leaves) {
+    if (isEnvReferenceValue(valueAtPath(parsed, leaf.path))) {
       return refused(
         "env_reference_target",
-        edit.path,
-        `${edit.path.join(".")} already holds an env() reference`,
+        leaf.path,
+        `${leaf.path.join(".")} already holds an env() reference`,
       );
     }
   }
 
   const indent = detectJsonIndent(source);
-  const nextValue = deepSet(parsed, edits);
+  const nextValue = applyPathEntries(parsed, leaves);
   const rendered = JSON.stringify(nextValue, null, indent);
   // `JSON.stringify` always renders `\n`, so a CRLF source needs its newline flavor restored
   // post-render — otherwise every edit to a CRLF JSON config would silently flip it to LF.
@@ -1295,7 +1318,13 @@ function applyJsonEdits(source: string, edits: ReadonlyArray<ConfigEdit>): Confi
   } catch {
     return refused("verification_mismatch", [], "edited document failed to re-parse");
   }
-  if (!deepEqualValue(reparsed, nextValue)) {
+  // Verified against `deepSet` — built from the ORIGINAL, un-flattened `edits` — not against
+  // `nextValue`, which is the flattened per-leaf mutation. Comparing against the mutation would
+  // make this verification tautological: it could never disagree with itself, so a sibling an
+  // object-valued edit silently drops would never surface as a mismatch (see this file's header
+  // comment).
+  const expected = deepSet(parsed, edits);
+  if (!deepEqualValue(reparsed, expected)) {
     return refused(
       "verification_mismatch",
       [],

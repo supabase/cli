@@ -457,6 +457,22 @@ y = 2
     const outcome = applyConfigEdits(source, "toml", [{ path: ["a"], value: { x: 99 } }]);
     expect(refusalReason(outcome)).toBe("verification_mismatch");
   });
+
+  // Regression pin: the TOML arm already refused this shape before the JSON arm was brought in
+  // line with it (config-edit.ts's JSON-arm consistency fix) — this test just confirms TOML's
+  // own behavior didn't move. Same shape as the JSON refusal test below, with the omitted
+  // sibling spelled as an `env(...)` reference (an exfiltration-adjacent flavor: the omitted
+  // sibling is exactly the kind of value that must never be silently dropped from the file).
+  test("refuses a TOML object-valued edit that would delete an existing env() sibling", () => {
+    const source = `[auth.sms.test_otp]
+"+15551234" = "111111"
+"+15559999" = "env(OTP_FALLBACK)"
+`;
+    const outcome = applyConfigEdits(source, "toml", [
+      { path: ["auth", "sms", "test_otp"], value: { "+15551234": "888888" } },
+    ]);
+    expect(refusalReason(outcome)).toBe("verification_mismatch");
+  });
 });
 
 describe("applyConfigEdits (toml): newline and idempotence", () => {
@@ -689,6 +705,64 @@ describe("applyConfigEdits (json)", () => {
   test("refuses a document it cannot parse", () => {
     const outcome = applyConfigEdits("{not json", "json", [{ path: ["x"], value: "y" }]);
     expect(refusalReason(outcome)).toBe("parse_error");
+  });
+
+  // Regression coverage for the JSON-arm consistency fix: before it, an object-valued edit was
+  // mutated AND verified with the same whole-subtree-replacing `deepSet`, so it could never
+  // catch itself deleting an unmentioned sibling — here, an `env(...)` reference, the exact kind
+  // of value this module must never silently drop. The TOML arm already refused this shape (see
+  // the pinned regression test in the `toml` describe block above); this is the JSON equivalent.
+  test("refuses a JSON object-valued edit that would delete an existing env() sibling, leaving the source untouched", () => {
+    const source = `{
+    "auth": {
+        "sms": {
+            "test_otp": {
+                "+15551234": "111111",
+                "+15559999": "env(OTP_FALLBACK)"
+            }
+        }
+    }
+}
+`;
+    const outcome = applyConfigEdits(source, "json", [
+      { path: ["auth", "sms", "test_otp"], value: { "+15551234": "888888" } },
+    ]);
+    expect(refusalReason(outcome)).toBe("verification_mismatch");
+    expect(outcome.kind).toBe("refused");
+  });
+
+  // Companion case: an object-valued edit that mentions EVERY existing sibling key has nothing
+  // left to delete, so it merges cleanly — writing only the mentioned leaves and preserving the
+  // destination's OWN key order (not the edit value's own key order, which lists them reversed).
+  test("merges a JSON object-valued edit that omits no existing sibling, writing mentioned leaves and preserving key order", () => {
+    const source = `{
+    "auth": {
+        "sms": {
+            "test_otp": {
+                "+15551234": "111111",
+                "+15559999": "222222"
+            }
+        }
+    }
+}
+`;
+    const outcome = applyConfigEdits(source, "json", [
+      {
+        path: ["auth", "sms", "test_otp"],
+        value: { "+15559999": "999999", "+15551234": "888888" },
+      },
+    ]);
+    expect(applied(outcome).text).toBe(`{
+    "auth": {
+        "sms": {
+            "test_otp": {
+                "+15551234": "888888",
+                "+15559999": "999999"
+            }
+        }
+    }
+}
+`);
   });
 });
 
