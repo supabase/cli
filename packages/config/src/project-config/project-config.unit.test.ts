@@ -1227,6 +1227,97 @@ describe("fromApiProjectConfig — auth section", () => {
     const result = fromApiProjectConfig({ auth: { sms_test_otp: "15551234567=123456" } });
     expect(result.auth?.sms?.test_otp).toEqual({ "15551234567": "123456" });
   });
+
+  // CLI-2316 follow-up: figma is now a real provider (../auth/providers.ts),
+  // mirroring github's shape (no url, has email_optional, no skip_nonce_check
+  // — verified against the real V1GetAuthServiceConfigOutput contract, which
+  // has no `external_figma_skip_nonce_check` field at all).
+  test("figma maps like any other non-apple/google provider", () => {
+    const apiSide = fromApiProjectConfig({
+      auth: {
+        external_figma_enabled: true,
+        external_figma_client_id: "figma-id",
+        external_figma_secret: "figma-secret",
+        external_figma_email_optional: true,
+      },
+    });
+    expect(apiSide.auth?.external?.figma).toEqual({
+      enabled: true,
+      client_id: "figma-id",
+      email_optional: true,
+    });
+
+    const documentSide = fromConfigDocument(
+      decodeCliConfig({
+        auth: {
+          external: {
+            figma: { enabled: true, client_id: "figma-id", secret: "figma-secret" },
+          },
+        },
+      }),
+    );
+    // The document arm copies the whole decoded provider struct (minus the
+    // secret leaf) verbatim — every schema-materialized field, not just the
+    // two declared above.
+    expect(documentSide.auth?.external?.figma).toEqual({
+      enabled: true,
+      client_id: "figma-id",
+      url: "",
+      redirect_uri: "",
+      skip_nonce_check: false,
+      email_optional: false,
+    });
+  });
+
+  // CLI-2316 follow-up: `sms.otp_length`/`sms.otp_expiry` are new config-schema
+  // fields for pre-existing real GoTrue fields (`sms_otp_length`/`sms_otp_exp`)
+  // that the legacy shell's config-sync never modeled and neither did Go's own
+  // `sms` struct — not a Go-parity gap, a genuinely new mapping.
+  test("sms_otp_length/sms_otp_exp map to auth.sms.otp_length/otp_expiry", () => {
+    const apiSide = fromApiProjectConfig({ auth: { sms_otp_length: 6, sms_otp_exp: 60 } });
+    expect(apiSide.auth?.sms?.otp_length).toBe(6);
+    expect(apiSide.auth?.sms?.otp_expiry).toBe(60);
+
+    const documentSide = fromConfigDocument(
+      decodeCliConfig({ auth: { sms: { otp_length: 8, otp_expiry: 120 } } }),
+    );
+    expect(documentSide.auth?.sms?.otp_length).toBe(8);
+    expect(documentSide.auth?.sms?.otp_expiry).toBe(120);
+  });
+
+  // CLI-2316 follow-up: `sms.twilio.content_sid` is a new config-schema field
+  // for a pre-existing real GoTrue field (`sms_twilio_content_sid`),
+  // Twilio-only (no `sms_twilio_verify_content_sid` API counterpart) — same
+  // "omitted when the SMS provider is explicitly unset" gating as
+  // `account_sid`/`message_service_sid` (`smsCredentialStringRow`).
+  test("sms_twilio_content_sid maps to auth.sms.twilio.content_sid, gated the same as its siblings", () => {
+    const apiSide = fromApiProjectConfig({
+      auth: { sms_provider: "twilio", sms_twilio_content_sid: "HXreal00000000000000000000000000" },
+    });
+    expect(apiSide.auth?.sms?.twilio?.content_sid).toBe("HXreal00000000000000000000000000");
+
+    const explicitlyUnset = fromApiProjectConfig({
+      auth: { sms_provider: "", sms_twilio_content_sid: "HXreal00000000000000000000000000" },
+    });
+    expect(Object.hasOwn(explicitlyUnset.auth?.sms?.twilio ?? {}, "content_sid")).toBe(false);
+
+    const documentSide = fromConfigDocument(
+      decodeCliConfig({
+        auth: {
+          sms: {
+            twilio: {
+              enabled: true,
+              account_sid: "AC1",
+              message_service_sid: "MG1",
+              content_sid: "HX1",
+              auth_token: "at1",
+            },
+          },
+        },
+      }),
+    );
+    expect(documentSide.auth?.sms?.twilio?.content_sid).toBe("HX1");
+  });
 });
 
 describe("fromApiProjectConfig — secrets (ADR 0019 rule 5)", () => {
