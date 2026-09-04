@@ -118,7 +118,7 @@
       }
     ],
     "plugins": [
-      "@semantic-release/commit-analyzer",
+      "./scripts/analyze-commits-title.js",
       "@semantic-release/release-notes-generator"
     ]
   }
