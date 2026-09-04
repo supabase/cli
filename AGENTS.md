@@ -50,7 +50,7 @@ Expected exceptions:
 **vitest.config.ts:**
 
 Package configs build on the repo-root `vitest.shared.ts` preset. `definePackageConfig` merges the
-shared defaults (bun export-condition resolution for workspace packages, istanbul coverage,
+shared defaults (bun export-condition resolution for workspace packages, v8 coverage,
 `passWithNoTests`, console output only from failing tests), and `testProject("unit" | "integration" |
 "e2e" | "live", overrides)` declares one inline project per test kind with the repo's file-suffix
 convention baked in. Package-specific settings such as timeouts, setup files, serial execution, or
