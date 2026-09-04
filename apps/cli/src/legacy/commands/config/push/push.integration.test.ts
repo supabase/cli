@@ -1732,6 +1732,88 @@ enroll_enabled = true
     }).pipe(Effect.provide(layer));
   });
 
+  it.live(
+    "an enroll-only flip (verify_enabled absent) still prompts, and declining drops the change",
+    () => {
+      // CLI-2313 (PR #6454 review): before this fix, the gate only looked at
+      // `verify_enabled` — an `enroll_enabled`-only flip skipped the prompt
+      // entirely and pushed the paid addon unconfirmed.
+      const toml = `project_id = "test"\n[auth.mfa.phone]\nenroll_enabled = true\n`;
+      const { layer, apiMock, out } = setupService({
+        toml,
+        confirm: [false],
+        addons: {
+          available_addons: [
+            {
+              type: "auth_mfa_phone",
+              variants: [{ name: "Phone MFA", price: { description: "$75.00/ month" } }],
+            },
+          ],
+        },
+      });
+      return Effect.gen(function* () {
+        yield* legacyConfigPush({ projectRef: Option.none() });
+        expect(out.promptConfirmCalls.map((call) => call.message)).toContain(
+          "Enabling Phone MFA will cost you $75.00/ month. Keep it enabled?",
+        );
+        expect(methodsOf(apiMock)).not.toContain("updateAuthServiceConfig");
+      }).pipe(Effect.provide(layer));
+    },
+  );
+
+  it.live(
+    "an enroll-only flip (verify_enabled absent) pushes mfa_phone_enroll_enabled when accepted",
+    () => {
+      const toml = `project_id = "test"\n[auth.mfa.phone]\nenroll_enabled = true\n`;
+      const { layer, apiMock } = setupService({
+        toml,
+        confirm: [true, true],
+        addons: {
+          available_addons: [
+            {
+              type: "auth_mfa_phone",
+              variants: [{ name: "Phone MFA", price: { description: "$75.00/ month" } }],
+            },
+          ],
+        },
+        v1: { updateAuthServiceConfig: () => Effect.succeed({}) },
+      });
+      return Effect.gen(function* () {
+        yield* legacyConfigPush({ projectRef: Option.none() });
+        const update = apiMock.requests.find((r) => r.method === "updateAuthServiceConfig");
+        expect(update).toBeDefined();
+        const input = update?.input as Record<string, unknown>;
+        expect(input["mfa_phone_enroll_enabled"]).toBe(true);
+      }).pipe(Effect.provide(layer));
+    },
+  );
+
+  it.live("an enroll-only flip never prompts when the remote already has verify_enabled on", () => {
+    const toml = `project_id = "test"\n[auth.mfa.phone]\nenroll_enabled = true\n`;
+    const { layer, apiMock, out } = setupService({
+      toml,
+      confirm: [true],
+      v2: {
+        status: 200,
+        body: v2Response({
+          attributes: (a) => ({
+            ...a,
+            auth: { ...(a["auth"] as Record<string, unknown>), mfa_phone_verify_enabled: true },
+          }),
+        }),
+      },
+      v1: { updateAuthServiceConfig: () => Effect.succeed({}) },
+    });
+    return Effect.gen(function* () {
+      yield* legacyConfigPush({ projectRef: Option.none() });
+      expect(out.promptConfirmCalls.some((call) => call.message.includes("Enabling"))).toBe(false);
+      const update = apiMock.requests.find((r) => r.method === "updateAuthServiceConfig");
+      expect(update).toBeDefined();
+      const input = update?.input as Record<string, unknown>;
+      expect(input["mfa_phone_enroll_enabled"]).toBe(true);
+    }).pipe(Effect.provide(layer));
+  });
+
   it.live("accepting a costed MFA addon prompt shows its price and pushes the setting", () => {
     const toml = `project_id = "test"\n[auth.mfa.phone]\nverify_enabled = true\n`;
     const { layer, apiMock, out } = setupService({

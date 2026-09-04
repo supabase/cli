@@ -13,6 +13,7 @@ import {
   legacyApplyMfaAddonDecline,
   legacyChangesCommunicated,
   legacyPlanConfigPush,
+  legacyPushAddonPromptNeeded,
   legacyPushPromptKey,
   legacyPushResourceEnabled,
   legacyPushResourceForPath,
@@ -41,6 +42,19 @@ function changeSet(changes: ReadonlyArray<ConfigChange>, remoteOnly = 0): Config
       total: changes.length + remoteOnly,
     },
   };
+}
+
+/** A remote `ProjectConfig` with the given gate's `verify_enabled` flag set. */
+function remoteWithVerifyEnabled(
+  gate: (typeof LEGACY_PUSH_ADDON_GATES)[number],
+  verifyEnabled: boolean,
+): ProjectConfig {
+  switch (gate.costKey) {
+    case "auth_mfa_phone":
+      return { auth: { mfa: { phone: { verify_enabled: verifyEnabled } } } };
+    case "auth_mfa_web_authn":
+      return { auth: { mfa: { web_authn: { verify_enabled: verifyEnabled } } } };
+  }
 }
 
 describe("LEGACY_PUSH_RESOURCES", () => {
@@ -259,6 +273,50 @@ describe("LEGACY_PUSH_ADDON_GATES", () => {
       },
     ]);
   });
+});
+
+describe("legacyPushAddonPromptNeeded", () => {
+  it.each(LEGACY_PUSH_ADDON_GATES)(
+    "prompts when $costKey's verify_enabled flips to true",
+    (gate) => {
+      const changes = [change(gate.verifyPath, "update", true, false)];
+      expect(legacyPushAddonPromptNeeded(changes, gate, {})).toBe(true);
+    },
+  );
+
+  it.each(LEGACY_PUSH_ADDON_GATES)(
+    "prompts when only $costKey's enroll_enabled flips to true and verify_enabled is false on the remote",
+    (gate) => {
+      const changes = [change(gate.enrollPath, "update", true, false)];
+      expect(legacyPushAddonPromptNeeded(changes, gate, {})).toBe(true);
+    },
+  );
+
+  it.each(LEGACY_PUSH_ADDON_GATES)(
+    "does not prompt when $costKey's enroll_enabled flips to true but verify_enabled is already true on the remote",
+    (gate) => {
+      const changes = [change(gate.enrollPath, "update", true, false)];
+      const remote = remoteWithVerifyEnabled(gate, true);
+      expect(legacyPushAddonPromptNeeded(changes, gate, remote)).toBe(false);
+    },
+  );
+
+  it.each(LEGACY_PUSH_ADDON_GATES)(
+    "does not prompt when neither $costKey flag is turning on",
+    (gate) => {
+      const changes = [change(gate.verifyPath, "update", false, false)];
+      expect(legacyPushAddonPromptNeeded(changes, gate, {})).toBe(false);
+    },
+  );
+
+  it.each(LEGACY_PUSH_ADDON_GATES)(
+    "does not prompt when $costKey's verify_enabled flips to true but the remote already has it on",
+    (gate) => {
+      const changes = [change(gate.verifyPath, "update", true, true)];
+      const remote = remoteWithVerifyEnabled(gate, true);
+      expect(legacyPushAddonPromptNeeded(changes, gate, remote)).toBe(false);
+    },
+  );
 });
 
 describe("legacyChangesCommunicated", () => {

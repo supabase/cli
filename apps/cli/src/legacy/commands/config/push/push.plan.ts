@@ -212,6 +212,27 @@ export const LEGACY_PUSH_ADDON_GATES: ReadonlyArray<LegacyPushAddonGate> = [
   },
 ];
 
+/**
+ * Whether an addon gate's cost-aware prompt should fire for this push: the
+ * routed change list turns on `verify_enabled` OR `enroll_enabled` (either
+ * flip is a new paid capability on its own — enrolment alone already starts
+ * SMS/WebAuthn charges), UNLESS the addon is already active on the project
+ * (`remote`'s `verify_enabled` is `true`), in which case there is no new
+ * cost to confirm.
+ */
+export function legacyPushAddonPromptNeeded(
+  changes: ReadonlyArray<ConfigChange>,
+  gate: LegacyPushAddonGate,
+  remote: ProjectConfig,
+): boolean {
+  if (legacyValueAtPath(remote, gate.verifyPath) === true) {
+    return false;
+  }
+  const turnsOn = (path: ReadonlyArray<string>): boolean =>
+    changes.some((change) => legacySamePath(change.path, path) && change.local === true);
+  return turnsOn(gate.verifyPath) || turnsOn(gate.enrollPath);
+}
+
 /** The routed change list, narrowed to the paths a resource's body actually communicated. */
 export function legacyChangesCommunicated(
   changes: ReadonlyArray<ConfigChange>,

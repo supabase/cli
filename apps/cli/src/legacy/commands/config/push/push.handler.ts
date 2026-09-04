@@ -94,13 +94,14 @@ import {
   type LegacyPushForced,
   type LegacyPushUnencodable,
 } from "./push.format.ts";
-import { legacyComparePaths, legacyIsRecord, legacySamePath } from "./push.paths.ts";
+import { legacyComparePaths, legacyIsRecord } from "./push.paths.ts";
 import {
   LEGACY_PUSH_ADDON_GATES,
   LEGACY_PUSH_RESOURCES,
   legacyApplyMfaAddonDecline,
   legacyChangesCommunicated,
   legacyPlanConfigPush,
+  legacyPushAddonPromptNeeded,
   legacyPushPromptKey,
   legacyPushResourceEnabled,
   legacyPushResourceForPath,
@@ -672,10 +673,10 @@ export const legacyConfigPush = Effect.fn("legacy.config.push")(function* (
           // (`legacyApplyMfaAddonDecline`, D12).
           let changes = plan.changesByResource.auth;
           for (const gate of LEGACY_PUSH_ADDON_GATES) {
-            const verifyChange = changes.find((change) =>
-              legacySamePath(change.path, gate.verifyPath),
-            );
-            if (verifyChange?.local === true && !(yield* keep(gate.costKey))) {
+            if (
+              legacyPushAddonPromptNeeded(changes, gate, remote) &&
+              !(yield* keep(gate.costKey))
+            ) {
               changes = legacyApplyMfaAddonDecline(changes, gate, remote);
               declinedAddons.push(gate.costKey);
             }
