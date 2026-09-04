@@ -64,7 +64,7 @@
     "@types/pg": "^8.23.1",
     "@types/pg-copy-streams": "^1.2.5",
     "@vercel/detect-agent": "^1.2.5",
-    "@vitest/coverage-istanbul": "catalog:",
+    "@vitest/coverage-v8": "catalog:",
     "dotenv": "^17.4.2",
     "effect": "catalog:",
     "esbuild": "^0.28.2",
