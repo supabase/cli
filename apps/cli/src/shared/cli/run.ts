@@ -1,9 +1,27 @@
 import { BunServices } from "@effect/platform-bun";
 import { CliConfigStore } from "@supabase/config/effect";
-import { Cause, Console, Effect, Exit, Fiber, Layer, Runtime, Stdio } from "effect";
+import {
+  Cause,
+  Console,
+  Crypto,
+  Effect,
+  Exit,
+  FileSystem,
+  Fiber,
+  Layer,
+  Path,
+  Runtime,
+  Scope,
+  Stdio,
+} from "effect";
 import { CliError, CliOutput, Command } from "effect/unstable/cli";
+import { ChildProcessSpawner } from "effect/unstable/process";
 import { CLI_VERSION } from "./version.ts";
-import { Credentials } from "../../next/auth/credentials.service.ts";
+import { Credentials } from "../auth/credentials.service.ts";
+import type { CliProjectHome } from "../config/cli-project-home.service.ts";
+import type { CliSettings } from "../config/cli-settings.service.ts";
+import type { ProjectLinkState } from "../config/project-link-state.service.ts";
+import type { LegacyPlatformApiFactory } from "../../legacy/auth/legacy-platform-api-factory.service.ts";
 import { jsonCliOutputFormatter } from "../output/json-formatter.ts";
 import { textCliOutputFormatter } from "../output/text-formatter.ts";
 import { outputLayerFor } from "../output/output.layer.ts";
@@ -12,20 +30,24 @@ import type { OutputFormat } from "../output/types.ts";
 import { Output } from "../output/output.service.ts";
 import { LegacyGoChildExitError } from "../legacy/legacy-go-child-exit.error.ts";
 import { GoProxyInvocation, goProxyInvocationLayer } from "../legacy/go-proxy-invocation.ts";
-import { cliSettingsLayer } from "../../next/config/cli-settings.layer.ts";
-import { cliProjectHomeLayer } from "../../next/config/cli-project-home.layer.ts";
-import { CliProjectLocalServiceVersions } from "../../next/config/cli-project-local-service-versions.service.ts";
-import { cliProjectContextLayer } from "../../next/config/cli-project-context.layer.ts";
-import { projectLinkStateLayer } from "../../next/config/project-link-state.layer.ts";
+import { cliSettingsLayer } from "../config/cli-settings.layer.ts";
+import { cliProjectHomeLayer } from "../config/cli-project-home.layer.ts";
+import { CliProjectLocalServiceVersions } from "../config/cli-project-local-service-versions.service.ts";
+import { cliProjectContextLayer } from "../config/cli-project-context.layer.ts";
+import { projectLinkStateLayer } from "../config/project-link-state.layer.ts";
 import { processControlLayer } from "../runtime/process-control.layer.ts";
 import { runtimeInfoLayer } from "../runtime/runtime-info.layer.ts";
 import { ttyLayer } from "../runtime/tty.layer.ts";
 import { CommandRuntime } from "../runtime/command-runtime.service.ts";
 import { ProcessControl } from "../runtime/process-control.service.ts";
+import type { RuntimeInfo } from "../runtime/runtime-info.service.ts";
+import type { Stdin } from "../runtime/stdin.service.ts";
+import type { Tty } from "../runtime/tty.service.ts";
 import type { Analytics } from "../telemetry/analytics.service.ts";
 import { aiToolLayer } from "../telemetry/ai-tool.layer.ts";
 import { AiTool } from "../telemetry/ai-tool.service.ts";
 import { telemetryRuntimeLayer } from "../telemetry/runtime.layer.ts";
+import type { TelemetryRuntime } from "../telemetry/runtime.service.ts";
 import { tracingLayer } from "../telemetry/tracing.layer.ts";
 import { CliArgs } from "./cli-args.service.ts";
 import { resolveAgentOutputFormatFromArgs } from "./agent-output.ts";
@@ -43,7 +65,27 @@ import {
  * makes an accidentally unprovided service fail at the shell boundary instead
  * of becoming a runtime missing-service defect.
  */
-type AllowedRunCliServices = unknown;
+type AllowedRunCliServices =
+  | Analytics
+  | ChildProcessSpawner.ChildProcessSpawner
+  | CliArgs
+  | CliProjectHome
+  | CliSettings
+  | CommandRuntime
+  | Crypto.Crypto
+  | FileSystem.FileSystem
+  | Path.Path
+  | ProcessControl
+  | ProjectLinkState
+  | RuntimeInfo
+  | Scope.Scope
+  | Stdio.Stdio
+  | TelemetryRuntime
+  | Tty
+  | LegacyPlatformApiFactory
+  | Stdin
+  | "effect/unstable/cli/GlobalFlag/linked"
+  | "effect/unstable/cli/GlobalFlag/local";
 
 // Global flags that consume the following argv token as their value. Keep this in
 // sync with the value-taking global flags defined in `shared/cli/global-flags.ts`
@@ -78,11 +120,7 @@ const globalFlagsWithValues = new Set([
 // error, including the `context.Canceled` a SIGINT produces — internal/start was
 // deleted as unreachable in CLI-1966, last present at commit a253ccba2), so native
 // `start` must participate in the global
-// wrapper to match. This list is matched purely against argv command-path segments — it has
-// no notion of which shell (legacy vs next) registered the matching command, so `next start`
-// (a completely different command tree that happens to share the literal path `["start"]`)
-// needs its OWN exemption, passed via `RunCliOptions.additionalSelfManagedSignalCommands` from
-// `next/cli/main.ts` — see that call site's comment for why.
+// wrapper to match. This list is matched purely against argv command-path segments.
 //
 // `["db", "start"]` (top-level `db start`) is ALSO deliberately not listed here, for the exact
 // same reason as `start` above: it used to proxy container bootstrap to the hidden Go
@@ -300,12 +338,9 @@ export function lastGlobalFlagValue(
 }
 
 /** Whether the global signal-interrupt handler should wrap this invocation. */
-export function shouldUseGlobalSignalInterrupt(
-  args: ReadonlyArray<string>,
-  additionalSelfManagedCommands: ReadonlyArray<ReadonlyArray<string>> = [],
-): boolean {
+export function shouldUseGlobalSignalInterrupt(args: ReadonlyArray<string>): boolean {
   const commandPath = extractCommandPath(args);
-  return ![...selfManagedSignalCommands, ...additionalSelfManagedCommands].some((command) =>
+  return !selfManagedSignalCommands.some((command) =>
     command.every((segment, index) => commandPath[index] === segment),
   );
 }
@@ -673,13 +708,6 @@ type AnyAnalyticsLayer = Layer.Layer<Analytics, never, any>;
 export interface RunCliOptions {
   readonly analyticsLayer: AnyAnalyticsLayer;
   /**
-   * Extra command paths (on top of the shared `selfManagedSignalCommands` list) that must NOT
-   * be wrapped in the global signal-interrupt handler for this shell specifically — see
-   * `next/cli/main.ts`'s own `start` exemption for why a shell needs this instead of just
-   * adding to the shared list.
-   */
-  readonly additionalSelfManagedSignalCommands?: ReadonlyArray<ReadonlyArray<string>>;
-  /**
    * Runs just before the process exits on any invocation that exits 0 — the
    * seam for the legacy shell's upgrade notice. `cleanShowHelp` marks the
    * exit-0 ShowHelp failure branch (a bare group command), which cobra serves
@@ -773,10 +801,7 @@ export async function runCli<
   // text/json formatters would have shown before the vendored library's own
   // duplicate render was suppressed.
   const suggestionContext = { rootCommand, args };
-  const useGlobalSignalInterrupt = shouldUseGlobalSignalInterrupt(
-    args,
-    options.additionalSelfManagedSignalCommands,
-  );
+  const useGlobalSignalInterrupt = shouldUseGlobalSignalInterrupt(args);
   const outputFormat = await Effect.runPromise(
     Effect.gen(function* () {
       const aiTool = yield* AiTool;

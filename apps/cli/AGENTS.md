@@ -2,6 +2,13 @@
 
 This file applies to the `apps/cli` workspace. Read it fully before touching any code in this package.
 
+> **`next/` has been removed from this tree.**
+> `src/next/` no longer exists here — `src/legacy/` is now the only CLI shell. The "Shell
+> Architecture" section below (and other two-shell framing throughout this file) describes the
+> historical layout while both shells coexisted and is stale; treat every mention of `next/` as
+> historical context, not current structure. Do not resurrect a `next/` tree or re-add
+> `next/`-specific code based on this document.
+
 ---
 
 ## Shell Architecture

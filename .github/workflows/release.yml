@@ -19,7 +19,6 @@ on:
         required: true
         type: choice
         options:
-          - alpha
           - beta
           - stable
       version:
@@ -152,14 +151,6 @@ jobs:
             fi
           fi
           case "$channel" in
-            alpha)
-              shell=next
-              npm_tag=alpha
-              prerelease=true
-              brew_name=""
-              scoop_name=""
-              publish_brew_scoop=false
-              ;;
             beta)
               shell=legacy
               npm_tag=beta
@@ -286,8 +277,8 @@ jobs:
   # Posts to the release Slack channel once the pipeline succeeds. Listing
   # `release` in `needs` without a status function in `if:` keeps the implicit
   # success() gate, so this only runs when both plan and release succeeded.
-  # The `if:` then filters to real (non-dry-run) stable cuts; alpha, beta, and
-  # dry runs stay silent. Nothing depends on this job, so a Slack/webhook
+  # The `if:` then filters to real (non-dry-run) stable cuts; beta and dry
+  # runs stay silent. Nothing depends on this job, so a Slack/webhook
   # failure can't affect the already-completed release.
   notify-slack:
     name: Notify Slack

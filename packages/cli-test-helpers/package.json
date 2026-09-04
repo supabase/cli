@@ -17,7 +17,6 @@
     "@types/bun": "catalog:",
     "@vitest/coverage-istanbul": "catalog:",
     "typescript": "catalog:",
-    "vite": "^8.2.2",
     "vitest": "catalog:"
   }
 }

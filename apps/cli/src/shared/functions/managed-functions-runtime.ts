@@ -29,7 +29,7 @@ import {
   relativeFunctionPath,
   relativeGlobalFunctionPath,
   toStartStackConfig,
-} from "../../next/config/stack-config.ts";
+} from "../config/stack-config.ts";
 
 /** The narrow stack surface owned by the managed Functions command. */
 export type ManagedFunctionsStack = Pick<EffectStack, "start" | "status" | "logs" | "followLogs">;

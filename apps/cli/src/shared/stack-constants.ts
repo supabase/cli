@@ -3,7 +3,6 @@ import { createHmac } from "node:crypto";
 export const defaultPublishableKey = "sb_publishable_ACJWlzQHlZjBrEguHvfOxg_3BJgxAaH";
 export const defaultSecretKey = "sb_secret_N7UND0UgjKTVK-Uodkm0Hg_xSvEMPvz";
 export const defaultJwtSecret = "super-secret-jwt-token-with-at-least-32-characters-long";
-export const DEFAULT_MANAGED_STACK_NAME = "default";
 
 export function generateJwt(secret: string, role: string): string {
   const header = Buffer.from(JSON.stringify({ alg: "HS256", typ: "JWT" })).toString("base64url");

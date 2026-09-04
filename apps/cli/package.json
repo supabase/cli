@@ -24,13 +24,11 @@
     "access": "public"
   },
   "scripts": {
-    "build": "pnpm build:go-sidecar && pnpm build:next && pnpm build:legacy && pnpm build:shim",
+    "build": "pnpm build:go-sidecar && pnpm build:legacy && pnpm build:shim",
     "build:go-sidecar": "mkdir -p dist && cp ../cli-go/supabase-go dist/supabase-go",
-    "build:next": "bun scripts/build-binary.ts next",
-    "build:legacy": "bun scripts/build-binary.ts legacy",
+    "build:legacy": "bun scripts/build-binary.ts",
     "build:shim": "bun build src/shared/cli/bin.ts --outfile dist/supabase.js --target node",
     "docs:spec": "bun scripts/generate-docs-spec.ts",
-    "dev:next": "pnpm exec bun src/next/main.ts",
     "dev:legacy": "pnpm exec bun src/legacy/main.ts",
     "test": "pnpm run test:unit --coverage.enabled && pnpm run test:integration --coverage.enabled && pnpm run test:e2e",
     "test:unit": "pnpm exec turbo run supabase#test:unit:run --",
@@ -69,6 +67,7 @@
     "@vitest/coverage-istanbul": "catalog:",
     "dotenv": "^17.4.2",
     "effect": "catalog:",
+    "esbuild": "^0.28.2",
     "pg": "^8.23.0",
     "pg-copy-streams": "^7.0.0",
     "posthog-node": "^5.51.2",
