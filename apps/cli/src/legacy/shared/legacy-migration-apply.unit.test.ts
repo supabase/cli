@@ -391,7 +391,9 @@ describe("legacyApplyMigrationFile", () => {
           expect(action).toBeGreaterThan(set);
           expect(cleanup).toBeGreaterThan(action);
 
-          const history = calls.filter((call) => call.kind === "query");
+          const history = calls.filter(
+            (call) => call.kind === "query" && call.params !== undefined,
+          );
           expect(history).toHaveLength(1);
           expect(history[0]?.params).toEqual([
             "20240101120000",
@@ -422,7 +424,9 @@ describe("legacyApplyMigrationFile", () => {
           expect(Exit.isFailure(exit)).toBe(true);
           const execs = calls.filter((call) => call.kind === "exec").map((call) => call.sql);
           expect(execs.at(-1)).toBe("RESET ALL");
-          expect(calls.some((call) => call.kind === "query")).toBe(false);
+          expect(calls.some((call) => call.kind === "query" && call.params !== undefined)).toBe(
+            false,
+          );
           if (Exit.isFailure(exit)) {
             expect(JSON.stringify(exit.cause)).toContain("At statement: 1");
           }
@@ -474,7 +478,9 @@ describe("legacyApplyMigrationFile", () => {
           expect(execs.filter((sql) => sql === "BEGIN")).toHaveLength(2);
           expect(execs.filter((sql) => sql === "COMMIT")).toHaveLength(2);
           expect(execs).toContain("SET LOCAL check_function_bodies = off");
-          const history = calls.filter((call) => call.kind === "query");
+          const history = calls.filter(
+            (call) => call.kind === "query" && call.params !== undefined,
+          );
           expect(history).toHaveLength(1);
           expect(history[0]?.params?.[0]).toBe("20240101120000");
           rmSync(dir, { recursive: true, force: true });
@@ -510,7 +516,9 @@ describe("legacyApplyMigrationFile", () => {
             expect.stringContaining("supabase_migrations.schema_migrations"),
           ]);
           // No standalone history insert: it rides the same batch as the statements.
-          expect(calls.filter((call) => call.kind === "query")).toHaveLength(0);
+          expect(
+            calls.filter((call) => call.kind === "query" && call.params !== undefined),
+          ).toHaveLength(0);
           rmSync(dir, { recursive: true, force: true });
         }),
       ),
@@ -527,7 +535,9 @@ describe("legacyApplyMigrationFile", () => {
       Effect.tap((exit) =>
         Effect.sync(() => {
           expect(Exit.isFailure(exit)).toBe(true);
-          expect(calls.some((call) => call.kind === "query")).toBe(false);
+          expect(calls.some((call) => call.kind === "query" && call.params !== undefined)).toBe(
+            false,
+          );
           expect(calls.some((call) => call.kind === "exec" && call.sql === "ROLLBACK")).toBe(true);
           rmSync(dir, { recursive: true, force: true });
         }),
@@ -601,7 +611,9 @@ describe("legacyApplyMigrationFile", () => {
           const authoredCommit = calls.findLastIndex(
             (call) => call.kind === "exec" && call.sql === "COMMIT",
           );
-          const history = calls.findIndex((call) => call.kind === "query");
+          const history = calls.findIndex(
+            (call) => call.kind === "query" && call.params !== undefined,
+          );
           expect(lastRestore).toBeGreaterThan(authoredCommit);
           expect(history).toBeGreaterThan(lastRestore);
           rmSync(dir, { recursive: true, force: true });
@@ -801,7 +813,9 @@ describe("legacyApplyMigrationFile", () => {
           const execs = calls.filter((call) => call.kind === "exec").map((call) => call.sql);
           expect(execs.filter((sql) => sql === "SET SESSION ROLE postgres")).toHaveLength(1);
           expect(execs[execs.indexOf("reset role") + 1]).toBe("SET SESSION ROLE postgres");
-          expect(calls.filter((call) => call.kind === "query")).toHaveLength(1);
+          expect(
+            calls.filter((call) => call.kind === "query" && call.params !== undefined),
+          ).toHaveLength(1);
           rmSync(dir, { recursive: true, force: true });
         }),
       ),

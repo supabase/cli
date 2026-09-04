@@ -139,6 +139,7 @@ export const VALUE_CONSUMING_LONG_FLAGS = new Set([
   "query-timeout",
   "region",
   "release-channel",
+  "remote-label",
   "remove-domains",
   "role",
   "runtime",

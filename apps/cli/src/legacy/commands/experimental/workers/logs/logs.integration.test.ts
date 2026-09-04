@@ -952,6 +952,84 @@ describe("legacy workers logs", () => {
       expect(out.stdoutText).toContain("burst 999");
       // Oldest first across pages, not merely within each one.
       expect(out.stdoutText.indexOf("older line")).toBeLessThan(out.stdoutText.indexOf("burst 0"));
+      // The short third page proved the window was empty below it, so nothing
+      // was skipped and the run stays quiet.
+      expect(out.stderrText).not.toContain("Skipped part of a burst");
+    }).pipe(Effect.provide(layer), Effect.ensuring(Effect.sync(repo.cleanup)));
+  });
+
+  // The drain walks backwards from the newest rows, so running out of pages
+  // leaves the *oldest* part of the burst unfetched while the cursor advances
+  // past it. Those lines are gone, and a silent hole is worse than a noisy one.
+  it.live("says so on stderr when a burst outruns the page budget", () => {
+    const repo = project();
+    // Five full pages, each older than the last so every page narrows the window
+    // and the loop runs to its bound rather than stopping early.
+    const pages = Array.from({ length: 5 }, (_unused, page) =>
+      logsResponse(
+        Array.from({ length: 1000 }, (_row, index) =>
+          workerLogRow({
+            id: `p${page}-${index}`,
+            tsMs: T2 - page * 1_000_000 + index,
+            message: `page ${page} line ${index}`,
+          }),
+        ),
+      ),
+    );
+    const { layer, out, http } = setupLegacyWorkers({
+      workdir: repo.dir,
+      routes: {
+        [LOGS_ROUTE]: [
+          logsResponse([workerLogRow({ id: "seed", tsMs: T1 - 100_000, message: "seed" })]),
+          ...pages,
+        ],
+      },
+    });
+
+    return Effect.gen(function* () {
+      yield* legacyWorkersLogs(flags({ follow: true }), followFor(0));
+
+      // The budget, and not one request more: the sixth page is never asked for.
+      expect(http.requests).toHaveLength(6);
+      expect(out.stderrText).toContain("Skipped part of a burst larger than 5000 lines");
+      // Actionable rather than a bare apology.
+      expect(out.stderrText).toContain("--kind");
+      // The lines it did reach are still printed.
+      expect(out.stdoutText).toContain("page 0 line 999");
+    }).pipe(Effect.provide(layer), Effect.ensuring(Effect.sync(repo.cleanup)));
+  });
+
+  it.live("warns once about a skipped burst, however long the tail runs", () => {
+    const repo = project();
+    const fullPage = (page: number, poll: number) =>
+      logsResponse(
+        Array.from({ length: 1000 }, (_row, index) =>
+          workerLogRow({
+            id: `poll${poll}-p${page}-${index}`,
+            tsMs: T2 + poll * 10_000_000 - page * 1_000_000 + index,
+            message: `poll ${poll} page ${page} line ${index}`,
+          }),
+        ),
+      );
+    const burst = (poll: number) => Array.from({ length: 5 }, (_u, page) => fullPage(page, poll));
+    const { layer, out } = setupLegacyWorkers({
+      workdir: repo.dir,
+      routes: {
+        [LOGS_ROUTE]: [
+          logsResponse([workerLogRow({ id: "seed", tsMs: T1 - 100_000, message: "seed" })]),
+          ...burst(0),
+          ...burst(1),
+        ],
+      },
+    });
+
+    return Effect.gen(function* () {
+      yield* legacyWorkersLogs(flags({ follow: true }), followFor(1));
+
+      // A sustained burst would otherwise repeat the notice every interval and
+      // bury the very lines it is warning about.
+      const notices = out.stderrText.split("Skipped part of a burst").length - 1;
+      expect(notices).toBe(1);
     }).pipe(Effect.provide(layer), Effect.ensuring(Effect.sync(repo.cleanup)));
   });
 

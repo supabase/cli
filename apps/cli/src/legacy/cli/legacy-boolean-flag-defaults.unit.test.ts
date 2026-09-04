@@ -21,7 +21,7 @@ import { legacyRoot } from "./root.ts";
  * precisely the invocation no handler test makes — so the guard walks the
  * command tree instead of waiting for a command to be exercised end to end.
  *
- * `experimental workers push --wait` is the flag that prompted it: it first
+ * `experimental workers push --no-wait` is the flag that prompted it: it first
  * shipped with neither closer, which made a plain
  * `supabase experimental workers push` fail to parse at all.
  */

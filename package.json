@@ -39,13 +39,13 @@
     "pkg-pr-new": "0.0.88",
     "turbo": "catalog:",
     "typescript": "catalog:",
-    "verdaccio": "^6.9.3"
+    "verdaccio": "^6.10.0"
   },
   "devEngines": {
-    "runtime": {
-      "name": "node",
-      "version": "24"
+    "packageManager": {
+      "name": "pnpm",
+      "version": "12.3.0",
+      "onFail": "error"
     }
-  },
-  "packageManager": "pnpm@11.4.0"
+  }
 }

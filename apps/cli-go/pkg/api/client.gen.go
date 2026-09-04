@@ -16041,7 +16041,7 @@ func (r V1GetAFunctionResponse) ContentType() string {
 type V1UpdateAFunctionResponse struct {
 	Body         []byte
 	HTTPResponse *http.Response
-	JSON200      *FunctionResponseOutput
+	JSON200      *FunctionSlugResponseOutput
 }
 
 // Status returns HTTPResponse.Status
@@ -22344,7 +22344,7 @@ func ParseV1UpdateAFunctionResponse(rsp *http.Response) (*V1UpdateAFunctionRespo
 
 	switch {
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
-		var dest FunctionResponseOutput
+		var dest FunctionSlugResponseOutput
 		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
 			return nil, err
 		}

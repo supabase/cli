@@ -77,10 +77,12 @@ import type { LegacyWorkersPushFlags } from "./push.command.ts";
  * of your Dockerfile. Every runtime this CLI offers has code to package, so
  * there is no path here that skips the upload.
  *
- * The command returns once the platform accepts the deploy. The container build
- * that follows runs for minutes, and blocking on it made every successful
- * deploy as slow as the slowest one — so `--wait` opts into the build's
- * verdict, for CI and for anyone who needs the image version before continuing.
+ * The command waits for that server-side build by default, so a plain push
+ * reports the build's verdict rather than only that the deploy was accepted.
+ * The build routinely runs for minutes, though, which makes every successful
+ * deploy as slow as the slowest one — so `--no-wait` returns as soon as the
+ * platform accepts the deploy, for an inner-loop redeploy or a CI step that
+ * only needs the spec on file.
  */
 
 const resolveRuntime = Effect.fnUntraced(function* (options: {
@@ -232,8 +234,8 @@ const deployOneWorker = Effect.fnUntraced(function* (input: {
   readonly refSuffix: string;
   readonly instances: Option.Option<number>;
   readonly exposure: Option.Option<WorkerExposure>;
-  /** `--wait`: block on the server-side build instead of returning once it starts. */
-  readonly wait: boolean;
+  /** `--no-wait`: return once the deploy is accepted instead of blocking on the build. */
+  readonly noWait: boolean;
   readonly pollSchedule?: Schedule.Schedule<unknown>;
   readonly pollRetrySchedule?: Schedule.Schedule<unknown>;
   /** Suppresses this step's human output when `-o` owns stdout. */
@@ -388,19 +390,30 @@ const deployOneWorker = Effect.fnUntraced(function* (input: {
     Effect.tapError(() => deploying.fail()),
   );
 
-  const settled = input.wait
-    ? yield* awaitWorkerBuild(api, projectRef, name, {
-        schedule: input.pollSchedule,
-        retrySchedule: input.pollRetrySchedule,
-        refSuffix: input.refSuffix,
-        onPoll: (polled) =>
-          polled.buildState === "building" ? deploying.message("Building worker...") : Effect.void,
-      }).pipe(Effect.tapError(() => deploying.fail()))
-    : accepted;
+  // Polled only when the deploy response left the build unresolved.
+  // `V2DeployAWorkerOutput` permits a terminal `active` or `failed` on the
+  // deploy itself, and that verdict is this deploy's — a fresh `GET` can only
+  // contradict it: `awaitWorkerBuild` reads a post-deploy 404 as "still
+  // building", so an already-`failed` deploy could burn the whole poll budget
+  // and surface as a timeout, and a concurrent deployment could answer with a
+  // state that belongs to someone else's build.
+  const settled =
+    input.noWait || accepted.buildState !== "building"
+      ? accepted
+      : yield* awaitWorkerBuild(api, projectRef, name, {
+          schedule: input.pollSchedule,
+          retrySchedule: input.pollRetrySchedule,
+          refSuffix: input.refSuffix,
+          onPoll: (polled) =>
+            polled.buildState === "building"
+              ? deploying.message("Building worker...")
+              : Effect.void,
+        }).pipe(Effect.tapError(() => deploying.fail()));
 
-  // Checked whether or not the build was waited on. A deploy answered with a
-  // spec already in `failed` is a refusal the command should report as one,
-  // rather than exiting zero on a worker that will never come up.
+  // Checked whether or not the build was waited on: the verdict can arrive on
+  // the deploy response as readily as on a poll. A spec already in `failed` is
+  // a refusal the command should report as one, rather than exiting zero on a
+  // worker that will never come up.
   if (settled.buildState === "failed") {
     yield* deploying.clear();
     return yield* Effect.fail(
@@ -420,6 +433,16 @@ const deployOneWorker = Effect.fnUntraced(function* (input: {
       ? workerUrl(projectRef, settings.projectHost, name)
       : undefined;
 
+  // Dropped while the build is still running, rather than passed through.
+  // `image_version` is optional-but-permitted on the deploy response, so a
+  // re-push of a worker that is already serving can echo the image it is
+  // serving *now* — the previous build's, not this one's. Rendered beside
+  // `State building` that names an image this deploy did not produce, and a
+  // script reading `image_version` next to `build_state: "building"` would take
+  // it for the new one. Only reachable under `--no-wait`; the default polls
+  // until the build leaves `building`, so `settled` carries the real image.
+  const imageVersion = settled.buildState === "building" ? undefined : settled.imageVersion;
+
   // Suppressed when `-o` is in play: the payload owns stdout, and these lines
   // would land in the middle of it.
   if (output.format === "text" && !input.machineOutput) {
@@ -432,15 +455,16 @@ const deployOneWorker = Effect.fnUntraced(function* (input: {
     yield* output.raw(
       legacyRenderWorkerDetails([
         // Labelled `State`, and placed first, the way `workers status` renders
-        // the same field: without `--wait` it is the one row that says the
+        // the same field: under `--no-wait` it is the one row that says the
         // worker is not serving yet, so it should not be hunted for at the
         // bottom of the block.
         ["State", settled.buildState],
         ["Runtime", runtime],
         ["Size", formatApiSize(settled.spec.size)],
-        // Empty without `--wait`: no image exists until the build produces one,
-        // and `legacyRenderWorkerDetails` drops an empty-valued row.
-        ["Image", settled.imageVersion ?? ""],
+        // Empty under `--no-wait`: this deploy's image does not exist until the
+        // build produces one, and `legacyRenderWorkerDetails` drops an
+        // empty-valued row.
+        ["Image", imageVersion ?? ""],
         ["Access", settled.spec.exposure],
         ["URL", url ?? ""],
       ]),
@@ -453,14 +477,17 @@ const deployOneWorker = Effect.fnUntraced(function* (input: {
       // more than for those: pushing several workers would otherwise bury each
       // worker's hint under the next worker's packaging and deploy output.
       //
-      // One short sentence per line, with the command and the flag aqua'd the
-      // way every other follow-up hint in this shell writes them. The single
-      // wrapped paragraph this replaced re-flowed differently at every terminal
-      // width and buried both commands mid-sentence.
+      // One short sentence per line, with the command aqua'd the way every
+      // other follow-up hint in this shell writes them. The single wrapped
+      // paragraph this replaced re-flowed differently at every terminal width
+      // and buried the command mid-sentence.
+      //
+      // No "drop `--no-wait` next time" line to go with it: reaching here means
+      // the caller asked not to wait, so the only thing left to tell them is
+      // where the build's verdict will show up.
       yield* emitSuccessTrailer(
         `\nYour build was submitted successfully.\n` +
-          `Run ${legacyAqua(`supabase experimental workers status ${name}${input.refSuffix}`)} to check on it.\n` +
-          `Add ${legacyAqua("--wait")} to block on the build next time.\n`,
+          `Run ${legacyAqua(`supabase experimental workers status ${name}${input.refSuffix}`)} to check on it.\n`,
       );
     }
   }
@@ -474,7 +501,7 @@ const deployOneWorker = Effect.fnUntraced(function* (input: {
     // Omitted rather than present-and-undefined: `-o toml` hands the payload to
     // smol-toml, which cannot represent undefined and would throw *after* the
     // upload and deploy had completed. Same reason `url` is spread below.
-    ...(settled.imageVersion === undefined ? {} : { image_version: settled.imageVersion }),
+    ...(imageVersion === undefined ? {} : { image_version: imageVersion }),
     build_state: settled.buildState,
     ...(url === undefined ? {} : { url }),
   };
@@ -503,6 +530,31 @@ const reportUnattempted = Effect.fnUntraced(function* (skipped: ReadonlyArray<st
 });
 
 /**
+ * Names the workers whose builds the run left running.
+ *
+ * Under `--no-wait` a worker is accepted while its build is still in flight, and
+ * its follow-up hint goes out as a success trailer. `runCli` drains trailers
+ * only on exit code 0 (`shared/cli/run.ts`, `afterSuccess`), so a later worker
+ * failing discards every hint the run had queued — including for builds that are
+ * still running on the platform, which the failure does nothing to stop.
+ *
+ * Reported here instead, on the path that actually runs. Same stderr-in-every-
+ * format rule as {@link reportUnattempted} and the same reason: a machine-format
+ * run is a CI run, and "what is still in flight" is as much a part of the
+ * failure's answer as "what never started".
+ *
+ * Empty on a waiting run, without needing to check the flag: a worker the run
+ * waited for has left `building` by the time it returns.
+ */
+const reportStillBuilding = Effect.fnUntraced(function* (building: ReadonlyArray<string>) {
+  if (building.length === 0) {
+    return;
+  }
+  const output = yield* Output;
+  yield* output.raw(`Still building: ${building.join(", ")}\n`, "stderr");
+});
+
+/**
  * `supabase experimental workers push [name...]` — deploy the named workers, or every worker
  * in the project when none are named, mirroring `supabase functions deploy`.
  *
@@ -512,9 +564,9 @@ const reportUnattempted = Effect.fnUntraced(function* (skipped: ReadonlyArray<st
  * the run, because a build that failed is usually the thing to fix before
  * spending minutes on the rest.
  *
- * Without `--wait` that serialization only covers the package/upload/deploy
+ * Under `--no-wait` that serialization only covers the package/upload/deploy
  * legs; the builds themselves then run concurrently on the platform, which is
- * what the caller asked for by not waiting.
+ * what the caller asked for by opting out of the wait.
  */
 export const legacyWorkersPush = Effect.fn("legacy.experimental.workers.push")(function* (
   flags: LegacyWorkersPushFlags,
@@ -566,6 +618,9 @@ export const legacyWorkersPush = Effect.fn("legacy.experimental.workers.push")(f
     // explicit `--project-ref` has to survive into every hint this push emits.
     const refSuffix = legacyWorkersProjectRefSuffix(flags.projectRef);
     const deployed: Array<Record<string, unknown>> = [];
+    // Accepted, but not finished: their builds outlive a failure further down
+    // the loop, so the failure path has to name them. See `reportStillBuilding`.
+    const stillBuilding: Array<string> = [];
     for (const [index, name] of names.entries()) {
       if (names.length > 1 && !machineOutput && output.format === "text") {
         // stderr, unblanked and labelled, the way `functions deploy` announces
@@ -585,22 +640,32 @@ export const legacyWorkersPush = Effect.fn("legacy.experimental.workers.push")(f
           "stderr",
         );
       }
-      deployed.push(
-        yield* deployOneWorker({
-          project,
-          name,
-          projectRef,
-          refSuffix,
-          instances: flags.instances,
-          exposure: flags.exposure,
-          wait: flags.wait,
-          machineOutput,
-          ...(options.pollSchedule === undefined ? {} : { pollSchedule: options.pollSchedule }),
-          ...(options.pollRetrySchedule === undefined
-            ? {}
-            : { pollRetrySchedule: options.pollRetrySchedule }),
-        }).pipe(Effect.tapError(() => reportUnattempted(names.slice(index + 1)))),
+      const worker = yield* deployOneWorker({
+        project,
+        name,
+        projectRef,
+        refSuffix,
+        instances: flags.instances,
+        exposure: flags.exposure,
+        noWait: flags.noWait,
+        machineOutput,
+        ...(options.pollSchedule === undefined ? {} : { pollSchedule: options.pollSchedule }),
+        ...(options.pollRetrySchedule === undefined
+          ? {}
+          : { pollRetrySchedule: options.pollRetrySchedule }),
+      }).pipe(
+        // In flight before what never started: one is a thing the user now has
+        // to follow, the other a thing they have to re-run.
+        Effect.tapError(() =>
+          reportStillBuilding(stillBuilding).pipe(
+            Effect.andThen(reportUnattempted(names.slice(index + 1))),
+          ),
+        ),
       );
+      deployed.push(worker);
+      if (worker.build_state === "building") {
+        stillBuilding.push(name);
+      }
     }
 
     // Only for a run that deployed several: one worker already said so itself,

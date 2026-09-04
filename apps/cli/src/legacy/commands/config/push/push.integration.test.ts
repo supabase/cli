@@ -1,11 +1,15 @@
 import { describe, expect, it } from "@effect/vitest";
-import { Effect, Exit, Layer, Option } from "effect";
+import { Effect, Exit, Layer, Option, Stdio } from "effect";
 import * as HttpClient from "effect/unstable/http/HttpClient";
 import * as HttpClientResponse from "effect/unstable/http/HttpClientResponse";
 import { mkdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 
-import { mockOutput } from "../../../../../tests/helpers/mocks.ts";
+import {
+  mockAnalytics,
+  mockContextualAnalytics,
+  mockOutput,
+} from "../../../../../tests/helpers/mocks.ts";
 import {
   buildLegacyTestRuntime,
   legacyJsonResponse,
@@ -19,7 +23,9 @@ import {
 } from "../../../../../tests/helpers/legacy-mocks.ts";
 import { mockRuntimeInfo, mockStdin, mockTty } from "../../../../../tests/helpers/mocks.ts";
 import { LegacyYesFlag } from "../../../../shared/legacy/global-flags.ts";
+import { commandRuntimeLayer } from "../../../../shared/runtime/command-runtime.layer.ts";
 import { legacyConfigPush } from "./push.handler.ts";
+import { legacyConfigPushHandler } from "./push.command.ts";
 
 const tempRoot = useLegacyTempWorkdir("supabase-config-push-int-");
 
@@ -88,6 +94,10 @@ function setup(opts: {
   readonly pipedAnswers?: ReadonlyArray<string>;
   /** Working directory the handler runs from; defaults to the temp project root. */
   readonly runtimeCwd?: string;
+  /** cliSettings.workdir override (what `--workdir` resolves to); defaults to the temp project root. */
+  readonly workdir?: string;
+  /** Analytics mock for tests asserting on captured telemetry events. */
+  readonly analytics?: ReturnType<typeof mockAnalytics>;
 }) {
   writeConfig(opts.toml);
   const routes = opts.routes ?? {};
@@ -141,11 +151,12 @@ function setup(opts: {
     buildLegacyTestRuntime({
       out,
       api,
-      cliSettings: mockLegacyCliSettings({ workdir: tempRoot.current }),
+      cliSettings: mockLegacyCliSettings({ workdir: opts.workdir ?? tempRoot.current }),
       runtimeInfo: mockRuntimeInfo({ cwd: opts.runtimeCwd ?? tempRoot.current }),
       telemetry: telemetry.layer,
       linkedProjectCache: linkedProjectCache.layer,
       tty: mockTty({ stdinIsTty: opts.stdinIsTty ?? true, stdoutIsTty: false }),
+      ...(opts.analytics === undefined ? {} : { analytics: opts.analytics }),
     }),
     mockStdin(
       opts.stdinIsTty ?? true,
@@ -410,11 +421,11 @@ project_id = "abcdefghijklmnopqrst"
     );
   });
 
-  it.live("loads config-push env from the project root when run from a subdirectory", () => {
-    // The workdir change moves to the project root before config load, so a
-    // SUPABASE_YES in <root>/supabase/.env auto-confirms even when invoked
-    // from a subdir. The env load must walk up like loadCliConfig, not
-    // use the raw cwd.
+  it.live("loads config-push env from the project root when --workdir names a subdirectory", () => {
+    // The handler resolves against cliSettings.workdir, so a `--workdir`
+    // pointing INSIDE the project must still walk up to the project root for
+    // the env load (like loadCliConfig) — a SUPABASE_YES in
+    // <root>/supabase/.env auto-confirms even then.
     const prev = process.env["SUPABASE_YES"];
     delete process.env["SUPABASE_YES"];
     const sub = join(tempRoot.current, "nested", "dir");
@@ -423,7 +434,7 @@ project_id = "abcdefghijklmnopqrst"
       toml: API_ONLY_TOML,
       stdinIsTty: false,
       pipedAnswers: ["n"],
-      runtimeCwd: sub,
+      workdir: sub,
       routes: {
         postgrestGet: { status: 200, body: POSTGREST_DISABLED },
         postgresGet: { status: 200, body: {} },
@@ -1005,5 +1016,41 @@ enabled = true
       expect(out.stderrText).toContain("Enabling webhooks for project:");
       expect(methodsOf(apiMock)).toContain("enableDatabaseWebhook");
     }).pipe(Effect.provide(layer));
+  });
+});
+
+describe("legacy config push telemetry wiring", () => {
+  // Drives the exact `Command.withHandler` wiring (legacyConfigPushHandler)
+  // rather than the bare handler: the safeFlags guard lives in the wiring,
+  // and nothing validates `--project-ref` before instrumentation fires.
+  const wiringLayer = (analytics: ReturnType<typeof mockAnalytics>, projectRef: string) =>
+    Layer.mergeAll(
+      setup({ toml: API_ONLY_TOML, yes: true, analytics }).layer,
+      commandRuntimeLayer(["config", "push"]),
+      Stdio.layerTest({
+        args: Effect.succeed(["config", "push", "--project-ref", projectRef]),
+      }),
+    );
+
+  it.live("logs a ref-shaped --project-ref verbatim in cli_command_executed", () => {
+    const analytics = mockContextualAnalytics();
+    const ref = "abcdefghijklmnopqrst";
+    return Effect.gen(function* () {
+      yield* Effect.exit(legacyConfigPushHandler({ projectRef: Option.some(ref) }));
+      const event = analytics.captured.find((c) => c.event === "cli_command_executed");
+      expect(event?.properties["flags"]).toEqual({ "project-ref": ref });
+    }).pipe(Effect.provide(wiringLayer(analytics, ref)));
+  });
+
+  it.live("redacts a --project-ref value that is not ref-shaped", () => {
+    // An arbitrary string (typo, wrong clipboard paste) may contain user
+    // data — it must reach PostHog as the redaction sentinel, never verbatim.
+    const analytics = mockContextualAnalytics();
+    const value = "s3cret-paste-mistake";
+    return Effect.gen(function* () {
+      yield* Effect.exit(legacyConfigPushHandler({ projectRef: Option.some(value) }));
+      const event = analytics.captured.find((c) => c.event === "cli_command_executed");
+      expect(event?.properties["flags"]).toEqual({ "project-ref": "<redacted>" });
+    }).pipe(Effect.provide(wiringLayer(analytics, value)));
   });
 });
