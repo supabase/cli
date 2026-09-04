@@ -190,6 +190,44 @@ describe("stack gateway", () => {
     ),
   );
 
+  it.live("interrupts lazy activation when the client disconnects before proxying", () =>
+    withPlatform(
+      Effect.gen(function* () {
+        const started = yield* Deferred.make<void>();
+        const interrupted = yield* Deferred.make<void>();
+        const gateway = yield* makeHttpGateway({
+          address: "127.0.0.1",
+          port: 0,
+          routes: [{ capability: "rest", match: () => true }],
+          activate: () =>
+            Effect.gen(function* () {
+              yield* Deferred.succeed(started, undefined);
+              yield* Effect.never.pipe(Effect.ensuring(Deferred.succeed(interrupted, undefined)));
+              return { capability: "rest" as const, endpoint: { host: "127.0.0.1", port: 1 } };
+            }),
+        });
+        let request: ClientRequest | undefined;
+        const requestFiber = yield* Effect.forkChild(
+          Effect.callback<void, never>((resume) => {
+            request = requestHttp(
+              { host: "127.0.0.1", port: gateway.port, path: "/rest/v1/items" },
+              (response) => response.resume(),
+            );
+            request.once("error", () => resume(Effect.void));
+            request.end();
+            return Effect.sync(() => request?.destroy());
+          }),
+          { startImmediately: true },
+        );
+        yield* Deferred.await(started);
+        request?.destroy();
+        yield* Deferred.await(interrupted).pipe(Effect.timeout("5 seconds"));
+        yield* Fiber.interrupt(requestFiber);
+        yield* gateway.close;
+      }),
+    ),
+  );
+
   it.live("routes an HTTP request after lazy activation and forwards the response", () =>
     withPlatform(
       Effect.gen(function* () {

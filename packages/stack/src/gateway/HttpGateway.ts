@@ -290,6 +290,28 @@ const mapFailure = (cause: Cause.Cause<unknown>): number => {
   return 503;
 };
 
+const cancelOnRequestClose = (
+  request: IncomingMessage,
+  response: ServerResponse,
+  fiber: Fiber<unknown, unknown>,
+): void => {
+  let active = true;
+  const cleanup = () => {
+    if (!active) return;
+    active = false;
+    request.off("aborted", cancel);
+    response.off("close", cancel);
+  };
+  const cancel = () => {
+    if (!active || response.writableEnded) return;
+    cleanup();
+    fiber.interruptUnsafe();
+  };
+  request.once("aborted", cancel);
+  response.once("close", cancel);
+  fiber.addObserver(cleanup);
+};
+
 const handleRequest = (
   request: IncomingMessage,
   response: ServerResponse,
@@ -339,8 +361,9 @@ const handleRequest = (
   // Node invokes this handler outside Effect; use the owner-scoped FiberSet
   // runtime so cancellation of the gateway interrupts in-flight activation.
   const fiber = runFork(activation);
+  cancelOnRequestClose(request, response, fiber);
   fiber.addObserver((exit) => {
-    if (!Exit.isFailure(exit) || response.writableEnded) return;
+    if (!Exit.isFailure(exit) || response.writableEnded || response.destroyed) return;
     if (response.headersSent) {
       response.destroy();
       return;
