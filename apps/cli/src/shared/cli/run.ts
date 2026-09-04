@@ -17,10 +17,10 @@ import {
 import { CliError, CliOutput, Command } from "effect/unstable/cli";
 import { ChildProcessSpawner } from "effect/unstable/process";
 import { CLI_VERSION } from "./version.ts";
-import { Credentials } from "../../next/auth/credentials.service.ts";
-import type { CliProjectHome } from "../../next/config/cli-project-home.service.ts";
-import type { CliSettings } from "../../next/config/cli-settings.service.ts";
-import type { ProjectLinkState } from "../../next/config/project-link-state.service.ts";
+import { Credentials } from "../auth/credentials.service.ts";
+import type { CliProjectHome } from "../config/cli-project-home.service.ts";
+import type { CliSettings } from "../config/cli-settings.service.ts";
+import type { ProjectLinkState } from "../config/project-link-state.service.ts";
 import type { LegacyPlatformApiFactory } from "../../legacy/auth/legacy-platform-api-factory.service.ts";
 import { jsonCliOutputFormatter } from "../output/json-formatter.ts";
 import { textCliOutputFormatter } from "../output/text-formatter.ts";
@@ -30,11 +30,11 @@ import type { OutputFormat } from "../output/types.ts";
 import { Output } from "../output/output.service.ts";
 import { LegacyGoChildExitError } from "../legacy/legacy-go-child-exit.error.ts";
 import { GoProxyInvocation, goProxyInvocationLayer } from "../legacy/go-proxy-invocation.ts";
-import { cliSettingsLayer } from "../../next/config/cli-settings.layer.ts";
-import { cliProjectHomeLayer } from "../../next/config/cli-project-home.layer.ts";
-import { CliProjectLocalServiceVersions } from "../../next/config/cli-project-local-service-versions.service.ts";
-import { cliProjectContextLayer } from "../../next/config/cli-project-context.layer.ts";
-import { projectLinkStateLayer } from "../../next/config/project-link-state.layer.ts";
+import { cliSettingsLayer } from "../config/cli-settings.layer.ts";
+import { cliProjectHomeLayer } from "../config/cli-project-home.layer.ts";
+import { CliProjectLocalServiceVersions } from "../config/cli-project-local-service-versions.service.ts";
+import { cliProjectContextLayer } from "../config/cli-project-context.layer.ts";
+import { projectLinkStateLayer } from "../config/project-link-state.layer.ts";
 import { processControlLayer } from "../runtime/process-control.layer.ts";
 import { runtimeInfoLayer } from "../runtime/runtime-info.layer.ts";
 import { ttyLayer } from "../runtime/tty.layer.ts";
@@ -121,10 +121,9 @@ const globalFlagsWithValues = new Set([
 // deleted as unreachable in CLI-1966, last present at commit a253ccba2), so native
 // `start` must participate in the global
 // wrapper to match. This list is matched purely against argv command-path segments — it has
-// no notion of which shell (legacy vs next) registered the matching command, so `next start`
-// (a completely different command tree that happens to share the literal path `["start"]`)
-// needs its OWN exemption, passed via `RunCliOptions.additionalSelfManagedSignalCommands` from
-// `next/cli/main.ts` — see that call site's comment for why.
+// no notion of which shell registered the matching command, so a shell whose OWN command tree
+// happens to share one of these literal paths for an unrelated reason needs its own exemption,
+// passed via `RunCliOptions.additionalSelfManagedSignalCommands` instead of added here.
 //
 // `["db", "start"]` (top-level `db start`) is ALSO deliberately not listed here, for the exact
 // same reason as `start` above: it used to proxy container bootstrap to the hidden Go
@@ -716,9 +715,8 @@ export interface RunCliOptions {
   readonly analyticsLayer: AnyAnalyticsLayer;
   /**
    * Extra command paths (on top of the shared `selfManagedSignalCommands` list) that must NOT
-   * be wrapped in the global signal-interrupt handler for this shell specifically — see
-   * `next/cli/main.ts`'s own `start` exemption for why a shell needs this instead of just
-   * adding to the shared list.
+   * be wrapped in the global signal-interrupt handler for this shell's invocation specifically,
+   * rather than for every shell sharing this runner.
    */
   readonly additionalSelfManagedSignalCommands?: ReadonlyArray<ReadonlyArray<string>>;
   /**
