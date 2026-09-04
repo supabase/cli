@@ -86,14 +86,18 @@ export type GatewayRoute = GatewayProxyRoute | GatewayLocalRoute;
 export const isGatewayProxyRoute = (route: GatewayRoute): route is GatewayProxyRoute =>
   route.capability !== undefined;
 
+type GatewayHttpKey = PortField | "api:internal";
+
 export interface StackGateway {
-  readonly http: ReadonlyMap<PortField, HttpGateway>;
+  readonly http: ReadonlyMap<GatewayHttpKey, HttpGateway>;
   readonly tcp: ReadonlyMap<PortField, TcpGateway>;
   readonly close: Effect.Effect<void>;
 }
 
-interface HttpGatewayListenerOptions {
+export interface HttpGatewayListenerOptions {
   readonly field: PortField;
+  /** Optional internal map key when multiple listeners serve one logical field. */
+  readonly key?: GatewayHttpKey;
   readonly options: Omit<HttpGatewayOptions, "activate">;
 }
 
@@ -115,7 +119,7 @@ export const makeGateway = (
   options: StackGatewayOptions,
 ): Effect.Effect<StackGateway, GatewayActivationError, import("effect/Scope").Scope> =>
   Effect.gen(function* () {
-    const http = new Map<PortField, HttpGateway>();
+    const http = new Map<GatewayHttpKey, HttpGateway>();
     const tcp = new Map<PortField, TcpGateway>();
     const closeValues = (values: Iterable<{ readonly close: Effect.Effect<void> }>) =>
       Effect.forEach(values, (gateway) => gateway.close.pipe(Effect.exit), {
@@ -123,10 +127,11 @@ export const makeGateway = (
         discard: true,
       });
     for (const entry of options.http ?? []) {
-      if (http.has(entry.field)) {
+      const key = entry.key ?? entry.field;
+      if (http.has(key)) {
         yield* closeValues(http.values());
         return yield* new GatewayActivationError({
-          message: `Duplicate HTTP gateway listener ${entry.field}`,
+          message: `Duplicate HTTP gateway listener ${key}`,
         });
       }
       const acquired = yield* Effect.exit(
@@ -136,7 +141,7 @@ export const makeGateway = (
         yield* closeValues(http.values());
         return yield* Effect.failCause(acquired.cause);
       }
-      http.set(entry.field, acquired.value);
+      http.set(key, acquired.value);
     }
     for (const entry of options.tcp ?? []) {
       if (tcp.has(entry.field) || http.has(entry.field)) {

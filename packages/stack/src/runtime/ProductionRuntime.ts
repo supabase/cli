@@ -517,6 +517,7 @@ export const makeProductionRuntime = (
       stackId: options.stackId,
       fetchJson,
     }).pipe(Effect.provideService(Scope.Scope, ownerScope));
+    const hostRoute = yield* Ref.make<ContainerHostRoute | undefined>(undefined);
     const ingress =
       options.ingress ??
       (yield* makeSupervisorIngress({
@@ -525,6 +526,8 @@ export const makeProductionRuntime = (
         store: options.stateStore,
         context: options.context,
         resolveAuthTemplates: inputOwner.resolveAuthTemplates,
+        resolveInternalApiBindAddress: () =>
+          Ref.get(hostRoute).pipe(Effect.map((route) => route?.bindAddress)),
       }));
     const envFiles =
       options.envFileOwner ??
@@ -575,8 +578,6 @@ export const makeProductionRuntime = (
       options.bootstrapDatabase ?? ((state: PersistedStackState) => bootstrapDatabaseAt(state));
 
     const artifacts = new Map<string, PreparedWorkloadArtifact>();
-    const hostRoute = yield* Ref.make<ContainerHostRoute | undefined>(undefined);
-
     const freshState = (key: Pick<RuntimeWorkloadKey, "stackId" | "workloadId">) =>
       currentStateReader(options).pipe(
         Effect.mapError((error) => mapDriverError(key, error)),
@@ -987,6 +988,29 @@ export const makeProductionRuntime = (
           ),
         waitForReadiness,
         bootstrapDatabase: bootstrapWorkloadDatabase,
+        onNetworkReady: (network) => {
+          const resolveGateway = containerEngine.resolveNetworkGateway;
+          if (resolveGateway === undefined) return Effect.succeed(false);
+          return resolveGateway(network.id).pipe(
+            Effect.mapError(
+              (error) =>
+                new RuntimeDriverError({
+                  message: "Unable to resolve container network gateway",
+                  stackId: options.stackId,
+                  workloadId: network.name,
+                  cause: error,
+                }),
+            ),
+            Effect.flatMap((gateway) =>
+              Effect.gen(function* () {
+                const current = yield* Ref.get(hostRoute);
+                if (current?.host === gateway && current.bindAddress === gateway) return false;
+                yield* Ref.set(hostRoute, { host: gateway, bindAddress: gateway });
+                return true;
+              }),
+            ),
+          );
+        },
         logStore: logs,
       });
     }

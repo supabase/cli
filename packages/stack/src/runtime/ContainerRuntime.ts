@@ -62,6 +62,10 @@ export interface ContainerRuntimeOptions {
     workload: PlannedWorkload,
     resource: ContainerResource,
   ) => Effect.Effect<void, RuntimeDriverError>;
+  /** Updates container-to-host routing after the exact stack network is ready. */
+  readonly onNetworkReady?: (
+    network: ContainerResource,
+  ) => Effect.Effect<boolean, RuntimeDriverError>;
   /** Persists exact container stdout/stderr lines while a workload is running. */
   readonly logStore?: LogStore;
 }
@@ -585,44 +589,19 @@ export const makeContainerRuntime = (
             yield* withEngine(key, options.engine.stopContainer(existing.container));
           resources.delete(resourceKey(key));
         }
-        const resolution = yield* resolved;
+        const initialResolution = yield* resolved;
         yield* guard;
-        const requestedPublications = resolution.publications ?? [];
-        if (requestedPublications.some((publication) => !isValidPublication(publication)))
+        const initialPublications = initialResolution.publications ?? [];
+        if (initialPublications.some((publication) => !isValidPublication(publication)))
           return yield* toDriverError(
             key,
             new Error("Container publications must use valid loopback host ports"),
           );
-        const publications = requestedPublications.filter(isValidPublication);
-        yield* withEngine(key, options.engine.preflight);
-        const volumeRequest = resolution.volume;
-        if (volumeRequest !== undefined && volumeRequest.target.length === 0)
+        const initialVolumeRequest = initialResolution.volume;
+        if (initialVolumeRequest !== undefined && initialVolumeRequest.target.length === 0)
           return yield* toDriverError(key, new Error("Container volume mapping is invalid"));
+        yield* withEngine(key, options.engine.preflight);
         const entries = yield* withEngine(key, options.engine.listResources(key.stackId));
-        const volumeSpec =
-          volumeRequest === undefined ? undefined : volumeSpecFor(key, volumeRequest);
-        const exactVolume =
-          volumeSpec === undefined
-            ? undefined
-            : entries.find(
-                (entry) =>
-                  entry.kind === "volume" &&
-                  entry.name === volumeSpec.name &&
-                  sameLabels(entry.labels, volumeSpec.labels),
-              );
-        if (volumeSpec !== undefined) {
-          const volume = volumeSpec;
-          if (exactVolume === undefined) {
-            const sameLabel = entries.find(
-              (entry) => entry.kind === "volume" && sameLabels(entry.labels, volume.labels),
-            );
-            const sameName = entries.find(
-              (entry) => entry.kind === "volume" && entry.name === volume.name,
-            );
-            if (sameLabel !== undefined || sameName !== undefined)
-              return yield* toDriverError(key, new Error("Container volume identity collision"));
-          }
-        }
         const existingExact = entries.find(
           (entry) => entry.kind === "workload" && sameWorkloadIdentity(entry.labels, labels),
         );
@@ -690,6 +669,51 @@ export const makeContainerRuntime = (
             key,
             options.engine.createNetwork({ name: networkName, labels: networkLabels }),
           ));
+
+        const routeChanged =
+          options.onNetworkReady === undefined
+            ? false
+            : yield* options.onNetworkReady(networkResource);
+        const resolution = routeChanged
+          ? yield* options.resolveWorkload === undefined
+              ? Effect.succeed<ContainerWorkloadResolution>({})
+              : options.resolveWorkload(key, workload)
+          : initialResolution;
+        yield* guard;
+        const requestedPublications = resolution.publications ?? [];
+        if (requestedPublications.some((publication) => !isValidPublication(publication)))
+          return yield* toDriverError(
+            key,
+            new Error("Container publications must use valid loopback host ports"),
+          );
+        const publications = requestedPublications.filter(isValidPublication);
+        const volumeRequest = resolution.volume;
+        if (volumeRequest !== undefined && volumeRequest.target.length === 0)
+          return yield* toDriverError(key, new Error("Container volume mapping is invalid"));
+        const volumeSpec =
+          volumeRequest === undefined ? undefined : volumeSpecFor(key, volumeRequest);
+        const exactVolume =
+          volumeSpec === undefined
+            ? undefined
+            : entries.find(
+                (entry) =>
+                  entry.kind === "volume" &&
+                  entry.name === volumeSpec.name &&
+                  sameLabels(entry.labels, volumeSpec.labels),
+              );
+        if (volumeSpec !== undefined) {
+          const volume = volumeSpec;
+          if (exactVolume === undefined) {
+            const sameLabel = entries.find(
+              (entry) => entry.kind === "volume" && sameLabels(entry.labels, volume.labels),
+            );
+            const sameName = entries.find(
+              (entry) => entry.kind === "volume" && entry.name === volume.name,
+            );
+            if (sameLabel !== undefined || sameName !== undefined)
+              return yield* toDriverError(key, new Error("Container volume identity collision"));
+          }
+        }
 
         if (volumeSpec !== undefined) {
           const volume = volumeSpec;

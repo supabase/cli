@@ -5,6 +5,7 @@ import type {
   GatewayRoute,
   GatewayProxyRoute,
   GatewayRouteRequest,
+  HttpGatewayListenerOptions,
   StackGateway,
 } from "../gateway/Gateway.ts";
 import {
@@ -72,6 +73,8 @@ export interface SupervisorIngressOptions {
     port: number,
     field: PortField,
   ) => Effect.Effect<HostListener, PortUnavailableError, Scope.Scope>;
+  /** Resolves an internal host bind address for container callbacks when required. */
+  readonly resolveInternalApiBindAddress?: () => Effect.Effect<string | undefined>;
   /** Resolver may be replaced by the production credential owner. */
   readonly apiMaterial?: (
     state: LifecycleInput["state"],
@@ -305,10 +308,11 @@ export const makeSupervisorIngress = (
                     );
                   },
                 };
-          const http = reservation.hostListeners
+          const http: HttpGatewayListenerOptions[] = reservation.hostListeners
             .filter((listener) => isHttpPortField(listener.field))
             .map((listener) => ({
               field: listener.field,
+              key: listener.field,
               options: {
                 listener,
                 routes:
@@ -322,6 +326,36 @@ export const makeSupervisorIngress = (
                 ) => routeBackend(input, reservation, route, result),
               },
             }));
+          const internalApiAddress =
+            input.definition.listeners.api.enabled &&
+            reservation.assignments.api !== undefined &&
+            options.resolveInternalApiBindAddress !== undefined
+              ? yield* options.resolveInternalApiBindAddress()
+              : undefined;
+          let internalApi: HostListener | undefined;
+          if (internalApiAddress !== undefined && reservation.assignments.api !== undefined) {
+            internalApi = yield* (options.bindHost ?? bindHostListener)(
+              internalApiAddress,
+              reservation.assignments.api.port,
+              "api",
+            ).pipe(Effect.provideService(Scope.Scope, entry.scope));
+            http.push({
+              field: "api",
+              key: "api:internal",
+              options: {
+                listener: internalApi,
+                routes:
+                  templateRoute !== undefined
+                    ? [templateRoute, ...(catalog.http.get("api") ?? [])]
+                    : (catalog.http.get("api") ?? []),
+                resolveBackend: (
+                  route: GatewayProxyRoute,
+                  _request: GatewayRouteRequest,
+                  result: ActivationResult,
+                ) => routeBackend(input, reservation, route, result),
+              },
+            });
+          }
           const tcp = reservation.hostListeners
             .filter((listener) => !isHttpPortField(listener.field))
             .map((listener) => ({
@@ -336,18 +370,25 @@ export const makeSupervisorIngress = (
                 ) => routeBackend(input, reservation, route, result),
               },
             }));
-          const gateway = yield* makeGateway({
-            http,
-            tcp,
-            activate: (capability) =>
-              activate(capability).pipe(
-                Effect.mapError((error) =>
-                  error instanceof GatewayActivationError
-                    ? error
-                    : new GatewayActivationError({ message: error.message, cause: error }),
+          const gatewayResult = yield* Effect.exit(
+            makeGateway({
+              http,
+              tcp,
+              activate: (capability) =>
+                activate(capability).pipe(
+                  Effect.mapError((error) =>
+                    error instanceof GatewayActivationError
+                      ? error
+                      : new GatewayActivationError({ message: error.message, cause: error }),
+                  ),
                 ),
-              ),
-          }).pipe(Effect.provideService(Scope.Scope, entry.scope));
+            }).pipe(Effect.provideService(Scope.Scope, entry.scope)),
+          );
+          if (Exit.isFailure(gatewayResult)) {
+            if (internalApi !== undefined) yield* internalApi.close.pipe(Effect.ignore);
+            return yield* Effect.failCause(gatewayResult.cause);
+          }
+          const gateway = gatewayResult.value;
           yield* Ref.set(current, {
             input,
             reservation,

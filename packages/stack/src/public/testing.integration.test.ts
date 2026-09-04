@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { tmpdir } from "node:os";
 // oxlint-disable-next-line effecttsgo/node-builtin-import -- this fixture asserts exact root paths.
-import { join } from "node:path";
+import { dirname, join, sep } from "node:path";
 import type { PromiseStack } from "./PromiseStack.ts";
 import { createTestStackWith, type TestStackOperations } from "./Testing.ts";
 import { defaultRuntimeEnvironment } from "../supervisor/Launcher.ts";
@@ -135,11 +135,65 @@ describe("test stack resource", () => {
         removed.push(root);
       },
     };
-    await expect(createTestStackWith({}, operations)).rejects.toThrow(
-      "startup failed; retained test stack root /tmp/stack-test-failed",
-    );
+    let failure: unknown;
+    try {
+      await createTestStackWith({}, operations);
+    } catch (error) {
+      failure = error;
+    }
+    expect(failure).toBeInstanceOf(Error);
+    if (!(failure instanceof Error)) throw new Error("expected startup failure");
+    expect(failure.message).toContain("startup failed");
+    expect(failure.message).toContain("retained test stack root /tmp/stack-test-failed");
     expect(events).toEqual(["start", "destroy"]);
     expect(removed).toEqual([]);
+  });
+
+  it("includes bounded startup diagnostics before cleanup removes a failed stack", async () => {
+    const events: Array<string> = [];
+    const removed: Array<string> = [];
+    const logQueries: Array<Parameters<PromiseStack["logs"]>[0]> = [];
+    const entries = Array.from({ length: 51 }, (_, index) => ({
+      cursor: { opaque: `v1_${(index + 1).toString(36)}` },
+      timestamp: "2026-01-01T00:00:00.000Z",
+      source: "pooler" as const,
+      stream: "stderr" as const,
+      message: index === 50 ? "pooler stderr" : `old-${index}`,
+    }));
+    const operations: TestStackOperations = {
+      createRoot: async () => "/tmp/stack-test-diagnostics",
+      createStack: async () => ({
+        ...fakeStack(events),
+        start: async () => {
+          events.push("start");
+          throw new Error("startup failed");
+        },
+        status: async () => status("starting"),
+        logs: async (query) => {
+          logQueries.push(query);
+          return { entries, cursor: { opaque: "v1_1" }, running: false };
+        },
+      }),
+      removeRoot: async (root) => {
+        removed.push(root);
+      },
+    };
+
+    let failure: unknown;
+    try {
+      await createTestStackWith({}, operations);
+    } catch (error) {
+      failure = error;
+    }
+    expect(failure).toBeInstanceOf(Error);
+    if (!(failure instanceof Error)) throw new Error("expected startup failure");
+    expect(failure.message).toContain("startup failed");
+    expect(failure.message).toContain("pooler stderr");
+    expect(failure.message).not.toContain("old-0");
+    expect(failure.cause).toEqual(expect.objectContaining({ message: "startup failed" }));
+    expect(logQueries).toEqual([{ tail: 50 }]);
+    expect(events).toEqual(["start", "destroy"]);
+    expect(removed).toEqual(["/tmp/stack-test-diagnostics"]);
   });
 
   it("fails and cleans up when start returns before the stack is ready", async () => {
@@ -360,6 +414,36 @@ describe("test stack resource", () => {
     await first[Symbol.asyncDispose]();
     await second[Symbol.asyncDispose]();
     expect(removedRoots).toEqual(["/tmp/stack-test-shared-a", "/tmp/stack-test-shared-b"]);
+  });
+
+  it("creates auto roots under the managed state root and cleans up the exact root", async () => {
+    let setupRoot: string | undefined;
+    let createdRoot: string | undefined;
+    let removedRoot: string | undefined;
+    const stack = await createTestStackWith(
+      {
+        setupProject: async (root) => {
+          setupRoot = root;
+        },
+      },
+      {
+        createStack: async (options) => {
+          createdRoot = options.projectRoot;
+          return fakeStack([]);
+        },
+        removeRoot: async (root) => {
+          removedRoot = root;
+        },
+      },
+    );
+    const managedRoot = defaultRuntimeEnvironment().stateRoot;
+    const projectsRoot = join(dirname(managedRoot), "test-projects");
+    expect(setupRoot).toBe(createdRoot);
+    expect(createdRoot?.startsWith(`${projectsRoot}${sep}`)).toBe(true);
+    if (!managedRoot.startsWith(`${tmpdir()}${sep}`))
+      expect(createdRoot?.startsWith(`${tmpdir()}${sep}`)).toBe(false);
+    await stack[Symbol.asyncDispose]();
+    expect(removedRoot).toBe(createdRoot);
   });
 
   it("retains the project root and managed state when one stack destroy fails", async () => {

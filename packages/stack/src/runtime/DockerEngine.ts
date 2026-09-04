@@ -70,6 +70,8 @@ export const serializeDockerCommand = (command: ContainerCommand): ContainerProc
           networkFormat,
         ],
       };
+    case "inspect-network-gateway":
+      return { args: ["network", "inspect", command.id, "--format", "{{json .IPAM.Config}}"] };
     case "inspect-volumes":
       return {
         args: [

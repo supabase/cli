@@ -15,6 +15,8 @@ export interface ContainerPlatform {
 export interface ContainerHostRoute {
   readonly host: string;
   readonly gateway?: string;
+  /** Host address where the in-process gateway also binds for rootful Linux containers. */
+  readonly bindAddress?: string;
 }
 class ContainerExecutableNotFoundError extends Data.TaggedError(
   "ContainerExecutableNotFoundError",
@@ -151,6 +153,7 @@ export type ContainerCommand =
   | { readonly operation: "pull-image"; readonly image: string }
   | { readonly operation: "inspect-containers"; readonly stackId: StackId }
   | { readonly operation: "inspect-networks"; readonly stackId: StackId }
+  | { readonly operation: "inspect-network-gateway"; readonly id: string }
   | { readonly operation: "inspect-volumes"; readonly stackId: StackId }
   | { readonly operation: "create-network"; readonly spec: ContainerNetworkSpec }
   | { readonly operation: "remove-network"; readonly id: string }
@@ -387,6 +390,9 @@ export interface ContainerEngineCodecs {
   readonly decodeNetworks: (
     result: ContainerCommandResult,
   ) => Effect.Effect<ReadonlyArray<ContainerResource>, ContainerEngineFailure>;
+  readonly decodeNetworkGateway: (
+    result: ContainerCommandResult,
+  ) => Effect.Effect<string, ContainerEngineFailure>;
   readonly decodeVolumes: (
     result: ContainerCommandResult,
   ) => Effect.Effect<ReadonlyArray<ContainerResource>, ContainerEngineFailure>;
@@ -522,6 +528,25 @@ export const makeContainerEngineCodecs = (options: {
         Effect.map((labels): ContainerResource => ({ id, name, kind: "network", labels })),
       );
     });
+  const decodeNetworkGateway: ContainerEngineCodecs["decodeNetworkGateway"] = (result) =>
+    Schema.decodeEffect(Schema.fromJsonString(Schema.Unknown))(result.stdout).pipe(
+      Effect.mapError((cause) => protocol("inspect-network-gateway", cause)),
+      Effect.flatMap((value) => {
+        const entries = Array.isArray(value) ? value : [value];
+        const gateway = entries.find(
+          (entry): entry is { readonly Gateway: string } =>
+            typeof entry === "object" &&
+            entry !== null &&
+            "Gateway" in entry &&
+            typeof entry.Gateway === "string" &&
+            /^(?:\d{1,3}\.){3}\d{1,3}$/u.test(entry.Gateway) &&
+            entry.Gateway.split(".").every((part: string) => Number(part) <= 255),
+        )?.Gateway;
+        return gateway === undefined
+          ? Effect.fail(protocol("inspect-network-gateway"))
+          : Effect.succeed(gateway);
+      }),
+    );
   const decodeVolumes: ContainerEngineCodecs["decodeVolumes"] = (result) =>
     decodeRows("inspect-volumes", result.stdout, 4, (values) => {
       const [name, stack, workload, role] = values;
@@ -562,6 +587,7 @@ export const makeContainerEngineCodecs = (options: {
       ),
     decodeContainers,
     decodeNetworks,
+    decodeNetworkGateway,
     decodeVolumes,
     decodeCreate,
     decodeWait,
@@ -587,6 +613,8 @@ export interface ContainerEngine {
   readonly createNetwork: (
     spec: ContainerNetworkSpec,
   ) => Effect.Effect<ContainerResource, ContainerEngineFailure>;
+  /** Resolves a rootful Docker network's IPv4 bridge gateway. */
+  readonly resolveNetworkGateway?: (id: string) => Effect.Effect<string, ContainerEngineFailure>;
   readonly removeNetwork: (id: string) => Effect.Effect<void, ContainerEngineFailure>;
   readonly createVolume: (
     spec: ContainerVolumeSpec,
@@ -684,7 +712,9 @@ export const makeContainerEngineCore = (options: ContainerEngineOptions): Contai
             }),
           )
         : Effect.succeed(
-            options.platform.os === "linux" && options.platform.desktop !== true
+            options.platform.os === "linux" &&
+              options.platform.desktop !== true &&
+              options.platform.rootless !== true
               ? { host: "host.docker.internal", gateway: "host-gateway" }
               : { host: "host.docker.internal" },
           )
@@ -725,6 +755,18 @@ export const makeContainerEngineCore = (options: ContainerEngineOptions): Contai
           options.codecs.decodeCreate("create-network", result, spec, "network"),
         ),
       ),
+    resolveNetworkGateway:
+      options.kind === "docker" &&
+      options.platform.os === "linux" &&
+      options.platform.desktop !== true &&
+      options.platform.rootless !== true &&
+      options.platform.remote !== true
+        ? (id) =>
+            check("inspect-network-gateway", {
+              operation: "inspect-network-gateway",
+              id,
+            }).pipe(Effect.flatMap(options.codecs.decodeNetworkGateway))
+        : undefined,
     removeNetwork: (id) => noResult("remove-network", { operation: "remove-network", id }),
     createVolume: (spec) =>
       check("create-volume", { operation: "create-volume", spec }).pipe(

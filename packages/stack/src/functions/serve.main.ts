@@ -244,6 +244,7 @@ Deno.serve({
       });
       return await worker.fetch(prepareUserRequest(request));
     } catch (error) {
+      console.error("[functions] worker error", error);
       for (const [denoError, sbCode] of DENO_SB_ERROR_MAP.entries()) {
         if (denoError !== undefined && error instanceof denoError)
           return getResponse(

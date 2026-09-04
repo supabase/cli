@@ -414,6 +414,41 @@ describe("container runtime", () => {
     }),
   );
 
+  it.live("resolves a rootful Docker network gateway without enabling host binds elsewhere", () =>
+    Effect.gen(function* () {
+      const requests: ContainerProcessRequest[] = [];
+      const docker = makeDockerEngine({
+        runner: makeControlledCommandRunner({
+          run: (request) =>
+            Effect.sync(() => {
+              requests.push(request);
+              return commandResult([{ Gateway: "172.18.0.1" }]);
+            }),
+        }),
+        platform: { os: "linux", desktop: false, rootless: false },
+      });
+      expect(docker.resolveNetworkGateway).toBeDefined();
+      expect(yield* docker.resolveNetworkGateway!("network-id")).toBe("172.18.0.1");
+      expect(requests[0]?.args).toEqual([
+        "network",
+        "inspect",
+        "network-id",
+        "--format",
+        "{{json .IPAM.Config}}",
+      ]);
+      const desktop = makeDockerEngine({
+        runner: makeControlledCommandRunner({ run: () => Effect.succeed(commandResult([])) }),
+        platform: { os: "darwin", desktop: true },
+      });
+      expect(desktop.resolveNetworkGateway).toBeUndefined();
+      const rootless = makeDockerEngine({
+        runner: makeControlledCommandRunner({ run: () => Effect.succeed(commandResult([])) }),
+        platform: { os: "linux", rootless: true },
+      });
+      expect(rootless.resolveNetworkGateway).toBeUndefined();
+    }),
+  );
+
   it.live("runs only container artifacts with exact labels, private backend and RO mounts", () =>
     Effect.gen(function* () {
       const commands: ContainerProcessRequest[] = [];
@@ -465,6 +500,44 @@ describe("container runtime", () => {
       }
       yield* runtime.stop(functionsKey);
       yield* runtime.remove(functionsKey);
+    }),
+  );
+
+  it.live("resolves workload inputs again after the network gateway is ready", () =>
+    Effect.gen(function* () {
+      const state: FakeContainerState = {
+        resources: [],
+        imagePresent: true,
+        calls: [],
+        createdSpecs: [],
+        nextId: 1,
+      };
+      let routeReady = false;
+      let resolutions = 0;
+      const runtime = yield* makeContainerRuntime({
+        engine: fakeContainerEngine(state),
+        ownerSessionId: "owner-session",
+        resolveWorkload: () =>
+          Effect.sync(() => {
+            resolutions += 1;
+            return routeReady
+              ? { hostRoute: { host: "172.18.0.1", bindAddress: "172.18.0.1" } }
+              : {};
+          }),
+        onNetworkReady: () =>
+          Effect.sync(() => {
+            routeReady = true;
+            return true;
+          }),
+      });
+      const ready = yield* runtime.start(key, workload());
+      expect(ready.state).toBe("ready");
+      expect(resolutions).toBe(2);
+      expect(state.createdSpecs.at(-1)?.hostRoute).toEqual({
+        host: "172.18.0.1",
+        bindAddress: "172.18.0.1",
+      });
+      yield* runtime.cleanup({ stackId, destroy: true });
     }),
   );
 

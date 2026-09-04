@@ -322,18 +322,23 @@ const expectRuntimeInputsAbsent = async (
   }
 };
 
-const throwStudioProfileDiagnostics = async (stack: TestStack, cause: unknown): Promise<never> => {
+const throwCapabilityDiagnostics = async (
+  stack: TestStack,
+  capabilityName: string,
+  operation: string,
+  cause: unknown,
+): Promise<never> => {
   let status: StackStatus | undefined;
   try {
     status = await stack.status();
   } catch {
     // Preserve the original request failure when status is unavailable.
   }
-  const studio = status?.capabilities.find(({ name }) => name === "studio");
+  const capability = status?.capabilities.find(({ name }) => name === capabilityName);
   const recentLogs: StackLogEntry[] = [];
   try {
     for (const entry of (await stack.logs()).entries) {
-      if (entry.source !== "studio" && entry.source !== "gateway") continue;
+      if (entry.source !== capabilityName && entry.source !== "gateway") continue;
       recentLogs.push(entry);
       if (recentLogs.length > 50) recentLogs.shift();
     }
@@ -341,14 +346,14 @@ const throwStudioProfileDiagnostics = async (stack: TestStack, cause: unknown): 
     // Preserve the original request failure when logs are unavailable.
   }
   const reason = cause instanceof Error ? cause.message : String(cause);
-  const state = studio === undefined ? "unavailable" : studio.state;
-  const error = studio?.error === undefined ? "none" : studio.error;
+  const state = capability === undefined ? "unavailable" : capability.state;
+  const error = capability?.error === undefined ? "none" : capability.error;
   const logs =
     recentLogs.length === 0
       ? "none"
       : recentLogs.map((entry) => `${entry.source}/${entry.stream}: ${entry.message}`).join("\n");
   throw new Error(
-    `Studio profile request failed: ${reason}; Studio state=${state}; error=${error}; recent logs:\n${logs}`,
+    `${operation} failed: ${reason}; ${capabilityName} state=${state}; error=${error}; recent logs:\n${logs}`,
     { cause },
   );
 };
@@ -795,63 +800,70 @@ const runWholeStackScenario = async (mode: (typeof RUNTIME_CASES)[number]): Prom
 
   // Functions are request-time discovered and call REST through SUPABASE_URL.
   const functionPath = `/functions/v1/${functionSlug}`;
-  let firstFunction: JsonObject = {};
-  await activate(stack, "functions", async () => {
-    firstFunction = await jsonObject(
-      await request(api.url, functionPath, { headers: apiHeaders(credentials) }),
-    );
-  });
-  expect(firstFunction).toEqual(
-    expect.objectContaining({
-      marker: markers.first,
-      functionSlug,
-      rows: expect.arrayContaining([{ id: 1, payload: markers.first }]),
-    }),
-  );
-  await writeFile(
-    join(projectRoot, "supabase", "functions", functionSlug, "index.ts"),
-    functionSource(table, markers.second),
-  );
-  const secondFunction = await jsonObject(
-    await request(api.url, functionPath, { headers: apiHeaders(credentials) }),
-  );
-  expect(secondFunction).toEqual(
-    expect.objectContaining({
-      marker: markers.second,
-      functionSlug,
-      rows: expect.arrayContaining([{ id: 1, payload: markers.first }]),
-    }),
-  );
-
-  // followLogs is a client-side poller. Capture the current cursor and subscribe
-  // before producing a unique console marker through the real edge runtime.
-  const beforeLiveLogs = await stack.logs({ capabilities: ["functions"] });
-  const liveIterator = stack
-    .followLogs({ capabilities: ["functions"], cursor: beforeLiveLogs.cursor })
-    [Symbol.asyncIterator]();
   try {
-    const liveNext = liveIterator.next();
+    let firstFunction: JsonObject = {};
+    await activate(stack, "functions", async () => {
+      firstFunction = await jsonObject(
+        await request(api.url, functionPath, { headers: apiHeaders(credentials) }),
+      );
+    });
+    expect(firstFunction).toEqual(
+      expect.objectContaining({
+        marker: markers.first,
+        functionSlug,
+        rows: expect.arrayContaining([{ id: 1, payload: markers.first }]),
+      }),
+    );
     await writeFile(
       join(projectRoot, "supabase", "functions", functionSlug, "index.ts"),
-      functionSource(table, markers.live),
+      functionSource(table, markers.second),
     );
-    await jsonObject(await request(api.url, functionPath, { headers: apiHeaders(credentials) }));
-    let liveEntry = await liveNext;
-    for (let attempt = 0; attempt < 100; attempt += 1) {
-      if (liveEntry.done) break;
-      if (liveEntry.value.source === "functions" && liveEntry.value.message.includes(markers.live))
-        break;
-      liveEntry = await liveIterator.next();
+    const secondFunction = await jsonObject(
+      await request(api.url, functionPath, { headers: apiHeaders(credentials) }),
+    );
+    expect(secondFunction).toEqual(
+      expect.objectContaining({
+        marker: markers.second,
+        functionSlug,
+        rows: expect.arrayContaining([{ id: 1, payload: markers.first }]),
+      }),
+    );
+
+    // followLogs is a client-side poller. Capture the current cursor and subscribe
+    // before producing a unique console marker through the real edge runtime.
+    const beforeLiveLogs = await stack.logs({ capabilities: ["functions"] });
+    const liveIterator = stack
+      .followLogs({ capabilities: ["functions"], cursor: beforeLiveLogs.cursor })
+      [Symbol.asyncIterator]();
+    try {
+      const liveNext = liveIterator.next();
+      await writeFile(
+        join(projectRoot, "supabase", "functions", functionSlug, "index.ts"),
+        functionSource(table, markers.live),
+      );
+      await jsonObject(await request(api.url, functionPath, { headers: apiHeaders(credentials) }));
+      let liveEntry = await liveNext;
+      for (let attempt = 0; attempt < 100; attempt += 1) {
+        if (liveEntry.done) break;
+        if (
+          liveEntry.value.source === "functions" &&
+          liveEntry.value.message.includes(markers.live)
+        )
+          break;
+        liveEntry = await liveIterator.next();
+      }
+      expect(liveEntry.done).toBe(false);
+      if (!liveEntry.done) {
+        expect(liveEntry.value.source).toBe("functions");
+        expect(liveEntry.value.message).toContain(markers.live);
+      }
+    } finally {
+      await liveIterator.return?.();
     }
-    expect(liveEntry.done).toBe(false);
-    if (!liveEntry.done) {
-      expect(liveEntry.value.source).toBe("functions");
-      expect(liveEntry.value.message).toContain(markers.live);
-    }
-  } finally {
-    await liveIterator.return?.();
+    expect((await liveIterator.next()).done).toBe(true);
+  } catch (cause) {
+    await throwCapabilityDiagnostics(stack, "functions", "Functions flow", cause);
   }
-  expect((await liveIterator.next()).done).toBe(true);
 
   // Mailpit UI traffic lazily activates the mail capability. SMTP delivery is
   // covered by the explicit SMTP configuration scenario below.
@@ -872,7 +884,7 @@ const runWholeStackScenario = async (mode: (typeof RUNTIME_CASES)[number]): Prom
       });
     });
   } catch (cause) {
-    await throwStudioProfileDiagnostics(stack, cause);
+    await throwCapabilityDiagnostics(stack, "studio", "Studio profile request", cause);
   }
 
   // Pooler is a separate public TCP listener over the same database credentials.

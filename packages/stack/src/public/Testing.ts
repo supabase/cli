@@ -1,9 +1,9 @@
 // oxlint-disable effecttsgo/async-function -- AsyncDisposable is the public test-resource contract.
 // oxlint-disable-next-line effecttsgo/node-builtin-import -- test resource owns its exact temp directory.
-import { mkdtemp, rm } from "node:fs/promises";
+import { mkdir, mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 // oxlint-disable-next-line effecttsgo/node-builtin-import -- test resource builds an isolated root.
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import { NodeServices } from "@effect/platform-node";
 import { Data } from "effect";
 import { defaultRuntimeEnvironment } from "../supervisor/Launcher.ts";
@@ -45,8 +45,16 @@ export interface TestStackOperations {
   readonly removeRoot: (root: string) => Promise<void>;
 }
 
+type TestStackOperationsOverrides = Partial<TestStackOperations>;
+
+const createTestProjectRoot = async (): Promise<string> => {
+  const projectsRoot = join(dirname(defaultRuntimeEnvironment().stateRoot), "test-projects");
+  await mkdir(projectsRoot, { recursive: true });
+  return mkdtemp(join(projectsRoot, "supabase-stack-test-"));
+};
+
 const defaultOperations: TestStackOperations = {
-  createRoot: () => mkdtemp(join(tmpdir(), "supabase-stack-test-")),
+  createRoot: createTestProjectRoot,
   createStack: (options, environment) =>
     makePromiseApi(NodeServices.layer, environment).createStack(options),
   removeRoot: (root) => rm(root, { recursive: true, force: true }),
@@ -131,6 +139,41 @@ const validateStartedStatus = (
   );
 };
 
+const STARTUP_DIAGNOSTIC_LOG_TAIL = 50;
+
+const withStartupDiagnostics = async (stack: PromiseStack, primary: unknown): Promise<Error> => {
+  const [snapshot, recentLogs] = await Promise.all([
+    stack.status().catch(() => undefined),
+    stack.logs({ tail: STARTUP_DIAGNOSTIC_LOG_TAIL }).catch(() => undefined),
+  ]);
+  const capabilityStates =
+    snapshot === undefined
+      ? "unavailable"
+      : snapshot.capabilities
+          .map(
+            ({ name, state, error }) =>
+              `${name}=${state}${error === undefined ? "" : ` (${error})`}`,
+          )
+          .join(", ");
+  const logs =
+    recentLogs === undefined
+      ? "unavailable"
+      : recentLogs.entries
+          .slice(-STARTUP_DIAGNOSTIC_LOG_TAIL)
+          .map(({ source, stream, message }) => `${source}/${stream}: ${message}`)
+          .join("\n") || "none";
+  const reason = primary instanceof Error ? primary.message : String(primary);
+  return new Error(
+    [
+      reason,
+      `lifecycle=${snapshot?.lifecycle ?? "unavailable"}`,
+      `capabilities=${capabilityStates}`,
+      `recent logs:\n${logs}`,
+    ].join("; "),
+    { cause: primary },
+  );
+};
+
 const cleanup = async (
   stack: PromiseStack | undefined,
   root: string,
@@ -165,14 +208,15 @@ const cleanup = async (
 /** Internal seam used by integration tests; the package testing barrel exports only createTestStack. */
 export const createTestStackWith = async (
   options: CreateTestStackOptions = {},
-  operations: TestStackOperations = defaultOperations,
+  operations: TestStackOperations | TestStackOperationsOverrides = defaultOperations,
 ): Promise<TestStack> => {
-  const projectRoot = await operations.createRoot();
+  const resolvedOperations: TestStackOperations = { ...defaultOperations, ...operations };
+  const projectRoot = await resolvedOperations.createRoot();
   let stack: PromiseStack | undefined;
   try {
     if (options.setupProject !== undefined) await options.setupProject(projectRoot);
     const runtimeEnvironment = testRuntimeEnvironment();
-    stack = await operations.createStack(
+    stack = await resolvedOperations.createStack(
       {
         projectRoot,
         name: options.name,
@@ -180,25 +224,24 @@ export const createTestStackWith = async (
       },
       runtimeEnvironment,
     );
-    const started = await stack.start(
-      options.config === undefined
-        ? undefined
-        : ({ config: options.config } satisfies PromiseStartStackOptions),
-    );
     try {
+      const started = await stack.start(
+        options.config === undefined
+          ? undefined
+          : ({ config: options.config } satisfies PromiseStartStackOptions),
+      );
       validateStartedStatus(started, options.config);
     } catch (error) {
-      if (error instanceof TestStackReadinessError) throw error;
-      throw new TestStackReadinessError({ message: String(error) });
+      throw await withStartupDiagnostics(stack, error);
     }
     const resource = stack;
     return {
       ...resource,
       stateRoot: runtimeEnvironment.stateRoot,
-      [Symbol.asyncDispose]: () => cleanup(resource, projectRoot, operations),
+      [Symbol.asyncDispose]: () => cleanup(resource, projectRoot, resolvedOperations),
     };
   } catch (error) {
-    await cleanup(stack, projectRoot, operations, error);
+    await cleanup(stack, projectRoot, resolvedOperations, error);
     throw error;
   }
 };

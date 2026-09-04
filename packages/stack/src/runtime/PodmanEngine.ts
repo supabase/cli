@@ -71,6 +71,8 @@ export const serializePodmanCommand = (command: ContainerCommand): ContainerProc
           networkFormat,
         ],
       };
+    case "inspect-network-gateway":
+      return { args: ["network", "inspect", command.id, "--format", "{{json .Subnets}}"] };
     case "inspect-volumes":
       return {
         args: [

@@ -21,6 +21,7 @@ import {
 import { makeStackStateStore } from "../state/StackStateStore.ts";
 import type { PersistedStackState } from "../state/StackState.ts";
 import { makeSupervisorIngress } from "./Ingress.ts";
+import { bindHostListener } from "./HostListener.ts";
 import type { HostListener } from "../state/PortCoordinator.ts";
 import { privateBindingIntentsFor } from "../runtime/WorkloadRuntimeSpec.ts";
 
@@ -52,23 +53,20 @@ const listenBackend = (server: ReturnType<typeof createHttpServer>) =>
     () => closeServer(server),
   ).pipe(Effect.as(server));
 
-const request = (port: number, path = "/rest/v1/items", method = "GET") =>
+const request = (port: number, path = "/rest/v1/items", method = "GET", host = "127.0.0.1") =>
   Effect.callback<{ readonly status: number; readonly body: string }, Error>((resume) => {
-    const client = requestHttp(
-      { host: "127.0.0.1", port, path, method },
-      (response: IncomingMessage) => {
-        const chunks: Buffer[] = [];
-        response.on("data", (chunk: Buffer) => chunks.push(chunk));
-        response.once("end", () =>
-          resume(
-            Effect.succeed({
-              status: response.statusCode ?? 0,
-              body: Buffer.concat(chunks).toString(),
-            }),
-          ),
-        );
-      },
-    );
+    const client = requestHttp({ host, port, path, method }, (response: IncomingMessage) => {
+      const chunks: Buffer[] = [];
+      response.on("data", (chunk: Buffer) => chunks.push(chunk));
+      response.once("end", () =>
+        resume(
+          Effect.succeed({
+            status: response.statusCode ?? 0,
+            body: Buffer.concat(chunks).toString(),
+          }),
+        ),
+      );
+    });
     client.once("error", (error) => resume(Effect.fail(error)));
     client.end();
     return Effect.sync(() => client.destroy());
@@ -236,6 +234,16 @@ describe("Supervisor ingress", () => {
           })),
           secrets: {},
         });
+        const listenerCloseCount = yield* Ref.make(0);
+        const bindHost = (address: string, port: number, field: HostListener["field"]) =>
+          bindHostListener(address, port, field).pipe(
+            Effect.map((listener) => ({
+              ...listener,
+              close: listener.close.pipe(
+                Effect.andThen(Ref.update(listenerCloseCount, (count) => count + 1)),
+              ),
+            })),
+          );
         const ingress = yield* makeSupervisorIngress({
           stackId,
           stateRoot: root,
@@ -248,6 +256,8 @@ describe("Supervisor ingress", () => {
               anonJwt: "anon-jwt",
               serviceRoleJwt: "service-jwt",
             }),
+          bindHost,
+          resolveInternalApiBindAddress: () => Effect.succeed("::1"),
         });
         const input = {
           stackId,
@@ -279,6 +289,9 @@ describe("Supervisor ingress", () => {
         const response = yield* request(api.port);
         expect(response.status).toBe(200);
         expect(response.body).toBe("forwarded");
+        const internalResponse = yield* request(api.port, "/rest/v1/items", "GET", "::1");
+        expect(internalResponse.status).toBe(200);
+        expect(internalResponse.body).toBe("forwarded");
         const reused = yield* ingress.acquire(input);
         expect(reused.fresh).toBe(false);
         yield* ingress.open(input, reused, (capability) =>
@@ -291,6 +304,7 @@ describe("Supervisor ingress", () => {
         expect(reusedResponse.status).toBe(200);
         expect(reusedResponse.body).toBe("forwarded");
         yield* ingress.close;
+        expect(yield* Ref.get(listenerCloseCount)).toBe(2);
         const reacquired = yield* ingress.acquire(input);
         expect(reacquired.fresh).toBe(true);
         const stale = yield* ingress
