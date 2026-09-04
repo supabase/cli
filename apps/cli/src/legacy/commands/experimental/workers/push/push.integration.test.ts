@@ -433,6 +433,29 @@ describe("legacy workers push", () => {
     }).pipe(Effect.provide(layer), Effect.ensuring(Effect.sync(repo.cleanup)));
   });
 
+  // The blank case, which reads as "not recorded" if the config reader collapses
+  // it: absent means the `public` default, so a worker whose config plainly
+  // tried to say something would go to the whole internet. Refused like any
+  // other value the CLI does not recognize.
+  it.live("refuses a blank recorded exposure instead of defaulting it to public", () => {
+    const repo = project({
+      "supabase/config.toml": `project_id = "demo"\n\n[workers.api]\nruntime = "node"\nexposure = ""\n`,
+    });
+    const { layer, http } = setupLegacyWorkers({ workdir: repo.dir, routes: routes() });
+
+    return Effect.gen(function* () {
+      const error = yield* push().pipe(Effect.flip);
+
+      expect(error).toBeInstanceOf(UnknownWorkerExposureError);
+      // Named as blank rather than as an unknown `""`, which reads like a
+      // parser quirk instead of an empty key.
+      expect((error as UnknownWorkerExposureError).detail).toContain("blank exposure");
+      expect((error as UnknownWorkerExposureError).suggestion).toContain("public, private");
+      // Nothing was packaged, uploaded or deployed — least of all publicly.
+      expect(http.requests).toHaveLength(0);
+    }).pipe(Effect.provide(layer), Effect.ensuring(Effect.sync(repo.cleanup)));
+  });
+
   // The flag is the authority for the deploy it runs, so an unrecognized
   // recorded value it replaces is moot rather than fatal.
   it.live("lets --exposure stand in for an exposure config records badly", () => {

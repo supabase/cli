@@ -254,6 +254,30 @@ describe("planWorkerEntry + commitWorkerEntry", () => {
   });
 });
 
+describe("readWorkersSection blank values", () => {
+  // Absent means the `public` default, so a blank `exposure` must not read as
+  // absent — that would silently widen a worker whose config tried to say
+  // something. `push` refuses the value instead.
+  test("keeps an explicitly blank exposure so push can refuse it", () => {
+    const section = readWorkersSection({ api: { runtime: "node", exposure: "" } });
+
+    expect(section.workers["api"]?.exposure).toBe("");
+  });
+
+  // The mirror: nothing else here widens anything on absence — a missing
+  // runtime is guessed, a missing size defaults, a missing source is the
+  // conventional directory — so blank keeps collapsing to absent for those.
+  test("still folds the other blank dials into absent", () => {
+    const section = readWorkersSection({ api: { runtime: "", size: "", source: "" } });
+
+    expect(section.workers["api"]).toMatchObject({
+      runtime: undefined,
+      size: undefined,
+      source: undefined,
+    });
+  });
+});
+
 describe("readWorkersSection prototype safety", () => {
   // `constructor` is a valid DNS label, so it is a valid worker name. Read into
   // a plain `{}`, looking it up would return `Object.prototype.constructor` and

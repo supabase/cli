@@ -175,7 +175,13 @@ const resolveExposure = Effect.fnUntraced(function* (options: {
   if (recorded === undefined) {
     return yield* Effect.fail(
       new UnknownWorkerExposureError({
-        detail: `supabase/config.toml records an unknown exposure "${options.recorded}" for "${options.name}".`,
+        // A blank value gets its own sentence: `an unknown exposure ""` reads
+        // like a parser quirk, when what actually happened is that the key is
+        // there and says nothing.
+        detail:
+          options.recorded.trim() === ""
+            ? `supabase/config.toml records a blank exposure for "${options.name}".`
+            : `supabase/config.toml records an unknown exposure "${options.recorded}" for "${options.name}".`,
         suggestion: `Set [workers.${options.name}] exposure to one of: ${WORKER_EXPOSURES.join(", ")}.`,
       }),
     );

@@ -73,6 +73,23 @@ export class WorkerConfigWriteUnsafeError extends Data.TaggedError("WorkerConfig
 const stringOrUndefined = (value: unknown): string | undefined =>
   typeof value === "string" && value !== "" ? value : undefined;
 
+/**
+ * As {@link stringOrUndefined}, but an explicitly empty string survives.
+ *
+ * For `exposure`, "recorded but unusable" must not read as "not recorded".
+ * Absent means the `public` default, so folding `exposure = ""` into `undefined`
+ * hands a config that plainly tried to say something to the most open setting
+ * there is — the exact silent-widening `push`'s `resolveExposure` exists to
+ * refuse. Kept verbatim so it reaches that check like any other value the CLI
+ * does not recognize.
+ *
+ * `runtime`, `size` and `source` keep the collapsing reader: their fallbacks are
+ * a marker-file guess, a default size and the conventional directory, none of
+ * which widens anything.
+ */
+const recordedStringOrUndefined = (value: unknown): string | undefined =>
+  typeof value === "string" ? value : undefined;
+
 /** A plain object — a `[workers.<name>]` table rather than a scalar or a list. */
 const isRecord = (value: unknown): value is Record<string, unknown> =>
   typeof value === "object" && value !== null && !Array.isArray(value);
@@ -108,10 +125,10 @@ export function readWorkersSection(workers: unknown): WorkersSection {
     entries[key] = {
       runtime: stringOrUndefined(value["runtime"]),
       size: stringOrUndefined(value["size"]),
-      // Left as whatever string was written, like `runtime` and `size`: `push`
-      // is what names the accepted values, and dropping an unrecognized one here
-      // would silently deploy a worker at the default exposure instead.
-      exposure: stringOrUndefined(value["exposure"]),
+      // Left as whatever string was written, empty included: `push` is what
+      // names the accepted values, and dropping an unrecognized one here would
+      // silently deploy a worker at the default exposure instead.
+      exposure: recordedStringOrUndefined(value["exposure"]),
       instances: instanceCountOrUndefined(value["instances"]),
       source: stringOrUndefined(value["source"]),
     };
