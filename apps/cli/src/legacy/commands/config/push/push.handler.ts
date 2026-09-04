@@ -100,6 +100,16 @@ function legacyPushServiceChanges(
     .sort(legacyComparePaths);
 }
 
+/** `services[].changes`, `secrets.sent`, and `secrets.skipped` must all read from the same
+ * source: the encoder's own `secretsEncoded` — the container that carries a `send` decision can
+ * still drop it as `unencodable`, so the raw decision list alone over-counts what a write actually
+ * placed in the body. */
+function legacyPushSentSecretPaths(
+  encoded: LegacyPushEncoded<unknown>,
+): ReadonlyArray<ReadonlyArray<string>> {
+  return encoded.secretsEncoded ?? [];
+}
+
 /** `push.format.ts` must never see a secret's plaintext. */
 function toSecretReport(decision: LegacyPushSecretDecision) {
   const { plaintext: _plaintext, ...report } = decision;
@@ -362,6 +372,7 @@ export const legacyConfigPush = Effect.fn("legacy.config.push")(function* (
     const forced: Array<LegacyPushForced> = [];
     const declinedAddons: Array<string> = [];
     let authWriteRan = false;
+    let secretsSent: ReadonlyArray<ReadonlyArray<string>> = [];
 
     // 6. Prints the resource's `Updating ... with config:` block (or the
     // up-to-date/not-pushable line), prompts, writes, and returns the
@@ -401,9 +412,7 @@ export const legacyConfigPush = Effect.fn("legacy.config.push")(function* (
         );
         if (yield* keep(legacyPushPromptKey(resource))) {
           yield* write(body);
-          const sentSecretPaths = secretsForResource
-            .filter((secret) => secret.status === "send")
-            .map((secret) => secret.path);
+          const sentSecretPaths = legacyPushSentSecretPaths(encoded);
           return {
             service: resource,
             status: "updated",
@@ -563,6 +572,7 @@ export const legacyConfigPush = Effect.fn("legacy.config.push")(function* (
           services.push(result);
           unencodable.push(...encoded.unencodable);
           authWriteRan = result.status === "updated";
+          secretsSent = legacyPushSentSecretPaths(encoded);
           if (result.status === "updated") forced.push(...encoded.forced);
           break;
         }
@@ -609,7 +619,13 @@ export const legacyConfigPush = Effect.fn("legacy.config.push")(function* (
             }),
           ),
         );
-        services.push({ service: "experimental.webhooks", status: "updated", changes: [] });
+        services.push({
+          service: "experimental.webhooks",
+          status: "updated",
+          // No registry-comparable path backs this write, but the summary's property
+          // count (and a JSON consumer inspecting `changes`) must still see it (finding 5).
+          changes: [["experimental", "webhooks", "enabled"]],
+        });
       } else {
         services.push({ service: "experimental.webhooks", status: "skipped", changes: [] });
       }
@@ -656,6 +672,7 @@ export const legacyConfigPush = Effect.fn("legacy.config.push")(function* (
         unmanagedCount,
         secrets: secrets.map(toSecretReport),
         authWriteRan,
+        secretsSent,
         declinedAddons,
         remoteOnly: plan.remoteOnly,
         scope,

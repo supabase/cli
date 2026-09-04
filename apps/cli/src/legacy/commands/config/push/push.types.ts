@@ -33,6 +33,9 @@ export interface LegacyConfigPushServiceResult {
   readonly status: LegacyConfigPushServiceStatus;
   /** Change paths this service's write communicated (empty for `up_to_date`/`disabled`/
    *  `unavailable`/`not_pushable`; `skipped` carries what the declined write would have
-   *  communicated, excluding secrets). */
+   *  communicated, excluding secrets). For `experimental.webhooks` — which has no
+   *  registry-comparable path of its own — `changes` is `[["experimental","webhooks","enabled"]]`
+   *  once the enable POST ran, `[]` otherwise, so a webhook-only push is still counted as a
+   *  pushed property in the json/stream-json summary. */
   readonly changes: ReadonlyArray<ReadonlyArray<string>>;
 }

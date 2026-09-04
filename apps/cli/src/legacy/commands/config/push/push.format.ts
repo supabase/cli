@@ -9,8 +9,19 @@ import {
   type LegacyConfigApiScope,
 } from "../config.format.ts";
 import { legacyComparePaths } from "./push.paths.ts";
-import type { LegacyPushResource } from "./push.plan.ts";
+import {
+  LEGACY_PUSH_RESOURCES,
+  legacyPushResponseBlock,
+  type LegacyPushResource,
+} from "./push.plan.ts";
 import type { LegacyPushSecretReport } from "./push.secrets.ts";
+
+/** The v2 response blocks `config push` actually reads from — derived from `LEGACY_PUSH_RESOURCES`
+ *  rather than a hand-kept list, so a block `config diff`/`config pull` care about but push never
+ *  touches (`pooler`, `realtime`) never inflates the summary's "not returned" caveat. */
+const PUSH_RESPONSE_BLOCKS: ReadonlySet<string> = new Set(
+  LEGACY_PUSH_RESOURCES.map((resource) => legacyPushResponseBlock(resource)),
+);
 
 /**
  * Pure formatters and payload builders for `config push` — no Effect, no
@@ -116,8 +127,8 @@ function renderSecretBlocks(secrets: ReadonlyArray<LegacyPushSecretReport>): str
         return renderBlock(
           secret.path,
           "secret",
-          "(not set — unresolved env reference; will not be pushed)",
-          "(not set)",
+          "(not set — empty or unresolved env reference; will not be pushed)",
+          secret.remoteState === "absent" ? "(not set)" : "(set)",
         );
       }
       return "";
@@ -195,8 +206,7 @@ export function legacyPushNotPushableLine(resource: LegacyPushResource, count: n
 
 export interface LegacyPushNotesInput {
   /** Declared paths with no Management API field at all — the fixed unsupported-prefix list
-   *  (`db.pooler.*`, `auth.oauth_server.*`, `db.major_version`) plus every routed change belonging
-   *  to a resource whose local gate is off. */
+   *  (`db.pooler.*`, `auth.oauth_server.*`, `db.major_version`). */
   readonly unsupported: ReadonlyArray<ReadonlyArray<string>>;
   /** Declared paths an encoder could not structurally express, with why. */
   readonly unencodable: ReadonlyArray<LegacyPushUnencodable>;
@@ -299,6 +309,11 @@ export interface LegacyPushPayloadInput {
    *  lands in `sent` (write ran) or `skipped` (declined, or auth not written for any other
    *  reason): the payload reports what was OBSERVED to happen, not the pre-prompt decision. */
   readonly authWriteRan: boolean;
+  /** The auth encoder's own `secretsEncoded` — the secret paths a write actually placed a
+   *  plaintext for. NOT every `status: "send"` decision: a container can carry a `send` decision
+   *  and still end up dropped as `unencodable` (its group unresolvable), so `sent` must read from
+   *  here rather than from the raw decision list — meaningful only when `authWriteRan`. */
+  readonly secretsSent: ReadonlyArray<ReadonlyArray<string>>;
   /** Addon cost prompts (`auth_mfa_phone`, `auth_mfa_web_authn`) declined this run. */
   readonly declinedAddons: ReadonlyArray<string>;
   readonly remoteOnly: number;
@@ -345,8 +360,9 @@ export function legacyPushSummaryMessage(input: LegacyPushPayloadInput): string 
     );
   }
 
-  if (input.scope.missing.length > 0) {
-    const n = input.scope.missing.length;
+  const missingPushBlocks = input.scope.missing.filter((block) => PUSH_RESPONSE_BLOCKS.has(block));
+  if (missingPushBlocks.length > 0) {
+    const n = missingPushBlocks.length;
     parts.push(
       `${legacyConfigPlural(n, "block", "blocks")} ${n === 1 ? "was" : "were"} not returned by the API.`,
     );
@@ -402,7 +418,7 @@ export function legacyPushPayload(input: LegacyPushPayloadInput): Record<string,
     forced: sortByPath(input.forced).map((entry) => ({ path: entry.path, value: entry.value })),
     unmanaged: input.unmanaged,
     secrets: {
-      sent: input.authWriteRan ? sendDecisions.map((secret) => secret.path) : [],
+      sent: input.authWriteRan ? input.secretsSent : [],
       unchanged: byStatus("unchanged"),
       not_set: byStatus("not_set"),
       gated: byStatus("gated"),

@@ -46,7 +46,7 @@ declines the confirmation prompt.
 | 5   | db.ssl_enforcement       | PUT    | `/v1/projects/{ref}/ssl-enforcement`            | 200     | same conditions, plus `[db.ssl_enforcement]` declared locally                                                  |
 | 6   | auth                     | PATCH  | `/v1/projects/{ref}/config/auth`                | 2xx     | same conditions, plus `auth.enabled` locally; MFA phone/webauthn gated by addon cost prompt                    |
 | 7   | storage                  | PATCH  | `/v1/projects/{ref}/config/storage`             | 2xx     | same conditions, plus `storage.enabled` locally                                                                |
-| 8   | experimental.webhooks    | POST   | `/v1/projects/{ref}/database/webhooks/enable`   | 2xx     | only if local `webhooks.enabled`; no GET/diff                                                                  |
+| 8   | experimental.webhooks    | POST   | `/v1/projects/{ref}/database/webhooks/enable`   | 2xx     | only if local `webhooks.enabled`; no GET/diff; a kept enable reports `changes: [["experimental","webhooks","enabled"]]` (no config-diff path backs it) so it still counts toward the pushed-property total |
 
 **Row 1 is the only `GET` this command makes** — no per-service `GET /v1/…`
 request remains anywhere in this table; row 1's single response is every
@@ -80,20 +80,31 @@ groups that your file doesn't declare never appears in any write, even when
 the group it belongs to ships for another reason.
 
 Some declared properties have no Management API field at all and are only
-reported, never pushed: `db.major_version`,
-`db.pooler.{pool_mode,default_pool_size,max_client_conn}`,
-`auth.oauth_server.{enabled,allow_dynamic_registration,authorization_url_path}`
-— these are reported in the "no Management API field" `Note:` line. A
-resource whose local gate is off (e.g. a declared `auth.*` value while
-`auth.enabled = false`) is NOT reported there: the projection's
+reported, never pushed: `db.major_version` and
+`db.pooler.{pool_mode,default_pool_size,max_client_conn}` — reported in the
+"no Management API field" `Note:` line. `auth.oauth_server.*` is NOT in that
+list, even though it also has no v1 write path: `@supabase/config`'s local
+projection drops the whole `auth.oauth_server` subtree unconditionally (no
+push encoder handles it at all), so a declared value there never reaches
+`changeSet.changes` in the first place — it is reported
+today as `unmanaged` instead (below), the same as any other property the
+projection drops. `push.plan.ts` still carries `auth.oauth_server` in its own
+unsupported-prefix list so that a declared value there is classified
+correctly the moment CLI-2314 stops pruning it from the projection; until
+then that list entry is a defensive no-op. A resource whose local gate is
+off (e.g. a declared `auth.*` value while `auth.enabled = false`) is NOT
+reported in the "no Management API field" note either: the projection's
 disabled-sentinel prune already removes its other declared keys before
 diffing, so it stays silently `disabled` in text mode (reported as
 `disabled` in the JSON payload's `services[]` entry — see Output below).
 Separately, a handful of declared, gated-on values can't be structurally
 expressed by their encoder — `api.enabled = true` with no `api.schemas`
-declared, or no SMS provider locally enabled while an SMS-family value
-changed — reported in their own `Note:` line with the specific reason. See
-Output below for both.
+declared, no SMS provider locally enabled while an SMS-family value changed,
+an invalid `auth.*` duration string (`sessions.timebox`,
+`mfa.phone.max_frequency`, `email.max_frequency`, `sms.max_frequency`), or
+one network-restriction CIDR array declared while its companion array
+cannot be resolved from either the read or the file — reported in their own
+`Note:` line with the specific reason. See Output below for both.
 
 ## Environment Variables
 
@@ -234,7 +245,11 @@ declared properties.` when every service is `up_to_date`/`disabled`, or
 fixed order, for each non-empty category: unsupported+unencodable, unmanaged,
 `scope.missing`, skipped services, not-set credentials, declined add-on
 prompts — so an agent echoing just `.message` never reports success while
-something declared was withheld.
+something declared was withheld. The `scope.missing` caveat counts only the
+blocks this command actually reads from (`api`, `database`, `auth`,
+`storage`); an omitted `pooler`/`realtime` block — which `config push` never
+compares against — never triggers it, even though the `Comparison scope:`
+line above always lists every missing block.
 
 `stream-json` mode — an NDJSON `result` event with the payload nested under
 `data` (consumers read `result.data.project_ref`, not `result.project_ref`):
@@ -252,9 +267,14 @@ mirroring — but not equal to — a `config.toml` path, plus the fixed string
 `project_ref`, `services[].service`, and `services[].status` are the established
 contract; every other field is additive. `secrets` partitions every declared secret
 (`changeSet.masked`) across its five buckets, reporting what was OBSERVED to happen —
-`sent` only when the auth write actually ran; a `send`-decided secret whose write did
-not run (declined prompt, or auth not written for any other reason) lands in `skipped`
-instead. `declined_addons` lists which paid MFA addon prompts (`auth_mfa_phone`,
+`sent` only when the auth write actually ran AND the container carrying that secret
+placed it in the request body. A `send`-decided secret whose write did not run
+(declined prompt, or auth not written for any other reason) lands in `skipped`
+instead; a `send`-decided secret whose container was dropped as `unencodable` (its
+required-together group unresolvable, even while OTHER auth fields still triggered a
+write) lands in neither `sent` nor `skipped` — it is reported in `unencodable` instead,
+so it is never silently swallowed. `declined_addons` lists which paid MFA addon prompts
+(`auth_mfa_phone`,
 `auth_mfa_web_authn`) were declined this run. Paths are segment arrays — a record key
 may itself contain a `.`.
 

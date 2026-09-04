@@ -1521,7 +1521,7 @@ secret = "env(MISSING_CAPTCHA_SECRET)"
       // ends on a blank line even though it's the last thing this resource
       // prints (the format-json push never echoes the prompt itself).
       expect(out.stderrText).toContain(
-        "auth.captcha.secret [secret]\n  local:  (not set — unresolved env reference; will not be pushed)\n  remote: (not set)\n\n",
+        "auth.captcha.secret [secret]\n  local:  (not set — empty or unresolved env reference; will not be pushed)\n  remote: (not set)\n\n",
       );
       expect(out.stderrText).toContain(
         "Note: 1 credential value was not pushed (empty or unresolved env reference): auth.captcha.secret",
@@ -2236,6 +2236,48 @@ secret = "new-secret"
     },
   );
 
+  it.live(
+    "a container whose companion is unresolvable never lets its secret ride the write silently: the secret lands in unencodable, never sent",
+    () => {
+      // `auth.hook.send_email.uri` is undeclared and the fixture's remote
+      // never reports `hook_send_email_uri` either, so the hook container's
+      // required-together group is incomplete — but `auth.site_url` is a
+      // genuine, independently-encodable change, so the auth write still
+      // runs. Before the fix, the hook's `secrets` decision (`status: "send"`)
+      // rode along into `secrets.sent` even though the hook body was dropped.
+      const toml = `project_id = "test"
+[auth]
+site_url = "http://localhost:3000"
+[auth.hook.send_email]
+enabled = true
+secrets = "v1,whsec_abc"
+`;
+      const { layer, apiMock, out } = setupService({
+        toml,
+        format: "json",
+        yes: true,
+        v1: { updateAuthServiceConfig: () => Effect.succeed({}) },
+      });
+      return Effect.gen(function* () {
+        yield* legacyConfigPush({ projectRef: Option.none() });
+        const update = apiMock.requests.find((r) => r.method === "updateAuthServiceConfig");
+        expect(update).toBeDefined();
+        const input = update?.input as Record<string, unknown>;
+        expect(input["site_url"]).toBe("http://localhost:3000");
+        expect(input["hook_send_email_secrets"]).toBeUndefined();
+        expect(input["hook_send_email_enabled"]).toBeUndefined();
+        const success = out.messages.find((m) => m.type === "success");
+        const data = success?.data as Record<string, unknown>;
+        expect(data["secrets"]).toMatchObject({ sent: [], skipped: [] });
+        expect(data["unencodable"]).toEqual(
+          expect.arrayContaining([
+            expect.objectContaining({ path: ["auth", "hook", "send_email", "secrets"] }),
+          ]),
+        );
+      }).pipe(Effect.provide(layer));
+    },
+  );
+
   it.live("a v2 response with a non-object body maps to the read network error", () => {
     const { layer } = setup({
       toml: `project_id = "test"\n`,
@@ -2278,6 +2320,31 @@ secret = "new-secret"
       yield* legacyConfigPush({ projectRef: Option.none() });
       const success = out.messages.find((m) => m.type === "success");
       expect(success?.message).toBe(`1 property pushed to ${REF}.`);
+    }).pipe(Effect.provide(layer));
+  });
+
+  it.live("a webhook-only push counts as 1 property pushed, not 0 (finding 5)", () => {
+    // Every managed resource matches the fixture's schema-default remote
+    // (`BASE_DISABLED` declares nothing else), so `experimental.webhooks`
+    // is the only service that ends up `updated` — before the fix its
+    // `changes` was always `[]`, so the summary undercounted it as 0.
+    const { layer, out } = setupService({
+      toml: `${BASE_DISABLED}[experimental.webhooks]\nenabled = true\n`,
+      format: "json",
+      yes: true,
+      v1: { enableDatabaseWebhook: () => Effect.succeed({}) },
+    });
+    return Effect.gen(function* () {
+      yield* legacyConfigPush({ projectRef: Option.none() });
+      const success = out.messages.find((m) => m.type === "success");
+      expect(success?.message).toBe(`1 property pushed to ${REF}.`);
+      const data = success?.data as Record<string, unknown>;
+      const services = data["services"] as ReadonlyArray<Record<string, unknown>>;
+      expect(services.find((s) => s["service"] === "experimental.webhooks")).toEqual({
+        service: "experimental.webhooks",
+        status: "updated",
+        changes: [["experimental", "webhooks", "enabled"]],
+      });
     }).pipe(Effect.provide(layer));
   });
 });

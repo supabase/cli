@@ -280,6 +280,30 @@ describe("legacyEncodeNetworkRestrictionsBody", () => {
     const result = legacyEncodeNetworkRestrictionsBody(input());
     expect(result.body).toBeUndefined();
   });
+
+  it("routes both CIDR paths to unencodable (REASON_GROUP_INCOMPLETE), not an empty array, when a companion cannot be resolved from remote or local", () => {
+    // Remote and local both lack `allowed_cidrs_v6` entirely — the whole
+    // group is incomplete, so nothing should be substituted with `[]`.
+    const local: ProjectConfig = {
+      db: { network_restrictions: { allowed_cidrs: ["10.0.0.0/8"] } },
+    };
+    const remote: ProjectConfig = { db: { network_restrictions: {} } };
+    const result = legacyEncodeNetworkRestrictionsBody(
+      input({
+        changes: [change(["db", "network_restrictions", "allowed_cidrs"], ["10.0.0.0/8"])],
+        local,
+        remote,
+      }),
+    );
+    expect(result.body).toBeUndefined();
+    expect(result.unencodable).toEqual([
+      {
+        path: ["db", "network_restrictions", "allowed_cidrs"],
+        reason: "one or more of this group's required fields could not be resolved",
+      },
+    ]);
+    expect(result.forced).toEqual([]);
+  });
 });
 
 describe("legacyEncodeSslEnforcementBody", () => {
@@ -494,6 +518,50 @@ describe("legacyEncodeAuthBody", () => {
     expect(result.body).toEqual({ smtp_max_frequency: 1 });
   });
 
+  describe("invalid durations route to unencodable, never a silent 0", () => {
+    const REASON = "the declared value is not a valid duration";
+
+    it("sessions.timebox: an unparseable string", () => {
+      const result = legacyEncodeAuthBody(
+        authInput({ changes: [change(["auth", "sessions", "timebox"], "not-a-duration")] }),
+      );
+      expect(result.body).toBeUndefined();
+      expect(result.unencodable).toEqual([
+        { path: ["auth", "sessions", "timebox"], reason: REASON },
+      ]);
+    });
+
+    it("mfa.phone.max_frequency: a non-string value", () => {
+      const result = legacyEncodeAuthBody(
+        authInput({ changes: [change(["auth", "mfa", "phone", "max_frequency"], 42)] }),
+      );
+      expect(result.body).toBeUndefined();
+      expect(result.unencodable).toEqual([
+        { path: ["auth", "mfa", "phone", "max_frequency"], reason: REASON },
+      ]);
+    });
+
+    it("smtp_max_frequency (email.max_frequency): an unparseable string", () => {
+      const result = legacyEncodeAuthBody(
+        authInput({ changes: [change(["auth", "email", "max_frequency"], "5 minutes")] }),
+      );
+      expect(result.body).toBeUndefined();
+      expect(result.unencodable).toEqual([
+        { path: ["auth", "email", "max_frequency"], reason: REASON },
+      ]);
+    });
+
+    it("sms_max_frequency (sms.max_frequency): a non-string value", () => {
+      const result = legacyEncodeAuthBody(
+        authInput({ changes: [change(["auth", "sms", "max_frequency"], null)] }),
+      );
+      expect(result.body).toBeUndefined();
+      expect(result.unencodable).toEqual([
+        { path: ["auth", "sms", "max_frequency"], reason: REASON },
+      ]);
+    });
+  });
+
   describe("smtp container", () => {
     it("disabled → only smtp_host: ''", () => {
       const local: ProjectConfig = { auth: { email: { smtp: { enabled: false } } } };
@@ -613,6 +681,7 @@ describe("legacyEncodeAuthBody", () => {
       });
       // No ConfigChange exists for a secret — nothing to report as "encoded".
       expect(result.encoded).toEqual([]);
+      expect(result.secretsEncoded).toEqual([["auth", "email", "smtp", "pass"]]);
     });
 
     it("withholds smtp_pass while unchanged/gated/not_set", () => {
@@ -669,6 +738,29 @@ describe("legacyEncodeAuthBody", () => {
           reason: "one or more of this group's required fields could not be resolved",
         },
       ]);
+    });
+
+    it("a secret-only trigger whose group is incomplete is reported unencodable, not silently dropped", () => {
+      // No ordinary change at all — only the `pass` secret is `send` — and the
+      // group's other companions cannot be resolved from remote or local.
+      const local: ProjectConfig = { auth: { email: { smtp: { enabled: true } } } };
+      const secrets: ReadonlyArray<LegacyPushSecretDecision> = [
+        secretDecision({
+          path: ["auth", "email", "smtp", "pass"],
+          apiKey: "smtp_pass",
+          status: "send",
+          plaintext: "hunter2",
+        }),
+      ];
+      const result = legacyEncodeAuthBody(authInput({ local, secrets }));
+      expect(result.body).toBeUndefined();
+      expect(result.unencodable).toEqual([
+        {
+          path: ["auth", "email", "smtp", "pass"],
+          reason: "one or more of this group's required fields could not be resolved",
+        },
+      ]);
+      expect(result.secretsEncoded).toEqual([]);
     });
   });
 
@@ -948,6 +1040,7 @@ describe("legacyEncodeAuthBody", () => {
         external_github_email_optional: false,
       });
       expect(result.encoded).toEqual([]);
+      expect(result.secretsEncoded).toEqual([["auth", "external", "github", "secret"]]);
     });
 
     it("routes the provider to unencodable (REASON_GROUP_INCOMPLETE) when client_id cannot be resolved", () => {
@@ -964,6 +1057,27 @@ describe("legacyEncodeAuthBody", () => {
           reason: "one or more of this group's required fields could not be resolved",
         },
       ]);
+    });
+
+    it("a secret-only trigger whose client_id cannot be resolved is reported unencodable, not silently dropped", () => {
+      const local: ProjectConfig = { auth: { external: { github: { enabled: true } } } };
+      const secrets: ReadonlyArray<LegacyPushSecretDecision> = [
+        secretDecision({
+          path: ["auth", "external", "github", "secret"],
+          apiKey: "external_github_secret",
+          status: "send",
+          plaintext: "gh-secret",
+        }),
+      ];
+      const result = legacyEncodeAuthBody(authInput({ local, secrets }));
+      expect(result.body).toBeUndefined();
+      expect(result.unencodable).toEqual([
+        {
+          path: ["auth", "external", "github", "secret"],
+          reason: "one or more of this group's required fields could not be resolved",
+        },
+      ]);
+      expect(result.secretsEncoded).toEqual([]);
     });
   });
 
@@ -1034,6 +1148,7 @@ describe("legacyEncodeAuthBody", () => {
         sms_twilio_message_service_sid: "svc",
         sms_twilio_auth_token: "token",
       });
+      expect(result.secretsEncoded).toEqual([["auth", "sms", "twilio", "auth_token"]]);
     });
 
     it("ships vonage's non-secret api_key alongside its secret api_secret", () => {
@@ -1077,6 +1192,48 @@ describe("legacyEncodeAuthBody", () => {
           reason: "one or more of this group's required fields could not be resolved",
         },
       ]);
+    });
+
+    it("a secret-only trigger with no active provider is reported unencodable, not silently dropped", () => {
+      const local: ProjectConfig = { auth: { sms: { twilio: { enabled: false } } } };
+      const secrets: ReadonlyArray<LegacyPushSecretDecision> = [
+        secretDecision({
+          path: ["auth", "sms", "twilio", "auth_token"],
+          apiKey: "sms_twilio_auth_token",
+          status: "send",
+          plaintext: "token",
+        }),
+      ];
+      const result = legacyEncodeAuthBody(authInput({ local, secrets }));
+      expect(result.body).toBeUndefined();
+      expect(result.unencodable).toEqual([
+        {
+          path: ["auth", "sms", "twilio", "auth_token"],
+          reason:
+            "config push can switch between SMS providers but cannot turn the active provider off; disable phone sign-in or use the dashboard",
+        },
+      ]);
+    });
+
+    it("a secret-only trigger whose active provider's group is incomplete is reported unencodable", () => {
+      const local: ProjectConfig = { auth: { sms: { twilio: { enabled: true } } } };
+      const secrets: ReadonlyArray<LegacyPushSecretDecision> = [
+        secretDecision({
+          path: ["auth", "sms", "twilio", "auth_token"],
+          apiKey: "sms_twilio_auth_token",
+          status: "send",
+          plaintext: "token",
+        }),
+      ];
+      const result = legacyEncodeAuthBody(authInput({ local, secrets }));
+      expect(result.body).toBeUndefined();
+      expect(result.unencodable).toEqual([
+        {
+          path: ["auth", "sms", "twilio", "auth_token"],
+          reason: "one or more of this group's required fields could not be resolved",
+        },
+      ]);
+      expect(result.secretsEncoded).toEqual([]);
     });
   });
 

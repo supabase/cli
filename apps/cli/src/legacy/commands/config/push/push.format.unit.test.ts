@@ -49,6 +49,13 @@ const NOT_SET_SECRET: LegacyPushSecretReport = {
   remoteState: "absent",
 };
 
+const NOT_SET_SECRET_PRESENT_REMOTE: LegacyPushSecretReport = {
+  path: ["auth", "sms", "twilio", "auth_token"],
+  apiKey: "sms_twilio_auth_token",
+  status: "not_set",
+  remoteState: "present",
+};
+
 const GATED_SECRET: LegacyPushSecretReport = {
   path: ["auth", "hook", "send_sms", "secrets"],
   apiKey: "hook_send_sms_secrets",
@@ -128,8 +135,25 @@ describe("legacyPushUpdatingLine", () => {
     ).toBe(
       "Updating Auth service with config:\n" +
         "auth.sms.twilio.auth_token [secret]\n" +
-        "  local:  (not set — unresolved env reference; will not be pushed)\n" +
+        "  local:  (not set — empty or unresolved env reference; will not be pushed)\n" +
         "  remote: (not set)\n" +
+        "\n",
+    );
+  });
+
+  test("a not_set secret's remote digest present renders 'remote: (set)'", () => {
+    expect(
+      legacyPushUpdatingLine({
+        resource: "auth",
+        changes: [],
+        secrets: [NOT_SET_SECRET_PRESENT_REMOTE],
+        ...NO_EXTRAS_OR_FORCED,
+      }),
+    ).toBe(
+      "Updating Auth service with config:\n" +
+        "auth.sms.twilio.auth_token [secret]\n" +
+        "  local:  (not set — empty or unresolved env reference; will not be pushed)\n" +
+        "  remote: (set)\n" +
         "\n",
     );
   });
@@ -477,6 +501,7 @@ describe("legacyPushSummaryMessage", () => {
     unmanagedCount: 0,
     secrets: [],
     authWriteRan: false,
+    secretsSent: [],
     declinedAddons: [],
     remoteOnly: 0,
     scope: { present: [], missing: [] },
@@ -619,6 +644,23 @@ describe("legacyPushSummaryMessage", () => {
     );
   });
 
+  test("caveat: scope.missing is filtered to the blocks config push actually reads from — pooler/realtime never contribute", () => {
+    expect(
+      legacyPushSummaryMessage({
+        ...EMPTY_SUMMARY_INPUT,
+        scope: { present: [], missing: ["pooler", "realtime"] },
+      }),
+    ).toBe("Nothing to push: the project already matches the declared properties.");
+    expect(
+      legacyPushSummaryMessage({
+        ...EMPTY_SUMMARY_INPUT,
+        scope: { present: [], missing: ["pooler", "realtime", "auth"] },
+      }),
+    ).toBe(
+      "Nothing to push: the project already matches the declared properties. 1 block was not returned by the API.",
+    );
+  });
+
   test("caveat: skipped services, singular and plural", () => {
     expect(
       legacyPushSummaryMessage({
@@ -682,6 +724,7 @@ describe("legacyPushSummaryMessage", () => {
         unmanagedCount: 1,
         secrets: [NOT_SET_SECRET],
         authWriteRan: false,
+        secretsSent: [],
         declinedAddons: ["auth_mfa_phone"],
         remoteOnly: 12,
         scope: { present: [], missing: ["auth"] },
@@ -725,6 +768,7 @@ describe("legacyPushPayload", () => {
     unmanagedCount: 1,
     secrets: [SENT_SECRET, UNCHANGED_SECRET, NOT_SET_SECRET, GATED_SECRET],
     authWriteRan: true,
+    secretsSent: [["auth", "captcha", "secret"]],
     declinedAddons: ["auth_mfa_phone"],
     remoteOnly: 12,
     scope: { present: ["api", "auth", "database", "pooler", "realtime", "storage"], missing: [] },
@@ -768,6 +812,15 @@ describe("legacyPushPayload", () => {
     });
   });
 
+  test("'sent' reads from secretsSent, not from the raw 'send' decision list — a send decision whose container was dropped never lands in 'sent'", () => {
+    // The write ran (authWriteRan: true) and `SENT_SECRET`'s status is
+    // still `send`, but the encoder that would have carried it reported
+    // nothing in `secretsSent` — its container must have been dropped as
+    // `unencodable` instead (asserted separately at the encoder layer).
+    const payload = legacyPushPayload({ ...BASE_INPUT, secretsSent: [] });
+    expect(payload["secrets"]).toMatchObject({ sent: [], skipped: [] });
+  });
+
   test("empty arrays round-trip as empty arrays, not omitted keys", () => {
     expect(
       legacyPushPayload({
@@ -780,6 +833,7 @@ describe("legacyPushPayload", () => {
         unmanagedCount: 0,
         secrets: [],
         authWriteRan: false,
+        secretsSent: [],
         declinedAddons: [],
         remoteOnly: 0,
         scope: { present: [], missing: [] },
