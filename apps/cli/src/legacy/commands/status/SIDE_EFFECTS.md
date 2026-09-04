@@ -327,7 +327,7 @@ the Go CLI's own contract exactly. The additive failure envelope above is scoped
   resolvable parent, no Management API service in scope, an offline/token-less
   `LegacyPlatformApiFactory` acquisition failure, or a failed/empty branch lookup all degrade
   rather than erroring, so this feature can never be the reason `status` fails or its exit code
-  changes. `legacyAcquireLinkedStateApi` (in `legacy-linked-state.ts`) tries
+  changes. `legacyAcquireBranchLookupApi` (in `legacy-branch-target.ts`) tries
   `Effect.serviceOption(LegacyPlatformApi)` first (the cheapest path, and what tests provide
   directly), then falls back to `Effect.serviceOption(LegacyPlatformApiFactory)` → `factory.make`
   with every failure caught — `status`'s runtime layer only ever wires up the lazy factory (see
