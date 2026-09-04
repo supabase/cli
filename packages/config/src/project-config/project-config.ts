@@ -688,7 +688,6 @@ export function fromConfigDocument(input: unknown): unknown {
   applyDocumentNormalizations(result);
   applySmsProviderPrecedence(result);
   applyDisabledSentinels(result);
-  applyPushUnmanagedOmissions(result);
   if (document !== undefined) {
     applyRawPresenceMask(result, document);
   }
@@ -767,32 +766,35 @@ export const DISABLED_SENTINEL_PRUNES: ReadonlyArray<{
     dropKeys: ["host", "port", "user", "pass", "admin_email", "sender_name"],
   },
   { containerPath: ["auth", "captcha"], dropKeys: ["provider", "secret"] },
-  // No push precedent (the section postdates the legacy mappers) — gated for
-  // family consistency: every other enabled-flagged container prunes its
-  // unmanaged siblings, and a platform-retained authorization path behind a
-  // disabled OAuth server is the same phantom-drift shape. Still meaningful
-  // for the API arm (GoTrue reports real hosted oauth_server state
-  // independent of push). On the DOCUMENT arm specifically, this entry's
-  // effect is superseded by {@link applyPushUnmanagedOmissions}, which drops
-  // the WHOLE `auth.oauth_server` subtree unconditionally — `authToUpdateBody`
-  // has no oauth_server handling at all, so even this entry's own
-  // `dropKeys` premise ("push manages the container while its toggle is on")
-  // does not hold for that arm.
+  // `oauth_server.enabled=false` means the platform serves no OAuth
+  // consent-UI/dynamic-registration behavior, but genuinely retains
+  // `allow_dynamic_registration`/`authorization_url_path` as
+  // stored-but-inert state — same shape as `auth.captcha` above. This isn't
+  // just theoretical: the stock `supabase init` project template
+  // (`project-init.templates.ts`) declares `[auth.oauth_server] enabled =
+  // false` together with `authorization_url_path = "/oauth/consent"` —
+  // without this prune, every stock project would show a fabricated drift
+  // line purely from `supabase init`'s own template.
   {
     containerPath: ["auth", "oauth_server"],
     dropKeys: ["allow_dynamic_registration", "authorization_url_path"],
   },
-  // Still meaningful on both arms for `enabled: true` (untouched) and on the
-  // API arm for `enabled: false` (real hosted state). On the DOCUMENT arm
-  // specifically, an `enabled: false` container is pruned further, to
-  // NOTHING, by {@link applyPushUnmanagedOmissions}: `storageToUpdateBody`
-  // only emits Iceberg/Vector inside a truthy `if (local.analytics.enabled)`
-  // branch (storage.sync.ts:287-300), never a `{enabled: false}` shape, so
-  // a disabled container reflects an unmanaged (not confirmed-off) state.
+  // `storage.analytics.enabled=false` means no Iceberg catalog is
+  // provisioned, so `max_namespaces`/`max_tables`/`max_catalogs` are
+  // retained-but-inert ceilings on a non-existent resource — same shape as
+  // `auth.captcha` above. The stock `supabase init` template declares
+  // `[storage.analytics] enabled=false, max_namespaces=5, max_tables=10,
+  // max_catalogs=2`, while a recorded platform fixture reports
+  // `max_namespaces=10` for a fresh project — without this prune, EVERY
+  // stock project would show a declared "lower the Iceberg quota" diff
+  // purely from the template, and `config push` would act on it.
   {
     containerPath: ["storage", "analytics"],
     dropKeys: ["max_namespaces", "max_tables", "max_catalogs"],
   },
+  // Same shape as `storage.analytics` above: `storage.vector.enabled=false`
+  // means no Vector catalog is provisioned, so `max_buckets`/`max_indexes`
+  // are retained-but-inert ceilings on a non-existent resource.
   { containerPath: ["storage", "vector"], dropKeys: ["max_buckets", "max_indexes"] },
 ];
 
@@ -873,45 +875,6 @@ function applyDisabledSentinels(result: Record<string, unknown>): void {
 }
 
 /**
- * DOCUMENT-ARM ONLY (human review round on PR #6339, thread 3) — never
- * called from {@link fromApiProjectConfig}. Distinct from
- * {@link applyDisabledSentinels} (drops SIBLINGS of an explicitly-disabled
- * container, both arms, keyed on the DOCUMENT's own `enabled` reading) and
- * {@link applyRawPresenceMask} (drops a container push skips because the
- * RAW FILE never declared it, needs `document` and mirrors a different
- * legacy signal entirely): this drops a container `storageToUpdateBody`/
- * `authToUpdateBody` structurally cannot communicate to the platform AT
- * ALL, independent of both the document's own `enabled` value and raw
- * presence.
- *
- * - `storage.analytics`/`storage.vector`: `storageToUpdateBody` only emits
- *   `icebergCatalog`/`vectorBuckets` inside a truthy `if (local.analytics.
- *   enabled)`/`if (local.vector.enabled)` branch (storage.sync.ts:287-300)
- *   — there is no `{enabled: false}` shape it ever sends. A document with
- *   the feature disabled therefore has NOTHING pushed for it (unmanaged),
- *   unlike the API arm's own `enabled: false`, which is a confirmed hosted
- *   reading. Dropped entirely rather than left as `{enabled: false}`.
- * - `auth.oauth_server`: `authToUpdateBody` has no oauth_server handling
- *   whatsoever — the whole subtree is unconditionally unmanaged by push,
- *   regardless of its `enabled` value. Dropped unconditionally, which
- *   supersedes `DISABLED_SENTINEL_PRUNES`'s own `["auth","oauth_server"]`
- *   entry for this arm specifically (that entry stays meaningful for the
- *   API arm — see its own comment).
- */
-function applyPushUnmanagedOmissions(result: Record<string, unknown>): void {
-  for (const containerPath of [
-    ["storage", "analytics"],
-    ["storage", "vector"],
-  ] as const) {
-    const container = readPath(result, containerPath);
-    if (isObject(container) && container["enabled"] === false) {
-      removePathAndEmptiedAncestors(result, containerPath);
-    }
-  }
-  removePathAndEmptiedAncestors(result, ["auth", "oauth_server"]);
-}
-
-/**
  * DOCUMENT-ARM ONLY, and only when {@link fromConfigDocument} was called
  * with a {@link CliConfigWithRawPresence} pair (human review round on PR
  * #6339, thread 1) — never called from {@link fromApiProjectConfig}, which
@@ -924,12 +887,11 @@ function applyPushUnmanagedOmissions(result: Record<string, unknown>): void {
  * ALWAYS sent regardless of presence). Distinct from
  * {@link applyDisabledSentinels} (reads the DECODED `enabled` flag — can
  * only ever say "explicitly disabled", never "never mentioned", and runs
- * even without a `document`) and {@link applyPushUnmanagedOmissions} (drops
- * a container push can never emit at all, independent of presence): this
- * drops a container/entry push skips specifically because the RAW FILE
- * never declared it — a stronger, independent signal only available with
- * `document`, so it runs last and can remove a subtree either of the other
- * two mechanisms already touched or left alone.
+ * even without a `document`): this drops a container/entry push skips
+ * specifically because the RAW FILE never declared it — a stronger,
+ * independent signal only available with `document`, so it runs last and
+ * can remove a subtree {@link applyDisabledSentinels} already touched or
+ * left alone.
  *
  * Values that DO survive still come from the DECODED `result` — masking
  * only decides presence/absence of a subtree, never substitutes a raw

@@ -347,48 +347,57 @@ describe("diffProjectConfig classification", () => {
     expect(result.changes).toEqual([]);
   });
 
-  test("a declared path the projection cannot push surfaces in unmanaged, never as a false clean", () => {
-    // `auth.oauth_server` is dropped from the document projection entirely —
-    // push has no oauth_server handling — so a declared `enabled = true`
-    // disagreeing with the remote's `false` cannot be a change entry. It must
+  test("a declared push-unmanaged sibling surfaces in unmanaged, never as a false clean", () => {
+    // A disabled `auth.oauth_server`'s siblings (`allow_dynamic_registration`,
+    // `authorization_url_path`) are retained-but-inert platform state that
+    // `config push` cannot communicate at all — pruned from the document
+    // projection by `DISABLED_SENTINEL_PRUNES` — so a declared value
+    // disagreeing with the remote's cannot be a `change` entry. It must
     // surface in `unmanaged` so the clean changes list is visibly partial.
+    // `enabled` itself is an ordinary comparable path (CLI-2314) — see the
+    // next test.
     const result = diffWith(
-      { auth: { oauth_server: { enabled: true } } },
-      { auth: { oauth_server_enabled: false } },
+      { auth: { oauth_server: { enabled: false, authorization_url_path: "/consent" } } },
+      { auth: { oauth_server_enabled: false, oauth_server_authorization_path: "/other" } },
     );
     expect(result.changes).toEqual([]);
-    expect(result.unmanaged).toContainEqual(["auth", "oauth_server", "enabled"]);
+    expect(result.unmanaged).toContainEqual(["auth", "oauth_server", "authorization_url_path"]);
   });
 
-  test("an unmanaged path is excluded from classification even when the remote AGREES with it", () => {
+  test("a push-unmanaged sibling is excluded from classification even when the remote AGREES with it", () => {
     // The disagreeing case above happened to pass even before the loop
-    // structurally excluded unmanaged paths, because the remote's `false`
-    // coincidentally matched the schema's own disabled-by-default baseline.
-    // `true`/`true` does not: it proves the exclusion itself, not an
-    // accidental baseline match — ADR 0022's "unmanaged paths can never
+    // structurally excluded unmanaged paths, because the remote's value
+    // coincidentally matched. Matching values here proves the exclusion
+    // itself, not an accidental match — ADR 0022's "unmanaged paths can never
     // classify either" applies even when local and remote agree.
     const result = diffWith(
-      { auth: { oauth_server: { enabled: true } } },
-      { auth: { oauth_server_enabled: true } },
+      { auth: { oauth_server: { enabled: false, authorization_url_path: "/consent" } } },
+      { auth: { oauth_server_enabled: false, oauth_server_authorization_path: "/consent" } },
     );
     expect(result.changes).toEqual([]);
-    expect(result.unmanaged).toContainEqual(["auth", "oauth_server", "enabled"]);
+    expect(result.unmanaged).toContainEqual(["auth", "oauth_server", "authorization_url_path"]);
     expect(result.counts.total).toBe(0);
   });
 
-  test("an unmanaged path is excluded from classification even when the remote DIFFERS from it", () => {
+  test("push-unmanaged siblings are excluded from classification even when the remote DIFFERS from them", () => {
     // Live repro: config.toml declares storage.analytics disabled with a
     // max_namespaces value, the platform reports it enabled with a different
-    // value — `storage.analytics` is dropped from the document projection
-    // entirely while disabled, so neither path may become a `remote_only`
-    // change, only `unmanaged`.
+    // value — `max_namespaces` is pruned from the document projection while
+    // the container is declared disabled, so it can never become a
+    // `remote_only` change, only `unmanaged`. `enabled` itself is an
+    // ordinary comparable path (CLI-2314) and correctly classifies as an
+    // `update`.
     const result = diffWith(
       { storage: { analytics: { enabled: false, max_namespaces: 5 } } },
       { storage: { features: { iceberg_catalog: { enabled: true, max_namespaces: 10 } } } },
     );
-    expect(changeAt(result.changes, ["storage", "analytics", "enabled"])).toBeUndefined();
+    expect(changeAt(result.changes, ["storage", "analytics", "enabled"])).toMatchObject({
+      class: "update",
+      local: false,
+      remote: true,
+    });
     expect(changeAt(result.changes, ["storage", "analytics", "max_namespaces"])).toBeUndefined();
-    expect(result.unmanaged).toContainEqual(["storage", "analytics", "enabled"]);
+    expect(result.unmanaged).not.toContainEqual(["storage", "analytics", "enabled"]);
     expect(result.unmanaged).toContainEqual(["storage", "analytics", "max_namespaces"]);
   });
 

@@ -86,12 +86,13 @@ export interface ConfigChangeSet {
   /**
    * Comparable non-secret paths the file declares but the local projection
    * dropped — declared state a `config push` structurally cannot communicate
-   * (ADR 0021's unmanaged-by-push families: `auth.oauth_server`, disabled
-   * `storage.analytics`/`storage.vector`, siblings of a disabled container's
-   * sentinel, an unselected SMS provider's credentials, …). These were never
-   * compared on the local side, so — like `masked` — a clean `changes` list
-   * is only a partial claim; callers must surface this rather than let a
-   * declared value silently vanish from the comparison.
+   * (ADR 0021's unmanaged-by-push families: siblings of a disabled
+   * container's sentinel — e.g. `auth.oauth_server.authorization_url_path`,
+   * disabled `storage.analytics`/`storage.vector`'s quota fields — an
+   * unselected SMS provider's credentials, …). These were never compared on
+   * the local side, so — like `masked` — a clean `changes` list is only a
+   * partial claim; callers must surface this rather than let a declared
+   * value silently vanish from the comparison.
    */
   readonly unmanaged: ReadonlyArray<ReadonlyArray<string>>;
   readonly counts: ConfigChangeCounts;

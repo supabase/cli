@@ -2541,21 +2541,20 @@ describe("review round: Go-range sessions, SMTP/provider/storage disabled sentin
     expect(unmappedApiFields(sparse)).toEqual({});
   });
 
-  // Thread 3 (human review round on PR #6339): storageToUpdateBody only
-  // emits Iceberg/Vector inside a truthy `if (local.analytics.enabled)`
-  // branch (storage.sync.ts:287-300) — a disabled container is push-
-  // unmanaged, not confirmed-off, so the DOCUMENT arm omits it entirely
-  // rather than projecting `{enabled: false}`. The API arm is unaffected:
-  // its own `{enabled: false}` reflects real hosted state GoTrue reports.
-  test("a disabled storage.analytics/vector container is omitted entirely on the document arm, but the API arm still projects its toggle", () => {
+  // `enabled=false` means no Iceberg/Vector catalog is provisioned, so the
+  // quota fields are retained-but-inert ceilings on a non-existent resource
+  // — DISABLED_SENTINEL_PRUNES drops them on BOTH arms, leaving
+  // `{enabled: false}` either way (CLI-2314: the document arm no longer
+  // omits the container entirely — see this file's own docstring).
+  test("a disabled storage.analytics/vector container projects only its toggle on both arms", () => {
     const projected = fromConfigDocument({
       storage: {
         analytics: { enabled: false, max_tables: 10 },
         vector: { enabled: false, max_buckets: 5 },
       },
     });
-    expect(Object.hasOwn(projected.storage ?? {}, "analytics")).toBe(false);
-    expect(Object.hasOwn(projected.storage ?? {}, "vector")).toBe(false);
+    expect(projected.storage?.analytics).toEqual({ enabled: false });
+    expect(projected.storage?.vector).toEqual({ enabled: false });
 
     const enabledDoc = fromConfigDocument({
       storage: { analytics: { enabled: true, max_tables: 10, max_namespaces: 1, max_catalogs: 1 } },
@@ -2571,6 +2570,9 @@ describe("review round: Go-range sessions, SMTP/provider/storage disabled sentin
       storage: { features: { iceberg_catalog: { enabled: false, max_tables: 10 } } },
     });
     expect(api.storage?.analytics).toEqual({ enabled: false });
+    // Cross-arm equality: both arms converge on the same reduced shape for
+    // the same disabled state.
+    expect(api.storage?.analytics).toEqual(projected.storage?.analytics);
   });
 
   test("disabled external providers project only their toggle", () => {
@@ -3151,20 +3153,34 @@ describe("review round: oauth_server disabled sentinel (CLI-2230)", () => {
     expect(api.auth?.oauth_server).toEqual({ enabled: false });
   });
 
-  // Thread 3 (human review round on PR #6339): authToUpdateBody has NO
-  // oauth_server handling at all, so the whole subtree is unconditionally
-  // unmanaged by push — the document arm omits it entirely, regardless of
-  // `enabled`, superseding the round-17 disabled-sentinel treatment that
-  // used to keep `{enabled: false}` here.
-  test("auth.oauth_server is omitted entirely on the document arm, enabled or not", () => {
+  // `oauth_server_enabled=false` means the platform serves no OAuth
+  // consent-UI/dynamic-registration behavior, but genuinely retains
+  // `allow_dynamic_registration`/`authorization_url_path` as
+  // stored-but-inert state — DISABLED_SENTINEL_PRUNES drops them on BOTH
+  // arms, leaving `{enabled: false}` either way (CLI-2314: the document arm
+  // no longer omits the container entirely — see this file's own
+  // docstring). An enabled container survives with every field intact on
+  // the document arm.
+  test("a disabled auth.oauth_server container projects only its toggle on both arms", () => {
     const disabled = fromConfigDocument({
       auth: { oauth_server: { enabled: false, authorization_url_path: "/stale" } },
     });
-    expect(Object.hasOwn(disabled.auth ?? {}, "oauth_server")).toBe(false);
+    expect(disabled.auth?.oauth_server).toEqual({ enabled: false });
+
     const enabledDoc = fromConfigDocument({
       auth: { oauth_server: { enabled: true, allow_dynamic_registration: true } },
     });
-    expect(Object.hasOwn(enabledDoc.auth ?? {}, "oauth_server")).toBe(false);
+    expect(enabledDoc.auth?.oauth_server).toEqual({
+      enabled: true,
+      allow_dynamic_registration: true,
+    });
+
+    // Cross-arm equality: both arms converge on the same reduced shape for
+    // the same disabled state.
+    const api = fromApiProjectConfig({
+      auth: { oauth_server_enabled: false, oauth_server_authorization_path: "/stale" },
+    });
+    expect(disabled.auth?.oauth_server).toEqual(api.auth?.oauth_server);
   });
 });
 
