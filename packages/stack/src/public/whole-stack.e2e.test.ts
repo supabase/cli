@@ -307,8 +307,11 @@ const expectEndpointsRefused = async (endpoints: ReadonlyArray<StackEndpoint>): 
   }
 };
 
-const expectRuntimeInputsAbsent = async (projectRoot: string, stackId: string): Promise<void> => {
-  const stackRoot = join(projectRoot, ".supabase", "managed", "stacks", stackId);
+const expectRuntimeInputsAbsent = async (
+  stack: Pick<TestStack, "stateRoot" | "id">,
+): Promise<void> => {
+  const stackRoot = join(stack.stateRoot, stack.id);
+  await access(stackRoot);
   for (const relativePath of ["runtime/env", "runtime/inputs", "runtime/functions"]) {
     const path = join(stackRoot, relativePath);
     try {
@@ -975,7 +978,7 @@ const runWholeStackScenario = async (mode: (typeof RUNTIME_CASES)[number]): Prom
   await expectOwnedWorkloads(mode, stack.id, []);
   const retainedLogs: StackLogEntry[] = (await stack.logs()).entries.slice();
   expect(retainedLogs.length).toBeGreaterThan(0);
-  await expectRuntimeInputsAbsent(projectRoot, initial.id);
+  await expectRuntimeInputsAbsent(stack);
   await expectEndpointsRefused(initialEndpoints);
   if (mode.runtime.kind === "container") {
     expect(await dockerOwnedResourceCount(initial.id, "containers")).toBe(0);
@@ -1385,7 +1388,7 @@ describe("managed Supabase stack whole-stack E2E", () => {
             expect(stopped.capabilities.every(({ state }) => state === "stopped")).toBe(true);
             expect(await supervisorPids(stack.id)).toHaveLength(0);
             await expectOwnedWorkloads(mode, stack.id, []);
-            await expectRuntimeInputsAbsent(projectRoot, stack.id);
+            await expectRuntimeInputsAbsent(stack);
             await expectEndpointsRefused(endpointSnapshot);
             if (mode.runtime.kind === "container") {
               if (stackId === undefined) throw new Error("Stack id was not assigned");

@@ -97,6 +97,7 @@ const stateStoreFor = (
   replace: () => Effect.die("unused"),
   replaceUnlocked: () => Effect.die("unused"),
   cleanup: () => Effect.die("unused"),
+  recoverRuntimeRemnant: () => Effect.die("unused"),
 });
 
 const mutableStateStoreFor = (current: {
@@ -116,6 +117,7 @@ const mutableStateStoreFor = (current: {
     Effect.sync(() => {
       current.value = undefined;
     }),
+  recoverRuntimeRemnant: () => Effect.void,
 });
 
 const memoryLogStore = (entries: StackLogEntry[]): LogStore => ({

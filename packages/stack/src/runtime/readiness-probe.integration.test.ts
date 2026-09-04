@@ -200,6 +200,9 @@ describe("private endpoint readiness probe", () => {
         if (Exit.isFailure(result)) {
           const cause = Option.getOrUndefined(Cause.findErrorOption(result.cause));
           expect(cause).toMatchObject({ message: "Readiness HTTP status was not successful" });
+          expect(cause).toMatchObject({
+            target: { mode: "http", host: "127.0.0.1", port },
+          });
         }
         expect(count).toBe(1);
       }),

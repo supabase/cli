@@ -1,4 +1,17 @@
-import { Crypto, Data, Effect, Exit, FileSystem, Path, Predicate, Schedule, Schema } from "effect";
+import {
+  Crypto,
+  Data,
+  Effect,
+  Exit,
+  FileSystem,
+  Path,
+  PlatformError,
+  Predicate,
+  Schedule,
+  Schema,
+} from "effect";
+// oxlint-disable-next-line effecttsgo/node-builtin-import -- native rmdir preserves non-recursive recovery semantics.
+import { rmdir } from "node:fs/promises";
 import {
   InvalidProjectRootError,
   StackStateFormatUnsupportedError,
@@ -68,6 +81,14 @@ export interface StackStateStore {
     InvalidProjectRootError | StackStateInvalidError,
     FileSystem.FileSystem | Path.Path
   >;
+  /** Removes only an empty runtime-only remnant and its now-empty identity root. */
+  readonly recoverRuntimeRemnant: (
+    stackId: string,
+  ) => Effect.Effect<
+    void,
+    InvalidProjectRootError | StackStateInvalidError,
+    FileSystem.FileSystem | Path.Path
+  >;
 }
 
 const isRecord = (value: unknown): value is Readonly<Record<string, unknown>> =>
@@ -75,6 +96,19 @@ const isRecord = (value: unknown): value is Readonly<Record<string, unknown>> =>
 
 const stateError = (message: string, cause?: unknown) =>
   new StackStateInvalidError({ message, ...(cause === undefined ? {} : { cause }) });
+
+const isNotFoundPlatformError = (error: unknown): error is PlatformError.PlatformError =>
+  error instanceof PlatformError.PlatformError &&
+  error.reason instanceof PlatformError.SystemError &&
+  Predicate.isTagged(error.reason, "NotFound");
+
+const MISSING_STATE_REMNANT_CODE = "missing-state-remnant" as const;
+const MISSING_STATE_REMNANT_MESSAGE =
+  "Stack state is missing beside identity-owned remnants; refusing to guess replacement state";
+
+/** Identifies an empty identity directory left by an interrupted owner launch. */
+export const isMissingStateRemnantError = (error: unknown): error is StackStateInvalidError =>
+  error instanceof StackStateInvalidError && error.code === MISSING_STATE_REMNANT_CODE;
 
 const validateId = (stackId: string) =>
   Schema.decodeEffect(StackIdSchema)(stackId).pipe(
@@ -344,6 +378,64 @@ export const makeStackStateStore = (options: {
         );
       });
 
+    const inspectMissingState = (
+      paths: StackPaths,
+    ): Effect.Effect<PersistedStackState | undefined, StackStateInvalidError> =>
+      Effect.gen(function* () {
+        const rootExists = yield* fs
+          .exists(paths.stackRoot)
+          .pipe(
+            Effect.mapError((error) =>
+              stateError(`Unable to inspect stack root: ${error.message}`),
+            ),
+          );
+        if (!rootExists) return undefined;
+        const entries = yield* fs.readDirectory(paths.stackRoot).pipe(
+          Effect.catchIf(
+            (error) => isNotFoundPlatformError(error),
+            () => Effect.void,
+          ),
+          Effect.mapError((error) =>
+            stateError(`Unable to inspect stack remnants: ${error.message}`),
+          ),
+        );
+        // The stack root may disappear after exists() while a concurrent destroy finishes.
+        if (entries === undefined) return undefined;
+        if (entries.length > 0) {
+          if (entries.length === 1 && entries[0] === "runtime") {
+            const runtimeInfo = yield* fs.stat(paths.runtime).pipe(
+              Effect.catchIf(
+                (error) => isNotFoundPlatformError(error),
+                () => Effect.void,
+              ),
+              Effect.mapError((error) =>
+                stateError(`Unable to inspect runtime remnant: ${error.message}`),
+              ),
+            );
+            if (runtimeInfo === undefined) return undefined;
+            if (runtimeInfo.type === "Directory") {
+              const runtimeEntries = yield* fs.readDirectory(paths.runtime).pipe(
+                Effect.catchIf(
+                  (error) => isNotFoundPlatformError(error),
+                  () => Effect.void,
+                ),
+                Effect.mapError((error) =>
+                  stateError(`Unable to inspect runtime remnant: ${error.message}`),
+                ),
+              );
+              if (runtimeEntries === undefined) return undefined;
+              if (runtimeEntries.length === 0)
+                return yield* new StackStateInvalidError({
+                  message: MISSING_STATE_REMNANT_MESSAGE,
+                  code: MISSING_STATE_REMNANT_CODE,
+                });
+            }
+          }
+          return yield* stateError(MISSING_STATE_REMNANT_MESSAGE);
+        }
+        return undefined;
+      });
+
     const read = (
       stackId: string,
     ): Effect.Effect<
@@ -353,52 +445,18 @@ export const makeStackStateStore = (options: {
     > =>
       Effect.gen(function* () {
         const paths = yield* pathsFor(stackId);
-        const exists = yield* fs
-          .exists(paths.stateDocument)
-          .pipe(
-            Effect.mapError((error) =>
-              stateError(`Unable to inspect state document: ${error.message}`),
-            ),
-          );
-        if (!exists) {
-          const rootExists = yield* fs
-            .exists(paths.stackRoot)
-            .pipe(
-              Effect.mapError((error) =>
-                stateError(`Unable to inspect stack root: ${error.message}`),
-              ),
-            );
-          if (!rootExists) return undefined;
-          const entries = yield* fs
-            .readDirectory(paths.stackRoot)
-            .pipe(
-              Effect.mapError((error) =>
-                stateError(`Unable to inspect stack remnants: ${error.message}`),
-              ),
-            );
-          if (entries.length > 0) {
-            return yield* stateError(
-              "Stack state is missing beside identity-owned remnants; refusing to guess replacement state",
-            );
-          }
-          return undefined;
-        }
-        const info = yield* fs
-          .stat(paths.stateDocument)
-          .pipe(
-            Effect.mapError((error) =>
-              stateError(`Unable to inspect state document: ${error.message}`),
-            ),
-          );
-        if (info.type !== "File")
-          return yield* stateError("Stack state document is not a regular file");
-        const text = yield* fs
-          .readFileString(paths.stateDocument)
-          .pipe(
-            Effect.mapError((error) =>
-              stateError(`Unable to read state document: ${error.message}`),
-            ),
-          );
+        const stateRead = yield* fs.readFileString(paths.stateDocument).pipe(
+          Effect.map((text) => ({ _tag: "present" as const, text })),
+          Effect.catch((error) =>
+            isNotFoundPlatformError(error)
+              ? inspectMissingState(paths).pipe(
+                  Effect.map((state) => ({ _tag: "missing" as const, state })),
+                )
+              : Effect.fail(stateError(`Unable to read state document: ${String(error)}`)),
+          ),
+        );
+        if (stateRead._tag === "missing") return stateRead.state;
+        const text = stateRead.text;
         const raw = yield* Schema.decodeEffect(Schema.fromJsonString(Schema.Unknown))(text).pipe(
           Effect.mapError((error) =>
             stateError(`Unable to parse state document: ${String(error)}`),
@@ -420,7 +478,11 @@ export const makeStackStateStore = (options: {
       withRegistryLock(
         options.stateRoot,
         Effect.gen(function* () {
-          const existing = yield* read(stackId);
+          const existing = yield* read(stackId).pipe(
+            Effect.catchIf(isMissingStateRemnantError, () =>
+              recoverRuntimeRemnantUnlocked(stackId).pipe(Effect.asVoid),
+            ),
+          );
           if (existing !== undefined) return existing;
           const paths = yield* pathsFor(stackId);
           yield* validateState(stackId, candidate);
@@ -455,6 +517,95 @@ export const makeStackStateStore = (options: {
       FileSystem.FileSystem | Path.Path | Crypto.Crypto
     > => withRegistryLock(options.stateRoot, replaceUnlocked(stackId, next));
 
+    // FileSystem.remove({ recursive: false }) maps to fs.rm, which refuses to
+    // remove directories on Node. Native rmdir is intentionally used here so
+    // a concurrent child creation fails with ENOTEMPTY instead of recursively
+    // deleting a newly-created lease or control file.
+    const removeEmptyDirectory = (directory: string, label: string) =>
+      Effect.tryPromise({
+        try: () => rmdir(directory),
+        catch: (error) =>
+          stateError(
+            `Unable to remove empty ${label} during recovery: ${
+              error instanceof Error ? error.message : String(error)
+            }`,
+          ),
+      });
+
+    const recoverRuntimeRemnantUnlocked = (
+      stackId: string,
+    ): Effect.Effect<
+      void,
+      InvalidProjectRootError | StackStateInvalidError,
+      FileSystem.FileSystem | Path.Path
+    > =>
+      Effect.gen(function* () {
+        const paths = yield* pathsFor(stackId);
+        const stateExists = yield* fs
+          .exists(paths.stateDocument)
+          .pipe(
+            Effect.mapError((error) =>
+              stateError(
+                `Unable to inspect state document during remnant recovery: ${error.message}`,
+              ),
+            ),
+          );
+        if (stateExists)
+          return yield* stateError("Cannot recover a runtime remnant beside persisted state");
+
+        const rootExists = yield* fs
+          .exists(paths.stackRoot)
+          .pipe(
+            Effect.mapError((error) =>
+              stateError(`Unable to inspect stack root during remnant recovery: ${error.message}`),
+            ),
+          );
+        if (!rootExists) return;
+        const entries = yield* fs
+          .readDirectory(paths.stackRoot)
+          .pipe(
+            Effect.mapError((error) =>
+              stateError(`Unable to inspect stack remnants during recovery: ${error.message}`),
+            ),
+          );
+        if (entries.length === 0) {
+          yield* removeEmptyDirectory(paths.stackRoot, "stack root");
+          return;
+        }
+        if (entries.length !== 1 || entries[0] !== "runtime")
+          return yield* stateError("Stack state is missing beside durable identity remnants");
+
+        const runtimeInfo = yield* fs
+          .stat(paths.runtime)
+          .pipe(
+            Effect.mapError((error) =>
+              stateError(`Unable to inspect runtime remnant during recovery: ${error.message}`),
+            ),
+          );
+        if (runtimeInfo.type !== "Directory")
+          return yield* stateError("Runtime remnant is not a directory");
+        const runtimeEntries = yield* fs
+          .readDirectory(paths.runtime)
+          .pipe(
+            Effect.mapError((error) =>
+              stateError(`Unable to inspect runtime remnant during recovery: ${error.message}`),
+            ),
+          );
+        if (runtimeEntries.length > 0)
+          return yield* stateError("Runtime remnant is not empty; refusing recovery");
+
+        yield* removeEmptyDirectory(paths.runtime, "runtime remnant");
+        yield* removeEmptyDirectory(paths.stackRoot, "stack root");
+      });
+
+    const recoverRuntimeRemnant = (
+      stackId: string,
+    ): Effect.Effect<
+      void,
+      InvalidProjectRootError | StackStateInvalidError,
+      FileSystem.FileSystem | Path.Path
+    > => withRegistryLock(options.stateRoot, recoverRuntimeRemnantUnlocked(stackId));
+
     const cleanup = (
       stackId: string,
     ): Effect.Effect<
@@ -476,7 +627,14 @@ export const makeStackStateStore = (options: {
         }),
       );
 
-    return { read, initialize, replace, replaceUnlocked, cleanup } satisfies StackStateStore;
+    return {
+      read,
+      initialize,
+      replace,
+      replaceUnlocked,
+      cleanup,
+      recoverRuntimeRemnant,
+    } satisfies StackStateStore;
   });
 
 export { PersistedStackStateSchema } from "./StackState.ts";

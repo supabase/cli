@@ -14,6 +14,8 @@ import { RuntimeDriverError } from "./RuntimeDriver.ts";
 import { makeNativeRuntime } from "./NativeRuntime.ts";
 import {
   defaultNativeProcessLauncher,
+  nativeLauncherEntrypointFor,
+  NATIVE_PROCESS_DISPATCH_SENTINEL,
   spawnNativeProcess,
   type NativeProcess,
 } from "./NativeProcess.ts";
@@ -83,6 +85,15 @@ const signalOnLog = (
 // this suite so file-level parallelism does not turn the default 5s guard into
 // a false failure while leaving the rest of the integration suite unchanged.
 describe("native runtime", { timeout: 15_000 }, () => {
+  it("uses a private dispatch marker for compiled Bun launcher paths", () => {
+    expect(
+      nativeLauncherEntrypointFor("file:///$bunfs/packages/stack/src/runtime/NativeProcess.ts"),
+    ).toBe(NATIVE_PROCESS_DISPATCH_SENTINEL);
+    expect(
+      nativeLauncherEntrypointFor("C:\\$bunfs\\packages\\stack\\src\\runtime\\NativeProcess.ts"),
+    ).toBe(NATIVE_PROCESS_DISPATCH_SENTINEL);
+  });
+
   it.live("rejects container artifacts before invoking native process resolution", () =>
     withPlatform(
       Effect.gen(function* () {
@@ -476,7 +487,7 @@ describe("native runtime", { timeout: 15_000 }, () => {
           command: process.execPath,
           args: [
             "-e",
-            `process.env.PGPASSWORD="host-secret"; await import(${JSON.stringify(launcherPath)})`,
+            `process.env.PGPASSWORD="host-secret"; const { runNativeLauncher } = await import(${JSON.stringify(launcherPath)}); runNativeLauncher()`,
           ],
         };
         const runtime = yield* makeNativeRuntime({

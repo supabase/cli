@@ -1,6 +1,7 @@
 import { Data, Effect } from "effect";
 import type { StackId } from "../public/StackId.ts";
 import type { PlannedWorkload } from "../model/ExecutionPlan.ts";
+import type { ReadinessTarget } from "./ReadinessProbe.ts";
 
 /** The exact identity used when touching a private runtime resource. */
 export interface RuntimeWorkloadKey {
@@ -50,5 +51,7 @@ export class RuntimeDriverError extends Data.TaggedError("RuntimeDriverError")<{
   readonly message: string;
   readonly stackId?: StackId;
   readonly workloadId?: string;
+  /** Private endpoint used by readiness failures, when applicable. */
+  readonly target?: ReadinessTarget;
   readonly cause?: unknown;
 }> {}

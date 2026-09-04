@@ -58,6 +58,7 @@ import type { LogQuery, StackLogBatch, StackLogEntry } from "./Logs.ts";
 import {
   createStack,
   inspectStack,
+  listStacks,
   makeHandle,
   openStack,
   type EffectStack,
@@ -596,6 +597,25 @@ describe("Effect stack lifecycle handoff", () => {
     ),
   );
 
+  it.live("preserves an allowed error tag when reading offline logs", () =>
+    Effect.gen(function* () {
+      const upgrade = new StackUpgradeRequiredError({
+        message: "The retained log protocol is newer than this client",
+        expectedRelease: STACK_RPC_RELEASE,
+        actualRelease: "future",
+      });
+      const stack = yield* makeTestHandle(stackId, {
+        resolveOwner: () => Effect.succeed(Option.none()),
+        readPersistedState: Effect.succeed(Option.some(stoppedState())),
+        readLogs: () => Effect.fail(upgrade),
+      });
+      const result = yield* stack.logs().pipe(Effect.exit);
+      expect(Exit.isFailure(result)).toBe(true);
+      if (Exit.isFailure(result))
+        expect(Option.getOrUndefined(Cause.findErrorOption(result.cause))).toBe(upgrade);
+    }).pipe(Effect.provide(NodeServices.layer)),
+  );
+
   it.live(
     "guards offline operations against real lock-only and metadata ownership",
     () =>
@@ -756,6 +776,88 @@ describe("Effect stack lifecycle handoff", () => {
           expect(Option.getOrUndefined(Cause.findErrorOption(logs.cause))).toBeInstanceOf(
             StackNotFoundError,
           );
+      }),
+    ),
+  );
+
+  it.live("does not leave a runtime remnant when a retained handle starts after destroy", () =>
+    withRuntimeRoot((project) =>
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const env = yield* StackRuntimeEnvironment;
+        const stack = yield* createStack({ projectRoot: project });
+        yield* stack.destroy();
+        const paths = yield* resolveStackPaths({ stateRoot: env.stateRoot, stackId: stack.id });
+
+        const failed = yield* stack.start().pipe(Effect.exit);
+
+        expect(Exit.isFailure(failed)).toBe(true);
+        expect(yield* fs.exists(paths.stackRoot)).toBe(false);
+        expect(yield* listStacks()).toEqual([]);
+      }),
+    ),
+  );
+
+  it.live("ignores a runtime-only missing-state sibling during list discovery", () =>
+    withRuntimeRoot((project) =>
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const env = yield* StackRuntimeEnvironment;
+        const valid = yield* createStack({ projectRoot: project });
+        const orphanId = StackIdSchema.make("a".repeat(64));
+        const orphanPaths = yield* resolveStackPaths({
+          stateRoot: env.stateRoot,
+          stackId: orphanId,
+        });
+        yield* fs.makeDirectory(orphanPaths.runtime, { recursive: true });
+
+        const listed = yield* listStacks();
+
+        expect(listed).toHaveLength(1);
+        expect(listed[0]?.id).toBe(valid.id);
+      }),
+    ),
+  );
+
+  it.live("recovers a same-identity runtime-only missing-state remnant during create", () =>
+    withRuntimeRoot((project) =>
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const env = yield* StackRuntimeEnvironment;
+        const identity = yield* resolveStackIdentity({ projectRoot: project });
+        const id = yield* deriveStackId(identity);
+        const paths = yield* resolveStackPaths({ stateRoot: env.stateRoot, stackId: id });
+        yield* fs.makeDirectory(paths.runtime, { recursive: true });
+
+        const recovered = yield* createStack({ projectRoot: project });
+
+        expect(recovered.id).toBe(id);
+        expect(yield* fs.exists(paths.stateDocument)).toBe(true);
+      }),
+    ),
+  );
+
+  it.live("keeps durable missing-state remnants fail-closed during list discovery", () =>
+    withRuntimeRoot((project) =>
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const env = yield* StackRuntimeEnvironment;
+        yield* createStack({ projectRoot: project });
+        const orphanId = StackIdSchema.make("b".repeat(64));
+        const orphanPaths = yield* resolveStackPaths({
+          stateRoot: env.stateRoot,
+          stackId: orphanId,
+        });
+        yield* fs.makeDirectory(orphanPaths.data, { recursive: true });
+
+        const listed = yield* listStacks().pipe(Effect.exit);
+
+        expect(Exit.isFailure(listed)).toBe(true);
+        expect(
+          Exit.isFailure(listed)
+            ? Option.getOrUndefined(Cause.findErrorOption(listed.cause))
+            : undefined,
+        ).toBeInstanceOf(StackStateInvalidError);
       }),
     ),
   );

@@ -10,6 +10,10 @@ import { InvalidLogCursorError } from "../public/Errors.ts";
 import { redactKnownSecrets } from "../state/SecretStore.ts";
 
 const CURSOR_PREFIX = "v1_";
+/** Keep at most twice the configured retention before compacting the file. */
+const COMPACTION_FACTOR = 2;
+const DEFAULT_LOG_MAX_ENTRIES = 1_000;
+const DEFAULT_LOG_MAX_BYTES = 1024 * 1024;
 
 /** File or decoding failure while opening or writing retained logs. */
 export class LogStoreError extends Data.TaggedError("LogStoreError")<{
@@ -39,6 +43,11 @@ export interface LogRecord {
 /** Internal retained-log query. */
 interface LogStoreQuery {
   readonly cursor?: LogCursor;
+}
+
+export interface RetainedLogReadOptions extends LogStoreQuery {
+  readonly maxEntries?: number;
+  readonly maxBytes?: number;
 }
 
 /** Cursor returned when a retained log file has no entries to advance to. */
@@ -71,6 +80,10 @@ export const selectLogBatch = (
 
 export interface LogStore {
   readonly path: string;
+  /**
+   * Appends one record. An individually oversized record is returned to the caller but is not
+   * retained, and does not advance the cursor or rewrite the retained log file.
+   */
   readonly append: (record: LogRecord) => Effect.Effect<StackLogEntry, LogStoreError>;
   /** Returns retained records after the supplied cursor. */
   readonly read: (
@@ -194,11 +207,17 @@ const readDocument = (
 export const readRetainedLogs = (
   fs: FileSystem.FileSystem,
   path: string,
-  options?: LogStoreQuery,
+  options?: RetainedLogReadOptions,
 ): Effect.Effect<ReadonlyArray<StackLogEntry>, LogStoreError | InvalidLogCursorError> =>
-  readDocument(fs, path).pipe(
-    Effect.flatMap((document) => selected(document.entries, options, path)),
-  );
+  Effect.gen(function* () {
+    const document = yield* readDocument(fs, path);
+    const maxEntries = validLimit(options?.maxEntries, DEFAULT_LOG_MAX_ENTRIES);
+    const maxBytes = validLimit(options?.maxBytes, DEFAULT_LOG_MAX_BYTES);
+    if (maxEntries < 1 || maxBytes < 2)
+      return yield* fileError(path, "Log retention limits must be positive");
+    const boundedDocument = yield* bounded(document, maxEntries, maxBytes, path);
+    return yield* selected(boundedDocument.document.entries, options, path);
+  });
 
 const redactDocument = (
   document: LogDocument,
@@ -294,8 +313,8 @@ export const makeLogStore = (
   Effect.gen(function* () {
     const fs = yield* FileSystem.FileSystem;
     const pathService = yield* Path.Path;
-    const maxEntries = validLimit(options.maxEntries, 1_000);
-    const maxBytes = validLimit(options.maxBytes, 1024 * 1024);
+    const maxEntries = validLimit(options.maxEntries, DEFAULT_LOG_MAX_ENTRIES);
+    const maxBytes = validLimit(options.maxBytes, DEFAULT_LOG_MAX_BYTES);
     if (maxEntries < 1 || maxBytes < 1)
       return yield* fileError(options.path, "Log retention limits must be positive");
 
@@ -327,6 +346,9 @@ export const makeLogStore = (
     );
     let document = boundedLoaded.document;
     let retainedBytes = boundedLoaded.bytes;
+    // The on-disk document may temporarily overshoot the configured limits between periodic
+    // compactions. Keep reads strictly bounded so the public retention contract remains stable.
+    let visibleEntries = boundedLoaded.document.entries;
     const exists = yield* fs
       .exists(options.path)
       .pipe(
@@ -362,10 +384,17 @@ export const makeLogStore = (
           };
           const encoded = yield* encodedEntry(entry, options.path);
           const entryBytes = new TextEncoder().encode(`${encoded}\n`).byteLength;
+          if (entryBytes > maxBytes) return entry;
           const nextBytes = retainedBytes + entryBytes;
-          if (document.entries.length + 1 <= maxEntries && nextBytes <= maxBytes) {
-            document = next;
-            retainedBytes = nextBytes;
+          const withinCompactionWindow =
+            document.entries.length + 1 <= maxEntries * COMPACTION_FACTOR &&
+            nextBytes <= maxBytes * COMPACTION_FACTOR;
+          if (withinCompactionWindow) {
+            const nextVisible =
+              next.entries.length <= maxEntries && nextBytes <= maxBytes
+                ? next.entries
+                : (yield* bounded(next, maxEntries, maxBytes, options.path, nextBytes)).document
+                    .entries;
             yield* Effect.scoped(
               Effect.gen(function* () {
                 const file = yield* fs.open(options.path, { flag: "a", mode: 0o600 });
@@ -378,18 +407,22 @@ export const makeLogStore = (
                   : fileError(options.path, "Unable to append retained logs", error),
               ),
             );
+            document = next;
+            retainedBytes = nextBytes;
+            visibleEntries = nextVisible;
           } else {
             const boundedNext = yield* bounded(next, maxEntries, maxBytes, options.path, nextBytes);
+            yield* persist(fs, options.path, boundedNext.document.entries);
             document = boundedNext.document;
             retainedBytes = boundedNext.bytes;
-            yield* persist(fs, options.path, document.entries);
+            visibleEntries = boundedNext.document.entries;
           }
           return entry;
         }),
       );
 
     const read = (readOptions?: LogStoreQuery) =>
-      semaphore.withPermit(selected(document.entries, readOptions, options.path));
+      semaphore.withPermit(selected(visibleEntries, readOptions, options.path));
 
     return {
       path: options.path,

@@ -41,6 +41,7 @@ import type { EffectStackCredentials } from "../public/Credentials.ts";
 import type { PlannedWorkload } from "../model/ExecutionPlan.ts";
 import { deriveStackId } from "../identity/Identity.ts";
 import { makeStackStateStore } from "../state/StackStateStore.ts";
+import { resolveStackPaths } from "../state/Paths.ts";
 import { StackRpcGroup, type StackRpcError } from "../control/StackRpc.ts";
 import { makeSupervisor, type Supervisor, type SupervisorRuntime } from "./Supervisor.ts";
 import type { SupervisorIngress } from "./Ingress.ts";
@@ -107,6 +108,7 @@ const makeFixture = (
     readonly shutdownReadArmed?: Ref.Ref<boolean>;
     readonly shutdownReadStarted?: Deferred.Deferred<void>;
     readonly shutdownReadGate?: Deferred.Deferred<void>;
+    readonly readCalls?: Ref.Ref<number>;
   } = {},
 ) =>
   Effect.gen(function* () {
@@ -164,7 +166,16 @@ const makeFixture = (
                 return yield* persistedStore.read(stackId);
               }),
           };
-    const store = runtimeStore;
+    const store =
+      fixtureOptions.readCalls === undefined
+        ? runtimeStore
+        : {
+            ...runtimeStore,
+            read: (stackId: string) =>
+              Ref.update(fixtureOptions.readCalls!, (count) => count + 1).pipe(
+                Effect.andThen(runtimeStore.read(stackId)),
+              ),
+          };
     yield* store.initialize(id, {
       format: "supabase-stack-state-v1",
       identity: { ...identity, stackId: id },
@@ -382,7 +393,18 @@ const makeFixture = (
       runtime,
     });
     yield* Ref.set(calls, []);
-    return { supervisor, calls, logOptions, failDestroy, context, store, id, runtime, resources };
+    return {
+      supervisor,
+      calls,
+      logOptions,
+      failDestroy,
+      context,
+      store,
+      id,
+      runtime,
+      resources,
+      root,
+    };
   });
 
 const run = <A, E, R>(effect: Effect.Effect<A, E, R>) =>
@@ -1288,6 +1310,30 @@ describe("Supervisor composition", () => {
     ),
   );
 
+  it.live("removes a runtime remnant when state disappears before supervisor initialization", () =>
+    run(
+      Effect.gen(function* () {
+        const fixture = yield* makeFixture();
+        const fs = yield* FileSystem.FileSystem;
+        const paths = yield* resolveStackPaths({ stateRoot: fixture.root, stackId: fixture.id });
+        yield* fixture.store.cleanup(fixture.id);
+        yield* fs.makeDirectory(paths.runtime, { recursive: true });
+
+        const failed = yield* makeSupervisor({
+          stackId: fixture.id,
+          ownerSessionId: "missing-state-session",
+          rpcRelease: "test-release",
+          stateStore: fixture.store,
+          context: fixture.context,
+          runtime: fixture.runtime,
+        }).pipe(Effect.exit);
+
+        expect(errorOf(failed)).toBeInstanceOf(StackStateInvalidError);
+        expect(yield* fs.exists(paths.runtime)).toBe(false);
+      }),
+    ),
+  );
+
   it.live("passes log query through the Supervisor log batch", () =>
     run(
       Effect.gen(function* () {
@@ -1615,6 +1661,36 @@ describe("Supervisor composition", () => {
         expect(yield* Ref.get(activationCalls)).toBe(1);
         expect(yield* fixture.supervisor.activate("functions")).toEqual(left);
         expect(yield* Ref.get(activationCalls)).toBe(1);
+      }),
+    ),
+  );
+
+  it.live("reuses a ready lazy activation without rereading durable state", () =>
+    run(
+      Effect.gen(function* () {
+        const readCalls = yield* Ref.make(0);
+        const fixture = yield* makeFixture({ readCalls });
+        yield* fixture.supervisor.start({
+          config: {
+            capabilities: {
+              functions: { activation: "lazy" },
+              auth: { enabled: false },
+              realtime: { enabled: false },
+              storage: { enabled: false },
+              studio: { enabled: false },
+              mail: { enabled: false },
+              analytics: { enabled: false },
+              pooler: { enabled: false },
+            },
+          },
+        });
+        yield* Ref.set(readCalls, 0);
+
+        yield* fixture.supervisor.activate("functions");
+        const afterFirst = yield* Ref.get(readCalls);
+        yield* fixture.supervisor.activate("functions");
+
+        expect(yield* Ref.get(readCalls)).toBe(afterFirst);
       }),
     ),
   );

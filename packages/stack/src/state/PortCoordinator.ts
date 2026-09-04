@@ -16,7 +16,7 @@ import type {
   PersistedStackState,
   PrivatePortAssignment,
 } from "./StackState.ts";
-import type { StackStateStore } from "./StackStateStore.ts";
+import { isMissingStateRemnantError, type StackStateStore } from "./StackStateStore.ts";
 import { withRegistryLock } from "./StackStateStore.ts";
 
 interface ListenerIntent {
@@ -133,9 +133,10 @@ const readAuthoritativeStates = (options: PortCoordinatorOptions) =>
       .pipe(Effect.mapError((error) => new StackStateInvalidError({ message: error.message })));
     const ids = entries.filter((entry) => idPattern.test(entry));
     const values = yield* Effect.forEach(ids, (stackId) =>
-      options.store
-        .read(stackId)
-        .pipe(Effect.map((state) => (state === undefined ? undefined : { stackId, state }))),
+      options.store.read(stackId).pipe(
+        Effect.catchIf(isMissingStateRemnantError, () => Effect.void),
+        Effect.map((state) => (state === undefined ? undefined : { stackId, state })),
+      ),
     );
     return values.filter(
       (entry): entry is { readonly stackId: string; readonly state: PersistedStackState } =>

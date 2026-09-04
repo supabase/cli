@@ -161,6 +161,12 @@ describe("managed stack handles", { timeout: 30_000 }, () => {
     expect(supervisorEntrypointFor(import.meta.url)).not.toBe(SUPERVISOR_DISPATCH_SENTINEL);
   });
 
+  it("selects the private dispatch marker for Windows compiled Bun paths", () => {
+    expect(
+      supervisorEntrypointFor("C:\\$bunfs\\root\\packages\\stack\\src\\supervisor\\Launcher.ts"),
+    ).toBe(SUPERVISOR_DISPATCH_SENTINEL);
+  });
+
   it.live("preserves the child ownership detail for metadata without a lease lock", () =>
     withRuntimeRoot((project) =>
       Effect.gen(function* () {
@@ -591,7 +597,7 @@ describe("managed stack handles", { timeout: 30_000 }, () => {
     ),
   );
 
-  it.live("keeps the detached owner alive after concurrent caller processes exit", () =>
+  it.live("concurrent caller processes share one stack identity after exit", () =>
     withRuntimeRoot((project) =>
       Effect.gen(function* () {
         const path = yield* Path.Path;

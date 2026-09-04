@@ -19,7 +19,7 @@ interface CheckoutMetadata {
 }
 
 const invalidMetadata = (path: string, reason: string): InvalidStackIdentityError =>
-  new InvalidStackIdentityError({ path, reason });
+  new InvalidStackIdentityError({ path, reason, message: reason });
 
 const canonicalGitDirectory = (
   fs: FileSystem.FileSystem,

@@ -327,6 +327,56 @@ describe("atomic stack state", () => {
     ),
   );
 
+  it.live("treats a state document disappearing during read as an absent stack", () =>
+    withPlatform(
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const root = yield* fs.makeTempDirectoryScoped({ prefix: "supabase-stack-read-race-" });
+        const stackId = yield* deriveStackId(identity);
+        const store = yield* makeStackStateStore({ stateRoot: root });
+        yield* store.initialize(stackId, state(stackId));
+        const statePath = path.join(root, stackId, "state.json");
+        const racingFs: FileSystem.FileSystem = {
+          ...fs,
+          readFileString: (candidate, encoding) =>
+            candidate === statePath
+              ? fs.remove(candidate).pipe(Effect.andThen(fs.readFileString(candidate, encoding)))
+              : fs.readFileString(candidate, encoding),
+        };
+        const racingStore = yield* makeStackStateStore({ stateRoot: root }).pipe(
+          Effect.provideService(FileSystem.FileSystem, racingFs),
+        );
+
+        expect(yield* racingStore.read(stackId)).toBeUndefined();
+      }),
+    ),
+  );
+
+  it.live("does not recover a runtime remnant that contains an owner lock", () =>
+    withPlatform(
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const root = yield* fs.makeTempDirectoryScoped({ prefix: "supabase-stack-live-remnant-" });
+        const store = yield* makeStackStateStore({ stateRoot: root });
+        const stackId = yield* deriveStackId(identity);
+        const runtime = path.join(root, stackId, "runtime");
+        const ownerLock = path.join(runtime, "owner.lock");
+        yield* fs.makeDirectory(runtime, { recursive: true });
+        yield* fs.writeFileString(ownerLock, "live");
+
+        const readExit = yield* store.read(stackId).pipe(Effect.exit);
+        expect(errorOf(readExit)).toBeInstanceOf(StackStateInvalidError);
+        const recovered = yield* store.recoverRuntimeRemnant(stackId).pipe(Effect.exit);
+
+        expect(errorOf(recovered)).toBeInstanceOf(StackStateInvalidError);
+        expect(yield* fs.exists(ownerLock)).toBe(true);
+        expect(yield* fs.exists(runtime)).toBe(true);
+      }),
+    ),
+  );
+
   it.live("rejects unsupported state formats", () =>
     withPlatform(
       Effect.gen(function* () {

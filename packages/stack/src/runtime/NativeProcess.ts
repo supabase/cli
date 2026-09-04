@@ -54,11 +54,20 @@ export interface NativeProcess {
   readonly kill: Effect.Effect<void, NativeProcessError>;
 }
 
-const launcherPath = fileURLToPath(new URL("./native-launcher.ts", import.meta.url));
+/** Private argv marker used when a compiled CLI dispatches its embedded native launcher. */
+export const NATIVE_PROCESS_DISPATCH_SENTINEL = "__supabase_stack_native__" as const;
+
+const isBunVirtualPath = (value: string): boolean => /(?:^|[\\/])\$bunfs(?:[\\/]|$)/.test(value);
+
+export const nativeLauncherEntrypointFor = (moduleUrl: string): string => {
+  if (isBunVirtualPath(moduleUrl)) return NATIVE_PROCESS_DISPATCH_SENTINEL;
+  const sourceEntrypoint = fileURLToPath(new URL("./native-launcher.ts", moduleUrl));
+  return isBunVirtualPath(sourceEntrypoint) ? NATIVE_PROCESS_DISPATCH_SENTINEL : sourceEntrypoint;
+};
 
 export const defaultNativeProcessLauncher = (): NativeProcessLauncher => ({
   command: process.execPath,
-  args: [launcherPath],
+  args: [nativeLauncherEntrypointFor(import.meta.url)],
 });
 
 const encodeSpec = (spec: NativeProcessSpec): Uint8Array =>

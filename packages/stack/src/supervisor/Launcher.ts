@@ -24,7 +24,7 @@ import {
   type OwnerMetadata,
   type StackRuntimeEnvironmentValue,
 } from "../state/Ownership.ts";
-import type { StackStateStore } from "../state/StackStateStore.ts";
+import { isMissingStateRemnantError, type StackStateStore } from "../state/StackStateStore.ts";
 import { makeControlClient } from "../control/ControlServer.ts";
 import { isMaintenanceTransportFailure } from "../control/MaintenanceProtocol.ts";
 import { STACK_RPC_RELEASE } from "../control/StackRpc.ts";
@@ -45,9 +45,12 @@ export type { StackRuntimeEnvironmentValue } from "../state/Ownership.ts";
 /** Private argv marker used when a compiled CLI dispatches its embedded Supervisor. */
 export const SUPERVISOR_DISPATCH_SENTINEL = "__supabase_stack_supervisor__" as const;
 
+const isBunVirtualPath = (value: string): boolean => /(?:^|[\\/])\$bunfs(?:[\\/]|$)/.test(value);
+
 export const supervisorEntrypointFor = (moduleUrl: string): string => {
+  if (isBunVirtualPath(moduleUrl)) return SUPERVISOR_DISPATCH_SENTINEL;
   const sourceEntrypoint = fileURLToPath(new URL("../entrypoints/supervisor-node.ts", moduleUrl));
-  return sourceEntrypoint.includes("/$bunfs/") ? SUPERVISOR_DISPATCH_SENTINEL : sourceEntrypoint;
+  return isBunVirtualPath(sourceEntrypoint) ? SUPERVISOR_DISPATCH_SENTINEL : sourceEntrypoint;
 };
 
 /** Default host values are resolved only at the process composition boundary. */
@@ -353,6 +356,15 @@ export const ensureSupervisor = (
   | ChildProcessSpawner.ChildProcessSpawner
 > =>
   Effect.gen(function* () {
+    const state = yield* options.stateStore.read(options.stackId).pipe(
+      Effect.catchIf(isMissingStateRemnantError, () =>
+        options.stateStore.recoverRuntimeRemnant(options.stackId).pipe(Effect.asVoid),
+      ),
+      Effect.mapError((error) =>
+        mapFailure(error instanceof Error ? error.message : String(error)),
+      ),
+    );
+    if (state === undefined) return yield* mapFailure("Stack state is missing");
     const existing = yield* readOwnerMetadata(
       options.environment.stateRoot,
       options.stackId,

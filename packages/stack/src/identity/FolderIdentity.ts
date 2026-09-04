@@ -18,6 +18,7 @@ export const resolveFolderIdentity = (
         new InvalidStackIdentityError({
           projectRoot: canonicalProjectRoot,
           reason: "The canonical project root is empty",
+          message: "The canonical project root is empty",
         }),
       )
     : Effect.succeed({

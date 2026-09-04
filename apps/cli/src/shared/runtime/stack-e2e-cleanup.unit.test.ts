@@ -1,8 +1,11 @@
 import { describe, expect, it, vi } from "@effect/vitest";
-import { mkdirSync, mkdtempSync, realpathSync, rmSync, symlinkSync } from "node:fs";
+import { mkdirSync, mkdtempSync, realpathSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { createStackE2eCleanupManager } from "../../../tests/helpers/stack-e2e-cleanup.ts";
+import {
+  captureStackRuntimeSnapshot,
+  createStackE2eCleanupManager,
+} from "../../../tests/helpers/stack-e2e-cleanup.ts";
 
 function permissionError(message = "permission denied") {
   return Object.assign(new Error(message), { code: "EACCES" });
@@ -40,6 +43,44 @@ function cleanupEnvironment(
 }
 
 describe("stack e2e cleanup manager", () => {
+  it("discovers current managed state by identity project root", () => {
+    const root = mkdtempSync(join(tmpdir(), "stack-e2e-cleanup-state-"));
+    const project = join(root, "project");
+    const stackId = "a".repeat(64);
+    const stackDir = join(root, "home", "managed", "stacks", stackId);
+    const stateFile = join(stackDir, "state.json");
+
+    try {
+      mkdirSync(project, { recursive: true });
+      mkdirSync(stackDir, { recursive: true });
+      writeFileSync(
+        stateFile,
+        JSON.stringify({
+          identity: { projectRoot: realpathSync(project) },
+        }),
+      );
+      writeFileSync(
+        join(stackDir, "control.json"),
+        JSON.stringify({
+          format: "supabase-stack-owner-v1",
+          stackId,
+          ownerSessionId: "owner-session",
+          endpoint: { kind: "unix", path: "/tmp/supabase-stack.sock" },
+          rpcRelease: "test",
+        }),
+      );
+
+      const normalizedStackDir = realpathSync(stackDir);
+      expect(captureStackRuntimeSnapshot(project, join(root, "home"))).toMatchObject({
+        managedStacksRootExists: true,
+        documentFiles: [join(normalizedStackDir, "state.json")],
+        stackDirs: [normalizedStackDir],
+      });
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
   it("cleans a registered stack project and associated home once", async () => {
     const calls: Array<string> = [];
     const manager = createStackE2eCleanupManager(

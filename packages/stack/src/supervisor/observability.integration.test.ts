@@ -2,7 +2,7 @@ import { NodeServices } from "@effect/platform-node";
 import { describe, expect, it } from "@effect/vitest";
 import { Cause, Effect, Exit, FileSystem, Option, Path } from "effect";
 import { InvalidLogCursorError } from "../public/Errors.ts";
-import { LogStoreError, makeLogStore, selectLogBatch } from "./LogStore.ts";
+import { LogStoreError, makeLogStore, readRetainedLogs, selectLogBatch } from "./LogStore.ts";
 
 const withPlatform = <A, E, R>(effect: Effect.Effect<A, E, R>) =>
   Effect.scoped(effect).pipe(Effect.provide(NodeServices.layer));
@@ -62,7 +62,100 @@ describe("observability", () => {
         const store = yield* makeLogStore({ path: path.join(root, "logs.json"), maxBytes: 300 });
         yield* store.append({ source: "database", stream: "stdout", message: "x".repeat(200) });
         expect(yield* store.read()).toEqual([]);
-        expect((yield* fs.stat(path.join(root, "logs.json"))).size).toBeLessThanOrEqual(300n);
+        expect(yield* fs.exists(path.join(root, "logs.json"))).toBe(false);
+      }),
+    ),
+  );
+
+  it.live("keeps reads bounded while compacting retained logs periodically", () =>
+    withPlatform(
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const root = yield* fs.makeTempDirectoryScoped({
+          prefix: "supabase-stack-log-compaction-",
+        });
+        const logPath = path.join(root, "logs.json");
+        const store = yield* makeLogStore({ path: logPath, maxEntries: 2 });
+        yield* store.append({ source: "database", stream: "stdout", message: "one" });
+        yield* store.append({ source: "database", stream: "stdout", message: "two" });
+        yield* store.append({ source: "database", stream: "stdout", message: "three" });
+
+        expect((yield* store.read()).map((entry) => entry.message)).toEqual(["two", "three"]);
+        expect(
+          (yield* readRetainedLogs(fs, logPath, { maxEntries: 2 })).map((entry) => entry.message),
+        ).toEqual(["two", "three"]);
+        // The third append is retained in the append-only window; compaction is deferred until
+        // the bounded overshoot is exhausted.
+        expect((yield* fs.readFileString(logPath)).trim().split("\n")).toHaveLength(3);
+
+        yield* store.append({ source: "database", stream: "stdout", message: "four" });
+        yield* store.append({ source: "database", stream: "stdout", message: "five" });
+        expect((yield* store.read()).map((entry) => entry.message)).toEqual(["four", "five"]);
+        expect((yield* fs.readFileString(logPath)).trim().split("\n")).toHaveLength(2);
+      }),
+    ),
+  );
+
+  it.live("drops an oversized record without evicting retained logs or reusing cursors", () =>
+    withPlatform(
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const root = yield* fs.makeTempDirectoryScoped({ prefix: "supabase-stack-log-cursor-" });
+        const logPath = path.join(root, "logs.json");
+        const firstStore = yield* makeLogStore({ path: logPath, maxBytes: 300 });
+        const first = yield* firstStore.append({
+          source: "database",
+          stream: "stdout",
+          message: "retained",
+        });
+        const beforeOversized = yield* fs.readFileString(logPath);
+
+        yield* firstStore.append({
+          source: "database",
+          stream: "stdout",
+          message: "x".repeat(300),
+        });
+
+        expect(yield* fs.readFileString(logPath)).toBe(beforeOversized);
+        expect((yield* firstStore.read()).map((entry) => entry.cursor)).toEqual([first.cursor]);
+
+        const secondStore = yield* makeLogStore({ path: logPath, maxBytes: 300 });
+        const second = yield* secondStore.append({
+          source: "database",
+          stream: "stdout",
+          message: "after restart",
+        });
+        const followed = yield* secondStore.read({ cursor: first.cursor });
+
+        expect(second.cursor.opaque).not.toBe(first.cursor.opaque);
+        expect(followed.map((entry) => entry.cursor)).toEqual([second.cursor]);
+      }),
+    ),
+  );
+
+  it.live("keeps in-memory retention unchanged when compaction persistence fails", () =>
+    withPlatform(
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const root = yield* fs.makeTempDirectoryScoped({
+          prefix: "supabase-stack-log-persist-failure-",
+        });
+        const logPath = path.join(root, "logs.json");
+        const store = yield* makeLogStore({ path: logPath, maxEntries: 1 });
+        yield* store.append({ source: "database", stream: "stdout", message: "one" });
+        yield* store.append({ source: "database", stream: "stdout", message: "two" });
+        yield* fs.chmod(root, 0o500);
+        const failed = yield* store
+          .append({ source: "database", stream: "stdout", message: "three" })
+          .pipe(Effect.exit);
+        yield* fs.chmod(root, 0o700);
+
+        expect(Exit.isFailure(failed)).toBe(true);
+        expect((yield* store.read()).map((entry) => entry.message)).toEqual(["two"]);
+        expect((yield* fs.readFileString(logPath)).trim().split("\n")).toHaveLength(2);
       }),
     ),
   );

@@ -44,7 +44,7 @@ import type { LogQuery, StackLogBatch } from "../public/Logs.ts";
 import type { EffectStackCredentials } from "../public/Credentials.ts";
 import { RuntimeDriverError, type RuntimeDriver } from "../runtime/RuntimeDriver.ts";
 import type { PersistedStackState } from "../state/StackState.ts";
-import type { StackStateStore } from "../state/StackStateStore.ts";
+import { isMissingStateRemnantError, type StackStateStore } from "../state/StackStateStore.ts";
 import { makeSessionLauncher, type SessionLauncher } from "./SessionLauncher.ts";
 import {
   makeLifecycleController,
@@ -153,7 +153,13 @@ export const makeSupervisor = (
   Effect.gen(function* () {
     const read = () =>
       options.stateStore.read(options.stackId).pipe(Effect.provideContext(options.context));
-    const initial = yield* read();
+    const initial = yield* read().pipe(
+      Effect.catchIf(isMissingStateRemnantError, () =>
+        options.stateStore
+          .recoverRuntimeRemnant(options.stackId)
+          .pipe(Effect.provideContext(options.context), Effect.asVoid),
+      ),
+    );
     if (initial === undefined)
       return yield* new StackStateInvalidError({ message: "Stack state is missing" });
     const runtime = options.runtime;
@@ -248,8 +254,8 @@ export const makeSupervisor = (
       result: LifecycleResult;
     }>;
     const lifecycleActive = yield* Ref.make<ActiveLifecycle | undefined>(undefined);
-    const ensureActivationAllowed = (): Effect.Effect<
-      PersistedStackState,
+    const ensureActivationPhaseAllowed = (): Effect.Effect<
+      void,
       GatewayActivationError | StackError
     > =>
       Effect.gen(function* () {
@@ -264,6 +270,12 @@ export const makeSupervisor = (
             stackId: options.stackId,
             message: "Cannot activate while exact cleanup is pending; stop the stack first",
           });
+      });
+    const ensureActivationStateAllowed = (): Effect.Effect<
+      PersistedStackState,
+      GatewayActivationError | StackError
+    > =>
+      Effect.gen(function* () {
         const state = yield* read();
         if (state === undefined)
           return yield* new StackStateInvalidError({ message: "Stack state is missing" });
@@ -273,6 +285,10 @@ export const makeSupervisor = (
           });
         return state;
       });
+    const ensureActivationAllowed = (): Effect.Effect<
+      PersistedStackState,
+      GatewayActivationError | StackError
+    > => ensureActivationPhaseAllowed().pipe(Effect.andThen(ensureActivationStateAllowed()));
     const shutdownSignal = yield* Deferred.make<void, never>();
     const signalShutdown = Deferred.succeed(shutdownSignal, undefined).pipe(Effect.asVoid);
     const ensureAcceptingOperations = Deferred.poll(shutdownSignal).pipe(
@@ -491,15 +507,18 @@ export const makeSupervisor = (
       Effect.gen(function* () {
         const token = yield* admission.withPermit(
           Effect.gen(function* () {
-            yield* ensureActivationAllowed();
+            yield* ensureActivationPhaseAllowed();
             const current = activationOwned.get(capability);
-            if (current?._tag === "ready")
+            if (current?._tag === "ready" && (yield* Ref.get(phase)) === "running")
               return {
                 _tag: "exit",
                 result: Exit.succeed(current.result),
               } satisfies ActivationToken;
             if (current?._tag === "pending")
               return { _tag: "deferred", result: current.result } satisfies ActivationToken;
+            // Validate durable lifecycle state only for a new activation. Ready
+            // entries above are already fenced by the in-memory phase checks.
+            yield* ensureActivationStateAllowed();
             const deferred = yield* Deferred.make<
               Exit.Exit<ActivationResult, GatewayActivationError | StackError>,
               never

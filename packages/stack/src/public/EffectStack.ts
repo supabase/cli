@@ -24,7 +24,11 @@ import { compileStack, rebuildExecutionPlan, type StackDefinition } from "../mod
 import { dependencyClosure, type ExecutionPlan } from "../model/ExecutionPlan.ts";
 import type { PersistedStackIdentity, PersistedStackState } from "../state/StackState.ts";
 import { toPersistedIdentity } from "../state/StackState.ts";
-import { makeStackStateStore, type StackStateStore } from "../state/StackStateStore.ts";
+import {
+  isMissingStateRemnantError,
+  makeStackStateStore,
+  type StackStateStore,
+} from "../state/StackStateStore.ts";
 import { resolveStackPaths } from "../state/Paths.ts";
 import { StackIdSchema, type StackId } from "./StackId.ts";
 import type { StackRuntime, StackRuntimePreference } from "./Runtime.ts";
@@ -453,9 +457,7 @@ export const makeHandle = (id: StackId, options: HandleDependencies): Effect.Eff
       );
     };
     const logsStateError = (error: StackError): StackLogsError =>
-      error instanceof StackNotFoundError ||
-      error instanceof StackOwnershipConflictError ||
-      error instanceof StackStateInvalidError
+      isNarrowError(error, STACK_LOGS_ERROR_TAGS)
         ? error
         : new StackStateInvalidError({ message: error.message, cause: error });
     const stopOwner = (owner: ReturnType<typeof makeControlClient>) =>
@@ -963,7 +965,9 @@ export const listStacks = (
     const result: StackDescriptor[] = [];
     for (const entry of entries) {
       if (!Schema.is(StackIdSchema)(entry)) continue;
-      const state = yield* store.read(entry);
+      const state = yield* store
+        .read(entry)
+        .pipe(Effect.catchIf(isMissingStateRemnantError, () => Effect.void));
       if (
         state !== undefined &&
         (projectRoot === undefined || state.identity.projectRoot === projectRoot)

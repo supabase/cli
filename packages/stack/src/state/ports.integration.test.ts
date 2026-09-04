@@ -5,9 +5,11 @@ import { createServer, type Server } from "node:net";
 // oxlint-disable-next-line effecttsgo/node-builtin-import
 import { createServer as createHttpServer } from "node:http";
 import { deriveStackId, type StackIdentity } from "../identity/Identity.ts";
+import { StackIdSchema } from "../public/StackId.ts";
 import { PortAllocationError, PortUnavailableError } from "../public/Errors.ts";
 import { makePortCoordinator, type HostListener, type ListenerIntents } from "./PortCoordinator.ts";
 import { makeStackStateStore, type PersistedStackState } from "./StackStateStore.ts";
+import { resolveStackPaths } from "./Paths.ts";
 import { bindHostListener } from "../supervisor/HostListener.ts";
 
 const layer = NodeServices.layer;
@@ -164,6 +166,35 @@ describe("sticky port coordination", () => {
         expect(repeat.assignments).toEqual(first.assignments);
         const second = yield* coordinator.planAndReserve(b, intents("automatic"));
         expect(second.assignments.api?.port).not.toBe(first.assignments.api?.port);
+      }),
+    ),
+  );
+
+  it.live("plans ports despite a runtime-only missing-state sibling", () =>
+    withPlatform(
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const root = yield* fs.makeTempDirectoryScoped({ prefix: "supabase-stack-port-remnant-" });
+        const store = yield* makeStackStateStore({ stateRoot: root });
+        const validIdentity = makeIdentity(root, "valid");
+        const validId = yield* deriveStackId(validIdentity);
+        yield* store.initialize(validId, baseState(validId, validIdentity));
+        const orphanId = StackIdSchema.make("a".repeat(64));
+        const orphanPaths = yield* resolveStackPaths({
+          stateRoot: root,
+          stackId: orphanId,
+        });
+        yield* fs.makeDirectory(orphanPaths.runtime, { recursive: true });
+        const coordinator = makePortCoordinator({
+          stateRoot: root,
+          store,
+          checkHostPort: successfulHostPortCheck,
+          bindHost: makeTestHostListener,
+        });
+
+        const reservation = yield* coordinator.planAndReserve(validId, intents("automatic"));
+
+        expect(reservation.assignments.api?.port).toBeTypeOf("number");
       }),
     ),
   );
@@ -789,6 +820,7 @@ describe("sticky port coordination", () => {
           .pipe(Effect.exit);
         const error = errorOf(result);
         expect(error).toBeInstanceOf(PortUnavailableError);
+        if (!(error instanceof PortUnavailableError)) throw new Error("Expected port error");
         expect(error?.message).toContain(
           "Could not bind an automatic public host port for api after 17 candidates",
         );

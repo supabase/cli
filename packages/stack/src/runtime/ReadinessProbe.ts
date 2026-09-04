@@ -36,6 +36,7 @@ const runtimeError = (
 ): RuntimeDriverError =>
   new RuntimeDriverError({
     message,
+    target,
     cause,
   });
 

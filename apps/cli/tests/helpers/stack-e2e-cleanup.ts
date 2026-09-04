@@ -14,7 +14,7 @@ type StackProject = {
   homeDir?: string;
 };
 
-interface StackRuntimeSnapshot {
+export interface StackRuntimeSnapshot {
   readonly managedStacksRootExists: boolean;
   readonly documentFiles: ReadonlyArray<string>;
   readonly stackDirs: ReadonlyArray<string>;
@@ -126,17 +126,6 @@ function descendantPids(
   }
 
   return [...visited];
-}
-
-function readDocumentPid(documentFile: string): number | undefined {
-  try {
-    const parsed = JSON.parse(readFileSync(documentFile, "utf8")) as {
-      readonly runtime?: { readonly pid?: number };
-    };
-    return parsed.runtime?.pid;
-  } catch {
-    return undefined;
-  }
 }
 
 function cleanupErrorDetail(
@@ -276,7 +265,14 @@ async function cleanupProject(
   await cleanupOwnedPath(project.dir, project.cleanup, environment);
 }
 
-function captureSnapshot(projectDir: string, homeDir?: string): StackRuntimeSnapshot {
+function isRecord(value: unknown): value is Readonly<Record<string, unknown>> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+export function captureStackRuntimeSnapshot(
+  projectDir: string,
+  homeDir?: string,
+): StackRuntimeSnapshot {
   const normalized = normalizeDir(projectDir);
   const managedStacksRoot =
     homeDir === undefined ? undefined : path.join(normalizeDir(homeDir), "managed", "stacks");
@@ -297,17 +293,17 @@ function captureSnapshot(projectDir: string, homeDir?: string): StackRuntimeSnap
       continue;
     }
     const stackDir = path.join(managedStacksRoot, entry.name);
-    const documentFile = path.join(stackDir, "stack.json");
+    const documentFile = path.join(stackDir, "state.json");
     if (!existsSync(documentFile)) {
       continue;
     }
     try {
-      const document = JSON.parse(readFileSync(documentFile, "utf8")) as {
-        readonly workspace?: { readonly path?: string };
-      };
+      const document: unknown = JSON.parse(readFileSync(documentFile, "utf8"));
+      const identity = isRecord(document) && isRecord(document.identity) ? document.identity : null;
+      const documentProjectRoot = isRecord(identity) ? identity.projectRoot : undefined;
       if (
-        document.workspace?.path === undefined ||
-        normalizeDir(document.workspace.path) !== normalized
+        typeof documentProjectRoot !== "string" ||
+        normalizeDir(documentProjectRoot) !== normalized
       ) {
         continue;
       }
@@ -318,12 +314,12 @@ function captureSnapshot(projectDir: string, homeDir?: string): StackRuntimeSnap
     documentFiles.push(documentFile);
   }
 
-  const rootPids = documentFiles
-    .map(readDocumentPid)
-    .filter((pid): pid is number => pid != null && pid > 0);
   const table = parsePsTable();
-  const descendants = descendantPids(rootPids, table);
+  // The supervisor no longer persists a PID in stack state. Its launch
+  // payload contains the exact project root, so use that command line as the
+  // owner root and include only its descendants.
   const commandPids = table.filter((row) => row.command.includes(normalized)).map((row) => row.pid);
+  const descendants = descendantPids(commandPids, table);
 
   return {
     managedStacksRootExists: stackDirs.length > 0,
@@ -334,22 +330,13 @@ function captureSnapshot(projectDir: string, homeDir?: string): StackRuntimeSnap
 }
 
 async function waitForCleanup(
-  projectDir: string,
-  homeDir: string | undefined,
+  _projectDir: string,
+  _homeDir: string | undefined,
   snapshot: StackRuntimeSnapshot,
 ): Promise<boolean> {
-  const deadline = Date.now() + 15_000;
-  while (Date.now() < deadline) {
-    const nextSnapshot = captureSnapshot(projectDir, homeDir);
-    const filesGone = nextSnapshot.documentFiles.length === 0;
-    const pidsGone = snapshot.trackedPids.every((pid) => !isProcessAlive(pid));
-    if (filesGone && pidsGone) {
-      return true;
-    }
-    await new Promise((resolve) => setTimeout(resolve, 200));
-  }
-
-  return false;
+  // stopStack resolves only after the owner has shut down. Check exact PIDs
+  // once and let forceCleanup handle anything that remains alive.
+  return snapshot.trackedPids.every((pid) => !isProcessAlive(pid));
 }
 
 async function forceCleanup(
@@ -368,13 +355,6 @@ async function forceCleanup(
       rmSync(stackDir, { recursive: true, force: true });
     } catch {}
   }
-
-  if (homeDir !== undefined) {
-    const managedStacksRoot = path.join(normalizeDir(homeDir), "managed", "stacks");
-    try {
-      rmSync(managedStacksRoot, { recursive: true, force: true });
-    } catch {}
-  }
 }
 
 function createRealEnvironment(): CleanupEnvironment {
@@ -387,7 +367,7 @@ function createRealEnvironment(): CleanupEnvironment {
       });
       return { exitCode: result.exitCode };
     },
-    captureSnapshot,
+    captureSnapshot: captureStackRuntimeSnapshot,
     waitForCleanup,
     forceCleanup,
     removeProjectWithDocker,
