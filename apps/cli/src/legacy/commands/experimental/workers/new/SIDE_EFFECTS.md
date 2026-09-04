@@ -14,12 +14,12 @@
 
 ## Files Written
 
-| Path                                            | Format | When                                                                                                                                                                       |
-| ----------------------------------------------- | ------ | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `<workdir>/supabase/config.toml`                | TOML   | on success — appends `[workers.<name>]` with `runtime`, `size`, `exposure`, and `instances`/`source` when those differ from the default, preserving surrounding formatting |
-| `<workdir>/supabase/workers/<name>/*`           | varies | on success, unless `--source` names another directory                                                                                                                      |
-| `<workdir>/<source>/*`                          | varies | on success, when `--source` is given                                                                                                                                       |
-| `<SUPABASE_HOME or ~/.supabase>/telemetry.json` | JSON   | whenever the handler runs — flushed on success and on failure                                                                                                              |
+| Path                                            | Format | When                                                                                                                                                                                                                          |
+| ----------------------------------------------- | ------ | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `<workdir>/supabase/config.toml`                | TOML   | on success — appends `[workers.<name>]` with `runtime`, `size` and `exposure` always, `instances` only when it differs from the default of 1, and `source` only when `--source` was passed, preserving surrounding formatting |
+| `<workdir>/supabase/workers/<name>/*`           | varies | on success, unless `--source` names another directory                                                                                                                                                                         |
+| `<workdir>/<source>/*`                          | varies | on success, when `--source` is given                                                                                                                                                                                          |
+| `<SUPABASE_HOME or ~/.supabase>/telemetry.json` | JSON   | whenever the handler runs — flushed on success and on failure                                                                                                                                                                 |
 
 Workers are recorded in `config.toml` only. The project config loader prefers
 `supabase/config.json` when one exists, but the entry writer is a TOML text

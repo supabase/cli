@@ -481,7 +481,63 @@ describe("legacy workers new", () => {
       yield* legacyWorkersNew(flags({ runtime: Option.some("node") }));
 
       const payload: unknown = JSON.parse(out.stdoutText);
-      expect(payload).toMatchObject({ runtime: "node", size: "2gb" });
+      // Every dial the scaffold settled, not just the two it is named for: a
+      // caller reading this payload is deciding what to deploy, and an omitted
+      // `exposure` or `instances` reads as "unknown" rather than as the default
+      // the run actually chose.
+      expect(payload).toMatchObject({
+        worker_name: "api",
+        runtime: "node",
+        size: "2gb",
+        vcpu: 1,
+        exposure: "public",
+        instances: 1,
+      });
+    }).pipe(Effect.provide(layer), Effect.ensuring(Effect.sync(repo.cleanup)));
+  });
+
+  // The count and the exposure are recorded sparsely — `instances` is left out
+  // of config.toml at the default — so the payload is the only place a caller
+  // can read what this scaffold will actually deploy as.
+  it.live("reports the chosen exposure and count under -o json", () => {
+    const repo = project();
+    const { layer, out } = setupLegacyWorkers({ workdir: repo.dir, goOutput: "json" });
+
+    return Effect.gen(function* () {
+      yield* legacyWorkersNew(
+        flags({
+          runtime: Option.some("node"),
+          exposure: Option.some("private"),
+          instances: Option.some(3),
+        }),
+      );
+
+      expect(JSON.parse(out.stdoutText)).toMatchObject({
+        exposure: "private",
+        instances: 3,
+      });
+    }).pipe(Effect.provide(layer), Effect.ensuring(Effect.sync(repo.cleanup)));
+  });
+
+  it.live("shows the exposure and declared count in the details block", () => {
+    const repo = project();
+    const { layer, out } = setupLegacyWorkers({ workdir: repo.dir });
+
+    return Effect.gen(function* () {
+      yield* legacyWorkersNew(
+        flags({
+          runtime: Option.some("node"),
+          exposure: Option.some("private"),
+          instances: Option.some(3),
+        }),
+      );
+
+      // `Access`, the way `workers status` and `push` label the same field.
+      expect(out.stdoutText).toContain("Access");
+      expect(out.stdoutText).toContain("private");
+      // `declared`, because nothing is running yet — a bare count would read as
+      // a live tally.
+      expect(out.stdoutText).toContain("3 declared");
     }).pipe(Effect.provide(layer), Effect.ensuring(Effect.sync(repo.cleanup)));
   });
 
