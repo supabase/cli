@@ -78,12 +78,66 @@ jobs:
         continue-on-error: true
         run: pnpm run check:config-api
 
-  test-unit:
+  # Path gate for the test jobs. Docs-only and release-notes-only changes skip
+  # every test job; Go-only changes skip unit and integration but keep e2e,
+  # which shells out to the Go sidecar binary; anything under .github or a
+  # TypeScript workspace runs everything. `check` is never gated. The summary
+  # jobs fail if this job does not succeed, so a broken gate cannot turn into
+  # a false green (ADR 0024).
+  changes:
     if: |
       !startsWith(github.head_ref, 'release-notes/') &&
       (github.event_name == 'merge_group' ||
         inputs.force ||
         github.event.pull_request.draft == false)
+    name: Detect changed areas
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      pull-requests: read
+    outputs:
+      ts: ${{ steps.filter.outputs.ts }}
+      go: ${{ steps.filter.outputs.go }}
+      ci: ${{ steps.filter.outputs.ci }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Classify changed paths
+        id: filter
+        uses: dorny/paths-filter@ceb8a2b8f2d89434be7ff52d3de7ec3738c5cc9d # v4.0.3
+        with:
+          filters: |
+            ts:
+              - "apps/cli/**"
+              - "apps/cli-e2e/**"
+              - "packages/**"
+              - "tools/**"
+              - "patches/**"
+              - "package.json"
+              - "pnpm-lock.yaml"
+              - "pnpm-workspace.yaml"
+              - "turbo.json"
+              - "tsconfig.json"
+              - "mise.toml"
+              - "mise.lock"
+              - ".bun-version"
+              - "vitest.*"
+            go:
+              - "apps/cli-go/**"
+            ci:
+              - ".github/**"
+
+  test-unit:
+    needs: changes
+    if: |
+      !startsWith(github.head_ref, 'release-notes/') &&
+      (github.event_name == 'merge_group' ||
+        inputs.force ||
+        github.event.pull_request.draft == false) &&
+      (needs.changes.outputs.ts == 'true' || needs.changes.outputs.ci == 'true')
     name: Run unit tests
     runs-on: blacksmith-4vcpu-ubuntu-2404
     steps:
@@ -101,11 +155,13 @@ jobs:
         run: pnpm run test:unit --coverage.enabled
 
   test-integration:
+    needs: changes
     if: |
       !startsWith(github.head_ref, 'release-notes/') &&
       (github.event_name == 'merge_group' ||
         inputs.force ||
-        github.event.pull_request.draft == false)
+        github.event.pull_request.draft == false) &&
+      (needs.changes.outputs.ts == 'true' || needs.changes.outputs.ci == 'true')
     name: Run integration tests
     runs-on: blacksmith-8vcpu-ubuntu-2404
     steps:
@@ -130,11 +186,15 @@ jobs:
         inputs.force ||
         github.event.pull_request.draft == false)
     name: Run unit and integration tests
-    needs: [test-unit, test-integration]
+    needs: [changes, test-unit, test-integration]
     runs-on: ubuntu-latest
     steps:
       - name: Verify unit and integration tests succeeded
         run: |
+          if [ "${{ needs.changes.result }}" != "success" ]; then
+            echo "::error ::Path gate did not succeed: changes=${{ needs.changes.result }}"
+            exit 1
+          fi
           if [ "${{ needs.test-unit.result }}" = "failure" ] || [ "${{ needs.test-unit.result }}" = "cancelled" ] || \
             [ "${{ needs.test-integration.result }}" = "failure" ] || [ "${{ needs.test-integration.result }}" = "cancelled" ]; then
             echo "::error ::Unit or integration tests failed: unit=${{ needs.test-unit.result }}, integration=${{ needs.test-integration.result }}"
@@ -143,11 +203,13 @@ jobs:
           echo "Unit and integration tests reported: unit=${{ needs.test-unit.result }}, integration=${{ needs.test-integration.result }}"
 
   test-e2e:
+    needs: changes
     if: |
       !startsWith(github.head_ref, 'release-notes/') &&
       (github.event_name == 'merge_group' ||
         inputs.force ||
-        github.event.pull_request.draft == false)
+        github.event.pull_request.draft == false) &&
+      (needs.changes.outputs.ts == 'true' || needs.changes.outputs.go == 'true' || needs.changes.outputs.ci == 'true')
     name: Run end-to-end tests (shard ${{ matrix.shard }}/3)
     runs-on: blacksmith-8vcpu-ubuntu-2404
     strategy:
@@ -204,11 +266,15 @@ jobs:
         inputs.force ||
         github.event.pull_request.draft == false)
     name: Run end-to-end tests
-    needs: test-e2e
+    needs: [changes, test-e2e]
     runs-on: ubuntu-latest
     steps:
       - name: Verify all shards succeeded
         run: |
+          if [ "${{ needs.changes.result }}" != "success" ]; then
+            echo "::error ::Path gate did not succeed: changes=${{ needs.changes.result }}"
+            exit 1
+          fi
           if [ "${{ needs.test-e2e.result }}" = "failure" ] || [ "${{ needs.test-e2e.result }}" = "cancelled" ]; then
             echo "::error ::One or more e2e shards failed: ${{ needs.test-e2e.result }}"
             exit 1
