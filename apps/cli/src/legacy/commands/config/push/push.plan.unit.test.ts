@@ -41,6 +41,7 @@ function changeSet(changes: ReadonlyArray<ConfigChange>, remoteOnly = 0): Config
       local_only: changes.filter((c) => c.class === "local_only").length,
       total: changes.length + remoteOnly,
     },
+    absencePolicy: "absent-is-hands-off",
   };
 }
 

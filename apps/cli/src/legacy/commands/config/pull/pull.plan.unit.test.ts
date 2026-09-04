@@ -34,6 +34,7 @@ function changeSet(changes: ReadonlyArray<ConfigChange>): ConfigChangeSet {
     masked: [],
     unmanaged: [],
     counts: { update, remote_only, local_only, total: changes.length },
+    absencePolicy: "absent-is-hands-off",
   };
 }
 
@@ -367,6 +368,7 @@ describe("legacyPlanConfigPull", () => {
       masked: [["auth", "external", "github", "secret"]],
       unmanaged: [["auth", "oauth_server", "enabled"]],
       counts: { update: 0, remote_only: 0, local_only: 0, total: 0 },
+      absencePolicy: "absent-is-hands-off",
     };
     const plan = legacyPlanConfigPull({
       changeSet: cs,

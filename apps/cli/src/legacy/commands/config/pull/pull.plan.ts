@@ -505,6 +505,7 @@ export function legacyExpandConfigPullChangeSet(
       masked: residual.masked,
       unmanaged: residual.unmanaged,
       counts: countsFor(changes),
+      absencePolicy: residual.absencePolicy,
     },
     residual,
   };

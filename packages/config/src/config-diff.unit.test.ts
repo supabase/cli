@@ -583,6 +583,81 @@ describe("diffProjectConfig classification", () => {
   });
 });
 
+describe("absence policy", () => {
+  test("absent-is-hands-off masks a fixed-list field (auth.captcha) out of local entirely, reporting remote_only with local: undefined", () => {
+    // `auth.captcha` is never declared in the document at all, and the
+    // remote is customized — `applyRawPresenceMask`'s fixed list removes the
+    // field from the local projection entirely rather than letting the
+    // schema default stand in, so a consumer can never mistake this for
+    // "push the default over the remote customization".
+    const result = diffWith(
+      {},
+      { auth: { security_captcha_enabled: true, security_captcha_provider: "hcaptcha" } },
+    );
+    expect(result.absencePolicy).toBe("absent-is-hands-off");
+    expect(changeAt(result.changes, ["auth", "captcha", "enabled"])).toMatchObject({
+      class: "remote_only",
+      local: undefined,
+      declared: false,
+    });
+  });
+
+  test("documents the hazardous cell: absent-is-default reports remote_only with the schema default masquerading as local", () => {
+    // No `document` at all — `diffProjectConfig({local: {config}, remote})`,
+    // the exact Studio-shaped call `ConfigAbsencePolicy` is named for. With
+    // no raw document to mask against, the local projection still carries
+    // the materialized schema default (`enabled: false`) as though it were a
+    // real declared value. This is deliberately NOT a "works correctly"
+    // assertion — it documents the one hazardous cell in the danger matrix: a
+    // consumer that treated `remote_only` as "safe to push" here would
+    // silently revert a genuine hosted customization to the schema default.
+    const result = diffProjectConfig({
+      local: { config: decodeCliConfig({}) },
+      remote: fromApiProjectConfig({
+        auth: { security_captcha_enabled: true, security_captcha_provider: "hcaptcha" },
+      }),
+    });
+    expect(result.absencePolicy).toBe("absent-is-default");
+    expect(changeAt(result.changes, ["auth", "captcha", "enabled"])).toMatchObject({
+      class: "remote_only",
+      local: false,
+      declared: false,
+    });
+  });
+
+  test("a comparable path outside the raw-presence mask's fixed list classifies identically under both policies", () => {
+    // api.max_rows is not one of applyRawPresenceMask's fixed paths, so the
+    // extra masking `absent-is-hands-off` applies makes no difference to it
+    // either way — the generic `declared` mechanism alone is what keeps both
+    // call shapes from misclassifying an undeclared, remote-customized field
+    // as `update`, proving the fixed-list mask is additive, not the only
+    // thing standing between an undeclared field and a false `update`.
+    const attributes = { api: { max_rows: 250 } };
+    const withDocument = diffWith({}, attributes);
+    const withoutDocument = diffProjectConfig({
+      local: { config: decodeCliConfig({}) },
+      remote: fromApiProjectConfig(attributes),
+    });
+    expect(changeAt(withDocument.changes, ["api", "max_rows"])).toMatchObject({
+      class: "remote_only",
+    });
+    expect(changeAt(withoutDocument.changes, ["api", "max_rows"])).toMatchObject({
+      class: "remote_only",
+    });
+  });
+
+  test("absencePolicy round-trips: hands-off when a document is supplied, default when it is omitted", () => {
+    const withDocument = diffWith({}, {});
+    expect(withDocument.absencePolicy).toBe("absent-is-hands-off");
+
+    const withoutDocument = diffProjectConfig({
+      local: { config: decodeCliConfig({}) },
+      remote: fromApiProjectConfig({}),
+    });
+    expect(withoutDocument.absencePolicy).toBe("absent-is-default");
+  });
+});
+
 describe("isEqualConfigValue", () => {
   test("sequence semantics by default", () => {
     expect(isEqualConfigValue(["a", "b"], ["a", "b"])).toBe(true);

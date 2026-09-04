@@ -1,6 +1,7 @@
 import type { CliConfigValueOrigin } from "./config-document.ts";
 import {
   type CliConfigWithRawPresence,
+  type ConfigAbsencePolicy,
   comparableProjectConfigPaths,
   fromConfigDocument,
   isComparableProjectConfigPath,
@@ -96,6 +97,15 @@ export interface ConfigChangeSet {
    */
   readonly unmanaged: ReadonlyArray<ReadonlyArray<string>>;
   readonly counts: ConfigChangeCounts;
+  /**
+   * Which {@link ConfigAbsencePolicy} `options.local` selected for this call —
+   * `"absent-is-hands-off"` when `options.local.document` was supplied,
+   * `"absent-is-default"` when it was omitted. See that type's docstring for
+   * the danger matrix this distinction protects against, and
+   * {@link DiffProjectConfigOptions.local}'s docstring for the specific
+   * classification cliff omitting `document` falls off.
+   */
+  readonly absencePolicy: ConfigAbsencePolicy;
 }
 
 export interface DiffProjectConfigOptions {
@@ -109,6 +119,21 @@ export interface DiffProjectConfigOptions {
    * structurally assignable. Note `fromConfigDocument` runs inside
    * `diffProjectConfig`, so a document the registry cannot canonicalize
    * throws `ProjectConfigParseError` from here.
+   *
+   * **Omitting `document` is a cliff, not a gentle degradation.** Internally,
+   * `diffProjectConfig` computes `const declaredRoot = options.local.document
+   * ?? {}` — a caller that leaves `document` out entirely doesn't just lose
+   * `applyRawPresenceMask`'s fixed-list masking, EVERY path's `declared` flag
+   * becomes `false` universally (`isDeclaredAtPath` walks an empty object).
+   * That means `local_only` can never fire (it requires `declared === true`
+   * with no remote value) and `unmanaged`/`masked` are always empty arrays
+   * (both filter on `isDeclaredAtPath(declaredRoot, ...)` too) — not merely
+   * "less masking coverage". This selects {@link ConfigAbsencePolicy}
+   * `"absent-is-default"` (see that type's docstring for the danger matrix)
+   * and is exactly the calling shape a caller like Studio would use if it
+   * called `diffProjectConfig({local: {config}, remote})` without ever
+   * loading/passing a raw document — the whole reason `ConfigAbsencePolicy`
+   * exists to be named.
    */
   readonly local: CliConfigWithRawPresence & {
     readonly valueOrigins?: ReadonlyArray<CliConfigValueOrigin> | undefined;
@@ -338,7 +363,11 @@ function hasAncestorPathKey(path: ReadonlyArray<string>, set: ReadonlySet<string
 
 // The default config's own convergence projection — the first `remote_only`
 // suppression baseline tier. Lazy so importing this module never pays for a
-// full schema decode + projection up front.
+// full schema decode + projection up front. Deliberately calls
+// `fromConfigDocument` on a bare `EffectiveConfig` — an internal,
+// intentional `"absent-is-default"` use (`ConfigAbsencePolicy`): the
+// suppression tiers below need a fully schema-materialized baseline to
+// compare a silent remote report against, not a raw-presence-masked one.
 let defaultProjectionMemo: ProjectConfig | undefined;
 function defaultProjection(): ProjectConfig {
   defaultProjectionMemo ??= fromConfigDocument(getDefaultCliConfig());
@@ -354,6 +383,8 @@ function defaultProjection(): ProjectConfig {
 export function diffProjectConfig(options: DiffProjectConfigOptions): ConfigChangeSet {
   const local = fromConfigDocument(options.local);
   const declaredRoot = options.local.document ?? {};
+  const absencePolicy: ConfigAbsencePolicy =
+    options.local.document !== undefined ? "absent-is-hands-off" : "absent-is-default";
   const envReferences = new Map<string, ReadonlyArray<string>>();
   for (const origin of options.local.valueOrigins ?? []) {
     if (origin.source === "environment" && origin.envVariables !== undefined) {
@@ -476,5 +507,6 @@ export function diffProjectConfig(options: DiffProjectConfigOptions): ConfigChan
     masked,
     unmanaged,
     counts: { update, remote_only, local_only, total: update + remote_only + local_only },
+    absencePolicy,
   };
 }

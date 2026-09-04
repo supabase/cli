@@ -9,6 +9,7 @@ const EMPTY_CHANGE_SET: ConfigChangeSet = {
   masked: [],
   unmanaged: [],
   counts: { update: 0, remote_only: 0, local_only: 0, total: 0 },
+  absencePolicy: "absent-is-hands-off",
 };
 
 describe("legacyConfigApiScope", () => {
@@ -119,6 +120,7 @@ describe("legacyRenderConfigDiffText", () => {
       masked: [["auth", "external", "github", "secret"]],
       unmanaged: [["auth", "oauth_server", "enabled"]],
       counts: { update: 1, remote_only: 1, local_only: 0, total: 2 },
+      absencePolicy: "absent-is-hands-off",
     };
     expect(legacyRenderConfigDiffText(changeSet, { present: ["api", "auth"], missing: [] })).toBe(
       "api.max_rows [update]\n" +
@@ -143,6 +145,7 @@ describe("legacyRenderConfigDiffText", () => {
           masked: [],
           unmanaged: [],
           counts: { update: 0, remote_only: 0, local_only: 0, total: 0 },
+          absencePolicy: "absent-is-hands-off",
         },
         { present: ["api"], missing: [] },
       ),

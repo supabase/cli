@@ -21,6 +21,7 @@ function emptyChangeSet(): ConfigChangeSet {
     changes: [],
     masked: [],
     unmanaged: [],
+    absencePolicy: "absent-is-hands-off",
     counts: { update: 0, remote_only: 0, local_only: 0, total: 0 },
   };
 }
@@ -97,6 +98,7 @@ describe("legacyConfigPullSummaryMessage", () => {
       changes: [change],
       masked: [],
       unmanaged: [],
+      absencePolicy: "absent-is-hands-off",
       counts: { update: 1, remote_only: 0, local_only: 0, total: 1 },
     };
     const plan: LegacyConfigPullPlan = {
@@ -122,6 +124,7 @@ describe("legacyConfigPullSummaryMessage", () => {
       changes: [change],
       masked: [],
       unmanaged: [],
+      absencePolicy: "absent-is-hands-off",
       counts: { update: 1, remote_only: 0, local_only: 0, total: 1 },
     };
     const plan: LegacyConfigPullPlan = {
@@ -181,6 +184,7 @@ describe("legacyConfigPullSummaryMessage", () => {
       changes: [change],
       masked: [],
       unmanaged: [],
+      absencePolicy: "absent-is-hands-off",
       counts: { update: 1, remote_only: 0, local_only: 0, total: 1 },
     };
     const blockOnlyPlan: LegacyConfigPullPlan = {
@@ -219,6 +223,7 @@ describe("legacyConfigPullSummaryMessage", () => {
       changes: [changeA, changeB],
       masked: [],
       unmanaged: [],
+      absencePolicy: "absent-is-hands-off",
       counts: { update: 0, remote_only: 0, local_only: 2, total: 2 },
     };
     const blockOnlyPlan: LegacyConfigPullPlan = {
@@ -299,6 +304,7 @@ describe("legacyConfigPullPayload", () => {
       changes: [change],
       masked: [],
       unmanaged: [],
+      absencePolicy: "absent-is-hands-off",
       counts: { update: 1, remote_only: 0, local_only: 0, total: 1 },
     };
     const plan: LegacyConfigPullPlan = {
@@ -371,6 +377,7 @@ describe("legacyConfigPullPayload", () => {
       changes: [change],
       masked: [],
       unmanaged: [],
+      absencePolicy: "absent-is-hands-off",
       counts: { update: 1, remote_only: 0, local_only: 0, total: 1 },
     };
     const plan: LegacyConfigPullPlan = {
@@ -431,6 +438,7 @@ describe("legacyConfigPullPayload", () => {
       changes: [change],
       masked: [],
       unmanaged: [],
+      absencePolicy: "absent-is-hands-off",
       counts: { update: 1, remote_only: 0, local_only: 0, total: 1 },
     };
     const plan: LegacyConfigPullPlan = {
@@ -490,6 +498,7 @@ describe("legacyConfigPullPayload", () => {
       changes: [change],
       masked: [],
       unmanaged: [],
+      absencePolicy: "absent-is-hands-off",
       counts: { update: 1, remote_only: 0, local_only: 0, total: 1 },
     };
     const plan: LegacyConfigPullPlan = {
@@ -544,6 +553,7 @@ describe("legacyConfigPullPayload", () => {
       changes: [change],
       masked: [],
       unmanaged: [],
+      absencePolicy: "absent-is-hands-off",
       counts: { update: 1, remote_only: 0, local_only: 0, total: 1 },
     };
     const plan: LegacyConfigPullPlan = {
@@ -683,6 +693,7 @@ describe("legacyRenderConfigPullText", () => {
       changes: [written, skipped],
       masked: [],
       unmanaged: [],
+      absencePolicy: "absent-is-hands-off",
       counts: { update: 1, remote_only: 0, local_only: 1, total: 2 },
     };
     const plan: LegacyConfigPullPlan = {
@@ -718,6 +729,7 @@ describe("legacyRenderConfigPullText", () => {
       changes: [change],
       masked: [],
       unmanaged: [],
+      absencePolicy: "absent-is-hands-off",
       counts: { update: 0, remote_only: 1, local_only: 0, total: 1 },
     };
     const plan: LegacyConfigPullPlan = {
@@ -750,6 +762,7 @@ describe("legacyRenderConfigPullText", () => {
       changes: [change],
       masked: [],
       unmanaged: [],
+      absencePolicy: "absent-is-hands-off",
       counts: { update: 1, remote_only: 0, local_only: 0, total: 1 },
     };
     const plan: LegacyConfigPullPlan = {
@@ -801,6 +814,7 @@ describe("legacyRenderConfigPullText", () => {
       changes: [change],
       masked: [],
       unmanaged: [],
+      absencePolicy: "absent-is-hands-off",
       counts: { update: 1, remote_only: 0, local_only: 0, total: 1 },
     };
     const plan: LegacyConfigPullPlan = {
@@ -853,6 +867,7 @@ describe("legacyRenderConfigPullText", () => {
       changes: [change],
       masked: [],
       unmanaged: [],
+      absencePolicy: "absent-is-hands-off",
       counts: { update: 1, remote_only: 0, local_only: 0, total: 1 },
     };
     const plan: LegacyConfigPullPlan = {
@@ -885,6 +900,7 @@ describe("legacyRenderConfigPullText", () => {
       changes: [change],
       masked: [],
       unmanaged: [],
+      absencePolicy: "absent-is-hands-off",
       counts: { update: 1, remote_only: 0, local_only: 0, total: 1 },
     };
     const plan: LegacyConfigPullPlan = {

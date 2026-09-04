@@ -103,13 +103,19 @@ export type ReadonlyJsonValue =
  * {@link comparableProjectConfigPaths}/{@link isComparableProjectConfigPath}
  * to restrict a comparison to exactly the fields `fromApiProjectConfig` can
  * actually speak for, rather than hand-maintaining an equivalent field list.
- * The gap runs the other direction too: `auth.oauth_server`, and
- * `storage.analytics`/`storage.vector` when disabled, ARE comparable paths
- * (`fromApiProjectConfig` maps them) that `fromConfigDocument` can be
- * silent on entirely, since push cannot communicate that state at all — see
- * ADR 0021's "unmanaged-by-push containers" family — so the same
- * both-operands-speak-for restriction applies symmetrically, not only for
- * the API arm's unconditional fields above.
+ * The gap runs the other direction too, but far more narrowly than it once
+ * did: `auth.oauth_server.enabled`, and `storage.analytics.enabled`/
+ * `storage.vector.enabled`, are ordinary comparable paths on BOTH arms today
+ * (CLI-2314 retired the whole-container omission this paragraph used to
+ * describe) — only their few gated sibling fields
+ * (`allow_dynamic_registration`/`authorization_url_path` for
+ * `auth.oauth_server`; `max_namespaces`/`max_tables`/`max_catalogs` for
+ * `storage.analytics`; `max_buckets`/`max_indexes` for `storage.vector`) are
+ * pruned from `fromConfigDocument`'s output while the container's `enabled`
+ * reads `false` ({@link DISABLED_SENTINEL_PRUNES}), matching
+ * `fromApiProjectConfig`'s own treatment of that same retained-but-inert
+ * platform state — not a case where `fromConfigDocument` goes silent on a
+ * comparable path `fromApiProjectConfig` speaks for.
  *
  * Per ADR 0021, a `ProjectConfig` value is NOT a verbatim projection of
  * whichever operand produced it — both {@link fromConfigDocument} and
@@ -459,26 +465,72 @@ function removePathAndEmptiedAncestors(
 }
 
 /**
+ * The two operand policies {@link fromConfigDocument} implements for how an
+ * ABSENT field — present in neither the raw file nor an in-memory operand —
+ * should be read. Named here for the first time: until now, every caller
+ * picked one implicitly by which overload it happened to call, never by a
+ * name either could reference.
+ *
+ * - `"absent-is-default"`: the operand is a bare {@link EffectiveConfig} (no
+ *   `document`). Every value on it is schema-materialized, so an
+ *   absent/undeclared field's value IS the schema default, and that default
+ *   is asserted as the caller's actual intent. Used today only by
+ *   `../config-diff.ts`'s `defaultProjection()` baseline helper (deliberately
+ *   — see that function's own note).
+ * - `"absent-is-hands-off"`: the operand is a {@link CliConfigWithRawPresence}
+ *   pair (`document` supplied). {@link applyRawPresenceMask} runs and, for
+ *   its own fixed list of paths (`db.ssl_enforcement`,
+ *   `storage.image_transformation`, `storage.s3_protocol`, `auth.captcha`,
+ *   the six `auth.hook.*` names, `auth.email.smtp`, `auth.external.*`), an
+ *   absent raw field is read as "hands off, I'm not speaking for this" and
+ *   removed from the projection entirely rather than standing in for the
+ *   schema default. This is what `config diff`/`config pull`/`config push`
+ *   all actually use in production today — `diff.handler.ts`,
+ *   `pull.handler.ts`, and `push.handler.ts` all call
+ *   `fromConfigDocument`/`diffProjectConfig` with a `{config, document}`
+ *   pair.
+ *
+ * The two policies agree everywhere except one cell. Danger matrix (rows:
+ * whether the field is locally declared; columns: whether the hosted value
+ * matches the schema default or has been customized on the platform):
+ *
+ * |  | hosted ≈ default | hosted **customized** |
+ * |---|---|---|
+ * | field declared | safe either policy | safe either policy — intended update |
+ * | **field absent** | safe either policy (the generic `declared`-based diff classification and default-baseline suppression already prevent noise here — see `config-diff.ts`) | **only hazardous cell**, and only under `absent-is-default`: a consumer gets back `remote_only` with `local = <schema default>`; treating `remote_only` as "push this" would silently revert a real hosted customization to default. `absent-is-hands-off` closes this for its fixed field list; the generic `declared` mechanism in `diffProjectConfig` closes it for every other comparable path (an undeclared field differing from remote classifies `remote_only`, never `update`, so `config push`'s `update`/`local_only`-only routing never touches it). |
+ *
+ * Mitigations that hold TODAY, not just aspirationally: `config push`'s
+ * routing (`apps/cli/src/legacy/commands/config/push/push.plan.ts`) never
+ * writes a `remote_only` change; `config pull`'s whole purpose is to close
+ * this gap by declaring every drifted path into the file; `config diff` is
+ * the seatbelt that shows the user `remote_only` entries before anything
+ * happens; every `ConfigChange` (`../config-diff.ts`) already carries a
+ * `declared: boolean` a consumer can filter on directly.
+ */
+export type ConfigAbsencePolicy = "absent-is-default" | "absent-is-hands-off";
+
+/**
  * A `{ config, document }` pair {@link fromConfigDocument} accepts as an
- * alternative to a bare {@link EffectiveConfig} (human review round on PR
- * #6339, thread 1): `document` is the raw, pre-decode document object
+ * alternative to a bare {@link EffectiveConfig}: supplying it is what SELECTS
+ * the {@link ConfigAbsencePolicy} `"absent-is-hands-off"` policy over the
+ * bare-operand `"absent-is-default"` default (human review round on PR
+ * #6339, thread 1) — `document` is the raw, pre-decode document object
  * (`LoadedCliConfig.document`, `../config-document.ts` — post-`env()`,
  * remotes-merged, retained precisely so a caller can inspect key presence a
- * decoded value loses to schema defaults) and unlocks raw-presence masking
- * ({@link applyRawPresenceMask}) a bare `EffectiveConfig` operand cannot,
- * since decode has already erased the distinction between "the file
- * declared this with a default value" and "the file never mentioned this at
- * all". `LoadedCliConfig` is structurally assignable to this interface
- * WITHOUT a cast — its `config: CliConfig` fits `EffectiveConfig` (a
- * `CliConfig` is one), its `document?: Record<string, unknown>` matches
- * exactly. Declared independently rather than importing `LoadedCliConfig`
- * by name: not for pure-runtime-graph reasons (`config-document.ts` is
- * already reachable from this package's pure entrypoint, and this very file
- * already imports `isObject` from it), but so `fromConfigDocument`'s public
- * contract doesn't couple its parameter shape to the loader's own type name
- * — this type is local-checkout-side on its own terms (ADR 0020's `Cli*`
- * convention), independent of which loader happens to produce a matching
- * shape.
+ * decoded value loses to schema defaults), unlocking {@link
+ * applyRawPresenceMask} for its own fixed list of paths, since decode has
+ * already erased the distinction between "the file declared this with a
+ * default value" and "the file never mentioned this at all". `LoadedCliConfig`
+ * is structurally assignable to this interface WITHOUT a cast — its `config:
+ * CliConfig` fits `EffectiveConfig` (a `CliConfig` is one), its `document?:
+ * Record<string, unknown>` matches exactly. Declared independently rather
+ * than importing `LoadedCliConfig` by name: not for pure-runtime-graph
+ * reasons (`config-document.ts` is already reachable from this package's pure
+ * entrypoint, and this very file already imports `isObject` from it), but so
+ * `fromConfigDocument`'s public contract doesn't couple its parameter shape
+ * to the loader's own type name — this type is local-checkout-side on its own
+ * terms (ADR 0020's `Cli*` convention), independent of which loader happens
+ * to produce a matching shape.
  */
 export interface CliConfigWithRawPresence {
   readonly config: EffectiveConfig;
@@ -576,44 +628,50 @@ function unwrapConfigDocumentSource(input: Record<string, unknown>): {
  * should not happen, since every `normalizeDocument` implementation returns
  * its input verbatim rather than throwing.
  *
- * NOT a verbatim projection of `config` (ADR 0021): beyond secret omission
- * and per-field canonicalization, this function also applies
+ * NOT a verbatim projection of `config` (ADR 0021). This and
+ * {@link fromApiProjectConfig} both build CONVERGENCE PROJECTIONS — the
+ * normalized shape multiple actors on either side of the local/hosted
+ * boundary (the CLI's `config diff`/`config pull`, and Studio, which calls
+ * this package directly) build so the two sides compare like for like, not a
+ * prediction of any one actor's write path. Beyond secret omission and
+ * per-field canonicalization, this function also applies
  * {@link applySmsProviderPrecedence} (a document enabling several SMS
- * providers converges on only the push-selected one staying `enabled`) and
+ * providers converges on only one staying `enabled`) and
  * {@link applyDisabledSentinels} (a disabled section/entry drops the sibling
- * fields the legacy push does not manage while it is off). The result
- * predicts what the hosted config will look like AFTER pushing `config`, not
- * `config`'s own declared hosted-section values — do not render it to a user
- * as "your local config".
+ * fields the platform itself retains as inert while it is off, matching what
+ * {@link fromApiProjectConfig} reports for that same hosted state) — do not
+ * render this value to a user as "your local config".
  *
- * The convergence prediction is exact for a genuinely sparse `config` — one
- * that only carries the keys the caller means to speak for. It holds only
- * "exact modulo schema defaults" for a fully-materialized decoded document
- * passed BARE (the common case, since a full `CliConfig` is a valid
- * operand): decode cannot recover whether the raw file actually wrote a key
- * or merely inherited its schema default, a distinction the legacy push
- * pipeline DOES read (e.g. it emits only the external providers the raw
- * file declared, never every provider a decoded document defaults to).
+ * How an ABSENT field is read depends on which {@link ConfigAbsencePolicy}
+ * this call selects — see that type's own docstring for the full policy
+ * definitions and danger matrix, summarized only briefly here. The
+ * convergence projection is exact for a genuinely sparse `config` — one that
+ * only carries the keys the caller means to speak for. It holds only "exact
+ * modulo schema defaults" for a fully-materialized decoded document passed
+ * BARE (the common `"absent-is-default"` case, since a full `CliConfig` is a
+ * valid operand): decode cannot recover whether the raw file actually wrote a
+ * key or merely inherited its schema default, a distinction
+ * {@link applyRawPresenceMask} needs and only has with a raw `document`.
  *
  * **This limit has a first-class remedy**: pass a {@link
- * CliConfigWithRawPresence} pair instead of a bare `config` — this is the
- * RECOMMENDED form whenever a `document` is available (i.e. whenever the
- * config came from `loadCliConfig` rather than being constructed in-memory,
- * e.g. `getDefaultCliConfig()`'s memo). With `document` present, this
- * function additionally applies {@link applyRawPresenceMask}, mirroring the
- * legacy push pipeline's own raw-presence gates
- * (`apps/cli/src/legacy/commands/config/push/push.raw-presence.ts`) exactly,
- * closing the gap for the fields those gates cover. Without `document`, this
- * function's behavior is unchanged, and a caller diffing its output against
- * a remote `ProjectConfig` should still first strip schema defaults with
- * `omitDefaultValues` and intersect to the fields both operands actually
- * speak for — see ADR 0021's "Limits" section for the verified boundary,
- * which fields the presence mask covers, and the residual drift categories
- * that remain deferred to CLI-2266 even with a `document` supplied.
+ * CliConfigWithRawPresence} pair instead of a bare `config` — this selects
+ * `"absent-is-hands-off"` and is the RECOMMENDED form whenever a `document`
+ * is available (i.e. whenever the config came from `loadCliConfig` rather
+ * than being constructed in-memory, e.g. `getDefaultCliConfig()`'s memo).
+ * With `document` present, this function additionally applies
+ * {@link applyRawPresenceMask} for its own fixed list of paths — see that
+ * function's docstring for exactly which. Without `document`, this
+ * function's behavior is unchanged (`"absent-is-default"`), and a caller
+ * diffing its output against a remote `ProjectConfig` should still first
+ * strip schema defaults with `omitDefaultValues` and intersect to the fields
+ * both operands actually speak for — see ADR 0021's "Limits" section for the
+ * verified boundary, and {@link ConfigAbsencePolicy}'s docstring for the
+ * residual hazard that remains even with a `document` supplied, for paths
+ * outside the presence mask's fixed list.
  * `@supabase/config/io`'s `loadCliConfig` supplies a `document`;
  * `saveCliConfig`'s returned `LoadedCliConfig` does NOT (there is no raw
  * file being re-read on a save) — passing that result here silently falls
- * back to the un-remedied, bare-`config` behavior.
+ * back to `"absent-is-default"`.
  */
 export function fromConfigDocument(config: EffectiveConfig): ProjectConfig;
 export function fromConfigDocument(loaded: CliConfigWithRawPresence): ProjectConfig;
@@ -932,16 +990,29 @@ function applyDisabledSentinels(result: Record<string, unknown>): void {
  * DOCUMENT-ARM ONLY, and only when {@link fromConfigDocument} was called
  * with a {@link CliConfigWithRawPresence} pair (human review round on PR
  * #6339, thread 1) — never called from {@link fromApiProjectConfig}, which
- * has no analogous raw-document concept. Mirrors the legacy push pipeline's
- * own raw-presence gates exactly: `apps/cli/src/legacy/commands/config/
- * push/push.raw-presence.ts`'s `legacyPresenceIn` (db.ssl_enforcement,
- * storage.image_transformation, storage.s3_protocol) and `config-sync/
- * auth.sync.ts`'s `AuthPresence` (captcha `:927`, the six hooks
- * `:951-960`, smtp `:1023`, external providers `:1075-1084` — `apple`
- * ALWAYS sent regardless of presence). Distinct from
- * {@link applyDisabledSentinels} (reads the DECODED `enabled` flag — can
- * only ever say "explicitly disabled", never "never mentioned", and runs
- * even without a `document`): this drops a container/entry push skips
+ * has no analogous raw-document concept. This is the mechanism that
+ * implements the {@link ConfigAbsencePolicy} `"absent-is-hands-off"` policy:
+ * it removes a subtree from the projection when the raw file never declared
+ * it, rather than letting the decoded (schema-defaulted) value stand in for
+ * the caller's intent.
+ *
+ * Its coverage is a FIXED, HARD-CODED list of paths — `db.ssl_enforcement`,
+ * `storage.image_transformation`, `storage.s3_protocol`, `auth.captcha`, the
+ * six `auth.hook.*` names, `auth.email.smtp` (cascading to
+ * `auth.rate_limit.email_sent`), and `auth.external.*` providers the raw file
+ * never declared (`apple` excepted — always retained regardless of presence)
+ * — NOT a general rule over every comparable path. Every comparable path
+ * OUTSIDE this list is covered only by the separate, GENERIC `declared`
+ * mechanism in `../config-diff.ts` (`diffProjectConfig`'s `isDeclaredAtPath`),
+ * which changes classification (`update` vs. `remote_only`) rather than
+ * removing anything from the projection. Do not read this function's fixed
+ * list as the full extent of the safety net this package provides — see
+ * {@link ConfigAbsencePolicy}'s docstring for how the two mechanisms combine
+ * and the one cell neither alone would close.
+ *
+ * Distinct from {@link applyDisabledSentinels} (reads the DECODED `enabled`
+ * flag — can only ever say "explicitly disabled", never "never mentioned",
+ * and runs even without a `document`): this drops a container/entry
  * specifically because the RAW FILE never declared it — a stronger,
  * independent signal only available with `document`, so it runs last and
  * can remove a subtree {@link applyDisabledSentinels} already touched or
@@ -949,10 +1020,9 @@ function applyDisabledSentinels(result: Record<string, unknown>): void {
  *
  * Values that DO survive still come from the DECODED `result` — masking
  * only decides presence/absence of a subtree, never substitutes a raw
- * value: push sends the decoded subset for any section the raw file
- * declares (e.g. a document that declares `[auth.external.google]` with
- * only `client_id` set still pushes `google`'s decoded `enabled: false`
- * default alongside it).
+ * value: a document that declares `[auth.external.google]` with only
+ * `client_id` set still projects `google`'s decoded `enabled: false` default
+ * alongside it.
  */
 function applyRawPresenceMask(
   result: Record<string, unknown>,
