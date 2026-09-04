@@ -2032,3 +2032,30 @@ export function isComparableProjectConfigPath(path: ReadonlyArray<string>): bool
   }
   return false;
 }
+
+/**
+ * Deduped `configPath`s of every `dualScope` row in
+ * {@link projectConfigMappingRows}, in registry order (CLI-2064) — the
+ * fields with a legitimate DIFFERENT correct value for the local stack than
+ * the hosted project (`./registry-row.ts`'s `dualScope` docstring). `config
+ * pull` uses this list to warn before silently overwriting one of these
+ * fields at the config ROOT, since doing so would reconfigure `supabase
+ * start` rather than merely record the hosted project's own setting; a write
+ * into a `[remotes.*]` block is unaffected.
+ */
+export const dualScopeProjectConfigPaths: ReadonlyArray<ReadonlyArray<string>> = (() => {
+  const seenKeys = new Set<string>();
+  const paths: Array<ReadonlyArray<string>> = [];
+  for (const row of projectConfigMappingRows) {
+    if (row.dualScope !== true) {
+      continue;
+    }
+    const key = pathKey(row.configPath);
+    if (seenKeys.has(key)) {
+      continue;
+    }
+    seenKeys.add(key);
+    paths.push(row.configPath);
+  }
+  return paths;
+})();

@@ -24,6 +24,18 @@ const config = {
     ),
     Flag.optional,
   ),
+  noWait: Flag.boolean("no-wait").pipe(
+    // The deploy POST is answered once the platform has accepted the spec and
+    // the uploaded context, and the server-side container build that follows
+    // routinely runs for minutes. Waiting stays the default so a plain push
+    // still reports the build's verdict, and `--no-wait` is the opt-out for the
+    // callers — an inner-loop redeploy, a fire-and-forget CI step — that only
+    // need the deploy accepted.
+    Flag.withDescription(
+      "Return once the deploy is accepted, without waiting for the server-side build to finish.",
+    ),
+    Flag.withDefault(false),
+  ),
   projectRef: Flag.string("project-ref").pipe(
     Flag.withDescription("Project ref of the Supabase project."),
     Flag.optional,
@@ -50,6 +62,10 @@ export const legacyWorkersPushCommand = Command.make("push", config).pipe(
     {
       command: "supabase experimental workers push api web",
       description: "Deploy several workers by name",
+    },
+    {
+      command: "supabase experimental workers push api --no-wait",
+      description: "Deploy without blocking on the build",
     },
   ]),
   Command.withHandler((flags) =>
