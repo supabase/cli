@@ -50,7 +50,7 @@ config for that ref to build the fallback connection (the saved workdir
 | Command                                                                                                         | When                                                                  | Purpose                                                                                                                                                                                                                                                                                   |
 | --------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `docker`/`podman container inspect supabase_db_<project_id>`                                                    | `--local`                                                             | assert `supabase start` is running                                                                                                                                                                                                                                                        |
-| `docker`/`podman image inspect <candidate>` per registry candidate, then `pull <candidate>` when none is cached | every pg-meta path                                                    | resolve the pg-meta image through the shared registry fallback (ECR, then GHCR, then Docker Hub, three attempts each) before running it                                                                                                                                                   |
+| `docker`/`podman image inspect <candidate>` per registry candidate, then `pull <candidate>` when none is cached | every pg-meta path                                                    | resolve the pg-meta image through the shared registry fallback (ECR, then GHCR, then Docker Hub, three attempts each; a slim image or `SUPABASE_INTERNAL_IMAGE_REGISTRY` pins a single candidate) after the TLS probe and before running it                                               |
 | `docker`/`podman run --rm --network <net> --env … <pgmeta> node dist/server/server.js`                          | `--local`, `--db-url`, project-ref paths with non-TypeScript `--lang` | run pg-meta to generate types from a live database. Always passes `node dist/server/server.js` after the image. Under `SUPABASE_USE_SLIM_IMAGES`, a current Dockerfile pin may resolve to slim `ghcr.io/supabase/cli/pgmeta`; a historical `.temp/pgmeta-version` pin stays on docker.io. |
 
 A raw TCP `SSLRequest` probe is also opened to the target database host/port to
@@ -76,16 +76,16 @@ timeout.
 
 ## Exit Codes
 
-| Code | Condition                                                        |
-| ---- | ---------------------------------------------------------------- |
-| `0`  | success — types printed to stdout                                |
-| `1`  | no target specified (must use one flag)                          |
-| `1`  | mutually exclusive flags combined (all four Go flag groups)      |
-| `1`  | `--postgrest-v9-compat` used without `--db-url`                  |
-| `1`  | invalid `--query-timeout` duration or invalid `--db-url`         |
-| `1`  | `supabase start` not running (`--local`) or db inspection failed |
-| `1`  | API error, TLS probe failure, or pg-meta container non-zero exit |
-| `1`  | pg-meta image could not be inspected or pulled from any registry |
+| Code | Condition                                                                                           |
+| ---- | --------------------------------------------------------------------------------------------------- |
+| `0`  | success — types printed to stdout                                                                   |
+| `1`  | no target specified (must use one flag)                                                             |
+| `1`  | mutually exclusive flags combined (all four Go flag groups)                                         |
+| `1`  | `--postgrest-v9-compat` used without `--db-url`                                                     |
+| `1`  | invalid `--query-timeout` duration or invalid `--db-url`                                            |
+| `1`  | `supabase start` not running (`--local`) or db inspection failed                                    |
+| `1`  | API error, TLS probe failure, or pg-meta container non-zero exit                                    |
+| `1`  | no container runtime found, or the pg-meta image could not be inspected or pulled from any registry |
 
 ## Output
 

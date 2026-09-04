@@ -12,13 +12,8 @@ test(
   "lists organizations for the authenticated token",
   { timeout: LIVE_TIMEOUT_MS },
   async ({ cli }) => {
-    const { exitCode, stdout, stderr } = await cli(["orgs", "list"]);
+    const { exitCode, stdout, stderr } = await cli(["orgs", "list", "--output", "json"]);
     expect(exitCode, stderr).toBe(0);
-    expect(stdout, stderr).toMatch(/ID\s+\|\s+NAME/);
-    const orgs = stdout
-      .split("\n")
-      .filter((line) => line.includes("|"))
-      .slice(2);
-    expect(orgs, stdout).not.toHaveLength(0);
+    expect(JSON.parse(stdout), stderr).not.toHaveLength(0);
   },
 );

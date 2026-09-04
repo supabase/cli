@@ -15,18 +15,7 @@ import { CliOutput, Command } from "effect/unstable/cli";
 import * as HttpClientError from "effect/unstable/http/HttpClientError";
 import * as HttpClientRequest from "effect/unstable/http/HttpClientRequest";
 import * as HttpClientResponse from "effect/unstable/http/HttpClientResponse";
-import {
-  Deferred,
-  Effect,
-  Exit,
-  Layer,
-  Option,
-  PlatformError,
-  Predicate,
-  Sink,
-  Stdio,
-  Stream,
-} from "effect";
+import { Deferred, Effect, Exit, Layer, Option, PlatformError, Sink, Stdio, Stream } from "effect";
 import {
   LEGACY_GLOBAL_FLAGS,
   LegacyDebugFlag,
@@ -229,7 +218,6 @@ function setup(
     readonly childStderr?: ReadonlyArray<string>;
     readonly childExitCode?: number;
     readonly childLayer?: Layer.Layer<ChildProcessSpawner.ChildProcessSpawner>;
-    readonly imageInspect?: "cached" | "scripted";
     readonly debug?: boolean;
     readonly networkId?: Option.Option<string>;
     readonly onSpawn?: (record: {
@@ -368,9 +356,7 @@ function setup(
   const layer = Layer.mergeAll(
     runtime,
     BunServices.layer,
-    opts.imageInspect === "scripted"
-      ? (opts.childLayer ?? child.layer)
-      : cachedImageInspect(opts.childLayer ?? child.layer),
+    opts.childLayer ?? child.layer,
     processControl.layer,
     Stdio.layerTest({ args: Effect.succeed(opts.args ?? ["gen", "types"]) }),
     Layer.succeed(LegacyOutputFlag, opts.goOutput ?? Option.none()),
@@ -398,37 +384,6 @@ function setup(
     api,
     layer,
   };
-}
-
-const cachedImageInspectHandle = ChildProcessSpawner.makeHandle({
-  pid: ChildProcessSpawner.ProcessId(1),
-  stdout: Stream.empty,
-  stderr: Stream.empty,
-  all: Stream.empty,
-  exitCode: Effect.succeed(ChildProcessSpawner.ExitCode(0)),
-  isRunning: Effect.succeed(false),
-  stdin: Sink.drain,
-  kill: () => Effect.void,
-  unref: Effect.succeed(Effect.void),
-  getInputFd: () => Sink.drain,
-  getOutputFd: () => Stream.empty,
-});
-
-function cachedImageInspect(
-  inner: Layer.Layer<ChildProcessSpawner.ChildProcessSpawner>,
-): Layer.Layer<ChildProcessSpawner.ChildProcessSpawner> {
-  return Layer.effect(
-    ChildProcessSpawner.ChildProcessSpawner,
-    Effect.map(ChildProcessSpawner.ChildProcessSpawner, (spawner) =>
-      ChildProcessSpawner.make((command) =>
-        Predicate.isTagged(command, "StandardCommand") &&
-        command.args[0] === "image" &&
-        command.args[1] === "inspect"
-          ? Effect.succeed(cachedImageInspectHandle)
-          : spawner.spawn(command),
-      ),
-    ),
-  ).pipe(Layer.provide(inner));
 }
 
 function mockSequentialChildProcessSpawner(
@@ -641,6 +596,7 @@ describe("legacy gen types", () => {
           const analytics = mockAnalytics();
           const child = mockSequentialChildProcessSpawner([
             { exitCode: 0 },
+            { exitCode: 0 },
             { exitCode: 0, stdout: ["export type Database = {};"] },
           ]);
           const args = [
@@ -662,7 +618,7 @@ describe("legacy gen types", () => {
             processEnvLayer({ SUPABASE_HOME: workdir }),
             mockRuntimeInfo({ cwd: workdir, homeDir: workdir }),
             mockTty({ stdinIsTty: false, stdoutIsTty: false }),
-            cachedImageInspect(child.layer),
+            child.layer,
             Stdio.layerTest({ args: Effect.succeed(args) }),
             Layer.succeed(
               TelemetryRuntime,
@@ -692,7 +648,7 @@ describe("legacy gen types", () => {
 
           expect(out.stdoutText).toContain("export type Database = {};");
           expect(out.stderrText).not.toContain("Access token not provided");
-          expect(child.spawned).toHaveLength(2);
+          expect(child.spawned).toHaveLength(3);
         }),
       catch: (cause) => (cause instanceof Error ? cause : new Error(String(cause))),
     }),
@@ -1363,8 +1319,8 @@ describe("legacy gen types", () => {
             expect(api.requests).not.toContainEqual(
               expect.objectContaining({ method: "generateTypescriptTypes" }),
             );
-            expect(child.spawned[0]?.args).toContain("--network");
-            expect(child.spawned[0]?.args).toContain("host");
+            expect(child.spawned[1]?.args).toContain("--network");
+            expect(child.spawned[1]?.args).toContain("host");
             expect(out.stderrText).toContain(`Connecting to 127.0.0.1 ${port}`);
             expect(
               docker.env.has(
@@ -1483,7 +1439,6 @@ describe("legacy gen types", () => {
           const { layer, out } = setup({
             args: ["gen", "types", "--lang", "go", "--project-id", LEGACY_VALID_REF],
             childLayer: child.layer,
-            imageInspect: "scripted",
             sslProbeLayer: Layer.succeed(LegacyPgDeltaSslProbe, {
               requireSsl: () => Effect.succeed(false),
               requireSslForHost: () => Effect.succeed(false),
@@ -1532,7 +1487,6 @@ describe("legacy gen types", () => {
           const { layer, out, dbConfig } = setup({
             args: ["gen", "types", "--lang", "go", "--project-id", LEGACY_VALID_REF],
             childLayer: child.layer,
-            imageInspect: "scripted",
             sslProbeLayer: Layer.succeed(LegacyPgDeltaSslProbe, {
               requireSsl: () => Effect.succeed(false),
               requireSslForHost: () => Effect.succeed(false),
@@ -1576,6 +1530,7 @@ describe("legacy gen types", () => {
       try: () =>
         withSslProbeServer(async (port) => {
           const child = mockSequentialChildProcessSpawner([
+            { exitCode: 0 },
             {
               exitCode: 1,
               stderr: [
@@ -1623,14 +1578,14 @@ describe("legacy gen types", () => {
           expect(out.stdoutText).toContain("type RetriedViaPooler struct {}");
           expect(out.stderrText).toContain("does not support IPv6");
           expect(out.stderrText).toContain("Retrying via the IPv4 connection pooler.");
-          expect(child.spawned).toHaveLength(2);
+          expect(child.spawned).toHaveLength(3);
           expect(
-            dockerEnv(child.spawned[0]?.args ?? []).has(
+            dockerEnv(child.spawned[1]?.args ?? []).has(
               `PG_META_DB_URL=postgresql://postgres:direct-password@db.${LEGACY_VALID_REF}.supabase.co:${port}/postgres?connect_timeout=10`,
             ),
           ).toBe(true);
           expect(
-            dockerEnv(child.spawned[1]?.args ?? []).has(
+            dockerEnv(child.spawned[2]?.args ?? []).has(
               `PG_META_DB_URL=postgresql://postgres.${LEGACY_VALID_REF}:pooler-password@127.0.0.1:${port}/postgres?connect_timeout=10`,
             ),
           ).toBe(true);
@@ -1647,6 +1602,7 @@ describe("legacy gen types", () => {
       try: () =>
         withSslProbeServer(async (port) => {
           const child = mockSequentialChildProcessSpawner([
+            { exitCode: 0 },
             {
               exitCode: 1,
               stderr: ["connect ENETUNREACH 2600:1f18::1:5432 - Local (:::0)"],
@@ -1690,7 +1646,7 @@ describe("legacy gen types", () => {
           );
 
           expect(out.stdoutText).toContain("type RetriedViaPooler struct {}");
-          expect(child.spawned).toHaveLength(2);
+          expect(child.spawned).toHaveLength(3);
           expect(dbConfig.poolerFallbacks).toHaveLength(1);
         }),
       catch: (cause) => (cause instanceof Error ? cause : new Error(String(cause))),
@@ -1702,6 +1658,7 @@ describe("legacy gen types", () => {
       try: () =>
         withSslProbeServer(async (port) => {
           const child = mockSequentialChildProcessSpawner([
+            { exitCode: 0 },
             { exitCode: 1, stderr: ["permission denied for schema public"] },
           ]);
           const { layer, dbConfig } = setup({
@@ -1740,7 +1697,7 @@ describe("legacy gen types", () => {
           );
 
           expect(Exit.isFailure(exit)).toBe(true);
-          expect(child.spawned).toHaveLength(1);
+          expect(child.spawned).toHaveLength(2);
           expect(dbConfig.poolerFallbacks).toHaveLength(0);
         }),
       catch: (cause) => (cause instanceof Error ? cause : new Error(String(cause))),
@@ -1754,6 +1711,7 @@ describe("legacy gen types", () => {
         try: () =>
           withSslProbeServer(async (port) => {
             const child = mockSequentialChildProcessSpawner([
+              { exitCode: 0 },
               {
                 exitCode: 1,
                 stderr: [
@@ -1803,7 +1761,7 @@ describe("legacy gen types", () => {
             );
 
             expect(Exit.isFailure(exit)).toBe(true);
-            expect(child.spawned).toHaveLength(2);
+            expect(child.spawned).toHaveLength(3);
             expect(dbConfig.poolerFallbacks).toHaveLength(1);
           }),
         catch: (cause) => (cause instanceof Error ? cause : new Error(String(cause))),
@@ -1818,6 +1776,7 @@ describe("legacy gen types", () => {
           Effect.runPromise(
             Effect.gen(function* () {
               const child = mockSequentialChildProcessSpawner([
+                { exitCode: 0 },
                 {
                   exitCode: 1,
                   stderr: [
@@ -1859,7 +1818,7 @@ describe("legacy gen types", () => {
               ).pipe(Effect.provide(layer), Effect.exit);
 
               expect(Exit.isFailure(exit)).toBe(true);
-              expect(child.spawned).toHaveLength(1);
+              expect(child.spawned).toHaveLength(2);
               expect(dbConfig.poolerFallbacks).toHaveLength(0);
               expect(out.stderrText).not.toContain("Retrying via the IPv4 connection pooler.");
             }),
@@ -1875,6 +1834,7 @@ describe("legacy gen types", () => {
           Effect.gen(function* () {
             let probeCalls = 0;
             const child = mockSequentialChildProcessSpawner([
+              { exitCode: 0 },
               { exitCode: 0, stdout: ["type RetriedAfterProbeFailure struct {}"] },
             ]);
             const { layer, out, dbConfig } = setup({
@@ -1924,7 +1884,7 @@ describe("legacy gen types", () => {
 
             expect(out.stdoutText).toContain("type RetriedAfterProbeFailure struct {}");
             expect(probeCalls).toBe(2);
-            expect(child.spawned).toHaveLength(1);
+            expect(child.spawned).toHaveLength(2);
             expect(dbConfig.poolerFallbacks).toHaveLength(1);
           }),
         ),
@@ -1993,6 +1953,7 @@ describe("legacy gen types", () => {
       try: () =>
         withSslProbeServer(async (port) => {
           const child = mockSequentialChildProcessSpawner([
+            { exitCode: 0 },
             {
               exitCode: 1,
               stderr: [
@@ -2034,7 +1995,7 @@ describe("legacy gen types", () => {
             expect(String(exit.cause)).toContain("error running container: exit 1");
             expect(String(exit.cause)).not.toContain("pooler fallback failed");
           }
-          expect(child.spawned).toHaveLength(1);
+          expect(child.spawned).toHaveLength(2);
         }),
       catch: (cause) => (cause instanceof Error ? cause : new Error(String(cause))),
     }),
@@ -2229,6 +2190,7 @@ describe("legacy gen types", () => {
           Effect.gen(function* () {
             const poolerHost = "aws-0-us-east-1.pooler.supabase.com";
             const child = mockSequentialChildProcessSpawner([
+              { exitCode: 0 },
               {
                 exitCode: 1,
                 stderr: [
@@ -2288,9 +2250,9 @@ describe("legacy gen types", () => {
               method: "getPoolerConfig",
               input: { ref: LEGACY_VALID_REF },
             });
-            expect(child.spawned).toHaveLength(2);
+            expect(child.spawned).toHaveLength(3);
             expect(
-              dockerEnv(child.spawned[1]?.args ?? []).has(
+              dockerEnv(child.spawned[2]?.args ?? []).has(
                 `PG_META_DB_URL=postgresql://postgres.${LEGACY_VALID_REF}:branch-password@${poolerHost}:5432/postgres?connect_timeout=10`,
               ),
             ).toBe(true);
@@ -2306,6 +2268,7 @@ describe("legacy gen types", () => {
         Effect.runPromise(
           Effect.gen(function* () {
             const child = mockSequentialChildProcessSpawner([
+              { exitCode: 0 },
               {
                 exitCode: 1,
                 stderr: [
@@ -2365,7 +2328,7 @@ describe("legacy gen types", () => {
               method: "getPoolerConfig",
               input: { ref: LEGACY_VALID_REF },
             });
-            expect(child.spawned).toHaveLength(1);
+            expect(child.spawned).toHaveLength(2);
           }),
         ),
       catch: (cause) => (cause instanceof Error ? cause : new Error(String(cause))),
@@ -2510,19 +2473,19 @@ describe("legacy gen types", () => {
           expect(out.stderrText).toContain("Connecting to db 5432");
           expect(out.stderrText).toContain("pg-meta warning");
           expect(out.stdoutText).toContain("export type Database = {};");
-          expect(child.spawned).toHaveLength(2);
+          expect(child.spawned).toHaveLength(3);
           expect(child.spawned[0]).toEqual({
             command: "docker",
             args: ["container", "inspect", "supabase_db_demo"],
           });
-          expect(child.spawned[1]?.command).toBe("docker");
-          expect(child.spawned[1]?.args).toContain("--network");
-          expect(child.spawned[1]?.args).toContain("supabase_network_demo");
+          expect(child.spawned[2]?.command).toBe("docker");
+          expect(child.spawned[2]?.args).toContain("--network");
+          expect(child.spawned[2]?.args).toContain("supabase_network_demo");
           expect(docker.env.has("PG_META_GENERATE_TYPES_INCLUDED_SCHEMAS=public,custom")).toBe(
             true,
           );
-          expect(child.spawned[1]?.args).toContain(resolvePgmetaImage());
-          expect(child.spawned[1]?.args.slice(-2)).toEqual(["node", "dist/server/server.js"]);
+          expect(child.spawned[2]?.args).toContain(resolvePgmetaImage());
+          expect(child.spawned[2]?.args.slice(-2)).toEqual(["node", "dist/server/server.js"]);
           // The local/db-url paths have no project ref, so they must not
           // populate the linked-project cache.
           expect(linkedProjectCache.cached).toBe(false);
@@ -2550,6 +2513,7 @@ describe("legacy gen types", () => {
           );
           const child = mockDockerMissingChildProcessSpawner([
             { exitCode: 0 },
+            { exitCode: 0 },
             { exitCode: 0, stdout: ["export type Database = {};"] },
           ]);
           const { layer, out } = setup({
@@ -2570,11 +2534,20 @@ describe("legacy gen types", () => {
             command: "podman",
             args: ["container", "inspect", "supabase_db_demo"],
           });
-          expect(child.spawned[2]?.command).toBe("docker");
-          expect(child.spawned[2]?.args).toContain("run");
-          expect(child.spawned[3]?.command).toBe("podman");
-          expect(child.spawned[3]?.args).toContain("run");
-          expect(child.spawned[3]?.args).toContain("supabase_network_demo");
+          expect(child.spawned[2]).toEqual({
+            command: "docker",
+            args: ["image", "inspect", resolvePgmetaImage()],
+          });
+          expect(child.spawned[3]).toEqual({
+            command: "podman",
+            args: ["image", "inspect", resolvePgmetaImage()],
+          });
+          expect(child.spawned[4]?.command).toBe("docker");
+          expect(child.spawned[4]?.args).toContain("run");
+          expect(child.spawned[5]?.command).toBe("podman");
+          expect(child.spawned[5]?.args).toContain("run");
+          expect(child.spawned[5]?.args).toContain("supabase_network_demo");
+          expect(child.spawned).toHaveLength(6);
         }),
       catch: (cause) => (cause instanceof Error ? cause : new Error(String(cause))),
     }),
@@ -2616,7 +2589,7 @@ describe("legacy gen types", () => {
               command: "docker",
               args: ["container", "inspect", "supabase_db_demo_project_with_spaces"],
             });
-            expect(child.spawned[1]?.args).toContain("supabase_network_demo_project_with_spaces");
+            expect(child.spawned[2]?.args).toContain("supabase_network_demo_project_with_spaces");
             expect(
               docker.env.has(
                 "PG_META_DB_URL=postgresql://postgres:secret-password@db:5432/postgres?connect_timeout=10",
@@ -2742,7 +2715,7 @@ describe("legacy gen types", () => {
             legacyGenTypes(defaultFlags({ local: true })).pipe(Effect.provide(layer)),
           );
 
-          expect(child.spawned[1]?.args).toContain(resolvePgmetaImage("0.99.0"));
+          expect(child.spawned[2]?.args).toContain(resolvePgmetaImage("0.99.0"));
         }),
       catch: (cause) => (cause instanceof Error ? cause : new Error(String(cause))),
     }),
@@ -3064,7 +3037,7 @@ describe("legacy gen types", () => {
         command: "docker",
         args: ["container", "inspect", localDbContainerId(projectId)],
       });
-      expect(child.spawned[1]?.args).toContain(localNetworkId(projectId));
+      expect(child.spawned[2]?.args).toContain(localNetworkId(projectId));
       expect(probes).toEqual([{ host: "127.0.0.1", port: 54322 }]);
       expect(docker.env.has("PG_META_GENERATE_TYPES_INCLUDED_SCHEMAS=public,graphql_public")).toBe(
         true,
@@ -3113,7 +3086,7 @@ describe("legacy gen types", () => {
         command: "docker",
         args: ["container", "inspect", localDbContainerId("configless-env-project")],
       });
-      expect(child.spawned[1]?.args).toContain(localNetworkId("configless-env-project"));
+      expect(child.spawned[2]?.args).toContain(localNetworkId("configless-env-project"));
       expect(probes).toEqual([{ host: "host.docker.internal", port: 55432 }]);
       expect(
         docker.env.has("PG_META_GENERATE_TYPES_INCLUDED_SCHEMAS=public,private,graphql_public"),
@@ -3124,7 +3097,7 @@ describe("legacy gen types", () => {
         ),
       ).toBe(true);
       expect(
-        child.spawned[1]?.args.some((arg) =>
+        child.spawned[2]?.args.some((arg) =>
           arg.startsWith("mirror.example.com/supabase/postgres-meta:"),
         ),
       ).toBe(true);
@@ -3202,6 +3175,7 @@ describe("legacy gen types", () => {
           );
           const sequence = mockSequentialChildProcessSpawner([
             { exitCode: 0 },
+            { exitCode: 0 },
             { exitCode: 1, stderr: ["pg-meta failed"] },
           ]);
           const { layer } = setup({
@@ -3217,7 +3191,7 @@ describe("legacy gen types", () => {
           if (Exit.isFailure(exit)) {
             expect(String(exit.cause)).toContain("error running container: exit 1");
           }
-          expect(sequence.spawned).toHaveLength(2);
+          expect(sequence.spawned).toHaveLength(3);
         }),
       catch: (cause) => (cause instanceof Error ? cause : new Error(String(cause))),
     });
@@ -3247,8 +3221,8 @@ describe("legacy gen types", () => {
           );
 
           expect(out.stderrText).toContain(`Connecting to 127.0.0.1 ${port}`);
-          expect(child.spawned[0]?.args).toContain("--network");
-          expect(child.spawned[0]?.args).toContain("host");
+          expect(child.spawned[1]?.args).toContain("--network");
+          expect(child.spawned[1]?.args).toContain("host");
           expect(docker.env.has("PG_META_GENERATE_TYPES=swift")).toBe(true);
           expect(docker.env.has("PG_QUERY_TIMEOUT_SECS=20")).toBe(true);
           expect(
@@ -3366,8 +3340,8 @@ describe("legacy gen types", () => {
             ).pipe(Effect.provide(layer)),
           );
 
-          expect(child.spawned[0]?.args).toContain("custom-network");
-          expect(child.spawned[0]?.args).not.toContain("host");
+          expect(child.spawned[1]?.args).toContain("custom-network");
+          expect(child.spawned[1]?.args).not.toContain("host");
         }),
       catch: (cause) => (cause instanceof Error ? cause : new Error(String(cause))),
     }),

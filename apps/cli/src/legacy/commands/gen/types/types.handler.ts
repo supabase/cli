@@ -1,6 +1,6 @@
 import { loadCliConfig } from "@supabase/config/internal";
 import { ChildProcessSpawner } from "effect/unstable/process";
-import { Effect, FileSystem, Option, Path, Stdio, Stream } from "effect";
+import { Effect, FileSystem, Option, Path, Predicate, Stdio, Stream } from "effect";
 import {
   LegacyDnsResolverFlag,
   LegacyNetworkIdFlag,
@@ -398,9 +398,11 @@ export const legacyGenTypes = Effect.fn("legacy.gen.types")(function* (flags: Le
   }) =>
     Effect.scoped(
       Effect.gen(function* () {
-        // Outside the pooler fallback so an image resolution failure is never read as an IPv6
-        // error; the resolver's candidate rewrite is idempotent on this rewritten reference.
-        const pgmetaImage = yield* resolveImage(resolvePgmetaImage(input.pgmetaVersionOverride));
+        // Cached so the pooler retry reuses one resolve; the resolver's candidate rewrite is
+        // idempotent on this already-rewritten reference.
+        const resolvedImage = yield* Effect.cached(
+          resolveImage(resolvePgmetaImage(input.pgmetaVersionOverride)),
+        );
         const buildRun = (target: {
           readonly url: string;
           readonly host: string;
@@ -441,6 +443,8 @@ export const legacyGenTypes = Effect.fn("legacy.gen.types")(function* (flags: Le
             if (useTls) {
               env.push(`PG_META_DB_SSL_ROOT_CERT=${legacyRootCaBundle()}`);
             }
+            // After the TLS probe, so an unreachable database fails before any image pull.
+            const pgmetaImage = yield* resolvedImage;
 
             // `--network-id` overrides any base network mode (even the
             // "host" mode used for --db-url), so honour the override here too.
@@ -495,7 +499,10 @@ export const legacyGenTypes = Effect.fn("legacy.gen.types")(function* (flags: Le
                 directHost: input.poolerFallback.directHost,
                 eligible: input.poolerFallback.eligible,
                 resolveFallback: input.poolerFallback.resolve,
-                classifyError: legacyIsIPv6ConnectivityErrorCause,
+                // A registry failure carries docker stderr that can read like an IPv6 error.
+                classifyError: (error) =>
+                  !Predicate.isTagged(error, "LegacyDockerRunError") &&
+                  legacyIsIPv6ConnectivityErrorCause(error),
                 classifyResult: (result) =>
                   result.exitCode !== 0 && legacyIsIPv6ConnectivityError(result.stderrText),
               });

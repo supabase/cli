@@ -8,5 +8,8 @@ test("dumps the remote schema to a file", async ({ cli, project, workspace }) =>
   const outFile = join(workspace.path, "schema.sql");
   const result = await cli(["db", "dump", "--db-url", project.dbUrl, "-f", outFile]);
   expect(result.exitCode, result.stderr).toBe(0);
-  expect(readFileSync(outFile, "utf8"), result.stderr).toMatch(/^CREATE /m);
+  const dump = readFileSync(outFile, "utf8");
+  expect(/^CREATE /m.test(dump), `stderr:\n${result.stderr}\nfile:\n${dump.slice(0, 1_000)}`).toBe(
+    true,
+  );
 });
