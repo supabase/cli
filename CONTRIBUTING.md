@@ -180,8 +180,11 @@ The root unit and integration scripts use Turbo to fan out the package-local
 workspace remains package-local because its tests run directly through Go:
 `pnpm --dir apps/cli-go run test:unit`. Go tests are covered by the dedicated
 Go CI workflow. Unit and integration tasks are uncached for now; e2e tasks are
-also uncached and run one package at a time. Forward a Vitest shard to every
-e2e package with `pnpm run test:e2e --shard=1/3`.
+also uncached and run one package at a time. Within a package, plain
+`*.e2e.test.ts` files run in parallel while `*.stack.e2e.test.ts` files (those
+that start a local stack or run Docker containers) run serially in the
+`e2e-stack` project. Forward a Vitest shard to every e2e package with
+`pnpm run test:e2e --shard=1/3`.
 
 ## E2E Compatibility Test Suite
 

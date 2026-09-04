@@ -294,6 +294,7 @@ See `apps/cli/src/commands/login/` as the canonical example.
 - `*.unit.test.ts` — unit tests, colocated next to source
 - `*.integration.test.ts` — integration tests, colocated next to source
 - `*.e2e.test.ts` — end-to-end tests, colocated next to source
+- `*.stack.e2e.test.ts` — stack-backed end-to-end tests: e2e files that start a local Supabase stack or run Docker containers. Still e2e, but they run one file at a time while plain e2e files run in parallel (ADR 0024)
 - `tests/` — shared test helpers (for example `tests/helpers/cli.ts`)
 
 ### Testing pyramid for CLI commands
@@ -309,6 +310,7 @@ See `apps/cli/src/commands/login/` as the canonical example.
 - Do not use e2e tests for help text, argument normalization, dry-run payloads, schema rendering, projection formatting, or similar detail coverage unless the real subprocess boundary itself is the thing being validated.
 - If an assertion can be expressed faithfully in an integration test, it should generally live there instead of in e2e.
 - When in doubt, move coverage down the pyramid: e2e -> integration -> unit.
+- An e2e test that starts a local stack (`supabase start`, `db start`, `createStack`) or runs a Docker container must use the `*.stack.e2e.test.ts` suffix so it joins the serial `e2e-stack` project. A test that only spawns the CLI against an isolated temporary home keeps the plain suffix and runs in parallel.
 
 ### Test execution policy
 

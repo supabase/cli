@@ -478,6 +478,7 @@ Read https://www.effect.solutions/testing for Effect testing patterns. Note that
 - `*.unit.test.ts` belongs to the `unit` Vitest project and is the default for unit-style and other fast in-process tests.
 - `*.integration.test.ts` belongs to the `integration` project and is for in-process integration tests that exercise real handler or service behavior with layered dependency replacement.
 - `*.e2e.test.ts` belongs to the `e2e` Vitest project and is for black-box CLI subprocess tests.
+- `*.stack.e2e.test.ts` belongs to the `e2e-stack` Vitest project: black-box CLI subprocess tests that start a local stack or run Docker containers. They run one file at a time; plain `e2e` files run in parallel. Use this suffix whenever the test invokes `start`, `db start`, `stop`, `status`, or otherwise needs a running stack or a container (ADR 0024).
 - `*.live.test.ts` belongs to the `live` Vitest project and is for black-box CLI subprocess tests whose asserted command reaches a real Supabase platform or project data plane — see "Live tests" below.
 
 ### Testing policy

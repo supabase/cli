@@ -80,8 +80,30 @@ export default defineConfig({
         ssr: { resolve: workspacePackageSsrResolve },
         plugins: [dockerfileTextPlugin()],
         test: {
+          // Stackless e2e: black-box CLI subprocesses against an isolated
+          // temporary home. Safe under file-level parallelism (see the flake
+          // policy in AGENTS.md), so Vitest's default parallelism applies.
           name: "e2e",
           include: ["**/*.e2e.test.ts"],
+          exclude: ["**/*.stack.e2e.test.ts", "**/node_modules/**"],
+          globalSetup: ["tests/e2e-global-setup.ts"],
+          setupFiles: ["tests/e2e-setup.ts"],
+          testTimeout: 120_000,
+          hookTimeout: 120_000,
+        },
+      },
+      {
+        resolve: workspacePackageResolve,
+        ssr: { resolve: workspacePackageSsrResolve },
+        plugins: [dockerfileTextPlugin()],
+        test: {
+          // Stack-backed e2e: files that start a local Supabase stack or run
+          // Docker containers claim machine-level resources, so they run one
+          // file at a time. Vitest schedules this serial group after the
+          // parallel projects finish. Opt in with the `*.stack.e2e.test.ts`
+          // suffix (ADR 0024).
+          name: "e2e-stack",
+          include: ["**/*.stack.e2e.test.ts"],
           fileParallelism: false,
           maxWorkers: 1,
           globalSetup: ["tests/e2e-global-setup.ts"],

@@ -27,8 +27,11 @@ export default defineConfig({
       },
       {
         test: {
-          name: "e2e",
-          include: ["**/*.e2e.test.ts"],
+          // Every e2e file here starts a local stack, so the whole kind is
+          // stack-backed and serial. See ADR 0024 for the `*.stack.e2e.test.ts`
+          // convention.
+          name: "e2e-stack",
+          include: ["**/*.stack.e2e.test.ts"],
           fileParallelism: false,
           globalSetup: ["./tests/global-setup.ts"],
         },
