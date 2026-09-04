@@ -13,7 +13,12 @@ test(
   { timeout: LIVE_TIMEOUT_MS },
   async ({ cli }) => {
     const { exitCode, stdout, stderr } = await cli(["orgs", "list"]);
-    expect(`${stdout}${stderr}`).not.toContain("Unauthorized");
-    expect(exitCode).toBe(0);
+    expect(exitCode, stderr).toBe(0);
+    expect(stdout, stderr).toMatch(/ID\s+\|\s+NAME/);
+    const orgs = stdout
+      .split("\n")
+      .filter((line) => line.includes("|"))
+      .slice(2);
+    expect(orgs, stdout).not.toHaveLength(0);
   },
 );
