@@ -175,6 +175,30 @@ const supervisorPid = async (stackId: string): Promise<number> => {
   return pid;
 };
 
+const nativeDatabaseSharedMemoryId = async (lockPath: string): Promise<number> => {
+  const lines = (await readFile(lockPath, "utf8")).split("\n");
+  const sharedMemoryId = Number(lines[6]?.trim().split(/\s+/u)[1]);
+  if (!Number.isSafeInteger(sharedMemoryId) || sharedMemoryId < 0)
+    throw new Error("Native database lock did not contain a valid shared-memory ID");
+  return sharedMemoryId;
+};
+
+const nativeDatabaseSharedMemoryExists = async (
+  sharedMemoryId: number,
+): Promise<boolean | undefined> => {
+  if (process.platform !== "linux" && process.platform !== "darwin") return undefined;
+  try {
+    const result = await execFile("ipcs", ["-m"], { encoding: "utf8" });
+    return result.stdout
+      .split("\n")
+      .some((line) => line.trim().split(/\s+/u)[1] === String(sharedMemoryId));
+  } catch (cause) {
+    if (typeof cause === "object" && cause !== null && "code" in cause && cause.code === "ENOENT")
+      return undefined;
+    throw cause;
+  }
+};
+
 const waitForProcessExit = (pid: number): Promise<void> => {
   const exited = Effect.try({
     try: () => {
@@ -1069,10 +1093,15 @@ describe("managed Supabase stack whole-stack E2E", () => {
       const databasePid = Number((await readFile(lockPath, "utf8")).split("\n", 1)[0]);
       if (!Number.isSafeInteger(databasePid) || databasePid <= 0)
         throw new Error("Native database lock did not contain a valid PID");
+      const sharedMemoryId = await nativeDatabaseSharedMemoryId(lockPath);
+      const sharedMemoryAvailable = await nativeDatabaseSharedMemoryExists(sharedMemoryId);
+      if (sharedMemoryAvailable !== undefined) expect(sharedMemoryAvailable).toBe(true);
       process.kill(await supervisorPid(stack.id), "SIGKILL");
       await waitForProcessExit(databasePid);
+      if (sharedMemoryAvailable !== undefined)
+        expect(await nativeDatabaseSharedMemoryExists(sharedMemoryId)).toBe(false);
       await expect(connect(database)).rejects.toThrow();
-      await access(lockPath);
+      await expect(access(lockPath)).rejects.toThrow();
 
       const recovered = await stack.start();
       expectDefaultLazyState(recovered);

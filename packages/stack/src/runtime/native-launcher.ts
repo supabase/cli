@@ -1,4 +1,5 @@
 // oxlint-disable effecttsgo/process-env -- standalone launcher reads inherited allowlisted variables before Effect starts.
+// oxlint-disable effecttsgo/global-timers -- standalone launcher grace deadline runs before Effect starts.
 // Standalone launcher boundary: this process must remain usable before the
 // Effect runtime exists and therefore talks to the host directly.
 // oxlint-disable-next-line effecttsgo/node-builtin-import
@@ -13,6 +14,8 @@ interface LaunchSpec {
   readonly args: ReadonlyArray<string>;
   readonly env?: Readonly<Record<string, string>>;
   readonly cwd?: string;
+  readonly gracefulStopSignal?: "SIGTERM" | "SIGINT";
+  readonly gracefulStopTimeoutMs?: number;
 }
 
 const isRecord = (candidate: unknown): candidate is Record<string, unknown> =>
@@ -40,11 +43,32 @@ const decodeSpec = (bytes: Buffer): LaunchSpec | undefined => {
         env[name] = entry;
       }
     }
+    if (
+      value.gracefulStopSignal !== undefined &&
+      value.gracefulStopSignal !== "SIGTERM" &&
+      value.gracefulStopSignal !== "SIGINT"
+    )
+      return undefined;
+    if (
+      value.gracefulStopTimeoutMs !== undefined &&
+      (typeof value.gracefulStopTimeoutMs !== "number" ||
+        !Number.isFinite(value.gracefulStopTimeoutMs) ||
+        value.gracefulStopTimeoutMs < 0)
+    )
+      return undefined;
+    if ((value.gracefulStopSignal === undefined) !== (value.gracefulStopTimeoutMs === undefined))
+      return undefined;
     return {
       executable: value.executable,
       args,
       cwd: value.cwd,
       env,
+      ...(value.gracefulStopSignal === undefined
+        ? {}
+        : { gracefulStopSignal: value.gracefulStopSignal }),
+      ...(value.gracefulStopTimeoutMs === undefined
+        ? {}
+        : { gracefulStopTimeoutMs: value.gracefulStopTimeoutMs }),
     };
   } catch {
     return undefined;
@@ -86,6 +110,11 @@ const inheritedEnvironment = (): NodeJS.ProcessEnv => {
 export const runNativeLauncher = (): void => {
   let child: ReturnType<typeof spawn> | undefined;
   let gracefulForwarded = false;
+  let ownerLost = false;
+  let ownerLossGraceful = false;
+  let gracefulTimeout: ReturnType<typeof setTimeout> | undefined;
+  let specGracefulStopSignal: LaunchSpec["gracefulStopSignal"];
+  let specGracefulStopTimeoutMs: LaunchSpec["gracefulStopTimeoutMs"];
   let groupTerminated = false;
   let childExited = false;
 
@@ -125,6 +154,31 @@ export const runNativeLauncher = (): void => {
   process.on("SIGTERM", () => forwardSignal("SIGTERM"));
   process.on("SIGINT", () => forwardSignal("SIGINT"));
 
+  const handleOwnerLoss = (): void => {
+    if (ownerLost || groupTerminated) return;
+    ownerLost = true;
+    if (
+      child === undefined ||
+      specGracefulStopSignal === undefined ||
+      specGracefulStopTimeoutMs === undefined
+    ) {
+      terminateGroup("SIGKILL");
+      return;
+    }
+    let sent = false;
+    try {
+      sent = child.kill(specGracefulStopSignal);
+    } catch {
+      sent = false;
+    }
+    if (!sent) {
+      terminateGroup("SIGKILL");
+      return;
+    }
+    ownerLossGraceful = true;
+    gracefulTimeout = setTimeout(() => terminateGroup("SIGKILL"), specGracefulStopTimeoutMs);
+  };
+
   // Register the owner pipe before waiting for the launch payload. EOF means
   // the owner process disappeared without running a normal scope finalizer.
   // Bun does not reliably surface EOF for a net.Socket created from this
@@ -138,12 +192,12 @@ export const runNativeLauncher = (): void => {
           autoClose: false,
         });
   // Owner-loss is an abrupt supervisor crash, not an explicit graceful stop.
-  // Use guaranteed tree termination so descendants that trap SIGTERM cannot be
-  // orphaned after the owner pipe closes.
-  ownerPipe.on("end", () => terminateGroup("SIGKILL"));
-  ownerPipe.on("error", () => terminateGroup("SIGKILL"));
+  // Apply a workload's bounded graceful policy when present, then guarantee
+  // tree termination so descendants cannot be orphaned after owner loss.
+  ownerPipe.on("end", handleOwnerLoss);
+  ownerPipe.on("error", handleOwnerLoss);
   ownerPipe.on("close", () => {
-    if (!childExited) terminateGroup("SIGKILL");
+    if (!childExited) handleOwnerLoss();
   });
   ownerPipe.resume();
 
@@ -161,6 +215,8 @@ export const runNativeLauncher = (): void => {
   if (spec === undefined || groupTerminated) {
     process.exit(127);
   } else {
+    specGracefulStopSignal = spec.gracefulStopSignal;
+    specGracefulStopTimeoutMs = spec.gracefulStopTimeoutMs;
     child = spawn(spec.executable, [...spec.args], {
       cwd: spec.cwd,
       env: { ...inheritedEnvironment(), ...spec.env },
@@ -170,6 +226,11 @@ export const runNativeLauncher = (): void => {
     child.on("error", () => process.exit(127));
     child.on("exit", (code) => {
       childExited = true;
+      if (gracefulTimeout !== undefined) clearTimeout(gracefulTimeout);
+      if (ownerLossGraceful) {
+        terminateGroup("SIGKILL");
+        return;
+      }
       ownerPipe.destroy();
       process.exit(code ?? 1);
     });

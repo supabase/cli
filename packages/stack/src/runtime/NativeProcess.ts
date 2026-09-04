@@ -1,4 +1,4 @@
-import { Data, Effect, Option, Scope, Stream, type Duration } from "effect";
+import { Data, Duration, Effect, Option, Scope, Stream } from "effect";
 import { fileURLToPath } from "node:url";
 import { ChildProcess } from "effect/unstable/process";
 import type { PlatformError } from "effect/PlatformError";
@@ -70,15 +70,30 @@ export const defaultNativeProcessLauncher = (): NativeProcessLauncher => ({
   args: [nativeLauncherEntrypointFor(import.meta.url)],
 });
 
-const encodeSpec = (spec: NativeProcessSpec): Uint8Array =>
-  new TextEncoder().encode(
+const encodeSpec = (spec: NativeProcessSpec): Uint8Array => {
+  const timeout =
+    spec.gracefulStopSignal === undefined
+      ? Option.none<number>()
+      : Duration.fromInput(spec.gracefulStopTimeout ?? "2 seconds").pipe(
+          Option.filter(Duration.isFinite),
+          Option.map(Duration.toMillis),
+          Option.filter((millis) => Number.isFinite(millis) && millis >= 0),
+        );
+  return new TextEncoder().encode(
     JSON.stringify({
       executable: spec.executable,
       args: spec.args ?? [],
       env: spec.env,
       cwd: spec.cwd,
+      ...(Option.isSome(timeout)
+        ? {
+            gracefulStopSignal: spec.gracefulStopSignal,
+            gracefulStopTimeoutMs: timeout.value,
+          }
+        : {}),
     }),
   );
+};
 
 const mapProcessError = (error: unknown, spec: NativeProcessSpec): NativeProcessError =>
   new NativeProcessError({

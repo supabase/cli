@@ -1146,6 +1146,137 @@ describe("native runtime", { timeout: 15_000 }, () => {
     ),
   );
 
+  const ownerLossTargetCode = (signalAware: boolean): string => {
+    const descendantCode = `
+      const net = require("node:net");
+      const server = net.createServer();
+      server.listen({ host: "127.0.0.1", port: 0 }, () => {
+        const address = server.address();
+        if (typeof address === "object" && address !== null) {
+          process.stdout.write("DESC_READY " + address.port + "\\n");
+        }
+      });
+    `;
+    return `
+      const net = require("node:net");
+      const { spawn } = require("node:child_process");
+      process.stdout.on("error", () => {});
+      const server = net.createServer();
+      server.listen({ host: "127.0.0.1", port: 0 }, () => {
+        const address = server.address();
+        if (typeof address === "object" && address !== null) {
+          process.stdout.write("TARGET_READY " + address.port + "\\n");
+        }
+        const child = spawn(process.execPath, ["-e", ${JSON.stringify(descendantCode)}], {
+          stdio: ["ignore", "pipe", "inherit"]
+        });
+        child.stdout.on("data", (chunk) => {
+          if (!process.stdout.destroyed) process.stdout.write(chunk);
+        });
+      });
+      process.once("SIGINT", () => {
+        ${signalAware ? 'process.stdout.write("TARGET_SIGINT\\n", () => { server.close(); process.exit(0); });' : 'process.stdout.write("TARGET_SIGINT\\n");'}
+      });
+    `;
+  };
+
+  const runOwnerLossScenario = (options: {
+    readonly targetCode: string;
+    readonly gracefulStopTimeoutMs: number;
+  }) =>
+    Effect.gen(function* () {
+      const launcherArgs = defaultNativeProcessLauncher().args;
+      const ownerCode = `
+        const { spawn } = require("node:child_process");
+        const launcherProcess = spawn(${JSON.stringify(process.execPath)}, ${JSON.stringify(launcherArgs)}, {
+          detached: true,
+          stdio: ["ignore", "inherit", "inherit", "pipe", "pipe"]
+        });
+        launcherProcess.stdio[4].end(JSON.stringify({
+          executable: ${JSON.stringify(process.execPath)},
+          args: ["-e", ${JSON.stringify(options.targetCode)}],
+          gracefulStopSignal: "SIGINT",
+          gracefulStopTimeoutMs: ${String(options.gracefulStopTimeoutMs)}
+        }));
+        setInterval(() => {}, 1000);
+      `;
+      const owner = yield* ChildProcess.make(process.execPath, ["-e", ownerCode], {
+        stdout: "pipe",
+        stderr: "pipe",
+        detached: true,
+      });
+      const stderr = yield* Ref.make("");
+      yield* owner.stderr.pipe(
+        Stream.decodeText,
+        Stream.runForEach((chunk) => Ref.update(stderr, (current) => current + chunk)),
+        Effect.forkChild({ startImmediately: true }),
+      );
+      const targetReady = yield* Deferred.make<string>();
+      const descendantReady = yield* Deferred.make<string>();
+      const signalDelivered = yield* Deferred.make<void>();
+      const outputFiber = yield* owner.stdout.pipe(
+        Stream.decodeText,
+        Stream.splitLines,
+        Stream.runForEach((line) =>
+          Effect.gen(function* () {
+            if (line.startsWith("TARGET_READY ")) yield* Deferred.succeed(targetReady, line);
+            else if (line.startsWith("DESC_READY ")) yield* Deferred.succeed(descendantReady, line);
+            else if (line === "TARGET_SIGINT") yield* Deferred.succeed(signalDelivered, undefined);
+          }),
+        ),
+        Effect.forkChild({ startImmediately: true }),
+      );
+      const diagnostics = yield* Ref.get(stderr);
+      const targetLine = yield* Deferred.await(targetReady).pipe(
+        Effect.timeoutOrElse({
+          duration: "3 seconds",
+          orElse: () => Effect.fail(new ProcessTreeTestError({ message: diagnostics })),
+        }),
+      );
+      const descendantLine = yield* Deferred.await(descendantReady).pipe(
+        Effect.timeoutOrElse({
+          duration: "3 seconds",
+          orElse: () => Effect.fail(new ProcessTreeTestError({ message: diagnostics })),
+        }),
+      );
+      const targetPort = Number.parseInt(targetLine.slice("TARGET_READY ".length), 10);
+      const descendantPort = Number.parseInt(descendantLine.slice("DESC_READY ".length), 10);
+      expect(Number.isSafeInteger(targetPort)).toBe(true);
+      expect(Number.isSafeInteger(descendantPort)).toBe(true);
+      const targetSocket = yield* NodeSocket.makeNet({ host: "127.0.0.1", port: targetPort });
+      const descendantSocket = yield* NodeSocket.makeNet({
+        host: "127.0.0.1",
+        port: descendantPort,
+      });
+      const targetOpened = yield* Deferred.make<void>();
+      const targetClosed = yield* targetSocket
+        .runRaw(() => Effect.void, { onOpen: Deferred.succeed(targetOpened, undefined) })
+        .pipe(Effect.exit, Effect.forkChild({ startImmediately: true }));
+      yield* Deferred.await(targetOpened);
+      const descendantOpened = yield* Deferred.make<void>();
+      const descendantClosed = yield* descendantSocket
+        .runRaw(() => Effect.void, { onOpen: Deferred.succeed(descendantOpened, undefined) })
+        .pipe(Effect.exit, Effect.forkChild({ startImmediately: true }));
+      yield* Deferred.await(descendantOpened);
+      yield* owner.kill({ killSignal: "SIGKILL" });
+      yield* Deferred.await(signalDelivered).pipe(Effect.timeout("3 seconds"));
+      yield* Fiber.join(targetClosed).pipe(Effect.timeout("5 seconds"));
+      yield* Fiber.join(descendantClosed).pipe(Effect.timeout("5 seconds"));
+      yield* Fiber.interrupt(outputFiber);
+    });
+
+  it.live("delivers graceful owner-loss SIGINT and reaps descendants", () =>
+    withPlatform(
+      runOwnerLossScenario({ targetCode: ownerLossTargetCode(true), gracefulStopTimeoutMs: 5_000 }),
+    ),
+  );
+
+  it.live("force-kills an owner-loss workload after its graceful timeout", () =>
+    withPlatform(
+      runOwnerLossScenario({ targetCode: ownerLossTargetCode(false), gracefulStopTimeoutMs: 100 }),
+    ),
+  );
+
   it.live("terminates descendants after a native workload exits normally", () =>
     withPlatform(
       Effect.gen(function* () {
