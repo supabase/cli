@@ -26,3 +26,6 @@ packages/cli-*/bin/
 # Turbo
 .turbo/
 apps/cli/.supabase/
+
+# Transient render dir created by packages/api/scripts/generated-output-sync.unit.test.ts
+packages/api/.generated-output-sync-*/

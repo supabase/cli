@@ -2789,8 +2789,7 @@ export function legacyRawUnmodeledBool(value: unknown, dottedFieldPath: string):
  * every `[]string`-typed config field during decode, so a raw or
  * `env(VAR)`-resolved string destined for a slice field (e.g. `auth.webauthn.rp_origins`, which
  * `@supabase/config` has no schema for at all) must be split the same way, not just accepted when
- * it's already a JS array. Hoisted here (was duplicated in `config/push/config-sync/{api,auth}.
- * sync.ts`) since it's now needed by a third, unrelated call site.
+ * it's already a JS array.
  */
 export function legacyStrToArr(value: string): Array<string> {
   return value.length === 0 ? [] : value.split(",");
@@ -3561,10 +3560,11 @@ export function legacyResolveLocalConfigValues(
   let authInput: LegacyAuthInput | undefined;
   if (authEnabled) {
     // `@supabase/config`'s auth schema has no `passkey`/`webauthn` fields at all (see
-    // `config-sync/auth.sync.ts`'s "not in `@supabase/config` schema" note), so passkey/webauthn
-    // are read from the RAW, post-`env()`-interpolation TOML document (`authDocument`, hoisted
-    // above) instead of the decoded `CliConfig` — same document-based approach already used
-    // on the `db`/migration config-load path (`legacy-db-config.toml-read.ts`'s
+    // `registry-auth.ts:717-724`'s "deliberately unmapped" note — there is no `../auth/*.ts`
+    // section for either), so passkey/webauthn are read from the RAW, post-`env()`-interpolation
+    // TOML document (`authDocument`, hoisted above) instead of the decoded `CliConfig` — same
+    // document-based approach already used on the `db`/migration config-load path
+    // (`legacy-db-config.toml-read.ts`'s
     // `legacyValidateAuthConfig`, section A6). `authDocument` is `undefined` when a caller hasn't
     // threaded `document` through yet, in which case passkey/smtp presence-based checks are
     // simply skipped rather than guessed at.
