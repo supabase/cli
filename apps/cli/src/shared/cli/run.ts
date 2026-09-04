@@ -120,10 +120,7 @@ const globalFlagsWithValues = new Set([
 // error, including the `context.Canceled` a SIGINT produces — internal/start was
 // deleted as unreachable in CLI-1966, last present at commit a253ccba2), so native
 // `start` must participate in the global
-// wrapper to match. This list is matched purely against argv command-path segments — it has
-// no notion of which shell registered the matching command, so a shell whose OWN command tree
-// happens to share one of these literal paths for an unrelated reason needs its own exemption,
-// passed via `RunCliOptions.additionalSelfManagedSignalCommands` instead of added here.
+// wrapper to match. This list is matched purely against argv command-path segments.
 //
 // `["db", "start"]` (top-level `db start`) is ALSO deliberately not listed here, for the exact
 // same reason as `start` above: it used to proxy container bootstrap to the hidden Go
@@ -341,12 +338,9 @@ export function lastGlobalFlagValue(
 }
 
 /** Whether the global signal-interrupt handler should wrap this invocation. */
-export function shouldUseGlobalSignalInterrupt(
-  args: ReadonlyArray<string>,
-  additionalSelfManagedCommands: ReadonlyArray<ReadonlyArray<string>> = [],
-): boolean {
+export function shouldUseGlobalSignalInterrupt(args: ReadonlyArray<string>): boolean {
   const commandPath = extractCommandPath(args);
-  return ![...selfManagedSignalCommands, ...additionalSelfManagedCommands].some((command) =>
+  return !selfManagedSignalCommands.some((command) =>
     command.every((segment, index) => commandPath[index] === segment),
   );
 }
@@ -714,12 +708,6 @@ type AnyAnalyticsLayer = Layer.Layer<Analytics, never, any>;
 export interface RunCliOptions {
   readonly analyticsLayer: AnyAnalyticsLayer;
   /**
-   * Extra command paths (on top of the shared `selfManagedSignalCommands` list) that must NOT
-   * be wrapped in the global signal-interrupt handler for this shell's invocation specifically,
-   * rather than for every shell sharing this runner.
-   */
-  readonly additionalSelfManagedSignalCommands?: ReadonlyArray<ReadonlyArray<string>>;
-  /**
    * Runs just before the process exits on any invocation that exits 0 — the
    * seam for the legacy shell's upgrade notice. `cleanShowHelp` marks the
    * exit-0 ShowHelp failure branch (a bare group command), which cobra serves
@@ -814,10 +802,7 @@ export async function runCli<
   // text/json formatters would have shown before the vendored library's own
   // duplicate render was suppressed.
   const suggestionContext = { rootCommand, args };
-  const useGlobalSignalInterrupt = shouldUseGlobalSignalInterrupt(
-    args,
-    options.additionalSelfManagedSignalCommands,
-  );
+  const useGlobalSignalInterrupt = shouldUseGlobalSignalInterrupt(args);
   const outputFormat = await Effect.runPromise(
     Effect.gen(function* () {
       const aiTool = yield* AiTool;

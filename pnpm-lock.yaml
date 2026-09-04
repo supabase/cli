@@ -268,9 +268,6 @@ importers:
       '@types/pg-copy-streams':
         specifier: ^1.2.5
         version: 1.2.5
-      '@types/react':
-        specifier: ^19.2.18
-        version: 19.2.18
       '@vercel/detect-agent':
         specifier: ^1.2.5
         version: 1.2.5
@@ -298,9 +295,6 @@ importers:
       prettier:
         specifier: 3.9.6
         version: 3.9.6
-      react:
-        specifier: ^19.2.8
-        version: 19.2.8
       semantic-release:
         specifier: 'catalog:'
         version: 25.0.9(supports-color@7.2.0)(typescript@7.0.2)
