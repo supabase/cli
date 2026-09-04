@@ -4,6 +4,7 @@ import { dirname, join } from "node:path";
 
 import { BunServices } from "@effect/platform-bun";
 import { describe, expect, it } from "@effect/vitest";
+import { afterEach, beforeEach } from "vitest";
 import { Effect, Exit, Layer, Option } from "effect";
 import * as HttpClient from "effect/unstable/http/HttpClient";
 import type * as HttpClientError from "effect/unstable/http/HttpClientError";
@@ -212,6 +213,34 @@ const VECTOR_DELETE = "/storage/v1/vector/DeleteVectorBucket";
 describe("legacy seed buckets", () => {
   const tmp = useLegacyTempWorkdir("supabase-seed-buckets-");
 
+  // Ambient `SUPABASE_API_*` values would shadow the dotenv fixtures below —
+  // the project-env walk skips keys already present in the shell env — so pin
+  // all six to unset for every test in this file (the ambient-override test
+  // sets its own value back through `legacyWithEnv`).
+  const API_OVERRIDE_ENV_KEYS = [
+    "SUPABASE_API_ENABLED",
+    "SUPABASE_API_EXTERNAL_URL",
+    "SUPABASE_API_PORT",
+    "SUPABASE_API_TLS_ENABLED",
+    "SUPABASE_API_TLS_CERT_PATH",
+    "SUPABASE_API_TLS_KEY_PATH",
+  ] as const;
+  let savedApiOverrideEnv: Record<string, string | undefined> = {};
+  beforeEach(() => {
+    savedApiOverrideEnv = {};
+    for (const key of API_OVERRIDE_ENV_KEYS) {
+      savedApiOverrideEnv[key] = process.env[key];
+      delete process.env[key];
+    }
+  });
+  afterEach(() => {
+    for (const key of API_OVERRIDE_ENV_KEYS) {
+      const previous = savedApiOverrideEnv[key];
+      if (previous === undefined) delete process.env[key];
+      else process.env[key] = previous;
+    }
+  });
+
   it.live("short-circuits with no output when nothing is configured", () => {
     const { layer, out, requests } = setupLegacySeedBuckets(tmp.current, {
       toml: 'project_id = "test"\n',
@@ -223,6 +252,49 @@ describe("legacy seed buckets", () => {
       expect(out.stderrText).toBe("");
     });
   });
+
+  it.live(
+    "hard-fails a malformed SUPABASE_API_PORT even when nothing is configured to seed",
+    () => {
+      // The override decode belongs to config load, which runs before the no-op
+      // short-circuit — same principle as the bucket-name/size validations.
+      const { layer, requests } = setupLegacySeedBuckets(tmp.current, {
+        toml: 'project_id = "test"\n',
+        files: { "supabase/.env": "SUPABASE_API_PORT=not-a-port\n" },
+      });
+      return Effect.gen(function* () {
+        const exit = yield* legacySeedBuckets(DEFAULT_FLAGS).pipe(
+          Effect.provide(layer),
+          Effect.exit,
+        );
+        expect(Exit.isFailure(exit)).toBe(true);
+        expect(JSON.stringify(exit)).toContain("Invalid config for api.port: cannot parse");
+        expect(requests).toHaveLength(0);
+      });
+    },
+  );
+
+  it.live(
+    "hard-fails a broken TLS cert/key pairing even when nothing is configured to seed",
+    () => {
+      // The canonical `[api]` block (port, then TLS presence) is enforced on the
+      // no-op path too — same principle as the malformed-port case above.
+      const { layer, requests } = setupLegacySeedBuckets(tmp.current, {
+        toml: 'project_id = "test"\n[api.tls]\nenabled = true\ncert_path = "kong.crt"\n',
+      });
+      return Effect.gen(function* () {
+        const exit = yield* legacySeedBuckets(DEFAULT_FLAGS).pipe(
+          Effect.provide(layer),
+          Effect.exit,
+        );
+        expect(Exit.isFailure(exit)).toBe(true);
+        expect(JSON.stringify(exit)).toContain(
+          "Missing required field in config: api.tls.key_path",
+        );
+        expect(requests).toHaveLength(0);
+      });
+    },
+  );
 
   it.live("emits an empty JSON result for a no-op run (json mode)", () => {
     const { layer, out, requests } = setupLegacySeedBuckets(tmp.current, {
@@ -1258,6 +1330,7 @@ describe("legacy seed buckets", () => {
     return Effect.gen(function* () {
       const exit = yield* legacySeedBuckets(DEFAULT_FLAGS).pipe(Effect.provide(layer), Effect.exit);
       expect(Exit.isSuccess(exit)).toBe(true);
+      expect(requests.length).toBeGreaterThan(0);
       // tls.enabled still picks the scheme; only the cert/key validation is gated.
       expect(requests.every((r) => r.url.startsWith("https:"))).toBe(true);
     });
@@ -1280,6 +1353,7 @@ describe("legacy seed buckets", () => {
     return Effect.gen(function* () {
       const exit = yield* legacySeedBuckets(DEFAULT_FLAGS).pipe(Effect.provide(layer), Effect.exit);
       expect(Exit.isSuccess(exit)).toBe(true);
+      expect(requests.length).toBeGreaterThan(0);
       expect(requests.every((r) => r.url.startsWith("https:"))).toBe(true);
     });
   });

@@ -221,6 +221,32 @@ const resolveLocalApiConfig = (
   });
 
 /**
+ * Validate-only entry point for `legacySeedBucketsRun`'s empty-config
+ * short-circuit: decodes the `SUPABASE_API_*` overrides and runs the canonical
+ * `[api]` config-load checks (`legacyValidateApiPort`, then the
+ * `legacyValidateApiTlsPresence` pairing rule) without building credentials —
+ * the cert/key file reads stay on the seeding path (`validateLocalKongTls`),
+ * where the established message precedence (jwt-secret length before TLS
+ * presence) is preserved. The resolved view is discarded; the seeding path
+ * re-resolves through `legacyResolveStorageCredentials`.
+ */
+export const legacyValidateLocalApiOverrides = Effect.fnUntraced(function* (
+  api: LegacyStorageConfigView["api"],
+  projectEnvValues: Readonly<Record<string, string>>,
+) {
+  const resolved = yield* resolveLocalApiConfig(api, projectEnvValues);
+  if (resolved.enabled && resolved.tls.enabled) {
+    yield* Effect.try({
+      try: () => legacyValidateApiTlsPresence(resolved.tls.cert_path, resolved.tls.key_path),
+      catch: (cause) =>
+        new LegacyStorageConfigError({
+          message: cause instanceof Error ? cause.message : String(cause),
+        }),
+    });
+  }
+});
+
+/**
  * Resolve the service-role key for the local Storage gateway, mirroring Go's
  * `(*auth).generateAPIKeys` + the Viper
  * `AutomaticEnv`/`SUPABASE_` prefix precedence:
