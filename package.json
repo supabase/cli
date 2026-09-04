@@ -41,6 +41,7 @@
     "turbo": "catalog:",
     "typescript": "catalog:",
     "verdaccio": "^6.10.0",
+    "vite": "catalog:",
     "vitest": "catalog:"
   },
   "devEngines": {

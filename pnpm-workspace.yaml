@@ -30,6 +30,7 @@ catalog:
   "semantic-release": "^25.0.9"
   "tldts": "^7.4.11"
   "turbo": "2.10.12"
+  "vite": "^8.2.2"
   "vitest": ^5.0.0
 
 blockExoticSubdeps: true

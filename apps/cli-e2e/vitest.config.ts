@@ -1,16 +1,12 @@
-import { defineConfig } from "vitest/config";
 import { BaseSequencer, type TestSpecification } from "vitest/node";
+import { definePackageConfig, testProject } from "../../vitest.shared.ts";
 
-export default defineConfig({
+export default definePackageConfig({
   test: {
-    passWithNoTests: true,
-    include: ["**/*.e2e.test.ts"],
-    exclude: ["**/node_modules/**"],
-    fileParallelism: false,
-    maxWorkers: 1,
-    globalSetup: ["tests/setup.ts"],
-    testTimeout: 60_000,
-    hookTimeout: 30_000,
+    // Replay fixtures are shared across files, so run them in a deterministic
+    // lexicographic order. `sequence.sequencer` is a run-level option: it
+    // applies to standalone runs of this package, not when the repo root loads
+    // this config as a project.
     sequence: {
       sequencer: class extends BaseSequencer {
         override async sort(files: TestSpecification[]) {
@@ -18,5 +14,16 @@ export default defineConfig({
         }
       },
     },
+    projects: [
+      testProject("e2e", {
+        test: {
+          fileParallelism: false,
+          maxWorkers: 1,
+          globalSetup: ["tests/setup.ts"],
+          testTimeout: 60_000,
+          hookTimeout: 30_000,
+        },
+      }),
+    ],
   },
 });
