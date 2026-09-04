@@ -1,5 +1,5 @@
 /**
- * Unit tests for config-sync.auth-email-content.ts.
+ * Unit tests for push.auth-email-content.ts.
  */
 
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
@@ -7,7 +7,7 @@ import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { afterEach, describe, expect, it } from "vitest";
 
-import { loadAuthEmailContent } from "./config-sync.auth-email-content.ts";
+import { legacyLoadAuthEmailContent } from "./push.auth-email-content.ts";
 
 const emptyEmail = {
   enable_signup: true,
@@ -21,7 +21,7 @@ const emptyEmail = {
   notification: {},
 };
 
-describe("loadAuthEmailContent", () => {
+describe("legacyLoadAuthEmailContent", () => {
   let workdir = "";
 
   afterEach(() => {
@@ -45,7 +45,7 @@ describe("loadAuthEmailContent", () => {
     writeFileSync(join(templateDir, "invite.html"), "<h1>Invite</h1>");
     writeFileSync(join(templateDir, "password_changed.html"), "<p>Changed</p>");
 
-    const content = loadAuthEmailContent(cwd, {
+    const content = legacyLoadAuthEmailContent(cwd, {
       ...emptyEmail,
       template: {
         invite: {
@@ -72,7 +72,7 @@ describe("loadAuthEmailContent", () => {
     mkdirSync(templateDir, { recursive: true });
     writeFileSync(join(templateDir, "password_changed.html"), "<p>Legacy location</p>");
 
-    const content = loadAuthEmailContent(cwd, {
+    const content = legacyLoadAuthEmailContent(cwd, {
       ...emptyEmail,
       notification: {
         password_changed: {
@@ -92,7 +92,7 @@ describe("loadAuthEmailContent", () => {
     mkdirSync(join(supabaseDir, "templates"), { recursive: true });
     writeFileSync(join(supabaseDir, "templates", "n.html"), "<p>Legacy file</p>");
 
-    const content = loadAuthEmailContent(cwd, {
+    const content = legacyLoadAuthEmailContent(cwd, {
       ...emptyEmail,
       notification: {
         password_changed: {
@@ -113,7 +113,7 @@ describe("loadAuthEmailContent", () => {
     writeFileSync(join(cwd, "templates", "n.html"), "<p>Root</p>");
     writeFileSync(join(supabaseDir, "templates", "n.html"), "<p>Legacy</p>");
 
-    const content = loadAuthEmailContent(cwd, {
+    const content = legacyLoadAuthEmailContent(cwd, {
       ...emptyEmail,
       notification: {
         password_changed: {
@@ -130,7 +130,7 @@ describe("loadAuthEmailContent", () => {
   it("skips notification templates when disabled", () => {
     const { cwd } = setup();
 
-    const content = loadAuthEmailContent(cwd, {
+    const content = legacyLoadAuthEmailContent(cwd, {
       ...emptyEmail,
       notification: {
         password_changed: {
@@ -147,7 +147,7 @@ describe("loadAuthEmailContent", () => {
   it("skips entries with an empty content_path", () => {
     const { cwd } = setup();
 
-    const content = loadAuthEmailContent(cwd, {
+    const content = legacyLoadAuthEmailContent(cwd, {
       ...emptyEmail,
       template: {
         invite: {
@@ -161,11 +161,11 @@ describe("loadAuthEmailContent", () => {
     expect(content.notification).toEqual({});
   });
 
-  it("throws a Go-shaped error when a template file is missing", () => {
+  it("throws a descriptive error when a template file is missing", () => {
     const { cwd } = setup();
 
     expect(() =>
-      loadAuthEmailContent(cwd, {
+      legacyLoadAuthEmailContent(cwd, {
         ...emptyEmail,
         template: {
           invite: {

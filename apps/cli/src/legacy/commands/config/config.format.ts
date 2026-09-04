@@ -6,7 +6,7 @@ import { legacySanitizeInlineName } from "../../shared/legacy-http-errors.ts";
 
 /**
  * Shared pure formatters, payload fragments, and input adapters for the
- * `config` command family (`diff`, `pull`) — no Effect, no services,
+ * `config` command family (`diff`, `pull`, `push`) — no Effect, no services,
  * unit-testable in isolation. Hoisted out of `diff/diff.format.ts` once
  * `config pull` needed the same API-scope classification, target-naming
  * phrase, value/path rendering, and masked/unmanaged/not-returned caveat
@@ -41,10 +41,8 @@ export interface LegacyConfigApiScope {
 /**
  * Human-readable labels for `ConfigChange.class`, hyphenated for prose
  * (`remote_only` reads as "this key exists only remotely", but the raw enum
- * token is not itself prose). Owned here so `diff`/`pull` never disagree on
- * how a class renders; `diff.format.ts` still keeps its own private copy
- * (unifying it onto this export is a follow-up, CLI-2064 — the two are
- * identical today).
+ * token is not itself prose). Owned here so `diff`/`pull`/`push` never
+ * disagree on how a class renders.
  */
 export const LEGACY_CONFIG_CLASS_LABELS: Record<ConfigChange["class"], string> = {
   update: "update",
@@ -144,6 +142,43 @@ export function legacyConfigChangePayloadEntry(change: ConfigChange): Record<str
     ...nullableValueEntry("remote", change.remote),
     ...(change.envVariables === undefined ? {} : { env_variables: change.envVariables }),
   };
+}
+
+function renderLocalChangeValue(change: ConfigChange): string {
+  const value = legacyConfigRenderValue(change.local, "(unset)");
+  // A populated local value on an undeclared path is the schema default the
+  // projection materialized — the value a `config push` would write. Say so,
+  // or "[remote-only]" reads as "this key exists only remotely", which is
+  // false for anything with a schema default (and the user will grep their
+  // file for a value that isn't there).
+  return change.local !== undefined && !change.declared
+    ? `${value} (schema default — not declared in config.toml)`
+    : value;
+}
+
+/**
+ * The per-property change-block renderer shared by `config diff`'s text body
+ * and `config push`'s per-resource `Updating … with config:` blocks: one
+ * `<path> [<class>]` / `  local:  <value>` / `  remote: <value>` block per
+ * change, each followed by a blank line — including after the last change, so
+ * a caller may append its own content (a note, a `[secret]` block) directly
+ * after this string without checking whether it ends in a newline itself.
+ */
+export function legacyConfigRenderChangeLines(changes: ReadonlyArray<ConfigChange>): string {
+  return changes
+    .map((change) => {
+      const env =
+        change.envVariables === undefined
+          ? ""
+          : ` (from env ${legacySanitizeInlineName(change.envVariables.join(", "))})`;
+      const block = [
+        `${legacyConfigRenderPath(change.path)} [${LEGACY_CONFIG_CLASS_LABELS[change.class]}]`,
+        `  local:  ${renderLocalChangeValue(change)}${env}`,
+        `  remote: ${legacyConfigRenderValue(change.remote, "(not returned)")}`,
+      ].join("\n");
+      return `${block}\n\n`;
+    })
+    .join("");
 }
 
 export function legacyConfigMaskedCaveat(masked: ReadonlyArray<ReadonlyArray<string>>): string {
