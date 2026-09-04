@@ -53,6 +53,20 @@ function quote(value: string): string {
   return `"${escaped}"`;
 }
 
+/**
+ * Whether `value` is a number this module can render without lying about it.
+ *
+ * Bare-rendering is faithful only for a whole, finite, non-negative count —
+ * which is what `[workers.<name>] instances` is bounded to. Everything else is
+ * either valid TOML the schema refuses (`1.5`, `-1`, `1e21`) or a token TOML has
+ * no reading for at all (`String(NaN)` is `NaN`, not `nan`; `String(Infinity)`
+ * is `Infinity`, not `inf`). Only the second kind fails a re-parse, so the first
+ * kind has to be stopped here.
+ */
+export function isRenderableTomlNumber(value: number): boolean {
+  return Number.isSafeInteger(value) && value >= 0;
+}
+
 /** Render `key` for use in a table header or key position. */
 export function tomlKey(key: string): string {
   return isBareKey(key) ? key : quote(key);
@@ -63,9 +77,13 @@ export function tomlKey(key: string): string {
  *
  * A number has to be rendered bare: quoting it would write a TOML string, and
  * the config schema types `[workers.<name>] instances` as a number — so a quoted
- * count produces a `config.toml` that no longer loads at all. Callers pass whole
- * numbers; anything else renders as a token TOML does not accept, which
- * `planWorkerEntry`'s re-parse catches before the file is written.
+ * count produces a `config.toml` that no longer loads at all.
+ *
+ * Rendering is all this does, and a bare number is only as good as the caller's.
+ * `1.5` and `-1` render as perfectly valid TOML that the worker schema rejects,
+ * so `planWorkerEntry`'s re-parse — a syntax check, not a schema one — would
+ * pass them straight through. {@link isRenderableTomlNumber} is the guard that
+ * makes that impossible, and it runs before this does.
  */
 function renderPair(key: string, value: string | number): string {
   return `${tomlKey(key)} = ${typeof value === "number" ? String(value) : quote(value)}`;

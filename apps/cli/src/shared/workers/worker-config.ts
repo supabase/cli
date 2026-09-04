@@ -6,7 +6,7 @@ import {
   type CliErrorActionabilityDeclaration,
   ErrorActionabilityId,
 } from "../telemetry/error-actionability.ts";
-import { appendTomlSection, tomlKey } from "./toml-section.ts";
+import { appendTomlSection, isRenderableTomlNumber, tomlKey } from "./toml-section.ts";
 
 /**
  * The `[workers]` section of `supabase/config.toml`, read through the decoded
@@ -169,6 +169,22 @@ export const planWorkerEntry = Effect.fnUntraced(function* (options: {
       new WorkerAlreadyConfiguredError({
         detail: `"${options.name}" is already configured in ${options.configPath}.`,
         suggestion: `Edit [workers.${options.name}] in ${options.configPath} yourself, or pick a different worker name.`,
+      }),
+    );
+  }
+
+  // Before rendering, because the re-parse below cannot catch this. A number
+  // like `1.5` or `-1` renders as valid TOML that only the *schema* rejects, so
+  // it would sail through a syntax check and land in the user's config as a
+  // `[workers]` section the loader then refuses.
+  const unrenderable = Object.entries(options.patch).find(
+    ([, value]) => typeof value === "number" && !isRenderableTomlNumber(value),
+  );
+  if (unrenderable !== undefined) {
+    return yield* Effect.fail(
+      new WorkerConfigWriteUnsafeError({
+        detail: `Recording "${options.name}" would write ${unrenderable[0]} = ${String(unrenderable[1])} to ${options.configPath}, which is not a whole, non-negative count.`,
+        suggestion: `Pass a whole number of zero or more, or add [workers.${options.name}] to ${options.configPath} yourself.`,
       }),
     );
   }

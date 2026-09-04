@@ -1,8 +1,8 @@
-import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { BunServices } from "@effect/platform-bun";
-import { Effect } from "effect";
+import { Effect, Exit } from "effect";
 import { afterEach, beforeEach, describe, expect, test } from "vitest";
 import {
   readWorkersSection,
@@ -109,6 +109,42 @@ describe("planWorkerEntry + commitWorkerEntry", () => {
   /** plan + commit — the pairing `new` performs once it has decided to write. */
   const writeWorkerEntry = (options: Parameters<typeof planWorkerEntry>[0]) =>
     planWorkerEntry(options).pipe(Effect.flatMap(commitWorkerEntry));
+
+  // The re-parse below is a syntax check, not a schema one: `instances = 1.5`
+  // is perfectly valid TOML that the worker schema rejects, so it would reach
+  // the user's config and only fail later, when the loader refuses the file.
+  test.each([
+    ["a fraction", 1.5],
+    ["a negative count", -1],
+    ["a value past the safe integer range", 1e21],
+    ["not a number at all", Number.NaN],
+  ])("refuses %s rather than rendering it", async (_label, instances) => {
+    const exit = await Effect.runPromise(
+      writeWorkerEntry({
+        configPath,
+        name: "api",
+        existingWorkers: {},
+        patch: { runtime: "node", instances },
+      }).pipe(Effect.provide(BunServices.layer), Effect.exit),
+    );
+
+    expect(Exit.isFailure(exit)).toBe(true);
+    // Refused before anything reaches disk, the way every other unsafe write is.
+    expect(existsSync(configPath)).toBe(false);
+  });
+
+  test("writes a whole, non-negative count unquoted", async () => {
+    await run(
+      writeWorkerEntry({
+        configPath,
+        name: "api",
+        existingWorkers: {},
+        patch: { runtime: "node", instances: 0 },
+      }).pipe(Effect.provide(BunServices.layer)),
+    );
+
+    expect(readFileSync(configPath, "utf8")).toContain("instances = 0");
+  });
 
   test("creates the file when there is none yet", async () => {
     await run(
