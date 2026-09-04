@@ -4,6 +4,7 @@ import { Effect, FileSystem, Path } from "effect";
 import { LegacyPlatformApiFactory } from "../auth/legacy-platform-api-factory.service.ts";
 import { LegacyCliSettings } from "../config/legacy-cli-settings.service.ts";
 import { legacyResolveApiExternalUrl } from "./legacy-api-url.ts";
+import { legacyValidateApiPort, legacyValidateApiTlsPresence } from "./legacy-config-validate.ts";
 import { legacyLoadProjectEnv } from "./legacy-db-config.toml-read.ts";
 import { legacyMapTenantApiKeysError } from "./legacy-get-tenant-api-keys.ts";
 import { legacyGetHostname } from "./legacy-hostname.ts";
@@ -67,6 +68,18 @@ interface LegacyStorageCredentials {
 export const legacyResolveStorageCredentials = Effect.fnUntraced(function* (opts: {
   readonly projectRef: string;
   readonly config: LegacyStorageConfigView;
+  /**
+   * Already-resolved project env map for the `SUPABASE_API_*` fold, when the
+   * caller has one in scope (`legacySeedBucketsRun`, `start`) — same
+   * passthrough idea as `legacySeedBucketsRun`'s own `resolvedConfig`. Either
+   * walk's shape works — a map that omits ambient-shadowed keys
+   * (`legacyLoadProjectEnv`) or one that overlays ambient values
+   * (`legacyResolveProjectEnvironmentValues`) — since the override helpers'
+   * `map[name] ?? process.env[name]` lookup resolves both identically. When
+   * omitted (the `storage` commands), the local branch loads the nested
+   * project dotenv walk itself.
+   */
+  readonly projectEnvValues?: Readonly<Record<string, string>>;
 }) {
   const cliSettings = yield* LegacyCliSettings;
 
@@ -105,7 +118,12 @@ export const legacyResolveStorageCredentials = Effect.fnUntraced(function* (opts
 
   const fs = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
-  const api = yield* resolveLocalApiConfig(fs, path, cliSettings.workdir, opts.config.api);
+  const projectEnvValues =
+    opts.projectEnvValues ??
+    (yield* legacyLoadProjectEnv(fs, path, cliSettings.workdir).pipe(
+      Effect.mapError((cause) => new LegacyStorageConfigError({ message: cause.message })),
+    ));
+  const api = yield* resolveLocalApiConfig(opts.config.api, projectEnvValues);
   const baseUrl = legacyResolveApiExternalUrl(api, legacyGetHostname());
   const apiKey = yield* resolveLocalServiceRoleKey(opts.config.auth);
 
@@ -138,29 +156,25 @@ export const legacyResolveStorageCredentials = Effect.fnUntraced(function* (opts
  * (`legacy-local-config-values.ts`'s resolvers, `start.handler.ts`'s
  * `effectiveLocalStorageConfig`); without this fold, a stack brought up with
  * e.g. `SUPABASE_API_PORT=54331` is unreachable here because the gateway URL
- * falls back to the raw `config.toml` port (#6452). Loads the nested project
- * dotenv files itself so a value set only in `supabase/.env`(.local) counts,
- * matching the `projectEnvValues` the sibling resolvers consume; a caller that
- * already folded these overrides (`start`) re-resolves to the same values, so
- * the fold is idempotent. A malformed port/bool override, an unreadable env
- * file, or an enabled API whose resolved port is `0` is an invalid-config hard
- * failure, same as the sibling resolvers.
+ * falls back to the raw `config.toml` port (#6452). `projectEnvValues` is the
+ * nested project dotenv map (caller-supplied or loaded by
+ * `legacyResolveStorageCredentials`), so a value set only in
+ * `supabase/.env`(.local) counts; a caller that already folded these overrides
+ * (`start`) re-resolves the same map to the same values, so the fold is
+ * idempotent. A malformed port/bool override or an enabled API whose resolved
+ * port is `0` (`legacyValidateApiPort` — the canonical branch) is an
+ * invalid-config hard failure, same as the sibling resolvers.
  * `[remotes.*]` never merges on the local path (`loadCliConfig` receives no
  * `projectRef` here), so the remote-over-env precedence those resolvers apply
  * does not arise.
  */
-const resolveLocalApiConfig = Effect.fnUntraced(function* (
-  fs: FileSystem.FileSystem,
-  path: Path.Path,
-  workdir: string,
+const resolveLocalApiConfig = (
   api: LegacyStorageConfigView["api"],
-) {
-  const projectEnvValues = yield* legacyLoadProjectEnv(fs, path, workdir).pipe(
-    Effect.mapError((cause) => new LegacyStorageConfigError({ message: cause.message })),
-  );
-  const resolved = yield* Effect.try({
-    try: () =>
-      ({
+  projectEnvValues: Readonly<Record<string, string>>,
+) =>
+  Effect.try({
+    try: () => {
+      const resolved = {
         enabled: legacyEnvOverrideBool(
           "SUPABASE_API_ENABLED",
           api.enabled,
@@ -191,26 +205,20 @@ const resolveLocalApiConfig = Effect.fnUntraced(function* (
             projectEnvValues,
           ),
         },
-      }) satisfies LegacyStorageConfigView["api"],
-    // A malformed port/bool override collapses into the tagged storage config
-    // error, preserving the helper's message — the same collapse every other
-    // consumer of these throwing helpers applies (`wrapDbConfigOverride` →
-    // `LegacyDbConfigLoadError`), keeping this Effect error channel tagged.
+      } satisfies LegacyStorageConfigView["api"];
+      legacyValidateApiPort(resolved.enabled, resolved.port);
+      return resolved;
+    },
+    // A malformed port/bool override or the canonical zero-port rejection
+    // collapses into the tagged storage config error, preserving the helper's
+    // message — the same collapse every other consumer of these throwing
+    // helpers applies (`wrapDbConfigOverride` → `LegacyDbConfigLoadError`),
+    // keeping this Effect error channel tagged.
     catch: (cause) =>
       new LegacyStorageConfigError({
         message: cause instanceof Error ? cause.message : String(cause),
       }),
   });
-  // An enabled API with a resolved port of 0 is rejected with the canonical
-  // missing-field message (`legacyValidateResolvedConfig`) — the override could
-  // otherwise smuggle a zero port past config validation into the gateway URL.
-  if (resolved.enabled && resolved.port === 0) {
-    return yield* new LegacyStorageConfigError({
-      message: "Missing required field in config: api.port",
-    });
-  }
-  return resolved;
-});
 
 /**
  * Resolve the service-role key for the local Storage gateway, mirroring Go's
@@ -266,21 +274,17 @@ const validateLocalKongTls = Effect.fnUntraced(function* (
   certPath: string | undefined,
   keyPath: string | undefined,
 ) {
-  const hasCert = certPath !== undefined && certPath.length > 0;
-  const hasKey = keyPath !== undefined && keyPath.length > 0;
+  // The canonical presence rule lives in `legacy-config-validate.ts`; only the
+  // file reads below are this caller's own I/O.
+  yield* Effect.try({
+    try: () => legacyValidateApiTlsPresence(certPath, keyPath),
+    catch: (cause) =>
+      new LegacyStorageConfigError({
+        message: cause instanceof Error ? cause.message : String(cause),
+      }),
+  });
 
-  if (hasCert && !hasKey) {
-    return yield* new LegacyStorageConfigError({
-      message: "Missing required field in config: api.tls.key_path",
-    });
-  }
-  if (hasKey && !hasCert) {
-    return yield* new LegacyStorageConfigError({
-      message: "Missing required field in config: api.tls.cert_path",
-    });
-  }
-
-  if (hasCert) {
+  if (certPath !== undefined && certPath.length > 0) {
     // TLS paths join unconditionally with the supabase dir — NO IsAbs guard
     // (`path.Join` absorbs a leading "/").
     const absCert = path.join(workdir, "supabase", certPath);

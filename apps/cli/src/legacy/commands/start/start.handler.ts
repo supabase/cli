@@ -1980,6 +1980,7 @@ export const legacyStart = Effect.fn("legacy.start")(function* (flags: LegacySta
         const { localKongCa } = yield* legacyResolveStorageCredentials({
           projectRef: "",
           config: effectiveLocalStorageConfig,
+          projectEnvValues,
         });
         // Shared by every gateway probe below (the bulk wait and the
         // storage-only recheck), so both trust the same local Kong CA.
@@ -2036,6 +2037,7 @@ export const legacyStart = Effect.fn("legacy.start")(function* (flags: LegacySta
                     config: effectiveLocalStorageConfig,
                     document: context.loaded?.document,
                   },
+                  projectEnvValues,
                 }).pipe(Effect.result);
                 if (Result.isFailure(seedResult)) {
                   // No manual `legacyRollbackStart` here — the outer
@@ -2081,6 +2083,7 @@ export const legacyStart = Effect.fn("legacy.start")(function* (flags: LegacySta
               config: effectiveLocalStorageConfig,
               document: context.loaded?.document,
             },
+            projectEnvValues,
           });
         }
 

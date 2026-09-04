@@ -232,6 +232,9 @@ export const legacyResetLocalDatabase = Effect.fnUntraced(function* (
       // auto-confirms bucket/vector/analytics prune prompts.
       yes,
       resolvedConfig: { config, document: loaded?.document },
+      // The same nested-dotenv walk this function already resolved for
+      // `yes`/`experimental` above — no independent reload in the seed core.
+      projectEnvValues: projectEnv,
     }).pipe(
       // A genuinely invalid bucket entry (bad name, unparseable `file_size_limit`, …) —
       // recreate already dropped/rebuilt the DB, so aborting now would leave the reset
