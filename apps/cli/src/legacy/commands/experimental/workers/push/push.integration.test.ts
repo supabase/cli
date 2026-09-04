@@ -456,6 +456,91 @@ describe("legacy workers push", () => {
     }).pipe(Effect.provide(layer), Effect.ensuring(Effect.sync(repo.cleanup)));
   });
 
+  // `--exposure` decides one deploy and nothing writes it down. Every deploy
+  // sends a complete spec, so a worker taken off the internet by the flag goes
+  // back on it at the next bare push — quietly, unless the run says so.
+  describe("says when --exposure will not outlive the deploy", () => {
+    const pushWith = (config: string, exposure: "public" | "private") => {
+      const repo = project({ "supabase/config.toml": config });
+      const { layer, out } = setupLegacyWorkers({ workdir: repo.dir, routes: routes() });
+      return { repo, layer, out, run: () => push({ exposure: Option.some(exposure) }) };
+    };
+
+    it.live("nudges when the config records nothing", () => {
+      const { repo, layer, out, run } = pushWith(
+        `project_id = "demo"\n\n[workers.api]\nruntime = "node"\n`,
+        "private",
+      );
+
+      return Effect.gen(function* () {
+        yield* run();
+
+        expect(out.stderrText).toContain("records no exposure for api");
+        // The exact line to add, the way the runtime guess names its own.
+        expect(out.stderrText).toContain('[workers.api] exposure = "private"');
+      }).pipe(Effect.provide(layer), Effect.ensuring(Effect.sync(repo.cleanup)));
+    });
+
+    it.live("nudges when the config records the opposite", () => {
+      const { repo, layer, out, run } = pushWith(
+        `project_id = "demo"\n\n[workers.api]\nruntime = "node"\nexposure = "public"\n`,
+        "private",
+      );
+
+      return Effect.gen(function* () {
+        yield* run();
+
+        expect(out.stderrText).toContain('records exposure = "public"');
+        expect(out.stderrText).toContain('exposure = "private"');
+      }).pipe(Effect.provide(layer), Effect.ensuring(Effect.sync(repo.cleanup)));
+    });
+
+    // A recorded value the CLI cannot read is not `chosen` either: the next bare
+    // push refuses rather than deploying, which is still not what this run did.
+    it.live("nudges when the config records something it cannot read", () => {
+      const { repo, layer, out, run } = pushWith(
+        `project_id = "demo"\n\n[workers.api]\nruntime = "node"\nexposure = "privat"\n`,
+        "private",
+      );
+
+      return Effect.gen(function* () {
+        yield* run();
+
+        expect(out.stderrText).toContain('records exposure = "privat"');
+      }).pipe(Effect.provide(layer), Effect.ensuring(Effect.sync(repo.cleanup)));
+    });
+
+    // Nothing drifts, so nothing to say — the flag restated what the config
+    // already holds, case-insensitively.
+    it.live("stays quiet when the config already agrees", () => {
+      const { repo, layer, out, run } = pushWith(
+        `project_id = "demo"\n\n[workers.api]\nruntime = "node"\nexposure = "PRIVATE"\n`,
+        "private",
+      );
+
+      return Effect.gen(function* () {
+        yield* run();
+
+        expect(out.stderrText).not.toContain("applies to this deploy only");
+      }).pipe(Effect.provide(layer), Effect.ensuring(Effect.sync(repo.cleanup)));
+    });
+
+    // The same non-drift, reached the other way: no recorded exposure and a flag
+    // naming the default a bare push would have picked anyway.
+    it.live("stays quiet when the flag restates the default", () => {
+      const { repo, layer, out, run } = pushWith(
+        `project_id = "demo"\n\n[workers.api]\nruntime = "node"\n`,
+        "public",
+      );
+
+      return Effect.gen(function* () {
+        yield* run();
+
+        expect(out.stderrText).not.toContain("applies to this deploy only");
+      }).pipe(Effect.provide(layer), Effect.ensuring(Effect.sync(repo.cleanup)));
+    });
+  });
+
   // The flag is the authority for the deploy it runs, so an unrecognized
   // recorded value it replaces is moot rather than fatal.
   it.live("lets --exposure stand in for an exposure config records badly", () => {

@@ -95,6 +95,14 @@ part of the question the failure raises. The second report also covers a real
 gap, since `runCli` drains success trailers only on exit code 0, so a failing
 run discards every follow-up hint it had queued.
 
+`--exposure` decides one deploy and nothing writes it down, so an override the
+config does not already agree with is reported on stderr, naming the
+`[workers.<name>] exposure` line to add. Unguarded by format, like the
+runtime-guess nudge: every deploy sends a complete spec, so a worker taken off
+the internet by the flag goes back on it at the next bare push, and a CI run is
+where that matters most. Silent when the config already resolves to the same
+exposure, case included.
+
 Under `--no-wait` the `Image` row and the payload's `image_version` are omitted
 while `build_state` is `building`. The deploy response may carry an
 `image_version` — a re-push of a worker that is already serving echoes the image

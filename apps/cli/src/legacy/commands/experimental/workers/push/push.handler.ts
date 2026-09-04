@@ -159,6 +159,12 @@ function resolveInstances(options: {
  * — and that is refused rather than coerced, the same way `resolveSize` treats a
  * size it does not know: silently deploying a `private`-typo'd worker as public
  * is the one outcome nobody asked for.
+ *
+ * The flag decides one deploy and nothing writes it down, so an override the
+ * config does not already agree with is reported the way `resolveRuntime`
+ * reports a guess: on stderr, naming the line to add. Without it, taking a
+ * worker off the internet with `--exposure private` lasts exactly until the next
+ * bare `push` puts it back.
  */
 const resolveExposure = Effect.fnUntraced(function* (options: {
   readonly name: string;
@@ -166,7 +172,30 @@ const resolveExposure = Effect.fnUntraced(function* (options: {
   readonly override: Option.Option<WorkerExposure>;
 }) {
   if (Option.isSome(options.override)) {
-    return options.override.value;
+    const chosen = options.override.value;
+    // What a later bare `push` would resolve to: the recorded value if the CLI
+    // knows it, the default if there is none, and `undefined` for one it cannot
+    // read — which is not `chosen` either, so that case is nudged too.
+    const withoutTheFlag =
+      options.recorded === undefined
+        ? DEFAULT_WORKER_EXPOSURE
+        : parseWorkerExposure(options.recorded);
+    if (withoutTheFlag !== chosen) {
+      const output = yield* Output;
+      // stderr, so it never lands inside a payload stdout is carrying — and
+      // unguarded by format, like the runtime nudge: a CI run is exactly where
+      // a one-deploy exposure quietly reverting matters most.
+      yield* output.raw(
+        `--exposure ${chosen} applies to this deploy only: supabase/config.toml ${
+          options.recorded === undefined
+            ? `records no exposure for ${options.name}`
+            : `records exposure = "${options.recorded}"`
+        }, so the next bare push will not use ${chosen}. ` +
+          `Pin it down by adding [workers.${options.name}] exposure = "${chosen}" to supabase/config.toml.\n`,
+        "stderr",
+      );
+    }
+    return chosen;
   }
   if (options.recorded === undefined) {
     return DEFAULT_WORKER_EXPOSURE;
