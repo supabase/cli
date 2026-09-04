@@ -71,6 +71,15 @@ const parseConfig = (): FunctionOverrides => {
   return {};
 };
 const configured = parseConfig();
+if (Deno.env.get("SUPABASE_INTERNAL_DEBUG") === "true") {
+  const debugConfig = Object.fromEntries(
+    Object.entries(configured).map(([name, config]) => [
+      name,
+      Object.fromEntries(Object.entries(config).filter(([key]) => key !== "env")),
+    ]),
+  );
+  console.log("Functions config:", JSON.stringify(debugConfig, null, 2));
+}
 
 const getResponse = (payload: any, status: number, customHeaders = {}) => {
   const headers = { ...customHeaders };

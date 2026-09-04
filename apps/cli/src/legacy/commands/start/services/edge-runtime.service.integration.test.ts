@@ -3,6 +3,7 @@ import { join } from "node:path";
 
 import { describe, expect, it } from "@effect/vitest";
 import { edgeRuntimeNofileUlimit } from "../../../../shared/stack-constants.ts";
+import { toDockerPath } from "../../../../shared/functions/functions-docker.ts";
 import { Deferred, Effect, Exit, Sink, Stream } from "effect";
 import { type ChildProcess, ChildProcessSpawner } from "effect/unstable/process";
 import { afterEach, beforeEach, vi } from "vitest";
@@ -245,6 +246,46 @@ describe("legacyStartEdgeRuntimeContainer", () => {
 
       const args = mock.runCall!.args;
       expect(args[args.indexOf("--workdir") + 1]).toBe(tempWorkdir.current);
+    }),
+  );
+
+  it.effect("sets the functions root to the mounted container path", () =>
+    Effect.gen(function* () {
+      const slug = "hello";
+      const functionsDir = join(tempWorkdir.current, "supabase", "functions");
+      const entrypoint = join(functionsDir, slug, "index.ts");
+      mkdirSync(join(functionsDir, slug), { recursive: true });
+      writeFileSync(entrypoint, "Deno.serve(() => new Response('ok'));");
+
+      const fnConfig = {
+        enabled: true,
+        verify_jwt: true,
+        import_map: "",
+        entrypoint,
+        static_files: [],
+        env: {},
+      };
+      const mock = mockDockerSpawner();
+      const out = mockOutput();
+
+      yield* legacyStartEdgeRuntimeContainer({
+        ...baseInput(tempWorkdir.current),
+        configDeclaredFunctions: { [slug]: fnConfig },
+        configFunctions: { [slug]: fnConfig },
+        rawConfigFunctions: { [slug]: fnConfig },
+      }).pipe(
+        Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, mock.spawner),
+        Effect.provide(out.layer),
+      );
+
+      const entries = envEntries(mock.runCall!);
+      expect(entries).toContain(`SUPABASE_INTERNAL_FUNCTIONS_ROOT=${toDockerPath(functionsDir)}`);
+      const configPrefix = "SUPABASE_INTERNAL_FUNCTIONS_CONFIG=";
+      const configEntry = entries.find((entry) => entry.startsWith(configPrefix));
+      expect(configEntry).toBeDefined();
+      expect(JSON.parse(configEntry!.slice(configPrefix.length))).toMatchObject({
+        hello: { entrypointPath: toDockerPath(entrypoint) },
+      });
     }),
   );
 

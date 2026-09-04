@@ -5,7 +5,7 @@ import {
 } from "@supabase/config/effect";
 import { edgeRuntimeNofileUlimit } from "../stack-constants.ts";
 import { mkdir, readFile, rm, writeFile } from "node:fs/promises";
-import { basename, isAbsolute, join, relative, resolve } from "node:path";
+import { isAbsolute, join, resolve } from "node:path";
 import { Effect, Option, Redacted, Stream } from "effect";
 import { parseDotEnv } from "../../legacy/shared/legacy-dotenv.ts";
 import { Output } from "../output/output.service.ts";
@@ -316,15 +316,10 @@ const parseFunctionEnvFile = Effect.fnUntraced(function* (pathname: string) {
 });
 
 function toFunctionContainerConfig(
-  workdir: string,
   config: ResolvedDeployFunctionConfig,
   envFile: Readonly<Record<string, string>>,
 ): ServeFunctionContainerConfig {
-  const toContainerPath = (pathname: string) => {
-    const resolvedPath = resolve(pathname);
-    const relativePath = relative(workdir, resolvedPath);
-    return relativePath.length === 0 ? basename(resolvedPath) : relativePath.replaceAll("\\", "/");
-  };
+  const toContainerPath = (pathname: string) => toDockerPath(resolve(pathname));
 
   return {
     // The Go serve path defaults verifyJWT to true when verify_jwt is not set in
@@ -697,11 +692,7 @@ export const startEdgeRuntimeContainer = Effect.fn("functions.startEdgeRuntimeCo
         input.discoverFunctionEnvFiles && Option.isNone(input.envFile)
           ? yield* parseFunctionEnvFile(join(functionsDir, config.slug, ".env"))
           : {};
-      functionsConfig[config.slug] = toFunctionContainerConfig(
-        input.projectRoot,
-        config,
-        functionEnv,
-      );
+      functionsConfig[config.slug] = toFunctionContainerConfig(config, functionEnv);
     }
 
     const binds = [...functionBinds.values()];
@@ -725,6 +716,7 @@ export const startEdgeRuntimeContainer = Effect.fn("functions.startEdgeRuntimeCo
       `SUPABASE_INTERNAL_JWT_SECRET=${input.authArtifacts.jwtSecret}`,
       `SUPABASE_JWKS=${input.authArtifacts.jwks}`,
       `SUPABASE_INTERNAL_HOST_PORT=${input.config.apiPort}`,
+      `SUPABASE_INTERNAL_FUNCTIONS_ROOT=${toDockerPath(functionsDir)}`,
       `SUPABASE_INTERNAL_FUNCTIONS_CONFIG=${JSON.stringify(functionsConfig)}`,
       ...(input.debug ? ["SUPABASE_INTERNAL_DEBUG=true"] : []),
     ];

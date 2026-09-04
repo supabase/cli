@@ -128,16 +128,17 @@ export const resolveFunctionConfig = async (options: {
   };
   if (override.enabled === false) return undefined;
   const functionDirectory = join(canonicalRoot, slug);
-  const directoryInfo = await optionalInfo(fs, functionDirectory);
-  if (directoryInfo === undefined || !directoryInfo.isDirectory) return undefined;
-  if (!(await safeRealPath(fs, canonicalRoot, functionDirectory))) return undefined;
-
   const rawEntrypoint =
     override?.entrypointPath && override.entrypointPath.length > 0
       ? override.entrypointPath
       : override.entrypoint && override.entrypoint.length > 0
         ? override.entrypoint
         : "index.ts";
+  if (!rawEntrypoint.startsWith("/")) {
+    const directoryInfo = await optionalInfo(fs, functionDirectory);
+    if (directoryInfo === undefined || !directoryInfo.isDirectory) return undefined;
+    if (!(await safeRealPath(fs, canonicalRoot, functionDirectory))) return undefined;
+  }
   const entrypointPath = relativePath(functionDirectory, rawEntrypoint);
   if (!(await safeRealPath(fs, canonicalRoot, entrypointPath))) return undefined;
   const entrypointInfo = await optionalInfo(fs, entrypointPath);

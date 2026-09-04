@@ -174,6 +174,30 @@ describe("Edge Runtime request-time function resolver", () => {
     }
   });
 
+  it("accepts an absolute entrypoint inside the functions root without a slug directory", async () => {
+    const root = await mkdtemp(join(tmpdir(), "stack-functions-resolver-absolute-entrypoint-"));
+    try {
+      const entrypoint = join(root, "legacy", "index.ts");
+      await mkdir(join(root, "legacy"), { recursive: true });
+      await writeFile(entrypoint, "export default 1");
+
+      await expect(
+        resolveFunctionConfig({
+          root,
+          slug: "hello",
+          overrides: { hello: { entrypointPath: entrypoint } },
+          fs: nodeFileSystem,
+        }),
+      ).resolves.toMatchObject({
+        entrypointPath: entrypoint,
+        importMapPath: "",
+        verifyJWT: true,
+      });
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
   it("applies global defaults to newly discovered functions while preserving overrides", async () => {
     const root = await mkdtemp(join(tmpdir(), "stack-functions-resolver-defaults-"));
     try {
