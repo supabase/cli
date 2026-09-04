@@ -3,7 +3,7 @@
  */
 
 import type { CliConfig, ConfigChange, ProjectConfig } from "@supabase/config";
-import { getDefaultCliConfig } from "@supabase/config";
+import { comparableProjectConfigPaths, getDefaultCliConfig } from "@supabase/config";
 import { AUTH_HOOK_NAMES, projectConfigMappingRows } from "@supabase/config/internal";
 import { describe, expect, it } from "vitest";
 
@@ -17,10 +17,12 @@ import {
   legacyEncodeStorageBody,
   LEGACY_PUSH_AUTH_LEAF_MAP,
   type LegacyAuthEncoderInput,
+  type LegacyPushEncoded,
   type LegacyPushEncoderInput,
   type LegacyStorageEncoderInput,
 } from "./push.encoders.ts";
 import { legacySamePath } from "./push.paths.ts";
+import { legacyPushResourceForPath, type LegacyPushResource } from "./push.plan.ts";
 import {
   LEGACY_EMAIL_NOTIFICATION_NAMES,
   LEGACY_EMAIL_TEMPLATE_NAMES,
@@ -169,6 +171,37 @@ describe("legacyEncodeApiBody", () => {
     );
     expect(result.body).toEqual({ db_schema: "public,private" });
     expect(result.forced).toEqual([{ path: ["api", "enabled"], value: true }]);
+  });
+
+  it("routes a schemas-only change to unencodable, without sending the disable sentinel, when the Data API is disabled and enabled itself is not a routed change", () => {
+    const result = legacyEncodeApiBody(
+      input({
+        changes: [change(["api", "schemas"], ["public", "private"])],
+        remote: { api: { enabled: false } },
+      }),
+    );
+    expect(result.body).toBeUndefined();
+    expect(result.unencodable).toEqual([
+      {
+        path: ["api", "schemas"],
+        reason: "the Data API is disabled on the project; declare api.enabled = true to apply this",
+      },
+    ]);
+  });
+
+  it("still applies a schemas change bundled with an api.enabled: true change, even while the Data API is currently disabled", () => {
+    const result = legacyEncodeApiBody(
+      input({
+        changes: [
+          change(["api", "enabled"], true),
+          change(["api", "schemas"], ["public", "private"]),
+        ],
+        remote: { api: { enabled: false } },
+        local: { api: { enabled: true, schemas: ["public", "private"] } },
+      }),
+    );
+    expect(result.body).toEqual({ db_schema: "public,private" });
+    expect(result.unencodable).toEqual([]);
   });
 });
 
@@ -566,6 +599,16 @@ describe("legacyEncodeAuthBody", () => {
         { path: ["auth", "sms", "max_frequency"], reason: REASON },
       ]);
     });
+
+    it("sessions.timebox: a digit-less (unit-only) duration, not a silent zero", () => {
+      const result = legacyEncodeAuthBody(
+        authInput({ changes: [change(["auth", "sessions", "timebox"], "s")] }),
+      );
+      expect(result.body).toBeUndefined();
+      expect(result.unencodable).toEqual([
+        { path: ["auth", "sessions", "timebox"], reason: REASON },
+      ]);
+    });
   });
 
   describe("smtp container", () => {
@@ -742,6 +785,36 @@ describe("legacyEncodeAuthBody", () => {
         {
           path: ["auth", "email", "smtp", "host"],
           reason: "one or more of this group's required fields could not be resolved",
+        },
+      ]);
+    });
+
+    it("routes the smtp container to unencodable when a companion resolves to the wrong type, instead of substituting a default", () => {
+      const local: ProjectConfig = {
+        auth: {
+          email: {
+            smtp: {
+              enabled: true,
+              host: "smtp.example.com",
+              port: 587,
+              user: "user",
+              admin_email: "a@b.com",
+              sender_name: "Sender",
+            },
+          },
+        },
+      };
+      const result = legacyEncodeAuthBody(
+        authInput({
+          changes: [change(["auth", "email", "smtp", "port"], "not-a-number")],
+          local,
+        }),
+      );
+      expect(result.body).toBeUndefined();
+      expect(result.unencodable).toEqual([
+        {
+          path: ["auth", "email", "smtp", "port"],
+          reason: "a required companion value has an unexpected type and could not be sent",
         },
       ]);
     });
@@ -1049,6 +1122,25 @@ describe("legacyEncodeAuthBody", () => {
       expect(result.secretsEncoded).toEqual([["auth", "external", "github", "secret"]]);
     });
 
+    it("routes the provider to unencodable when client_id resolves to the wrong type, instead of substituting a default", () => {
+      const local: ProjectConfig = {
+        auth: { external: { github: { enabled: true, email_optional: false } } },
+      };
+      const result = legacyEncodeAuthBody(
+        authInput({
+          changes: [change(["auth", "external", "github", "client_id"], true)],
+          local,
+        }),
+      );
+      expect(result.body).toBeUndefined();
+      expect(result.unencodable).toEqual([
+        {
+          path: ["auth", "external", "github", "client_id"],
+          reason: "a required companion value has an unexpected type and could not be sent",
+        },
+      ]);
+    });
+
     it("routes the provider to unencodable (REASON_GROUP_INCOMPLETE) when client_id cannot be resolved", () => {
       const result = legacyEncodeAuthBody(
         authInput({
@@ -1262,6 +1354,25 @@ describe("legacyEncodeAuthBody", () => {
           path: ["auth", "sms", "twilio", "enabled"],
           reason:
             "config push can switch between SMS providers but cannot turn the active provider off; disable phone sign-in or use the dashboard",
+        },
+      ]);
+    });
+
+    it("routes the active provider to unencodable when a credential field resolves to the wrong type, instead of substituting a default", () => {
+      const local: ProjectConfig = {
+        auth: { sms: { twilio: { enabled: true, message_service_sid: "svc" } } },
+      };
+      const result = legacyEncodeAuthBody(
+        authInput({
+          changes: [change(["auth", "sms", "twilio", "account_sid"], 12345)],
+          local,
+        }),
+      );
+      expect(result.body).toBeUndefined();
+      expect(result.unencodable).toEqual([
+        {
+          path: ["auth", "sms", "twilio", "account_sid"],
+          reason: "a required companion value has an unexpected type and could not be sent",
         },
       ]);
     });
@@ -1533,4 +1644,52 @@ describe("auth encoder key-name drift guard", () => {
       expect(row?.apiPath.at(-1)).toBe(pair.apiKey);
     },
   );
+});
+
+describe("encoder exhaustiveness drift guard", () => {
+  /**
+   * Feeds every {@link comparableProjectConfigPaths} entry that
+   * `legacyPushResourceForPath` routes to a resource (excluding the three
+   * intentionally-unsupported prefixes, covered by `push.plan.unit.test.ts`'s
+   * own drift guard) to that resource's encoder as a single synthetic
+   * `update` change, and asserts the path lands in `encoded`, `unencodable`,
+   * or `extras` — never silently in none of the three. The classification
+   * itself doesn't matter (an incomplete container correctly reports
+   * `unencodable`); what matters is that every encoder's own switch/branch
+   * logic accounts for every path it can ever receive, backstopped by each
+   * encoder's `withExhaustiveness` wrapper (`push.encoders.ts`).
+   */
+  const ENCODE_BY_RESOURCE: Readonly<
+    Record<LegacyPushResource, (changes: ReadonlyArray<ConfigChange>) => LegacyPushEncoded<unknown>>
+  > = {
+    api: (changes) => legacyEncodeApiBody(input({ changes })),
+    "db.settings": (changes) => legacyEncodeDbSettingsBody(input({ changes })),
+    "db.network_restrictions": (changes) => legacyEncodeNetworkRestrictionsBody(input({ changes })),
+    "db.ssl_enforcement": (changes) => legacyEncodeSslEnforcementBody(input({ changes })),
+    storage: (changes) => legacyEncodeStorageBody(storageInput({ changes })),
+    auth: (changes) => legacyEncodeAuthBody(authInput({ changes })),
+  };
+
+  it("classifies every routable comparable config path as encoded, unencodable, or extras — never neither", () => {
+    const uncovered: Array<ReadonlyArray<string>> = [];
+    for (const path of comparableProjectConfigPaths) {
+      const resource = legacyPushResourceForPath(path);
+      if (resource === "unsupported") {
+        continue;
+      }
+      const result = ENCODE_BY_RESOURCE[resource]([change(path, true)]);
+      const covered = [
+        ...result.encoded,
+        ...result.unencodable.map((entry) => entry.path),
+        ...result.extras.map((entry) => entry.path),
+      ];
+      if (!covered.some((candidate) => legacySamePath(candidate, path))) {
+        uncovered.push(path);
+      }
+    }
+    expect(
+      uncovered,
+      `paths silently dropped by their encoder (neither encoded, unencodable, nor extras): ${JSON.stringify(uncovered)}`,
+    ).toEqual([]);
+  });
 });

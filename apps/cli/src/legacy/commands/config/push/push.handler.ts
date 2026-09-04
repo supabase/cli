@@ -539,6 +539,7 @@ export const legacyConfigPush = Effect.fn("legacy.config.push")(function* (
             resource,
             changes: communicated,
             secrets: secretsForResource.map(toSecretReport),
+            secretsEncoded: encoded.secretsEncoded ?? [],
             extras: encoded.extras,
             forced: encoded.forced,
           }),

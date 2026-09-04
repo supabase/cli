@@ -26,6 +26,7 @@ import {
   legacyContainerEnabled,
   legacyIsPrefixOf,
   legacyIsRecord,
+  legacyPathIn,
   legacySamePath,
   legacyValueAtPath,
 } from "./push.paths.ts";
@@ -147,6 +148,11 @@ const REASON_VALUE_NOT_REPRESENTABLE = "the declared value could not be represen
 const REASON_DB_SETTINGS_KEY_SHAPE =
   "only a top-level db.settings.<key> value can be encoded into a Postgres config write";
 const REASON_INVALID_DURATION = "the declared value is not a valid duration";
+const REASON_API_DISABLED =
+  "the Data API is disabled on the project; declare api.enabled = true to apply this";
+const REASON_COMPANION_TYPE_MISMATCH =
+  "a required companion value has an unexpected type and could not be sent";
+const REASON_NO_ENCODER = "config push has no encoder for this property";
 
 // --- generic path/value helpers ---------------------------------------------
 
@@ -291,6 +297,43 @@ function sortByPath<T extends { readonly path: ReadonlyArray<string> }>(
   return [...entries].sort((a, b) => legacyComparePaths(a.path, b.path));
 }
 
+/**
+ * Every routed change an encoder receives must land in `encoded`,
+ * `unencodable`, or `extras` — never neither. A path missing from all three
+ * (a resource path this encoder's own switch/branch logic forgot to handle)
+ * is pushed to `unencodable` with {@link REASON_NO_ENCODER} instead of being
+ * silently dropped.
+ */
+function finalizeEncoded<Body>(
+  changes: ReadonlyArray<ConfigChange>,
+  result: LegacyPushEncoded<Body>,
+): LegacyPushEncoded<Body> {
+  const covered = [
+    ...result.encoded,
+    ...result.unencodable.map((entry) => entry.path),
+    ...result.extras.map((entry) => entry.path),
+  ];
+  const missing = changes.filter((change) => !legacyPathIn(change.path, covered));
+  if (missing.length === 0) {
+    return result;
+  }
+  return {
+    ...result,
+    unencodable: sortByPath([
+      ...result.unencodable,
+      ...missing.map((change) => ({ path: change.path, reason: REASON_NO_ENCODER })),
+    ]),
+  };
+}
+
+/** Wraps an encoder's implementation with the {@link finalizeEncoded} exhaustiveness check,
+ *  applied once here rather than at every one of an encoder's internal return points. */
+function withExhaustiveness<In extends LegacyPushEncoderInput, Body>(
+  encode: (input: In) => LegacyPushEncoded<Body>,
+): (input: In) => LegacyPushEncoded<Body> {
+  return (input) => finalizeEncoded(input.changes, encode(input));
+}
+
 /** Adds one leaf mapping to `body` when `path` has a routed change; `transform` returning
  *  `undefined` marks it unencodable instead, with `reason` (defaulting to the generic
  *  wrong-type reason) rather than always the same catch-all. */
@@ -322,60 +365,85 @@ function makeLeafAdder(
 
 // --- api ---------------------------------------------------------------------
 
-export function legacyEncodeApiBody(
-  input: LegacyPushEncoderInput,
-): LegacyPushEncoded<LegacyApiUpdateBody> {
+function encodeApiBody(input: LegacyPushEncoderInput): LegacyPushEncoded<LegacyApiUpdateBody> {
   const { changes, local, remote } = input;
   const encoded: Array<ReadonlyArray<string>> = [];
   const unencodable: Array<{ path: ReadonlyArray<string>; reason: string }> = [];
   const forced: Array<{ path: ReadonlyArray<string>; value: unknown }> = [];
 
-  let dbSchema: string | undefined;
   const enabledChange = findChange(changes, ["api", "enabled"]);
   const schemasChange = findChange(changes, ["api", "schemas"]);
+  const extraSearchPathChange = findChange(changes, ["api", "extra_search_path"]);
+  const maxRowsChange = findChange(changes, ["api", "max_rows"]);
+
+  // Whether the Data API is currently disabled and staying that way: `enabled`
+  // itself is not a routed change, and its resolved (remote-preferred) value
+  // is `false`. Every OTHER api.* change is then meaningless to send — there
+  // is no live Data API for the platform to apply it to — so each routes to
+  // `unencodable` instead of either silently riding along inside the `""`
+  // disable sentinel (a schemas-only change would otherwise be swallowed by
+  // it) or being sent on its own to an endpoint that ignores it while
+  // disabled.
+  const apiDisabled =
+    enabledChange === undefined &&
+    asBoolean(resolveLeaf(changes, ["api", "enabled"], remote, local).value) === false;
+
+  let dbSchema: string | undefined;
   if (enabledChange !== undefined || schemasChange !== undefined) {
     const triggerPaths = [enabledChange, schemasChange]
       .filter((change): change is ConfigChange => change !== undefined)
       .map((change) => change.path);
 
-    const enabledResolved = resolveLeaf(changes, ["api", "enabled"], remote, local);
-    const enabled = asBoolean(enabledResolved.value);
-    if (enabled === false) {
-      dbSchema = "";
-      encoded.push(...triggerPaths);
-      pushForced(forced, ["api", "enabled"], enabledResolved);
+    if (apiDisabled) {
+      for (const path of triggerPaths) {
+        unencodable.push({ path, reason: REASON_API_DISABLED });
+      }
     } else {
-      const schemasResolved = resolveLeaf(changes, ["api", "schemas"], remote, local);
-      const schemas = asStringArray(schemasResolved.value) ?? [];
-      if (schemas.length === 0) {
-        for (const path of triggerPaths) {
-          unencodable.push({ path, reason: REASON_API_ENABLE_NEEDS_SCHEMA });
-        }
-      } else {
-        dbSchema = schemas.join(",");
+      const enabledResolved = resolveLeaf(changes, ["api", "enabled"], remote, local);
+      const enabled = asBoolean(enabledResolved.value);
+      if (enabled === false) {
+        dbSchema = "";
         encoded.push(...triggerPaths);
         pushForced(forced, ["api", "enabled"], enabledResolved);
-        pushForced(forced, ["api", "schemas"], schemasResolved);
+      } else {
+        const schemasResolved = resolveLeaf(changes, ["api", "schemas"], remote, local);
+        const schemas = asStringArray(schemasResolved.value) ?? [];
+        if (schemas.length === 0) {
+          for (const path of triggerPaths) {
+            unencodable.push({ path, reason: REASON_API_ENABLE_NEEDS_SCHEMA });
+          }
+        } else {
+          dbSchema = schemas.join(",");
+          encoded.push(...triggerPaths);
+          pushForced(forced, ["api", "enabled"], enabledResolved);
+          pushForced(forced, ["api", "schemas"], schemasResolved);
+        }
       }
     }
   }
 
   let dbExtraSearchPath: string | undefined;
-  const extraSearchPathChange = findChange(changes, ["api", "extra_search_path"]);
   if (extraSearchPathChange !== undefined) {
-    dbExtraSearchPath = (asStringArray(extraSearchPathChange.local) ?? []).join(",");
-    encoded.push(extraSearchPathChange.path);
+    if (apiDisabled) {
+      unencodable.push({ path: extraSearchPathChange.path, reason: REASON_API_DISABLED });
+    } else {
+      dbExtraSearchPath = (asStringArray(extraSearchPathChange.local) ?? []).join(",");
+      encoded.push(extraSearchPathChange.path);
+    }
   }
 
   let maxRows: number | undefined;
-  const maxRowsChange = findChange(changes, ["api", "max_rows"]);
   if (maxRowsChange !== undefined) {
-    const value = asNumber(maxRowsChange.local);
-    if (value !== undefined) {
-      maxRows = value;
-      encoded.push(maxRowsChange.path);
+    if (apiDisabled) {
+      unencodable.push({ path: maxRowsChange.path, reason: REASON_API_DISABLED });
     } else {
-      unencodable.push({ path: maxRowsChange.path, reason: REASON_VALUE_NOT_REPRESENTABLE });
+      const value = asNumber(maxRowsChange.local);
+      if (value !== undefined) {
+        maxRows = value;
+        encoded.push(maxRowsChange.path);
+      } else {
+        unencodable.push({ path: maxRowsChange.path, reason: REASON_VALUE_NOT_REPRESENTABLE });
+      }
     }
   }
 
@@ -396,9 +464,11 @@ export function legacyEncodeApiBody(
   };
 }
 
+export const legacyEncodeApiBody = withExhaustiveness(encodeApiBody);
+
 // --- db.settings ---------------------------------------------------------
 
-export function legacyEncodeDbSettingsBody(
+function encodeDbSettingsBody(
   input: LegacyPushEncoderInput,
 ): LegacyPushEncoded<LegacyDbSettingsUpdateBody> {
   const { changes } = input;
@@ -435,9 +505,11 @@ export function legacyEncodeDbSettingsBody(
   };
 }
 
+export const legacyEncodeDbSettingsBody = withExhaustiveness(encodeDbSettingsBody);
+
 // --- db.network_restrictions -----------------------------------------------
 
-export function legacyEncodeNetworkRestrictionsBody(
+function encodeNetworkRestrictionsBody(
   input: LegacyPushEncoderInput,
 ): LegacyPushEncoded<LegacyNetworkRestrictionsUpdateBody> {
   const { changes, local, remote } = input;
@@ -487,9 +559,13 @@ export function legacyEncodeNetworkRestrictionsBody(
   };
 }
 
+export const legacyEncodeNetworkRestrictionsBody = withExhaustiveness(
+  encodeNetworkRestrictionsBody,
+);
+
 // --- db.ssl_enforcement -----------------------------------------------------
 
-export function legacyEncodeSslEnforcementBody(
+function encodeSslEnforcementBody(
   input: LegacyPushEncoderInput,
 ): LegacyPushEncoded<LegacySslEnforcementUpdateBody> {
   const { changes } = input;
@@ -516,6 +592,8 @@ export function legacyEncodeSslEnforcementBody(
   };
 }
 
+export const legacyEncodeSslEnforcementBody = withExhaustiveness(encodeSslEnforcementBody);
+
 // --- storage -----------------------------------------------------------------
 
 interface LegacyStorageIcebergCatalogBody {
@@ -531,7 +609,7 @@ interface LegacyStorageVectorBucketsBody {
   readonly maxIndexes: number;
 }
 
-export function legacyEncodeStorageBody(
+function encodeStorageBody(
   input: LegacyStorageEncoderInput,
 ): LegacyPushEncoded<LegacyStorageUpdateBody> {
   const { changes, local, remote, config } = input;
@@ -704,6 +782,8 @@ export function legacyEncodeStorageBody(
   };
 }
 
+export const legacyEncodeStorageBody = withExhaustiveness(encodeStorageBody);
+
 // --- auth ----------------------------------------------------------------
 
 /** `undefined` on a non-string or an unparseable duration — never `0`, so an invalid
@@ -776,6 +856,22 @@ function encodeSmtpContainer(
   if ([hostR, portR, userR, adminEmailR, senderNameR].some((r) => r.source === "none")) {
     for (const path of unencodableTargets(containerChanges, secret)) {
       unencodable.push({ path, reason: REASON_GROUP_INCOMPLETE });
+    }
+    return undefined;
+  }
+  // A companion that DID resolve but to the wrong runtime type (never
+  // expected from a schema-typed `ProjectConfig`, but `remote` is untyped
+  // JSON off the wire) must never be silently coerced to `""`/`"0"` below —
+  // it makes the whole group unencodable instead.
+  if (
+    typeof hostR.value !== "string" ||
+    typeof portR.value !== "number" ||
+    typeof userR.value !== "string" ||
+    typeof adminEmailR.value !== "string" ||
+    typeof senderNameR.value !== "string"
+  ) {
+    for (const path of unencodableTargets(containerChanges, secret)) {
+      unencodable.push({ path, reason: REASON_COMPANION_TYPE_MISMATCH });
     }
     return undefined;
   }
@@ -914,6 +1010,20 @@ function encodeExternalProviderContainer(
     }
     return undefined;
   }
+  // Each companion resolved to SOME value above — but a wrong runtime type
+  // (client_id/url expect a string, email_optional/skip_nonce_check expect a
+  // boolean) must never be silently coerced to `""`/`false` below.
+  if (
+    typeof clientIdR.value !== "string" ||
+    (urlR !== undefined && typeof urlR.value !== "string") ||
+    (emailOptionalR !== undefined && typeof emailOptionalR.value !== "boolean") ||
+    (skipNonceCheckR !== undefined && typeof skipNonceCheckR.value !== "boolean")
+  ) {
+    for (const path of unencodableTargets(containerChanges, secret)) {
+      unencodable.push({ path, reason: REASON_COMPANION_TYPE_MISMATCH });
+    }
+    return undefined;
+  }
   pushForced(forced, [...containerPath, "client_id"], clientIdR);
   body[`${key}_client_id`] = asString(clientIdR.value) ?? "";
   if (secret?.status === "send") {
@@ -1009,12 +1119,21 @@ function encodeActiveSmsProviderBody(
       break;
   }
 
-  if (resolutions.some(({ resolution }) => resolution.source === "none")) {
+  // Every field resolved through `field`/`optionalField` above is
+  // string-typed; a resolution present but of the wrong runtime type must
+  // never have silently fallen through `field`'s `?? ""` default, so it is
+  // caught here alongside the "missing entirely" case rather than shipped.
+  const missingResolution = resolutions.some(({ resolution }) => resolution.source === "none");
+  const wrongTypeResolution = resolutions.some(
+    ({ resolution }) => resolution.source !== "none" && typeof resolution.value !== "string",
+  );
+  if (missingResolution || wrongTypeResolution) {
+    const reason = missingResolution ? REASON_GROUP_INCOMPLETE : REASON_COMPANION_TYPE_MISMATCH;
     for (const change of containerChanges) {
-      unencodable.push({ path: change.path, reason: REASON_GROUP_INCOMPLETE });
+      unencodable.push({ path: change.path, reason });
     }
     for (const path of sentSecretPaths) {
-      unencodable.push({ path, reason: REASON_GROUP_INCOMPLETE });
+      unencodable.push({ path, reason });
     }
     return undefined;
   }
@@ -1265,7 +1384,7 @@ export const LEGACY_PUSH_AUTH_LEAF_MAP: ReadonlyArray<LegacyPushAuthLeafSpec> = 
   },
 ];
 
-export function legacyEncodeAuthBody(
+function encodeAuthBody(
   input: LegacyAuthEncoderInput,
 ): LegacyPushEncoded<Readonly<Record<string, unknown>>> {
   const { changes, local, remote, secrets, emailContent, remoteAuthAttributes, now } = input;
@@ -1495,3 +1614,5 @@ export function legacyEncodeAuthBody(
     secretsEncoded: [...secretsEncoded].sort(legacyComparePaths),
   };
 }
+
+export const legacyEncodeAuthBody = withExhaustiveness(encodeAuthBody);

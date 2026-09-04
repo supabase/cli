@@ -44,13 +44,23 @@ export function legacyParseDuration(s: string): number {
       n = n * 10 + parseInt(s.charAt(i), 10);
       i++;
     }
+    const intDigits = i;
+    let fracDigits = 0;
     if (i < s.length && s.charAt(i) === ".") {
       i++;
+      const fracStart = i;
       while (i < s.length && s.charAt(i) >= "0" && s.charAt(i) <= "9") {
         frac = frac * 10 + parseInt(s.charAt(i), 10);
         post *= 10;
         i++;
       }
+      fracDigits = i - fracStart;
+    }
+    // A component with no digit at all — bare unit ("s", "ms") or a lone "." —
+    // must never silently parse as a zero-valued component; that would let a
+    // typo'd duration overwrite a remote value with 0 instead of failing.
+    if (intDigits === 0 && fracDigits === 0) {
+      throw new Error(`time: invalid duration "${orig}"`);
     }
     s = s.slice(i);
     if (s.length === 0) throw new Error(`time: missing unit in duration "${orig}"`);

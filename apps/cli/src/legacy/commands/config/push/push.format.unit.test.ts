@@ -63,7 +63,7 @@ const GATED_SECRET: LegacyPushSecretReport = {
   remoteState: "absent",
 };
 
-const NO_EXTRAS_OR_FORCED = { extras: [], forced: [] };
+const NO_EXTRAS_OR_FORCED = { extras: [], forced: [], secretsEncoded: [] };
 
 describe("legacyPushUpdatingLine", () => {
   const RESOURCE_PREFIXES: ReadonlyArray<readonly [LegacyPushResource, string]> = [
@@ -93,6 +93,7 @@ describe("legacyPushUpdatingLine", () => {
         changes: [API_MAX_ROWS_CHANGE],
         secrets: [SENT_SECRET],
         ...NO_EXTRAS_OR_FORCED,
+        secretsEncoded: [SENT_SECRET.path],
       }),
     ).toBe(
       "Updating Auth service with config:\n" +
@@ -114,6 +115,7 @@ describe("legacyPushUpdatingLine", () => {
         changes: [],
         secrets: [SENT_SECRET_ABSENT_REMOTE],
         ...NO_EXTRAS_OR_FORCED,
+        secretsEncoded: [SENT_SECRET_ABSENT_REMOTE.path],
       }),
     ).toBe(
       "Updating Auth service with config:\n" +
@@ -164,8 +166,34 @@ describe("legacyPushUpdatingLine", () => {
       changes: [],
       secrets: [SENT_SECRET],
       ...NO_EXTRAS_OR_FORCED,
+      secretsEncoded: [SENT_SECRET.path],
     });
     expect(rendered).not.toContain("(digest)");
+  });
+
+  test("a send secret whose container was dropped as unencodable renders as NOT being sent, not as a pending update", () => {
+    // `secretsEncoded` omits the path — the container carrying it turned out
+    // unencodable — so the pre-prompt block must never imply it is being
+    // sent, even though `status` is still `send`.
+    expect(
+      legacyPushUpdatingLine({
+        resource: "auth",
+        changes: [API_MAX_ROWS_CHANGE],
+        secrets: [SENT_SECRET],
+        ...NO_EXTRAS_OR_FORCED,
+        secretsEncoded: [],
+      }),
+    ).toBe(
+      "Updating Auth service with config:\n" +
+        "api.max_rows [update]\n" +
+        "  local:  2000\n" +
+        "  remote: 1000\n" +
+        "\n" +
+        "auth.captcha.secret [secret]\n" +
+        "  local:  (set)\n" +
+        "  remote: (not pushed — its group could not be encoded)\n" +
+        "\n",
+    );
   });
 
   test("omits unchanged and gated secrets from the block", () => {
@@ -185,6 +213,7 @@ describe("legacyPushUpdatingLine", () => {
         resource: "auth",
         changes: [],
         secrets: [],
+        secretsEncoded: [],
         extras: [{ path: ["auth", "email", "template", "invite", "content"], label: "content" }],
         forced: [],
       }),
@@ -203,6 +232,7 @@ describe("legacyPushUpdatingLine", () => {
         resource: "db.network_restrictions",
         changes: [],
         secrets: [],
+        secretsEncoded: [],
         extras: [],
         forced: [{ path: ["db", "network_restrictions", "allowed_cidrs_v6"], value: [] }],
       }),
@@ -220,6 +250,7 @@ describe("legacyPushUpdatingLine", () => {
       resource: "auth",
       changes: [API_MAX_ROWS_CHANGE],
       secrets: [SENT_SECRET],
+      secretsEncoded: [SENT_SECRET.path],
       extras: [{ path: ["auth", "email", "template", "invite", "content"], label: "content" }],
       forced: [],
     });
@@ -303,7 +334,7 @@ describe("legacyPushNotes", () => {
 
   test("unsupported: singular and plural", () => {
     expect(legacyPushNotes({ ...EMPTY_NOTES, unsupported: [["db", "major_version"]] })).toBe(
-      "Note: 1 declared property has no Management API field and was not pushed: db.major_version (change them from the dashboard).\n",
+      "Note: 1 declared property has no Management API field and was not pushed: db.major_version (change it from the dashboard).\n",
     );
     expect(
       legacyPushNotes({
@@ -468,7 +499,7 @@ describe("legacyPushNotes", () => {
         remoteOnly: 12,
       }),
     ).toBe(
-      "Note: 1 declared property has no Management API field and was not pushed: db.major_version (change them from the dashboard).\n" +
+      "Note: 1 declared property has no Management API field and was not pushed: db.major_version (change it from the dashboard).\n" +
         "Note: 1 declared property could not be encoded and was not pushed: api.enabled (enabling the Data API needs at least one schema in api.schemas)\n" +
         "Note: 1 declared property is not managed by config push and was not compared; run `supabase config diff` to list them.\n" +
         "Note: 1 undeclared property had to be sent alongside a declared change and was written at its config default: db.network_restrictions.allowed_cidrs_v6 (the values shown in the confirmation block were applied).\n" +
@@ -485,7 +516,7 @@ describe("legacyPushNotes", () => {
     });
     expect(rendered).not.toContain(esc);
     expect(rendered).toBe(
-      "Note: 1 declared property has no Management API field and was not pushed: db.evil[31mred No config differences found. (change them from the dashboard).\n",
+      "Note: 1 declared property has no Management API field and was not pushed: db.evil[31mred No config differences found. (change it from the dashboard).\n",
     );
   });
 });
@@ -563,9 +594,7 @@ describe("legacyPushSummaryMessage", () => {
   test("caveat: unsupported + unencodable, singular and plural", () => {
     expect(
       legacyPushSummaryMessage({ ...EMPTY_SUMMARY_INPUT, unsupported: [["db", "major_version"]] }),
-    ).toBe(
-      "Nothing to push: the project already matches the declared properties. 1 declared property could not be pushed.",
-    );
+    ).toBe("Nothing was pushed. 1 declared property could not be pushed.");
     expect(
       legacyPushSummaryMessage({
         ...EMPTY_SUMMARY_INPUT,
@@ -577,9 +606,47 @@ describe("legacyPushSummaryMessage", () => {
           },
         ],
       }),
-    ).toBe(
-      "Nothing to push: the project already matches the declared properties. 2 declared properties could not be pushed.",
-    );
+    ).toBe("Nothing was pushed. 2 declared properties could not be pushed.");
+  });
+
+  test('base: "Nothing was pushed" (not "Nothing to push") when every service is up_to_date/disabled but something is unsupported', () => {
+    // The base sentence must never claim the project "already matches the
+    // declared properties" in the same breath as reporting that a declared
+    // property could not be pushed — self-contradictory.
+    expect(
+      legacyPushSummaryMessage({
+        ...EMPTY_SUMMARY_INPUT,
+        services: [{ service: "api", status: "up_to_date", changes: [] }],
+        unsupported: [["db", "major_version"]],
+      }),
+    ).toBe("Nothing was pushed. 1 declared property could not be pushed.");
+  });
+
+  test('base: "Nothing was pushed" when every service is up_to_date/disabled but something is unencodable', () => {
+    expect(
+      legacyPushSummaryMessage({
+        ...EMPTY_SUMMARY_INPUT,
+        services: [{ service: "db.settings", status: "disabled", changes: [] }],
+        unencodable: [
+          {
+            path: ["api", "enabled"],
+            reason: "enabling the Data API needs at least one schema in api.schemas",
+          },
+        ],
+      }),
+    ).toBe("Nothing was pushed. 1 declared property could not be pushed.");
+  });
+
+  test('base: "Nothing to push" still applies when unsupported/unencodable are both empty, even with a disabled service present', () => {
+    expect(
+      legacyPushSummaryMessage({
+        ...EMPTY_SUMMARY_INPUT,
+        services: [
+          { service: "api", status: "up_to_date", changes: [] },
+          { service: "storage", status: "disabled", changes: [] },
+        ],
+      }),
+    ).toBe("Nothing to push: the project already matches the declared properties.");
   });
 
   test("caveat: unmanagedCount, singular and plural", () => {
@@ -774,7 +841,7 @@ describe("legacyPushPayload", () => {
     scope: { present: ["api", "auth", "database", "pooler", "realtime", "storage"], missing: [] },
   };
 
-  test("shapes the full payload, bucketing secrets across all five statuses", () => {
+  test("shapes the full payload, bucketing secrets across all six statuses", () => {
     expect(legacyPushPayload(BASE_INPUT)).toEqual({
       schema_version: 1,
       project_ref: "abcdefghijklmnopqrst",
@@ -793,6 +860,7 @@ describe("legacyPushPayload", () => {
         unchanged: [["auth", "hook", "mfa_verification_attempt", "secrets"]],
         not_set: [["auth", "sms", "twilio", "auth_token"]],
         gated: [["auth", "hook", "send_sms", "secrets"]],
+        unencodable: [],
         skipped: [],
       },
       declined_addons: ["auth_mfa_phone"],
@@ -801,24 +869,59 @@ describe("legacyPushPayload", () => {
     });
   });
 
-  test("a status: send secret lands in 'skipped', not 'sent', when the auth write did not run", () => {
+  test("a status: send secret lands in 'skipped', not 'sent'/'unencodable', when the auth write did not run", () => {
     const payload = legacyPushPayload({ ...BASE_INPUT, authWriteRan: false });
     expect(payload["secrets"]).toEqual({
       sent: [],
       unchanged: [["auth", "hook", "mfa_verification_attempt", "secrets"]],
       not_set: [["auth", "sms", "twilio", "auth_token"]],
       gated: [["auth", "hook", "send_sms", "secrets"]],
+      unencodable: [],
       skipped: [["auth", "captcha", "secret"]],
     });
   });
 
-  test("'sent' reads from secretsSent, not from the raw 'send' decision list — a send decision whose container was dropped never lands in 'sent'", () => {
+  test("'sent' reads from secretsSent, not from the raw 'send' decision list — a send decision whose container was dropped lands in 'unencodable', never in 'sent'", () => {
     // The write ran (authWriteRan: true) and `SENT_SECRET`'s status is
     // still `send`, but the encoder that would have carried it reported
     // nothing in `secretsSent` — its container must have been dropped as
     // `unencodable` instead (asserted separately at the encoder layer).
     const payload = legacyPushPayload({ ...BASE_INPUT, secretsSent: [] });
-    expect(payload["secrets"]).toMatchObject({ sent: [], skipped: [] });
+    expect(payload["secrets"]).toMatchObject({
+      sent: [],
+      unencodable: [["auth", "captcha", "secret"]],
+      skipped: [],
+    });
+  });
+
+  test("the six secret buckets partition every declared secret's path exactly once", () => {
+    const sentAndEncoded = { ...SENT_SECRET, path: ["auth", "captcha", "secret"] };
+    const sentButDropped = {
+      ...SENT_SECRET,
+      path: ["auth", "email", "smtp", "pass"],
+      apiKey: "smtp_pass",
+    };
+    const secrets: ReadonlyArray<LegacyPushSecretReport> = [
+      sentAndEncoded,
+      sentButDropped,
+      UNCHANGED_SECRET,
+      NOT_SET_SECRET,
+      GATED_SECRET,
+    ];
+    const payload = legacyPushPayload({
+      ...BASE_INPUT,
+      secrets,
+      authWriteRan: true,
+      secretsSent: [sentAndEncoded.path],
+    });
+    const buckets = payload["secrets"] as Readonly<
+      Record<string, ReadonlyArray<ReadonlyArray<string>>>
+    >;
+    const bucketPaths = Object.values(buckets)
+      .flat()
+      .map((path) => path.join("."));
+    const declaredPaths = secrets.map((secret) => secret.path.join(".")).sort();
+    expect(bucketPaths.sort()).toEqual(declaredPaths);
   });
 
   test("empty arrays round-trip as empty arrays, not omitted keys", () => {
@@ -846,7 +949,7 @@ describe("legacyPushPayload", () => {
       unencodable: [],
       forced: [],
       unmanaged: [],
-      secrets: { sent: [], unchanged: [], not_set: [], gated: [], skipped: [] },
+      secrets: { sent: [], unchanged: [], not_set: [], gated: [], unencodable: [], skipped: [] },
       declined_addons: [],
       remote_only: 0,
       scope: { present: [], missing: [] },

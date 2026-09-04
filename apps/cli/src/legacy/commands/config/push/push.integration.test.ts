@@ -681,6 +681,7 @@ max_rows = 1000
         unchanged: [],
         not_set: [],
         gated: [],
+        unencodable: [],
         skipped: [],
       });
       expect(data["remote_only"]).toBe(0);
@@ -864,7 +865,7 @@ otp_expiry = 120
     return Effect.gen(function* () {
       yield* legacyConfigPush({ projectRef: Option.none() });
       expect(out.stderrText).toContain(
-        "Note: 1 declared property has no Management API field and was not pushed: db.pooler.pool_mode (change them from the dashboard).",
+        "Note: 1 declared property has no Management API field and was not pushed: db.pooler.pool_mode (change it from the dashboard).",
       );
       const success = out.messages.find((m) => m.type === "success");
       const data = success?.data as Record<string, unknown>;

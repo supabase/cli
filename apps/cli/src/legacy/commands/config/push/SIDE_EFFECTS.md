@@ -273,6 +273,7 @@ asserting `false` would be as misleading as asserting `true`:
     "unchanged": [],
     "not_set": [],
     "gated": [],
+    "unencodable": [],
     "skipped": [],
   },
   "declined_addons": [],
@@ -329,7 +330,7 @@ mirroring — but not equal to — a `config.toml` path, plus the fixed string
 contract; every other field is additive. When the branch gate declines (machine format
 without `--yes`), the command fails (exit `1`) with the standard error envelope in place
 of the success payload — see above. `secrets` partitions every declared secret
-(`changeSet.masked`) across its five buckets, reporting what was OBSERVED to happen —
+(`changeSet.masked`) across its six buckets, reporting what was OBSERVED to happen —
 `sent` only when the auth write actually ran AND the container carrying that secret
 placed it in the request body. A `send`-decided secret whose write did not run
 (declined prompt, or auth not written for any other reason) lands in `skipped`

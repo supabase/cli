@@ -51,4 +51,20 @@ describe("legacyParseDuration", () => {
   it("throws on an unrecognized unit", () => {
     expect(() => legacyParseDuration("5d")).toThrow(/unknown unit/);
   });
+
+  it("throws on a digit-less (unit-only) component, rather than parsing it as zero", () => {
+    expect(() => legacyParseDuration("s")).toThrow(/invalid duration/);
+    expect(() => legacyParseDuration("ms")).toThrow(/invalid duration/);
+    expect(() => legacyParseDuration("h")).toThrow(/invalid duration/);
+  });
+
+  it("accepts a decimal-only component (a digit after the point still counts)", () => {
+    expect(legacyParseDuration(".5s")).toBe(500_000_000);
+  });
+
+  it("throws when one component of an otherwise-valid duration is digit-less", () => {
+    expect(() => legacyParseDuration("1hm")).toThrow(/invalid duration/);
+    expect(() => legacyParseDuration("1h0m0s0ms")).not.toThrow();
+    expect(() => legacyParseDuration("5sms")).toThrow(/invalid duration/);
+  });
 });

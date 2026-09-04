@@ -12,7 +12,7 @@ import {
   type LegacyConfigApiScope,
 } from "../config.format.ts";
 import type { LegacyConfigPushTarget } from "./push.branch-target.ts";
-import { legacyComparePaths } from "./push.paths.ts";
+import { legacyComparePaths, legacyPathIn } from "./push.paths.ts";
 import {
   LEGACY_PUSH_RESOURCES,
   legacyPushResponseBlock,
@@ -111,15 +111,32 @@ function renderBlock(
 
 /**
  * `[secret]` blocks — rendered BEFORE the confirmation prompt, so a credential
- * that will not be sent (`not_set`) is disclosed alongside one that will
- * (`send`), inside the same resource block. `unchanged`/`gated` decisions
- * never render (nothing changed, or the secret's container is off — already
- * silent the same way a `disabled` resource status is).
+ * that will not be sent (`not_set`, or a `send` secret whose own container
+ * ended up unencodable) is disclosed alongside one that will (`send` AND
+ * actually placed in the request body), inside the same resource block.
+ * `unchanged`/`gated` decisions never render (nothing changed, or the
+ * secret's container is off — already silent the same way a `disabled`
+ * resource status is). `secretsEncoded` is the encoder's own record of which
+ * `send` decisions it actually placed a plaintext for — a container can
+ * carry a `send` decision and still drop it as `unencodable` (its
+ * required-together group unresolvable), so a `send` status alone never
+ * implies the secret is being sent.
  */
-function renderSecretBlocks(secrets: ReadonlyArray<LegacyPushSecretReport>): string {
+function renderSecretBlocks(
+  secrets: ReadonlyArray<LegacyPushSecretReport>,
+  secretsEncoded: ReadonlyArray<ReadonlyArray<string>>,
+): string {
   return secrets
     .map((secret) => {
       if (secret.status === "send") {
+        if (!legacyPathIn(secret.path, secretsEncoded)) {
+          return renderBlock(
+            secret.path,
+            "secret",
+            "(set)",
+            "(not pushed — its group could not be encoded)",
+          );
+        }
         return renderBlock(
           secret.path,
           "secret",
@@ -172,6 +189,10 @@ export interface LegacyPushUpdatingLineInput {
   /** The resource's full secret-decision list; only `send`/`not_set` entries render. Callers with
    *  no secrets (every resource but `auth`) simply pass `[]`. */
   readonly secrets: ReadonlyArray<LegacyPushSecretReport>;
+  /** The encoder result's own `secretsEncoded` — which `send` decisions the request body actually
+   *  placed a plaintext for. A `send` decision whose path is absent here renders as NOT being
+   *  sent, because its container was dropped as `unencodable` (see `renderSecretBlocks`). */
+  readonly secretsEncoded: ReadonlyArray<ReadonlyArray<string>>;
   readonly extras: ReadonlyArray<LegacyPushExtra>;
   readonly forced: ReadonlyArray<LegacyPushForced>;
 }
@@ -188,7 +209,7 @@ export function legacyPushUpdatingLine(input: LegacyPushUpdatingLineInput): stri
   return (
     `${PUSH_UPDATING_PREFIX[input.resource]}\n` +
     legacyConfigRenderChangeLines(input.changes) +
-    renderSecretBlocks(input.secrets) +
+    renderSecretBlocks(input.secrets, input.secretsEncoded) +
     renderExtraBlocks(input.extras) +
     renderForcedBlocks(input.forced)
   );
@@ -237,7 +258,7 @@ export function legacyPushNotes(input: LegacyPushNotesInput): string {
   if (input.unsupported.length > 0) {
     const n = input.unsupported.length;
     lines.push(
-      `Note: ${legacyConfigPlural(n, "declared property", "declared properties")} ${n === 1 ? "has" : "have"} no Management API field and ${n === 1 ? "was" : "were"} not pushed: ${input.unsupported.map(legacyConfigRenderPath).join(", ")} (change them from the dashboard).`,
+      `Note: ${legacyConfigPlural(n, "declared property", "declared properties")} ${n === 1 ? "has" : "have"} no Management API field and ${n === 1 ? "was" : "were"} not pushed: ${input.unsupported.map(legacyConfigRenderPath).join(", ")} (change ${n === 1 ? "it" : "them"} from the dashboard).`,
     );
   }
 
@@ -307,11 +328,12 @@ export interface LegacyPushPayloadInput {
    *  unfiltered `unmanaged` list, which the payload's own `unmanaged` field keeps in full. */
   readonly unmanagedCount: number;
   /** Every declared secret's decision, unfiltered — partitions `changeSet.masked` across all
-   *  five buckets below (`gated` is now included, unlike the pre-fix-pass payload). */
+   *  six buckets below (`gated` is now included, unlike the pre-fix-pass payload). */
   readonly secrets: ReadonlyArray<LegacyPushSecretReport>;
   /** Whether the auth resource's write actually ran — decides whether a `status: "send"` secret
-   *  lands in `sent` (write ran) or `skipped` (declined, or auth not written for any other
-   *  reason): the payload reports what was OBSERVED to happen, not the pre-prompt decision. */
+   *  lands in `sent`/`unencodable` (write ran) or `skipped` (declined, or auth not written for
+   *  any other reason): the payload reports what was OBSERVED to happen, not the pre-prompt
+   *  decision. */
   readonly authWriteRan: boolean;
   /** The auth encoder's own `secretsEncoded` — the secret paths a write actually placed a
    *  plaintext for. NOT every `status: "send"` decision: a container can carry a `send` decision
@@ -339,6 +361,8 @@ export function legacyPushSummaryMessage(input: LegacyPushPayloadInput): string 
     const n = updated.reduce((sum, service) => sum + service.changes.length, 0);
     base = `${legacyConfigPlural(n, "property", "properties")} pushed to ${legacySanitizeInlineName(input.projectRef)}.`;
   } else if (
+    input.unsupported.length === 0 &&
+    input.unencodable.length === 0 &&
     input.services.every(
       (service) => service.status === "up_to_date" || service.status === "disabled",
     )
@@ -426,6 +450,16 @@ export function legacyPushPayload(input: LegacyPushPayloadInput): Record<string,
       unchanged: byStatus("unchanged"),
       not_set: byStatus("not_set"),
       gated: byStatus("gated"),
+      // A `send` decision the auth write ran but did NOT place in the request
+      // body — its container was dropped as `unencodable` (its
+      // required-together group unresolvable), even while OTHER auth fields
+      // still triggered the write. Distinct from `skipped`, which means the
+      // write itself never ran.
+      unencodable: input.authWriteRan
+        ? sendDecisions
+            .map((secret) => secret.path)
+            .filter((path) => !legacyPathIn(path, input.secretsSent))
+        : [],
       skipped: input.authWriteRan ? [] : sendDecisions.map((secret) => secret.path),
     },
     declined_addons: input.declinedAddons,
