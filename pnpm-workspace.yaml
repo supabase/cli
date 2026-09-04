@@ -15,7 +15,7 @@ catalog:
   "@effect/platform-bun": "4.0.0-rc.112"
   "@effect/platform-node": "4.0.0-rc.112"
   "@effect/sql-pg": "4.0.0-rc.112"
-  "@effect/tsgo": "0.37.0"
+  "@effect/tsgo": &effect-tsgo-version "0.37.0"
   "@effect/vitest": "4.0.0-rc.112"
   "@tsconfig/bun": "^1.0.11"
   "@types/bun": "^1.4.0"
@@ -38,6 +38,59 @@ blockExoticSubdeps: true
 overrides:
   # pg-topo's parser chain otherwise resolves bleeding-edge Node globals that conflict with Bun's web types.
   "@launchql/protobufjs>@types/node": "24.10.4"
+
+packageExtensions:
+  # The global virtual store has no hidden hoist directory
+  # (node_modules/.pnpm/node_modules), so anything a package imports without
+  # declaring has to be declared here for it to resolve at all.
+  bun-types:
+    dependencies:
+      # bun-types imports undici-types but declares only @types/node; keep
+      # this range matching @types/node's own so both resolve to one copy.
+      undici-types: "~8.3.0"
+  "@supabase/pg-delta":
+    dependencies:
+      # Consumed as raw TypeScript source (`bun` exports condition), which
+      # imports pg and debug without shipping their @types packages.
+      "@types/debug": "^4.1.12"
+      "@types/pg": "^8.23.1"
+  # vitest lists vite as both a dependency and a peer, so pnpm resolves it as a
+  # peer only. These two reach vitest through their own `vitest` peer inside a
+  # peer cycle, which leaves them a vitest variant with no vite at all — fatal
+  # under the global store as soon as coverage loads `vitest/node`. Giving them
+  # an optional vite peer makes pnpm resolve the full vitest variant instead.
+  "@vitest/coverage-istanbul": &vitest-consumer
+    peerDependencies:
+      vite: "*"
+    peerDependenciesMeta:
+      vite:
+        optional: true
+  "@effect/vitest": *vitest-consumer
+  # The root `prepare` script (`effect-tsgo patch --oxlint`) replaces files
+  # inside these installed packages. Their global-store directories are keyed
+  # only by each package's own dependency graph and shared with every checkout
+  # on the machine that resolves the same graph, so the in-place patches would
+  # leak into unrelated projects. Declaring the patcher as a dependency of
+  # everything it mutates folds its version (aliased from the catalog entry
+  # above) into that key, keeping the patched directories private to
+  # identically-configured checkouts and re-keyed on every @effect/tsgo bump.
+  oxlint: &effect-tsgo-patched
+    dependencies:
+      "@effect/tsgo": *effect-tsgo-version
+  "@oxlint/binding-darwin-arm64": *effect-tsgo-patched
+  "@oxlint/binding-darwin-x64": *effect-tsgo-patched
+  "@oxlint/binding-linux-arm64-gnu": *effect-tsgo-patched
+  "@oxlint/binding-linux-arm64-musl": *effect-tsgo-patched
+  "@oxlint/binding-linux-x64-gnu": *effect-tsgo-patched
+  "@oxlint/binding-linux-x64-musl": *effect-tsgo-patched
+  "@oxlint/binding-win32-arm64-msvc": *effect-tsgo-patched
+  "@oxlint/binding-win32-x64-msvc": *effect-tsgo-patched
+  "@oxlint-tsgolint/darwin-arm64": *effect-tsgo-patched
+  "@oxlint-tsgolint/darwin-x64": *effect-tsgo-patched
+  "@oxlint-tsgolint/linux-arm64": *effect-tsgo-patched
+  "@oxlint-tsgolint/linux-x64": *effect-tsgo-patched
+  "@oxlint-tsgolint/win32-arm64": *effect-tsgo-patched
+  "@oxlint-tsgolint/win32-x64": *effect-tsgo-patched
 
 minimumReleaseAge: 10200
 minimumReleaseAgeExclude:
@@ -76,3 +129,5 @@ supportedArchitectures:
 
 patchedDependencies:
   "@libpg-query/parser@17.6.10": patches/@libpg-query__parser@17.6.10.patch
+
+virtualStoreType: global

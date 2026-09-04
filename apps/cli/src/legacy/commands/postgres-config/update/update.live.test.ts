@@ -1,7 +1,7 @@
 import { expect } from "vitest";
 
 import {
-  postgresConfigLiveFlags,
+  experimentalProjectLiveFlags,
   removePostgresConfigLiveOverride,
   requireLiveSuccess,
   test,
@@ -11,7 +11,7 @@ import {
 // --no-restart skips the database restart; work_mem is a dynamic parameter, so
 // the override still takes effect.
 test("applies an override with --no-restart and get proves it", async ({ cli, project }) => {
-  const flags = postgresConfigLiveFlags(project);
+  const flags = experimentalProjectLiveFlags(project);
   let targetError: unknown;
   const cleanupErrors: Array<unknown> = [];
   try {

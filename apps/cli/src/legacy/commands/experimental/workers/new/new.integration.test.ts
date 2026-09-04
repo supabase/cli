@@ -13,6 +13,7 @@ import {
 import {
   InvalidWorkerNameError,
   InvalidWorkerSourceError,
+  MissingWorkerNameError,
   WorkerDirectoryExistsError,
 } from "../../../../../shared/workers/workers.errors.ts";
 import { legacyWorkersNew } from "./new.handler.ts";
@@ -27,7 +28,7 @@ verify_jwt = false
 
 function flags(overrides: Partial<LegacyWorkersNewFlags> = {}): LegacyWorkersNewFlags {
   return {
-    name: "api",
+    name: Option.some("api"),
     runtime: Option.none(),
     size: Option.none(),
     source: Option.none(),
@@ -54,7 +55,7 @@ describe("legacy workers new", () => {
     const { layer, out } = setupLegacyWorkers({ workdir: repo.dir });
 
     return Effect.gen(function* () {
-      yield* legacyWorkersNew(flags({ name: "api", runtime: Option.some("node") }));
+      yield* legacyWorkersNew(flags({ name: Option.some("api"), runtime: Option.some("node") }));
 
       const workerDir = join(repo.dir, "supabase", "workers", "api");
       expect(existsSync(join(workerDir, "index.mjs"))).toBe(true);
@@ -66,9 +67,89 @@ describe("legacy workers new", () => {
       // the shape `functions new` established.
       expect(out.stdoutText).toContain("Created new Worker at supabase/workers/api");
       expect(out.stdoutText).toContain("Runtime");
-      expect(out.stdoutText).toContain("supabase experimental workers push api");
+      // The deploy hint is a success trailer, which lands on stderr.
+      expect(out.stderrText).toContain("supabase experimental workers push api");
     }).pipe(Effect.provide(layer), Effect.ensuring(Effect.sync(repo.cleanup)));
   });
+  it.live("asks for the name when the command line carries none", () => {
+    const repo = project();
+    const { layer, out } = setupLegacyWorkers({
+      workdir: repo.dir,
+      promptTextResponses: ["orders"],
+      promptSelectResponses: ["node", "2gb"],
+    });
+
+    return Effect.gen(function* () {
+      yield* legacyWorkersNew(flags({ name: Option.none() }));
+
+      expect(out.promptTextCalls.map((call) => call.message)).toEqual([
+        "What should this worker be called?",
+      ]);
+      expect(existsSync(join(repo.dir, "supabase", "workers", "orders", "index.mjs"))).toBe(true);
+      expect(repo.config()).toContain("[workers.orders]");
+    }).pipe(Effect.provide(layer), Effect.ensuring(Effect.sync(repo.cleanup)));
+  });
+
+  // The prompt is the last place a mistyped or taken name can be corrected
+  // without ending the run, so it refuses both there rather than after asking.
+  it.live("refuses a bad or already-recorded name at the name prompt", () => {
+    const repo = project({
+      "supabase/config.toml": `${CONFIG_WITH_COMMENTS}\n[workers.api]\nruntime = "node"\nsize = "2gb"\n`,
+    });
+    const { layer, out } = setupLegacyWorkers({
+      workdir: repo.dir,
+      promptTextResponses: ["orders"],
+      promptSelectResponses: ["node", "2gb"],
+    });
+
+    return Effect.gen(function* () {
+      yield* legacyWorkersNew(flags({ name: Option.none() }));
+
+      const validate = out.promptTextCalls[0]?.opts?.validate;
+      expect(validate).toBeDefined();
+      expect(validate?.("My_Worker")).toContain("lowercase letters");
+      expect(validate?.("api")).toContain("already configured");
+      expect(validate?.("orders")).toBeUndefined();
+      expect(existsSync(join(repo.dir, "supabase", "workers", "orders", "index.mjs"))).toBe(true);
+    }).pipe(Effect.provide(layer), Effect.ensuring(Effect.sync(repo.cleanup)));
+  });
+
+  // Nowhere to ask means nothing to scaffold under: the name is the directory,
+  // the config key and the hostname, and none of those has a default.
+  it.live.each([
+    { label: "not interactive", setup: { interactive: false } },
+    // A TTY, but stdout was claimed by the payload, so a prompt would corrupt it.
+    { label: "-o json", setup: { goOutput: "json" as const } },
+    // `printf 'orders\n' | supabase experimental workers new`: stdout is still a
+    // terminal, so `output.interactive` on its own would have fed the pipe
+    // straight into the name prompt instead of taking this documented path.
+    { label: "piped stdin", setup: { stdinIsTty: false } },
+  ])("refuses a bare new when there is nowhere to ask ($label)", ({ setup }) => {
+    const repo = project();
+    const { layer, out } = setupLegacyWorkers({
+      workdir: repo.dir,
+      // An answer is waiting, so a prompt would succeed rather than fail some
+      // other way.
+      promptTextResponses: ["orders"],
+      ...setup,
+    });
+
+    return Effect.gen(function* () {
+      const error = yield* legacyWorkersNew(flags({ name: Option.none() })).pipe(Effect.flip);
+
+      expect(error).toBeInstanceOf(MissingWorkerNameError);
+      if (!(error instanceof MissingWorkerNameError)) {
+        return yield* Effect.die("expected MissingWorkerNameError");
+      }
+      // The retry has to name the path the command is actually registered at;
+      // `supabase workers new` is an unknown command.
+      expect(error.suggestion).toContain("supabase experimental workers new");
+      expect(out.promptTextCalls).toEqual([]);
+      expect(existsSync(join(repo.dir, "supabase", "workers"))).toBe(false);
+      expect(repo.config()).toBe(CONFIG_WITH_COMMENTS);
+    }).pipe(Effect.provide(layer), Effect.ensuring(Effect.sync(repo.cleanup)));
+  });
+
   it.live("prompts for runtime and size when neither is given", () => {
     const repo = project();
     const { layer, out } = setupLegacyWorkers({
@@ -77,7 +158,7 @@ describe("legacy workers new", () => {
     });
 
     return Effect.gen(function* () {
-      yield* legacyWorkersNew(flags({ name: "api" }));
+      yield* legacyWorkersNew(flags({ name: Option.some("api") }));
 
       expect(out.promptSelectCalls.map((call) => call.message)).toEqual([
         "Which runtime should this worker use?",
@@ -89,12 +170,31 @@ describe("legacy workers new", () => {
     }).pipe(Effect.provide(layer), Effect.ensuring(Effect.sync(repo.cleanup)));
   });
 
+  // The runtime and size prompts do have defaults to fall back on, so a piped
+  // stdin must leave them unasked rather than consuming the pipe.
+  it.live("takes the defaults without prompting when stdin is piped", () => {
+    const repo = project();
+    const { layer, out } = setupLegacyWorkers({
+      workdir: repo.dir,
+      stdinIsTty: false,
+      promptSelectResponses: ["node", "4gb"],
+    });
+
+    return Effect.gen(function* () {
+      yield* legacyWorkersNew(flags({ name: Option.some("api") }));
+
+      expect(out.promptSelectCalls).toEqual([]);
+      expect(repo.config()).toContain('runtime = "deno"');
+      expect(repo.config()).toContain('size = "2gb"');
+    }).pipe(Effect.provide(layer), Effect.ensuring(Effect.sync(repo.cleanup)));
+  });
+
   it.live("falls back to the defaults without prompting when not interactive", () => {
     const repo = project();
     const { layer, out } = setupLegacyWorkers({ workdir: repo.dir, format: "json" });
 
     return Effect.gen(function* () {
-      yield* legacyWorkersNew(flags({ name: "api" }));
+      yield* legacyWorkersNew(flags({ name: Option.some("api") }));
 
       expect(out.promptSelectCalls).toHaveLength(0);
       expect(repo.config()).toContain('runtime = "deno"');
@@ -110,12 +210,12 @@ describe("legacy workers new", () => {
 
     return Effect.gen(function* () {
       yield* legacyWorkersNew(
-        flags({ name: "api", runtime: Option.some("deno"), size: Option.some("4gb") }),
+        flags({ name: Option.some("api"), runtime: Option.some("deno"), size: Option.some("4gb") }),
       );
       const recorded = repo.config();
 
       const error = yield* legacyWorkersNew(
-        flags({ name: "api", runtime: Option.some("node") }),
+        flags({ name: Option.some("api"), runtime: Option.some("node") }),
       ).pipe(Effect.flip);
 
       expect(error).toBeInstanceOf(WorkerAlreadyConfiguredError);
@@ -136,7 +236,7 @@ describe("legacy workers new", () => {
 
       return Effect.gen(function* () {
         const error = yield* legacyWorkersNew(
-          flags({ name: "api", runtime: Option.some("node") }),
+          flags({ name: Option.some("api"), runtime: Option.some("node") }),
         ).pipe(Effect.flip);
 
         expect(error).toBeInstanceOf(WorkerAlreadyConfiguredError);
@@ -154,7 +254,7 @@ describe("legacy workers new", () => {
     return Effect.gen(function* () {
       yield* legacyWorkersNew(
         flags({
-          name: "api",
+          name: Option.some("api"),
           runtime: Option.some("node"),
           source: Option.some("packages/api"),
         }),
@@ -174,7 +274,7 @@ describe("legacy workers new", () => {
       for (const source of [".", "..", "supabase", "supabase/functions"]) {
         const error = yield* legacyWorkersNew(
           flags({
-            name: "api",
+            name: Option.some("api"),
             runtime: Option.some("node"),
             source: Option.some(source),
           }),
@@ -194,7 +294,7 @@ describe("legacy workers new", () => {
     const { layer } = setupLegacyWorkers({ workdir: created.dir });
 
     return Effect.gen(function* () {
-      yield* legacyWorkersNew(flags({ name: "api", runtime: Option.some("node") }));
+      yield* legacyWorkersNew(flags({ name: Option.some("api"), runtime: Option.some("node") }));
 
       expect(existsSync(join(created.dir, "supabase", "workers", "api", "index.mjs"))).toBe(true);
       expect(readFileSync(join(created.dir, "supabase", "config.toml"), "utf8")).toBe(
@@ -212,7 +312,7 @@ describe("legacy workers new", () => {
 
     return Effect.gen(function* () {
       const error = yield* legacyWorkersNew(
-        flags({ name: "api", runtime: Option.some("node") }),
+        flags({ name: Option.some("api"), runtime: Option.some("node") }),
       ).pipe(Effect.flip);
 
       expect(error).toBeInstanceOf(WorkerDirectoryExistsError);
@@ -228,7 +328,7 @@ describe("legacy workers new", () => {
     const { layer } = setupLegacyWorkers({ workdir: repo.dir });
 
     return Effect.gen(function* () {
-      yield* legacyWorkersNew(flags({ name: "api", runtime: Option.some("node") }));
+      yield* legacyWorkersNew(flags({ name: Option.some("api"), runtime: Option.some("node") }));
 
       expect(existsSync(join(repo.dir, "supabase", "workers", "api", "index.mjs"))).toBe(true);
     }).pipe(Effect.provide(layer), Effect.ensuring(Effect.sync(repo.cleanup)));
@@ -240,7 +340,7 @@ describe("legacy workers new", () => {
 
     return Effect.gen(function* () {
       const error = yield* legacyWorkersNew(
-        flags({ name: "api", runtime: Option.some("node") }),
+        flags({ name: Option.some("api"), runtime: Option.some("node") }),
       ).pipe(Effect.flip);
 
       expect(error).toBeInstanceOf(WorkerDirectoryExistsError);
@@ -257,7 +357,9 @@ describe("legacy workers new", () => {
     const { layer } = setupLegacyWorkers({ workdir: repo.dir });
 
     return Effect.gen(function* () {
-      const error = yield* legacyWorkersNew(flags({ name: "My_Worker" })).pipe(Effect.flip);
+      const error = yield* legacyWorkersNew(flags({ name: Option.some("My_Worker") })).pipe(
+        Effect.flip,
+      );
 
       expect(error).toBeInstanceOf(InvalidWorkerNameError);
       expect(existsSync(join(repo.dir, "supabase", "workers"))).toBe(false);
@@ -286,7 +388,7 @@ describe("legacy workers new", () => {
 
     return Effect.gen(function* () {
       const error = yield* legacyWorkersNew(
-        flags({ name: "api", runtime: Option.some("deno") }),
+        flags({ name: Option.some("api"), runtime: Option.some("deno") }),
       ).pipe(Effect.flip);
 
       expect(error).toBeInstanceOf(WorkerAlreadyConfiguredError);
@@ -307,7 +409,7 @@ describe("legacy workers new", () => {
     const { layer } = setupLegacyWorkers({ workdir: repo.dir });
 
     return Effect.gen(function* () {
-      yield* legacyWorkersNew(flags({ name: "api", runtime: Option.some("node") }));
+      yield* legacyWorkersNew(flags({ name: Option.some("api"), runtime: Option.some("node") }));
 
       const jsonPath = join(repo.dir, "supabase", "config.json");
       expect(readFileSync(jsonPath, "utf8")).toBe(configJson);
@@ -332,7 +434,7 @@ describe("legacy workers new", () => {
     const { layer } = setupLegacyWorkers({ workdir });
 
     return Effect.gen(function* () {
-      yield* legacyWorkersNew(flags({ name: "api", runtime: Option.some("node") }));
+      yield* legacyWorkersNew(flags({ name: Option.some("api"), runtime: Option.some("node") }));
 
       // The ancestor project is untouched.
       expect(repo.config()).toBe(CONFIG_WITH_COMMENTS);
@@ -357,7 +459,7 @@ describe("legacy workers new", () => {
 
     return Effect.gen(function* () {
       const error = yield* legacyWorkersNew(
-        flags({ name: "api", runtime: Option.some("node") }),
+        flags({ name: Option.some("api"), runtime: Option.some("node") }),
       ).pipe(Effect.flip);
 
       expect(error).toBeInstanceOf(WorkerConfigWriteUnsafeError);
@@ -366,15 +468,15 @@ describe("legacy workers new", () => {
     }).pipe(Effect.provide(layer), Effect.ensuring(Effect.sync(repo.cleanup)));
   });
 
-  // A plain file used to read as an empty directory, which then failed with a
-  // bare EEXIST from `makeDirectory` instead of naming what was in the way.
+  // A plain file must not read as an empty directory: that fails with a bare
+  // EEXIST from `makeDirectory` instead of naming what is in the way.
   it.live("refuses a plain file at the destination", () => {
     const repo = project({ "supabase/workers/api": "not a directory" });
     const { layer } = setupLegacyWorkers({ workdir: repo.dir });
 
     return Effect.gen(function* () {
       const error = yield* legacyWorkersNew(
-        flags({ name: "api", runtime: Option.some("node") }),
+        flags({ name: Option.some("api"), runtime: Option.some("node") }),
       ).pipe(Effect.flip);
 
       expect(error).toBeInstanceOf(WorkerDirectoryExistsError);
@@ -396,7 +498,7 @@ describe("legacy workers new", () => {
     return Effect.gen(function* () {
       yield* legacyWorkersNew(
         flags({
-          name: "api",
+          name: Option.some("api"),
           runtime: Option.some("node"),
           source: Option.some("generated"),
         }),
@@ -423,12 +525,36 @@ describe("legacy workers new", () => {
     });
 
     return Effect.gen(function* () {
-      yield* legacyWorkersNew(flags({ name: "api" }));
+      yield* legacyWorkersNew(flags({ name: Option.some("api") }));
 
       const payload: unknown = JSON.parse(out.stdoutText);
       // The defaults stand, because there was nowhere to ask.
       expect(payload).toMatchObject({ runtime: "deno", size: "2gb" });
       expect(out.promptSelectCalls).toEqual([]);
+    }).pipe(Effect.provide(layer), Effect.ensuring(Effect.sync(repo.cleanup)));
+  });
+
+  // The prompts only ever offer values this CLI knows, so an unrecognized answer
+  // means the prompt layer handed back something off-menu. Recording it verbatim
+  // would put a runtime into config.toml that `push` then refuses; the default
+  // is the one answer that still scaffolds something deployable.
+  it.live("falls back to the defaults when a prompt answers off-menu", () => {
+    const repo = project();
+    const { layer } = setupLegacyWorkers({
+      workdir: repo.dir,
+      promptSelectResponses: ["cobol", "colossal"],
+    });
+
+    return Effect.gen(function* () {
+      yield* legacyWorkersNew({
+        name: Option.some("api"),
+        runtime: Option.none(),
+        size: Option.none(),
+        source: Option.none(),
+      });
+
+      expect(repo.config()).toContain(`runtime = "deno"`);
+      expect(repo.config()).toContain(`size = "2gb"`);
     }).pipe(Effect.provide(layer), Effect.ensuring(Effect.sync(repo.cleanup)));
   });
 
@@ -439,7 +565,7 @@ describe("legacy workers new", () => {
     return Effect.gen(function* () {
       const error = yield* legacyWorkersNew(
         flags({
-          name: "api",
+          name: Option.some("api"),
           runtime: Option.some("node"),
           source: Option.some(join("supabase", "config.toml")),
         }),

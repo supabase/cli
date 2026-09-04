@@ -282,6 +282,10 @@ export function mockOutput(
         }
       | undefined;
   }> = [];
+  const promptTextCalls: Array<{
+    message: string;
+    opts?: { defaultValue?: string; validate?: (v: string) => string | undefined };
+  }> = [];
   const promptTextResponses = [...(opts.promptTextResponses ?? [])];
   const promptSelectResponses = [...(opts.promptSelectResponses ?? [])];
   const promptPasswordResponses = [...(opts.promptPasswordResponses ?? [])];
@@ -386,10 +390,11 @@ export function mockOutput(
       promptText: (() => {
         let callCount = 0;
         return (
-          _msg: string,
+          message: string,
           options?: { defaultValue?: string; validate?: (v: string) => string | undefined },
         ) => {
           callCount++;
+          promptTextCalls.push({ message, opts: options });
           // Exercise the validate callback to cover both branches (line 140)
           if (options?.validate) {
             options.validate(""); // truthy branch: returns error message
@@ -450,6 +455,7 @@ export function mockOutput(
     events,
     promptConfirmCalls,
     promptSelectCalls,
+    promptTextCalls,
     rawChunks,
     get stdoutText() {
       return rawChunks

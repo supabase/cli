@@ -61,11 +61,17 @@ wrapper emits for every command.
 
 ## Output Formats
 
-| Mode                          | stdout                                                                                                 | stderr                       |
-| ----------------------------- | ------------------------------------------------------------------------------------------------------ | ---------------------------- |
-| text (default)                | the details block, plus the build-retry line on a failure                                              | an unreadable instance tally |
-| `--output-format json`        | one structured result carrying every reported field                                                    | as above                     |
-| `--output-format stream-json` | the same result as a single terminal event                                                             | as above                     |
-| `-o json` / `yaml` / `toml`   | the same payload in that encoding, and nothing else                                                    | as above                     |
-| `-o pretty` / `table` / `csv` | the text rendering — these fall through rather than encoding                                           | as above                     |
-| `-o env`                      | refused before any request; the payload nests an instance tally a flat `KEY=value` list cannot express | the error                    |
+| Mode                          | stdout                                                                                                 | stderr                                                              |
+| ----------------------------- | ------------------------------------------------------------------------------------------------------ | ------------------------------------------------------------------- |
+| text (default)                | the details block                                                                                      | an unreadable instance tally, and the build-retry hint on a failure |
+| `--output-format json`        | one structured result carrying every reported field                                                    | neither — both are text-only                                        |
+| `--output-format stream-json` | the same result as a single terminal event                                                             | neither — both are text-only                                        |
+| `-o json` / `yaml` / `toml`   | the same payload in that encoding, and nothing else                                                    | neither — both are text-only                                        |
+| `-o pretty` / `table` / `csv` | the text rendering — these fall through rather than encoding                                           | both, as in text                                                    |
+| `-o env`                      | refused before any request; the payload nests an instance tally a flat `KEY=value` list cannot express | the error                                                           |
+
+A structured emission is the end of the run: the handler returns at
+`legacyEmitWorkersMachineOutput` or at `output.success`, so nothing in the text
+branch below it — the instance tally and the build-retry trailer — is reached.
+`-o pretty`, `table` and `csv` are the exception, since they encode nothing and
+fall through to that same text branch.

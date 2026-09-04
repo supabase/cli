@@ -17,7 +17,11 @@ artifacts (`./schema.json`, `./project-schema.json`).
   `CliConfig` alongside which keys were actually present in the source document) — presence matters
   because the schema defaults every optional section, so the decoded `CliConfig` alone can't tell
   "explicitly set to the default" from "never set" (ADR 0021). Call `unmappedApiFields` after
-  `fromApiProjectConfig` if you care whether this package version understood the response.
+  `fromApiProjectConfig` if you care whether this package version understood the response. Also
+  exports the config-diff classification engine — `diffProjectConfig`, `ConfigChange`/
+  `ConfigChangeClass`/`ConfigChangeCounts`/`ConfigChangeSet`, `DiffProjectConfigOptions` — a pure,
+  synchronous comparison between two `ProjectConfig` projections (ADR 0022), promoted here from
+  `./internal` now that Studio is a second consumer.
 - `@supabase/config/io` — a Promise-based file-IO facade for **external, non-Effect Node/Bun
   consumers only**. Resolved via package.json exports conditions (`bun`/`node`/`browser`/`default`).
   Has zero internal consumers by design — nothing inside this monorepo should import it.
@@ -26,15 +30,24 @@ artifacts (`./schema.json`, `./project-schema.json`).
   project-environment resolution, and `inferFunctionsManifest` (discovers and validates
   `supabase/functions/*` on disk).
 - `@supabase/config/internal` (CLI-2234) — NOT covered by semver, and only `apps/cli` may import it
-  (enforced by `src/monorepo-import-contract.unit.test.ts`). Exists solely for `apps/cli`'s own
-  Go-parity call sites and contract-guard tests: `loadCliConfig`/`resolveCliConfigValue`/
+  (enforced by `src/monorepo-import-contract.unit.test.ts`). Carries `apps/cli`'s own Go-parity
+  call sites and contract-guard tests: `loadCliConfig`/`resolveCliConfigValue`/
   `resolveCliConfigSubtree` — the SAME runtime functions `./effect` exports, re-typed here to
   additionally accept the internal-only `goViperCompat` option (`InternalLoadCliConfigOptions` for
   `loadCliConfig`; `resolveCliConfigValue`/`resolveCliConfigSubtree`'s own widened options type,
   `InternalResolveCliConfigOptions`, is package-internal and not itself re-exported) — plus the
   otherwise-internal registry data (`AUTH_HOOK_NAMES`, `unmappedSecretApiPaths`,
   `projectConfigMappingRows`, `ProjectConfigMappingRow`, `ProjectConfigApiAttributes`,
-  `ENV_CAPTURE_REGEX`). Anything here can change or vanish in any release.
+  `ENV_CAPTURE_REGEX`). It also carries `supabase config pull`/`diff`'s own support surface
+  (CLI-2064): the format-preserving surgical editor (`applyConfigEdits` and its
+  `ConfigEdit`/`ConfigEditOutcome`/`ConfigEditRefusal`/`ConfigEditRefusalReason`/`ConfigEditValue`/
+  `AppliedConfigEdit` types), the config diff engine (`diffProjectConfig` and its `ConfigChange`/
+  `ConfigChangeClass`/`ConfigChangeCounts`/`ConfigChangeSet`/`DiffProjectConfigOptions` types),
+  `dualScopeProjectConfigPaths`, the raw `[remotes.*]` helpers `remoteNameForProjectRef`/
+  `remoteProjectIdEntries`, and the atomic single-file writer `writeCliConfigDocumentText`/
+  `CliConfigWriteError` — kept off `./effect`'s public surface deliberately (no consumer outside
+  `apps/cli` needs them, and internal-only keeps the published semver surface unchanged). Anything
+  here can change or vanish in any release.
 - `@supabase/config/schema.json` — generated JSON Schema (draft 2020-12) for `CliConfig` (a
   `dist/` build output).
 - `@supabase/config/project-schema.json` (CLI-2234) — generated JSON Schema (draft 2020-12) for

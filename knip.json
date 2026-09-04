@@ -13,7 +13,8 @@
         "src/shared/cli/bin.ts",
         "src/**/*.test.ts",
         "src/**/*.e2e.test.ts",
-        "src/**/*.live.test.ts"
+        "src/**/*.live.test.ts",
+        "scripts/analyze-commits-title.js"
       ],
       "ignore": [
         "scripts/*.ts",

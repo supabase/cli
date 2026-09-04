@@ -11,8 +11,13 @@ import { withLegacyCommandInstrumentation } from "../../../telemetry/legacy-comm
 import { legacyConfigPush } from "./push.handler.ts";
 
 const config = {
+  // `link`'s settled vocabulary (CLI-2167/CLI-2289): one flag that accepts
+  // either a project ref or a branch of the linked project — no separate
+  // `--target`.
   projectRef: Flag.string("project-ref").pipe(
-    Flag.withDescription("Project ref of the Supabase project."),
+    Flag.withDescription(
+      "Project ref of the Supabase project, or the name (or UUID) of one of its branches. Values that are exactly 20 lowercase letters are always treated as project refs.",
+    ),
     Flag.optional,
   ),
 } as const;
@@ -39,7 +44,7 @@ export const legacyConfigPushHandler = (flags: LegacyConfigPushFlags) =>
   );
 
 export const legacyConfigPushCommand = Command.make("push", config).pipe(
-  Command.withDescription("Pushes local config.toml to the linked project."),
+  Command.withDescription("Pushes local config.toml to the linked project or one of its branches."),
   Command.withShortDescription("Push local config to linked project"),
   Command.withExamples([
     {
@@ -49,6 +54,10 @@ export const legacyConfigPushCommand = Command.make("push", config).pipe(
     {
       command: "supabase config push --project-ref abcdefghijklmnopqrst",
       description: "Push local config to a specific project",
+    },
+    {
+      command: "supabase config push --project-ref staging",
+      description: "Push local config to the 'staging' branch",
     },
   ]),
   Command.withHandler(legacyConfigPushHandler),

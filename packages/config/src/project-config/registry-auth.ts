@@ -726,7 +726,7 @@ function hoursDurationRow(
 // CORE (auth.sync.ts:1263-1276, applyRemoteAuthConfig's base scalar fields)
 
 const coreRows: ReadonlyArray<ProjectConfigMappingRow> = [
-  stringRow(["auth", "site_url"], "site_url"),
+  { ...stringRow(["auth", "site_url"], "site_url"), dualScope: true },
   {
     configPath: ["auth", "additional_redirect_urls"],
     apiPath: ["auth", "uri_allow_list"],
@@ -740,6 +740,7 @@ const coreRows: ReadonlyArray<ProjectConfigMappingRow> = [
     // (`api.schemas`, `api.extra_search_path`).
     arrayEquality: "set",
     unit: "csv → string[]",
+    dualScope: true,
   },
   uintRow(["auth", "jwt_expiry"], "jwt_exp"),
   boolRow(["auth", "enable_refresh_token_rotation"], "refresh_token_rotation_enabled"),
@@ -850,6 +851,7 @@ const smtpRows: ReadonlyArray<ProjectConfigMappingRow> = [
       const host = expectString(value, smtpHostPath);
       return host.length > 0 ? host : undefined;
     },
+    dualScope: true,
   },
   {
     // auth.sync.ts:1420-1425: the API reports smtp_port as a string. `null`
@@ -875,6 +877,7 @@ const smtpRows: ReadonlyArray<ProjectConfigMappingRow> = [
     // `25.5`/out-of-range omit the field (REMOVED, not left verbatim — an
     // omitted key is what the API arm reports for the same pushed state).
     normalizeDocument: (value) => (typeof value === "number" ? parseUint16(String(value)) : value),
+    dualScope: true,
   },
   smtpSiblingStringRow(["auth", "email", "smtp", "user"], "smtp_user"),
   smtpSiblingStringRow(["auth", "email", "smtp", "admin_email"], "smtp_admin_email"),
@@ -913,6 +916,7 @@ function smtpSiblingStringRow(
       const narrowed = expectString(value, apiPath);
       return smtpExplicitlyDisabledInAttributes(attributes) ? undefined : narrowed;
     },
+    dualScope: true,
   };
 }
 
@@ -1027,6 +1031,7 @@ const captchaRows: ReadonlyArray<ProjectConfigMappingRow> = [
       const provider = expectString(value, ["auth", "security_captcha_provider"]);
       return provider === "hcaptcha" || provider === "turnstile" ? provider : undefined;
     },
+    dualScope: true,
   },
   secretRow(["auth", "captcha", "secret"], "security_captcha_secret"),
 ];
@@ -1079,6 +1084,7 @@ const smsBaseRows: ReadonlyArray<ProjectConfigMappingRow> = [
       return Object.keys(map).length > 0 ? map : undefined;
     },
     normalizeDocument: canonicalizeTestOtpMap,
+    dualScope: true,
   },
 ];
 

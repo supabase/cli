@@ -209,6 +209,7 @@ const sessionReplicationRoleRow: ProjectConfigMappingRow = {
     const role = expectString(value, sessionReplicationRolePath);
     return role === "origin" || role === "replica" || role === "local" ? role : undefined;
   },
+  dualScope: true,
 };
 
 function dbSettingRow(
@@ -220,6 +221,7 @@ function dbSettingRow(
     configPath: ["db", "settings", key],
     apiPath,
     transform: (value) => narrow(value, apiPath),
+    dualScope: true,
   };
 }
 
@@ -302,6 +304,7 @@ const dbSectionRows: ReadonlyArray<ProjectConfigMappingRow> = [
     configPath: ["db", "major_version"],
     apiPath: dbMajorVersionPath,
     transform: (value) => (value === null ? undefined : expectInteger(value, dbMajorVersionPath)),
+    dualScope: true,
   },
   // v2 flattens what v1 nested under `currentConfig.database`
   // (db.sync.ts:241 `applyRemoteSslEnforcement`).
@@ -345,18 +348,21 @@ const dbSectionRows: ReadonlyArray<ProjectConfigMappingRow> = [
       const mode = expectString(value, poolerPoolModePath);
       return mode === "transaction" || mode === "session" ? mode : undefined;
     },
+    dualScope: true,
   },
   {
     configPath: ["db", "pooler", "default_pool_size"],
     apiPath: poolerDefaultPoolSizePath,
     transform: (value) =>
       value === null ? undefined : expectInteger(value, poolerDefaultPoolSizePath),
+    dualScope: true,
   },
   {
     configPath: ["db", "pooler", "max_client_conn"],
     apiPath: poolerMaxClientConnPath,
     transform: (value) =>
       value === null ? undefined : expectInteger(value, poolerMaxClientConnPath),
+    dualScope: true,
   },
   // Deliberately unmapped (no faithful counterpart): pooler.
   // ignore_startup_parameters, server_idle_timeout, server_lifetime,
