@@ -202,8 +202,9 @@ describe("stack gateway", () => {
           activate: () =>
             Effect.gen(function* () {
               yield* Deferred.succeed(started, undefined);
-              yield* Effect.never.pipe(Effect.ensuring(Deferred.succeed(interrupted, undefined)));
-              return { capability: "rest" as const, endpoint: { host: "127.0.0.1", port: 1 } };
+              return yield* Effect.never.pipe(
+                Effect.ensuring(Deferred.succeed(interrupted, undefined)),
+              );
             }),
         });
         let request: ClientRequest | undefined;

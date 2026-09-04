@@ -527,6 +527,7 @@ export const makeRuntimeInputOwner = (
         maxClientConn,
       });
       const target = path.join(poolerRoot, "pooler_tenant.exs");
+      const fileMode = runtime === "native" ? 0o600 : 0o644;
       return Effect.gen(function* () {
         const token = yield* crypto.randomUUIDv4.pipe(
           Effect.mapError(() => failure("Unable to allocate pooler tenant file")),
@@ -544,7 +545,7 @@ export const makeRuntimeInputOwner = (
               const file = yield* mapFile(
                 temporary,
                 "create pooler tenant file",
-                fs.open(temporary, { flag: "w", mode: 0o600 }),
+                fs.open(temporary, { flag: "w", mode: fileMode }),
               );
               yield* mapFile(
                 temporary,
@@ -554,9 +555,9 @@ export const makeRuntimeInputOwner = (
               yield* mapFile(temporary, "sync pooler tenant file", file.sync);
             }),
           );
-          yield* mapFile(temporary, "secure pooler tenant file", fs.chmod(temporary, 0o600));
+          yield* mapFile(temporary, "secure pooler tenant file", fs.chmod(temporary, fileMode));
           yield* mapFile(target, "publish pooler tenant file", fs.rename(temporary, target));
-          yield* mapFile(target, "secure published pooler tenant file", fs.chmod(target, 0o600));
+          yield* mapFile(target, "secure published pooler tenant file", fs.chmod(target, fileMode));
           return target;
         }).pipe(
           Effect.ensuring(

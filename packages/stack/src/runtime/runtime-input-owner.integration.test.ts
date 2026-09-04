@@ -648,6 +648,7 @@ describe("runtime input owner", () => {
         const material = yield* owner.resolve(containerState, "pooler:pooler");
         const tenant = material.pooler?.tenantPath;
         expect(tenant).toBeDefined();
+        expect((yield* fs.stat(tenant!)).mode & 0o777).toBe(0o644);
         const content = yield* fs.readFileString(tenant!);
         expect(content).toContain('"external_id" => "tenant-custom"');
         expect(content).toContain(`"db_host" => "${containerAliasFor("database:database")}"`);
