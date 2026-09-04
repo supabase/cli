@@ -2,6 +2,7 @@ import { createHash } from "node:crypto";
 import {
   Context,
   Data,
+  DateTime,
   Effect,
   Exit,
   FileSystem,
@@ -13,6 +14,7 @@ import {
   Semaphore,
   Scope,
 } from "effect";
+// oxlint-disable-next-line effecttsgo/node-builtin-import -- Managed path validation relies on native path semantics at the filesystem boundary.
 import { isAbsolute, relative, resolve } from "node:path";
 import { PORT_CATALOG, type PortSet } from "../PortCatalog.ts";
 import { reservePortSet, type PortLease, type PortReservationRequest } from "../PortAllocator.ts";
@@ -24,6 +26,7 @@ import {
   isControlOwnership,
   probeControl,
   type ControlAcquisition,
+  type ControlMaintenanceOperation,
   type ControlOwnership,
   type ControlProbe,
 } from "./control.ts";
@@ -88,12 +91,16 @@ export interface StartStackRequest {
   readonly lifecycle?: ManagedStackDocument["lifecycle"];
   readonly runtime?: ManagedStackDocument["runtime"];
   readonly launch: ManagedStackDocument["launch"];
+  /** Incompatible replacement must retain the target's sticky assignments. */
+  readonly preservePersistedPorts?: boolean;
 }
 
 export interface AllocateManagedPortsRequest {
   readonly stackId: string;
   readonly portDocument: ManagedPortIntentDocument;
   readonly persisted?: ReadonlyArray<ManagedPortAssignment>;
+  /** During an upgrade restart, keep the target's sticky assignments. */
+  readonly preservePersisted?: boolean;
 }
 
 export interface ManagedPortAllocation {
@@ -113,6 +120,7 @@ export type ManagedStackStartResult = ManagedStackStartResultBase & {
 export interface ManagedStackLifecycleUpdate {
   readonly stackId: string;
   readonly lifecycle: ManagedStackDocument["lifecycle"];
+  readonly stopIntent?: "explicit";
   /** A running runtime descriptor, or `null` to clear stale runtime state. */
   readonly runtime?: ManagedStackDocument["runtime"] | null;
 }
@@ -188,7 +196,8 @@ export type ManagedStackManagerError =
   | import("./control.ts").ControlTransportError
   | import("./control.ts").ControlProtocolError
   | import("./control.ts").ControlProtocolMismatchError
-  | import("./control.ts").ControlAddressConflictError;
+  | import("./control.ts").ControlAddressConflictError
+  | import("./control.ts").ControlMaintenanceBusyError;
 
 export interface ManagedStackManagerShape {
   readonly stateRoot: string;
@@ -200,6 +209,7 @@ export interface ManagedStackManagerShape {
   ) => Effect.Effect<WorkspaceDiscovery, ManagedStackManagerError>;
   readonly acquireControl: (
     stackId: string,
+    operation: ControlMaintenanceOperation,
   ) => Effect.Effect<ControlAcquisition, ManagedStackManagerError, Scope.Scope>;
   readonly probeControl: (
     stackId: string,
@@ -217,7 +227,7 @@ export interface ManagedStackManagerShape {
   readonly inspectStack: (
     stackId: string,
   ) => Effect.Effect<ManagedStack | undefined, ManagedStackManagerError>;
-  readonly listStacks: () => Effect.Effect<
+  readonly listStacks: Effect.Effect<
     ReadonlyArray<ManagedStackListing>,
     ManagedStackManagerError,
     never
@@ -226,6 +236,10 @@ export interface ManagedStackManagerShape {
     ownership: ControlOwnership,
     request: AllocateManagedPortsRequest,
   ) => Effect.Effect<ManagedPortAllocation, ManagedStackManagerError, import("effect/Scope").Scope>;
+  /** Validate durable managed-port conflicts without acquiring or releasing host ports. */
+  readonly validateManagedPortReservations: (
+    request: AllocateManagedPortsRequest,
+  ) => Effect.Effect<void, ManagedStackManagerError>;
   /** Persist one owner-gated lifecycle transition for the supervisor. */
   readonly recordLifecycle: (
     ownership: ControlOwnership,
@@ -255,7 +269,7 @@ export class ManagedStackManager extends Context.Service<
   ManagedStackManagerShape
 >()("stack/managed/ManagedStackManager") {}
 
-const now = (): string => new Date().toISOString();
+const now = (): string => DateTime.formatIso(DateTime.nowUnsafe());
 
 const lengthPrefixed = (value: string): Uint8Array => {
   const bytes = new TextEncoder().encode(value);
@@ -441,7 +455,7 @@ const makeManager = (
     ): Effect.Effect<void, ManagedStackManagerError> =>
       Effect.gen(function* () {
         if (discovery.workspace.kind !== "folder") return;
-        const listings = yield* store.list();
+        const listings = yield* store.list;
         const matching = listings
           .filter(isHealthyDocument)
           .map((listing) => listing.document)
@@ -458,9 +472,7 @@ const makeManager = (
             .stat(persistedPath)
             .pipe(
               Effect.catchTag("PlatformError", (error) =>
-                Predicate.isTagged(error.reason, "NotFound")
-                  ? Effect.succeed(undefined)
-                  : Effect.fail(error),
+                Predicate.isTagged(error.reason, "NotFound") ? Effect.void : Effect.fail(error),
               ),
             );
           if (persistedInfo === undefined || persistedInfo.type !== "Directory") continue;
@@ -481,15 +493,142 @@ const makeManager = (
             marker.checkoutId === discovery.identity.checkoutId &&
             marker.contextId === discovery.identity.contextId
           ) {
-            return yield* Effect.fail(
-              new InvalidManagedIdentityError({
-                message:
-                  "This ordinary workspace identity is already in use at another folder. Delete the current copied folder's .supabase/identity.json so a new identity can be generated.",
-              }),
-            );
+            return yield* new InvalidManagedIdentityError({
+              message:
+                "This ordinary workspace identity is already in use at another folder. Delete the current copied folder's .supabase/identity.json so a new identity can be generated.",
+            });
           }
         }
       });
+
+    const inspectManagedPortReservations = (request: AllocateManagedPortsRequest) =>
+      Effect.gen(function* () {
+        const persisted = request.persisted ?? [];
+        const listings = yield* store.list;
+        const plan = planManagedPorts({
+          activeFields: request.portDocument.activeFields,
+          disabledFields: request.portDocument.disabledFields,
+          intents: resolvePortIntents(request.portDocument),
+          persisted,
+          preferCatalogDefaults,
+          preservePersisted: request.preservePersisted,
+        });
+        const invalidPersistedAutomatic = plan.durable.find(
+          (entry) =>
+            entry.intent === "automatic" &&
+            entry.selection.kind === "exact" &&
+            entry.selection.port >= CONTROL_PORT_RANGE.min &&
+            entry.selection.port <= CONTROL_PORT_RANGE.max,
+        );
+        const invalidInactiveAutomatic = plan.inactiveAssignments.find(
+          (assignment) =>
+            assignment.intent === "automatic" &&
+            assignment.port >= CONTROL_PORT_RANGE.min &&
+            assignment.port <= CONTROL_PORT_RANGE.max,
+        );
+        const invalidPersistedPort =
+          invalidPersistedAutomatic?.selection.kind === "exact"
+            ? invalidPersistedAutomatic.selection.port
+            : invalidInactiveAutomatic?.port;
+        const invalidPersistedField =
+          invalidPersistedAutomatic?.field ??
+          Object.values(PORT_CATALOG).find(
+            (entry) => entry.configKey === invalidInactiveAutomatic?.key,
+          )?.field;
+        if (invalidPersistedField !== undefined && invalidPersistedPort !== undefined) {
+          return yield* new ManagedPortAllocationError({
+            fields: [invalidPersistedField],
+            cause: `Persisted automatic port ${invalidPersistedPort} is reserved for managed control endpoints`,
+          });
+        }
+        const strictReserved = new Set<number>();
+        const exactReserved = new Set<number>(
+          (yield* controlEndpointCandidates(request.stackId)).map(({ port }) => port),
+        );
+        const owners = new Map<
+          number,
+          ReadonlyArray<{
+            readonly document: ManagedStackDocument;
+            readonly assignment: ManagedPortAssignment;
+          }>
+        >();
+        for (const listing of listings.filter(isHealthyDocument)) {
+          for (const candidate of yield* controlEndpointCandidates(listing.document.id)) {
+            exactReserved.add(candidate.port);
+          }
+          if (listing.document.id === request.stackId) continue;
+          for (const assignment of listing.document.ports) {
+            const liveExact =
+              assignment.intent === "exact" &&
+              (listing.document.lifecycle === "running" ||
+                listing.document.lifecycle === "starting");
+            owners.set(assignment.port, [
+              ...(owners.get(assignment.port) ?? []),
+              { document: listing.document, assignment },
+            ]);
+            if (assignment.intent === "automatic" || liveExact) {
+              strictReserved.add(assignment.port);
+            }
+          }
+        }
+        for (const assignment of plan.inactiveAssignments) {
+          strictReserved.add(assignment.port);
+        }
+        const requestedAssignments = plan.durable.flatMap((entry) =>
+          entry.selection.kind === "exact"
+            ? [
+                {
+                  key: entry.key,
+                  port: entry.selection.port,
+                  intent: entry.intent,
+                } satisfies ManagedPortAssignment,
+              ]
+            : [],
+        );
+        for (const assignment of requestedAssignments) {
+          if (!exactReserved.has(assignment.port)) continue;
+          return yield* new ManagedExactPortOccupiedError({
+            key: assignment.key,
+            port: assignment.port,
+            stackId: request.stackId,
+          });
+        }
+        for (const assignment of requestedAssignments) {
+          const owner = (owners.get(assignment.port) ?? []).find((candidate) => {
+            const lifecycle =
+              candidate.document.lifecycle === "deleting"
+                ? "running"
+                : candidate.document.lifecycle;
+            return managedPortReservationsConflict(request.stackId, assignment, {
+              stackId: candidate.document.id,
+              stackName: candidate.document.identity.name,
+              lifecycle,
+              assignment: candidate.assignment,
+            });
+          });
+          if (owner !== undefined) {
+            return yield* conflictError(request.stackId, assignment, owner.document);
+          }
+          const inactiveOwner = plan.inactiveAssignments.find(
+            (candidate) => candidate.port === assignment.port,
+          );
+          if (inactiveOwner !== undefined && assignment.intent === "exact") {
+            return yield* new ManagedExactPortOccupiedError({
+              key: assignment.key,
+              port: assignment.port,
+              stackId: request.stackId,
+              ownerStackId: request.stackId,
+              ownerKey: inactiveOwner.key,
+            });
+          }
+        }
+        return { exactReserved, owners, plan, strictReserved };
+      });
+
+    const validateManagedPortReservations = (
+      request: AllocateManagedPortsRequest,
+    ): Effect.Effect<void, ManagedStackManagerError> =>
+      inspectManagedPortReservations(request).pipe(Effect.asVoid);
 
     const allocateManagedPorts = (
       ownership: ControlOwnership,
@@ -501,79 +640,9 @@ const makeManager = (
     > =>
       Effect.gen(function* () {
         yield* requireOwnedForStack(ownership, request.stackId);
-        const persisted = request.persisted ?? [];
         const attempt = Effect.gen(function* () {
-          const listings = yield* store.list();
-          const plan = planManagedPorts({
-            activeFields: request.portDocument.activeFields,
-            disabledFields: request.portDocument.disabledFields,
-            intents: resolvePortIntents(request.portDocument),
-            persisted,
-            preferCatalogDefaults,
-          });
-          const invalidPersistedAutomatic = plan.durable.find(
-            (entry) =>
-              entry.intent === "automatic" &&
-              entry.selection.kind === "exact" &&
-              entry.selection.port >= CONTROL_PORT_RANGE.min &&
-              entry.selection.port <= CONTROL_PORT_RANGE.max,
-          );
-          const invalidInactiveAutomatic = plan.inactiveAssignments.find(
-            (assignment) =>
-              assignment.intent === "automatic" &&
-              assignment.port >= CONTROL_PORT_RANGE.min &&
-              assignment.port <= CONTROL_PORT_RANGE.max,
-          );
-          const invalidPersistedPort =
-            invalidPersistedAutomatic?.selection.kind === "exact"
-              ? invalidPersistedAutomatic.selection.port
-              : invalidInactiveAutomatic?.port;
-          const invalidPersistedField =
-            invalidPersistedAutomatic?.field ??
-            Object.values(PORT_CATALOG).find(
-              (entry) => entry.configKey === invalidInactiveAutomatic?.key,
-            )?.field;
-          if (invalidPersistedField !== undefined && invalidPersistedPort !== undefined) {
-            return yield* Effect.fail(
-              new ManagedPortAllocationError({
-                fields: [invalidPersistedField],
-                cause: `Persisted automatic port ${invalidPersistedPort} is reserved for managed control endpoints`,
-              }),
-            );
-          }
-          const strictReserved = new Set<number>();
-          const exactReserved = new Set<number>(
-            (yield* controlEndpointCandidates(request.stackId)).map(({ port }) => port),
-          );
-          const owners = new Map<
-            number,
-            ReadonlyArray<{
-              readonly document: ManagedStackDocument;
-              readonly assignment: ManagedPortAssignment;
-            }>
-          >();
-          for (const listing of listings.filter(isHealthyDocument)) {
-            for (const candidate of yield* controlEndpointCandidates(listing.document.id)) {
-              exactReserved.add(candidate.port);
-            }
-            if (listing.document.id === request.stackId) continue;
-            for (const assignment of listing.document.ports) {
-              const liveExact =
-                assignment.intent === "exact" &&
-                (listing.document.lifecycle === "running" ||
-                  listing.document.lifecycle === "starting");
-              owners.set(assignment.port, [
-                ...(owners.get(assignment.port) ?? []),
-                { document: listing.document, assignment },
-              ]);
-              if (assignment.intent === "automatic" || liveExact) {
-                strictReserved.add(assignment.port);
-              }
-            }
-          }
-          for (const assignment of plan.inactiveAssignments) {
-            strictReserved.add(assignment.port);
-          }
+          const { exactReserved, owners, plan, strictReserved } =
+            yield* inspectManagedPortReservations(request);
           const automaticExcluded = new Set<number>();
           for (let port = CONTROL_PORT_RANGE.min; port <= CONTROL_PORT_RANGE.max; port += 1) {
             automaticExcluded.add(port);
@@ -586,59 +655,6 @@ const makeManager = (
           for (const port of exactReserved) automaticExcluded.add(port);
 
           const requests = portRequests(plan, automaticExcluded);
-          const exactRequests = requests.filter((item) => item.selection.kind === "exact");
-          const requestedAssignments = exactRequests.flatMap((item) => {
-            const entry = plan.durable.find((candidate) => candidate.field === item.field);
-            if (entry?.selection.kind !== "exact") return [];
-            return [
-              {
-                key: entry.key,
-                port: entry.selection.port,
-                intent: entry.intent,
-              } satisfies ManagedPortAssignment,
-            ];
-          });
-          for (const assignment of requestedAssignments) {
-            if (!exactReserved.has(assignment.port)) continue;
-            return yield* Effect.fail(
-              new ManagedExactPortOccupiedError({
-                key: assignment.key,
-                port: assignment.port,
-                stackId: request.stackId,
-              }),
-            );
-          }
-          for (const assignment of requestedAssignments) {
-            const owner = (owners.get(assignment.port) ?? []).find((candidate) => {
-              const lifecycle =
-                candidate.document.lifecycle === "deleting"
-                  ? "running"
-                  : candidate.document.lifecycle;
-              return managedPortReservationsConflict(request.stackId, assignment, {
-                stackId: candidate.document.id,
-                stackName: candidate.document.identity.name,
-                lifecycle,
-                assignment: candidate.assignment,
-              });
-            });
-            if (owner !== undefined) {
-              return yield* Effect.fail(conflictError(request.stackId, assignment, owner.document));
-            }
-            const inactiveOwner = plan.inactiveAssignments.find(
-              (candidate) => candidate.port === assignment.port,
-            );
-            if (inactiveOwner !== undefined && assignment.intent === "exact") {
-              return yield* Effect.fail(
-                new ManagedExactPortOccupiedError({
-                  key: assignment.key,
-                  port: assignment.port,
-                  stackId: request.stackId,
-                  ownerStackId: request.stackId,
-                  ownerKey: inactiveOwner.key,
-                }),
-              );
-            }
-          }
           const allocation = yield* withManagedPortLease(
             reservePortSet(requests, { reserved: exactReserved }).pipe(
               Effect.provideService(FileSystem.FileSystem, fileSystem),
@@ -682,7 +698,7 @@ const makeManager = (
         const discovery = yield* provideDependencies(discoverEnvironment(request.workspacePath));
         yield* validateOrdinaryWorkspaceIdentity(discovery);
         if (discovery.state === "needsRepair") {
-          return yield* Effect.fail(workspaceRepairConflict(discovery.reason));
+          return yield* workspaceRepairConflict(discovery.reason);
         }
         const stackId = deriveStackId(discovery.identity, stackName);
         const existing = yield* store.read(stackId);
@@ -704,12 +720,12 @@ const makeManager = (
         const discovery = yield* provideDependencies(ensureEnvironment(request.workspacePath));
         yield* validateOrdinaryWorkspaceIdentity(discovery);
         if (discovery.state === "needsRepair") {
-          return yield* Effect.fail(workspaceRepairConflict(discovery.reason));
+          return yield* workspaceRepairConflict(discovery.reason);
         }
         const stackId = deriveStackId(discovery.identity, stackName);
         const repairId = deriveRepairOwnershipId(discovery.identity);
         const repairAcquisition = yield* provideDependencies(
-          acquireControl({ stackId: repairId }).pipe(
+          acquireControl({ stackId: repairId, maintenanceOperation: "repair" }).pipe(
             Effect.flatMap((acquisition) =>
               isOwned(acquisition)
                 ? Effect.succeed(acquisition)
@@ -735,15 +751,13 @@ const makeManager = (
           const refreshed = yield* provideDependencies(ensureEnvironment(request.workspacePath));
           yield* validateOrdinaryWorkspaceIdentity(refreshed);
           if (refreshed.state === "needsRepair") {
-            return yield* Effect.fail(workspaceRepairConflict(refreshed.reason));
+            return yield* workspaceRepairConflict(refreshed.reason);
           }
           const refreshedStackId = deriveStackId(refreshed.identity, stackName);
           if (refreshedStackId !== stackId) {
-            return yield* Effect.fail(
-              new ManagedWorkspaceRepairConflictError({
-                reason: "Workspace identity changed while resolving the stack",
-              }),
-            );
+            return yield* new ManagedWorkspaceRepairConflictError({
+              reason: "Workspace identity changed while resolving the stack",
+            });
           }
           yield* requireOwnedForStack(request.ownership, refreshedStackId);
           const existing = yield* store.read(refreshedStackId);
@@ -762,6 +776,7 @@ const makeManager = (
             stackId: refreshedStackId,
             portDocument: request.portDocument,
             persisted: current?.ports,
+            preservePersisted: request.preservePersistedPorts,
           });
           const timestamp = now();
           const document: ManagedStackDocument = {
@@ -786,10 +801,10 @@ const makeManager = (
       stackId: string,
     ): Effect.Effect<ManagedStack | undefined, ManagedStackManagerError> => store.read(stackId);
 
-    const listStacks = (): Effect.Effect<
+    const listStacks: Effect.Effect<
       ReadonlyArray<ManagedStackListing>,
       ManagedStackManagerError
-    > => store.list();
+    > = store.list;
 
     const recordLifecycle = (
       ownership: ControlOwnership,
@@ -800,24 +815,19 @@ const makeManager = (
           yield* requireOwnedForStack(ownership, update.stackId);
           const current = yield* store.read(update.stackId);
           if (current === undefined) {
-            return yield* Effect.fail(new ManagedStackNotFoundError({ stackId: update.stackId }));
+            return yield* new ManagedStackNotFoundError({ stackId: update.stackId });
           }
-          const ownerState =
-            update.lifecycle === "running"
-              ? "running"
-              : update.lifecycle === "starting"
-                ? "starting"
-                : update.lifecycle === "deleting"
-                  ? "deleting"
-                  : update.lifecycle === "failed"
-                    ? "failed"
-                    : "stopping";
-          yield* ownership.setState(ownerState, update.lifecycle === "running");
           let next: ManagedStackDocument = {
             ...current,
             lifecycle: update.lifecycle,
             updatedAt: now(),
           };
+          if (update.stopIntent === "explicit") {
+            next = { ...next, stopIntent: "explicit" };
+          } else if (update.lifecycle !== "stopped") {
+            const { stopIntent: _stopIntent, ...withoutStopIntent } = next;
+            next = withoutStopIntent;
+          }
           if (
             update.runtime !== undefined ||
             update.lifecycle === "stopped" ||
@@ -843,7 +853,7 @@ const makeManager = (
           yield* requireOwnedForStack(ownership, update.stackId);
           const current = yield* store.read(update.stackId);
           if (current === undefined) {
-            return yield* Effect.fail(new ManagedStackNotFoundError({ stackId: update.stackId }));
+            return yield* new ManagedStackNotFoundError({ stackId: update.stackId });
           }
           const metadata = {
             versions: update.launch.versions,
@@ -880,21 +890,19 @@ const makeManager = (
       Effect.scoped(
         Effect.gen(function* () {
           if (request.reason === "duplicate") {
-            return yield* Effect.fail(workspaceRepairConflict("duplicate"));
+            return yield* workspaceRepairConflict("duplicate");
           }
           const repairId = deriveRepairOwnershipId(request.identity);
           const repairAcquisition = yield* provideDependencies(
-            acquireControl({ stackId: repairId }),
+            acquireControl({ stackId: repairId, maintenanceOperation: "repair" }),
           );
           if (!isOwned(repairAcquisition)) {
-            return yield* Effect.fail(
-              new ManagedWorkspaceRepairConflictError({
-                reason: "Workspace repair is already owned",
-              }),
-            );
+            return yield* new ManagedWorkspaceRepairConflictError({
+              reason: "Workspace repair is already owned",
+            });
           }
           yield* provideDependencies(validateEnvironmentRepair(request));
-          const listings = yield* store.list();
+          const listings = yield* store.list;
           const affected = listings
             .filter(isHealthyDocument)
             .map((listing) => listing.document)
@@ -907,26 +915,22 @@ const makeManager = (
           const stackOwners: Array<ControlOwnership> = [];
           for (const document of affected) {
             const acquisition = yield* provideDependencies(
-              acquireControl({ stackId: document.id }),
+              acquireControl({ stackId: document.id, maintenanceOperation: "repair" }),
             );
             if (!isOwned(acquisition)) {
-              return yield* Effect.fail(
-                new ManagedWorkspaceRepairConflictError({
-                  stackId: document.id,
-                  reason: `Managed stack ${document.id} is attached to a live owner`,
-                }),
-              );
+              return yield* new ManagedWorkspaceRepairConflictError({
+                stackId: document.id,
+                reason: `Managed stack ${document.id} is attached to a live owner`,
+              });
             }
             stackOwners.push(acquisition);
           }
           const revalidated = yield* provideDependencies(validateEnvironmentRepair(request));
           const inspection = yield* provideDependencies(inspectWorkspace(revalidated.path));
           if (inspection.kind !== "git-checkout") {
-            return yield* Effect.fail(
-              new ManagedWorkspaceRepairConflictError({
-                reason: "Repair target is not a Git checkout",
-              }),
-            );
+            return yield* new ManagedWorkspaceRepairConflictError({
+              reason: "Repair target is not a Git checkout",
+            });
           }
           const updatedAt = now();
           const checkoutRoot = revalidated.path;
@@ -939,12 +943,10 @@ const makeManager = (
           });
           for (const { document, escaped } of updates) {
             if (isAbsolute(escaped) || escaped === ".." || escaped.startsWith("../")) {
-              return yield* Effect.fail(
-                new ManagedWorkspaceRepairConflictError({
-                  stackId: document.id,
-                  reason: `Managed stack ${document.id} has an invalid local project key`,
-                }),
-              );
+              return yield* new ManagedWorkspaceRepairConflictError({
+                stackId: document.id,
+                reason: `Managed stack ${document.id} has an invalid local project key`,
+              });
             }
           }
           for (const { document, projectPath } of updates) {
@@ -983,13 +985,12 @@ const makeManager = (
             ),
             Effect.catchTag("PlatformError", (error) =>
               Predicate.isTagged(error.reason, "NotFound")
-                ? Effect.succeed(undefined)
+                ? Effect.void
                 : store.remove(stackId).pipe(Effect.as({ outcome: "removed" as const, stackId })),
             ),
           );
           if (current === undefined) return { outcome: "already-absent", stackId };
           if ("outcome" in current) return current;
-          yield* acquisition.setState("deleting", false);
           if (current.launch.mode === "docker") {
             yield* dockerForceRemove(
               current.launch.containerRuntime,
@@ -1018,13 +1019,15 @@ const makeManager = (
           yield* validateOrdinaryWorkspaceIdentity(discovery);
           return discovery;
         }),
-      acquireControl: (stackId) => provideDependencies(acquireControl({ stackId })),
+      acquireControl: (stackId, operation) =>
+        provideDependencies(acquireControl({ stackId, maintenanceOperation: operation })),
       probeControl: (stackId) => provideDependencies(probeControl(stackId)),
       readStack,
       startStack,
       inspectStack,
       listStacks,
       allocateManagedPorts,
+      validateManagedPortReservations,
       recordLifecycle,
       updateLaunch,
       repairWorkspace,

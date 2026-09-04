@@ -109,6 +109,22 @@ describe("dockerImageForService", () => {
     );
   });
 
+  it("uses the upstream mirror repositories for vector and pooler", () => {
+    expect(dockerImageForService("vector", DEFAULT_VERSIONS.vector)).toBe(
+      `ghcr.io/supabase/vector:${DEFAULT_VERSIONS.vector}`,
+    );
+    expect(dockerImageForService("pooler", DEFAULT_VERSIONS.pooler)).toBe(
+      `ghcr.io/supabase/supavisor:${DEFAULT_VERSIONS.pooler}`,
+    );
+  });
+
+  it("preserves upstream mirror repositories for explicit vector and pooler versions", () => {
+    expect(dockerImageForService("vector", "0.52.0-alpine")).toBe(
+      "ghcr.io/supabase/vector:0.52.0-alpine",
+    );
+    expect(dockerImageForService("pooler", "2.9.6")).toBe("ghcr.io/supabase/supavisor:2.9.6");
+  });
+
   it("keeps non-managed services Docker-only", () => {
     expect(SERVICE_CATALOG.imgproxy).toMatchObject({
       runtimeSupport: "docker-only",

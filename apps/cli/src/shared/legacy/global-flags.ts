@@ -26,16 +26,24 @@ import { legacyViperEnvBool, legacyViperEnvBoolWithProjectFallback } from "./leg
 // Go's own text byte-for-byte; before that, this only reached the TS-native
 // `--help` renderer, whose overall layout already diverges from cobra's, so
 // the mismatch was harder to notice (CLI-1965 review finding).
+/**
+ * Every value the global `-o/--output` flag accepts — the single source of
+ * truth for per-command `outputFormats` overrides that widen the wrapper's
+ * enum check to "all values" (e.g. `config diff`'s handler-level rejection),
+ * so a value added here automatically flows to those commands and their tests.
+ */
+export const LEGACY_GLOBAL_OUTPUT_FORMATS = [
+  "env",
+  "pretty",
+  "json",
+  "toml",
+  "yaml",
+  "table",
+  "csv",
+] as const;
+
 export const LegacyOutputFlag = GlobalFlag.setting("output")({
-  flag: Flag.choice("output", [
-    "env",
-    "pretty",
-    "json",
-    "toml",
-    "yaml",
-    "table",
-    "csv",
-  ] as const).pipe(
+  flag: Flag.choice("output", LEGACY_GLOBAL_OUTPUT_FORMATS).pipe(
     Flag.withAlias("o"),
     Flag.withDescription("output format of status variables"),
     Flag.optional,

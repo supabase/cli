@@ -126,7 +126,7 @@ function legacyTransportFailureForMock() {
 /**
  * Wires `LegacyPlatformApiFactory` directly (`make` resolves immediately to a
  * stubbed client) — NOT `LegacyPlatformApi`. Pins the actual production
- * acquisition path `legacyAcquireLinkedStateApi` falls back to when only the
+ * acquisition path `legacyAcquireBranchLookupApi` falls back to when only the
  * lazy factory is in scope (`status`'s real runtime shape, via
  * `legacyPlatformApiFactoryLayer` in `status.command.ts`), as opposed to the
  * direct-service `branches` mock above, which existing tests provide and which
@@ -314,7 +314,7 @@ interface SetupOpts {
   /**
    * When set INSTEAD of `branches`, wires only `LegacyPlatformApiFactory`
    * (never `LegacyPlatformApi` directly) — the shape `status`'s real runtime
-   * actually provides. Pins `legacyAcquireLinkedStateApi`'s factory-fallback
+   * actually provides. Pins `legacyAcquireBranchLookupApi`'s factory-fallback
    * path (CLI-2167 follow-up bug fix).
    */
   readonly apiFactory?: {
@@ -1302,7 +1302,7 @@ content_path = "./supabase/templates/password_changed_notification.html"
         // runtime never wires `LegacyPlatformApi` directly (only the lazy
         // `LegacyPlatformApiFactory`, via `legacyPlatformApiFactoryLayer` in
         // `status.command.ts`) — a test using the `branches` mock above
-        // would pass even if `legacyAcquireLinkedStateApi`'s factory fallback
+        // would pass even if `legacyAcquireBranchLookupApi`'s factory fallback
         // were broken or missing entirely.
         const { layer, out, workdir, apiFactoryMock } = setup({
           apiFactory: { ok: [LINKED_BRANCH] },
@@ -1756,7 +1756,7 @@ content_path = "./supabase/templates/password_changed_notification.html"
     });
 
     it.live(
-      "a branch lookup that never resolves times out and degrades to the RICH block (real 5s wait — LEGACY_LINKED_STATE_LOOKUP_TIMEOUT is a module-private constant in legacy-linked-state.ts, not monkey-patchable; accepted as a real-time test for this one scenario, PR #6168 review)",
+      "a branch lookup that never resolves times out and degrades to the RICH block (real 5s wait — LEGACY_BRANCH_LOOKUP_TIMEOUT is an exported constant in legacy-branch-target.ts, but its VALUE isn't overridable without changing the source; accepted as a real-time test for this one scenario, PR #6168 review)",
       () => {
         const { layer, out, workdir } = setup();
         writeProjectRefFile(workdir, LINKED_BRANCH_REF);

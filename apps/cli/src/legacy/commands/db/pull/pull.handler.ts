@@ -659,7 +659,7 @@ export const legacyDbPull = Effect.fn("legacy.db.pull")(function* (flags: Legacy
           yield* legacyMakeDir(fs, path.dirname(migrationPath)).pipe(
             Effect.mapError((cause) => new LegacyDbPullWriteError({ message: cause.message })),
           );
-          const image = yield* legacyResolveDbImage(
+          const { image } = yield* legacyResolveDbImage(
             fs,
             path,
             cliSettings.workdir,

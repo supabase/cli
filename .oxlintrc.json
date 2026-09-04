@@ -8,6 +8,8 @@
     ".repos",
     "apps/cli-go",
     "apps/cli-e2e/fixtures",
+    "packages/stack",
+    "packages/process-compose",
     "**/testdata",
     "**/dist",
     "**/coverage",
@@ -27,10 +29,24 @@
   },
   "overrides": [
     {
-      // Legacy CLI is superseded by src/next; not worth the cleanup churn.
+      // The legacy CLI is the stable, shipped shell; a lint-driven rewrite of
+      // its existing string-building code isn't worth the churn.
       "files": ["apps/cli/src/legacy/**"],
       "rules": {
         "typescript/no-base-to-string": "off"
+      }
+    },
+    {
+      // `.github/scripts` is the only `bun:test` consumer in the repo (every
+      // package test suite uses vitest). `@types/bun`'s test matcher types
+      // reuse the same sync `Matchers<T>` interface for `expect(x).rejects`,
+      // so `.rejects.toThrow(...)` types as returning `void` even though it
+      // must be awaited at runtime — a `@types/bun` typing gap, not a real
+      // `await`-of-non-Promise bug. Verified: `bun test` and `tsc --noEmit`
+      // both pass; removing the `await` would make the assertion racy.
+      "files": [".github/scripts/**"],
+      "rules": {
+        "typescript/await-thenable": "off"
       }
     }
   ]

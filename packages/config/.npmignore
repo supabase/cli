@@ -1,0 +1,11 @@
+# Without this file, `npm pack`/`npm publish` fall back to the root
+# `.gitignore` for this whole directory — and its bare `dist` line prunes
+# `packages/config/dist/` from npm's packlist WALK before `package.json`'s
+# `files` array is ever consulted, silently shipping a tarball with zero
+# `dist/**` files despite `dist` being explicitly listed there (CLI-2234).
+# This file's mere presence is what fixes it: once an `.npmignore` exists,
+# npm uses it instead of consulting `.gitignore`. `files` in package.json
+# still governs what actually ships; the one line below just restates, for
+# npm's own ignore pass, the same test-file exclusion `files`'s
+# `!src/**/*.test.ts` negation already expresses.
+*.test.ts

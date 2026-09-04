@@ -29,11 +29,13 @@ These workspaces should generally follow this structure:
 - Standard scripts: `test`, `types:check`
 - Standard devDependencies: `@tsconfig/bun`, `@types/bun`, `typescript`
 
-Linting (`oxlint`), formatting (`oxfmt`), and unused-code analysis (`knip`) are repo-wide, not per-package: the tools are root devDependencies configured by `.oxlintrc.json`, `.oxfmtrc.json`, and `knip.json` at the repo root (knip's config maps each workspace under its `workspaces` key). The root `check:all`/`fix:all` scripts are the sole repo-wide quality entrypoints and use Turbo to orchestrate the root-owned `lint:*`/`fmt:*`/`knip:*` scripts and package `types:check` targets. Package-local work can run `pnpm types:check` and the package's test scripts; `pnpm exec oxlint`, `pnpm exec oxfmt`, and `pnpm exec knip-bun` from the repo root also work directly.
+Generic linting (`oxlint`), formatting (`oxfmt`), and unused-code analysis (`knip`) are repo-wide, not per-package: the tools are root devDependencies configured by `.oxlintrc.json`, `.oxfmtrc.json`, and `knip.json` at the repo root (knip's config maps each workspace under its `workspaces` key). Effect-specific linting is incrementally scoped to `packages/stack` and `packages/process-compose` through `.oxlintrc.effect.json`; run it with the root `lint:effect:check` or `lint:effect:fix` scripts. The root `check:all`/`fix:all` scripts are the sole repo-wide quality entrypoints and use Turbo to orchestrate the root-owned generic `lint:*`/`fmt:*`/`knip:*` scripts and package `types:check` targets; `fix:all` runs the Effect lint fix after those generic fixes complete. Package-local work can run `pnpm types:check` and the package's test scripts; `pnpm exec oxlint`, `pnpm exec oxfmt`, and `pnpm exec knip-bun` from the repo root also work directly.
 
 Expected exceptions:
 
 - `apps/cli` is published, so it is not `private`
+- `packages/config` is published (on its own release train — see `packages/config/AGENTS.md`), so
+  it is not `private`
 - `apps/docs` is a Next.js app and does not follow the standard package template
 - `packages/cli-*` are binary wrapper packages and do not follow the standard TypeScript workspace template
 
@@ -59,7 +61,7 @@ Expected exceptions:
 
 Use the `Cli*` prefix for the local checkout side and a bare `Project*` name for the hosted
 Supabase project. Config-value helpers follow the config family regardless of their inputs (e.g.
-`resolveCliConfigValue`, `MissingCliConfigValueError`). A symbol that deliberately spans both
+`resolveCliConfigValue`, `CliConfigParseError`). A symbol that deliberately spans both
 families takes a family-neutral name instead of a misleading prefix (see the ADR 0020 addendum for
 the `EffectiveConfig` precedent).
 
@@ -235,26 +237,16 @@ pnpm test
 
 If a workspace exposes a different script set, use that workspace's `package.json` as the source of truth.
 
-## Nx
+## Workspace graph and task execution
 
-This repo uses pnpm and Turbo for root-owned quality checks and ordinary unit,
-integration, and e2e tests. Package scripts are the source of truth for those
-workflows; package-local quality work is limited to `types:check` and the
-declared test scripts.
-Nx remains scoped to dependency inspection. Turbo owns repository build,
-generation, quality, live, and auxiliary workflows.
-
-### Exploring the workspace
+This repo uses pnpm workspaces and Turbo for task execution and dependency
+graph orchestration. Package scripts are the source of truth for leaf
+implementations; root-owned Turbo tasks coordinate build, generation, quality,
+live, and auxiliary workflows. Inspect a task's dependency graph with Turbo's
+JSON dry-run output:
 
 ```sh
-# List all projects
-nx show projects
-
-# Show targets and metadata for a specific project
-nx show project <name> --json
-
-# Visualize the project dependency graph
-nx graph
+pnpm exec turbo run <task> --dry=json
 ```
 
 ### Running repository workflows
@@ -273,18 +265,17 @@ pnpm exec turbo run supabase#build
 pnpm run test:live
 ```
 
-Use `nx show project <name> --json` to inspect remaining Nx targets,
-dependencies, and outputs — do not guess target names. Run live and auxiliary
-workflows through their root Turbo entrypoints, and run ordinary tests with the
-relevant package's declared `pnpm test` scripts. Repo-wide quality checks use
-the repository-root `pnpm check:all` and `pnpm fix:all` scripts, which delegate
-orchestration to Turbo.
+Run live and auxiliary workflows through their root Turbo entrypoints, and run
+ordinary tests with the relevant package's declared `pnpm test` scripts. Repo-
+wide quality checks use the repository-root `pnpm check:all` and `pnpm fix:all`
+scripts, which delegate orchestration to Turbo.
 
 ## Pull Requests
 
 PR titles must follow conventional-commits format because the `Lint Pull Request` workflow runs `amannn/action-semantic-pull-request` against the title. Use `<type>(<scope>): <subject>` (e.g. `fix(cli): …`, `test(cli): …`, `feat(api): …`). A bare descriptive title like "Build TypeScript CLI as compiled Bun binaries" will fail the lint. When a PR is created (including by the Claude Code UI or someone else), check the title against this rule and update it if needed.
 Avoid semantic-release-triggering types for non-release changes. For CI, docs, tests, tooling, agent instructions, and other repository-maintenance changes, do not use `fix`, `feat`, `perf`, or breaking-change markers just to satisfy the PR title linter. Prefer non-releasing conventional types such as `chore`, `docs`, `test`, or `ci` when the change should not produce a package release.
 Do not include a validation, test plan, or list of checks in PR descriptions. CI enforces validation for PRs, so PR descriptions should focus on what changed, why it changed, and any reviewer-relevant context that CI cannot infer.
+This repo is public: PR descriptions, issues, and code comments are world-readable. Keep internal content out of them: absolute production metrics (event counts, user counts, revenue figures: state percentages, ratios, or relative change instead), internal decision detail (vendor, legal, pricing, or strategy discussions), and competitor names (protocol identifiers such as user-agent strings are fine). Put that context in the Linear issue and link it.
 
 ## Refactoring Policy
 

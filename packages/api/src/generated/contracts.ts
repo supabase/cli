@@ -55,12 +55,7 @@ export const ApiKeyResponse = Schema.Struct({
   api_key: Schema.optionalKey(Schema.Union([Schema.String, Schema.Null])),
   id: Schema.optionalKey(Schema.Union([Schema.String, Schema.Null])),
   type: Schema.optionalKey(
-    Schema.Union([
-      Schema.Literal("legacy"),
-      Schema.Literal("publishable"),
-      Schema.Literal("secret"),
-      Schema.Null,
-    ]),
+    Schema.Union([Schema.Literals(["legacy", "publishable", "secret"]), Schema.Null]),
   ),
   prefix: Schema.optionalKey(Schema.Union([Schema.String, Schema.Null])),
   name: Schema.String,
@@ -68,11 +63,7 @@ export const ApiKeyResponse = Schema.Struct({
   hash: Schema.optionalKey(Schema.Union([Schema.String, Schema.Null])),
   secret_jwt_template: Schema.optionalKey(
     Schema.Union([
-      Schema.Record(Schema.String, Schema.Json.annotate({ expected: "JSON value" })).check(
-        Schema.isPropertyNames(Schema.String).annotate({
-          expected: "an object with property names matching the schema",
-        }),
-      ),
+      Schema.Record(Schema.String, Schema.Json.annotate({ expected: "JSON value" })),
       Schema.Null,
     ]),
   ),
@@ -331,12 +322,8 @@ export const ThirdPartyAuth = Schema.Struct({
   type: Schema.String,
   oidc_issuer_url: Schema.optionalKey(Schema.Union([Schema.String, Schema.Null])),
   jwks_url: Schema.optionalKey(Schema.Union([Schema.String, Schema.Null])),
-  custom_jwks: Schema.optionalKey(
-    Schema.Union([Schema.Json.annotate({ expected: "JSON value" }), Schema.Null]),
-  ),
-  resolved_jwks: Schema.optionalKey(
-    Schema.Union([Schema.Json.annotate({ expected: "JSON value" }), Schema.Null]),
-  ),
+  custom_jwks: Schema.optionalKey(Schema.Json.annotate({ expected: "JSON value" })),
+  resolved_jwks: Schema.optionalKey(Schema.Json.annotate({ expected: "JSON value" })),
   inserted_at: Schema.String,
   updated_at: Schema.String,
   resolved_at: Schema.optionalKey(Schema.Union([Schema.String, Schema.Null])),
@@ -351,11 +338,9 @@ export type UpdateCustomHostnameResponseJsonValue =
   | { readonly [x: string]: UpdateCustomHostnameResponseJsonValue };
 export const UpdateCustomHostnameResponseJsonValue = Schema.Union([
   Schema.Union([
-    Schema.Union([
-      Schema.String,
-      Schema.Number.check(Schema.isFinite().annotate({ expected: "a finite number" })),
-      Schema.Boolean,
-    ]),
+    Schema.String,
+    Schema.Number.check(Schema.isFinite().annotate({ expected: "a finite number" })),
+    Schema.Boolean,
     Schema.Null,
   ]),
   Schema.Array(
@@ -384,11 +369,9 @@ export type ListProjectAddonsResponseJsonValue =
   | { readonly [x: string]: ListProjectAddonsResponseJsonValue };
 export const ListProjectAddonsResponseJsonValue = Schema.Union([
   Schema.Union([
-    Schema.Union([
-      Schema.String,
-      Schema.Number.check(Schema.isFinite().annotate({ expected: "a finite number" })),
-      Schema.Boolean,
-    ]),
+    Schema.String,
+    Schema.Number.check(Schema.isFinite().annotate({ expected: "a finite number" })),
+    Schema.Boolean,
     Schema.Null,
   ]),
   Schema.Array(
@@ -1437,7 +1420,7 @@ export const V1CreateLegacySigningKeyOutput = Schema.Struct({
   ),
   algorithm: Schema.Literals(["EdDSA", "ES256", "RS256", "HS256"]),
   status: Schema.Literals(["in_use", "previously_used", "revoked", "standby"]),
-  public_jwk: Schema.Union([Schema.Json.annotate({ expected: "JSON value" }), Schema.Null]),
+  public_jwk: Schema.Json.annotate({ expected: "JSON value" }),
   created_at: Schema.String.annotate({ format: "date-time" }),
   updated_at: Schema.String.annotate({ format: "date-time" }),
 });
@@ -1495,11 +1478,7 @@ export const V1CreateProjectApiKeyInput = Schema.Struct({
   description: Schema.optionalKey(Schema.Union([Schema.String, Schema.Null])),
   secret_jwt_template: Schema.optionalKey(
     Schema.Union([
-      Schema.Record(Schema.String, Schema.Json.annotate({ expected: "JSON value" })).check(
-        Schema.isPropertyNames(Schema.String).annotate({
-          expected: "an object with property names matching the schema",
-        }),
-      ),
+      Schema.Record(Schema.String, Schema.Json.annotate({ expected: "JSON value" })),
       Schema.Null,
     ]),
   ),
@@ -1508,12 +1487,7 @@ export const V1CreateProjectApiKeyOutput = Schema.Struct({
   api_key: Schema.optionalKey(Schema.Union([Schema.String, Schema.Null])),
   id: Schema.optionalKey(Schema.Union([Schema.String, Schema.Null])),
   type: Schema.optionalKey(
-    Schema.Union([
-      Schema.Literal("legacy"),
-      Schema.Literal("publishable"),
-      Schema.Literal("secret"),
-      Schema.Null,
-    ]),
+    Schema.Union([Schema.Literals(["legacy", "publishable", "secret"]), Schema.Null]),
   ),
   prefix: Schema.optionalKey(Schema.Union([Schema.String, Schema.Null])),
   name: Schema.String,
@@ -1521,11 +1495,7 @@ export const V1CreateProjectApiKeyOutput = Schema.Struct({
   hash: Schema.optionalKey(Schema.Union([Schema.String, Schema.Null])),
   secret_jwt_template: Schema.optionalKey(
     Schema.Union([
-      Schema.Record(Schema.String, Schema.Json.annotate({ expected: "JSON value" })).check(
-        Schema.isPropertyNames(Schema.String).annotate({
-          expected: "an object with property names matching the schema",
-        }),
-      ),
+      Schema.Record(Schema.String, Schema.Json.annotate({ expected: "JSON value" })),
       Schema.Null,
     ]),
   ),
@@ -1722,7 +1692,7 @@ export const V1CreateProjectSigningKeyOutput = Schema.Struct({
   ),
   algorithm: Schema.Literals(["EdDSA", "ES256", "RS256", "HS256"]),
   status: Schema.Literals(["in_use", "previously_used", "revoked", "standby"]),
-  public_jwk: Schema.Union([Schema.Json.annotate({ expected: "JSON value" }), Schema.Null]),
+  public_jwk: Schema.Json.annotate({ expected: "JSON value" }),
   created_at: Schema.String.annotate({ format: "date-time" }),
   updated_at: Schema.String.annotate({ format: "date-time" }),
 });
@@ -1754,12 +1724,8 @@ export const V1CreateProjectTpaIntegrationOutput = Schema.Struct({
   type: Schema.String,
   oidc_issuer_url: Schema.optionalKey(Schema.Union([Schema.String, Schema.Null])),
   jwks_url: Schema.optionalKey(Schema.Union([Schema.String, Schema.Null])),
-  custom_jwks: Schema.optionalKey(
-    Schema.Union([Schema.Json.annotate({ expected: "JSON value" }), Schema.Null]),
-  ),
-  resolved_jwks: Schema.optionalKey(
-    Schema.Union([Schema.Json.annotate({ expected: "JSON value" }), Schema.Null]),
-  ),
+  custom_jwks: Schema.optionalKey(Schema.Json.annotate({ expected: "JSON value" })),
+  resolved_jwks: Schema.optionalKey(Schema.Json.annotate({ expected: "JSON value" })),
   inserted_at: Schema.String,
   updated_at: Schema.String,
   resolved_at: Schema.optionalKey(Schema.Union([Schema.String, Schema.Null])),
@@ -2039,12 +2005,7 @@ export const V1DeleteProjectApiKeyOutput = Schema.Struct({
   api_key: Schema.optionalKey(Schema.Union([Schema.String, Schema.Null])),
   id: Schema.optionalKey(Schema.Union([Schema.String, Schema.Null])),
   type: Schema.optionalKey(
-    Schema.Union([
-      Schema.Literal("legacy"),
-      Schema.Literal("publishable"),
-      Schema.Literal("secret"),
-      Schema.Null,
-    ]),
+    Schema.Union([Schema.Literals(["legacy", "publishable", "secret"]), Schema.Null]),
   ),
   prefix: Schema.optionalKey(Schema.Union([Schema.String, Schema.Null])),
   name: Schema.String,
@@ -2052,11 +2013,7 @@ export const V1DeleteProjectApiKeyOutput = Schema.Struct({
   hash: Schema.optionalKey(Schema.Union([Schema.String, Schema.Null])),
   secret_jwt_template: Schema.optionalKey(
     Schema.Union([
-      Schema.Record(Schema.String, Schema.Json.annotate({ expected: "JSON value" })).check(
-        Schema.isPropertyNames(Schema.String).annotate({
-          expected: "an object with property names matching the schema",
-        }),
-      ),
+      Schema.Record(Schema.String, Schema.Json.annotate({ expected: "JSON value" })),
       Schema.Null,
     ]),
   ),
@@ -2113,12 +2070,8 @@ export const V1DeleteProjectTpaIntegrationOutput = Schema.Struct({
   type: Schema.String,
   oidc_issuer_url: Schema.optionalKey(Schema.Union([Schema.String, Schema.Null])),
   jwks_url: Schema.optionalKey(Schema.Union([Schema.String, Schema.Null])),
-  custom_jwks: Schema.optionalKey(
-    Schema.Union([Schema.Json.annotate({ expected: "JSON value" }), Schema.Null]),
-  ),
-  resolved_jwks: Schema.optionalKey(
-    Schema.Union([Schema.Json.annotate({ expected: "JSON value" }), Schema.Null]),
-  ),
+  custom_jwks: Schema.optionalKey(Schema.Json.annotate({ expected: "JSON value" })),
+  resolved_jwks: Schema.optionalKey(Schema.Json.annotate({ expected: "JSON value" })),
   inserted_at: Schema.String,
   updated_at: Schema.String,
   resolved_at: Schema.optionalKey(Schema.Union([Schema.String, Schema.Null])),
@@ -2719,9 +2672,7 @@ export const V1GetActionRunOutput = Schema.Struct({
       updated_at: Schema.String,
     }),
   ),
-  git_config: Schema.optionalKey(
-    Schema.Union([Schema.Json.annotate({ expected: "JSON value" }), Schema.Null]),
-  ),
+  git_config: Schema.optionalKey(Schema.Json.annotate({ expected: "JSON value" })),
   workdir: Schema.Union([Schema.String, Schema.Null]),
   check_run_id: Schema.Union([
     Schema.Number.check(Schema.isFinite().annotate({ expected: "a finite number" })),
@@ -2935,11 +2886,7 @@ export const V1GetAuthServiceConfigOutput = Schema.Struct({
       ),
     Schema.Null,
   ]),
-  db_max_pool_size_unit: Schema.Union([
-    Schema.Literal("connections"),
-    Schema.Literal("percent"),
-    Schema.Null,
-  ]),
+  db_max_pool_size_unit: Schema.Union([Schema.Literals(["connections", "percent"]), Schema.Null]),
   disable_signup: Schema.Union([Schema.Boolean, Schema.Null]),
   external_anonymous_users_enabled: Schema.Union([Schema.Boolean, Schema.Null]),
   external_apple_additional_client_ids: Schema.Union([Schema.String, Schema.Null]),
@@ -3213,12 +3160,12 @@ export const V1GetAuthServiceConfigOutput = Schema.Struct({
     Schema.Null,
   ]),
   password_required_characters: Schema.Union([
-    Schema.Literal("abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ:0123456789"),
-    Schema.Literal("abcdefghijklmnopqrstuvwxyz:ABCDEFGHIJKLMNOPQRSTUVWXYZ:0123456789"),
-    Schema.Literal(
+    Schema.Literals([
+      "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ:0123456789",
+      "abcdefghijklmnopqrstuvwxyz:ABCDEFGHIJKLMNOPQRSTUVWXYZ:0123456789",
       "abcdefghijklmnopqrstuvwxyz:ABCDEFGHIJKLMNOPQRSTUVWXYZ:0123456789:!@#$%^&*()_+-=[]{};'\\\\:\"|<>?,./`~",
-    ),
-    Schema.Literal(""),
+      "",
+    ]),
     Schema.Null,
   ]),
   rate_limit_anonymous_users: Schema.Union([
@@ -3326,8 +3273,7 @@ export const V1GetAuthServiceConfigOutput = Schema.Struct({
   security_sb_forwarded_for_enabled: Schema.Union([Schema.Boolean, Schema.Null]),
   security_captcha_enabled: Schema.Union([Schema.Boolean, Schema.Null]),
   security_captcha_provider: Schema.Union([
-    Schema.Literal("turnstile"),
-    Schema.Literal("hcaptcha"),
+    Schema.Literals(["turnstile", "hcaptcha"]),
     Schema.Null,
   ]),
   security_captcha_secret: Schema.Union([Schema.String, Schema.Null]),
@@ -3401,11 +3347,7 @@ export const V1GetAuthServiceConfigOutput = Schema.Struct({
       }),
     ),
   sms_provider: Schema.Union([
-    Schema.Literal("messagebird"),
-    Schema.Literal("textlocal"),
-    Schema.Literal("twilio"),
-    Schema.Literal("twilio_verify"),
-    Schema.Literal("vonage"),
+    Schema.Literals(["messagebird", "textlocal", "twilio", "twilio_verify", "vonage"]),
     Schema.Null,
   ]),
   sms_template: Schema.Union([Schema.String, Schema.Null]),
@@ -3898,7 +3840,7 @@ export const V1GetLegacySigningKeyOutput = Schema.Struct({
   ),
   algorithm: Schema.Literals(["EdDSA", "ES256", "RS256", "HS256"]),
   status: Schema.Literals(["in_use", "previously_used", "revoked", "standby"]),
-  public_jwk: Schema.Union([Schema.Json.annotate({ expected: "JSON value" }), Schema.Null]),
+  public_jwk: Schema.Json.annotate({ expected: "JSON value" }),
   created_at: Schema.String.annotate({ format: "date-time" }),
   updated_at: Schema.String.annotate({ format: "date-time" }),
 });
@@ -4052,11 +3994,7 @@ export const V1GetOrganizationProjectClaimOutput = Schema.Struct({
     ),
     source_subscription_plan: Schema.Literals(["free", "pro", "team", "enterprise", "platform"]),
     target_subscription_plan: Schema.Union([
-      Schema.Literal("free"),
-      Schema.Literal("pro"),
-      Schema.Literal("team"),
-      Schema.Literal("enterprise"),
-      Schema.Literal("platform"),
+      Schema.Literals(["free", "pro", "team", "enterprise", "platform"]),
       Schema.Null,
     ]),
   }),
@@ -4086,63 +4024,90 @@ export const V1GetPerformanceAdvisorsInput = Schema.Struct({
 });
 export const V1GetPerformanceAdvisorsOutput = Schema.Struct({
   lints: Schema.Array(
-    Schema.Struct({
-      name: Schema.Literals([
-        "unindexed_foreign_keys",
-        "auth_users_exposed",
-        "auth_rls_initplan",
-        "no_primary_key",
-        "unused_index",
-        "multiple_permissive_policies",
-        "policy_exists_rls_disabled",
-        "rls_enabled_no_policy",
-        "duplicate_index",
-        "security_definer_view",
-        "function_search_path_mutable",
-        "rls_disabled_in_public",
-        "extension_in_public",
-        "rls_references_user_metadata",
-        "materialized_view_in_api",
-        "foreign_table_in_api",
-        "unsupported_reg_types",
-        "auth_otp_long_expiry",
-        "auth_otp_short_length",
-        "ssl_not_enforced",
-        "network_restrictions_not_set",
-        "password_requirements_min_length",
-        "pitr_not_enabled",
-        "auth_leaked_password_protection",
-        "auth_insufficient_mfa_options",
-        "auth_password_policy_missing",
-        "leaked_service_key",
-        "no_backup_admin",
-        "vulnerable_postgres_version",
-      ]),
-      title: Schema.String,
-      level: Schema.Literals(["ERROR", "WARN", "INFO"]),
-      facing: Schema.Literal("EXTERNAL"),
-      categories: Schema.Array(Schema.Literals(["PERFORMANCE", "SECURITY"])),
-      description: Schema.String,
-      detail: Schema.String,
-      remediation: Schema.String,
-      metadata: Schema.optionalKey(
-        Schema.Struct({
-          schema: Schema.optionalKey(Schema.String),
-          name: Schema.optionalKey(Schema.String),
-          entity: Schema.optionalKey(Schema.String),
-          type: Schema.optionalKey(
-            Schema.Literals(["table", "view", "auth", "function", "extension", "compliance"]),
+    Schema.StructWithRest(
+      Schema.Struct({
+        name: Schema.Literals([
+          "unindexed_foreign_keys",
+          "auth_users_exposed",
+          "auth_rls_initplan",
+          "no_primary_key",
+          "unused_index",
+          "multiple_permissive_policies",
+          "policy_exists_rls_disabled",
+          "rls_enabled_no_policy",
+          "duplicate_index",
+          "security_definer_view",
+          "function_search_path_mutable",
+          "rls_disabled_in_public",
+          "extension_in_public",
+          "rls_references_user_metadata",
+          "materialized_view_in_api",
+          "foreign_table_in_api",
+          "unsupported_reg_types",
+          "auth_otp_long_expiry",
+          "auth_otp_short_length",
+          "ssl_not_enforced",
+          "log_connections_not_enabled",
+          "network_restrictions_not_set",
+          "password_requirements_min_length",
+          "pitr_not_enabled",
+          "auth_leaked_password_protection",
+          "auth_insufficient_mfa_options",
+          "auth_password_policy_missing",
+          "leaked_service_key",
+          "no_backup_admin",
+          "vulnerable_postgres_version",
+          "db_not_reachable",
+          "db_connection_failing",
+          "db_connection_limit_reached",
+          "instance_telemetry_lost",
+          "instance_db_down",
+          "instance_alert_firing",
+          "log_service_error_rate_high",
+          "project_not_active",
+          "advisor_check_unavailable",
+        ]),
+        title: Schema.String,
+        level: Schema.Literals(["ERROR", "WARN", "INFO"]),
+        facing: Schema.Literal("EXTERNAL"),
+        categories: Schema.Array(Schema.Literals(["PERFORMANCE", "SECURITY", "HEALTH"])),
+        description: Schema.String,
+        detail: Schema.String,
+        remediation: Schema.String,
+        metadata: Schema.optionalKey(
+          Schema.StructWithRest(
+            Schema.Struct({
+              schema: Schema.optionalKey(Schema.String),
+              name: Schema.optionalKey(Schema.String),
+              entity: Schema.optionalKey(Schema.String),
+              type: Schema.optionalKey(
+                Schema.Literals([
+                  "table",
+                  "view",
+                  "materialized view",
+                  "foreign table",
+                  "auth",
+                  "function",
+                  "extension",
+                  "compliance",
+                  "health",
+                ]),
+              ),
+              fkey_name: Schema.optionalKey(Schema.String),
+              fkey_columns: Schema.optionalKey(
+                Schema.Array(
+                  Schema.Number.check(Schema.isFinite().annotate({ expected: "a finite number" })),
+                ),
+              ),
+            }),
+            [Schema.Record(Schema.String, Schema.Json.annotate({ expected: "JSON value" }))],
           ),
-          fkey_name: Schema.optionalKey(Schema.String),
-          fkey_columns: Schema.optionalKey(
-            Schema.Array(
-              Schema.Number.check(Schema.isFinite().annotate({ expected: "a finite number" })),
-            ),
-          ),
-        }),
-      ),
-      cache_key: Schema.String,
-    }),
+        ),
+        cache_key: Schema.String,
+        observed_at: Schema.optionalKey(Schema.String.annotate({ format: "date-time" })),
+      }),
+      [Schema.Record(Schema.String, Schema.Json.annotate({ expected: "JSON value" }))],
+    ),
   ),
 });
 export const V1GetPgsodiumConfigInput = Schema.Struct({
@@ -4674,12 +4639,7 @@ export const V1GetProjectApiKeyOutput = Schema.Struct({
   api_key: Schema.optionalKey(Schema.Union([Schema.String, Schema.Null])),
   id: Schema.optionalKey(Schema.Union([Schema.String, Schema.Null])),
   type: Schema.optionalKey(
-    Schema.Union([
-      Schema.Literal("legacy"),
-      Schema.Literal("publishable"),
-      Schema.Literal("secret"),
-      Schema.Null,
-    ]),
+    Schema.Union([Schema.Literals(["legacy", "publishable", "secret"]), Schema.Null]),
   ),
   prefix: Schema.optionalKey(Schema.Union([Schema.String, Schema.Null])),
   name: Schema.String,
@@ -4687,11 +4647,7 @@ export const V1GetProjectApiKeyOutput = Schema.Struct({
   hash: Schema.optionalKey(Schema.Union([Schema.String, Schema.Null])),
   secret_jwt_template: Schema.optionalKey(
     Schema.Union([
-      Schema.Record(Schema.String, Schema.Json.annotate({ expected: "JSON value" })).check(
-        Schema.isPropertyNames(Schema.String).annotate({
-          expected: "an object with property names matching the schema",
-        }),
-      ),
+      Schema.Record(Schema.String, Schema.Json.annotate({ expected: "JSON value" })),
       Schema.Null,
     ]),
   ),
@@ -5034,7 +4990,7 @@ export const V1GetProjectSigningKeyOutput = Schema.Struct({
   ),
   algorithm: Schema.Literals(["EdDSA", "ES256", "RS256", "HS256"]),
   status: Schema.Literals(["in_use", "previously_used", "revoked", "standby"]),
-  public_jwk: Schema.Union([Schema.Json.annotate({ expected: "JSON value" }), Schema.Null]),
+  public_jwk: Schema.Json.annotate({ expected: "JSON value" }),
   created_at: Schema.String.annotate({ format: "date-time" }),
   updated_at: Schema.String.annotate({ format: "date-time" }),
 });
@@ -5064,7 +5020,7 @@ export const V1GetProjectSigningKeysOutput = Schema.Struct({
       ),
       algorithm: Schema.Literals(["EdDSA", "ES256", "RS256", "HS256"]),
       status: Schema.Literals(["in_use", "previously_used", "revoked", "standby"]),
-      public_jwk: Schema.Union([Schema.Json.annotate({ expected: "JSON value" }), Schema.Null]),
+      public_jwk: Schema.Json.annotate({ expected: "JSON value" }),
       created_at: Schema.String.annotate({ format: "date-time" }),
       updated_at: Schema.String.annotate({ format: "date-time" }),
     }),
@@ -5105,12 +5061,8 @@ export const V1GetProjectTpaIntegrationOutput = Schema.Struct({
   type: Schema.String,
   oidc_issuer_url: Schema.optionalKey(Schema.Union([Schema.String, Schema.Null])),
   jwks_url: Schema.optionalKey(Schema.Union([Schema.String, Schema.Null])),
-  custom_jwks: Schema.optionalKey(
-    Schema.Union([Schema.Json.annotate({ expected: "JSON value" }), Schema.Null]),
-  ),
-  resolved_jwks: Schema.optionalKey(
-    Schema.Union([Schema.Json.annotate({ expected: "JSON value" }), Schema.Null]),
-  ),
+  custom_jwks: Schema.optionalKey(Schema.Json.annotate({ expected: "JSON value" })),
+  resolved_jwks: Schema.optionalKey(Schema.Json.annotate({ expected: "JSON value" })),
   inserted_at: Schema.String,
   updated_at: Schema.String,
   resolved_at: Schema.optionalKey(Schema.Union([Schema.String, Schema.Null])),
@@ -5423,63 +5375,90 @@ export const V1GetSecurityAdvisorsInput = Schema.Struct({
 });
 export const V1GetSecurityAdvisorsOutput = Schema.Struct({
   lints: Schema.Array(
-    Schema.Struct({
-      name: Schema.Literals([
-        "unindexed_foreign_keys",
-        "auth_users_exposed",
-        "auth_rls_initplan",
-        "no_primary_key",
-        "unused_index",
-        "multiple_permissive_policies",
-        "policy_exists_rls_disabled",
-        "rls_enabled_no_policy",
-        "duplicate_index",
-        "security_definer_view",
-        "function_search_path_mutable",
-        "rls_disabled_in_public",
-        "extension_in_public",
-        "rls_references_user_metadata",
-        "materialized_view_in_api",
-        "foreign_table_in_api",
-        "unsupported_reg_types",
-        "auth_otp_long_expiry",
-        "auth_otp_short_length",
-        "ssl_not_enforced",
-        "network_restrictions_not_set",
-        "password_requirements_min_length",
-        "pitr_not_enabled",
-        "auth_leaked_password_protection",
-        "auth_insufficient_mfa_options",
-        "auth_password_policy_missing",
-        "leaked_service_key",
-        "no_backup_admin",
-        "vulnerable_postgres_version",
-      ]),
-      title: Schema.String,
-      level: Schema.Literals(["ERROR", "WARN", "INFO"]),
-      facing: Schema.Literal("EXTERNAL"),
-      categories: Schema.Array(Schema.Literals(["PERFORMANCE", "SECURITY"])),
-      description: Schema.String,
-      detail: Schema.String,
-      remediation: Schema.String,
-      metadata: Schema.optionalKey(
-        Schema.Struct({
-          schema: Schema.optionalKey(Schema.String),
-          name: Schema.optionalKey(Schema.String),
-          entity: Schema.optionalKey(Schema.String),
-          type: Schema.optionalKey(
-            Schema.Literals(["table", "view", "auth", "function", "extension", "compliance"]),
+    Schema.StructWithRest(
+      Schema.Struct({
+        name: Schema.Literals([
+          "unindexed_foreign_keys",
+          "auth_users_exposed",
+          "auth_rls_initplan",
+          "no_primary_key",
+          "unused_index",
+          "multiple_permissive_policies",
+          "policy_exists_rls_disabled",
+          "rls_enabled_no_policy",
+          "duplicate_index",
+          "security_definer_view",
+          "function_search_path_mutable",
+          "rls_disabled_in_public",
+          "extension_in_public",
+          "rls_references_user_metadata",
+          "materialized_view_in_api",
+          "foreign_table_in_api",
+          "unsupported_reg_types",
+          "auth_otp_long_expiry",
+          "auth_otp_short_length",
+          "ssl_not_enforced",
+          "log_connections_not_enabled",
+          "network_restrictions_not_set",
+          "password_requirements_min_length",
+          "pitr_not_enabled",
+          "auth_leaked_password_protection",
+          "auth_insufficient_mfa_options",
+          "auth_password_policy_missing",
+          "leaked_service_key",
+          "no_backup_admin",
+          "vulnerable_postgres_version",
+          "db_not_reachable",
+          "db_connection_failing",
+          "db_connection_limit_reached",
+          "instance_telemetry_lost",
+          "instance_db_down",
+          "instance_alert_firing",
+          "log_service_error_rate_high",
+          "project_not_active",
+          "advisor_check_unavailable",
+        ]),
+        title: Schema.String,
+        level: Schema.Literals(["ERROR", "WARN", "INFO"]),
+        facing: Schema.Literal("EXTERNAL"),
+        categories: Schema.Array(Schema.Literals(["PERFORMANCE", "SECURITY", "HEALTH"])),
+        description: Schema.String,
+        detail: Schema.String,
+        remediation: Schema.String,
+        metadata: Schema.optionalKey(
+          Schema.StructWithRest(
+            Schema.Struct({
+              schema: Schema.optionalKey(Schema.String),
+              name: Schema.optionalKey(Schema.String),
+              entity: Schema.optionalKey(Schema.String),
+              type: Schema.optionalKey(
+                Schema.Literals([
+                  "table",
+                  "view",
+                  "materialized view",
+                  "foreign table",
+                  "auth",
+                  "function",
+                  "extension",
+                  "compliance",
+                  "health",
+                ]),
+              ),
+              fkey_name: Schema.optionalKey(Schema.String),
+              fkey_columns: Schema.optionalKey(
+                Schema.Array(
+                  Schema.Number.check(Schema.isFinite().annotate({ expected: "a finite number" })),
+                ),
+              ),
+            }),
+            [Schema.Record(Schema.String, Schema.Json.annotate({ expected: "JSON value" }))],
           ),
-          fkey_name: Schema.optionalKey(Schema.String),
-          fkey_columns: Schema.optionalKey(
-            Schema.Array(
-              Schema.Number.check(Schema.isFinite().annotate({ expected: "a finite number" })),
-            ),
-          ),
-        }),
-      ),
-      cache_key: Schema.String,
-    }),
+        ),
+        cache_key: Schema.String,
+        observed_at: Schema.optionalKey(Schema.String.annotate({ format: "date-time" })),
+      }),
+      [Schema.Record(Schema.String, Schema.Json.annotate({ expected: "JSON value" }))],
+    ),
   ),
 });
 export const V1GetServicesHealthInput = Schema.Struct({
@@ -5844,9 +5823,7 @@ export const V1ListActionRunsOutput = Schema.Array(
         updated_at: Schema.String,
       }),
     ),
-    git_config: Schema.optionalKey(
-      Schema.Union([Schema.Json.annotate({ expected: "JSON value" }), Schema.Null]),
-    ),
+    git_config: Schema.optionalKey(Schema.Json.annotate({ expected: "JSON value" })),
     workdir: Schema.Union([Schema.String, Schema.Null]),
     check_run_id: Schema.Union([
       Schema.Number.check(Schema.isFinite().annotate({ expected: "a finite number" })),
@@ -6753,7 +6730,7 @@ export const V1RemoveProjectSigningKeyOutput = Schema.Struct({
   ),
   algorithm: Schema.Literals(["EdDSA", "ES256", "RS256", "HS256"]),
   status: Schema.Literals(["in_use", "previously_used", "revoked", "standby"]),
-  public_jwk: Schema.Union([Schema.Json.annotate({ expected: "JSON value" }), Schema.Null]),
+  public_jwk: Schema.Json.annotate({ expected: "JSON value" }),
   created_at: Schema.String.annotate({ format: "date-time" }),
   updated_at: Schema.String.annotate({ format: "date-time" }),
 });
@@ -7532,7 +7509,7 @@ export const V1UpdateAuthServiceConfigInput = Schema.Struct({
   ),
   security_captcha_enabled: Schema.optionalKey(Schema.Union([Schema.Boolean, Schema.Null])),
   security_captcha_provider: Schema.optionalKey(
-    Schema.Union([Schema.Literal("turnstile"), Schema.Literal("hcaptcha"), Schema.Null]),
+    Schema.Union([Schema.Literals(["turnstile", "hcaptcha"]), Schema.Null]),
   ),
   security_captcha_secret: Schema.optionalKey(Schema.Union([Schema.String, Schema.Null])),
   sessions_timebox: Schema.optionalKey(
@@ -7704,12 +7681,12 @@ export const V1UpdateAuthServiceConfigInput = Schema.Struct({
   ),
   password_required_characters: Schema.optionalKey(
     Schema.Union([
-      Schema.Literal("abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ:0123456789"),
-      Schema.Literal("abcdefghijklmnopqrstuvwxyz:ABCDEFGHIJKLMNOPQRSTUVWXYZ:0123456789"),
-      Schema.Literal(
+      Schema.Literals([
+        "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ:0123456789",
+        "abcdefghijklmnopqrstuvwxyz:ABCDEFGHIJKLMNOPQRSTUVWXYZ:0123456789",
         "abcdefghijklmnopqrstuvwxyz:ABCDEFGHIJKLMNOPQRSTUVWXYZ:0123456789:!@#$%^&*()_+-=[]{};'\\\\:\"|<>?,./`~",
-      ),
-      Schema.Literal(""),
+        "",
+      ]),
       Schema.Null,
     ]),
   ),
@@ -7808,11 +7785,7 @@ export const V1UpdateAuthServiceConfigInput = Schema.Struct({
   ),
   sms_provider: Schema.optionalKey(
     Schema.Union([
-      Schema.Literal("messagebird"),
-      Schema.Literal("textlocal"),
-      Schema.Literal("twilio"),
-      Schema.Literal("twilio_verify"),
-      Schema.Literal("vonage"),
+      Schema.Literals(["messagebird", "textlocal", "twilio", "twilio_verify", "vonage"]),
       Schema.Null,
     ]),
   ),
@@ -7999,7 +7972,7 @@ export const V1UpdateAuthServiceConfigInput = Schema.Struct({
     ]),
   ),
   db_max_pool_size_unit: Schema.optionalKey(
-    Schema.Union([Schema.Literal("connections"), Schema.Literal("percent"), Schema.Null]),
+    Schema.Union([Schema.Literals(["connections", "percent"]), Schema.Null]),
   ),
   api_max_request_duration: Schema.optionalKey(
     Schema.Union([
@@ -8098,11 +8071,7 @@ export const V1UpdateAuthServiceConfigOutput = Schema.Struct({
       ),
     Schema.Null,
   ]),
-  db_max_pool_size_unit: Schema.Union([
-    Schema.Literal("connections"),
-    Schema.Literal("percent"),
-    Schema.Null,
-  ]),
+  db_max_pool_size_unit: Schema.Union([Schema.Literals(["connections", "percent"]), Schema.Null]),
   disable_signup: Schema.Union([Schema.Boolean, Schema.Null]),
   external_anonymous_users_enabled: Schema.Union([Schema.Boolean, Schema.Null]),
   external_apple_additional_client_ids: Schema.Union([Schema.String, Schema.Null]),
@@ -8376,12 +8345,12 @@ export const V1UpdateAuthServiceConfigOutput = Schema.Struct({
     Schema.Null,
   ]),
   password_required_characters: Schema.Union([
-    Schema.Literal("abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ:0123456789"),
-    Schema.Literal("abcdefghijklmnopqrstuvwxyz:ABCDEFGHIJKLMNOPQRSTUVWXYZ:0123456789"),
-    Schema.Literal(
+    Schema.Literals([
+      "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ:0123456789",
+      "abcdefghijklmnopqrstuvwxyz:ABCDEFGHIJKLMNOPQRSTUVWXYZ:0123456789",
       "abcdefghijklmnopqrstuvwxyz:ABCDEFGHIJKLMNOPQRSTUVWXYZ:0123456789:!@#$%^&*()_+-=[]{};'\\\\:\"|<>?,./`~",
-    ),
-    Schema.Literal(""),
+      "",
+    ]),
     Schema.Null,
   ]),
   rate_limit_anonymous_users: Schema.Union([
@@ -8489,8 +8458,7 @@ export const V1UpdateAuthServiceConfigOutput = Schema.Struct({
   security_sb_forwarded_for_enabled: Schema.Union([Schema.Boolean, Schema.Null]),
   security_captcha_enabled: Schema.Union([Schema.Boolean, Schema.Null]),
   security_captcha_provider: Schema.Union([
-    Schema.Literal("turnstile"),
-    Schema.Literal("hcaptcha"),
+    Schema.Literals(["turnstile", "hcaptcha"]),
     Schema.Null,
   ]),
   security_captcha_secret: Schema.Union([Schema.String, Schema.Null]),
@@ -8564,11 +8532,7 @@ export const V1UpdateAuthServiceConfigOutput = Schema.Struct({
       }),
     ),
   sms_provider: Schema.Union([
-    Schema.Literal("messagebird"),
-    Schema.Literal("textlocal"),
-    Schema.Literal("twilio"),
-    Schema.Literal("twilio_verify"),
-    Schema.Literal("vonage"),
+    Schema.Literals(["messagebird", "textlocal", "twilio", "twilio_verify", "vonage"]),
     Schema.Null,
   ]),
   sms_template: Schema.Union([Schema.String, Schema.Null]),
@@ -9529,11 +9493,7 @@ export const V1UpdateProjectApiKeyInput = Schema.Struct({
   description: Schema.optionalKey(Schema.Union([Schema.String, Schema.Null])),
   secret_jwt_template: Schema.optionalKey(
     Schema.Union([
-      Schema.Record(Schema.String, Schema.Json.annotate({ expected: "JSON value" })).check(
-        Schema.isPropertyNames(Schema.String).annotate({
-          expected: "an object with property names matching the schema",
-        }),
-      ),
+      Schema.Record(Schema.String, Schema.Json.annotate({ expected: "JSON value" })),
       Schema.Null,
     ]),
   ),
@@ -9542,12 +9502,7 @@ export const V1UpdateProjectApiKeyOutput = Schema.Struct({
   api_key: Schema.optionalKey(Schema.Union([Schema.String, Schema.Null])),
   id: Schema.optionalKey(Schema.Union([Schema.String, Schema.Null])),
   type: Schema.optionalKey(
-    Schema.Union([
-      Schema.Literal("legacy"),
-      Schema.Literal("publishable"),
-      Schema.Literal("secret"),
-      Schema.Null,
-    ]),
+    Schema.Union([Schema.Literals(["legacy", "publishable", "secret"]), Schema.Null]),
   ),
   prefix: Schema.optionalKey(Schema.Union([Schema.String, Schema.Null])),
   name: Schema.String,
@@ -9555,11 +9510,7 @@ export const V1UpdateProjectApiKeyOutput = Schema.Struct({
   hash: Schema.optionalKey(Schema.Union([Schema.String, Schema.Null])),
   secret_jwt_template: Schema.optionalKey(
     Schema.Union([
-      Schema.Record(Schema.String, Schema.Json.annotate({ expected: "JSON value" })).check(
-        Schema.isPropertyNames(Schema.String).annotate({
-          expected: "an object with property names matching the schema",
-        }),
-      ),
+      Schema.Record(Schema.String, Schema.Json.annotate({ expected: "JSON value" })),
       Schema.Null,
     ]),
   ),
@@ -9618,7 +9569,7 @@ export const V1UpdateProjectSigningKeyOutput = Schema.Struct({
   ),
   algorithm: Schema.Literals(["EdDSA", "ES256", "RS256", "HS256"]),
   status: Schema.Literals(["in_use", "previously_used", "revoked", "standby"]),
-  public_jwk: Schema.Union([Schema.Json.annotate({ expected: "JSON value" }), Schema.Null]),
+  public_jwk: Schema.Json.annotate({ expected: "JSON value" }),
   created_at: Schema.String.annotate({ format: "date-time" }),
   updated_at: Schema.String.annotate({ format: "date-time" }),
 });
@@ -10036,87 +9987,103 @@ export const V2CreateLogDrainInput = Schema.Struct({
     ),
   data: Schema.Struct({
     type: Schema.Literal("log_drain").annotate({ description: "Resource type." }),
-    attributes: Schema.Struct({
-      name: Schema.String,
-      description: Schema.optionalKey(Schema.String),
-      config: Schema.Union([
-        Schema.Struct({
-          url: Schema.optionalKey(Schema.Union([Schema.String, Schema.Null])),
-          schema: Schema.optionalKey(Schema.String),
-          username: Schema.optionalKey(Schema.Union([Schema.String, Schema.Null])),
-          password: Schema.optionalKey(Schema.Union([Schema.String, Schema.Null])),
-          port: Schema.optionalKey(
-            Schema.Union([
-              Schema.Number.check(Schema.isFinite().annotate({ expected: "a finite number" })),
-              Schema.Null,
-            ]),
-          ),
-          hostname: Schema.optionalKey(Schema.String),
-        }).annotate({ title: "postgres" }),
-        Schema.Struct({
-          url: Schema.optionalKey(Schema.String),
-          http: Schema.optionalKey(Schema.Literals(["http1", "http2"])),
-          gzip: Schema.optionalKey(Schema.Boolean),
-          headers: Schema.optionalKey(Schema.Record(Schema.String, Schema.String)),
-        }).annotate({ title: "webhook" }),
-        Schema.Struct({
-          project_id: Schema.optionalKey(Schema.String),
-          dataset_id: Schema.optionalKey(Schema.String),
-        }).annotate({ title: "bigquery" }),
-        Schema.Struct({
-          api_key: Schema.optionalKey(Schema.String),
-          region: Schema.optionalKey(Schema.String),
-        }).annotate({ title: "datadog" }),
-        Schema.Struct({
-          url: Schema.optionalKey(Schema.String),
-          username: Schema.optionalKey(Schema.Union([Schema.String, Schema.Null])),
-          password: Schema.optionalKey(Schema.Union([Schema.String, Schema.Null])),
-          headers: Schema.optionalKey(Schema.Record(Schema.String, Schema.String)),
-        }).annotate({ title: "loki" }),
-        Schema.Struct({ dsn: Schema.optionalKey(Schema.String) }).annotate({ title: "sentry" }),
-        Schema.Struct({
-          domain: Schema.optionalKey(Schema.String),
-          api_token: Schema.optionalKey(Schema.String),
-          dataset_name: Schema.optionalKey(Schema.String),
-        }).annotate({ title: "axiom" }),
-        Schema.Struct({
-          host: Schema.optionalKey(Schema.String),
-          port: Schema.optionalKey(
-            Schema.Number.check(Schema.isInt().annotate({ expected: "an integer" }))
-              .check(
-                Schema.isGreaterThanOrEqualTo(0).annotate({
-                  expected: "a value greater than or equal to 0",
-                }),
-              )
-              .check(
-                Schema.isLessThanOrEqualTo(65535).annotate({
-                  expected: "a value less than or equal to 65535",
-                }),
-              ),
-          ),
-          tls: Schema.optionalKey(Schema.Boolean),
-          structured_data: Schema.optionalKey(Schema.String),
-          cipher_key: Schema.optionalKey(Schema.String),
-          ca_cert: Schema.optionalKey(Schema.String),
-          client_cert: Schema.optionalKey(Schema.String),
-          client_key: Schema.optionalKey(Schema.String),
-        }).annotate({ title: "syslog" }),
-      ]),
-      backend_type: Schema.Literals([
-        "postgres",
-        "bigquery",
-        "clickhouse",
-        "webhook",
-        "datadog",
-        "loki",
-        "sentry",
-        "s3",
-        "axiom",
-        "last9",
-        "otlp",
-        "syslog",
-      ]),
-    }),
+    attributes: Schema.StructWithRest(
+      Schema.Struct({
+        name: Schema.String,
+        description: Schema.optionalKey(Schema.String),
+        config: Schema.Union([
+          Schema.Struct({
+            url: Schema.optionalKey(Schema.String),
+            http: Schema.optionalKey(Schema.Literals(["http1", "http2"])),
+            gzip: Schema.optionalKey(Schema.Boolean),
+            headers: Schema.optionalKey(Schema.Record(Schema.String, Schema.String)),
+          }).annotate({ title: "webhook" }),
+          Schema.Struct({
+            api_key: Schema.optionalKey(Schema.String),
+            region: Schema.optionalKey(Schema.String),
+          }).annotate({ title: "datadog" }),
+          Schema.Struct({
+            url: Schema.optionalKey(Schema.String),
+            username: Schema.optionalKey(Schema.Union([Schema.String, Schema.Null])),
+            password: Schema.optionalKey(Schema.Union([Schema.String, Schema.Null])),
+            headers: Schema.optionalKey(Schema.Record(Schema.String, Schema.String)),
+          }).annotate({ title: "loki" }),
+          Schema.Struct({ dsn: Schema.optionalKey(Schema.String) }).annotate({ title: "sentry" }),
+          Schema.Struct({
+            domain: Schema.optionalKey(Schema.String),
+            api_token: Schema.optionalKey(Schema.String),
+            dataset_name: Schema.optionalKey(Schema.String),
+          }).annotate({ title: "axiom" }),
+          Schema.Struct({
+            host: Schema.optionalKey(Schema.String),
+            port: Schema.optionalKey(
+              Schema.Number.check(Schema.isInt().annotate({ expected: "an integer" }))
+                .check(
+                  Schema.isGreaterThanOrEqualTo(0).annotate({
+                    expected: "a value greater than or equal to 0",
+                  }),
+                )
+                .check(
+                  Schema.isLessThanOrEqualTo(65535).annotate({
+                    expected: "a value less than or equal to 65535",
+                  }),
+                ),
+            ),
+            tls: Schema.optionalKey(Schema.Boolean),
+            structured_data: Schema.optionalKey(Schema.String),
+            cipher_key: Schema.optionalKey(Schema.String),
+            ca_cert: Schema.optionalKey(Schema.String),
+            client_cert: Schema.optionalKey(Schema.String),
+            client_key: Schema.optionalKey(Schema.String),
+          }).annotate({ title: "syslog" }),
+          Schema.Struct({
+            s3_bucket: Schema.optionalKey(Schema.String),
+            storage_region: Schema.optionalKey(Schema.String),
+            access_key_id: Schema.optionalKey(Schema.String),
+            secret_access_key: Schema.optionalKey(Schema.String),
+            batch_timeout: Schema.optionalKey(
+              Schema.Number.check(Schema.isInt().annotate({ expected: "an integer" }))
+                .check(
+                  Schema.isGreaterThanOrEqualTo(-9007199254740991).annotate({
+                    expected: "a value greater than or equal to -9007199254740991",
+                  }),
+                )
+                .check(
+                  Schema.isLessThanOrEqualTo(9007199254740991).annotate({
+                    expected: "a value less than or equal to 9007199254740991",
+                  }),
+                ),
+            ),
+          }).annotate({ title: "s3" }),
+          Schema.Struct({
+            region: Schema.optionalKey(Schema.String),
+            username: Schema.optionalKey(Schema.String),
+            password: Schema.optionalKey(Schema.String),
+          }).annotate({ title: "last9" }),
+          Schema.Struct({
+            endpoint: Schema.optionalKey(Schema.String),
+            protocol: Schema.optionalKey(Schema.String),
+            gzip: Schema.optionalKey(Schema.Boolean),
+            headers: Schema.optionalKey(Schema.Record(Schema.String, Schema.String)),
+          }).annotate({ title: "otlp" }),
+        ]),
+        backend_type: Schema.Literals([
+          "postgres",
+          "bigquery",
+          "clickhouse",
+          "webhook",
+          "datadog",
+          "loki",
+          "sentry",
+          "s3",
+          "axiom",
+          "last9",
+          "otlp",
+          "syslog",
+        ]),
+      }),
+      [Schema.Record(Schema.String, Schema.Json.annotate({ expected: "JSON value" }))],
+    ),
   }),
 });
 export const V2CreateLogDrainOutput = Schema.Struct({
@@ -10128,28 +10095,11 @@ export const V2CreateLogDrainOutput = Schema.Struct({
       description: Schema.optionalKey(Schema.String),
       config: Schema.Union([
         Schema.Struct({
-          url: Schema.optionalKey(Schema.Union([Schema.String, Schema.Null])),
-          schema: Schema.optionalKey(Schema.String),
-          username: Schema.optionalKey(Schema.Union([Schema.String, Schema.Null])),
-          password: Schema.optionalKey(Schema.Union([Schema.String, Schema.Null])),
-          port: Schema.optionalKey(
-            Schema.Union([
-              Schema.Number.check(Schema.isFinite().annotate({ expected: "a finite number" })),
-              Schema.Null,
-            ]),
-          ),
-          hostname: Schema.optionalKey(Schema.String),
-        }).annotate({ title: "postgres" }),
-        Schema.Struct({
           url: Schema.optionalKey(Schema.String),
           http: Schema.optionalKey(Schema.Literals(["http1", "http2"])),
           gzip: Schema.optionalKey(Schema.Boolean),
           headers: Schema.optionalKey(Schema.Record(Schema.String, Schema.String)),
         }).annotate({ title: "webhook" }),
-        Schema.Struct({
-          project_id: Schema.optionalKey(Schema.String),
-          dataset_id: Schema.optionalKey(Schema.String),
-        }).annotate({ title: "bigquery" }),
         Schema.Struct({
           api_key: Schema.optionalKey(Schema.String),
           region: Schema.optionalKey(Schema.String),
@@ -10188,6 +10138,36 @@ export const V2CreateLogDrainOutput = Schema.Struct({
           client_cert: Schema.optionalKey(Schema.String),
           client_key: Schema.optionalKey(Schema.String),
         }).annotate({ title: "syslog" }),
+        Schema.Struct({
+          s3_bucket: Schema.optionalKey(Schema.String),
+          storage_region: Schema.optionalKey(Schema.String),
+          access_key_id: Schema.optionalKey(Schema.String),
+          secret_access_key: Schema.optionalKey(Schema.String),
+          batch_timeout: Schema.optionalKey(
+            Schema.Number.check(Schema.isInt().annotate({ expected: "an integer" }))
+              .check(
+                Schema.isGreaterThanOrEqualTo(-9007199254740991).annotate({
+                  expected: "a value greater than or equal to -9007199254740991",
+                }),
+              )
+              .check(
+                Schema.isLessThanOrEqualTo(9007199254740991).annotate({
+                  expected: "a value less than or equal to 9007199254740991",
+                }),
+              ),
+          ),
+        }).annotate({ title: "s3" }),
+        Schema.Struct({
+          region: Schema.optionalKey(Schema.String),
+          username: Schema.optionalKey(Schema.String),
+          password: Schema.optionalKey(Schema.String),
+        }).annotate({ title: "last9" }),
+        Schema.Struct({
+          endpoint: Schema.optionalKey(Schema.String),
+          protocol: Schema.optionalKey(Schema.String),
+          gzip: Schema.optionalKey(Schema.Boolean),
+          headers: Schema.optionalKey(Schema.Record(Schema.String, Schema.String)),
+        }).annotate({ title: "otlp" }),
       ]),
       backend_type: Schema.Literals([
         "postgres",
@@ -10216,7 +10196,10 @@ export const V2CreateOrganizationInvitationsInput = Schema.Struct({
     Schema.Struct({
       type: Schema.Literal("organization_invitation").annotate({ description: "Resource type." }),
       attributes: Schema.Struct({
-        email: Schema.String.annotate({ format: "email" }).check(
+        email: Schema.String.annotate({
+          description: "Email address of the invitation receipient.",
+          format: "email",
+        }).check(
           Schema.isPattern(
             new RegExp(
               "^(?!\\.)(?!.*\\.\\.)([A-Za-z0-9_'+\\-\\.]*)[A-Za-z0-9_+-]@([A-Za-z0-9][A-Za-z0-9\\-]*\\.)+[A-Za-z]{2,}$",
@@ -10297,7 +10280,10 @@ export const V2CreateOrganizationInvitationsOutput = Schema.Struct({
               ),
             ),
             meta: Schema.Struct({
-              email: Schema.String.annotate({ format: "email" }).check(
+              email: Schema.String.annotate({
+                description: "Email address of the invitation receipient.",
+                format: "email",
+              }).check(
                 Schema.isPattern(
                   new RegExp(
                     "^(?!\\.)(?!.*\\.\\.)([A-Za-z0-9_'+\\-\\.]*)[A-Za-z0-9_+-]@([A-Za-z0-9][A-Za-z0-9\\-]*\\.)+[A-Za-z]{2,}$",
@@ -10317,7 +10303,10 @@ export const V2CreateOrganizationInvitationsOutput = Schema.Struct({
     Schema.Struct({
       type: Schema.Literal("organization_invitation").annotate({ description: "Resource type." }),
       attributes: Schema.Struct({
-        email: Schema.String.annotate({ format: "email" }).check(
+        email: Schema.String.annotate({
+          description: "Email address of the invitation receipient.",
+          format: "email",
+        }).check(
           Schema.isPattern(
             new RegExp(
               "^(?!\\.)(?!.*\\.\\.)([A-Za-z0-9_'+\\-\\.]*)[A-Za-z0-9_+-]@([A-Za-z0-9][A-Za-z0-9\\-]*\\.)+[A-Za-z]{2,}$",
@@ -10520,7 +10509,10 @@ export const V2DeleteOrganizationInvitationsInput = Schema.Struct({
     Schema.Struct({
       type: Schema.Literal("organization_invitation").annotate({ description: "Resource type." }),
       attributes: Schema.Struct({
-        email: Schema.String.annotate({ format: "email" }).check(
+        email: Schema.String.annotate({
+          description: "Email address of the invitation receipient.",
+          format: "email",
+        }).check(
           Schema.isPattern(
             new RegExp(
               "^(?!\\.)(?!.*\\.\\.)([A-Za-z0-9_'+\\-\\.]*)[A-Za-z0-9_+-]@([A-Za-z0-9][A-Za-z0-9\\-]*\\.)+[A-Za-z]{2,}$",
@@ -10541,7 +10533,10 @@ export const V2DeleteOrganizationInvitationsOutput = Schema.Struct({
     Schema.Struct({
       type: Schema.Literal("organization_invitation").annotate({ description: "Resource type." }),
       attributes: Schema.Struct({
-        email: Schema.String.annotate({ format: "email" }).check(
+        email: Schema.String.annotate({
+          description: "Email address of the invitation receipient.",
+          format: "email",
+        }).check(
           Schema.isPattern(
             new RegExp(
               "^(?!\\.)(?!.*\\.\\.)([A-Za-z0-9_'+\\-\\.]*)[A-Za-z0-9_+-]@([A-Za-z0-9][A-Za-z0-9\\-]*\\.)+[A-Za-z]{2,}$",
@@ -11514,28 +11509,11 @@ export const V2ListLogDrainsOutput = Schema.Struct({
         description: Schema.optionalKey(Schema.String),
         config: Schema.Union([
           Schema.Struct({
-            url: Schema.optionalKey(Schema.Union([Schema.String, Schema.Null])),
-            schema: Schema.optionalKey(Schema.String),
-            username: Schema.optionalKey(Schema.Union([Schema.String, Schema.Null])),
-            password: Schema.optionalKey(Schema.Union([Schema.String, Schema.Null])),
-            port: Schema.optionalKey(
-              Schema.Union([
-                Schema.Number.check(Schema.isFinite().annotate({ expected: "a finite number" })),
-                Schema.Null,
-              ]),
-            ),
-            hostname: Schema.optionalKey(Schema.String),
-          }).annotate({ title: "postgres" }),
-          Schema.Struct({
             url: Schema.optionalKey(Schema.String),
             http: Schema.optionalKey(Schema.Literals(["http1", "http2"])),
             gzip: Schema.optionalKey(Schema.Boolean),
             headers: Schema.optionalKey(Schema.Record(Schema.String, Schema.String)),
           }).annotate({ title: "webhook" }),
-          Schema.Struct({
-            project_id: Schema.optionalKey(Schema.String),
-            dataset_id: Schema.optionalKey(Schema.String),
-          }).annotate({ title: "bigquery" }),
           Schema.Struct({
             api_key: Schema.optionalKey(Schema.String),
             region: Schema.optionalKey(Schema.String),
@@ -11574,6 +11552,36 @@ export const V2ListLogDrainsOutput = Schema.Struct({
             client_cert: Schema.optionalKey(Schema.String),
             client_key: Schema.optionalKey(Schema.String),
           }).annotate({ title: "syslog" }),
+          Schema.Struct({
+            s3_bucket: Schema.optionalKey(Schema.String),
+            storage_region: Schema.optionalKey(Schema.String),
+            access_key_id: Schema.optionalKey(Schema.String),
+            secret_access_key: Schema.optionalKey(Schema.String),
+            batch_timeout: Schema.optionalKey(
+              Schema.Number.check(Schema.isInt().annotate({ expected: "an integer" }))
+                .check(
+                  Schema.isGreaterThanOrEqualTo(-9007199254740991).annotate({
+                    expected: "a value greater than or equal to -9007199254740991",
+                  }),
+                )
+                .check(
+                  Schema.isLessThanOrEqualTo(9007199254740991).annotate({
+                    expected: "a value less than or equal to 9007199254740991",
+                  }),
+                ),
+            ),
+          }).annotate({ title: "s3" }),
+          Schema.Struct({
+            region: Schema.optionalKey(Schema.String),
+            username: Schema.optionalKey(Schema.String),
+            password: Schema.optionalKey(Schema.String),
+          }).annotate({ title: "last9" }),
+          Schema.Struct({
+            endpoint: Schema.optionalKey(Schema.String),
+            protocol: Schema.optionalKey(Schema.String),
+            gzip: Schema.optionalKey(Schema.Boolean),
+            headers: Schema.optionalKey(Schema.Record(Schema.String, Schema.String)),
+          }).annotate({ title: "otlp" }),
         ]),
         backend_type: Schema.Literals([
           "postgres",
@@ -12167,6 +12175,161 @@ export const V2PreviewAProjectTransferOutput = Schema.Struct({
     }),
   }),
 });
+export const V2RunProjectAdvisorsInput = Schema.Struct({
+  ref: Schema.String.check(
+    Schema.isMinLength(20).annotate({ expected: "a value with a length of at least 20" }),
+  )
+    .check(Schema.isMaxLength(20).annotate({ expected: "a value with a length of at most 20" }))
+    .check(
+      Schema.isPattern(new RegExp("^[a-z]+$")).annotate({
+        expected: "a string matching the RegExp ^[a-z]+$",
+      }),
+    ),
+  data: Schema.StructWithRest(
+    Schema.Struct({
+      type: Schema.Literal("project_advisors").annotate({ description: "Resource type." }),
+      attributes: Schema.Struct({
+        lints: Schema.Array(
+          Schema.Struct({
+            name: Schema.Literals([
+              "unindexed_foreign_keys",
+              "auth_users_exposed",
+              "auth_rls_initplan",
+              "no_primary_key",
+              "unused_index",
+              "multiple_permissive_policies",
+              "policy_exists_rls_disabled",
+              "rls_enabled_no_policy",
+              "duplicate_index",
+              "security_definer_view",
+              "function_search_path_mutable",
+              "rls_disabled_in_public",
+              "extension_in_public",
+              "rls_references_user_metadata",
+              "materialized_view_in_api",
+              "foreign_table_in_api",
+              "unsupported_reg_types",
+              "auth_otp_long_expiry",
+              "auth_otp_short_length",
+              "ssl_not_enforced",
+              "log_connections_not_enabled",
+              "network_restrictions_not_set",
+              "password_requirements_min_length",
+              "pitr_not_enabled",
+              "auth_leaked_password_protection",
+              "auth_insufficient_mfa_options",
+              "auth_password_policy_missing",
+              "leaked_service_key",
+              "no_backup_admin",
+              "vulnerable_postgres_version",
+              "db_not_reachable",
+              "db_connection_failing",
+              "db_connection_limit_reached",
+              "instance_telemetry_lost",
+              "instance_db_down",
+              "instance_alert_firing",
+              "log_service_error_rate_high",
+            ]),
+          }),
+        )
+          .check(
+            Schema.isMinLength(1).annotate({ expected: "a value with a length of at least 1" }),
+          )
+          .check(
+            Schema.isMaxLength(10).annotate({ expected: "a value with a length of at most 10" }),
+          ),
+      }),
+    }),
+    [Schema.Record(Schema.String, Schema.Json.annotate({ expected: "JSON value" }))],
+  ),
+});
+export const V2RunProjectAdvisorsOutput = Schema.Struct({
+  data: Schema.Struct({
+    type: Schema.Literal("project_advisors").annotate({ description: "Resource type." }),
+    attributes: Schema.Struct({
+      lints: Schema.Array(
+        Schema.Struct({
+          name: Schema.Literals([
+            "unindexed_foreign_keys",
+            "auth_users_exposed",
+            "auth_rls_initplan",
+            "no_primary_key",
+            "unused_index",
+            "multiple_permissive_policies",
+            "policy_exists_rls_disabled",
+            "rls_enabled_no_policy",
+            "duplicate_index",
+            "security_definer_view",
+            "function_search_path_mutable",
+            "rls_disabled_in_public",
+            "extension_in_public",
+            "rls_references_user_metadata",
+            "materialized_view_in_api",
+            "foreign_table_in_api",
+            "unsupported_reg_types",
+            "auth_otp_long_expiry",
+            "auth_otp_short_length",
+            "ssl_not_enforced",
+            "log_connections_not_enabled",
+            "network_restrictions_not_set",
+            "password_requirements_min_length",
+            "pitr_not_enabled",
+            "auth_leaked_password_protection",
+            "auth_insufficient_mfa_options",
+            "auth_password_policy_missing",
+            "leaked_service_key",
+            "no_backup_admin",
+            "vulnerable_postgres_version",
+            "db_not_reachable",
+            "db_connection_failing",
+            "db_connection_limit_reached",
+            "instance_telemetry_lost",
+            "instance_db_down",
+            "instance_alert_firing",
+            "log_service_error_rate_high",
+            "project_not_active",
+            "advisor_check_unavailable",
+          ]),
+          title: Schema.String,
+          level: Schema.Literals(["ERROR", "WARN", "INFO"]),
+          facing: Schema.Literal("EXTERNAL"),
+          categories: Schema.Array(Schema.Literals(["PERFORMANCE", "SECURITY", "HEALTH"])),
+          description: Schema.String,
+          detail: Schema.String,
+          remediation: Schema.String,
+          metadata: Schema.optionalKey(
+            Schema.Struct({
+              schema: Schema.optionalKey(Schema.String),
+              name: Schema.optionalKey(Schema.String),
+              entity: Schema.optionalKey(Schema.String),
+              type: Schema.optionalKey(
+                Schema.Literals([
+                  "table",
+                  "view",
+                  "materialized view",
+                  "foreign table",
+                  "auth",
+                  "function",
+                  "extension",
+                  "compliance",
+                  "health",
+                ]),
+              ),
+              fkey_name: Schema.optionalKey(Schema.String),
+              fkey_columns: Schema.optionalKey(
+                Schema.Array(
+                  Schema.Number.check(Schema.isFinite().annotate({ expected: "a finite number" })),
+                ),
+              ),
+            }),
+          ),
+          cache_key: Schema.String,
+          observed_at: Schema.optionalKey(Schema.String.annotate({ format: "date-time" })),
+        }),
+      ),
+    }),
+  }),
+});
 export const V2TransferAProjectInput = Schema.Struct({
   ref: Schema.String.check(
     Schema.isMinLength(20).annotate({ expected: "a value with a length of at least 20" }),
@@ -12204,89 +12367,105 @@ export const V2UpdateLogDrainInput = Schema.Struct({
   ),
   data: Schema.Struct({
     type: Schema.Literal("log_drain").annotate({ description: "Resource type." }),
-    attributes: Schema.Struct({
-      name: Schema.optionalKey(Schema.String),
-      description: Schema.optionalKey(Schema.String),
-      config: Schema.optionalKey(
-        Schema.Union([
-          Schema.Struct({
-            url: Schema.optionalKey(Schema.Union([Schema.String, Schema.Null])),
-            schema: Schema.optionalKey(Schema.String),
-            username: Schema.optionalKey(Schema.Union([Schema.String, Schema.Null])),
-            password: Schema.optionalKey(Schema.Union([Schema.String, Schema.Null])),
-            port: Schema.optionalKey(
-              Schema.Union([
-                Schema.Number.check(Schema.isFinite().annotate({ expected: "a finite number" })),
-                Schema.Null,
-              ]),
-            ),
-            hostname: Schema.optionalKey(Schema.String),
-          }).annotate({ title: "postgres" }),
-          Schema.Struct({
-            url: Schema.optionalKey(Schema.String),
-            http: Schema.optionalKey(Schema.Literals(["http1", "http2"])),
-            gzip: Schema.optionalKey(Schema.Boolean),
-            headers: Schema.optionalKey(Schema.Record(Schema.String, Schema.String)),
-          }).annotate({ title: "webhook" }),
-          Schema.Struct({
-            project_id: Schema.optionalKey(Schema.String),
-            dataset_id: Schema.optionalKey(Schema.String),
-          }).annotate({ title: "bigquery" }),
-          Schema.Struct({
-            api_key: Schema.optionalKey(Schema.String),
-            region: Schema.optionalKey(Schema.String),
-          }).annotate({ title: "datadog" }),
-          Schema.Struct({
-            url: Schema.optionalKey(Schema.String),
-            username: Schema.optionalKey(Schema.Union([Schema.String, Schema.Null])),
-            password: Schema.optionalKey(Schema.Union([Schema.String, Schema.Null])),
-            headers: Schema.optionalKey(Schema.Record(Schema.String, Schema.String)),
-          }).annotate({ title: "loki" }),
-          Schema.Struct({ dsn: Schema.optionalKey(Schema.String) }).annotate({ title: "sentry" }),
-          Schema.Struct({
-            domain: Schema.optionalKey(Schema.String),
-            api_token: Schema.optionalKey(Schema.String),
-            dataset_name: Schema.optionalKey(Schema.String),
-          }).annotate({ title: "axiom" }),
-          Schema.Struct({
-            host: Schema.optionalKey(Schema.String),
-            port: Schema.optionalKey(
-              Schema.Number.check(Schema.isInt().annotate({ expected: "an integer" }))
-                .check(
-                  Schema.isGreaterThanOrEqualTo(0).annotate({
-                    expected: "a value greater than or equal to 0",
-                  }),
-                )
-                .check(
-                  Schema.isLessThanOrEqualTo(65535).annotate({
-                    expected: "a value less than or equal to 65535",
-                  }),
-                ),
-            ),
-            tls: Schema.optionalKey(Schema.Boolean),
-            structured_data: Schema.optionalKey(Schema.String),
-            cipher_key: Schema.optionalKey(Schema.String),
-            ca_cert: Schema.optionalKey(Schema.String),
-            client_cert: Schema.optionalKey(Schema.String),
-            client_key: Schema.optionalKey(Schema.String),
-          }).annotate({ title: "syslog" }),
+    attributes: Schema.StructWithRest(
+      Schema.Struct({
+        name: Schema.optionalKey(Schema.String),
+        description: Schema.optionalKey(Schema.String),
+        config: Schema.optionalKey(
+          Schema.Union([
+            Schema.Struct({
+              url: Schema.optionalKey(Schema.String),
+              http: Schema.optionalKey(Schema.Literals(["http1", "http2"])),
+              gzip: Schema.optionalKey(Schema.Boolean),
+              headers: Schema.optionalKey(Schema.Record(Schema.String, Schema.String)),
+            }).annotate({ title: "webhook" }),
+            Schema.Struct({
+              api_key: Schema.optionalKey(Schema.String),
+              region: Schema.optionalKey(Schema.String),
+            }).annotate({ title: "datadog" }),
+            Schema.Struct({
+              url: Schema.optionalKey(Schema.String),
+              username: Schema.optionalKey(Schema.Union([Schema.String, Schema.Null])),
+              password: Schema.optionalKey(Schema.Union([Schema.String, Schema.Null])),
+              headers: Schema.optionalKey(Schema.Record(Schema.String, Schema.String)),
+            }).annotate({ title: "loki" }),
+            Schema.Struct({ dsn: Schema.optionalKey(Schema.String) }).annotate({ title: "sentry" }),
+            Schema.Struct({
+              domain: Schema.optionalKey(Schema.String),
+              api_token: Schema.optionalKey(Schema.String),
+              dataset_name: Schema.optionalKey(Schema.String),
+            }).annotate({ title: "axiom" }),
+            Schema.Struct({
+              host: Schema.optionalKey(Schema.String),
+              port: Schema.optionalKey(
+                Schema.Number.check(Schema.isInt().annotate({ expected: "an integer" }))
+                  .check(
+                    Schema.isGreaterThanOrEqualTo(0).annotate({
+                      expected: "a value greater than or equal to 0",
+                    }),
+                  )
+                  .check(
+                    Schema.isLessThanOrEqualTo(65535).annotate({
+                      expected: "a value less than or equal to 65535",
+                    }),
+                  ),
+              ),
+              tls: Schema.optionalKey(Schema.Boolean),
+              structured_data: Schema.optionalKey(Schema.String),
+              cipher_key: Schema.optionalKey(Schema.String),
+              ca_cert: Schema.optionalKey(Schema.String),
+              client_cert: Schema.optionalKey(Schema.String),
+              client_key: Schema.optionalKey(Schema.String),
+            }).annotate({ title: "syslog" }),
+            Schema.Struct({
+              s3_bucket: Schema.optionalKey(Schema.String),
+              storage_region: Schema.optionalKey(Schema.String),
+              access_key_id: Schema.optionalKey(Schema.String),
+              secret_access_key: Schema.optionalKey(Schema.String),
+              batch_timeout: Schema.optionalKey(
+                Schema.Number.check(Schema.isInt().annotate({ expected: "an integer" }))
+                  .check(
+                    Schema.isGreaterThanOrEqualTo(-9007199254740991).annotate({
+                      expected: "a value greater than or equal to -9007199254740991",
+                    }),
+                  )
+                  .check(
+                    Schema.isLessThanOrEqualTo(9007199254740991).annotate({
+                      expected: "a value less than or equal to 9007199254740991",
+                    }),
+                  ),
+              ),
+            }).annotate({ title: "s3" }),
+            Schema.Struct({
+              region: Schema.optionalKey(Schema.String),
+              username: Schema.optionalKey(Schema.String),
+              password: Schema.optionalKey(Schema.String),
+            }).annotate({ title: "last9" }),
+            Schema.Struct({
+              endpoint: Schema.optionalKey(Schema.String),
+              protocol: Schema.optionalKey(Schema.String),
+              gzip: Schema.optionalKey(Schema.Boolean),
+              headers: Schema.optionalKey(Schema.Record(Schema.String, Schema.String)),
+            }).annotate({ title: "otlp" }),
+          ]),
+        ),
+        backend_type: Schema.Literals([
+          "postgres",
+          "bigquery",
+          "clickhouse",
+          "webhook",
+          "datadog",
+          "loki",
+          "sentry",
+          "s3",
+          "axiom",
+          "last9",
+          "otlp",
+          "syslog",
         ]),
-      ),
-      backend_type: Schema.Literals([
-        "postgres",
-        "bigquery",
-        "clickhouse",
-        "webhook",
-        "datadog",
-        "loki",
-        "sentry",
-        "s3",
-        "axiom",
-        "last9",
-        "otlp",
-        "syslog",
-      ]),
-    }),
+      }),
+      [Schema.Record(Schema.String, Schema.Json.annotate({ expected: "JSON value" }))],
+    ),
   }),
 });
 export const V2UpdateLogDrainOutput = Schema.Struct({
@@ -12298,28 +12477,11 @@ export const V2UpdateLogDrainOutput = Schema.Struct({
       description: Schema.optionalKey(Schema.String),
       config: Schema.Union([
         Schema.Struct({
-          url: Schema.optionalKey(Schema.Union([Schema.String, Schema.Null])),
-          schema: Schema.optionalKey(Schema.String),
-          username: Schema.optionalKey(Schema.Union([Schema.String, Schema.Null])),
-          password: Schema.optionalKey(Schema.Union([Schema.String, Schema.Null])),
-          port: Schema.optionalKey(
-            Schema.Union([
-              Schema.Number.check(Schema.isFinite().annotate({ expected: "a finite number" })),
-              Schema.Null,
-            ]),
-          ),
-          hostname: Schema.optionalKey(Schema.String),
-        }).annotate({ title: "postgres" }),
-        Schema.Struct({
           url: Schema.optionalKey(Schema.String),
           http: Schema.optionalKey(Schema.Literals(["http1", "http2"])),
           gzip: Schema.optionalKey(Schema.Boolean),
           headers: Schema.optionalKey(Schema.Record(Schema.String, Schema.String)),
         }).annotate({ title: "webhook" }),
-        Schema.Struct({
-          project_id: Schema.optionalKey(Schema.String),
-          dataset_id: Schema.optionalKey(Schema.String),
-        }).annotate({ title: "bigquery" }),
         Schema.Struct({
           api_key: Schema.optionalKey(Schema.String),
           region: Schema.optionalKey(Schema.String),
@@ -12358,6 +12520,36 @@ export const V2UpdateLogDrainOutput = Schema.Struct({
           client_cert: Schema.optionalKey(Schema.String),
           client_key: Schema.optionalKey(Schema.String),
         }).annotate({ title: "syslog" }),
+        Schema.Struct({
+          s3_bucket: Schema.optionalKey(Schema.String),
+          storage_region: Schema.optionalKey(Schema.String),
+          access_key_id: Schema.optionalKey(Schema.String),
+          secret_access_key: Schema.optionalKey(Schema.String),
+          batch_timeout: Schema.optionalKey(
+            Schema.Number.check(Schema.isInt().annotate({ expected: "an integer" }))
+              .check(
+                Schema.isGreaterThanOrEqualTo(-9007199254740991).annotate({
+                  expected: "a value greater than or equal to -9007199254740991",
+                }),
+              )
+              .check(
+                Schema.isLessThanOrEqualTo(9007199254740991).annotate({
+                  expected: "a value less than or equal to 9007199254740991",
+                }),
+              ),
+          ),
+        }).annotate({ title: "s3" }),
+        Schema.Struct({
+          region: Schema.optionalKey(Schema.String),
+          username: Schema.optionalKey(Schema.String),
+          password: Schema.optionalKey(Schema.String),
+        }).annotate({ title: "last9" }),
+        Schema.Struct({
+          endpoint: Schema.optionalKey(Schema.String),
+          protocol: Schema.optionalKey(Schema.String),
+          gzip: Schema.optionalKey(Schema.Boolean),
+          headers: Schema.optionalKey(Schema.Record(Schema.String, Schema.String)),
+        }).annotate({ title: "otlp" }),
       ]),
       backend_type: Schema.Literals([
         "postgres",
@@ -12612,6 +12804,7 @@ export const openApiOperationIdMap = {
   "v2-list-organization-roles": "v2ListOrganizationRoles",
   "v2-list-private-link-associations": "v2ListPrivateLinkAssociations",
   "v2-preview-a-project-transfer": "v2PreviewAProjectTransfer",
+  "v2-run-project-advisors": "v2RunProjectAdvisors",
   "v2-transfer-a-project": "v2TransferAProject",
   "v2-update-log-drain": "v2UpdateLogDrain",
 } as const;
@@ -13854,7 +14047,7 @@ export const operationDefinitions = {
   v1GetProjectLogsAll: {
     id: "v1GetProjectLogsAll",
     description:
-      "Executes a SQL query on the project's logs.\n\nEither the `iso_timestamp_start` and `iso_timestamp_end` parameters must be provided.\nIf both are not provided, only the last 1 minute of logs will be queried.\nThe timestamp range must be no more than 24 hours and is rounded to the nearest minute. If the range is more than 24 hours, a validation error will be thrown.\n\nNote: Unless the `sql` parameter is provided, only edge_logs will be queried. See the [log query docs](/docs/guides/telemetry/logs?queryGroups=product&product=postgres&queryGroups=source&source=edge_logs#querying-with-the-logs-explorer:~:text=logs%20from%20the-,Sources,-drop%2Ddown%3A) for all available sources.",
+      "Executes a SQL query on the project's logs.\n\nEither the `iso_timestamp_start` and `iso_timestamp_end` parameters must be provided.\nIf both are not provided, only the last 1 minute of logs will be queried.\nThe timestamp range must be no more than 24 hours and is rounded to the nearest minute. If the range is more than 24 hours, a validation error will be thrown.\n\nNote: Unless the `sql` parameter is provided, only edge_logs will be queried. See the [log query docs](https://supabase.com/docs/guides/monitoring-and-debugging/logs#logs-explorer) for all available sources.",
     method: "GET",
     path: "/v1/projects/{ref}/analytics/endpoints/logs.all",
     pathParams: ["ref"],
@@ -15611,6 +15804,19 @@ export const operationDefinitions = {
     response: { kind: "json" },
     inputSchema: V2PreviewAProjectTransferInput,
     outputSchema: V2PreviewAProjectTransferOutput,
+  },
+  v2RunProjectAdvisors: {
+    id: "v2RunProjectAdvisors",
+    description: "Runs the project advisors with the given names",
+    method: "POST",
+    path: "/v2/projects/{ref}/advisors/run",
+    pathParams: ["ref"],
+    queryParams: [],
+    headerParams: [],
+    requestBody: { kind: "json", contentType: "application/json", fields: ["data"] },
+    response: { kind: "json" },
+    inputSchema: V2RunProjectAdvisorsInput,
+    outputSchema: V2RunProjectAdvisorsOutput,
   },
   v2TransferAProject: {
     id: "v2TransferAProject",

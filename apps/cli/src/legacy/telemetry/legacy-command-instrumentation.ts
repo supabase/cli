@@ -449,9 +449,21 @@ function withLegacyCommandAnalyticsImplementation<Flags extends Record<string, u
         // json/stream-json mode after a `--fail-on` trigger so the machine payload
         // on stdout stays intact. Treat a non-zero process exit code as 1 even when
         // the Effect succeeded, matching Go; otherwise fall back to the Effect exit.
+        //
+        // `config diff --exit-code` is the one exception: it sets exit code 2 to
+        // signal drift, deliberately WITHOUT failing the Effect (`diff.handler.ts`'s
+        // own 0/1/2 convention — 2 means "drift found", not "command failed"). This
+        // is TS-native behavior with no Go counterpart, so record the real exit code
+        // truthfully instead of collapsing it into the process-controlled failure
+        // bucket below.
         const processExitCode = yield* processControl.getExitCode;
-        const recordedExitCode =
-          Exit.isFailure(exit) || (processExitCode !== undefined && processExitCode !== 0) ? 1 : 0;
+        const isConfigDiffDriftSignal =
+          Exit.isSuccess(exit) && command === "config diff" && processExitCode === 2;
+        const recordedExitCode = isConfigDiffDriftSignal
+          ? 2
+          : Exit.isFailure(exit) || (processExitCode !== undefined && processExitCode !== 0)
+            ? 1
+            : 0;
 
         // Go's Execute() reads s.distinctID() AFTER the command handler runs
         // (cmd/root.go:177), which returns the just-stitched gotrue id when

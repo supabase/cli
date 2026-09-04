@@ -1,3 +1,5 @@
+// oxlint-disable effecttsgo/node-builtin-import -- Path tests use the native path module to assert platform-specific path normalization.
+
 import { Effect } from "effect";
 import { join, resolve } from "node:path";
 import { describe, expect, it } from "vitest";

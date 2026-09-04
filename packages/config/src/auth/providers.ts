@@ -148,6 +148,10 @@ export const external = Schema.Struct({
     id: "facebook",
     name: "Facebook",
   }),
+  figma: provider({
+    id: "figma",
+    name: "Figma",
+  }),
   github: provider({
     id: "github",
     name: "GitHub",

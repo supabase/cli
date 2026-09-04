@@ -4,7 +4,7 @@ import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { Effect, Layer, Option } from "effect";
-import { cliSettingsLayer } from "../../next/config/cli-settings.layer.ts";
+import { cliSettingsLayer } from "../config/cli-settings.layer.ts";
 import {
   mockCliProjectContext,
   mockRuntimeInfo,

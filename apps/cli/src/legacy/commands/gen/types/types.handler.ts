@@ -1,6 +1,6 @@
-import { loadCliConfig } from "@supabase/config/effect";
+import { loadCliConfig } from "@supabase/config/internal";
 import { ChildProcessSpawner } from "effect/unstable/process";
-import { Effect, FileSystem, Option, Path, Stdio, Stream } from "effect";
+import { Effect, FileSystem, Option, Path, Predicate, Stdio, Stream } from "effect";
 import {
   LegacyDnsResolverFlag,
   LegacyNetworkIdFlag,
@@ -19,6 +19,7 @@ import {
   PROJECT_NOT_LINKED_MESSAGE,
 } from "../../../config/legacy-project-ref.service.ts";
 import { spawnContainerCli } from "../../../shared/legacy-container-cli.ts";
+import { legacyMakeDockerImageResolver } from "../../../shared/legacy-docker-image-resolve.ts";
 import {
   legacyIsIPv6ConnectivityError,
   legacyIsIPv6ConnectivityErrorCause,
@@ -229,6 +230,7 @@ export const legacyGenTypes = Effect.fn("legacy.gen.types")(function* (flags: Le
   const networkId = yield* LegacyNetworkIdFlag;
   const dnsResolver = yield* LegacyDnsResolverFlag;
   const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
+  const resolveImage = legacyMakeDockerImageResolver(spawner);
   const rawArgs = yield* stdio.args;
   const platformApi = yield* LegacyPlatformApiFactory;
   const projectRef = yield* LegacyProjectRefResolver;
@@ -396,6 +398,11 @@ export const legacyGenTypes = Effect.fn("legacy.gen.types")(function* (flags: Le
   }) =>
     Effect.scoped(
       Effect.gen(function* () {
+        // Cached so the pooler retry reuses one resolve; the resolver's candidate rewrite is
+        // idempotent on this already-rewritten reference.
+        const resolvedImage = yield* Effect.cached(
+          resolveImage(resolvePgmetaImage(input.pgmetaVersionOverride)),
+        );
         const buildRun = (target: {
           readonly url: string;
           readonly host: string;
@@ -436,6 +443,8 @@ export const legacyGenTypes = Effect.fn("legacy.gen.types")(function* (flags: Le
             if (useTls) {
               env.push(`PG_META_DB_SSL_ROOT_CERT=${legacyRootCaBundle()}`);
             }
+            // After the TLS probe, so an unreachable database fails before any image pull.
+            const pgmetaImage = yield* resolvedImage;
 
             // `--network-id` overrides any base network mode (even the
             // "host" mode used for --db-url), so honour the override here too.
@@ -446,7 +455,7 @@ export const legacyGenTypes = Effect.fn("legacy.gen.types")(function* (flags: Le
               "--network",
               networkMode,
               ...env.flatMap((entry) => ["--env", entry]),
-              resolvePgmetaImage(input.pgmetaVersionOverride),
+              pgmetaImage,
               "node",
               "dist/server/server.js",
             ];
@@ -490,7 +499,10 @@ export const legacyGenTypes = Effect.fn("legacy.gen.types")(function* (flags: Le
                 directHost: input.poolerFallback.directHost,
                 eligible: input.poolerFallback.eligible,
                 resolveFallback: input.poolerFallback.resolve,
-                classifyError: legacyIsIPv6ConnectivityErrorCause,
+                // A registry failure carries docker stderr that can read like an IPv6 error.
+                classifyError: (error) =>
+                  !Predicate.isTagged(error, "LegacyDockerRunError") &&
+                  legacyIsIPv6ConnectivityErrorCause(error),
                 classifyResult: (result) =>
                   result.exitCode !== 0 && legacyIsIPv6ConnectivityError(result.stderrText),
               });

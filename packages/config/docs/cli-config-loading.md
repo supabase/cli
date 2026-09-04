@@ -8,8 +8,17 @@ This document explains how the CLI's on-disk config document loading works, acro
 - `CliConfig`: the persisted config-file document (`supabase/config.toml` / `supabase/config.json`)
   — the full local superset, including local-only sections (`studio`, ports, `edge_runtime`,
   `analytics`, …) plus `[remotes.*]` overrides. Owned by `@supabase/config`.
-- `ProjectConfig`: reserved. Not implemented in this package yet — it will be the hosted-project
-  subset produced by mapping a Management API project-config response, once CLI-2230/CLI-2156 land.
+- `ProjectConfig`: the hosted-project subset — the sections a hosted project manages (`api`,
+  `auth`, `db`, `realtime`, `storage`, `workers`, `experimental`), produced by `toProjectConfig`
+  from either a `CliConfig` document or a Management API v2 project-config response (CLI-2230).
+  Sparse by design: it carries only what its source actually said, so it composes with the
+  subtraction core (`subtractCliConfig`/`omitDefaultValues`, operand type `EffectiveConfig`)
+  without fabricating drift from schema defaults. An API-sourced value may speak for fewer
+  fields than the section list implies — `realtime` maps no fields today, and `workers`/
+  `experimental` have no v2 project-config API counterpart at all — so a comparison consumer
+  should restrict itself to `comparableProjectConfigPaths`/`isComparableProjectConfigPath`
+  rather than treating a section's presence in that list as a per-field guarantee. Owned by
+  `@supabase/config` (`packages/config/src/project-config/`).
 - `CliSettings`: the CLI's effective runtime settings bundle (platform `apiUrl`, `dashboardUrl`,
   access token, telemetry flags, `supabaseHome`, `noKeyring`, `debug`). Lives in `apps/cli`, not
   this package.
@@ -25,9 +34,8 @@ This document explains how the CLI's on-disk config document loading works, acro
 The `Cli*` prefix is a rule, not a per-name coincidence: it names the local checkout side — what
 the CLI reads, writes, or resolves about itself on disk. A bare `Project*` name is reserved for the
 hosted Supabase project. Value-helpers follow the config family regardless of their inputs, not the
-shape of whatever they're passed — `resolveCliConfigValue` and `MissingCliConfigValueError` are
-`Cli*`-named for this reason. See [ADR 0020](../../../docs/adr/0020-config-naming-vocabulary.md)
-for the full decision record.
+shape of whatever they're passed — `resolveCliConfigValue` is `Cli*`-named for this reason. See
+[ADR 0020](../../../docs/adr/0020-config-naming-vocabulary.md) for the full decision record.
 
 Within `CliConfig` itself, `project_id` is overloaded by position: the root-scope `project_id` is
 a local identifier that defaults to the working directory name when running `supabase init` (see
@@ -52,19 +60,17 @@ against `packages/config/src/node.ts`/`bun.ts`) are:
 - `loadCliConfig`
 - `saveCliConfig`
 - `loadCliConfigFile`
-- `findCliProjectRootFor`
-- `findCliProjectPathsFor`
-- `loadCliProjectEnvironmentFor`
-- `loadFunctionsManifest`
+- `findCliProjectRoot`
+- `findCliProjectPaths`
+- `loadCliProjectEnvironment`
+- `inferFunctionsManifest`
 
-`loadCliConfig`, `saveCliConfig`, and `loadCliConfigFile` share their name with the `./effect`
-program they wrap (only the return type changes, `Effect` to `Promise`). The other four don't:
-`findCliProjectRootFor`/`findCliProjectPathsFor`/`loadCliProjectEnvironmentFor` add a `For` suffix
-their `./effect` counterparts (`findCliProjectRoot`, `findCliProjectPaths`,
-`loadCliProjectEnvironment`) don't carry, and `loadFunctionsManifest` wraps `./effect`'s
-`inferFunctionsManifest` under an unrelated verb. Settling this naming — the `For` suffix
-convention, and the `loadFunctionsManifest`/`inferFunctionsManifest` divergence — is tracked in
-CLI-2234.
+Every name here matches its `./effect` counterpart one-to-one (only the return type changes,
+`Effect` to `Promise`) — the subpath itself (`/io` vs `/effect`) is what conveys Promise-vs-Effect.
+`findCliProjectRootFor`/`findCliProjectPathsFor`/`loadCliProjectEnvironmentFor`/
+`loadFunctionsManifest` were the pre-CLI-2234 names: the first three carried a `For` suffix their
+`./effect` counterparts didn't, and the fourth wrapped `./effect`'s `inferFunctionsManifest` under
+an unrelated verb. CLI-2234 renamed all four to match.
 
 ## Overview
 
@@ -200,10 +206,14 @@ literal, unresolved `env(NAME)`.
 ## Lazy `env(NAME)` Resolution
 
 A caller can also resolve `env(NAME)` references explicitly, after config is loaded. The package
-exposes two helpers, from `@supabase/config/effect`:
+exposes two helpers, under the same names from both `.` (plain, synchronous) and
+`@supabase/config/effect` (Effect-typed; the Effect-typed variant wins when both are in scope via
+`@supabase/config/effect`, since explicit named exports take precedence over a star re-export of
+the same name). Neither has a failure mode: an unresolved `env(NAME)` reference is preserved
+verbatim rather than rejected or thrown (see "Lazy `env(NAME)` Resolution" behavior below).
 
-- `resolveCliConfigValue(value, cliProjectEnv, configPath, options?)`
-- `resolveCliConfigSubtree(value, cliProjectEnv, pathPrefix, options?)`
+- `resolveCliConfigValue(value, cliProjectEnv, configPath)`
+- `resolveCliConfigSubtree(value, cliProjectEnv, pathPrefix)`
 
 Resolution only applies to exact whole-string matches of the form:
 
@@ -228,7 +238,11 @@ resolves and redacts leaves nested inside `[remotes.*]` blocks.
 
 An optional `goViperCompat` flag switches the `env(NAME)` matcher from the default, strict
 `SCREAMING_SNAKE_CASE`-only pattern to Go/viper's case-agnostic `^env\((.*)\)$` form; only the
-Go-parity legacy shell sets it.
+Go-parity legacy shell sets it. The public `resolveCliConfigValue`/`resolveCliConfigSubtree` on
+`.`/`./effect` take no options parameter at all (CLI-2234) — `goViperCompat` is internal-only,
+typed on `InternalResolveCliConfigOptions`, a package-internal type that is not itself exported.
+`@supabase/config/internal` re-exports these same runtime functions re-typed to additionally
+accept it; `apps/cli`'s Go-parity call sites import from there instead.
 
 Callers such as `functions serve`/`functions dev`, `secrets set`, and `start` call these resolvers
 on the subtrees they actually need (e.g. `auth`, `edge_runtime`, `functions`), so dormant
@@ -236,9 +250,8 @@ config — like a disabled Twilio block whose `auth_token` is still `env(TWILIO_
 that variable was never set — never has to resolve at load time, and no caller pays for resolving
 or redacting a subtree it doesn't use.
 
-The package still exports a `MissingCliConfigValueError` class, and `apps/cli` classifies it for
-telemetry, but neither resolver raises it today: an unresolved `env(NAME)` reference is returned
-as a plain string, not a typed failure.
+Neither resolver ever fails: an unresolved `env(NAME)` reference is returned as a plain string,
+not a typed failure.
 
 ## Secret Handling
 
@@ -370,10 +383,11 @@ For example:
 
 Those are different meanings and should remain separate.
 
-The reserved `ProjectConfig` — the not-yet-implemented hosted-project subset — will sit alongside
-these two: it converges the same committed-intent fields from a Management API response, without
-the local-only sections (`studio`, ports, `edge_runtime`, `analytics`, `[remotes.*]`, …) that only
-make sense for a local checkout.
+`ProjectConfig` — the hosted-project subset (CLI-2230) — sits alongside these two: it converges
+the same committed-intent fields from either a `CliConfig` document or a Management API response,
+without the local-only sections (`studio`, ports, `edge_runtime`, `analytics`, `[remotes.*]`, …)
+that only make sense for a local checkout. See the Vocabulary entry above for its sparse
+semantics and comparison contract.
 
 ## Process Env as Input
 
@@ -393,4 +407,4 @@ So the public architecture intentionally stays at:
 - `CliProjectPaths`
 - `CliProjectContext`
 - `CliSettings`
-- `ProjectConfig` (reserved, not yet implemented)
+- `ProjectConfig`

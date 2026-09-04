@@ -19,9 +19,6 @@ const SHIM_PATH = fileURLToPath(new URL("../../dist/supabase.js", import.meta.ur
 const LEGACY_BINARY_PATH = fileURLToPath(
   new URL(`../../dist/supabase-legacy${BINARY_EXT}`, import.meta.url),
 );
-const NEXT_BINARY_PATH = fileURLToPath(
-  new URL(`../../dist/supabase-next${BINARY_EXT}`, import.meta.url),
-);
 
 // E2E subprocesses should only enter agent output mode when a test explicitly
 // opts in via `options.env`. Keep this list aligned with @vercel/detect-agent
@@ -59,10 +56,10 @@ function subprocessBaseEnv(): Record<string, string> {
   return env;
 }
 
-function assertBuildArtifactsExist(shell: "legacy" | "next", binaryPath: string): void {
+function assertBuildArtifactsExist(binaryPath: string): void {
   if (!existsSync(SHIM_PATH) || !existsSync(binaryPath)) {
     throw new Error(
-      `Missing ${shell} CLI build artifacts. Run \`pnpm --filter supabase build\` before invoking ${shell} e2e tests.\n` +
+      `Missing legacy CLI build artifacts. Run \`pnpm --filter supabase build\` before invoking e2e tests.\n` +
         `  expected shim:   ${SHIM_PATH}\n` +
         `  expected binary: ${binaryPath}`,
     );
@@ -299,7 +296,8 @@ export function spawnSupabase(
   args: string[],
   options?: {
     cwd?: string;
-    env?: Record<string, string>;
+    /** `undefined` REMOVES the key from the child env (base env and pins included). */
+    env?: Record<string, string | undefined>;
     /** Reuse a temp SUPABASE_HOME directory instead of creating a new one per call. */
     home?: string;
     /** Write this string to stdin, then close it. */
@@ -308,36 +306,38 @@ export function spawnSupabase(
     cleanupProcessGroupOnClose?: boolean;
     /** Maximum time to wait for the process to exit before force-killing it. */
     exitTimeoutMs?: number;
-    /** Which source entrypoint to execute. */
-    entrypoint?: "next" | "legacy";
+    /** Which source entrypoint to execute. Only the legacy shell remains. */
+    entrypoint?: "legacy";
   },
 ): SpawnedSupabase {
   const ownHome = options?.home ? null : makeTempHome();
   const homeDir = options?.home ?? ownHome!.dir;
   noteStackCliProjectHome(options?.cwd, homeDir);
-  const entrypoint = options?.entrypoint ?? "next";
   const usesStartWrapper = args[0] === "start";
   // Exercise the same shim + compiled shell binary handoff that published
   // packages use. `SUPABASE_CLI_BINARY_OVERRIDE` points the shim at the local
   // build artifact without needing platform wrapper packages.
   let execCmd: string;
   let execArgs: string[];
-  const env: Record<string, string> = {
+  // An `undefined` in `options.env` removes the key entirely — pins and ambient values alike —
+  // so a cache-subject test can run with a variable genuinely absent (the shipped default),
+  // not just overridden.
+  const mergedEnv: Record<string, string | undefined> = {
     ...subprocessBaseEnv(),
     SUPABASE_HOME: homeDir,
     SUPABASE_NO_KEYRING: "1",
     SUPABASE_TELEMETRY_DISABLED: "1",
-    // Isolate e2e from a developer/CI soak (`SUPABASE_SHADOW_CACHE=1`). Cache-subject tests opt in via `options.env`.
+    // Isolate e2e from the default-ON shadow cache. Cache-subject tests opt back in (or unset
+    // the key with `undefined`) via `options.env`.
     SUPABASE_SHADOW_CACHE: "0",
     ...options?.env,
   };
-  if (entrypoint === "legacy") {
-    assertBuildArtifactsExist("legacy", LEGACY_BINARY_PATH);
-    env["SUPABASE_CLI_BINARY_OVERRIDE"] = LEGACY_BINARY_PATH;
-  } else {
-    assertBuildArtifactsExist("next", NEXT_BINARY_PATH);
-    env["SUPABASE_CLI_BINARY_OVERRIDE"] = NEXT_BINARY_PATH;
+  const env: Record<string, string> = {};
+  for (const [key, value] of Object.entries(mergedEnv)) {
+    if (value !== undefined) env[key] = value;
   }
+  assertBuildArtifactsExist(LEGACY_BINARY_PATH);
+  env["SUPABASE_CLI_BINARY_OVERRIDE"] = LEGACY_BINARY_PATH;
   execCmd = "node";
   execArgs = [SHIM_PATH, ...args];
   const proc = spawn(execCmd, execArgs, {
@@ -518,7 +518,8 @@ export async function runSupabase(
   args: string[],
   options?: {
     cwd?: string;
-    env?: Record<string, string>;
+    /** `undefined` REMOVES the key from the child env (base env and pins included). */
+    env?: Record<string, string | undefined>;
     /** Reuse a temp SUPABASE_HOME directory instead of creating a new one per call. */
     home?: string;
     /** Write this string to stdin, then close it. */
@@ -529,8 +530,8 @@ export async function runSupabase(
     untilTimeoutMs?: number;
     /** Maximum time to wait for the command to exit before force-killing it. */
     exitTimeoutMs?: number;
-    /** Which source entrypoint to execute. */
-    entrypoint?: "next" | "legacy";
+    /** Which source entrypoint to execute. Only the legacy shell remains. */
+    entrypoint?: "legacy";
   },
 ): Promise<RunResult> {
   const spawned = spawnSupabase(args, options);

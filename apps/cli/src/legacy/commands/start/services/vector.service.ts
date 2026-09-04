@@ -35,6 +35,11 @@ import * as ChildProcess from "effect/unstable/process/ChildProcess";
 import type { ChildProcessSpawner } from "effect/unstable/process/ChildProcessSpawner";
 
 import type { LegacyStartContainerSpec } from "../../../shared/db-bootstrap/docker-create-args.ts";
+import {
+  legacySlimWgetHealthcheck,
+  legacySlimWgetWaitCommand,
+  legacyUsesSlimRuntime,
+} from "../../../shared/db-bootstrap/slim-runtime.ts";
 import { legacyRenderStartVectorYaml } from "../lib/template-render.ts";
 
 type Spawner = ChildProcessSpawner["Service"];
@@ -283,14 +288,23 @@ const LEGACY_VECTOR_HEALTHCHECK = {
  * start too early), then `exec`s Vector so it is PID 1. A TERM trap covers
  * the wait so `docker stop` does not burn 10s if Logflare is still down;
  * `-T 2` bounds each probe so a hung health endpoint cannot defer the trap.
+ * Slim Vector ships BusyBox wget, so the wait uses `-q --spider` instead of
+ * GNU `--no-verbose --tries`.
  */
-export function legacyBuildVectorEntrypointScript(vectorYaml: string, logflareId: string): string {
+export function legacyBuildVectorEntrypointScript(
+  vectorYaml: string,
+  logflareId: string,
+  opts: { readonly slim?: boolean } = {},
+): string {
+  const wget = opts.slim
+    ? legacySlimWgetWaitCommand(`http://${logflareId}:4000/health`)
+    : `wget --no-verbose --tries=1 -T 2 --spider http://${logflareId}:4000/health`;
   return (
     "cat <<'EOF' > /etc/vector/vector.yaml\n" +
     vectorYaml +
-    "\nEOF\ntrap 'exit 143' TERM\nuntil wget --no-verbose --tries=1 -T 2 --spider http://" +
-    logflareId +
-    ":4000/health 2>/dev/null; do sleep 2; done\ntrap - TERM\nexec vector --config /etc/vector/vector.yaml\n"
+    "\nEOF\ntrap 'exit 143' TERM\nuntil " +
+    wget +
+    " 2>/dev/null; do sleep 2; done\ntrap - TERM\nexec vector --config /etc/vector/vector.yaml\n"
   );
 }
 
@@ -331,6 +345,7 @@ export interface LegacyVectorContainerSpecInput {
 export function legacyBuildVectorContainerSpec(
   input: LegacyVectorContainerSpecInput,
 ): LegacyStartContainerSpec {
+  const slim = legacyUsesSlimRuntime(input.image);
   const vectorYaml = legacyRenderStartVectorYaml({
     apiKey: input.apiKey,
     vectorId: input.containerName,
@@ -349,9 +364,11 @@ export function legacyBuildVectorContainerSpec(
     containerName: input.containerName,
     env: input.dockerSocketPlan.env,
     entrypoint: "sh",
-    cmd: ["-c", legacyBuildVectorEntrypointScript(vectorYaml, input.logflareId)],
+    cmd: ["-c", legacyBuildVectorEntrypointScript(vectorYaml, input.logflareId, { slim })],
     binds: input.dockerSocketPlan.binds,
-    healthcheck: LEGACY_VECTOR_HEALTHCHECK,
+    healthcheck: slim
+      ? legacySlimWgetHealthcheck("http://127.0.0.1:9001/health")
+      : LEGACY_VECTOR_HEALTHCHECK,
     restartPolicy: "unless-stopped",
     securityOpt: input.dockerSocketPlan.securityOpt,
     networkId: input.networkId,

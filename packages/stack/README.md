@@ -54,9 +54,32 @@ const runtime =
 ```
 
 `daemonLayer` starts the managed supervisor and returns a remote `Stack` layer;
+`restartManagedStackForUpgrade` is the explicit stop/start operation used by
+`supabase start` when the owner was started by another CLI version;
 `connectLayer` reattaches through the deterministic control endpoint;
 `stopDaemon` and the discovery helpers delegate to the managed lifecycle
 facade. No CLI metadata file or PID polling is involved.
+
+Managed ownership is exposed by one deterministic loopback HTTP listener. The
+stable cross-build control protocol is `GET /owner` plus session-fenced
+`POST /stop`; runtime operations use same-version Effect RPC over framed NDJSON
+at `POST /rpc`. The complete application is installed before the listener
+binds, and runtime RPC is available only after the supervisor publishes a
+running lifecycle state. Owner discovery distinguishes a versioned supervisor
+from an unversioned maintenance lease. Stop requests carry either explicit-user
+or upgrade-replacement intent so a user stop cannot be undone by a delayed
+replacement child.
+
+The CLI version must exactly match the daemon CLI version before a remote
+runtime client is constructed. Released and preview CLI versions are immutable
+and unique, so the version is the compatibility identity. An incompatible owner is never spoken to
+over RPC: connect-only commands report an actionable upgrade requirement, and
+only an explicit `supabase start` may preflight, stop the exact old owner
+session, and start the current version. Upgrade restart preserves the managed
+identity and launch metadata, data roots, runtime mode, pinned service
+versions, exclusions, and sticky port assignments; it never deletes the
+managed stack. Existing connections briefly disconnect during this normal
+stop/start upgrade restart.
 
 After a managed supervisor claims a stack, its persisted Docker, Podman, or
 native selection remains pinned even if startup later fails. Retry after

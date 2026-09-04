@@ -240,7 +240,7 @@ export const legacyBuildLocalDbContainerInputs = (
       jwtExpiry: values.authJwtExpiry,
       projectId,
       networkId,
-      configImage: bootstrapConfig.postgresImage,
+      configImage: bootstrapConfig.postgresConfigImage,
       rootKey: values.rootKey,
     };
 

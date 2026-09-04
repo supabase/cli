@@ -1,6 +1,6 @@
 import { Effect, Exit, Stream } from "effect";
 import type { ChildProcessSpawner } from "effect/unstable/process/ChildProcessSpawner";
-import { spawnContainerCli } from "./legacy-container-cli.ts";
+import { LegacyContainerRuntimeNotFoundError, spawnContainerCli } from "./legacy-container-cli.ts";
 import { LegacyDockerRunError } from "./legacy-docker-run.errors.ts";
 import {
   LEGACY_SUGGEST_DOCKER_INSTALL,
@@ -29,6 +29,9 @@ const spawnError = () =>
     reason: "spawn",
     daemonDown: false,
   });
+
+const runtimeNotFound = (cause: LegacyContainerRuntimeNotFoundError) =>
+  new LegacyDockerRunError({ message: cause.message, reason: "spawn", daemonDown: false });
 
 /**
  * Docker's/Podman's "image not found" stderr shape for `image inspect` — the subprocess
@@ -71,7 +74,7 @@ const concat = (chunks: ReadonlyArray<Uint8Array>): Uint8Array => {
  * candidate (3 total attempts) with an escalating 4s/8s backoff
  * (`DOCKER_PULL_RETRY_DELAYS_MS`), matching `2<<(i+1)` seconds for `i` in
  * `0,1`. A spawn failure (the Docker/Podman binary itself couldn't be run) is
- * a different, non-retryable case — see `spawnError` below. Used by both the
+ * a different, non-retryable case — see `runtimeNotFound` below. Used by both the
  * foreground `db dump`-style run-to-completion containers
  * (`legacy-docker-run.layer.ts`) and `start`'s detached, long-running service
  * containers — the resolve/pull/retry algorithm is identical for both, only
@@ -102,7 +105,7 @@ export function legacyMakeDockerImageResolver(
         stdin: "ignore",
         stdout: "ignore",
         stderr: "pipe",
-      }).pipe(Effect.mapError(() => spawnError()));
+      }).pipe(Effect.mapError(runtimeNotFound));
       const stderrChunks: Array<Uint8Array> = [];
       yield* Stream.runForEach(handle.stderr, (chunk) =>
         Effect.sync(() => {
@@ -140,7 +143,7 @@ export function legacyMakeDockerImageResolver(
     image: string,
   ): Effect.Effect<
     { readonly exitCode: number; readonly stderr: string; readonly endedWithNewline: boolean },
-    Error
+    LegacyDockerRunError
   > =>
     Effect.gen(function* () {
       const handle = yield* spawnContainerCli(spawner, ["pull", image], {
@@ -149,7 +152,7 @@ export function legacyMakeDockerImageResolver(
         stderr: "pipe",
         detached: false,
         extendEnv: true,
-      }).pipe(Effect.mapError(() => new Error("spawn")));
+      }).pipe(Effect.mapError(runtimeNotFound));
       // Tee pull progress to the parent terminal in real time so a large,
       // uncached pull does not look frozen — Go streams the same progress via
       // `jsonmessage.DisplayJSONMessagesToStream`. Progress goes to stderr so
@@ -182,8 +185,11 @@ export function legacyMakeDockerImageResolver(
           ),
         ],
         { concurrency: "unbounded" },
+      ).pipe(Effect.mapError(() => spawnError()));
+      const exitCode = yield* handle.exitCode.pipe(
+        Effect.map(Number),
+        Effect.mapError(() => spawnError()),
       );
-      const exitCode = yield* handle.exitCode.pipe(Effect.map(Number));
       const stdout = new TextDecoder().decode(concat(stdoutChunks));
       const stderr = new TextDecoder().decode(concat(stderrChunks));
       return {
@@ -271,9 +277,9 @@ export function legacyMakeDockerImageResolver(
             // a down daemon is caught earlier, by `hasLocalImage`'s own
             // fail-fast check above, and never reaches this loop. No registry
             // candidate can fix a missing Docker/Podman binary, so stop here
-            // and surface the install hint instead of an opaque, repeated
-            // spawn error across every candidate.
-            return yield* Effect.fail(spawnError());
+            // and surface that failure instead of an opaque, repeated spawn
+            // error across every candidate.
+            return yield* Effect.failCause(result.cause);
           }
 
           const delay = DOCKER_PULL_RETRY_DELAYS_MS[attemptIndex];

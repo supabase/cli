@@ -1,3 +1,5 @@
+// oxlint-disable effecttsgo/node-builtin-import -- Atomic claim integration tests use native filesystem fixtures to verify cross-process claims.
+
 import { NodeFileSystem } from "@effect/platform-node";
 import { it } from "@effect/vitest";
 import { Deferred, Effect, Fiber, FileSystem, Layer, PlatformError } from "effect";

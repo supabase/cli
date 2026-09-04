@@ -1,3 +1,5 @@
+// oxlint-disable effecttsgo/async-function -- Port helper functions await native listener readiness and release operations.
+
 import { NodeFileSystem } from "@effect/platform-node";
 import { Effect } from "effect";
 import { createStack, type StackHandle } from "../../src/node.ts";

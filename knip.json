@@ -3,7 +3,7 @@
   "exclude": ["catalogReferences"],
   "workspaces": {
     ".": {
-      "entry": [".github/scripts/**/*.ts", "tools/release/*.ts"],
+      "entry": [".github/scripts/**/*.ts", "tools/*.ts", "tools/release/*.ts"],
       "ignore": [".repos/**", "apps/cli-go/**"],
       "ignoreBinaries": ["go"],
       "ignoreDependencies": ["verdaccio"]
@@ -13,9 +13,15 @@
         "src/shared/cli/bin.ts",
         "src/**/*.test.ts",
         "src/**/*.e2e.test.ts",
-        "src/**/*.live.test.ts"
+        "src/**/*.live.test.ts",
+        "scripts/analyze-commits-title.js"
       ],
-      "ignore": ["scripts/*.ts", "tests/**/*.ts", "src/shared/telemetry/event-catalog.ts"],
+      "ignore": [
+        "scripts/*.ts",
+        "tests/**/*.ts",
+        "src/shared/telemetry/event-catalog.ts",
+        "src/shared/workers/stacks/**"
+      ],
       "ignoreBinaries": ["mkfifo"],
       "ignoreDependencies": ["prettier"]
     },
@@ -28,6 +34,9 @@
     "packages/api": {
       "entry": ["src/**/*.test.ts"],
       "ignoreDependencies": ["undici"]
+    },
+    "packages/config": {
+      "entry": ["src/**/*.test.ts"]
     },
     "packages/process-compose": {
       "entry": ["src/**/*.test.ts", "tests/**/*.ts"]

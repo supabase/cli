@@ -1,3 +1,5 @@
+// oxlint-disable effecttsgo/async-function, effecttsgo/global-date, effecttsgo/node-builtin-import -- Stack e2e tests await subprocess-backed operations and inspect native filesystem paths and timestamps.
+
 import { createClient, type SupabaseClient } from "@supabase/supabase-js";
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -19,10 +21,17 @@ describe("createStack e2e", () => {
     dataDir = mkdtempSync(join(tmpdir(), "supabase-e2e-"));
     projectDir = mkdtempSync(join(tmpdir(), "supabase-e2e-project-"));
     writeFunction(projectDir, "hello", "hello");
+    writeSharedFunction(projectDir);
+    writeNestedWorkerPathFunction(projectDir);
 
     stack = await createStack({
       projectDir,
-      functions: functionsBundle(projectDir, ["hello"]),
+      functions: functionsBundle(projectDir, [
+        "hello",
+        "shared-alpha",
+        "shared-beta",
+        "nested-worker-path",
+      ]),
       jwtSecret: "super-secret-jwt-token-with-at-least-32-characters-long",
       postgres: { dataDir },
     });
@@ -65,6 +74,28 @@ describe("createStack e2e", () => {
       );
       expect(functionsRes.status).toBe(200);
       expect(await functionsRes.text()).toBe("hello");
+    },
+  );
+
+  test(
+    "keeps worker env isolated for functions sharing a source directory",
+    { timeout: 30_000 },
+    async () => {
+      const [alpha, beta, nested] = await Promise.all([
+        fetchFunctionWhenReady(`${stack.url}/functions/v1/shared-alpha`),
+        fetchFunctionWhenReady(`${stack.url}/functions/v1/shared-beta`),
+        fetchFunctionWhenReady(`${stack.url}/functions/v1/nested-worker-path`),
+      ]);
+      const reusedAlpha = await fetchFunctionWhenReady(`${stack.url}/functions/v1/shared-alpha`);
+
+      expect(alpha.status).toBe(200);
+      expect(await alpha.text()).toBe("shared-alpha:shared-import-ok");
+      expect(beta.status).toBe(200);
+      expect(await beta.text()).toBe("shared-beta:shared-import-ok");
+      expect(reusedAlpha.status).toBe(200);
+      expect(await reusedAlpha.text()).toBe("shared-alpha:shared-import-ok");
+      expect(nested.status).toBe(200);
+      expect(await nested.text()).toBe("nested-worker-path:nested-source");
     },
   );
 
@@ -147,6 +178,45 @@ function writeFunction(projectDir: string, slug: string, body: string) {
   writeFileSync(join(dir, "index.ts"), `Deno.serve(() => new Response(${codeSafeJson(body)}));\n`);
 }
 
+function writeSharedFunction(projectDir: string) {
+  const functionsDir = join(projectDir, "supabase", "functions");
+  const sharedDir = join(functionsDir, "shared");
+  mkdirSync(sharedDir, { recursive: true });
+  mkdirSync(join(functionsDir, "_shared"), { recursive: true });
+  writeFileSync(
+    join(functionsDir, "_shared", "value.ts"),
+    'export const sharedValue = "shared-import-ok";\n',
+  );
+  writeFileSync(
+    join(sharedDir, "index.ts"),
+    `import { sharedValue } from "../_shared/value.ts";
+
+Deno.serve(() => new Response(
+  (Deno.env.get("SUPABASE_FUNCTION_SLUG") ?? "") + ":" + sharedValue,
+));
+`,
+  );
+}
+
+function writeNestedWorkerPathFunction(projectDir: string) {
+  const dir = join(
+    projectDir,
+    "supabase",
+    "functions",
+    "shared",
+    ".supabase-worker",
+    "shared-alpha",
+  );
+  mkdirSync(dir, { recursive: true });
+  writeFileSync(
+    join(dir, "index.ts"),
+    `Deno.serve(() => new Response(
+  (Deno.env.get("SUPABASE_FUNCTION_SLUG") ?? "") + ":nested-source",
+));
+`,
+  );
+}
+
 function functionsBundle(
   projectDir: string,
   names: ReadonlyArray<string>,
@@ -156,7 +226,17 @@ function functionsBundle(
     functions: names.map((name) => ({
       name,
       verifyJWT: false,
-      entrypointPath: join(projectDir, "supabase", "functions", name, "index.ts"),
+      entrypointPath: join(
+        projectDir,
+        "supabase",
+        "functions",
+        name === "nested-worker-path"
+          ? join("shared", ".supabase-worker", "shared-alpha")
+          : name.startsWith("shared-")
+            ? "shared"
+            : name,
+        "index.ts",
+      ),
       importMapPath: null,
       staticFiles: [],
       env: {},

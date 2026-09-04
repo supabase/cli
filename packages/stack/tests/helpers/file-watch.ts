@@ -1,3 +1,5 @@
+// oxlint-disable effecttsgo/node-builtin-import -- File-watch tests need the native watcher API to observe filesystem events.
+
 import { watch, type FSWatcher } from "node:fs";
 
 /**

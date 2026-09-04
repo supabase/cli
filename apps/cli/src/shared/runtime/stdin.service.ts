@@ -2,17 +2,23 @@ import type { Effect, Option, Stream } from "effect";
 import { Context } from "effect";
 import type { PlatformError } from "effect/PlatformError";
 
+/**
+ * The process's stdin. `readPipedBytes`, `readPipedText`, `pipedBytesStream` and `readLine`
+ * each read fd 0 through a buffered reader of their own, so bytes one of them has read ahead
+ * are gone for the others: a command must use only one of them per invocation (`readLine` may
+ * be called repeatedly; its calls share a single reader).
+ */
 interface StdinShape {
   readonly isTTY: boolean;
   readonly readPipedBytes: Effect.Effect<Option.Option<Uint8Array>>;
   /**
    * Piped stdin as a byte stream, for consumers that must avoid buffering the whole
-   * pipe (e.g. `migration new` seeding a file from a large `pg_dump`, matching Go's
-   * `io.Copy` streaming). Unlike {@link readPipedBytes}, read errors PROPAGATE on the
-   * error channel — Go's `io.Copy` returns `failed to copy from stdin` and exits
-   * non-zero rather than writing a truncated file, so the caller must map the failure.
-   * Emits nothing for an empty pipe; callers gate on {@link isTTY} themselves (a TTY
-   * should not be drained).
+   * pipe (e.g. `migration new` seeding a file from a large `pg_dump`). Unlike
+   * {@link readPipedBytes}, read errors PROPAGATE on the error channel (once a non-blocking
+   * fd 0 with nothing to read yet has been waited out): a caller writing the bytes to a file
+   * must fail rather than leave a truncated file behind, so it maps the failure itself. Emits
+   * nothing for an empty pipe; callers gate on {@link isTTY} themselves (a TTY should not be
+   * drained).
    */
   readonly pipedBytesStream: Stream.Stream<Uint8Array, PlatformError>;
   readonly readPipedText: Effect.Effect<Option.Option<string>>;
@@ -27,9 +33,13 @@ interface StdinShape {
    * {@link readPipedText} (a whole-stream collect), this reads line by line, so it
    * works for an interactive terminal as well as a pipe.
    *
-   * On a PIPE lines are read ahead into a bounded buffer rather than on demand, so only
-   * the first N piped lines are answerable and anything past them is dropped. See
-   * `stdin.layer.ts` for N and for why reading ahead is required at all.
+   * stdin is pulled a chunk (64 KiB) at a time and only when a prompt needs a line, so a
+   * producer that outruns the prompts stays in the pipe apart from the chunk or two the reader
+   * holds for later prompts. A read error ends line reading the way EOF does: that prompt and
+   * every later one get `None`. So does a line that runs past 64 KiB without a line break
+   * (`MAX_PENDING_LINE_BYTES` in `stdin.layer.ts`): the reader stops a chunk or two past that
+   * bound and never reaches whatever follows. A non-blocking fd 0 with nothing to read yet is
+   * waited on, not treated as a read error.
    */
   readonly readLine: (timeoutMillis: number) => Effect.Effect<Option.Option<string>>;
 }

@@ -17,7 +17,7 @@ export {
   CliProjectEnvParseError,
   DuplicateRemoteProjectIdError,
   InvalidRemoteProjectIdError,
-  MissingCliConfigValueError,
+  ProjectConfigParseError,
 } from "./errors.ts";
 export type { ConfigFormat } from "./config-format.ts";
 export {
@@ -37,20 +37,41 @@ export {
   type FunctionsManifest,
   type ResolvedFunctionConfig,
 } from "./functions-manifest-model.ts";
-export type {
-  LoadCliProjectEnvironmentOptions,
-  CliProjectEnvironment,
-  ResolvedCliConfigValue,
-  ResolveCliConfigOptions,
-} from "./project.ts";
-export type { CliProjectPaths } from "./paths.ts";
-export { CLI_CONFIG_SCHEMA_URL } from "./schema-metadata.ts";
+export type { LoadCliProjectEnvironmentOptions, CliProjectEnvironment } from "./project.ts";
 export {
-  type BaseCliConfig,
+  type ResolvedCliConfigValue,
+  resolveCliConfigValue,
+  resolveCliConfigSubtree,
+} from "./lib/resolve.ts";
+export type { CliProjectPaths } from "./paths.ts";
+export { CLI_CONFIG_SCHEMA_URL, PROJECT_CONFIG_SCHEMA_URL } from "./schema-metadata.ts";
+export {
+  type EffectiveConfig,
   type SparseCliConfig,
   getDefaultCliConfig,
   omitDefaultValues,
   subtractCliConfig,
 } from "./sparse.ts";
-export { KONG_LOCAL_CA_CERT } from "./tls.ts";
-export { ENV_CAPTURE_REGEX } from "./lib/env.ts";
+export {
+  type CliConfigWithRawPresence,
+  type ConfigAbsencePolicy,
+  type ProjectConfig,
+  type ReadonlyJsonValue,
+  type ToProjectConfigSource,
+  attachApiResponse,
+  comparableProjectConfigPaths,
+  fromApiProjectConfig,
+  fromConfigDocument,
+  isComparableProjectConfigPath,
+  toProjectConfig,
+  unmappedApiFields,
+} from "./project-config/project-config.ts";
+export { ProjectConfigSchema, toProjectConfigJsonSchema } from "./project-config/project-schema.ts";
+export {
+  type ConfigChange,
+  type ConfigChangeClass,
+  type ConfigChangeCounts,
+  type ConfigChangeSet,
+  type DiffProjectConfigOptions,
+  diffProjectConfig,
+} from "./config-diff.ts";

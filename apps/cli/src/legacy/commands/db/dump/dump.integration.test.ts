@@ -1,10 +1,12 @@
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { spawnSync } from "node:child_process";
+import { closeSync, existsSync, mkdirSync, openSync, readFileSync, writeFileSync } from "node:fs";
+import process from "node:process";
 import { join } from "node:path";
 import { BunServices } from "@effect/platform-bun";
 import { describe, expect, it } from "@effect/vitest";
 import { Cause, Effect, Exit, Layer, Option } from "effect";
 
-import { mockOutput } from "../../../../../tests/helpers/mocks.ts";
+import { mockOutput, mockTty, processEnvLayer } from "../../../../../tests/helpers/mocks.ts";
 import {
   LEGACY_VALID_REF,
   mockLegacyCliSettings,
@@ -222,14 +224,15 @@ function mockDockerRun(opts: {
   };
 }
 
-const runtimeInfoLayer = Layer.succeed(RuntimeInfo, {
-  cwd: "/work/project",
-  platform: "linux",
-  arch: "x64",
-  homeDir: "/home/user",
-  execPath: "/usr/bin/supabase",
-  pid: 1234,
-});
+const runtimeInfoLayer = (platform: NodeJS.Platform) =>
+  Layer.succeed(RuntimeInfo, {
+    cwd: "/work/project",
+    platform,
+    arch: "x64",
+    homeDir: "/home/user",
+    execPath: "/usr/bin/supabase",
+    pid: 1234,
+  });
 
 interface SetupOpts {
   format?: "text" | "json" | "stream-json";
@@ -248,6 +251,9 @@ interface SetupOpts {
   resolveFails?: boolean;
   ref?: string;
   linkedFails?: boolean;
+  platform?: NodeJS.Platform;
+  stdoutIsPipe?: boolean;
+  env?: Readonly<Record<string, string>>;
 }
 
 function setup(opts: SetupOpts = {}) {
@@ -279,7 +285,9 @@ function setup(opts: SetupOpts = {}) {
     }),
     telemetry.layer,
     cache.layer,
-    runtimeInfoLayer,
+    runtimeInfoLayer(opts.platform ?? "linux"),
+    mockTty({ stdoutIsPipe: opts.stdoutIsPipe }),
+    processEnvLayer(opts.env ?? {}),
     Layer.succeed(
       LegacyNetworkIdFlag,
       opts.networkId === undefined ? Option.none() : Option.some(opts.networkId),
@@ -941,4 +949,89 @@ describe("legacy db dump integration", () => {
       expect(out.stdoutText).toBe("CREATE SCHEMA x;\n");
     }).pipe(Effect.provide(layer));
   });
+
+  const UNICODE_SQL = "insert into t values ('Oranges \u{1F34A}', 'd\u00f6Terra');\n";
+  const NON_ASCII_WARNING = "The dump contains non-ASCII characters";
+  const PIPED_WIN32 = { platform: "win32", stdoutIsPipe: true } as const;
+
+  // Real-runtime probe of the classification `ttyLayer` ships for
+  // `stdoutIsPipe`. A shell pipeline is used for the pipe case: spawnSync's
+  // own "pipe" stdio is a socketpair under Bun, which fstats as a socket.
+  const PROBE = 'process.stdout.write(String(require("node:fs").fstatSync(1).isFIFO()));';
+
+  it.skipIf(process.platform === "win32")("classifies a real piped stdout as a pipe", () => {
+    const result = spawnSync("/bin/sh", ["-c", `"${process.execPath}" -e '${PROBE}' | cat`], {
+      encoding: "utf8",
+    });
+    expect(result.status).toBe(0);
+    expect(result.stdout).toBe("true");
+  });
+
+  it.skipIf(process.platform === "win32")("classifies a file-backed stdout as not a pipe", () => {
+    const file = join(tmp.current, "pipe-probe.txt");
+    const fd = openSync(file, "w");
+    try {
+      const result = spawnSync(process.execPath, ["-e", PROBE], {
+        stdio: ["ignore", fd, "inherit"],
+      });
+      expect(result.status).toBe(0);
+    } finally {
+      closeSync(fd);
+    }
+    expect(readFileSync(file, "utf8")).toBe("false");
+  });
+
+  it.live("windows: warns when a piped stdout dump contains non-ASCII text", () => {
+    const { layer, out } = setup({
+      isLocal: true,
+      stdout: UNICODE_SQL,
+      ...PIPED_WIN32,
+      env: { MSYSTEM: "" },
+    });
+    return Effect.gen(function* () {
+      yield* legacyDbDump(flags({ local: Option.some(true) }));
+      expect(out.stdoutText).toBe(UNICODE_SQL);
+      expect(out.stderrText).toContain("WARNING:");
+      expect(out.stderrText).toContain(NON_ASCII_WARNING);
+      expect(out.stderrText).toContain("re-run with --file");
+    }).pipe(Effect.provide(layer));
+  });
+
+  it.live("stays silent when a piped Windows dump writes to --file", () => {
+    const { layer, out } = setup({
+      isLocal: true,
+      stdout: UNICODE_SQL,
+      ...PIPED_WIN32,
+      workdir: tmp.current,
+    });
+    return Effect.gen(function* () {
+      yield* legacyDbDump(flags({ local: Option.some(true), file: Option.some("out.sql") }));
+      expect(readFileSync(join(tmp.current, "out.sql"), "utf8")).toBe(UNICODE_SQL);
+      expect(out.stderrText).not.toContain(NON_ASCII_WARNING);
+    }).pipe(Effect.provide(layer));
+  });
+
+  const SILENT: ReadonlyArray<[string, Partial<SetupOpts>]> = [
+    ["on non-Windows platforms", { stdoutIsPipe: true }],
+    [
+      "when stdout is not a pipe (TTY, or cmd.exe / Git Bash `>` file handle)",
+      { platform: "win32" },
+    ],
+    [
+      "in a Git Bash / MSYS session (byte-faithful mintty pipe)",
+      { ...PIPED_WIN32, env: { MSYSTEM: "MINGW64" } },
+    ],
+    ["under a mintty terminal outside MSYS", { ...PIPED_WIN32, env: { TERM_PROGRAM: "mintty" } }],
+    ["when the dump is ASCII-only", { ...PIPED_WIN32, stdout: "select 'plain \x7f';\n" }],
+  ];
+  for (const [scenario, over] of SILENT) {
+    it.live(`stays silent ${scenario}`, () => {
+      const { layer, out } = setup({ isLocal: true, stdout: UNICODE_SQL, ...over });
+      return Effect.gen(function* () {
+        yield* legacyDbDump(flags({ local: Option.some(true) }));
+        expect(out.stdoutText).toBe(over.stdout ?? UNICODE_SQL);
+        expect(out.stderrText).not.toContain(NON_ASCII_WARNING);
+      }).pipe(Effect.provide(layer));
+    });
+  }
 });

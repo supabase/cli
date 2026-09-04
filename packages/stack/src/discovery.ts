@@ -14,6 +14,14 @@ import { NoRunningStackError } from "./managed/model.ts";
 import type { ManagedPortDrift, ManagedPortIntentDocument } from "./managed/model.ts";
 import { managedStackDocumentPathEffect } from "./managed/paths.ts";
 import { HttpTransportClient } from "./HttpTransportClient.ts";
+import type { ControlTransport } from "./managed/control.ts";
+import { isControlSupervisorStatus } from "./DaemonProtocol.ts";
+import {
+  DaemonUpgradeRequired,
+  StackRpcProtocolError,
+  StackRpcTransportError,
+  StopTimeout,
+} from "./errors.ts";
 import type { Stack } from "./Stack.ts";
 
 export interface StackSummary {
@@ -76,7 +84,15 @@ const liveStatus = (
 ): Effect.Effect<boolean, ManagedStackManagerError, never> =>
   manager
     .probeControl(document.id)
-    .pipe(Effect.map((probe) => probe?.status.state === "running" && probe.status.ready));
+    .pipe(
+      Effect.map(
+        (probe) =>
+          probe !== undefined &&
+          isControlSupervisorStatus(probe.status) &&
+          probe.status.state === "running" &&
+          probe.status.ready,
+      ),
+    );
 
 export const listStacks = (opts: {
   readonly cacheRoot: string;
@@ -84,7 +100,7 @@ export const listStacks = (opts: {
 }): Effect.Effect<ReadonlyArray<StackSummary>, ManagedStackManagerError, ManagedStackManager> =>
   Effect.gen(function* () {
     const manager = yield* ManagedStackManager;
-    const listings = yield* manager.listStacks();
+    const listings = yield* manager.listStacks;
     const projectPath =
       opts.projectDir === undefined
         ? undefined
@@ -147,7 +163,7 @@ export const stopDaemon = (opts: {
   readonly projectDir?: string;
 }): Effect.Effect<
   void,
-  NoRunningStackError | ManagedStackManagerError,
+  NoRunningStackError | ManagedStackManagerError | StopTimeout,
   ManagedStackManager | HttpTransportClient
 > =>
   stopManagedStack({
@@ -161,7 +177,11 @@ export const deleteManagedStackPersistence = (opts: {
   readonly cwd?: string;
   readonly cacheRoot: string;
   readonly projectDir?: string;
-}): Effect.Effect<void, NoRunningStackError | ManagedStackManagerError, ManagedStackManager> =>
+}): Effect.Effect<
+  void,
+  NoRunningStackError | ManagedStackManagerError,
+  ManagedStackManager | ControlTransport
+> =>
   deleteManagedStack({
     workspacePath: opts.projectDir ?? opts.cwd ?? process.cwd(),
     ...(opts.name === undefined ? {} : { stackName: opts.name }),
@@ -191,13 +211,18 @@ export const connectManagedLayer = (opts: {
   readonly cwd?: string;
   readonly cacheRoot: string;
   readonly projectDir?: string;
+  readonly cliVersion: string;
 }): Effect.Effect<
-  import("effect").Layer.Layer<Stack>,
-  NoRunningStackError | ManagedStackManagerError,
+  import("effect").Layer.Layer<
+    Stack,
+    DaemonUpgradeRequired | StackRpcProtocolError | StackRpcTransportError
+  >,
+  NoRunningStackError | ManagedStackManagerError | DaemonUpgradeRequired,
   ManagedStackManager | HttpTransportClient
 > =>
   connectManagedStack({
     workspacePath: opts.projectDir ?? opts.cwd ?? process.cwd(),
     ...(opts.name === undefined ? {} : { stackName: opts.name }),
     cwd: opts.cwd,
+    cliVersion: opts.cliVersion,
   });
