@@ -56,7 +56,9 @@ packageExtensions:
   # peer only. These two reach vitest through their own `vitest` peer inside a
   # peer cycle, which leaves them a vitest variant with no vite at all — fatal
   # under the global store as soon as coverage loads `vitest/node`. Declaring the
-  # required vite peer makes pnpm resolve the full vitest variant instead.
+  # required vite peer makes pnpm resolve the full vitest variant instead. The
+  # root `vite` devDependency is intentional peer-resolution plumbing (and the
+  # manifest owner recognized by Knip); keep it when cleaning up unused deps.
   "@vitest/coverage-v8": &vitest-consumer
     peerDependencies:
       vite: "*"
