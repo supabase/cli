@@ -142,8 +142,9 @@ export const legacyResolveStorageCredentials = Effect.fnUntraced(function* (opts
  * dotenv files itself so a value set only in `supabase/.env`(.local) counts,
  * matching the `projectEnvValues` the sibling resolvers consume; a caller that
  * already folded these overrides (`start`) re-resolves to the same values, so
- * the fold is idempotent. A malformed port/bool override or an unreadable env
- * file is an invalid-config hard failure, same as the sibling resolvers.
+ * the fold is idempotent. A malformed port/bool override, an unreadable env
+ * file, or an enabled API whose resolved port is `0` is an invalid-config hard
+ * failure, same as the sibling resolvers.
  * `[remotes.*]` never merges on the local path (`loadCliConfig` receives no
  * `projectRef` here), so the remote-over-env precedence those resolvers apply
  * does not arise.
@@ -157,7 +158,7 @@ const resolveLocalApiConfig = Effect.fnUntraced(function* (
   const projectEnvValues = yield* legacyLoadProjectEnv(fs, path, workdir).pipe(
     Effect.mapError((cause) => new LegacyStorageConfigError({ message: cause.message })),
   );
-  return yield* Effect.try({
+  const resolved = yield* Effect.try({
     try: () =>
       ({
         enabled: legacyEnvOverrideBool(
@@ -200,6 +201,15 @@ const resolveLocalApiConfig = Effect.fnUntraced(function* (
         message: cause instanceof Error ? cause.message : String(cause),
       }),
   });
+  // An enabled API with a resolved port of 0 is rejected with the canonical
+  // missing-field message (`legacyValidateResolvedConfig`) — the override could
+  // otherwise smuggle a zero port past config validation into the gateway URL.
+  if (resolved.enabled && resolved.port === 0) {
+    return yield* new LegacyStorageConfigError({
+      message: "Missing required field in config: api.port",
+    });
+  }
+  return resolved;
 });
 
 /**

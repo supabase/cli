@@ -81,20 +81,20 @@ Analytics bucket routes (`/storage/v1/iceberg/...`) are only reached when
 
 ## Exit Codes
 
-| Code | Condition                                                                                                                                                 |
-| ---- | --------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `0`  | success (including the empty-config short-circuit)                                                                                                        |
-| `1`  | `supabase/config.toml` parse failure                                                                                                                      |
-| `1`  | `auth.jwt_secret` (or `SUPABASE_AUTH_JWT_SECRET`) set but shorter than 16 characters                                                                      |
-| `1`  | `[storage.buckets]` entry has an invalid name (contains characters outside the allowed bucket-name pattern)                                               |
-| `1`  | `api.tls.cert_path` set without `api.tls.key_path` (or vice-versa) when `api.tls.enabled = true` (local only)                                             |
-| `1`  | malformed `SUPABASE_API_PORT` / `SUPABASE_API_ENABLED` / `SUPABASE_API_TLS_ENABLED` override, or an unreadable/malformed project dotenv file (local only) |
-| `1`  | `api.tls.cert_path` or `api.tls.key_path` points to an unreadable file (local TLS only)                                                                   |
-| `1`  | Storage API error (non-2xx) other than vector-unavailable                                                                                                 |
-| `1`  | network / connection failure to the Storage gateway                                                                                                       |
-| `1`  | malformed list response (a 200 body whose shape doesn't decode)                                                                                           |
-| `1`  | unreadable `objects_path` (filesystem error during walk/upload)                                                                                           |
-| `1`  | `--project-ref` set without `--linked` (see Notes)                                                                                                        |
+| Code | Condition                                                                                                                                                                                                    |
+| ---- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `0`  | success (including the empty-config short-circuit)                                                                                                                                                           |
+| `1`  | `supabase/config.toml` parse failure                                                                                                                                                                         |
+| `1`  | `auth.jwt_secret` (or `SUPABASE_AUTH_JWT_SECRET`) set but shorter than 16 characters                                                                                                                         |
+| `1`  | `[storage.buckets]` entry has an invalid name (contains characters outside the allowed bucket-name pattern)                                                                                                  |
+| `1`  | `api.tls.cert_path` set without `api.tls.key_path` (or vice-versa) when `api.tls.enabled = true` (local only)                                                                                                |
+| `1`  | malformed `SUPABASE_API_PORT` / `SUPABASE_API_ENABLED` / `SUPABASE_API_TLS_ENABLED` override, a resolved `api.port` of `0` with the API enabled, or an unreadable/malformed project dotenv file (local only) |
+| `1`  | `api.tls.cert_path` or `api.tls.key_path` points to an unreadable file (local TLS only)                                                                                                                      |
+| `1`  | Storage API error (non-2xx) other than vector-unavailable                                                                                                                                                    |
+| `1`  | network / connection failure to the Storage gateway                                                                                                                                                          |
+| `1`  | malformed list response (a 200 body whose shape doesn't decode)                                                                                                                                              |
+| `1`  | unreadable `objects_path` (filesystem error during walk/upload)                                                                                                                                              |
+| `1`  | `--project-ref` set without `--linked` (see Notes)                                                                                                                                                           |
 
 ## Telemetry Events Fired
 

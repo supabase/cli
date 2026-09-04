@@ -14,6 +14,7 @@ import {
   legacyJsonResponse,
   legacyStatusCodeFailure,
   legacyTransportFailure,
+  legacyWithEnv,
   mockLegacyCliSettings,
   mockLegacyPlatformApiService,
   mockLegacyLinkedProjectCacheTracked,
@@ -1063,9 +1064,8 @@ describe("legacy seed buckets", () => {
 
   it.live("calls the gateway on the SUPABASE_API_PORT override, not the config.toml port", () => {
     // #6452: the resolved api.port must reach the storage gateway like every
-    // other consumer of that setting.
-    const previous = process.env["SUPABASE_API_PORT"];
-    process.env["SUPABASE_API_PORT"] = "55511";
+    // other consumer of that setting. Setup runs before the env mutation so a
+    // throwing mkdir/write can never leak the override into later tests.
     const { layer, requests } = setupLegacySeedBuckets(tmp.current, {
       toml: "[api]\nport = 54321\n[storage.buckets.images]\npublic = true\n",
       routes: [
@@ -1073,18 +1073,18 @@ describe("legacy seed buckets", () => {
         { method: "POST", match: "/storage/v1/bucket", body: { name: "images" } },
       ],
     });
-    return Effect.gen(function* () {
-      const exit = yield* legacySeedBuckets(DEFAULT_FLAGS).pipe(Effect.provide(layer), Effect.exit);
-      expect(Exit.isSuccess(exit)).toBe(true);
-      expect(requests.length).toBeGreaterThan(0);
-      expect(requests.map((r) => new URL(r.url).port)).toEqual(requests.map(() => "55511"));
-    }).pipe(
-      Effect.ensuring(
-        Effect.sync(() => {
-          if (previous === undefined) delete process.env["SUPABASE_API_PORT"];
-          else process.env["SUPABASE_API_PORT"] = previous;
-        }),
-      ),
+    return legacyWithEnv(
+      "SUPABASE_API_PORT",
+      "55511",
+      Effect.gen(function* () {
+        const exit = yield* legacySeedBuckets(DEFAULT_FLAGS).pipe(
+          Effect.provide(layer),
+          Effect.exit,
+        );
+        expect(Exit.isSuccess(exit)).toBe(true);
+        expect(requests.length).toBeGreaterThan(0);
+        expect(requests.every((r) => new URL(r.url).port === "55511")).toBe(true);
+      }),
     );
   });
 
@@ -1103,7 +1103,7 @@ describe("legacy seed buckets", () => {
       const exit = yield* legacySeedBuckets(DEFAULT_FLAGS).pipe(Effect.provide(layer), Effect.exit);
       expect(Exit.isSuccess(exit)).toBe(true);
       expect(requests.length).toBeGreaterThan(0);
-      expect(requests.map((r) => new URL(r.url).port)).toEqual(requests.map(() => "55512"));
+      expect(requests.every((r) => new URL(r.url).port === "55512")).toBe(true);
     });
   });
 
@@ -1129,6 +1129,40 @@ describe("legacy seed buckets", () => {
       });
     },
   );
+
+  it.live("rejects SUPABASE_API_PORT=0 with the canonical missing-field error", () => {
+    // `api.enabled` with a zero port is invalid config (`legacyValidateResolvedConfig`);
+    // the override must not smuggle a zero port into the gateway URL.
+    const { layer, requests } = setupLegacySeedBuckets(tmp.current, {
+      toml: "[api]\nport = 54321\n[storage.buckets.images]\npublic = true\n",
+      files: { "supabase/.env": "SUPABASE_API_PORT=0\n" },
+      routes: [{ method: "GET", match: "/storage/v1/bucket", body: [] }],
+    });
+    return Effect.gen(function* () {
+      const exit = yield* legacySeedBuckets(DEFAULT_FLAGS).pipe(Effect.provide(layer), Effect.exit);
+      expect(Exit.isFailure(exit)).toBe(true);
+      expect(JSON.stringify(exit)).toContain("Missing required field in config: api.port");
+      expect(requests).toHaveLength(0);
+    });
+  });
+
+  it.live("allows a zero api.port when the API is disabled, matching config validation", () => {
+    // The canonical zero-port rejection is gated on `api.enabled`
+    // (`legacyValidateResolvedConfig`); a disabled API with port 0 proceeds.
+    const { layer, requests } = setupLegacySeedBuckets(tmp.current, {
+      toml: "[api]\nenabled = false\nport = 54321\n[storage.buckets.images]\npublic = true\n",
+      files: { "supabase/.env": "SUPABASE_API_PORT=0\n" },
+      routes: [
+        { method: "GET", match: "/storage/v1/bucket", body: [] },
+        { method: "POST", match: "/storage/v1/bucket", body: { name: "images" } },
+      ],
+    });
+    return Effect.gen(function* () {
+      const exit = yield* legacySeedBuckets(DEFAULT_FLAGS).pipe(Effect.provide(layer), Effect.exit);
+      expect(Exit.isSuccess(exit)).toBe(true);
+      expect(requests.length).toBeGreaterThan(0);
+    });
+  });
 
   it.live("hard-fails on a malformed SUPABASE_API_PORT override before any gateway call", () => {
     const { layer, requests } = setupLegacySeedBuckets(tmp.current, {
