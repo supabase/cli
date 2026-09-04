@@ -86,14 +86,17 @@ export interface ConfigChangeSet {
   readonly masked: ReadonlyArray<ReadonlyArray<string>>;
   /**
    * Comparable non-secret paths the file declares but the local projection
-   * dropped — declared state a `config push` structurally cannot communicate
-   * (ADR 0021's unmanaged-by-push families: siblings of a disabled
-   * container's sentinel — e.g. `auth.oauth_server.authorization_url_path`,
-   * disabled `storage.analytics`/`storage.vector`'s quota fields — an
-   * unselected SMS provider's credentials, …). These were never compared on
-   * the local side, so — like `masked` — a clean `changes` list is only a
-   * partial claim; callers must surface this rather than let a declared
-   * value silently vanish from the comparison.
+   * dropped — declared state no actor's write path can express, because the
+   * feature it belongs to is switched off (ADR 0021's CLI-2314 addendum:
+   * siblings of a disabled container's sentinel — e.g.
+   * `auth.oauth_server.authorization_url_path`, disabled
+   * `storage.analytics`/`storage.vector`'s quota fields — an unselected SMS
+   * provider's credentials, …). Not every reason a path lands here is
+   * self-contained, either: `auth.rate_limit.email_sent` can be pruned
+   * because a DIFFERENT path, `auth.email.smtp`, is undeclared. These were
+   * never compared on the local side, so — like `masked` — a clean `changes`
+   * list is only a partial claim; callers must surface this rather than let
+   * a declared value silently vanish from the comparison.
    */
   readonly unmanaged: ReadonlyArray<ReadonlyArray<string>>;
   readonly counts: ConfigChangeCounts;
