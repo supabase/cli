@@ -19,9 +19,6 @@ const SHIM_PATH = fileURLToPath(new URL("../../dist/supabase.js", import.meta.ur
 const LEGACY_BINARY_PATH = fileURLToPath(
   new URL(`../../dist/supabase-legacy${BINARY_EXT}`, import.meta.url),
 );
-const NEXT_BINARY_PATH = fileURLToPath(
-  new URL(`../../dist/supabase-next${BINARY_EXT}`, import.meta.url),
-);
 
 // E2E subprocesses should only enter agent output mode when a test explicitly
 // opts in via `options.env`. Keep this list aligned with @vercel/detect-agent
@@ -59,10 +56,10 @@ function subprocessBaseEnv(): Record<string, string> {
   return env;
 }
 
-function assertBuildArtifactsExist(shell: "legacy" | "next", binaryPath: string): void {
+function assertBuildArtifactsExist(binaryPath: string): void {
   if (!existsSync(SHIM_PATH) || !existsSync(binaryPath)) {
     throw new Error(
-      `Missing ${shell} CLI build artifacts. Run \`pnpm --filter supabase build\` before invoking ${shell} e2e tests.\n` +
+      `Missing legacy CLI build artifacts. Run \`pnpm --filter supabase build\` before invoking e2e tests.\n` +
         `  expected shim:   ${SHIM_PATH}\n` +
         `  expected binary: ${binaryPath}`,
     );
@@ -309,14 +306,13 @@ export function spawnSupabase(
     cleanupProcessGroupOnClose?: boolean;
     /** Maximum time to wait for the process to exit before force-killing it. */
     exitTimeoutMs?: number;
-    /** Which source entrypoint to execute. */
-    entrypoint?: "next" | "legacy";
+    /** Which source entrypoint to execute. Only the legacy shell remains. */
+    entrypoint?: "legacy";
   },
 ): SpawnedSupabase {
   const ownHome = options?.home ? null : makeTempHome();
   const homeDir = options?.home ?? ownHome!.dir;
   noteStackCliProjectHome(options?.cwd, homeDir);
-  const entrypoint = options?.entrypoint ?? "next";
   const usesStartWrapper = args[0] === "start";
   // Exercise the same shim + compiled shell binary handoff that published
   // packages use. `SUPABASE_CLI_BINARY_OVERRIDE` points the shim at the local
@@ -340,13 +336,8 @@ export function spawnSupabase(
   for (const [key, value] of Object.entries(mergedEnv)) {
     if (value !== undefined) env[key] = value;
   }
-  if (entrypoint === "legacy") {
-    assertBuildArtifactsExist("legacy", LEGACY_BINARY_PATH);
-    env["SUPABASE_CLI_BINARY_OVERRIDE"] = LEGACY_BINARY_PATH;
-  } else {
-    assertBuildArtifactsExist("next", NEXT_BINARY_PATH);
-    env["SUPABASE_CLI_BINARY_OVERRIDE"] = NEXT_BINARY_PATH;
-  }
+  assertBuildArtifactsExist(LEGACY_BINARY_PATH);
+  env["SUPABASE_CLI_BINARY_OVERRIDE"] = LEGACY_BINARY_PATH;
   execCmd = "node";
   execArgs = [SHIM_PATH, ...args];
   const proc = spawn(execCmd, execArgs, {
@@ -539,8 +530,8 @@ export async function runSupabase(
     untilTimeoutMs?: number;
     /** Maximum time to wait for the command to exit before force-killing it. */
     exitTimeoutMs?: number;
-    /** Which source entrypoint to execute. */
-    entrypoint?: "next" | "legacy";
+    /** Which source entrypoint to execute. Only the legacy shell remains. */
+    entrypoint?: "legacy";
   },
 ): Promise<RunResult> {
   const spawned = spawnSupabase(args, options);

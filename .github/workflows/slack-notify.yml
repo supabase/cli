@@ -12,7 +12,7 @@ on:
         required: true
         type: string
       channel:
-        description: Release channel (alpha | beta | stable), used to label the message. Omit for packages that release without channels.
+        description: Release channel (beta | stable), used to label the message. Omit for packages that release without channels.
         required: false
         type: string
         default: ""

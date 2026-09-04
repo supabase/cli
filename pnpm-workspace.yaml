@@ -12,7 +12,6 @@ allowBuilds:
   sharp: true
 
 catalog:
-  "@effect/atom-react": "4.0.0-rc.112"
   "@effect/platform-bun": "4.0.0-rc.112"
   "@effect/platform-node": "4.0.0-rc.112"
   "@effect/sql-pg": "4.0.0-rc.112"
@@ -99,7 +98,6 @@ minimumReleaseAgeExclude:
   - "@turbo/linux-arm64@2.10.11"
   - "@turbo/windows-64@2.10.11"
   - "@turbo/windows-arm64@2.10.11"
-  - "@effect/atom-react@4.0.0-rc.111"
   - "@effect/platform-bun@4.0.0-rc.111"
   - "@effect/platform-node@4.0.0-rc.111"
   - "@effect/platform-node-shared@4.0.0-rc.111"
