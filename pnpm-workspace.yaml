@@ -20,7 +20,7 @@ catalog:
   "@tsconfig/bun": "^1.0.11"
   "@types/bun": "^1.4.0"
   "typescript": "^7.0.2"
-  "@vitest/coverage-istanbul": "^4.1.11"
+  "@vitest/coverage-v8": "^4.1.11"
   "effect": "4.0.0-rc.112"
   "knip": "^6.32.2"
   "oxfmt": "^0.65.0"
@@ -55,14 +55,11 @@ packageExtensions:
   # vitest lists vite as both a dependency and a peer, so pnpm resolves it as a
   # peer only. These two reach vitest through their own `vitest` peer inside a
   # peer cycle, which leaves them a vitest variant with no vite at all — fatal
-  # under the global store as soon as coverage loads `vitest/node`. Giving them
-  # an optional vite peer makes pnpm resolve the full vitest variant instead.
-  "@vitest/coverage-istanbul": &vitest-consumer
+  # under the global store as soon as coverage loads `vitest/node`. Declaring the
+  # required vite peer makes pnpm resolve the full vitest variant instead.
+  "@vitest/coverage-v8": &vitest-consumer
     peerDependencies:
       vite: "*"
-    peerDependenciesMeta:
-      vite:
-        optional: true
   "@effect/vitest": *vitest-consumer
   # The root `prepare` script (`effect-tsgo patch --oxlint`) replaces files
   # inside these installed packages. Their global-store directories are keyed
