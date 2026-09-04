@@ -209,9 +209,6 @@ async function waitForLocalPostgres(containerName: string) {
   );
 }
 
-// `gen types` starts pg-meta itself (local AND remote non-ts languages) via a
-// single-registry rewrite with no fallback (`resolvePgmetaImage`), so pre-resolve
-// it and retag the winning candidate onto the exact reference the CLI will run.
 async function ensurePgmetaImage(deadline?: number) {
   const expected = resolvePgmetaImage();
   const resolved = await ensureImage(dockerfileServiceImage("pgmeta"), deadline);

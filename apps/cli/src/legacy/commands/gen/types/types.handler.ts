@@ -19,6 +19,7 @@ import {
   PROJECT_NOT_LINKED_MESSAGE,
 } from "../../../config/legacy-project-ref.service.ts";
 import { spawnContainerCli } from "../../../shared/legacy-container-cli.ts";
+import { legacyMakeDockerImageResolver } from "../../../shared/legacy-docker-image-resolve.ts";
 import {
   legacyIsIPv6ConnectivityError,
   legacyIsIPv6ConnectivityErrorCause,
@@ -229,6 +230,7 @@ export const legacyGenTypes = Effect.fn("legacy.gen.types")(function* (flags: Le
   const networkId = yield* LegacyNetworkIdFlag;
   const dnsResolver = yield* LegacyDnsResolverFlag;
   const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
+  const resolveImage = legacyMakeDockerImageResolver(spawner);
   const rawArgs = yield* stdio.args;
   const platformApi = yield* LegacyPlatformApiFactory;
   const projectRef = yield* LegacyProjectRefResolver;
@@ -396,6 +398,7 @@ export const legacyGenTypes = Effect.fn("legacy.gen.types")(function* (flags: Le
   }) =>
     Effect.scoped(
       Effect.gen(function* () {
+        const pgmetaImage = yield* resolveImage(resolvePgmetaImage(input.pgmetaVersionOverride));
         const buildRun = (target: {
           readonly url: string;
           readonly host: string;
@@ -440,7 +443,6 @@ export const legacyGenTypes = Effect.fn("legacy.gen.types")(function* (flags: Le
             // `--network-id` overrides any base network mode (even the
             // "host" mode used for --db-url), so honour the override here too.
             const networkMode = Option.isSome(networkId) ? networkId.value : input.networkMode;
-            const pgmetaImage = resolvePgmetaImage(input.pgmetaVersionOverride);
             const args = [
               "run",
               "--rm",

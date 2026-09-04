@@ -15,7 +15,18 @@ import { CliOutput, Command } from "effect/unstable/cli";
 import * as HttpClientError from "effect/unstable/http/HttpClientError";
 import * as HttpClientRequest from "effect/unstable/http/HttpClientRequest";
 import * as HttpClientResponse from "effect/unstable/http/HttpClientResponse";
-import { Deferred, Effect, Exit, Layer, Option, PlatformError, Sink, Stdio, Stream } from "effect";
+import {
+  Deferred,
+  Effect,
+  Exit,
+  Layer,
+  Option,
+  PlatformError,
+  Predicate,
+  Sink,
+  Stdio,
+  Stream,
+} from "effect";
 import {
   LEGACY_GLOBAL_FLAGS,
   LegacyDebugFlag,
@@ -55,6 +66,7 @@ import {
   LegacyPgDeltaSslProbeError,
 } from "../../../shared/legacy-pgdelta-ssl-probe.service.ts";
 import { legacyPgDeltaSslProbeLayer } from "../../../shared/legacy-pgdelta-ssl-probe.layer.ts";
+import { legacyGetRegistryImageUrlCandidates } from "../../../shared/legacy-docker-registry.ts";
 import type {
   LegacyDbConfigFlags,
   LegacyResolvedDbConfig,
@@ -217,6 +229,7 @@ function setup(
     readonly childStderr?: ReadonlyArray<string>;
     readonly childExitCode?: number;
     readonly childLayer?: Layer.Layer<ChildProcessSpawner.ChildProcessSpawner>;
+    readonly imageInspect?: "cached" | "scripted";
     readonly debug?: boolean;
     readonly networkId?: Option.Option<string>;
     readonly onSpawn?: (record: {
@@ -355,7 +368,9 @@ function setup(
   const layer = Layer.mergeAll(
     runtime,
     BunServices.layer,
-    opts.childLayer ?? child.layer,
+    opts.imageInspect === "scripted"
+      ? (opts.childLayer ?? child.layer)
+      : cachedImageInspect(opts.childLayer ?? child.layer),
     processControl.layer,
     Stdio.layerTest({ args: Effect.succeed(opts.args ?? ["gen", "types"]) }),
     Layer.succeed(LegacyOutputFlag, opts.goOutput ?? Option.none()),
@@ -383,6 +398,37 @@ function setup(
     api,
     layer,
   };
+}
+
+const cachedImageInspectHandle = ChildProcessSpawner.makeHandle({
+  pid: ChildProcessSpawner.ProcessId(1),
+  stdout: Stream.empty,
+  stderr: Stream.empty,
+  all: Stream.empty,
+  exitCode: Effect.succeed(ChildProcessSpawner.ExitCode(0)),
+  isRunning: Effect.succeed(false),
+  stdin: Sink.drain,
+  kill: () => Effect.void,
+  unref: Effect.succeed(Effect.void),
+  getInputFd: () => Sink.drain,
+  getOutputFd: () => Stream.empty,
+});
+
+function cachedImageInspect(
+  inner: Layer.Layer<ChildProcessSpawner.ChildProcessSpawner>,
+): Layer.Layer<ChildProcessSpawner.ChildProcessSpawner> {
+  return Layer.effect(
+    ChildProcessSpawner.ChildProcessSpawner,
+    Effect.map(ChildProcessSpawner.ChildProcessSpawner, (spawner) =>
+      ChildProcessSpawner.make((command) =>
+        Predicate.isTagged(command, "StandardCommand") &&
+        command.args[0] === "image" &&
+        command.args[1] === "inspect"
+          ? Effect.succeed(cachedImageInspectHandle)
+          : spawner.spawn(command),
+      ),
+    ),
+  ).pipe(Layer.provide(inner));
 }
 
 function mockSequentialChildProcessSpawner(
@@ -616,7 +662,7 @@ describe("legacy gen types", () => {
             processEnvLayer({ SUPABASE_HOME: workdir }),
             mockRuntimeInfo({ cwd: workdir, homeDir: workdir }),
             mockTty({ stdinIsTty: false, stdoutIsTty: false }),
-            child.layer,
+            cachedImageInspect(child.layer),
             Stdio.layerTest({ args: Effect.succeed(args) }),
             Layer.succeed(
               TelemetryRuntime,
@@ -1415,6 +1461,111 @@ describe("legacy gen types", () => {
               `PG_META_DB_URL=postgresql://postgres.${LEGACY_VALID_REF}:pooler-password@127.0.0.1:${port}/postgres?connect_timeout=10&options=reference%3D${LEGACY_VALID_REF}`,
             ),
           ).toBe(true);
+        }),
+      catch: (cause) => (cause instanceof Error ? cause : new Error(String(cause))),
+    }),
+  );
+
+  it.live("resolves the pg-meta image through the shared resolver before running it", () =>
+    Effect.tryPromise({
+      try: () =>
+        withSslProbeServer(async (port) => {
+          const image = resolvePgmetaImage();
+          const candidates = legacyGetRegistryImageUrlCandidates(image);
+          const child = mockSequentialChildProcessSpawner([
+            ...candidates.map(() => ({
+              exitCode: 1,
+              stderr: ["Error response from daemon: No such image"],
+            })),
+            { exitCode: 0 },
+            { exitCode: 0, stdout: ["type PulledThenRun struct {}"] },
+          ]);
+          const { layer, out } = setup({
+            args: ["gen", "types", "--lang", "go", "--project-id", LEGACY_VALID_REF],
+            childLayer: child.layer,
+            imageInspect: "scripted",
+            sslProbeLayer: Layer.succeed(LegacyPgDeltaSslProbe, {
+              requireSsl: () => Effect.succeed(false),
+              requireSslForHost: () => Effect.succeed(false),
+            }),
+            dbConfigResolve: () =>
+              Effect.succeed(
+                remoteResolvedConfig({
+                  host: `db.${LEGACY_VALID_REF}.supabase.co`,
+                  port,
+                  user: "postgres",
+                  password: "direct-password",
+                  database: "postgres",
+                }),
+              ),
+          });
+
+          await Effect.runPromise(
+            legacyGenTypes(
+              defaultFlags({ projectId: Option.some(LEGACY_VALID_REF), lang: "go" }),
+            ).pipe(Effect.provide(layer)),
+          );
+
+          expect(out.stdoutText).toContain("type PulledThenRun struct {}");
+          expect(child.spawned.map((spawn) => spawn.args)).toEqual([
+            ...candidates.map((candidate) => ["image", "inspect", candidate]),
+            ["pull", image],
+            expect.arrayContaining(["run", image, "node", "dist/server/server.js"]),
+          ]);
+        }),
+      catch: (cause) => (cause instanceof Error ? cause : new Error(String(cause))),
+    }),
+  );
+
+  it.live("surfaces an image resolution failure without retrying through the pooler", () =>
+    Effect.tryPromise({
+      try: () =>
+        withSslProbeServer(async (port) => {
+          const child = mockSequentialChildProcessSpawner([
+            {
+              exitCode: 1,
+              stderr: [
+                'could not translate host name "db.abcdefghijklmnopqrst.supabase.co" to address: No address associated with hostname',
+              ],
+            },
+          ]);
+          const { layer, out, dbConfig } = setup({
+            args: ["gen", "types", "--lang", "go", "--project-id", LEGACY_VALID_REF],
+            childLayer: child.layer,
+            imageInspect: "scripted",
+            sslProbeLayer: Layer.succeed(LegacyPgDeltaSslProbe, {
+              requireSsl: () => Effect.succeed(false),
+              requireSslForHost: () => Effect.succeed(false),
+            }),
+            dbConfigResolve: () =>
+              Effect.succeed(
+                remoteResolvedConfig({
+                  host: `db.${LEGACY_VALID_REF}.supabase.co`,
+                  port,
+                  user: "postgres",
+                  password: "direct-password",
+                  database: "postgres",
+                }),
+              ),
+            poolerFallback: Option.some({
+              host: "127.0.0.1",
+              port,
+              user: `postgres.${LEGACY_VALID_REF}`,
+              password: "pooler-password",
+              database: "postgres",
+            }),
+          });
+
+          const exit = await Effect.runPromiseExit(
+            legacyGenTypes(
+              defaultFlags({ projectId: Option.some(LEGACY_VALID_REF), lang: "go" }),
+            ).pipe(Effect.provide(layer)),
+          );
+
+          expect(Exit.isFailure(exit)).toBe(true);
+          expect(out.stderrText).not.toContain("Retrying via the IPv4 connection pooler.");
+          expect(dbConfig.poolerFallbacks).toHaveLength(0);
+          expect(child.spawned.map((spawn) => spawn.args[0])).not.toContain("run");
         }),
       catch: (cause) => (cause instanceof Error ? cause : new Error(String(cause))),
     }),
