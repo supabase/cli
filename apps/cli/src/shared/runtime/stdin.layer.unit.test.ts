@@ -7,13 +7,14 @@ import { stdinLayerFrom } from "./stdin.layer.ts";
 
 const encoder = new TextEncoder();
 
+// A read failure the layer keeps: `EAGAIN` would be waited out as `WouldBlock` instead.
 const readError = Stream.fail(
   systemError({
     module: "Stdin",
     method: "read",
     _tag: "Unknown",
-    description: "EAGAIN: resource temporarily unavailable, read",
-    cause: new Error("EAGAIN: resource temporarily unavailable, read"),
+    description: "EIO: i/o error, read",
+    cause: new Error("EIO: i/o error, read"),
   }),
 );
 
