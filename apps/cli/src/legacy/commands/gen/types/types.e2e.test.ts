@@ -209,6 +209,8 @@ async function waitForLocalPostgres(containerName: string) {
   );
 }
 
+// Pre-pulls pg-meta inside the image budget and retags the winning candidate onto the
+// reference `gen types` resolves, so the CLI's own resolver takes the cached path.
 async function ensurePgmetaImage(deadline?: number) {
   const expected = resolvePgmetaImage();
   const resolved = await ensureImage(dockerfileServiceImage("pgmeta"), deadline);

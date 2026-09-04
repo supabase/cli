@@ -398,6 +398,8 @@ export const legacyGenTypes = Effect.fn("legacy.gen.types")(function* (flags: Le
   }) =>
     Effect.scoped(
       Effect.gen(function* () {
+        // Outside the pooler fallback so an image resolution failure is never read as an IPv6
+        // error; the resolver's candidate rewrite is idempotent on this rewritten reference.
         const pgmetaImage = yield* resolveImage(resolvePgmetaImage(input.pgmetaVersionOverride));
         const buildRun = (target: {
           readonly url: string;
