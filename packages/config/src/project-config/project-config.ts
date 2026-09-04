@@ -739,12 +739,9 @@ function applySmsProviderPrecedence(result: Record<string, unknown>): void {
 
 /**
  * Fields the legacy push does not manage while their section's toggle is off
- * — it writes only the disable sentinel for each of these (Data API: only
- * `db_schema: ""`, api.sync.ts:130-145; network restrictions: whole flow
- * skipped, db.sync.ts:148-150; SMTP: only `smtp_host: ""`,
- * auth.sync.ts:2384-2397; storage Iceberg/Vector: whole feature omitted,
- * storage.sync.ts:287-299; captcha provider/secret only when enabled,
- * :2315-2324; hook URI/secrets only when enabled, :2551-2565; SMS provider
+ * — it writes only the disable sentinel for each of these (storage
+ * Iceberg/Vector: whole feature omitted, storage.sync.ts:287-299; hook
+ * URI/secrets only when enabled, auth.sync.ts:2551-2565; SMS provider
  * credentials only for the selected provider, :2498-2539) — so projecting
  * the (usually schema-filled or platform-retained) siblings would fabricate
  * drift between representations of the same disabled state. Applied to BOTH
@@ -771,15 +768,57 @@ export const DISABLED_SENTINEL_PRUNES: ReadonlyArray<{
   /** Keys to drop when `enabled === false`; absent = drop every key but `enabled`. */
   readonly dropKeys?: ReadonlyArray<string>;
 }> = [
+  // `api.enabled` is not an independent wire field: `./registry.ts`'s
+  // `["api", "enabled"]` row (registry.ts:122-130) derives it from
+  // `db_schema.length > 0` via `remoteDataApiDisabled` (registry.ts:54-57)
+  // — the same underlying value `schemas` itself reads, just viewed as a
+  // boolean, not a second fact push happened to send. `extra_search_path`/
+  // `max_rows` are PostgREST-serving config for a PostgREST that isn't
+  // exposed while the Data API is off. The API arm already row-gates all
+  // three siblings on that same `remoteDataApiDisabled` check independently
+  // (registry.ts:98-149) — this document-arm rule is symmetry with
+  // something the API arm enforces on its own, not push imitation.
   { containerPath: ["api"], dropKeys: ["schemas", "extra_search_path", "max_rows"] },
+  // `db.network_restrictions.enabled`'s own schema description
+  // (`../db.ts:170`) is "Enable management of network restrictions.", not
+  // "Enable network restrictions" — a deliberate, actor-independent
+  // management opt-out ("don't let any tool touch my CIDR list"), not a
+  // push-pipeline artifact. Confirmed on the API arm too: there is no
+  // `network_restrictions.enabled` field on the v2 contract at all
+  // (registry.ts:332-337) — the platform has no hosted concept of this
+  // toggle to disable or re-enable, so unlike every other entry here, this
+  // document-arm prune has no API-side counterpart to be symmetric with.
   {
     containerPath: ["db", "network_restrictions"],
     dropKeys: ["allowed_cidrs", "allowed_cidrs_v6"],
   },
+  // Same shape as `api` above: `smtp.enabled` is derived from
+  // `smtp_host.length > 0` (registry-auth.ts's `smtpRows`, :839-841), not an
+  // independent field — with no host configured, GoTrue has no SMTP server
+  // to send through, so `port`/`user`/`admin_email`/`sender_name` are inert
+  // (`host` itself is excluded from `dropKeys` since it IS the wire
+  // signal). `pass` is a secret row and already omitted on both arms
+  // regardless of this rule. The API arm already row-gates the four
+  // siblings independently via `smtpExplicitlyDisabledInAttributes`
+  // (registry-auth.ts:888-903, consumed by `smtpSiblingStringRow`) — same
+  // "symmetry with an API-arm rule" shape as `api` above, not push
+  // imitation.
   {
     containerPath: ["auth", "email", "smtp"],
     dropKeys: ["host", "port", "user", "pass", "admin_email", "sender_name"],
   },
+  // Unlike the three entries above, `auth.captcha.provider` is genuine
+  // retained-but-inert hosted state, not a document-arm-only artifact: a
+  // recorded platform fixture reports `security_captcha_enabled: false`
+  // together with a still-populated `security_captcha_provider` (this
+  // file's own "the API arm prunes unmanaged fields behind disabled
+  // toggles too" test, below) — the platform keeps a stale provider choice
+  // around after captcha is turned off. The API arm's own `provider` row
+  // (registry-auth.ts:1019-1035) is NOT independently gated on
+  // `security_captcha_enabled` the way `api`'s/SMTP's siblings are, so this
+  // rule is load-bearing on BOTH arms for genuine phantom-drift
+  // suppression — an even stronger case than `api`/`auth.email.smtp`
+  // above. `secret` is a secret row and already omitted regardless.
   { containerPath: ["auth", "captcha"], dropKeys: ["provider", "secret"] },
   // `oauth_server.enabled=false` means the platform serves no OAuth
   // consent-UI/dynamic-registration behavior, but genuinely retains

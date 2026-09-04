@@ -9,6 +9,7 @@ import { Schema } from "effect";
 import {
   attachApiResponse,
   comparableProjectConfigPaths,
+  DISABLED_SENTINEL_PRUNES,
   DOCUMENT_ONLY_LOCAL_PATHS,
   fromApiProjectConfig,
   fromConfigDocument,
@@ -3186,6 +3187,158 @@ describe("review round: oauth_server disabled sentinel (CLI-2230)", () => {
     });
     expect(disabled.auth?.oauth_server).toEqual(api.auth?.oauth_server);
   });
+});
+
+describe("DISABLED_SENTINEL_PRUNES — cross-arm symmetry re-derived from the data model (CLI-2314)", () => {
+  /**
+   * One disabled-state fixture pair per {@link DISABLED_SENTINEL_PRUNES}
+   * entry: a document declaring the container disabled with every dropKey
+   * populated with a stale, non-default value, and the equivalent API
+   * attributes representing that same hosted state with the same sibling
+   * values. Machine-checks the claim behind each entry's own docstring — that
+   * the rule is re-derived from something the platform's data model already
+   * enforces (or retains) on both arms, not push-shaped reasoning the API arm
+   * doesn't independently share. A future entry added on push-only reasoning
+   * would need its own fixture here and would fail the loop below the moment
+   * the two arms disagree.
+   */
+  const fixturesByContainerPath: Record<
+    string,
+    { document: Record<string, unknown>; apiAttributes: Record<string, unknown> }
+  > = {
+    api: {
+      document: {
+        api: {
+          enabled: false,
+          schemas: ["public"],
+          extra_search_path: ["extensions"],
+          max_rows: 500,
+        },
+      },
+      apiAttributes: { api: { db_schema: "", db_extra_search_path: "extensions", max_rows: 500 } },
+    },
+    "auth.email.smtp": {
+      document: {
+        auth: {
+          email: {
+            smtp: {
+              enabled: false,
+              host: "smtp.example.com",
+              port: 587,
+              user: "postmaster",
+              pass: "stale-secret",
+              admin_email: "admin@example.com",
+              sender_name: "Support",
+            },
+          },
+        },
+      },
+      apiAttributes: {
+        auth: {
+          smtp_host: "",
+          smtp_port: "587",
+          smtp_user: "postmaster",
+          smtp_pass: "stale-secret",
+          smtp_admin_email: "admin@example.com",
+          smtp_sender_name: "Support",
+        },
+      },
+    },
+    "auth.captcha": {
+      document: {
+        auth: { captcha: { enabled: false, provider: "turnstile", secret: "stale-secret" } },
+      },
+      apiAttributes: {
+        auth: {
+          security_captcha_enabled: false,
+          security_captcha_provider: "turnstile",
+          security_captcha_secret: "stale-secret",
+        },
+      },
+    },
+    "auth.oauth_server": {
+      document: {
+        auth: {
+          oauth_server: {
+            enabled: false,
+            allow_dynamic_registration: true,
+            authorization_url_path: "/stale",
+          },
+        },
+      },
+      apiAttributes: {
+        auth: {
+          oauth_server_enabled: false,
+          oauth_server_allow_dynamic_registration: true,
+          oauth_server_authorization_path: "/stale",
+        },
+      },
+    },
+    "storage.analytics": {
+      document: {
+        storage: {
+          analytics: { enabled: false, max_namespaces: 5, max_tables: 10, max_catalogs: 2 },
+        },
+      },
+      apiAttributes: {
+        storage: {
+          features: {
+            iceberg_catalog: { enabled: false, max_namespaces: 5, max_tables: 10, max_catalogs: 2 },
+          },
+        },
+      },
+    },
+    "storage.vector": {
+      document: {
+        storage: { vector: { enabled: false, max_buckets: 5, max_indexes: 3 } },
+      },
+      apiAttributes: {
+        storage: { features: { vector_buckets: { enabled: false, max_buckets: 5, max_indexes: 3 } } },
+      },
+    },
+  };
+
+  function readContainer(root: unknown, path: ReadonlyArray<string>): unknown {
+    return path.reduce<unknown>(
+      (value, key) =>
+        typeof value === "object" && value !== null ? (value as Record<string, unknown>)[key] : undefined,
+      root,
+    );
+  }
+
+  for (const rule of DISABLED_SENTINEL_PRUNES) {
+    const key = rule.containerPath.join(".");
+
+    // Skipped, not weakened: `db.network_restrictions.enabled` has no v2 API
+    // contract field at all (registry.ts:332-337) — it's a document-only
+    // management toggle. `applyDisabledSentinels` can therefore never fire on
+    // the API arm for this container (its mapped shape never carries an
+    // `enabled` key to compare against `false`), so there is no "equivalent
+    // API response representing the same disabled state" this generic scheme
+    // could build. The asymmetry itself is the documented, correct behavior
+    // for this entry (see its own comment above `DISABLED_SENTINEL_PRUNES`),
+    // not a gap this test should paper over.
+    if (key === "db.network_restrictions") {
+      continue;
+    }
+
+    test(`"${key}" reduces to the same disabled shape via fromConfigDocument and fromApiProjectConfig`, () => {
+      const fixture = fixturesByContainerPath[key];
+      if (!fixture) {
+        throw new Error(
+          `no cross-arm fixture registered for DISABLED_SENTINEL_PRUNES entry "${key}" — add one to fixturesByContainerPath`,
+        );
+      }
+      const documentContainer = readContainer(fromConfigDocument(fixture.document), rule.containerPath);
+      const apiContainer = readContainer(
+        fromApiProjectConfig(fixture.apiAttributes),
+        rule.containerPath,
+      );
+      expect(documentContainer).toEqual({ enabled: false });
+      expect(apiContainer).toEqual({ enabled: false });
+      expect(documentContainer).toEqual(apiContainer);
+    });
+  }
 });
 
 describe("review round: clone-snapshot validation, provenance, digit exactness (CLI-2230)", () => {
