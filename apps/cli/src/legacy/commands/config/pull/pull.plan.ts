@@ -47,12 +47,12 @@ export type LegacyConfigPullSkipReason =
   | "unwritable"
   | "would_invalidate";
 
-export interface LegacyConfigPullSkip {
+interface LegacyConfigPullSkip {
   readonly change: ConfigChange;
   readonly reason: LegacyConfigPullSkipReason;
 }
 
-export interface LegacyConfigPullPlannedWrite {
+interface LegacyConfigPullPlannedWrite {
   readonly change: ConfigChange;
   /** `change.path`, prefixed with `["remotes", label]` when the destination
    * is a `[remotes.*]` block — the exact path `applyConfigEdits` edits. */
@@ -60,7 +60,7 @@ export interface LegacyConfigPullPlannedWrite {
   readonly value: ConfigEditValue;
 }
 
-export type LegacyConfigPullWarningKind =
+type LegacyConfigPullWarningKind =
   | "dual_scope"
   | "duplicates_root"
   | "array_drift"

@@ -463,6 +463,9 @@ importers:
       typescript:
         specifier: 'catalog:'
         version: 7.0.2
+      vite:
+        specifier: ^8.2.2
+        version: 8.2.2
       vitest:
         specifier: 'catalog:'
         version: 4.1.11(@vitest/coverage-istanbul@4.1.11)
