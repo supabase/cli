@@ -15,7 +15,7 @@ import { projectConfigMappingRows } from "./registry.ts";
  * resolve against {@link CliConfigSchema}'s AST, and every row's `apiPath`
  * (plus `alsoConsumes` and `./registry-auth.ts`'s `unmappedSecretApiPaths`)
  * must resolve against {@link ProjectConfigApiAttributesSchema}'s AST. This
- * is what keeps the 233 rows across `./registry.ts`/`./registry-auth.ts`
+ * is what keeps the 243 rows across `./registry.ts`/`./registry-auth.ts`
  * true when either schema moves — a renamed or removed field fails a test
  * here instead of silently producing a `ProjectConfig` that never populates
  * (a wrong `configPath`) or a row that never reads a real API field (a

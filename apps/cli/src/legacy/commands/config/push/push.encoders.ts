@@ -953,6 +953,16 @@ function encodeActiveSmsProviderBody(
     return resolution;
   };
   const field = (key: string): string => asString(resolve(key).value) ?? "";
+  // A companion the config schema declares as `optionalKey` (no materialized
+  // default) and the API may report as absent: it must never make the whole
+  // provider body unencodable. Included only when some tier resolved it; a
+  // resolved value still takes part in `forced` disclosure.
+  const optionalField = (key: string): string | undefined => {
+    const resolution = resolveLeaf(changes, ["auth", "sms", provider, key], remote, local);
+    if (resolution.source === "none") return undefined;
+    resolutions.push({ key, resolution });
+    return asString(resolution.value) ?? "";
+  };
   const secretFor = (key: string) => findSecretDecision(secrets, ["auth", "sms", provider, key]);
   // Collected locally rather than pushed straight to `secretsEncoded`: a
   // provider's own secret is applied to `body` INSIDE the switch below,
@@ -973,6 +983,10 @@ function encodeActiveSmsProviderBody(
     case "twilio":
       body["sms_twilio_account_sid"] = field("account_sid");
       body["sms_twilio_message_service_sid"] = field("message_service_sid");
+      {
+        const contentSid = optionalField("content_sid");
+        if (contentSid !== undefined) body["sms_twilio_content_sid"] = contentSid;
+      }
       applySecret(body, "auth_token");
       break;
     case "twilio_verify":
@@ -1235,6 +1249,8 @@ export const LEGACY_PUSH_AUTH_LEAF_MAP: ReadonlyArray<LegacyPushAuthLeafSpec> = 
     transform: asBoolean,
   },
   { configPath: ["auth", "sms", "template"], apiKey: "sms_template", transform: asString },
+  { configPath: ["auth", "sms", "otp_length"], apiKey: "sms_otp_length", transform: asNumber },
+  { configPath: ["auth", "sms", "otp_expiry"], apiKey: "sms_otp_exp", transform: asNumber },
 
   // web3
   {

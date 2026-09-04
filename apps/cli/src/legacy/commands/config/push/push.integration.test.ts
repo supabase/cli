@@ -835,6 +835,27 @@ max_frequency = "10s"
     },
   );
 
+  it.live("pushes sms.otp_expiry as sms_otp_exp through the REAL typed client", () => {
+    // Regression test for the CLI-2316 auth-encoder leaf added alongside the
+    // new `auth.sms.otp_length`/`otp_expiry` schema fields: the v2 remote
+    // reports the platform default (`sms_otp_exp: 60`, from
+    // `legacyV2ProjectConfigResponse`), so only the declared local override
+    // should ship.
+    const toml = `project_id = "test"
+[auth.sms]
+otp_expiry = 120
+`;
+    const { layer, api } = setup({ toml, yes: true });
+    return Effect.gen(function* () {
+      yield* legacyConfigPush({ projectRef: Option.none() });
+      const update = api.requests.find(
+        (r) => r.method === "PATCH" && r.url.includes("/config/auth"),
+      );
+      expect(update).toBeDefined();
+      expect(update?.body).toEqual({ sms_otp_exp: 120 });
+    }).pipe(Effect.provide(layer));
+  });
+
   it.live("routes db.pooler.pool_mode to the unsupported note, never a resource", () => {
     const { layer, out } = setup({
       toml: `project_id = "test"\n[db.pooler]\npool_mode = "session"\n`,

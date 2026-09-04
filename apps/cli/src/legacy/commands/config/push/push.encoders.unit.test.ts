@@ -517,6 +517,13 @@ describe("legacyEncodeAuthBody", () => {
     expect(result.body).toEqual({ smtp_max_frequency: 1 });
   });
 
+  it("ships only sms_otp_exp for sms.otp_expiry — sparse body", () => {
+    const result = legacyEncodeAuthBody(
+      authInput({ changes: [change(["auth", "sms", "otp_expiry"], 120)] }),
+    );
+    expect(result.body).toEqual({ sms_otp_exp: 120 });
+  });
+
   describe("invalid durations route to unencodable, never a silent 0", () => {
     const REASON = "the declared value is not a valid duration";
 
@@ -1122,7 +1129,12 @@ describe("legacyEncodeAuthBody", () => {
       const local: ProjectConfig = {
         auth: {
           sms: {
-            twilio: { enabled: true, account_sid: "sid", message_service_sid: "svc" },
+            twilio: {
+              enabled: true,
+              account_sid: "sid",
+              message_service_sid: "svc",
+              content_sid: "content",
+            },
           },
         },
       };
@@ -1145,9 +1157,84 @@ describe("legacyEncodeAuthBody", () => {
         sms_provider: "twilio",
         sms_twilio_account_sid: "sid",
         sms_twilio_message_service_sid: "svc",
+        sms_twilio_content_sid: "content",
         sms_twilio_auth_token: "token",
       });
       expect(result.secretsEncoded).toEqual([["auth", "sms", "twilio", "auth_token"]]);
+    });
+
+    it("ships twilio's content_sid, but twilio_verify never emits it", () => {
+      const local: ProjectConfig = {
+        auth: {
+          sms: {
+            twilio: {
+              enabled: true,
+              account_sid: "sid",
+              message_service_sid: "svc",
+              content_sid: "content",
+            },
+          },
+        },
+      };
+      const result = legacyEncodeAuthBody(
+        authInput({
+          changes: [change(["auth", "sms", "twilio", "content_sid"], "content")],
+          local,
+        }),
+      );
+      expect(result.body).toEqual({
+        sms_provider: "twilio",
+        sms_twilio_account_sid: "sid",
+        sms_twilio_message_service_sid: "svc",
+        sms_twilio_content_sid: "content",
+      });
+
+      const verifyLocal: ProjectConfig = {
+        auth: {
+          sms: {
+            twilio_verify: { enabled: true, account_sid: "sid", message_service_sid: "svc" },
+          },
+        },
+      };
+      const verifyResult = legacyEncodeAuthBody(
+        authInput({
+          changes: [change(["auth", "sms", "twilio_verify", "account_sid"], "sid")],
+          local: verifyLocal,
+        }),
+      );
+      expect(verifyResult.body).toEqual({
+        sms_provider: "twilio_verify",
+        sms_twilio_verify_account_sid: "sid",
+        sms_twilio_verify_message_service_sid: "svc",
+      });
+      expect(verifyResult.body).not.toHaveProperty("sms_twilio_content_sid");
+    });
+
+    it("keeps encoding twilio when content_sid is unset everywhere (optional companion)", () => {
+      // `content_sid` is an `optionalKey` with no materialized default; a
+      // project that never set it must still be able to push its other
+      // twilio settings instead of the whole provider block becoming
+      // unencodable.
+      const local: ProjectConfig = {
+        auth: {
+          sms: {
+            twilio: { enabled: true, account_sid: "sid-2", message_service_sid: "svc" },
+          },
+        },
+      };
+      const result = legacyEncodeAuthBody(
+        authInput({
+          changes: [change(["auth", "sms", "twilio", "account_sid"], "sid-2")],
+          local,
+        }),
+      );
+      expect(result.body).toEqual({
+        sms_provider: "twilio",
+        sms_twilio_account_sid: "sid-2",
+        sms_twilio_message_service_sid: "svc",
+      });
+      expect(result.body).not.toHaveProperty("sms_twilio_content_sid");
+      expect(result.unencodable).toEqual([]);
     });
 
     it("ships vonage's non-secret api_key alongside its secret api_secret", () => {
@@ -1374,6 +1461,7 @@ describe("auth encoder key-name drift guard", () => {
       configPath: ["auth", "sms", "twilio", "message_service_sid"],
       apiKey: "sms_twilio_message_service_sid",
     },
+    { configPath: ["auth", "sms", "twilio", "content_sid"], apiKey: "sms_twilio_content_sid" },
     { configPath: ["auth", "sms", "twilio", "auth_token"], apiKey: "sms_twilio_auth_token" },
     {
       configPath: ["auth", "sms", "twilio_verify", "account_sid"],
@@ -1431,9 +1519,9 @@ describe("auth encoder key-name drift guard", () => {
     ...notificationPairs,
   ];
 
-  it("covers exactly 182 (configPath, apiKey) pairs (42 leaf + 6 smtp + 3 captcha + 18 hooks + 80 providers + 13 sms credentials + 6 template subjects + 14 notifications)", () => {
-    expect(leafPairs.length).toBe(42);
-    expect(allPairs.length).toBe(182);
+  it("covers exactly 189 (configPath, apiKey) pairs (44 leaf + 6 smtp + 3 captcha + 18 hooks + 84 providers + 14 sms credentials + 6 template subjects + 14 notifications)", () => {
+    expect(leafPairs.length).toBe(44);
+    expect(allPairs.length).toBe(189);
   });
 
   it.each(allPairs.map((pair) => [pair.configPath.join("."), pair] as const))(

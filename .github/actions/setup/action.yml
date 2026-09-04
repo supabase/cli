@@ -23,14 +23,15 @@ runs:
       with:
         version: 2026.9.0
 
+    # actions/cache-restored pnpm global virtual-store links are unusable on Windows; fresh installs reconstruct them.
     - name: Resolve pnpm store path
-      if: inputs.dependency-cache == 'true'
+      if: inputs.dependency-cache == 'true' && runner.os != 'Windows'
       id: pnpm-store
       shell: bash
       run: echo "path=$(pnpm store path --silent)" >> "$GITHUB_OUTPUT"
 
     - name: Configure pnpm dependency cache
-      if: inputs.dependency-cache == 'true'
+      if: inputs.dependency-cache == 'true' && runner.os != 'Windows'
       uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
       with:
         path: ${{ steps.pnpm-store.outputs.path }}

@@ -82,6 +82,32 @@ Concrete behavior families, by normalizer:
   ships the push-side capability — an omission this family models is a statement about push's CURRENT
   limitations, not a permanent semantic ceiling.
 
+- **CLI-only fields with no hosted counterpart on EITHER arm** (CLI-2316, `DOCUMENT_ONLY_LOCAL_PATHS`,
+  `project-config.ts`) — a family DISTINCT from the unmanaged-by-push family above, despite the
+  similar-looking mechanism (both drop a document-declared value from the projection): this family's
+  omissions are a PERMANENT semantic ceiling, not a push-capability gap CLI-2266's lockstep rule
+  governs. `api.port`/`api.tls`/`api.external_url`, `db.port`/`db.shadow_port`/`db.health_timeout`,
+  `db.pooler.{enabled,port}`, `db.migrations`, `db.seed`, every config-side `realtime.*` field, and
+  most of `experimental.*` describe purely local-machine behavior — a bind port, which Docker image to
+  run, which local schema-diff engine to use — with no corresponding `v2GetProjectConfig` attribute to
+  ever converge toward, confirmed directly against the OpenAPI-generated schema
+  (`packages/api/src/generated/contracts.ts`), not assumed. There is no "push gains the capability"
+  future for these: a hosted project has no port to bind or Docker image to select, so unlike the
+  family above, extending push could never make one of these comparable.
+
+  **A field that DOES have a `v2GetProjectConfig` counterpart is never a member of this family, even
+  when `config push` cannot write it** (PR #6451 review round, correcting this family's initial
+  version): `db.major_version` and `db.pooler.{pool_mode,default_pool_size,max_client_conn}` are real,
+  read-only-via-push hosted facts — `fromApiProjectConfig` maps all four from genuine
+  `v2GetProjectConfig` state — and excluding them from the document arm made them permanently
+  `unmanaged` in `config diff` for every stock project (the `supabase init` template declares all
+  four), since `config diff`/`config pull` — `ProjectConfig`'s actual current consumers — never even
+  reach the comparison for an `unmanaged` path (ADR 0022). `config push` itself doesn't consult
+  `ProjectConfig` at all today (still the legacy v1 `config-sync` mappers below), so "push can't write
+  it" is not, by itself, a reason to exclude a field from this list — only "no hosted fact exists to
+  compare or pull" is. Distinguishing "unpushable" from "not hosted at all" for `config push`'s own
+  future consumption of `ProjectConfig` is explicitly CLI-2313/CLI-2314's concern, not this list's.
+
 **`fromApiProjectConfig`** (`registry-auth.ts`, `registry.ts`, `project-config.ts`):
 
 - API `null` on a gating boolean canonicalizes to `enabled: false` rather than being skipped, so the

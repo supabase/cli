@@ -17,13 +17,14 @@ import {
 } from "./push.registry-names.ts";
 
 describe("LEGACY_EXTERNAL_PROVIDER_IDS", () => {
-  it("names exactly the 19 external provider ids", () => {
+  it("names exactly the 20 external provider ids", () => {
     expect(LEGACY_EXTERNAL_PROVIDER_IDS).toEqual([
       "apple",
       "azure",
       "bitbucket",
       "discord",
       "facebook",
+      "figma",
       "github",
       "gitlab",
       "google",
