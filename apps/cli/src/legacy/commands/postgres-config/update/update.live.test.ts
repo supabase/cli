@@ -1,9 +1,9 @@
 import { expect } from "vitest";
 
 import {
+  expectPostgresConfigLiveOverride,
   experimentalProjectLiveFlags,
   removePostgresConfigLiveOverride,
-  requireLiveSuccess,
   test,
   throwWithCleanup,
 } from "../../../../../tests/helpers/live.ts";
@@ -30,11 +30,13 @@ test("applies an override with --no-restart and get proves it", async ({ cli, pr
     const applied = JSON.parse(updated.stdout) as Record<string, unknown>;
     expect(applied["work_mem"], updated.stdout).toBe("7MB");
 
-    const proof = await cli(["postgres-config", "get", ...flags, "-o", "json"]);
-    requireLiveSuccess(proof, "postgres-config get proof for postgres-config update");
-    expect(proof.stdout, proof.stderr).not.toBe("");
-    const config = JSON.parse(proof.stdout) as Record<string, unknown>;
-    expect(config["work_mem"], proof.stdout).toBe("7MB");
+    await expectPostgresConfigLiveOverride(
+      cli,
+      project,
+      "work_mem",
+      "7MB",
+      "postgres-config get proof for postgres-config update",
+    );
   } catch (error) {
     targetError = error;
   } finally {

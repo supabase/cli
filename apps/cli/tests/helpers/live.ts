@@ -2,8 +2,9 @@ import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 
+import { Predicate } from "effect";
 import pg from "pg";
-import { inject, test as vitestTest } from "vitest";
+import { expect, inject, test as vitestTest } from "vitest";
 
 import { makeTempHome, runSupabase } from "./cli.ts";
 import { LIVE_EXIT_TIMEOUT_MS } from "./live-env.ts";
@@ -170,6 +171,39 @@ export async function removePostgresConfigLiveOverride(
     "--no-restart",
   ]);
   requireLiveSuccess(removed, `postgres-config delete cleanup for ${key}`);
+}
+
+export function expectPostgresConfigLiveOverride(
+  cli: LiveFixtures["cli"],
+  project: LiveProject,
+  key: string,
+  expected: string | undefined,
+  label: string,
+): Promise<void> {
+  return expect
+    .poll(
+      async () => {
+        const proof = await cli(
+          ["postgres-config", "get", ...experimentalProjectLiveFlags(project), "-o", "json"],
+          { exitTimeoutMs: 20_000 },
+        );
+        requireLiveSuccess(proof, label);
+        let config: unknown;
+        try {
+          config = JSON.parse(proof.stdout);
+        } catch {
+          config = undefined;
+        }
+        if (!Predicate.isObject(config)) {
+          throw new Error(
+            `${label}: unexpected postgres-config get payload\nstdout:\n${proof.stdout}\nstderr:\n${proof.stderr}`,
+          );
+        }
+        return config[key];
+      },
+      { interval: 2_000, timeout: 60_000, message: label },
+    )
+    .toBe(expected);
 }
 
 /**
