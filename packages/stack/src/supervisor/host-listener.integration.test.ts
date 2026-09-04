@@ -3,6 +3,8 @@ import { describe, expect, it } from "@effect/vitest";
 import { Cause, Effect, Exit, Fiber, Option } from "effect";
 // oxlint-disable-next-line effecttsgo/node-builtin-import
 import { createServer, type Server as HttpServer } from "node:http";
+// oxlint-disable-next-line effecttsgo/node-builtin-import
+import { PassThrough } from "node:stream";
 import { connect as connectNet, type Server as NetServer, type Socket } from "node:net";
 import { PortUnavailableError } from "../public/Errors.ts";
 import { bindHostListener, bindHostListenerWithOptions } from "./HostListener.ts";
@@ -115,6 +117,25 @@ describe("host listener binding", () => {
         yield* Fiber.join(tcpClosed);
         expect(httpSocket.destroyed).toBe(true);
         expect(tcpSocket.destroyed).toBe(true);
+      }),
+    ),
+  );
+
+  it.live("closes connections emitted while listener shutdown is in progress", () =>
+    run(
+      Effect.gen(function* () {
+        const listener = yield* bindHostListener("127.0.0.1", 0, "api");
+        if (listener.binding.kind !== "http") return yield* Effect.die("expected HTTP listener");
+        const lateSocket = new PassThrough();
+        const closing = yield* Effect.forkChild(listener.close, { startImmediately: true });
+        listener.binding.server.emit("connection", lateSocket);
+        yield* Fiber.join(closing).pipe(
+          Effect.timeoutOrElse({
+            duration: "10 seconds",
+            orElse: () => Effect.die("listener close timed out"),
+          }),
+        );
+        expect(lateSocket.destroyed).toBe(true);
       }),
     ),
   );

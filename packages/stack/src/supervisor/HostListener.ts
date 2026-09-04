@@ -23,16 +23,29 @@ export interface HostListenerBindOptions {
 
 interface ConnectionTracker extends HostListenerConnections {
   readonly detach: () => void;
+  readonly close: () => void;
 }
 
 const trackConnections = (server: HttpServer | NetServer): ConnectionTracker => {
   const sockets = new Set<Duplex>();
+  let closing = false;
   const onConnection = (socket: Duplex) => {
+    if (closing) {
+      socket.destroy();
+      return;
+    }
     sockets.add(socket);
     socket.once("close", () => sockets.delete(socket));
   };
   server.on("connection", onConnection);
-  return { sockets, detach: () => server.off("connection", onConnection) };
+  return {
+    sockets,
+    close: () => {
+      closing = true;
+      for (const socket of sockets) socket.destroy();
+    },
+    detach: () => server.off("connection", onConnection),
+  };
 };
 
 const closeServer = (
@@ -40,21 +53,18 @@ const closeServer = (
   tracker: ConnectionTracker,
 ): Effect.Effect<void> =>
   Effect.callback<void>((resume) => {
-    const destroyConnections = () => {
-      for (const socket of tracker.sockets) socket.destroy();
-    };
     const finish = () => {
       tracker.detach();
       resume(Effect.void);
     };
-    destroyConnections();
+    tracker.close();
     if (!server.listening) {
       finish();
       return;
     }
     server.close(finish);
     return Effect.sync(() => {
-      destroyConnections();
+      tracker.close();
       tracker.detach();
       if (server.listening) server.close(() => undefined);
     });
@@ -81,11 +91,11 @@ const bind = <T extends HttpServer | NetServer>(
     };
     const teardown = () => {
       cleanup();
+      tracker.close();
       tracker.detach();
       const swallow = () => undefined;
       server.once("error", swallow);
       try {
-        for (const socket of tracker.sockets) socket.destroy();
         server.close(() => server.off("error", swallow));
       } catch {
         server.off("error", swallow);
