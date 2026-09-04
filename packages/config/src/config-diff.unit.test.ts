@@ -347,48 +347,57 @@ describe("diffProjectConfig classification", () => {
     expect(result.changes).toEqual([]);
   });
 
-  test("a declared path the projection cannot push surfaces in unmanaged, never as a false clean", () => {
-    // `auth.oauth_server` is dropped from the document projection entirely —
-    // push has no oauth_server handling — so a declared `enabled = true`
-    // disagreeing with the remote's `false` cannot be a change entry. It must
+  test("a declared push-unmanaged sibling surfaces in unmanaged, never as a false clean", () => {
+    // A disabled `auth.oauth_server`'s siblings (`allow_dynamic_registration`,
+    // `authorization_url_path`) are retained-but-inert platform state that
+    // `config push` cannot communicate at all — pruned from the document
+    // projection by `DISABLED_SENTINEL_PRUNES` — so a declared value
+    // disagreeing with the remote's cannot be a `change` entry. It must
     // surface in `unmanaged` so the clean changes list is visibly partial.
+    // `enabled` itself is an ordinary comparable path (CLI-2314) — see the
+    // next test.
     const result = diffWith(
-      { auth: { oauth_server: { enabled: true } } },
-      { auth: { oauth_server_enabled: false } },
+      { auth: { oauth_server: { enabled: false, authorization_url_path: "/consent" } } },
+      { auth: { oauth_server_enabled: false, oauth_server_authorization_path: "/other" } },
     );
     expect(result.changes).toEqual([]);
-    expect(result.unmanaged).toContainEqual(["auth", "oauth_server", "enabled"]);
+    expect(result.unmanaged).toContainEqual(["auth", "oauth_server", "authorization_url_path"]);
   });
 
-  test("an unmanaged path is excluded from classification even when the remote AGREES with it", () => {
+  test("a push-unmanaged sibling is excluded from classification even when the remote AGREES with it", () => {
     // The disagreeing case above happened to pass even before the loop
-    // structurally excluded unmanaged paths, because the remote's `false`
-    // coincidentally matched the schema's own disabled-by-default baseline.
-    // `true`/`true` does not: it proves the exclusion itself, not an
-    // accidental baseline match — ADR 0022's "unmanaged paths can never
+    // structurally excluded unmanaged paths, because the remote's value
+    // coincidentally matched. Matching values here proves the exclusion
+    // itself, not an accidental match — ADR 0022's "unmanaged paths can never
     // classify either" applies even when local and remote agree.
     const result = diffWith(
-      { auth: { oauth_server: { enabled: true } } },
-      { auth: { oauth_server_enabled: true } },
+      { auth: { oauth_server: { enabled: false, authorization_url_path: "/consent" } } },
+      { auth: { oauth_server_enabled: false, oauth_server_authorization_path: "/consent" } },
     );
     expect(result.changes).toEqual([]);
-    expect(result.unmanaged).toContainEqual(["auth", "oauth_server", "enabled"]);
+    expect(result.unmanaged).toContainEqual(["auth", "oauth_server", "authorization_url_path"]);
     expect(result.counts.total).toBe(0);
   });
 
-  test("an unmanaged path is excluded from classification even when the remote DIFFERS from it", () => {
+  test("push-unmanaged siblings are excluded from classification even when the remote DIFFERS from them", () => {
     // Live repro: config.toml declares storage.analytics disabled with a
     // max_namespaces value, the platform reports it enabled with a different
-    // value — `storage.analytics` is dropped from the document projection
-    // entirely while disabled, so neither path may become a `remote_only`
-    // change, only `unmanaged`.
+    // value — `max_namespaces` is pruned from the document projection while
+    // the container is declared disabled, so it can never become a
+    // `remote_only` change, only `unmanaged`. `enabled` itself is an
+    // ordinary comparable path (CLI-2314) and correctly classifies as an
+    // `update`.
     const result = diffWith(
       { storage: { analytics: { enabled: false, max_namespaces: 5 } } },
       { storage: { features: { iceberg_catalog: { enabled: true, max_namespaces: 10 } } } },
     );
-    expect(changeAt(result.changes, ["storage", "analytics", "enabled"])).toBeUndefined();
+    expect(changeAt(result.changes, ["storage", "analytics", "enabled"])).toMatchObject({
+      class: "update",
+      local: false,
+      remote: true,
+    });
     expect(changeAt(result.changes, ["storage", "analytics", "max_namespaces"])).toBeUndefined();
-    expect(result.unmanaged).toContainEqual(["storage", "analytics", "enabled"]);
+    expect(result.unmanaged).not.toContainEqual(["storage", "analytics", "enabled"]);
     expect(result.unmanaged).toContainEqual(["storage", "analytics", "max_namespaces"]);
   });
 
@@ -571,6 +580,81 @@ describe("diffProjectConfig classification", () => {
     expect(result.counts.remote_only).toBe(1);
     expect(result.counts.local_only).toBe(1);
     expect(result.counts.total).toBe(3);
+  });
+});
+
+describe("absence policy", () => {
+  test("absent-is-hands-off masks a fixed-list field (auth.captcha) out of local entirely, reporting remote_only with local: undefined", () => {
+    // `auth.captcha` is never declared in the document at all, and the
+    // remote is customized — `applyRawPresenceMask`'s fixed list removes the
+    // field from the local projection entirely rather than letting the
+    // schema default stand in, so a consumer can never mistake this for
+    // "push the default over the remote customization".
+    const result = diffWith(
+      {},
+      { auth: { security_captcha_enabled: true, security_captcha_provider: "hcaptcha" } },
+    );
+    expect(result.absencePolicy).toBe("absent-is-hands-off");
+    expect(changeAt(result.changes, ["auth", "captcha", "enabled"])).toMatchObject({
+      class: "remote_only",
+      local: undefined,
+      declared: false,
+    });
+  });
+
+  test("documents the hazardous cell: absent-is-default reports remote_only with the schema default masquerading as local", () => {
+    // No `document` at all — `diffProjectConfig({local: {config}, remote})`,
+    // the exact Studio-shaped call `ConfigAbsencePolicy` is named for. With
+    // no raw document to mask against, the local projection still carries
+    // the materialized schema default (`enabled: false`) as though it were a
+    // real declared value. This is deliberately NOT a "works correctly"
+    // assertion — it documents the one hazardous cell in the danger matrix: a
+    // consumer that treated `remote_only` as "safe to push" here would
+    // silently revert a genuine hosted customization to the schema default.
+    const result = diffProjectConfig({
+      local: { config: decodeCliConfig({}) },
+      remote: fromApiProjectConfig({
+        auth: { security_captcha_enabled: true, security_captcha_provider: "hcaptcha" },
+      }),
+    });
+    expect(result.absencePolicy).toBe("absent-is-default");
+    expect(changeAt(result.changes, ["auth", "captcha", "enabled"])).toMatchObject({
+      class: "remote_only",
+      local: false,
+      declared: false,
+    });
+  });
+
+  test("a comparable path outside the raw-presence mask's fixed list classifies identically under both policies", () => {
+    // api.max_rows is not one of applyRawPresenceMask's fixed paths, so the
+    // extra masking `absent-is-hands-off` applies makes no difference to it
+    // either way — the generic `declared` mechanism alone is what keeps both
+    // call shapes from misclassifying an undeclared, remote-customized field
+    // as `update`, proving the fixed-list mask is additive, not the only
+    // thing standing between an undeclared field and a false `update`.
+    const attributes = { api: { max_rows: 250 } };
+    const withDocument = diffWith({}, attributes);
+    const withoutDocument = diffProjectConfig({
+      local: { config: decodeCliConfig({}) },
+      remote: fromApiProjectConfig(attributes),
+    });
+    expect(changeAt(withDocument.changes, ["api", "max_rows"])).toMatchObject({
+      class: "remote_only",
+    });
+    expect(changeAt(withoutDocument.changes, ["api", "max_rows"])).toMatchObject({
+      class: "remote_only",
+    });
+  });
+
+  test("absencePolicy round-trips: hands-off when a document is supplied, default when it is omitted", () => {
+    const withDocument = diffWith({}, {});
+    expect(withDocument.absencePolicy).toBe("absent-is-hands-off");
+
+    const withoutDocument = diffProjectConfig({
+      local: { config: decodeCliConfig({}) },
+      remote: fromApiProjectConfig({}),
+    });
+    expect(withoutDocument.absencePolicy).toBe("absent-is-default");
   });
 });
 

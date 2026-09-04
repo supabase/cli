@@ -1,6 +1,7 @@
 import type { CliConfigValueOrigin } from "./config-document.ts";
 import {
   type CliConfigWithRawPresence,
+  type ConfigAbsencePolicy,
   comparableProjectConfigPaths,
   fromConfigDocument,
   isComparableProjectConfigPath,
@@ -85,16 +86,29 @@ export interface ConfigChangeSet {
   readonly masked: ReadonlyArray<ReadonlyArray<string>>;
   /**
    * Comparable non-secret paths the file declares but the local projection
-   * dropped — declared state a `config push` structurally cannot communicate
-   * (ADR 0021's unmanaged-by-push families: `auth.oauth_server`, disabled
-   * `storage.analytics`/`storage.vector`, siblings of a disabled container's
-   * sentinel, an unselected SMS provider's credentials, …). These were never
-   * compared on the local side, so — like `masked` — a clean `changes` list
-   * is only a partial claim; callers must surface this rather than let a
-   * declared value silently vanish from the comparison.
+   * dropped — declared state no actor's write path can express, because the
+   * feature it belongs to is switched off (ADR 0021's CLI-2314 addendum:
+   * siblings of a disabled container's sentinel — e.g.
+   * `auth.oauth_server.authorization_url_path`, disabled
+   * `storage.analytics`/`storage.vector`'s quota fields — an unselected SMS
+   * provider's credentials, …). Not every reason a path lands here is
+   * self-contained, either: `auth.rate_limit.email_sent` can be pruned
+   * because a DIFFERENT path, `auth.email.smtp`, is undeclared. These were
+   * never compared on the local side, so — like `masked` — a clean `changes`
+   * list is only a partial claim; callers must surface this rather than let
+   * a declared value silently vanish from the comparison.
    */
   readonly unmanaged: ReadonlyArray<ReadonlyArray<string>>;
   readonly counts: ConfigChangeCounts;
+  /**
+   * Which {@link ConfigAbsencePolicy} `options.local` selected for this call —
+   * `"absent-is-hands-off"` when `options.local.document` was supplied,
+   * `"absent-is-default"` when it was omitted. See that type's docstring for
+   * the danger matrix this distinction protects against, and
+   * {@link DiffProjectConfigOptions.local}'s docstring for the specific
+   * classification cliff omitting `document` falls off.
+   */
+  readonly absencePolicy: ConfigAbsencePolicy;
 }
 
 export interface DiffProjectConfigOptions {
@@ -108,6 +122,21 @@ export interface DiffProjectConfigOptions {
    * structurally assignable. Note `fromConfigDocument` runs inside
    * `diffProjectConfig`, so a document the registry cannot canonicalize
    * throws `ProjectConfigParseError` from here.
+   *
+   * **Omitting `document` is a cliff, not a gentle degradation.** Internally,
+   * `diffProjectConfig` computes `const declaredRoot = options.local.document
+   * ?? {}` — a caller that leaves `document` out entirely doesn't just lose
+   * `applyRawPresenceMask`'s fixed-list masking, EVERY path's `declared` flag
+   * becomes `false` universally (`isDeclaredAtPath` walks an empty object).
+   * That means `local_only` can never fire (it requires `declared === true`
+   * with no remote value) and `unmanaged`/`masked` are always empty arrays
+   * (both filter on `isDeclaredAtPath(declaredRoot, ...)` too) — not merely
+   * "less masking coverage". This selects {@link ConfigAbsencePolicy}
+   * `"absent-is-default"` (see that type's docstring for the danger matrix)
+   * and is exactly the calling shape a caller like Studio would use if it
+   * called `diffProjectConfig({local: {config}, remote})` without ever
+   * loading/passing a raw document — the whole reason `ConfigAbsencePolicy`
+   * exists to be named.
    */
   readonly local: CliConfigWithRawPresence & {
     readonly valueOrigins?: ReadonlyArray<CliConfigValueOrigin> | undefined;
@@ -337,7 +366,11 @@ function hasAncestorPathKey(path: ReadonlyArray<string>, set: ReadonlySet<string
 
 // The default config's own convergence projection — the first `remote_only`
 // suppression baseline tier. Lazy so importing this module never pays for a
-// full schema decode + projection up front.
+// full schema decode + projection up front. Deliberately calls
+// `fromConfigDocument` on a bare `EffectiveConfig` — an internal,
+// intentional `"absent-is-default"` use (`ConfigAbsencePolicy`): the
+// suppression tiers below need a fully schema-materialized baseline to
+// compare a silent remote report against, not a raw-presence-masked one.
 let defaultProjectionMemo: ProjectConfig | undefined;
 function defaultProjection(): ProjectConfig {
   defaultProjectionMemo ??= fromConfigDocument(getDefaultCliConfig());
@@ -353,6 +386,8 @@ function defaultProjection(): ProjectConfig {
 export function diffProjectConfig(options: DiffProjectConfigOptions): ConfigChangeSet {
   const local = fromConfigDocument(options.local);
   const declaredRoot = options.local.document ?? {};
+  const absencePolicy: ConfigAbsencePolicy =
+    options.local.document !== undefined ? "absent-is-hands-off" : "absent-is-default";
   const envReferences = new Map<string, ReadonlyArray<string>>();
   for (const origin of options.local.valueOrigins ?? []) {
     if (origin.source === "environment" && origin.envVariables !== undefined) {
@@ -475,5 +510,6 @@ export function diffProjectConfig(options: DiffProjectConfigOptions): ConfigChan
     masked,
     unmanaged,
     counts: { update, remote_only, local_only, total: update + remote_only + local_only },
+    absencePolicy,
   };
 }

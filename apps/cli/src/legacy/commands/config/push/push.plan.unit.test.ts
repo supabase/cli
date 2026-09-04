@@ -41,6 +41,7 @@ function changeSet(changes: ReadonlyArray<ConfigChange>, remoteOnly = 0): Config
       local_only: changes.filter((c) => c.class === "local_only").length,
       total: changes.length + remoteOnly,
     },
+    absencePolicy: "absent-is-hands-off",
   };
 }
 
@@ -107,6 +108,9 @@ describe("legacyPushResourceForPath", () => {
     [["db", "network_restrictions", "allowed_cidrs_v6"], "db.network_restrictions"],
     [["db", "ssl_enforcement", "enabled"], "db.ssl_enforcement"],
     [["auth", "site_url"], "auth"],
+    [["auth", "oauth_server", "enabled"], "auth"],
+    [["auth", "oauth_server", "allow_dynamic_registration"], "auth"],
+    [["auth", "oauth_server", "authorization_url_path"], "auth"],
     [["storage", "file_size_limit"], "storage"],
   ])("routes %j to %s", (path, resource) => {
     expect(legacyPushResourceForPath(path)).toBe(resource);
@@ -123,9 +127,6 @@ describe("legacyPushResourceForPath", () => {
     [["db", "pooler", "pool_mode"]],
     [["db", "pooler", "default_pool_size"]],
     [["db", "pooler", "max_client_conn"]],
-    [["auth", "oauth_server", "enabled"]],
-    [["auth", "oauth_server", "allow_dynamic_registration"]],
-    [["auth", "oauth_server", "authorization_url_path"]],
   ])("classifies %j as unsupported", (path) => {
     expect(legacyPushResourceForPath(path)).toBe("unsupported");
   });
@@ -134,7 +135,7 @@ describe("legacyPushResourceForPath", () => {
     expect(legacyPushResourceForPath(["realtime", "enabled"])).toBe("unsupported");
   });
 
-  it("drift guard: every comparable config path resolves to a resource, or one of the three intentionally-unsupported prefixes", () => {
+  it("drift guard: every comparable config path resolves to a resource, or one of the two intentionally-unsupported prefixes", () => {
     // `legacyPushResourceForPath` never returns `undefined` (B12) — an
     // unroutable path falls through to `"unsupported"` too, the same result
     // an intentionally-listed prefix gets. So a plain `!== undefined`
@@ -197,24 +198,22 @@ describe("legacyPlanConfigPush", () => {
   it("routes an unsupported-prefix pushable change into `unsupported`, not a resource bucket", () => {
     const set = changeSet([
       change(["db", "pooler", "pool_mode"], "update"),
-      change(["auth", "oauth_server", "enabled"], "local_only"),
+      change(["db", "major_version"], "local_only"),
     ]);
     const plan = legacyPlanConfigPush(set);
     expect(plan.unsupported).toEqual([
       ["db", "pooler", "pool_mode"],
-      ["auth", "oauth_server", "enabled"],
+      ["db", "major_version"],
     ]);
     expect(plan.changesByResource["db.settings"]).toEqual([]);
-    expect(plan.changesByResource.auth).toEqual([]);
   });
 });
 
 describe("LEGACY_PUSH_UNSUPPORTED_PREFIXES", () => {
-  it("names exactly the three unsupported subtrees", () => {
+  it("names exactly the two unsupported subtrees", () => {
     expect(LEGACY_PUSH_UNSUPPORTED_PREFIXES).toEqual([
       ["db", "major_version"],
       ["db", "pooler"],
-      ["auth", "oauth_server"],
     ]);
   });
 });
@@ -247,14 +246,18 @@ describe("legacyPushResourceEnabled", () => {
     expect(legacyPushResourceEnabled("db.ssl_enforcement", config, {})).toBe(false);
   });
 
-  it("gates auth and storage on the decoded config's own enabled flag", () => {
+  it("is always true for auth and storage, regardless of their local enabled toggle (CLI-2314)", () => {
+    // `auth.enabled`/`storage.enabled` control only the local GoTrue/Storage
+    // Docker service — gating the whole resource on them silently dropped a
+    // user's declared hosted-auth/storage changes whenever they simply
+    // didn't run that service locally.
     const base = getDefaultCliConfig();
     const authOff: CliConfig = { ...base, auth: { ...base.auth, enabled: false } };
     const storageOff: CliConfig = { ...base, storage: { ...base.storage, enabled: false } };
     expect(legacyPushResourceEnabled("auth", base, {})).toBe(true);
-    expect(legacyPushResourceEnabled("auth", authOff, {})).toBe(false);
+    expect(legacyPushResourceEnabled("auth", authOff, {})).toBe(true);
     expect(legacyPushResourceEnabled("storage", base, {})).toBe(true);
-    expect(legacyPushResourceEnabled("storage", storageOff, {})).toBe(false);
+    expect(legacyPushResourceEnabled("storage", storageOff, {})).toBe(true);
   });
 });
 

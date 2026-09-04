@@ -443,10 +443,11 @@ describe("legacyEncodeStorageBody", () => {
         },
       },
     };
-    // The real pipeline drops a disabled `storage.analytics` from the local
-    // projection entirely (`applyPushUnmanagedOmissions`) — this directly
-    // exercises the encoder with that pruned shape, as a change constructed
-    // by hand rather than through the full diff pipeline (CLI-2314 note).
+    // The real pipeline drops a disabled `storage.analytics`'s max_* siblings
+    // from the local projection (`DISABLED_SENTINEL_PRUNES`, leaving only
+    // `{enabled: false}`) — this directly exercises the encoder with that
+    // pruned shape, as a change constructed by hand rather than through the
+    // full diff pipeline.
     const result = legacyEncodeStorageBody(
       storageInput({ changes: [change(["storage", "analytics", "enabled"], false)], config }),
     );
@@ -1630,9 +1631,9 @@ describe("auth encoder key-name drift guard", () => {
     ...notificationPairs,
   ];
 
-  it("covers exactly 189 (configPath, apiKey) pairs (44 leaf + 6 smtp + 3 captcha + 18 hooks + 84 providers + 14 sms credentials + 6 template subjects + 14 notifications)", () => {
-    expect(leafPairs.length).toBe(44);
-    expect(allPairs.length).toBe(189);
+  it("covers exactly 192 (configPath, apiKey) pairs (47 leaf + 6 smtp + 3 captcha + 18 hooks + 84 providers + 14 sms credentials + 6 template subjects + 14 notifications)", () => {
+    expect(leafPairs.length).toBe(47);
+    expect(allPairs.length).toBe(192);
   });
 
   it.each(allPairs.map((pair) => [pair.configPath.join("."), pair] as const))(
@@ -1649,7 +1650,7 @@ describe("auth encoder key-name drift guard", () => {
 describe("encoder exhaustiveness drift guard", () => {
   /**
    * Feeds every {@link comparableProjectConfigPaths} entry that
-   * `legacyPushResourceForPath` routes to a resource (excluding the three
+   * `legacyPushResourceForPath` routes to a resource (excluding the two
    * intentionally-unsupported prefixes, covered by `push.plan.unit.test.ts`'s
    * own drift guard) to that resource's encoder as a single synthetic
    * `update` change, and asserts the path lands in `encoded`, `unencodable`,

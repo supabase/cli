@@ -972,10 +972,17 @@ otp_expiry = 120
   );
 
   it.live(
-    "a disabled storage.analytics whose remote is enabled surfaces as unmanaged, not pushed",
+    "a disabled storage.analytics's declared quota sibling surfaces as unmanaged, not pushed",
     () => {
+      // `storage.analytics.enabled` is an ordinary comparable path (CLI-2314)
+      // and matches the remote here (both `false`), so it produces no
+      // change. `max_namespaces` is the sibling `DISABLED_SENTINEL_PRUNES`
+      // still drops from the local projection while the container is
+      // disabled — declared locally and disagreeing with the remote's
+      // report, it must surface as unmanaged rather than vanish silently or
+      // get force-pushed.
       const { layer, out, api } = setup({
-        toml: `project_id = "test"\n[storage.analytics]\nenabled = false\n`,
+        toml: `project_id = "test"\n[storage.analytics]\nenabled = false\nmax_namespaces = 5\n`,
         format: "json",
         v2: {
           status: 200,
@@ -990,8 +997,8 @@ otp_expiry = 120
                     unknown
                   >),
                   iceberg_catalog: {
-                    enabled: true,
-                    max_namespaces: 5,
+                    enabled: false,
+                    max_namespaces: 10,
                     max_tables: 10,
                     max_catalogs: 2,
                   },
@@ -1011,28 +1018,43 @@ otp_expiry = 120
         ).toBe(false);
         const success = out.messages.find((m) => m.type === "success");
         const data = success?.data as Record<string, unknown>;
-        expect(data["unmanaged"]).toEqual([["storage", "analytics", "enabled"]]);
+        expect(data["unmanaged"]).toEqual([["storage", "analytics", "max_namespaces"]]);
         expect(data["unsupported"]).toEqual([]);
       }).pipe(Effect.provide(layer));
     },
   );
 
-  it.live("a declared auth.oauth_server surfaces as unmanaged, never as unsupported", () => {
-    const { layer, out } = setup({
-      toml: `project_id = "test"\n[auth.oauth_server]\nenabled = true\n`,
-      format: "json",
-    });
-    return Effect.gen(function* () {
-      yield* legacyConfigPush({ projectRef: Option.none() });
-      expect(out.stderrText).toContain(
-        "Note: 1 declared property is not managed by config push and was not compared; run `supabase config diff` to list them.",
-      );
-      const success = out.messages.find((m) => m.type === "success");
-      const data = success?.data as Record<string, unknown>;
-      expect(data["unmanaged"]).toEqual([["auth", "oauth_server", "enabled"]]);
-      expect(data["unsupported"]).toEqual([]);
-    }).pipe(Effect.provide(layer));
-  });
+  it.live(
+    "a declared auth.oauth_server.enabled is pushed through the auth endpoint, no longer as unmanaged or unsupported",
+    () => {
+      // Before CLI-2314, `fromConfigDocument` dropped the WHOLE
+      // `auth.oauth_server` subtree unconditionally, so a declared `enabled`
+      // never reached `changeSet.changes` and was reported `unmanaged`. A
+      // later step made `enabled` an ordinary comparable path, but
+      // `LEGACY_PUSH_UNSUPPORTED_PREFIXES` still routed it to the "no
+      // Management API field" note (`unsupported`). This is the final step:
+      // the v1 auth endpoint genuinely accepts `oauth_server_enabled`, so the
+      // leaf now pushes like any other auth field.
+      const { layer, out, api } = setup({
+        toml: `project_id = "test"\n[auth.oauth_server]\nenabled = true\n`,
+        format: "json",
+        yes: true,
+      });
+      return Effect.gen(function* () {
+        yield* legacyConfigPush({ projectRef: Option.none() });
+        const update = api.requests.find(
+          (r) => r.method === "PATCH" && r.url.includes("/config/auth"),
+        );
+        expect(update).toBeDefined();
+        expect(update?.body).toEqual({ oauth_server_enabled: true });
+        expect(out.stderrText).not.toContain("has no Management API field");
+        const success = out.messages.find((m) => m.type === "success");
+        const data = success?.data as Record<string, unknown>;
+        expect(data["unsupported"]).toEqual([]);
+        expect(data["unmanaged"]).toEqual([]);
+      }).pipe(Effect.provide(layer));
+    },
+  );
 
   it.live("reports the remote-only count when nothing pushable exists anywhere", () => {
     const { layer, out, api } = setup({
@@ -1516,43 +1538,144 @@ allowed_cidrs_v6 = ["::1/128"]
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("auth disabled skips email content loading and reports the resource as disabled", () => {
-    const { layer, out, apiMock } = setupService({
-      toml: `project_id = "test"\n[auth]\nenabled = false\n`,
-      format: "json",
-    });
-    return Effect.gen(function* () {
-      yield* legacyConfigPush({ projectRef: Option.none() });
-      expect(methodsOf(apiMock)).not.toContain("updateAuthServiceConfig");
-      const success = out.messages.find((m) => m.type === "success");
-      const data = success?.data as Record<string, unknown>;
-      const services = data["services"] as ReadonlyArray<Record<string, unknown>>;
-      expect(services.find((s) => s["service"] === "auth")).toEqual({
-        service: "auth",
-        status: "disabled",
-        changes: [],
+  it.live(
+    "auth disabled locally with the remote at defaults reports up to date, not disabled (CLI-2314)",
+    () => {
+      // `auth.enabled = false` only means "don't run local GoTrue" — it no
+      // longer gates the whole resource. With nothing else declared and the
+      // remote at schema defaults, there is genuinely no diff to push.
+      const { layer, out, apiMock } = setupService({
+        toml: `project_id = "test"\n[auth]\nenabled = false\n`,
+        format: "json",
       });
-    }).pipe(Effect.provide(layer));
-  });
+      return Effect.gen(function* () {
+        yield* legacyConfigPush({ projectRef: Option.none() });
+        expect(methodsOf(apiMock)).not.toContain("updateAuthServiceConfig");
+        const success = out.messages.find((m) => m.type === "success");
+        const data = success?.data as Record<string, unknown>;
+        const services = data["services"] as ReadonlyArray<Record<string, unknown>>;
+        expect(services.find((s) => s["service"] === "auth")).toEqual({
+          service: "auth",
+          status: "up_to_date",
+          changes: [],
+        });
+      }).pipe(Effect.provide(layer));
+    },
+  );
 
-  it.live("storage disabled reports the resource as disabled without a write", () => {
-    const { layer, out, apiMock } = setupService({
-      toml: `project_id = "test"\n[storage]\nenabled = false\n`,
-      format: "json",
-    });
-    return Effect.gen(function* () {
-      yield* legacyConfigPush({ projectRef: Option.none() });
-      expect(methodsOf(apiMock)).not.toContain("updateStorageConfig");
-      const success = out.messages.find((m) => m.type === "success");
-      const data = success?.data as Record<string, unknown>;
-      const services = data["services"] as ReadonlyArray<Record<string, unknown>>;
-      expect(services.find((s) => s["service"] === "storage")).toEqual({
-        service: "storage",
-        status: "disabled",
-        changes: [],
+  it.live(
+    "storage disabled locally with the remote at defaults reports up to date, not disabled (CLI-2314)",
+    () => {
+      // Same as the auth case above: `storage.enabled = false` is a local
+      // Docker toggle, not a hosted management opt-out.
+      const { layer, out, apiMock } = setupService({
+        toml: `project_id = "test"\n[storage]\nenabled = false\n`,
+        format: "json",
       });
-    }).pipe(Effect.provide(layer));
-  });
+      return Effect.gen(function* () {
+        yield* legacyConfigPush({ projectRef: Option.none() });
+        expect(methodsOf(apiMock)).not.toContain("updateStorageConfig");
+        const success = out.messages.find((m) => m.type === "success");
+        const data = success?.data as Record<string, unknown>;
+        const services = data["services"] as ReadonlyArray<Record<string, unknown>>;
+        expect(services.find((s) => s["service"] === "storage")).toEqual({
+          service: "storage",
+          status: "up_to_date",
+          changes: [],
+        });
+      }).pipe(Effect.provide(layer));
+    },
+  );
+
+  it.live(
+    "auth disabled locally still pushes an explicitly declared hosted auth change (CLI-2314)",
+    () => {
+      // Local GoTrue is off, but the user explicitly declared a real hosted
+      // SMTP setting that differs from the remote's — `config push` must
+      // still act on it; the resource is no longer gated on `auth.enabled`.
+      const { layer, out, apiMock } = setupService({
+        toml: `project_id = "test"
+[auth]
+enabled = false
+
+[auth.email.smtp]
+enabled = true
+host = "smtp.mine.example.com"
+port = 587
+user = "postmaster"
+pass = "hunter2"
+admin_email = "admin@mine.example.com"
+sender_name = "My Project"
+`,
+        yes: true,
+        format: "json",
+        v2: {
+          status: 200,
+          body: v2Response({
+            attributes: (a) => ({
+              ...a,
+              auth: {
+                ...(a["auth"] as Record<string, unknown>),
+                smtp_host: "smtp.remote.example.com",
+              },
+            }),
+          }),
+        },
+        v1: { updateAuthServiceConfig: () => Effect.succeed(authWriteResponseFixture()) },
+      });
+      return Effect.gen(function* () {
+        yield* legacyConfigPush({ projectRef: Option.none() });
+        expect(methodsOf(apiMock)).toContain("updateAuthServiceConfig");
+        const success = out.messages.find((m) => m.type === "success");
+        const data = success?.data as Record<string, unknown>;
+        const services = data["services"] as ReadonlyArray<Record<string, unknown>>;
+        expect(services.find((s) => s["service"] === "auth")).toMatchObject({
+          service: "auth",
+          status: "updated",
+        });
+      }).pipe(Effect.provide(layer));
+    },
+  );
+
+  it.live(
+    "auth disabled locally does not push an undeclared field that merely drifted from default (CLI-2314)",
+    () => {
+      // Local never mentions captcha at all; the remote reports a real
+      // provider configured. Undeclared drift surfaces as remote-only
+      // (informational), never pushed — `auth.enabled = false` plays no role
+      // in that classification either way.
+      const { layer, out, apiMock } = setupService({
+        toml: `project_id = "test"\n[auth]\nenabled = false\n`,
+        format: "json",
+        v2: {
+          status: 200,
+          body: v2Response({
+            attributes: (a) => ({
+              ...a,
+              auth: {
+                ...(a["auth"] as Record<string, unknown>),
+                security_captcha_enabled: true,
+                security_captcha_provider: "hcaptcha",
+              },
+            }),
+          }),
+        },
+      });
+      return Effect.gen(function* () {
+        yield* legacyConfigPush({ projectRef: Option.none() });
+        expect(methodsOf(apiMock)).not.toContain("updateAuthServiceConfig");
+        const success = out.messages.find((m) => m.type === "success");
+        const data = success?.data as Record<string, unknown>;
+        expect(data["remote_only"]).toBeGreaterThan(0);
+        const services = data["services"] as ReadonlyArray<Record<string, unknown>>;
+        expect(services.find((s) => s["service"] === "auth")).toEqual({
+          service: "auth",
+          status: "up_to_date",
+          changes: [],
+        });
+      }).pipe(Effect.provide(layer));
+    },
+  );
 
   it.live(
     "a v2 response without the data envelope aborts (D2) even though the diff itself would tolerate it",
