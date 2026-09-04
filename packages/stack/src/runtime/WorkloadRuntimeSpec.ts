@@ -23,6 +23,8 @@ import { parseFileSize } from "../model/capabilities/storage.ts";
 import { resolveThirdPartyIssuer } from "../model/capabilities/auth-third-party.ts";
 import { Effect, type Duration } from "effect";
 import { StackPreparationError, StackStateInvalidError } from "../public/Errors.ts";
+import { FUNCTIONS_CONTAINER_ROOT } from "../functions/serve-main-deps.ts";
+export { FUNCTIONS_CONTAINER_ROOT } from "../functions/serve-main-deps.ts";
 
 type WorkloadRuntimeKind = "native" | "container";
 
@@ -281,7 +283,6 @@ export const validateWorkloadRuntimeInputs = (
     }
   });
 
-export const FUNCTIONS_CONTAINER_ROOT = "/__supabase_functions";
 export const FUNCTIONS_BOOTSTRAP_CONTAINER_PATH = "/root";
 
 const compactEnvironment = (

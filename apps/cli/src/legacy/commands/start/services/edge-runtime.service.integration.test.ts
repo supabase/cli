@@ -10,7 +10,7 @@ import { join } from "node:path";
 
 import { describe, expect, it } from "@effect/vitest";
 import { edgeRuntimeNofileUlimit } from "../../../../shared/stack-constants.ts";
-import { toDockerPath } from "../../../../shared/functions/functions-docker.ts";
+import { FUNCTIONS_CONTAINER_ROOT } from "../../../../shared/functions/serve-main-deps.ts";
 import { Deferred, Effect, Exit, Sink, Stream } from "effect";
 import { type ChildProcess, ChildProcessSpawner } from "effect/unstable/process";
 import { afterEach, beforeEach, vi } from "vitest";
@@ -222,7 +222,7 @@ describe("legacyStartEdgeRuntimeContainer", () => {
       }),
   );
 
-  it.effect("sets --workdir once an enabled function mounts the project root (#6035)", () =>
+  it.effect("uses the fixed functions root without changing the container workdir", () =>
     Effect.gen(function* () {
       const slug = "hello";
       const entrypoint = join(tempWorkdir.current, "supabase", "functions", slug, "index.ts");
@@ -252,7 +252,10 @@ describe("legacyStartEdgeRuntimeContainer", () => {
       );
 
       const args = mock.runCall!.args;
-      expect(args[args.indexOf("--workdir") + 1]).toBe(tempWorkdir.current);
+      expect(args).not.toContain("--workdir");
+      expect(args).toContain(
+        `${tempWorkdir.current}/supabase/functions:${FUNCTIONS_CONTAINER_ROOT}:ro`,
+      );
     }),
   );
 
@@ -286,23 +289,22 @@ describe("legacyStartEdgeRuntimeContainer", () => {
       );
 
       const entries = envEntries(mock.runCall!);
-      expect(entries).toContain(`SUPABASE_INTERNAL_FUNCTIONS_ROOT=${toDockerPath(functionsDir)}`);
+      expect(entries).toContain(`SUPABASE_INTERNAL_FUNCTIONS_ROOT=${FUNCTIONS_CONTAINER_ROOT}`);
       const configPrefix = "SUPABASE_INTERNAL_FUNCTIONS_CONFIG=";
       const configEntry = entries.find((entry) => entry.startsWith(configPrefix));
       expect(configEntry).toBeDefined();
       expect(JSON.parse(configEntry!.slice(configPrefix.length))).toMatchObject({
-        hello: { entrypointPath: toDockerPath(entrypoint) },
+        hello: { entrypointPath: `${FUNCTIONS_CONTAINER_ROOT}/hello/index.ts` },
       });
     }),
   );
 
-  it.effect("maps canonical function paths to the mounted root target", () =>
+  it.effect("maps canonical function paths to the fixed mounted root", () =>
     Effect.gen(function* () {
       const slug = "hello";
       const canonicalWorkdir = join(tempWorkdir.current, "canonical");
       const linkedWorkdir = join(tempWorkdir.current, "linked");
       const canonicalFunctionsDir = join(canonicalWorkdir, "supabase", "functions");
-      const mountedFunctionsDir = join(linkedWorkdir, "supabase", "functions");
       mkdirSync(join(canonicalFunctionsDir, slug), { recursive: true });
       symlinkSync(canonicalWorkdir, linkedWorkdir, "dir");
       const canonicalEntrypoint = join(
@@ -340,7 +342,7 @@ describe("legacyStartEdgeRuntimeContainer", () => {
       const configEntry = entries.find((entry) => entry.startsWith(configPrefix));
       expect(configEntry).toBeDefined();
       expect(JSON.parse(configEntry!.slice(configPrefix.length))).toMatchObject({
-        hello: { entrypointPath: toDockerPath(join(mountedFunctionsDir, slug, "index.ts")) },
+        hello: { entrypointPath: `${FUNCTIONS_CONTAINER_ROOT}/${slug}/index.ts` },
       });
     }),
   );

@@ -1,4 +1,6 @@
 /** Minimal runtime dependencies bundled into the Edge Runtime bootstrap. */
+export const FUNCTIONS_CONTAINER_ROOT = "/__supabase_functions";
+
 export const STATUS_CODE = {
   OK: 200,
   Unauthorized: 401,

@@ -28,6 +28,7 @@ import {
   runChildProcess,
   toDockerPath,
 } from "./functions-docker.ts";
+import { FUNCTIONS_CONTAINER_ROOT } from "./serve-main-deps.ts";
 
 const dockerRuntimeServerPort = 8081;
 const dockerRuntimeInspectorPort = 8083;
@@ -663,7 +664,7 @@ export const startEdgeRuntimeContainer = Effect.fn("functions.startEdgeRuntimeCo
 
     const functionsDir = join(input.projectRoot, functionsDirName);
     const functionsRoot = resolve(functionsDir);
-    const containerFunctionsRoot = toDockerPath(functionsRoot);
+    const containerFunctionsRoot = FUNCTIONS_CONTAINER_ROOT;
     const canonicalFunctionsRoot = yield* Effect.promise(() =>
       realpath(functionsRoot).catch(() => functionsRoot),
     );
@@ -692,8 +693,12 @@ export const startEdgeRuntimeContainer = Effect.fn("functions.startEdgeRuntimeCo
           },
         }),
       )) {
-        const key = formatDockerBind(bind);
-        functionBinds.set(key, bind);
+        const mappedBind =
+          resolve(bind.hostPath) === functionsRoot
+            ? { ...bind, containerPath: containerFunctionsRoot }
+            : bind;
+        const key = formatDockerBind(mappedBind);
+        functionBinds.set(key, mappedBind);
       }
       const missingSourceWarning = bindWarnings.find((warning) =>
         warning.includes("failed to read file:"),
