@@ -1,9 +1,9 @@
-import { CLI_CONFIG_SCHEMA_URL, fromApiProjectConfig } from "@supabase/config";
 import {
+  CLI_CONFIG_SCHEMA_URL,
   diffProjectConfig,
-  loadCliConfig,
-  remoteNameForProjectRef,
-} from "@supabase/config/internal";
+  fromApiProjectConfig,
+} from "@supabase/config/effect";
+import { loadCliConfig, remoteNameForProjectRef } from "@supabase/config/internal";
 import { operationDefinitions } from "@supabase/api/effect";
 import { Effect, Option } from "effect";
 

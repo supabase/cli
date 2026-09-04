@@ -1,9 +1,11 @@
 import {
-  diffProjectConfig,
+  type CliConfigValueOrigin,
   type ConfigChange,
   type ConfigChangeSet,
-} from "@supabase/config/internal";
-import type { CliConfigValueOrigin, EffectiveConfig, ProjectConfig } from "@supabase/config";
+  diffProjectConfig,
+  type EffectiveConfig,
+  type ProjectConfig,
+} from "@supabase/config";
 import { describe, expect, test } from "vitest";
 
 import {

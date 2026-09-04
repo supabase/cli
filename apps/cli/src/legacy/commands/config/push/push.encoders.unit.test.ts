@@ -2,9 +2,8 @@
  * Unit tests for push.encoders.ts.
  */
 
-import type { CliConfig, ProjectConfig } from "@supabase/config";
+import type { CliConfig, ConfigChange, ProjectConfig } from "@supabase/config";
 import { getDefaultCliConfig } from "@supabase/config";
-import type { ConfigChange } from "@supabase/config/internal";
 import { AUTH_HOOK_NAMES, projectConfigMappingRows } from "@supabase/config/internal";
 import { describe, expect, it } from "vitest";
 

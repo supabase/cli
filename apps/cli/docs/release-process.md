@@ -220,7 +220,7 @@ Production releases live in a single `[.github/workflows/release.yml](../../../.
 
 `alpha` is reserved for the v3 rewrite (`next` shell), released only on demand. `beta` auto-publishes on every merge to `develop` (legacy shell). `stable` auto-publishes after a develop→main fast-forward, which itself happens when the weekly `[deploy.yml](../../../.github/workflows/deploy.yml)` cron PR is approved (the FF push to `main` re-fires `release.yml` via the `push: branches: [main]` trigger).
 
-Beta + stable versions are computed by `cycjimmy/semantic-release-action` from conventional commits (`feat:` → minor, `fix:` → patch, `BREAKING CHANGE` → major). The `release` config lives in `apps/cli/package.json` and is configured with `prerelease: beta` on the `develop` branch, so develop pushes emit `X.Y.Z-beta.N` and main pushes emit `X.Y.Z` (suffix dropped).
+Beta + stable versions are computed by `cycjimmy/semantic-release-action` from the first line of each squash commit (the PR title). Conventional commit titles use `feat:` → minor, `fix:`, `perf:`, or `revert:` → patch, and `!` after the type or scope (`feat!:` / `fix(scope)!:`) → major. Commit bodies, including `BREAKING CHANGE` notes, are ignored for version calculation. The `release` config lives in `apps/cli/package.json` and is configured with `prerelease: beta` on the `develop` branch, so develop pushes emit `X.Y.Z-beta.N` and main pushes emit `X.Y.Z` (suffix dropped).
 
 ```mermaid
 flowchart TD

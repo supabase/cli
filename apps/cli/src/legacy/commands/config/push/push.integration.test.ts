@@ -117,6 +117,95 @@ function authWriteResponseFixture(): Record<string, unknown> {
   return fixture;
 }
 
+// CLI-2168/CLI-2289 branch-target fixtures — every ref below is exactly 20
+// lowercase letters (`LEGACY_BRANCH_PROJECT_REF_PATTERN`), distinct from
+// `REF` and from each other, so the same test file can model a branch, its
+// parent, and an unrelated project simultaneously.
+const BRANCH_REF = "cccccccccccccccccccc";
+const PARENT_REF = "pppppppppppppppppppp";
+const OTHER_PARENT_REF = "qqqqqqqqqqqqqqqqqqqq";
+const PROBE_REF = "zzzzzzzzzzzzzzzzzzzz";
+const UUID_TARGET_REF = "rrrrrrrrrrrrrrrrrrrr";
+const BRANCH_UUID = "11111111-1111-4111-8111-111111111111";
+
+/**
+ * Schema-valid `V1GetProjectOutput` fixture (CLI-2168's live target-detection
+ * probe). Every existing (plain-project) scenario relies on this being the
+ * DEFAULT `project` route response with an EMPTY `name` — `normalizeApiName`
+ * folds that to `undefined`, so the target-echo line degrades to the
+ * pre-CLI-2168 bare `Pushing config to project: <ref>\n` text those
+ * scenarios already pin. Dedicated CLI-2168 tests below override `name`
+ * to prove the named-project path separately.
+ */
+const PUSH_TEST_PROJECT = {
+  id: REF,
+  ref: REF,
+  name: "",
+  organization_id: "org_test",
+  organization_slug: "test-org",
+  status: "ACTIVE_HEALTHY",
+  region: "us-east-1",
+  created_at: "2026-01-01T00:00:00Z",
+  database: {
+    host: "db.example.co",
+    version: "15.1.0.117",
+    postgres_engine: "15",
+    release_channel: "ga",
+  },
+};
+
+/** `V1ListAllBranchesOutput` item — the best-effort branch-name lookup
+ * (`legacyFindBranchName`) matches on `project_ref`. */
+const BRANCH_LIST_ITEM = {
+  id: "22222222-2222-4222-8222-222222222222",
+  name: "feat-x",
+  project_ref: BRANCH_REF,
+  parent_project_ref: PARENT_REF,
+  is_default: false,
+  persistent: false,
+  status: "MIGRATIONS_PASSED",
+  created_at: "2026-05-27T01:02:03Z",
+  updated_at: "2026-05-27T01:02:04Z",
+  with_data: false,
+};
+
+/** `V1GetABranch` body for a branch-name `--project-ref` lookup (CLI-2289). */
+const BRANCH_BY_NAME = {
+  id: BRANCH_UUID,
+  name: "staging",
+  project_ref: BRANCH_REF,
+  parent_project_ref: REF,
+  is_default: false,
+  persistent: true,
+  status: "MIGRATIONS_PASSED",
+  created_at: "2026-05-27T01:02:03Z",
+  updated_at: "2026-05-27T01:02:04Z",
+  with_data: false,
+};
+
+/** `V1GetABranchConfig` body for a UUID `--project-ref` lookup (CLI-2289). */
+const BRANCH_CONFIG = {
+  ref: UUID_TARGET_REF,
+  postgres_version: "15",
+  postgres_engine: "15",
+  release_channel: "ga",
+  status: "ACTIVE_HEALTHY",
+  db_host: "h",
+  db_port: 5432,
+};
+
+function writeLinkedProjectRefFile(ref: string): void {
+  const dir = join(tempRoot.current, "supabase", ".temp");
+  mkdirSync(dir, { recursive: true });
+  writeFileSync(join(dir, "project-ref"), ref);
+}
+
+function writeLinkedProjectCacheFile(json: Record<string, unknown>): void {
+  const dir = join(tempRoot.current, "supabase", ".temp");
+  mkdirSync(dir, { recursive: true });
+  writeFileSync(join(dir, "linked-project.json"), JSON.stringify(json));
+}
+
 /**
  * Real-client setup, routed by URL — for scenarios whose only writes are
  * `api` (PATCH /postgrest) and `db.settings` (PUT /config/database/postgres),
@@ -151,6 +240,24 @@ function setup(opts: {
   readonly workdir?: string;
   /** Analytics mock for tests asserting on captured telemetry events. */
   readonly analytics?: ReturnType<typeof mockAnalytics>;
+  // CLI-2168/CLI-2289 — live target-detection probe and branch-name/UUID
+  // resolution. Defaults keep every existing (plain-project) scenario
+  // working without opting in: the project probe succeeds with an unnamed
+  // project, and the branch-lookup endpoints degrade to "not found"/empty
+  // rather than hanging or decode-erroring. `"fail"` simulates a transport
+  // failure (distinct from an explicit status code) for the hard-failure
+  // scenarios.
+  readonly project?: { status: number; body: unknown } | "fail";
+  readonly branchList?: { status: number; body: unknown };
+  readonly branchByName?: { status: number; body: unknown } | "fail";
+  readonly branchById?: { status: number; body: unknown };
+  /**
+   * `cliSettings.projectId` override — defaults to `Option.some(REF)`.
+   * CLI-2168/CLI-2289 scenarios pass `Option.none()` so ref resolution falls
+   * through to the `.temp/project-ref` file, or `Option.some(<ref>)` to model
+   * an env override distinct from any linked-state files.
+   */
+  readonly projectId?: Option.Option<string>;
 }) {
   writeConfig(opts.toml);
   const out = mockOutput({
@@ -211,6 +318,34 @@ function setup(opts: {
         const p = opts.authPatch ?? { status: 200, body: authWriteResponseFixture() };
         return Effect.succeed(legacyJsonResponse(request, p.status, p.body));
       }
+      const pathname = new URL(url).pathname;
+      // CLI-2168's live target-detection probe: a bare project ref defaults
+      // to a schema-valid, unnamed project, so every existing (plain-project)
+      // scenario keeps working without opting in.
+      if (/^\/v1\/projects\/[a-z0-9-]+$/.test(pathname)) {
+        if (opts.project === "fail") {
+          return Effect.fail(legacyTransportFailure(request));
+        }
+        const p = opts.project ?? { status: 200, body: PUSH_TEST_PROJECT };
+        return Effect.succeed(legacyJsonResponse(request, p.status, p.body));
+      }
+      // CLI-2289's branch resolution + the best-effort branch-name lookup —
+      // defaults degrade to "not found"/empty rather than hanging.
+      if (/^\/v1\/projects\/[a-z0-9-]+\/branches$/.test(pathname)) {
+        const b = opts.branchList ?? { status: 200, body: [] };
+        return Effect.succeed(legacyJsonResponse(request, b.status, b.body));
+      }
+      if (/^\/v1\/projects\/[a-z0-9-]+\/branches\/[^/]+$/.test(pathname)) {
+        if (opts.branchByName === "fail") {
+          return Effect.fail(legacyTransportFailure(request));
+        }
+        const b = opts.branchByName ?? { status: 404, body: {} };
+        return Effect.succeed(legacyJsonResponse(request, b.status, b.body));
+      }
+      if (/^\/v1\/branches\/[0-9a-f-]+$/.test(pathname)) {
+        const b = opts.branchById ?? { status: 404, body: {} };
+        return Effect.succeed(legacyJsonResponse(request, b.status, b.body));
+      }
       // Anything else (network-restrictions/ssl/webhooks) — succeed with an
       // empty body; scenarios that write to one of those use `setupService()`
       // below instead (their typed responses have too many required fields
@@ -224,7 +359,10 @@ function setup(opts: {
     buildLegacyTestRuntime({
       out,
       api,
-      cliSettings: mockLegacyCliSettings({ workdir: opts.workdir ?? tempRoot.current }),
+      cliSettings: mockLegacyCliSettings({
+        workdir: opts.workdir ?? tempRoot.current,
+        ...(opts.projectId === undefined ? {} : { projectId: opts.projectId }),
+      }),
       runtimeInfo: mockRuntimeInfo({ cwd: opts.runtimeCwd ?? tempRoot.current }),
       telemetry: telemetry.layer,
       linkedProjectCache: linkedProjectCache.layer,
@@ -959,7 +1097,14 @@ function setupService(opts: {
   writeConfig(opts.toml);
   const out = mockOutput({ format: opts.format ?? "text", promptConfirmResponses: opts.confirm });
   const apiMock = mockLegacyPlatformApiService({
-    v1: opts.v1 ?? {},
+    v1: {
+      // CLI-2168's live target-detection probe — defaults to a schema-valid,
+      // unnamed project so every gated-service scenario keeps working
+      // without opting in (mirrors `setup()`'s own default above);
+      // overridable via `opts.v1.getProject`.
+      getProject: () => Effect.succeed(PUSH_TEST_PROJECT),
+      ...opts.v1,
+    },
     raw: {
       v2GetProjectConfig:
         opts.v2 === "fail" ? "fail" : (opts.v2 ?? { status: 200, body: v2Response() }),
@@ -2345,6 +2490,722 @@ secrets = "v1,whsec_abc"
         status: "updated",
         changes: [["experimental", "webhooks", "enabled"]],
       });
+    }).pipe(Effect.provide(layer));
+  });
+});
+
+// A config declaring a real `api` diff (matches the fixture's remote
+// `max_rows: 1000`) — used by the branch/project target-detection (CLI-2168)
+// and branch-name/UUID resolution (CLI-2289) scenarios below to prove a push
+// actually proceeded, the same way the very first test in this file does.
+const BRANCH_PUSH_TOML = `project_id = "test"\n[api]\nmax_rows = 2000\n`;
+
+/**
+ * The realistic "already ran `supabase link <branch>`" state (CLI-2168):
+ * `.temp/project-ref` holds the BRANCH's own ref, `.temp/linked-project.json`
+ * caches the PARENT (name "My App"), the live probe 404s (the ref is a
+ * branch, not a project), and the parent's branch list confirms it — so the
+ * target resolves to `{ kind: "branch", ref: BRANCH_REF, parentRef:
+ * PARENT_REF, parentName: "My App", branch: "feat-x" }`. `projectId:
+ * Option.none()` so ref resolution reads the `.temp/project-ref` file
+ * instead of the (env-equivalent) default.
+ */
+function setupLinkedBranchPush(
+  opts: {
+    readonly format?: "text" | "json" | "stream-json";
+    readonly yes?: boolean;
+    readonly confirm?: ReadonlyArray<boolean>;
+    readonly stdinIsTty?: boolean;
+    readonly pipedAnswers?: ReadonlyArray<string>;
+  } = {},
+) {
+  writeLinkedProjectRefFile(BRANCH_REF);
+  writeLinkedProjectCacheFile({ ref: PARENT_REF, name: "My App" });
+  return setup({
+    toml: BRANCH_PUSH_TOML,
+    projectId: Option.none(),
+    format: opts.format,
+    yes: opts.yes,
+    confirm: opts.confirm,
+    stdinIsTty: opts.stdinIsTty,
+    pipedAnswers: opts.pipedAnswers,
+    project: { status: 404, body: {} },
+    branchList: { status: 200, body: [BRANCH_LIST_ITEM] },
+    v2: { status: 200, body: v2Response({ ref: BRANCH_REF }) },
+  });
+}
+
+describe("legacy config push branch/project target detection (CLI-2168)", () => {
+  it.live("a plain project push never triggers the branch confirmation gate", () => {
+    const { layer, out, api } = setup({
+      toml: BRANCH_PUSH_TOML,
+      yes: true,
+      project: { status: 200, body: { ...PUSH_TEST_PROJECT, name: "Test Project" } },
+    });
+    return Effect.gen(function* () {
+      yield* legacyConfigPush({ projectRef: Option.none() });
+      expect(out.stderrText).toContain(`Pushing config to project: Test Project (${REF})`);
+      expect(out.stderrText).not.toContain("Pushing config to branch");
+      expect(api.requests.some((r) => r.method === "PATCH" && r.url.includes("/postgrest"))).toBe(
+        true,
+      );
+    }).pipe(Effect.provide(layer));
+  });
+
+  it.live(
+    "an empty project name from the live probe degrades to the bare-ref target-echo line",
+    () => {
+      // `normalizeApiName` (push.branch-target.ts, shared by both the
+      // project-probe and branch-list call sites) folds an empty `name`
+      // into `undefined` before it ever reaches the target object — the
+      // same degradation every OTHER scenario in this file relies on via
+      // `PUSH_TEST_PROJECT`'s default empty name; this test pins it
+      // explicitly.
+      const { layer, out } = setup({
+        toml: BRANCH_PUSH_TOML,
+        yes: true,
+        project: { status: 200, body: { ...PUSH_TEST_PROJECT, name: "" } },
+      });
+      return Effect.gen(function* () {
+        yield* legacyConfigPush({ projectRef: Option.none() });
+        expect(out.stderrText).toContain(`Pushing config to project: ${REF}\n`);
+        expect(out.stderrText).not.toContain("project:  (");
+      }).pipe(Effect.provide(layer));
+    },
+  );
+
+  it.live(
+    "the realistic 'link <branch>' then flag-less push flow shows both target lines and proceeds",
+    () => {
+      const { layer, out, api } = setupLinkedBranchPush({ yes: true });
+      return Effect.gen(function* () {
+        yield* legacyConfigPush({ projectRef: Option.none() });
+        expect(out.stderrText).toContain(`Pushing config to branch: feat-x (${BRANCH_REF})`);
+        expect(out.stderrText).toContain(`  Parent project: My App (${PARENT_REF})`);
+        expect(
+          api.requests.some((r) => r.url.includes(`/v1/projects/${PARENT_REF}/branches`)),
+        ).toBe(true);
+        expect(api.requests.some((r) => r.method === "PATCH" && r.url.includes("/postgrest"))).toBe(
+          true,
+        );
+      }).pipe(Effect.provide(layer));
+    },
+  );
+
+  it.live(
+    "a branch push with no branch-list match still trusts a just-linked parent (no cached name)",
+    () => {
+      writeLinkedProjectRefFile(BRANCH_REF);
+      writeLinkedProjectCacheFile({ ref: PARENT_REF });
+      const { layer, out, api } = setup({
+        toml: BRANCH_PUSH_TOML,
+        yes: true,
+        projectId: Option.none(),
+        project: { status: 404, body: {} },
+        v2: { status: 200, body: v2Response({ ref: BRANCH_REF }) },
+      });
+      return Effect.gen(function* () {
+        yield* legacyConfigPush({ projectRef: Option.none() });
+        expect(out.stderrText).toContain(`Pushing config to branch: ${BRANCH_REF}`);
+        expect(out.stderrText).toContain(`  Parent project: ${PARENT_REF}`);
+        expect(out.stderrText).not.toContain("My App");
+        expect(api.requests.some((r) => r.method === "PATCH" && r.url.includes("/postgrest"))).toBe(
+          true,
+        );
+      }).pipe(Effect.provide(layer));
+    },
+  );
+
+  it.live(
+    "a live 404 with nothing cached degrades to a bare branch line with zero branch lookups",
+    () => {
+      const { layer, out, api } = setup({
+        toml: BRANCH_PUSH_TOML,
+        yes: true,
+        projectId: Option.some(PROBE_REF),
+        project: { status: 404, body: {} },
+        v2: { status: 200, body: v2Response({ ref: PROBE_REF }) },
+      });
+      return Effect.gen(function* () {
+        yield* legacyConfigPush({ projectRef: Option.none() });
+        expect(out.stderrText).toContain(`Pushing config to branch: ${PROBE_REF}\n`);
+        expect(out.stderrText).not.toContain("Parent project:");
+        expect(api.requests.some((r) => r.url.includes("/branches"))).toBe(false);
+      }).pipe(Effect.provide(layer));
+    },
+  );
+
+  it.live("declining the branch confirmation prompt on a TTY fails before any mutation", () => {
+    const { layer, api, telemetry, linkedProjectCache } = setupLinkedBranchPush({
+      confirm: [false],
+    });
+    return Effect.gen(function* () {
+      const exit = yield* legacyConfigPush({ projectRef: Option.none() }).pipe(Effect.exit);
+      expect(Exit.isFailure(exit)).toBe(true);
+      if (Exit.isFailure(exit)) {
+        expect(JSON.stringify(exit.cause)).toContain("LegacyConfigPushCancelledError");
+      }
+      expect(api.requests.some((r) => r.url.includes("/billing/addons"))).toBe(false);
+      expect(api.requests.some((r) => r.url.includes("/v2/projects/"))).toBe(false);
+      expect(api.requests.some((r) => r.url.includes("/postgrest"))).toBe(false);
+      // Legacy Shell Invariant #1: a declined branch gate still flushes
+      // telemetry and writes the linked-project cache, same as any other
+      // failure.
+      expect(telemetry.flushed).toBe(true);
+      expect(linkedProjectCache.cached).toBe(true);
+    }).pipe(Effect.provide(layer));
+  });
+
+  it.live("an unattended run with no --yes and empty stdin declines and fails by default", () => {
+    const { layer, api } = setupLinkedBranchPush({ stdinIsTty: false });
+    return Effect.gen(function* () {
+      const exit = yield* legacyConfigPush({ projectRef: Option.none() }).pipe(Effect.exit);
+      expect(Exit.isFailure(exit)).toBe(true);
+      if (Exit.isFailure(exit)) {
+        expect(JSON.stringify(exit.cause)).toContain("LegacyConfigPushCancelledError");
+      }
+      expect(api.requests.some((r) => r.url.includes("/v2/projects/"))).toBe(false);
+    }).pipe(Effect.provide(layer));
+  });
+
+  it.live("an explicit piped 'n' on non-TTY stdin declines and fails a branch push", () => {
+    const { layer, api } = setupLinkedBranchPush({
+      stdinIsTty: false,
+      pipedAnswers: ["n"],
+    });
+    return Effect.gen(function* () {
+      const exit = yield* legacyConfigPush({ projectRef: Option.none() }).pipe(Effect.exit);
+      expect(Exit.isFailure(exit)).toBe(true);
+      if (Exit.isFailure(exit)) {
+        expect(JSON.stringify(exit.cause)).toContain("LegacyConfigPushCancelledError");
+      }
+      expect(api.requests.some((r) => r.url.includes("/v2/projects/"))).toBe(false);
+    }).pipe(Effect.provide(layer));
+  });
+
+  it.live("--yes auto-confirms a branch push and echoes the prompt", () => {
+    const { layer, out, api } = setupLinkedBranchPush({ yes: true });
+    return Effect.gen(function* () {
+      yield* legacyConfigPush({ projectRef: Option.none() });
+      expect(out.stderrText).toContain(
+        `branch "feat-x" (${BRANCH_REF})? (skip this check with --yes) [y/N] y`,
+      );
+      expect(api.requests.some((r) => r.method === "PATCH" && r.url.includes("/postgrest"))).toBe(
+        true,
+      );
+    }).pipe(Effect.provide(layer));
+  });
+
+  it.live(
+    "json output mode declines and fails a branch push without --yes (CLI-2168 safety default)",
+    () => {
+      const { layer, out, api } = setupLinkedBranchPush({ format: "json" });
+      return Effect.gen(function* () {
+        const exit = yield* legacyConfigPush({ projectRef: Option.none() }).pipe(Effect.exit);
+        expect(Exit.isFailure(exit)).toBe(true);
+        if (Exit.isFailure(exit)) {
+          const rendered = JSON.stringify(exit.cause);
+          expect(rendered).toContain("LegacyConfigPushCancelledError");
+          // A machine-mode/non-TTY decline never renders the interactive
+          // prompt's own "(skip this check with --yes)" hint at all
+          // (`legacyPromptYesNo` returns the default silently) — the
+          // cancelled error's own `suggestion` field is the ONLY place a
+          // script/agent sees the --yes escape hatch.
+          expect(rendered).toContain("--yes");
+          expect(rendered).toContain("SUPABASE_YES");
+        }
+        expect(out.messages.some((m) => m.type === "success")).toBe(false);
+        expect(api.requests.some((r) => ["PATCH", "PUT", "POST"].includes(r.method))).toBe(false);
+      }).pipe(Effect.provide(layer));
+    },
+  );
+
+  it.live("json output mode with --yes reports the branch target in the machine payload", () => {
+    const { layer, out } = setupLinkedBranchPush({ format: "json", yes: true });
+    return Effect.gen(function* () {
+      yield* legacyConfigPush({ projectRef: Option.none() });
+      const success = out.messages.find((m) => m.type === "success");
+      const data = success?.data as Record<string, unknown>;
+      expect(data["project_ref"]).toBe(BRANCH_REF);
+      expect(data["is_branch"]).toBe(true);
+      expect(data["branch"]).toBe("feat-x");
+      expect(data["parent_project_ref"]).toBe(PARENT_REF);
+      expect(Array.isArray(data["services"])).toBe(true);
+    }).pipe(Effect.provide(layer));
+  });
+
+  it.live(
+    "an unrelated cached parent does not get credited without a confirming branch-list match",
+    () => {
+      writeLinkedProjectCacheFile({ ref: PARENT_REF });
+      const { layer, out, api } = setup({
+        toml: BRANCH_PUSH_TOML,
+        yes: true,
+        projectId: Option.some(PROBE_REF),
+        project: { status: 404, body: {} },
+        v2: { status: 200, body: v2Response({ ref: PROBE_REF }) },
+      });
+      return Effect.gen(function* () {
+        yield* legacyConfigPush({ projectRef: Option.none() });
+        expect(out.stderrText).toContain(`Pushing config to branch: ${PROBE_REF}`);
+        expect(out.stderrText).not.toContain("Parent project:");
+        expect(
+          api.requests.some((r) => r.url.includes(`/v1/projects/${PARENT_REF}/branches`)),
+        ).toBe(true);
+      }).pipe(Effect.provide(layer));
+    },
+  );
+
+  it.live("a self-referential cached parent is dropped without any branch-list lookup", () => {
+    writeLinkedProjectCacheFile({ ref: PROBE_REF });
+    const { layer, out, api } = setup({
+      toml: BRANCH_PUSH_TOML,
+      yes: true,
+      projectId: Option.some(PROBE_REF),
+      project: { status: 404, body: {} },
+      v2: { status: 200, body: v2Response({ ref: PROBE_REF }) },
+    });
+    return Effect.gen(function* () {
+      yield* legacyConfigPush({ projectRef: Option.none() });
+      expect(out.stderrText).toContain(`Pushing config to branch: ${PROBE_REF}`);
+      expect(out.stderrText).not.toContain("Parent project:");
+      expect(api.requests.some((r) => r.url.includes("/branches"))).toBe(false);
+    }).pipe(Effect.provide(layer));
+  });
+
+  it.live("a non-ref-shaped cached parent is dropped without any branch-list lookup", () => {
+    writeLinkedProjectCacheFile({ ref: "not-a-real-ref" });
+    const { layer, out, api } = setup({
+      toml: BRANCH_PUSH_TOML,
+      yes: true,
+      projectId: Option.some(PROBE_REF),
+      project: { status: 404, body: {} },
+      v2: { status: 200, body: v2Response({ ref: PROBE_REF }) },
+    });
+    return Effect.gen(function* () {
+      yield* legacyConfigPush({ projectRef: Option.none() });
+      expect(out.stderrText).toContain(`Pushing config to branch: ${PROBE_REF}`);
+      expect(out.stderrText).not.toContain("Parent project:");
+      expect(api.requests.some((r) => r.url.includes("/branches"))).toBe(false);
+    }).pipe(Effect.provide(layer));
+  });
+
+  it.live(
+    "a transport failure probing the live target degrades to unknown rather than aborting the push",
+    () => {
+      // The target-detection probe is diagnostic-only: a transport failure
+      // must never abort a push that would otherwise succeed — including
+      // for a plain project whose token can write service config but
+      // happens to fail this one informational read. It degrades to
+      // "unknown" (never "branch" — that would wrongly gate an ordinary
+      // push behind a confirmation that auto-declines, and fails, in an
+      // unattended run) and the push proceeds.
+      const { layer, out, api } = setup({
+        toml: BRANCH_PUSH_TOML,
+        yes: true,
+        projectId: Option.some(PROBE_REF),
+        project: "fail",
+        v2: { status: 200, body: v2Response({ ref: PROBE_REF }) },
+      });
+      return Effect.gen(function* () {
+        yield* legacyConfigPush({ projectRef: Option.none() });
+        expect(out.stderrText).toContain(
+          `Pushing config to: ${PROBE_REF} (could not determine whether this is a branch or the main project)`,
+        );
+        expect(out.stderrText).not.toContain("Do you want to push config to branch");
+        expect(api.requests.some((r) => r.url.includes("/branches"))).toBe(false);
+        expect(api.requests.some((r) => r.method === "PATCH" && r.url.includes("/postgrest"))).toBe(
+          true,
+        );
+      }).pipe(Effect.provide(layer));
+    },
+  );
+
+  it.live(
+    "a broken .temp/project-ref (a directory, not a file) degrades gracefully instead of failing",
+    () => {
+      // Mirrors the established `legacyReadProjectRefFile` EISDIR regression
+      // technique — the target-detection recovery's own best-effort read
+      // must swallow a real read failure (not just a missing file), not
+      // propagate it. A cache candidate (with a branch-list response that
+      // does NOT confirm this ref) is required so recovery actually reaches
+      // the `.temp/project-ref` read at all.
+      mkdirSync(join(tempRoot.current, "supabase", ".temp", "project-ref"), { recursive: true });
+      writeLinkedProjectCacheFile({ ref: PARENT_REF });
+      const { layer, out, api } = setup({
+        toml: BRANCH_PUSH_TOML,
+        yes: true,
+        projectId: Option.some(PROBE_REF),
+        project: { status: 404, body: {} },
+        branchList: { status: 200, body: [] },
+        v2: { status: 200, body: v2Response({ ref: PROBE_REF }) },
+      });
+      return Effect.gen(function* () {
+        yield* legacyConfigPush({ projectRef: Option.none() });
+        expect(
+          api.requests.some((r) => r.url.includes(`/v1/projects/${PARENT_REF}/branches`)),
+        ).toBe(true);
+        expect(out.stderrText).toContain(`Pushing config to branch: ${PROBE_REF}`);
+        expect(out.stderrText).not.toContain("Parent project:");
+      }).pipe(Effect.provide(layer));
+    },
+  );
+
+  it.live("a 500 probing the live target degrades to unknown rather than aborting the push", () => {
+    const { layer, out, api } = setup({
+      toml: BRANCH_PUSH_TOML,
+      yes: true,
+      projectId: Option.some(PROBE_REF),
+      project: { status: 500, body: { message: "boom" } },
+      v2: { status: 200, body: v2Response({ ref: PROBE_REF }) },
+    });
+    return Effect.gen(function* () {
+      yield* legacyConfigPush({ projectRef: Option.none() });
+      expect(out.stderrText).toContain(
+        `Pushing config to: ${PROBE_REF} (could not determine whether this is a branch or the main project)`,
+      );
+      expect(api.requests.some((r) => r.method === "PATCH" && r.url.includes("/postgrest"))).toBe(
+        true,
+      );
+    }).pipe(Effect.provide(layer));
+  });
+
+  it.live(
+    "an unknown target (a live probe failure) never carries is_branch in the machine payload",
+    () => {
+      const { layer, out } = setup({
+        toml: BRANCH_PUSH_TOML,
+        yes: true,
+        format: "json",
+        projectId: Option.some(PROBE_REF),
+        project: { status: 500, body: {} },
+        v2: { status: 200, body: v2Response({ ref: PROBE_REF }) },
+      });
+      return Effect.gen(function* () {
+        yield* legacyConfigPush({ projectRef: Option.none() });
+        const success = out.messages.find((m) => m.type === "success");
+        const data = success?.data as Record<string, unknown>;
+        expect(data["project_ref"]).toBe(PROBE_REF);
+        expect("is_branch" in data).toBe(false);
+      }).pipe(Effect.provide(layer));
+    },
+  );
+
+  // The "transport failure"/"500" tests above cover the `"unknown"` outcome
+  // for a genuine probe error; only the TIMEOUT-specific sub-case (a live
+  // probe that hangs rather than erroring) remains untested — both reach the
+  // identical `{ kind: "unknown" }` outcome, so this is a coverage gap in HOW
+  // "unknown" is reached, not in the behavior itself. A `TestClock`-driven
+  // proof of `LEGACY_BRANCH_LOOKUP_TIMEOUT`'s degradation was deliberately
+  // not added here: `legacyConfigPush` does substantial real, unmocked
+  // filesystem I/O (project-root discovery, config.toml read, `.env` load)
+  // before it ever reaches the probe's `Effect.timeoutOrElse`, and that I/O
+  // settles on a real event-loop macrotask turn a virtual `TestClock` cannot
+  // provide — forcing it through would need either a real wall-clock wait
+  // (banned by this repo's flake-resistance policy) or an in-memory
+  // `FileSystem` fake diverging from every other scenario in this file.
+});
+
+describe("legacy config push --project-ref branch name/UUID resolution (CLI-2289)", () => {
+  it.live(
+    "--project-ref <branch-name> resolves via the already-known parent, no extra live probe",
+    () => {
+      const { layer, out, api } = setup({
+        toml: BRANCH_PUSH_TOML,
+        yes: true,
+        branchByName: { status: 200, body: BRANCH_BY_NAME },
+        v2: { status: 200, body: v2Response({ ref: BRANCH_REF }) },
+      });
+      return Effect.gen(function* () {
+        yield* legacyConfigPush({ projectRef: Option.some("staging") });
+        expect(out.stderrText).toContain(`Pushing config to branch: staging (${BRANCH_REF})`);
+        expect(out.stderrText).toContain(`  Parent project: ${REF}`);
+        expect(
+          api.requests.some(
+            (r) => r.method === "GET" && new URL(r.url).pathname === `/v1/projects/${BRANCH_REF}`,
+          ),
+        ).toBe(false);
+      }).pipe(Effect.provide(layer));
+    },
+  );
+
+  it.live(
+    "--project-ref <branch-name> skips the branch confirmation prompt, with no --yes and no queued answer",
+    () => {
+      // `knownBranch` is `{kind: "name", branchName, parentRef}` for a NAME
+      // target, so `push.handler.ts`'s `knownBranch === undefined` gate is
+      // never entered — no prompt at all. The real proof is `out.stderrText`
+      // never containing the branch-prompt label — `legacyPromptYesNo`
+      // always writes its label to stderr before reading any answer, on
+      // both a TTY and non-TTY, so its total absence is conclusive.
+      const { layer, out } = setup({
+        toml: BRANCH_PUSH_TOML,
+        yes: false,
+        branchByName: { status: 200, body: BRANCH_BY_NAME },
+        v2: { status: 200, body: v2Response({ ref: BRANCH_REF }) },
+      });
+      return Effect.gen(function* () {
+        const exit = yield* legacyConfigPush({ projectRef: Option.some("staging") }).pipe(
+          Effect.exit,
+        );
+        expect(Exit.isSuccess(exit)).toBe(true);
+        expect(out.stderrText).toContain(`Pushing config to branch: staging (${BRANCH_REF})`);
+        expect(out.stderrText).not.toContain("Do you want to push config to branch");
+      }).pipe(Effect.provide(layer));
+    },
+  );
+
+  it.live(
+    "--project-ref <branch-name> enriches the parent name from a matching linked-project cache",
+    () => {
+      writeLinkedProjectCacheFile({ ref: REF, name: "Test Project" });
+      const { layer, out } = setup({
+        toml: BRANCH_PUSH_TOML,
+        yes: true,
+        branchByName: { status: 200, body: BRANCH_BY_NAME },
+        v2: { status: 200, body: v2Response({ ref: BRANCH_REF }) },
+      });
+      return Effect.gen(function* () {
+        yield* legacyConfigPush({ projectRef: Option.some("staging") });
+        expect(out.stderrText).toContain(`  Parent project: Test Project (${REF})`);
+      }).pipe(Effect.provide(layer));
+    },
+  );
+
+  it.live(
+    "--project-ref <branch-name> ignores a linked-project cache belonging to a different parent",
+    () => {
+      writeLinkedProjectCacheFile({ ref: OTHER_PARENT_REF, name: "Someone Else" });
+      const { layer, out } = setup({
+        toml: BRANCH_PUSH_TOML,
+        yes: true,
+        branchByName: { status: 200, body: BRANCH_BY_NAME },
+        v2: { status: 200, body: v2Response({ ref: BRANCH_REF }) },
+      });
+      return Effect.gen(function* () {
+        yield* legacyConfigPush({ projectRef: Option.some("staging") });
+        expect(out.stderrText).toContain(`  Parent project: ${REF}`);
+        expect(out.stderrText).not.toContain("Someone Else");
+      }).pipe(Effect.provide(layer));
+    },
+  );
+
+  it.live(
+    "--project-ref <branch-name> resolution works without a spinner in json output mode",
+    () => {
+      const { layer, out } = setup({
+        toml: BRANCH_PUSH_TOML,
+        yes: true,
+        format: "json",
+        branchByName: { status: 200, body: BRANCH_BY_NAME },
+        v2: { status: 200, body: v2Response({ ref: BRANCH_REF }) },
+      });
+      return Effect.gen(function* () {
+        yield* legacyConfigPush({ projectRef: Option.some("staging") });
+        const success = out.messages.find((m) => m.type === "success");
+        const data = success?.data as Record<string, unknown>;
+        expect(data["is_branch"]).toBe(true);
+        expect(data["branch"]).toBe("staging");
+        expect(data["parent_project_ref"]).toBe(REF);
+      }).pipe(Effect.provide(layer));
+    },
+  );
+
+  it.live("--project-ref <uuid> resolves without any linked project (CLI-2289 regression)", () => {
+    const { layer, out, api } = setup({
+      toml: BRANCH_PUSH_TOML,
+      yes: true,
+      projectId: Option.none(),
+      project: { status: 404, body: {} },
+      branchById: { status: 200, body: BRANCH_CONFIG },
+      v2: { status: 200, body: v2Response({ ref: UUID_TARGET_REF }) },
+    });
+    return Effect.gen(function* () {
+      const exit = yield* legacyConfigPush({ projectRef: Option.some(BRANCH_UUID) }).pipe(
+        Effect.exit,
+      );
+      expect(Exit.isSuccess(exit)).toBe(true);
+      expect(out.stderrText).toContain(`Pushing config to branch: ${UUID_TARGET_REF}`);
+      expect(out.stderrText).not.toContain(BRANCH_UUID);
+      const branchRequests = api.requests.filter((r) => r.url.includes("/branches"));
+      expect(branchRequests).toHaveLength(1);
+      expect(branchRequests[0]?.url).toContain(`/v1/branches/${BRANCH_UUID}`);
+    }).pipe(Effect.provide(layer));
+  });
+
+  it.live(
+    "--project-ref <uuid> never shows the branch confirmation prompt, on an unattended run with no --yes",
+    () => {
+      // `knownBranch` is `{kind: "uuid"}` (defined, not `undefined`) for a
+      // UUID target — the same "explicit target this invocation" shape a
+      // branch NAME target gets, so `push.handler.ts`'s `target.kind ===
+      // "branch" && knownBranch === undefined` gate is never entered: no
+      // prompt at all, even on a fully unattended run (no `--yes`, non-TTY,
+      // empty stdin). Per-service prompts (`keep()`) still default to
+      // `true` on empty non-TTY stdin, so the mutation still proceeds.
+      const { layer, out, api } = setup({
+        toml: BRANCH_PUSH_TOML,
+        yes: false,
+        stdinIsTty: false,
+        projectId: Option.none(),
+        project: { status: 404, body: {} },
+        branchById: { status: 200, body: BRANCH_CONFIG },
+        v2: { status: 200, body: v2Response({ ref: UUID_TARGET_REF }) },
+      });
+      return Effect.gen(function* () {
+        const exit = yield* legacyConfigPush({ projectRef: Option.some(BRANCH_UUID) }).pipe(
+          Effect.exit,
+        );
+        expect(Exit.isSuccess(exit)).toBe(true);
+        expect(out.stderrText).toContain(`Pushing config to branch: ${UUID_TARGET_REF}`);
+        expect(out.stderrText).not.toContain("Do you want to push config to branch");
+        expect(api.requests.some((r) => r.method === "PATCH" && r.url.includes("/postgrest"))).toBe(
+          true,
+        );
+      }).pipe(Effect.provide(layer));
+    },
+  );
+
+  it.live("--project-ref <unknown-branch-name> fails with a branches-list suggestion", () => {
+    const { layer, api, telemetry, linkedProjectCache } = setup({
+      toml: BRANCH_PUSH_TOML,
+      yes: true,
+      branchByName: { status: 404, body: { message: "not found" } },
+    });
+    return Effect.gen(function* () {
+      const exit = yield* legacyConfigPush({ projectRef: Option.some("ghost") }).pipe(Effect.exit);
+      expect(Exit.isFailure(exit)).toBe(true);
+      const rendered = JSON.stringify(exit);
+      expect(rendered).toContain("LegacyConfigPushBranchNotFoundError");
+      expect(rendered).toContain('Branch \\"ghost\\" not found');
+      expect(rendered).toContain("supabase branches list");
+      expect(api.requests.some((r) => r.url.includes("/billing/addons"))).toBe(false);
+      // Legacy Shell Invariant #1: telemetry flushes even though ref
+      // resolution itself failed — but no ref was ever resolved, so the
+      // linked-project cache stays untouched.
+      expect(telemetry.flushed).toBe(true);
+      expect(linkedProjectCache.cachedRef).toBeUndefined();
+    }).pipe(Effect.provide(layer));
+  });
+
+  it.live(
+    "a branch-name lookup failure in json mode still resolves cleanly without a spinner",
+    () => {
+      const { layer, api } = setup({
+        toml: BRANCH_PUSH_TOML,
+        yes: true,
+        format: "json",
+        branchByName: { status: 404, body: { message: "not found" } },
+      });
+      return Effect.gen(function* () {
+        const exit = yield* legacyConfigPush({ projectRef: Option.some("ghost") }).pipe(
+          Effect.exit,
+        );
+        expect(Exit.isFailure(exit)).toBe(true);
+        expect(JSON.stringify(exit)).toContain("LegacyConfigPushBranchNotFoundError");
+        expect(api.requests.some((r) => r.url.includes("/billing/addons"))).toBe(false);
+      }).pipe(Effect.provide(layer));
+    },
+  );
+
+  it.live("--project-ref <branch-name> in an unlinked directory fails naming the value", () => {
+    const { layer, api, telemetry, linkedProjectCache } = setup({
+      toml: BRANCH_PUSH_TOML,
+      yes: true,
+      projectId: Option.none(),
+    });
+    return Effect.gen(function* () {
+      const exit = yield* legacyConfigPush({ projectRef: Option.some("somebranch") }).pipe(
+        Effect.exit,
+      );
+      expect(Exit.isFailure(exit)).toBe(true);
+      const rendered = JSON.stringify(exit);
+      expect(rendered).toContain("LegacyConfigPushBranchNotLinkedError");
+      expect(rendered).toContain('\\"somebranch\\"');
+      expect(api.requests).toHaveLength(0);
+      // Legacy Shell Invariant #1: fails purely from local file/env state,
+      // before any ref is resolved — telemetry still flushes, but the
+      // linked-project cache write is a no-op.
+      expect(telemetry.flushed).toBe(true);
+      expect(linkedProjectCache.cachedRef).toBeUndefined();
+    }).pipe(Effect.provide(layer));
+  });
+
+  it.live("--project-ref <branch-name> with a corrupt linked ref reports it as invalid", () => {
+    const { layer, api, telemetry, linkedProjectCache } = setup({
+      toml: BRANCH_PUSH_TOML,
+      yes: true,
+      projectId: Option.some("not-a-valid-ref"),
+    });
+    return Effect.gen(function* () {
+      const exit = yield* legacyConfigPush({ projectRef: Option.some("somebranch") }).pipe(
+        Effect.exit,
+      );
+      expect(Exit.isFailure(exit)).toBe(true);
+      const rendered = JSON.stringify(exit);
+      expect(rendered).toContain("LegacyConfigPushParentRefInvalidError");
+      expect(rendered).toContain('\\"somebranch\\"');
+      expect(api.requests).toHaveLength(0);
+      // Legacy Shell Invariant #1: no ref ever resolved here either.
+      expect(telemetry.flushed).toBe(true);
+      expect(linkedProjectCache.cachedRef).toBeUndefined();
+    }).pipe(Effect.provide(layer));
+  });
+
+  it.live("a resolved branch with no project ref yet fails with a not-ready error", () => {
+    const { layer, api, telemetry, linkedProjectCache } = setup({
+      toml: BRANCH_PUSH_TOML,
+      yes: true,
+      branchByName: { status: 200, body: { ...BRANCH_BY_NAME, project_ref: "" } },
+    });
+    return Effect.gen(function* () {
+      const exit = yield* legacyConfigPush({ projectRef: Option.some("staging") }).pipe(
+        Effect.exit,
+      );
+      expect(Exit.isFailure(exit)).toBe(true);
+      const rendered = JSON.stringify(exit);
+      expect(rendered).toContain("LegacyConfigPushBranchNotReadyError");
+      expect(rendered).toContain("has no project ref yet");
+      expect(api.requests.some((r) => r.url.includes("/billing/addons"))).toBe(false);
+      // This fails inside `legacyResolveConfigTarget` itself (the
+      // placeholder ref is rejected before it's ever assigned to the
+      // handler's `resolvedRef`), so the cache write is still a no-op.
+      expect(telemetry.flushed).toBe(true);
+      expect(linkedProjectCache.cachedRef).toBeUndefined();
+    }).pipe(Effect.provide(layer));
+  });
+
+  it.live("a transport failure resolving a branch name maps to the resolve network error", () => {
+    const { layer, telemetry, linkedProjectCache } = setup({
+      toml: BRANCH_PUSH_TOML,
+      yes: true,
+      branchByName: "fail",
+    });
+    return Effect.gen(function* () {
+      const exit = yield* legacyConfigPush({ projectRef: Option.some("staging") }).pipe(
+        Effect.exit,
+      );
+      expect(Exit.isFailure(exit)).toBe(true);
+      expect(JSON.stringify(exit)).toContain("LegacyConfigPushBranchResolveNetworkError");
+      expect(telemetry.flushed).toBe(true);
+      expect(linkedProjectCache.cachedRef).toBeUndefined();
+    }).pipe(Effect.provide(layer));
+  });
+
+  it.live("a non-404 branch-name lookup failure keeps its status error", () => {
+    const { layer, telemetry, linkedProjectCache } = setup({
+      toml: BRANCH_PUSH_TOML,
+      yes: true,
+      branchByName: { status: 500, body: { message: "boom" } },
+    });
+    return Effect.gen(function* () {
+      const exit = yield* legacyConfigPush({ projectRef: Option.some("staging") }).pipe(
+        Effect.exit,
+      );
+      expect(Exit.isFailure(exit)).toBe(true);
+      expect(JSON.stringify(exit)).toContain("LegacyConfigPushBranchResolveStatusError");
+      expect(telemetry.flushed).toBe(true);
+      expect(linkedProjectCache.cachedRef).toBeUndefined();
     }).pipe(Effect.provide(layer));
   });
 });

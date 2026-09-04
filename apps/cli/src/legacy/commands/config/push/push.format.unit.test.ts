@@ -1,4 +1,4 @@
-import type { ConfigChange } from "@supabase/config/internal";
+import type { ConfigChange } from "@supabase/config";
 import { describe, expect, test } from "vitest";
 
 import type { LegacyPushResource } from "./push.plan.ts";

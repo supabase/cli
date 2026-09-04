@@ -1,4 +1,5 @@
-import { type ConfigChangeClass, projectConfigMappingRows } from "@supabase/config/internal";
+import type { ConfigChangeClass } from "@supabase/config";
+import { projectConfigMappingRows } from "@supabase/config/internal";
 import { expect } from "vitest";
 
 import { requireLiveSuccess, test } from "../../../../../tests/helpers/live.ts";

@@ -17,14 +17,6 @@
  */
 export { ENV_CAPTURE_REGEX } from "./lib/env.ts";
 export {
-  type ConfigChange,
-  type ConfigChangeClass,
-  type ConfigChangeCounts,
-  type ConfigChangeSet,
-  type DiffProjectConfigOptions,
-  diffProjectConfig,
-} from "./config-diff.ts";
-export {
   type AppliedConfigEdit,
   applyConfigEdits,
   type ConfigEdit,

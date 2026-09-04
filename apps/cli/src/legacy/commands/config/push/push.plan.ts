@@ -8,8 +8,7 @@
  * when no v1 field exists for it at all.
  */
 
-import type { CliConfig, ProjectConfig } from "@supabase/config";
-import type { ConfigChange, ConfigChangeSet } from "@supabase/config/internal";
+import type { CliConfig, ConfigChange, ConfigChangeSet, ProjectConfig } from "@supabase/config";
 
 import { legacyIsPrefixOf, legacyPathIn, legacySamePath, legacyValueAtPath } from "./push.paths.ts";
 

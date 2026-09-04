@@ -2,9 +2,8 @@
  * Unit tests for push.plan.ts.
  */
 
-import type { CliConfig, ProjectConfig } from "@supabase/config";
+import type { CliConfig, ConfigChange, ConfigChangeSet, ProjectConfig } from "@supabase/config";
 import { comparableProjectConfigPaths, getDefaultCliConfig } from "@supabase/config";
-import type { ConfigChange, ConfigChangeSet } from "@supabase/config/internal";
 import { describe, expect, it } from "vitest";
 
 import {

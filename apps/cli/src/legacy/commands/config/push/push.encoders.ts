@@ -15,8 +15,7 @@
  * that fallback is disclosed via `forced`, never applied silently.
  */
 
-import type { CliConfig, ProjectConfig } from "@supabase/config";
-import type { ConfigChange } from "@supabase/config/internal";
+import type { CliConfig, ConfigChange, ProjectConfig } from "@supabase/config";
 import { AUTH_HOOK_NAMES } from "@supabase/config/internal";
 
 import { ramInBytes } from "../../../shared/legacy-size-units.ts";

@@ -1,4 +1,4 @@
-import type { ConfigChangeSet } from "@supabase/config/internal";
+import type { ConfigChangeSet } from "@supabase/config";
 
 import { legacySanitizeInlineName } from "../../../shared/legacy-http-errors.ts";
 import {

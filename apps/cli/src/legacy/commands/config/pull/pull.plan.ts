@@ -1,12 +1,16 @@
 import {
+  type CliConfigValueOrigin,
   type ConfigChange,
   type ConfigChangeSet,
+  diffProjectConfig,
+  type EffectiveConfig,
+  type ProjectConfig,
+} from "@supabase/config";
+import {
   type ConfigEditValue,
   dualScopeProjectConfigPaths,
-  diffProjectConfig,
   ENV_CAPTURE_REGEX,
 } from "@supabase/config/internal";
-import type { CliConfigValueOrigin, EffectiveConfig, ProjectConfig } from "@supabase/config";
 
 import type { LegacyConfigPullDestination } from "./pull.scope.ts";
 
