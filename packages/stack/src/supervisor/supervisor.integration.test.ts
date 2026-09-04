@@ -1598,16 +1598,14 @@ describe("Supervisor composition", () => {
         };
         const first = yield* Effect.forkChild(fixture.supervisor.start({ config: firstConfig }));
         yield* Deferred.await(preflightStarted);
-        const second = yield* Effect.forkChild(
-          fixture.supervisor.start({ config: distinctConfig }),
-        );
-        yield* Deferred.succeed(preflightGate, undefined);
-        const [firstExit, secondExit] = yield* Effect.all([
-          Fiber.join(first).pipe(Effect.exit),
-          Fiber.join(second).pipe(Effect.exit),
-        ]);
-        expect(Exit.isFailure(firstExit)).toBe(true);
+        const secondExit = yield* fixture.supervisor
+          .start({ config: distinctConfig })
+          .pipe(Effect.exit);
+        expect(Exit.isFailure(secondExit)).toBe(true);
         expect(errorOf(secondExit)).toBeInstanceOf(StackLifecycleConflictError);
+        yield* Deferred.succeed(preflightGate, undefined);
+        const firstExit = yield* Fiber.join(first).pipe(Effect.exit);
+        expect(Exit.isFailure(firstExit)).toBe(true);
       }),
     ),
   );

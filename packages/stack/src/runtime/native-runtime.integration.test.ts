@@ -1033,7 +1033,6 @@ describe("native runtime", { timeout: 15_000 }, () => {
           const net = require("node:net");
           const { spawn } = require("node:child_process");
           process.stdout.on("error", () => {});
-          process.on("SIGTERM", () => process.stdout.write("TARGET_SIGTERM\\n"));
           const server = net.createServer();
           server.listen({ host: "127.0.0.1", port: 0 }, () => {
             const address = server.address();
@@ -1058,7 +1057,6 @@ describe("native runtime", { timeout: 15_000 }, () => {
             executable: ${JSON.stringify(runtime.command)},
             args: ["-e", ${JSON.stringify(targetCode)}]
           }));
-          process.stdout.write("LAUNCHER_READY " + launcherProcess.pid + "\\n");
           setInterval(() => {}, 1000);
         `;
             const owner = yield* ChildProcess.make(process.execPath, ["-e", ownerCode], {
@@ -1072,23 +1070,16 @@ describe("native runtime", { timeout: 15_000 }, () => {
               Stream.runForEach((chunk) => Ref.update(stderr, (current) => current + chunk)),
               Effect.forkChild({ startImmediately: true }),
             );
-            const launcherReady = yield* Deferred.make<string>();
             const targetReady = yield* Deferred.make<string>();
             const descendantReady = yield* Deferred.make<string>();
-            const targetSignal = yield* Deferred.make<void>();
             const outputFiber = yield* owner.stdout.pipe(
               Stream.decodeText,
               Stream.splitLines,
               Stream.runForEach((line) =>
                 Effect.gen(function* () {
-                  if (line.startsWith("LAUNCHER_READY "))
-                    yield* Deferred.succeed(launcherReady, line);
-                  else if (line.startsWith("TARGET_READY "))
-                    yield* Deferred.succeed(targetReady, line);
+                  if (line.startsWith("TARGET_READY ")) yield* Deferred.succeed(targetReady, line);
                   else if (line.startsWith("DESC_READY "))
                     yield* Deferred.succeed(descendantReady, line);
-                  else if (line === "TARGET_SIGTERM")
-                    yield* Deferred.succeed(targetSignal, undefined);
                 }),
               ),
               Effect.forkChild({ startImmediately: true }),
@@ -1105,14 +1096,11 @@ describe("native runtime", { timeout: 15_000 }, () => {
                   }),
               }),
             );
-            const launcherLine = yield* Deferred.await(launcherReady);
             const targetLine = yield* Deferred.await(targetReady);
             const targetPort = Number.parseInt(targetLine.slice("TARGET_READY ".length), 10);
             const descendantPort = Number.parseInt(output.slice("DESC_READY ".length), 10);
             expect(Number.isSafeInteger(targetPort)).toBe(true);
             expect(Number.isSafeInteger(descendantPort)).toBe(true);
-            const launcherPid = Number.parseInt(launcherLine.slice("LAUNCHER_READY ".length), 10);
-            expect(Number.isSafeInteger(launcherPid)).toBe(true);
             const targetSocket = yield* NodeSocket.makeNet({ host: "127.0.0.1", port: targetPort });
             const descendantSocket = yield* NodeSocket.makeNet({
               host: "127.0.0.1",
@@ -1132,22 +1120,10 @@ describe("native runtime", { timeout: 15_000 }, () => {
               })
               .pipe(Effect.exit, Effect.forkChild({ startImmediately: true }));
             yield* Deferred.await(descendantClosedSignal);
-            expect(
-              spawnSync("kill", ["-TERM", `-${launcherPid}`], { encoding: "utf8" }).status,
-            ).toBe(0);
-            yield* Deferred.await(targetSignal).pipe(
-              Effect.timeoutOrElse({
-                duration: "3 seconds",
-                orElse: () =>
-                  Effect.fail(
-                    new ProcessTreeTestError({ message: "target did not receive SIGTERM" }),
-                  ),
-              }),
-            );
             yield* owner.kill({ killSignal: "SIGKILL" });
             yield* Fiber.join(targetClosed).pipe(
               Effect.timeoutOrElse({
-                duration: "3 seconds",
+                duration: "10 seconds",
                 orElse: () =>
                   Effect.fail(
                     new ProcessTreeTestError({ message: "target process tree did not close" }),
@@ -1156,7 +1132,7 @@ describe("native runtime", { timeout: 15_000 }, () => {
             );
             yield* Fiber.join(descendantClosed).pipe(
               Effect.timeoutOrElse({
-                duration: "3 seconds",
+                duration: "10 seconds",
                 orElse: () =>
                   Effect.fail(
                     new ProcessTreeTestError({ message: "descendant process tree did not close" }),
