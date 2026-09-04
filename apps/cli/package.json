@@ -36,7 +36,7 @@
     "test:integration": "pnpm exec turbo run supabase#test:integration:run --",
     "test:integration:run": "bun --bun vitest run --project integration --coverage.reportsDirectory=coverage/integration",
     "test:e2e": "pnpm exec turbo run supabase#build && pnpm exec turbo run supabase#test:e2e:run --only --",
-    "test:e2e:run": "bun --bun vitest run --project e2e",
+    "test:e2e:run": "bun --bun vitest run --project e2e --project e2e-stack",
     "test:live": "bun --bun vitest run --project live",
     "test:smoke": "bun run tests/smoke-test.ts",
     "types:check": "tsc --noEmit"
