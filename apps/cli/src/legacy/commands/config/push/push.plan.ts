@@ -167,10 +167,17 @@ export function legacyPlanConfigPush(changeSet: ConfigChangeSet): LegacyPushPlan
 
 /**
  * Whether a resource is even eligible to be pushed, given the decoded config
- * (`db.network_restrictions`/`auth`/`storage`'s own `enabled` flag) and the
- * local projection (`db.ssl_enforcement`'s declared presence — undeclared
- * means the raw-presence mask already dropped the whole subtree). `api` and
- * `db.settings` have no such gate.
+ * (`db.network_restrictions`'s own `enabled` flag) and the local projection
+ * (`db.ssl_enforcement`'s declared presence — undeclared means the
+ * raw-presence mask already dropped the whole subtree). `api`, `db.settings`,
+ * `auth`, and `storage` have no such gate: `api`/`db.settings` never had one,
+ * and `auth.enabled`/`storage.enabled` no longer gate their resource either
+ * (CLI-2314, correcting a prior mistake) — that flag controls only the local
+ * GoTrue/Storage Docker service, with no Management API equivalent, so
+ * gating the whole resource on it silently dropped a user's declared
+ * hosted-auth/storage changes whenever they simply didn't run that service
+ * locally. `db.network_restrictions.enabled` stays a genuine gate: it is a
+ * real hosted-side management opt-out, not a local-service toggle.
  */
 export function legacyPushResourceEnabled(
   resource: LegacyPushResource,
@@ -180,15 +187,13 @@ export function legacyPushResourceEnabled(
   switch (resource) {
     case "api":
     case "db.settings":
+    case "auth":
+    case "storage":
       return true;
     case "db.network_restrictions":
       return config.db.network_restrictions.enabled;
     case "db.ssl_enforcement":
       return local.db?.ssl_enforcement !== undefined;
-    case "auth":
-      return config.auth.enabled;
-    case "storage":
-      return config.storage.enabled;
   }
 }
 

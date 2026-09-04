@@ -247,14 +247,18 @@ describe("legacyPushResourceEnabled", () => {
     expect(legacyPushResourceEnabled("db.ssl_enforcement", config, {})).toBe(false);
   });
 
-  it("gates auth and storage on the decoded config's own enabled flag", () => {
+  it("is always true for auth and storage, regardless of their local enabled toggle (CLI-2314)", () => {
+    // `auth.enabled`/`storage.enabled` control only the local GoTrue/Storage
+    // Docker service — gating the whole resource on them silently dropped a
+    // user's declared hosted-auth/storage changes whenever they simply
+    // didn't run that service locally.
     const base = getDefaultCliConfig();
     const authOff: CliConfig = { ...base, auth: { ...base.auth, enabled: false } };
     const storageOff: CliConfig = { ...base, storage: { ...base.storage, enabled: false } };
     expect(legacyPushResourceEnabled("auth", base, {})).toBe(true);
-    expect(legacyPushResourceEnabled("auth", authOff, {})).toBe(false);
+    expect(legacyPushResourceEnabled("auth", authOff, {})).toBe(true);
     expect(legacyPushResourceEnabled("storage", base, {})).toBe(true);
-    expect(legacyPushResourceEnabled("storage", storageOff, {})).toBe(false);
+    expect(legacyPushResourceEnabled("storage", storageOff, {})).toBe(true);
   });
 });
 

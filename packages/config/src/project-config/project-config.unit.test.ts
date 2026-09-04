@@ -3106,13 +3106,17 @@ describe("review round: exactness parsing, cross-arm disabled sentinels (CLI-223
     expect(Object.hasOwn(ok, "auth")).toBe(false);
   });
 
-  test("documents with auth or storage disabled project only the toggle", () => {
+  test("documents with auth or storage disabled still project their other declared fields (CLI-2314)", () => {
+    // `auth.enabled`/`storage.enabled` are local Docker toggles with no
+    // hosted counterpart — `DISABLED_SENTINEL_PRUNES` no longer treats them
+    // as a "drop every other declared field" gate, so a document that
+    // declares `enabled = false` alongside a real hosted field keeps it.
     const projected = fromConfigDocument({
       auth: { enabled: false, site_url: "http://localhost:3000" },
       storage: { enabled: false, file_size_limit: "50MiB" },
     });
-    expect(projected.auth).toEqual({ enabled: false });
-    expect(projected.storage).toEqual({ enabled: false });
+    expect(projected.auth).toEqual({ enabled: false, site_url: "http://localhost:3000" });
+    expect(projected.storage).toEqual({ enabled: false, file_size_limit: "50MiB" });
   });
 
   test("the email rate limit is pruned only on an EXPLICIT smtp.enabled === false, never on absence", () => {

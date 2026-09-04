@@ -565,11 +565,18 @@ export const legacyConfigPush = Effect.fn("legacy.config.push")(function* (
     // 11. Six resources, in the established push order. A resource whose
     // response block was omitted from the read is `unavailable` — nothing is
     // compared, nothing is written (S5/D2); the `Comparison scope:` line
-    // above already explains why. Otherwise, a gated-off resource is simply
-    // `disabled` — the projection's disabled-sentinel prune already removed
-    // its other declared keys before diffing, so `plan.changesByResource`
-    // never has anything left to route here — and a gated-on resource
-    // dispatches to its own encoder/write pair.
+    // above already explains why. Otherwise, a gated-off resource is
+    // `disabled` — today (CLI-2314) this can only fire for
+    // `db.network_restrictions`, the one resource whose own `enabled` flag is
+    // a genuine hosted-side management opt-out: the projection's
+    // disabled-sentinel prune still removes its `allowed_cidrs`/
+    // `allowed_cidrs_v6` siblings before diffing, so `plan.changesByResource`
+    // never has anything left to route to it while the flag is off. `auth`
+    // and `storage` always return `true` from `legacyPushResourceEnabled`
+    // now — their local `enabled` toggle only controls a Docker service the
+    // Management API has no concept of, so this branch can no longer fire
+    // for either — and a gated-on resource dispatches to its own
+    // encoder/write pair.
     for (const resource of LEGACY_PUSH_RESOURCES) {
       if (scope.missing.includes(legacyPushResponseBlock(resource))) {
         services.push({ service: resource, status: "unavailable", changes: [] });

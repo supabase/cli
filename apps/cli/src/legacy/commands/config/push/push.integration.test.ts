@@ -1516,43 +1516,144 @@ allowed_cidrs_v6 = ["::1/128"]
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("auth disabled skips email content loading and reports the resource as disabled", () => {
-    const { layer, out, apiMock } = setupService({
-      toml: `project_id = "test"\n[auth]\nenabled = false\n`,
-      format: "json",
-    });
-    return Effect.gen(function* () {
-      yield* legacyConfigPush({ projectRef: Option.none() });
-      expect(methodsOf(apiMock)).not.toContain("updateAuthServiceConfig");
-      const success = out.messages.find((m) => m.type === "success");
-      const data = success?.data as Record<string, unknown>;
-      const services = data["services"] as ReadonlyArray<Record<string, unknown>>;
-      expect(services.find((s) => s["service"] === "auth")).toEqual({
-        service: "auth",
-        status: "disabled",
-        changes: [],
+  it.live(
+    "auth disabled locally with the remote at defaults reports up to date, not disabled (CLI-2314)",
+    () => {
+      // `auth.enabled = false` only means "don't run local GoTrue" — it no
+      // longer gates the whole resource. With nothing else declared and the
+      // remote at schema defaults, there is genuinely no diff to push.
+      const { layer, out, apiMock } = setupService({
+        toml: `project_id = "test"\n[auth]\nenabled = false\n`,
+        format: "json",
       });
-    }).pipe(Effect.provide(layer));
-  });
+      return Effect.gen(function* () {
+        yield* legacyConfigPush({ projectRef: Option.none() });
+        expect(methodsOf(apiMock)).not.toContain("updateAuthServiceConfig");
+        const success = out.messages.find((m) => m.type === "success");
+        const data = success?.data as Record<string, unknown>;
+        const services = data["services"] as ReadonlyArray<Record<string, unknown>>;
+        expect(services.find((s) => s["service"] === "auth")).toEqual({
+          service: "auth",
+          status: "up_to_date",
+          changes: [],
+        });
+      }).pipe(Effect.provide(layer));
+    },
+  );
 
-  it.live("storage disabled reports the resource as disabled without a write", () => {
-    const { layer, out, apiMock } = setupService({
-      toml: `project_id = "test"\n[storage]\nenabled = false\n`,
-      format: "json",
-    });
-    return Effect.gen(function* () {
-      yield* legacyConfigPush({ projectRef: Option.none() });
-      expect(methodsOf(apiMock)).not.toContain("updateStorageConfig");
-      const success = out.messages.find((m) => m.type === "success");
-      const data = success?.data as Record<string, unknown>;
-      const services = data["services"] as ReadonlyArray<Record<string, unknown>>;
-      expect(services.find((s) => s["service"] === "storage")).toEqual({
-        service: "storage",
-        status: "disabled",
-        changes: [],
+  it.live(
+    "storage disabled locally with the remote at defaults reports up to date, not disabled (CLI-2314)",
+    () => {
+      // Same as the auth case above: `storage.enabled = false` is a local
+      // Docker toggle, not a hosted management opt-out.
+      const { layer, out, apiMock } = setupService({
+        toml: `project_id = "test"\n[storage]\nenabled = false\n`,
+        format: "json",
       });
-    }).pipe(Effect.provide(layer));
-  });
+      return Effect.gen(function* () {
+        yield* legacyConfigPush({ projectRef: Option.none() });
+        expect(methodsOf(apiMock)).not.toContain("updateStorageConfig");
+        const success = out.messages.find((m) => m.type === "success");
+        const data = success?.data as Record<string, unknown>;
+        const services = data["services"] as ReadonlyArray<Record<string, unknown>>;
+        expect(services.find((s) => s["service"] === "storage")).toEqual({
+          service: "storage",
+          status: "up_to_date",
+          changes: [],
+        });
+      }).pipe(Effect.provide(layer));
+    },
+  );
+
+  it.live(
+    "auth disabled locally still pushes an explicitly declared hosted auth change (CLI-2314)",
+    () => {
+      // Local GoTrue is off, but the user explicitly declared a real hosted
+      // SMTP setting that differs from the remote's — `config push` must
+      // still act on it; the resource is no longer gated on `auth.enabled`.
+      const { layer, out, apiMock } = setupService({
+        toml: `project_id = "test"
+[auth]
+enabled = false
+
+[auth.email.smtp]
+enabled = true
+host = "smtp.mine.example.com"
+port = 587
+user = "postmaster"
+pass = "hunter2"
+admin_email = "admin@mine.example.com"
+sender_name = "My Project"
+`,
+        yes: true,
+        format: "json",
+        v2: {
+          status: 200,
+          body: v2Response({
+            attributes: (a) => ({
+              ...a,
+              auth: {
+                ...(a["auth"] as Record<string, unknown>),
+                smtp_host: "smtp.remote.example.com",
+              },
+            }),
+          }),
+        },
+        v1: { updateAuthServiceConfig: () => Effect.succeed(authWriteResponseFixture()) },
+      });
+      return Effect.gen(function* () {
+        yield* legacyConfigPush({ projectRef: Option.none() });
+        expect(methodsOf(apiMock)).toContain("updateAuthServiceConfig");
+        const success = out.messages.find((m) => m.type === "success");
+        const data = success?.data as Record<string, unknown>;
+        const services = data["services"] as ReadonlyArray<Record<string, unknown>>;
+        expect(services.find((s) => s["service"] === "auth")).toMatchObject({
+          service: "auth",
+          status: "updated",
+        });
+      }).pipe(Effect.provide(layer));
+    },
+  );
+
+  it.live(
+    "auth disabled locally does not push an undeclared field that merely drifted from default (CLI-2314)",
+    () => {
+      // Local never mentions captcha at all; the remote reports a real
+      // provider configured. Undeclared drift surfaces as remote-only
+      // (informational), never pushed — `auth.enabled = false` plays no role
+      // in that classification either way.
+      const { layer, out, apiMock } = setupService({
+        toml: `project_id = "test"\n[auth]\nenabled = false\n`,
+        format: "json",
+        v2: {
+          status: 200,
+          body: v2Response({
+            attributes: (a) => ({
+              ...a,
+              auth: {
+                ...(a["auth"] as Record<string, unknown>),
+                security_captcha_enabled: true,
+                security_captcha_provider: "hcaptcha",
+              },
+            }),
+          }),
+        },
+      });
+      return Effect.gen(function* () {
+        yield* legacyConfigPush({ projectRef: Option.none() });
+        expect(methodsOf(apiMock)).not.toContain("updateAuthServiceConfig");
+        const success = out.messages.find((m) => m.type === "success");
+        const data = success?.data as Record<string, unknown>;
+        expect(data["remote_only"]).toBeGreaterThan(0);
+        const services = data["services"] as ReadonlyArray<Record<string, unknown>>;
+        expect(services.find((s) => s["service"] === "auth")).toEqual({
+          service: "auth",
+          status: "up_to_date",
+          changes: [],
+        });
+      }).pipe(Effect.provide(layer));
+    },
+  );
 
   it.live(
     "a v2 response without the data envelope aborts (D2) even though the diff itself would tolerate it",

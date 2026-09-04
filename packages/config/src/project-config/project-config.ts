@@ -334,10 +334,15 @@ function copyHostedValueForDocument(value: unknown, path: ReadonlyArray<string>)
  * Deliberately NOT listed, despite looking like the same "local toggle"
  * shape as the entries above — each was checked against `v2GetProjectConfig`
  * and/or how `config push` actually treats it, not excluded on the strength
- * of its description alone: `auth.enabled`/`storage.enabled` (kept:
- * {@link DISABLED_SENTINEL_PRUNES}'s `["auth"]`/`["storage"]` entries already
- * deliberately preserve `{enabled: false}` as a reviewed "is this section
- * managed by push" signal, PR #6339), `db.network_restrictions.enabled`
+ * of its description alone: `auth.enabled`/`storage.enabled` (kept: a
+ * document that declares this flag still genuinely declares it, and this
+ * list only excludes fields with no live hosted counterpart on either arm
+ * from the projection entirely — CLI-2314 retired the PR #6339 rule that
+ * additionally treated this flag's OWN presence as an "is this section
+ * managed by push" signal and pruned every other declared field in the
+ * section on it, once that rule was found to silently hide genuine hosted
+ * customization behind an unrelated local Docker toggle; see
+ * {@link DISABLED_SENTINEL_PRUNES}'s docstring), `db.network_restrictions.enabled`
  * (kept: the same deliberate management-opt-out shape, CLI-2314's own
  * ruling), `api.auto_expose_new_tables` and
  * `auth.third_party`/`auth.jwt_issuer`/`auth.signing_keys_path` (real hosted
@@ -740,22 +745,32 @@ function applySmsProviderPrecedence(result: Record<string, unknown>): void {
  * auth.sync.ts:2384-2397; storage Iceberg/Vector: whole feature omitted,
  * storage.sync.ts:287-299; captcha provider/secret only when enabled,
  * :2315-2324; hook URI/secrets only when enabled, :2551-2565; SMS provider
- * credentials only for the selected provider, :2498-2539; whole Auth/Storage
- * sections gated on their own `enabled`, :1224-1226 / storage.sync.ts's
- * subset gating) — so projecting the (usually schema-filled or
- * platform-retained) siblings would fabricate drift between representations
- * of the same disabled state. Applied to BOTH normalizers' outputs: the
- * mapped shape is identical on the document and API arms, so one pass keeps
- * the two symmetric by construction.
+ * credentials only for the selected provider, :2498-2539) — so projecting
+ * the (usually schema-filled or platform-retained) siblings would fabricate
+ * drift between representations of the same disabled state. Applied to BOTH
+ * normalizers' outputs: the mapped shape is identical on the document and
+ * API arms, so one pass keeps the two symmetric by construction.
+ *
+ * Does NOT include `auth`/`storage`'s own top-level `enabled` (CLI-2314,
+ * correcting a PR #6339 mistake): unlike every entry below, that flag is
+ * "Enable the local GoTrue/Storage service" (`../auth/index.ts`,
+ * `../storage.ts`) — a pure local-Docker toggle for `supabase start`, with no
+ * row in the API-mapping registry and no Management API write path gated on
+ * it. Treating it as one more disabled-sentinel container dropped the ENTIRE
+ * rest of a genuinely-configured `auth`/`storage` section (SMTP, external
+ * providers, captcha, …) the moment a user turned off the local service —
+ * extremely common, since most setups don't run every local service — even
+ * though the hosted project's real config is unrelated to that toggle and
+ * may still fully exist and differ from it.
+ * `legacyPushResourceEnabled` (`apps/cli/src/legacy/commands/config/push/
+ * push.plan.ts`) no longer gates the whole `auth`/`storage` resource on this
+ * flag either, for the same reason.
  */
 export const DISABLED_SENTINEL_PRUNES: ReadonlyArray<{
   readonly containerPath: ReadonlyArray<string>;
   /** Keys to drop when `enabled === false`; absent = drop every key but `enabled`. */
   readonly dropKeys?: ReadonlyArray<string>;
 }> = [
-  // Top-level service toggles first — they subsume the section rules below.
-  { containerPath: ["auth"] },
-  { containerPath: ["storage"] },
   { containerPath: ["api"], dropKeys: ["schemas", "extra_search_path", "max_rows"] },
   {
     containerPath: ["db", "network_restrictions"],
