@@ -1,13 +1,10 @@
 import {
   CLI_CONFIG_SCHEMA_URL,
+  diffProjectConfig,
   fromApiProjectConfig,
   ProjectConfigParseError,
-} from "@supabase/config";
-import {
-  diffProjectConfig,
-  loadCliConfig,
-  remoteNameForProjectRef,
-} from "@supabase/config/internal";
+} from "@supabase/config/effect";
+import { loadCliConfig, remoteNameForProjectRef } from "@supabase/config/internal";
 import { operationDefinitions } from "@supabase/api/effect";
 import { Effect, Option } from "effect";
 

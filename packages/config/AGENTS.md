@@ -17,7 +17,11 @@ artifacts (`./schema.json`, `./project-schema.json`).
   `CliConfig` alongside which keys were actually present in the source document) — presence matters
   because the schema defaults every optional section, so the decoded `CliConfig` alone can't tell
   "explicitly set to the default" from "never set" (ADR 0021). Call `unmappedApiFields` after
-  `fromApiProjectConfig` if you care whether this package version understood the response.
+  `fromApiProjectConfig` if you care whether this package version understood the response. Also
+  exports the config-diff classification engine — `diffProjectConfig`, `ConfigChange`/
+  `ConfigChangeClass`/`ConfigChangeCounts`/`ConfigChangeSet`, `DiffProjectConfigOptions` — a pure,
+  synchronous comparison between two `ProjectConfig` projections (ADR 0022), promoted here from
+  `./internal` now that Studio is a second consumer.
 - `@supabase/config/io` — a Promise-based file-IO facade for **external, non-Effect Node/Bun
   consumers only**. Resolved via package.json exports conditions (`bun`/`node`/`browser`/`default`).
   Has zero internal consumers by design — nothing inside this monorepo should import it.

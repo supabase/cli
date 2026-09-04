@@ -377,7 +377,7 @@ export function diffProjectConfig(options: DiffProjectConfigOptions): ConfigChan
     .filter(
       (path) => isDeclaredAtPath(declaredRoot, path) && valueAtPath(local, path) === undefined,
     )
-    .toSorted(comparePaths);
+    .sort(comparePaths);
   const unmanagedPathKeys = new Set(unmanaged.map(pathKey));
 
   for (const path of paths.values()) {
@@ -464,7 +464,7 @@ export function diffProjectConfig(options: DiffProjectConfigOptions): ConfigChan
 
   const masked = secretConfigPaths
     .filter((path) => isDeclaredAtPath(declaredRoot, path))
-    .toSorted(comparePaths);
+    .sort(comparePaths);
 
   const update = changes.filter((change) => change.class === "update").length;
   const remote_only = changes.filter((change) => change.class === "remote_only").length;

@@ -1,21 +1,21 @@
 import {
   CLI_CONFIG_SCHEMA_URL,
+  diffProjectConfig,
   fromApiProjectConfig,
   ProjectConfigParseError,
   type CliConfigParseError,
+  type ConfigChangeSet,
   type ConfigFormat,
   type LoadedCliConfig,
-} from "@supabase/config";
+} from "@supabase/config/effect";
 import {
   applyConfigEdits,
   decodeCliConfigDocumentForValidationEffect,
-  type ConfigChangeSet,
+  loadCliConfig,
+  writeCliConfigDocumentText,
   type ConfigEdit,
   type ConfigEditRefusalReason,
   type DecodeCliConfigDocumentForValidationEffectOptions,
-  diffProjectConfig,
-  loadCliConfig,
-  writeCliConfigDocumentText,
 } from "@supabase/config/internal";
 import { operationDefinitions } from "@supabase/api/effect";
 import { Effect, FileSystem, Option, Result, Schema, SchemaIssue } from "effect";

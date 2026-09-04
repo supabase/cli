@@ -1,7 +1,7 @@
 # 0022. Config Diff Classification and Managed Surface
 
 **Status**: accepted
-**Date**: 2026-08-20 (registry consolidation 2026-08-28; review revision 2026-08-31)
+**Date**: 2026-08-20 (registry consolidation 2026-08-28; review revision 2026-08-31; public entrypoint promotion 2026-09-03)
 
 ## Problem Statement
 
@@ -15,7 +15,7 @@ This ADR was first accepted with a self-contained translation table inside `conf
 
 ## Decision
 
-`@supabase/config` owns the comparison core as pure, synchronous functions (`config-diff.ts`), with no dependency on `@supabase/api`, output formatting, or command flags — layered on CLI-2230's registry rather than a translation of its own. It is CLI-only today: `diffProjectConfig` is exported solely from the `internal` subpath, which `monorepo-import-contract.unit.test.ts` restricts to `apps/cli` — Studio has no path to it. Promotion to the public entrypoint is deliberately deferred to a follow-up when a second consumer (Studio, or a push mapper) actually needs it, rather than exported speculatively:
+`@supabase/config` owns the comparison core as pure, synchronous functions (`config-diff.ts`), with no dependency on `@supabase/api`, output formatting, or command flags — layered on CLI-2230's registry rather than a translation of its own. `diffProjectConfig` is now exported from the public `.` entrypoint, promoted from the `internal` subpath because Studio became a second real consumer — both `apps/cli` and Studio read the same classification:
 
 - **Both operands are `ProjectConfig` convergence projections (ADR 0021).** The caller builds the local operand with `fromConfigDocument({config, document})` — raw-presence-masked, canonicalized, secret-omitting — and the remote operand with `fromApiProjectConfig(response)`. All wire-shape knowledge (renames, inversions, unit conversions, the GoTrue key table) lives in `projectConfigMappingRows`, once, shared with Studio and the future push mapper.
 - **The managed surface is the registry's.** The classifier walks the union of both operands' leaf paths filtered by `isComparableProjectConfigPath` — a path with no registry row is _unmanaged by construction_ and never reported (`[studio]`, ports, image pins, `[realtime]` locals, `workers`).
