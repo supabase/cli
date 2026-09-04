@@ -476,14 +476,13 @@ describe("fromConfigDocument — CLI-only field exclusion (CLI-2316)", () => {
     return current;
   }
 
-  test("excludes local ports, db.major_version, and the whole db.pooler/migrations/seed subtrees", () => {
+  test("excludes local ports, db.pooler.{enabled,port}, and the whole db.migrations/seed subtrees", () => {
     const document = decodeCliConfig({
       api: { port: 9999, external_url: "http://example.com", max_rows: 42 },
       db: {
         port: 9999,
         shadow_port: 8888,
         health_timeout: "5m",
-        major_version: 15,
         pooler: {
           enabled: true,
           port: 7777,
@@ -505,13 +504,22 @@ describe("fromConfigDocument — CLI-only field exclusion (CLI-2316)", () => {
     expect(Object.hasOwn(projected.db ?? {}, "port")).toBe(false);
     expect(Object.hasOwn(projected.db ?? {}, "shadow_port")).toBe(false);
     expect(Object.hasOwn(projected.db ?? {}, "health_timeout")).toBe(false);
-    expect(Object.hasOwn(projected.db ?? {}, "major_version")).toBe(false);
-    expect(Object.hasOwn(projected.db ?? {}, "pooler")).toBe(false);
+    expect(Object.hasOwn(projected.db?.pooler ?? {}, "enabled")).toBe(false);
+    expect(Object.hasOwn(projected.db?.pooler ?? {}, "port")).toBe(false);
     expect(Object.hasOwn(projected.db ?? {}, "migrations")).toBe(false);
     expect(Object.hasOwn(projected.db ?? {}, "seed")).toBe(false);
-    // Siblings prove the exclusion is targeted, not a section-wide wipe.
+    // Siblings prove the exclusion is targeted, not a section-wide wipe —
+    // `pool_mode`/`default_pool_size`/`max_client_conn` are real,
+    // `v2GetProjectConfig`-reported hosted facts (PR #6451 review round) and
+    // must stay comparable for `config diff`/`config pull`, unlike `enabled`/
+    // `port` right above, which the API never reports at all.
     expect(projected.api?.max_rows).toBe(42);
     expect(projected.db?.settings?.max_connections).toBe(5);
+    expect(projected.db?.pooler).toEqual({
+      pool_mode: "session",
+      default_pool_size: 5,
+      max_client_conn: 50,
+    });
   });
 
   test("excludes the whole realtime section — it survives on neither arm", () => {
@@ -546,12 +554,29 @@ describe("fromConfigDocument — CLI-only field exclusion (CLI-2316)", () => {
     expect(projected.experimental?.webhooks).toEqual({ enabled: true });
   });
 
-  test("db.major_version and db.pooler.* still populate from the API arm — only the document arm is silent", () => {
+  test("db.major_version and db.pooler.{pool_mode,default_pool_size,max_client_conn} populate on BOTH arms (PR #6451 correction)", () => {
+    // These 4 fields are real, `v2GetProjectConfig`-reported hosted facts
+    // with no `config push` write path — but `ProjectConfig`'s actual
+    // current consumers are `config diff`/`config pull` (`v2GetProjectConfig`),
+    // not `config push` (still the legacy v1 `config-sync` mappers, with zero
+    // `ProjectConfig` involvement). Excluding them from the document arm —
+    // this test's ORIGINAL, incorrect assertion — made them permanently
+    // `unmanaged` for every stock project (the `supabase init` template
+    // declares all four), which blocked `config pull` from ever syncing the
+    // platform's real values down. They must stay symmetric across both arms.
     const documentSide = fromConfigDocument(
       decodeCliConfig({ db: { major_version: 15, pooler: { pool_mode: "session" } } }),
     );
-    expect(Object.hasOwn(documentSide.db ?? {}, "major_version")).toBe(false);
-    expect(Object.hasOwn(documentSide.db ?? {}, "pooler")).toBe(false);
+    expect(documentSide.db?.major_version).toBe(15);
+    // `default_pool_size`/`max_client_conn` are schema-decoded defaults here
+    // (20/100, `../db.ts`) — present because the whole `pooler` struct
+    // materializes on decode, not because this document declared them.
+    // `enabled`/`port` are excluded regardless (the next test covers that).
+    expect(documentSide.db?.pooler).toEqual({
+      pool_mode: "session",
+      default_pool_size: 20,
+      max_client_conn: 100,
+    });
 
     const apiSide = fromApiProjectConfig({
       database: { major_version: 17 },
@@ -565,6 +590,27 @@ describe("fromConfigDocument — CLI-only field exclusion (CLI-2316)", () => {
     });
   });
 
+  test("db.pooler.enabled and db.pooler.port are absent from BOTH arms — v2GetProjectConfig reports neither", () => {
+    const documentSide = fromConfigDocument(
+      decodeCliConfig({ db: { pooler: { enabled: true, port: 54329 } } }),
+    );
+    // `pooler` itself survives (its other 3 fields decode to their schema
+    // defaults) — only `enabled`/`port` are excluded from it.
+    expect(Object.hasOwn(documentSide.db?.pooler ?? {}, "enabled")).toBe(false);
+    expect(Object.hasOwn(documentSide.db?.pooler ?? {}, "port")).toBe(false);
+    expect(documentSide.db?.pooler?.pool_mode).toBe("transaction");
+
+    // The API arm never populates these either: no registry row maps them,
+    // since `v2GetProjectConfig`'s `pooler` struct has no `enabled`/`port`
+    // field to map from in the first place.
+    const apiSide = fromApiProjectConfig({
+      pooler: { enabled: true, port: 54329, pool_mode: "session" },
+    });
+    expect(Object.hasOwn(apiSide.db?.pooler ?? {}, "enabled")).toBe(false);
+    expect(Object.hasOwn(apiSide.db?.pooler ?? {}, "port")).toBe(false);
+    expect(apiSide.db?.pooler).toEqual({ pool_mode: "session" });
+  });
+
   // Exhaustive counterpart to the hand-picked tests above, iterating
   // `DOCUMENT_ONLY_LOCAL_PATHS` itself rather than a second hand-picked field
   // list. Unlike the x-secret exhaustiveness test just above — which builds
@@ -573,11 +619,19 @@ describe("fromConfigDocument — CLI-only field exclusion (CLI-2316)", () => {
   // mixes whole-subtree and scalar-leaf entries of different value types, so
   // one generic "put a marker at every path" builder can't populate it the
   // way the all-string x-secret patterns allow). The `toBeDefined` check
-  // below on `document` itself is what keeps that hand-written gap from
-  // silently rotting: `decodeCliConfig` drops any key the schema doesn't
-  // recognize, so a typo in the probe below, or a new
-  // `DOCUMENT_ONLY_LOCAL_PATHS` entry the probe forgets to populate, fails
-  // loudly here instead of the `toBeUndefined` assertion passing vacuously.
+  // below on `document` is a PARTIAL guard, not a complete one (PR #6451
+  // review round): it always catches a typo'd or renamed path in the
+  // CONSTANT itself (`decodeCliConfig` only ever produces the schema's own
+  // spelling, never a typo'd one, so `readAtPath` finds nothing regardless of
+  // defaults). What it does NOT reliably catch is the probe below simply
+  // forgetting to set a value at a CORRECTLY-spelled listed path: 12 of
+  // these 18 paths are always-materialized (`withDecodingDefaultKey`, never
+  // `optionalKey`), so `decodeCliConfig` fills a schema default for them even
+  // when the probe omits an explicit value — `toBeDefined` passes on that
+  // default either way. Only the other 6 — `api.external_url` and the 5
+  // `experimental.*` entries, every one `optionalKey` — stay genuinely
+  // undefined unless the probe sets them explicitly, so only THOSE 6 catch a
+  // probe that forgot to populate a listed path.
   test("no DOCUMENT_ONLY_LOCAL_PATHS entry survives fromConfigDocument, exhaustively", () => {
     expect(DOCUMENT_ONLY_LOCAL_PATHS.length).toBeGreaterThan(0);
 
@@ -593,7 +647,7 @@ describe("fromConfigDocument — CLI-only field exclusion (CLI-2316)", () => {
         shadow_port: 2,
         health_timeout: "5m",
         major_version: 15,
-        pooler: { enabled: true },
+        pooler: { enabled: true, port: 7777, pool_mode: "session" },
         migrations: { enabled: false },
         seed: { enabled: false },
         settings: { max_connections: 5 },
@@ -621,6 +675,39 @@ describe("fromConfigDocument — CLI-only field exclusion (CLI-2316)", () => {
     expect(projected.api?.max_rows).toBe(42);
     expect(projected.db?.settings?.max_connections).toBe(5);
     expect(projected.experimental?.webhooks).toEqual({ enabled: true });
+    // `major_version`/`pool_mode` are declared right alongside the excluded
+    // `pooler.enabled`/`pooler.port` above — proving the exclusion is
+    // per-field, not a `db.pooler`- or `db`-wide wipe (PR #6451 correction).
+    expect(projected.db?.major_version).toBe(15);
+    expect(projected.db?.pooler?.pool_mode).toBe("session");
+  });
+
+  // Integrity guard (PR #6451 review round): the bug this whole file's
+  // review round caught was exactly this overlap — `db.major_version` and 3
+  // of `db.pooler`'s fields were BOTH `comparableProjectConfigPaths` members
+  // (real registry rows, `./registry.ts`) AND `DOCUMENT_ONLY_LOCAL_PATHS`
+  // entries, which permanently blocked `config diff`/`config pull` from ever
+  // comparing or pulling them (see the corrected tests above). This test
+  // pins the invariant going forward: no comparable (registry-mapped) path,
+  // nor any of its ancestors, may ever be a `DOCUMENT_ONLY_LOCAL_PATHS`
+  // member — a future registry row added beneath an excluded prefix (e.g.
+  // under `db.migrations`, which today has none) would silently become
+  // uncomparable exactly like `major_version`/`pooler` did, and this test
+  // would catch it the moment that row is added.
+  test("no comparableProjectConfigPaths entry (or its ancestors) is ever a DOCUMENT_ONLY_LOCAL_PATHS member", () => {
+    expect(comparableProjectConfigPaths.length).toBeGreaterThan(0);
+
+    function isExcludedOrAncestorExcluded(path: ReadonlyArray<string>): boolean {
+      return DOCUMENT_ONLY_LOCAL_PATHS.some((excluded) => {
+        if (excluded.length > path.length) {
+          return false;
+        }
+        return excluded.every((segment, index) => segment === path[index]);
+      });
+    }
+
+    const violations = comparableProjectConfigPaths.filter(isExcludedOrAncestorExcluded);
+    expect(violations).toEqual([]);
   });
 });
 

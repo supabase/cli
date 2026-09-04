@@ -408,15 +408,20 @@ describe("diffProjectConfig classification", () => {
     expect(result.unmanaged).toEqual([]);
   });
 
-  test("db.major_version and db.pooler.* surface as unmanaged, not update, when declared (CLI-2316)", () => {
+  test("db.major_version and db.pooler.* classify as normal update/remote_only, never unmanaged (PR #6451 correction)", () => {
     // Both are `comparableProjectConfigPaths` members (`fromApiProjectConfig`
-    // maps them from real, read-only remote state), but `fromConfigDocument`
-    // never populates either — `config push` has no write path for a
-    // project's Postgres version or its Supavisor settings at all. A stock
-    // `supabase init` template declares both, so before CLI-2316 excluded
-    // them from the document projection, a differing remote value here
-    // misclassified as a pushable `update`, which push would then silently
-    // fail to apply.
+    // maps them from real, `v2GetProjectConfig`-reported state) AND
+    // `fromConfigDocument` populates both normally (CLI-2316's package review
+    // round). The ORIGINAL version of this test asserted the opposite —
+    // excluding them from the document arm entirely, which made them
+    // permanently `unmanaged` for every stock project (the `supabase init`
+    // template declares all of these), silently blocking `config pull` from
+    // ever syncing the platform's real Postgres version or pooler settings:
+    // `unmanaged` paths never reach `changes` (`hasAncestorPathKey` above),
+    // and `config pull`'s planner (`legacyPlanConfigPull`) only ever writes
+    // from `changes`. `config push` itself doesn't consult `ProjectConfig` at
+    // all today (still the legacy v1 `config-sync` mappers), so there was
+    // never a push-correctness reason to exclude them either.
     const result = diffWith(
       { db: { major_version: 15, pooler: { pool_mode: "session", default_pool_size: 15 } } },
       {
@@ -424,12 +429,37 @@ describe("diffProjectConfig classification", () => {
         pooler: { pool_mode: "transaction", default_pool_size: 20 },
       },
     );
-    expect(changeAt(result.changes, ["db", "major_version"])).toBeUndefined();
-    expect(changeAt(result.changes, ["db", "pooler", "pool_mode"])).toBeUndefined();
-    expect(changeAt(result.changes, ["db", "pooler", "default_pool_size"])).toBeUndefined();
-    expect(result.unmanaged).toContainEqual(["db", "major_version"]);
-    expect(result.unmanaged).toContainEqual(["db", "pooler", "pool_mode"]);
-    expect(result.unmanaged).toContainEqual(["db", "pooler", "default_pool_size"]);
+    expect(changeAt(result.changes, ["db", "major_version"])).toMatchObject({
+      class: "update",
+      local: 15,
+      remote: 17,
+    });
+    expect(changeAt(result.changes, ["db", "pooler", "pool_mode"])).toMatchObject({
+      class: "update",
+      local: "session",
+      remote: "transaction",
+    });
+    expect(changeAt(result.changes, ["db", "pooler", "default_pool_size"])).toMatchObject({
+      class: "update",
+      local: 15,
+      remote: 20,
+    });
+    expect(result.unmanaged).toEqual([]);
+  });
+
+  test("db.pooler.enabled and db.pooler.port are never comparable — v2GetProjectConfig reports neither", () => {
+    // Unlike their 3 siblings above, these 2 have no registry row at all
+    // (`isComparableProjectConfigPath` is false for both), so they never
+    // reach the comparison loop regardless of local/remote presence — there
+    // is no remote value to ever compare or pull for either.
+    const result = diffWith(
+      { db: { pooler: { enabled: false, port: 12345 } } },
+      { pooler: { pool_mode: "session" } },
+    );
+    expect(changeAt(result.changes, ["db", "pooler", "enabled"])).toBeUndefined();
+    expect(changeAt(result.changes, ["db", "pooler", "port"])).toBeUndefined();
+    expect(result.unmanaged).not.toContainEqual(["db", "pooler", "enabled"]);
+    expect(result.unmanaged).not.toContainEqual(["db", "pooler", "port"]);
   });
 
   test("sequence arrays register reordering as drift", () => {

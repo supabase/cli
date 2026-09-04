@@ -122,17 +122,22 @@ export type ReadonlyJsonValue =
  *
  * Relatedly (CLI-2316), a document-sourced `ProjectConfig` never carries any
  * of the paths in {@link DOCUMENT_ONLY_LOCAL_PATHS} — ports, TLS/URL
- * overrides, `db.major_version`, the whole `db.pooler`/`db.migrations`/
- * `db.seed` subtrees, every config-side `realtime.*` field, and most of
+ * overrides, `db.pooler.{enabled,port}`, the whole `db.migrations`/`db.seed`
+ * subtrees, every config-side `realtime.*` field, and most of
  * `experimental.*` — even though each lives inside one of the seven hosted
- * sections above: none has a live hosted counterpart under any CLI command,
- * so a `ProjectConfig` describing "the state after push" has nothing to say
- * about them. This is an asymmetry between the two arms for `db.major_version`
- * and `db.pooler.{pool_mode,default_pool_size,max_client_conn}` specifically:
- * {@link fromApiProjectConfig} still maps those from the platform's real
- * (informational, unpushable-via-`config push`) Postgres version and
- * Supavisor settings, so an API-sourced `ProjectConfig` CAN carry them while
- * a document-sourced one never does.
+ * sections above: none has any hosted counterpart on either arm — confirmed
+ * directly against the `v2GetProjectConfig` OpenAPI-generated schema, not
+ * assumed. `db.major_version` and `db.pooler`'s other 3 fields
+ * (`pool_mode`/`default_pool_size`/`max_client_conn`) are deliberately NOT in
+ * that list, despite genuinely having no `config push` write path either:
+ * both `config diff` and `config pull` — `ProjectConfig`'s actual current
+ * consumers — need them to stay normally comparable so `config pull` can
+ * still sync the platform's real (read-only-via-push) Postgres version and
+ * pooler settings into the file; only `config push` itself (which doesn't
+ * consult `ProjectConfig` at all today — it still runs on the legacy v1
+ * `config-sync` mappers) would ever need to know these are unpushable, and
+ * that distinction belongs to CLI-2313/CLI-2314's push rework, not to this
+ * list.
  */
 export type ProjectConfig = DeepPartial<Pick<CliConfig, HostedSectionKey>> & {
   // Readonly, recursively: the runtime value is deep-frozen
@@ -144,11 +149,17 @@ export type ProjectConfig = DeepPartial<Pick<CliConfig, HostedSectionKey>> & {
 
 /**
  * Deep-copies `value` (a hosted-section subtree rooted at `path`) at the
- * OBJECT level, dropping every leaf whose full path matches an `x-secret`
+ * OBJECT level for the DOCUMENT arm specifically — named for that arm (PR
+ * #6451 review round; the prior name, `copyHostedValueWithoutSecrets`, only
+ * described its original single responsibility and this function has never
+ * had a second caller: `fromApiProjectConfig` never shares it, since the API
+ * arm's own secret handling is the `isSecret`-row branch in
+ * `applyMappingRows` below, an entirely different mechanism over a different
+ * input shape) — dropping every leaf whose full path matches an `x-secret`
  * schema annotation (CLI-2230's secret-omission finding) OR is a member of
  * {@link DOCUMENT_ONLY_LOCAL_PATHS} (CLI-2316 — a field that lives inside a
- * hosted section but describes purely local dev-server behavior no
- * `config push` can ever act on): `fromConfigDocument`'s
+ * hosted section but has no live hosted counterpart on either arm):
+ * `fromConfigDocument`'s
  * input is a *decoded* `CliConfig`/`EffectiveConfig`, where `secret()`-annotated fields
  * (`../lib/env.ts`) hold plaintext or an unresolved `env(VAR)` literal, never
  * a `Redacted` wrapper (decode never redacts — only
@@ -188,7 +199,7 @@ export type ProjectConfig = DeepPartial<Pick<CliConfig, HostedSectionKey>> & {
  * explicit value (e.g. "no redirect URLs"), never litter from secret
  * stripping.
  */
-function copyHostedValueWithoutSecrets(value: unknown, path: ReadonlyArray<string>): unknown {
+function copyHostedValueForDocument(value: unknown, path: ReadonlyArray<string>): unknown {
   if (Array.isArray(value)) {
     // Elements are copied recursively too — this function's input is never
     // schema-validated, so an object-shaped array element is still reachable
@@ -199,7 +210,7 @@ function copyHostedValueWithoutSecrets(value: unknown, path: ReadonlyArray<strin
     // empty-record *elements* are preserved (the empty-container prune below
     // applies only to record children — arrays compare wholesale, so their
     // contents must survive verbatim).
-    return value.map((element) => copyHostedValueWithoutSecrets(element, path));
+    return value.map((element) => copyHostedValueForDocument(element, path));
   }
   if (isObject(value)) {
     const result: Record<string, unknown> = {};
@@ -208,7 +219,7 @@ function copyHostedValueWithoutSecrets(value: unknown, path: ReadonlyArray<strin
       if (isSecretPath(childPath) || isDocumentOnlyLocalPath(childPath)) {
         continue;
       }
-      const copied = copyHostedValueWithoutSecrets(child, childPath);
+      const copied = copyHostedValueForDocument(child, childPath);
       // Prune only containers this copy itself EMPTIED (a secret-stripped
       // subtree, possibly cascading upward) — never one that was empty in the
       // input. An originally-empty object can be data: a record entry's value
@@ -232,52 +243,72 @@ function copyHostedValueWithoutSecrets(value: unknown, path: ReadonlyArray<strin
 
 /**
  * `fromConfigDocument`-ONLY exclusions (CLI-2316), applied by
- * {@link isDocumentOnlyLocalPath} inside {@link copyHostedValueWithoutSecrets}'s
+ * {@link isDocumentOnlyLocalPath} inside {@link copyHostedValueForDocument}'s
  * object recursion, alongside {@link isSecretPath}. Every one of these fields
  * lives inside a {@link HOSTED_SECTION_KEYS} section, so the whole-section
- * copy would otherwise include it, but none can ever converge toward or
- * diverge from anything the platform holds via `config push` — verified by
- * tracing every `apps/cli/src/legacy/commands/config/push/config-sync/*.sync.ts`
- * mapper plus `seed buckets`, `db inspect`, `db schema declarative generate`,
- * and `start`'s local bootstrap. Projecting one would contradict
- * {@link fromConfigDocument}'s own "predicts the state AFTER pushing
- * `config`" contract. That said, this list mixes two different REASONS a
- * field can't converge, not one — most entries have no hosted concept behind
- * them at all, but `db.major_version` and 3 of `db.pooler`'s 5 fields name a
- * REAL, platform-owned hosted fact that `config push` simply has no write
- * path for (the API arm still reports it, read-only) — see those two
- * entries' own bullets below for the distinction:
+ * copy would otherwise include it, but none has ANY real hosted counterpart —
+ * confirmed against the actual `v2GetProjectConfig` OpenAPI-generated schema
+ * (`packages/api/src/generated/contracts.ts`), not just this package's own
+ * `./api-attributes.ts` mirror of it, and cross-checked against every
+ * `apps/cli/src/legacy/commands/config/push/config-sync/*.sync.ts` mapper
+ * plus `seed buckets`, `db inspect`, `db schema declarative generate`, and
+ * `start`'s local bootstrap.
+ *
+ * This is a narrower, corrected list (PR #6451 review round): the original
+ * version of this list additionally excluded `db.major_version` and the
+ * WHOLE `db.pooler` subtree, reasoning that `config push` never writes
+ * either. That reasoning doesn't hold for what this list actually gates:
+ * `fromConfigDocument`/`ProjectConfig` is consumed by `config diff` and
+ * `config pull` (`v2GetProjectConfig`) TODAY — `config push` still runs
+ * entirely on the legacy v1 `config-sync/*.sync.ts` mappers below, with zero
+ * `ProjectConfig` involvement, so "push doesn't read it" says nothing about
+ * whether this list should exclude it. `database.major_version` and
+ * `pooler.{pool_mode,default_pool_size,max_client_conn}` are real,
+ * `v2GetProjectConfig`-reported hosted facts (confirmed directly against the
+ * OpenAPI-generated schema, not assumed): excluding them made them
+ * PERMANENTLY `unmanaged` in `config diff` (`isDeclaredAtPath &&
+ * localValue === undefined`, `./config-diff.ts`) for every stock project,
+ * since the `supabase init` template declares all four
+ * (`apps/cli/src/shared/init/project-init.templates.ts`) — unlike, say,
+ * `auth.oauth_server`, which starts UNDECLARED and only becomes `unmanaged`
+ * on ITS first pull. `unmanaged` paths never reach `config diff`'s
+ * `changes` array at all (`hasAncestorPathKey`, `./config-diff.ts`), and
+ * `config pull`'s planner only ever writes from `changes`
+ * (`legacyPlanConfigPull`, `pull.plan.ts`) — so excluding these four
+ * permanently blocked `config pull` from ever syncing the platform's real
+ * Postgres version or pooler settings into the file, for every project,
+ * forever. `pooler.enabled`/`pooler.port` stay excluded: `v2GetProjectConfig`
+ * reports neither (verified directly against the generated schema — the
+ * `pooler` struct has no `enabled` or `port` field at all), so unlike their
+ * 3 siblings they have no hosted fact to ever compare or pull:
  *
  * - `api.port`, `api.tls`, `api.external_url` — local Kong bind port/TLS
  *   termination/URL override. `apiToUpdateBody` (`api.sync.ts`) reads only
- *   `db_schema`/`db_extra_search_path`/`max_rows`; none of these three.
+ *   `db_schema`/`db_extra_search_path`/`max_rows`; none of these three. (All
+ *   three ARE still read by the auth mapper — `auth.sync.ts`'s
+ *   `jwtIssuer`/`authExternalUrl` derivation reads `api.external_url`/
+ *   `api.tls` to compute a COMPARISON-ONLY effective URL/issuer for
+ *   `auth.jwt_issuer`; that derived value is compared against the remote but
+ *   never itself sent in `authToUpdateBody` — a comparison-input role, not a
+ *   push target, so it doesn't change these three fields' own exclusion.)
  * - `db.port`, `db.shadow_port`, `db.health_timeout` — local Postgres/
  *   shadow-DB bind ports and local health-check wait. None is referenced
- *   anywhere in `db.sync.ts`; a hosted project has no "port" (it's reached
- *   over a fixed HTTPS URL) and no CLI-configurable startup health check.
- * - `db.major_version` — selects which local Postgres Docker image to run.
- *   The REMOTE database's actual major version IS a real, platform-owned
- *   hosted fact — mapped separately by {@link fromApiProjectConfig} (the
- *   `database.major_version` row in `./registry.ts`, read-only reporting)
- *   — that mapping is correct and untouched by this list. This document-side
- *   field just isn't how you'd ever change it: there is no `config push`
- *   write path for a project's Postgres version at all, so the document arm
- *   has no comparable value to project.
- * - `db.pooler` — the WHOLE subtree (`enabled`, `port`, `pool_mode`,
- *   `default_pool_size`, `max_client_conn`), not just `port`: legacy
- *   `config-sync/` has no `pooler`/`pgbouncer`/`supavisor` reference
- *   anywhere — `db.pooler.*` is read exclusively by `start`'s local
- *   Supavisor bootstrap. The same `db.major_version` situation applies to 3
- *   of these 5 fields — {@link fromApiProjectConfig} DOES map
- *   `pool_mode`/`default_pool_size`/`max_client_conn` from real, read-only
- *   remote Supavisor state (`./registry.ts`), untouched here for the same
- *   reason; `enabled` and `port` have no hosted concept on either arm.
+ *   anywhere in `db.sync.ts`, and `v2GetProjectConfig` reports none of them;
+ *   a hosted project has no "port" (it's reached over a fixed HTTPS URL) and
+ *   no CLI-configurable startup health check.
+ * - `db.pooler.enabled`, `db.pooler.port` — ONLY these 2 of the section's 5
+ *   fields (see above for why `pool_mode`/`default_pool_size`/
+ *   `max_client_conn` are NOT here): `v2GetProjectConfig`'s `pooler` struct
+ *   has no `enabled`/`port` field, and legacy `config-sync/` has no
+ *   `pooler`/`pgbouncer`/`supavisor` reference anywhere — both fields are
+ *   read exclusively by `start`'s local Supavisor bootstrap, with no hosted
+ *   fact behind either on any arm.
  * - `db.migrations`, `db.seed` — whole subtrees (their own children,
  *   `enabled`/`schema_paths`/`sql_paths`, never need listing separately: the
  *   container itself is skipped before this function ever recurses into
  *   them). Both describe how the LOCAL CLI behaves during `db push`/`db
- *   reset`, not anything about the hosted project — no matching API
- *   attribute exists for either.
+ *   reset`, not anything about the hosted project — no matching
+ *   `v2GetProjectConfig` attribute exists for either.
  * - `realtime.enabled`, `realtime.ip_version`, `realtime.max_header_length`
  *   — every config-side `realtime` field, i.e. the whole section (see
  *   `./registry.ts`'s own comment on why the 12 real hosted `realtime.*` API
@@ -301,26 +332,30 @@ function copyHostedValueWithoutSecrets(value: unknown, path: ReadonlyArray<strin
  *   deliberately NOT in this list.
  *
  * Deliberately NOT listed, despite looking like the same "local toggle"
- * shape as the entries above — each was checked against how `config push`
- * actually treats it, not excluded on the strength of its description alone:
- * `auth.enabled`/`storage.enabled` (kept: {@link DISABLED_SENTINEL_PRUNES}'s
- * `["auth"]`/`["storage"]` entries already deliberately preserve
- * `{enabled: false}` as a reviewed "is this section managed by push" signal,
- * PR #6339), `db.network_restrictions.enabled` (kept: the same deliberate
- * management-opt-out shape, CLI-2314's own ruling), `api.auto_expose_new_tables`
- * and `auth.third_party`/`auth.jwt_issuer`/`auth.signing_keys_path` (real
- * hosted concepts push either already sends or simply hasn't been wired to
- * send yet — a push-capability gap, not a CLI-only field), and
- * `storage.buckets` (real hosted state via `seed buckets --linked`, which
- * writes buckets onto the remote project through the Storage API — a
- * different write path than `config push`, but still hosted).
+ * shape as the entries above — each was checked against `v2GetProjectConfig`
+ * and/or how `config push` actually treats it, not excluded on the strength
+ * of its description alone: `auth.enabled`/`storage.enabled` (kept:
+ * {@link DISABLED_SENTINEL_PRUNES}'s `["auth"]`/`["storage"]` entries already
+ * deliberately preserve `{enabled: false}` as a reviewed "is this section
+ * managed by push" signal, PR #6339), `db.network_restrictions.enabled`
+ * (kept: the same deliberate management-opt-out shape, CLI-2314's own
+ * ruling), `api.auto_expose_new_tables` and
+ * `auth.third_party`/`auth.jwt_issuer`/`auth.signing_keys_path` (real hosted
+ * concepts push either already sends or simply hasn't been wired to send yet
+ * — a push-capability gap, not a CLI-only field), and `storage.buckets`
+ * (real hosted state via `seed buckets --linked`, which writes buckets onto
+ * the remote project through the Storage API — a different write path than
+ * `config push`, but still hosted; a bucket entry's OWN `objects_path` child
+ * is itself local-only — the local upload-source directory, never sent
+ * anywhere — but `storage.buckets` has no registry row at all today, so
+ * nothing currently reads `ProjectConfig` at that path either way).
  *
  * `studio.*`/`inbucket.*` need no entry here despite being named in the
- * report this list is derived from (Slack, Ivan, 2026-09-03): neither
- * `studio` nor `local_smtp` (the config-side key `[inbucket]` normalizes to,
- * `../io.ts`) is a member of `HOSTED_SECTION_KEYS` at all, so both are
- * already excluded by construction — confirmed by this file's own "keeps
- * exactly the hosted sections" test.
+ * report this list is derived from: neither `studio` nor `local_smtp` (the
+ * config-side key `[inbucket]` normalizes to, `../io.ts`) is a member of
+ * `HOSTED_SECTION_KEYS` at all, so both are already excluded by
+ * construction — confirmed by this file's own "keeps exactly the hosted
+ * sections" test.
  *
  * Exact-match only, no wildcard segments: unlike `../lib/secret-paths.ts`'s
  * patterns (which need a `"*"` segment for a dynamic `Schema.Record` key,
@@ -334,8 +369,8 @@ export const DOCUMENT_ONLY_LOCAL_PATHS: ReadonlyArray<ReadonlyArray<string>> = [
   ["db", "port"],
   ["db", "shadow_port"],
   ["db", "health_timeout"],
-  ["db", "major_version"],
-  ["db", "pooler"],
+  ["db", "pooler", "enabled"],
+  ["db", "pooler", "port"],
   ["db", "migrations"],
   ["db", "seed"],
   ["realtime", "enabled"],
@@ -517,9 +552,9 @@ function unwrapConfigDocumentSource(input: Record<string, unknown>): {
  * operand — a full `CliConfig` is one) down to its hosted-section subset.
  * Copies each hosted section deeply and only when own-present on `config`,
  * omitting every `x-secret` leaf and every {@link DOCUMENT_ONLY_LOCAL_PATHS}
- * entry — a field with no live hosted counterpart under any CLI command, e.g.
- * `db.port`, `db.major_version`, `db.pooler`, `db.migrations`, `db.seed`, the
- * whole `realtime` section (both via {@link copyHostedValueWithoutSecrets};
+ * entry — a field with no live hosted counterpart on either arm, e.g.
+ * `db.port`, `db.pooler.{enabled,port}`, `db.migrations`, `db.seed`, the
+ * whole `realtime` section (both via {@link copyHostedValueForDocument};
  * CLI-2316) — and canonicalizing every field a registry row's
  * `normalizeDocument` covers ({@link applyDocumentNormalizations}) — parity
  * with
@@ -623,7 +658,7 @@ export function fromConfigDocument(input: unknown): unknown {
       let copied: unknown;
       try {
         section = config[key];
-        copied = copyHostedValueWithoutSecrets(section, [key]);
+        copied = copyHostedValueForDocument(section, [key]);
       } catch (cause) {
         if (cause instanceof ProjectConfigParseError) {
           throw cause;
@@ -634,7 +669,7 @@ export function fromConfigDocument(input: unknown): unknown {
           reason: "caller_misuse",
         });
       }
-      // Same emptied-by-the-copy prune as `copyHostedValueWithoutSecrets`'s
+      // Same emptied-by-the-copy prune as `copyHostedValueForDocument`'s
       // own recursion, applied at the section boundary: a section that turns
       // out to contain nothing but secrets must disappear from the projection
       // entirely, while a section the document genuinely declared empty
