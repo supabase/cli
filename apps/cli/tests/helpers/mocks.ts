@@ -7,23 +7,23 @@ import type { ReactElement } from "react";
 import type { CliProjectEnvironment, CliProjectPaths } from "@supabase/config";
 import { Stack, StackServiceState, type StackInfo } from "@supabase/stack/effect";
 import { HttpTransportClient } from "@supabase/stack/testing";
-import { Api } from "../../src/next/auth/api.service.ts";
-import type { LoginSessionResponse, ProfileResponse } from "../../src/next/auth/api.service.ts";
-import { Credentials } from "../../src/next/auth/credentials.service.ts";
-import { Crypto } from "../../src/next/auth/crypto.service.ts";
-import { ApiError } from "../../src/next/auth/errors.ts";
-import { cliSettingsLayer } from "../../src/next/config/cli-settings.layer.ts";
-import { CliProjectHome } from "../../src/next/config/cli-project-home.service.ts";
+import { Api } from "../../src/shared/auth/api.service.ts";
+import type { LoginSessionResponse, ProfileResponse } from "../../src/shared/auth/api.service.ts";
+import { Credentials } from "../../src/shared/auth/credentials.service.ts";
+import { Crypto } from "../../src/shared/auth/crypto.service.ts";
+import { ApiError } from "../../src/shared/auth/errors.ts";
+import { cliSettingsLayer } from "../../src/shared/config/cli-settings.layer.ts";
+import { CliProjectHome } from "../../src/shared/config/cli-project-home.service.ts";
 import {
   CliProjectLocalServiceVersions,
   type LocalServiceVersionsState,
-} from "../../src/next/config/cli-project-local-service-versions.service.ts";
-import { ProjectLinkRemote } from "../../src/next/config/project-link-remote.service.ts";
+} from "../../src/shared/config/cli-project-local-service-versions.service.ts";
+import { ProjectLinkRemote } from "../../src/shared/config/project-link-remote.service.ts";
 import {
   ProjectLinkState,
   type ProjectLinkStateValue,
-} from "../../src/next/config/project-link-state.service.ts";
-import { CliProjectContext } from "../../src/next/config/cli-project-context.service.ts";
+} from "../../src/shared/config/project-link-state.service.ts";
+import { CliProjectContext } from "../../src/shared/config/cli-project-context.service.ts";
 import { NonInteractiveError } from "../../src/shared/output/errors.ts";
 import { Output } from "../../src/shared/output/output.service.ts";
 import type { OutputFormat } from "../../src/shared/output/types.ts";
