@@ -94,11 +94,21 @@ export interface LegacyConfigPullWarning {
    * `pull.handler.ts`, from its post-plan convergence check (plan §1.9,
    * ADR 0021 decision 4) — a planned write that the convergence check finds
    * reclassifies as `unmanaged` once applied, because the value just written
-   * made itself invisible to the projection again. Has no known live
-   * trigger today: CLI-2314 retired the one prune that could still
-   * reclassify a value after writing it (`auth.oauth_server`'s old
-   * unconditional removal) — see ADR 0021's CLI-2314 addendum. Retained as
-   * a structural safety net for a future asymmetric prune, not dead code.
+   * made itself invisible to the projection again. CLI-2314 retired the one
+   * `DISABLED_SENTINEL_PRUNES`-family prune that could still reclassify a
+   * value after writing it (`auth.oauth_server`'s old unconditional
+   * removal) — see ADR 0021's CLI-2314 addendum — but a live trigger
+   * remains via a different mechanism: `applyDisabledSentinels`'s
+   * cross-section rule deletes `auth.rate_limit.email_sent` whenever
+   * `auth.email.smtp.enabled` decodes explicitly `false`, on BOTH arms — the
+   * API arm only spares it for a genuinely SPARSE response that omits
+   * `smtp_host` entirely (an ordinary `smtp_host: ""` response still prunes
+   * it there too). So a sparse remote reporting a real
+   * `rate_limit_email_sent` while omitting `smtp_host`, pulled into a
+   * document that never declares `[auth.email.smtp]`, re-masks the
+   * just-written path on the residual check (`pull.integration.test.ts`
+   * pins the exact construction). Retained as a structural safety net for
+   * any other asymmetric/cross-path prune too, not dead code.
    * Always carries `path`. `would_invalidate` also carries
    * `path` — the nearest enclosing family/provider table
    * {@link legacyDropConfigPullUnvalidatableFamilies} dropped every write

@@ -238,18 +238,34 @@ function pathKey(path: ReadonlyArray<string>): string {
  * this point (this check runs BEFORE the dry-run/prompt/write/validation
  * steps), so the error can truthfully say so. A residual `unmanaged` path
  * would mean the very value this run just wrote made itself invisible to the
- * projection again. Every surviving `@supabase/config` prune
- * (`DISABLED_SENTINEL_PRUNES`, `applyRawPresenceMask`) is conditional on
- * exactly the state a write establishes — a container's OWN decoded
- * `enabled`, or the raw file's OWN declared-ness — so writing a value
- * satisfies the very condition that would otherwise hide it again, and this
- * branch has no known live trigger today. CLI-2314 retired the one prune
+ * projection again. Most surviving `@supabase/config` prunes
+ * (`DISABLED_SENTINEL_PRUNES`, most of `applyRawPresenceMask`) are
+ * conditional on exactly the state a write establishes — a container's OWN
+ * decoded `enabled`, or the raw file's OWN declared-ness — so writing a
+ * value usually satisfies the very condition that would otherwise hide it
+ * again. CLI-2314 retired the one `DISABLED_SENTINEL_PRUNES`-family prune
  * that didn't have this property (`auth.oauth_server`'s old unconditional
  * removal, ignoring what had just been written) — see ADR 0021's CLI-2314
  * addendum; `pull.integration.test.ts`'s "no longer trips the ADR 0021
- * unpushable warning" case pins the resulting behavior for that family.
- * Retained as a structural safety net for a future asymmetric prune, not
- * dead code: surfaced as a `"unpushable"` warning, reusing the SAME
+ * unpushable warning" case pins the resulting behavior for that family. This
+ * branch DOES still have a known live trigger, though, via a DIFFERENT
+ * cross-path prune: `applyDisabledSentinels`'s own "cross-section rule"
+ * (`project-config.ts`, search "Cross-section rule: the email rate limit")
+ * deletes `auth.rate_limit.email_sent` whenever `auth.email.smtp.enabled` is
+ * explicitly `false` — checked on BOTH arms, not gated by raw presence. On
+ * the API arm this only spares `email_sent` when the response is genuinely
+ * SPARSE (never reports `smtp_host` at all, so `enabled` decodes as absent
+ * rather than an explicit `false`) — an ordinary response with
+ * `smtp_host: ""` (the common "SMTP not configured" shape) still prunes it
+ * there too, leaving nothing to diff. So the live trigger is narrow: a
+ * sparse remote response reporting a real `rate_limit_email_sent` while
+ * omitting `smtp_host` entirely, pulled into a LOCAL document that also
+ * never declares `[auth.email.smtp]` (so `applyRawPresenceMask` masks the
+ * just-written value again on the residual check) — see
+ * `pull.integration.test.ts`'s matching case for the exact construction.
+ * Retained as a structural safety net for any OTHER asymmetric/cross-path
+ * prune too, not dead code: surfaced as a `"unpushable"` warning, reusing
+ * the SAME
  * `plan.warnings` / `legacyRenderConfigPullText` "Warnings:" hook the
  * planner's own `dual_scope`/`duplicates_root`/`array_drift` warnings
  * already render through, rather than adding a new payload field.

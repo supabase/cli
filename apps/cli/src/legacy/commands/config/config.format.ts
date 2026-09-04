@@ -185,13 +185,20 @@ export function legacyConfigMaskedCaveat(masked: ReadonlyArray<ReadonlyArray<str
   return `${legacyConfigPlural(masked.length, "credential value", "credential values")} not compared (masked by the API): ${masked.map(legacyConfigRenderPath).join(", ")}`;
 }
 
+// Cause-neutral wording (review round, CLI-2314): not every `unmanaged` path
+// is hidden because ITS OWN section is disabled — `auth.rate_limit.email_sent`
+// is omitted because a DIFFERENT field, `auth.email.smtp`, is undeclared, and
+// an unselected SMS provider's credentials are omitted because another
+// provider is active, not because anything is "disabled". "Not part of the
+// current comparison" covers every surviving `DISABLED_SENTINEL_PRUNES`/
+// `applyRawPresenceMask` reason without overclaiming a specific one.
 export function legacyConfigUnmanagedCaveat(
   unmanaged: ReadonlyArray<ReadonlyArray<string>>,
 ): string {
   const phrase =
     unmanaged.length === 1
-      ? "1 declared property is not managed while its section is disabled and was not compared"
-      : `${unmanaged.length} declared properties are not managed while their section is disabled and were not compared`;
+      ? "1 declared property is not part of the current comparison and was not compared"
+      : `${unmanaged.length} declared properties are not part of the current comparison and were not compared`;
   return `${phrase}: ${unmanaged.map(legacyConfigRenderPath).join(", ")}`;
 }
 

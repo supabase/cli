@@ -643,7 +643,7 @@ describe("legacyPushSummaryMessage", () => {
         ...EMPTY_SUMMARY_INPUT,
         services: [
           { service: "api", status: "up_to_date", changes: [] },
-          { service: "storage", status: "disabled", changes: [] },
+          { service: "db.network_restrictions", status: "disabled", changes: [] },
         ],
       }),
     ).toBe("Nothing to push: the project already matches the declared properties.");
@@ -653,7 +653,7 @@ describe("legacyPushSummaryMessage", () => {
     expect(
       legacyPushSummaryMessage({
         ...EMPTY_SUMMARY_INPUT,
-        unmanaged: [["auth", "oauth_server", "enabled"]],
+        unmanaged: [["auth", "oauth_server", "authorization_url_path"]],
         unmanagedCount: 1,
       }),
     ).toBe(
@@ -663,7 +663,7 @@ describe("legacyPushSummaryMessage", () => {
       legacyPushSummaryMessage({
         ...EMPTY_SUMMARY_INPUT,
         unmanaged: [
-          ["auth", "oauth_server", "enabled"],
+          ["auth", "oauth_server", "authorization_url_path"],
           ["auth", "oauth_server", "allow_dynamic_registration"],
         ],
         unmanagedCount: 2,
@@ -681,7 +681,7 @@ describe("legacyPushSummaryMessage", () => {
       legacyPushSummaryMessage({
         ...EMPTY_SUMMARY_INPUT,
         unmanaged: [
-          ["auth", "oauth_server", "enabled"],
+          ["auth", "oauth_server", "authorization_url_path"],
           ["auth", "oauth_server", "allow_dynamic_registration"],
           ["db", "pooler", "pool_mode"],
         ],
@@ -787,7 +787,7 @@ describe("legacyPushSummaryMessage", () => {
         unsupported: [["db", "major_version"]],
         unencodable: [],
         forced: [],
-        unmanaged: [["auth", "oauth_server", "enabled"]],
+        unmanaged: [["auth", "oauth_server", "authorization_url_path"]],
         unmanagedCount: 1,
         secrets: [NOT_SET_SECRET],
         authWriteRan: false,
@@ -831,7 +831,7 @@ describe("legacyPushPayload", () => {
       },
     ],
     forced: [{ path: ["db", "network_restrictions", "allowed_cidrs_v6"], value: [] }],
-    unmanaged: [["auth", "oauth_server", "enabled"]],
+    unmanaged: [["auth", "oauth_server", "authorization_url_path"]],
     unmanagedCount: 1,
     secrets: [SENT_SECRET, UNCHANGED_SECRET, NOT_SET_SECRET, GATED_SECRET],
     authWriteRan: true,
@@ -854,7 +854,7 @@ describe("legacyPushPayload", () => {
         },
       ],
       forced: [{ path: ["db", "network_restrictions", "allowed_cidrs_v6"], value: [] }],
-      unmanaged: [["auth", "oauth_server", "enabled"]],
+      unmanaged: [["auth", "oauth_server", "authorization_url_path"]],
       secrets: {
         sent: [["auth", "captcha", "secret"]],
         unchanged: [["auth", "hook", "mfa_verification_attempt", "secrets"]],

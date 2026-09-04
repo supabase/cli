@@ -312,16 +312,21 @@ export const legacyConfigPush = Effect.fn("legacy.config.push")(function* (
     // Config lives at <projectRoot>/supabase/config.{toml,json}.
     const configProjectRoot = dirname(dirname(loaded.path));
 
-    // 4. Email content validation runs during config load, before any network call.
-    const authEmailContent = config.auth.enabled
-      ? yield* Effect.try({
-          try: () => legacyLoadAuthEmailContent(configProjectRoot, config.auth.email),
-          catch: (cause) =>
-            new LegacyConfigPushLoadConfigError({
-              message: cause instanceof Error ? cause.message : String(cause),
-            }),
-        })
-      : { template: {}, notification: {} };
+    // 4. Email content validation runs during config load, before any network
+    // call. Unconditional regardless of `config.auth.enabled` (CLI-2314,
+    // review round): that flag is the local-only GoTrue Docker toggle and no
+    // longer gates whether the `auth` resource is pushed (`push.plan.ts`'s
+    // `legacyPushResourceEnabled`) — gating this load the same way it used
+    // to would silently push empty template/notification content over a
+    // real hosted customization whenever `auth.enabled = false`, even though
+    // every other declared `auth.*` field is pushed normally in that case.
+    const authEmailContent = yield* Effect.try({
+      try: () => legacyLoadAuthEmailContent(configProjectRoot, config.auth.email),
+      catch: (cause) =>
+        new LegacyConfigPushLoadConfigError({
+          message: cause instanceof Error ? cause.message : String(cause),
+        }),
+    });
 
     // 5. Determine the push target (plain project vs. branch vs. unknown)
     // and, for a CONFIRMED branch, gate the push behind an explicit
@@ -566,17 +571,21 @@ export const legacyConfigPush = Effect.fn("legacy.config.push")(function* (
     // response block was omitted from the read is `unavailable` — nothing is
     // compared, nothing is written (S5/D2); the `Comparison scope:` line
     // above already explains why. Otherwise, a gated-off resource is
-    // `disabled` — today (CLI-2314) this can only fire for
-    // `db.network_restrictions`, the one resource whose own `enabled` flag is
-    // a genuine hosted-side management opt-out: the projection's
-    // disabled-sentinel prune still removes its `allowed_cidrs`/
-    // `allowed_cidrs_v6` siblings before diffing, so `plan.changesByResource`
-    // never has anything left to route to it while the flag is off. `auth`
-    // and `storage` always return `true` from `legacyPushResourceEnabled`
-    // now — their local `enabled` toggle only controls a Docker service the
-    // Management API has no concept of, so this branch can no longer fire
-    // for either — and a gated-on resource dispatches to its own
-    // encoder/write pair.
+    // `disabled` — today (CLI-2314) this can fire for two of the six:
+    // `db.network_restrictions`, whose own `enabled` flag is a genuine
+    // hosted-side management opt-out (the projection's disabled-sentinel
+    // prune still removes its `allowed_cidrs`/`allowed_cidrs_v6` siblings
+    // before diffing, so `plan.changesByResource` never has anything left to
+    // route to it while the flag is off); and `db.ssl_enforcement`, gated on
+    // simple presence (`legacyPushResourceEnabled`'s
+    // `local.db?.ssl_enforcement !== undefined` case) rather than a decoded
+    // `enabled` value — the stock `supabase init` template ships this block
+    // commented out, so a fresh project hits `disabled` here by default.
+    // `auth` and `storage` always return `true` from
+    // `legacyPushResourceEnabled` now — their local `enabled` toggle only
+    // controls a Docker service the Management API has no concept of, so
+    // this branch can no longer fire for either — and a gated-on resource
+    // dispatches to its own encoder/write pair.
     for (const resource of LEGACY_PUSH_RESOURCES) {
       if (scope.missing.includes(legacyPushResponseBlock(resource))) {
         services.push({ service: resource, status: "unavailable", changes: [] });

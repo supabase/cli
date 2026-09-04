@@ -603,6 +603,50 @@ describe("legacy config pull integration", () => {
     },
   );
 
+  it.live(
+    "a first-pull auth.rate_limit.email_sent DOES trip the ADR 0021 unpushable warning, for a sparse remote (review round, CLI-2314)",
+    () => {
+      // `applyDisabledSentinels`'s cross-section rule (`project-config.ts`,
+      // search "Cross-section rule: the email rate limit") deletes
+      // `auth.rate_limit.email_sent` whenever `auth.email.smtp.enabled`
+      // decodes explicitly `false` — checked on BOTH arms. The stock fixture
+      // reports `smtp_host: ""` (an ordinary "not configured" response),
+      // which decodes `enabled: false` explicitly and would prune
+      // `email_sent` on the API arm too, leaving nothing to diff — deleting
+      // `smtp_host` from the response instead (never mentioning it, a
+      // genuinely SPARSE shape) is what spares `email_sent` there. Combined
+      // with the LOCAL document never declaring `[auth.email.smtp]` either
+      // (so `applyRawPresenceMask` re-masks the just-written value on the
+      // residual check), this reproduces the one live trigger for the
+      // "unpushable" warning today.
+      const { layer, out } = setup({
+        toml: 'project_id = "test"\n',
+        yes: true,
+        v2: {
+          status: 200,
+          body: v2Response({
+            attributes: (attributes) => {
+              const auth = { ...(attributes["auth"] as Record<string, unknown>) };
+              delete auth["smtp_host"];
+              auth["rate_limit_email_sent"] = 50;
+              return { ...attributes, auth };
+            },
+          }),
+        },
+      });
+      return Effect.gen(function* () {
+        yield* legacyConfigPull(noFlags);
+        const after = readFileSync(configPath(), "utf8");
+        expect(after).toContain("[auth.rate_limit]");
+        expect(after).toContain("email_sent = 50");
+        expect(out.stdoutText).toContain("Warnings:");
+        expect(out.stdoutText).toContain(
+          "auth.rate_limit.email_sent was written here, but `config push` cannot send it back to the platform",
+        );
+      }).pipe(Effect.provide(layer));
+    },
+  );
+
   it.live("a clean remote reports nothing to write without prompting", () => {
     const { layer, out } = setup({ toml: 'project_id = "test"\n' });
     return Effect.gen(function* () {
@@ -2048,7 +2092,7 @@ describe("legacy config pull integration", () => {
       yield* legacyConfigPull(noFlags);
       expect(out.stdoutText).toContain("No config differences found.");
       expect(out.stdoutText).toContain(
-        "Note: 1 declared property is not managed while its section is disabled and was not compared: auth.oauth_server.allow_dynamic_registration",
+        "Note: 1 declared property is not part of the current comparison and was not compared: auth.oauth_server.allow_dynamic_registration",
       );
     }).pipe(Effect.provide(layer));
   });
@@ -2091,7 +2135,7 @@ describe("legacy config pull integration", () => {
         yield* legacyConfigPull(noFlags);
         expect(out.stdoutText).toContain("No config differences found.");
         expect(out.stdoutText).toContain(
-          "Note: 2 declared properties are not managed while their section is disabled and were not compared: auth.oauth_server.allow_dynamic_registration, auth.oauth_server.authorization_url_path",
+          "Note: 2 declared properties are not part of the current comparison and were not compared: auth.oauth_server.allow_dynamic_registration, auth.oauth_server.authorization_url_path",
         );
       }).pipe(Effect.provide(layer));
     },

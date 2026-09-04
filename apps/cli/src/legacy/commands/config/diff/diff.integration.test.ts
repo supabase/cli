@@ -1009,7 +1009,7 @@ describe("legacy config diff integration", () => {
       yield* legacyConfigDiff(noFlags);
       expect(out.stdoutText).toContain("No config differences found.");
       expect(out.stdoutText).toContain(
-        "Note: 1 declared property is not managed while its section is disabled and was not compared: auth.oauth_server.authorization_url_path",
+        "Note: 1 declared property is not part of the current comparison and was not compared: auth.oauth_server.authorization_url_path",
       );
     }).pipe(Effect.provide(layer));
   });

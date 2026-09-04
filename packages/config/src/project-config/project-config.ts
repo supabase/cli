@@ -796,15 +796,22 @@ function applySmsProviderPrecedence(result: Record<string, unknown>): void {
 }
 
 /**
- * Fields the legacy push does not manage while their section's toggle is off
- * — it writes only the disable sentinel for each of these (storage
- * Iceberg/Vector: whole feature omitted, storage.sync.ts:287-299; hook
- * URI/secrets only when enabled, auth.sync.ts:2551-2565; SMS provider
- * credentials only for the selected provider, :2498-2539) — so projecting
- * the (usually schema-filled or platform-retained) siblings would fabricate
- * drift between representations of the same disabled state. Applied to BOTH
+ * Sibling fields of a container that go inert (retained-but-not-served, or
+ * structurally implied by the same wire fact) the moment that container's
+ * OWN `enabled` is `false` — projecting them would fabricate drift between
+ * two representations of the identical disabled state. Each entry below
+ * carries its own comment re-deriving its specific justification from the
+ * platform's actual data model (CLI-2314) rather than from what the legacy
+ * `config push` pipeline (deleted by CLI-2313, commit `c7bf0ecd3`) happened
+ * to send — do not reintroduce a blanket rationale here; read the entry.
+ *
+ * This constant handles container-scalar siblings only. Record-keyed
+ * per-entry sweeps (`auth.external.*`, `auth.hook.*`, `auth.sms.*` — each
+ * entry's own `enabled` gates ITS OWN siblings) are a separate mechanism,
+ * {@link DISABLED_SENTINEL_ENTRY_SWEEPS}, below. Applied to BOTH
  * normalizers' outputs: the mapped shape is identical on the document and
- * API arms, so one pass keeps the two symmetric by construction.
+ * API arms, so one pass keeps the two symmetric by construction (pinned by
+ * the cross-arm symmetry test in this file's `.unit.test.ts`).
  *
  * Does NOT include `auth`/`storage`'s own top-level `enabled` (CLI-2314,
  * correcting a PR #6339 mistake): unlike every entry below, that flag is
@@ -850,14 +857,18 @@ export const DISABLED_SENTINEL_PRUNES: ReadonlyArray<{
     containerPath: ["db", "network_restrictions"],
     dropKeys: ["allowed_cidrs", "allowed_cidrs_v6"],
   },
-  // Same shape as `api` above: `smtp.enabled` is derived from
-  // `smtp_host.length > 0` (registry-auth.ts's `smtpRows`, :839-841), not an
-  // independent field — with no host configured, GoTrue has no SMTP server
-  // to send through, so `port`/`user`/`admin_email`/`sender_name` are inert
-  // (`host` itself is excluded from `dropKeys` since it IS the wire
-  // signal). `pass` is a secret row and already omitted on both arms
-  // regardless of this rule. The API arm already row-gates the four
-  // siblings independently via `smtpExplicitlyDisabledInAttributes`
+  // Same shape as `api` above: on the API arm, `smtp.enabled` is derived
+  // from `smtp_host.length > 0` (registry-auth.ts's `smtpRows`, :839-841),
+  // so `enabled === false` there structurally implies `host` is already
+  // empty — nothing to prune. On the DOCUMENT arm, `enabled` and `host` are
+  // independent schema fields; a document can declare `enabled = false`
+  // while still recording a stale `host`. `host` IS included in `dropKeys`
+  // below (not excluded) so that case still converges to the identical
+  // `{enabled: false}` shape the API arm produces — with no SMTP server to
+  // send through, `port`/`user`/`admin_email`/`sender_name` are inert too.
+  // `pass` is a secret row and already omitted on both arms regardless of
+  // this rule. The API arm already row-gates the four non-`host` siblings
+  // independently via `smtpExplicitlyDisabledInAttributes`
   // (registry-auth.ts:888-903, consumed by `smtpSiblingStringRow`) — same
   // "symmetry with an API-arm rule" shape as `api` above, not push
   // imitation.
