@@ -1,6 +1,6 @@
 import { inferFunctionsManifest, loadCliConfig } from "@supabase/config/effect";
 import { CliConfigSchema } from "@supabase/config";
-import type { CliConfig, FunctionsManifest } from "@supabase/config";
+import type { CliConfig, FunctionsManifest, LoadedCliConfig } from "@supabase/config";
 import {
   Crypto,
   Data,
@@ -60,7 +60,11 @@ export interface ServeManagedFunctionsOperations {
   ) => Effect.Effect<ManagedFunctionsStack, unknown, ManagedFunctionsRuntime>;
   readonly loadConfig: (
     cwd: string,
-  ) => Effect.Effect<CliConfig | undefined, unknown, FileSystem.FileSystem | Path.Path>;
+  ) => Effect.Effect<
+    LoadedCliConfig | CliConfig | undefined,
+    unknown,
+    FileSystem.FileSystem | Path.Path
+  >;
   readonly loadManifest?: (
     cwd: string,
     config: CliConfig,
@@ -72,7 +76,7 @@ export interface ServeManagedFunctionsOperations {
 
 const defaultOperations: Required<ServeManagedFunctionsOperations> = {
   createStack,
-  loadConfig: (cwd) => loadCliConfig(cwd).pipe(Effect.map((loaded) => loaded?.config)),
+  loadConfig: (cwd) => loadCliConfig(cwd).pipe(Effect.map((loaded) => loaded ?? undefined)),
   loadManifest: (cwd, config) => inferFunctionsManifest({ cwd, config }),
   readEnvFile: (pathname) =>
     Effect.gen(function* () {
@@ -182,7 +186,9 @@ export const serveManagedFunctions = Effect.fnUntraced(function* (
     }
   }
 
-  const config = loadedConfig ?? (yield* Schema.decodeUnknownEffect(CliConfigSchema)({}));
+  const cliConfig =
+    loadedConfig !== undefined && "config" in loadedConfig ? loadedConfig.config : loadedConfig;
+  const config = cliConfig ?? (yield* Schema.decodeUnknownEffect(CliConfigSchema)({}));
   const hasFunctionFlags = options.noVerifyJwt === true || options.importMap !== undefined;
   const manifest = hasFunctionFlags
     ? yield* resolvedOperations.loadManifest(options.projectRoot, config)

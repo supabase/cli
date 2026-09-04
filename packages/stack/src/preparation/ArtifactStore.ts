@@ -4,8 +4,10 @@ import {
   Effect,
   Exit,
   FileSystem,
+  Option,
   Path,
   PlatformError,
+  Predicate,
   Schema,
   Scope,
   Semaphore,
@@ -121,6 +123,14 @@ const pathWithin = (root: string, candidate: string, separator: string): boolean
 const pathAtOrBelow = (root: string, candidate: string, separator: string): boolean =>
   candidate === root || candidate.startsWith(`${root}${separator}`);
 
+const isNotFound = (cause: unknown): cause is PlatformError.PlatformError =>
+  cause instanceof PlatformError.PlatformError &&
+  cause.reason instanceof PlatformError.SystemError &&
+  Predicate.isTagged(cause.reason, "NotFound");
+
+const isMissingArtifactRoot = (error: ArtifactIntegrityError): boolean =>
+  Predicate.hasProperty(error, "cause") && isNotFound(error.cause);
+
 const validateKey = (key: string): Effect.Effect<void, StackPreparationError> =>
   validateRelativePath(key, "artifact key").pipe(
     Effect.flatMap(() =>
@@ -181,19 +191,23 @@ const encodeMetadata = (metadata: ArtifactMetadata): Effect.Effect<string, Stack
 const readMetadata = (
   fs: FileSystem.FileSystem,
   metadataPath: string,
-): Effect.Effect<ArtifactMetadata, ArtifactIntegrityError> =>
-  fs.readFileString(metadataPath).pipe(
-    Effect.mapError((cause) =>
-      metadataError("Cached artifact metadata is unreadable", { path: metadataPath, cause }),
-    ),
-    Effect.flatMap((text) =>
+): Effect.Effect<Option.Option<ArtifactMetadata>, ArtifactIntegrityError> =>
+  Effect.matchEffect(fs.readFileString(metadataPath), {
+    onFailure: (cause) =>
+      isNotFound(cause)
+        ? Effect.succeed(Option.none())
+        : Effect.fail(
+            metadataError("Cached artifact metadata is unreadable", {
+              path: metadataPath,
+              cause,
+            }),
+          ),
+    onSuccess: (text) =>
       Schema.decodeEffect(Schema.fromJsonString(ArtifactMetadataSchema))(text).pipe(
-        Effect.mapError((cause) =>
-          metadataError("Cached artifact metadata is malformed", { path: metadataPath, cause }),
-        ),
+        Effect.map(Option.some),
+        Effect.orElseSucceed(() => Option.none()),
       ),
-    ),
-  );
+  });
 
 const ensureDirectory = (
   fs: FileSystem.FileSystem,
@@ -598,48 +612,97 @@ const makeArtifactOperation = (
     const target = path.resolve(cacheRoot, request.key);
     const targetParent = path.dirname(target);
     yield* ensureDirectory(fs, path, targetParent, cacheRoot);
-    const targetExists = yield* mapFs(target, "inspect cached artifact", fs.exists(target));
-    const cachedRoot = targetExists
-      ? yield* ensureSafeRoot(fs, path, target, cacheRoot)
-      : undefined;
     const metadataPath = path.join(target, METADATA_NAME);
-    const checkCached: Effect.Effect<PreparedArtifact, ArtifactIntegrityError> = Effect.gen(
-      function* () {
-        const realRoot = cachedRoot ?? (yield* ensureSafeRoot(fs, path, target, cacheRoot));
-        const metadata = yield* readMetadata(fs, metadataPath);
-        yield* verifyMetadata(request, expectedSha256, metadata);
-        // Published content is intentionally not rehashed on cache hits. Metadata and cheap
-        // structural checks protect the cache boundary; content tampering may execute or fail
-        // later when the workload starts.
-        const safePaths = yield* ensureSafePaths(
-          fs,
-          path,
-          target,
-          realRoot,
-          metadata,
-          request.requiredRuntimePaths,
+    const checkCached: Effect.Effect<
+      Option.Option<PreparedArtifact>,
+      ArtifactIntegrityError
+    > = Effect.gen(function* () {
+      const realRoot = yield* ensureSafeRoot(fs, path, target, cacheRoot).pipe(
+        Effect.map(Option.some),
+        Effect.catch((error) =>
+          isMissingArtifactRoot(error) ? Effect.succeed(Option.none()) : Effect.fail(error),
+        ),
+      );
+      if (Option.isNone(realRoot)) return Option.none();
+      const cachedMetadata = yield* readMetadata(fs, metadataPath);
+      if (Option.isNone(cachedMetadata)) return Option.none();
+      const metadata = cachedMetadata.value;
+      yield* verifyMetadata(request, expectedSha256, metadata);
+      // Published content is intentionally not rehashed on cache hits. Metadata and cheap
+      // structural checks protect the cache boundary; content tampering may execute or fail
+      // later when the workload starts.
+      const safePaths = yield* ensureSafePaths(
+        fs,
+        path,
+        target,
+        realRoot.value,
+        metadata,
+        request.requiredRuntimePaths,
+      );
+      if (request.executablePath !== undefined) {
+        const executable = safePaths[request.executablePath];
+        if (executable === undefined)
+          return yield* metadataError("Cached artifact executable path is not recorded", {
+            path: request.executablePath,
+          });
+        yield* ensureExecutableFile(fs, executable.realPath);
+      }
+      return Option.some({
+        key: request.key,
+        path: target,
+        sha256: expectedSha256,
+        requiredRuntimePaths: [...request.requiredRuntimePaths],
+        ...(request.executablePath === undefined ? {} : { executablePath: request.executablePath }),
+        outcome: "cached" as const,
+      });
+    });
+    const inspectCache = (): Effect.Effect<Option.Option<PreparedArtifact>, ArtifactStoreError> =>
+      Effect.gen(function* () {
+        const exists = yield* mapFs(target, "inspect cached artifact", fs.exists(target));
+        if (!exists) return Option.none();
+        const cached = yield* checkCached;
+        if (Option.isSome(cached)) return cached;
+        const stillExists = yield* mapFs(target, "inspect cached artifact", fs.exists(target));
+        if (!stillExists) return Option.none();
+        const token = yield* crypto.randomUUIDv4.pipe(
+          Effect.mapError((cause) =>
+            artifactError(`Unable to allocate artifact replacement name: ${cause.message}`, {
+              key: request.key,
+              cause,
+            }),
+          ),
         );
-        if (request.executablePath !== undefined) {
-          const executable = safePaths[request.executablePath];
-          if (executable === undefined)
-            return yield* metadataError("Cached artifact executable path is not recorded", {
-              path: request.executablePath,
-            });
-          yield* ensureExecutableFile(fs, executable.realPath);
+        const replacement = path.join(targetParent, `.${path.basename(target)}.${token}.invalid`);
+        const moved = yield* Effect.acquireUseRelease(
+          fs.rename(target, replacement).pipe(
+            Effect.as(Option.some(replacement)),
+            Effect.catch((cause) =>
+              isNotFound(cause)
+                ? Effect.succeed(Option.none())
+                : Effect.fail(
+                    artifactError(`Unable to replace invalid cached artifact: ${String(cause)}`, {
+                      path: target,
+                      cause,
+                    }),
+                  ),
+            ),
+          ),
+          (renamed) => Effect.succeed(Option.isSome(renamed)),
+          (renamed) => (Option.isSome(renamed) ? cleanup(fs, renamed.value) : Effect.void),
+        );
+        if (moved) {
+          return Option.none();
         }
-        return {
-          key: request.key,
-          path: target,
-          sha256: expectedSha256,
-          requiredRuntimePaths: [...request.requiredRuntimePaths],
-          ...(request.executablePath === undefined
-            ? {}
-            : { executablePath: request.executablePath }),
-          outcome: "cached" as const,
-        };
-      },
-    );
-    if (targetExists) return yield* checkCached;
+        const raced = yield* mapFs(target, "inspect cached artifact", fs.exists(target));
+        if (!raced) return Option.none();
+        const concurrent = yield* checkCached;
+        if (Option.isSome(concurrent)) return concurrent;
+        return yield* metadataError("Concurrent cached artifact metadata is invalid", {
+          path: metadataPath,
+        });
+      });
+    const initial = yield* inspectCache();
+    if (Option.isSome(initial)) return initial.value;
 
     const token = yield* crypto.randomUUIDv4.pipe(
       Effect.mapError((cause) =>
@@ -650,9 +713,9 @@ const makeArtifactOperation = (
       ),
     );
     const temporary = path.join(targetParent, `.${path.basename(target)}.${token}.tmp`);
-    yield* ensureDirectory(fs, path, temporary, cacheRoot);
-    const temporaryRoot = yield* ensureSafeRoot(fs, path, temporary, cacheRoot);
     const published = yield* Effect.gen(function* () {
+      yield* ensureDirectory(fs, path, temporary, cacheRoot);
+      const temporaryRoot = yield* ensureSafeRoot(fs, path, temporary, cacheRoot);
       const archive = yield* source.materialize(request, temporary).pipe(
         Effect.provideService(FileSystem.FileSystem, fs),
         Effect.provideService(Path.Path, path),
@@ -698,24 +761,16 @@ const makeArtifactOperation = (
           fs.chmod(executable.realPath, EXECUTABLE_MODE),
         );
       }
-      const nowExists = yield* mapFs(target, "inspect concurrent artifact", fs.exists(target));
-      if (nowExists) {
-        const cached = yield* checkCached;
-        return cached;
-      }
+      const beforePublish = yield* inspectCache();
+      if (Option.isSome(beforePublish)) return beforePublish.value;
       const rename = mapFs(temporary, "publish artifact", fs.rename(temporary, target)).pipe(
         Effect.as(undefined),
       );
-      const recoverPublish = (
-        error: StackPreparationError,
-      ): Effect.Effect<PreparedArtifact | undefined, ArtifactStoreError> =>
+      const recoverPublish = (): Effect.Effect<PreparedArtifact | undefined, ArtifactStoreError> =>
         Effect.gen(function* () {
-          const exists = yield* mapFs(target, "inspect concurrent artifact", fs.exists(target));
-          if (exists) {
-            const cached = yield* checkCached;
-            return cached;
-          }
-          return yield* error;
+          const probe = yield* inspectCache();
+          if (Option.isSome(probe)) return probe.value;
+          return yield* rename;
         });
       const recovered: Effect.Effect<PreparedArtifact | undefined, ArtifactStoreError> =
         rename.pipe(Effect.catch(recoverPublish));

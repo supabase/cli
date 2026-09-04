@@ -6,10 +6,19 @@ import {
   isFunctionScopedPath,
   relativeFunctionPath,
   relativeGlobalFunctionPath,
+  type CliConfigWithRawPresence,
   toStartStackConfig,
 } from "./stack-config.ts";
 
 describe("toStartStackConfig", () => {
+  const loadedConfig = (
+    document: Record<string, unknown>,
+    configInput: Record<string, unknown> = document,
+  ): CliConfigWithRawPresence => ({
+    config: Schema.decodeSync(CliConfigSchema)(configInput),
+    document,
+  });
+
   it("leaves runtime selection to the stack", () => {
     expect(Effect.runSync(toStartStackConfig(undefined, []))).toMatchObject({
       capabilities: expect.any(Object),
@@ -73,6 +82,80 @@ describe("toStartStackConfig", () => {
       expect(Redacted.isRedacted(jwtSecret.secret)).toBe(true);
       expect(Redacted.value(jwtSecret.secret)).toBe("jwt-secret");
     }
+  });
+
+  it("leaves omitted listener ports automatic while preserving explicit defaults", () => {
+    const loaded = loadedConfig(
+      {
+        api: {},
+        db: { port: 54322 },
+        studio: {},
+        local_smtp: {},
+        edge_runtime: {},
+      },
+      {
+        api: {},
+        db: { port: 54322 },
+        studio: {},
+        local_smtp: {},
+        edge_runtime: {},
+      },
+    );
+    const config = Effect.runSync(toStartStackConfig(loaded, []));
+
+    expect(config.listeners?.api).toBeUndefined();
+    expect(config.listeners?.database).toEqual({ port: 54322 });
+    expect(config.listeners?.studio).toBeUndefined();
+    expect(config.listeners?.mailUi).toBeUndefined();
+    expect(config.listeners?.smtp).toBeUndefined();
+    expect(config.listeners?.pop3).toBeUndefined();
+    expect(config.listeners?.functionsInspector).toBeUndefined();
+  });
+
+  it("keeps an explicit default port instead of treating it as omitted", () => {
+    const loaded = loadedConfig({ api: { port: 54321 } }, { api: { port: 54321 } });
+    const config = Effect.runSync(toStartStackConfig(loaded, []));
+
+    expect(config.listeners?.api).toEqual({ port: 54321 });
+  });
+
+  it("disables dedicated listeners when their capabilities are disabled", () => {
+    const loaded = loadedConfig(
+      {
+        db: { pooler: { enabled: false } },
+        studio: { enabled: false },
+        local_smtp: { enabled: false },
+        edge_runtime: { enabled: false },
+      },
+      {
+        db: { pooler: { enabled: false } },
+        studio: { enabled: false },
+        local_smtp: { enabled: false },
+        edge_runtime: { enabled: false },
+      },
+    );
+    const config = Effect.runSync(toStartStackConfig(loaded, []));
+
+    expect(config.listeners?.pooler).toEqual({ enabled: false });
+    expect(config.listeners?.studio).toEqual({ enabled: false });
+    expect(config.listeners?.mailUi).toEqual({ enabled: false });
+    expect(config.listeners?.smtp).toEqual({ enabled: false });
+    expect(config.listeners?.pop3).toEqual({ enabled: false });
+    expect(config.listeners?.functionsInspector).toEqual({ enabled: false });
+  });
+
+  it("disables excluded dedicated listeners without changing API listeners", () => {
+    const loaded = loadedConfig(
+      { api: { enabled: false, port: 54321 }, db: { port: 54322 }, studio: { port: 54323 } },
+      { api: { enabled: false, port: 54321 }, db: { port: 54322 }, studio: { port: 54323 } },
+    );
+    const config = Effect.runSync(toStartStackConfig(loaded, ["studio", "pooler"]));
+
+    expect(config.capabilities?.rest).toEqual({ enabled: false });
+    expect(config.listeners?.api).toEqual({ port: 54321 });
+    expect(config.listeners?.database).toEqual({ port: 54322 });
+    expect(config.listeners?.studio).toEqual({ enabled: false });
+    expect(config.listeners?.pooler).toEqual({ enabled: false });
   });
 
   it("translates Functions paths from the supabase directory to each function directory", () => {

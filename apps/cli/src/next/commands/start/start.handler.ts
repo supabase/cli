@@ -6,7 +6,7 @@ import {
   type CreateStackOptions,
 } from "@supabase/stack/effect";
 import { loadCliConfig } from "@supabase/config/effect";
-import type { CliConfig } from "@supabase/config";
+import type { CliConfig, LoadedCliConfig } from "@supabase/config";
 import { ChildProcessSpawner } from "effect/unstable/process";
 import { CliProjectHome } from "../../config/cli-project-home.service.ts";
 import { Output } from "../../../shared/output/output.service.ts";
@@ -29,12 +29,16 @@ export interface StartOperations {
   ) => Effect.Effect<StartStack, unknown, StartRuntime>;
   readonly loadConfig: (
     cwd: string,
-  ) => Effect.Effect<CliConfig | undefined, unknown, FileSystem.FileSystem | Path.Path>;
+  ) => Effect.Effect<
+    LoadedCliConfig | CliConfig | undefined,
+    unknown,
+    FileSystem.FileSystem | Path.Path
+  >;
 }
 
 const defaultOperations: StartOperations = {
   createStack,
-  loadConfig: (cwd) => loadCliConfig(cwd).pipe(Effect.map((loaded) => loaded?.config)),
+  loadConfig: (cwd) => loadCliConfig(cwd).pipe(Effect.map((loaded) => loaded ?? undefined)),
 };
 
 export const start = Effect.fnUntraced(function* (

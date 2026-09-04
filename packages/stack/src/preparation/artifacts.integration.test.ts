@@ -78,7 +78,7 @@ describe("verified native artifact preparation", () => {
     ),
   );
 
-  it.live("fails closed for unknown artifact metadata instead of executing the cached tree", () =>
+  it.live("replaces a cached tree with unknown artifact metadata", () =>
     withPlatform(
       Effect.gen(function* () {
         const fs = yield* FileSystem.FileSystem;
@@ -94,19 +94,49 @@ describe("verified native artifact preparation", () => {
         );
         let called = false;
         const source: ArtifactSource = {
-          materialize: () =>
+          materialize: (entry, destination) =>
             Effect.sync(() => {
               called = true;
-              return archive;
-            }),
+              return entry;
+            }).pipe(Effect.andThen(sourceWriting().materialize(entry, destination))),
         };
         const store = yield* makeArtifactStore({ cacheRoot: root, source });
 
-        const exit = yield* store.prepare(request).pipe(Effect.exit);
+        const prepared = yield* store.prepare(request);
 
-        expect(errorOf(exit)).toBeInstanceOf(ArtifactIntegrityError);
-        expect(called).toBe(false);
-        expect(yield* fs.readFileString(`${target}/bin/postgres`)).toBe("unverified postgres");
+        expect(prepared.outcome).toBe("downloaded");
+        expect(called).toBe(true);
+        expect(yield* fs.readFileString(`${target}/bin/postgres`)).toBe("native postgres");
+      }),
+    ),
+  );
+
+  it.live("replaces a cached tree with missing artifact metadata", () =>
+    withPlatform(
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const root = yield* fs.makeTempDirectoryScoped({
+          prefix: "supabase-stack-artifact-missing-metadata-",
+        });
+        const target = `${root}/${request.key}`;
+        yield* fs.makeDirectory(`${target}/bin`, { recursive: true });
+        yield* fs.writeFileString(`${target}/bin/postgres`, "unverified postgres");
+        let called = false;
+        const source: ArtifactSource = {
+          materialize: (entry, destination) =>
+            Effect.sync(() => {
+              called = true;
+              return entry;
+            }).pipe(Effect.andThen(sourceWriting().materialize(entry, destination))),
+        };
+        const store = yield* makeArtifactStore({ cacheRoot: root, source });
+
+        const prepared = yield* store.prepare(request);
+
+        expect(prepared.outcome).toBe("downloaded");
+        expect(called).toBe(true);
+        expect(yield* fs.readFileString(`${target}/bin/postgres`)).toBe("native postgres");
+        expect(yield* fs.exists(`${target}/.artifact.json`)).toBe(true);
       }),
     ),
   );

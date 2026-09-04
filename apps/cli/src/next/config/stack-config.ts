@@ -70,6 +70,57 @@ const omitUndefined = (value: unknown): unknown => {
   );
 };
 
+const isRecord = (value: unknown): value is Readonly<Record<string, unknown>> =>
+  typeof value === "object" && value !== null && !Array.isArray(value);
+
+/** A decoded config paired with its raw document so key presence survives schema defaults. */
+export interface CliConfigWithRawPresence {
+  readonly config: CliConfig;
+  readonly document?: Readonly<Record<string, unknown>>;
+}
+
+const hasOwnPath = (
+  root: Readonly<Record<string, unknown>> | undefined,
+  path: ReadonlyArray<string>,
+): boolean => {
+  let current: unknown = root;
+  for (const segment of path) {
+    if (!isRecord(current) || !Object.hasOwn(current, segment)) return false;
+    current = current[segment];
+  }
+  return true;
+};
+
+const unwrapConfig = (
+  input: CliConfig | CliConfigWithRawPresence | undefined,
+): {
+  readonly config: CliConfig | undefined;
+  readonly document: Readonly<Record<string, unknown>> | undefined;
+} => {
+  if (input === undefined) return { config: undefined, document: undefined };
+  if ("config" in input) return { config: input.config, document: input.document };
+  return { config: input, document: undefined };
+};
+
+const configuredListener = (
+  section: unknown,
+  port: number | undefined,
+  path: ReadonlyArray<string>,
+  document: Readonly<Record<string, unknown>> | undefined,
+) => {
+  if (section === undefined) return undefined;
+  if (document !== undefined && !hasOwnPath(document, path)) return undefined;
+  return port === undefined ? {} : { port };
+};
+
+const dedicatedListener = (
+  disabled: boolean,
+  section: unknown,
+  port: number | undefined,
+  path: ReadonlyArray<string>,
+  document: Readonly<Record<string, unknown>> | undefined,
+) => (disabled ? ({ enabled: false } as const) : configuredListener(section, port, path, document));
+
 const passwordRequirements = (value: string | undefined): AuthSettings["password_requirements"] =>
   value === "" ||
   value === "letters_digits" ||
@@ -322,9 +373,10 @@ const toAuthSettings = (auth: CliConfig["auth"] | undefined): AuthSettings | und
 
 /** Translates CLI exclusions to the stack's closed capability config. */
 export function toStartStackConfig(
-  config: CliConfig | undefined,
+  input: CliConfig | CliConfigWithRawPresence | undefined,
   exclude: ReadonlyArray<ExcludedStackService>,
 ): Effect.Effect<StackConfig, InvalidStackConfigError> {
+  const { config, document } = unwrapConfig(input);
   const excluded = new Set(exclude);
   const db = config?.db;
   const api = config?.api;
@@ -392,15 +444,50 @@ export function toStartStackConfig(
       pooler: capability("pooler", excluded, pooler?.enabled, poolerSettings),
     },
     listeners: {
-      api: api === undefined ? undefined : { port: api.port },
-      database: db === undefined ? undefined : { port: db.port },
-      pooler: pooler === undefined ? undefined : { port: pooler.port },
-      studio: studio === undefined ? undefined : { port: studio.port },
-      mailUi: mail === undefined ? undefined : { port: mail.port },
-      smtp: mail?.smtp_port === undefined ? undefined : { port: mail.smtp_port },
-      pop3: mail?.pop3_port === undefined ? undefined : { port: mail.pop3_port },
-      functionsInspector:
-        edgeRuntime === undefined ? undefined : { port: edgeRuntime.inspector_port },
+      api: configuredListener(api, api?.port, ["api", "port"], document),
+      database: configuredListener(db, db?.port, ["db", "port"], document),
+      pooler: dedicatedListener(
+        disabledCapability("pooler", excluded, pooler?.enabled),
+        pooler,
+        pooler?.port,
+        ["db", "pooler", "port"],
+        document,
+      ),
+      studio: dedicatedListener(
+        disabledCapability("studio", excluded, studio?.enabled),
+        studio,
+        studio?.port,
+        ["studio", "port"],
+        document,
+      ),
+      mailUi: dedicatedListener(
+        disabledCapability("mail", excluded, mail?.enabled),
+        mail,
+        mail?.port,
+        ["local_smtp", "port"],
+        document,
+      ),
+      smtp: dedicatedListener(
+        disabledCapability("mail", excluded, mail?.enabled),
+        mail,
+        mail?.smtp_port,
+        ["local_smtp", "smtp_port"],
+        document,
+      ),
+      pop3: dedicatedListener(
+        disabledCapability("mail", excluded, mail?.enabled),
+        mail,
+        mail?.pop3_port,
+        ["local_smtp", "pop3_port"],
+        document,
+      ),
+      functionsInspector: dedicatedListener(
+        disabledCapability("functions", excluded, edgeRuntime?.enabled),
+        edgeRuntime,
+        edgeRuntime?.inspector_port,
+        ["edge_runtime", "inspector_port"],
+        document,
+      ),
     },
     security:
       auth?.jwt_secret === undefined &&

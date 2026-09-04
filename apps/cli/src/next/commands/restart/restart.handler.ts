@@ -1,5 +1,5 @@
 import { loadCliConfig } from "@supabase/config/effect";
-import type { CliConfig } from "@supabase/config";
+import type { CliConfig, LoadedCliConfig } from "@supabase/config";
 import { Crypto, Effect, FileSystem, Option, Path, Scope } from "effect";
 import { ChildProcessSpawner } from "effect/unstable/process";
 import {
@@ -30,13 +30,17 @@ export interface RestartOperations {
   readonly openStack: (id: StackId) => Effect.Effect<RestartStack, unknown, RestartRuntime>;
   readonly loadConfig: (
     cwd: string,
-  ) => Effect.Effect<CliConfig | undefined, unknown, FileSystem.FileSystem | Path.Path>;
+  ) => Effect.Effect<
+    LoadedCliConfig | CliConfig | undefined,
+    unknown,
+    FileSystem.FileSystem | Path.Path
+  >;
 }
 
 const defaultOperations: RestartOperations = {
   findStack,
   openStack,
-  loadConfig: (cwd) => loadCliConfig(cwd).pipe(Effect.map((loaded) => loaded?.config)),
+  loadConfig: (cwd) => loadCliConfig(cwd).pipe(Effect.map((loaded) => loaded ?? undefined)),
 };
 
 export const restart = Effect.fnUntraced(function* (
