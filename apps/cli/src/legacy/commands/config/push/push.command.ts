@@ -45,7 +45,7 @@ export const legacyConfigPushHandler = (flags: LegacyConfigPushFlags) =>
 
 export const legacyConfigPushCommand = Command.make("push", config).pipe(
   Command.withDescription(
-    "Pushes the properties your local config.toml declares to the linked project or one of its branches. Properties the file does not declare are left unchanged; run `supabase config diff` to preview.",
+    "Pushes the properties your local config.toml declares to the linked project or one of its branches. Properties the file does not declare are left unchanged; run `supabase config diff` to preview. Prompts for confirmation before writing each changed resource, showing the exact diff — but a non-interactive run (no TTY, --yes, or piped stdin with no answer) defaults to proceeding, so a value your file declares only because `supabase init`'s own template wrote it (e.g. a disabled storage.analytics/auth.oauth_server toggle, or a local development site_url) can silently overwrite a real, intentionally-customized hosted setting. Scripts and agents driving this command non-interactively should run `supabase config diff` first and review it, rather than relying on the prompt.",
   ),
   Command.withShortDescription("Push local config to linked project"),
   Command.withExamples([
