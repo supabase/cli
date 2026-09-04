@@ -66,7 +66,6 @@ export {
   toProjectConfig,
   unmappedApiFields,
 } from "./project-config/project-config.ts";
-export { HOSTED_SECTION_KEYS, type HostedSectionKey } from "./project-config/hosted-sections.ts";
 export { ProjectConfigSchema, toProjectConfigJsonSchema } from "./project-config/project-schema.ts";
 export {
   type ConfigChange,
