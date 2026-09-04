@@ -231,7 +231,7 @@ export function legacyPushNotPushableLine(resource: LegacyPushResource, count: n
 
 export interface LegacyPushNotesInput {
   /** Declared paths with no Management API field at all — the fixed unsupported-prefix list
-   *  (`db.pooler.*`, `auth.oauth_server.*`, `db.major_version`). */
+   *  (`db.pooler.*`, `db.major_version`). */
   readonly unsupported: ReadonlyArray<ReadonlyArray<string>>;
   /** Declared paths an encoder could not structurally express, with why. */
   readonly unencodable: ReadonlyArray<LegacyPushUnencodable>;

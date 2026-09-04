@@ -108,6 +108,9 @@ describe("legacyPushResourceForPath", () => {
     [["db", "network_restrictions", "allowed_cidrs_v6"], "db.network_restrictions"],
     [["db", "ssl_enforcement", "enabled"], "db.ssl_enforcement"],
     [["auth", "site_url"], "auth"],
+    [["auth", "oauth_server", "enabled"], "auth"],
+    [["auth", "oauth_server", "allow_dynamic_registration"], "auth"],
+    [["auth", "oauth_server", "authorization_url_path"], "auth"],
     [["storage", "file_size_limit"], "storage"],
   ])("routes %j to %s", (path, resource) => {
     expect(legacyPushResourceForPath(path)).toBe(resource);
@@ -124,9 +127,6 @@ describe("legacyPushResourceForPath", () => {
     [["db", "pooler", "pool_mode"]],
     [["db", "pooler", "default_pool_size"]],
     [["db", "pooler", "max_client_conn"]],
-    [["auth", "oauth_server", "enabled"]],
-    [["auth", "oauth_server", "allow_dynamic_registration"]],
-    [["auth", "oauth_server", "authorization_url_path"]],
   ])("classifies %j as unsupported", (path) => {
     expect(legacyPushResourceForPath(path)).toBe("unsupported");
   });
@@ -135,7 +135,7 @@ describe("legacyPushResourceForPath", () => {
     expect(legacyPushResourceForPath(["realtime", "enabled"])).toBe("unsupported");
   });
 
-  it("drift guard: every comparable config path resolves to a resource, or one of the three intentionally-unsupported prefixes", () => {
+  it("drift guard: every comparable config path resolves to a resource, or one of the two intentionally-unsupported prefixes", () => {
     // `legacyPushResourceForPath` never returns `undefined` (B12) — an
     // unroutable path falls through to `"unsupported"` too, the same result
     // an intentionally-listed prefix gets. So a plain `!== undefined`
@@ -198,24 +198,22 @@ describe("legacyPlanConfigPush", () => {
   it("routes an unsupported-prefix pushable change into `unsupported`, not a resource bucket", () => {
     const set = changeSet([
       change(["db", "pooler", "pool_mode"], "update"),
-      change(["auth", "oauth_server", "enabled"], "local_only"),
+      change(["db", "major_version"], "local_only"),
     ]);
     const plan = legacyPlanConfigPush(set);
     expect(plan.unsupported).toEqual([
       ["db", "pooler", "pool_mode"],
-      ["auth", "oauth_server", "enabled"],
+      ["db", "major_version"],
     ]);
     expect(plan.changesByResource["db.settings"]).toEqual([]);
-    expect(plan.changesByResource.auth).toEqual([]);
   });
 });
 
 describe("LEGACY_PUSH_UNSUPPORTED_PREFIXES", () => {
-  it("names exactly the three unsupported subtrees", () => {
+  it("names exactly the two unsupported subtrees", () => {
     expect(LEGACY_PUSH_UNSUPPORTED_PREFIXES).toEqual([
       ["db", "major_version"],
       ["db", "pooler"],
-      ["auth", "oauth_server"],
     ]);
   });
 });

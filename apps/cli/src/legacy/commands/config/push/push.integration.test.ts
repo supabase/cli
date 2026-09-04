@@ -1025,30 +1025,32 @@ otp_expiry = 120
   );
 
   it.live(
-    "a declared auth.oauth_server.enabled surfaces as unsupported, no longer as unmanaged",
+    "a declared auth.oauth_server.enabled is pushed through the auth endpoint, no longer as unmanaged or unsupported",
     () => {
       // Before CLI-2314, `fromConfigDocument` dropped the WHOLE
       // `auth.oauth_server` subtree unconditionally, so a declared `enabled`
-      // never reached `changeSet.changes` and was reported `unmanaged`.
-      // `enabled` is now an ordinary comparable path, so a declared value
-      // disagreeing with the remote's IS a real `changeSet.changes` entry —
-      // routed by `LEGACY_PUSH_UNSUPPORTED_PREFIXES` to the "no Management
-      // API field" note (`unsupported`), never silently written.
+      // never reached `changeSet.changes` and was reported `unmanaged`. A
+      // later step made `enabled` an ordinary comparable path, but
+      // `LEGACY_PUSH_UNSUPPORTED_PREFIXES` still routed it to the "no
+      // Management API field" note (`unsupported`). This is the final step:
+      // the v1 auth endpoint genuinely accepts `oauth_server_enabled`, so the
+      // leaf now pushes like any other auth field.
       const { layer, out, api } = setup({
         toml: `project_id = "test"\n[auth.oauth_server]\nenabled = true\n`,
         format: "json",
+        yes: true,
       });
       return Effect.gen(function* () {
         yield* legacyConfigPush({ projectRef: Option.none() });
-        expect(out.stderrText).toContain(
-          "Note: 1 declared property has no Management API field and was not pushed: auth.oauth_server.enabled (change it from the dashboard).",
+        const update = api.requests.find(
+          (r) => r.method === "PATCH" && r.url.includes("/config/auth"),
         );
-        expect(
-          api.requests.some((r) => r.method === "PATCH" && r.url.includes("/config/auth")),
-        ).toBe(false);
+        expect(update).toBeDefined();
+        expect(update?.body).toEqual({ oauth_server_enabled: true });
+        expect(out.stderrText).not.toContain("has no Management API field");
         const success = out.messages.find((m) => m.type === "success");
         const data = success?.data as Record<string, unknown>;
-        expect(data["unsupported"]).toEqual([["auth", "oauth_server", "enabled"]]);
+        expect(data["unsupported"]).toEqual([]);
         expect(data["unmanaged"]).toEqual([]);
       }).pipe(Effect.provide(layer));
     },

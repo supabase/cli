@@ -34,13 +34,11 @@ export const LEGACY_PUSH_RESOURCES: ReadonlyArray<LegacyPushResource> = [
  * ProjectConfig path prefixes with no v1 write path — surfaced (in the
  * `unsupported` note/payload field), never pushed. Every leaf under one of
  * these prefixes is unsupported: `db.major_version`;
- * `db.pooler.{pool_mode,default_pool_size,max_client_conn}`;
- * `auth.oauth_server.{enabled,allow_dynamic_registration,authorization_url_path}`.
+ * `db.pooler.{pool_mode,default_pool_size,max_client_conn}`.
  */
 export const LEGACY_PUSH_UNSUPPORTED_PREFIXES: ReadonlyArray<ReadonlyArray<string>> = [
   ["db", "major_version"],
   ["db", "pooler"],
-  ["auth", "oauth_server"],
 ];
 
 /** Longest-registered-prefix routing target for a comparable config path. */

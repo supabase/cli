@@ -92,17 +92,15 @@ the group it belongs to ships for another reason.
 Some declared properties have no Management API field at all and are only
 reported, never pushed: `db.major_version` and
 `db.pooler.{pool_mode,default_pool_size,max_client_conn}` — reported in the
-"no Management API field" `Note:` line. `auth.oauth_server.*` is NOT in that
-list, even though it also has no v1 write path: `@supabase/config`'s local
-projection drops the whole `auth.oauth_server` subtree unconditionally (no
-push encoder handles it at all), so a declared value there never reaches
-`changeSet.changes` in the first place — it is reported
-today as `unmanaged` instead (below), the same as any other property the
-projection drops. `push.plan.ts` still carries `auth.oauth_server` in its own
-unsupported-prefix list so that a declared value there is classified
-correctly the moment CLI-2314 stops pruning it from the projection; until
-then that list entry is a defensive no-op. A resource whose local gate is
-off (e.g. a declared `auth.*` value while `auth.enabled = false`) is NOT
+"no Management API field" `Note:` line. `auth.oauth_server.*` is no longer in
+that list (CLI-2314): the v1 auth endpoint genuinely accepts
+`oauth_server_enabled`, `oauth_server_allow_dynamic_registration`, and
+`oauth_server_authorization_path`, so a declared
+`auth.oauth_server.{enabled,allow_dynamic_registration,authorization_url_path}`
+value is pushed through the `auth` resource like any other auth field, and
+`push.plan.ts`'s unsupported-prefix list no longer carries this family. A
+resource whose local gate is off (e.g. a declared `auth.*` value while
+`auth.enabled = false`) is NOT
 reported in the "no Management API field" note either: the projection's
 disabled-sentinel prune already removes its other declared keys before
 diffing, so it stays silently `disabled` in text mode (reported as
@@ -267,7 +265,7 @@ asserting `false` would be as misleading as asserting `true`:
     },
   ],
   "forced": [{ "path": ["db", "network_restrictions", "allowed_cidrs_v6"], "value": [] }],
-  "unmanaged": [["auth", "oauth_server", "enabled"]],
+  "unmanaged": [["storage", "analytics", "max_namespaces"]],
   "secrets": {
     "sent": [["auth", "captcha", "secret"]],
     "unchanged": [],

@@ -1382,6 +1382,23 @@ export const LEGACY_PUSH_AUTH_LEAF_MAP: ReadonlyArray<LegacyPushAuthLeafSpec> = 
     apiKey: "external_web3_ethereum_enabled",
     transform: asBoolean,
   },
+
+  // oauth server
+  {
+    configPath: ["auth", "oauth_server", "enabled"],
+    apiKey: "oauth_server_enabled",
+    transform: asBoolean,
+  },
+  {
+    configPath: ["auth", "oauth_server", "allow_dynamic_registration"],
+    apiKey: "oauth_server_allow_dynamic_registration",
+    transform: asBoolean,
+  },
+  {
+    configPath: ["auth", "oauth_server", "authorization_url_path"],
+    apiKey: "oauth_server_authorization_path",
+    transform: asString,
+  },
 ];
 
 function encodeAuthBody(
