@@ -19,7 +19,7 @@ export const isMaintenanceTransportFailure = (error: unknown): boolean => {
   return Predicate.hasProperty(error, "reason") && error.reason === "transport";
 };
 
-export const ownerSessionIdIsValid = (value: string): boolean =>
+const ownerSessionIdIsValid = (value: string): boolean =>
   value.length > 0 && value.length <= 128 && /^[A-Za-z0-9_-]+$/.test(value);
 
 export const OwnerSessionIdSchema = Schema.String.pipe(

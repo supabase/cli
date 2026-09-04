@@ -372,6 +372,12 @@ const writeUpgrade = (
   return `${lines.join("\r\n")}\r\n\r\n`;
 };
 
+const trackSocket = (active: Set<Duplex>, socket: Duplex): void => {
+  if (active.has(socket)) return;
+  active.add(socket);
+  socket.once("close", () => active.delete(socket));
+};
+
 const handleUpgrade = (
   request: IncomingMessage,
   socket: Duplex,
@@ -380,8 +386,7 @@ const handleUpgrade = (
   runFork: <A, E>(effect: Effect.Effect<A, E>) => Fiber<A, E>,
   active: Set<Duplex>,
 ): void => {
-  active.add(socket);
-  socket.once("close", () => active.delete(socket));
+  trackSocket(active, socket);
   const view = requestView(request);
   const route = routeFor(view, options.routes);
   if (route === undefined) {
@@ -474,11 +479,9 @@ export const makeHttpGateway = (
       options.listener?.binding?.kind === "http" ? options.listener.binding.server : createServer();
     if (options.listener !== undefined && !server.listening)
       return yield* new GatewayActivationError({ message: "Gateway listener is not bound" });
-    const active = new Set<Duplex>();
-    const connectionHandler = (socket: Duplex) => {
-      active.add(socket);
-      socket.once("close", () => active.delete(socket));
-    };
+    const active =
+      options.listener === undefined ? new Set<Duplex>() : options.listener.connections.sockets;
+    const connectionHandler = (socket: Duplex) => trackSocket(active, socket);
     const requestHandler = (request: IncomingMessage, response: ServerResponse) =>
       handleRequest(request, response, options, runFork);
     const upgradeHandler = (request: IncomingMessage, socket: Duplex, head: Buffer) =>

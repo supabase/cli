@@ -3,6 +3,8 @@ import { Cause, Crypto, Effect, Exit, FileSystem, Option, Path, Scope, Schema } 
 import type { Server as HttpServer } from "node:http";
 // oxlint-disable-next-line effecttsgo/node-builtin-import
 import type { Server as NetServer } from "node:net";
+// oxlint-disable-next-line effecttsgo/node-builtin-import
+import type { Duplex } from "node:stream";
 import { NetworkPortSchema, PORT_FIELDS, type PortField } from "../public/Status.ts";
 import {
   PortAllocationError,
@@ -40,6 +42,12 @@ export interface HostListener {
   readonly close: Effect.Effect<void>;
   /** The exact bound listener may be adopted by a gateway without rebind. */
   readonly binding: HostListenerBinding;
+  /** Sockets accepted since bind, shared with an adopting gateway for teardown. */
+  readonly connections: HostListenerConnections;
+}
+
+export interface HostListenerConnections {
+  readonly sockets: Set<Duplex>;
 }
 
 type HostListenerBinding =

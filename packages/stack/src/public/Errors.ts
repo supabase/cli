@@ -255,6 +255,7 @@ export const STACK_CREDENTIALS_ERROR_TAGS = [
   "StackLifecycleConflictError",
   "StackSecretMismatchError",
   "InvalidJwtSigningMaterialError",
+  "StackUpgradeRequiredError",
 ] as const satisfies ReadonlyArray<StackErrorTag>;
 export type StackCredentialsError = ErrorByTag<(typeof STACK_CREDENTIALS_ERROR_TAGS)[number]>;
 

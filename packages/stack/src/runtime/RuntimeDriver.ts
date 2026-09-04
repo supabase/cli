@@ -17,24 +17,25 @@ export interface RuntimeCleanupRequest {
 }
 
 /** Runtime states projected to callers and status inspection. */
-type ObservedWorkloadState = "absent" | "starting" | "ready" | "stopped" | "failed";
+type ObservedWorkloadState = "starting" | "ready" | "stopped" | "failed";
 
 export interface ObservedWorkload extends RuntimeWorkloadKey {
   readonly state: ObservedWorkloadState;
   readonly error?: string;
 }
 
-type RuntimeWorkload = PlannedWorkload;
-
 export interface RuntimeDriver {
   /** Enumerates only private resources owned by this exact stack identity. */
   readonly observe: (
     stackId: StackId,
   ) => Effect.Effect<ReadonlyArray<ObservedWorkload>, RuntimeDriverError>;
-  /** Starts one exact resource and returns after its readiness probe succeeds. */
+  /**
+   * Starts one exact resource and returns after its readiness probe succeeds. Callers must use
+   * stop or cleanup for ownership teardown; caller interruption is not part of this contract.
+   */
   readonly start: (
     key: RuntimeWorkloadKey,
-    workload: RuntimeWorkload,
+    workload: PlannedWorkload,
   ) => Effect.Effect<ObservedWorkload, RuntimeDriverError>;
   /** Stops one exact resource; no other stack may be touched. */
   readonly stop: (key: RuntimeWorkloadKey) => Effect.Effect<void, RuntimeDriverError>;

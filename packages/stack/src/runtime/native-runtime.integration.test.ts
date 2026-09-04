@@ -295,6 +295,29 @@ describe("native runtime", { timeout: 15_000 }, () => {
     ),
   );
 
+  it.live("returns the existing observation when an exact key is already ready", () =>
+    withPlatform(
+      Effect.gen(function* () {
+        let launches = 0;
+        const runtime = yield* makeNativeRuntime({
+          resolveProcess: () =>
+            Effect.sync(() => {
+              launches += 1;
+              return processPlan(fixtureProcess(`ready-${launches}`));
+            }),
+          waitForReadiness: () => Effect.void,
+        });
+        const key = keyFor("already-ready");
+        const first = yield* runtime.start(key, workload("already-ready"));
+        const second = yield* runtime.start(key, workload("already-ready"));
+        expect(second).toEqual(first);
+        expect(launches).toBe(1);
+        yield* runtime.stop(key);
+        yield* runtime.remove(key);
+      }),
+    ),
+  );
+
   it.live("keeps a shared start alive when one caller is interrupted", () =>
     withPlatform(
       Effect.gen(function* () {

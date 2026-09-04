@@ -190,7 +190,6 @@ export interface ContainerLogOptions {
   readonly tail?: "all" | 0;
 }
 export interface ContainerCommandRunner {
-  readonly executable: string;
   readonly run: (
     request: ContainerProcessRequest,
   ) => Effect.Effect<ContainerCommandResult, ContainerEngineFailure>;
@@ -371,7 +370,7 @@ export const makeProcessCommandRunner = (
           ),
         ),
       );
-    return { executable: options.executable, run, stream };
+    return { run, stream };
   });
 
 export interface ContainerEngineCodecs {
@@ -576,7 +575,6 @@ export interface ContainerEngineOptions {
 }
 export interface ContainerEngine {
   readonly kind: ContainerEngineKind;
-  readonly executable: string;
   readonly preflight: Effect.Effect<ContainerHostRoute, ContainerEngineFailure>;
   readonly probe: Effect.Effect<void, ContainerEngineFailure>;
   readonly inspectImage: (
@@ -700,7 +698,6 @@ export const makeContainerEngineCore = (options: ContainerEngineOptions): Contai
         : Effect.succeed({ host: "host.containers.internal" });
   return {
     kind: options.kind,
-    executable: options.runner.executable,
     preflight,
     probe: check("probe", { operation: "probe" }).pipe(Effect.flatMap(options.codecs.decodeProbe)),
     inspectImage: (image) =>

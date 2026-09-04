@@ -1,6 +1,6 @@
 import { NodeServices } from "@effect/platform-node";
 import { describe, expect, it } from "@effect/vitest";
-import { Context, Crypto, Effect, Exit, FileSystem, Path } from "effect";
+import { Context, Crypto, Effect, Exit, FileSystem, Path, Ref, Scope } from "effect";
 // oxlint-disable-next-line effecttsgo/node-builtin-import
 import {
   createServer as createHttpServer,
@@ -9,12 +9,19 @@ import {
   type ServerResponse,
   // oxlint-disable-next-line effecttsgo/node-builtin-import
 } from "node:http";
+// oxlint-disable-next-line effecttsgo/node-builtin-import
+import type { Duplex } from "node:stream";
 import { deriveStackId, type StackIdentity } from "../identity/Identity.ts";
 import { compileStack } from "../model/Compiler.ts";
-import { GatewayActivationError, StackPreparationError } from "../public/Errors.ts";
+import {
+  GatewayActivationError,
+  PortUnavailableError,
+  StackPreparationError,
+} from "../public/Errors.ts";
 import { makeStackStateStore } from "../state/StackStateStore.ts";
 import type { PersistedStackState } from "../state/StackState.ts";
 import { makeSupervisorIngress } from "./Ingress.ts";
+import type { HostListener } from "../state/PortCoordinator.ts";
 import { privateBindingIntentsFor } from "../runtime/WorkloadRuntimeSpec.ts";
 
 const identity: StackIdentity = {
@@ -68,6 +75,109 @@ const request = (port: number, path = "/rest/v1/items", method = "GET") =>
   });
 
 describe("Supervisor ingress", () => {
+  it.live("closes reservation scopes after repeated failed acquire attempts", () =>
+    run(
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const crypto = yield* Crypto.Crypto;
+        const context = Context.make(FileSystem.FileSystem, fs).pipe(
+          Context.add(Path.Path, path),
+          Context.add(Crypto.Crypto, crypto),
+        );
+        const root = yield* fs.makeTempDirectoryScoped({ prefix: "supabase-ingress-scope-" });
+        const projectRoot = path.join(root, "project");
+        yield* fs.makeDirectory(projectRoot);
+        const stackIdentity = {
+          ...identity,
+          projectRoot,
+          checkoutRoot: projectRoot,
+          workspaceId: projectRoot,
+          checkoutId: projectRoot,
+        };
+        const stackId = yield* deriveStackId(stackIdentity);
+        const databasePort = 50_000 + (Number.parseInt(stackId.slice(0, 4), 16) % 10_000);
+        const compiled = yield* compileStack({
+          projectRoot,
+          runtime: { kind: "native" },
+          config: { listeners: { database: { port: databasePort } } },
+        });
+        const store = yield* makeStackStateStore({
+          stateRoot: path.join(root, "managed", "stacks"),
+        });
+        yield* store.initialize(stackId, {
+          format: "supabase-stack-state-v1",
+          identity: { ...stackIdentity, stackId },
+          runtime: { kind: "native" },
+          desiredLifecycle: "running",
+          definition: compiled.definition,
+          ports: [],
+          privatePorts: privateBindingIntentsFor(compiled.executionPlan).map((binding, index) => ({
+            ...binding,
+            port: 30_000 + index,
+          })),
+          secrets: {},
+        });
+        const apiCloseCount = yield* Ref.make(0);
+        const checkHostPort = () => Effect.void;
+        const bindHost = (
+          address: string,
+          port: number,
+          field: HostListener["field"],
+        ): Effect.Effect<HostListener, PortUnavailableError, Scope.Scope> => {
+          if (field === "database")
+            return Effect.fail(
+              new PortUnavailableError({
+                field,
+                port,
+                message: "Injected database listener failure",
+              }),
+            );
+          if (field !== "api")
+            return Effect.fail(
+              new PortUnavailableError({
+                field,
+                port,
+                message: "Unexpected listener bind",
+              }),
+            );
+          const close = Ref.update(apiCloseCount, (count) => count + 1);
+          return Effect.gen(function* () {
+            yield* Effect.addFinalizer(() => close);
+            return {
+              field,
+              address,
+              port,
+              close,
+              connections: { sockets: new Set<Duplex>() },
+              binding: { kind: "http", server: createHttpServer() },
+            } satisfies HostListener;
+          });
+        };
+        const ingress = yield* makeSupervisorIngress({
+          stackId,
+          stateRoot: path.join(root, "managed", "stacks"),
+          store,
+          context,
+          checkHostPort,
+          bindHost,
+        });
+        const state = yield* store.read(stackId).pipe(Effect.map((value) => value!));
+        const input = {
+          stackId,
+          state,
+          definition: compiled.definition,
+          secrets: {},
+          plan: compiled.executionPlan,
+        };
+        for (let attempt = 1; attempt <= 3; attempt += 1) {
+          expect(Exit.isFailure(yield* ingress.acquire(input).pipe(Effect.exit))).toBe(true);
+          expect(yield* Ref.get(apiCloseCount)).toBe(attempt);
+        }
+      }),
+    ),
+  );
+
   it.live("adopts a coordinated listener and forwards a public request", () =>
     run(
       Effect.gen(function* () {

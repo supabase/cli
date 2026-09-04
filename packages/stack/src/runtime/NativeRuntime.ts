@@ -33,33 +33,30 @@ import {
   type NativeProcessSpec,
 } from "./NativeProcess.ts";
 
-type NativeWorkload = PlannedWorkload;
-
 export interface NativeRuntimeOptions {
   /**
    * Resolves the process-ownership launcher. Development defaults use the
-   * bundled native-launcher entrypoint; packaged CLIs can provide their own
-   * command/entrypoint without changing process ownership semantics.
+   * bundled native-launcher entrypoint.
    */
   readonly resolveLauncher?: (
     key: RuntimeWorkloadKey,
-    workload: NativeWorkload,
+    workload: PlannedWorkload,
   ) => Effect.Effect<NativeProcessLauncher, RuntimeDriverError>;
   /** Resolves the complete native process plan for one workload. */
   readonly resolveProcess: (
     key: RuntimeWorkloadKey,
-    workload: NativeWorkload,
+    workload: PlannedWorkload,
   ) => Effect.Effect<NativeProcessPlan, RuntimeDriverError>;
   /** Private readiness is resolved by the owning Supervisor/gateway seam. */
   readonly waitForReadiness: (
     key: RuntimeWorkloadKey,
-    workload: NativeWorkload,
+    workload: PlannedWorkload,
     process: NativeProcess,
   ) => Effect.Effect<void, RuntimeDriverError>;
   /** Runs the one-shot initial database bootstrap after readiness. */
   readonly bootstrapDatabase?: (
     key: RuntimeWorkloadKey,
-    workload: NativeWorkload,
+    workload: PlannedWorkload,
     process?: NativeProcess,
   ) => Effect.Effect<void, RuntimeDriverError>;
   readonly logStore?: LogStore;
@@ -80,7 +77,7 @@ interface OutputAccumulator {
 
 interface Resource {
   readonly key: RuntimeWorkloadKey;
-  readonly workload: NativeWorkload;
+  readonly workload: PlannedWorkload;
   readonly scope: Scope.Closeable;
   readonly state: Ref.Ref<ObservedWorkload>;
   readonly output: Readonly<{ stdout: OutputAccumulator; stderr: OutputAccumulator }>;
@@ -179,7 +176,7 @@ export const makeNativeRuntime = (
     const pathService = yield* Path.Path;
     const parentScope = yield* Scope.Scope;
     const runtimeScope = yield* Scope.fork(parentScope, "parallel");
-    const lifecycle = yield* Semaphore.make(1);
+    const registration = yield* Semaphore.make(1);
     const resources = new Map<string, Resource>();
 
     const cleanup = (resource: Resource): Effect.Effect<void, never> =>
@@ -502,7 +499,7 @@ export const makeNativeRuntime = (
 
     const start = (
       key: RuntimeWorkloadKey,
-      workload: NativeWorkload,
+      workload: PlannedWorkload,
     ): Effect.Effect<ObservedWorkload, RuntimeDriverError> => {
       if (workload.selected.kind === "container")
         return Effect.fail(
@@ -513,13 +510,15 @@ export const makeNativeRuntime = (
           }),
         );
       return Effect.flatMap(
-        lifecycle.withPermit(
+        // The permit serializes registration only; process readiness and log following continue
+        // after it is released, while stop/remove/cleanup hold it for their full operation.
+        registration.withPermit(
           Effect.gen(function* () {
             const id = resourceKey(key);
             const existing = resources.get(id);
             if (existing !== undefined) {
               const current = yield* Ref.get(existing.state);
-              if (current.state === "starting") return existing;
+              if (current.state === "starting" || current.state === "ready") return existing;
               yield* cleanup(existing);
             }
             const processScope = yield* Scope.fork(runtimeScope, "parallel");
@@ -604,7 +603,7 @@ export const makeNativeRuntime = (
       });
 
     const stop = (key: RuntimeWorkloadKey): Effect.Effect<void, RuntimeDriverError> =>
-      lifecycle.withPermit(
+      registration.withPermit(
         Effect.gen(function* () {
           const resource = resources.get(resourceKey(key));
           if (resource === undefined) return;
@@ -615,7 +614,7 @@ export const makeNativeRuntime = (
       );
 
     const remove = (key: RuntimeWorkloadKey): Effect.Effect<void, RuntimeDriverError> =>
-      lifecycle.withPermit(
+      registration.withPermit(
         Effect.gen(function* () {
           const resource = resources.get(resourceKey(key));
           if (resource === undefined) return;
@@ -628,7 +627,7 @@ export const makeNativeRuntime = (
     const cleanupRuntime = (
       request: RuntimeCleanupRequest,
     ): Effect.Effect<void, RuntimeDriverError> =>
-      lifecycle.withPermit(
+      registration.withPermit(
         Effect.gen(function* () {
           let cleanupCause: Cause.Cause<RuntimeDriverError> = Cause.empty;
           const attempt = <A>(effect: Effect.Effect<A, RuntimeDriverError>) =>

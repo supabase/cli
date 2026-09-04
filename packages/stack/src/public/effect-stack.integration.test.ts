@@ -51,8 +51,10 @@ import {
   StackStateInvalidError,
   StackStateFormatUnsupportedError,
   StackNotFoundError,
+  StackNotRunningError,
   StackVersionUnsupportedError,
   StackUpgradeRequiredError,
+  type StackError,
 } from "./Errors.ts";
 import type { LogQuery, StackLogBatch, StackLogEntry } from "./Logs.ts";
 import {
@@ -209,7 +211,7 @@ describe("Effect stack lifecycle handoff", () => {
           },
         }).pipe(Effect.provideService(Scope.Scope, ownerScope));
         const stack = yield* makeTestHandle(stackId, {
-          resolveOwner: () => Effect.succeed(Option.some(owner)),
+          resolveOwner: () => Effect.succeed(Option.some({ owner, launched: false })),
         });
         const stopped = yield* stack.stop().pipe(Effect.exit);
         expect(Exit.isFailure(stopped)).toBe(true);
@@ -326,7 +328,9 @@ describe("Effect stack lifecycle handoff", () => {
         const stack = yield* makeTestHandle(stackId, {
           resolveOwner: () =>
             Ref.get(ownerAvailable).pipe(
-              Effect.map((available) => (available ? Option.some(owner) : Option.none())),
+              Effect.map((available) =>
+                available ? Option.some({ owner, launched: false }) : Option.none(),
+              ),
             ),
           readOfflineState: Effect.succeed(Option.some(stoppedState())),
         });
@@ -395,7 +399,7 @@ describe("Effect stack lifecycle handoff", () => {
           },
         }).pipe(Effect.provideService(Scope.Scope, ownerScope));
         const stack = yield* makeTestHandle(stackId, {
-          resolveOwner: () => Effect.succeed(Option.some(owner)),
+          resolveOwner: () => Effect.succeed(Option.some({ owner, launched: false })),
         });
         const result = yield* stack.logs({ cursor: { opaque: "not-a-cursor" } }).pipe(Effect.exit);
         expect(Exit.isFailure(result)).toBe(true);
@@ -550,7 +554,7 @@ describe("Effect stack lifecycle handoff", () => {
           resolveOwner: () =>
             Effect.sync(() => {
               ownerReads += 1;
-              return ownerReads === 1 ? Option.some(owner) : Option.none();
+              return ownerReads === 1 ? Option.some({ owner, launched: false }) : Option.none();
             }),
           readOfflineState: Effect.fail(
             new StackOwnershipConflictError({ message: "Owner metadata still exists" }),
@@ -780,6 +784,43 @@ describe("Effect stack lifecycle handoff", () => {
     ),
   );
 
+  it.live("classifies credentials for offline and unreachable stacks", () =>
+    Effect.gen(function* () {
+      const stopped = yield* makeTestHandle(stackId, {
+        readOfflineState: Effect.succeed(Option.some(stoppedState())),
+      });
+      const stoppedResult = yield* stopped.credentials().pipe(Effect.exit);
+      expect(Exit.isFailure(stoppedResult)).toBe(true);
+      if (Exit.isFailure(stoppedResult)) {
+        const error = Cause.findErrorOption(stoppedResult.cause);
+        expect(Option.isSome(error)).toBe(true);
+        if (Option.isSome(error)) expect(error.value).toBeInstanceOf(StackNotRunningError);
+      }
+
+      const missing = yield* makeTestHandle(stackId);
+      const missingResult = yield* missing.credentials().pipe(Effect.exit);
+      expect(Exit.isFailure(missingResult)).toBe(true);
+      if (Exit.isFailure(missingResult)) {
+        const error = Cause.findErrorOption(missingResult.cause);
+        expect(Option.isSome(error)).toBe(true);
+        if (Option.isSome(error)) expect(error.value).toBeInstanceOf(StackNotFoundError);
+      }
+
+      const running = yield* makeTestHandle(stackId, {
+        readOfflineState: Effect.succeed(
+          Option.some({ ...stoppedState(), desiredLifecycle: "running" }),
+        ),
+      });
+      const runningResult = yield* running.credentials().pipe(Effect.exit);
+      expect(Exit.isFailure(runningResult)).toBe(true);
+      if (Exit.isFailure(runningResult)) {
+        const error = Cause.findErrorOption(runningResult.cause);
+        expect(Option.isSome(error)).toBe(true);
+        if (Option.isSome(error)) expect(error.value).toBeInstanceOf(StackOwnershipConflictError);
+      }
+    }).pipe(Effect.provide(NodeServices.layer)),
+  );
+
   it.live("does not leave a runtime remnant when a retained handle starts after destroy", () =>
     withRuntimeRoot((project) =>
       Effect.gen(function* () {
@@ -930,7 +971,6 @@ describe("Effect stack lifecycle handoff", () => {
         const crypto = yield* Crypto.Crypto;
         const calls: Array<string> = [];
         const runner: ContainerCommandRunner = {
-          executable: "controlled-docker",
           run: (request) => {
             calls.push(request.args.slice(0, 3).join(" "));
             if (request.args[0] === "version")
@@ -1033,7 +1073,7 @@ describe("Effect stack lifecycle handoff", () => {
             },
           }).pipe(Effect.provideService(Scope.Scope, ownerScope));
           const stack = yield* makeTestHandle(stackId, {
-            resolveOwner: () => Effect.succeed(Option.some(owner)),
+            resolveOwner: () => Effect.succeed(Option.some({ owner, launched: false })),
           });
           const result = yield* stack.start().pipe(Effect.exit);
           expect(Exit.isFailure(result)).toBe(true);
@@ -1107,7 +1147,7 @@ describe("Effect stack lifecycle handoff", () => {
           },
         }).pipe(Effect.provideService(Scope.Scope, ownerScope));
         const stack = yield* makeTestHandle(stackId, {
-          resolveOwner: () => Effect.succeed(Option.some(owner)),
+          resolveOwner: () => Effect.succeed(Option.some({ owner, launched: false })),
         });
         const first = yield* Effect.forkChild(stack.start(), { startImmediately: true });
         yield* Deferred.await(startEntered);
@@ -1142,7 +1182,6 @@ describe("Effect stack lifecycle handoff", () => {
         const secondRelease = yield* Deferred.make<void>();
         const present = new Set<string>();
         const runner: ContainerCommandRunner = {
-          executable: "controlled-docker",
           run: (request) => {
             const [command, subcommand, image] = request.args;
             if (command === "version")
@@ -1280,7 +1319,7 @@ describe("Effect stack lifecycle handoff", () => {
           rpcRelease: STACK_RPC_RELEASE,
         };
         const stack = yield* makeTestHandle(stackId, {
-          resolveOwner: () => Effect.succeed(Option.some(owner)),
+          resolveOwner: () => Effect.succeed(Option.some({ owner, launched: false })),
         });
         yield* stack.start();
         yield* stack.start({ config: {} });
@@ -1331,7 +1370,7 @@ describe("Effect stack lifecycle handoff", () => {
           resolveOwner: (launch) =>
             Effect.sync(() => {
               launched ||= launch;
-              return launched ? Option.some(owner) : Option.none();
+              return launched ? Option.some({ owner, launched: true }) : Option.none();
             }),
         });
         expect((yield* stack.start()).lifecycle).toBe("running");
@@ -1379,13 +1418,17 @@ describe("Effect stack lifecycle handoff", () => {
           resolveOwner: () =>
             Effect.succeed(
               Option.some({
-                format: "supabase-stack-owner-v1" as const,
-                stackId,
-                endpoint,
-                ownerSessionId,
-                rpcRelease: STACK_RPC_RELEASE,
+                owner: {
+                  format: "supabase-stack-owner-v1" as const,
+                  stackId,
+                  endpoint,
+                  ownerSessionId,
+                  rpcRelease: STACK_RPC_RELEASE,
+                },
+                launched: false,
               }),
             ),
+          readPersistedState: Effect.succeed(Option.some(stoppedState())),
         });
         const destroyFiber = yield* Effect.forkChild(stack.destroy(), { startImmediately: true });
         yield* Deferred.await(responseSent);
@@ -1406,13 +1449,17 @@ describe("Effect stack lifecycle handoff", () => {
           resolveOwner: () =>
             Effect.succeed(
               Option.some({
-                format: "supabase-stack-owner-v1" as const,
-                stackId,
-                endpoint: { kind: "unix", path: path.join(root, "missing.sock") },
-                ownerSessionId: "session",
-                rpcRelease: STACK_RPC_RELEASE,
+                owner: {
+                  format: "supabase-stack-owner-v1" as const,
+                  stackId,
+                  endpoint: { kind: "unix", path: path.join(root, "missing.sock") },
+                  ownerSessionId: "session",
+                  rpcRelease: STACK_RPC_RELEASE,
+                },
+                launched: false,
               }),
             ),
+          readPersistedState: Effect.succeed(Option.some(stoppedState())),
         });
         const result = yield* stack.destroy().pipe(Effect.exit);
         expect(Exit.isFailure(result)).toBe(true);
@@ -1428,6 +1475,28 @@ describe("Effect stack lifecycle handoff", () => {
     ),
   );
 
+  it.live("fails destroy without launching an owner when persisted state is absent", () =>
+    Effect.gen(function* () {
+      let launchCalls = 0;
+      const stack = yield* makeTestHandle(stackId, {
+        resolveOwner: (launch) =>
+          Effect.sync(() => {
+            if (launch) launchCalls += 1;
+            return Option.none();
+          }),
+        readPersistedState: Effect.succeed(Option.none()),
+      });
+      const result = yield* stack.destroy().pipe(Effect.exit);
+      expect(Exit.isFailure(result)).toBe(true);
+      if (Exit.isFailure(result)) {
+        const failure = Cause.findErrorOption(result.cause);
+        expect(Option.isSome(failure)).toBe(true);
+        if (Option.isSome(failure)) expect(failure.value).toBeInstanceOf(StackNotFoundError);
+      }
+      expect(launchCalls).toBe(0);
+    }),
+  );
+
   it.live(
     "stops an incompatible owner before starting a replacement",
     () =>
@@ -1437,10 +1506,8 @@ describe("Effect stack lifecycle handoff", () => {
           const env = yield* StackRuntimeEnvironment;
           const stack = yield* createStack({ projectRoot: project, runtime: { kind: "native" } });
           yield* Effect.addFinalizer(() => stack.destroy().pipe(Effect.ignore));
-          const identity = yield* resolveStackIdentity({ projectRoot: project });
           const store = yield* makeStackStateStore({ stateRoot: env.stateRoot });
           yield* ensureSupervisor({
-            identity,
             stackId: stack.id,
             stateStore: store,
             environment: env,
@@ -1678,14 +1745,14 @@ describe("Effect stack lifecycle handoff", () => {
         const fs = yield* FileSystem.FileSystem;
         const env = yield* StackRuntimeEnvironment;
         const stack = yield* createStack({ projectRoot: project, runtime: { kind: "native" } });
-        const identity = yield* resolveStackIdentity({ projectRoot: project });
         const store = yield* makeStackStateStore({ stateRoot: env.stateRoot });
         yield* ensureSupervisor({
-          identity,
           stackId: stack.id,
           stateStore: store,
           environment: env,
         });
+        const ownerHandle = yield* openStack(stack.id);
+        yield* Effect.addFinalizer(() => ownerHandle.stop().pipe(Effect.ignore));
         const owner = yield* readOwnerMetadata(env.stateRoot, stack.id, env);
         expect(owner).toBeDefined();
         if (owner === undefined) return;
@@ -1701,9 +1768,426 @@ describe("Effect stack lifecycle handoff", () => {
           ),
         );
         yield* fs.writeFileString(paths.controlMetadata, incompatibleOwner);
-        const oldOwnerHandle = yield* openStack(stack.id);
-        yield* oldOwnerHandle.stop();
+        yield* ownerHandle.stop();
+        expect(yield* readOwnerMetadata(env.stateRoot, stack.id, env)).toBeUndefined();
+        expect(yield* ownerLockExists(env.stateRoot, stack.id)).toBe(false);
       }),
+    ),
+  );
+
+  it.live(
+    "rejects incompatible RPC calls before opening handlers while allowing maintenance stop",
+    () =>
+      Effect.scoped(
+        Effect.gen(function* () {
+          const fs = yield* FileSystem.FileSystem;
+          const path = yield* Path.Path;
+          const root = yield* fs.makeTempDirectoryScoped({
+            prefix: "supabase-effect-stack-release-",
+          });
+          const endpoint = { kind: "unix" as const, path: path.join(root, "control.sock") };
+          const ownerSessionId = "incompatible-rpc-session";
+          const ownerRelease = "stack-rpc-v0@0.0.1";
+          const ownerScope = yield* Scope.make();
+          yield* Effect.addFinalizer(() => Scope.close(ownerScope, Exit.void));
+          const calls = yield* Ref.make(0);
+          const invoked = <A>(value: A) =>
+            Ref.update(calls, (count) => count + 1).pipe(Effect.andThen(Effect.succeed(value)));
+          const owner = {
+            format: "supabase-stack-owner-v1" as const,
+            stackId,
+            endpoint,
+            ownerSessionId,
+            rpcRelease: ownerRelease,
+          };
+          yield* startControlServer({
+            endpoint,
+            stackId,
+            ownerSessionId,
+            rpcRelease: ownerRelease,
+            rpcHandlers: {
+              status: () => invoked(runningStatus),
+              credentials: () => invoked(credentials),
+              start: () => invoked(runningStatus),
+              destroy: () => invoked(undefined),
+              logs: () => invoked({ entries: [], cursor: { opaque: "v1_0" }, running: false }),
+            },
+            maintenanceHandlers: {
+              probe: Effect.succeed({
+                ok: true,
+                op: "probe",
+                stackId,
+                ownerSessionId,
+                rpcRelease: ownerRelease,
+              }),
+              stop: Effect.succeed({ ok: true, op: "stop" }),
+            },
+            onShutdownReady: Scope.close(ownerScope, Exit.void),
+          }).pipe(Effect.provideService(Scope.Scope, ownerScope));
+          const stack = yield* makeTestHandle(stackId, {
+            resolveOwner: () => Effect.succeed(Option.some({ owner, launched: false })),
+          });
+          const status = yield* stack.status().pipe(Effect.exit);
+          const stackCredentials = yield* stack.credentials().pipe(Effect.exit);
+          const logs = yield* stack.logs().pipe(Effect.exit);
+          const assertUpgrade = (result: Exit.Exit<unknown, StackError>) => {
+            expect(Exit.isFailure(result)).toBe(true);
+            if (Exit.isFailure(result)) {
+              const failure = Cause.findErrorOption(result.cause);
+              expect(Option.isSome(failure)).toBe(true);
+              if (Option.isSome(failure)) {
+                expect(failure.value).toBeInstanceOf(StackUpgradeRequiredError);
+                expect(failure.value).toMatchObject({
+                  expectedRelease: STACK_RPC_RELEASE,
+                  actualRelease: ownerRelease,
+                });
+              }
+            }
+          };
+          assertUpgrade(status);
+          assertUpgrade(stackCredentials);
+          assertUpgrade(logs);
+          expect(yield* Ref.get(calls)).toBe(0);
+          yield* stack.stop();
+        }).pipe(Effect.provide(NodeServices.layer)),
+      ),
+  );
+
+  it.live("stops a freshly launched owner when the first start RPC is interrupted", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const root = yield* fs.makeTempDirectoryScoped({ prefix: "supabase-effect-stack-launch-" });
+        const endpoint = { kind: "unix" as const, path: path.join(root, "control.sock") };
+        const ownerSessionId = "fresh-launch-session";
+        const ownerScope = yield* Scope.make();
+        yield* Effect.addFinalizer(() => Scope.close(ownerScope, Exit.void));
+        const startEntered = yield* Deferred.make<void>();
+        const stopCalls = yield* Ref.make(0);
+        const owner = {
+          format: "supabase-stack-owner-v1" as const,
+          stackId,
+          endpoint,
+          ownerSessionId,
+          rpcRelease: STACK_RPC_RELEASE,
+        };
+        yield* startControlServer({
+          endpoint,
+          stackId,
+          ownerSessionId,
+          rpcRelease: STACK_RPC_RELEASE,
+          rpcHandlers: {
+            status: () => Effect.succeed(runningStatus),
+            credentials: () => Effect.succeed(credentials),
+            start: () =>
+              Deferred.succeed(startEntered, undefined).pipe(Effect.andThen(Effect.never)),
+            destroy: () => Effect.void,
+            logs: () => emptyLogs(),
+          },
+          maintenanceHandlers: {
+            probe: Effect.succeed({
+              ok: true,
+              op: "probe",
+              stackId,
+              ownerSessionId,
+              rpcRelease: STACK_RPC_RELEASE,
+            }),
+            stop: Ref.update(stopCalls, (calls) => calls + 1).pipe(
+              Effect.andThen(Effect.succeed({ ok: true, op: "stop" } as const)),
+            ),
+          },
+        }).pipe(Effect.provideService(Scope.Scope, ownerScope));
+        const stack = yield* makeTestHandle(stackId, {
+          resolveOwner: () => Effect.succeed(Option.some({ owner, launched: true })),
+        });
+        const start = yield* Effect.forkChild(stack.start(), { startImmediately: true });
+        yield* Deferred.await(startEntered);
+        yield* Fiber.interrupt(start);
+        expect(yield* Ref.get(stopCalls)).toBe(1);
+      }).pipe(Effect.provide(NodeServices.layer)),
+    ),
+  );
+
+  it.live("stops a freshly launched owner when destroy is interrupted", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const root = yield* fs.makeTempDirectoryScoped({
+          prefix: "supabase-effect-stack-destroy-",
+        });
+        const endpoint = { kind: "unix" as const, path: path.join(root, "control.sock") };
+        const ownerSessionId = "fresh-destroy-session";
+        const ownerScope = yield* Scope.make();
+        yield* Effect.addFinalizer(() => Scope.close(ownerScope, Exit.void));
+        const destroyEntered = yield* Deferred.make<void>();
+        const stopCalls = yield* Ref.make(0);
+        const owner = {
+          format: "supabase-stack-owner-v1" as const,
+          stackId,
+          endpoint,
+          ownerSessionId,
+          rpcRelease: STACK_RPC_RELEASE,
+        };
+        yield* startControlServer({
+          endpoint,
+          stackId,
+          ownerSessionId,
+          rpcRelease: STACK_RPC_RELEASE,
+          rpcHandlers: {
+            status: () => Effect.succeed(runningStatus),
+            credentials: () => Effect.succeed(credentials),
+            start: () => Effect.succeed(runningStatus),
+            destroy: () =>
+              Deferred.succeed(destroyEntered, undefined).pipe(Effect.andThen(Effect.never)),
+            logs: () => emptyLogs(),
+          },
+          maintenanceHandlers: {
+            probe: Effect.succeed({
+              ok: true,
+              op: "probe",
+              stackId,
+              ownerSessionId,
+              rpcRelease: STACK_RPC_RELEASE,
+            }),
+            stop: Ref.update(stopCalls, (calls) => calls + 1).pipe(
+              Effect.andThen(Effect.succeed({ ok: true, op: "stop" } as const)),
+            ),
+          },
+        }).pipe(Effect.provideService(Scope.Scope, ownerScope));
+        const stack = yield* makeTestHandle(stackId, {
+          resolveOwner: () => Effect.succeed(Option.some({ owner, launched: true })),
+          readPersistedState: Effect.succeed(Option.some(stoppedState())),
+        });
+        const destroy = yield* Effect.forkChild(stack.destroy(), { startImmediately: true });
+        yield* Deferred.await(destroyEntered);
+        yield* Fiber.interrupt(destroy);
+        const interrupted = yield* Fiber.join(destroy).pipe(Effect.exit);
+        expect(Exit.isFailure(interrupted)).toBe(true);
+        expect(yield* Ref.get(stopCalls)).toBe(1);
+      }).pipe(Effect.provide(NodeServices.layer)),
+    ),
+  );
+
+  it.live("reports fresh-owner rollback failures after an interrupted start", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const root = yield* fs.makeTempDirectoryScoped({
+          prefix: "supabase-effect-stack-rollback-",
+        });
+        const endpoint = { kind: "unix" as const, path: path.join(root, "control.sock") };
+        const ownerSessionId = "rollback-failure-session";
+        const ownerScope = yield* Scope.make();
+        yield* Effect.addFinalizer(() => Scope.close(ownerScope, Exit.void));
+        const startEntered = yield* Deferred.make<void>();
+        const stopCalls = yield* Ref.make(0);
+        const releaseCalls = yield* Ref.make(0);
+        const owner = {
+          format: "supabase-stack-owner-v1" as const,
+          stackId,
+          endpoint,
+          ownerSessionId,
+          rpcRelease: STACK_RPC_RELEASE,
+        };
+        yield* startControlServer({
+          endpoint,
+          stackId,
+          ownerSessionId,
+          rpcRelease: STACK_RPC_RELEASE,
+          rpcHandlers: {
+            status: () => Effect.succeed(runningStatus),
+            credentials: () => Effect.succeed(credentials),
+            start: () =>
+              Deferred.succeed(startEntered, undefined).pipe(Effect.andThen(Effect.never)),
+            destroy: () => Effect.void,
+            logs: () => emptyLogs(),
+          },
+          maintenanceHandlers: {
+            probe: Effect.succeed({
+              ok: true,
+              op: "probe",
+              stackId,
+              ownerSessionId,
+              rpcRelease: STACK_RPC_RELEASE,
+            }),
+            stop: Ref.update(stopCalls, (calls) => calls + 1).pipe(
+              Effect.andThen(
+                Effect.succeed({
+                  ok: false,
+                  error: { tag: "operation-failed", message: "injected rollback failure" },
+                } as const),
+              ),
+            ),
+          },
+        }).pipe(Effect.provideService(Scope.Scope, ownerScope));
+        const stack = yield* makeTestHandle(stackId, {
+          resolveOwner: () => Effect.succeed(Option.some({ owner, launched: true })),
+          waitForRelease: Ref.update(releaseCalls, (calls) => calls + 1).pipe(
+            Effect.andThen(
+              Effect.fail(new StackOwnershipConflictError({ message: "release failed" })),
+            ),
+          ),
+        });
+        const start = yield* Effect.forkChild(stack.start(), { startImmediately: true });
+        yield* Deferred.await(startEntered);
+        yield* Fiber.interrupt(start);
+        const interrupted = yield* Fiber.join(start).pipe(Effect.exit);
+        expect(Exit.isFailure(interrupted)).toBe(true);
+        if (Exit.isFailure(interrupted)) {
+          const failure = Cause.findErrorOption(interrupted.cause);
+          expect(Option.isSome(failure)).toBe(true);
+          if (Option.isSome(failure)) {
+            expect(failure.value).toBeInstanceOf(StackCleanupError);
+            expect(failure.value.message).toContain(
+              "Unable to clean up freshly launched Supervisor",
+            );
+            expect(failure.value.cause).toBeDefined();
+          }
+        }
+        expect(yield* Ref.get(stopCalls)).toBe(1);
+        expect(yield* Ref.get(releaseCalls)).toBe(1);
+      }).pipe(Effect.provide(NodeServices.layer)),
+    ),
+  );
+
+  it.live("preserves an interrupted start when fresh-owner cleanup is refused", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const root = yield* fs.makeTempDirectoryScoped({
+          prefix: "ss-ar-",
+        });
+        const endpoint = { kind: "unix" as const, path: path.join(root, "control.sock") };
+        const ownerSessionId = "admitted-rollback-session";
+        const ownerScope = yield* Scope.make();
+        yield* Effect.addFinalizer(() => Scope.close(ownerScope, Exit.void));
+        const startEntered = yield* Deferred.make<void>();
+        const stopCalls = yield* Ref.make(0);
+        const releaseCalls = yield* Ref.make(0);
+        const owner = {
+          format: "supabase-stack-owner-v1" as const,
+          stackId,
+          endpoint,
+          ownerSessionId,
+          rpcRelease: STACK_RPC_RELEASE,
+        };
+        yield* startControlServer({
+          endpoint,
+          stackId,
+          ownerSessionId,
+          rpcRelease: STACK_RPC_RELEASE,
+          rpcHandlers: {
+            status: () => Effect.succeed(runningStatus),
+            credentials: () => Effect.succeed(credentials),
+            start: () =>
+              Deferred.succeed(startEntered, undefined).pipe(Effect.andThen(Effect.never)),
+            destroy: () => Effect.void,
+            logs: () => emptyLogs(),
+          },
+          maintenanceHandlers: {
+            probe: Effect.succeed({
+              ok: true,
+              op: "probe",
+              stackId,
+              ownerSessionId,
+              rpcRelease: STACK_RPC_RELEASE,
+            }),
+            stop: Ref.update(stopCalls, (calls) => calls + 1).pipe(
+              Effect.andThen(
+                Effect.succeed({
+                  ok: false,
+                  error: {
+                    tag: "operation-failed",
+                    message: "a lifecycle transition is already in progress",
+                    stackErrorTag: "StackLifecycleConflictError",
+                  },
+                } as const),
+              ),
+            ),
+          },
+        }).pipe(Effect.provideService(Scope.Scope, ownerScope));
+        const stack = yield* makeTestHandle(stackId, {
+          resolveOwner: () => Effect.succeed(Option.some({ owner, launched: true })),
+          waitForRelease: Ref.update(releaseCalls, (calls) => calls + 1).pipe(
+            Effect.andThen(
+              Effect.fail(new StackOwnershipConflictError({ message: "release was unexpected" })),
+            ),
+          ),
+        });
+        const start = yield* Effect.forkChild(stack.start(), { startImmediately: true });
+        yield* Deferred.await(startEntered);
+        yield* Fiber.interrupt(start);
+        const interrupted = yield* Fiber.join(start).pipe(Effect.exit);
+        expect(Exit.isFailure(interrupted)).toBe(true);
+        if (Exit.isFailure(interrupted)) {
+          const failure = Cause.findErrorOption(interrupted.cause);
+          expect(Option.isNone(failure)).toBe(true);
+          expect(Cause.hasInterrupts(interrupted.cause)).toBe(true);
+        }
+        expect(yield* Ref.get(stopCalls)).toBe(1);
+        expect(yield* Ref.get(releaseCalls)).toBe(0);
+      }).pipe(Effect.provide(NodeServices.layer)),
+    ),
+  );
+
+  it.live("does not stop an owner joined through a concurrent launch", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const root = yield* fs.makeTempDirectoryScoped({ prefix: "supabase-effect-stack-join-" });
+        const endpoint = { kind: "unix" as const, path: path.join(root, "control.sock") };
+        const ownerSessionId = "joined-launch-session";
+        const ownerScope = yield* Scope.make();
+        yield* Effect.addFinalizer(() => Scope.close(ownerScope, Exit.void));
+        const startEntered = yield* Deferred.make<void>();
+        const stopCalls = yield* Ref.make(0);
+        const owner = {
+          format: "supabase-stack-owner-v1" as const,
+          stackId,
+          endpoint,
+          ownerSessionId,
+          rpcRelease: STACK_RPC_RELEASE,
+        };
+        yield* startControlServer({
+          endpoint,
+          stackId,
+          ownerSessionId,
+          rpcRelease: STACK_RPC_RELEASE,
+          rpcHandlers: {
+            status: () => Effect.succeed(runningStatus),
+            credentials: () => Effect.succeed(credentials),
+            start: () =>
+              Deferred.succeed(startEntered, undefined).pipe(Effect.andThen(Effect.never)),
+            destroy: () => Effect.void,
+            logs: () => emptyLogs(),
+          },
+          maintenanceHandlers: {
+            probe: Effect.succeed({
+              ok: true,
+              op: "probe",
+              stackId,
+              ownerSessionId,
+              rpcRelease: STACK_RPC_RELEASE,
+            }),
+            stop: Ref.update(stopCalls, (calls) => calls + 1).pipe(
+              Effect.andThen(Effect.succeed({ ok: true, op: "stop" } as const)),
+            ),
+          },
+          onShutdownReady: Scope.close(ownerScope, Exit.void),
+        }).pipe(Effect.provideService(Scope.Scope, ownerScope));
+        const stack = yield* makeTestHandle(stackId, {
+          resolveOwner: () => Effect.succeed(Option.some({ owner, launched: false })),
+        });
+        const start = yield* Effect.forkChild(stack.start(), { startImmediately: true });
+        yield* Deferred.await(startEntered);
+        yield* Fiber.interrupt(start);
+        expect(yield* Ref.get(stopCalls)).toBe(0);
+      }).pipe(Effect.provide(NodeServices.layer)),
     ),
   );
 });

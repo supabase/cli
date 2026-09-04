@@ -55,10 +55,10 @@ interface RuntimeInputMaterial {
 }
 
 export interface RuntimeInputOwner {
-  /** Resolves all stack-owned inputs needed before a workload is created. */
+  /** Resolves stack-owned inputs needed before a workload is created. */
   readonly resolve: (
     state: PersistedStackState,
-    options?: Readonly<{ readonly includePooler?: boolean }>,
+    workloadId: string,
   ) => Effect.Effect<RuntimeInputMaterial, StackPreparationError>;
   /** Resolves one configured project-relative regular file without copying it. */
   readonly resolveProjectFile: (
@@ -317,6 +317,19 @@ export const makeRuntimeInputOwner = (
           return yield* failure("Configured project path must resolve to a regular file");
         return canonicalCandidate;
       });
+    };
+
+    const ensureFunctionsRoot = (
+      state: PersistedStackState,
+    ): Effect.Effect<void, StackPreparationError> => {
+      const settings = settingsFor(state, "functions");
+      const root = isRecord(settings) ? settingValue(state, settings.functions_root) : "";
+      if (root.length === 0) return Effect.fail(failure("Persisted Functions root is missing"));
+      return mapFile(
+        root,
+        "create Functions root",
+        fs.makeDirectory(root, { recursive: true }),
+      ).pipe(Effect.asVoid);
     };
 
     const resolveAuthTemplates = (
@@ -608,43 +621,59 @@ export const makeRuntimeInputOwner = (
     type OwnedResult<A> = Deferred.Deferred<Exit.Exit<A, StackPreparationError>, never>;
     const commonPending = new Map<string, OwnedResult<RuntimeInputMaterial>>();
     const commonCompleted = new Map<string, RuntimeInputMaterial>();
+    const authPending = new Map<string, OwnedResult<NonNullable<RuntimeInputMaterial["auth"]>>>();
+    const authCompleted = new Map<string, NonNullable<RuntimeInputMaterial["auth"]>>();
     const poolerPending = new Map<string, OwnedResult<string>>();
     const poolerCompleted = new Map<string, string>();
     const keyFor = (state: PersistedStackState): string =>
       `${options.stackId}\u0000${canonicalize(state.runtime)}\u0000${canonicalize(state.definition ?? {})}`;
+    const needsAuthMaterial = (state: PersistedStackState, workloadId: string): boolean =>
+      (["rest", "auth", "realtime", "storage", "functions"] as const).some(
+        (capability) =>
+          state.definition?.capabilities[capability].enabled === true &&
+          (workloadId === `${capability}:${capability}` ||
+            (capability === "functions" && workloadId === "functions:edge-runtime")),
+      );
 
     const materializeCommon = (
       state: PersistedStackState,
+      workloadId: string,
+      authMaterial: NonNullable<RuntimeInputMaterial["auth"]> | undefined,
     ): Effect.Effect<RuntimeInputMaterial, StackPreparationError> =>
       Effect.gen(function* () {
-        const jwtConsumers = ["rest", "auth", "realtime", "storage", "functions"] as const;
-        const resolvesAuthMaterial = jwtConsumers.some(
-          (capability) => state.definition?.capabilities[capability].enabled === true,
-        );
-        const auth = resolvesAuthMaterial ? yield* resolveAuth(state) : undefined;
-        const analyticsSettings = settingsFor(state, "analytics");
-        const gcpPath = isRecord(analyticsSettings)
-          ? settingValue(state, analyticsSettings.gcp_jwt_path)
-          : "";
-        const analyticsEnabled = state.definition?.capabilities.analytics.enabled === true;
-        const vectorPort = isRecord(analyticsSettings)
-          ? settingValue(state, analyticsSettings.vector_port)
-          : "";
-        const vectorConfigPath =
-          analyticsEnabled && vectorPort.length > 0 ? yield* writeVectorConfig(state) : undefined;
-        const analytics =
-          !analyticsEnabled || (gcpPath.length === 0 && vectorConfigPath === undefined)
-            ? undefined
-            : {
-                ...(gcpPath.length === 0
-                  ? {}
-                  : { gcpJwtPath: yield* resolveProjectFile(state, gcpPath) }),
-                ...(vectorConfigPath === undefined ? {} : { vectorConfigPath }),
-              };
-        const functions =
-          state.definition?.capabilities.functions.enabled !== true
-            ? undefined
-            : { secrets: yield* resolveFunctionsEdgeRuntimeSecrets(state) };
+        if (workloadId === "studio:studio" || workloadId === "functions:edge-runtime")
+          yield* ensureFunctionsRoot(state);
+        const auth = needsAuthMaterial(state, workloadId) ? authMaterial : undefined;
+        const resolvesAnalyticsMaterial =
+          state.definition?.capabilities.analytics.enabled === true &&
+          workloadId.startsWith("analytics:");
+        const analytics = !resolvesAnalyticsMaterial
+          ? undefined
+          : yield* Effect.gen(function* () {
+              const analyticsSettings = settingsFor(state, "analytics");
+              const gcpPath = isRecord(analyticsSettings)
+                ? settingValue(state, analyticsSettings.gcp_jwt_path)
+                : "";
+              const vectorPort = isRecord(analyticsSettings)
+                ? settingValue(state, analyticsSettings.vector_port)
+                : "";
+              const vectorConfigPath =
+                vectorPort.length > 0 ? yield* writeVectorConfig(state) : undefined;
+              return gcpPath.length === 0 && vectorConfigPath === undefined
+                ? undefined
+                : {
+                    ...(gcpPath.length === 0
+                      ? {}
+                      : { gcpJwtPath: yield* resolveProjectFile(state, gcpPath) }),
+                    ...(vectorConfigPath === undefined ? {} : { vectorConfigPath }),
+                  };
+            });
+        const resolvesFunctionsMaterial =
+          workloadId === "functions:edge-runtime" &&
+          state.definition?.capabilities.functions.enabled === true;
+        const functions = resolvesFunctionsMaterial
+          ? { secrets: yield* resolveFunctionsEdgeRuntimeSecrets(state) }
+          : undefined;
         return {
           ...(auth === undefined ? {} : { auth }),
           ...(analytics === undefined ? {} : { analytics }),
@@ -721,18 +750,21 @@ export const makeRuntimeInputOwner = (
 
     const resolve = (
       state: PersistedStackState,
-      options: Readonly<{ readonly includePooler?: boolean }> = {},
+      workloadId: string,
     ): Effect.Effect<RuntimeInputMaterial, StackPreparationError> =>
       Effect.gen(function* () {
-        const key = keyFor(state);
+        const key = `${keyFor(state)}\u0000${workloadId}`;
+        const auth = needsAuthMaterial(state, workloadId)
+          ? yield* singleFlight(keyFor(state), authPending, authCompleted, resolveAuth(state))
+          : undefined;
         const common = yield* singleFlight(
           key,
           commonPending,
           commonCompleted,
-          materializeCommon(state),
+          materializeCommon(state, workloadId, auth),
         );
         if (
-          options.includePooler !== true ||
+          workloadId !== "pooler:pooler" ||
           state.definition?.capabilities.pooler.enabled !== true
         )
           return common;
@@ -749,15 +781,21 @@ export const makeRuntimeInputOwner = (
         const pending = yield* admission.withPermit(
           Effect.sync(() => {
             const common = [...commonPending.values()];
+            const auth = [...authPending.values()];
             const pooler = [...poolerPending.values()];
             commonPending.clear();
             commonCompleted.clear();
+            authPending.clear();
+            authCompleted.clear();
             poolerPending.clear();
             poolerCompleted.clear();
-            return { common, pooler };
+            return { common, auth, pooler };
           }),
         );
         yield* Effect.forEach(pending.common, (deferred) =>
+          Deferred.succeed(deferred, Exit.fail(failure("Runtime inputs were invalidated"))),
+        );
+        yield* Effect.forEach(pending.auth, (deferred) =>
           Deferred.succeed(deferred, Exit.fail(failure("Runtime inputs were invalidated"))),
         );
         yield* Effect.forEach(pending.pooler, (deferred) =>

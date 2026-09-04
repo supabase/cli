@@ -103,16 +103,12 @@ interface ContainerVolumeRequest {
   readonly ownerWorkloadId?: string;
 }
 
-interface ContainerRuntimeResourceIds {
+interface ContainerRuntimeResource {
   readonly container: string;
   state: "starting" | "running" | "stopped" | "failed";
   readonly error?: string;
-}
-
-interface ContainerRuntimeResource extends ContainerRuntimeResourceIds {
   readonly key: RuntimeWorkloadKey;
   readonly workload: PlannedWorkload;
-  readonly ownerSessionId: string;
   readonly failure: Deferred.Deferred<never, RuntimeDriverError>;
   logFiber?: Fiber.Fiber<void, never>;
   watchFiber?: Fiber.Fiber<void, never>;
@@ -261,7 +257,7 @@ export const makeContainerRuntime = (
       options.startupProcessTimeout ?? ("5 minutes" satisfies Duration.Input);
     const parentScope = yield* Scope.Scope;
     const runtimeScope = yield* Scope.fork(parentScope, "parallel");
-    const lifecycle = yield* Semaphore.make(1);
+    const registration = yield* Semaphore.make(1);
     const resources = new Map<string, ContainerRuntimeResource>();
     const startGuards = new Map<string, Ref.Ref<boolean>>();
     const startFibers = new Map<string, Fiber.Fiber<ObservedWorkload, RuntimeDriverError>>();
@@ -281,6 +277,39 @@ export const makeContainerRuntime = (
 
     const stopExitWatcher = (resource: ContainerRuntimeResource): Effect.Effect<void> =>
       resource.watchFiber === undefined ? Effect.void : Fiber.interrupt(resource.watchFiber);
+
+    const cleanupStartedContainer = (
+      key: RuntimeWorkloadKey,
+      containerId: string,
+    ): Effect.Effect<void, RuntimeDriverError> =>
+      registration.withPermit(
+        Effect.uninterruptible(
+          Effect.gen(function* () {
+            const exact = (yield* withEngine(key, options.engine.listResources(key.stackId))).find(
+              (entry) => entry.kind === "workload" && entry.id === containerId,
+            );
+            if (exact === undefined) return;
+            if (exact.state === "running")
+              yield* withEngine(key, options.engine.stopContainer(containerId));
+            yield* withEngine(key, options.engine.removeContainer(containerId));
+          }),
+        ),
+      );
+
+    const cleanupRegisteredResource = (
+      resource: ContainerRuntimeResource,
+    ): Effect.Effect<void, RuntimeDriverError> =>
+      Effect.gen(function* () {
+        resource.stopRequested = true;
+        yield* stopLogs(resource);
+        yield* stopExitWatcher(resource);
+        const cleanup = yield* cleanupStartedContainer(resource.key, resource.container).pipe(
+          Effect.exit,
+        );
+        const id = resourceKey(resource.key);
+        if (resources.get(id) === resource) resources.delete(id);
+        if (Exit.isFailure(cleanup)) return yield* Effect.failCause(cleanup.cause);
+      });
 
     const reportFailure = (
       resource: ContainerRuntimeResource,
@@ -572,15 +601,18 @@ export const makeContainerRuntime = (
         const entries = yield* withEngine(key, options.engine.listResources(key.stackId));
         const volumeSpec =
           volumeRequest === undefined ? undefined : volumeSpecFor(key, volumeRequest);
+        const exactVolume =
+          volumeSpec === undefined
+            ? undefined
+            : entries.find(
+                (entry) =>
+                  entry.kind === "volume" &&
+                  entry.name === volumeSpec.name &&
+                  sameLabels(entry.labels, volumeSpec.labels),
+              );
         if (volumeSpec !== undefined) {
           const volume = volumeSpec;
-          const exact = entries.find(
-            (entry) =>
-              entry.kind === "volume" &&
-              entry.name === volume.name &&
-              sameLabels(entry.labels, volume.labels),
-          );
-          if (exact === undefined) {
+          if (exactVolume === undefined) {
             const sameLabel = entries.find(
               (entry) => entry.kind === "volume" && sameLabels(entry.labels, volume.labels),
             );
@@ -661,12 +693,6 @@ export const makeContainerRuntime = (
 
         if (volumeSpec !== undefined) {
           const volume = volumeSpec;
-          const exactVolume = entries.find(
-            (entry) =>
-              entry.kind === "volume" &&
-              entry.name === volume.name &&
-              sameLabels(entry.labels, volume.labels),
-          );
           if (exactVolume === undefined)
             yield* withEngine(key, options.engine.createVolume(volume));
         }
@@ -731,29 +757,43 @@ export const makeContainerRuntime = (
         }
         yield* guard;
         yield* withEngine(key, options.engine.startContainer(container.id));
-        const resource = yield* Effect.gen(function* () {
-          const failure = yield* Deferred.make<never, RuntimeDriverError>();
-          const createdResource: ContainerRuntimeResource = {
-            key,
-            workload,
-            ownerSessionId: options.ownerSessionId,
-            container: container.id,
-            state: "starting",
-            failure,
-            stopRequested: false,
-          };
-          resources.set(resourceKey(key), createdResource);
-          return createdResource;
-        });
-        yield* attachLogs(resource, "all");
-        yield* attachExitWatcher(resource);
-        const readiness =
-          resolution.waitForReadiness === undefined
-            ? options.waitForReadiness === undefined
-              ? Effect.void
-              : options.waitForReadiness(key, workload, container)
-            : resolution.waitForReadiness(key, workload, container);
-        const startup = Effect.gen(function* () {
+        const registered = yield* Effect.uninterruptibleMask((restore) =>
+          restore(
+            Effect.gen(function* () {
+              yield* guard;
+              const failure = yield* Deferred.make<never, RuntimeDriverError>();
+              yield* guard;
+              const createdResource: ContainerRuntimeResource = {
+                key,
+                workload,
+                container: container.id,
+                state: "starting",
+                failure,
+                stopRequested: false,
+              };
+              resources.set(resourceKey(key), createdResource);
+              return createdResource;
+            }),
+          ).pipe(Effect.exit),
+        );
+        if (Exit.isFailure(registered)) {
+          const cleanup = yield* cleanupStartedContainer(key, container.id).pipe(Effect.exit);
+          return yield* Effect.failCause(
+            Exit.isFailure(cleanup)
+              ? Cause.combine(registered.cause, cleanup.cause)
+              : registered.cause,
+          );
+        }
+        const resource = registered.value;
+        const postRegistration = Effect.gen(function* () {
+          yield* attachLogs(resource, "all");
+          yield* attachExitWatcher(resource);
+          const readiness =
+            resolution.waitForReadiness === undefined
+              ? options.waitForReadiness === undefined
+                ? Effect.void
+                : options.waitForReadiness(key, workload, container)
+              : resolution.waitForReadiness(key, workload, container);
           yield* Effect.raceFirst(readiness, Deferred.await(resource.failure));
           if (workload.bootstrap === "database") {
             if (options.bootstrapDatabase === undefined)
@@ -763,53 +803,61 @@ export const makeContainerRuntime = (
               );
             yield* options.bootstrapDatabase(key, workload, container);
           }
+          resource.state = "running";
+          return { ...key, state: "ready" } satisfies ObservedWorkload;
         });
-        const ready = yield* startup.pipe(Effect.exit);
-        if (Exit.isFailure(ready)) {
-          resource.stopRequested = true;
-          yield* stopLogs(resource);
-          yield* stopExitWatcher(resource);
-          const stopExit = yield* Effect.exit(
-            withEngine(key, options.engine.stopContainer(container.id)),
+        // The mask lets Exit observe ordinary failures from the restored work; interruptions stay
+        // pending and re-raise at mask exit, where the outer wrapper performs cleanup.
+        const completed = yield* Effect.uninterruptibleMask((restore) =>
+          restore(postRegistration).pipe(Effect.exit),
+        );
+        if (Exit.isFailure(completed)) {
+          const cleanup = yield* cleanupRegisteredResource(resource).pipe(Effect.exit);
+          return yield* Effect.failCause(
+            Exit.isFailure(cleanup)
+              ? Cause.combine(completed.cause, cleanup.cause)
+              : completed.cause,
           );
-          const removeExit = yield* Effect.exit(
-            withEngine(key, options.engine.removeContainer(container.id)),
-          );
-          let cleanupCause: Cause.Cause<RuntimeDriverError> = Cause.empty;
-          if (Exit.isFailure(stopExit)) cleanupCause = Cause.combine(cleanupCause, stopExit.cause);
-          if (Exit.isFailure(removeExit))
-            cleanupCause = Cause.combine(cleanupCause, removeExit.cause);
-          resources.delete(resourceKey(key));
-          return yield* cleanupCause.reasons.length === 0
-            ? Effect.failCause(ready.cause)
-            : Effect.failCause(Cause.combine(ready.cause, cleanupCause));
         }
-        resource.state = "running";
-        const result: ObservedWorkload = { ...key, state: "ready" };
-        return result;
+        return completed.value;
       });
       return Effect.gen(function* () {
         const inFlight = startFibers.get(id);
         if (inFlight !== undefined) return yield* Fiber.join(inFlight);
         const guardRef = yield* Ref.make(false);
         startGuards.set(id, guardRef);
-        // Track the whole lifecycle wait, not only the body after permit acquisition. Cleanup
+        // Track the whole registration wait, not only the body after permit acquisition. Cleanup
         // must be able to interrupt starts queued behind another activation as well. The permit
         // only covers forking the body; readiness and log following continue after it is released.
         const run = Effect.gen(function* () {
-          const body = yield* lifecycle.withPermit(
+          const body = yield* registration.withPermit(
             Effect.forkChild(startEffect, { startImmediately: true }),
           );
           return yield* Fiber.join(body);
         });
         const fiber = yield* Effect.forkChild(run, { startImmediately: true });
         startFibers.set(id, fiber);
-        return yield* Fiber.join(fiber).pipe(
-          Effect.ensuring(
-            Effect.sync(() => {
-              if (startGuards.get(id) === guardRef) startGuards.delete(id);
-              if (startFibers.get(id) === fiber) startFibers.delete(id);
-            }),
+        return yield* Effect.uninterruptibleMask((restore) =>
+          Effect.gen(function* () {
+            const joined = yield* restore(Fiber.join(fiber)).pipe(Effect.exit);
+            if (Exit.isFailure(joined)) {
+              yield* Fiber.interrupt(fiber);
+              const resource = resources.get(id);
+              if (resource !== undefined) {
+                const cleanup = yield* cleanupRegisteredResource(resource).pipe(Effect.exit);
+                if (Exit.isFailure(cleanup))
+                  return yield* Effect.failCause(Cause.combine(joined.cause, cleanup.cause));
+              }
+              return yield* Effect.failCause(joined.cause);
+            }
+            return joined.value;
+          }).pipe(
+            Effect.ensuring(
+              Effect.sync(() => {
+                if (startGuards.get(id) === guardRef) startGuards.delete(id);
+                if (startFibers.get(id) === fiber) startFibers.delete(id);
+              }),
+            ),
           ),
         );
       });
@@ -835,7 +883,8 @@ export const makeContainerRuntime = (
               yield* stopLogs(found);
               yield* stopExitWatcher(found);
               yield* withEngine(key, options.engine.stopContainer(found.container));
-              resources.set(resourceKey(key), { ...found, state: "stopped" });
+              const id = resourceKey(key);
+              if (resources.get(id) === found) resources.set(id, { ...found, state: "stopped" });
             })
         : (guard === undefined ? Effect.void : Ref.set(guard, true)).pipe(
             Effect.andThen(withEngine(key, options.engine.listResources(key.stackId))),
@@ -858,10 +907,10 @@ export const makeContainerRuntime = (
     };
 
     const stop = (key: RuntimeWorkloadKey): Effect.Effect<void, RuntimeDriverError> =>
-      lifecycle.withPermit(stopInPermit(key));
+      registration.withPermit(stopInPermit(key));
 
     const remove = (key: RuntimeWorkloadKey): Effect.Effect<void, RuntimeDriverError> =>
-      lifecycle.withPermit(
+      registration.withPermit(
         Effect.gen(function* () {
           const found = resources.get(resourceKey(key));
           if (found !== undefined) {
@@ -900,7 +949,7 @@ export const makeContainerRuntime = (
       );
 
     const cleanup = (request: RuntimeCleanupRequest): Effect.Effect<void, RuntimeDriverError> =>
-      lifecycle.withPermit(
+      registration.withPermit(
         Effect.gen(function* () {
           // Stop and interrupt starts that have not registered a resource yet. Without this
           // fence, cleanup can observe an empty resource list while an activation is still inside
@@ -919,8 +968,12 @@ export const makeContainerRuntime = (
             if (fiber !== undefined) yield* Fiber.interrupt(fiber);
           }
 
+          const stackKey = {
+            stackId: request.stackId,
+            workloadId: "",
+          } satisfies RuntimeWorkloadKey;
           const entries = yield* withEngine(
-            { stackId: request.stackId, workloadId: "" },
+            stackKey,
             options.engine.listResources(request.stackId),
           );
           const owned = entries
@@ -944,34 +997,14 @@ export const makeContainerRuntime = (
           // stop does not prevent the remove attempt; all failures are returned together.
           for (const entry of owned.filter(isWorkloadResource)) {
             if (entry.state === "running")
-              yield* attempt(
-                withEngine(
-                  { stackId: request.stackId, workloadId: "" },
-                  options.engine.stopContainer(entry.id),
-                ),
-              );
-            yield* attempt(
-              withEngine(
-                { stackId: request.stackId, workloadId: "" },
-                options.engine.removeContainer(entry.id),
-              ),
-            );
+              yield* attempt(withEngine(stackKey, options.engine.stopContainer(entry.id)));
+            yield* attempt(withEngine(stackKey, options.engine.removeContainer(entry.id)));
           }
           for (const entry of owned.filter(isNetworkResource))
-            yield* attempt(
-              withEngine(
-                { stackId: request.stackId, workloadId: "" },
-                options.engine.removeNetwork(entry.id),
-              ),
-            );
+            yield* attempt(withEngine(stackKey, options.engine.removeNetwork(entry.id)));
           if (request.destroy)
             for (const entry of owned.filter((candidate) => candidate.kind === "volume"))
-              yield* attempt(
-                withEngine(
-                  { stackId: request.stackId, workloadId: "" },
-                  options.engine.removeVolume(entry.id),
-                ),
-              );
+              yield* attempt(withEngine(stackKey, options.engine.removeVolume(entry.id)));
 
           for (const id of resources.keys())
             if (id.startsWith(`${request.stackId}:`)) resources.delete(id);

@@ -116,6 +116,7 @@ const makeTestHostListener = (
           port,
           field,
           binding: { kind: "http", server },
+          connections: { sockets: new Set() },
           close,
         } satisfies HostListener;
       }),
@@ -135,6 +136,7 @@ const makeTestHostListener = (
         port,
         field,
         binding: { kind: "tcp", server, allowHalfOpen: true },
+        connections: { sockets: new Set() },
         close,
       } satisfies HostListener;
     }),

@@ -1,5 +1,7 @@
 import { Effect, Exit, FiberSet, Scope } from "effect";
 import { createServer, Socket, type Server } from "node:net";
+// oxlint-disable-next-line effecttsgo/node-builtin-import
+import type { Duplex } from "node:stream";
 import type { Fiber } from "effect/Fiber";
 import { GatewayActivationError } from "../public/Errors.ts";
 import type {
@@ -34,6 +36,12 @@ export interface TcpGateway {
 
 const routeFor = (routes: ReadonlyArray<GatewayProxyRoute>): GatewayProxyRoute | undefined =>
   routes.find((route) => route.match({ path: "/", headers: {} }));
+
+const trackSocket = (active: Set<Duplex>, socket: Duplex): void => {
+  if (active.has(socket)) return;
+  active.add(socket);
+  socket.once("close", () => active.delete(socket));
+};
 
 const tunnel = (
   source: Socket,
@@ -110,10 +118,9 @@ const handleConnection = (
   source: Socket,
   options: TcpGatewayOptions,
   runFork: <A, E>(effect: Effect.Effect<A, E>) => Fiber<A, E>,
-  active: Set<Socket>,
+  active: Set<Duplex>,
 ): void => {
-  active.add(source);
-  source.once("close", () => active.delete(source));
+  trackSocket(active, source);
   const route = routeFor(options.routes);
   if (route === undefined) {
     source.destroy();
@@ -158,7 +165,8 @@ export const makeTcpGateway = (
         : createServer({ allowHalfOpen: true });
     if (options.listener !== undefined && !server.listening)
       return yield* new GatewayActivationError({ message: "Gateway listener is not bound" });
-    const active = new Set<Socket>();
+    const active =
+      options.listener === undefined ? new Set<Duplex>() : options.listener.connections.sockets;
     const connectionHandler = (socket: Socket) =>
       handleConnection(socket, options, runFork, active);
     server.on("connection", connectionHandler);

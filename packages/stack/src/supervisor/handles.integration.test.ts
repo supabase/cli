@@ -126,7 +126,6 @@ const quoteModuleSpecifier = (value: string): string =>
 
 const fakeContainerEngine = (kind: "docker" | "podman", calls: string[]): ContainerEngine => ({
   kind,
-  executable: kind,
   preflight: Effect.succeed({ host: "host.containers.internal" }),
   probe: Effect.sync(() => {
     calls.push(`${kind}:probe`);
@@ -178,7 +177,6 @@ describe("managed stack handles", { timeout: 30_000 }, () => {
           tempRoot: project,
         };
         const stack = yield* createStack({ projectRoot: project });
-        const identity = yield* resolveStackIdentity({ projectRoot: project });
         const store = yield* makeStackStateStore({ stateRoot: env.stateRoot });
         const paths = yield* resolveStackPaths({ stateRoot: env.stateRoot, stackId: stack.id });
         const owner = {
@@ -214,7 +212,6 @@ describe("managed stack handles", { timeout: 30_000 }, () => {
           ),
         );
         const result = yield* ensureSupervisor({
-          identity,
           stackId: stack.id,
           stateStore: store,
           environment: runtime,

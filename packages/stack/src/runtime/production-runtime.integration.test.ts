@@ -24,6 +24,7 @@ import type { StackRuntime } from "../public/Runtime.ts";
 import { NetworkPortSchema } from "../public/Status.ts";
 import type { PersistedStackState } from "../state/StackState.ts";
 import type { StackStateStore } from "../state/StackStateStore.ts";
+import { resolveSecrets } from "../state/SecretStore.ts";
 import { resolveStackPaths } from "../state/Paths.ts";
 import type { SupervisorIngress } from "../supervisor/Ingress.ts";
 import type { LogStore } from "../supervisor/LogStore.ts";
@@ -258,7 +259,6 @@ const ownerInputContainerEngine = (
   };
   return {
     kind: "docker",
-    executable: "test-container-engine",
     preflight: Effect.sync(() => {
       return { host: "host.docker.internal" };
     }),
@@ -322,6 +322,101 @@ const ownerInputContainerEngine = (
 };
 
 describe("production runtime", () => {
+  it.live("validates materialized secrets from the candidate definition and values", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const root = yield* fs.makeTempDirectoryScoped({
+          prefix: "supabase-production-candidate-",
+        });
+        const previous = yield* compileStack({
+          projectRoot: root,
+          runtime: { kind: "native" },
+        });
+        const previousSecrets = yield* resolveSecrets(
+          { declarations: previous.secrets },
+          undefined,
+          "stopped",
+        );
+        const candidate = yield* compileStack({
+          projectRoot: root,
+          runtime: { kind: "native" },
+          config: {
+            capabilities: {
+              storage: {
+                enabled: true,
+                settings: {
+                  s3_protocol: {
+                    secret_access_key: Redacted.make("candidate-secret"),
+                  },
+                },
+              },
+            },
+          },
+        });
+        const candidateSecrets = yield* resolveSecrets(
+          { declarations: candidate.secrets },
+          undefined,
+          "stopped",
+        );
+        const missing = Object.fromEntries(
+          Object.entries(candidateSecrets.persisted).filter(
+            ([slot]) => slot !== "secret:storage.settings.s3_protocol.secret_access_key",
+          ),
+        );
+        const current = {
+          value: {
+            ...stateFor({}, { kind: "native" }),
+            identity: {
+              ...stateFor({}).identity,
+              projectRoot: root,
+              checkoutRoot: root,
+              workspaceId: root,
+              checkoutId: root,
+            },
+            definition: previous.definition,
+            secrets: previousSecrets.persisted,
+          },
+        } satisfies { value: PersistedStackState };
+        const context = yield* Effect.context<FileSystem.FileSystem | Path.Path | Crypto.Crypto>();
+        const runtime = yield* makeProductionRuntime({
+          stateRoot: root,
+          stackId,
+          ownerSessionId: "candidate-secrets",
+          stateStore: stateStoreFor(current),
+          context,
+          ingress,
+          envFileOwner: envFiles,
+          functionsBootstrapOwner: bootstrap,
+          artifactPreparer: {
+            prepare: (_runtime, workload) =>
+              Effect.succeed({
+                workloadId: workload.id,
+                capability: workload.capability,
+                version: "test",
+                outcome: "cached" as const,
+              }),
+          },
+          logStore: memoryLogStore([]),
+        });
+        const result = yield* runtime
+          .preflight({
+            stackId,
+            state: current.value,
+            definition: candidate.definition,
+            secrets: missing,
+            plan: candidate.executionPlan,
+          })
+          .pipe(Effect.exit);
+        expect(Exit.isFailure(result)).toBe(true);
+        if (Exit.isFailure(result)) {
+          const error = Option.getOrUndefined(Cause.findErrorOption(result.cause));
+          expect(error).toBeInstanceOf(StackStateInvalidError);
+        }
+      }),
+    ).pipe(Effect.provide(NodeServices.layer)),
+  );
+
   it.live("keeps cleanup available when retained logs are corrupted", () =>
     Effect.scoped(
       Effect.gen(function* () {
@@ -366,7 +461,6 @@ describe("production runtime", () => {
         const supervisor = yield* makeSupervisor({
           stackId,
           ownerSessionId: "bad-logs-owner",
-          rpcRelease: "test-release",
           stateStore: store,
           context,
           runtime,
@@ -490,6 +584,105 @@ describe("production runtime", () => {
           stackId,
           workloadId: database.id,
         });
+      }),
+    ).pipe(Effect.provide(NodeServices.layer)),
+  );
+
+  it.live("defers unreachable Auth OIDC resolution until Auth activation", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const root = yield* fs.makeTempDirectoryScoped({
+          prefix: "supabase-production-oidc-lazy-",
+        });
+        const readinessServer = createNetServer((socket) => socket.end());
+        yield* listenForNativeReadiness(readinessServer);
+        const address = readinessServer.address();
+        if (typeof address !== "object" || address === null)
+          return yield* Effect.die("Database readiness server did not expose an address");
+        const compiled = yield* compileStack({
+          projectRoot: root,
+          runtime: { kind: "container", engine: "docker" },
+          config: {
+            capabilities: {
+              auth: {
+                enabled: true,
+                settings: {
+                  third_party: {
+                    workos: { enabled: true, issuer_url: "https://issuer.example" },
+                  },
+                },
+              },
+            },
+          },
+        });
+        const resolved = yield* resolveSecrets(
+          { declarations: compiled.secrets },
+          undefined,
+          "stopped",
+        );
+        const current = {
+          value: {
+            ...stateFor(resolved.persisted, { kind: "container", engine: "docker" }),
+            identity: {
+              ...stateFor({}).identity,
+              projectRoot: root,
+              checkoutRoot: root,
+              workspaceId: root,
+              checkoutId: root,
+            },
+            desiredLifecycle: "running" as const,
+            definition: compiled.definition,
+            privatePorts: [
+              { workloadId: "database:database", binding: "primary", port: address.port },
+            ],
+          },
+        } satisfies { value: PersistedStackState };
+        const database = compiled.executionPlan.workloads.find(
+          ({ id }) => id === "database:database",
+        );
+        const auth = compiled.executionPlan.workloads.find(({ id }) => id === "auth:auth");
+        if (database === undefined || auth === undefined)
+          return yield* Effect.die("Expected database and Auth workloads");
+        const context = yield* Effect.context<FileSystem.FileSystem | Path.Path | Crypto.Crypto>();
+        const runtime = yield* makeProductionRuntime({
+          stateRoot: root,
+          stackId,
+          ownerSessionId: "oidc-lazy",
+          stateStore: stateStoreFor(current),
+          context,
+          ingress,
+          containerEngine: ownerInputContainerEngine([]),
+          artifactPreparer: {
+            prepare: (_runtime, workload) =>
+              Effect.succeed({
+                workloadId: workload.id,
+                capability: workload.capability,
+                version: "test",
+                outcome: "cached" as const,
+                image: workload.selected.kind === "container" ? workload.selected.image : undefined,
+              }),
+          },
+          logStore: memoryLogStore([]),
+          fetchJson: () => Effect.fail(new StackPreparationError({ message: "OIDC unavailable" })),
+          bootstrapDatabase: () => Effect.void,
+        });
+        const databaseReady = yield* runtime.driver.start(
+          { stackId, workloadId: database.id },
+          database,
+        );
+        expect(databaseReady.state).toBe("ready");
+        const authResult = yield* runtime.driver
+          .start({ stackId, workloadId: auth.id }, auth)
+          .pipe(Effect.exit);
+        expect(Exit.isFailure(authResult)).toBe(true);
+        if (Exit.isFailure(authResult)) {
+          const error = Option.getOrUndefined(Cause.findErrorOption(authResult.cause));
+          expect(error).toBeInstanceOf(RuntimeDriverError);
+          expect(error?.message).toContain("OIDC discovery request failed");
+          expect(error?.cause).toBeInstanceOf(StackPreparationError);
+        }
+        yield* runtime.driver.stop({ stackId, workloadId: database.id });
       }),
     ).pipe(Effect.provide(NodeServices.layer)),
   );
@@ -1187,7 +1380,7 @@ describe("production runtime", () => {
               checkoutId: root,
             },
             definition: compiled.definition,
-            ports: [{ field: "database", port, intent: "exact" }],
+            ports: [{ field: "database", port, intent: "automatic" }],
             secrets,
           },
         } satisfies { value: PersistedStackState };
@@ -1226,6 +1419,35 @@ describe("production runtime", () => {
         if (Exit.isFailure(result)) {
           const error = Option.getOrUndefined(Cause.findErrorOption(result.cause));
           expect(error).toBeInstanceOf(PortUnavailableError);
+        }
+        const changedPort = port === 65_535 ? 65_534 : port + 1;
+        const candidates = [
+          {
+            ...compiled.definition,
+            listeners: {
+              ...compiled.definition.listeners,
+              database: { ...compiled.definition.listeners.database, enabled: false },
+            },
+          },
+          {
+            ...compiled.definition,
+            listeners: {
+              ...compiled.definition.listeners,
+              database: { ...compiled.definition.listeners.database, port: changedPort },
+            },
+          },
+        ];
+        for (const definition of candidates) {
+          const accepted = yield* runtime
+            .preflight({
+              stackId,
+              state: current.value,
+              definition,
+              secrets,
+              plan: compiled.executionPlan,
+            })
+            .pipe(Effect.exit);
+          expect(Exit.isSuccess(accepted)).toBe(true);
         }
       }),
     ).pipe(Effect.provide(NodeServices.layer)),

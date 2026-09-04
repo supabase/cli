@@ -26,24 +26,30 @@ class SupervisorReadinessError extends Data.TaggedError("SupervisorReadinessErro
   readonly cause?: unknown;
 }> {}
 
-const reportSupervisorFailure = (error: unknown): void => {
-  try {
-    const conflict = error instanceof StackOwnershipConflictError;
-    // The descriptor is owned by the parent launcher and intentionally
-    // written directly at this standalone process boundary.
-    NodeFs.writeSync(
-      3,
-      `${Schema.encodeSync(Schema.fromJsonString(SupervisorReadySchema))({ ok: false, code: conflict ? "ownership-conflict" : "failed", message: error instanceof Error ? error.message : "Supervisor failed" })}\n`,
-    );
-    NodeFs.closeSync(3);
-  } catch {
-    // The parent may have already closed the readiness descriptor.
-  }
+interface ReadinessState {
+  written: boolean;
+}
+
+const reportSupervisorFailure = (error: unknown, readiness: ReadinessState): void => {
+  if (!readiness.written)
+    try {
+      const conflict = error instanceof StackOwnershipConflictError;
+      // The descriptor is owned by the parent launcher and intentionally
+      // written directly at this standalone process boundary.
+      NodeFs.writeSync(
+        3,
+        `${Schema.encodeSync(Schema.fromJsonString(SupervisorReadySchema))({ ok: false, code: conflict ? "ownership-conflict" : "failed", message: error instanceof Error ? error.message : "Supervisor failed" })}\n`,
+      );
+      NodeFs.closeSync(3);
+    } catch {
+      // The parent may have already closed the readiness descriptor.
+    }
   process.exitCode = 1;
 };
 
 const writeReadiness = (
   value: Schema.Schema.Type<typeof SupervisorReadySchema>,
+  readiness: ReadinessState,
 ): Effect.Effect<void, SupervisorReadinessError> =>
   Effect.gen(function* () {
     const encoded = yield* Schema.encodeEffect(Schema.fromJsonString(SupervisorReadySchema))(
@@ -61,6 +67,7 @@ const writeReadiness = (
       try: () => {
         NodeFs.writeSync(3, `${encoded}\n`, undefined, "utf8");
         NodeFs.closeSync(3);
+        readiness.written = true;
       },
       catch: (cause) =>
         new SupervisorReadinessError({
@@ -70,7 +77,7 @@ const writeReadiness = (
     });
   });
 
-const runSupervisor = (args: SupervisorArgs) =>
+const runSupervisor = (args: SupervisorArgs, readiness: ReadinessState) =>
   Effect.scoped(
     Effect.gen(function* () {
       const environment: StackRuntimeEnvironmentValue = {
@@ -87,7 +94,7 @@ const runSupervisor = (args: SupervisorArgs) =>
         stateRoot: args.stateRoot,
         stackId: args.stackId,
         ownerSessionId,
-        rpcRelease: args.rpcRelease || STACK_RPC_RELEASE,
+        rpcRelease: STACK_RPC_RELEASE,
         environment,
       });
       const context = yield* Effect.context<FileSystem.FileSystem | Path.Path | Crypto.Crypto>();
@@ -104,7 +111,6 @@ const runSupervisor = (args: SupervisorArgs) =>
       const supervisor = yield* makeSupervisor({
         stackId: args.stackId,
         ownerSessionId,
-        rpcRelease: args.rpcRelease || STACK_RPC_RELEASE,
         stateStore: store,
         context,
         runtime,
@@ -113,13 +119,13 @@ const runSupervisor = (args: SupervisorArgs) =>
         endpoint: lease.metadata.endpoint,
         stackId: args.stackId,
         ownerSessionId,
-        rpcRelease: args.rpcRelease || STACK_RPC_RELEASE,
+        rpcRelease: STACK_RPC_RELEASE,
         maintenanceHandlers: supervisor.maintenanceHandlers,
         rpcHandlers: supervisor.rpcHandlers,
         onShutdownReady: supervisor.shutdownIfIdle,
       });
       yield* publishOwnership(lease);
-      yield* writeReadiness({ ok: true, stackId: args.stackId, ownerSessionId });
+      yield* writeReadiness({ ok: true, stackId: args.stackId, ownerSessionId }, readiness);
       yield* supervisor.shutdown;
     }),
   ).pipe(Effect.provide(NodeServices.layer));
@@ -127,10 +133,12 @@ const runSupervisor = (args: SupervisorArgs) =>
 const parseSupervisorArgs = (argv: ReadonlyArray<string>) =>
   Schema.decodeEffect(Schema.fromJsonString(SupervisorArgsSchema))(argv[0] ?? "{}");
 
-export const runSupervisorProcess = (argv: ReadonlyArray<string>): Promise<void> =>
-  Effect.runPromise(parseSupervisorArgs(argv).pipe(Effect.flatMap(runSupervisor))).catch(
-    reportSupervisorFailure,
-  );
+export const runSupervisorProcess = (argv: ReadonlyArray<string>): Promise<void> => {
+  const readiness = { written: false } satisfies ReadinessState;
+  return Effect.runPromise(
+    parseSupervisorArgs(argv).pipe(Effect.flatMap((args) => runSupervisor(args, readiness))),
+  ).catch((error) => reportSupervisorFailure(error, readiness));
+};
 
 if (import.meta.main) {
   await runSupervisorProcess(process.argv.slice(2));

@@ -3,6 +3,7 @@ import { describe, expect, it } from "@effect/vitest";
 import { Cause, Effect, Exit, Fiber, Option } from "effect";
 // oxlint-disable-next-line effecttsgo/node-builtin-import
 import { createServer, type Server as HttpServer } from "node:http";
+import { connect as connectNet, type Server as NetServer, type Socket } from "node:net";
 import { PortUnavailableError } from "../public/Errors.ts";
 import { bindHostListener, bindHostListenerWithOptions } from "./HostListener.ts";
 
@@ -70,6 +71,50 @@ describe("host listener binding", () => {
         yield* Effect.yieldNow;
         yield* Fiber.interrupt(fiber);
         expect(server?.listening).toBe(false);
+      }),
+    ),
+  );
+
+  it.live("closes connections accepted before gateway adoption", () =>
+    run(
+      Effect.gen(function* () {
+        const http = yield* bindHostListener("127.0.0.1", 0, "api");
+        const tcp = yield* bindHostListener("127.0.0.1", 0, "database");
+        const connect = (server: HttpServer | NetServer) =>
+          Effect.callback<Socket, Error>((resume) => {
+            const address = server.address();
+            if (typeof address !== "object" || address === null) {
+              resume(Effect.die("listener did not expose an address"));
+              return;
+            }
+            const socket = connectNet(address.port, "127.0.0.1");
+            socket.once("connect", () => resume(Effect.succeed(socket)));
+            socket.once("error", (error) => resume(Effect.fail(error)));
+            return Effect.sync(() => socket.destroy());
+          });
+        const awaitClose = (socket: Socket) =>
+          Effect.callback<void>((resume) => {
+            if (socket.destroyed) {
+              resume(Effect.void);
+              return;
+            }
+            socket.once("close", () => resume(Effect.void));
+            return Effect.sync(() => socket.destroy());
+          });
+        const httpSocket = yield* connect(http.binding.server);
+        const tcpSocket = yield* connect(tcp.binding.server);
+        const httpClosed = yield* Effect.forkChild(awaitClose(httpSocket), {
+          startImmediately: true,
+        });
+        yield* http.close;
+        yield* Fiber.join(httpClosed);
+        const tcpClosed = yield* Effect.forkChild(awaitClose(tcpSocket), {
+          startImmediately: true,
+        });
+        yield* tcp.close;
+        yield* Fiber.join(tcpClosed);
+        expect(httpSocket.destroyed).toBe(true);
+        expect(tcpSocket.destroyed).toBe(true);
       }),
     ),
   );

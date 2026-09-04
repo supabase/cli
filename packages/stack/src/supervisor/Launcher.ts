@@ -16,7 +16,6 @@ import {
 import { fileURLToPath } from "node:url";
 import { ChildProcess } from "effect/unstable/process";
 import { ChildProcessSpawner } from "effect/unstable/process";
-import type { StackIdentity } from "../identity/Identity.ts";
 import { resolveStackPaths } from "../state/Paths.ts";
 import { StackIdSchema, type StackId } from "../public/StackId.ts";
 import {
@@ -80,6 +79,12 @@ type ChildResult =
   | { readonly kind: "ownership-conflict"; readonly message: string }
   | { readonly kind: "failed"; readonly message: string };
 
+export interface EnsureSupervisorResult {
+  readonly owner: OwnerMetadata;
+  /** True only when this caller won the launch race and owns the new session. */
+  readonly launched: boolean;
+}
+
 const mapFailure = (message: string) => new StackStateInvalidError({ message });
 const SUPERVISOR_READINESS_TIMEOUT_MS = 30_000;
 const SUPERVISOR_REREAD_INTERVAL_MS = 25;
@@ -88,7 +93,6 @@ const SUPERVISOR_READINESS_REREAD_TIMES = Math.floor(
 );
 
 export interface LauncherOptions {
-  readonly identity: StackIdentity;
   readonly stackId: StackId;
   readonly stateStore: StackStateStore;
   readonly environment: StackRuntimeEnvironmentValue;
@@ -220,7 +224,7 @@ const launchAndAwait = (
   payload: SupervisorArgs,
   paths: { readonly stackRoot: string },
 ): Effect.Effect<
-  OwnerMetadata,
+  EnsureSupervisorResult,
   StackOwnershipConflictError | StackStateInvalidError | StackUpgradeRequiredError,
   FileSystem.FileSystem | Path.Path | Scope.Scope | ChildProcessSpawner.ChildProcessSpawner
 > =>
@@ -276,7 +280,7 @@ const launchAndAwait = (
         return yield* mapFailure("Supervisor readiness arrived before owner metadata");
       if (
         metadata.ownerSessionId !== ready.ownerSessionId ||
-        metadata.rpcRelease !== payload.rpcRelease
+        metadata.rpcRelease !== STACK_RPC_RELEASE
       )
         return yield* mapFailure("Supervisor readiness metadata identity mismatch");
       return { kind: "ready", metadata } satisfies ChildResult;
@@ -308,7 +312,7 @@ const launchAndAwait = (
         });
         const preserveChildConflict = () => Effect.fail(childConflict);
         return yield* validateCompatibleOwner(options, current).pipe(
-          Effect.as(current),
+          Effect.map(() => ({ owner: current, launched: false }) satisfies EnsureSupervisorResult),
           Effect.catchTags({
             StackStateInvalidError: preserveChildConflict,
             StackOwnershipConflictError: preserveChildConflict,
@@ -330,6 +334,7 @@ const launchAndAwait = (
               ),
             ),
         }),
+        Effect.map((owner) => ({ owner, launched: false }) satisfies EnsureSupervisorResult),
       );
     }
     yield* Fiber.interrupt(ownerFiber);
@@ -337,7 +342,10 @@ const launchAndAwait = (
       yield* terminateLaunch;
       return yield* mapFailure(childResult.message);
     }
-    return childResult.metadata;
+    return {
+      owner: childResult.metadata,
+      launched: true,
+    } satisfies EnsureSupervisorResult;
   }).pipe(Effect.catchTag("PlatformError", (error) => Effect.fail(mapFailure(error.message))));
 
 /**
@@ -347,7 +355,7 @@ const launchAndAwait = (
 export const ensureSupervisor = (
   options: LauncherOptions,
 ): Effect.Effect<
-  OwnerMetadata,
+  EnsureSupervisorResult,
   StackOwnershipConflictError | StackStateInvalidError | StackUpgradeRequiredError,
   | FileSystem.FileSystem
   | Path.Path
@@ -378,7 +386,7 @@ export const ensureSupervisor = (
         // malformed metadata remains fail-closed in readOwnerMetadata.
         Effect.catchTag("StackStateInvalidError", () => Effect.succeed(false)),
       );
-      if (compatible) return existing;
+      if (compatible) return { owner: existing, launched: false } satisfies EnsureSupervisorResult;
     }
     const stackId = yield* Schema.decodeEffect(StackIdSchema)(options.stackId).pipe(
       Effect.mapError((error) => mapFailure(`Invalid StackId: ${String(error)}`)),
@@ -402,8 +410,6 @@ export const ensureSupervisor = (
       platform: options.environment.platform,
       stackId: options.stackId,
       ownerSessionId,
-      rpcRelease: STACK_RPC_RELEASE,
-      identity: options.identity,
     };
     yield* (yield* FileSystem.FileSystem)
       .makeDirectory(paths.runtime, { recursive: true })
@@ -413,6 +419,6 @@ export const ensureSupervisor = (
         ),
       );
     const owner = yield* launchAndAwait(options, payload, { stackRoot: paths.stackRoot });
-    yield* validateCompatibleOwner(options, owner);
+    if (!owner.launched) yield* validateCompatibleOwner(options, owner.owner);
     return owner;
   });

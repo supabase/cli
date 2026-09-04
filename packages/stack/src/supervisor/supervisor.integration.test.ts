@@ -387,7 +387,6 @@ const makeFixture = (
     const supervisor = yield* makeSupervisor({
       stackId: id,
       ownerSessionId: "owner-session",
-      rpcRelease: "test-release",
       stateStore: store,
       context,
       runtime,
@@ -631,7 +630,6 @@ describe("Supervisor composition", () => {
         const successor = yield* makeSupervisor({
           stackId: fixture.id,
           ownerSessionId: "stopped-relaunch-successor",
-          rpcRelease: "test-release",
           stateStore: fixture.store,
           context: fixture.context,
           runtime: { ...fixture.runtime, driver },
@@ -670,7 +668,6 @@ describe("Supervisor composition", () => {
         const successor = yield* makeSupervisor({
           stackId: fixture.id,
           ownerSessionId: "successor-session",
-          rpcRelease: "test-release",
           stateStore: fixture.store,
           context: fixture.context,
           runtime: fixture.runtime,
@@ -702,7 +699,6 @@ describe("Supervisor composition", () => {
         const successor = yield* makeSupervisor({
           stackId: fixture.id,
           ownerSessionId: "successor-session",
-          rpcRelease: "test-release",
           stateStore: fixture.store,
           context: fixture.context,
           runtime: fixture.runtime,
@@ -780,7 +776,6 @@ describe("Supervisor composition", () => {
         const successor = yield* makeSupervisor({
           stackId: fixture.id,
           ownerSessionId: "successor-session",
-          rpcRelease: "test-release",
           stateStore: fixture.store,
           context: fixture.context,
           runtime: fixture.runtime,
@@ -795,7 +790,6 @@ describe("Supervisor composition", () => {
         const retryOwner = yield* makeSupervisor({
           stackId: fixture.id,
           ownerSessionId: "retry-session",
-          rpcRelease: "test-release",
           stateStore: fixture.store,
           context: fixture.context,
           runtime: fixture.runtime,
@@ -814,7 +808,6 @@ describe("Supervisor composition", () => {
         const successor = yield* makeSupervisor({
           stackId: fixture.id,
           ownerSessionId: "materialization-successor",
-          rpcRelease: "test-release",
           stateStore: fixture.store,
           context: fixture.context,
           runtime: fixture.runtime,
@@ -832,7 +825,6 @@ describe("Supervisor composition", () => {
         const retryOwner = yield* makeSupervisor({
           stackId: fixture.id,
           ownerSessionId: "materialization-retry",
-          rpcRelease: "test-release",
           stateStore: fixture.store,
           context: fixture.context,
           runtime: fixture.runtime,
@@ -850,7 +842,6 @@ describe("Supervisor composition", () => {
         const successor = yield* makeSupervisor({
           stackId: fixture.id,
           ownerSessionId: "changed-input-successor",
-          rpcRelease: "test-release",
           stateStore: fixture.store,
           context: fixture.context,
           runtime: fixture.runtime,
@@ -911,7 +902,6 @@ describe("Supervisor composition", () => {
         const successor = yield* makeSupervisor({
           stackId: fixture.id,
           ownerSessionId: "stopped-fence-successor",
-          rpcRelease: "test-release",
           stateStore: fixture.store,
           context: fixture.context,
           runtime: fixture.runtime,
@@ -1322,7 +1312,6 @@ describe("Supervisor composition", () => {
         const failed = yield* makeSupervisor({
           stackId: fixture.id,
           ownerSessionId: "missing-state-session",
-          rpcRelease: "test-release",
           stateStore: fixture.store,
           context: fixture.context,
           runtime: fixture.runtime,
@@ -1477,7 +1466,6 @@ describe("Supervisor composition", () => {
         const supervisor = yield* makeSupervisor({
           stackId: fixture.id,
           ownerSessionId: "artifact-failure-supervisor",
-          rpcRelease: "test-release",
           stateStore: fixture.store,
           context: fixture.context,
           runtime: { ...fixture.runtime, driver },
@@ -1951,7 +1939,6 @@ describe("Supervisor composition", () => {
         const successor = yield* makeSupervisor({
           stackId: fixture.id,
           ownerSessionId: "successor-session",
-          rpcRelease: "test-release",
           stateStore: fixture.store,
           context: fixture.context,
           runtime: fixture.runtime,

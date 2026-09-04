@@ -178,7 +178,6 @@ const stateWithCandidate = (
   desiredLifecycle,
   definition: candidate.definition,
   secrets: candidate.secrets,
-  ports: state.ports,
 });
 
 /** Creates one Supervisor-local lifecycle owner. Mutable coordination is allocated per Effect run. */

@@ -53,7 +53,12 @@ import {
 } from "./Lifecycle.ts";
 import { EMPTY_LOG_CURSOR, selectLogBatch, type LogStore } from "./LogStore.ts";
 import type { SupervisorIngress } from "./Ingress.ts";
-import { StackRpcGroup, type StackRpcError, type StackRpcHandlers } from "../control/StackRpc.ts";
+import {
+  STACK_RPC_RELEASE,
+  StackRpcGroup,
+  type StackRpcError,
+  type StackRpcHandlers,
+} from "../control/StackRpc.ts";
 import type { MaintenanceResponse } from "../control/MaintenanceProtocol.ts";
 import { statusFor, type ActualPhase } from "./StatusProjection.ts";
 import {
@@ -107,13 +112,16 @@ export interface Supervisor {
 export type SupervisorOptions = {
   readonly stackId: StackId;
   readonly ownerSessionId: string;
-  readonly rpcRelease: string;
   readonly stateStore: StackStateStore;
   readonly context: Context.Context<FileSystem.FileSystem | Path.Path | Crypto.Crypto>;
   readonly runtime: SupervisorRuntime;
 };
 
 const rpcError = (tag: StackRpcError["tag"], message: string): StackRpcError => ({ tag, message });
+const credentialsUnavailable = rpcError(
+  "StackNotRunningError",
+  "Stack credentials are unavailable",
+);
 const stateErrorMessage = (error: StackError | { readonly message?: string }): string =>
   typeof error.message === "string" ? error.message : "Stack operation failed";
 
@@ -715,7 +723,7 @@ export const makeSupervisor = (
         op: "probe",
         ownerSessionId: options.ownerSessionId,
         stackId: options.stackId,
-        rpcRelease: options.rpcRelease,
+        rpcRelease: STACK_RPC_RELEASE,
       } satisfies MaintenanceResponse),
       stop: stopWithShutdown.pipe(
         Effect.provideContext(options.context),
@@ -744,9 +752,7 @@ export const makeSupervisor = (
           actualPhase !== "running" ||
           state.desiredLifecycle !== "running"
         )
-          return yield* Effect.fail(
-            rpcError("StackNotRunningError", "Stack credentials are unavailable"),
-          );
+          return yield* Effect.fail(credentialsUnavailable);
 
         const definition = state.definition;
         const databaseListener = definition?.listeners.database;
@@ -757,15 +763,10 @@ export const makeSupervisor = (
           !databaseListener.enabled ||
           databaseAssignment === undefined
         )
-          return yield* Effect.fail(
-            rpcError("StackNotRunningError", "Stack credentials are unavailable"),
-          );
+          return yield* Effect.fail(credentialsUnavailable);
 
         const auth = definition.capabilities.auth;
-        if (!auth.enabled)
-          return yield* Effect.fail(
-            rpcError("StackNotRunningError", "Stack credentials are unavailable"),
-          );
+        if (!auth.enabled) return yield* Effect.fail(credentialsUnavailable);
 
         const requiredSecret = (slot: string): Effect.Effect<string, StackRpcError> => {
           const value = state.secrets[slot]?.value;
@@ -806,9 +807,7 @@ export const makeSupervisor = (
         const apiListener = definition.listeners.api;
         const apiAssignment = state.ports.find(({ field }) => field === "api");
         if (apiListener === undefined || !apiListener.enabled || apiAssignment === undefined)
-          return yield* Effect.fail(
-            rpcError("StackNotRunningError", "Stack credentials are unavailable"),
-          );
+          return yield* Effect.fail(credentialsUnavailable);
         const accessKeyId = s3.access_key_id;
         const region = s3.region;
         if (

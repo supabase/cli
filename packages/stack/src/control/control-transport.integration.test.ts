@@ -435,6 +435,37 @@ describe("control transport", () => {
     ),
   );
 
+  it.live("round-trips an RPC log batch larger than the maintenance frame cap", () =>
+    withServer(
+      ({ endpoint, stackId, ownerSessionId }) =>
+        Effect.gen(function* () {
+          const client = makeControlClient(endpoint, { stackId, ownerSessionId });
+          const rpc = yield* client.rpc;
+          const result = yield* rpc.logs({});
+          expect(result.entries).toHaveLength(1);
+          expect(result.entries[0]?.message).toHaveLength(MAINTENANCE_MAX_FRAME_BYTES + 16_384);
+        }),
+      () => ({
+        rpcHandlers: {
+          logs: () =>
+            Effect.succeed({
+              entries: [
+                {
+                  cursor: { opaque: "v1_1" },
+                  timestamp: "2026-01-01T00:00:00.000Z",
+                  source: "database" as const,
+                  stream: "stdout" as const,
+                  message: "x".repeat(MAINTENANCE_MAX_FRAME_BYTES + 16_384),
+                },
+              ],
+              cursor: { opaque: "v1_1" },
+              running: false,
+            }),
+        },
+      }),
+    ),
+  );
+
   it.live("holds a fragmented preface until the newline and reports the consumed boundary", () =>
     withPlatform(
       Effect.gen(function* () {

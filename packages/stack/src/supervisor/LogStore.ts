@@ -177,7 +177,11 @@ const readDocument = (
     ).pipe(
       Effect.flatMap((entries) => {
         const nextCursor = entries.reduce(
-          (next, entry) => Math.max(next, Number.parseInt(entry.cursor.opaque.slice(3), 36) + 1),
+          (next, entry) =>
+            Math.max(
+              next,
+              Number.parseInt(entry.cursor.opaque.slice(CURSOR_PREFIX.length), 36) + 1,
+            ),
           1,
         );
         return validateDocument(sourcePath, { nextCursor, entries });
@@ -369,56 +373,67 @@ export const makeLogStore = (
     const semaphore = yield* Semaphore.make(1);
     const append = (record: LogRecord) =>
       semaphore.withPermit(
-        Effect.gen(function* () {
-          const cursor = opaqueCursor(document.nextCursor);
-          const entry = {
-            cursor,
-            timestamp: record.timestamp ?? DateTime.formatIso(DateTime.nowUnsafe()),
-            source: record.source,
-            stream: record.stream,
-            message: redactKnownSecrets(record.message, knownSecrets),
-          } satisfies StackLogEntry;
-          const next = {
-            nextCursor: document.nextCursor + 1,
-            entries: [...document.entries, entry],
-          };
-          const encoded = yield* encodedEntry(entry, options.path);
-          const entryBytes = new TextEncoder().encode(`${encoded}\n`).byteLength;
-          if (entryBytes > maxBytes) return entry;
-          const nextBytes = retainedBytes + entryBytes;
-          const withinCompactionWindow =
-            document.entries.length + 1 <= maxEntries * COMPACTION_FACTOR &&
-            nextBytes <= maxBytes * COMPACTION_FACTOR;
-          if (withinCompactionWindow) {
-            const nextVisible =
-              next.entries.length <= maxEntries && nextBytes <= maxBytes
-                ? next.entries
-                : (yield* bounded(next, maxEntries, maxBytes, options.path, nextBytes)).document
-                    .entries;
-            yield* Effect.scoped(
-              Effect.gen(function* () {
-                const file = yield* fs.open(options.path, { flag: "a", mode: 0o600 });
-                yield* file.writeAll(new TextEncoder().encode(`${encoded}\n`));
-              }),
-            ).pipe(
-              Effect.mapError((error) =>
-                error instanceof LogStoreError
-                  ? error
-                  : fileError(options.path, "Unable to append retained logs", error),
-              ),
-            );
-            document = next;
-            retainedBytes = nextBytes;
-            visibleEntries = nextVisible;
-          } else {
-            const boundedNext = yield* bounded(next, maxEntries, maxBytes, options.path, nextBytes);
-            yield* persist(fs, options.path, boundedNext.document.entries);
-            document = boundedNext.document;
-            retainedBytes = boundedNext.bytes;
-            visibleEntries = boundedNext.document.entries;
-          }
-          return entry;
-        }),
+        // Persisting a record and advancing the in-memory cursor are one transaction. Without
+        // the mask, shutdown can interrupt after the file write but before `document = next`,
+        // causing the next append to reuse a cursor already present on disk.
+        Effect.uninterruptible(
+          Effect.gen(function* () {
+            const cursor = opaqueCursor(document.nextCursor);
+            const entry = {
+              cursor,
+              timestamp: record.timestamp ?? DateTime.formatIso(DateTime.nowUnsafe()),
+              source: record.source,
+              stream: record.stream,
+              message: redactKnownSecrets(record.message, knownSecrets),
+            } satisfies StackLogEntry;
+            const next = {
+              nextCursor: document.nextCursor + 1,
+              entries: [...document.entries, entry],
+            };
+            const encoded = yield* encodedEntry(entry, options.path);
+            const entryBytes = new TextEncoder().encode(`${encoded}\n`).byteLength;
+            if (entryBytes > maxBytes) return entry;
+            const nextBytes = retainedBytes + entryBytes;
+            const withinCompactionWindow =
+              document.entries.length + 1 <= maxEntries * COMPACTION_FACTOR &&
+              nextBytes <= maxBytes * COMPACTION_FACTOR;
+            if (withinCompactionWindow) {
+              const nextVisible =
+                next.entries.length <= maxEntries && nextBytes <= maxBytes
+                  ? next.entries
+                  : (yield* bounded(next, maxEntries, maxBytes, options.path, nextBytes)).document
+                      .entries;
+              yield* Effect.scoped(
+                Effect.gen(function* () {
+                  const file = yield* fs.open(options.path, { flag: "a", mode: 0o600 });
+                  yield* file.writeAll(new TextEncoder().encode(`${encoded}\n`));
+                }),
+              ).pipe(
+                Effect.mapError((error) =>
+                  error instanceof LogStoreError
+                    ? error
+                    : fileError(options.path, "Unable to append retained logs", error),
+                ),
+              );
+              document = next;
+              retainedBytes = nextBytes;
+              visibleEntries = nextVisible;
+            } else {
+              const boundedNext = yield* bounded(
+                next,
+                maxEntries,
+                maxBytes,
+                options.path,
+                nextBytes,
+              );
+              yield* persist(fs, options.path, boundedNext.document.entries);
+              document = boundedNext.document;
+              retainedBytes = boundedNext.bytes;
+              visibleEntries = boundedNext.document.entries;
+            }
+            return entry;
+          }),
+        ),
       );
 
     const read = (readOptions?: LogStoreQuery) =>

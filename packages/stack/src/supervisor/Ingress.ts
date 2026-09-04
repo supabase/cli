@@ -9,13 +9,16 @@ import type {
 } from "../gateway/Gateway.ts";
 import {
   GatewayActivationError,
+  PortUnavailableError,
   StackPreparationError,
   type StackError,
 } from "../public/Errors.ts";
+import type { PortField } from "../public/Status.ts";
 import { routeCatalogFor, type GatewayApiMaterial } from "../gateway/RouteCatalog.ts";
 import { GatewayRouteNotFoundError, makeGateway } from "../gateway/Gateway.ts";
 import {
   makePortCoordinator,
+  type HostListener,
   type ListenerIntents,
   type PortReservation,
 } from "../state/PortCoordinator.ts";
@@ -58,6 +61,17 @@ export interface SupervisorIngressOptions {
   readonly stateRoot: string;
   readonly store: StackStateStore;
   readonly context: Context.Context<Crypto.Crypto | FileSystem.FileSystem | Path.Path>;
+  /** Optional host-port seams for embedding tests; production uses native listeners. */
+  readonly checkHostPort?: (
+    address: string,
+    port: number,
+    field: string,
+  ) => Effect.Effect<void, PortUnavailableError>;
+  readonly bindHost?: (
+    address: string,
+    port: number,
+    field: PortField,
+  ) => Effect.Effect<HostListener, PortUnavailableError, Scope.Scope>;
   /** Resolver may be replaced by the production credential owner. */
   readonly apiMaterial?: (
     state: LifecycleInput["state"],
@@ -170,8 +184,8 @@ export const makeSupervisorIngress = (
     const coordinator = makePortCoordinator({
       stateRoot: options.stateRoot,
       store: options.store,
-      checkHostPort,
-      bindHost: bindHostListener,
+      checkHostPort: options.checkHostPort ?? checkHostPort,
+      bindHost: options.bindHost ?? bindHostListener,
     });
     const acquire = (
       input: LifecycleInput,
@@ -191,6 +205,9 @@ export const makeSupervisorIngress = (
             .pipe(
               Effect.provideContext(options.context),
               Effect.provideService(Scope.Scope, reservationScope),
+              Effect.onExit((exit) =>
+                Exit.isSuccess(exit) ? Effect.void : Scope.close(reservationScope, exit),
+              ),
             );
           const owned: SupervisorIngressReservation = {
             ...reservation,

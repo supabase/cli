@@ -2,6 +2,8 @@ import { Effect, Schema } from "effect";
 import { MaintenanceProtocolError } from "./MaintenanceProtocol.ts";
 
 export const MAINTENANCE_MAX_FRAME_BYTES = 64 * 1024;
+/** RPC payloads may include the complete retained log window plus serialization overhead. */
+export const RPC_MAX_FRAME_BYTES = 2 * 1024 * 1024;
 
 const textEncoder = new TextEncoder();
 const textDecoder = new TextDecoder("utf-8", { fatal: true });
@@ -23,22 +25,27 @@ const encodeJson = (value: JsonValue): Effect.Effect<Uint8Array, MaintenanceProt
     ),
   );
 
+const encodeBoundedFrame = (
+  body: Uint8Array,
+  maxBytes: number,
+): Effect.Effect<Uint8Array, MaintenanceProtocolError> => {
+  if (body.byteLength > maxBytes) {
+    return Effect.fail(
+      new MaintenanceProtocolError({ message: "Control frame exceeds size limit" }),
+    );
+  }
+  const frame = new Uint8Array(body.byteLength + 4);
+  new DataView(frame.buffer).setUint32(0, body.byteLength, false);
+  frame.set(body, 4);
+  return Effect.succeed(frame);
+};
+
 /** Encode one bounded uint32-big-endian frame containing JSON. */
 export const encodeFrame = (
   value: JsonValue,
 ): Effect.Effect<Uint8Array, MaintenanceProtocolError> =>
   encodeJson(value).pipe(
-    Effect.flatMap((body) => {
-      if (body.byteLength > MAINTENANCE_MAX_FRAME_BYTES) {
-        return Effect.fail(
-          new MaintenanceProtocolError({ message: "Control frame exceeds size limit" }),
-        );
-      }
-      const frame = new Uint8Array(body.byteLength + 4);
-      new DataView(frame.buffer).setUint32(0, body.byteLength, false);
-      frame.set(body, 4);
-      return Effect.succeed(frame);
-    }),
+    Effect.flatMap((body) => encodeBoundedFrame(body, MAINTENANCE_MAX_FRAME_BYTES)),
   );
 
 export const decodeFrame = (
@@ -80,7 +87,10 @@ const isJsonValue = (value: unknown): value is JsonValue => {
 export class FrameDecoder {
   private buffer = new Uint8Array(0);
 
-  push(chunk: Uint8Array): Effect.Effect<ReadonlyArray<Uint8Array>, MaintenanceProtocolError> {
+  push(
+    chunk: Uint8Array,
+    maxFrameBytes = MAINTENANCE_MAX_FRAME_BYTES,
+  ): Effect.Effect<ReadonlyArray<Uint8Array>, MaintenanceProtocolError> {
     if (chunk.byteLength === 0) return Effect.succeed([]);
     const combined = new Uint8Array(this.buffer.byteLength + chunk.byteLength);
     combined.set(this.buffer);
@@ -92,7 +102,7 @@ export class FrameDecoder {
         0,
         false,
       );
-      if (length > MAINTENANCE_MAX_FRAME_BYTES) {
+      if (length > maxFrameBytes) {
         return Effect.fail(
           new MaintenanceProtocolError({ message: "Control frame exceeds size limit" }),
         );
@@ -103,10 +113,6 @@ export class FrameDecoder {
     }
     return Effect.succeed(frames);
   }
-
-  get bufferedBytes(): number {
-    return this.buffer.byteLength;
-  }
 }
 
 /** Encode a raw RPC serialization payload in the same bounded frame format. */
@@ -114,15 +120,5 @@ export const encodeRawFrame = (
   value: Uint8Array | string,
 ): Effect.Effect<Uint8Array, MaintenanceProtocolError> =>
   Effect.sync(() => (typeof value === "string" ? textEncoder.encode(value) : value)).pipe(
-    Effect.flatMap((body) => {
-      if (body.byteLength > MAINTENANCE_MAX_FRAME_BYTES) {
-        return Effect.fail(
-          new MaintenanceProtocolError({ message: "Control frame exceeds size limit" }),
-        );
-      }
-      const frame = new Uint8Array(body.byteLength + 4);
-      new DataView(frame.buffer).setUint32(0, body.byteLength, false);
-      frame.set(body, 4);
-      return Effect.succeed(frame);
-    }),
+    Effect.flatMap((body) => encodeBoundedFrame(body, RPC_MAX_FRAME_BYTES)),
   );

@@ -2,7 +2,7 @@ import { NodeServices } from "@effect/platform-node";
 import { describe, expect, it } from "@effect/vitest";
 import { Deferred, Effect, Exit, Fiber } from "effect";
 import { GatewayActivationError } from "../public/Errors.ts";
-import { connect as connectNet, createServer, type Server } from "node:net";
+import { connect as connectNet, createServer, type Server, type Socket } from "node:net";
 // oxlint-disable-next-line effecttsgo/node-builtin-import
 import {
   Agent,
@@ -22,6 +22,7 @@ import {
 import { makeHttpGateway } from "./HttpGateway.ts";
 import { makeTcpGateway } from "./TcpGateway.ts";
 import type { HostListener } from "../state/PortCoordinator.ts";
+import { bindHostListener } from "../supervisor/HostListener.ts";
 
 const withPlatform = <A, E, R>(effect: Effect.Effect<A, E, R>) =>
   Effect.scoped(effect).pipe(Effect.provide(NodeServices.layer));
@@ -284,6 +285,7 @@ describe("stack gateway", () => {
           address: "127.0.0.1",
           port: address.port,
           binding: { kind: "http", server: prebound },
+          connections: { sockets: new Set() },
           close: Effect.sync(() => {
             released = true;
             releaseCalls += 1;
@@ -300,6 +302,41 @@ describe("stack gateway", () => {
         expect(released).toBe(true);
         expect(releaseCalls).toBe(1);
         expect(prebound.listening).toBe(false);
+      }),
+    ),
+  );
+
+  it.live("closes a socket accepted before HTTP gateway adoption", () =>
+    withPlatform(
+      Effect.gen(function* () {
+        const listener = yield* bindHostListener("127.0.0.1", 0, "api");
+        const address = listener.binding.server.address();
+        if (typeof address !== "object" || address === null) return;
+        const socket = yield* Effect.callback<Socket, Error>((resume) => {
+          const client = connectNet(address.port, "127.0.0.1");
+          client.once("connect", () => resume(Effect.succeed(client)));
+          client.once("error", (error) => resume(Effect.fail(error)));
+          return Effect.sync(() => client.destroy());
+        });
+        const gateway = yield* makeHttpGateway({
+          listener,
+          routes: [],
+          activate: () => Effect.fail(new GatewayActivationError({ message: "not reached" })),
+        });
+        const closed = yield* Effect.forkChild(
+          Effect.callback<void>((resume) => {
+            if (socket.destroyed) {
+              resume(Effect.void);
+              return;
+            }
+            socket.once("close", () => resume(Effect.void));
+            return Effect.sync(() => socket.destroy());
+          }),
+          { startImmediately: true },
+        );
+        yield* gateway.close;
+        yield* Fiber.join(closed);
+        expect(socket.destroyed).toBe(true);
       }),
     ),
   );
@@ -466,6 +503,7 @@ describe("stack gateway", () => {
           address: "127.0.0.1",
           port: preboundAddress.port,
           binding: { kind: "tcp", server: prebound, allowHalfOpen: true },
+          connections: { sockets: new Set() },
           close: closeServer(prebound),
         };
         const gateway = yield* makeTcpGateway({
@@ -489,6 +527,41 @@ describe("stack gateway", () => {
         expect(response.equals(fixture)).toBe(true);
         yield* gateway.close;
         yield* closeServer(backend);
+      }),
+    ),
+  );
+
+  it.live("closes a socket accepted before TCP gateway adoption", () =>
+    withPlatform(
+      Effect.gen(function* () {
+        const listener = yield* bindHostListener("127.0.0.1", 0, "database");
+        const address = listener.binding.server.address();
+        if (typeof address !== "object" || address === null) return;
+        const socket = yield* Effect.callback<Socket, Error>((resume) => {
+          const client = connectNet(address.port, "127.0.0.1");
+          client.once("connect", () => resume(Effect.succeed(client)));
+          client.once("error", (error) => resume(Effect.fail(error)));
+          return Effect.sync(() => client.destroy());
+        });
+        const gateway = yield* makeTcpGateway({
+          listener,
+          routes: [],
+          activate: () => Effect.fail(new GatewayActivationError({ message: "not reached" })),
+        });
+        const closed = yield* Effect.forkChild(
+          Effect.callback<void>((resume) => {
+            if (socket.destroyed) {
+              resume(Effect.void);
+              return;
+            }
+            socket.once("close", () => resume(Effect.void));
+            return Effect.sync(() => socket.destroy());
+          }),
+          { startImmediately: true },
+        );
+        yield* gateway.close;
+        yield* Fiber.join(closed);
+        expect(socket.destroyed).toBe(true);
       }),
     ),
   );
@@ -520,6 +593,7 @@ describe("stack gateway", () => {
           address: "127.0.0.1",
           port: httpAddress.port,
           binding: { kind: "http", server: httpServer },
+          connections: { sockets: new Set() },
           close: closeNative(httpServer),
         };
         const badTcpListener: HostListener = {
@@ -527,6 +601,7 @@ describe("stack gateway", () => {
           address: "127.0.0.1",
           port: badTcpAddress.port,
           binding: { kind: "http", server: badTcpServer },
+          connections: { sockets: new Set() },
           close: closeNative(badTcpServer),
         };
         const result = yield* makeGateway({

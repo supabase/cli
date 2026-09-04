@@ -1,6 +1,6 @@
 import { NodeServices } from "@effect/platform-node";
 import { describe, expect, it } from "@effect/vitest";
-import { Cause, Effect, Exit, FileSystem, Option, Path } from "effect";
+import { Cause, Deferred, Effect, Exit, FileSystem, Fiber, Option, Path } from "effect";
 import { InvalidLogCursorError } from "../public/Errors.ts";
 import { LogStoreError, makeLogStore, readRetainedLogs, selectLogBatch } from "./LogStore.ts";
 
@@ -131,6 +131,64 @@ describe("observability", () => {
 
         expect(second.cursor.opaque).not.toBe(first.cursor.opaque);
         expect(followed.map((entry) => entry.cursor)).toEqual([second.cursor]);
+      }),
+    ),
+  );
+
+  it.live("does not reuse a cursor when an append is interrupted after its write", () =>
+    withPlatform(
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const root = yield* fs.makeTempDirectoryScoped({ prefix: "supabase-stack-log-interrupt-" });
+        const logPath = path.join(root, "logs.json");
+        const writeCompleted = yield* Deferred.make<void>();
+        const interruptionRequested = yield* Deferred.make<void>();
+        const releaseWrite = yield* Deferred.make<void>();
+        const wrappedFs = {
+          ...fs,
+          open: (target: string, options?: Parameters<typeof fs.open>[1]) =>
+            fs.open(target, options).pipe(
+              Effect.map((file) =>
+                target === logPath && options?.flag === "a"
+                  ? new Proxy(file, {
+                      get: (current, property, receiver) =>
+                        property === "writeAll"
+                          ? (bytes: Uint8Array) =>
+                              current
+                                .writeAll(bytes)
+                                .pipe(
+                                  Effect.andThen(Deferred.succeed(writeCompleted, undefined)),
+                                  Effect.andThen(Deferred.await(releaseWrite)),
+                                )
+                          : Reflect.get(current, property, receiver),
+                    })
+                  : file,
+              ),
+            ),
+        } satisfies FileSystem.FileSystem;
+        const store = yield* makeLogStore({ path: logPath }).pipe(
+          Effect.provideService(FileSystem.FileSystem, wrappedFs),
+        );
+        const interrupted = yield* Effect.forkChild(
+          store.append({ source: "auth", stream: "stdout", message: "interrupted" }),
+        );
+        yield* Deferred.await(writeCompleted);
+        const interrupt = yield* Effect.forkChild(
+          Deferred.succeed(interruptionRequested, undefined).pipe(
+            Effect.andThen(Fiber.interrupt(interrupted)),
+          ),
+        );
+        yield* Deferred.await(interruptionRequested);
+        yield* Deferred.succeed(releaseWrite, undefined);
+        yield* Fiber.join(interrupt);
+        const second = yield* store.append({
+          source: "rest",
+          stream: "stderr",
+          message: "after interruption",
+        });
+        expect(second.cursor.opaque).not.toBe("v1_1");
+        expect((yield* store.read()).map((entry) => entry.cursor.opaque)).toEqual(["v1_1", "v1_2"]);
       }),
     ),
   );

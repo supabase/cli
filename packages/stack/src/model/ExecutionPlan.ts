@@ -61,7 +61,7 @@ export interface PlannedWorkload {
 export interface ExecutionPlan {
   readonly runtime: StackRuntime;
   /** Materialized lazy/eager policy consumed by the Supervisor gateway seam. */
-  readonly activation: Readonly<{ [Name in CapabilityName]: EnabledCapability["activation"] }>;
+  readonly activation: Readonly<{ [Name in CapabilityName]: "eager" | "lazy" }>;
   readonly startOrder: ReadonlyArray<CapabilityName>;
   readonly dependencies: Readonly<{ [Name in CapabilityName]: ReadonlyArray<CapabilityName> }>;
   readonly routes: ReadonlyArray<
@@ -72,6 +72,26 @@ export interface ExecutionPlan {
     }>
   >;
   readonly workloads: ReadonlyArray<PlannedWorkload>;
+}
+
+export interface MaterializedCapability<Settings> {
+  readonly enabled: boolean;
+  readonly activation: "eager" | "lazy";
+  readonly version: string;
+  readonly settings: MaterializedSettings<Settings>;
+}
+
+export interface MaterializedCapabilities {
+  readonly database: MaterializedCapability<DatabaseSettings>;
+  readonly rest: MaterializedCapability<RestSettings>;
+  readonly auth: MaterializedCapability<AuthSettings>;
+  readonly realtime: MaterializedCapability<RealtimeSettings>;
+  readonly storage: MaterializedCapability<StorageSettings>;
+  readonly functions: MaterializedCapability<FunctionsSettings>;
+  readonly studio: MaterializedCapability<StudioSettings>;
+  readonly mail: MaterializedCapability<MailSettings>;
+  readonly analytics: MaterializedCapability<AnalyticsSettings>;
+  readonly pooler: MaterializedCapability<PoolerSettings>;
 }
 
 /** Return the requested capabilities and every transitive dependency. */
@@ -105,59 +125,49 @@ export const activeExecutionPlan = (
   startOrder: plan.startOrder.filter((name) => active.has(name)),
 });
 
-export interface EnabledCapability {
-  readonly enabled: boolean;
-  readonly activation: "eager" | "lazy";
-}
-
-type PlanSettings = {
-  readonly database: MaterializedSettings<DatabaseSettings>;
-  readonly rest: MaterializedSettings<RestSettings>;
-  readonly auth: MaterializedSettings<AuthSettings>;
-  readonly realtime: MaterializedSettings<RealtimeSettings>;
-  readonly storage: MaterializedSettings<StorageSettings>;
-  readonly functions: MaterializedSettings<FunctionsSettings>;
-  readonly studio: MaterializedSettings<StudioSettings>;
-  readonly mail: MaterializedSettings<MailSettings>;
-  readonly analytics: MaterializedSettings<AnalyticsSettings>;
-  readonly pooler: MaterializedSettings<PoolerSettings>;
-};
-
 const selectedWorkloads = (
   name: CapabilityName,
   modules: typeof CAPABILITY_MODULES,
-  settings: PlanSettings,
+  capabilities: MaterializedCapabilities,
   workloads: ReadonlyArray<WorkloadSpec>,
 ): ReadonlyArray<WorkloadSpec> => {
   switch (name) {
     case "database":
-      return modules.database.selectWorkloads?.(settings.database, workloads) ?? workloads;
+      return (
+        modules.database.selectWorkloads?.(capabilities.database.settings, workloads) ?? workloads
+      );
     case "rest":
-      return modules.rest.selectWorkloads?.(settings.rest, workloads) ?? workloads;
+      return modules.rest.selectWorkloads?.(capabilities.rest.settings, workloads) ?? workloads;
     case "auth":
-      return modules.auth.selectWorkloads?.(settings.auth, workloads) ?? workloads;
+      return modules.auth.selectWorkloads?.(capabilities.auth.settings, workloads) ?? workloads;
     case "realtime":
-      return modules.realtime.selectWorkloads?.(settings.realtime, workloads) ?? workloads;
+      return (
+        modules.realtime.selectWorkloads?.(capabilities.realtime.settings, workloads) ?? workloads
+      );
     case "storage":
-      return modules.storage.selectWorkloads?.(settings.storage, workloads) ?? workloads;
+      return (
+        modules.storage.selectWorkloads?.(capabilities.storage.settings, workloads) ?? workloads
+      );
     case "functions":
-      return modules.functions.selectWorkloads?.(settings.functions, workloads) ?? workloads;
+      return (
+        modules.functions.selectWorkloads?.(capabilities.functions.settings, workloads) ?? workloads
+      );
     case "studio":
-      return modules.studio.selectWorkloads?.(settings.studio, workloads) ?? workloads;
+      return modules.studio.selectWorkloads?.(capabilities.studio.settings, workloads) ?? workloads;
     case "mail":
-      return modules.mail.selectWorkloads?.(settings.mail, workloads) ?? workloads;
+      return modules.mail.selectWorkloads?.(capabilities.mail.settings, workloads) ?? workloads;
     case "analytics":
-      return modules.analytics.selectWorkloads?.(settings.analytics, workloads) ?? workloads;
+      return (
+        modules.analytics.selectWorkloads?.(capabilities.analytics.settings, workloads) ?? workloads
+      );
     case "pooler":
-      return modules.pooler.selectWorkloads?.(settings.pooler, workloads) ?? workloads;
+      return modules.pooler.selectWorkloads?.(capabilities.pooler.settings, workloads) ?? workloads;
   }
 };
 
 export const createExecutionPlan = (
   runtime: StackRuntime,
-  enabled: Readonly<{ [Name in CapabilityName]: EnabledCapability }>,
-  versions: Readonly<{ [Name in CapabilityName]: string }>,
-  settings: PlanSettings,
+  capabilities: MaterializedCapabilities,
   modules: typeof CAPABILITY_MODULES = CAPABILITY_MODULES,
 ): Effect.Effect<ExecutionPlan, InvalidStackConfigError> => {
   const dependencyMap = {
@@ -173,9 +183,9 @@ export const createExecutionPlan = (
     pooler: modules.pooler.dependencies,
   } satisfies { [Name in CapabilityName]: ReadonlyArray<CapabilityName> };
   for (const name of CAPABILITY_NAMES) {
-    if (!enabled[name].enabled) continue;
+    if (!capabilities[name].enabled) continue;
     for (const dependency of dependencyMap[name]) {
-      if (!enabled[dependency].enabled) {
+      if (!capabilities[dependency].enabled) {
         return Effect.fail(
           new InvalidStackConfigError({
             message: `${name} requires disabled capability ${dependency}`,
@@ -198,7 +208,7 @@ export const createExecutionPlan = (
       });
       return;
     }
-    if (visited.has(name) || !enabled[name].enabled) return;
+    if (visited.has(name) || !capabilities[name].enabled) return;
     visitingCapabilities.add(name);
     visited.add(name);
     for (const dependency of dependencyMap[name]) {
@@ -218,23 +228,23 @@ export const createExecutionPlan = (
   for (const name of CAPABILITY_NAMES) visit(name);
   if (capabilityGraphError !== undefined) return Effect.fail(capabilityGraphError);
   const routes = CAPABILITY_NAMES.flatMap((name) =>
-    enabled[name].enabled
+    capabilities[name].enabled
       ? modules[name].routes.map((route) => ({ capability: name, ...route }))
       : [],
   );
   const declaredWorkloads: PlannedWorkload[] = [];
   for (const name of CAPABILITY_NAMES) {
-    if (!enabled[name].enabled) continue;
-    const release = modules[name].releases[versions[name]];
+    if (!capabilities[name].enabled) continue;
+    const release = modules[name].releases[capabilities[name].version];
     if (release === undefined)
       return Effect.fail(
         new InvalidStackConfigError({
-          message: `Missing ${name} release ${versions[name]}`,
+          message: `Missing ${name} release ${capabilities[name].version}`,
           capability: name,
-          version: versions[name],
+          version: capabilities[name].version,
         }),
       );
-    const selectedEntries = selectedWorkloads(name, modules, settings, release.workloads);
+    const selectedEntries = selectedWorkloads(name, modules, capabilities, release.workloads);
     for (const entry of selectedEntries) {
       const id = `${name}:${entry.name}`;
       declaredWorkloads.push({
@@ -279,17 +289,17 @@ export const createExecutionPlan = (
   for (const entry of declaredWorkloads) visitWorkload(entry.id);
   if (graphError !== undefined) return Effect.fail(graphError);
   const activation = {
-    database: enabled.database.activation,
-    rest: enabled.rest.activation,
-    auth: enabled.auth.activation,
-    realtime: enabled.realtime.activation,
-    storage: enabled.storage.activation,
-    functions: enabled.functions.activation,
-    studio: enabled.studio.activation,
-    mail: enabled.mail.activation,
-    analytics: enabled.analytics.activation,
-    pooler: enabled.pooler.activation,
-  } satisfies { [Name in CapabilityName]: EnabledCapability["activation"] };
+    database: capabilities.database.activation,
+    rest: capabilities.rest.activation,
+    auth: capabilities.auth.activation,
+    realtime: capabilities.realtime.activation,
+    storage: capabilities.storage.activation,
+    functions: capabilities.functions.activation,
+    studio: capabilities.studio.activation,
+    mail: capabilities.mail.activation,
+    analytics: capabilities.analytics.activation,
+    pooler: capabilities.pooler.activation,
+  } satisfies { [Name in CapabilityName]: "eager" | "lazy" };
   return Effect.succeed({
     runtime,
     activation,

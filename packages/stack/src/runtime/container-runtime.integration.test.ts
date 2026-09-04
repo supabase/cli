@@ -41,10 +41,7 @@ import { makeSupervisor, type SupervisorRuntime } from "../supervisor/Supervisor
 import type { SupervisorIngress } from "../supervisor/Ingress.ts";
 import { deriveStackId } from "../identity/Identity.ts";
 
-const makeControlledCommandRunner = (
-  options: Omit<ContainerCommandRunner, "executable"> & { readonly executable?: string },
-): ContainerCommandRunner => ({
-  executable: options.executable ?? "controlled-container-engine",
+const makeControlledCommandRunner = (options: ContainerCommandRunner): ContainerCommandRunner => ({
   run: options.run,
   ...(options.stream === undefined ? {} : { stream: options.stream }),
 });
@@ -98,7 +95,6 @@ const fakeContainerEngine = (state: FakeContainerState): ContainerEngine => {
     state.resources.find((resource) => resource.id === resourceId);
   return {
     kind: "docker",
-    executable: "controlled-container-engine",
     preflight: Effect.succeed({ host: "host.docker.internal" }),
     probe: Effect.void,
     inspectImage: () =>
@@ -213,6 +209,57 @@ const memoryLogStore = (records: LogRecord[]): LogStore => ({
     })).pipe(Effect.tap((entry) => Effect.sync(() => records.push(entry)))),
   read: () => Effect.succeed([]),
 });
+
+const pendingStartRace = (operation: "stop" | "remove") =>
+  Effect.gen(function* () {
+    const state: FakeContainerState = {
+      resources: [],
+      imagePresent: true,
+      calls: [],
+      createdSpecs: [],
+      nextId: 1,
+    };
+    const startEntered = yield* Deferred.make<void>();
+    const releaseStart = yield* Deferred.make<void>();
+    let removeCalls = 0;
+    let stopCalls = 0;
+    const base = fakeContainerEngine(state);
+    const runtime = yield* makeContainerRuntime({
+      engine: {
+        ...base,
+        startContainer: (id) =>
+          Effect.gen(function* () {
+            yield* Deferred.succeed(startEntered, undefined);
+            yield* Deferred.await(releaseStart);
+            yield* base.startContainer(id);
+          }),
+        stopContainer: (id) =>
+          Effect.gen(function* () {
+            stopCalls += 1;
+            yield* base.stopContainer(id);
+          }),
+        removeContainer: (id) =>
+          Effect.gen(function* () {
+            removeCalls += 1;
+            yield* base.removeContainer(id);
+          }),
+      },
+      ownerSessionId: "owner-session",
+    });
+    const starting = yield* runtime
+      .start(key, workload())
+      .pipe(Effect.forkChild({ startImmediately: true }));
+    yield* Deferred.await(startEntered);
+    yield* runtime[operation](key);
+    yield* Deferred.succeed(releaseStart, undefined);
+    const started = yield* Fiber.join(starting).pipe(Effect.exit);
+    expect(Exit.isFailure(started)).toBe(true);
+    expect(state.resources.filter((resource) => resource.kind === "workload")).toEqual([]);
+    expect(removeCalls).toBe(1);
+    expect(stopCalls).toBe(operation === "stop" ? 1 : 0);
+    yield* runtime.remove(key);
+    expect(removeCalls).toBe(1);
+  });
 
 describe("container runtime", () => {
   it.live("executes the exact command argv through a bounded process boundary", () =>
@@ -921,6 +968,51 @@ describe("container runtime", () => {
     }),
   );
 
+  it.live("cleans a resource interrupted after registration", () =>
+    Effect.gen(function* () {
+      const state: FakeContainerState = {
+        resources: [],
+        imagePresent: true,
+        calls: [],
+        createdSpecs: [],
+        nextId: 1,
+      };
+      const readinessEntered = yield* Deferred.make<void>();
+      const readinessRelease = yield* Deferred.make<void>();
+      const cleanupEntered = yield* Deferred.make<void>();
+      let removeCalls = 0;
+      const base = fakeContainerEngine(state);
+      const runtime = yield* makeContainerRuntime({
+        engine: {
+          ...base,
+          removeContainer: (id) =>
+            Effect.gen(function* () {
+              removeCalls += 1;
+              yield* base.removeContainer(id);
+              yield* Deferred.succeed(cleanupEntered, undefined);
+            }),
+        },
+        ownerSessionId: "owner-session",
+        waitForReadiness: () =>
+          Effect.gen(function* () {
+            yield* Deferred.succeed(readinessEntered, undefined);
+            yield* Deferred.await(readinessRelease);
+          }),
+      });
+      const starting = yield* runtime
+        .start(key, workload())
+        .pipe(Effect.forkChild({ startImmediately: true }));
+      yield* Deferred.await(readinessEntered);
+      yield* Fiber.interrupt(starting);
+      yield* Deferred.await(cleanupEntered);
+      expect(state.resources.filter((resource) => resource.kind === "workload")).toEqual([]);
+      expect(removeCalls).toBe(1);
+      yield* runtime.remove(key);
+      expect(removeCalls).toBe(1);
+      yield* Deferred.succeed(readinessRelease, undefined);
+    }),
+  );
+
   it.live("allows stop to interrupt a blocked container readiness", () =>
     Effect.gen(function* () {
       const state: FakeContainerState = {
@@ -954,6 +1046,89 @@ describe("container runtime", () => {
       expect(state.calls.some((call) => call.startsWith("stop:"))).toBe(true);
       yield* Deferred.succeed(release, undefined);
     }),
+  );
+
+  it.live("does not resurrect a resource removed by a failed start", () =>
+    Effect.gen(function* () {
+      const state: FakeContainerState = {
+        resources: [],
+        imagePresent: true,
+        calls: [],
+        createdSpecs: [],
+        nextId: 1,
+      };
+      const readinessEntered = yield* Deferred.make<void>();
+      const failReadiness = yield* Deferred.make<void>();
+      const removeEntered = yield* Deferred.make<void>();
+      const stopEntered = yield* Deferred.make<void>();
+      const releaseStop = yield* Deferred.make<void>();
+      const removed = yield* Deferred.make<void>();
+      let stopCalls = 0;
+      let removeCalls = 0;
+      const base = fakeContainerEngine(state);
+      const runtime = yield* makeContainerRuntime({
+        engine: {
+          ...base,
+          stopContainer: (id) =>
+            Effect.gen(function* () {
+              stopCalls += 1;
+              if (stopCalls === 1) {
+                yield* Deferred.succeed(stopEntered, undefined);
+                yield* Deferred.await(releaseStop);
+              }
+              yield* base.stopContainer(id);
+            }),
+          removeContainer: (id) =>
+            Effect.gen(function* () {
+              removeCalls += 1;
+              if (removeCalls === 1) {
+                yield* Deferred.succeed(removeEntered, undefined);
+              }
+              yield* base.removeContainer(id);
+              yield* Deferred.succeed(removed, undefined);
+            }),
+        },
+        ownerSessionId: "owner-session",
+        resolveWorkload: () =>
+          Effect.succeed({
+            waitForReadiness: () =>
+              Effect.gen(function* () {
+                yield* Deferred.succeed(readinessEntered, undefined);
+                yield* Deferred.await(failReadiness);
+                return yield* new RuntimeDriverError({
+                  message: "readiness failed",
+                  stackId: key.stackId,
+                  workloadId: key.workloadId,
+                });
+              }),
+          }),
+      });
+      const starting = yield* runtime
+        .start(key, workload())
+        .pipe(Effect.forkChild({ startImmediately: true }));
+      yield* Deferred.await(readinessEntered);
+      const stopping = yield* runtime.stop(key).pipe(Effect.forkChild({ startImmediately: true }));
+      yield* Deferred.await(stopEntered);
+      yield* Deferred.succeed(failReadiness, undefined);
+      yield* Deferred.succeed(releaseStop, undefined);
+      yield* Deferred.await(removed);
+      expect(yield* runtime.observe(stackId)).toEqual([]);
+      yield* Fiber.join(stopping);
+      const failed = yield* Fiber.join(starting).pipe(Effect.exit);
+      expect(Exit.isFailure(failed)).toBe(true);
+      yield* runtime.remove(key);
+      expect(removeCalls).toBe(1);
+      const finalObserved = yield* runtime.observe(stackId);
+      expect(finalObserved).toEqual([]);
+    }),
+  );
+
+  it.live("does not register a container removed while start is pending", () =>
+    pendingStartRace("remove"),
+  );
+
+  it.live("does not register a container stopped while start is pending", () =>
+    pendingStartRace("stop"),
   );
 
   it.live("does not let cleanup race an in-flight container creation", () =>
@@ -992,6 +1167,56 @@ describe("container runtime", () => {
       expect(Exit.isFailure(startExit)).toBe(true);
 
       expect(state.resources.some((resource) => resource.kind === "workload")).toBe(false);
+    }),
+  );
+
+  it.live("interrupts multiple pending starts during cleanup without deadlocking", () =>
+    Effect.gen(function* () {
+      const state: FakeContainerState = {
+        resources: [],
+        imagePresent: true,
+        calls: [],
+        createdSpecs: [],
+        nextId: 1,
+      };
+      const authKey: RuntimeWorkloadKey = { ...key, workloadId: "auth:auth" };
+      const databaseReadinessEntered = yield* Deferred.make<void>();
+      const authReadinessEntered = yield* Deferred.make<void>();
+      const waitForever = yield* Deferred.make<void>();
+      const base = fakeContainerEngine(state);
+      const runtime = yield* makeContainerRuntime({
+        engine: {
+          ...base,
+          waitContainer: () => Deferred.await(waitForever).pipe(Effect.as(0)),
+        },
+        ownerSessionId: "owner-session",
+        resolveWorkload: (requestKey) =>
+          Effect.succeed({
+            waitForReadiness: () =>
+              Effect.gen(function* () {
+                yield* requestKey.workloadId === key.workloadId
+                  ? Deferred.succeed(databaseReadinessEntered, undefined)
+                  : Deferred.succeed(authReadinessEntered, undefined);
+                yield* Deferred.await(waitForever);
+              }),
+          }),
+      });
+      const databaseStart = yield* runtime
+        .start(key, workload())
+        .pipe(Effect.forkChild({ startImmediately: true }));
+      const authStart = yield* runtime
+        .start(authKey, workload())
+        .pipe(Effect.forkChild({ startImmediately: true }));
+      yield* Deferred.await(databaseReadinessEntered);
+      yield* Deferred.await(authReadinessEntered);
+
+      const completed = yield* runtime
+        .cleanup({ stackId, destroy: true })
+        .pipe(Effect.as("completed"), Effect.timeout("1 second"));
+      expect(completed).toBe("completed");
+      expect(Exit.isFailure(yield* Fiber.join(databaseStart).pipe(Effect.exit))).toBe(true);
+      expect(Exit.isFailure(yield* Fiber.join(authStart).pipe(Effect.exit))).toBe(true);
+      expect(state.resources.filter((resource) => resource.kind === "workload")).toEqual([]);
     }),
   );
 
@@ -2312,7 +2537,6 @@ describe("container runtime", () => {
         const supervisor = yield* makeSupervisor({
           stackId: testStackId,
           ownerSessionId: "owner-session",
-          rpcRelease: "test-release",
           stateStore: store,
           context,
           runtime,

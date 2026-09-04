@@ -1,19 +1,7 @@
 import { Duration, Effect, Path, Redacted, Schema } from "effect";
 import { InvalidStackConfigError, StackVersionUnsupportedError } from "../public/Errors.ts";
 import { StackConfigSchema, type StackConfig } from "../public/Config.ts";
-import type {
-  AuthSettings,
-  DatabaseSettings,
-  RestSettings,
-  RealtimeSettings,
-  StorageSettings,
-  FunctionsSettings,
-  StudioSettings,
-  MailSettings,
-  AnalyticsSettings,
-  PoolerSettings,
-  JwtSigning,
-} from "../public/Config.ts";
+import type { JwtSigning } from "../public/Config.ts";
 import type { CapabilityName } from "../public/Capability.ts";
 import type { PortField } from "../public/Status.ts";
 import type { StackRuntime } from "../public/Runtime.ts";
@@ -32,12 +20,14 @@ import {
   parseGoDuration,
 } from "./capabilities/index.ts";
 import { resolveThirdPartyIssuer } from "./capabilities/auth-third-party.ts";
-import { CAPABILITY_MODULES, createExecutionPlan, type ExecutionPlan } from "./ExecutionPlan.ts";
-import type {
-  CapabilityModule,
-  CapabilityRelease,
-  MaterializedSettings,
-} from "./CapabilityModule.ts";
+import {
+  CAPABILITY_MODULES,
+  createExecutionPlan,
+  type ExecutionPlan,
+  type MaterializedCapabilities,
+  type MaterializedCapability,
+} from "./ExecutionPlan.ts";
+import type { CapabilityModule, MaterializedSettings } from "./CapabilityModule.ts";
 import type { SecretGenerator, SecretJwtSigning } from "../state/SecretStore.ts";
 import { AUTH_JWT_SECRET_SLOT } from "../state/SecretStore.ts";
 
@@ -45,26 +35,8 @@ interface SecretSlot {
   readonly slot: string;
 }
 
-interface MaterializedCapability<T> {
-  readonly enabled: boolean;
-  readonly activation: "eager" | "lazy";
-  readonly version: string;
-  readonly settings: MaterializedSettings<T>;
-}
-
 export interface StackDefinition {
-  readonly capabilities: Readonly<{
-    readonly database: MaterializedCapability<DatabaseSettings>;
-    readonly rest: MaterializedCapability<RestSettings>;
-    readonly auth: MaterializedCapability<AuthSettings>;
-    readonly realtime: MaterializedCapability<RealtimeSettings>;
-    readonly storage: MaterializedCapability<StorageSettings>;
-    readonly functions: MaterializedCapability<FunctionsSettings>;
-    readonly studio: MaterializedCapability<StudioSettings>;
-    readonly mail: MaterializedCapability<MailSettings>;
-    readonly analytics: MaterializedCapability<AnalyticsSettings>;
-    readonly pooler: MaterializedCapability<PoolerSettings>;
-  }>;
+  readonly capabilities: MaterializedCapabilities;
   readonly listeners: Readonly<Record<PortField, MaterializedListener>>;
   readonly security: Readonly<{
     readonly jwt: Readonly<{
@@ -470,12 +442,12 @@ const releaseFor = <T>(
   module: CapabilityModule<T>,
   raw: unknown,
   previousVersion?: string,
-): Effect.Effect<CapabilityRelease, StackVersionUnsupportedError> => {
+): Effect.Effect<string, StackVersionUnsupportedError> => {
   const selected = extract(raw, "version");
   const selector =
     typeof selected === "string" ? selected : (previousVersion ?? module.defaultVersion);
   const release = module.releases[selector];
-  if (release !== undefined) return Effect.succeed(release);
+  if (release !== undefined) return Effect.succeed(release.version);
   return Effect.fail(
     new StackVersionUnsupportedError({
       capability: module.name,
@@ -529,7 +501,7 @@ const materializeCapability = <T>(
   normalizeFunctions: boolean,
   previousVersion?: string,
 ): Effect.Effect<
-  MaterializedCapability<T> & { readonly release: CapabilityRelease },
+  MaterializedCapability<T>,
   InvalidStackConfigError | StackVersionUnsupportedError,
   Path.Path
 > => {
@@ -544,99 +516,21 @@ const materializeCapability = <T>(
     const merged = materializeAbsence(normalizedSettings);
     const slotted = slotsFor(merged, `${module.name}.settings`, slots, module.secretPolicy);
     const completeSettings = ensureManagedSlots(slotted, module, selected.enabled, slots);
-    const selectedRelease = yield* releaseFor(module, selected.raw, previousVersion);
-    const version = selectedRelease.version;
+    const version = yield* releaseFor(module, selected.raw, previousVersion);
     return {
       enabled: selected.enabled,
       activation: selected.activation,
       version,
       settings: completeSettings,
-      release: selectedRelease,
     };
   });
 };
 
-const withoutRelease = <T>(
-  capability: MaterializedCapability<T> & { readonly release: CapabilityRelease },
-): MaterializedCapability<T> => ({
-  enabled: capability.enabled,
-  activation: capability.activation,
-  version: capability.version,
-  settings: capability.settings,
-});
-
 const planForDefinition = (
   runtime: StackRuntime,
   definition: StackDefinition,
-): Effect.Effect<ExecutionPlan, InvalidStackConfigError | StackVersionUnsupportedError> => {
-  const enabled = {
-    database: {
-      enabled: definition.capabilities.database.enabled,
-      activation: definition.capabilities.database.activation,
-    },
-    rest: {
-      enabled: definition.capabilities.rest.enabled,
-      activation: definition.capabilities.rest.activation,
-    },
-    auth: {
-      enabled: definition.capabilities.auth.enabled,
-      activation: definition.capabilities.auth.activation,
-    },
-    realtime: {
-      enabled: definition.capabilities.realtime.enabled,
-      activation: definition.capabilities.realtime.activation,
-    },
-    storage: {
-      enabled: definition.capabilities.storage.enabled,
-      activation: definition.capabilities.storage.activation,
-    },
-    functions: {
-      enabled: definition.capabilities.functions.enabled,
-      activation: definition.capabilities.functions.activation,
-    },
-    studio: {
-      enabled: definition.capabilities.studio.enabled,
-      activation: definition.capabilities.studio.activation,
-    },
-    mail: {
-      enabled: definition.capabilities.mail.enabled,
-      activation: definition.capabilities.mail.activation,
-    },
-    analytics: {
-      enabled: definition.capabilities.analytics.enabled,
-      activation: definition.capabilities.analytics.activation,
-    },
-    pooler: {
-      enabled: definition.capabilities.pooler.enabled,
-      activation: definition.capabilities.pooler.activation,
-    },
-  };
-  const versions = {
-    database: definition.capabilities.database.version,
-    rest: definition.capabilities.rest.version,
-    auth: definition.capabilities.auth.version,
-    realtime: definition.capabilities.realtime.version,
-    storage: definition.capabilities.storage.version,
-    functions: definition.capabilities.functions.version,
-    studio: definition.capabilities.studio.version,
-    mail: definition.capabilities.mail.version,
-    analytics: definition.capabilities.analytics.version,
-    pooler: definition.capabilities.pooler.version,
-  };
-  const settings = {
-    database: definition.capabilities.database.settings,
-    rest: definition.capabilities.rest.settings,
-    auth: definition.capabilities.auth.settings,
-    realtime: definition.capabilities.realtime.settings,
-    storage: definition.capabilities.storage.settings,
-    functions: definition.capabilities.functions.settings,
-    studio: definition.capabilities.studio.settings,
-    mail: definition.capabilities.mail.settings,
-    analytics: definition.capabilities.analytics.settings,
-    pooler: definition.capabilities.pooler.settings,
-  };
-  return createExecutionPlan(runtime, enabled, versions, settings, CAPABILITY_MODULES);
-};
+): Effect.Effect<ExecutionPlan, InvalidStackConfigError | StackVersionUnsupportedError> =>
+  createExecutionPlan(runtime, definition.capabilities);
 
 /** Rebuilds the private execution plan from a persisted, fully materialized definition. */
 export const rebuildExecutionPlan = (
@@ -760,39 +654,17 @@ export const compileStack = (
       false,
       previous?.definition.capabilities.pooler.version,
     );
-    const database = withoutRelease(databaseResult);
-    const rest = withoutRelease(restResult);
-    const auth = withoutRelease(authResult);
-    const realtime = withoutRelease(realtimeResult);
-    const storage = withoutRelease(storageResult);
-    const functions = withoutRelease(functionsResult);
-    const studio = withoutRelease(studioResult);
-    const mail = withoutRelease(mailResult);
-    const analytics = withoutRelease(analyticsResult);
-    const pooler = withoutRelease(poolerResult);
     const capabilities = {
-      database,
-      rest,
-      auth,
-      realtime,
-      storage,
-      functions,
-      studio,
-      mail,
-      analytics,
-      pooler,
-    };
-    const enabled: Record<CapabilityName, { enabled: boolean; activation: "eager" | "lazy" }> = {
-      database: { enabled: database.enabled, activation: database.activation },
-      rest: { enabled: rest.enabled, activation: rest.activation },
-      auth: { enabled: auth.enabled, activation: auth.activation },
-      realtime: { enabled: realtime.enabled, activation: realtime.activation },
-      storage: { enabled: storage.enabled, activation: storage.activation },
-      functions: { enabled: functions.enabled, activation: functions.activation },
-      studio: { enabled: studio.enabled, activation: studio.activation },
-      mail: { enabled: mail.enabled, activation: mail.activation },
-      analytics: { enabled: analytics.enabled, activation: analytics.activation },
-      pooler: { enabled: pooler.enabled, activation: pooler.activation },
+      database: databaseResult,
+      rest: restResult,
+      auth: authResult,
+      realtime: realtimeResult,
+      storage: storageResult,
+      functions: functionsResult,
+      studio: studioResult,
+      mail: mailResult,
+      analytics: analyticsResult,
+      pooler: poolerResult,
     };
     const rawListeners = isRecord(config.listeners) ? config.listeners : {};
     const listeners = {
@@ -823,36 +695,7 @@ export const compileStack = (
       listeners,
       security,
     };
-    const versions = {
-      database: database.version,
-      rest: rest.version,
-      auth: auth.version,
-      realtime: realtime.version,
-      storage: storage.version,
-      functions: functions.version,
-      studio: studio.version,
-      mail: mail.version,
-      analytics: analytics.version,
-      pooler: pooler.version,
-    };
-    const executionPlan = yield* createExecutionPlan(
-      input.runtime,
-      enabled,
-      versions,
-      {
-        database: database.settings,
-        rest: rest.settings,
-        auth: auth.settings,
-        realtime: realtime.settings,
-        storage: storage.settings,
-        functions: functions.settings,
-        studio: studio.settings,
-        mail: mail.settings,
-        analytics: analytics.settings,
-        pooler: pooler.settings,
-      },
-      CAPABILITY_MODULES,
-    );
+    const executionPlan = yield* planForDefinition(input.runtime, definition);
     return { definition, secrets: slots, executionPlan };
   });
 

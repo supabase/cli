@@ -1,4 +1,4 @@
-import { Data, Schema } from "effect";
+import { Schema } from "effect";
 import { Rpc, RpcGroup } from "effect/unstable/rpc";
 import * as RpcClient from "effect/unstable/rpc/RpcClient";
 import type { RpcClientError } from "effect/unstable/rpc/RpcClientError";
@@ -11,16 +11,7 @@ import { STACK_ERROR_TAGS } from "../public/Errors.ts";
 /** Pinned release identifier used to detect incompatible live owners. */
 export const STACK_RPC_RELEASE = "stack-rpc-v1@0.1.0" as const;
 
-export class StackRpcProtocolError extends Data.TaggedError("StackRpcProtocolError")<{
-  readonly message: string;
-  readonly expectedRelease?: string;
-  readonly actualRelease?: string;
-}> {}
-
-const StackRpcErrorTagSchema = Schema.Literals([
-  ...STACK_ERROR_TAGS,
-  "StackRpcProtocolError",
-] as const);
+const StackRpcErrorTagSchema = Schema.Literals([...STACK_ERROR_TAGS] as const);
 
 const StackRpcErrorSchema = Schema.Struct({
   tag: StackRpcErrorTagSchema,
@@ -60,9 +51,5 @@ export type StackRpcHandlers = {
 };
 export type StackRpcClient = RpcClient.FromGroup<typeof StackRpcGroup, RpcClientError>;
 
-export const releaseMismatch = (actualRelease: string): StackRpcProtocolError =>
-  new StackRpcProtocolError({
-    message: `Incompatible Stack RPC release; expected ${STACK_RPC_RELEASE}, received ${actualRelease}`,
-    expectedRelease: STACK_RPC_RELEASE,
-    actualRelease,
-  });
+export const releaseMismatch = (actualRelease: string): string =>
+  `Incompatible Stack RPC release; expected ${STACK_RPC_RELEASE}, received ${actualRelease}`;

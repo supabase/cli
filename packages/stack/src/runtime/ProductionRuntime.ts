@@ -61,7 +61,6 @@ import {
 } from "./RuntimeInputOwner.ts";
 import type { NativeProcessSpec } from "./NativeProcess.ts";
 import {
-  FUNCTIONS_BOOTSTRAP_CONTAINER_PATH,
   resolveContainerResolutionFor,
   runtimeSpecFor,
   validatePrivateAssignments,
@@ -491,7 +490,6 @@ export const makeProductionRuntime = (
     const state = yield* currentStateReader(options);
     const fileSystem = yield* FileSystem.FileSystem;
     const pathService = yield* Path.Path;
-    const childSpawner = yield* ChildProcessSpawner.ChildProcessSpawner;
     const ownerScope = yield* Scope.Scope;
     const paths = yield* resolveStackPaths({
       stateRoot: options.stateRoot,
@@ -514,23 +512,11 @@ export const makeProductionRuntime = (
         }));
     // oxlint-enable effecttsgo/async-function
     // oxlint-enable effecttsgo/global-fetch-in-effect
-    const inputOwnerScope = yield* Scope.fork(ownerScope, "sequential");
     const inputOwner = yield* makeRuntimeInputOwner({
       stateRoot: options.stateRoot,
       stackId: options.stackId,
       fetchJson,
-    }).pipe(Effect.provideService(Scope.Scope, inputOwnerScope));
-    yield* Scope.addFinalizer(
-      ownerScope,
-      Effect.gen(function* () {
-        yield* Scope.close(inputOwnerScope, Exit.void);
-        yield* inputOwner.cleanupAll.pipe(
-          Effect.catchTag("StackPreparationError", () => Effect.void),
-        );
-      }),
-    );
-    // Register this child scope before constructing drivers: LIFO cleanup
-    // stops workloads, closes owner fibers, then removes generated files.
+    }).pipe(Effect.provideService(Scope.Scope, ownerScope));
     const ingress =
       options.ingress ??
       (yield* makeSupervisorIngress({
@@ -628,9 +614,7 @@ export const makeProductionRuntime = (
       host: ContainerHostRoute | undefined,
     ): Effect.Effect<WorkloadRuntimeInputs, StackPreparationError> =>
       Effect.gen(function* () {
-        const material = yield* inputOwner.resolve(fresh, {
-          includePooler: workload.id === "pooler:pooler",
-        });
+        const material = yield* inputOwner.resolve(fresh, workload.id);
         const templates = material.auth?.templates;
         const apiListener = fresh.definition?.listeners.api;
         const apiAssignment = fresh.ports.find((assignment) => assignment.field === "api");
@@ -653,7 +637,6 @@ export const makeProductionRuntime = (
           workload.id === "functions:edge-runtime"
             ? {
                 bootstrapPath: yield* functionsPath(),
-                bootstrapContainerPath: FUNCTIONS_BOOTSTRAP_CONTAINER_PATH,
                 ...(material.functions?.secrets === undefined
                   ? {}
                   : { secrets: material.functions.secrets }),
@@ -678,7 +661,7 @@ export const makeProductionRuntime = (
       Effect.gen(function* () {
         if (logStoreInitializationFailure !== undefined)
           return yield* preparationError(
-            "Unable to open stack logs",
+            `Unable to open stack logs: ${logStoreInitializationFailure.message}`,
             logStoreInitializationFailure,
           );
         if (!runtimeMatches(input.state.runtime, state.runtime))
@@ -691,8 +674,13 @@ export const makeProductionRuntime = (
         // Eagerly validate the candidate before any engine/artifact work. Start-time checks
         // below revalidate the fresh persisted definition because it is runtime authority.
         yield* validateDatabaseReadinessBudget(input.definition, input.plan.workloads);
+        const candidateState: PersistedStackState = {
+          ...input.state,
+          definition: input.definition,
+          secrets: input.secrets,
+        };
         yield* Effect.forEach(input.plan.workloads, (workload) =>
-          validateMaterializedSecrets(input.state, workload.capability),
+          validateMaterializedSecrets(candidateState, workload.capability),
         );
         yield* Effect.forEach(input.plan.workloads, (workload) =>
           Effect.gen(function* () {
@@ -719,6 +707,13 @@ export const makeProductionRuntime = (
         if (input.state.runtime.kind === "native") {
           for (const assignment of input.state.ports) {
             const listener = input.definition.listeners[assignment.field];
+            if (
+              !listener.enabled ||
+              (listener.port === "automatic"
+                ? assignment.intent !== "automatic"
+                : listener.port !== assignment.port)
+            )
+              continue;
             yield* checkHostPort(listener.address, assignment.port, assignment.field).pipe(
               Effect.mapError(
                 (error) =>
@@ -906,10 +901,6 @@ export const makeProductionRuntime = (
         bootstrapDatabase: bootstrapWorkloadDatabase,
         logStore: logs,
       }).pipe(
-        Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, childSpawner),
-        Effect.provideService(Scope.Scope, ownerScope),
-        Effect.provideService(FileSystem.FileSystem, fileSystem),
-        Effect.provideService(Path.Path, pathService),
         Effect.mapError((error) => preparationError("Unable to initialize native runtime", error)),
       );
     } else {
@@ -931,8 +922,6 @@ export const makeProductionRuntime = (
                     key,
                     `Unknown runtime specification for ${workload.id}`,
                   );
-                // Revalidate the fresh persisted definition before creating a container;
-                // preflight checks the candidate definition, while this state is authoritative.
                 yield* readinessDeadlineFor(fresh, workload).pipe(
                   Effect.mapError((error) => mapDriverError(key, error)),
                 );
@@ -953,9 +942,6 @@ export const makeProductionRuntime = (
                   yield* Ref.set(hostRoute, route);
                 }
                 const inputs = yield* runtimeInputs(workload, fresh, route).pipe(
-                  Effect.mapError((error) => mapDriverError(key, error)),
-                );
-                yield* validateWorkloadRuntimeInputs(fresh, workload, inputs).pipe(
                   Effect.mapError((error) => mapDriverError(key, error)),
                 );
                 const resolution = yield* resolveContainerResolutionFor(
@@ -994,7 +980,6 @@ export const makeProductionRuntime = (
                 return {
                   ...withoutEnv,
                   envFile,
-                  waitForReadiness,
                   ...(volume === undefined ? {} : { volume }),
                 } satisfies ContainerWorkloadResolution;
               }),
@@ -1003,7 +988,7 @@ export const makeProductionRuntime = (
         waitForReadiness,
         bootstrapDatabase: bootstrapWorkloadDatabase,
         logStore: logs,
-      }).pipe(Effect.provideService(Scope.Scope, ownerScope));
+      });
     }
     const baseDriver = withOwnedRuntimeFileCleanup(
       driver,

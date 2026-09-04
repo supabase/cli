@@ -46,7 +46,6 @@ const containerEngine = (
   kind: ContainerEngine["kind"] = "docker",
 ): ContainerEngine => ({
   kind,
-  executable: "docker",
   preflight: Effect.succeed({ host: "host.docker.internal" }),
   probe: Effect.sync(() => {
     calls.push("probe");

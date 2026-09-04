@@ -25,6 +25,8 @@ import {
   encodeFrame,
   encodeRawFrame,
   FrameDecoder,
+  MAINTENANCE_MAX_FRAME_BYTES,
+  RPC_MAX_FRAME_BYTES,
   type JsonValue,
 } from "./FrameCodec.ts";
 import {
@@ -36,7 +38,6 @@ import {
   MaintenanceRequestSchema,
   MaintenanceProtocolError,
   MaintenanceResponseSchema,
-  ownerSessionIdIsValid,
   type MaintenanceRequest,
   type MaintenanceResponse,
 } from "./MaintenanceProtocol.ts";
@@ -225,7 +226,12 @@ const demuxSocket = (
 
         const processFrames = (input: Uint8Array): Effect.Effect<void, Socket.SocketError | E, R> =>
           Effect.gen(function* () {
-            const result = yield* Effect.exit(decoder.push(input));
+            const result = yield* Effect.exit(
+              decoder.push(
+                input,
+                phase === "rpc" ? RPC_MAX_FRAME_BYTES : MAINTENANCE_MAX_FRAME_BYTES,
+              ),
+            );
             if (Exit.isFailure(result)) {
               yield* close;
               return;
@@ -305,15 +311,6 @@ const demuxSocket = (
               }
               phase = decoded.value.protocol.kind;
               preface = new Uint8Array(0);
-              if (
-                decoded.value.protocol.stackId === undefined ||
-                decoded.value.protocol.ownerSessionId === undefined ||
-                !ownerSessionIdIsValid(decoded.value.protocol.ownerSessionId)
-              ) {
-                yield* sendJson(protocolFailure("invalid-request"));
-                yield* close;
-                return;
-              }
               if (decoded.value.protocol.stackId !== options.stackId) {
                 yield* sendJson(protocolFailure("invalid-request"));
                 yield* close;
@@ -329,7 +326,7 @@ const demuxSocket = (
                   ok: false,
                   error: {
                     tag: "unsupported-release",
-                    message: releaseMismatch(decoded.value.protocol.release).message,
+                    message: releaseMismatch(decoded.value.protocol.release),
                   },
                 });
                 yield* close;
@@ -507,7 +504,7 @@ const makeControlRpcSocket = (
           const decoder = new FrameDecoder();
           yield* socket.runRaw(
             (chunk) =>
-              decoder.push(toBytes(chunk)).pipe(
+              decoder.push(toBytes(chunk), RPC_MAX_FRAME_BYTES).pipe(
                 Effect.mapError(
                   (error) =>
                     new Socket.SocketError({

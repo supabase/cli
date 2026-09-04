@@ -3,8 +3,10 @@ import { Effect, Scope } from "effect";
 import { createServer as createHttpServer, type Server as HttpServer } from "node:http";
 // oxlint-disable-next-line effecttsgo/node-builtin-import
 import { createServer as createNetServer, type Server as NetServer } from "node:net";
+// oxlint-disable-next-line effecttsgo/node-builtin-import
+import type { Duplex } from "node:stream";
 import { PortUnavailableError } from "../public/Errors.ts";
-import { type HostListener } from "../state/PortCoordinator.ts";
+import { type HostListener, type HostListenerConnections } from "../state/PortCoordinator.ts";
 import { PORT_FIELD_PROTOCOL, type PortField } from "../public/Status.ts";
 
 export interface HostListenerBindOptions {
@@ -19,17 +21,49 @@ export interface HostListenerBindOptions {
   ) => void;
 }
 
-const closeServer = (server: HttpServer | NetServer): Effect.Effect<void> =>
+interface ConnectionTracker extends HostListenerConnections {
+  readonly detach: () => void;
+}
+
+const trackConnections = (server: HttpServer | NetServer): ConnectionTracker => {
+  const sockets = new Set<Duplex>();
+  const onConnection = (socket: Duplex) => {
+    sockets.add(socket);
+    socket.once("close", () => sockets.delete(socket));
+  };
+  server.on("connection", onConnection);
+  return { sockets, detach: () => server.off("connection", onConnection) };
+};
+
+const closeServer = (
+  server: HttpServer | NetServer,
+  tracker: ConnectionTracker,
+): Effect.Effect<void> =>
   Effect.callback<void>((resume) => {
-    if (!server.listening) {
+    const destroyConnections = () => {
+      for (const socket of tracker.sockets) socket.destroy();
+    };
+    const finish = () => {
+      tracker.detach();
       resume(Effect.void);
+    };
+    destroyConnections();
+    if (!server.listening) {
+      finish();
       return;
     }
-    server.close(() => resume(Effect.void));
+    server.close(finish);
     return Effect.sync(() => {
+      destroyConnections();
+      tracker.detach();
       if (server.listening) server.close(() => undefined);
     });
   });
+
+interface BoundServer<T extends HttpServer | NetServer> {
+  readonly server: T;
+  readonly connections: ConnectionTracker;
+}
 
 const bind = <T extends HttpServer | NetServer>(
   server: T,
@@ -38,23 +72,29 @@ const bind = <T extends HttpServer | NetServer>(
   field: string,
   listen: HostListenerBindOptions["listen"] = (value, host, number, onListening) =>
     value.listen({ host, port: number }, onListening),
-): Effect.Effect<T, PortUnavailableError, Scope.Scope> =>
-  Effect.callback<T, PortUnavailableError>((resume) => {
+): Effect.Effect<BoundServer<T>, PortUnavailableError, Scope.Scope> =>
+  Effect.callback<BoundServer<T>, PortUnavailableError>((resume) => {
+    const tracker = trackConnections(server);
     let settled = false;
     const cleanup = () => {
       server.off("error", onError);
     };
-    const onError = (cause: Error) => {
-      if (settled) return;
-      settled = true;
+    const teardown = () => {
       cleanup();
+      tracker.detach();
       const swallow = () => undefined;
       server.once("error", swallow);
       try {
+        for (const socket of tracker.sockets) socket.destroy();
         server.close(() => server.off("error", swallow));
       } catch {
         server.off("error", swallow);
       }
+    };
+    const onError = (cause: Error) => {
+      if (settled) return;
+      settled = true;
+      teardown();
       resume(
         Effect.fail(
           new PortUnavailableError({
@@ -72,7 +112,7 @@ const bind = <T extends HttpServer | NetServer>(
         if (settled) return;
         settled = true;
         cleanup();
-        resume(Effect.succeed(server));
+        resume(Effect.succeed({ server, connections: tracker }));
       });
     } catch (cause) {
       onError(cause instanceof Error ? cause : new Error(String(cause)));
@@ -80,18 +120,11 @@ const bind = <T extends HttpServer | NetServer>(
     return Effect.sync(() => {
       if (settled) return;
       settled = true;
-      cleanup();
       // `listen` may still be completing when the waiting fiber is interrupted. Keep a temporary
       // error sink while asking Node to close the exact server so a late bind failure cannot become
       // an uncaught process error. `close` throws synchronously when no handle exists; in that case
       // the server has no owned resources left to release.
-      const swallow = () => undefined;
-      server.once("error", swallow);
-      try {
-        server.close(() => server.off("error", swallow));
-      } catch {
-        server.off("error", swallow);
-      }
+      teardown();
     });
   });
 
@@ -101,7 +134,11 @@ export const checkHostPort = (
   port: number,
   field: string,
 ): Effect.Effect<void, PortUnavailableError> =>
-  Effect.scoped(bind(createNetServer(), address, port, field).pipe(Effect.flatMap(closeServer)));
+  Effect.scoped(
+    bind(createNetServer(), address, port, field).pipe(
+      Effect.flatMap(({ server, connections }) => closeServer(server, connections)),
+    ),
+  );
 
 /** Bind and retain one public host listener for direct adoption by a gateway. */
 export const bindHostListener = (
@@ -125,15 +162,16 @@ export const bindHostListenerWithOptions = (
       field,
       options.listen,
     ).pipe(
-      Effect.flatMap((server) =>
+      Effect.flatMap(({ server, connections }) =>
         Effect.gen(function* () {
-          const close = yield* Effect.cached(closeServer(server));
+          const close = yield* Effect.cached(closeServer(server, connections));
           yield* Effect.addFinalizer(() => close);
           return {
             field,
             address,
             port,
             close,
+            connections,
             binding: { kind: "http", server },
           } satisfies HostListener;
         }),
@@ -146,15 +184,16 @@ export const bindHostListenerWithOptions = (
     field,
     options.listen,
   ).pipe(
-    Effect.flatMap((server) =>
+    Effect.flatMap(({ server, connections }) =>
       Effect.gen(function* () {
-        const close = yield* Effect.cached(closeServer(server));
+        const close = yield* Effect.cached(closeServer(server, connections));
         yield* Effect.addFinalizer(() => close);
         return {
           field,
           address,
           port,
           close,
+          connections,
           binding: { kind: "tcp", server, allowHalfOpen: true },
         } satisfies HostListener;
       }),

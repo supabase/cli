@@ -21,7 +21,6 @@ export const CapabilityStateSchema = Schema.Literals([
   "dormant",
   "starting",
   "ready",
-  "stopping",
   "stopped",
   "failed",
 ] as const);
