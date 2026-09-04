@@ -19,8 +19,9 @@ Analytics answers product questions such as:
 - whether usage came from a human terminal, CI, or known agent tool
 
 This path is event-based and is owned by the PostHog-facing `Analytics` service in
-[`src/shared/telemetry/analytics.service.ts`](../src/shared/telemetry/analytics.service.ts) and
-[`src/shared/telemetry/analytics.layer.ts`](../src/shared/telemetry/analytics.layer.ts).
+[`src/shared/telemetry/analytics.service.ts`](../src/shared/telemetry/analytics.service.ts),
+implemented for the legacy shell by
+[`src/legacy/telemetry/legacy-analytics.layer.ts`](../src/legacy/telemetry/legacy-analytics.layer.ts).
 
 It is intentionally separate from the span-based tracing path.
 
@@ -97,12 +98,6 @@ Current milestone events include:
 - `cli_login_completed`
 - `cli_project_linked`
 - `cli_stack_started`
-
-These are emitted from command handlers such as:
-
-- [`src/next/commands/login/login.handler.ts`](../src/next/commands/login/login.handler.ts)
-- [`src/next/commands/link/link.handler.ts`](../src/next/commands/link/link.handler.ts)
-- [`src/next/commands/start/start.handler.ts`](../src/next/commands/start/start.handler.ts)
 
 ## Shared Properties and Identity
 
