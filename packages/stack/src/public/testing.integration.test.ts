@@ -4,6 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { PromiseStack } from "./PromiseStack.ts";
 import { createTestStackWith, type TestStackOperations } from "./Testing.ts";
+import { defaultRuntimeEnvironment } from "../supervisor/Launcher.ts";
 import { CAPABILITY_NAMES } from "./Capability.ts";
 import { StackIdSchema } from "./StackId.ts";
 import type { StackStatus } from "./Status.ts";
@@ -229,7 +230,7 @@ describe("test stack resource", () => {
     ]);
   });
 
-  it("passes an isolated runtime state root without mutating process environment", async () => {
+  it("uses the managed runtime state root without mutating process environment", async () => {
     const events: Array<string> = [];
     // This read is the assertion that createTestStackWith leaves global environment untouched.
     // oxlint-disable-next-line effecttsgo/process-env -- test-only environment immutability assertion.
@@ -246,8 +247,7 @@ describe("test stack resource", () => {
     };
     const stack = await createTestStackWith({}, operations);
     await stack[Symbol.asyncDispose]();
-    expect(environment?.stateRoot).toBe("/tmp/stack-test-isolated-state/.supabase/managed/stacks");
-    expect(environment?.stateRoot.startsWith("/tmp/stack-test-isolated-state/")).toBe(true);
+    expect(environment?.stateRoot).toBe(defaultRuntimeEnvironment().stateRoot);
     expect(environment?.artifactCacheRoot).toBe(join(tmpdir(), "supabase-stack-test-artifacts"));
     expect(environment?.artifactCacheRoot).not.toContain("stack-test-isolated-state");
     // Compare against the snapshot above to prove no global environment mutation occurred.
@@ -331,21 +331,15 @@ describe("test stack resource", () => {
     expect(events).toEqual(["start", "destroy"]);
   });
 
-  it("shares one coordination state root while test stacks overlap", async () => {
+  it("uses the managed state root while test stacks overlap", async () => {
     const roots = ["/tmp/stack-test-shared-a", "/tmp/stack-test-shared-b"];
     const environments: Array<Parameters<NonNullable<TestStackOperations["createStack"]>>[1]> = [];
     const removedRoots: Array<string> = [];
-    const removedStateRoots: Array<string> = [];
-    let stateRootCreations = 0;
     const operations: TestStackOperations = {
       createRoot: async () => {
         const root = roots.shift();
         if (root === undefined) throw new Error("No test root available");
         return root;
-      },
-      createStateRoot: async () => {
-        stateRootCreations += 1;
-        return "/tmp/stack-test-shared-state";
       },
       createStack: async (_options, environment) => {
         environments.push(environment);
@@ -354,48 +348,41 @@ describe("test stack resource", () => {
       removeRoot: async (root) => {
         removedRoots.push(root);
       },
-      removeStateRoot: async (root) => {
-        removedStateRoots.push(root);
-      },
     };
     const [first, second] = await Promise.all([
       createTestStackWith({}, operations),
       createTestStackWith({}, operations),
     ]);
-    expect(stateRootCreations).toBe(1);
     expect(environments.map((environment) => environment?.stateRoot)).toEqual([
-      "/tmp/stack-test-shared-state",
-      "/tmp/stack-test-shared-state",
+      defaultRuntimeEnvironment().stateRoot,
+      defaultRuntimeEnvironment().stateRoot,
     ]);
     await first[Symbol.asyncDispose]();
-    expect(removedStateRoots).toEqual([]);
     await second[Symbol.asyncDispose]();
     expect(removedRoots).toEqual(["/tmp/stack-test-shared-a", "/tmp/stack-test-shared-b"]);
-    expect(removedStateRoots).toEqual(["/tmp/stack-test-shared-state"]);
   });
 
-  it("retains shared coordination state when one stack destroy fails", async () => {
+  it("retains the project root and managed state when one stack destroy fails", async () => {
     const roots = ["/tmp/stack-test-retained-a", "/tmp/stack-test-retained-b"];
     const removedRoots: Array<string> = [];
-    const removedStateRoots: Array<string> = [];
+    const environments: Array<Parameters<NonNullable<TestStackOperations["createStack"]>>[1]> = [];
     const operations: TestStackOperations = {
       createRoot: async () => {
         const root = roots.shift();
         if (root === undefined) throw new Error("No test root available");
         return root;
       },
-      createStateRoot: async () => "/tmp/stack-test-retained-state",
-      createStack: async (options) => ({
-        ...fakeStack([]),
-        destroy: async () => {
-          if (options.projectRoot.endsWith("-a")) throw new Error("destroy a failed");
-        },
-      }),
+      createStack: async (options, environment) => {
+        environments.push(environment);
+        return {
+          ...fakeStack([]),
+          destroy: async () => {
+            if (options.projectRoot.endsWith("-a")) throw new Error("destroy a failed");
+          },
+        };
+      },
       removeRoot: async (root) => {
         removedRoots.push(root);
-      },
-      removeStateRoot: async (root) => {
-        removedStateRoots.push(root);
       },
     };
     const [first, second] = await Promise.all([
@@ -407,6 +394,9 @@ describe("test stack resource", () => {
     );
     await second[Symbol.asyncDispose]();
     expect(removedRoots).toEqual(["/tmp/stack-test-retained-b"]);
-    expect(removedStateRoots).toEqual([]);
+    expect(environments.map((environment) => environment?.stateRoot)).toEqual([
+      defaultRuntimeEnvironment().stateRoot,
+      defaultRuntimeEnvironment().stateRoot,
+    ]);
   });
 });

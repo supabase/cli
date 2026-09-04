@@ -9,12 +9,15 @@
 import { PgClient } from "@effect/sql-pg";
 import { Data, Effect, Redacted, Schedule, type Duration } from "effect";
 import { execFile as execFileCallback } from "node:child_process";
-import { access, mkdir, readFile, readdir, writeFile } from "node:fs/promises";
+import { access, mkdir, mkdtemp, readFile, readdir, rm, writeFile } from "node:fs/promises";
 import { connect as connectTcp } from "node:net";
+import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { promisify } from "node:util";
 import { WebSocket } from "ws";
 import { describe, expect, test } from "vitest";
+import { createStack, listStacks, type PromiseStack } from "../index.ts";
+import { defaultRuntimeEnvironment } from "../supervisor/Launcher.ts";
 import { createTestStack, type TestStack } from "../testing.ts";
 import { CAPABILITY_NAMES } from "./Capability.ts";
 import type { PromiseStackCredentials } from "./Credentials.ts";
@@ -1148,6 +1151,65 @@ describe("managed Supabase stack whole-stack E2E", () => {
         ]);
         expect(firstRows).toEqual([{ payload: firstMarker }]);
         expect(secondRows).toEqual([{ payload: secondMarker }]);
+      },
+    );
+
+    test(
+      `coordinates with an ordinary package stack in ${mode.name} mode`,
+      { timeout: E2E_TIMEOUT_MS },
+      async () => {
+        const identity = crypto.randomUUID().replaceAll("-", "").slice(0, 16);
+        const ordinaryRoot = await mkdtemp(join(tmpdir(), "supabase-stack-cli-consumer-"));
+        let ordinary: PromiseStack | undefined;
+        let helper: TestStack | undefined;
+        let primary: unknown;
+        try {
+          ordinary = await createStack({
+            projectRoot: ordinaryRoot,
+            name: `stack-cli-consumer-${identity}`,
+            runtime: mode.runtime,
+          });
+          await ordinary.start();
+          helper = await createTestStack({
+            name: `stack-helper-consumer-${identity}`,
+            runtime: mode.runtime,
+          });
+
+          const ordinaryStatus = await ordinary.status();
+          const helperStatus = await helper.status();
+          expect(ordinaryStatus.lifecycle).toBe("running");
+          expect(helperStatus.lifecycle).toBe("running");
+          expect(helper.stateRoot).toBe(defaultRuntimeEnvironment().stateRoot);
+          expect(endpoint(ordinaryStatus, "api").port).not.toBe(endpoint(helperStatus, "api").port);
+
+          const scoped = await listStacks({ projectRoot: ordinaryRoot });
+          expect(scoped.map(({ id }) => id)).toContain(ordinary.id);
+          expect(scoped.map(({ id }) => id)).not.toContain(helper.id);
+          const all = await listStacks();
+          expect(all.map(({ id }) => id)).toEqual(expect.arrayContaining([ordinary.id, helper.id]));
+        } catch (error) {
+          primary = error;
+        }
+
+        const [helperResult, ordinaryResult] = await Promise.allSettled([
+          helper === undefined ? Promise.resolve() : helper[Symbol.asyncDispose](),
+          ordinary === undefined ? Promise.resolve() : ordinary.destroy(),
+        ]);
+        let cleanupFailure: unknown;
+        for (const result of [helperResult, ordinaryResult]) {
+          if (result.status === "rejected") {
+            cleanupFailure ??= result.reason;
+          }
+        }
+        if (ordinaryResult.status === "fulfilled") {
+          try {
+            await rm(ordinaryRoot, { recursive: true, force: true });
+          } catch (error) {
+            cleanupFailure ??= error;
+          }
+        }
+        if (primary !== undefined) throw primary;
+        if (cleanupFailure !== undefined) throw cleanupFailure;
       },
     );
 

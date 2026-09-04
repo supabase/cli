@@ -19,13 +19,14 @@ The public API has two deliberate entrypoints: Effect-native operations are
 available from `@supabase/stack/effect`, while the package root exposes the
 Promise handle and root Promise functions (`createStack`, `openStack`,
 `findStack`, `listStacks`, and `inspectStack`). Test callers use the public
-`createTestStack` helper from `@supabase/stack/testing`; it owns an isolated
-project root and exact-identity cleanup through `await using`. Overlapping test
-helpers share one process-scoped ephemeral coordination state root so automatic
-ports coordinate like production while each project root and identity-scoped
-data remain isolated. The coordination root is reference-counted and removed
-after every owned stack has destroyed successfully; a failed destroy retains
-its exact project and coordination state for recovery.
+`createTestStack` helper from `@supabase/stack/testing`; it owns a unique
+temporary project root and exact-identity cleanup through `await using`, while
+using the same managed state root as ordinary package and CLI callers. All
+default callers therefore coordinate automatic ports through one registry;
+helper project roots and identities remain isolated. Temporary test stacks are
+excluded from the current CLI project-scoped listing because their project roots
+differ, but remain visible to unfiltered package `listStacks()`. A failed
+destroy retains its exact project root and managed state for recovery.
 
 The managed document is private, unreleased state under the user-level managed
 root. It is not a repository contract, service registry, compatibility facade,
