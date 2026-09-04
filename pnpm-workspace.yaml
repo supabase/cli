@@ -20,7 +20,7 @@ catalog:
   "@tsconfig/bun": "^1.0.11"
   "@types/bun": "^1.4.0"
   "typescript": "^7.0.2"
-  "@vitest/coverage-istanbul": "^4.1.11"
+  "@vitest/coverage-istanbul": "^5.0.0"
   "effect": "4.0.0-rc.112"
   "knip": "^6.32.2"
   "oxfmt": "^0.65.0"
@@ -29,6 +29,7 @@ catalog:
   "semantic-release": "^25.0.9"
   "tldts": "^7.4.11"
   "turbo": "2.10.12"
+  "vite": "^8.2.2"
   "vitest": ^5.0.0
 
 blockExoticSubdeps: true
@@ -90,6 +91,15 @@ packageExtensions:
   "@oxlint-tsgolint/win32-arm64": *effect-tsgo-patched
   "@oxlint-tsgolint/win32-x64": *effect-tsgo-patched
 
+# @effect/vitest 4.0.0-rc.x declares a `vitest >=4.1.0 <5.0.0` peer, but it only
+# uses the stable `vitest` entrypoint and runs cleanly against Vitest 5 (the
+# whole unit/integration suite passes). Upstream has not widened the range yet;
+# accept Vitest 5 here so every install stops warning about a known-good pair.
+# Drop this rule once @effect/vitest ships a vitest@5-compatible peer range.
+peerDependencyRules:
+  allowedVersions:
+    "@effect/vitest>vitest": "5"
+
 minimumReleaseAge: 10200
 minimumReleaseAgeExclude:
   - "@turbo/darwin-64@2.10.11"
@@ -110,6 +120,7 @@ minimumReleaseAgeExclude:
   - "effect@4.0.0-rc.111"
   - tinybench@6.1.4
   - "turbo@2.10.11"
+  - "@vitest/coverage-istanbul@5.0.0"
   - "@vitest/mocker@5.0.0"
   - "@vitest/spy@5.0.0"
   - vitest@5.0.0

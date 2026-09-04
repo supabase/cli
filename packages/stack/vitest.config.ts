@@ -1,38 +1,13 @@
-import { defineConfig } from "vitest/config";
+import { definePackageConfig, testProject } from "../../vitest.shared.ts";
 
-export default defineConfig({
+export default definePackageConfig({
   test: {
-    passWithNoTests: true,
-    coverage: {
-      enabled: false,
-      provider: "istanbul",
-      clean: false,
-      include: ["src/**/*.ts"],
-      reporter: ["text", "lcov"],
-      reportsDirectory: "coverage",
-    },
     projects: [
-      {
-        test: {
-          name: "unit",
-          include: ["**/*.unit.test.ts"],
-        },
-      },
-      {
-        test: {
-          name: "integration",
-          include: ["**/*.integration.test.ts"],
-          testTimeout: 60_000,
-        },
-      },
-      {
-        test: {
-          name: "e2e",
-          include: ["**/*.e2e.test.ts"],
-          fileParallelism: false,
-          globalSetup: ["./tests/global-setup.ts"],
-        },
-      },
+      testProject("unit"),
+      testProject("integration", { test: { testTimeout: 60_000 } }),
+      testProject("e2e", {
+        test: { fileParallelism: false, globalSetup: ["./tests/global-setup.ts"] },
+      }),
     ],
   },
 });

@@ -1,7 +1,8 @@
 import { readFileSync } from "node:fs";
-import { defaultClientConditions, defaultServerConditions } from "vite";
-import { defineConfig } from "vitest/config";
+import { definePackageConfig, testProject } from "../../vitest.shared.ts";
 
+// `src/shared/services/dockerfile-images.ts` imports the Go CLI's Dockerfile
+// with Bun's `{ type: "text" }` import attribute; Vite needs a loader for it.
 function dockerfileTextPlugin() {
   return {
     name: "dockerfile-text-loader",
@@ -16,31 +17,10 @@ function dockerfileTextPlugin() {
   };
 }
 
-// Workspace packages such as @supabase/config publish a `bun` export
-// condition pointing at their TypeScript source (see
-// packages/config/package.json's `exports` map); without it, Vite's resolver
-// falls through to the `default` condition and loads the built `dist/*.js`
-// output instead — which is stale, or missing entirely on a fresh clone
-// before the package has been built. Extending (not replacing) Vite's
-// default condition lists keeps every other package's exports resolution
-// unchanged. Required on every inline `test.projects` entry below too:
-// Vitest builds a separate Vite config per project and does not inherit
-// these from the root config (see PR #6366 finding 0).
-const workspacePackageResolve = { conditions: [...defaultClientConditions, "bun"] };
-const workspacePackageSsrResolve = { conditions: [...defaultServerConditions, "bun"] };
-
-export default defineConfig({
-  resolve: workspacePackageResolve,
-  ssr: { resolve: workspacePackageSsrResolve },
+export default definePackageConfig({
   plugins: [dockerfileTextPlugin()],
   test: {
-    passWithNoTests: true,
     coverage: {
-      enabled: false,
-      provider: "istanbul",
-      include: ["src/**/*.ts"],
-      reporter: ["text", "lcov"],
-      reportsDirectory: "coverage",
       exclude: [
         "tests/**",
         "scripts/**",
@@ -56,29 +36,10 @@ export default defineConfig({
       ],
     },
     projects: [
-      {
-        resolve: workspacePackageResolve,
-        ssr: { resolve: workspacePackageSsrResolve },
+      testProject("unit", { test: { env: { FORCE_COLOR: "1" } } }),
+      testProject("integration"),
+      testProject("e2e", {
         test: {
-          name: "unit",
-          include: ["**/*.unit.test.ts"],
-          env: { FORCE_COLOR: "1" },
-        },
-      },
-      {
-        resolve: workspacePackageResolve,
-        ssr: { resolve: workspacePackageSsrResolve },
-        test: {
-          name: "integration",
-          include: ["**/*.integration.test.ts"],
-        },
-      },
-      {
-        resolve: workspacePackageResolve,
-        ssr: { resolve: workspacePackageSsrResolve },
-        test: {
-          name: "e2e",
-          include: ["**/*.e2e.test.ts"],
           fileParallelism: false,
           maxWorkers: 1,
           globalSetup: ["tests/e2e-global-setup.ts"],
@@ -86,23 +47,19 @@ export default defineConfig({
           testTimeout: 120_000,
           hookTimeout: 120_000,
         },
-      },
-      {
-        resolve: workspacePackageResolve,
-        ssr: { resolve: workspacePackageSsrResolve },
+      }),
+      // Live tests run against one provisioned project on the configured
+      // platform. They are never part of the default unit/integration/e2e
+      // loop; an explicit run fails fast when required configuration is absent.
+      testProject("live", {
         test: {
-          // Live tests run against one provisioned project on the configured
-          // platform. They are never part of the default unit/integration/e2e
-          // loop; an explicit run fails fast when required configuration is absent.
-          name: "live",
-          include: ["**/*.live.test.ts"],
           fileParallelism: false,
           maxWorkers: 1,
           globalSetup: ["tests/live-global-setup.ts"],
           testTimeout: 300_000,
           hookTimeout: 300_000,
         },
-      },
+      }),
     ],
   },
 });
