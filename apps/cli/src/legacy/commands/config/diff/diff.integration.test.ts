@@ -983,18 +983,24 @@ describe("legacy config diff integration", () => {
   });
 
   it.live("a declared path push cannot communicate surfaces in the unmanaged note", () => {
-    // auth.oauth_server is dropped from the local projection entirely (push
-    // has no oauth_server handling), so a declared `enabled = true`
-    // disagreeing with the remote's default `false` cannot be a change entry
-    // — but it must not vanish silently either.
+    // `auth.oauth_server.enabled` is now an ordinary comparable path
+    // (CLI-2314), so it no longer demonstrates this. Its sibling
+    // `authorization_url_path` still does: `DISABLED_SENTINEL_PRUNES` drops
+    // it from the local projection while the container is declared
+    // disabled, so a declared value disagreeing with the remote's cannot be
+    // a change entry — but it must not vanish silently either.
     const { layer, out } = setup({
-      toml: 'project_id = "test"\n[auth.oauth_server]\nenabled = true\n',
+      toml: 'project_id = "test"\n[auth.oauth_server]\nenabled = false\nauthorization_url_path = "/consent"\n',
       v2: {
         status: 200,
         body: v2Response({
           attributes: (attributes) => ({
             ...attributes,
-            auth: { oauth_server_enabled: false },
+            auth: {
+              ...(attributes["auth"] as Record<string, unknown>),
+              oauth_server_enabled: false,
+              oauth_server_authorization_path: "/other",
+            },
           }),
         }),
       },
@@ -1003,7 +1009,7 @@ describe("legacy config diff integration", () => {
       yield* legacyConfigDiff(noFlags);
       expect(out.stdoutText).toContain("No config differences found.");
       expect(out.stdoutText).toContain(
-        "Note: 1 declared property cannot be pushed and was not compared: auth.oauth_server.enabled",
+        "Note: 1 declared property cannot be pushed and was not compared: auth.oauth_server.authorization_url_path",
       );
     }).pipe(Effect.provide(layer));
   });

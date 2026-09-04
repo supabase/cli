@@ -972,10 +972,17 @@ otp_expiry = 120
   );
 
   it.live(
-    "a disabled storage.analytics whose remote is enabled surfaces as unmanaged, not pushed",
+    "a disabled storage.analytics's declared quota sibling surfaces as unmanaged, not pushed",
     () => {
+      // `storage.analytics.enabled` is an ordinary comparable path (CLI-2314)
+      // and matches the remote here (both `false`), so it produces no
+      // change. `max_namespaces` is the sibling `DISABLED_SENTINEL_PRUNES`
+      // still drops from the local projection while the container is
+      // disabled — declared locally and disagreeing with the remote's
+      // report, it must surface as unmanaged rather than vanish silently or
+      // get force-pushed.
       const { layer, out, api } = setup({
-        toml: `project_id = "test"\n[storage.analytics]\nenabled = false\n`,
+        toml: `project_id = "test"\n[storage.analytics]\nenabled = false\nmax_namespaces = 5\n`,
         format: "json",
         v2: {
           status: 200,
@@ -990,8 +997,8 @@ otp_expiry = 120
                     unknown
                   >),
                   iceberg_catalog: {
-                    enabled: true,
-                    max_namespaces: 5,
+                    enabled: false,
+                    max_namespaces: 10,
                     max_tables: 10,
                     max_catalogs: 2,
                   },
@@ -1011,28 +1018,41 @@ otp_expiry = 120
         ).toBe(false);
         const success = out.messages.find((m) => m.type === "success");
         const data = success?.data as Record<string, unknown>;
-        expect(data["unmanaged"]).toEqual([["storage", "analytics", "enabled"]]);
+        expect(data["unmanaged"]).toEqual([["storage", "analytics", "max_namespaces"]]);
         expect(data["unsupported"]).toEqual([]);
       }).pipe(Effect.provide(layer));
     },
   );
 
-  it.live("a declared auth.oauth_server surfaces as unmanaged, never as unsupported", () => {
-    const { layer, out } = setup({
-      toml: `project_id = "test"\n[auth.oauth_server]\nenabled = true\n`,
-      format: "json",
-    });
-    return Effect.gen(function* () {
-      yield* legacyConfigPush({ projectRef: Option.none() });
-      expect(out.stderrText).toContain(
-        "Note: 1 declared property is not managed by config push and was not compared; run `supabase config diff` to list them.",
-      );
-      const success = out.messages.find((m) => m.type === "success");
-      const data = success?.data as Record<string, unknown>;
-      expect(data["unmanaged"]).toEqual([["auth", "oauth_server", "enabled"]]);
-      expect(data["unsupported"]).toEqual([]);
-    }).pipe(Effect.provide(layer));
-  });
+  it.live(
+    "a declared auth.oauth_server.enabled surfaces as unsupported, no longer as unmanaged",
+    () => {
+      // Before CLI-2314, `fromConfigDocument` dropped the WHOLE
+      // `auth.oauth_server` subtree unconditionally, so a declared `enabled`
+      // never reached `changeSet.changes` and was reported `unmanaged`.
+      // `enabled` is now an ordinary comparable path, so a declared value
+      // disagreeing with the remote's IS a real `changeSet.changes` entry —
+      // routed by `LEGACY_PUSH_UNSUPPORTED_PREFIXES` to the "no Management
+      // API field" note (`unsupported`), never silently written.
+      const { layer, out, api } = setup({
+        toml: `project_id = "test"\n[auth.oauth_server]\nenabled = true\n`,
+        format: "json",
+      });
+      return Effect.gen(function* () {
+        yield* legacyConfigPush({ projectRef: Option.none() });
+        expect(out.stderrText).toContain(
+          "Note: 1 declared property has no Management API field and was not pushed: auth.oauth_server.enabled (change it from the dashboard).",
+        );
+        expect(
+          api.requests.some((r) => r.method === "PATCH" && r.url.includes("/config/auth")),
+        ).toBe(false);
+        const success = out.messages.find((m) => m.type === "success");
+        const data = success?.data as Record<string, unknown>;
+        expect(data["unsupported"]).toEqual([["auth", "oauth_server", "enabled"]]);
+        expect(data["unmanaged"]).toEqual([]);
+      }).pipe(Effect.provide(layer));
+    },
+  );
 
   it.live("reports the remote-only count when nothing pushable exists anywhere", () => {
     const { layer, out, api } = setup({

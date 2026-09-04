@@ -556,15 +556,25 @@ describe("legacy config pull integration", () => {
   });
 
   it.live(
-    "writing a push-unmanaged family (ADR 0021) on its first pull notes it can't be sent back",
+    "a first-pull auth.oauth_server.enabled no longer trips the ADR 0021 unpushable warning (CLI-2314)",
     () => {
-      // `auth.oauth_server.enabled` is undeclared before this run, so it
-      // plans as a normal `remote_only` write (`applyPushUnmanagedOmissions`
-      // only prunes a path from the local projection once it's DECLARED —
-      // `../diff/diff.integration.test.ts`'s own "unmanaged" case pins the
-      // declared-already state). The convergence check's own post-write
-      // projection has it declared, so it reclassifies as `unmanaged` there
-      // — decision 4's "written but config push cannot send it back" note.
+      // Before CLI-2314, `applyPushUnmanagedOmissions` dropped the WHOLE
+      // `auth.oauth_server` subtree from the DOCUMENT arm unconditionally,
+      // so writing `enabled` here on a first pull immediately reclassified
+      // it as `unmanaged` — this test used to pin that "written here, but
+      // config push cannot send it back" warning. `enabled` is now an
+      // ordinary comparable path: writing it converges local and remote
+      // exactly, so no residual `unmanaged` entry exists to warn about, and
+      // it stays genuinely round-trippable. (Its siblings —
+      // `allow_dynamic_registration`/`authorization_url_path` — are still
+      // pruned while the container is declared disabled, see the
+      // "declared-but-unpushable" tests below, but that pruning runs
+      // symmetrically on both the local and remote arms, keyed on each
+      // side's OWN `enabled` value, so a value pull ever writes for them can
+      // never itself be the one that goes unmanaged: the remote only ever
+      // reports a real value for them while its own `enabled` is `true`,
+      // and pull always converges local's `enabled` to match in the same
+      // run.)
       const { layer, out } = setup({
         toml: 'project_id = "test"\n',
         yes: true,
@@ -586,9 +596,9 @@ describe("legacy config pull integration", () => {
         const after = readFileSync(configPath(), "utf8");
         expect(after).toContain("[auth.oauth_server]");
         expect(after).toContain("enabled = true");
-        expect(out.stdoutText).toContain(
-          "auth.oauth_server.enabled was written here, but `config push` cannot send it back",
-        );
+        expect(out.stdoutText).not.toContain("cannot send it back");
+        expect(out.stdoutText).not.toContain("Warnings:");
+        expect(out.stdoutText).toContain("1 change written.");
       }).pipe(Effect.provide(layer));
     },
   );
@@ -2006,7 +2016,18 @@ describe("legacy config pull integration", () => {
   });
 
   it.live("a single declared-but-unpushable property surfaces in the unmanaged note", () => {
-    const before = ['project_id = "test"', "[auth.oauth_server]", "enabled = true", ""].join("\n");
+    // `enabled` is declared `false` (matching the remote, so it produces no
+    // change — it's now an ordinary comparable path, CLI-2314). Its sibling
+    // `allow_dynamic_registration` is what still demonstrates
+    // declared-but-unpushable: `DISABLED_SENTINEL_PRUNES` drops it from the
+    // local projection while the container is disabled.
+    const before = [
+      'project_id = "test"',
+      "[auth.oauth_server]",
+      "enabled = false",
+      "allow_dynamic_registration = true",
+      "",
+    ].join("\n");
     const { layer, out } = setup({
       toml: before,
       v2: {
@@ -2017,6 +2038,7 @@ describe("legacy config pull integration", () => {
             auth: {
               ...(attributes["auth"] as Record<string, unknown>),
               oauth_server_enabled: false,
+              oauth_server_allow_dynamic_registration: false,
             },
           }),
         }),
@@ -2026,7 +2048,7 @@ describe("legacy config pull integration", () => {
       yield* legacyConfigPull(noFlags);
       expect(out.stdoutText).toContain("No config differences found.");
       expect(out.stdoutText).toContain(
-        "Note: 1 declared property cannot be pushed and was not compared: auth.oauth_server.enabled",
+        "Note: 1 declared property cannot be pushed and was not compared: auth.oauth_server.allow_dynamic_registration",
       );
     }).pipe(Effect.provide(layer));
   });
@@ -2034,11 +2056,18 @@ describe("legacy config pull integration", () => {
   it.live(
     "declared-but-unpushable properties surface in the unmanaged note, pluralized when there's more than one",
     () => {
+      // `enabled` is declared `false`, matching the remote (an ordinary
+      // comparable path, CLI-2314, that produces no change here). Its two
+      // siblings, `allow_dynamic_registration` and `authorization_url_path`,
+      // are what `DISABLED_SENTINEL_PRUNES` still drops from the local
+      // projection while the container is disabled — both surface as
+      // unpushable, exercising the pluralized note.
       const before = [
         'project_id = "test"',
         "[auth.oauth_server]",
-        "enabled = true",
+        "enabled = false",
         "allow_dynamic_registration = true",
+        'authorization_url_path = "/consent"',
         "",
       ].join("\n");
       const { layer, out } = setup({
@@ -2052,6 +2081,7 @@ describe("legacy config pull integration", () => {
                 ...(attributes["auth"] as Record<string, unknown>),
                 oauth_server_enabled: false,
                 oauth_server_allow_dynamic_registration: false,
+                oauth_server_authorization_path: "/other",
               },
             }),
           }),
@@ -2061,7 +2091,7 @@ describe("legacy config pull integration", () => {
         yield* legacyConfigPull(noFlags);
         expect(out.stdoutText).toContain("No config differences found.");
         expect(out.stdoutText).toContain(
-          "Note: 2 declared properties cannot be pushed and were not compared: auth.oauth_server.allow_dynamic_registration, auth.oauth_server.enabled",
+          "Note: 2 declared properties cannot be pushed and were not compared: auth.oauth_server.allow_dynamic_registration, auth.oauth_server.authorization_url_path",
         );
       }).pipe(Effect.provide(layer));
     },
