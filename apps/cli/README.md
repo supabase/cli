@@ -108,7 +108,7 @@ Important areas:
 - `src/shared/cli/` for shared runner logic, roots, and global flags
 - `src/legacy/commands/` for the legacy command tree
 - `src/shared/output/` for text / JSON / NDJSON output policies
-- `src/shared/runtime/` for TTY, stdin, browser, Ink, and process-control services
+- `src/shared/runtime/` for TTY, stdin, browser, and process-control services
 - `src/shared/auth/` for login-related services
 
 The local stack commands use `@supabase/stack` for lifecycle, status, logs, and runtime operations.
@@ -122,7 +122,6 @@ eager startup as its default.
 Useful companion docs:
 
 - [`../../packages/stack/docs/architecture.md`](../../packages/stack/docs/architecture.md)
-- [`docs/ui.md`](./docs/ui.md)
 
 ## Development
 
