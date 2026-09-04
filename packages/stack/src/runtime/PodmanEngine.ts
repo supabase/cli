@@ -2,11 +2,10 @@ import {
   makeContainerEngineCodecs,
   makeContainerEngineCore,
   CONTAINER_LABEL_KEYS,
-  containerLabels,
+  serializeCommonContainerCommand,
   type ContainerCommand,
   type ContainerEngine,
   type ContainerEngineOptions,
-  type ContainerLogOptions,
   type ContainerProcessRequest,
 } from "./ContainerEngine.ts";
 
@@ -84,83 +83,10 @@ export const serializePodmanCommand = (command: ContainerCommand): ContainerProc
           volumeFormat,
         ],
       };
-    case "create-network":
-      return {
-        args: ["network", "create", ...containerLabels(command.spec.labels), command.spec.name],
-      };
-    case "remove-network":
-      return { args: ["network", "rm", command.id] };
-    case "create-volume":
-      return {
-        args: ["volume", "create", ...containerLabels(command.spec.labels), command.spec.name],
-      };
-    case "remove-volume":
-      return { args: ["volume", "rm", command.id] };
-    case "create-container": {
-      const bindMounts = command.spec.mounts.flatMap((mount) => [
-        "--mount",
-        `type=bind,src=${mount.source},dst=${mount.target}${mount.readOnly ? ",ro" : ""}`,
-      ]);
-      const volumeMounts = command.spec.volumeMounts.flatMap((mount) => [
-        "--mount",
-        `type=volume,src=${mount.volume},dst=${mount.target}${mount.readOnly ? ",ro" : ""}`,
-      ]);
-      const publications = command.spec.publications.flatMap((port) => [
-        "--publish",
-        `${port.address}:${port.hostPort}:${port.containerPort}`,
-      ]);
-      const environment =
-        command.spec.envFile === undefined ? [] : ["--env-file", command.spec.envFile];
-      const networkAliases =
-        command.spec.networkAliases === undefined
-          ? []
-          : command.spec.networkAliases.flatMap((alias) => ["--network-alias", alias]);
-      const entrypoint =
-        command.spec.entrypoint === undefined ? [] : ["--entrypoint", command.spec.entrypoint];
-      return {
-        args: [
-          "create",
-          "--name",
-          command.spec.name,
-          "--network",
-          command.spec.network,
-          ...networkAliases,
-          ...containerLabels(command.spec.labels),
-          ...bindMounts,
-          ...volumeMounts,
-          ...publications,
-          ...environment,
-          ...entrypoint,
-          command.spec.image,
-          ...(command.spec.command ?? []),
-        ],
-      };
-    }
-    case "copy-container":
-      return { args: ["cp", command.source, `${command.id}:${command.destination}`] };
-    case "start-container":
-      return { args: ["start", command.id] };
-    case "wait-container":
-      return { args: ["wait", command.id] };
-    case "stop-container":
-      return { args: ["stop", command.id] };
-    case "remove-container":
-      return { args: ["rm", "--force", command.id] };
+    default:
+      return serializeCommonContainerCommand(command);
   }
 };
-
-const serializePodmanLogs = (
-  id: string,
-  options: ContainerLogOptions | undefined,
-): ContainerProcessRequest => ({
-  args: [
-    "logs",
-    "--follow",
-    "--tail",
-    options?.tail === undefined ? "all" : String(options.tail),
-    id,
-  ],
-});
 
 export const makePodmanEngine = (
   options: Omit<ContainerEngineOptions, "kind" | "codecs">,
@@ -172,6 +98,5 @@ export const makePodmanEngine = (
       engineName: "Podman",
       scalarFormat: "raw",
       serialize: serializePodmanCommand,
-      serializeLogs: serializePodmanLogs,
     }),
   });

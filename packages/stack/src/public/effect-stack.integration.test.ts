@@ -1003,6 +1003,7 @@ describe("Effect stack lifecycle handoff", () => {
               });
             return Effect.succeed<ContainerCommandResult>({ stdout: "", stderr: "", exitCode: 0 });
           },
+          stream: () => Stream.empty,
         };
         const engine = makeDockerEngine({ runner, platform: { os: "linux" } });
         const stack = yield* createStack({
@@ -1238,6 +1239,7 @@ describe("Effect stack lifecycle handoff", () => {
               );
             return Effect.succeed({ stdout: "", stderr: "", exitCode: 0 });
           },
+          stream: () => Stream.empty,
         };
         const engine = makeDockerEngine({
           runner,

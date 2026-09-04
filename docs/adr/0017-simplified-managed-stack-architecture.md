@@ -72,8 +72,9 @@ and previously persisted sticky automatic ports remain hard failures and are
 never silently moved.
 
 Every managed document records one concrete runtime selection. Native and
-container runtimes never mix. Omission defaults to Docker; callers may
-explicitly select Docker or Podman. There is no probing or auto-detection;
+container runtimes never mix. An omitted runtime selects native; when a
+container runtime is selected, an omitted engine defaults to Docker. Callers
+may explicitly select Docker or Podman. There is no probing or auto-detection;
 Podman is supported only on local Linux hosts. Persisted state records the
 resolved exact engine. Capability releases and
 workload artifacts are persisted as exact version pins (including their

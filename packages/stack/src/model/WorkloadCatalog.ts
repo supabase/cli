@@ -18,7 +18,6 @@ export interface NativeWorkloadArtifact {
   readonly requiredRuntimePaths: ReadonlyArray<string>;
   readonly executablePath: string;
   readonly nativeProcess?: NativeWorkloadProcess;
-  readonly containerAlias: string;
 }
 
 /** Artifact-root-relative process metadata for native Node workloads. */
@@ -29,7 +28,6 @@ export interface NativeWorkloadProcess {
 }
 
 export interface WorkloadCatalogEntry {
-  readonly workloadId: string;
   readonly service: string;
   readonly defaultVersion: string;
   /** Supported exact versions mapped to their matching container image. */
@@ -43,7 +41,6 @@ export interface WorkloadCatalogEntry {
 }
 
 const native = (
-  workloadId: string,
   service: string,
   defaultVersion: string,
   containerImage: string,
@@ -55,7 +52,6 @@ const native = (
     readonly nativeProcess?: NativeWorkloadProcess;
   } = {},
 ): WorkloadCatalogEntry => ({
-  workloadId,
   service,
   defaultVersion,
   releases: {
@@ -71,7 +67,6 @@ const native = (
 /** The single authoritative private workload identity table. */
 const workloadCatalog = {
   "database:database": native(
-    "database:database",
     "postgres",
     "17.6.1.168",
     "ghcr.io/supabase/cli/postgres:17.6.1.168",
@@ -93,7 +88,6 @@ const workloadCatalog = {
     },
   ),
   "rest:rest": native(
-    "rest:rest",
     "postgrest",
     "v16.2",
     "ghcr.io/supabase/cli/postgrest:v16.2",
@@ -101,16 +95,10 @@ const workloadCatalog = {
     ["bin/postgrest"],
     { containerAlias: "supabase-rest" },
   ),
-  "auth:auth": native(
-    "auth:auth",
-    "auth",
-    "v2.196.0",
-    "ghcr.io/supabase/cli/auth:v2.196.0",
+  "auth:auth": native("auth", "v2.196.0", "ghcr.io/supabase/cli/auth:v2.196.0", "bin/auth", [
     "bin/auth",
-    ["bin/auth"],
-  ),
+  ]),
   "realtime:realtime": native(
-    "realtime:realtime",
     "realtime",
     "v2.134.5",
     "ghcr.io/supabase/cli/realtime:v2.134.5",
@@ -118,7 +106,6 @@ const workloadCatalog = {
     ["bin/migrate", "bin/realtime", "bin/server"],
   ),
   "storage:storage": native(
-    "storage:storage",
     "storage",
     "v1.73.0",
     "ghcr.io/supabase/cli/storage:v1.73.0",
@@ -133,14 +120,12 @@ const workloadCatalog = {
     },
   ),
   "storage:imgproxy": native(
-    "storage:imgproxy",
     "imgproxy",
     "v3.8.0",
     "ghcr.io/supabase/cli/imgproxy:v3.8.0",
     "bin/imgproxy",
   ),
   "functions:edge-runtime": native(
-    "functions:edge-runtime",
     "edge-runtime",
     "v1.76.2",
     "ghcr.io/supabase/cli/edge-runtime:v1.76.2",
@@ -149,7 +134,6 @@ const workloadCatalog = {
     { containerAlias: "supabase-functions" },
   ),
   "studio:studio": native(
-    "studio:studio",
     "studio",
     "2026.09.04-sha-5a67366",
     "ghcr.io/supabase/cli/studio:2026.09.04-sha-5a67366",
@@ -164,7 +148,6 @@ const workloadCatalog = {
     },
   ),
   "studio:pgmeta": native(
-    "studio:pgmeta",
     "pgmeta",
     "v0.99.0",
     "ghcr.io/supabase/cli/pgmeta:v0.99.0",
@@ -179,7 +162,6 @@ const workloadCatalog = {
     },
   ),
   "mail:mail": native(
-    "mail:mail",
     "mailpit",
     "v1.30.2",
     "ghcr.io/supabase/cli/mailpit:v1.30.2",
@@ -188,7 +170,6 @@ const workloadCatalog = {
     { containerAlias: "supabase-mail" },
   ),
   "analytics:analytics": native(
-    "analytics:analytics",
     "analytics",
     "v1.50.9",
     "ghcr.io/supabase/cli/analytics:v1.50.9",
@@ -196,7 +177,6 @@ const workloadCatalog = {
     ["bin/logflare"],
   ),
   "analytics:vector": native(
-    "analytics:vector",
     "vector",
     "0.53.0",
     "ghcr.io/supabase/cli/vector:0.53.0",
@@ -204,7 +184,6 @@ const workloadCatalog = {
     ["bin/vector", "share/doc/vector/config/vector.yaml"],
   ),
   "pooler:pooler": native(
-    "pooler:pooler",
     "pooler",
     "v2.9.12",
     "ghcr.io/supabase/cli/pooler:v2.9.12",
@@ -277,7 +256,6 @@ const artifactFor = (
     requiredRuntimePaths: entry.requiredRuntimePaths,
     executablePath: entry.executablePath,
     ...(entry.nativeProcess === undefined ? {} : { nativeProcess: entry.nativeProcess }),
-    containerAlias: entry.containerAlias,
   };
 };
 

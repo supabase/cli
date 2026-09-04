@@ -41,4 +41,6 @@ non-PostgreSQL capability lazy. `followLogs(...)` provides filterable live entri
 stateless client-polled cursor.
 
 Database reset is intentionally outside the current API. Applying migrations, declarative schemas,
-and seeds remains the caller's responsibility.
+and seeds remains the caller's responsibility. The runtime bootstrap only reconciles the `_realtime`
+schema owner, closed database role passwords, and JWT settings in one transaction; the slim database
+artifact owns its initialization and migrations.

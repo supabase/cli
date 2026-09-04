@@ -459,9 +459,8 @@ const releaseFor = <T>(
 
 const enabledSettings = (
   name: CapabilityName,
-  capabilities: Readonly<Record<string, unknown>>,
+  raw: unknown,
 ): { enabled: boolean; activation: "eager" | "lazy"; settings: unknown; raw: unknown } => {
-  const raw = capabilities[name];
   if (name === "database")
     return { enabled: true, activation: "eager", settings: extract(raw, "settings") ?? {}, raw };
   if (raw === undefined || raw === null) {
@@ -505,7 +504,7 @@ const materializeCapability = <T>(
   InvalidStackConfigError | StackVersionUnsupportedError,
   Path.Path
 > => {
-  const selected = enabledSettings(module.name, { [module.name]: raw });
+  const selected = enabledSettings(module.name, raw);
   const mergedInput = merge(module.defaultSettings, selected.settings);
   const materialized = module.materialize?.(mergedInput, projectRoot) ?? mergedInput;
   const normalized = normalizeFunctions

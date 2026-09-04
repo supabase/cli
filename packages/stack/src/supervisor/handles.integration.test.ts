@@ -154,6 +154,7 @@ const fakeContainerEngine = (kind: "docker" | "podman", calls: string[]): Contai
   waitContainer: () => Effect.succeed(0),
   stopContainer: () => Effect.void,
   removeContainer: () => Effect.void,
+  streamLogs: () => Stream.empty,
 });
 
 describe("managed stack handles", { timeout: 30_000 }, () => {

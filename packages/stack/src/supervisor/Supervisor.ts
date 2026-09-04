@@ -758,13 +758,21 @@ export const makeSupervisor = (
         const definition = state.definition;
         const databaseListener = definition?.listeners.database;
         const databaseAssignment = state.ports.find(({ field }) => field === "database");
+        if (definition === undefined)
+          return yield* Effect.fail(
+            rpcError("InvalidStackConfigError", "Stack credentials require a stack definition"),
+          );
         if (
-          definition === undefined ||
           databaseListener === undefined ||
           !databaseListener.enabled ||
           databaseAssignment === undefined
         )
-          return yield* Effect.fail(credentialsUnavailable);
+          return yield* Effect.fail(
+            rpcError(
+              "InvalidStackConfigError",
+              "Stack credentials require an enabled database listener and assigned database port",
+            ),
+          );
 
         const auth = definition.capabilities.auth;
         if (!auth.enabled)
@@ -811,7 +819,12 @@ export const makeSupervisor = (
         const apiListener = definition.listeners.api;
         const apiAssignment = state.ports.find(({ field }) => field === "api");
         if (apiListener === undefined || !apiListener.enabled || apiAssignment === undefined)
-          return yield* Effect.fail(credentialsUnavailable);
+          return yield* Effect.fail(
+            rpcError(
+              "InvalidStackConfigError",
+              "Stack credentials require an enabled API listener and assigned API port",
+            ),
+          );
         const accessKeyId = s3.access_key_id;
         const region = s3.region;
         if (

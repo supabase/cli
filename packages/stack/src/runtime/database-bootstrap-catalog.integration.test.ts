@@ -4,7 +4,7 @@ import { Cause, Effect, Exit, Option, Redacted } from "effect";
 import { compileStack } from "../model/Compiler.ts";
 import type { PersistedStackState } from "../state/StackState.ts";
 import { StackPreparationError } from "../public/Errors.ts";
-import { DATABASE_BOOTSTRAP_REVISION, databaseBootstrapPlan } from "./DatabaseBootstrapCatalog.ts";
+import { databaseBootstrapPlan } from "./DatabaseBootstrapCatalog.ts";
 
 const stackId = "a".repeat(64);
 
@@ -43,20 +43,13 @@ const errorOf = <E>(exit: Exit.Exit<unknown, E>): E | undefined =>
   Exit.isFailure(exit) ? Option.getOrUndefined(Cause.findErrorOption(exit.cause)) : undefined;
 
 describe("database bootstrap catalog", () => {
-  it.live("creates one revision and reconciles all closed roles and settings", () =>
+  it.live("returns the managed database material required for reconciliation", () =>
     Effect.gen(function* () {
       const state = yield* compileDefinition;
       const plan = yield* databaseBootstrapPlan(state);
-      expect(plan.revisions).toEqual([DATABASE_BOOTSTRAP_REVISION]);
-      expect(Object.keys(plan.credentials?.roles ?? {})).toHaveLength(7);
-      for (const password of Object.values(plan.credentials?.roles ?? {}))
-        expect(password === undefined ? undefined : Redacted.value(password)).toBe(
-          "database-secret",
-        );
-      expect(plan.settings?.jwtExpiry).toBe(3600);
-      expect(
-        plan.settings === undefined ? undefined : Redacted.value(plan.settings.jwtSecret),
-      ).toBe("jwt-secret");
+      expect(Redacted.value(plan.databasePassword)).toBe("database-secret");
+      expect(Redacted.value(plan.jwtSecret)).toBe("jwt-secret");
+      expect(plan.jwtExpiry).toBe(3600);
     }),
   );
 

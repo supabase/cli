@@ -1124,7 +1124,25 @@ describe("Supervisor composition", () => {
           .pipe(Effect.provideContext(fixture.context));
         const listenerExit = yield* invokeCredentials(fixture.supervisor).pipe(Effect.exit);
         expect(errorOf(listenerExit)).toEqual(
-          expect.objectContaining({ tag: "StackNotRunningError" }),
+          expect.objectContaining({ tag: "InvalidStackConfigError" }),
+        );
+
+        const disabledDatabase = {
+          ...complete,
+          definition: {
+            ...complete.definition,
+            listeners: {
+              ...complete.definition.listeners,
+              database: { ...complete.definition.listeners.database, enabled: false },
+            },
+          },
+        };
+        yield* fixture.store
+          .replace(fixture.id, disabledDatabase)
+          .pipe(Effect.provideContext(fixture.context));
+        const disabledDatabaseExit = yield* invokeCredentials(fixture.supervisor).pipe(Effect.exit);
+        expect(errorOf(disabledDatabaseExit)).toEqual(
+          expect.objectContaining({ tag: "InvalidStackConfigError" }),
         );
       }),
     ),

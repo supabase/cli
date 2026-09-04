@@ -27,7 +27,6 @@ const artifact: NativeWorkloadArtifact = {
   checksumUrl: "https://example.test/SHA256SUMS",
   requiredRuntimePaths: ["bin/demo"],
   executablePath: "bin/demo",
-  containerAlias: "supabase-demo",
 };
 const request: ArtifactRequest = {
   key: "demo/v1",

@@ -10,7 +10,6 @@ import {
   runDatabaseBootstrap,
 } from "../model/DatabaseBootstrap.ts";
 import type { PersistedStackState } from "../state/StackState.ts";
-import { DATABASE_INTERNAL_PASSWORD_SLOT } from "../state/SecretStore.ts";
 import { StackPreparationError } from "../public/Errors.ts";
 import { databaseBootstrapPlan } from "./DatabaseBootstrapCatalog.ts";
 
@@ -94,7 +93,6 @@ export const makeDatabaseSessionFromSqlClient = (
 
   const transaction: DatabaseTransaction = {
     execute: executeWith,
-    query: queryWith,
     setRolePassword: (role, password) =>
       generated("SELECT format('ALTER ROLE %I PASSWORD %L', $1::text, $2::text) AS statement", [
         role,
@@ -190,17 +188,12 @@ export const bootstrapDatabaseAt = (
       return yield* new StackPreparationError({
         message: "A persisted database private port is required for bootstrap",
       });
-    const password = state.secrets[DATABASE_INTERNAL_PASSWORD_SLOT]?.value;
-    if (typeof password !== "string" || password.length === 0)
-      return yield* new StackPreparationError({
-        message: "Managed database password is unavailable for bootstrap",
-      });
     yield* Effect.scoped(
       Effect.gen(function* () {
         const session = yield* makePostgresDatabaseSession({
           host: "127.0.0.1",
           port,
-          password: Redacted.make(password),
+          password: plan.databasePassword,
         });
         yield* ensureInternalDatabase(
           session,
@@ -208,7 +201,7 @@ export const bootstrapDatabaseAt = (
             host: "127.0.0.1",
             port,
             database: INTERNAL_DATABASE,
-            password: Redacted.make(password),
+            password: plan.databasePassword,
           }),
         );
         yield* runDatabaseBootstrap(session, plan);

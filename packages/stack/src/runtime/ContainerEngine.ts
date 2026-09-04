@@ -14,7 +14,6 @@ export interface ContainerPlatform {
 }
 export interface ContainerHostRoute {
   readonly host: string;
-  readonly gateway?: string;
   /** Host address where the in-process gateway also binds for rootful Linux containers. */
   readonly bindAddress?: string;
 }
@@ -72,7 +71,7 @@ export const CONTAINER_LABEL_KEYS = {
 };
 
 /** Shapes byte-identical label argv for Docker and Podman. */
-export const containerLabels = (value: ContainerLabels): ReadonlyArray<string> => {
+const containerLabels = (value: ContainerLabels): ReadonlyArray<string> => {
   const pairs: ReadonlyArray<readonly [string, string]> =
     value.role === "network"
       ? [
@@ -137,7 +136,6 @@ export interface ContainerContainerSpec {
   readonly mounts: ReadonlyArray<ContainerMount>;
   readonly volumeMounts: ReadonlyArray<ContainerVolumeMount>;
   readonly publications: ReadonlyArray<ContainerPortPublication>;
-  readonly hostRoute?: ContainerHostRoute;
   readonly role: "workload";
   /** Optional image entrypoint override used by service-owned init processes. */
   readonly entrypoint?: string;
@@ -170,6 +168,90 @@ export type ContainerCommand =
   | { readonly operation: "wait-container"; readonly id: string }
   | { readonly operation: "stop-container"; readonly id: string }
   | { readonly operation: "remove-container"; readonly id: string };
+
+type CommonContainerCommand = Extract<
+  ContainerCommand,
+  | { readonly operation: "create-network" }
+  | { readonly operation: "remove-network" }
+  | { readonly operation: "create-volume" }
+  | { readonly operation: "remove-volume" }
+  | { readonly operation: "create-container" }
+  | { readonly operation: "copy-container" }
+  | { readonly operation: "start-container" }
+  | { readonly operation: "wait-container" }
+  | { readonly operation: "stop-container" }
+  | { readonly operation: "remove-container" }
+>;
+
+export const serializeCommonContainerCommand = (
+  command: CommonContainerCommand,
+): ContainerProcessRequest => {
+  switch (command.operation) {
+    case "create-network":
+      return {
+        args: ["network", "create", ...containerLabels(command.spec.labels), command.spec.name],
+      };
+    case "remove-network":
+      return { args: ["network", "rm", command.id] };
+    case "create-volume":
+      return {
+        args: ["volume", "create", ...containerLabels(command.spec.labels), command.spec.name],
+      };
+    case "remove-volume":
+      return { args: ["volume", "rm", command.id] };
+    case "create-container": {
+      const bindMounts = command.spec.mounts.flatMap((mount) => [
+        "--mount",
+        `type=bind,src=${mount.source},dst=${mount.target}${mount.readOnly ? ",ro" : ""}`,
+      ]);
+      const volumeMounts = command.spec.volumeMounts.flatMap((mount) => [
+        "--mount",
+        `type=volume,src=${mount.volume},dst=${mount.target}${mount.readOnly ? ",ro" : ""}`,
+      ]);
+      const publications = command.spec.publications.flatMap((port) => [
+        "--publish",
+        `${port.address}:${port.hostPort}:${port.containerPort}`,
+      ]);
+      const environment =
+        command.spec.envFile === undefined ? [] : ["--env-file", command.spec.envFile];
+      const networkAliases =
+        command.spec.networkAliases === undefined
+          ? []
+          : command.spec.networkAliases.flatMap((alias) => ["--network-alias", alias]);
+      const entrypoint =
+        command.spec.entrypoint === undefined ? [] : ["--entrypoint", command.spec.entrypoint];
+      return {
+        args: [
+          "create",
+          "--name",
+          command.spec.name,
+          "--network",
+          command.spec.network,
+          ...networkAliases,
+          ...containerLabels(command.spec.labels),
+          ...bindMounts,
+          ...volumeMounts,
+          ...publications,
+          ...environment,
+          ...entrypoint,
+          command.spec.image,
+          ...(command.spec.command ?? []),
+        ],
+      };
+    }
+    case "copy-container":
+      return { args: ["cp", command.source, `${command.id}:${command.destination}`] };
+    case "start-container":
+      return { args: ["start", command.id] };
+    case "wait-container":
+      return { args: ["wait", command.id] };
+    case "stop-container":
+      return { args: ["stop", command.id] };
+    case "remove-container":
+      return { args: ["rm", "--force", command.id] };
+  }
+};
+
 export interface ContainerCommandResult {
   readonly stdout: string;
   readonly stderr: string;
@@ -197,7 +279,7 @@ export interface ContainerCommandRunner {
     request: ContainerProcessRequest,
   ) => Effect.Effect<ContainerCommandResult, ContainerEngineFailure>;
   /** Follows one exact process's stdout/stderr until it exits. */
-  readonly stream?: (
+  readonly stream: (
     request: ContainerProcessRequest,
   ) => Stream.Stream<ContainerProcessOutputChunk, ContainerEngineFailure>;
 }
@@ -405,17 +487,12 @@ export interface ContainerEngineCodecs {
   readonly decodeWait: (
     result: ContainerCommandResult,
   ) => Effect.Effect<number, ContainerEngineFailure>;
-  readonly serializeLogs: (
-    id: string,
-    options: ContainerLogOptions | undefined,
-  ) => ContainerProcessRequest;
 }
 
 export const makeContainerEngineCodecs = (options: {
   readonly engineName: "Docker" | "Podman";
   readonly scalarFormat: "json" | "raw";
   readonly serialize: ContainerEngineCodecs["serialize"];
-  readonly serializeLogs: ContainerEngineCodecs["serializeLogs"];
 }): ContainerEngineCodecs => {
   const protocol = (operation: string, cause?: unknown): ContainerEngineProtocolError =>
     new ContainerEngineProtocolError({
@@ -579,7 +656,6 @@ export const makeContainerEngineCodecs = (options: {
   };
   return {
     serialize: options.serialize,
-    serializeLogs: options.serializeLogs,
     decodeProbe: (result) => scalar("probe", result.stdout).pipe(Effect.asVoid),
     decodeImage: (result) =>
       Effect.forEach(lines(result.stdout), (line) => scalar("inspect-image", line)).pipe(
@@ -635,7 +711,7 @@ export interface ContainerEngine {
   readonly stopContainer: (id: string) => Effect.Effect<void, ContainerEngineFailure>;
   readonly removeContainer: (id: string) => Effect.Effect<void, ContainerEngineFailure>;
   /** Follows one exact container and emits complete stdout/stderr lines. */
-  readonly streamLogs?: (
+  readonly streamLogs: (
     id: string,
     options?: ContainerLogOptions,
   ) => Stream.Stream<ContainerLogLine, ContainerEngineFailure>;
@@ -662,13 +738,6 @@ export const makeContainerEngineCore = (options: ContainerEngineOptions): Contai
     logOptions?: ContainerLogOptions,
   ): Stream.Stream<ContainerLogLine, ContainerEngineFailure> => {
     const source = options.runner.stream;
-    if (source === undefined)
-      return Stream.fail(
-        new ContainerEngineProtocolError({
-          operation: "logs",
-          message: "Container engine log streaming is unavailable",
-        }),
-      );
     interface LineState {
       readonly stdout: { readonly decoder: TextDecoder; remainder: string };
       readonly stderr: { readonly decoder: TextDecoder; remainder: string };
@@ -696,7 +765,15 @@ export const makeContainerEngineCore = (options: ContainerEngineOptions): Contai
         accumulator.remainder = "";
         return [{ stream: streamName, message }];
       });
-    return source(options.codecs.serializeLogs(id, logOptions)).pipe(
+    return source({
+      args: [
+        "logs",
+        "--follow",
+        "--tail",
+        logOptions?.tail === undefined ? "all" : String(logOptions.tail),
+        id,
+      ],
+    }).pipe(
       Stream.mapAccum(stateFor, (state, chunk) => [state, split(state, chunk)] as const, {
         onHalt: flush,
       }),
@@ -711,13 +788,7 @@ export const makeContainerEngineCore = (options: ContainerEngineOptions): Contai
               message: "Docker remote daemon has no verified host route",
             }),
           )
-        : Effect.succeed(
-            options.platform.os === "linux" &&
-              options.platform.desktop !== true &&
-              options.platform.rootless !== true
-              ? { host: "host.docker.internal", gateway: "host-gateway" }
-              : { host: "host.docker.internal" },
-          )
+        : Effect.succeed({ host: "host.docker.internal" })
       : options.platform.remote === true || options.platform.os !== "linux"
         ? Effect.fail(
             new ContainerRoutingUnsupportedError({

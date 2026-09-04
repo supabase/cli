@@ -41,9 +41,11 @@ import { makeSupervisor, type SupervisorRuntime } from "../supervisor/Supervisor
 import type { SupervisorIngress } from "../supervisor/Ingress.ts";
 import { deriveStackId } from "../identity/Identity.ts";
 
-const makeControlledCommandRunner = (options: ContainerCommandRunner): ContainerCommandRunner => ({
+const makeControlledCommandRunner = (
+  options: Pick<ContainerCommandRunner, "run"> & Partial<Pick<ContainerCommandRunner, "stream">>,
+): ContainerCommandRunner => ({
   run: options.run,
-  ...(options.stream === undefined ? {} : { stream: options.stream }),
+  stream: options.stream ?? (() => Stream.empty),
 });
 
 const stackId = StackIdSchema.make("a".repeat(64));
@@ -196,6 +198,7 @@ const fakeContainerEngine = (state: FakeContainerState): ContainerEngine => {
         state.calls.push(`remove:${resourceId}`);
         state.resources = state.resources.filter((resource) => resource.id !== resourceId);
       }),
+    streamLogs: () => Stream.empty,
   };
 };
 
@@ -284,12 +287,14 @@ describe("container runtime", () => {
         executable: process.execPath,
         baseArgs: ["-e", "process.stdout.write('follower-line\\n'); setInterval(() => {}, 1000)"],
       });
-      const follower = yield* runner.stream!({
-        args: ["logs", "--follow", "--tail", "0", "container-id"],
-      }).pipe(
-        Stream.runForEach(() => Deferred.succeed(firstChunk, undefined)),
-        Effect.forkChild({ startImmediately: true }),
-      );
+      const follower = yield* runner
+        .stream({
+          args: ["logs", "--follow", "--tail", "0", "container-id"],
+        })
+        .pipe(
+          Stream.runForEach(() => Deferred.succeed(firstChunk, undefined)),
+          Effect.forkChild({ startImmediately: true }),
+        );
       yield* Deferred.await(firstChunk);
       yield* Fiber.interrupt(follower);
     }).pipe(Effect.provide(NodeServices.layer)),
@@ -394,7 +399,7 @@ describe("container runtime", () => {
         runner,
         platform: { os: "linux", desktop: false },
       });
-      expect((yield* linux.preflight).gateway).toBe("host-gateway");
+      expect((yield* linux.preflight).host).toBe("host.docker.internal");
       const podman = makePodmanEngine({
         runner,
         platform: { os: "linux", rootless: true },
@@ -520,9 +525,7 @@ describe("container runtime", () => {
         resolveWorkload: () =>
           Effect.sync(() => {
             resolutions += 1;
-            return routeReady
-              ? { hostRoute: { host: "172.18.0.1", bindAddress: "172.18.0.1" } }
-              : {};
+            return { command: [routeReady ? "updated" : "initial"] };
           }),
         onNetworkReady: () =>
           Effect.sync(() => {
@@ -533,10 +536,7 @@ describe("container runtime", () => {
       const ready = yield* runtime.start(key, workload());
       expect(ready.state).toBe("ready");
       expect(resolutions).toBe(2);
-      expect(state.createdSpecs.at(-1)?.hostRoute).toEqual({
-        host: "172.18.0.1",
-        bindAddress: "172.18.0.1",
-      });
+      expect(state.createdSpecs.at(-1)?.command).toEqual(["updated"]);
       yield* runtime.cleanup({ stackId, destroy: true });
     }),
   );
@@ -1775,7 +1775,7 @@ describe("container runtime", () => {
     }),
   );
 
-  it.live("keeps Docker and Podman command codecs independent and closed", () =>
+  it.live("preserves Docker and Podman command behavior", () =>
     Effect.gen(function* () {
       const workload = {
         name: "backend",
@@ -1787,20 +1787,19 @@ describe("container runtime", () => {
           role: "workload" as const,
         },
         network: "private",
-        mounts: [],
-        volumeMounts: [],
+        mounts: [{ source: "/tmp/backend", target: "/app/backend", readOnly: true }],
+        volumeMounts: [{ volume: "backend-data", target: "/var/lib/backend", readOnly: false }],
         publications: [{ address: "127.0.0.1" as const, hostPort: 54321, containerPort: 8000 }],
         envFile: "/tmp/supabase-owned.env",
         networkAliases: ["supabase-database"],
         command: ["serve", "--port", "8000"],
-        hostRoute: { host: "host.docker.internal", gateway: "host-gateway" },
         role: "workload" as const,
       };
       const docker = serializeDockerCommand({ operation: "create-container", spec: workload });
-      expect(docker.args).toContain("--add-host");
-      expect(docker.args).toContain("host.docker.internal:host-gateway");
       expect(docker.args).toContain("--publish");
       expect(docker.args).toContain("127.0.0.1:54321:8000");
+      expect(docker.args).toContain("type=bind,src=/tmp/backend,dst=/app/backend,ro");
+      expect(docker.args).toContain("type=volume,src=backend-data,dst=/var/lib/backend");
       expect(docker.args).toContain("--network-alias");
       expect(docker.args).toContain("supabase-database");
       expect(docker.args).toContain("--env-file");
@@ -1813,13 +1812,14 @@ describe("container runtime", () => {
       });
       expect(podmanCreate.args).toContain("--env-file");
       expect(podmanCreate.args).toContain("127.0.0.1:54321:8000");
+      expect(podmanCreate.args).toContain("type=bind,src=/tmp/backend,dst=/app/backend,ro");
+      expect(podmanCreate.args).toContain("type=volume,src=backend-data,dst=/var/lib/backend");
       expect(podmanCreate.args).toContain("--network-alias");
       expect(podmanCreate.args).toContain("/tmp/supabase-owned.env");
       expect(podmanCreate.args.join(" ")).not.toContain("value");
       expect(podmanCreate.args.slice(-3)).toEqual(["serve", "--port", "8000"]);
       const podman = serializePodmanCommand({ operation: "inspect-networks", stackId });
       expect(podman.args.join(" ")).toContain("{{index .Labels");
-      expect(podman.args.join(" ")).not.toContain("host-gateway");
       expect(
         serializeDockerCommand({
           operation: "copy-container",
@@ -1910,8 +1910,8 @@ describe("container runtime", () => {
         runner,
         platform: { os: "linux", rootless: true },
       });
-      const dockerLogs = yield* Stream.runCollect(docker.streamLogs!("container-id", { tail: 0 }));
-      const podmanLogs = yield* Stream.runCollect(podman.streamLogs!("podman-id"));
+      const dockerLogs = yield* Stream.runCollect(docker.streamLogs("container-id", { tail: 0 }));
+      const podmanLogs = yield* Stream.runCollect(podman.streamLogs("podman-id"));
       expect(dockerLogs).toEqual([
         { stream: "stdout", message: "first" },
         { stream: "stderr", message: "error" },

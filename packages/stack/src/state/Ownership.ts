@@ -279,14 +279,6 @@ export const readOwnerMetadata = (
     const paths = yield* resolveStackPaths({ stateRoot, stackId: validId }).pipe(
       Effect.mapError((error) => stateError(String(error))),
     );
-    const exists = yield* fs
-      .exists(paths.controlMetadata)
-      .pipe(
-        Effect.mapError((error) =>
-          stateError(`Unable to inspect owner metadata: ${error.message}`),
-        ),
-      );
-    if (!exists) return undefined;
     const raw = yield* fs.readFileString(paths.controlMetadata).pipe(
       Effect.map(Option.some),
       Effect.catchTag("PlatformError", (error) =>

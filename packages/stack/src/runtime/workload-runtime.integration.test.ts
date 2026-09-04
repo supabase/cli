@@ -625,7 +625,7 @@ describe("workload runtime catalog", () => {
         );
         expect(
           runtimeSpecFor(functions)?.env(configured, functions, 9000, "container", {
-            hostRoute: { host: "host.docker.internal", gateway: "host-gateway" },
+            hostRoute: { host: "host.docker.internal" },
           }),
         ).toMatchObject({ SUPABASE_URL: "http://host.docker.internal:54321" });
         expect(rest?.env(configured, planned("rest:rest"), 3000, "native")).toMatchObject({
@@ -786,7 +786,7 @@ describe("workload runtime catalog", () => {
           { address: "127.0.0.1", hostPort: 30017, containerPort: 4000 },
         ]);
         const resolution = containerResolutionFor(configured, functions, {
-          hostRoute: { host: "host.docker.internal", gateway: "host-gateway" },
+          hostRoute: { host: "host.docker.internal" },
         });
         expect(resolution?.command.join(" ")).toContain(
           `--main-service=${FUNCTIONS_BOOTSTRAP_CONTAINER_PATH}`,
@@ -808,10 +808,6 @@ describe("workload runtime catalog", () => {
           Object.keys(resolution?.env ?? {}).some((key) => key.startsWith("FUNCTIONS_FUNCTIONS_")),
         ).toBe(false);
         expect(resolution?.env.EDGE_RUNTIME_PORT).toBe("9000");
-        expect(resolution?.hostRoute).toEqual({
-          host: "host.docker.internal",
-          gateway: "host-gateway",
-        });
         const bootstrapResolution = containerResolutionFor(configured, functions, {
           functions: { bootstrapPath: "/tmp/functions/4/main.ts" },
         });
@@ -831,7 +827,7 @@ describe("workload runtime catalog", () => {
         const studio = runtimeSpecFor(planned("studio:studio"));
         expect(
           studio?.env(configured, planned("studio:studio"), 3000, "container", {
-            hostRoute: { host: "host.docker.internal", gateway: "host-gateway" },
+            hostRoute: { host: "host.docker.internal" },
           }),
         ).toMatchObject({
           SUPABASE_URL: "http://host.docker.internal:54321",

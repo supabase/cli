@@ -17,7 +17,6 @@ import type { StackId } from "../public/StackId.ts";
 import type { LogStore } from "../supervisor/LogStore.ts";
 import {
   type ContainerContainerSpec,
-  type ContainerHostRoute,
   type ContainerEngine,
   type ContainerEngineFailure,
   type ContainerLabels,
@@ -78,7 +77,6 @@ export interface ContainerWorkloadResolution {
   /** Path to an owned env file; secret bytes are kept out of engine argv. */
   readonly envFile?: string;
   readonly networkAliases?: ReadonlyArray<string>;
-  readonly hostRoute?: ContainerHostRoute;
   /** Private host-loopback publications used by the in-process gateway. */
   readonly publications?: ReadonlyArray<ContainerPortPublicationInput>;
   /** Service-owned one-shot processes run before a newly-created main container. */
@@ -346,12 +344,6 @@ export const makeContainerRuntime = (
     ): Effect.Effect<void> => {
       const logStore = options.logStore;
       if (logStore === undefined) return Effect.void;
-      if (options.engine.streamLogs === undefined)
-        return reportFailure(
-          resource,
-          new Error("Container log streaming is unavailable"),
-          `Container log stream failed for ${resource.key.workloadId}`,
-        );
       const stream = options.engine.streamLogs(resource.container, { tail });
       const consume = stream.pipe(
         Stream.runForEach((line) =>
@@ -466,9 +458,6 @@ export const makeContainerRuntime = (
         ...(context.resolution.envFile === undefined
           ? {}
           : { envFile: context.resolution.envFile }),
-        ...(context.resolution.hostRoute === undefined
-          ? {}
-          : { hostRoute: context.resolution.hostRoute }),
       };
       let logFiber: Fiber.Fiber<void, RuntimeDriverError> | undefined;
       const acquire = withEngine(key, options.engine.createContainer(specification));
@@ -476,7 +465,7 @@ export const makeContainerRuntime = (
       const use = (container: ContainerResource): Effect.Effect<void, RuntimeDriverError> =>
         Effect.gen(function* () {
           yield* withEngine(key, options.engine.startContainer(container.id));
-          if (logStore !== undefined && options.engine.streamLogs !== undefined) {
+          if (logStore !== undefined) {
             const consume = options.engine.streamLogs(container.id, { tail: "all" }).pipe(
               Stream.runForEach((line) =>
                 logStore
@@ -751,7 +740,6 @@ export const makeContainerRuntime = (
             ...(resolution.networkAliases === undefined
               ? {}
               : { networkAliases: resolution.networkAliases }),
-            ...(resolution.hostRoute === undefined ? {} : { hostRoute: resolution.hostRoute }),
             ...(resolution.entrypoint === undefined ? {} : { entrypoint: resolution.entrypoint }),
             ...(resolution.command === undefined ? {} : { command: resolution.command }),
           } satisfies ContainerContainerSpec),

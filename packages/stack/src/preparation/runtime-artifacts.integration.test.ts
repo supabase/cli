@@ -1,6 +1,6 @@
 import { NodeServices } from "@effect/platform-node";
 import { describe, expect, it } from "@effect/vitest";
-import { Cause, Effect, Exit, FileSystem, Option, Path } from "effect";
+import { Cause, Effect, Exit, FileSystem, Option, Path, Stream } from "effect";
 import type { PlannedWorkload } from "../model/ExecutionPlan.ts";
 import type { ArtifactRequest, ArtifactStore, PreparedArtifact } from "./ArtifactStore.ts";
 import type {
@@ -74,6 +74,7 @@ const containerEngine = (
   waitContainer: () => Effect.succeed(0),
   stopContainer: () => Effect.void,
   removeContainer: () => Effect.void,
+  streamLogs: () => Stream.empty,
 });
 
 describe("runtime artifact preparation", () => {

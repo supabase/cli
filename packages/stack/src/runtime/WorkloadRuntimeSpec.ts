@@ -181,7 +181,6 @@ export interface ContainerWorkloadResolution {
     readonly hostPort: number;
     readonly containerPort: number;
   }>;
-  readonly hostRoute?: ContainerHostRoute;
   readonly bootstrap?: Readonly<{ readonly source: string; readonly destination: string }>;
 }
 
@@ -1495,7 +1494,6 @@ export const containerResolutionFor = (
           },
         }
       : {}),
-    ...(inputs.hostRoute === undefined ? {} : { hostRoute: inputs.hostRoute }),
   };
 };
 

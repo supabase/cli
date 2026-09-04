@@ -426,7 +426,6 @@ export const makeHandle = (id: StackId, options: HandleDependencies): Effect.Eff
       call: (rpc: StackRpcClient) => Effect.Effect<A, StackRpcError | RpcClientError>,
       mapError: (error: ControlError) => E,
       launch = false,
-      cleanupFreshOwner = false,
     ): Effect.Effect<A, E> => {
       const rpcCall: Effect.Effect<A, StackRpcError | RpcClientError | StackError> = resolveClient(
         launch,
@@ -434,9 +433,7 @@ export const makeHandle = (id: StackId, options: HandleDependencies): Effect.Eff
         Effect.flatMap(({ client, resolution }) =>
           Effect.scoped(client.rpc.pipe(Effect.flatMap(call))).pipe(
             Effect.onExit((result) =>
-              cleanupFreshOwner && resolution.launched
-                ? cleanupLaunchedOwner(resolution, result)
-                : Effect.void,
+              launch ? cleanupLaunchedOwner(resolution, result) : Effect.void,
             ),
           ),
         ),
@@ -563,7 +560,6 @@ export const makeHandle = (id: StackId, options: HandleDependencies): Effect.Eff
             ? rpc.start({})
             : rpc.start({ config: startOptions.config }),
         startError,
-        true,
         true,
       ).pipe(
         Effect.tapError(() =>
