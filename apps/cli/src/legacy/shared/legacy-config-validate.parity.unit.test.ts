@@ -4,9 +4,12 @@ import { join } from "node:path";
 import { BunServices } from "@effect/platform-bun";
 import { describe, expect, it } from "@effect/vitest";
 import { CliConfigSchema, type CliConfig } from "@supabase/config";
-import { Effect, Exit, FileSystem, Path, Schema } from "effect";
+import { Effect, Exit, FileSystem, Layer, Path, Schema } from "effect";
 
+import { legacyWithEnv, mockLegacyCliSettings } from "../../../tests/helpers/legacy-mocks.ts";
+import { LegacyPlatformApiFactory } from "../auth/legacy-platform-api-factory.service.ts";
 import { legacyReadDbToml } from "./legacy-db-config.toml-read.ts";
+import { legacyResolveStorageCredentials } from "./legacy-storage-credentials.ts";
 import { legacyResolveLocalConfigValues } from "./legacy-local-config-values.ts";
 
 /**
@@ -15,7 +18,10 @@ import { legacyResolveLocalConfigValues } from "./legacy-local-config-values.ts"
  * `@supabase/config`-decoded) — and asserts they fail with the SAME shared error-message
  * substring, since both now route through the single `legacyValidateResolvedConfig`. The two
  * pipelines don't need byte-identical exception wrapping, just the same core Go-parity message
- * text (`.toContain(...)` on both sides with the same expected string).
+ * text (`.toContain(...)` on both sides with the same expected string). A third caller — the
+ * storage-credentials resolver (S, `legacyResolveStorageCredentials`) — shares the `api.port`
+ * and `api.tls` presence branches through the exported helpers; its own describe block below
+ * drives that pipeline.
  *
  * D's harness replicates the `withConfig`/`read`/`failsWith` pattern from
  * `legacy-db-config.toml-read.unit.test.ts` (file-local there, not exported — faithfully
@@ -279,7 +285,9 @@ const scenarios: ReadonlyArray<ParityScenario> = [
 // out-of-scope list):
 // - `remotes[*].project_id`, `auth.sms`, `auth.external` — D-only, never part of the shared
 // validator (`LegacyConfigValidationInput` has no fields for these at all).
-// - `api.tls`, `project_id`, `studio`, `local_smtp` — L-only, D has no equivalent sections.
+// - `project_id`, `studio`, `local_smtp` — L-only, D has no equivalent sections. `api.tls`
+// presence is D-skipped for the same reason but IS shared with S via
+// `legacyValidateApiTlsPresence` — see the S block below.
 describe("legacyValidateResolvedConfig cross-caller parity (D vs L)", () => {
   for (const scenario of scenarios) {
     it.effect(`${scenario.name}: D and L fail with the same message`, () =>
@@ -289,4 +297,69 @@ describe("legacyValidateResolvedConfig cross-caller parity (D vs L)", () => {
       }),
     );
   }
+});
+
+// The `api.port` branch is L-only in the D-vs-L table above (D has no api section), but it is
+// now ALSO shared with the storage-credentials resolver (S) through `legacyValidateApiPort`
+// (#6467 review). Drive S's real pipeline and L against the same zero-port config and assert
+// the identical message, so the shared branch cannot drift for either caller.
+describe("shared api validation branches, cross-caller parity (S vs L)", () => {
+  /** Drives S's real pipeline (`legacyResolveStorageCredentials`, local branch) to failure. */
+  const failsWithS = (config: CliConfig, message: string) =>
+    Effect.gen(function* () {
+      const dir = withConfig("");
+      const exit = yield* legacyResolveStorageCredentials({ projectRef: "", config }).pipe(
+        Effect.provide(
+          Layer.mergeAll(
+            BunServices.layer,
+            mockLegacyCliSettings({ workdir: dir }),
+            // Local-path parity only — the remote branch (and with it the
+            // platform API) is never reached.
+            Layer.succeed(LegacyPlatformApiFactory, {
+              make: Effect.die("unreachable: local-only parity scenario"),
+            }),
+          ),
+        ),
+        Effect.exit,
+      );
+      expect(Exit.isFailure(exit), `S: expected failure containing: ${message}`).toBe(true);
+      if (Exit.isFailure(exit)) {
+        expect(JSON.stringify(exit.cause)).toContain(message);
+      }
+      rmSync(dir, { recursive: true, force: true });
+    });
+
+  // Ambient SUPABASE_API_* values would override the config under test, so pin
+  // every participating key to unset for the duration of each scenario.
+  const isolated = <A, E, R>(body: Effect.Effect<A, E, R>) =>
+    [
+      "SUPABASE_API_PORT",
+      "SUPABASE_API_ENABLED",
+      "SUPABASE_API_TLS_ENABLED",
+      "SUPABASE_API_TLS_CERT_PATH",
+      "SUPABASE_API_TLS_KEY_PATH",
+    ].reduce((inner, name) => legacyWithEnv(name, undefined, inner), body);
+
+  it.effect("api.port = 0 with the API enabled: S and L fail with the same message", () =>
+    isolated(
+      Effect.gen(function* () {
+        const message = "Missing required field in config: api.port";
+        failsWithL({ api: { port: 0 } }, message);
+        yield* failsWithS(baseConfig({ api: { port: 0 } }), message);
+      }),
+    ),
+  );
+
+  it.effect("api.tls cert without key: S and L fail with the same presence message", () =>
+    isolated(
+      Effect.gen(function* () {
+        const message = "Missing required field in config: api.tls.key_path";
+        failsWithL({ api: { tls: { enabled: true, cert_path: "kong.crt" } } }, message);
+        yield* failsWithS(
+          baseConfig({ api: { tls: { enabled: true, cert_path: "kong.crt" } } }),
+          message,
+        );
+      }),
+    ),
+  );
 });

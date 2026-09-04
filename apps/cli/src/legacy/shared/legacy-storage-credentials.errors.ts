@@ -13,7 +13,10 @@ import {
  *
  * `LegacyStorageConfigError` covers the config-load-time validations run
  * before the Storage API client is built (`auth.jwt_secret` length, Kong TLS cert/key pairing
- * and readability). The remaining three mirror `tenant.GetApiKeys` failure
+ * and readability, a malformed `SUPABASE_API_*` port/bool override, an enabled
+ * API whose resolved `api.port` is `0`, and an unreadable/malformed project
+ * dotenv file — see `legacyResolveStorageCredentials`'s local branch and `resolveLocalApiConfig`).
+ * The remaining three mirror `tenant.GetApiKeys` failure
  * modes on the `--linked` path.
  */
 export class LegacyStorageConfigError extends Data.TaggedError("LegacyStorageConfigError")<{
