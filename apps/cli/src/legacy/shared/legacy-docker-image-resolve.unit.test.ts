@@ -4,6 +4,7 @@ import type * as ChildProcess from "effect/unstable/process/ChildProcess";
 import { ChildProcessSpawner } from "effect/unstable/process";
 import * as TestClock from "effect/testing/TestClock";
 
+import { imageDigest } from "../../shared/services/image-digests.ts";
 import { legacyMakeDockerImageResolver } from "./legacy-docker-image-resolve.ts";
 import { legacyContainerRuntimeNotFoundMessage } from "./legacy-container-cli.ts";
 import { LEGACY_SUGGEST_DOCKER_INSTALL } from "./legacy-docker-suggest.ts";
@@ -23,8 +24,10 @@ function mockSpawner(
     exitCode: 1,
     stderr: "Error response from daemon: No such image: placeholder",
   },
+  tagResult: { readonly exitCode: number; readonly stderr?: string } = { exitCode: 0 },
 ) {
   const pulls: Array<string> = [];
+  const tags: Array<[string, string]> = [];
   const imageInspectOptions: Array<ChildProcess.CommandOptions> = [];
 
   const spawner = ChildProcessSpawner.make((command) =>
@@ -56,8 +59,14 @@ function mockSpawner(
         });
       }
 
-      const result = pulls.length < pullResults.length ? pullResults[pulls.length] : undefined;
-      pulls.push(args[1] ?? "");
+      const isTag = args[0] === "tag";
+      if (isTag) tags.push([args[1] ?? "", args[2] ?? ""]);
+      const result = isTag
+        ? tagResult
+        : pulls.length < pullResults.length
+          ? pullResults[pulls.length]
+          : undefined;
+      if (!isTag) pulls.push(args[1] ?? "");
       const exitDeferred = yield* Deferred.make<ChildProcessSpawner.ExitCode>();
       yield* Deferred.succeed(exitDeferred, ChildProcessSpawner.ExitCode(result?.exitCode ?? 1));
       return ChildProcessSpawner.makeHandle({
@@ -83,6 +92,9 @@ function mockSpawner(
     spawner,
     get pulls() {
       return pulls;
+    },
+    get tags() {
+      return tags;
     },
     get imageInspectOptions() {
       return imageInspectOptions;
@@ -444,6 +456,208 @@ describe("legacyMakeDockerImageResolver", () => {
 
       expect(error).toBeInstanceOf(LegacyDockerRunError);
       expect(error.message).toContain(legacyContainerRuntimeNotFoundMessage);
+    }),
+  );
+
+  it.effect("pulls a pinned image by digest and tags it under the candidate reference", () =>
+    Effect.gen(function* () {
+      const previousRegistry = process.env[REGISTRY_ENV];
+      delete process.env[REGISTRY_ENV];
+      try {
+        const mock = mockSpawner([{ exitCode: 0 }]);
+        const resolve = legacyMakeDockerImageResolver(mock.spawner);
+        const candidate = "public.ecr.aws/supabase/postgres-meta:v0.99.0";
+        const pinned = `${candidate}@${imageDigest(candidate) ?? ""}`;
+
+        const image = yield* resolve("supabase/postgres-meta:v0.99.0");
+
+        expect(image).toBe(candidate);
+        expect(mock.pulls).toEqual([pinned]);
+        expect(mock.tags).toEqual([[pinned, candidate]]);
+      } finally {
+        if (previousRegistry !== undefined) process.env[REGISTRY_ENV] = previousRegistry;
+      }
+    }),
+  );
+
+  it.effect("moves to the next registry without retrying when one rejects the pinned digest", () =>
+    Effect.gen(function* () {
+      const previousRegistry = process.env[REGISTRY_ENV];
+      delete process.env[REGISTRY_ENV];
+      try {
+        const digest = imageDigest("supabase/postgres-meta:v0.99.0") ?? "";
+        const mock = mockSpawner([
+          {
+            exitCode: 1,
+            stderr: `Error response from daemon: unknown: failed to resolve reference "public.ecr.aws/supabase/postgres-meta@${digest}": unexpected status from HEAD request to https://public.ecr.aws/v2/supabase/postgres-meta/blobs/${digest}: 401 Unauthorized`,
+          },
+          {
+            exitCode: 1,
+            stderr: `Error response from daemon: failed to resolve reference "ghcr.io/supabase/postgres-meta@${digest}": ghcr.io/supabase/postgres-meta@${digest}: not found`,
+          },
+          { exitCode: 0 },
+        ]);
+        const resolve = legacyMakeDockerImageResolver(mock.spawner);
+
+        const image = yield* resolve("supabase/postgres-meta:v0.99.0");
+
+        expect(image).toBe("supabase/postgres-meta:v0.99.0");
+        expect(mock.pulls).toEqual([
+          `public.ecr.aws/supabase/postgres-meta:v0.99.0@${digest}`,
+          `ghcr.io/supabase/postgres-meta:v0.99.0@${digest}`,
+          `supabase/postgres-meta:v0.99.0@${digest}`,
+        ]);
+        expect(mock.tags).toEqual([
+          [`supabase/postgres-meta:v0.99.0@${digest}`, "supabase/postgres-meta:v0.99.0"],
+        ]);
+      } finally {
+        if (previousRegistry !== undefined) process.env[REGISTRY_ENV] = previousRegistry;
+      }
+    }),
+  );
+
+  it.effect("reports a docker tag that fails after a pinned pull", () =>
+    Effect.gen(function* () {
+      const previousRegistry = process.env[REGISTRY_ENV];
+      delete process.env[REGISTRY_ENV];
+      try {
+        const mock = mockSpawner([{ exitCode: 0 }], undefined, {
+          exitCode: 1,
+          stderr: "Error response from daemon: No such image: placeholder",
+        });
+        const resolve = legacyMakeDockerImageResolver(mock.spawner);
+
+        const error = yield* resolve("supabase/postgres-meta:v0.99.0").pipe(Effect.flip);
+
+        expect(error.reason).toBe("pull");
+        expect(error.daemonDown).toBe(false);
+        expect(error.message).toBe(
+          "failed to tag docker image: Error response from daemon: No such image: placeholder",
+        );
+      } finally {
+        if (previousRegistry !== undefined) process.env[REGISTRY_ENV] = previousRegistry;
+      }
+    }),
+  );
+
+  it.effect("names the pin and a way out when every registry rejects it", () =>
+    Effect.gen(function* () {
+      const previousRegistry = process.env[REGISTRY_ENV];
+      delete process.env[REGISTRY_ENV];
+      try {
+        const digest = imageDigest("supabase/postgres-meta:v0.99.0") ?? "";
+        const mock = mockSpawner([
+          { exitCode: 1, stderr: `${digest}: not found` },
+          { exitCode: 1, stderr: `${digest}: not found` },
+          { exitCode: 1, stderr: `${digest}: not found` },
+        ]);
+        const resolve = legacyMakeDockerImageResolver(mock.spawner);
+
+        const error = yield* resolve("supabase/postgres-meta:v0.99.0").pipe(Effect.flip);
+
+        expect(mock.pulls).toHaveLength(3);
+        expect(error.message).toContain(
+          `failed to pull docker image from all registries (3 of 3 registries rejected ${digest}, the digest this CLI pins for supabase/postgres-meta:v0.99.0; update the CLI, or set SUPABASE_INTERNAL_IMAGE_REGISTRY, for example to docker.io, to pull the tag unpinned): `,
+        );
+      } finally {
+        if (previousRegistry !== undefined) process.env[REGISTRY_ENV] = previousRegistry;
+      }
+    }),
+  );
+
+  it.effect("keeps retrying a failure that does not name the pinned digest", () =>
+    Effect.gen(function* () {
+      const previousRegistry = process.env[REGISTRY_ENV];
+      delete process.env[REGISTRY_ENV];
+      try {
+        const digest = imageDigest("supabase/postgres-meta:v0.99.0") ?? "";
+        const credentialHelperMissing =
+          'error getting credentials - err: exec: "docker-credential-desktop": executable file not found in $PATH';
+        const mock = mockSpawner([
+          { exitCode: 1, stderr: `${digest}: not found` },
+          { exitCode: 1, stderr: credentialHelperMissing },
+          { exitCode: 1, stderr: credentialHelperMissing },
+          { exitCode: 1, stderr: credentialHelperMissing },
+          { exitCode: 1, stderr: `${digest}: not found` },
+        ]);
+        const resolve = legacyMakeDockerImageResolver(mock.spawner);
+        const fiber = yield* resolve("supabase/postgres-meta:v0.99.0").pipe(
+          Effect.forkChild({ startImmediately: true }),
+        );
+
+        yield* TestClock.adjust("4 seconds");
+        yield* TestClock.adjust("8 seconds");
+        const error = yield* Fiber.join(fiber).pipe(Effect.flip);
+
+        expect(mock.pulls).toHaveLength(5);
+        expect(error.message).toContain(
+          `(2 of 3 registries rejected ${digest}, the digest this CLI pins for supabase/postgres-meta:v0.99.0; set SUPABASE_INTERNAL_IMAGE_REGISTRY, for example to docker.io, to pull the tag unpinned): `,
+        );
+        expect(error.message).not.toContain("update the CLI");
+      } finally {
+        if (previousRegistry !== undefined) process.env[REGISTRY_ENV] = previousRegistry;
+      }
+    }),
+  );
+
+  it.effect("never pins a docker.io override", () =>
+    Effect.gen(function* () {
+      const previousRegistry = process.env[REGISTRY_ENV];
+      process.env[REGISTRY_ENV] = "docker.io";
+      try {
+        const mock = mockSpawner([{ exitCode: 0 }]);
+        const resolve = legacyMakeDockerImageResolver(mock.spawner);
+
+        const image = yield* resolve("supabase/postgres-meta:v0.99.0");
+
+        expect(image).toBe("supabase/postgres-meta:v0.99.0");
+        expect(mock.pulls).toEqual(["supabase/postgres-meta:v0.99.0"]);
+        expect(mock.tags).toEqual([]);
+      } finally {
+        if (previousRegistry === undefined) delete process.env[REGISTRY_ENV];
+        else process.env[REGISTRY_ENV] = previousRegistry;
+      }
+    }),
+  );
+
+  it.effect("never pins a registry override that only the project dotenv sets", () =>
+    Effect.gen(function* () {
+      const previousRegistry = process.env[REGISTRY_ENV];
+      delete process.env[REGISTRY_ENV];
+      try {
+        const mock = mockSpawner([{ exitCode: 0 }]);
+        const resolve = legacyMakeDockerImageResolver(mock.spawner, {
+          [REGISTRY_ENV]: "docker.io",
+        });
+
+        const image = yield* resolve("supabase/postgres-meta:v0.99.0");
+
+        expect(image).toBe("supabase/postgres-meta:v0.99.0");
+        expect(mock.pulls).toEqual(["supabase/postgres-meta:v0.99.0"]);
+        expect(mock.tags).toEqual([]);
+      } finally {
+        if (previousRegistry !== undefined) process.env[REGISTRY_ENV] = previousRegistry;
+      }
+    }),
+  );
+
+  it.effect("never pins a user-configured registry", () =>
+    Effect.gen(function* () {
+      const previousRegistry = process.env[REGISTRY_ENV];
+      process.env[REGISTRY_ENV] = "registry.example.com";
+      try {
+        const mock = mockSpawner([{ exitCode: 0 }]);
+        const resolve = legacyMakeDockerImageResolver(mock.spawner);
+
+        const image = yield* resolve("supabase/postgres-meta:v0.99.0");
+
+        expect(image).toBe("registry.example.com/supabase/postgres-meta:v0.99.0");
+        expect(mock.pulls).toEqual([image]);
+        expect(mock.tags).toEqual([]);
+      } finally {
+        if (previousRegistry === undefined) delete process.env[REGISTRY_ENV];
+        else process.env[REGISTRY_ENV] = previousRegistry;
+      }
     }),
   );
 });

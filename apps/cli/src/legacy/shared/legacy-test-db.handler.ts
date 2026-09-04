@@ -25,18 +25,19 @@ import {
   LegacyTestDbRunError,
 } from "./legacy-test-db.errors.ts";
 import { buildLegacyPgProveArgs } from "./legacy-test-db.pg-prove-args.ts";
+import { dockerfileServiceImageRaw } from "../../shared/services/dockerfile-images.ts";
 
 // Go: `apps/cli-go/internal/db/test/test.go:24-25` (deleted in CLI-1970; last
 // present at commit 7b469f5b3).
 const ENABLE_PGTAP = "create extension if not exists pgtap with schema extensions";
 const DISABLE_PGTAP = "drop extension if exists pgtap";
 // Go bakes this default into the Dockerfile (`pkg/config/templates/Dockerfile:20`).
-// The TS config schema does not model an `[images]` override, so it is fixed here.
+// The TS config schema does not model an `[images]` override, so the pin is used as-is.
 // Go resolves it through `GetRegistryImageUrl` (`DockerStart`), honoring
 // `SUPABASE_INTERNAL_IMAGE_REGISTRY` / the default ECR mirror, so do the same
 // before passing it to `docker run`. Re-verify `NO_TESTS_VERDICT` still matches
 // when bumping this tag.
-const LEGACY_PG_PROVE_IMAGE = "supabase/pg_prove:3.36";
+const LEGACY_PG_PROVE_IMAGE = dockerfileServiceImageRaw("pgprove");
 const MAX_PROJECT_ID_LENGTH = 40;
 /**
  * `TAP::Harness` closes every run with exactly one `Result: <verdict>` line.

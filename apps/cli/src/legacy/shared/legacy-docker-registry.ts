@@ -58,6 +58,12 @@ function legacyGetRegistryOverride(
   return registry === undefined || registry.length === 0 ? undefined : registry.toLowerCase();
 }
 
+export function legacyHasRegistryOverride(
+  projectEnvValues?: Readonly<Record<string, string>>,
+): boolean {
+  return legacyGetRegistryOverride(projectEnvValues) !== undefined;
+}
+
 function legacyGetRegistry(projectEnvValues?: Readonly<Record<string, string>>): string {
   return legacyGetRegistryOverride(projectEnvValues) ?? DEFAULT_REGISTRY;
 }

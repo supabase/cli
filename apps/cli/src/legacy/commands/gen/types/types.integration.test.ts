@@ -55,7 +55,11 @@ import {
   LegacyPgDeltaSslProbeError,
 } from "../../../shared/legacy-pgdelta-ssl-probe.service.ts";
 import { legacyPgDeltaSslProbeLayer } from "../../../shared/legacy-pgdelta-ssl-probe.layer.ts";
-import { legacyGetRegistryImageUrlCandidates } from "../../../shared/legacy-docker-registry.ts";
+import {
+  legacyGetRegistryImageUrlCandidates,
+  legacyHasRegistryOverride,
+} from "../../../shared/legacy-docker-registry.ts";
+import { imageDigest } from "../../../../shared/services/image-digests.ts";
 import type {
   LegacyDbConfigFlags,
   LegacyResolvedDbConfig,
@@ -1427,6 +1431,8 @@ describe("legacy gen types", () => {
       try: () =>
         withSslProbeServer(async (port) => {
           const image = resolvePgmetaImage();
+          const digest = legacyHasRegistryOverride() ? undefined : imageDigest(image);
+          const pinned = digest === undefined ? image : `${image}@${digest}`;
           const candidates = legacyGetRegistryImageUrlCandidates(image);
           const child = mockSequentialChildProcessSpawner([
             ...candidates.map(() => ({
@@ -1434,6 +1440,7 @@ describe("legacy gen types", () => {
               stderr: ["Error response from daemon: No such image"],
             })),
             { exitCode: 0 },
+            ...(digest === undefined ? [] : [{ exitCode: 0 }]),
             { exitCode: 0, stdout: ["type PulledThenRun struct {}"] },
           ]);
           const { layer, out } = setup({
@@ -1464,7 +1471,8 @@ describe("legacy gen types", () => {
           expect(out.stdoutText).toContain("type PulledThenRun struct {}");
           expect(child.spawned.map((spawn) => spawn.args)).toEqual([
             ...candidates.map((candidate) => ["image", "inspect", candidate]),
-            ["pull", image],
+            ["pull", pinned],
+            ...(digest === undefined ? [] : [["tag", pinned, image]]),
             expect.arrayContaining(["run", image, "node", "dist/server/server.js"]),
           ]);
         }),

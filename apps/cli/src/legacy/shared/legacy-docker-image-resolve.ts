@@ -6,7 +6,11 @@ import {
   LEGACY_SUGGEST_DOCKER_INSTALL,
   legacyIsDockerDaemonUnreachable,
 } from "./legacy-docker-suggest.ts";
-import { legacyGetRegistryImageUrlCandidates } from "./legacy-docker-registry.ts";
+import {
+  legacyGetRegistryImageUrlCandidates,
+  legacyHasRegistryOverride,
+} from "./legacy-docker-registry.ts";
+import { imageDigest } from "../../shared/services/image-digests.ts";
 
 type Spawner = ChildProcessSpawner["Service"];
 
@@ -47,6 +51,12 @@ const runtimeNotFound = (cause: LegacyContainerRuntimeNotFoundError) =>
 const isImageNotFoundMessage = (message: string): boolean =>
   /no such image/iu.test(message) || /image not known/iu.test(message);
 
+const pinNote = (digest: string, image: string, rejected: number, candidates: number): string => {
+  if (rejected === 0) return ` (pinned to ${digest})`;
+  const remedy = rejected === candidates ? "update the CLI, or set" : "set";
+  return ` (${rejected} of ${candidates} registries rejected ${digest}, the digest this CLI pins for ${image}; ${remedy} SUPABASE_INTERNAL_IMAGE_REGISTRY, for example to docker.io, to pull the tag unpinned)`;
+};
+
 const concat = (chunks: ReadonlyArray<Uint8Array>): Uint8Array => {
   const total = chunks.reduce((size, chunk) => size + chunk.length, 0);
   const bytes = new Uint8Array(total);
@@ -78,7 +88,11 @@ const concat = (chunks: ReadonlyArray<Uint8Array>): Uint8Array => {
  * foreground `db dump`-style run-to-completion containers
  * (`legacy-docker-run.layer.ts`) and `start`'s detached, long-running service
  * containers — the resolve/pull/retry algorithm is identical for both, only
- * the caller's process lifecycle differs.
+ * the caller's process lifecycle differs. Images pinned in
+ * `image-digests.generated.ts` are pulled by digest and tagged under the
+ * candidate; a locally present tag is trusted as-is (verifying it would break
+ * `docker load`ed and locally built images), and a user-configured registry
+ * override is never pinned.
  *
  * `projectEnvValues` is optional (see `legacy-docker-registry.ts`'s doc
  * comment) — `start` and the `functions` Docker paths (`deploy`, `download`,
@@ -199,9 +213,40 @@ export function legacyMakeDockerImageResolver(
       };
     }).pipe(Effect.scoped);
 
+  const tagImage = (source: string, target: string): Effect.Effect<void, LegacyDockerRunError> =>
+    Effect.gen(function* () {
+      const handle = yield* spawnContainerCli(spawner, ["tag", source, target], {
+        stdin: "ignore",
+        stdout: "ignore",
+        stderr: "pipe",
+      }).pipe(Effect.mapError(runtimeNotFound));
+      const stderrChunks: Array<Uint8Array> = [];
+      yield* Stream.runForEach(handle.stderr, (chunk) =>
+        Effect.sync(() => {
+          stderrChunks.push(chunk);
+        }),
+      ).pipe(Effect.mapError(() => spawnError()));
+      const exitCode = yield* handle.exitCode.pipe(
+        Effect.map(Number),
+        Effect.mapError(() => spawnError()),
+      );
+      if (exitCode !== 0) {
+        const stderr = new TextDecoder().decode(concat(stderrChunks)).trim();
+        return yield* Effect.fail(
+          new LegacyDockerRunError({
+            message: `failed to tag docker image: ${stderr}`,
+            reason: "pull",
+            daemonDown: legacyIsDockerDaemonUnreachable(stderr),
+          }),
+        );
+      }
+    }).pipe(Effect.scoped);
+
   return (image: string, deadline?: number): Effect.Effect<string, LegacyDockerRunError> =>
     Effect.gen(function* () {
       const candidates = legacyGetRegistryImageUrlCandidates(image, projectEnvValues);
+      const digest = legacyHasRegistryOverride(projectEnvValues) ? undefined : imageDigest(image);
+      let rejected = 0;
       for (const candidate of candidates) {
         if (yield* hasLocalImage(candidate)) {
           return candidate;
@@ -244,10 +289,11 @@ export function legacyMakeDockerImageResolver(
             );
             break;
           }
+          const reference = digest === undefined ? candidate : `${candidate}@${digest}`;
           const result = yield* Effect.exit(
             remainingMs === undefined
-              ? pullImage(candidate)
-              : Effect.timeoutOrElse(pullImage(candidate), {
+              ? pullImage(reference)
+              : Effect.timeoutOrElse(pullImage(reference), {
                   duration: `${remainingMs} millis`,
                   orElse: () => Effect.succeed(PULL_TIMED_OUT),
                 }),
@@ -261,6 +307,7 @@ export function legacyMakeDockerImageResolver(
             const pulled = result.value;
             lastPullEndedWithNewline = pulled.endedWithNewline;
             if (pulled.exitCode === 0) {
+              if (digest !== undefined) yield* tagImage(reference, candidate);
               return candidate;
             }
             const message =
@@ -268,6 +315,15 @@ export function legacyMakeDockerImageResolver(
                 ? pulled.stderr
                 : `docker pull exited with code ${pulled.exitCode}`;
             failures.push(`${candidate} attempt ${attempt}: ${message}`);
+            // A registry that rejects the pinned digest will not accept it on retry.
+            if (
+              digest !== undefined &&
+              message.includes(digest) &&
+              /manifest unknown|not found|unauthorized|forbidden/i.test(message)
+            ) {
+              rejected += 1;
+              break;
+            }
             if (attemptIndex === DOCKER_PULL_RETRY_DELAYS_MS.length) {
               break;
             }
@@ -311,9 +367,10 @@ export function legacyMakeDockerImageResolver(
         }
       }
 
+      const pin = digest === undefined ? "" : pinNote(digest, image, rejected, candidates.length);
       return yield* Effect.fail(
         new LegacyDockerRunError({
-          message: `failed to pull docker image from all registries: ${failures.join("; ")}`,
+          message: `failed to pull docker image from all registries${pin}: ${failures.join("; ")}`,
           reason: "pull",
           daemonDown: failures.some(legacyIsDockerDaemonUnreachable),
         }),

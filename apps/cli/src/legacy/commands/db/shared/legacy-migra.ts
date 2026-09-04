@@ -18,6 +18,7 @@ import {
 } from "./legacy-migra.deno-templates.ts";
 import { LegacyMigraDiffError, LegacyMigraSchemaLoadError } from "./legacy-migra.errors.ts";
 import { legacyEdgeRuntimeId, type LegacyPgDeltaContext } from "../../../shared/legacy-pgdelta.ts";
+import { dockerfileServiceImageRaw } from "../../../../shared/services/dockerfile-images.ts";
 
 /**
  * The migra Docker image, parsed by Go from its embedded Dockerfile
@@ -25,7 +26,7 @@ import { legacyEdgeRuntimeId, type LegacyPgDeltaContext } from "../../../shared/
  * Used only by the OOM bash fallback (`DiffSchemaMigraBash`); the common
  * edge-runtime path runs `@pgkit/migra` instead.
  */
-const LEGACY_MIGRA_IMAGE = "supabase/migra:3.0.1663481299";
+const LEGACY_MIGRA_IMAGE = dockerfileServiceImageRaw("migra");
 
 /**
  * Schemas excluded from a no-`--schema` migra diff. Verbatim from Go's
