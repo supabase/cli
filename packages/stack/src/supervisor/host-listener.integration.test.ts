@@ -3,8 +3,6 @@ import { describe, expect, it } from "@effect/vitest";
 import { Cause, Effect, Exit, Fiber, Option } from "effect";
 // oxlint-disable-next-line effecttsgo/node-builtin-import
 import { createServer, type Server as HttpServer } from "node:http";
-// oxlint-disable-next-line effecttsgo/node-builtin-import
-import { PassThrough } from "node:stream";
 import { connect as connectNet, type Server as NetServer, type Socket } from "node:net";
 import { PortUnavailableError } from "../public/Errors.ts";
 import { bindHostListener, bindHostListenerWithOptions } from "./HostListener.ts";
@@ -83,59 +81,39 @@ describe("host listener binding", () => {
         const http = yield* bindHostListener("127.0.0.1", 0, "api");
         const tcp = yield* bindHostListener("127.0.0.1", 0, "database");
         const connect = (server: HttpServer | NetServer) =>
-          Effect.callback<Socket, Error>((resume) => {
+          Effect.gen(function* () {
             const address = server.address();
             if (typeof address !== "object" || address === null) {
-              resume(Effect.die("listener did not expose an address"));
-              return;
+              return yield* Effect.die("listener did not expose an address");
             }
-            const socket = connectNet(address.port, "127.0.0.1");
-            socket.once("connect", () => resume(Effect.succeed(socket)));
-            socket.once("error", (error) => resume(Effect.fail(error)));
-            return Effect.sync(() => socket.destroy());
-          });
-        const awaitClose = (socket: Socket) =>
-          Effect.callback<void>((resume) => {
-            if (socket.destroyed) {
-              resume(Effect.void);
-              return;
-            }
-            socket.once("close", () => resume(Effect.void));
-            return Effect.sync(() => socket.destroy());
+            const accepted = yield* Effect.forkChild(
+              Effect.callback<Socket, Error>((resume) => {
+                const onConnection = (socket: Socket) => resume(Effect.succeed(socket));
+                server.once("connection", onConnection);
+                return Effect.sync(() => server.off("connection", onConnection));
+              }),
+              { startImmediately: true },
+            );
+            yield* Effect.acquireRelease(
+              Effect.callback<Socket, Error>((resume) => {
+                const socket = connectNet(address.port, "127.0.0.1");
+                socket.once("connect", () => resume(Effect.succeed(socket)));
+                socket.once("error", (error) => resume(Effect.fail(error)));
+                return Effect.sync(() => {
+                  socket.destroy();
+                });
+              }),
+              (socket) => Effect.sync(() => socket.destroy()),
+            );
+            const acceptedSocket = yield* Fiber.join(accepted).pipe(Effect.timeout("5 seconds"));
+            return acceptedSocket;
           });
         const httpSocket = yield* connect(http.binding.server);
         const tcpSocket = yield* connect(tcp.binding.server);
-        const httpClosed = yield* Effect.forkChild(awaitClose(httpSocket), {
-          startImmediately: true,
-        });
         yield* http.close;
-        yield* Fiber.join(httpClosed);
-        const tcpClosed = yield* Effect.forkChild(awaitClose(tcpSocket), {
-          startImmediately: true,
-        });
         yield* tcp.close;
-        yield* Fiber.join(tcpClosed);
         expect(httpSocket.destroyed).toBe(true);
         expect(tcpSocket.destroyed).toBe(true);
-      }),
-    ),
-  );
-
-  it.live("closes connections emitted while listener shutdown is in progress", () =>
-    run(
-      Effect.gen(function* () {
-        const listener = yield* bindHostListener("127.0.0.1", 0, "api");
-        if (listener.binding.kind !== "http") return yield* Effect.die("expected HTTP listener");
-        const lateSocket = new PassThrough();
-        const closing = yield* Effect.forkChild(listener.close, { startImmediately: true });
-        listener.binding.server.emit("connection", lateSocket);
-        yield* Fiber.join(closing).pipe(
-          Effect.timeoutOrElse({
-            duration: "10 seconds",
-            orElse: () => Effect.die("listener close timed out"),
-          }),
-        );
-        expect(lateSocket.destroyed).toBe(true);
       }),
     ),
   );

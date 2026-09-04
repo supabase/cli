@@ -310,32 +310,36 @@ describe("stack gateway", () => {
     withPlatform(
       Effect.gen(function* () {
         const listener = yield* bindHostListener("127.0.0.1", 0, "api");
-        const address = listener.binding.server.address();
+        if (listener.binding.kind !== "http") return;
+        const server = listener.binding.server;
+        const address = server.address();
         if (typeof address !== "object" || address === null) return;
-        const socket = yield* Effect.callback<Socket, Error>((resume) => {
-          const client = connectNet(address.port, "127.0.0.1");
-          client.once("connect", () => resume(Effect.succeed(client)));
-          client.once("error", (error) => resume(Effect.fail(error)));
-          return Effect.sync(() => client.destroy());
-        });
+        const accepted = yield* Effect.forkChild(
+          Effect.callback<Socket, Error>((resume) => {
+            const onConnection = (socket: Socket) => resume(Effect.succeed(socket));
+            server.once("connection", onConnection);
+            return Effect.sync(() => server.off("connection", onConnection));
+          }),
+          { startImmediately: true },
+        );
+        yield* Effect.acquireRelease(
+          Effect.callback<Socket, Error>((resume) => {
+            const client = connectNet(address.port, "127.0.0.1");
+            client.once("connect", () => resume(Effect.succeed(client)));
+            client.once("error", (error) => resume(Effect.fail(error)));
+            return Effect.sync(() => {
+              client.destroy();
+            });
+          }),
+          (client) => Effect.sync(() => client.destroy()),
+        );
+        const socket = yield* Fiber.join(accepted).pipe(Effect.timeout("5 seconds"));
         const gateway = yield* makeHttpGateway({
           listener,
           routes: [],
           activate: () => Effect.fail(new GatewayActivationError({ message: "not reached" })),
         });
-        const closed = yield* Effect.forkChild(
-          Effect.callback<void>((resume) => {
-            if (socket.destroyed) {
-              resume(Effect.void);
-              return;
-            }
-            socket.once("close", () => resume(Effect.void));
-            return Effect.sync(() => socket.destroy());
-          }),
-          { startImmediately: true },
-        );
         yield* gateway.close;
-        yield* Fiber.join(closed);
         expect(socket.destroyed).toBe(true);
       }),
     ),
@@ -535,32 +539,36 @@ describe("stack gateway", () => {
     withPlatform(
       Effect.gen(function* () {
         const listener = yield* bindHostListener("127.0.0.1", 0, "database");
-        const address = listener.binding.server.address();
+        if (listener.binding.kind !== "tcp") return;
+        const server = listener.binding.server;
+        const address = server.address();
         if (typeof address !== "object" || address === null) return;
-        const socket = yield* Effect.callback<Socket, Error>((resume) => {
-          const client = connectNet(address.port, "127.0.0.1");
-          client.once("connect", () => resume(Effect.succeed(client)));
-          client.once("error", (error) => resume(Effect.fail(error)));
-          return Effect.sync(() => client.destroy());
-        });
+        const accepted = yield* Effect.forkChild(
+          Effect.callback<Socket, Error>((resume) => {
+            const onConnection = (socket: Socket) => resume(Effect.succeed(socket));
+            server.once("connection", onConnection);
+            return Effect.sync(() => server.off("connection", onConnection));
+          }),
+          { startImmediately: true },
+        );
+        yield* Effect.acquireRelease(
+          Effect.callback<Socket, Error>((resume) => {
+            const client = connectNet(address.port, "127.0.0.1");
+            client.once("connect", () => resume(Effect.succeed(client)));
+            client.once("error", (error) => resume(Effect.fail(error)));
+            return Effect.sync(() => {
+              client.destroy();
+            });
+          }),
+          (client) => Effect.sync(() => client.destroy()),
+        );
+        const socket = yield* Fiber.join(accepted).pipe(Effect.timeout("5 seconds"));
         const gateway = yield* makeTcpGateway({
           listener,
           routes: [],
           activate: () => Effect.fail(new GatewayActivationError({ message: "not reached" })),
         });
-        const closed = yield* Effect.forkChild(
-          Effect.callback<void>((resume) => {
-            if (socket.destroyed) {
-              resume(Effect.void);
-              return;
-            }
-            socket.once("close", () => resume(Effect.void));
-            return Effect.sync(() => socket.destroy());
-          }),
-          { startImmediately: true },
-        );
         yield* gateway.close;
-        yield* Fiber.join(closed);
         expect(socket.destroyed).toBe(true);
       }),
     ),
