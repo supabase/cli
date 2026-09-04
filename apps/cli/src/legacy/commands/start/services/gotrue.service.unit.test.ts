@@ -50,6 +50,8 @@ const baseEnvInput: LegacyBuildGotrueEnvInput = {
     enable_confirmations: false,
     template: "Your code is {{ .Code }}",
     max_frequency: "5s",
+    otp_length: 6,
+    otp_expiry: 60,
     twilio: { enabled: false, account_sid: "", message_service_sid: "" },
     twilio_verify: { enabled: false },
     messagebird: { enabled: false },

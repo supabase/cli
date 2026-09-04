@@ -201,7 +201,7 @@ function v2Response(
       external_phone_enabled: false,
       sms_autoconfirm: false,
       sms_max_frequency: 5,
-      sms_otp_exp: 600,
+      sms_otp_exp: 60,
       sms_otp_length: 6,
       external_github_enabled: false,
       external_github_client_id: "",
