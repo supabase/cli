@@ -41,8 +41,9 @@ artifacts (`./schema.json`, `./project-schema.json`).
   `ENV_CAPTURE_REGEX`). It also carries `supabase config pull`/`diff`'s own support surface
   (CLI-2064): the format-preserving surgical editor (`applyConfigEdits` and its
   `ConfigEdit`/`ConfigEditOutcome`/`ConfigEditRefusal`/`ConfigEditRefusalReason`/`ConfigEditValue`/
-  `AppliedConfigEdit` types), the config diff engine (`diffProjectConfig` and its `ConfigChange`/
-  `ConfigChangeClass`/`ConfigChangeCounts`/`ConfigChangeSet`/`DiffProjectConfigOptions` types),
+  `AppliedConfigEdit` types — the config diff engine itself, `diffProjectConfig` and its
+  `ConfigChange`/`ConfigChangeClass`/`ConfigChangeCounts`/`ConfigChangeSet`/
+  `DiffProjectConfigOptions` types, lives on `.`, not here — see above),
   `dualScopeProjectConfigPaths`, the raw `[remotes.*]` helpers `remoteNameForProjectRef`/
   `remoteProjectIdEntries`, and the atomic single-file writer `writeCliConfigDocumentText`/
   `CliConfigWriteError` — kept off `./effect`'s public surface deliberately (no consumer outside

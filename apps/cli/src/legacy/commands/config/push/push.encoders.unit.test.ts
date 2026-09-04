@@ -443,10 +443,11 @@ describe("legacyEncodeStorageBody", () => {
         },
       },
     };
-    // The real pipeline drops a disabled `storage.analytics` from the local
-    // projection entirely (`applyPushUnmanagedOmissions`) — this directly
-    // exercises the encoder with that pruned shape, as a change constructed
-    // by hand rather than through the full diff pipeline (CLI-2314 note).
+    // The real pipeline drops a disabled `storage.analytics`'s max_* siblings
+    // from the local projection (`DISABLED_SENTINEL_PRUNES`, leaving only
+    // `{enabled: false}`) — this directly exercises the encoder with that
+    // pruned shape, as a change constructed by hand rather than through the
+    // full diff pipeline.
     const result = legacyEncodeStorageBody(
       storageInput({ changes: [change(["storage", "analytics", "enabled"], false)], config }),
     );

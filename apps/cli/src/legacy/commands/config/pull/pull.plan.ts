@@ -93,9 +93,13 @@ export interface LegacyConfigPullWarning {
    * path-bearing kinds below); `unpushable` is likewise constructed by
    * `pull.handler.ts`, from its post-plan convergence check (plan §1.9,
    * ADR 0021 decision 4) — a planned write that the convergence check finds
-   * reclassifies as `unmanaged` once applied (e.g. `auth.oauth_server`'s
-   * first pull): `config push` has no code path for it, so it can never be
-   * sent back. Always carries `path`. `would_invalidate` also carries
+   * reclassifies as `unmanaged` once applied, because the value just written
+   * made itself invisible to the projection again. Has no known live
+   * trigger today: CLI-2314 retired the one prune that could still
+   * reclassify a value after writing it (`auth.oauth_server`'s old
+   * unconditional removal) — see ADR 0021's CLI-2314 addendum. Retained as
+   * a structural safety net for a future asymmetric prune, not dead code.
+   * Always carries `path`. `would_invalidate` also carries
    * `path` — the nearest enclosing family/provider table
    * {@link legacyDropConfigPullUnvalidatableFamilies} dropped every write
    * under (e.g. `["auth","sms","twilio"]`), constructed by `pull.handler.ts`

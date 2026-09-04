@@ -237,15 +237,22 @@ function pathKey(path: ReadonlyArray<string>): string {
  * (`impossibleState`) rather than a crash: nothing has been written yet at
  * this point (this check runs BEFORE the dry-run/prompt/write/validation
  * steps), so the error can truthfully say so. A residual `unmanaged` path
- * (ADR 0021's unpushable families, e.g. `auth.oauth_server` on its first
- * pull: undeclared before this run, so it planned normally, but DECLARING it
- * makes `applyPushUnmanagedOmissions` drop it from every future comparison)
- * is expected, not a defect — `config push` has no code path for these
- * fields, so a written value there can never be sent back. Surfaced as a
- * `"unpushable"` warning, reusing the SAME `plan.warnings` /
- * `legacyRenderConfigPullText` "Warnings:" hook the planner's own
- * `dual_scope`/`duplicates_root`/`array_drift` warnings already render
- * through, rather than adding a new payload field.
+ * would mean the very value this run just wrote made itself invisible to the
+ * projection again. Every surviving `@supabase/config` prune
+ * (`DISABLED_SENTINEL_PRUNES`, `applyRawPresenceMask`) is conditional on
+ * exactly the state a write establishes — a container's OWN decoded
+ * `enabled`, or the raw file's OWN declared-ness — so writing a value
+ * satisfies the very condition that would otherwise hide it again, and this
+ * branch has no known live trigger today. CLI-2314 retired the one prune
+ * that didn't have this property (`auth.oauth_server`'s old unconditional
+ * removal, ignoring what had just been written) — see ADR 0021's CLI-2314
+ * addendum; `pull.integration.test.ts`'s "no longer trips the ADR 0021
+ * unpushable warning" case pins the resulting behavior for that family.
+ * Retained as a structural safety net for a future asymmetric prune, not
+ * dead code: surfaced as a `"unpushable"` warning, reusing the SAME
+ * `plan.warnings` / `legacyRenderConfigPullText` "Warnings:" hook the
+ * planner's own `dual_scope`/`duplicates_root`/`array_drift` warnings
+ * already render through, rather than adding a new payload field.
  */
 function legacyConfigPullDefectAndUnpushableCheck(
   plan: LegacyConfigPullPlan,

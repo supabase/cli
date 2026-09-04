@@ -3293,7 +3293,9 @@ describe("DISABLED_SENTINEL_PRUNES — cross-arm symmetry re-derived from the da
         storage: { vector: { enabled: false, max_buckets: 5, max_indexes: 3 } },
       },
       apiAttributes: {
-        storage: { features: { vector_buckets: { enabled: false, max_buckets: 5, max_indexes: 3 } } },
+        storage: {
+          features: { vector_buckets: { enabled: false, max_buckets: 5, max_indexes: 3 } },
+        },
       },
     },
   };
@@ -3301,7 +3303,9 @@ describe("DISABLED_SENTINEL_PRUNES — cross-arm symmetry re-derived from the da
   function readContainer(root: unknown, path: ReadonlyArray<string>): unknown {
     return path.reduce<unknown>(
       (value, key) =>
-        typeof value === "object" && value !== null ? (value as Record<string, unknown>)[key] : undefined,
+        typeof value === "object" && value !== null
+          ? (value as Record<string, unknown>)[key]
+          : undefined,
       root,
     );
   }
@@ -3329,7 +3333,10 @@ describe("DISABLED_SENTINEL_PRUNES — cross-arm symmetry re-derived from the da
           `no cross-arm fixture registered for DISABLED_SENTINEL_PRUNES entry "${key}" — add one to fixturesByContainerPath`,
         );
       }
-      const documentContainer = readContainer(fromConfigDocument(fixture.document), rule.containerPath);
+      const documentContainer = readContainer(
+        fromConfigDocument(fixture.document),
+        rule.containerPath,
+      );
       const apiContainer = readContainer(
         fromApiProjectConfig(fixture.apiAttributes),
         rule.containerPath,
