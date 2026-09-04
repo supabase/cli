@@ -18,7 +18,7 @@ notes below). A property your file doesn't declare is never written.
 | ---------------------------------------------- | ------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `<workdir>/supabase/config.toml`               | TOML                      | always, AFTER the target ref is resolved (branch/UUID resolution's own network call, when it applies, runs first — see Notes) — with the resolved ref passed in the SAME `loadCliConfig` call so a matching `[remotes.<name>]` block's overlay is merged before the one full schema decode (parse error aborts, exit 1)                                                       |
 | `<workdir>/supabase/.env`, `.env.local`        | dotenv                    | always, to resolve `env(VAR)` references inside `config.toml` and to collect `DOTENV_PRIVATE_KEY`(`_*`) values for decrypting `encrypted:` secrets                                                                                                                                                                                                                            |
-| Auth email template HTML (`content_path`)      | HTML                      | when `auth.enabled`; paths resolved per the rules below                                                                                                                                                                                                                                                                                                                       |
+| Auth email template HTML (`content_path`)      | HTML                      | always (CLI-2314 — no longer gated on `auth.enabled`, which controls only the local GoTrue Docker service, not this write); paths resolved per the rules below                                                                                                                                                                                                                |
 | `<workdir>/supabase/.temp/project-ref`         | plain text                | project-ref fallback (flag → `SUPABASE_PROJECT_ID` → this file); also re-read (its exact value compared against the resolved ref) when the resolved ref is CERTAIN to be a branch (a UUID-resolved `--project-ref`, or the target-detection probe's 404) — only once a cache candidate exists to correlate it against, to decide whether that candidate parent can be trusted |
 | `<workdir>/supabase/.temp/linked-project.json` | JSON                      | existence check only, to decide whether the cache write below is skipped (`ensureProjectGroupsCached` telemetry cache — see `db/lint`'s Notes for the full mechanism); ALSO parsed (`ref`/`name`) whenever the resolved ref is CERTAIN to be a branch (a UUID-resolved `--project-ref`, or the target-detection probe's 404), to name its parent project                      |
 | `~/.supabase/access-token`                     | plain text (token string) | when `SUPABASE_ACCESS_TOKEN` unset and keyring unavailable                                                                                                                                                                                                                                                                                                                    |
@@ -51,8 +51,8 @@ declines the confirmation prompt.
 | 3   | db.settings              | PUT    | `/v1/projects/{ref}/config/database/postgres`   | 200        | same conditions (this resource's own local gate is "always on")                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                             |
 | 4   | db.network_restrictions  | POST   | `/v1/projects/{ref}/network-restrictions/apply` | 201        | same conditions, plus `db.network_restrictions.enabled` locally; body always carries both CIDR arrays together                                                                                                                                                                                                                                                                                                                                                                                                                                                                                              |
 | 5   | db.ssl_enforcement       | PUT    | `/v1/projects/{ref}/ssl-enforcement`            | 200        | same conditions, plus `[db.ssl_enforcement]` declared locally                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                               |
-| 6   | auth                     | PATCH  | `/v1/projects/{ref}/config/auth`                | 2xx        | same conditions, plus `auth.enabled` locally; MFA phone/webauthn gated by an addon cost prompt when `verify_enabled` or `enroll_enabled` is being turned on and the add-on is not already active on the project                                                                                                                                                                                                                                                                                                                                                                                             |
-| 7   | storage                  | PATCH  | `/v1/projects/{ref}/config/storage`             | 2xx        | same conditions, plus `storage.enabled` locally                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                             |
+| 6   | auth                     | PATCH  | `/v1/projects/{ref}/config/auth`                | 2xx        | same conditions (this resource's own local gate is "always on" too, CLI-2314 — `auth.enabled` only controls the local GoTrue Docker service, not this write); MFA phone/webauthn gated by an addon cost prompt when `verify_enabled` or `enroll_enabled` is being turned on and the add-on is not already active on the project                                                                                                                                                                                                                                                                             |
+| 7   | storage                  | PATCH  | `/v1/projects/{ref}/config/storage`             | 2xx        | same conditions (this resource's own local gate is "always on" too, CLI-2314 — `storage.enabled` only controls the local Storage Docker service, not this write)                                                                                                                                                                                                                                                                                                                                                                                                                                            |
 | 8   | experimental.webhooks    | POST   | `/v1/projects/{ref}/database/webhooks/enable`   | 2xx        | only if local `webhooks.enabled`; no GET/diff; a kept enable reports `changes: [["experimental","webhooks","enabled"]]` (no config-diff path backs it) so it still counts toward the pushed-property total                                                                                                                                                                                                                                                                                                                                                                                                  |
 
 **Row 1 is the only per-resource `GET` this command makes** — no per-service
@@ -92,21 +92,22 @@ the group it belongs to ships for another reason.
 Some declared properties have no Management API field at all and are only
 reported, never pushed: `db.major_version` and
 `db.pooler.{pool_mode,default_pool_size,max_client_conn}` — reported in the
-"no Management API field" `Note:` line. `auth.oauth_server.*` is NOT in that
-list, even though it also has no v1 write path: `@supabase/config`'s local
-projection drops the whole `auth.oauth_server` subtree unconditionally (no
-push encoder handles it at all), so a declared value there never reaches
-`changeSet.changes` in the first place — it is reported
-today as `unmanaged` instead (below), the same as any other property the
-projection drops. `push.plan.ts` still carries `auth.oauth_server` in its own
-unsupported-prefix list so that a declared value there is classified
-correctly the moment CLI-2314 stops pruning it from the projection; until
-then that list entry is a defensive no-op. A resource whose local gate is
-off (e.g. a declared `auth.*` value while `auth.enabled = false`) is NOT
-reported in the "no Management API field" note either: the projection's
-disabled-sentinel prune already removes its other declared keys before
-diffing, so it stays silently `disabled` in text mode (reported as
-`disabled` in the JSON payload's `services[]` entry — see Output below).
+"no Management API field" `Note:` line. `auth.oauth_server.*` is no longer in
+that list (CLI-2314): the v1 auth endpoint genuinely accepts
+`oauth_server_enabled`, `oauth_server_allow_dynamic_registration`, and
+`oauth_server_authorization_path`, so a declared
+`auth.oauth_server.{enabled,allow_dynamic_registration,authorization_url_path}`
+value is pushed through the `auth` resource like any other auth field, and
+`push.plan.ts`'s unsupported-prefix list no longer carries this family. A
+resource whose local gate is genuinely off (only `db.network_restrictions`,
+and `db.ssl_enforcement` by default-template omission — see
+`push.handler.ts`'s resource-loop comment) is NOT reported in the "no
+Management API field" note either: it stays silently `disabled` in text mode
+(reported as `disabled` in the JSON payload's `services[]` entry — see
+Output below). `auth`/`storage` no longer have a local gate at all
+(CLI-2314): a declared `auth.*`/`storage.*` value is compared and pushed the
+same way regardless of `auth.enabled`/`storage.enabled`, which control only
+the local Docker service.
 Separately, a handful of declared, gated-on values can't be structurally
 expressed by their encoder — `api.enabled = true` with no `api.schemas`
 declared, no SMS provider locally enabled while an SMS-family value changed,
@@ -267,7 +268,7 @@ asserting `false` would be as misleading as asserting `true`:
     },
   ],
   "forced": [{ "path": ["db", "network_restrictions", "allowed_cidrs_v6"], "value": [] }],
-  "unmanaged": [["auth", "oauth_server", "enabled"]],
+  "unmanaged": [["storage", "analytics", "max_namespaces"]],
   "secrets": {
     "sent": [["auth", "captcha", "secret"]],
     "unchanged": [],

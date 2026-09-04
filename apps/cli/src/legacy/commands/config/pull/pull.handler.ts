@@ -237,15 +237,38 @@ function pathKey(path: ReadonlyArray<string>): string {
  * (`impossibleState`) rather than a crash: nothing has been written yet at
  * this point (this check runs BEFORE the dry-run/prompt/write/validation
  * steps), so the error can truthfully say so. A residual `unmanaged` path
- * (ADR 0021's unpushable families, e.g. `auth.oauth_server` on its first
- * pull: undeclared before this run, so it planned normally, but DECLARING it
- * makes `applyPushUnmanagedOmissions` drop it from every future comparison)
- * is expected, not a defect — `config push` has no code path for these
- * fields, so a written value there can never be sent back. Surfaced as a
- * `"unpushable"` warning, reusing the SAME `plan.warnings` /
- * `legacyRenderConfigPullText` "Warnings:" hook the planner's own
- * `dual_scope`/`duplicates_root`/`array_drift` warnings already render
- * through, rather than adding a new payload field.
+ * would mean the very value this run just wrote made itself invisible to the
+ * projection again. Most surviving `@supabase/config` prunes
+ * (`DISABLED_SENTINEL_PRUNES`, most of `applyRawPresenceMask`) are
+ * conditional on exactly the state a write establishes — a container's OWN
+ * decoded `enabled`, or the raw file's OWN declared-ness — so writing a
+ * value usually satisfies the very condition that would otherwise hide it
+ * again. CLI-2314 retired the one `DISABLED_SENTINEL_PRUNES`-family prune
+ * that didn't have this property (`auth.oauth_server`'s old unconditional
+ * removal, ignoring what had just been written) — see ADR 0021's CLI-2314
+ * addendum; `pull.integration.test.ts`'s "no longer trips the ADR 0021
+ * unpushable warning" case pins the resulting behavior for that family. This
+ * branch DOES still have a known live trigger, though, via a DIFFERENT
+ * cross-path prune: `applyDisabledSentinels`'s own "cross-section rule"
+ * (`project-config.ts`, search "Cross-section rule: the email rate limit")
+ * deletes `auth.rate_limit.email_sent` whenever `auth.email.smtp.enabled` is
+ * explicitly `false` — checked on BOTH arms, not gated by raw presence. On
+ * the API arm this only spares `email_sent` when the response is genuinely
+ * SPARSE (never reports `smtp_host` at all, so `enabled` decodes as absent
+ * rather than an explicit `false`) — an ordinary response with
+ * `smtp_host: ""` (the common "SMTP not configured" shape) still prunes it
+ * there too, leaving nothing to diff. So the live trigger is narrow: a
+ * sparse remote response reporting a real `rate_limit_email_sent` while
+ * omitting `smtp_host` entirely, pulled into a LOCAL document that also
+ * never declares `[auth.email.smtp]` (so `applyRawPresenceMask` masks the
+ * just-written value again on the residual check) — see
+ * `pull.integration.test.ts`'s matching case for the exact construction.
+ * Retained as a structural safety net for any OTHER asymmetric/cross-path
+ * prune too, not dead code: surfaced as a `"unpushable"` warning, reusing
+ * the SAME
+ * `plan.warnings` / `legacyRenderConfigPullText` "Warnings:" hook the
+ * planner's own `dual_scope`/`duplicates_root`/`array_drift` warnings
+ * already render through, rather than adding a new payload field.
  */
 function legacyConfigPullDefectAndUnpushableCheck(
   plan: LegacyConfigPullPlan,

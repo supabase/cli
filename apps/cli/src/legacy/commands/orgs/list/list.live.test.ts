@@ -12,8 +12,8 @@ test(
   "lists organizations for the authenticated token",
   { timeout: LIVE_TIMEOUT_MS },
   async ({ cli }) => {
-    const { exitCode, stdout, stderr } = await cli(["orgs", "list"]);
-    expect(`${stdout}${stderr}`).not.toContain("Unauthorized");
-    expect(exitCode).toBe(0);
+    const { exitCode, stdout, stderr } = await cli(["orgs", "list", "--output", "json"]);
+    expect(exitCode, stderr).toBe(0);
+    expect(JSON.parse(stdout), stderr).not.toHaveLength(0);
   },
 );

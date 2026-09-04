@@ -206,6 +206,134 @@ user can act on by editing their file. Tracked on CLI-2266, not fixed here. The 
 gate this category used to include is a plain VALUE gate rather than a raw-presence one, and IS now
 modeled — see the "unmanaged-by-push containers" family above.
 
+## Update (2026-09-04, CLI-2314): ProjectConfig is a shared multi-actor representation
+
+CLI-2314 (supabase/cli, this ADR's own repo) closes out the "unmanaged-by-push containers" family
+above and the presence-relativity danger this section's remedy narrows. Recorded here, in the ADR
+this design lives in, rather than as a silent behavior change.
+
+**1. The premise expired.** This ADR's title and Decision both frame the two normalizers as
+predicting `config push`'s own outcome: "`fromConfigDocument(doc)` returns what the hosted config
+_will look like after a push of `doc`_ — not `doc`'s own hosted-section values as declared." That
+framing was already circular by the time CLI-2313 (supabase/cli#6454, a prior branch this one is
+based on) landed: commit `c7bf0ecd3` deleted
+`apps/cli/src/legacy/commands/config/push/config-sync/*.sync.ts` and
+`push/push.raw-presence.ts` entirely, and rebuilt `config push` to consume the shared
+`ProjectConfig`/`ConfigChangeSet` directly (`push.handler.ts` now imports `diffProjectConfig`/
+`fromConfigDocument`/`fromApiProjectConfig` from `@supabase/config`/`@supabase/config/effect`, the
+same functions `config diff`/`config pull` use) — there is no separate push-direction mapper left
+to predict the outcome of. Meanwhile Studio has been a second real actor reading this same package
+directly (via the public `.` entrypoint, ADR 0022) since before this addendum, with none of the v1
+push endpoints' write-path limitations (no `oauth_server` gap, no `auth`/`storage`-resource
+`enabled` gate, …). "Predict what push would send" cannot be the governing question for a value two
+independent actors both read; the governing question this addendum adopts instead is **does the
+platform genuinely retain-but-not-serve this value while the feature it belongs to is off,
+independent of which actor is asking** — a property of the platform's own data model, not of any
+one caller's transport limitations.
+
+**2. The "unmanaged-by-push containers" family is retired.** The whole-container omissions this
+ADR's Decision section lists above (`storage.analytics`/`storage.vector` dropped entirely while
+disabled, `auth.oauth_server` dropped unconditionally regardless of `enabled`) were implemented by
+`applyPushUnmanagedOmissions` (`packages/config/src/project-config/project-config.ts`), deleted on
+this branch by commit `1d6195c9c` ("retire push-capability pruning from `fromConfigDocument`").
+What replaced it is not a relaxation but a re-derivation: commits `1d6195c9c`, `0998946e9`, and
+`e2171f8ee` collectively re-audited every surviving `DISABLED_SENTINEL_PRUNES` entry and rewrote its
+justification from scratch, checked against one question — **does this sibling field genuinely go
+inert/unrepresentable server-side when the container's own toggle is off, independent of any
+actor's write path — rather than "what legacy push happened to send"**:
+
+- `api.{schemas,extra_search_path,max_rows}`: `api.enabled` isn't an independent wire field at all —
+  the registry derives it from `db_schema.length > 0`, the same fact `schemas` itself carries, and
+  the API arm already row-gates all three siblings on that same check independently. Symmetry with
+  something the API arm enforces on its own, not push imitation.
+- `db.network_restrictions.{allowed_cidrs,allowed_cidrs_v6}`: the flag's own schema description is
+  "Enable **management** of network restrictions," not "enable network restrictions" — a
+  deliberate, actor-independent opt-out with no v2 API field at all (the one entry with no API-arm
+  counterpart to be symmetric with, by design).
+- `auth.email.smtp.{host,port,user,pass,admin_email,sender_name}`: `smtp.enabled` is derived from
+  `smtp_host.length > 0`, not an independent field, and the API arm already row-gates the same four
+  siblings independently.
+- `auth.captcha.{provider,secret}`: genuinely retained hosted state (a recorded platform fixture
+  reports `security_captcha_enabled: false` alongside a still-populated `security_captcha_provider`)
+  — the API arm's own `provider` row is NOT independently gated the way the three families above
+  are, so this rule is load-bearing on both arms for real phantom-drift suppression, not push
+  imitation dressed up as symmetry.
+- `auth.oauth_server.{allow_dynamic_registration,authorization_url_path}` and
+  `storage.{analytics,vector}`'s quota fields: same shape as `auth.captcha` — retained-but-inert
+  state a disabled feature keeps around (confirmed directly: the stock `supabase init` template
+  declares `[auth.oauth_server] enabled = false` alongside `authorization_url_path`, and
+  `[storage.analytics] enabled = false` alongside populated `max_namespaces`/`max_tables`/
+  `max_catalogs` — without this prune, every stock project would show fabricated drift from its own
+  template).
+
+Every surviving entry is now pinned by a machine-checked cross-arm fixture
+(`project-config.unit.test.ts`'s "DISABLED_SENTINEL_PRUNES — cross-arm symmetry re-derived from the
+data model" suite, added by `e2171f8ee`): for each rule, a document fixture and an equivalent raw
+API-attributes fixture both reduce to the identical `{enabled: false}` shape through
+`fromConfigDocument`/`fromApiProjectConfig` respectively. A future entry added on push-only
+reasoning, with no such symmetric platform fact behind it, fails that loop the moment the two arms
+disagree.
+
+**3. `unmanaged` reframed.** `config-diff.ts`'s `ConfigChangeSet.unmanaged` docstring still reads,
+verbatim, "declared state a `config push` structurally cannot communicate" — accurate wording
+before this addendum, now imprecise for the reason above. The correct framing going forward:
+declared, but no actor's write path can express it, because the feature it belongs to is switched
+off — not "push specifically can't send it." The value is not push-shaped drift; it is
+platform-retained inert state no comparison, by any actor, can meaningfully hold against a
+"what does the platform currently do" reading.
+
+**4. The absence-policy naming (CLI-2314's other half).** Commit `b68fd77a8` named the two policies
+`fromConfigDocument` had always implicitly implemented, as `ConfigAbsencePolicy`
+(`packages/config/src/project-config/project-config.ts`): `"absent-is-default"` (the operand is a
+bare `EffectiveConfig`; every value is schema-materialized, so an absent field's value IS the
+schema default) and `"absent-is-hands-off"` (the operand is a `CliConfigWithRawPresence` pair;
+`applyRawPresenceMask` removes an absent field from its fixed path list entirely rather than
+standing in for the default). The two policies agree everywhere except one cell — reproduced here
+since this ADR is exactly where a future reader would look for it:
+
+|                  | hosted ≈ default   | hosted **customized**                                                                                                                                                                                                                                                                                                                                                                               |
+| ---------------- | ------------------ | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| field declared   | safe either policy | safe either policy — intended update                                                                                                                                                                                                                                                                                                                                                                |
+| **field absent** | safe either policy | **only hazardous cell**, and only under `absent-is-default`: a consumer gets back `remote_only` with `local = <schema default>`; treating `remote_only` as "push this" would silently revert a real hosted customization to default. `absent-is-hands-off` closes this for its fixed field list; the generic `declared` mechanism in `diffProjectConfig` closes it for every other comparable path. |
+
+`DiffProjectConfigOptions.local`'s own docstring (`config-diff.ts`) names the cliff a caller falls
+off by omitting `document`: internally, `diffProjectConfig` computes
+`const declaredRoot = options.local.document ?? {}` — a caller that leaves `document` out doesn't
+just lose `applyRawPresenceMask`'s masking, EVERY path's `declared` flag becomes `false`
+universally (`isDeclaredAtPath` walks an empty object). `local_only` can then never fire (it
+requires `declared === true` with no remote value), and `unmanaged`/`masked` are always empty
+arrays — not merely "less masking coverage." This is exactly the calling shape a caller like Studio
+would use if it invoked `diffProjectConfig({local: {config}, remote})` without ever loading a raw
+document — the whole reason `ConfigAbsencePolicy` exists to be named as a caller-visible choice
+rather than an implicit side effect of which overload happened to be called.
+
+**5. Correct the record.** A related claim lives outside this ADR's own text, in
+`project-config.ts`'s `DOCUMENT_ONLY_LOCAL_PATHS` docstring (added by PR #6451/CLI-2316, predating
+this branch, left as-is — out of this addendum's scope): that `auth.oauth_server` "starts
+UNDECLARED and only becomes `unmanaged` on ITS first pull," contrasted there against
+`db.major_version`/`db.pooler.*` (permanently unmanaged because the `supabase init` template always
+declares them). That contrast was already wrong when written:
+`apps/cli/src/shared/init/project-init.templates.ts` declares `[auth.oauth_server] enabled = false`
+with `authorization_url_path = "/oauth/consent"` in the stock template, exactly like the fields it
+was being contrasted against — every stock project has always had this path declared from
+`supabase init` onward, never "starting undeclared." A similar "first pull" framing was also echoed
+in `pull.handler.ts`/`pull.plan.ts`'s own comments; this commit corrects those two directly (Part D
+of this reconciliation), so only the `project-config.ts` original remains uncorrected. Separately,
+commit `23ae41d02` on this branch made `oauth_server.{enabled,allow_dynamic_registration,
+authorization_url_path}` genuinely pushable through the v1 auth endpoint (`oauth_server_enabled`,
+`oauth_server_allow_dynamic_registration`, `oauth_server_authorization_path`) — so as of this
+branch, `auth.oauth_server.enabled` is no longer in the unmanaged/unpushable category at all under
+any framing; only its two `DISABLED_SENTINEL_PRUNES`-covered siblings remain there, and only while
+the container is declared disabled.
+
+**6. Citation hygiene note.** This ADR's own Decision/Limits sections above, and roughly 80 more
+`*.sync.ts`/`push.raw-presence.ts` file-line citations across
+`packages/config/src/project-config/registry-auth.ts` and `./registry.ts`, still cite the exact
+files CLI-2313 deleted (`c7bf0ecd3`). These are retained deliberately as historical provenance for
+where each registry row's mapping knowledge was originally mined from — not a claim that those
+files still exist. Sweeping all of them is out of scope for this addendum; this note exists so a
+future reader hitting one of those citations understands its status without re-deriving it.
+
 ## Rationale
 
 - The alternative — verbatim projection on both sides — is what motivated every one of the 29 rounds'

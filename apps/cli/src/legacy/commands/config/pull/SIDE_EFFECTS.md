@@ -211,9 +211,11 @@ the -o/--output flag is not supported by config pull; use --output-format json|s
   through the SAME git dirty guard and confirmation flow as any other write (`Create
 [remotes.<label>] in <path>?` instead of the usual `Apply N change(s)...`, see Output) — only a
   run with NEITHER a value change NOR a new block skips straight to "no config differences found."
-- **ADR-0021 "unpushable" families** (e.g. `auth.oauth_server`, disabled `storage.analytics`/
-  `storage.vector`) ARE written by pull despite `config push` having no way to send them back — a
-  `warnings[]` entry (`kind: "unpushable"`) says so instead of silently leaving a permanent gap.
+- **ADR-0021 "unpushable" families** (e.g. disabled `storage.analytics`/`storage.vector`) ARE
+  written by pull despite `config push` having no way to send them back — a `warnings[]` entry
+  (`kind: "unpushable"`) says so instead of silently leaving a permanent gap. (`auth.oauth_server`
+  was an example of this family before CLI-2314; it is now genuinely pushable through the auth
+  endpoint like any other auth field.)
 - **Dual-scope root writes**: pulling a property the registry flags `dualScope` (e.g.
   `auth.site_url`, `db.settings.*`, `db.pooler.*`) into the config ROOT also changes what
   `supabase start` uses locally — flagged with a `dual_scope` warning, never refused.
