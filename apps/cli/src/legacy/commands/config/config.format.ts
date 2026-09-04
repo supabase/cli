@@ -190,8 +190,8 @@ export function legacyConfigUnmanagedCaveat(
 ): string {
   const phrase =
     unmanaged.length === 1
-      ? "1 declared property cannot be pushed and was not compared"
-      : `${unmanaged.length} declared properties cannot be pushed and were not compared`;
+      ? "1 declared property is not managed while its section is disabled and was not compared"
+      : `${unmanaged.length} declared properties are not managed while their section is disabled and were not compared`;
   return `${phrase}: ${unmanaged.map(legacyConfigRenderPath).join(", ")}`;
 }
 

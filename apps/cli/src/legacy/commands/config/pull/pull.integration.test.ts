@@ -2048,7 +2048,7 @@ describe("legacy config pull integration", () => {
       yield* legacyConfigPull(noFlags);
       expect(out.stdoutText).toContain("No config differences found.");
       expect(out.stdoutText).toContain(
-        "Note: 1 declared property cannot be pushed and was not compared: auth.oauth_server.allow_dynamic_registration",
+        "Note: 1 declared property is not managed while its section is disabled and was not compared: auth.oauth_server.allow_dynamic_registration",
       );
     }).pipe(Effect.provide(layer));
   });
@@ -2091,7 +2091,7 @@ describe("legacy config pull integration", () => {
         yield* legacyConfigPull(noFlags);
         expect(out.stdoutText).toContain("No config differences found.");
         expect(out.stdoutText).toContain(
-          "Note: 2 declared properties cannot be pushed and were not compared: auth.oauth_server.allow_dynamic_registration, auth.oauth_server.authorization_url_path",
+          "Note: 2 declared properties are not managed while their section is disabled and were not compared: auth.oauth_server.allow_dynamic_registration, auth.oauth_server.authorization_url_path",
         );
       }).pipe(Effect.provide(layer));
     },

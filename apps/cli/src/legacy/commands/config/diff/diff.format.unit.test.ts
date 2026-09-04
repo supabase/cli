@@ -133,7 +133,7 @@ describe("legacyRenderConfigDiffText", () => {
         "\n" +
         "2 differences found (1 update, 1 remote-only, 0 local-only).\n" +
         "Note: 1 credential value not compared (masked by the API): auth.external.github.secret\n" +
-        "Note: 1 declared property cannot be pushed and was not compared: auth.oauth_server.enabled\n",
+        "Note: 1 declared property is not managed while its section is disabled and was not compared: auth.oauth_server.enabled\n",
     );
   });
 
