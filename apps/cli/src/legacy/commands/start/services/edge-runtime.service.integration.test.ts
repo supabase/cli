@@ -1,4 +1,11 @@
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import {
+  existsSync,
+  mkdirSync,
+  readFileSync,
+  realpathSync,
+  symlinkSync,
+  writeFileSync,
+} from "node:fs";
 import { join } from "node:path";
 
 import { describe, expect, it } from "@effect/vitest";
@@ -285,6 +292,55 @@ describe("legacyStartEdgeRuntimeContainer", () => {
       expect(configEntry).toBeDefined();
       expect(JSON.parse(configEntry!.slice(configPrefix.length))).toMatchObject({
         hello: { entrypointPath: toDockerPath(entrypoint) },
+      });
+    }),
+  );
+
+  it.effect("maps canonical function paths to the mounted root target", () =>
+    Effect.gen(function* () {
+      const slug = "hello";
+      const canonicalWorkdir = join(tempWorkdir.current, "canonical");
+      const linkedWorkdir = join(tempWorkdir.current, "linked");
+      const canonicalFunctionsDir = join(canonicalWorkdir, "supabase", "functions");
+      const mountedFunctionsDir = join(linkedWorkdir, "supabase", "functions");
+      mkdirSync(join(canonicalFunctionsDir, slug), { recursive: true });
+      symlinkSync(canonicalWorkdir, linkedWorkdir, "dir");
+      const canonicalEntrypoint = join(
+        realpathSync(canonicalWorkdir),
+        "supabase",
+        "functions",
+        slug,
+        "index.ts",
+      );
+      writeFileSync(canonicalEntrypoint, "Deno.serve(() => new Response('ok'));");
+
+      const fnConfig = {
+        enabled: true,
+        verify_jwt: true,
+        import_map: "",
+        entrypoint: canonicalEntrypoint,
+        static_files: [],
+        env: {},
+      };
+      const mock = mockDockerSpawner();
+      const out = mockOutput();
+
+      yield* legacyStartEdgeRuntimeContainer({
+        ...baseInput(linkedWorkdir),
+        configDeclaredFunctions: { [slug]: fnConfig },
+        configFunctions: { [slug]: fnConfig },
+        rawConfigFunctions: { [slug]: fnConfig },
+      }).pipe(
+        Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, mock.spawner),
+        Effect.provide(out.layer),
+      );
+
+      const entries = envEntries(mock.runCall!);
+      const configPrefix = "SUPABASE_INTERNAL_FUNCTIONS_CONFIG=";
+      const configEntry = entries.find((entry) => entry.startsWith(configPrefix));
+      expect(configEntry).toBeDefined();
+      expect(JSON.parse(configEntry!.slice(configPrefix.length))).toMatchObject({
+        hello: { entrypointPath: toDockerPath(join(mountedFunctionsDir, slug, "index.ts")) },
       });
     }),
   );

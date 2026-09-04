@@ -4,8 +4,8 @@ import {
   type ResolvedFunctionConfig as ManifestFunctionConfig,
 } from "@supabase/config/effect";
 import { edgeRuntimeNofileUlimit } from "../stack-constants.ts";
-import { mkdir, readFile, rm, writeFile } from "node:fs/promises";
-import { isAbsolute, join, resolve } from "node:path";
+import { mkdir, readFile, realpath, rm, writeFile } from "node:fs/promises";
+import { isAbsolute, join, relative, resolve, sep } from "node:path";
 import { Effect, Option, Redacted, Stream } from "effect";
 import { parseDotEnv } from "../../legacy/shared/legacy-dotenv.ts";
 import { Output } from "../output/output.service.ts";
@@ -318,8 +318,21 @@ const parseFunctionEnvFile = Effect.fnUntraced(function* (pathname: string) {
 function toFunctionContainerConfig(
   config: ResolvedDeployFunctionConfig,
   envFile: Readonly<Record<string, string>>,
+  pathMappings: ReadonlyArray<{ readonly hostRoot: string; readonly containerRoot: string }>,
 ): ServeFunctionContainerConfig {
-  const toContainerPath = (pathname: string) => toDockerPath(resolve(pathname));
+  const toContainerPath = (pathname: string) => {
+    const resolvedPath = resolve(pathname);
+    for (const mapping of pathMappings) {
+      const relativePath = relative(mapping.hostRoot, resolvedPath);
+      if (
+        relativePath === "" ||
+        (!isAbsolute(relativePath) && relativePath !== ".." && !relativePath.startsWith(`..${sep}`))
+      ) {
+        return join(mapping.containerRoot, relativePath).replaceAll("\\", "/");
+      }
+    }
+    return toDockerPath(resolvedPath);
+  };
 
   return {
     // The Go serve path defaults verifyJWT to true when verify_jwt is not set in
@@ -649,6 +662,17 @@ export const startEdgeRuntimeContainer = Effect.fn("functions.startEdgeRuntimeCo
     );
 
     const functionsDir = join(input.projectRoot, functionsDirName);
+    const functionsRoot = resolve(functionsDir);
+    const containerFunctionsRoot = toDockerPath(functionsRoot);
+    const canonicalFunctionsRoot = yield* Effect.promise(() =>
+      realpath(functionsRoot).catch(() => functionsRoot),
+    );
+    const pathMappings = [
+      { hostRoot: functionsRoot, containerRoot: containerFunctionsRoot },
+      ...(canonicalFunctionsRoot === functionsRoot
+        ? []
+        : [{ hostRoot: canonicalFunctionsRoot, containerRoot: containerFunctionsRoot }]),
+    ];
     const functionBinds = new Map<string, DockerBind>();
     const emittedScopeWarnings = new Set<string>();
     const functionsConfig: Record<string, ServeFunctionContainerConfig> = {};
@@ -692,7 +716,7 @@ export const startEdgeRuntimeContainer = Effect.fn("functions.startEdgeRuntimeCo
         input.discoverFunctionEnvFiles && Option.isNone(input.envFile)
           ? yield* parseFunctionEnvFile(join(functionsDir, config.slug, ".env"))
           : {};
-      functionsConfig[config.slug] = toFunctionContainerConfig(config, functionEnv);
+      functionsConfig[config.slug] = toFunctionContainerConfig(config, functionEnv, pathMappings);
     }
 
     const binds = [...functionBinds.values()];
@@ -716,7 +740,7 @@ export const startEdgeRuntimeContainer = Effect.fn("functions.startEdgeRuntimeCo
       `SUPABASE_INTERNAL_JWT_SECRET=${input.authArtifacts.jwtSecret}`,
       `SUPABASE_JWKS=${input.authArtifacts.jwks}`,
       `SUPABASE_INTERNAL_HOST_PORT=${input.config.apiPort}`,
-      `SUPABASE_INTERNAL_FUNCTIONS_ROOT=${toDockerPath(functionsDir)}`,
+      `SUPABASE_INTERNAL_FUNCTIONS_ROOT=${containerFunctionsRoot}`,
       `SUPABASE_INTERNAL_FUNCTIONS_CONFIG=${JSON.stringify(functionsConfig)}`,
       ...(input.debug ? ["SUPABASE_INTERNAL_DEBUG=true"] : []),
     ];
