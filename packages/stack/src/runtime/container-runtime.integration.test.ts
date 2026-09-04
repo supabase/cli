@@ -299,7 +299,7 @@ describe("container runtime", () => {
     Effect.sync(() => {
       const spec: ContainerContainerSpec = {
         name: "auth-init",
-        image: "ghcr.io/supabase/cli/auth:v2.196.0",
+        image: "registry.example.test/auth:fixture",
         labels: {
           stackId,
           ownerSessionId: "owner",

@@ -6,6 +6,7 @@ import { canonicalize, compileStack, rebuildExecutionPlan, sameDefinition } from
 import { resolveThirdPartyIssuer } from "./capabilities/auth-third-party.ts";
 import { DEFAULT_DATABASE_HEALTH_TIMEOUT } from "./capabilities/database.ts";
 import { parseFileSize } from "./capabilities/storage.ts";
+import { catalogEntryFor } from "./WorkloadCatalog.ts";
 
 const layer = NodeServices.layer;
 const compile = (
@@ -643,10 +644,10 @@ describe("closed capability compiler", () => {
 
   it.live("resolves the supported database major to its supported release", () =>
     Effect.gen(function* () {
-      const expected = {
-        17: "17.6.1.167",
-      } as const;
-      for (const [major, release] of Object.entries(expected)) {
+      for (const [release, image] of Object.entries(
+        catalogEntryFor("database:database").releases,
+      )) {
+        const major = release.split(".")[0];
         const result = yield* compile({ capabilities: { database: { version: major } } });
         expect(result.definition.capabilities.database.version).toBe(release);
         expect(
@@ -655,7 +656,7 @@ describe("closed capability compiler", () => {
           native: { kind: "native", release },
           container: {
             kind: "container",
-            image: `ghcr.io/supabase/cli/postgres:${release}`,
+            image,
           },
         });
       }
@@ -673,7 +674,7 @@ describe("closed capability compiler", () => {
 
   it.live("rejects unsupported historical database releases", () =>
     Effect.gen(function* () {
-      for (const version of ["13", "13.3.0", "14", "15"]) {
+      for (const version of ["13", "13.3.0", "14"]) {
         const result = yield* compile({ capabilities: { database: { version } } }).pipe(
           Effect.exit,
         );

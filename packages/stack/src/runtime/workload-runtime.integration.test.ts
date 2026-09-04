@@ -1,7 +1,7 @@
 import { NodeServices } from "@effect/platform-node";
 import { describe, expect, it } from "@effect/vitest";
 import { Effect, Exit, FileSystem, Redacted, Schema } from "effect";
-import { WORKLOAD_CATALOG } from "../model/WorkloadCatalog.ts";
+import { catalogReleaseFor, WORKLOAD_CATALOG } from "../model/WorkloadCatalog.ts";
 import type { PlannedWorkload } from "../model/ExecutionPlan.ts";
 import { deriveStackId } from "../identity/Identity.ts";
 import type { PersistedStackState } from "../state/StackState.ts";
@@ -85,8 +85,8 @@ const state: PersistedStackState = {
 };
 
 const planned = (id: string): PlannedWorkload => {
-  const entry = WORKLOAD_CATALOG[id];
-  if (entry === undefined) throw new Error(`Missing test catalog entry: ${id}`);
+  const release = catalogReleaseFor(id);
+  if (release === undefined) throw new Error(`Missing test catalog release: ${id}`);
   const separator = id.indexOf(":");
   const capability = CAPABILITY_NAMES.find((name) => name === id.slice(0, separator));
   if (capability === undefined) throw new Error(`Missing test capability: ${id}`);
@@ -96,10 +96,10 @@ const planned = (id: string): PlannedWorkload => {
     dependencies: [],
     readiness: {},
     artifacts: {
-      native: { kind: "native", release: entry.nativeVersion },
-      container: { kind: "container", image: entry.containerImage },
+      native: { kind: "native", release: release.version },
+      container: { kind: "container", image: release.containerImage },
     },
-    selected: { kind: "native", release: entry.nativeVersion },
+    selected: { kind: "native", release: release.version },
   };
 };
 

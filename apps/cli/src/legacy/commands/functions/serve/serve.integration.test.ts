@@ -3,12 +3,12 @@ import { describe, expect, it } from "@effect/vitest";
 import { CliConfigSchema, type FunctionsManifest } from "@supabase/config";
 import type { StackConfig, StackId, StackStatus } from "@supabase/stack/effect";
 import { CAPABILITY_NAMES, StackIdSchema } from "@supabase/stack/effect";
-import { Effect, Layer, Option, Redacted, Schema, Stream } from "effect";
+import { Deferred, Effect, Fiber, Layer, Option, Redacted, Schema, Stream } from "effect";
 import {
   mockLegacyCliSettings,
   mockLegacyTelemetryStateLayer,
 } from "../../../../../tests/helpers/legacy-mocks.ts";
-import { mockOutput } from "../../../../../tests/helpers/mocks.ts";
+import { mockOutput, mockProcessControl } from "../../../../../tests/helpers/mocks.ts";
 import type { LegacyFunctionsServeFlags } from "./serve.handler.ts";
 import { legacyFunctionsServe } from "./serve.handler.ts";
 import type {
@@ -106,6 +106,7 @@ describe("legacy functions serve", () => {
       Effect.provide(
         Layer.mergeAll(
           output.layer,
+          mockProcessControl().layer,
           BunServices.layer,
           mockLegacyCliSettings({ workdir: "/tmp/project" }),
           mockLegacyTelemetryStateLayer,
@@ -131,4 +132,48 @@ describe("legacy functions serve", () => {
       ),
     );
   });
+
+  it.live("stops following logs when process shutdown is requested", () =>
+    Effect.gen(function* () {
+      const following = yield* Deferred.make<void>();
+      const shutdown = yield* Deferred.make<void>();
+      const stack: ManagedFunctionsStack = {
+        start: () => Effect.succeed(status("running")),
+        status: () => Effect.succeed(status("running")),
+        logs: () => Effect.die("logs must not be read"),
+        followLogs: () =>
+          Stream.fromEffect(Deferred.succeed(following, undefined)).pipe(
+            Stream.map(() => ({
+              cursor: { opaque: "1" },
+              timestamp: "now",
+              source: "functions" as const,
+              stream: "stdout" as const,
+              message: "following",
+            })),
+            Stream.concat(Stream.never),
+          ),
+      };
+      const operations: ServeManagedFunctionsOperations = {
+        createStack: () => Effect.succeed(stack),
+        loadConfig: () => Effect.succeed(Schema.decodeUnknownSync(CliConfigSchema)({})),
+        loadManifest: () => Effect.succeed({}),
+      };
+      const processControl = mockProcessControl({ awaitShutdown: Deferred.await(shutdown) });
+      const fiber = yield* legacyFunctionsServe(baseFlags(), operations).pipe(
+        Effect.provide(
+          Layer.mergeAll(
+            mockOutput({ interactive: false }).layer,
+            processControl.layer,
+            BunServices.layer,
+            mockLegacyCliSettings({ workdir: "/tmp/project" }),
+            mockLegacyTelemetryStateLayer,
+          ),
+        ),
+        Effect.forkChild,
+      );
+      yield* Deferred.await(following);
+      yield* Deferred.succeed(shutdown, undefined);
+      yield* Fiber.join(fiber).pipe(Effect.timeout("1 second"));
+    }),
+  );
 });

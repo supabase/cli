@@ -6,11 +6,16 @@ import { CAPABILITY_NAMES } from "../public/Capability.ts";
 import { CAPABILITY_MODULES } from "./ExecutionPlan.ts";
 import { workload } from "./CapabilityModule.ts";
 import {
+  catalogEntryFor,
+  catalogReleaseFor,
   resolveNativeArtifactForWorkload,
   targetForPlatform,
   WORKLOAD_CATALOG,
 } from "./WorkloadCatalog.ts";
 import { StackPreparationError } from "../public/Errors.ts";
+
+const databaseCatalog = catalogEntryFor("database:database");
+const defaultDatabaseMajor = databaseCatalog.defaultVersion.split(".")[0];
 
 const compile = (config: Parameters<typeof compileStack>[0]["config"]) =>
   compileStack({ projectRoot: "/tmp/catalog-project", runtime: { kind: "native" }, config }).pipe(
@@ -27,9 +32,10 @@ const compileContainer = (config: Parameters<typeof compileStack>[0]["config"]) 
 describe("complete workload catalog", () => {
   it("uses the catalog release for both runtime artifact identities", () => {
     const selected = workload("rest", "rest");
+    const catalog = catalogReleaseFor("rest:rest");
     expect(selected.artifacts).toEqual({
-      native: { kind: "native", release: WORKLOAD_CATALOG["rest:rest"]?.nativeVersion },
-      container: { kind: "container", image: WORKLOAD_CATALOG["rest:rest"]?.containerImage },
+      native: { kind: "native", release: catalog?.version },
+      container: { kind: "container", image: catalog?.containerImage },
     });
   });
 
@@ -98,7 +104,9 @@ describe("complete workload catalog", () => {
         expect(workload.artifacts.native.release).toBe(capability.version);
       }
 
-      const databaseAlias = yield* compile({ capabilities: { database: { version: "17" } } });
+      const databaseAlias = yield* compile({
+        capabilities: { database: { version: defaultDatabaseMajor } },
+      });
       const database = databaseAlias.executionPlan.workloads.find(
         (entry) => entry.id === "database:database",
       );
@@ -107,9 +115,7 @@ describe("complete workload catalog", () => {
       expect(databaseAlias.definition.capabilities.database.version).toBe(
         database.artifacts.native.release,
       );
-      expect(database.artifacts.native.release).toBe(
-        WORKLOAD_CATALOG["database:database"]?.nativeVersion,
-      );
+      expect(database.artifacts.native.release).toBe(databaseCatalog.defaultVersion);
     }),
   );
 
@@ -155,14 +161,14 @@ describe("complete workload catalog", () => {
         const workload = result.executionPlan.workloads.find((entry) => entry.id === id);
         expect(workload).toBeDefined();
         if (workload === undefined) continue;
-        expect(workload.artifacts.native.release).toBe(catalog.nativeVersion);
+        expect(workload.artifacts.native.release).toBe(catalog.defaultVersion);
         const artifact = yield* resolveNativeArtifactForWorkload(workload, {
           os: "darwin",
           arch: "arm64",
         });
-        expect(artifact.releaseTag).toBe(`${catalog.service}-${catalog.nativeVersion}`);
+        expect(artifact.releaseTag).toBe(`${catalog.service}-${catalog.defaultVersion}`);
         expect(artifact.downloadUrl).toBe(
-          `https://github.com/supabase/slim-services/releases/download/${catalog.service}-${catalog.nativeVersion}/${catalog.service}-${catalog.nativeVersion}-darwin-arm64.tar.zst`,
+          `https://github.com/supabase/slim-services/releases/download/${catalog.service}-${catalog.defaultVersion}/${catalog.service}-${catalog.defaultVersion}-darwin-arm64.tar.zst`,
         );
       }
     }),
@@ -226,19 +232,21 @@ describe("complete workload catalog", () => {
       const images = new Map(
         result.executionPlan.workloads.map((entry) => [entry.id, entry.artifacts.container.image]),
       );
-      expect(images.get("mail:mail")).toBe(WORKLOAD_CATALOG["mail:mail"]?.containerImage);
+      expect(images.get("mail:mail")).toBe(catalogReleaseFor("mail:mail")?.containerImage);
       expect(images.get("storage:imgproxy")).toBe(
-        WORKLOAD_CATALOG["storage:imgproxy"]?.containerImage,
+        catalogReleaseFor("storage:imgproxy")?.containerImage,
       );
       expect(images.get("analytics:vector")).toBe(
-        WORKLOAD_CATALOG["analytics:vector"]?.containerImage,
+        catalogReleaseFor("analytics:vector")?.containerImage,
       );
     }),
   );
 
   it.live("derives native database artifacts from the planned release", () =>
     Effect.gen(function* () {
-      const compiled = yield* compile({ capabilities: { database: { version: "17" } } });
+      const compiled = yield* compile({
+        capabilities: { database: { version: defaultDatabaseMajor } },
+      });
       const database = compiled.executionPlan.workloads.find(
         ({ id }) => id === "database:database",
       );
@@ -248,9 +256,9 @@ describe("complete workload catalog", () => {
         os: "linux",
         arch: "x64",
       });
-      expect(artifact.version).toBe(WORKLOAD_CATALOG["database:database"]?.nativeVersion);
+      expect(artifact.version).toBe(databaseCatalog.defaultVersion);
       expect(artifact.downloadUrl).toContain(
-        `postgres-${WORKLOAD_CATALOG["database:database"]?.nativeVersion}-linux-amd64.tar.zst`,
+        `postgres-${databaseCatalog.defaultVersion}-linux-amd64.tar.zst`,
       );
     }),
   );

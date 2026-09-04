@@ -1,5 +1,8 @@
 import { Schema } from "effect";
 import { release, workload, type CapabilityModule } from "../CapabilityModule.ts";
+import { catalogEntryFor } from "../WorkloadCatalog.ts";
+
+const version = catalogEntryFor("realtime:realtime").defaultVersion;
 
 const Secret = Schema.Redacted(Schema.String);
 
@@ -22,10 +25,10 @@ export const RealtimeModule: CapabilityModule<RealtimeSettings> = {
   },
   defaultEnabled: true,
   defaultActivation: "lazy",
-  defaultVersion: "v2.130.0",
+  defaultVersion: version,
   dependencies: ["database"],
   releases: {
-    "v2.130.0": release("v2.130.0", [
+    [version]: release(version, [
       workload("realtime", "realtime", {
         dependencies: ["database:database"],
         readiness: { portField: "api" },

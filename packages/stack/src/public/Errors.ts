@@ -249,6 +249,7 @@ export const STACK_STATUS_ERROR_TAGS = [
 export type StackStatusError = ErrorByTag<(typeof STACK_STATUS_ERROR_TAGS)[number]>;
 
 export const STACK_CREDENTIALS_ERROR_TAGS = [
+  "InvalidStackConfigError",
   "StackNotFoundError",
   "StackNotRunningError",
   "StackOwnershipConflictError",

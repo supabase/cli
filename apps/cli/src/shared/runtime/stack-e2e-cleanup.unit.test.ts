@@ -65,6 +65,7 @@ describe("stack e2e cleanup manager", () => {
           format: "supabase-stack-owner-v1",
           stackId,
           ownerSessionId: "owner-session",
+          leasePort: 45_001,
           endpoint: { kind: "unix", path: "/tmp/supabase-stack.sock" },
           rpcRelease: "test",
         }),

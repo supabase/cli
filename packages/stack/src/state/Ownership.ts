@@ -60,6 +60,7 @@ const OwnerMetadataSchema = Schema.Struct({
   format: Schema.Literal(OWNERSHIP_FORMAT),
   stackId: StackIdSchema,
   ownerSessionId: OwnerSessionIdSchema,
+  leasePort: NetworkPortSchema,
   endpoint: ControlEndpointSchema,
   rpcRelease: Schema.String,
 });
@@ -253,12 +254,13 @@ const metadataFrom = (value: unknown): Effect.Effect<OwnerMetadata, StackStateIn
 export const controlEndpointFor = (
   stackId: StackId | string,
   environment: Pick<StackRuntimeEnvironmentValue, "platform" | "tempRoot">,
+  leasePort: number,
 ): ControlEndpoint => {
   const root = environment.tempRoot.replace(/[\\/]+$/, "");
   const token = String(stackId);
   if (environment.platform === "windows")
-    return { kind: "pipe", name: `\\\\.\\pipe\\supabase-stack-${token}` };
-  return { kind: "unix", path: `${root}/supabase-stack-${token}.sock` };
+    return { kind: "pipe", name: `\\\\.\\pipe\\supabase-stack-${token}-${leasePort}` };
+  return { kind: "unix", path: `${root}/supabase-stack-${token}-${leasePort}.sock` };
 };
 
 /** Reads and validates complete owner metadata without probing or mutating. */
@@ -302,7 +304,7 @@ export const readOwnerMetadata = (
     const metadata = yield* metadataFrom(parsed);
     if (metadata.stackId !== validId)
       return yield* stateError("Owner metadata StackId does not match its directory");
-    const expected = controlEndpointFor(validId, environment);
+    const expected = controlEndpointFor(validId, environment, metadata.leasePort);
     if (metadata.endpoint.kind !== expected.kind)
       return yield* stateError("Owner metadata endpoint kind does not match this runtime");
     if (
@@ -540,13 +542,6 @@ export const acquireOwnership = (options: {
       Effect.mapError((error) => stateError(String(error))),
     );
     const lockPath = path.join(paths.runtime, "owner.lock");
-    const metadata: OwnerMetadata = {
-      format: OWNERSHIP_FORMAT,
-      stackId: validId,
-      ownerSessionId: options.ownerSessionId,
-      endpoint: controlEndpointFor(validId, options.environment),
-      rpcRelease: options.rpcRelease,
-    };
     const scope = yield* Scope.Scope;
     return yield* Effect.uninterruptibleMask((restore) =>
       Effect.gen(function* () {
@@ -579,6 +574,14 @@ export const acquireOwnership = (options: {
               : error,
           ),
         );
+        const metadata: OwnerMetadata = {
+          format: OWNERSHIP_FORMAT,
+          stackId: validId,
+          ownerSessionId: options.ownerSessionId,
+          leasePort: held.port,
+          endpoint: controlEndpointFor(validId, options.environment, held.port),
+          rpcRelease: options.rpcRelease,
+        };
         const acquire = Effect.gen(function* () {
           const port = held.port;
           const lock: OwnerLock = {

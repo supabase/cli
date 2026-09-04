@@ -10,6 +10,7 @@ import {
   runDatabaseBootstrap,
 } from "../model/DatabaseBootstrap.ts";
 import type { PersistedStackState } from "../state/StackState.ts";
+import { DATABASE_INTERNAL_PASSWORD_SLOT } from "../state/SecretStore.ts";
 import { StackPreparationError } from "../public/Errors.ts";
 import { databaseBootstrapPlan } from "./DatabaseBootstrapCatalog.ts";
 
@@ -189,7 +190,7 @@ export const bootstrapDatabaseAt = (
       return yield* new StackPreparationError({
         message: "A persisted database private port is required for bootstrap",
       });
-    const password = state.secrets["secret:database.internal.password"]?.value;
+    const password = state.secrets[DATABASE_INTERNAL_PASSWORD_SLOT]?.value;
     if (typeof password !== "string" || password.length === 0)
       return yield* new StackPreparationError({
         message: "Managed database password is unavailable for bootstrap",

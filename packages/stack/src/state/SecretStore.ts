@@ -14,6 +14,7 @@ export const AUTH_SECRET_KEY_SLOT = "secret:auth.settings.secret_key";
 export const AUTH_ANON_KEY_SLOT = "secret:auth.settings.anon_key";
 export const AUTH_SERVICE_ROLE_KEY_SLOT = "secret:auth.settings.service_role_key";
 export const AUTH_JWT_SECRET_SLOT = "secret:auth.settings.jwt_secret";
+export const DATABASE_INTERNAL_PASSWORD_SLOT = "secret:database.internal.password";
 
 type SecretPolicy = "managed" | "passthrough";
 

@@ -19,6 +19,7 @@ import { describe, expect, test } from "vitest";
 import { createStack, listStacks, type PromiseStack } from "../index.ts";
 import { defaultRuntimeEnvironment } from "../supervisor/Launcher.ts";
 import { createTestStack, type TestStack } from "../testing.ts";
+import { catalogEntryFor } from "../model/WorkloadCatalog.ts";
 import { CAPABILITY_NAMES } from "./Capability.ts";
 import type { PromiseStackCredentials } from "./Credentials.ts";
 import type { StackLogEntry } from "./Logs.ts";
@@ -39,10 +40,26 @@ const LAZY_STUDIO_ACTIVATION_TIMEOUT_MS = 180_000;
 // Pooler is activated by the first TCP connection and may take longer than the normal
 // query deadline while its migration and tenant bootstrap processes run.
 const LAZY_POOLER_ACTIVATION_TIMEOUT = "30 seconds";
-const RUNTIME_CASES = [
+const ALL_RUNTIME_CASES = [
   { name: "native", runtime: { kind: "native" as const } },
   { name: "Docker", runtime: { kind: "container" as const, engine: "docker" as const } },
 ] as const;
+// Test registration must select the CI matrix case before an Effect program exists.
+// oxlint-disable-next-line effecttsgo/process-env
+const SELECTED_RUNTIME = process.env["SUPABASE_STACK_E2E_RUNTIME"];
+if (
+  SELECTED_RUNTIME !== undefined &&
+  SELECTED_RUNTIME !== "native" &&
+  SELECTED_RUNTIME !== "container"
+)
+  throw new Error(`Unsupported stack E2E runtime: ${SELECTED_RUNTIME}`);
+const RUNTIME_CASES = ALL_RUNTIME_CASES.filter(
+  ({ runtime }) => SELECTED_RUNTIME === undefined || runtime.kind === SELECTED_RUNTIME,
+);
+const databaseCatalog = catalogEntryFor("database:database");
+const NON_DEFAULT_DATABASE_RELEASES = Object.keys(databaseCatalog.releases).filter(
+  (version) => version !== databaseCatalog.defaultVersion,
+);
 const BASE_WORKLOAD_IDS = [
   "analytics:analytics",
   "auth:auth",
@@ -1079,7 +1096,7 @@ const runWholeStackScenario = async (mode: (typeof RUNTIME_CASES)[number]): Prom
 };
 
 describe("managed Supabase stack whole-stack E2E", () => {
-  test(
+  test.skipIf(SELECTED_RUNTIME === "container")(
     "recovers the native database after abrupt Supervisor termination",
     { timeout: E2E_TIMEOUT_MS },
     async () => {
@@ -1112,6 +1129,26 @@ describe("managed Supabase stack whole-stack E2E", () => {
   );
 
   for (const mode of RUNTIME_CASES) {
+    for (const databaseVersion of NON_DEFAULT_DATABASE_RELEASES) {
+      const major = databaseVersion.split(".")[0];
+      test(
+        `starts PostgreSQL ${major} in ${mode.name} mode`,
+        { timeout: E2E_TIMEOUT_MS },
+        async () => {
+          await using stack: TestStack = await createTestStack({
+            name: `stack-postgres-${major}-${crypto.randomUUID().replaceAll("-", "").slice(0, 16)}`,
+            runtime: mode.runtime,
+            config: { capabilities: { database: { version: major } } },
+          });
+          const rows = await databaseQuery(
+            (await stack.credentials()).database.url,
+            "SELECT current_setting('server_version') AS version",
+          );
+          expect(rows).toEqual([{ version: expect.stringMatching(new RegExp(`^${major}\\.`)) }]);
+        },
+      );
+    }
+
     test(
       `coordinates concurrent isolated stacks in ${mode.name} mode`,
       { timeout: E2E_TIMEOUT_MS },

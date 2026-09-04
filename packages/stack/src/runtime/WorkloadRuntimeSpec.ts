@@ -24,6 +24,7 @@ import { resolveThirdPartyIssuer } from "../model/capabilities/auth-third-party.
 import { Effect, type Duration } from "effect";
 import { StackPreparationError, StackStateInvalidError } from "../public/Errors.ts";
 import { FUNCTIONS_CONTAINER_ROOT } from "../functions/serve-main-deps.ts";
+import { DATABASE_INTERNAL_PASSWORD_SLOT } from "../state/SecretStore.ts";
 export { FUNCTIONS_CONTAINER_ROOT } from "../functions/serve-main-deps.ts";
 
 type WorkloadRuntimeKind = "native" | "container";
@@ -364,7 +365,7 @@ const dbUrl = (
   database = "postgres",
 ): string => {
   const port = runtime === "container" ? 5432 : dbPort(state);
-  return `postgresql://${role}:${secret(state, "secret:database.internal.password")}@${dbHost(runtime)}:${port}/${database}`;
+  return `postgresql://${role}:${secret(state, DATABASE_INTERNAL_PASSWORD_SLOT)}@${dbHost(runtime)}:${port}/${database}`;
 };
 
 const usesResolvedJwks = (state: PersistedStackState): boolean => {
@@ -989,7 +990,7 @@ const analyticsEnv = (
     DB_DATABASE: "_supabase",
     DB_SCHEMA: "_analytics",
     DB_USERNAME: "supabase_admin",
-    DB_PASSWORD: secret(state, "secret:database.internal.password"),
+    DB_PASSWORD: secret(state, DATABASE_INTERNAL_PASSWORD_SLOT),
     LOGFLARE_SUPABASE_MODE: "true",
     LOGFLARE_SINGLE_TENANT: "true",
     LOGFLARE_PRIVATE_ACCESS_TOKEN: valueAt(state, "analytics", "api_key"),
@@ -1027,7 +1028,7 @@ const specs: Readonly<Record<string, WorkloadRuntimeSpecDefinition>> = {
           runtime === "container"
             ? "/var/lib/postgresql/data"
             : (inputs.database?.dataPath ?? `${state.identity.projectRoot}/.supabase/db/data`),
-        POSTGRES_PASSWORD: secret(state, "secret:database.internal.password"),
+        POSTGRES_PASSWORD: secret(state, DATABASE_INTERNAL_PASSWORD_SLOT),
         TZDIR: "/var/db/timezone/zoneinfo",
       }),
     containerArgs: (state, _workload, port) => databaseArgs(state, port, "container"),
@@ -1062,7 +1063,7 @@ const specs: Readonly<Record<string, WorkloadRuntimeSpecDefinition>> = {
         DB_HOST: dbHost(runtime),
         DB_PORT: String(runtime === "container" ? 5432 : dbPort(state)),
         DB_USER: "supabase_admin",
-        DB_PASSWORD: secret(state, "secret:database.internal.password"),
+        DB_PASSWORD: secret(state, DATABASE_INTERNAL_PASSWORD_SLOT),
         DB_NAME: "postgres",
         DB_AFTER_CONNECT_QUERY: "SET search_path TO _realtime",
         API_JWT_SECRET: secret(state, "secret:auth.settings.jwt_secret"),
@@ -1178,7 +1179,7 @@ const specs: Readonly<Record<string, WorkloadRuntimeSpecDefinition>> = {
           runtime === "container" ? FUNCTIONS_CONTAINER_ROOT : functionsRoot(state),
         OPENAI_API_KEY: secret(state, "secret:studio.settings.openai_api_key"),
         CURRENT_CLI_VERSION: "local",
-        POSTGRES_PASSWORD: secret(state, "secret:database.internal.password"),
+        POSTGRES_PASSWORD: secret(state, DATABASE_INTERNAL_PASSWORD_SLOT),
         POSTGRES_USER_READ_WRITE: "postgres",
         PGRST_DB_SCHEMAS: "public,graphql_public",
         PGRST_DB_EXTRA_SEARCH_PATH: "public,extensions",
@@ -1201,7 +1202,7 @@ const specs: Readonly<Record<string, WorkloadRuntimeSpecDefinition>> = {
       PG_META_DB_PORT: String(runtime === "container" ? 5432 : dbPort(state)),
       PG_META_DB_NAME: "postgres",
       PG_META_DB_USER: "postgres",
-      PG_META_DB_PASSWORD: secret(state, "secret:database.internal.password"),
+      PG_META_DB_PASSWORD: secret(state, DATABASE_INTERNAL_PASSWORD_SLOT),
     }),
     containerArgs: () => [],
     readiness: { protocol: "http", path: "/health" },
@@ -1300,7 +1301,7 @@ const specs: Readonly<Record<string, WorkloadRuntimeSpecDefinition>> = {
           runtime === "native" && valueAt(state, "pooler", "pool_mode") !== "session"
             ? String(primaryPort)
             : "6543",
-        DATABASE_URL: `ecto://postgres:${secret(state, "secret:database.internal.password")}@${dbHost(runtime)}:${runtime === "container" ? 5432 : dbPort(state)}/_supabase`,
+        DATABASE_URL: `ecto://postgres:${secret(state, DATABASE_INTERNAL_PASSWORD_SLOT)}@${dbHost(runtime)}:${runtime === "container" ? 5432 : dbPort(state)}/_supabase`,
         API_JWT_SECRET: secret(state, "secret:auth.settings.jwt_secret"),
         REGION: "local",
         TENANT_ID: valueAt(state, "pooler", "tenant_id"),

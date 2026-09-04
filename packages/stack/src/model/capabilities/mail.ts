@@ -1,5 +1,8 @@
 import { Schema } from "effect";
 import { release, workload, type CapabilityModule } from "../CapabilityModule.ts";
+import { catalogEntryFor } from "../WorkloadCatalog.ts";
+
+const version = catalogEntryFor("mail:mail").defaultVersion;
 
 export const MailSettingsSchema = Schema.Struct({
   admin_email: Schema.optionalKey(Schema.String),
@@ -12,10 +15,10 @@ export const MailModule: CapabilityModule<MailSettings> = {
   defaultSettings: { admin_email: "admin@email.com", sender_name: "Admin" },
   defaultEnabled: true,
   defaultActivation: "lazy",
-  defaultVersion: "v1.30.2",
+  defaultVersion: version,
   dependencies: [],
   releases: {
-    "v1.30.2": release("v1.30.2", [
+    [version]: release(version, [
       workload("mail", "mail", {
         readiness: { portField: "mailUi" },
       }),

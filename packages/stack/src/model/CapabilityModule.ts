@@ -1,7 +1,7 @@
 import type { Redacted, Schema } from "effect";
 import type { CapabilityName, ActivationMode } from "../public/Capability.ts";
 import type { PortField } from "../public/Status.ts";
-import { catalogEntryFor } from "./WorkloadCatalog.ts";
+import { catalogReleaseFor } from "./WorkloadCatalog.ts";
 
 /** Logical artifact descriptors. Download/image resolution belongs to preparation. */
 export interface NativeArtifact {
@@ -86,14 +86,18 @@ export const workload = (
     readonly bootstrap?: WorkloadSpec["bootstrap"];
     readonly dependencies?: ReadonlyArray<string>;
     readonly readiness?: WorkloadSpec["readiness"];
+    readonly version?: string;
   } = {},
 ): WorkloadSpec => {
-  const catalog = catalogEntryFor(`${capability}:${name}`);
-  if (catalog === undefined)
-    throw new Error(`Missing workload artifact declaration: ${capability}:${name}`);
+  const workloadId = `${capability}:${name}`;
+  const selected = catalogReleaseFor(workloadId, options.version);
+  if (selected === undefined)
+    throw new Error(
+      `Missing workload artifact release: ${workloadId}${options.version === undefined ? "" : `@${options.version}`}`,
+    );
   const artifacts = {
-    native: { kind: "native" as const, release: catalog.nativeVersion },
-    container: { kind: "container" as const, image: catalog.containerImage },
+    native: { kind: "native" as const, release: selected.version },
+    container: { kind: "container" as const, image: selected.containerImage },
   };
   return {
     name,

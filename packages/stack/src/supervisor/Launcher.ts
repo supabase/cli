@@ -34,6 +34,7 @@ import {
 } from "./LaunchProtocol.ts";
 import {
   StackOwnershipConflictError,
+  StackStateFormatUnsupportedError,
   StackStateInvalidError,
   StackUpgradeRequiredError,
 } from "../public/Errors.ts";
@@ -356,7 +357,10 @@ export const ensureSupervisor = (
   options: LauncherOptions,
 ): Effect.Effect<
   EnsureSupervisorResult,
-  StackOwnershipConflictError | StackStateInvalidError | StackUpgradeRequiredError,
+  | StackOwnershipConflictError
+  | StackStateFormatUnsupportedError
+  | StackStateInvalidError
+  | StackUpgradeRequiredError,
   | FileSystem.FileSystem
   | Path.Path
   | Crypto.Crypto
@@ -369,7 +373,9 @@ export const ensureSupervisor = (
         options.stateStore.recoverRuntimeRemnant(options.stackId).pipe(Effect.asVoid),
       ),
       Effect.mapError((error) =>
-        mapFailure(error instanceof Error ? error.message : String(error)),
+        error instanceof StackStateFormatUnsupportedError
+          ? error
+          : mapFailure(error instanceof Error ? error.message : String(error)),
       ),
     );
     if (state === undefined) return yield* mapFailure("Stack state is missing");

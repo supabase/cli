@@ -38,6 +38,7 @@ import { toPersistedIdentity, type PersistedStackState } from "../state/StackSta
 import { startControlServer } from "../control/ControlServer.ts";
 import { STACK_RPC_RELEASE, type StackRpcHandlers } from "../control/StackRpc.ts";
 import { compileStack } from "../model/Compiler.ts";
+import { catalogEntryFor } from "../model/WorkloadCatalog.ts";
 import {
   StackDestructionError,
   StackCleanupError,
@@ -76,6 +77,10 @@ import {
   type ContainerCommandRunner,
 } from "../runtime/ContainerEngine.ts";
 import { ContainerEngineResolver } from "../runtime/ContainerEngineResolver.ts";
+
+const defaultDatabaseVersion = catalogEntryFor("database:database").defaultVersion;
+const defaultDatabaseMajor = defaultDatabaseVersion.split(".")[0];
+const defaultRestVersion = catalogEntryFor("rest:rest").defaultVersion;
 
 const stackId = StackIdSchema.make(
   "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
@@ -177,6 +182,7 @@ describe("Effect stack lifecycle handoff", () => {
           stackId,
           endpoint,
           ownerSessionId,
+          leasePort: 45_001,
           rpcRelease: STACK_RPC_RELEASE,
         };
         const ownerScope = yield* Scope.make();
@@ -295,6 +301,7 @@ describe("Effect stack lifecycle handoff", () => {
           stackId,
           endpoint,
           ownerSessionId,
+          leasePort: 45_001,
           rpcRelease: STACK_RPC_RELEASE,
         };
         yield* startControlServer({
@@ -373,6 +380,7 @@ describe("Effect stack lifecycle handoff", () => {
           stackId,
           endpoint,
           ownerSessionId,
+          leasePort: 45_001,
           rpcRelease: STACK_RPC_RELEASE,
         };
         yield* startControlServer({
@@ -506,7 +514,7 @@ describe("Effect stack lifecycle handoff", () => {
         yield* store.replace(stack.id, { ...state, desiredLifecycle: "stopped" });
 
         const started = yield* stack
-          .start({ config: { capabilities: { database: { version: "15" } } } })
+          .start({ config: { capabilities: { database: { version: "unsupported" } } } })
           .pipe(Effect.exit);
 
         expect(Exit.isFailure(started)).toBe(true);
@@ -547,6 +555,7 @@ describe("Effect stack lifecycle handoff", () => {
           stackId,
           endpoint: { kind: "unix" as const, path: path.join(project, "missing-owner.sock") },
           ownerSessionId: "unreachable-owner",
+          leasePort: 45_001,
           rpcRelease: STACK_RPC_RELEASE,
         };
         let ownerReads = 0;
@@ -739,7 +748,7 @@ describe("Effect stack lifecycle handoff", () => {
     ),
   );
 
-  it.live("preserves unsupported persisted state format from prepare", () =>
+  it.live("preserves unsupported persisted state format from prepare and start", () =>
     withRuntimeRoot((project) =>
       Effect.gen(function* () {
         const fs = yield* FileSystem.FileSystem;
@@ -756,6 +765,13 @@ describe("Effect stack lifecycle handoff", () => {
         expect(Exit.isFailure(result)).toBe(true);
         if (Exit.isFailure(result))
           expect(Option.getOrUndefined(Cause.findErrorOption(result.cause))).toBeInstanceOf(
+            StackStateFormatUnsupportedError,
+          );
+
+        const started = yield* stack.start().pipe(Effect.exit);
+        expect(Exit.isFailure(started)).toBe(true);
+        if (Exit.isFailure(started))
+          expect(Option.getOrUndefined(Cause.findErrorOption(started.cause))).toBeInstanceOf(
             StackStateFormatUnsupportedError,
           );
       }),
@@ -1003,7 +1019,7 @@ describe("Effect stack lifecycle handoff", () => {
         const persisted = yield* compileStack({
           projectRoot: project,
           runtime: { kind: "container", engine: "docker" },
-          config: { capabilities: { database: { version: "17" } } },
+          config: { capabilities: { database: { version: defaultDatabaseMajor } } },
         }).pipe(
           Effect.provideService(Path.Path, path),
           Effect.provideService(Crypto.Crypto, crypto),
@@ -1017,8 +1033,8 @@ describe("Effect stack lifecycle handoff", () => {
           capabilities: ["rest"],
         });
         expect(prepared.capabilities).toEqual([
-          { capability: "database", version: "17.6.1.167", outcome: "cached" },
-          { capability: "rest", version: "v16.2", outcome: "cached" },
+          { capability: "database", version: defaultDatabaseVersion, outcome: "cached" },
+          { capability: "rest", version: defaultRestVersion, outcome: "cached" },
         ]);
         expect(calls.filter((call) => call.startsWith("image ls"))).toHaveLength(2);
       }),
@@ -1044,6 +1060,7 @@ describe("Effect stack lifecycle handoff", () => {
             stackId,
             endpoint,
             ownerSessionId,
+            leasePort: 45_001,
             rpcRelease: STACK_RPC_RELEASE,
           };
           yield* startControlServer({
@@ -1110,6 +1127,7 @@ describe("Effect stack lifecycle handoff", () => {
           stackId,
           endpoint,
           ownerSessionId,
+          leasePort: 45_001,
           rpcRelease: STACK_RPC_RELEASE,
         };
         yield* startControlServer({
@@ -1250,7 +1268,7 @@ describe("Effect stack lifecycle handoff", () => {
         expect(Exit.isFailure(canceled)).toBe(true);
         const cached = yield* stack.prepare({ capabilities: ["database"] });
         expect(cached.capabilities).toEqual([
-          { capability: "database", version: "17.6.1.167", outcome: "cached" },
+          { capability: "database", version: defaultDatabaseVersion, outcome: "cached" },
         ]);
         expect(yield* fs.readFileString(paths.stateDocument)).toBe(before);
         expect(yield* readOwnerMetadata(env.stateRoot, stack.id, env)).toBeUndefined();
@@ -1316,6 +1334,7 @@ describe("Effect stack lifecycle handoff", () => {
           stackId,
           endpoint,
           ownerSessionId,
+          leasePort: 45_001,
           rpcRelease: STACK_RPC_RELEASE,
         };
         const stack = yield* makeTestHandle(stackId, {
@@ -1341,6 +1360,7 @@ describe("Effect stack lifecycle handoff", () => {
           stackId,
           endpoint,
           ownerSessionId,
+          leasePort: 45_001,
           rpcRelease: STACK_RPC_RELEASE,
         };
         yield* startControlServer({
@@ -1423,6 +1443,7 @@ describe("Effect stack lifecycle handoff", () => {
                   stackId,
                   endpoint,
                   ownerSessionId,
+                  leasePort: 45_001,
                   rpcRelease: STACK_RPC_RELEASE,
                 },
                 launched: false,
@@ -1454,6 +1475,7 @@ describe("Effect stack lifecycle handoff", () => {
                   stackId,
                   endpoint: { kind: "unix", path: path.join(root, "missing.sock") },
                   ownerSessionId: "session",
+                  leasePort: 45_001,
                   rpcRelease: STACK_RPC_RELEASE,
                 },
                 launched: false,
@@ -1798,6 +1820,7 @@ describe("Effect stack lifecycle handoff", () => {
             stackId,
             endpoint,
             ownerSessionId,
+            leasePort: 45_001,
             rpcRelease: ownerRelease,
           };
           yield* startControlServer({
@@ -1870,6 +1893,7 @@ describe("Effect stack lifecycle handoff", () => {
           stackId,
           endpoint,
           ownerSessionId,
+          leasePort: 45_001,
           rpcRelease: STACK_RPC_RELEASE,
         };
         yield* startControlServer({
@@ -1928,6 +1952,7 @@ describe("Effect stack lifecycle handoff", () => {
           stackId,
           endpoint,
           ownerSessionId,
+          leasePort: 45_001,
           rpcRelease: STACK_RPC_RELEASE,
         };
         yield* startControlServer({
@@ -1990,6 +2015,7 @@ describe("Effect stack lifecycle handoff", () => {
           stackId,
           endpoint,
           ownerSessionId,
+          leasePort: 45_001,
           rpcRelease: STACK_RPC_RELEASE,
         };
         yield* startControlServer({
@@ -2073,6 +2099,7 @@ describe("Effect stack lifecycle handoff", () => {
           stackId,
           endpoint,
           ownerSessionId,
+          leasePort: 45_001,
           rpcRelease: STACK_RPC_RELEASE,
         };
         yield* startControlServer({
@@ -2151,6 +2178,7 @@ describe("Effect stack lifecycle handoff", () => {
           stackId,
           endpoint,
           ownerSessionId,
+          leasePort: 45_001,
           rpcRelease: STACK_RPC_RELEASE,
         };
         yield* startControlServer({

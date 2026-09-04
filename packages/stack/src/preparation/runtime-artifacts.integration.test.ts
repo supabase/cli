@@ -15,6 +15,10 @@ import {
 } from "./RuntimeArtifacts.ts";
 import { ContainerEngineError } from "../public/Errors.ts";
 import { ContainerEngineProtocolError } from "../runtime/ContainerEngine.ts";
+import { catalogReleaseFor } from "../model/WorkloadCatalog.ts";
+
+const databaseRelease = catalogReleaseFor("database:database");
+if (databaseRelease === undefined) throw new Error("Missing default database release");
 
 const nativeWorkload = (selected: PlannedWorkload["selected"]): PlannedWorkload => ({
   id: "database:database",
@@ -22,10 +26,10 @@ const nativeWorkload = (selected: PlannedWorkload["selected"]): PlannedWorkload 
   dependencies: [],
   readiness: {},
   artifacts: {
-    native: { kind: "native", release: "17.6.1.167" },
+    native: { kind: "native", release: databaseRelease.version },
     container: {
       kind: "container",
-      image: "ghcr.io/supabase/cli/postgres:17.6.1.167",
+      image: databaseRelease.containerImage,
     },
   },
   selected,
@@ -149,13 +153,15 @@ describe("runtime artifact preparation", () => {
     const result = Effect.runSync(
       runtime.prepare(
         { kind: "native" },
-        nativeWorkload({ kind: "native", release: "17.6.1.167" }),
+        nativeWorkload({ kind: "native", release: databaseRelease.version }),
       ),
     );
     expect(result.outcome).toBe("downloaded");
-    expect(result.version).toBe("17.6.1.167");
+    expect(result.version).toBe(databaseRelease.version);
     expect(requests).toHaveLength(1);
-    expect(requests[0]?.key).toContain("slim-services/postgres/17.6.1.167/darwin-arm64");
+    expect(requests[0]?.key).toContain(
+      `slim-services/postgres/${databaseRelease.version}/darwin-arm64`,
+    );
     expect(requests[0]?.sha256).toBe("a".repeat(64));
   });
 
@@ -171,15 +177,15 @@ describe("runtime artifact preparation", () => {
         { kind: "container", engine: "docker" },
         nativeWorkload({
           kind: "container",
-          image: "ghcr.io/supabase/cli/postgres:17.6.1.167",
+          image: databaseRelease.containerImage,
         }),
       ),
     );
     expect(result.outcome).toBe("pulled");
     expect(calls).toEqual([
       "probe",
-      "inspect:ghcr.io/supabase/cli/postgres:17.6.1.167",
-      "pull:ghcr.io/supabase/cli/postgres:17.6.1.167",
+      `inspect:${databaseRelease.containerImage}`,
+      `pull:${databaseRelease.containerImage}`,
     ]);
   });
 
@@ -194,7 +200,7 @@ describe("runtime artifact preparation", () => {
         { kind: "container", engine: "podman" },
         nativeWorkload({
           kind: "container",
-          image: "ghcr.io/supabase/cli/postgres:17.6.1.167",
+          image: databaseRelease.containerImage,
         }),
       ),
     );
@@ -220,7 +226,7 @@ describe("runtime artifact preparation", () => {
         { kind: "container", engine: "docker" },
         nativeWorkload({
           kind: "container",
-          image: "ghcr.io/supabase/cli/postgres:17.6.1.167",
+          image: databaseRelease.containerImage,
         }),
       ),
     );
@@ -251,7 +257,7 @@ describe("runtime artifact preparation", () => {
         { kind: "native" },
         nativeWorkload({
           kind: "container",
-          image: "ghcr.io/supabase/cli/postgres:17.6.1.167",
+          image: databaseRelease.containerImage,
         }),
       ),
     );

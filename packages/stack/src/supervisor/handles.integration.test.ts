@@ -48,6 +48,7 @@ import { makeStackStateStore } from "../state/StackStateStore.ts";
 import { makeControlClient, startControlServer } from "../control/ControlServer.ts";
 import { resolveStackPaths } from "../state/Paths.ts";
 import { STACK_RPC_RELEASE, type StackRpcHandlers } from "../control/StackRpc.ts";
+import { catalogReleaseFor } from "../model/WorkloadCatalog.ts";
 import {
   StackOwnershipConflictError,
   StackPreparationError,
@@ -55,6 +56,9 @@ import {
 } from "../public/Errors.ts";
 import type { ContainerEngine } from "../runtime/ContainerEngine.ts";
 import { ContainerEngineResolver } from "../runtime/ContainerEngineResolver.ts";
+
+const databaseRelease = catalogReleaseFor("database:database");
+if (databaseRelease === undefined) throw new Error("Missing default database release");
 
 const withRuntimeRoot = <A, E, R>(effect: (project: string) => Effect.Effect<A, E, R>) =>
   Effect.scoped(
@@ -183,7 +187,8 @@ describe("managed stack handles", { timeout: 30_000 }, () => {
           format: "supabase-stack-owner-v1" as const,
           stackId: stack.id,
           ownerSessionId: "stale-owner",
-          endpoint: controlEndpointFor(stack.id, runtime),
+          leasePort: 45_001,
+          endpoint: controlEndpointFor(stack.id, runtime, 45_001),
           rpcRelease: STACK_RPC_RELEASE,
         };
         const ownerJson = yield* Schema.encodeEffect(Schema.fromJsonString(Schema.Unknown))(owner);
@@ -281,10 +286,7 @@ describe("managed stack handles", { timeout: 30_000 }, () => {
         }).pipe(Effect.provideService(ContainerEngineResolver, resolver));
         const prepared = yield* stack.prepare({ capabilities: ["database"] });
         expect(prepared.capabilities).toHaveLength(1);
-        expect(calls).toEqual([
-          "podman:probe",
-          "podman:inspect:ghcr.io/supabase/cli/postgres:17.6.1.167",
-        ]);
+        expect(calls).toEqual(["podman:probe", `podman:inspect:${databaseRelease.containerImage}`]);
         expect(dockerCalls).toEqual([]);
       }),
     ),

@@ -66,6 +66,7 @@ import {
   AUTH_PUBLISHABLE_KEY_SLOT,
   AUTH_SECRET_KEY_SLOT,
   AUTH_SERVICE_ROLE_KEY_SLOT,
+  DATABASE_INTERNAL_PASSWORD_SLOT,
 } from "../state/SecretStore.ts";
 
 import type { ActivationResult } from "../gateway/Gateway.ts";
@@ -766,7 +767,10 @@ export const makeSupervisor = (
           return yield* Effect.fail(credentialsUnavailable);
 
         const auth = definition.capabilities.auth;
-        if (!auth.enabled) return yield* Effect.fail(credentialsUnavailable);
+        if (!auth.enabled)
+          return yield* Effect.fail(
+            rpcError("InvalidStackConfigError", "Stack credentials require Auth to be enabled"),
+          );
 
         const requiredSecret = (slot: string): Effect.Effect<string, StackRpcError> => {
           const value = state.secrets[slot]?.value;
@@ -777,7 +781,7 @@ export const makeSupervisor = (
             : Effect.succeed(value);
         };
 
-        const databasePassword = yield* requiredSecret("secret:database.internal.password");
+        const databasePassword = yield* requiredSecret(DATABASE_INTERNAL_PASSWORD_SLOT);
         const databaseHost = credentialHost(databaseListener.address);
         const databaseUrl = `postgresql://${encodeURIComponent("postgres")}:${encodeURIComponent(
           databasePassword,

@@ -1,5 +1,8 @@
 import { Schema } from "effect";
 import { release, workload, type CapabilityModule } from "../CapabilityModule.ts";
+import { catalogEntryFor } from "../WorkloadCatalog.ts";
+
+const version = catalogEntryFor("rest:rest").defaultVersion;
 
 export const RestSettingsSchema = Schema.Struct({
   schemas: Schema.optionalKey(Schema.Array(Schema.String)),
@@ -30,10 +33,10 @@ export const RestModule: CapabilityModule<RestSettings> = {
   },
   defaultEnabled: true,
   defaultActivation: "lazy",
-  defaultVersion: "v16.2",
+  defaultVersion: version,
   dependencies: ["database"],
   releases: {
-    "v16.2": release("v16.2", [
+    [version]: release(version, [
       workload("rest", "rest", {
         dependencies: ["database:database"],
         readiness: { portField: "api" },

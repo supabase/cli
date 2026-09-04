@@ -1,6 +1,9 @@
 import { Schema } from "effect";
 import { release, workload, type CapabilityModule } from "../CapabilityModule.ts";
+import { catalogEntryFor } from "../WorkloadCatalog.ts";
 import { NetworkPortSchema } from "../../public/Status.ts";
+
+const version = catalogEntryFor("auth:auth").defaultVersion;
 
 const Secret = Schema.Redacted(Schema.String);
 const OptionalString = Schema.optionalKey(Schema.String);
@@ -392,10 +395,10 @@ export const AuthModule: CapabilityModule<AuthSettings> = {
   },
   defaultEnabled: true,
   defaultActivation: "lazy",
-  defaultVersion: "v2.196.0",
+  defaultVersion: version,
   dependencies: ["database"],
   releases: {
-    "v2.196.0": release("v2.196.0", [
+    [version]: release(version, [
       workload("auth", "auth", {
         dependencies: ["database:database"],
         readiness: { portField: "api" },

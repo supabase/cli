@@ -1,5 +1,8 @@
 import { Schema } from "effect";
 import { release, workload, type CapabilityModule } from "../CapabilityModule.ts";
+import { catalogEntryFor } from "../WorkloadCatalog.ts";
+
+const version = catalogEntryFor("storage:storage").defaultVersion;
 
 const Bucket = Schema.Struct({
   public: Schema.optionalKey(Schema.Boolean),
@@ -100,10 +103,10 @@ export const StorageModule: CapabilityModule<StorageSettings> = {
   },
   defaultEnabled: true,
   defaultActivation: "lazy",
-  defaultVersion: "v1.72.1",
+  defaultVersion: version,
   dependencies: ["database"],
   releases: {
-    "v1.72.1": release("v1.72.1", [
+    [version]: release(version, [
       workload("storage", "storage", {
         dependencies: ["database:database"],
         readiness: { portField: "api" },

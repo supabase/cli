@@ -1,5 +1,8 @@
 import { Schema } from "effect";
 import { release, workload, type CapabilityModule } from "../CapabilityModule.ts";
+import { catalogEntryFor } from "../WorkloadCatalog.ts";
+
+const version = catalogEntryFor("functions:edge-runtime").defaultVersion;
 
 const Secret = Schema.Redacted(Schema.String);
 const FunctionSlug = Schema.String.check(Schema.isPattern(/^[a-zA-Z0-9_-]+$/));
@@ -54,10 +57,10 @@ export const FunctionsModule: CapabilityModule<FunctionsSettings> = {
   },
   defaultEnabled: true,
   defaultActivation: "lazy",
-  defaultVersion: "v1.74.3",
+  defaultVersion: version,
   dependencies: ["database"],
   releases: {
-    "v1.74.3": release("v1.74.3", [
+    [version]: release(version, [
       workload("edge-runtime", "functions", {
         dependencies: ["database:database"],
         readiness: { portField: "functionsInspector" },

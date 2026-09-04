@@ -1,5 +1,8 @@
 import { Schema } from "effect";
 import { release, workload, type CapabilityModule } from "../CapabilityModule.ts";
+import { catalogEntryFor } from "../WorkloadCatalog.ts";
+
+const version = catalogEntryFor("studio:studio").defaultVersion;
 
 const Secret = Schema.Redacted(Schema.String);
 export const StudioSettingsSchema = Schema.Struct({
@@ -13,10 +16,10 @@ export const StudioModule: CapabilityModule<StudioSettings> = {
   defaultSettings: { api_url: "", openai_api_key: undefined },
   defaultEnabled: true,
   defaultActivation: "lazy",
-  defaultVersion: "2026.08.24-sha-8ec45b2",
+  defaultVersion: version,
   dependencies: ["rest", "analytics"],
   releases: {
-    "2026.08.24-sha-8ec45b2": release("2026.08.24-sha-8ec45b2", [
+    [version]: release(version, [
       workload("studio", "studio", {
         dependencies: ["studio:pgmeta", "analytics:analytics"],
         readiness: { portField: "studio" },

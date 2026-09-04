@@ -1,5 +1,6 @@
 import { Duration, Schema } from "effect";
 import { release, workload, type CapabilityModule } from "../CapabilityModule.ts";
+import { catalogEntryFor } from "../WorkloadCatalog.ts";
 
 const settingsFields = {
   effective_cache_size: Schema.optionalKey(Schema.String),
@@ -135,12 +136,22 @@ const defaults: DatabaseSettings = {
   vault: {},
 };
 
-const postgres17Release = release("17.6.1.167", [
-  workload("database", "database", {
-    bootstrap: "database",
-    readiness: { portField: "database" },
+const databaseCatalog = catalogEntryFor("database:database");
+const databaseReleases = Object.fromEntries(
+  Object.keys(databaseCatalog.releases).flatMap((version) => {
+    const selected = release(version, [
+      workload("database", "database", {
+        bootstrap: "database",
+        readiness: { portField: "database" },
+        version,
+      }),
+    ]);
+    return [
+      [version, selected],
+      [version.split(".")[0], selected],
+    ];
   }),
-]);
+);
 
 export const DatabaseModule: CapabilityModule<DatabaseSettings> = {
   name: "database",
@@ -148,12 +159,9 @@ export const DatabaseModule: CapabilityModule<DatabaseSettings> = {
   defaultSettings: defaults,
   defaultEnabled: true,
   defaultActivation: "eager",
-  defaultVersion: "17.6.1.167",
+  defaultVersion: databaseCatalog.defaultVersion,
   dependencies: [],
-  releases: {
-    "17": postgres17Release,
-    "17.6.1.167": postgres17Release,
-  },
+  releases: databaseReleases,
   routes: [{ listener: "database", protocol: "tcp" }],
   secretPolicy: () => "passthrough",
   managedSecretSlots: [],

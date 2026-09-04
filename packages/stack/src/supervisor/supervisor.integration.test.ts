@@ -1063,7 +1063,7 @@ describe("Supervisor composition", () => {
           .pipe(Effect.provideContext(fixture.context));
         const authDisabled = yield* invokeCredentials(fixture.supervisor).pipe(Effect.exit);
         expect(errorOf(authDisabled)).toEqual(
-          expect.objectContaining({ tag: "StackNotRunningError" }),
+          expect.objectContaining({ tag: "InvalidStackConfigError" }),
         );
         if (state.definition === undefined)
           return yield* new StackStateInvalidError({ message: "running definition is missing" });
@@ -1092,9 +1092,12 @@ describe("Supervisor composition", () => {
             ),
           ),
         };
+        yield* fixture.store
+          .replace(fixture.id, missingSecret)
+          .pipe(Effect.provideContext(fixture.context));
         const missingExit = yield* invokeCredentials(fixture.supervisor).pipe(Effect.exit);
         expect(errorOf(missingExit)).toEqual(
-          expect.objectContaining({ tag: "StackNotRunningError" }),
+          expect.objectContaining({ tag: "StackSecretMismatchError" }),
         );
         const storageSecretMissing = {
           ...missingSecret,

@@ -2,9 +2,7 @@ import { Effect, Redacted } from "effect";
 import type { DatabaseBootstrapOptions } from "../model/DatabaseBootstrap.ts";
 import type { PersistedStackState } from "../state/StackState.ts";
 import { StackPreparationError } from "../public/Errors.ts";
-
-const DATABASE_PASSWORD_SLOT = "secret:database.internal.password";
-const JWT_SECRET_SLOT = "secret:auth.settings.jwt_secret";
+import { AUTH_JWT_SECRET_SLOT, DATABASE_INTERNAL_PASSWORD_SLOT } from "../state/SecretStore.ts";
 
 /**
  * The only SQL revision owned by the runtime bootstrap. The slim Postgres
@@ -39,11 +37,11 @@ export const databaseBootstrapPlan = (
         "A materialized stack definition is required for database bootstrap",
       );
 
-    const databasePassword = secretValue(state, DATABASE_PASSWORD_SLOT);
+    const databasePassword = secretValue(state, DATABASE_INTERNAL_PASSWORD_SLOT);
     if (databasePassword === undefined)
       return yield* missingMaterial("Managed database password is unavailable for bootstrap");
 
-    const jwtSecret = secretValue(state, JWT_SECRET_SLOT);
+    const jwtSecret = secretValue(state, AUTH_JWT_SECRET_SLOT);
     if (jwtSecret === undefined)
       return yield* missingMaterial("Managed JWT secret is unavailable for database bootstrap");
 

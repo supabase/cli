@@ -1,6 +1,9 @@
 import { Schema } from "effect";
 import { release, workload, type CapabilityModule } from "../CapabilityModule.ts";
+import { catalogEntryFor } from "../WorkloadCatalog.ts";
 import { NetworkPortSchema } from "../../public/Status.ts";
+
+const version = catalogEntryFor("analytics:analytics").defaultVersion;
 
 const Secret = Schema.Redacted(Schema.String);
 export const AnalyticsSettingsSchema = Schema.Struct({
@@ -25,10 +28,10 @@ export const AnalyticsModule: CapabilityModule<AnalyticsSettings> = {
   },
   defaultEnabled: true,
   defaultActivation: "lazy",
-  defaultVersion: "v1.50.6",
+  defaultVersion: version,
   dependencies: ["database"],
   releases: {
-    "v1.50.6": release("v1.50.6", [
+    [version]: release(version, [
       workload("analytics", "analytics", {
         dependencies: ["database:database"],
         readiness: { portField: "api" },

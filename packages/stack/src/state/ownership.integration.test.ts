@@ -149,7 +149,9 @@ describe("stack ownership", () => {
           environment,
         });
         expect(yield* ownerLockExists(root, stackId)).toBe(true);
-        expect(lease.metadata.endpoint).toEqual(controlEndpointFor(stackId, environment));
+        expect(lease.metadata.endpoint).toEqual(
+          controlEndpointFor(stackId, environment, lease.metadata.leasePort),
+        );
         yield* publishOwnership(lease);
         expect(yield* readOwnerMetadata(root, stackId, environment)).toEqual(lease.metadata);
 
@@ -281,7 +283,9 @@ describe("stack ownership", () => {
             rpcRelease: "stack-rpc-v1@0.1.0",
             environment,
           });
-          expect(successor.metadata.endpoint).toEqual(controlEndpointFor(stackId, environment));
+          expect(successor.metadata.endpoint).toEqual(
+            controlEndpointFor(stackId, environment, successor.metadata.leasePort),
+          );
           expect(yield* ownerLockExists(root, stackId)).toBe(true);
           yield* publishOwnership(successor);
           expect((yield* readOwnerMetadata(root, stackId, environment))?.ownerSessionId).toBe(
@@ -349,7 +353,7 @@ describe("stack ownership", () => {
         const address = stale.address();
         if (address === null || typeof address === "string")
           return yield* new StackStateInvalidError({ message: "missing lease port" });
-        const staleEndpoint = controlEndpointFor(stackId, environment);
+        const staleEndpoint = controlEndpointFor(stackId, environment, address.port);
         if (staleEndpoint.kind !== "unix")
           return yield* new StackStateInvalidError({ message: "expected unix endpoint" });
         yield* fs.writeFileString(
@@ -366,6 +370,7 @@ describe("stack ownership", () => {
             format: "supabase-stack-owner-v1",
             stackId,
             ownerSessionId: "old-session",
+            leasePort: address.port,
             endpoint: staleEndpoint,
             rpcRelease: "stack-rpc-v1@0.1.0",
           }),
@@ -387,13 +392,11 @@ describe("stack ownership", () => {
     ),
   );
 
-  it.live("removes a stale Unix control socket when no prior lease record exists", () =>
+  it.live("uses a new control endpoint while a prior lease is still alive", () =>
     withPlatform(
       Effect.gen(function* () {
         const fs = yield* FileSystem.FileSystem;
-        const root = yield* fs.makeTempDirectoryScoped({
-          prefix: "supabase-stack-no-lock-socket-",
-        });
+        const root = yield* fs.makeTempDirectoryScoped({ prefix: "supabase-stack-live-owner-" });
         const stackId = yield* deriveStackId(identity);
         const environment: StackRuntimeEnvironmentValue = {
           stateRoot: root,
@@ -401,19 +404,26 @@ describe("stack ownership", () => {
           platform: "posix",
         };
         const paths = yield* resolveStackPaths({ stateRoot: root, stackId });
-        const endpoint = controlEndpointFor(stackId, environment);
-        if (endpoint.kind !== "unix") return yield* Effect.die("expected Unix endpoint");
-        yield* fs.makeDirectory(paths.runtime, { recursive: true });
-        yield* fs.writeFileString(endpoint.path, "stale socket");
-        const lease = yield* acquireOwnership({
+        const first = yield* acquireOwnership({
+          stateRoot: root,
+          stackId,
+          ownerSessionId: "old-owner",
+          rpcRelease: "rpc",
+          environment,
+        });
+        yield* fs.remove(paths.runtime, { recursive: true });
+        const replacement = yield* acquireOwnership({
           stateRoot: root,
           stackId,
           ownerSessionId: "new-owner",
           rpcRelease: "rpc",
           environment,
         });
-        expect(yield* fs.exists(endpoint.path)).toBe(false);
-        yield* lease.release;
+        expect(replacement.metadata.leasePort).not.toBe(first.metadata.leasePort);
+        expect(replacement.metadata.endpoint).not.toEqual(first.metadata.endpoint);
+        yield* first.release;
+        expect(yield* ownerLockExists(root, stackId)).toBe(true);
+        yield* replacement.release;
       }),
     ),
   );
@@ -510,7 +520,8 @@ describe("stack ownership", () => {
           format: "supabase-stack-owner-v1",
           stackId,
           ownerSessionId: "orphaned-owner",
-          endpoint: controlEndpointFor(stackId, environment),
+          leasePort: 45_001,
+          endpoint: controlEndpointFor(stackId, environment, 45_001),
           rpcRelease: "rpc",
         };
         yield* fs.writeFileString(paths.controlMetadata, jsonText(metadata));

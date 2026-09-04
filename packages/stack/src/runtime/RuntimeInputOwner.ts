@@ -18,6 +18,7 @@ import { resolveStackPaths } from "../state/Paths.ts";
 import { isRecord, settingValue, settingsFor } from "../state/MaterializedSettings.ts";
 import {
   base64UrlEncode,
+  DATABASE_INTERNAL_PASSWORD_SLOT,
   resolveSigningKeyMaterial,
   type ResolvedSigningKeyMaterial,
 } from "../state/SecretStore.ts";
@@ -492,7 +493,7 @@ export const makeRuntimeInputOwner = (
       state: PersistedStackState,
       runtime: "native" | "container",
     ): Effect.Effect<string, StackPreparationError> => {
-      const password = state.secrets["secret:database.internal.password"]?.value ?? "";
+      const password = state.secrets[DATABASE_INTERNAL_PASSWORD_SLOT]?.value ?? "";
       if (password.length === 0)
         return Effect.fail(failure("Persisted database secret is missing"));
       const settings = settingsFor(state, "pooler");

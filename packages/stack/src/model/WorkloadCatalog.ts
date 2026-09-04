@@ -31,8 +31,9 @@ export interface NativeWorkloadProcess {
 export interface WorkloadCatalogEntry {
   readonly workloadId: string;
   readonly service: string;
-  readonly nativeVersion: string;
-  readonly containerImage: string;
+  readonly defaultVersion: string;
+  /** Supported exact versions mapped to their matching container image. */
+  readonly releases: Readonly<Record<string, string>>;
   readonly requiredRuntimePaths: ReadonlyArray<string>;
   readonly executablePath: string;
   /** Stable, stack-local DNS identity used by container dependants. */
@@ -44,19 +45,23 @@ export interface WorkloadCatalogEntry {
 const native = (
   workloadId: string,
   service: string,
-  nativeVersion: string,
+  defaultVersion: string,
   containerImage: string,
   executablePath: string,
   requiredRuntimePaths: ReadonlyArray<string> = [executablePath],
   options: {
+    readonly additionalReleases?: Readonly<Record<string, string>>;
     readonly containerAlias?: string;
     readonly nativeProcess?: NativeWorkloadProcess;
   } = {},
 ): WorkloadCatalogEntry => ({
   workloadId,
   service,
-  nativeVersion,
-  containerImage,
+  defaultVersion,
+  releases: {
+    [defaultVersion]: containerImage,
+    ...options.additionalReleases,
+  },
   requiredRuntimePaths,
   executablePath,
   containerAlias: options.containerAlias ?? `supabase-${service}`,
@@ -68,8 +73,8 @@ const workloadCatalog = {
   "database:database": native(
     "database:database",
     "postgres",
-    "17.6.1.167",
-    "ghcr.io/supabase/cli/postgres:17.6.1.167",
+    "17.6.1.168",
+    "ghcr.io/supabase/cli/postgres:17.6.1.168",
     "share/supabase-cli/bin/supabase-postgres-init.sh",
     [
       "bin/postgres",
@@ -80,7 +85,12 @@ const workloadCatalog = {
       "share/supabase-cli/migrations",
       "lib",
     ],
-    { containerAlias: "supabase-database" },
+    {
+      additionalReleases: {
+        "15.14.1.168": "ghcr.io/supabase/cli/postgres:15.14.1.168",
+      },
+      containerAlias: "supabase-database",
+    },
   ),
   "rest:rest": native(
     "rest:rest",
@@ -102,16 +112,16 @@ const workloadCatalog = {
   "realtime:realtime": native(
     "realtime:realtime",
     "realtime",
-    "v2.130.0",
-    "ghcr.io/supabase/cli/realtime:v2.130.0",
+    "v2.134.5",
+    "ghcr.io/supabase/cli/realtime:v2.134.5",
     "bin/server",
     ["bin/migrate", "bin/realtime", "bin/server"],
   ),
   "storage:storage": native(
     "storage:storage",
     "storage",
-    "v1.72.1",
-    "ghcr.io/supabase/cli/storage:v1.72.1",
+    "v1.73.0",
+    "ghcr.io/supabase/cli/storage:v1.73.0",
     "app/dist/start/server.js",
     ["node/bin/node", "app/dist/start/server.js", "app/dist/scripts/migrate-call.js"],
     {
@@ -132,8 +142,8 @@ const workloadCatalog = {
   "functions:edge-runtime": native(
     "functions:edge-runtime",
     "edge-runtime",
-    "v1.74.3",
-    "ghcr.io/supabase/cli/edge-runtime:v1.74.3",
+    "v1.76.2",
+    "ghcr.io/supabase/cli/edge-runtime:v1.76.2",
     "bin/edge-runtime",
     ["bin/edge-runtime"],
     { containerAlias: "supabase-functions" },
@@ -141,8 +151,8 @@ const workloadCatalog = {
   "studio:studio": native(
     "studio:studio",
     "studio",
-    "2026.08.24-sha-8ec45b2",
-    "ghcr.io/supabase/cli/studio:2026.08.24-sha-8ec45b2",
+    "2026.09.04-sha-5a67366",
+    "ghcr.io/supabase/cli/studio:2026.09.04-sha-5a67366",
     "app/apps/studio/server.js",
     ["node/bin/node", "app/apps/studio/docker-entrypoint.mjs", "app/apps/studio/server.js"],
     {
@@ -180,8 +190,8 @@ const workloadCatalog = {
   "analytics:analytics": native(
     "analytics:analytics",
     "analytics",
-    "v1.50.6",
-    "ghcr.io/supabase/cli/analytics:v1.50.6",
+    "v1.50.9",
+    "ghcr.io/supabase/cli/analytics:v1.50.9",
     "bin/logflare",
     ["bin/logflare"],
   ),
@@ -216,16 +226,40 @@ export const targetForPlatform = (platform: {
   return undefined;
 };
 
-/** Returns the catalog entry for a workload. */
-export const catalogEntryFor = (workloadId: string): WorkloadCatalogEntry | undefined =>
-  WORKLOAD_CATALOG[workloadId];
+/** Returns the catalog entry for a workload. Known workload IDs are always present. */
+export function catalogEntryFor(workloadId: WorkloadId): WorkloadCatalogEntry;
+export function catalogEntryFor(workloadId: string): WorkloadCatalogEntry | undefined;
+export function catalogEntryFor(workloadId: string): WorkloadCatalogEntry | undefined {
+  return WORKLOAD_CATALOG[workloadId];
+}
+
+export interface WorkloadCatalogRelease {
+  readonly version: string;
+  readonly containerImage: string;
+}
+
+/** Returns one exact native/container release pair for a workload. */
+export const catalogReleaseFor = (
+  workloadId: string,
+  version?: string,
+): WorkloadCatalogRelease | undefined => {
+  const entry = catalogEntryFor(workloadId);
+  if (entry === undefined) return undefined;
+  const selected = version ?? entry.defaultVersion;
+  const containerImage = entry.releases[selected];
+  return containerImage === undefined ? undefined : { version: selected, containerImage };
+};
 
 /** Resolves the container alias for a catalog workload identity. */
 export const containerAliasFor = (workloadId: WorkloadId): string =>
   workloadCatalog[workloadId].containerAlias;
 
-const artifactFor = (entry: WorkloadCatalogEntry, target: NativeTarget): NativeWorkloadArtifact => {
-  const version = entry.nativeVersion;
+const artifactFor = (
+  entry: WorkloadCatalogEntry,
+  release: WorkloadCatalogRelease,
+  target: NativeTarget,
+): NativeWorkloadArtifact => {
+  const version = release.version;
   const releaseTag = `${entry.service}-${version}`;
   const assetName = `${releaseTag}-${target}`;
   const base = `https://github.com/supabase/slim-services/releases/download/${releaseTag}`;
@@ -272,7 +306,8 @@ export const resolveNativeArtifactForWorkload = (
         platform: `${platform.os}/${platform.arch}`,
       }),
     );
-  if (workload.artifacts.native.release !== entry.nativeVersion)
+  const release = catalogReleaseFor(workload.id, workload.artifacts.native.release);
+  if (release === undefined)
     return Effect.fail(
       new StackPreparationError({
         message: `Unsupported native release ${workload.artifacts.native.release}`,
@@ -281,5 +316,5 @@ export const resolveNativeArtifactForWorkload = (
         version: workload.artifacts.native.release,
       }),
     );
-  return Effect.succeed(artifactFor(entry, target));
+  return Effect.succeed(artifactFor(entry, release, target));
 };

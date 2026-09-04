@@ -24,6 +24,7 @@ import {
   StackUpgradeRequiredError,
 } from "@supabase/stack/effect";
 import { Output } from "../output/output.service.ts";
+import { ProcessControl } from "../runtime/process-control.service.ts";
 import {
   isFunctionScopedPath,
   relativeFunctionPath,
@@ -146,6 +147,7 @@ export const serveManagedFunctions = Effect.fnUntraced(function* (
   operations: ServeManagedFunctionsOperations = defaultOperations,
 ) {
   const output = yield* Output;
+  const processControl = yield* ProcessControl;
   const resolvedOperations: Required<ServeManagedFunctionsOperations> = {
     ...defaultOperations,
     ...operations,
@@ -315,9 +317,12 @@ export const serveManagedFunctions = Effect.fnUntraced(function* (
         lifecycle: ready.lifecycle,
       });
       if (apiUrl !== undefined) yield* output.info(`${apiUrl}/functions/v1`);
-      yield* stack
-        .followLogs({ capabilities: ["functions"] })
-        .pipe(Stream.runForEach((entry) => output.info(`[${entry.source}] ${entry.message}`)));
+      yield* Effect.raceFirst(
+        stack
+          .followLogs({ capabilities: ["functions"] })
+          .pipe(Stream.runForEach((entry) => output.info(`[${entry.source}] ${entry.message}`))),
+        processControl.awaitShutdown,
+      );
     }),
   );
 });

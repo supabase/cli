@@ -1,5 +1,8 @@
 import { Schema } from "effect";
 import { release, workload, type CapabilityModule } from "../CapabilityModule.ts";
+import { catalogEntryFor } from "../WorkloadCatalog.ts";
+
+const version = catalogEntryFor("pooler:pooler").defaultVersion;
 
 const Secret = Schema.Redacted(Schema.String);
 export const PoolerSettingsSchema = Schema.Struct({
@@ -24,10 +27,10 @@ export const PoolerModule: CapabilityModule<PoolerSettings> = {
   },
   defaultEnabled: true,
   defaultActivation: "lazy",
-  defaultVersion: "v2.9.12",
+  defaultVersion: version,
   dependencies: ["database"],
   releases: {
-    "v2.9.12": release("v2.9.12", [
+    [version]: release(version, [
       workload("pooler", "pooler", {
         dependencies: ["database:database"],
         readiness: { portField: "pooler" },

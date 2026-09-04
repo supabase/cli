@@ -912,7 +912,7 @@ describe("production runtime", () => {
               Effect.succeed({
                 workloadId: "realtime:realtime",
                 capability: "realtime" as const,
-                version: "v2.130.0",
+                version: compiled.definition.capabilities.realtime.version,
                 outcome: "cached" as const,
                 artifactRoot,
               }),
@@ -1000,7 +1000,7 @@ describe("production runtime", () => {
               Effect.succeed({
                 workloadId: "database:database",
                 capability: "database" as const,
-                version: "17.6.1.167",
+                version: compiled.definition.capabilities.database.version,
                 outcome: "cached" as const,
                 artifactRoot,
               }),
@@ -1117,7 +1117,7 @@ describe("production runtime", () => {
                 Effect.succeed({
                   workloadId: "database:database",
                   capability: "database" as const,
-                  version: "17.6.1.167",
+                  version: compiled.definition.capabilities.database.version,
                   outcome: "cached" as const,
                   artifactRoot,
                 }),
