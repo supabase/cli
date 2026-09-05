@@ -30,6 +30,7 @@ catalog:
   "tldts": "^7.4.11"
   "turbo": "2.10.12"
   "vitest": "^4.1.11"
+  '@supabase/supabase-js': ^2.110.7
 
 blockExoticSubdeps: true
 
