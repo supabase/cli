@@ -409,66 +409,6 @@ describe("native runtime", { timeout: 15_000 }, () => {
     ),
   );
 
-  it.live("runs post-readiness startup processes before reporting ready", () =>
-    withPlatform(
-      Effect.gen(function* () {
-        const fs = yield* FileSystem.FileSystem;
-        const path = yield* Path.Path;
-        const root = yield* fs.makeTempDirectoryScoped({ prefix: "supabase-native-post-ready-" });
-        const logStore = yield* makeLogStore({ path: path.join(root, "logs.json") });
-        const postReadiness = {
-          executable: process.execPath,
-          args: [
-            "-e",
-            'process.stdout.write("post-ready\\n"); process.stderr.write("post-ready-stderr\\n")',
-          ],
-        };
-        const runtime = yield* makeNativeRuntime({
-          resolveProcess: () =>
-            Effect.succeed({
-              startup: [],
-              postReadiness: [postReadiness],
-              main: fixtureProcess("main"),
-            }),
-          logStore,
-          waitForReadiness: () => Effect.void,
-        });
-        const key = keyFor("post-readiness");
-        const ready = yield* runtime.start(key, workload("post-readiness"));
-        expect(ready.state).toBe("ready");
-        const messages = (yield* logStore.read()).map((entry) => entry.message);
-        expect(messages).toContain("post-ready");
-        expect(messages).toContain("post-ready-stderr");
-        yield* runtime.remove(key);
-      }),
-    ),
-  );
-
-  it.live("writes a completion witness only after a successful post-readiness process", () =>
-    withPlatform(
-      Effect.gen(function* () {
-        const fs = yield* FileSystem.FileSystem;
-        const path = yield* Path.Path;
-        const root = yield* fs.makeTempDirectoryScoped({ prefix: "supabase-native-marker-" });
-        const marker = path.join(root, "data", "migration-complete");
-        const runtime = yield* makeNativeRuntime({
-          resolveProcess: () =>
-            Effect.succeed({
-              startup: [],
-              postReadiness: [{ ...oneShotProcess("migrated"), successMarker: marker }],
-              main: fixtureProcess("main"),
-            }),
-          waitForReadiness: () => Effect.void,
-        });
-        const key = keyFor("marker");
-        const ready = yield* runtime.start(key, workload("marker"));
-        expect(ready.state).toBe("ready");
-        expect(yield* fs.readFileString(marker)).toBe("completed\n");
-        yield* runtime.stop(key);
-      }),
-    ),
-  );
-
   it.live("bounds a native one-shot before it can report readiness", () =>
     withPlatform(
       Effect.gen(function* () {
@@ -536,208 +476,6 @@ describe("native runtime", { timeout: 15_000 }, () => {
         const messages = (yield* logStore.read()).map((entry) => entry.message);
         expect(messages).toContain('{"password":"missing","path":true}');
         yield* runtime.stop(key);
-      }),
-    ),
-  );
-
-  it.live("does not report ready when post-readiness startup fails", () =>
-    withPlatform(
-      Effect.gen(function* () {
-        let readinessCalled = false;
-        const runtime = yield* makeNativeRuntime({
-          resolveProcess: () =>
-            Effect.succeed({
-              startup: [],
-              postReadiness: [oneShotProcess("post-ready-failed", 7)],
-              main: fixtureProcess("main"),
-            }),
-          waitForReadiness: () =>
-            Effect.sync(() => {
-              readinessCalled = true;
-            }),
-        });
-        const result = yield* runtime
-          .start(keyFor("post-readiness-failed"), workload("post-readiness-failed"))
-          .pipe(Effect.exit);
-        expect(Exit.isFailure(result)).toBe(true);
-        if (Exit.isFailure(result))
-          expect(Cause.pretty(result.cause)).toContain(
-            "Native post-readiness process exited with code 7",
-          );
-        expect(readinessCalled).toBe(true);
-        expect(yield* runtime.observe(stackId)).toEqual([]);
-      }),
-    ),
-  );
-
-  it.live("fails when the main workload exits while post-readiness is blocked", () =>
-    withPlatform(
-      Effect.gen(function* () {
-        const fs = yield* FileSystem.FileSystem;
-        const path = yield* Path.Path;
-        const root = yield* fs.makeTempDirectoryScoped({
-          prefix: "supabase-native-post-ready-main-exit-",
-        });
-        const readyPath = path.join(root, "main-ready");
-        const releasePath = path.join(root, "post-release");
-        expect(spawnSync("mkfifo", [readyPath]).status).toBe(0);
-        expect(spawnSync("mkfifo", [releasePath]).status).toBe(0);
-        const logStore = yield* makeLogStore({ path: path.join(root, "logs.json") });
-        const postStartedSignal = yield* Deferred.make<void>();
-        const signaledLogStore = signalOnLog(logStore, "post-blocked", postStartedSignal);
-        const postReadiness = {
-          executable: process.execPath,
-          args: [
-            "-e",
-            `const fs = require("node:fs"); process.stdout.write("post-blocked\\n"); const fd = fs.openSync(${JSON.stringify(releasePath)}, "r"); fs.readSync(fd, Buffer.alloc(1), 0, 1, null); fs.closeSync(fd); process.stdout.write("post-complete\\n")`,
-          ],
-        };
-        const main = {
-          executable: process.execPath,
-          args: [
-            "-e",
-            `const fs = require("node:fs"); const fd = fs.openSync(${JSON.stringify(readyPath)}, "r"); fs.readSync(fd, Buffer.alloc(1), 0, 1, null); fs.closeSync(fd); process.stdout.write("main-exited\\n"); process.exit(0)`,
-          ],
-        };
-        const runtime = yield* makeNativeRuntime({
-          resolveProcess: () =>
-            Effect.succeed({ startup: [], postReadiness: [postReadiness], main }),
-          logStore: signaledLogStore,
-          waitForReadiness: () => Effect.void,
-        });
-        const key = keyFor("post-readiness-main-exit");
-        const caller = yield* runtime
-          .start(key, workload("post-readiness-main-exit"))
-          .pipe(Effect.forkChild({ startImmediately: true }));
-        yield* Deferred.await(postStartedSignal);
-        const releaseMain = spawnSync(
-          process.execPath,
-          ["-e", `require("node:fs").writeFileSync(${JSON.stringify(readyPath)}, "x")`],
-          { encoding: "utf8", timeout: 5_000 },
-        );
-        expect(releaseMain.error).toBeUndefined();
-        expect(releaseMain.status).toBe(0);
-        const result = yield* Fiber.join(caller).pipe(
-          Effect.exit,
-          Effect.timeoutOrElse({
-            duration: "5 seconds",
-            orElse: () =>
-              Effect.fail(
-                new ProcessTreeTestError({
-                  message: "Native caller lifecycle result timed out",
-                }),
-              ),
-          }),
-        );
-        expect(Exit.isFailure(result)).toBe(true);
-        if (Exit.isFailure(result))
-          expect(Cause.pretty(result.cause)).toContain("exited before readiness");
-        expect(yield* runtime.observe(stackId)).toEqual([]);
-      }),
-    ),
-  );
-
-  it.live("interrupts a post-readiness startup process through its exact child scope", () =>
-    withPlatform(
-      Effect.gen(function* () {
-        const fs = yield* FileSystem.FileSystem;
-        const path = yield* Path.Path;
-        const root = yield* fs.makeTempDirectoryScoped({
-          prefix: "supabase-native-post-interrupt-",
-        });
-        const pidPath = path.join(root, "pid");
-        const logStore = yield* makeLogStore({ path: path.join(root, "logs.json") });
-        const startedSignal = yield* Deferred.make<void>();
-        const signaledLogStore = signalOnLog(logStore, "post-started", startedSignal);
-        const runtime = yield* makeNativeRuntime({
-          resolveProcess: () =>
-            Effect.succeed({
-              startup: [],
-              postReadiness: [
-                {
-                  executable: process.execPath,
-                  args: [
-                    "-e",
-                    `require("node:fs").writeFileSync(${JSON.stringify(pidPath)},String(process.pid)); process.stdout.write("post-started\\n"); setInterval(()=>{},1000)`,
-                  ],
-                },
-              ],
-              main: fixtureProcess("never-main"),
-            }),
-          logStore: signaledLogStore,
-          waitForReadiness: () => Effect.void,
-        });
-        const key = keyFor("post-readiness-interrupted");
-        const caller = yield* runtime
-          .start(key, workload("post-readiness-interrupted"))
-          .pipe(Effect.forkChild({ startImmediately: true }));
-        yield* Deferred.await(startedSignal);
-        yield* runtime.stop(key);
-        const result = yield* Fiber.join(caller).pipe(Effect.exit);
-        expect(Exit.isFailure(result)).toBe(true);
-        const pid = Number.parseInt(yield* fs.readFileString(pidPath), 10);
-        expect(Number.isSafeInteger(pid)).toBe(true);
-        const processState = yield* Effect.sync(() => {
-          const result = spawnSync("ps", ["-p", String(pid), "-o", "stat="], {
-            encoding: "utf8",
-          });
-          return result.stdout.trim();
-        });
-        expect(processState === "" || processState.startsWith("Z")).toBe(true);
-      }),
-    ),
-  );
-
-  it.live("interrupts a blocked post-readiness child when log persistence fails", () =>
-    withPlatform(
-      Effect.gen(function* () {
-        const fs = yield* FileSystem.FileSystem;
-        const path = yield* Path.Path;
-        const root = yield* fs.makeTempDirectoryScoped({
-          prefix: "supabase-native-post-log-failure-",
-        });
-        const pidPath = path.join(root, "pid");
-        const stoppedPath = path.join(root, "stopped");
-        const logStore: LogStore = {
-          path: "memory://native-post-log-failure",
-          append: () =>
-            Effect.fail(
-              new LogStoreError({
-                path: "memory://native-post-log-failure",
-                message: "disk full",
-              }),
-            ),
-          read: () => Effect.succeed([]),
-        };
-        const runtime = yield* makeNativeRuntime({
-          resolveProcess: () =>
-            Effect.succeed({
-              startup: [],
-              postReadiness: [
-                {
-                  executable: process.execPath,
-                  args: [
-                    "-e",
-                    `const fs=require("node:fs"); fs.writeFileSync(${JSON.stringify(pidPath)},String(process.pid)); const stop=()=>{fs.writeFileSync(${JSON.stringify(stoppedPath)},"stopped"); process.exit(0)}; process.on("SIGTERM",stop); process.on("SIGINT",stop); process.stdout.write("post-log-failure\\n"); setInterval(()=>{},1000);`,
-                  ],
-                },
-              ],
-              main: {
-                executable: process.execPath,
-                args: ["-e", "setInterval(() => {}, 1000)"],
-              },
-            }),
-          logStore,
-          waitForReadiness: () => Effect.void,
-        });
-        const result = yield* runtime
-          .start(keyFor("post-log-failure"), workload("post-log-failure"))
-          .pipe(Effect.exit);
-        expect(Exit.isFailure(result)).toBe(true);
-        const pid = Number.parseInt(yield* fs.readFileString(pidPath), 10);
-        expect(Number.isSafeInteger(pid)).toBe(true);
-        expect(yield* fs.readFileString(stoppedPath)).toBe("stopped");
-        expect(yield* runtime.observe(stackId)).toEqual([]);
       }),
     ),
   );
@@ -887,54 +625,26 @@ describe("native runtime", { timeout: 15_000 }, () => {
   it.live("runs database bootstrap before reporting readiness", () =>
     withPlatform(
       Effect.gen(function* () {
-        const fs = yield* FileSystem.FileSystem;
-        const path = yield* Path.Path;
-        const root = yield* fs.makeTempDirectoryScoped({
-          prefix: "supabase-native-post-ready-bootstrap-",
-        });
-        const postCompletePath = path.join(root, "post-complete");
-        let applied = false;
-        let postCompletedBeforeBootstrap = false;
+        let readinessCalled = false;
+        let bootstrapCalledAfterReadiness = false;
         const runtime = yield* makeNativeRuntime({
           resolveProcess: () =>
             Effect.succeed({
               startup: [],
-              postReadiness: [
-                {
-                  executable: process.execPath,
-                  args: [
-                    "-e",
-                    `require("node:fs").writeFileSync(${JSON.stringify(postCompletePath)}, "done"); process.stdout.write("post-complete\\n")`,
-                  ],
-                },
-              ],
               main: fixtureProcess("database"),
             }),
-          waitForReadiness: () => Effect.void,
+          waitForReadiness: () =>
+            Effect.sync(() => {
+              readinessCalled = true;
+            }),
           bootstrapDatabase: () =>
-            fs.exists(postCompletePath).pipe(
-              Effect.mapError(
-                (error) =>
-                  new RuntimeDriverError({
-                    message: "Unable to inspect post-readiness marker",
-                    stackId,
-                    workloadId: "database:bootstrap",
-                    cause: error,
-                  }),
-              ),
-              Effect.tap((completed) =>
-                Effect.sync(() => {
-                  postCompletedBeforeBootstrap = completed;
-                  applied = true;
-                }),
-              ),
-              Effect.asVoid,
-            ),
+            Effect.sync(() => {
+              bootstrapCalledAfterReadiness = readinessCalled;
+            }),
         });
         const key = keyFor("bootstrap");
         const ready = yield* runtime.start(key, workload("bootstrap", "database"));
-        expect(applied).toBe(true);
-        expect(postCompletedBeforeBootstrap).toBe(true);
+        expect(bootstrapCalledAfterReadiness).toBe(true);
         expect(ready.state).toBe("ready");
         yield* runtime.stop(key);
         yield* runtime.remove(key);

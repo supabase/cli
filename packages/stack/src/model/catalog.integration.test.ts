@@ -41,15 +41,15 @@ describe("complete workload catalog", () => {
 
   it("matches the executable paths shipped by slim-services archives", () => {
     const expected = {
-      "database:database": "share/supabase-cli/bin/supabase-postgres-init.sh",
+      "database:database": "bin/supabase-postgres-start",
       "rest:rest": "bin/postgrest",
       "auth:auth": "bin/auth",
       "realtime:realtime": "bin/server",
-      "storage:storage": "app/dist/start/server.js",
+      "storage:storage": "bin/storage",
       "storage:imgproxy": "bin/imgproxy",
       "functions:edge-runtime": "bin/edge-runtime",
-      "studio:studio": "app/apps/studio/server.js",
-      "studio:pgmeta": "app/dist/server/server.js",
+      "studio:studio": "bin/studio",
+      "studio:pgmeta": "bin/pgmeta",
       "mail:mail": "bin/mailpit",
       "analytics:analytics": "bin/logflare",
       "analytics:vector": "bin/vector",
@@ -60,33 +60,28 @@ describe("complete workload catalog", () => {
       expect(WORKLOAD_CATALOG[id]?.requiredRuntimePaths).toContain(executable);
     }
     expect(WORKLOAD_CATALOG["realtime:realtime"]?.requiredRuntimePaths).toEqual([
-      "bin/migrate",
-      "bin/realtime",
       "bin/server",
+      "bin/prepare",
     ]);
     expect(WORKLOAD_CATALOG["database:database"]?.requiredRuntimePaths).toEqual([
-      "bin/postgres",
-      "bin/pg_isready",
-      "bin/psql",
-      "share/supabase-cli/bin/supabase-postgres-init.sh",
-      "share/supabase-cli/config/pgsodium_getkey.sh",
-      "share/supabase-cli/migrations",
-      "lib",
+      "bin/supabase-postgres-start",
     ]);
     expect(WORKLOAD_CATALOG["storage:storage"]?.requiredRuntimePaths).toEqual([
-      "node/bin/node",
-      "app/dist/start/server.js",
-      "app/dist/scripts/migrate-call.js",
+      "bin/storage",
+      "bin/prepare",
     ]);
-    expect(WORKLOAD_CATALOG["analytics:analytics"]?.requiredRuntimePaths).toEqual(["bin/logflare"]);
+    expect(WORKLOAD_CATALOG["analytics:analytics"]?.requiredRuntimePaths).toEqual([
+      "bin/logflare",
+      "bin/prepare",
+    ]);
     expect(WORKLOAD_CATALOG["analytics:vector"]?.requiredRuntimePaths).toEqual([
       "bin/vector",
       "share/doc/vector/config/vector.yaml",
     ]);
     expect(WORKLOAD_CATALOG["pooler:pooler"]?.requiredRuntimePaths).toEqual([
-      "bin/migrate",
-      "bin/supavisor",
       "bin/server",
+      "bin/prepare",
+      "bin/provision-tenant",
     ]);
   });
 

@@ -1,6 +1,5 @@
 import {
   Cause,
-  Config,
   Context,
   Crypto,
   Duration,
@@ -167,8 +166,6 @@ const urlHost = (host: string): string => {
 };
 
 const DATABASE_WORKLOAD_ID = "database:database";
-/** Atomic lifecycle witness for a successfully migrated native cluster. */
-export const NATIVE_DATABASE_MIGRATION_MARKER = ".supabase-stack-migration-complete";
 const checkNativeDatabaseLockEvidence = (
   fileSystem: FileSystem.FileSystem,
   lockPath: string,
@@ -330,91 +327,6 @@ const readinessFor = (
     ),
   );
 };
-
-interface NativeDatabaseMigrationOptions {
-  readonly key: Pick<RuntimeWorkloadKey, "stackId" | "workloadId">;
-  readonly dataPath: string;
-  readonly artifactRoot: string;
-  readonly environment: Readonly<Record<string, string>>;
-  readonly endpointPort: number;
-  readonly fileSystem: FileSystem.FileSystem;
-  readonly pathService: Path.Path;
-}
-
-/** Builds the one-shot native PostgreSQL migration process for an unmarked data directory. */
-const prepareNativeDatabaseMigration = (
-  options: NativeDatabaseMigrationOptions,
-): Effect.Effect<NativeProcessSpec | undefined, RuntimeDriverError> =>
-  Effect.gen(function* () {
-    const { key, dataPath, artifactRoot, environment, endpointPort, fileSystem, pathService } =
-      options;
-    const markerPath = pathService.join(dataPath, NATIVE_DATABASE_MIGRATION_MARKER);
-    const migrated = yield* fileSystem
-      .exists(markerPath)
-      .pipe(
-        Effect.mapError((error) =>
-          driverError(key, `Unable to inspect native database data path: ${error.message}`, error),
-        ),
-      );
-    if (migrated) return undefined;
-    const pgVersionPath = pathService.join(dataPath, "PG_VERSION");
-    const initialized = yield* fileSystem
-      .exists(pgVersionPath)
-      .pipe(
-        Effect.mapError((error) =>
-          driverError(key, `Unable to inspect native database data path: ${error.message}`, error),
-        ),
-      );
-    const postmasterOptionsPath = pathService.join(dataPath, "postmaster.opts");
-    const completeInitialization = initialized
-      ? yield* fileSystem
-          .exists(postmasterOptionsPath)
-          .pipe(
-            Effect.mapError((error) =>
-              driverError(
-                key,
-                `Unable to inspect native database data path: ${error.message}`,
-                error,
-              ),
-            ),
-          )
-      : false;
-    if (initialized && !completeInitialization)
-      yield* fileSystem
-        .remove(dataPath, { recursive: true, force: true })
-        .pipe(
-          Effect.mapError((error) =>
-            driverError(
-              key,
-              `Unable to remove incomplete native database data path: ${error.message}`,
-              error,
-            ),
-          ),
-        );
-    const migrationsPath = pathService.join(artifactRoot, "share/supabase-cli/migrations");
-    const artifactBin = pathService.join(artifactRoot, "bin");
-    const hostPath = yield* Config.string("PATH").pipe(
-      Config.withDefault(""),
-      Effect.mapError((error) => driverError(key, "Unable to read host PATH", error)),
-    );
-    return {
-      executable: pathService.join(migrationsPath, "migrate.sh"),
-      cwd: migrationsPath,
-      // Migration can legitimately outlive readiness on a cold machine; its marker is
-      // written only after success, so rerunning remains idempotent when the marker is absent.
-      timeout: "15 minutes",
-      successMarker: markerPath,
-      env: {
-        ...environment,
-        PATH: hostPath.length === 0 ? artifactBin : `${artifactBin}:${hostPath}`,
-        POSTGRES_HOST: "127.0.0.1",
-        POSTGRES_PORT: String(endpointPort),
-        POSTGRES_DB: "postgres",
-        POSTGRES_USER: "supabase_admin",
-        POSTGRES_PASSWORD: environment.POSTGRES_PASSWORD ?? "",
-      },
-    };
-  });
 
 declare const SUPABASE_FUNCTIONS_SERVE_MAIN_TEMPLATE: string | undefined;
 
@@ -827,9 +739,6 @@ export const makeProductionRuntime = (
             ...(workload.id.startsWith("analytics:") && material.analytics !== undefined
               ? { analytics: material.analytics }
               : {}),
-            ...(workload.id === "pooler:pooler" && material.pooler !== undefined
-              ? { pooler: material.pooler }
-              : {}),
             database: { dataPath: pathService.join(paths.data, "database") },
             storage: { dataPath: pathService.join(paths.data, "storage") },
             ...(functions === undefined ? {} : { functions }),
@@ -1003,9 +912,6 @@ export const makeProductionRuntime = (
                     key,
                     `Unknown runtime specification for ${workload.id}`,
                   );
-                const readinessBudget = yield* readinessDeadlineFor(fresh, workload).pipe(
-                  Effect.mapError((error) => mapDriverError(key, error)),
-                );
                 // Revalidate the fresh persisted definition before spawning; preflight checks
                 // the candidate definition, while this state is the runtime authority.
                 const inputs = yield* runtimeInputs(workload, fresh, undefined).pipe(
@@ -1039,24 +945,6 @@ export const makeProductionRuntime = (
                   inputs,
                 );
                 const environment = spec.env(fresh, workload, endpoint.port, "native", inputs);
-                let migration: NativeProcessSpec | undefined;
-                if (isDatabaseWorkload(workload)) {
-                  const dataPath = inputs.database?.dataPath;
-                  if (dataPath === undefined)
-                    return yield* driverError(
-                      key,
-                      "Resolved database data path is unavailable for native migration",
-                    );
-                  migration = yield* prepareNativeDatabaseMigration({
-                    key,
-                    dataPath,
-                    artifactRoot: prepared.artifactRoot,
-                    environment,
-                    endpointPort: endpoint.port,
-                    fileSystem,
-                    pathService,
-                  });
-                }
                 return {
                   startup: spec
                     .nativeStartupProcesses(
@@ -1068,12 +956,9 @@ export const makeProductionRuntime = (
                     )
                     .map((startup: NativeProcessSpec) => ({
                       ...startup,
-                      timeout:
-                        startup.timeout ??
-                        (isDatabaseWorkload(workload) ? readinessBudget : Duration.minutes(5)),
+                      timeout: startup.timeout ?? Duration.minutes(5),
                       env: { ...environment, ...startup.env },
                     })),
-                  ...(migration === undefined ? {} : { postReadiness: [migration] }),
                   main: { ...resolvedNativeProcess, env: environment },
                 };
               }),

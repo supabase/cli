@@ -14,11 +14,7 @@ import type {
   ContainerMount,
   ContainerStartupProcess,
 } from "./ContainerEngine.ts";
-import {
-  catalogEntryFor,
-  containerAliasFor,
-  type NativeWorkloadProcess,
-} from "../model/WorkloadCatalog.ts";
+import { catalogEntryFor, containerAliasFor } from "../model/WorkloadCatalog.ts";
 import { parseFileSize } from "../model/capabilities/storage.ts";
 import { resolveThirdPartyIssuer } from "../model/capabilities/auth-third-party.ts";
 import { Effect, type Duration } from "effect";
@@ -72,8 +68,6 @@ export interface WorkloadRuntimeInputs {
   /** Stack-owned native persistent data paths. Containers use their named volumes instead. */
   readonly database?: Readonly<{ readonly dataPath?: string }>;
   readonly storage?: Readonly<{ readonly dataPath?: string }>;
-  /** Owner-resolved tenant provisioning file for the Pooler container. */
-  readonly pooler?: Readonly<{ readonly tenantPath?: string }>;
   /** Host route used by containers to reach StackGateway. */
   readonly hostRoute?: ContainerHostRoute;
 }
@@ -236,17 +230,6 @@ export const validateWorkloadRuntimeInputs = (
       )
         return yield* new StackPreparationError({
           message: "Resolved Analytics service-account path is required",
-          workload: workload.id,
-        });
-    }
-    if (workload.id === "pooler:pooler" && inputs.pooler?.tenantPath !== undefined) {
-      const tenantPath = inputs.pooler.tenantPath;
-      if (
-        tenantPath.length === 0 ||
-        [...tenantPath].some((character) => character.charCodeAt(0) < 0x20)
-      )
-        return yield* new StackPreparationError({
-          message: "Resolved Pooler tenant path is invalid",
           workload: workload.id,
         });
     }
@@ -482,20 +465,6 @@ const nativeProcessFor = (
   inputs: WorkloadRuntimeInputs = {},
 ): NativeProcessResolution => {
   const catalog = catalogEntryFor(workload.id);
-  const metadata: NativeWorkloadProcess | undefined = catalog?.nativeProcess;
-  if (metadata !== undefined) {
-    const metadataArgs = metadata.args.map((arg) =>
-      arg.startsWith("app/") || arg.startsWith("share/") ? artifactPath(artifactRoot, arg) : arg,
-    );
-    return {
-      executable: artifactPath(artifactRoot, metadata.executablePath),
-      args: nativeArgsFor(workload, metadataArgs, inputs),
-      cwd: artifactPath(artifactRoot, metadata.cwd),
-      ...(workload.id === "database:database"
-        ? { gracefulStopSignal: "SIGINT", gracefulStopTimeout: "15 seconds" }
-        : {}),
-    };
-  }
   const executablePath = catalog?.executablePath;
   const resolvedPort = privatePortFor(state, workload.id, "primary") ?? port;
   const args = spec
@@ -519,7 +488,7 @@ const nativeStartupProcessesFor = (
   artifactRoot: string,
   _state: PersistedStackState,
   workload: PlannedWorkload,
-  inputs: WorkloadRuntimeInputs = {},
+  _inputs: WorkloadRuntimeInputs = {},
 ): ReadonlyArray<NativeProcessResolution> => {
   const artifact = (relative: string): string => artifactPath(artifactRoot, relative);
   const cwd = artifactRoot;
@@ -527,49 +496,16 @@ const nativeStartupProcessesFor = (
     case "auth:auth":
       return [{ executable: artifact("bin/auth"), args: ["migrate"], cwd }];
     case "storage:storage":
-      return [
-        {
-          executable: artifact("node/bin/node"),
-          args: [artifact("app/dist/scripts/migrate-call.js")],
-          cwd: artifact("app"),
-        },
-      ];
+      return [{ executable: artifact("bin/prepare"), args: [], cwd }];
     case "realtime:realtime":
-      return [
-        { executable: artifact("bin/migrate"), args: [], cwd },
-        {
-          executable: artifact("bin/realtime"),
-          args: ["eval", "Realtime.Release.seeds(Realtime.Repo)"],
-          cwd,
-        },
-      ];
+      return [{ executable: artifact("bin/prepare"), args: [], cwd }];
     case "analytics:analytics":
+      return [{ executable: artifact("bin/prepare"), args: [], cwd }];
+    case "pooler:pooler":
       return [
-        {
-          executable: artifact("bin/logflare"),
-          args: ["eval", "Logflare.Release.migrate"],
-          cwd,
-        },
+        { executable: artifact("bin/prepare"), args: [], cwd },
+        { executable: artifact("bin/provision-tenant"), args: [], cwd },
       ];
-    case "pooler:pooler": {
-      const migrate = { executable: artifact("bin/migrate"), args: [], cwd };
-      const tenantPath = inputs.pooler?.tenantPath;
-      if (tenantPath === undefined) return [migrate];
-      return [
-        migrate,
-        {
-          executable: "/bin/sh",
-          args: [
-            "-c",
-            'exec "$1" eval "$(cat "$SUPABASE_POOLER_TENANT_PATH")"',
-            "supavisor",
-            artifact("bin/supavisor"),
-          ],
-          cwd,
-          env: { SUPABASE_POOLER_TENANT_PATH: tenantPath },
-        },
-      ];
-    }
     default:
       return [];
   }
@@ -1027,6 +963,8 @@ const specs: Readonly<Record<string, WorkloadRuntimeSpecDefinition>> = {
           runtime === "container"
             ? "/var/lib/postgresql/data"
             : (inputs.database?.dataPath ?? `${state.identity.projectRoot}/.supabase/db/data`),
+        POSTGRES_USER: "supabase_admin",
+        POSTGRES_DB: "postgres",
         POSTGRES_PASSWORD: secret(state, DATABASE_INTERNAL_PASSWORD_SLOT),
         TZDIR: "/var/db/timezone/zoneinfo",
       }),
@@ -1082,13 +1020,7 @@ const specs: Readonly<Record<string, WorkloadRuntimeSpecDefinition>> = {
       }),
     containerEntrypoint: "/usr/bin/tini",
     containerArgs: () => ["-s", "-g", "--", "/app/bin/server"],
-    containerStartupProcesses: () => [
-      { entrypoint: "/app/bin/migrate", command: [] },
-      {
-        entrypoint: "/app/bin/realtime",
-        command: ["eval", "Realtime.Release.seeds(Realtime.Repo)"],
-      },
-    ],
+    containerStartupProcesses: () => [{ entrypoint: "/app/bin/prepare", command: [] }],
     readiness: { protocol: "http", path: "/healthcheck" },
   },
   "storage:storage": {
@@ -1097,9 +1029,7 @@ const specs: Readonly<Record<string, WorkloadRuntimeSpecDefinition>> = {
     env: (state, workload, port, runtime = "native", inputs = {}) =>
       withStorageSettings(state, runtime, port, workload, inputs),
     containerArgs: () => [],
-    containerStartupProcesses: () => [
-      { entrypoint: "/node/bin/node", command: ["dist/scripts/migrate-call.js"] },
-    ],
+    containerStartupProcesses: () => [{ entrypoint: "/slim-runtime/bin/prepare", command: [] }],
     readiness: { protocol: "http", path: "/status" },
   },
   "storage:imgproxy": {
@@ -1279,7 +1209,7 @@ const specs: Readonly<Record<string, WorkloadRuntimeSpecDefinition>> = {
   "pooler:pooler": {
     bindings: { primary: { containerPort: 6543 }, admin: { containerPort: 4000 } },
     args: () => ["start"],
-    env: (state, workload, port, runtime = "native", inputs = {}) => {
+    env: (state, workload, port, runtime = "native", _inputs = {}) => {
       const adminPort =
         runtime === "container" ? 4000 : privatePortFor(state, "pooler:pooler", "admin");
       const primaryPort = privatePortFor(state, "pooler:pooler", "primary");
@@ -1301,6 +1231,9 @@ const specs: Readonly<Record<string, WorkloadRuntimeSpecDefinition>> = {
             ? String(primaryPort)
             : "6543",
         DATABASE_URL: `ecto://postgres:${secret(state, DATABASE_INTERNAL_PASSWORD_SLOT)}@${dbHost(runtime)}:${runtime === "container" ? 5432 : dbPort(state)}/_supabase`,
+        POSTGRES_HOST: dbHost(runtime),
+        POSTGRES_PORT: String(runtime === "container" ? 5432 : dbPort(state)),
+        POSTGRES_PASSWORD: secret(state, DATABASE_INTERNAL_PASSWORD_SLOT),
         API_JWT_SECRET: secret(state, "secret:auth.settings.jwt_secret"),
         REGION: "local",
         TENANT_ID: valueAt(state, "pooler", "tenant_id"),
@@ -1311,41 +1244,15 @@ const specs: Readonly<Record<string, WorkloadRuntimeSpecDefinition>> = {
         DEFAULT_POOL_SIZE: valueAt(state, "pooler", "default_pool_size"),
         MAX_CLIENT_CONN: valueAt(state, "pooler", "max_client_conn"),
         POOL_MODE: valueAt(state, "pooler", "pool_mode"),
-        ...(runtime === "container" && inputs.pooler?.tenantPath !== undefined
-          ? { SUPABASE_POOLER_TENANT_PATH: "/app/pooler_tenant.exs" }
-          : {}),
       };
     },
-    // Mirror native convergence explicitly: migrate before the main server.
-    // Tenant provisioning remains a separate owner/bootstrap phase.
+    // Mirror native convergence explicitly: prepare and provision before the main server.
     containerEntrypoint: "/usr/bin/tini",
-    containerStartupProcesses: (_state, _workload, inputs = {}) => {
-      const migrate = { entrypoint: "/app/bin/migrate", command: [] };
-      const tenantPath = inputs.pooler?.tenantPath;
-      return tenantPath === undefined
-        ? [migrate]
-        : [
-            migrate,
-            {
-              entrypoint: "/usr/bin/sh",
-              command: [
-                "-c",
-                'exec /app/bin/supavisor eval "$(cat "$SUPABASE_POOLER_TENANT_PATH")"',
-              ],
-            },
-          ];
-    },
+    containerStartupProcesses: () => [
+      { entrypoint: "/app/bin/prepare", command: [] },
+      { entrypoint: "/app/bin/provision-tenant", command: [] },
+    ],
     containerArgs: () => ["-s", "-g", "--", "/app/bin/server"],
-    containerMounts: (_state, _workload, inputs = {}) =>
-      inputs.pooler?.tenantPath === undefined
-        ? []
-        : [
-            {
-              source: inputs.pooler.tenantPath,
-              target: "/app/pooler_tenant.exs",
-              readOnly: true,
-            },
-          ],
     readiness: { protocol: "http", path: "/api/health", binding: "admin" },
   },
 };

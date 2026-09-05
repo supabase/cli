@@ -17,14 +17,6 @@ export interface NativeWorkloadArtifact {
   readonly checksumUrl: string;
   readonly requiredRuntimePaths: ReadonlyArray<string>;
   readonly executablePath: string;
-  readonly nativeProcess?: NativeWorkloadProcess;
-}
-
-/** Artifact-root-relative process metadata for native Node workloads. */
-export interface NativeWorkloadProcess {
-  readonly executablePath: string;
-  readonly args: ReadonlyArray<string>;
-  readonly cwd: string;
 }
 
 export interface WorkloadCatalogEntry {
@@ -36,8 +28,6 @@ export interface WorkloadCatalogEntry {
   readonly executablePath: string;
   /** Stable, stack-local DNS identity used by container dependants. */
   readonly containerAlias: string;
-  /** Present when the artifact is launched through an interpreter. */
-  readonly nativeProcess?: NativeWorkloadProcess;
 }
 
 const native = (
@@ -49,7 +39,6 @@ const native = (
   options: {
     readonly additionalReleases?: Readonly<Record<string, string>>;
     readonly containerAlias?: string;
-    readonly nativeProcess?: NativeWorkloadProcess;
   } = {},
 ): WorkloadCatalogEntry => ({
   service,
@@ -61,7 +50,6 @@ const native = (
   requiredRuntimePaths,
   executablePath,
   containerAlias: options.containerAlias ?? `supabase-${service}`,
-  ...(options.nativeProcess === undefined ? {} : { nativeProcess: options.nativeProcess }),
 });
 
 /** The single authoritative private workload identity table. */
@@ -69,20 +57,13 @@ const workloadCatalog = {
   "database:database": native(
     "postgres",
     "17.6.1.168",
-    "ghcr.io/supabase/cli/postgres:17.6.1.168",
-    "share/supabase-cli/bin/supabase-postgres-init.sh",
-    [
-      "bin/postgres",
-      "bin/pg_isready",
-      "bin/psql",
-      "share/supabase-cli/bin/supabase-postgres-init.sh",
-      "share/supabase-cli/config/pgsodium_getkey.sh",
-      "share/supabase-cli/migrations",
-      "lib",
-    ],
+    "ghcr.io/supabase/cli/postgres:17.6.1.168@sha256:88747ff441dc313edab7f2bc14f2586d7fee5cc7c44d6425729756d1ef7e0f89",
+    "bin/supabase-postgres-start",
+    ["bin/supabase-postgres-start"],
     {
       additionalReleases: {
-        "15.14.1.168": "ghcr.io/supabase/cli/postgres:15.14.1.168",
+        "15.14.1.168":
+          "ghcr.io/supabase/cli/postgres:15.14.1.168@sha256:f8cd66cf9d464374fe8932a319c6bb0ab03520643ee038b4e84bbdb8ad03bd8f",
       },
       containerAlias: "supabase-database",
     },
@@ -101,23 +82,16 @@ const workloadCatalog = {
   "realtime:realtime": native(
     "realtime",
     "v2.134.5",
-    "ghcr.io/supabase/cli/realtime:v2.134.5",
+    "ghcr.io/supabase/cli/realtime:v2.134.5@sha256:ebed084dc805ca8d9dc0ab37a84f858c82c1ccd9afcf4bff332941ea0d089347",
     "bin/server",
-    ["bin/migrate", "bin/realtime", "bin/server"],
+    ["bin/server", "bin/prepare"],
   ),
   "storage:storage": native(
     "storage",
     "v1.73.0",
-    "ghcr.io/supabase/cli/storage:v1.73.0",
-    "app/dist/start/server.js",
-    ["node/bin/node", "app/dist/start/server.js", "app/dist/scripts/migrate-call.js"],
-    {
-      nativeProcess: {
-        executablePath: "node/bin/node",
-        args: ["app/dist/start/server.js"],
-        cwd: "app",
-      },
-    },
+    "ghcr.io/supabase/cli/storage:v1.73.0@sha256:c645e251ecdb393b370413697f5a5ed48c853d1c068c4698fece8d2914f5d8aa",
+    "bin/storage",
+    ["bin/storage", "bin/prepare"],
   ),
   "storage:imgproxy": native(
     "imgproxy",
@@ -136,30 +110,16 @@ const workloadCatalog = {
   "studio:studio": native(
     "studio",
     "2026.09.04-sha-5a67366",
-    "ghcr.io/supabase/cli/studio:2026.09.04-sha-5a67366",
-    "app/apps/studio/server.js",
-    ["node/bin/node", "app/apps/studio/docker-entrypoint.mjs", "app/apps/studio/server.js"],
-    {
-      nativeProcess: {
-        executablePath: "node/bin/node",
-        args: ["app/apps/studio/docker-entrypoint.mjs"],
-        cwd: "app",
-      },
-    },
+    "ghcr.io/supabase/cli/studio:2026.09.04-sha-5a67366@sha256:b33221c99519400d648b98e0c31004f8897104c3970d0ef169392c3f3d22c22c",
+    "bin/studio",
+    ["bin/studio"],
   ),
   "studio:pgmeta": native(
     "pgmeta",
     "v0.99.0",
-    "ghcr.io/supabase/cli/pgmeta:v0.99.0",
-    "app/dist/server/server.js",
-    ["node/bin/node", "app/dist/server/server.js"],
-    {
-      nativeProcess: {
-        executablePath: "node/bin/node",
-        args: ["app/dist/server/server.js"],
-        cwd: "app",
-      },
-    },
+    "ghcr.io/supabase/cli/pgmeta:v0.99.0@sha256:efe57d66dafa2921f7c1af3283e40432dd66eba190ea84d3d9d1eda629c64ff0",
+    "bin/pgmeta",
+    ["bin/pgmeta"],
   ),
   "mail:mail": native(
     "mailpit",
@@ -172,9 +132,9 @@ const workloadCatalog = {
   "analytics:analytics": native(
     "analytics",
     "v1.50.9",
-    "ghcr.io/supabase/cli/analytics:v1.50.9",
+    "ghcr.io/supabase/cli/analytics:v1.50.9@sha256:5a1bc151a4e53f84012a1b459db9e64bdd72945b115633896e8df004861c988f",
     "bin/logflare",
-    ["bin/logflare"],
+    ["bin/logflare", "bin/prepare"],
   ),
   "analytics:vector": native(
     "vector",
@@ -186,9 +146,9 @@ const workloadCatalog = {
   "pooler:pooler": native(
     "pooler",
     "v2.9.12",
-    "ghcr.io/supabase/cli/pooler:v2.9.12",
+    "ghcr.io/supabase/cli/pooler:v2.9.12@sha256:eb011c14a6dd569f795397215887357d6ce45ebadf387efd32af7bb81afb7a73",
     "bin/server",
-    ["bin/migrate", "bin/supavisor", "bin/server"],
+    ["bin/server", "bin/prepare", "bin/provision-tenant"],
   ),
 } satisfies Readonly<Record<string, WorkloadCatalogEntry>>;
 
@@ -255,7 +215,6 @@ const artifactFor = (
     checksumUrl: `${base}/SHA256SUMS`,
     requiredRuntimePaths: entry.requiredRuntimePaths,
     executablePath: entry.executablePath,
-    ...(entry.nativeProcess === undefined ? {} : { nativeProcess: entry.nativeProcess }),
   };
 };
 

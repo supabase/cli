@@ -7,7 +7,6 @@ import { digestHex } from "./Integrity.ts";
 import { StackPreparationError } from "../public/Errors.ts";
 import {
   makeSlimServicesSource,
-  normalizeSlimServicesLayout,
   slimServicesChecksum,
   systemTarBoundary,
   type ZstdDecompressor,
@@ -106,88 +105,6 @@ const requestUrl = (input: Parameters<typeof fetch>[0]): string =>
   typeof input === "string" ? input : input instanceof URL ? input.toString() : input.url;
 
 describe("slim-services artifact source", () => {
-  it.live("keeps Postgres init scripts only under the migrations directory", () =>
-    Effect.scoped(
-      Effect.gen(function* () {
-        const fs = yield* FileSystem.FileSystem;
-        const destination = yield* fs.makeTempDirectoryScoped({
-          prefix: "slim-services-postgres-",
-        });
-        const initScripts = `${destination}/share/supabase-cli/migrations/init-scripts`;
-        yield* fs.makeDirectory(initScripts, { recursive: true });
-        const postgresArtifact = { ...artifact, service: "postgres" };
-        yield* normalizeSlimServicesLayout(postgresArtifact, destination);
-        expect(yield* fs.exists(`${destination}/share/supabase-cli/init-scripts`)).toBe(false);
-        expect(yield* fs.exists(initScripts)).toBe(true);
-      }).pipe(Effect.provide(NodeServices.layer)),
-    ),
-  );
-
-  it.live("removes an extracted duplicate Postgres init-script tree", () =>
-    Effect.scoped(
-      Effect.gen(function* () {
-        const fs = yield* FileSystem.FileSystem;
-        const destination = yield* fs.makeTempDirectoryScoped({
-          prefix: "slim-services-postgres-duplicate-",
-        });
-        const target = `${destination}/share/supabase-cli/migrations/init-scripts`;
-        const alias = `${destination}/share/supabase-cli/init-scripts`;
-        yield* fs.makeDirectory(target, { recursive: true });
-        yield* fs.makeDirectory(alias, { recursive: true });
-        yield* fs.writeFileString(`${target}/migration.sql`, "target");
-        yield* fs.writeFileString(`${alias}/migration.sql`, "duplicate");
-        yield* normalizeSlimServicesLayout({ ...artifact, service: "postgres" }, destination);
-        expect(yield* fs.exists(alias)).toBe(false);
-        expect(yield* fs.readFileString(`${target}/migration.sql`)).toBe("target");
-      }).pipe(Effect.provide(NodeServices.layer)),
-    ),
-  );
-
-  it.live("removes a contained Postgres init-scripts symlink without touching its target", () =>
-    Effect.scoped(
-      Effect.gen(function* () {
-        const fs = yield* FileSystem.FileSystem;
-        const destination = yield* fs.makeTempDirectoryScoped({
-          prefix: "slim-services-postgres-symlink-",
-        });
-        const target = `${destination}/share/supabase-cli/migrations/init-scripts`;
-        const alias = `${destination}/share/supabase-cli/init-scripts`;
-        yield* fs.makeDirectory(target, { recursive: true });
-        yield* fs.writeFileString(`${target}/migration.sql`, "target");
-        yield* fs.symlink("migrations/init-scripts", alias);
-        yield* normalizeSlimServicesLayout({ ...artifact, service: "postgres" }, destination);
-        expect(yield* fs.exists(alias)).toBe(false);
-        expect(yield* fs.readFileString(`${target}/migration.sql`)).toBe("target");
-      }).pipe(Effect.provide(NodeServices.layer)),
-    ),
-  );
-
-  it.live("rejects a Postgres init-scripts symlink that escapes its artifact root", () =>
-    Effect.scoped(
-      Effect.gen(function* () {
-        const fs = yield* FileSystem.FileSystem;
-        const destination = yield* fs.makeTempDirectoryScoped({
-          prefix: "slim-services-postgres-symlink-escape-",
-        });
-        const outside = yield* fs.makeTempDirectoryScoped({
-          prefix: "slim-services-postgres-symlink-outside-",
-        });
-        const target = `${destination}/share/supabase-cli/migrations/init-scripts`;
-        const alias = `${destination}/share/supabase-cli/init-scripts`;
-        yield* fs.makeDirectory(target, { recursive: true });
-        yield* fs.makeDirectory(outside, { recursive: true });
-        yield* fs.symlink(outside, alias);
-        const result = yield* normalizeSlimServicesLayout(
-          { ...artifact, service: "postgres" },
-          destination,
-        ).pipe(Effect.exit);
-        expect(Exit.isFailure(result)).toBe(true);
-        expect(errorOf(result)).toBeInstanceOf(StackPreparationError);
-        expect(yield* fs.exists(alias)).toBe(true);
-      }).pipe(Effect.provide(NodeServices.layer)),
-    ),
-  );
-
   it.live("verifies checksums and extracts a manifest-matched archive using injected fetch", () =>
     Effect.scoped(
       Effect.gen(function* () {

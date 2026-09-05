@@ -6,12 +6,10 @@ import { resolveStackPaths } from "../state/Paths.ts";
 import { isRecord, settingValue, settingsFor } from "../state/MaterializedSettings.ts";
 import {
   base64UrlEncode,
-  DATABASE_INTERNAL_PASSWORD_SLOT,
   resolveSigningKeyMaterial,
   type ResolvedSigningKeyMaterial,
 } from "../state/SecretStore.ts";
 import { resolveThirdPartyIssuer } from "../model/capabilities/auth-third-party.ts";
-import { containerAliasFor } from "../model/WorkloadCatalog.ts";
 import { canonicalize } from "../model/Compiler.ts";
 
 /** A parsed JSON document fetched by the owner for OIDC discovery. */
@@ -39,7 +37,6 @@ interface RuntimeInputMaterial {
     /** Session-scoped Vector config owned by this stack runtime. */
     readonly vectorConfigPath?: string;
   }>;
-  readonly pooler?: Readonly<{ readonly tenantPath?: string }>;
   readonly functions?: Readonly<{ readonly secrets: Readonly<Record<string, string>> }>;
 }
 
@@ -85,13 +82,6 @@ const mapFile = <A, R>(
     Effect.mapError((error) => failure(`Unable to ${operation}`, { path: target, cause: error })),
   );
 
-const finiteSetting = (value: string): number | undefined => {
-  const trimmed = value.trim();
-  if (trimmed.length === 0) return undefined;
-  const parsed = Number(trimmed);
-  return Number.isFinite(parsed) ? parsed : undefined;
-};
-
 const relativeEscape = (path: Path.Path, root: string, candidate: string): boolean => {
   const relative = path.relative(root, candidate);
   return relative === ".." || relative.startsWith(`..${path.sep}`) || path.isAbsolute(relative);
@@ -133,68 +123,6 @@ const symmetricJwk = (secret: string): Readonly<Record<string, unknown>> => ({
   key_ops: ["verify"],
   k: base64UrlEncode(new TextEncoder().encode(secret)),
 });
-
-const elixirString = (value: string): string => {
-  let output = '"';
-  const characters = [...value];
-  for (let index = 0; index < characters.length; index += 1) {
-    const character = characters[index] ?? "";
-    const code = character.codePointAt(0) ?? 0;
-    if (character === "\\") output += "\\\\";
-    else if (character === '"') output += '\\"';
-    else if (character === "#" && characters[index + 1] === "{") output += "\\#";
-    else if (character === "\n") output += "\\n";
-    else if (character === "\r") output += "\\r";
-    else if (character === "\t") output += "\\t";
-    else if (code < 0x20) output += `\\x${code.toString(16).padStart(2, "0")}`;
-    else output += character;
-  }
-  return `${output}"`;
-};
-
-const poolerTenantScript = (input: {
-  readonly externalId: string;
-  readonly dbHost: string;
-  readonly dbPort: number;
-  readonly dbPassword: string;
-  readonly poolMode: "transaction" | "session";
-  readonly defaultPoolSize: number;
-  readonly maxClientConn: number;
-}): string => `{:ok, _} = Application.ensure_all_started(:supavisor)
-
-{:ok, version} =
-  case Supavisor.Repo.query!("select version()") do
-    %{rows: [[ver]]} -> Supavisor.Helpers.parse_pg_version(ver)
-    _ -> nil
-  end
-
-params = %{
-  "external_id" => ${elixirString(input.externalId)},
-  "db_host" => ${elixirString(input.dbHost)},
-  "db_port" => ${String(input.dbPort)},
-  "db_database" => "postgres",
-  "require_user" => false,
-  "auth_query" => "SELECT * FROM pgbouncer.get_auth($1)",
-  "default_max_clients" => ${String(input.maxClientConn)},
-  "default_pool_size" => ${String(input.defaultPoolSize)},
-  "default_parameter_status" => %{"server_version" => version},
-  "users" => [%{
-    "db_user" => "pgbouncer",
-    "db_password" => ${elixirString(input.dbPassword)},
-    "mode_type" => ${elixirString(input.poolMode)},
-    "pool_size" => ${String(input.defaultPoolSize)},
-    "is_manager" => true
-  }]
-}
-
-case Supavisor.Tenants.get_tenant_by_external_id(params["external_id"]) do
-  nil ->
-    {:ok, _} = Supavisor.Tenants.create_tenant(params)
-  existing ->
-    existing = Supavisor.Repo.preload(existing, :users)
-    {:ok, _} = Supavisor.Tenants.update_tenant(existing, params)
-end
-`;
 
 /** Resolves materialized Edge Runtime secrets to their caller-visible names. */
 const resolveFunctionsEdgeRuntimeSecrets = (
@@ -277,7 +205,6 @@ export const makeRuntimeInputOwner = (
     const stackPaths = yield* resolveStackPaths(options).pipe(
       Effect.mapError((cause) => failure("Unable to resolve runtime input paths", { cause })),
     );
-    const poolerRoot = path.join(stackPaths.runtime, "inputs", "pooler");
     const vectorRoot = path.join(stackPaths.runtime, "inputs", "vector");
 
     const resolveProjectFile = (
@@ -479,87 +406,6 @@ export const makeRuntimeInputOwner = (
         };
       });
 
-    const writePoolerTenant = (
-      state: PersistedStackState,
-      runtime: "native" | "container",
-    ): Effect.Effect<string, StackPreparationError> => {
-      const password = state.secrets[DATABASE_INTERNAL_PASSWORD_SLOT]?.value ?? "";
-      if (password.length === 0)
-        return Effect.fail(failure("Persisted database secret is missing"));
-      const settings = settingsFor(state, "pooler");
-      const poolMode = settingValue(state, isRecord(settings) ? settings.pool_mode : undefined);
-      if (poolMode !== "transaction" && poolMode !== "session")
-        return Effect.fail(failure("Persisted Pooler mode is invalid"));
-      const tenantId = settingValue(state, isRecord(settings) ? settings.tenant_id : undefined);
-      if (tenantId.length === 0)
-        return Effect.fail(failure("Persisted Pooler tenant id is missing"));
-      const defaultPoolSize = finiteSetting(
-        settingValue(state, isRecord(settings) ? settings.default_pool_size : undefined),
-      );
-      const maxClientConn = finiteSetting(
-        settingValue(state, isRecord(settings) ? settings.max_client_conn : undefined),
-      );
-      if (defaultPoolSize === undefined || maxClientConn === undefined)
-        return Effect.fail(failure("Persisted Pooler sizing settings are invalid"));
-      const nativeAssignment = state.privatePorts.find(
-        (entry) => entry.workloadId === "database:database" && entry.binding === "primary",
-      );
-      const dbHost = runtime === "container" ? containerAliasFor("database:database") : "127.0.0.1";
-      const dbPort = runtime === "container" ? 5432 : nativeAssignment?.port;
-      if (dbPort === undefined)
-        return Effect.fail(failure("Persisted native database assignment is missing"));
-      const content = poolerTenantScript({
-        externalId: tenantId,
-        dbHost,
-        dbPort,
-        dbPassword: password,
-        poolMode,
-        defaultPoolSize,
-        maxClientConn,
-      });
-      const target = path.join(poolerRoot, "pooler_tenant.exs");
-      const fileMode = runtime === "native" ? 0o600 : 0o644;
-      return Effect.gen(function* () {
-        const token = yield* crypto.randomUUIDv4.pipe(
-          Effect.mapError(() => failure("Unable to allocate pooler tenant file")),
-        );
-        const temporary = path.join(poolerRoot, `.pooler_tenant.exs.${token}.tmp`);
-        return yield* Effect.gen(function* () {
-          yield* mapFile(
-            poolerRoot,
-            "create pooler tenant directory",
-            fs.makeDirectory(poolerRoot, { recursive: true, mode: 0o700 }),
-          );
-          yield* mapFile(poolerRoot, "secure pooler tenant directory", fs.chmod(poolerRoot, 0o700));
-          yield* Effect.scoped(
-            Effect.gen(function* () {
-              const file = yield* mapFile(
-                temporary,
-                "create pooler tenant file",
-                fs.open(temporary, { flag: "w", mode: fileMode }),
-              );
-              yield* mapFile(
-                temporary,
-                "write pooler tenant file",
-                file.writeAll(new TextEncoder().encode(content)),
-              );
-              yield* mapFile(temporary, "sync pooler tenant file", file.sync);
-            }),
-          );
-          yield* mapFile(temporary, "secure pooler tenant file", fs.chmod(temporary, fileMode));
-          yield* mapFile(target, "publish pooler tenant file", fs.rename(temporary, target));
-          yield* mapFile(target, "secure published pooler tenant file", fs.chmod(target, fileMode));
-          return target;
-        }).pipe(
-          Effect.ensuring(
-            fs
-              .remove(temporary, { force: true })
-              .pipe(Effect.catchTag("PlatformError", () => Effect.void)),
-          ),
-        );
-      });
-    };
-
     const writeVectorConfig = (
       state: PersistedStackState,
     ): Effect.Effect<string, StackPreparationError> => {
@@ -610,7 +456,6 @@ export const makeRuntimeInputOwner = (
 
     const commonCompleted = new Map<string, RuntimeInputMaterial>();
     const authCompleted = new Map<string, NonNullable<RuntimeInputMaterial["auth"]>>();
-    const poolerCompleted = new Map<string, string>();
     const keyFor = (state: PersistedStackState): string =>
       `${options.stackId}\u0000${canonicalize(state.runtime)}\u0000${canonicalize(state.definition ?? {})}`;
     const needsAuthMaterial = (state: PersistedStackState, workloadId: string): boolean =>
@@ -693,27 +538,11 @@ export const makeRuntimeInputOwner = (
           commonCompleted,
           materializeCommon(state, workloadId, auth),
         );
-        if (
-          workloadId !== "pooler:pooler" ||
-          state.definition?.capabilities.pooler.enabled !== true
-        )
-          return common;
-        const tenantPath = yield* resolveCached(
-          key,
-          poolerCompleted,
-          writePoolerTenant(state, state.runtime.kind),
-        );
-        return { ...common, pooler: { tenantPath } };
+        return common;
       });
     const cleanupAll = Effect.gen(function* () {
       commonCompleted.clear();
       authCompleted.clear();
-      poolerCompleted.clear();
-      yield* mapFile(
-        poolerRoot,
-        "clean pooler tenant files",
-        fs.remove(poolerRoot, { recursive: true, force: true }),
-      );
       yield* mapFile(
         vectorRoot,
         "clean Vector configs",

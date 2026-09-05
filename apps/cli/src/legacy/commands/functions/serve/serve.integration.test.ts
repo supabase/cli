@@ -51,6 +51,7 @@ const status = (lifecycle: StackStatus["lifecycle"]): StackStatus => ({
     activation: name === "functions" ? "lazy" : "eager",
     state: lifecycle === "running" ? (name === "functions" ? "dormant" : "ready") : "stopped",
   })),
+  artifacts: [],
 });
 
 describe("legacy functions serve", () => {

@@ -399,67 +399,26 @@ describe("workload runtime catalog", () => {
     ]);
     const storage = planned("storage:storage");
     expect(runtimeSpecFor(storage)?.nativeStartupProcesses(root, state, storage, 5000)).toEqual([
-      {
-        executable: `${root}/node/bin/node`,
-        args: [`${root}/app/dist/scripts/migrate-call.js`],
-        cwd: `${root}/app`,
-      },
+      { executable: `${root}/bin/prepare`, args: [], cwd: root },
     ]);
     const realtime = planned("realtime:realtime");
     expect(runtimeSpecFor(realtime)?.nativeStartupProcesses(root, state, realtime, 4000)).toEqual([
-      { executable: `${root}/bin/migrate`, args: [], cwd: root },
-      {
-        executable: `${root}/bin/realtime`,
-        args: ["eval", "Realtime.Release.seeds(Realtime.Repo)"],
-        cwd: root,
-      },
+      { executable: `${root}/bin/prepare`, args: [], cwd: root },
     ]);
     const analytics = planned("analytics:analytics");
     expect(runtimeSpecFor(analytics)?.nativeStartupProcesses(root, state, analytics, 4000)).toEqual(
-      [
-        {
-          executable: `${root}/bin/logflare`,
-          args: ["eval", "Logflare.Release.migrate"],
-          cwd: root,
-        },
-      ],
+      [{ executable: `${root}/bin/prepare`, args: [], cwd: root }],
     );
     const pooler = planned("pooler:pooler");
     expect(runtimeSpecFor(pooler)?.nativeStartupProcesses(root, state, pooler, 6543)).toEqual([
-      { executable: `${root}/bin/migrate`, args: [], cwd: root },
+      { executable: `${root}/bin/prepare`, args: [], cwd: root },
+      { executable: `${root}/bin/provision-tenant`, args: [], cwd: root },
     ]);
-    const tenantInput = { pooler: { tenantPath: "/tmp/pooler-tenant.exs" } };
-    const tenantStartup = runtimeSpecFor(pooler)?.nativeStartupProcesses(
-      root,
-      state,
-      pooler,
-      6543,
-      tenantInput,
-    );
-    expect(tenantStartup).toHaveLength(2);
-    expect(tenantStartup?.[1]).toEqual({
-      executable: "/bin/sh",
-      args: [
-        "-c",
-        'exec "$1" eval "$(cat "$SUPABASE_POOLER_TENANT_PATH")"',
-        "supavisor",
-        `${root}/bin/supavisor`,
-      ],
-      cwd: root,
-      env: { SUPABASE_POOLER_TENANT_PATH: "/tmp/pooler-tenant.exs" },
+    expect(runtimeSpecFor(pooler)?.env(state, pooler, 6543, "container")).toMatchObject({
+      POSTGRES_HOST: "supabase-database",
+      POSTGRES_PORT: "5432",
+      POSTGRES_PASSWORD: "postgres",
     });
-    expect(tenantStartup?.[1]?.args.join(" ")).not.toContain("secret");
-
-    const nativeTenantEnv = runtimeSpecFor(pooler)?.env(state, pooler, 6543, "native", tenantInput);
-    expect(nativeTenantEnv).not.toHaveProperty("SUPABASE_POOLER_TENANT_PATH");
-    const containerTenantEnv = runtimeSpecFor(pooler)?.env(
-      state,
-      pooler,
-      6543,
-      "container",
-      tenantInput,
-    );
-    expect(containerTenantEnv?.SUPABASE_POOLER_TENANT_PATH).toBe("/app/pooler_tenant.exs");
 
     expect(containerResolutionFor(state, auth)?.command).toEqual([]);
     expect(containerResolutionFor(state, auth)?.startup).toEqual([
@@ -467,7 +426,7 @@ describe("workload runtime catalog", () => {
     ]);
     expect(containerResolutionFor(state, storage)?.command).toEqual([]);
     expect(containerResolutionFor(state, storage)?.startup).toEqual([
-      { entrypoint: "/node/bin/node", command: ["dist/scripts/migrate-call.js"] },
+      { entrypoint: "/slim-runtime/bin/prepare", command: [] },
     ]);
     expect(containerResolutionFor(state, realtime)?.entrypoint).toBe("/usr/bin/tini");
     expect(containerResolutionFor(state, realtime)?.command).toEqual([
@@ -477,11 +436,7 @@ describe("workload runtime catalog", () => {
       "/app/bin/server",
     ]);
     expect(containerResolutionFor(state, realtime)?.startup).toEqual([
-      { entrypoint: "/app/bin/migrate", command: [] },
-      {
-        entrypoint: "/app/bin/realtime",
-        command: ["eval", "Realtime.Release.seeds(Realtime.Repo)"],
-      },
+      { entrypoint: "/app/bin/prepare", command: [] },
     ]);
     expect(containerResolutionFor(state, analytics)?.command).toEqual([]);
     expect(containerResolutionFor(state, pooler)?.entrypoint).toBe("/usr/bin/tini");
@@ -492,22 +447,9 @@ describe("workload runtime catalog", () => {
       "/app/bin/server",
     ]);
     expect(containerResolutionFor(state, pooler)?.startup).toEqual([
-      { entrypoint: "/app/bin/migrate", command: [] },
+      { entrypoint: "/app/bin/prepare", command: [] },
+      { entrypoint: "/app/bin/provision-tenant", command: [] },
     ]);
-    const poolerWithTenant = containerResolutionFor(state, pooler, tenantInput);
-    expect(poolerWithTenant?.command).toEqual(["-s", "-g", "--", "/app/bin/server"]);
-    expect(poolerWithTenant?.startup).toEqual([
-      { entrypoint: "/app/bin/migrate", command: [] },
-      {
-        entrypoint: "/usr/bin/sh",
-        command: ["-c", 'exec /app/bin/supavisor eval "$(cat "$SUPABASE_POOLER_TENANT_PATH")"'],
-      },
-    ]);
-    expect(poolerWithTenant?.mounts).toEqual([
-      { source: "/tmp/pooler-tenant.exs", target: "/app/pooler_tenant.exs", readOnly: true },
-    ]);
-    expect(poolerWithTenant?.env.SUPABASE_POOLER_TENANT_PATH).toBe("/app/pooler_tenant.exs");
-    expect(poolerWithTenant?.command.join(" ")).not.toContain("secret");
   });
 
   it.live(
@@ -858,9 +800,9 @@ describe("workload runtime catalog", () => {
         expect(
           studio?.nativeProcess(nodeArtifactRoot, configured, planned("studio:studio"), 3000),
         ).toEqual({
-          executable: "/tmp/native-artifact/node/bin/node",
-          args: ["/tmp/native-artifact/app/apps/studio/docker-entrypoint.mjs"],
-          cwd: "/tmp/native-artifact/app",
+          executable: "/tmp/native-artifact/bin/studio",
+          args: [],
+          cwd: "/tmp/supabase-runtime-spec",
         });
         expect(
           runtimeSpecFor(planned("database:database"))?.nativeProcess(
@@ -1095,15 +1037,6 @@ describe("workload runtime catalog", () => {
       expect(env).not.toHaveProperty("VECTOR_ENABLED");
       expect(env).not.toHaveProperty("VECTOR_DATABASE_URL");
     }).pipe(Effect.provide(NodeServices.layer)),
-  );
-
-  it.live("validates owner-resolved Pooler tenant paths before runtime creation", () =>
-    Effect.gen(function* () {
-      const failed = yield* validateWorkloadRuntimeInputs(state, planned("pooler:pooler"), {
-        pooler: { tenantPath: "/tmp/tenant\n.exs" },
-      }).pipe(Effect.exit);
-      expect(Exit.isFailure(failed)).toBe(true);
-    }),
   );
 
   it("uses Auth's local JWT secret for every internal JWT consumer", () => {

@@ -35,7 +35,6 @@ import { LogStoreError } from "../supervisor/LogStore.ts";
 import type { LifecycleInput } from "../supervisor/Lifecycle.ts";
 import {
   makeProductionRuntime,
-  NATIVE_DATABASE_MIGRATION_MARKER,
   readinessDeadlineFor,
   withOwnedRuntimeFileCleanup,
 } from "./ProductionRuntime.ts";
@@ -159,31 +158,32 @@ const writeNativeDatabaseFixture = (
   path: Path.Path,
   root: string,
   eventsPath: string,
-  failFirstMigration = false,
 ) =>
   Effect.gen(function* () {
-    const initDirectory = path.join(root, "share/supabase-cli/bin");
-    const migrationDirectory = path.join(root, "share/supabase-cli/migrations");
-    yield* fs.makeDirectory(initDirectory, { recursive: true });
-    yield* fs.makeDirectory(migrationDirectory, { recursive: true });
-    const main = path.join(initDirectory, "supabase-postgres-init.sh");
+    const binDirectory = path.join(root, "bin");
+    yield* fs.makeDirectory(binDirectory, { recursive: true });
+    const main = path.join(binDirectory, "supabase-postgres-start");
+    const helperScript = [
+      'const fs = require("node:fs");',
+      'const net = require("node:net");',
+      "const args = process.argv.slice(1);",
+      'const port = Number(args[args.indexOf("-p") + 1]);',
+      `fs.appendFileSync(${JSON.stringify(eventsPath)}, "postgres-start|data=" + process.env.PGDATA + "|user=" + process.env.POSTGRES_USER + "|db=" + process.env.POSTGRES_DB + "|password=" + process.env.POSTGRES_PASSWORD + "|args=" + args.join(" ") + "\\n");`,
+      "const server = net.createServer((socket) => socket.end());",
+      'server.listen(port, "127.0.0.1");',
+      "const stop = () => server.close(() => process.exit(0));",
+      'process.on("SIGTERM", stop);',
+      'process.on("SIGINT", stop);',
+    ].join("");
     yield* fs.writeFileString(
       main,
-      "#!/bin/sh\ntrap 'exit 0' TERM INT\nwhile :; do sleep 1; done\n",
-    );
-    yield* fs.chmod(main, 0o755);
-    const migrate = path.join(migrationDirectory, "migrate.sh");
-    const firstMigrationPath = `${eventsPath}.migration-attempted`;
-    yield* fs.writeFileString(
-      migrate,
       `#!/bin/sh
 set -eu
-${failFirstMigration ? `if [ ! -e ${JSON.stringify(firstMigrationPath)} ]; then touch ${JSON.stringify(firstMigrationPath)}; exit 7; fi` : ""}
-printf 'migration|host=%s|port=%s|db=%s|user=%s|password=%s|path=%s\\n' "$POSTGRES_HOST" "$POSTGRES_PORT" "$POSTGRES_DB" "$POSTGRES_USER" "$POSTGRES_PASSWORD" "$PATH" >> ${JSON.stringify(eventsPath)}
+exec ${JSON.stringify(process.execPath)} -e ${JSON.stringify(helperScript)} -- "$@"
 `,
     );
-    yield* fs.chmod(migrate, 0o755);
-    return { main, migrate };
+    yield* fs.chmod(main, 0o755);
+    return { main };
   });
 
 const writeNativeRealtimeFixture = (
@@ -203,6 +203,19 @@ printf 'realtime-migrate|RELEASE_DISTRIBUTION=%s\\n' "\${RELEASE_DISTRIBUTION:-m
 `,
     );
     yield* fs.chmod(migrate, 0o755);
+    const prepare = path.join(bin, "prepare");
+    yield* fs.writeFileString(
+      prepare,
+      `#!/bin/sh
+set -eu
+SCRIPT_DIR="$(CDPATH= cd -- "$(dirname -- "$0")" && pwd -P)"
+"$SCRIPT_DIR/migrate"
+if [ "\${SEED_SELF_HOST:-}" = true ]; then
+  "$SCRIPT_DIR/realtime" eval 'Realtime.Release.seeds(Realtime.Repo)'
+fi
+`,
+    );
+    yield* fs.chmod(prepare, 0o755);
     const realtime = path.join(bin, "realtime");
     yield* fs.writeFileString(realtime, "#!/bin/sh\nexit 0\n");
     yield* fs.chmod(realtime, 0o755);
@@ -1627,7 +1640,7 @@ describe("production runtime", () => {
     ).pipe(Effect.provide(NodeServices.layer)),
   );
 
-  it.live("runs canonical PostgreSQL migrations before bootstrap on first native boot", () =>
+  it.live("starts the canonical PostgreSQL helper before bootstrap", () =>
     Effect.scoped(
       Effect.gen(function* () {
         const fs = yield* FileSystem.FileSystem;
@@ -1635,12 +1648,18 @@ describe("production runtime", () => {
         const root = yield* fs.makeTempDirectoryScoped({ prefix: "supabase-production-pg-first-" });
         const eventsPath = path.join(root, "events");
         const artifactRoot = path.join(root, "artifact");
+        yield* fs.writeFileString(eventsPath, "");
         yield* writeNativeDatabaseFixture(fs, path, artifactRoot, eventsPath);
-        const readinessServer = createNetServer((socket) => socket.end());
+        const readinessServer = createNetServer();
         yield* listenForNativeReadiness(readinessServer);
         const address = readinessServer.address();
         if (typeof address !== "object" || address === null)
           return yield* Effect.die("Native readiness server did not expose an address");
+        yield* Effect.callback<void, Error>((resume) => {
+          readinessServer.close((error) =>
+            error === undefined ? resume(Effect.void) : resume(Effect.fail(error)),
+          );
+        });
         const compiled = yield* compileStack({
           projectRoot: root,
           runtime: { kind: "native" },
@@ -1709,161 +1728,19 @@ describe("production runtime", () => {
           database,
         );
         expect(ready.state).toBe("ready");
-        expect(
-          yield* fs.exists(path.join(databaseDataPath, NATIVE_DATABASE_MIGRATION_MARKER)),
-        ).toBe(true);
         const events = yield* fs.readFileString(eventsPath);
-        expect(events).toContain("migration|host=127.0.0.1");
-        expect(events).toContain("port=" + String(address.port));
-        expect(events).toContain("db=postgres");
+        expect(events).toContain(`postgres-start|data=${databaseDataPath}`);
         expect(events).toContain("user=supabase_admin");
+        expect(events).toContain("db=postgres");
         expect(events).toContain("password=db-secret");
-        expect(events).toContain(`path=${path.join(artifactRoot, "bin")}:`);
-        expect(events.indexOf("migration")).toBeLessThan(events.indexOf("bootstrap"));
+        expect(events).toContain(`args=-p ${address.port}`);
+        expect(events.indexOf("postgres-start")).toBeLessThan(events.indexOf("bootstrap"));
         yield* runtime.driver.stop({
           stackId,
           workloadId: database.id,
         });
       }),
     ).pipe(Effect.provide(NodeServices.layer)),
-  );
-
-  it.live(
-    "retries canonical PostgreSQL migrations when PG_VERSION exists without completion marker",
-    () =>
-      Effect.scoped(
-        Effect.gen(function* () {
-          const fs = yield* FileSystem.FileSystem;
-          const path = yield* Path.Path;
-          const root = yield* fs.makeTempDirectoryScoped({
-            prefix: "supabase-production-pg-existing-",
-          });
-          const eventsPath = path.join(root, "events");
-          const artifactRoot = path.join(root, "artifact");
-          yield* writeNativeDatabaseFixture(fs, path, artifactRoot, eventsPath, true);
-          const readinessServer = createNetServer((socket) => socket.end());
-          yield* listenForNativeReadiness(readinessServer);
-          const address = readinessServer.address();
-          if (typeof address !== "object" || address === null)
-            return yield* Effect.die("Native readiness server did not expose an address");
-          const compiled = yield* compileStack({
-            projectRoot: root,
-            runtime: { kind: "native" },
-          });
-          const current = {
-            value: {
-              ...stateFor({
-                "secret:database.internal.password": { policy: "managed", value: "db-secret" },
-                "secret:auth.settings.jwt_secret": { policy: "managed", value: "jwt-secret" },
-              }),
-              identity: {
-                ...stateFor({}).identity,
-                projectRoot: root,
-                checkoutRoot: root,
-                workspaceId: root,
-                checkoutId: root,
-              },
-              desiredLifecycle: "running" as const,
-              definition: compiled.definition,
-              privatePorts: [
-                { workloadId: "database:database", binding: "primary", port: address.port },
-              ],
-            },
-          } satisfies { value: PersistedStackState };
-          const runtimePaths = yield* resolveStackPaths({ stateRoot: root, stackId });
-          const databaseDataPath = path.join(runtimePaths.data, "database");
-          yield* fs.makeDirectory(databaseDataPath, { recursive: true });
-          yield* fs.writeFileString(path.join(databaseDataPath, "PG_VERSION"), "17\n");
-          // A completed initdb has both PG_VERSION and postmaster.opts. The
-          // missing migration marker must not erase its durable contents.
-          yield* fs.writeFileString(path.join(databaseDataPath, "postmaster.opts"), "postgres\n");
-          const durableMarker = path.join(databaseDataPath, "durable-user-data");
-          yield* fs.writeFileString(durableMarker, "preserve-me");
-          const bootstrap = () =>
-            Effect.gen(function* () {
-              const previous = yield* fs
-                .readFileString(eventsPath)
-                .pipe(Effect.catchTag("PlatformError", () => Effect.succeed("")));
-              yield* fs.writeFileString(eventsPath, `${previous}bootstrap\n`);
-            }).pipe(
-              Effect.mapError(
-                (cause) =>
-                  new StackPreparationError({ message: "bootstrap fixture failed", cause }),
-              ),
-            );
-          const context = yield* Effect.context<
-            FileSystem.FileSystem | Path.Path | Crypto.Crypto
-          >();
-          const runtime = yield* makeProductionRuntime({
-            stateRoot: root,
-            stackId,
-            ownerSessionId: "owner",
-            stateStore: stateStoreFor(current),
-            context,
-            ingress,
-            artifactPreparer: {
-              prepare: () =>
-                Effect.succeed({
-                  workloadId: "database:database",
-                  capability: "database" as const,
-                  version: compiled.definition.capabilities.database.version,
-                  outcome: "cached" as const,
-                  artifactRoot,
-                }),
-            },
-            logStore: memoryLogStore([]),
-            bootstrapDatabase: bootstrap,
-          });
-          const database = compiled.executionPlan.workloads.find(
-            (workload) => workload.id === "database:database",
-          );
-          if (database === undefined) return yield* Effect.die("Expected database workload");
-          const failed = yield* runtime.driver
-            .start(
-              {
-                stackId,
-                workloadId: database.id,
-              },
-              database,
-            )
-            .pipe(Effect.exit);
-          expect(Exit.isFailure(failed)).toBe(true);
-          expect(yield* fs.readFileString(durableMarker)).toBe("preserve-me");
-          expect(
-            yield* fs.exists(path.join(databaseDataPath, NATIVE_DATABASE_MIGRATION_MARKER)),
-          ).toBe(false);
-          yield* runtime.driver.start(
-            {
-              stackId,
-              workloadId: database.id,
-            },
-            database,
-          );
-          const events = yield* fs.readFileString(eventsPath);
-          expect(events).toContain("migration|host=127.0.0.1");
-          expect(events).toContain("bootstrap\n");
-          expect(
-            yield* fs.exists(path.join(databaseDataPath, NATIVE_DATABASE_MIGRATION_MARKER)),
-          ).toBe(true);
-          yield* runtime.driver.stop({
-            stackId,
-            workloadId: database.id,
-          });
-          yield* fs.writeFileString(eventsPath, "");
-          yield* runtime.driver.start(
-            {
-              stackId,
-              workloadId: database.id,
-            },
-            database,
-          );
-          expect(yield* fs.readFileString(eventsPath)).toBe("bootstrap\n");
-          yield* runtime.driver.stop({
-            stackId,
-            workloadId: database.id,
-          });
-        }),
-      ).pipe(Effect.provide(NodeServices.layer)),
   );
 
   it.live("wires persisted database and generic readiness deadlines", () =>
@@ -2542,29 +2419,15 @@ describe("production runtime", () => {
         const poolerStartupSpecs = createdSpecs.filter(
           (spec) => spec.labels.workloadId === pooler.id && spec.labels.startup === true,
         );
-        expect(poolerSpec?.mounts).toContainEqual({
-          source: expect.stringContaining("pooler_tenant.exs"),
-          target: "/app/pooler_tenant.exs",
-          readOnly: true,
-        });
-        expect(
-          poolerStartupSpecs.some((spec) =>
-            spec.command?.join(" ").includes("/app/bin/supavisor eval"),
-          ),
-        ).toBe(true);
-        const tenantPath = poolerSpec?.mounts.find(
-          (mount) => mount.target === "/app/pooler_tenant.exs",
-        )?.source;
-        if (tenantPath === undefined)
-          return yield* Effect.die("Pooler tenant mount was not captured");
-        expect(yield* fs.exists(tenantPath)).toBe(true);
+        expect(poolerSpec?.mounts).toEqual([]);
+        expect(poolerStartupSpecs.map((spec) => spec.entrypoint)).toEqual([
+          "/app/bin/prepare",
+          "/app/bin/provision-tenant",
+        ]);
         yield* runtime.driver.stop({
           stackId,
           workloadId: pooler.id,
         });
-        // Runtime inputs are session-owned and remain available across an individual workload
-        // restart; the owner cleanup at session end removes the flat path.
-        expect(yield* fs.exists(tenantPath)).toBe(true);
         yield* runtime.driver.start(
           {
             stackId,
@@ -2572,15 +2435,7 @@ describe("production runtime", () => {
           },
           pooler,
         );
-        const secondSpec = createdSpecs.findLast((spec) => spec.labels.workloadId === pooler.id);
-        const secondTenantPath = secondSpec?.mounts.find(
-          (mount) => mount.target === "/app/pooler_tenant.exs",
-        )?.source;
-        if (secondTenantPath === undefined)
-          return yield* Effect.die("Second Pooler tenant mount was not captured");
-        expect(yield* fs.exists(secondTenantPath)).toBe(true);
         yield* runtime.driver.cleanup({ stackId, destroy: false });
-        expect(yield* fs.exists(secondTenantPath)).toBe(false);
         expect(yield* fs.exists(firstBootstrapPath)).toBe(false);
         yield* runtime.driver.start(
           {

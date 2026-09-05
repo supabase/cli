@@ -1,16 +1,4 @@
-import {
-  Cause,
-  Deferred,
-  Effect,
-  Exit,
-  Fiber,
-  FileSystem,
-  Path,
-  Ref,
-  Scope,
-  Semaphore,
-  Stream,
-} from "effect";
+import { Cause, Deferred, Effect, Exit, Fiber, Ref, Scope, Semaphore, Stream } from "effect";
 import { ChildProcessSpawner } from "effect/unstable/process";
 import type { ExitCode } from "effect/unstable/process/ChildProcessSpawner";
 import type * as ChildProcessSpawnerService from "effect/unstable/process/ChildProcessSpawner";
@@ -66,8 +54,6 @@ export interface NativeRuntimeOptions {
 interface NativeProcessPlan {
   readonly startup: ReadonlyArray<NativeProcessSpec>;
   readonly main: NativeProcessSpec;
-  /** One-shot processes that require the long-lived workload to be ready. */
-  readonly postReadiness?: ReadonlyArray<NativeProcessSpec>;
 }
 
 interface OutputAccumulator {
@@ -168,12 +154,10 @@ export const makeNativeRuntime = (
 ): Effect.Effect<
   RuntimeDriver,
   RuntimeDriverError,
-  ChildProcessSpawnerService.ChildProcessSpawner | Scope.Scope | FileSystem.FileSystem | Path.Path
+  ChildProcessSpawnerService.ChildProcessSpawner | Scope.Scope
 > =>
   Effect.gen(function* () {
     const childSpawner = yield* ChildProcessSpawner.ChildProcessSpawner;
-    const fileSystem = yield* FileSystem.FileSystem;
-    const pathService = yield* Path.Path;
     const parentScope = yield* Scope.Scope;
     const runtimeScope = yield* Scope.fork(parentScope, "parallel");
     const registration = yield* Semaphore.make(1);
@@ -255,35 +239,12 @@ export const makeNativeRuntime = (
       }).pipe(Effect.forkIn(resource.scope), Effect.asVoid);
     };
 
-    const writeSuccessMarker = (markerPath: string): Effect.Effect<void, NativeProcessError> =>
-      Effect.gen(function* () {
-        const parent = pathService.dirname(markerPath);
-        yield* fileSystem.makeDirectory(parent, { recursive: true });
-        const temporary = yield* fileSystem.makeTempFile({
-          directory: parent,
-          prefix: ".supabase-stack-marker-",
-        });
-        yield* fileSystem.writeFileString(temporary, "completed\n");
-        yield* fileSystem.chmod(temporary, 0o600);
-        yield* fileSystem
-          .rename(temporary, markerPath)
-          .pipe(Effect.ensuring(fileSystem.remove(temporary, { force: true }).pipe(Effect.ignore)));
-      }).pipe(
-        Effect.mapError(
-          (error) =>
-            new NativeProcessError({
-              message: error instanceof Error ? error.message : String(error),
-              cause: error,
-            }),
-        ),
-      );
-
     /** Runs one short-lived, service-owned startup process in its own scope. */
     const runStartupProcess = (
       resource: Resource,
       spec: NativeProcessSpec,
       launcher: NativeProcessLauncher | undefined,
-      phase: "startup" | "post-readiness",
+      phase: "startup",
     ): Effect.Effect<void, RuntimeDriverError> =>
       Effect.gen(function* () {
         const startupScope = yield* Scope.fork(resource.scope, "parallel");
@@ -357,16 +318,6 @@ export const makeNativeRuntime = (
             return yield* driverError(
               resource.key,
               `Native ${phase} process exited with code ${String(result.value)} for ${resource.key.workloadId}`,
-            );
-          if (spec.successMarker !== undefined)
-            yield* writeSuccessMarker(spec.successMarker).pipe(
-              Effect.mapError((error) =>
-                driverError(
-                  resource.key,
-                  `Native ${phase} success marker failed for ${resource.key.workloadId}: ${error.message}`,
-                  error,
-                ),
-              ),
             );
         });
         yield* Effect.uninterruptibleMask((restore) =>
@@ -449,9 +400,6 @@ export const makeNativeRuntime = (
           );
           const preReady = Effect.gen(function* () {
             yield* readiness(key, workload, process);
-            yield* ensureNotStopped();
-            for (const postReadiness of resolved.postReadiness ?? [])
-              yield* runStartupProcess(resource, postReadiness, launcher, "post-readiness");
             yield* ensureNotStopped();
             if (workload.bootstrap === "database") {
               if (options.bootstrapDatabase === undefined)

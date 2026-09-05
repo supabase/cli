@@ -19,8 +19,6 @@ export interface NativeProcessSpec {
   readonly gracefulStopTimeout?: Duration.Input;
   /** Maximum time allowed for this service-owned one-shot process. */
   readonly timeout?: Duration.Input;
-  /** Exact lifecycle witness written after a successful one-shot process. */
-  readonly successMarker?: string;
 }
 
 /**
