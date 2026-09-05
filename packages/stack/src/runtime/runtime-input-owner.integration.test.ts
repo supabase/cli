@@ -1,17 +1,6 @@
 import { NodeServices } from "@effect/platform-node";
 import { describe, expect, it } from "@effect/vitest";
-import {
-  Cause,
-  Deferred,
-  Effect,
-  Exit,
-  FileSystem,
-  Fiber,
-  Option,
-  Path,
-  Redacted,
-  Scope,
-} from "effect";
+import { Cause, Effect, Exit, FileSystem, Option, Path, Redacted } from "effect";
 import { generateKeyPairSync } from "node:crypto";
 import { compileStack, type CompiledStack } from "../model/Compiler.ts";
 import { StackPreparationError } from "../public/Errors.ts";
@@ -738,74 +727,12 @@ describe("runtime input owner", () => {
     ),
   );
 
-  it.live("single-flights cold equivalent resolutions and reuses the completed material", () =>
-    withPlatform(
-      Effect.gen(function* () {
-        const fs = yield* FileSystem.FileSystem;
-        const root = yield* fs.makeTempDirectoryScoped({ prefix: "runtime-input-single-flight-" });
-        const started = yield* Deferred.make<void>();
-        const release = yield* Deferred.make<void>();
-        let fetches = 0;
-        const state = yield* compiledState(root, {
-          capabilities: {
-            auth: {
-              settings: {
-                third_party: { workos: { enabled: true, issuer_url: "https://issuer.example" } },
-              },
-            },
-            pooler: { enabled: true },
-          },
-        });
-        const native = {
-          ...state,
-          privatePorts: [{ workloadId: "database:database", binding: "primary", port: 30_001 }],
-        };
-        const owner = yield* makeRuntimeInputOwner({
-          stateRoot: root,
-          stackId,
-          fetchJson: (url) => {
-            fetches += 1;
-            return Effect.gen(function* () {
-              if (fetches === 1) {
-                yield* Deferred.succeed(started, undefined);
-                yield* Deferred.await(release);
-              }
-              return url.endsWith("openid-configuration")
-                ? { jwks_uri: "https://issuer.example/keys" }
-                : { keys: [{ kty: "RSA", n: "n", e: "AQAB" }] };
-            });
-          },
-        });
-        const first = yield* Effect.forkChild(owner.resolve(native, "auth:auth"), {
-          startImmediately: true,
-        });
-        yield* Deferred.await(started);
-        const second = yield* Effect.forkChild(owner.resolve(native, "auth:auth"), {
-          startImmediately: true,
-        });
-        expect(fetches).toBe(1);
-        yield* Deferred.succeed(release, undefined);
-        const [firstMaterial, secondMaterial] = yield* Effect.all([
-          Fiber.join(first),
-          Fiber.join(second),
-        ]);
-        expect(fetches).toBe(2);
-        expect(firstMaterial.auth?.jwks).toBe(secondMaterial.auth?.jwks);
-        const cached = yield* owner.resolve(native, "auth:auth");
-        expect(cached.auth?.jwks).toBe(firstMaterial.auth?.jwks);
-        expect(fetches).toBe(2);
-      }),
-    ),
-  );
-
   it.live("shares OIDC material across JWT-consuming workloads", () =>
     withPlatform(
       Effect.gen(function* () {
         const root = yield* (yield* FileSystem.FileSystem).makeTempDirectoryScoped({
           prefix: "runtime-input-auth-shared-",
         });
-        const started = yield* Deferred.make<void>();
-        const release = yield* Deferred.make<void>();
         let fetches = 0;
         const state = yield* compiledState(root, {
           capabilities: {
@@ -821,31 +748,18 @@ describe("runtime input owner", () => {
           stackId,
           fetchJson: (url) => {
             fetches += 1;
-            return Effect.gen(function* () {
-              if (fetches === 1) {
-                yield* Deferred.succeed(started, undefined);
-                yield* Deferred.await(release);
-              }
-              return url.endsWith("openid-configuration")
+            return Effect.succeed(
+              url.endsWith("openid-configuration")
                 ? { jwks_uri: "https://issuer.example/keys" }
-                : { keys: [{ kty: "RSA", n: "n", e: "AQAB" }] };
-            });
+                : { keys: [{ kty: "RSA", n: "n", e: "AQAB" }] },
+            );
           },
         });
-        const rest = yield* Effect.forkChild(owner.resolve(state, "rest:rest"), {
-          startImmediately: true,
-        });
-        yield* Deferred.await(started);
-        const realtime = yield* Effect.forkChild(owner.resolve(state, "realtime:realtime"), {
-          startImmediately: true,
-        });
-        expect(fetches).toBe(1);
-        yield* Deferred.succeed(release, undefined);
-        const [restMaterial, realtimeMaterial] = yield* Effect.all([
-          Fiber.join(rest),
-          Fiber.join(realtime),
-        ]);
+        const restMaterial = yield* owner.resolve(state, "rest:rest");
+        const cachedRestMaterial = yield* owner.resolve(state, "rest:rest");
+        const realtimeMaterial = yield* owner.resolve(state, "realtime:realtime");
         expect(fetches).toBe(2);
+        expect(cachedRestMaterial.auth?.jwks).toBe(restMaterial.auth?.jwks);
         expect(restMaterial.auth?.jwks).toBe(realtimeMaterial.auth?.jwks);
         expect(restMaterial.analytics).toBeUndefined();
         expect(realtimeMaterial.analytics).toBeUndefined();
@@ -860,112 +774,6 @@ describe("runtime input owner", () => {
         });
         yield* owner.resolve(changedState, "rest:rest");
         expect(fetches).toBe(4);
-      }),
-    ),
-  );
-
-  it.live("keeps the owner alive when an in-flight waiter is interrupted", () =>
-    withPlatform(
-      Effect.gen(function* () {
-        const root = yield* (yield* FileSystem.FileSystem).makeTempDirectoryScoped({
-          prefix: "runtime-input-single-flight-interrupt-",
-        });
-        const started = yield* Deferred.make<void>();
-        const release = yield* Deferred.make<void>();
-        let fetches = 0;
-        const state = yield* compiledState(root, {
-          capabilities: {
-            auth: {
-              settings: {
-                third_party: { workos: { enabled: true, issuer_url: "https://issuer.example" } },
-              },
-            },
-          },
-        });
-        const owner = yield* makeRuntimeInputOwner({
-          stateRoot: root,
-          stackId,
-          fetchJson: (url) => {
-            fetches += 1;
-            return Effect.gen(function* () {
-              if (fetches === 1) {
-                yield* Deferred.succeed(started, undefined);
-                yield* Deferred.await(release);
-              }
-              return url.endsWith("openid-configuration")
-                ? { jwks_uri: "https://issuer.example/keys" }
-                : { keys: [{ kty: "RSA", n: "n", e: "AQAB" }] };
-            });
-          },
-        });
-        const first = yield* Effect.forkChild(owner.resolve(state, "auth:auth"), {
-          startImmediately: true,
-        });
-        yield* Deferred.await(started);
-        const second = yield* Effect.forkChild(owner.resolve(state, "auth:auth"), {
-          startImmediately: true,
-        });
-        expect(fetches).toBe(1);
-        yield* Fiber.interrupt(second);
-        yield* Deferred.succeed(release, undefined);
-        const firstMaterial = yield* Fiber.join(first);
-        expect(firstMaterial.auth?.jwks).toContain('"keys"');
-        expect(fetches).toBe(2);
-        const cached = yield* owner.resolve(state, "auth:auth");
-        expect(cached.auth?.jwks).toBe(firstMaterial.auth?.jwks);
-        expect(fetches).toBe(2);
-      }),
-    ),
-  );
-
-  it.live("completes materializing and queued owners when their scope closes", () =>
-    withPlatform(
-      Effect.gen(function* () {
-        const root = yield* (yield* FileSystem.FileSystem).makeTempDirectoryScoped({
-          prefix: "runtime-input-owner-scope-close-",
-        });
-        const started = yield* Deferred.make<void>();
-        const release = yield* Deferred.make<void>();
-        let fetches = 0;
-        const state = yield* compiledState(root, {
-          capabilities: {
-            auth: {
-              settings: {
-                third_party: { workos: { enabled: true, issuer_url: "https://issuer.example" } },
-              },
-            },
-          },
-        });
-        const ownerScope = yield* Scope.make();
-        const owner = yield* makeRuntimeInputOwner({
-          stateRoot: root,
-          stackId,
-          fetchJson: (url) => {
-            fetches += 1;
-            return Effect.gen(function* () {
-              if (fetches === 1) {
-                yield* Deferred.succeed(started, undefined);
-                yield* Deferred.await(release);
-              }
-              return url.endsWith("openid-configuration")
-                ? { jwks_uri: "https://issuer.example/keys" }
-                : { keys: [{ kty: "RSA", n: "n", e: "AQAB" }] };
-            });
-          },
-        }).pipe(Effect.provideService(Scope.Scope, ownerScope));
-        const materializing = yield* Effect.forkChild(owner.resolve(state, "auth:auth"), {
-          startImmediately: true,
-        });
-        yield* Deferred.await(started);
-        const queued = yield* Effect.forkChild(owner.resolve(state, "auth:auth"), {
-          startImmediately: true,
-        });
-        expect(fetches).toBe(1);
-        yield* Scope.close(ownerScope, Exit.void);
-        const materializingExit = yield* Fiber.join(materializing).pipe(Effect.exit);
-        const queuedExit = yield* Fiber.join(queued).pipe(Effect.exit);
-        expect(Exit.isFailure(materializingExit)).toBe(true);
-        expect(Exit.isFailure(queuedExit)).toBe(true);
       }),
     ),
   );

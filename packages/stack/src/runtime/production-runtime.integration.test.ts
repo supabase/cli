@@ -3,10 +3,12 @@ import { NodeServices } from "@effect/platform-node";
 import { describe, expect, it } from "@effect/vitest";
 import {
   Cause,
+  Deferred,
   Duration,
   Effect,
   Exit,
   FileSystem,
+  Fiber,
   Path,
   Crypto,
   Redacted,
@@ -683,6 +685,93 @@ describe("production runtime", () => {
           expect(error?.cause).toBeInstanceOf(StackPreparationError);
         }
         yield* runtime.driver.stop({ stackId, workloadId: database.id });
+      }),
+    ).pipe(Effect.provide(NodeServices.layer)),
+  );
+
+  it.live("interrupts native input materialization before cleanup", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const root = yield* fs.makeTempDirectoryScoped({
+          prefix: "supabase-production-oidc-stop-",
+        });
+        const started = yield* Deferred.make<void>();
+        const release = yield* Deferred.make<void>();
+        const interrupted = yield* Deferred.make<void>();
+        yield* Effect.addFinalizer(() => Deferred.succeed(release, undefined));
+        const compiled = yield* compileStack({
+          projectRoot: root,
+          runtime: { kind: "native" },
+          config: {
+            capabilities: {
+              auth: {
+                enabled: true,
+                settings: {
+                  third_party: {
+                    workos: { enabled: true, issuer_url: "https://issuer.example" },
+                  },
+                },
+              },
+            },
+          },
+        });
+        const resolved = yield* resolveSecrets(
+          { declarations: compiled.secrets },
+          undefined,
+          "stopped",
+        );
+        const current = {
+          value: {
+            ...stateFor(resolved.persisted, { kind: "native" }),
+            identity: {
+              ...stateFor({}).identity,
+              projectRoot: root,
+              checkoutRoot: root,
+              workspaceId: root,
+              checkoutId: root,
+            },
+            desiredLifecycle: "running" as const,
+            definition: compiled.definition,
+          },
+        } satisfies { value: PersistedStackState };
+        const auth = compiled.executionPlan.workloads.find(({ id }) => id === "auth:auth");
+        if (auth === undefined) return yield* Effect.die("Expected Auth workload");
+        const context = yield* Effect.context<FileSystem.FileSystem | Path.Path | Crypto.Crypto>();
+        const runtime = yield* makeProductionRuntime({
+          stateRoot: root,
+          stackId,
+          ownerSessionId: "oidc-stop",
+          stateStore: stateStoreFor(current),
+          context,
+          ingress,
+          envFileOwner: envFiles,
+          functionsBootstrapOwner: bootstrap,
+          artifactPreparer: artifacts,
+          logStore: memoryLogStore([]),
+          fetchJson: (url) =>
+            Effect.gen(function* () {
+              yield* Deferred.succeed(started, undefined);
+              yield* Deferred.await(release);
+              return url.endsWith("openid-configuration")
+                ? { jwks_uri: "https://issuer.example/keys" }
+                : { keys: [{ kty: "RSA", n: "n", e: "AQAB" }] };
+            }).pipe(Effect.ensuring(Deferred.succeed(interrupted, undefined))),
+        });
+        const key = { stackId, workloadId: auth.id };
+        const starting = yield* Effect.forkChild(runtime.driver.start(key, auth), {
+          startImmediately: true,
+        });
+        yield* Deferred.await(started);
+        yield* runtime.driver.stop(key);
+        expect(yield* Deferred.isDone(interrupted)).toBe(true);
+        // The release is only a guard for the interrupted implementation under test. A correct
+        // owner propagates cancellation from NativeRuntime.startFiber without this handoff.
+        yield* Deferred.succeed(release, undefined);
+        yield* runtime.driver.cleanup({ stackId, destroy: false });
+        const startExit = yield* Fiber.join(starting).pipe(Effect.exit);
+        expect(Exit.isFailure(startExit)).toBe(true);
+        expect(yield* runtime.driver.observe(stackId)).toEqual([]);
       }),
     ).pipe(Effect.provide(NodeServices.layer)),
   );

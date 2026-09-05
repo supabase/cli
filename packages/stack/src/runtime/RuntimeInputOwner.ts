@@ -1,16 +1,4 @@
-import {
-  Crypto,
-  Deferred,
-  Effect,
-  Exit,
-  FileSystem,
-  FiberSet,
-  Path,
-  PlatformError,
-  Scope,
-  Schema,
-  Semaphore,
-} from "effect";
+import { Crypto, Effect, FileSystem, Path, PlatformError, Schema } from "effect";
 import type { PersistedStackState } from "../state/StackState.ts";
 import type { StackId } from "../public/StackId.ts";
 import { StackPreparationError } from "../public/Errors.ts";
@@ -56,7 +44,13 @@ interface RuntimeInputMaterial {
 }
 
 export interface RuntimeInputOwner {
-  /** Resolves stack-owned inputs needed before a workload is created. */
+  /**
+   * Resolves stack-owned inputs needed before a workload is created.
+   *
+   * The Supervisor serializes workload startup and runtime cleanup. This owner therefore keeps
+   * only completed material in its caches; the caller owns an in-progress resolution and its
+   * interruption.
+   */
   readonly resolve: (
     state: PersistedStackState,
     workloadId: string,
@@ -274,16 +268,12 @@ export const makeRuntimeInputOwner = (
 ): Effect.Effect<
   RuntimeInputOwner,
   StackPreparationError,
-  FileSystem.FileSystem | Path.Path | Crypto.Crypto | Scope.Scope
+  FileSystem.FileSystem | Path.Path | Crypto.Crypto
 > =>
   Effect.gen(function* () {
     const fs = yield* FileSystem.FileSystem;
     const path = yield* Path.Path;
     const crypto = yield* Crypto.Crypto;
-    const admission = yield* Semaphore.make(1);
-    const execution = yield* Semaphore.make(1);
-    const ownerScope = yield* Effect.scope;
-    const ownedFibers = yield* FiberSet.make().pipe(Effect.provideService(Scope.Scope, ownerScope));
     const stackPaths = yield* resolveStackPaths(options).pipe(
       Effect.mapError((cause) => failure("Unable to resolve runtime input paths", { cause })),
     );
@@ -618,14 +608,8 @@ export const makeRuntimeInputOwner = (
       });
     };
 
-    const joinExit = <A, E>(result: Exit.Exit<A, E>): Effect.Effect<A, E> =>
-      Exit.isSuccess(result) ? Effect.succeed(result.value) : Effect.failCause(result.cause);
-    type OwnedResult<A> = Deferred.Deferred<Exit.Exit<A, StackPreparationError>, never>;
-    const commonPending = new Map<string, OwnedResult<RuntimeInputMaterial>>();
     const commonCompleted = new Map<string, RuntimeInputMaterial>();
-    const authPending = new Map<string, OwnedResult<NonNullable<RuntimeInputMaterial["auth"]>>>();
     const authCompleted = new Map<string, NonNullable<RuntimeInputMaterial["auth"]>>();
-    const poolerPending = new Map<string, OwnedResult<string>>();
     const poolerCompleted = new Map<string, string>();
     const keyFor = (state: PersistedStackState): string =>
       `${options.stackId}\u0000${canonicalize(state.runtime)}\u0000${canonicalize(state.definition ?? {})}`;
@@ -683,71 +667,16 @@ export const makeRuntimeInputOwner = (
         };
       });
 
-    const singleFlight = <A>(
+    const resolveCached = <A>(
       key: string,
-      pending: Map<string, OwnedResult<A>>,
       completed: Map<string, A>,
       materialize: Effect.Effect<A, StackPreparationError>,
     ): Effect.Effect<A, StackPreparationError> =>
-      Effect.gen(function* () {
-        const result = yield* Effect.uninterruptibleMask((restore) =>
-          Effect.gen(function* () {
-            type Admission =
-              | { readonly kind: "ready"; readonly value: A }
-              | { readonly kind: "waiting"; readonly deferred: OwnedResult<A> };
-            const owned = yield* admission.withPermit(
-              Effect.gen(function* () {
-                const ready = completed.get(key);
-                if (ready !== undefined) return { kind: "ready", value: ready } satisfies Admission;
-                const current = pending.get(key);
-                if (current !== undefined)
-                  return { kind: "waiting", deferred: current } satisfies Admission;
-                const deferred = yield* Deferred.make<Exit.Exit<A, StackPreparationError>, never>();
-                pending.set(key, deferred);
-                const publish = (exit: Exit.Exit<A, StackPreparationError>) =>
-                  Effect.uninterruptible(
-                    Effect.gen(function* () {
-                      const completion = yield* admission.withPermit(
-                        Effect.sync(() => {
-                          if (pending.get(key) !== deferred)
-                            return Exit.fail(
-                              failure("Runtime input materialization was invalidated"),
-                            );
-                          pending.delete(key);
-                          if (Exit.isSuccess(exit)) completed.set(key, exit.value);
-                          return exit;
-                        }),
-                      );
-                      yield* Deferred.succeed(deferred, completion);
-                    }),
-                  );
-                let entered = false;
-                const materializing = Effect.uninterruptibleMask((restore) =>
-                  Effect.gen(function* () {
-                    entered = true;
-                    const stillCurrent = yield* admission.withPermit(
-                      Effect.sync(() => pending.get(key) === deferred),
-                    );
-                    if (!stillCurrent)
-                      return yield* failure("Runtime input materialization was invalidated");
-                    return yield* restore(materialize);
-                  }).pipe(Effect.onExit(publish)),
-                );
-                const owner = execution.withPermit(materializing).pipe(
-                  // An owner interrupted while queued on execution never enters
-                  // `materializing`; this fallback still wakes its waiters.
-                  Effect.onExit((exit) => (entered ? Effect.void : publish(exit))),
-                );
-                yield* FiberSet.run(ownedFibers, owner, { startImmediately: true });
-                return { kind: "waiting", deferred } satisfies Admission;
-              }),
-            );
-            return owned.kind === "ready"
-              ? Exit.succeed(owned.value)
-              : yield* restore(Deferred.await(owned.deferred));
-          }),
-        );
-        return yield* joinExit(result);
+      Effect.suspend(() => {
+        const ready = completed.get(key);
+        return ready === undefined
+          ? materialize.pipe(Effect.tap((value) => Effect.sync(() => completed.set(key, value))))
+          : Effect.succeed(ready);
       });
 
     const resolve = (
@@ -757,11 +686,10 @@ export const makeRuntimeInputOwner = (
       Effect.gen(function* () {
         const key = `${keyFor(state)}\u0000${workloadId}`;
         const auth = needsAuthMaterial(state, workloadId)
-          ? yield* singleFlight(keyFor(state), authPending, authCompleted, resolveAuth(state))
+          ? yield* resolveCached(keyFor(state), authCompleted, resolveAuth(state))
           : undefined;
-        const common = yield* singleFlight(
+        const common = yield* resolveCached(
           key,
-          commonPending,
           commonCompleted,
           materializeCommon(state, workloadId, auth),
         );
@@ -770,51 +698,28 @@ export const makeRuntimeInputOwner = (
           state.definition?.capabilities.pooler.enabled !== true
         )
           return common;
-        const tenantPath = yield* singleFlight(
+        const tenantPath = yield* resolveCached(
           key,
-          poolerPending,
           poolerCompleted,
           writePoolerTenant(state, state.runtime.kind),
         );
         return { ...common, pooler: { tenantPath } };
       });
-    const cleanupAll = execution.withPermit(
-      Effect.gen(function* () {
-        const pending = yield* admission.withPermit(
-          Effect.sync(() => {
-            const common = [...commonPending.values()];
-            const auth = [...authPending.values()];
-            const pooler = [...poolerPending.values()];
-            commonPending.clear();
-            commonCompleted.clear();
-            authPending.clear();
-            authCompleted.clear();
-            poolerPending.clear();
-            poolerCompleted.clear();
-            return { common, auth, pooler };
-          }),
-        );
-        yield* Effect.forEach(pending.common, (deferred) =>
-          Deferred.succeed(deferred, Exit.fail(failure("Runtime inputs were invalidated"))),
-        );
-        yield* Effect.forEach(pending.auth, (deferred) =>
-          Deferred.succeed(deferred, Exit.fail(failure("Runtime inputs were invalidated"))),
-        );
-        yield* Effect.forEach(pending.pooler, (deferred) =>
-          Deferred.succeed(deferred, Exit.fail(failure("Runtime inputs were invalidated"))),
-        );
-        yield* mapFile(
-          poolerRoot,
-          "clean pooler tenant files",
-          fs.remove(poolerRoot, { recursive: true, force: true }),
-        );
-        yield* mapFile(
-          vectorRoot,
-          "clean Vector configs",
-          fs.remove(vectorRoot, { recursive: true, force: true }),
-        );
-      }),
-    );
+    const cleanupAll = Effect.gen(function* () {
+      commonCompleted.clear();
+      authCompleted.clear();
+      poolerCompleted.clear();
+      yield* mapFile(
+        poolerRoot,
+        "clean pooler tenant files",
+        fs.remove(poolerRoot, { recursive: true, force: true }),
+      );
+      yield* mapFile(
+        vectorRoot,
+        "clean Vector configs",
+        fs.remove(vectorRoot, { recursive: true, force: true }),
+      );
+    });
 
     return {
       resolve,

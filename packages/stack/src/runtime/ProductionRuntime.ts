@@ -490,7 +490,6 @@ export const makeProductionRuntime = (
     const state = yield* currentStateReader(options);
     const fileSystem = yield* FileSystem.FileSystem;
     const pathService = yield* Path.Path;
-    const ownerScope = yield* Scope.Scope;
     const paths = yield* resolveStackPaths({
       stateRoot: options.stateRoot,
       stackId: options.stackId,
@@ -516,7 +515,7 @@ export const makeProductionRuntime = (
       stateRoot: options.stateRoot,
       stackId: options.stackId,
       fetchJson,
-    }).pipe(Effect.provideService(Scope.Scope, ownerScope));
+    });
     const hostRoute = yield* Ref.make<ContainerHostRoute | undefined>(undefined);
     const ingress =
       options.ingress ??

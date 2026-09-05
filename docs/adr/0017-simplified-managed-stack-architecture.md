@@ -104,6 +104,12 @@ is caller-owned: cancellation stops that caller's unfinished transfers while
 completed cache entries remain. It never acquires control or ownership and does
 not create runtime resources.
 
+Runtime input materialization belongs to the workload startup operation. The Supervisor serializes
+workload startup with runtime cleanup, so the input owner caches only completed values and leaves an
+in-progress resolution in the startup operation's scope. Interrupting native startup therefore interrupts
+OIDC fetches and file materialization; successful Pooler and Vector files remain owned until the
+runtime cleanup boundary removes them.
+
 Artifact cache trust begins only after a candidate has passed checksum and
 runtime-path validation, had its metadata written, and been atomically
 published. A cache hit revalidates the metadata, required path kinds and
