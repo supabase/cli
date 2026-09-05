@@ -17,6 +17,7 @@ catalog:
   "@effect/sql-pg": "4.0.0-rc.112"
   "@effect/tsgo": &effect-tsgo-version "0.37.0"
   "@effect/vitest": "4.0.0-rc.112"
+  "@supabase/supabase-js": ^2.110.7
   "@tsconfig/bun": "^1.0.11"
   "@types/bun": "^1.4.0"
   "typescript": "^7.0.2"

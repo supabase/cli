@@ -11,7 +11,6 @@ import {
   legacyOrderedKeys,
   legacyRenderJson,
   legacyRenderTablewriter,
-  legacyResolveAgentMode,
   legacyToCsv,
 } from "./query.format.ts";
 
@@ -350,15 +349,6 @@ describe("legacyFindNonFiniteJsonValue", () => {
     expect(legacyFindNonFiniteJsonValue([[Number.NaN]])).toBe("NaN");
     expect(legacyFindNonFiniteJsonValue([[Number.POSITIVE_INFINITY]])).toBe("+Inf");
     expect(legacyFindNonFiniteJsonValue([[1], [Number.NEGATIVE_INFINITY]])).toBe("-Inf");
-  });
-});
-
-describe("legacyResolveAgentMode", () => {
-  it("honors the explicit flag and falls back to detection on auto", () => {
-    expect(legacyResolveAgentMode("yes", Option.none())).toBe(true);
-    expect(legacyResolveAgentMode("no", Option.some("cursor"))).toBe(false);
-    expect(legacyResolveAgentMode("auto", Option.some("cursor"))).toBe(true);
-    expect(legacyResolveAgentMode("auto", Option.none())).toBe(false);
   });
 });
 

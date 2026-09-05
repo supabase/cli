@@ -93,10 +93,57 @@ describe("legacyDohFetch", () => {
     // TLS SNI set to original hostname (CWE-350 guard).
     expect(call.init.tls?.serverName).toBe("api.supabase.com");
     // Host header pinned to original hostname.
-    const headers = call.init.headers as Record<string, string>;
-    expect(headers["Host"]).toBe("api.supabase.com");
+    const headers = new Headers(call.init.headers);
+    expect(headers.get("host")).toBe("api.supabase.com");
     // Other headers preserved.
-    expect(headers["authorization"]).toBe("Bearer tok");
+    expect(headers.get("authorization")).toBe("Bearer tok");
+  });
+
+  it("preserves entries from a WHATWG Headers instance (supabase-js shape)", async () => {
+    const captured: CapturedCall[] = [];
+    const fetchFn = legacyDohFetch({
+      dnsResolver: "https",
+      resolver: makeFakeResolver(["203.0.113.10"]),
+      innerFetch: makeFakeFetch(captured),
+    });
+
+    // supabase-js passes `init.headers` as a `Headers` instance, not a plain
+    // record. Spreading a `Headers` instance yields zero entries, so this is
+    // the regression case: auth and capability headers must survive the
+    // DoH rewrite.
+    await fetchFn("https://feedback.supabase.co/rest/v1/interfaces_feedback", {
+      method: "DELETE",
+      headers: new Headers({
+        apikey: "sb_publishable_key",
+        "content-type": "application/json",
+        "x-feedback-token": "123e4567-e89b-12d3-a456-426614174000",
+      }),
+    });
+
+    const headers = new Headers(captured[0]!.init.headers);
+    expect(headers.get("apikey")).toBe("sb_publishable_key");
+    expect(headers.get("content-type")).toBe("application/json");
+    expect(headers.get("x-feedback-token")).toBe("123e4567-e89b-12d3-a456-426614174000");
+    expect(headers.get("host")).toBe("feedback.supabase.co");
+  });
+
+  it("preserves headers embedded on a Request when no init headers are given", async () => {
+    const captured: CapturedCall[] = [];
+    const fetchFn = legacyDohFetch({
+      dnsResolver: "https",
+      resolver: makeFakeResolver(["203.0.113.10"]),
+      innerFetch: makeFakeFetch(captured),
+    });
+
+    await fetchFn(
+      new Request("https://api.supabase.com/v1/projects", {
+        headers: { authorization: "Bearer tok" },
+      }),
+    );
+
+    const headers = new Headers(captured[0]!.init.headers);
+    expect(headers.get("authorization")).toBe("Bearer tok");
+    expect(headers.get("host")).toBe("api.supabase.com");
   });
 
   it("passes through without DoH when dnsResolver is 'native'", async () => {

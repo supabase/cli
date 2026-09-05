@@ -143,12 +143,20 @@ export function legacyDohFetch(opts: LegacyDohFetchOptions): typeof globalThis.f
     // returned HTTP 403 (cert validated OK against 'cloudflare.com'). CWE-350
     // guard: cert validation never falls back to the raw IP even though the URL
     // authority is an IP literal.
+    // `init.headers` may be a plain record (Effect's FetchHttpClient), a
+    // WHATWG `Headers` instance (supabase-js), or an entries array — spreading
+    // a `Headers` instance yields zero entries, so rebuild through the
+    // `Headers` constructor, which accepts every `HeadersInit` shape. When the
+    // request is a `Request` with no separate `init.headers`, the headers live
+    // on the request object itself (standard fetch semantics: `init.headers`
+    // replaces them entirely when present).
+    const headers = new Headers(
+      init?.headers ?? (input instanceof Request ? input.headers : undefined),
+    );
+    headers.set("Host", hostHeader);
     const rewrittenInit: BunFetchRequestInit = {
       ...init,
-      headers: {
-        ...init?.headers,
-        Host: hostHeader,
-      },
+      headers,
       tls: { serverName },
     };
 

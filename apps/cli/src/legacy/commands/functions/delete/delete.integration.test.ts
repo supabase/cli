@@ -2,8 +2,6 @@ import { describe, expect, it } from "@effect/vitest";
 import { Effect, Layer, Option, Stdio } from "effect";
 
 import { commandRuntimeLayer } from "../../../../shared/runtime/command-runtime.layer.ts";
-import { CurrentAnalyticsContext } from "../../../../shared/telemetry/analytics-context.ts";
-import { Analytics } from "../../../../shared/telemetry/analytics.service.ts";
 import {
   buildLegacyTestRuntime,
   mockLegacyCliSettings,
@@ -12,34 +10,11 @@ import {
   mockLegacyTelemetryStateTracked,
   useLegacyTempWorkdir,
 } from "../../../../../tests/helpers/legacy-mocks.ts";
-import { mockOutput } from "../../../../../tests/helpers/mocks.ts";
+import { mockContextualAnalytics, mockOutput } from "../../../../../tests/helpers/mocks.ts";
 import { legacyFunctionsDeleteHandler } from "./delete.command.ts";
 import { legacyFunctionsDelete } from "./delete.handler.ts";
 
 const tempRoot = useLegacyTempWorkdir("supabase-functions-delete-legacy-");
-
-// `withLegacyCommandInstrumentation` threads `flags`/`command`/etc. through
-// `CurrentAnalyticsContext`, not the direct `capture()` call args — mirrors
-// the identical local helper in `legacy-command-instrumentation.unit.test.ts`.
-// The shared `mockAnalytics()` in tests/helpers/mocks.ts deliberately doesn't
-// merge this context (most callers don't need it).
-function mockContextualAnalytics() {
-  const captured: Array<{ event: string; properties: Record<string, unknown> }> = [];
-  const layer = Layer.succeed(
-    Analytics,
-    Analytics.of({
-      capture: (event: string, properties: Record<string, unknown> = {}) =>
-        Effect.gen(function* () {
-          const context = yield* CurrentAnalyticsContext;
-          captured.push({ event, properties: { ...context, ...properties } });
-        }),
-      identify: () => Effect.void,
-      alias: () => Effect.void,
-      groupIdentify: () => Effect.void,
-    }),
-  );
-  return { layer, captured };
-}
 
 // Strip ANSI SGR (aqua slug/ref via `legacyAqua`) so byte-assertions are
 // stable whether or not the test stdout supports color.

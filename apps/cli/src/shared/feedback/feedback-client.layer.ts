@@ -1,0 +1,172 @@
+import { createClient } from "@supabase/supabase-js";
+import { Effect, Layer, Option } from "effect";
+import type { Database } from "./database.types.ts";
+import type { FeedbackSubmission } from "./feedback-client.service.ts";
+import { FeedbackBackendError, FeedbackClient } from "./feedback-client.service.ts";
+
+/**
+ * Feedback backend connection config. The keys are publishable (anon) keys,
+ * safe to commit. Submissions go exclusively through the SECURITY DEFINER
+ * `submit_interfaces_feedback` RPC (there is no insert grant on the table),
+ * which returns a server-generated delete token exactly once. Reads and
+ * deletes are gated by RLS policies that compare the row's `delete_token`
+ * against the `x-feedback-token` request header — plus a matching
+ * `x-feedback-project-ref` header when the row was submitted with one.
+ */
+interface FeedbackEnvironment {
+  readonly url: string;
+  readonly key: string;
+}
+
+const FEEDBACK_STAGING: FeedbackEnvironment = {
+  url: "https://imrwaufzgcaczqmpnxyr.supabase.co",
+  key: "sb_publishable_puOyAlqG5J_XfBMTDM2Ckw_L5mieFdb",
+};
+
+// No dedicated production feedback project exists yet (CLI-1946): production
+// intentionally reuses the staging values until one is provisioned.
+const FEEDBACK_PRODUCTION: FeedbackEnvironment = { ...FEEDBACK_STAGING };
+
+const REQUEST_TIMEOUT_MS = 10_000;
+
+interface FeedbackClientOptions {
+  readonly environment: FeedbackEnvironment;
+  /**
+   * Injectable transport. Production wires the legacy debug/DoH fetch
+   * (`legacyFeedbackFetch` in `feedback.layers.ts`) so `--debug` and
+   * `--dns-resolver https` apply; hermetic tests inject a recording fake.
+   */
+  readonly fetch?: typeof globalThis.fetch;
+}
+
+// Profile → feedback environment, mirroring how the Management API url follows
+// the resolved profile: staging profiles post to the staging project, with a
+// production fallback for unknown and YAML-file profiles (`legacy-profile.ts`).
+export function legacyFeedbackEnvironment(profile: string): FeedbackEnvironment {
+  switch (profile) {
+    case "supabase-staging":
+    case "supabase-local":
+      return FEEDBACK_STAGING;
+    default:
+      return FEEDBACK_PRODUCTION;
+  }
+}
+
+type RpcArgs = Database["public"]["Functions"]["submit_interfaces_feedback"]["Args"];
+
+// `user_id` is the gotrue user UUID the handler read from the persisted
+// telemetry identity — best-effort attribution, omitted when logged out or
+// when telemetry consent is denied. A row submitted with it additionally
+// requires the matching `x-feedback-user-id` header on preview/delete (RLS).
+function toRpcArgs(submission: FeedbackSubmission): RpcArgs {
+  const { context } = submission;
+  return {
+    feedback: submission.message,
+    user_agent: context.userAgent,
+    ...(submission.projectRef === undefined ? {} : { project_ref: submission.projectRef }),
+    ...(submission.userId === undefined ? {} : { user_id: submission.userId }),
+    metadata: {
+      cli_version: context.cliVersion,
+      source: "cli",
+      os: context.os,
+      arch: context.arch,
+      is_agent: context.isAgent,
+      ...(context.agentName === undefined ? {} : { agent_name: context.agentName }),
+    },
+  };
+}
+
+export function feedbackClientLayer(options: FeedbackClientOptions): Layer.Layer<FeedbackClient> {
+  return Layer.sync(FeedbackClient, () => {
+    const client = createClient<Database>(options.environment.url, options.environment.key, {
+      auth: { persistSession: false },
+      global: options.fetch === undefined ? {} : { fetch: options.fetch },
+    });
+
+    // PostgREST reports failures as a returned `error`, not a rejection; a
+    // thrown/timed-out/aborted fetch rejects. Both map to `FeedbackBackendError`.
+    // Each request aborts on whichever fires first: fiber interruption (the
+    // signal `Effect.tryPromise` hands us — Ctrl-C must not let an in-flight
+    // submit commit after the command is cancelled) or the 10s timeout.
+    const run = <A>(
+      operation: FeedbackBackendError["operation"],
+      request: (signal: AbortSignal) => PromiseLike<{
+        data: A;
+        error: { message: string } | null;
+        count?: number | null;
+      }>,
+    ) =>
+      Effect.tryPromise({
+        try: (signal) =>
+          request(AbortSignal.any([signal, AbortSignal.timeout(REQUEST_TIMEOUT_MS)])),
+        catch: (cause) =>
+          new FeedbackBackendError({
+            message: cause instanceof Error ? cause.message : String(cause),
+            operation,
+          }),
+      }).pipe(
+        Effect.flatMap((response) =>
+          response.error === null
+            ? Effect.succeed(response)
+            : Effect.fail(new FeedbackBackendError({ message: response.error.message, operation })),
+        ),
+      );
+
+    return FeedbackClient.of({
+      submit: (submission) =>
+        run("submit", (signal) =>
+          client.rpc("submit_interfaces_feedback", toRpcArgs(submission)).abortSignal(signal),
+        ).pipe(
+          Effect.flatMap(({ data }) =>
+            typeof data === "string" && data.length > 0
+              ? Effect.succeed({ deleteToken: data })
+              : Effect.fail(
+                  new FeedbackBackendError({
+                    message: "feedback backend returned no delete token",
+                    operation: "submit",
+                  }),
+                ),
+          ),
+        ),
+
+      preview: (token, context) =>
+        run("preview", (signal) => {
+          let request = client
+            .from("interfaces_feedback")
+            .select("feedback")
+            .eq("delete_token", token)
+            .setHeader("x-feedback-token", token)
+            .abortSignal(signal);
+          if (context?.projectRef !== undefined) {
+            request = request.setHeader("x-feedback-project-ref", context.projectRef);
+          }
+          if (context?.userId !== undefined) {
+            request = request.setHeader("x-feedback-user-id", context.userId);
+          }
+          return request;
+        }).pipe(Effect.map(({ data }) => Option.fromNullishOr(data?.[0]?.feedback))),
+
+      delete: (token, context) =>
+        run("delete", (signal) => {
+          // The `delete_token=eq.` filter satisfies PostgREST's filterless-delete
+          // rejection; the `x-feedback-token` header is the actual security
+          // boundary (RLS matches zero rows without it). `count: "exact"` asks
+          // for a Content-Range so the caller can tell a matched delete from a
+          // zero-row one.
+          let request = client
+            .from("interfaces_feedback")
+            .delete({ count: "exact" })
+            .eq("delete_token", token)
+            .setHeader("x-feedback-token", token)
+            .abortSignal(signal);
+          if (context?.projectRef !== undefined) {
+            request = request.setHeader("x-feedback-project-ref", context.projectRef);
+          }
+          if (context?.userId !== undefined) {
+            request = request.setHeader("x-feedback-user-id", context.userId);
+          }
+          return request;
+        }).pipe(Effect.map(({ count }) => ({ deleted: count === 1 }))),
+    });
+  });
+}

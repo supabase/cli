@@ -41,7 +41,7 @@
   },
   "devDependencies": {
     "@effect/vitest": "catalog:",
-    "@supabase/supabase-js": "^2.112.4",
+    "@supabase/supabase-js": "catalog:",
     "@tsconfig/bun": "catalog:",
     "@types/bun": "catalog:",
     "@vitest/coverage-v8": "catalog:",
