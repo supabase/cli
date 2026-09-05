@@ -389,7 +389,7 @@ jobs:
           done
 
       - name: Create draft GitHub Release
-        uses: softprops/action-gh-release@3d0d9888cb7fd7b750713d6e236d1fcb99157228 # v3.0.2
+        uses: softprops/action-gh-release@efb35369e0ad2afab669f228072c1b0d510eae64 # v3.0.3
         with:
           tag_name: v${{ inputs.version }}
           name: v${{ inputs.version }}
@@ -426,7 +426,7 @@ jobs:
 
       - name: Sync stable release to Linear
         if: ${{ inputs.channel == 'stable' && env.LINEAR_CLI_STABLE_RELEASE_ACCESS_KEY != '' }}
-        uses: linear/linear-release-action@17b8c24f8ceb2b98cabaf1965ff83c55dd596fac # v0
+        uses: linear/linear-release-action@3f31fcf14c110cc53579fcc3575a26d469c413b4 # v0
         with:
           access_key: ${{ env.LINEAR_CLI_STABLE_RELEASE_ACCESS_KEY }}
           version: v${{ inputs.version }}
@@ -437,7 +437,7 @@ jobs:
 
       - name: Sync beta release to Linear
         if: ${{ inputs.channel == 'beta' && env.LINEAR_CLI_BETA_RELEASE_ACCESS_KEY != '' }}
-        uses: linear/linear-release-action@17b8c24f8ceb2b98cabaf1965ff83c55dd596fac # v0
+        uses: linear/linear-release-action@3f31fcf14c110cc53579fcc3575a26d469c413b4 # v0
         with:
           access_key: ${{ env.LINEAR_CLI_BETA_RELEASE_ACCESS_KEY }}
           version: v${{ inputs.version }}
