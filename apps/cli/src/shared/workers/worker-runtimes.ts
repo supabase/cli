@@ -1,12 +1,13 @@
 /**
- * The alpha envelope a worker is described by: which runtime it is built on,
- * and how big an instance it runs as.
+ * The alpha envelope a worker is described by: which runtime it is built on, how
+ * big an instance it runs as, and whether it is reachable from the internet.
  *
- * Both are deliberately small closed sets. The Workers API takes `spec.size` as
- * one opaque string (`2gb-1vcpu`) rather than independent cpu/memory dials, so
- * the CLI offers exactly the sizes that string has values for and derives the
- * vCPU count from the memory the user picked — one choice, not two that could
- * be combined into a shape the platform does not run.
+ * All three are deliberately small closed sets, and the CLI's own rather than
+ * the API's: the Workers API takes `spec.size` as one opaque string
+ * (`2gb-1vcpu`) rather than independent cpu/memory dials, and `spec.exposure` as
+ * an unconstrained string. So the CLI offers exactly the sizes that string has
+ * values for and derives the vCPU count from the memory the user picked — one
+ * choice, not two that could be combined into a shape the platform does not run.
  */
 
 /** A worker's runtime: its own Dockerfile, or one of the catalog base images. */
@@ -80,6 +81,42 @@ function isWorkerSize(value: string): value is WorkerSize {
 export function parseWorkerSize(value: string): WorkerSize | undefined {
   const canonical = value.trim().toLowerCase();
   return isWorkerSize(canonical) ? canonical : undefined;
+}
+
+/**
+ * How a worker is reached: `public` gives it an internet-facing URL, `private`
+ * keeps it reachable only from inside the project.
+ *
+ * `spec.exposure` is an unconstrained string in the Management API's schema, so
+ * this closed set is the CLI's own — the same arrangement as {@link WORKER_SIZES},
+ * and the reason output renders the *accepted* exposure verbatim rather than
+ * forcing it back into this enum.
+ */
+export const WORKER_EXPOSURES = ["public", "private"] as const;
+
+export type WorkerExposure = (typeof WORKER_EXPOSURES)[number];
+
+/**
+ * The exposure a worker gets when neither `--exposure` nor `[workers.<name>]
+ * exposure` says otherwise. Public, because every runtime offered today serves
+ * HTTP and a worker nobody has locked down is one you can call.
+ */
+export const DEFAULT_WORKER_EXPOSURE: WorkerExposure = "public";
+
+/** One-line description of each exposure, for `--exposure`'s prompt and help. */
+export const WORKER_EXPOSURE_DESCRIPTIONS: Record<WorkerExposure, string> = {
+  public: "Reachable from the internet at the worker's own URL.",
+  private: "Reachable only from inside the project; no URL is issued.",
+};
+
+function isWorkerExposure(value: string): value is WorkerExposure {
+  return WORKER_EXPOSURES.some((exposure) => exposure === value);
+}
+
+/** As {@link parseWorkerRuntime}, for exposures. */
+export function parseWorkerExposure(value: string): WorkerExposure | undefined {
+  const canonical = value.trim().toLowerCase();
+  return isWorkerExposure(canonical) ? canonical : undefined;
 }
 
 const VCPU_FOR_SIZE: Record<WorkerSize, number> = { "2gb": 1, "4gb": 2 };

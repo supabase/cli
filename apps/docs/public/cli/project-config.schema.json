@@ -1862,6 +1862,11 @@
               "description": "Instance size, denominated by memory. Each size implies its own vCPU count,\nso it is the one dial rather than two.",
               "examples": ["2gb"]
             },
+            "exposure": {
+              "type": "string",
+              "description": "How the worker is reached: `public` gives it an internet-facing URL,\n`private` keeps it reachable only from inside the project. Every deploy\nsends a complete spec, so the value recorded here is what keeps a private\nworker private; `--exposure` overrides it for one deploy. Defaults to\n`public`.",
+              "examples": ["private"]
+            },
             "instances": {
               "type": "integer",
               "minimum": 0,

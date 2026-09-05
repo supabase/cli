@@ -65,6 +65,20 @@ size = "2gb"
     );
   });
 
+  // Quoting a count would write a TOML string, and the config schema types
+  // `instances` as a number — so the rendered file would stop loading entirely.
+  test("writes a number bare rather than quoting it", () => {
+    expect(appendTomlSection("", "workers.api", { size: "2gb", instances: 3 })).toBe(
+      '[workers.api]\nsize = "2gb"\ninstances = 3\n',
+    );
+  });
+
+  test("writes a zero count, which is a real value rather than an absent one", () => {
+    expect(appendTomlSection("", "workers.api", { instances: 0 })).toBe(
+      "[workers.api]\ninstances = 0\n",
+    );
+  });
+
   test("writes a header with no keys when there is nothing to set", () => {
     expect(appendTomlSection("", "workers.api", {})).toBe("[workers.api]\n");
   });

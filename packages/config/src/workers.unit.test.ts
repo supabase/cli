@@ -8,9 +8,28 @@ const workerNamePattern = "^[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?$";
 
 describe("workers schema", () => {
   test("decodes a worker table with every dial set", () => {
-    expect(
-      decode({ api: { runtime: "node", size: "4gb", instances: 3, source: "packages/api" } }),
-    ).toEqual({ api: { runtime: "node", size: "4gb", instances: 3, source: "packages/api" } });
+    const every = {
+      api: {
+        runtime: "node",
+        size: "4gb",
+        exposure: "private",
+        instances: 3,
+        source: "packages/api",
+      },
+    };
+    expect(decode(every)).toEqual(every);
+  });
+
+  // Unconstrained, like `runtime` and `size`: the Management API takes
+  // `spec.exposure` as a plain string, and `push` is what names the values it
+  // accepts. Pinning an enum here would make a config a newer CLI understands
+  // fail to load at all.
+  test("accepts an exposure it does not itself recognize", () => {
+    expect(decode({ api: { exposure: "internal" } })).toEqual({ api: { exposure: "internal" } });
+  });
+
+  test("rejects a non-string exposure", () => {
+    expect(() => decode({ api: { exposure: true } })).toThrow();
   });
 
   test("defaults to an empty section when the key is absent", () => {
@@ -66,6 +85,7 @@ describe("workers schema", () => {
 
     expect(workerSchema?.properties?.runtime).toBeDefined();
     expect(workerSchema?.properties?.size).toBeDefined();
+    expect(workerSchema?.properties?.exposure).toBeDefined();
     expect(workerSchema?.properties?.instances).toBeDefined();
     expect(workerSchema?.properties?.source).toBeDefined();
   });

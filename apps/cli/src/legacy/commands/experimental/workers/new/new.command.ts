@@ -3,7 +3,11 @@ import { Argument, Command, Flag } from "effect/unstable/cli";
 import type * as CliCommand from "effect/unstable/cli/Command";
 import { withJsonErrorHandling } from "../../../../../shared/output/json-error-handling.ts";
 import { commandRuntimeLayer } from "../../../../../shared/runtime/command-runtime.layer.ts";
-import { WORKER_RUNTIMES, WORKER_SIZES } from "../../../../../shared/workers/worker-runtimes.ts";
+import {
+  WORKER_EXPOSURES,
+  WORKER_RUNTIMES,
+  WORKER_SIZES,
+} from "../../../../../shared/workers/worker-runtimes.ts";
 import { legacyCliSettingsLayer } from "../../../../config/legacy-cli-settings.layer.ts";
 import { legacyDebugLoggerLayer } from "../../../../shared/legacy-debug-logger.layer.ts";
 import { legacyTelemetryStateLayer } from "../../../../telemetry/legacy-telemetry-state.layer.ts";
@@ -29,6 +33,24 @@ const config = {
     ),
     Flag.optional,
   ),
+  exposure: Flag.choice("exposure", WORKER_EXPOSURES).pipe(
+    Flag.withDescription(
+      "Whether the worker is reachable from the internet, recorded as `exposure` in supabase/config.toml. Prompted when omitted.",
+    ),
+    Flag.optional,
+  ),
+  instances: Flag.integer("instances").pipe(
+    // Bounded at the parser, the same way `push --instances` and the config
+    // schema's own `instances` are.
+    Flag.filter(
+      (instances) => instances >= 0,
+      (instances) => `--instances ${instances} is negative; pass zero or more.`,
+    ),
+    Flag.withDescription(
+      "Number of instances to record in supabase/config.toml. Not prompted for, and recorded only when it differs from the default of 1.",
+    ),
+    Flag.optional,
+  ),
   source: Flag.string("source").pipe(
     Flag.withDescription(
       "Scaffold the worker here instead of the default workers directory, recorded as `source` in supabase/config.toml.",
@@ -50,21 +72,29 @@ const legacyWorkersNewRuntimeLayer = Layer.mergeAll(
 
 export const legacyWorkersNewCommand = Command.make("new", config).pipe(
   Command.withDescription(
-    "Scaffold a worker directory from a runtime's starter files and record the choice in supabase/config.toml. Nothing is deployed.",
+    "Scaffold a worker directory from a runtime's starter files and record the choices in supabase/config.toml. Nothing is deployed.",
   ),
   Command.withShortDescription("Scaffold a worker locally"),
   Command.withExamples([
     {
       command: "supabase experimental workers new",
-      description: "Prompt for the name, then for runtime and size",
+      description: "Prompt for the name, then for runtime, size and exposure",
     },
     {
       command: "supabase experimental workers new api",
-      description: "Scaffold supabase/workers/api, prompting for runtime and size",
+      description: "Scaffold supabase/workers/api, prompting for runtime, size and exposure",
     },
     {
       command: "supabase experimental workers new api --runtime node",
       description: "Scaffold supabase/workers/api on the node runtime",
+    },
+    {
+      command: "supabase experimental workers new api --exposure private",
+      description: "Scaffold a worker with no internet-facing URL",
+    },
+    {
+      command: "supabase experimental workers new api --instances 3",
+      description: "Scaffold a worker that deploys at three instances",
     },
     {
       command: "supabase experimental workers new api --source packages/api",
