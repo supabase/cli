@@ -4,7 +4,6 @@ import { Cause, Crypto, Deferred, Effect, Exit, Fiber, FileSystem, Option } from
 import { zstdCompress } from "node:zlib";
 import { makeArtifactStore, type ArtifactRequest } from "./ArtifactStore.ts";
 import { digestHex } from "./Integrity.ts";
-import { StackPreparationError } from "../public/Errors.ts";
 import {
   makeSlimServicesSource,
   slimServicesChecksum,
