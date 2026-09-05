@@ -19,7 +19,7 @@ const stuck = (message: string) => ({
 });
 
 const removals = {
-  extensions: ["pgcrypto", "uuid-ossp"],
+  extensions: ["pg_cron", "pgcrypto", "pgmq", "uuid-ossp"],
   extensionIntents: [
     { extension: "pg_cron", intentKind: "job", key: "refresh download metrics" },
     { extension: "pgmq", intentKind: "queue", key: "emails" },
@@ -72,9 +72,25 @@ describe("legacyClassifyDeclarativeCompatibilityGap", () => {
       },
     },
     {
-      name: "stages extension intents",
+      name: "stages dropped extensions along with the objects they manage",
       overrides: {},
-      expected: { recommendedAction: "stage-next-export" },
+      expected: {
+        recommendedAction: "stage-next-export",
+        ambiguousRemovals: ["pg_cron", "pgmq"],
+        extensionIntents: removals.extensionIntents,
+      },
+    },
+    {
+      name: "ignores cron job and pgmq queue removals whose extension stays",
+      overrides: {
+        removals: { extensions: ["pgcrypto"], extensionIntents: removals.extensionIntents },
+      },
+      expected: { recommendedAction: "repair-extensions", extensionIntents: [] },
+    },
+    {
+      name: "never gates on cron job and pgmq queue removals alone",
+      overrides: { removals: { extensions: [], extensionIntents: removals.extensionIntents } },
+      expected: { recommendedAction: "none" },
     },
     {
       name: "trusts a next export manifest",
@@ -153,6 +169,7 @@ describe("legacyFormatDeclarativeUpgradeGate", () => {
         "platform extensions and extension-managed objects like cron jobs.",
         "",
         "  Legacy-implicit extensions: pgcrypto, uuid-ossp",
+        "  Extensions: pg_cron, pgmq",
         "  Extension-managed objects: pg_cron job refresh download metrics, pgmq queue emails",
         "",
         "Do not apply a sync generated from this tree — it can drop extensions or unschedule jobs.",

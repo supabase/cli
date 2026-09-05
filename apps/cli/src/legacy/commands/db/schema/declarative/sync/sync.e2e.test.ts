@@ -84,6 +84,13 @@ describe("db schema declarative sync (e2e)", () => {
         `CREATE EXTENSION IF NOT EXISTS "${extension}" WITH SCHEMA "extensions";\n`,
       );
     }
+    // Both install into a fixed schema, so no `WITH SCHEMA` clause.
+    for (const extension of ["pg_cron", "pgmq"]) {
+      writeFileSync(
+        path.join(extensionsDir, `${extension}.sql`),
+        `CREATE EXTENSION IF NOT EXISTS "${extension}";\n`,
+      );
+    }
 
     const start = await runSupabase(
       [
@@ -169,6 +176,68 @@ describe("db schema declarative sync (e2e)", () => {
       );
       expect(converged.exitCode, commandFailure(converged)).toBe(0);
       expect(`${converged.stdout}${converged.stderr}`).toContain("No schema changes found");
+    },
+  );
+
+  test(
+    "renames a cron job and drops a pgmq queue declared in the tree",
+    { timeout: SCENARIO_TIMEOUT_MS },
+    async () => {
+      const projectDir = project?.dir;
+      if (projectDir === undefined) throw new Error("declarative sync project was not initialized");
+      const jobsPath = path.join(projectDir, "supabase", "schemas", "jobs.sql");
+      const sync = (name: string) =>
+        runSupabase(
+          ["db", "schema", "declarative", "sync", "--no-apply", "--name", name, "--experimental"],
+          {
+            entrypoint: "legacy",
+            cwd: projectDir,
+            env: NEXT_ENV,
+            exitTimeoutMs: SCENARIO_COMMAND_TIMEOUT_MS,
+          },
+        );
+      // A next-engine plan may span several ordered migration files; read every
+      // file a sync added rather than only the last one.
+      const syncAndReadSql = async (name: string) => {
+        const before = new Set(migrationFiles(projectDir));
+        const result = await sync(name);
+        expect(result.exitCode, commandFailure(result)).toBe(0);
+        const added = migrationFiles(projectDir).filter((file) => !before.has(file));
+        expect(added.length, "sync did not write a migration").toBeGreaterThan(0);
+        return {
+          result,
+          sql: added
+            .map((file) =>
+              readFileSync(path.join(projectDir, "supabase", "migrations", file), "utf8"),
+            )
+            .join("\n"),
+        };
+      };
+
+      writeFileSync(
+        jobsPath,
+        [
+          "select cron.schedule('nightly_cleanup', '0 3 * * *', $$delete from public.disposable_note$$);",
+          "select pgmq.create('emails');",
+          "",
+        ].join("\n"),
+      );
+      const added = await syncAndReadSql("add_jobs");
+      expect(added.sql).toContain("cron.schedule('nightly_cleanup'");
+      expect(added.sql).toContain("pgmq.create('emails')");
+
+      // Rename the job and drop the queue: previously refused as a legacy export.
+      writeFileSync(
+        jobsPath,
+        "select cron.schedule('weekly_cleanup', '0 3 * * 0', $$delete from public.disposable_note$$);\n",
+      );
+      const removed = await syncAndReadSql("rename_job_drop_queue");
+      expect(`${removed.result.stdout}${removed.result.stderr}`).not.toContain(
+        "legacy pg-delta export",
+      );
+      expect(removed.sql).toContain("cron.unschedule('nightly_cleanup')");
+      expect(removed.sql).toContain("cron.schedule('weekly_cleanup'");
+      expect(removed.sql).toContain("pgmq.drop_queue('emails')");
     },
   );
 });
