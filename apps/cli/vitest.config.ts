@@ -1,5 +1,5 @@
 import { readFileSync } from "node:fs";
-import { definePackageConfig, testProject } from "../../vitest.shared.ts";
+import { definePackageConfig, testProject } from "../../vitest.shared.mts";
 
 // `src/shared/services/dockerfile-images.ts` imports the Go CLI's Dockerfile
 // with Bun's `{ type: "text" }` import attribute; Vite needs a loader for it.

@@ -30,16 +30,13 @@
     "build:shim": "bun build src/shared/cli/bin.ts --outfile dist/supabase.js --target node",
     "docs:spec": "bun scripts/generate-docs-spec.ts",
     "dev:legacy": "pnpm exec bun src/legacy/main.ts",
-    "test": "pnpm run test:unit --coverage.enabled && pnpm run test:integration --coverage.enabled && pnpm run test:e2e",
-    "test:unit": "pnpm exec turbo run supabase#test:unit:run --",
-    "test:unit:run": "bun --bun vitest run --project unit --coverage.reportsDirectory=coverage/unit",
-    "test:integration": "pnpm exec turbo run supabase#test:integration:run --",
-    "test:integration:run": "bun --bun vitest run --project integration --coverage.reportsDirectory=coverage/integration",
-    "test:e2e": "pnpm exec turbo run supabase#build && pnpm exec turbo run supabase#test:e2e:run --only --",
-    "test:e2e:run": "bun --bun vitest run --project e2e --project e2e-stack",
+    "types:check": "tsc --noEmit",
+    "test": "bun --bun vitest run --project unit --project integration",
+    "test:unit": "bun --bun vitest run --project unit",
+    "test:integration": "bun --bun vitest run --project integration",
+    "test:e2e": "pnpm exec turbo run supabase#build && bun --bun vitest run --project e2e --project e2e-stack",
     "test:live": "bun --bun vitest run --project live",
-    "test:smoke": "bun run tests/smoke-test.ts",
-    "types:check": "tsc --noEmit"
+    "test:smoke": "bun run tests/smoke-test.ts"
   },
   "dependencies": {
     "eciesjs": "^0.5.0",

@@ -1,0 +1,158 @@
+name: Develop tests
+
+# Runs the full unit, integration, and e2e suites from the repository root on
+# every develop push and keeps two by-products that PR runs cannot produce
+# themselves (ADR 0024):
+#
+# - one merged coverage report, since coverage left the PR jobs;
+# - per-file test durations, merged across shards into
+#   `.vitest/shard-weights.json` and saved to the Actions cache. PR runs of
+#   test.yml restore that file and hand it to every shard as a run artifact,
+#   so the root sequencer balances shards on develop's latest numbers. Caches
+#   saved from PR or merge-queue runs are invisible to other branches, which
+#   is why this has to run on develop itself.
+on:
+  push:
+    branches:
+      - develop
+    paths-ignore:
+      - "apps/docs/**"
+      - "release-notes/**"
+      - "**/*.md"
+
+permissions:
+  contents: read
+  actions: read
+
+concurrency:
+  group: develop-tests-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  unit-integration:
+    name: Unit and integration with coverage
+    runs-on: blacksmith-8vcpu-ubuntu-2404
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Setup
+        uses: ./.github/actions/setup
+        with:
+          dependency-firewall-token: ${{ secrets.DF_FIREWALL_TOKEN }}
+
+      - name: Run unit and integration tests with coverage
+        run: pnpm run test --coverage.enabled --reporter=default --reporter=github-actions --reporter=json --outputFile=.vitest/report-unit-integration.json
+
+      - name: Upload coverage report
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: coverage-${{ github.sha }}
+          path: coverage/
+          retention-days: 30
+
+      - name: Upload test report
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: test-report-unit-integration
+          path: .vitest/report-unit-integration.json
+          retention-days: 7
+
+  e2e:
+    name: End-to-end (shard ${{ matrix.shard }}/3)
+    runs-on: blacksmith-8vcpu-ubuntu-2404
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: [1, 2, 3]
+    steps:
+      - name: Checkout
+        uses: useblacksmith/checkout@6fd481652155169ed4d2f25ebaf97464f685175f # v1.0.0-beta
+        with:
+          fetch-depth: 0
+
+      - name: Setup
+        uses: ./.github/actions/setup
+        with:
+          dependency-firewall-token: ${{ secrets.DF_FIREWALL_TOKEN }}
+
+      - name: Cache Go CLI binary
+        id: cache-go-binary
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: apps/cli-go/supabase-go
+          key: go-cli-${{ runner.os }}-${{ hashFiles('apps/cli-go/**/*.go',
+            'apps/cli-go/go.mod', 'apps/cli-go/go.sum') }}
+
+      - name: Build Go CLI
+        if: steps.cache-go-binary.outputs.cache-hit != 'true'
+        run: go build -o supabase-go .
+        working-directory: apps/cli-go
+
+      - name: Run end-to-end tests
+        run: pnpm run test:e2e --shard=${{ matrix.shard }}/3 --reporter=default --reporter=github-actions --reporter=json --outputFile=.vitest/report-e2e-${{ matrix.shard }}.json
+        env:
+          CLI_HARNESS_TARGET: ts-legacy
+          SUPABASE_GO_BINARY: ${{ github.workspace }}/apps/cli-go/supabase-go
+
+      - name: Upload test report
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: test-report-e2e-${{ matrix.shard }}
+          path: .vitest/report-e2e-${{ matrix.shard }}.json
+          retention-days: 7
+
+  shard-weights:
+    name: Merge shard weights
+    # Merge whatever reports exist even when a shard failed: a failed shard
+    # still reports durations for the files it ran, and files without a fresh
+    # duration keep their previous weight.
+    if: always()
+    needs: [unit-integration, e2e]
+    runs-on: blacksmith-4vcpu-ubuntu-2404
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Setup
+        uses: ./.github/actions/setup
+        with:
+          dependency-firewall-token: ${{ secrets.DF_FIREWALL_TOKEN }}
+
+      - name: Download test reports
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          pattern: test-report-*
+          path: .vitest/reports
+          merge-multiple: true
+
+      - name: Restore previous shard weights
+        id: previous
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: .vitest/shard-weights.json
+          key: vitest-shard-weights-${{ github.sha }}
+          restore-keys: |
+            vitest-shard-weights-
+
+      - name: Merge durations into shard weights
+        run: |
+          previous=""
+          if [ -f .vitest/shard-weights.json ]; then
+            mv .vitest/shard-weights.json .vitest/previous-shard-weights.json
+            previous="--previous .vitest/previous-shard-weights.json"
+          fi
+          # shellcheck disable=SC2086
+          bun tools/test-shard-weights.ts merge --out .vitest/shard-weights.json $previous .vitest/reports/*.json
+
+      - name: Save shard weights
+        uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: .vitest/shard-weights.json
+          key: vitest-shard-weights-${{ github.sha }}

@@ -7,12 +7,10 @@
     ".": "./src/index.ts"
   },
   "scripts": {
-    "test": "pnpm run test:unit && pnpm run test:integration",
-    "test:unit": "pnpm exec turbo run @supabase/process-compose#test:unit:run --",
-    "test:unit:run": "bun --bun vitest run --project unit --coverage.reportsDirectory=coverage/unit",
-    "test:integration": "pnpm exec turbo run @supabase/process-compose#test:integration:run --",
-    "test:integration:run": "bun --bun vitest run --project integration --coverage.reportsDirectory=coverage/integration",
-    "types:check": "tsc --noEmit"
+    "types:check": "tsc --noEmit",
+    "test": "bun --bun vitest run --project unit --project integration",
+    "test:unit": "bun --bun vitest run --project unit",
+    "test:integration": "bun --bun vitest run --project integration"
   },
   "dependencies": {
     "effect": "catalog:"

@@ -459,9 +459,9 @@ Rules:
 
 ## Testing
 
-Use `pnpm run test` to run tests. The `package.json` `test` script runs the unit, integration, and e2e Vitest projects, with coverage enabled for unit and integration.
+Use `pnpm run test` to run tests. The `package.json` `test` script runs the unit and integration Vitest projects; add `--coverage.enabled` for a coverage report. `pnpm run test:e2e` builds the CLI through Turbo and then runs the `e2e` and `e2e-stack` projects: stackless subprocess tests in parallel, then the stack-backed files one at a time.
 
-Use `pnpm run test:unit && pnpm run test:integration` for the main in-process suite, and `pnpm run test:e2e` for the sequential subprocess suite.
+Use `pnpm run test:unit` or `pnpm run test:integration` for one kind. From the repository root, `bun --bun vitest run --project 'supabase (integration)'` runs the same project inside the repo-wide Vitest process.
 
 Always run the relevant unit and integration tests automatically for the command or workspace you changed.
 Do not run the full e2e suite automatically. Only run e2e when the user asks, or when you need extra confidence for the command you touched.

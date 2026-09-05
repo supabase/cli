@@ -147,7 +147,7 @@ Run the following orchestration commands from the repository root.
 
 ```sh
 # Replay (no credentials needed)
-pnpm exec turbo run @supabase/cli-e2e#test:e2e:run   # ts-legacy target
+pnpm --filter @supabase/cli-e2e run test:e2e   # ts-legacy target
 
 # Record (requires staging access)
 SUPABASE_ACCESS_TOKEN=sbp_... SUPABASE_STAGING_URL=https://api.supabase.green \
@@ -162,19 +162,24 @@ After recording, replay must pass with no changes between the two commands.
 
 ### Sharding (replay only)
 
-CI splits the replay suite across 3 parallel shards via vitest's `--shard`
-flag (https://vitest.dev/guide/improving-performance.html#sharding).
-Locally, invoke vitest directly so the flag isn't eaten by a `--`
-passthrough quirk in package-script argument forwarding:
+CI runs every package's e2e projects from the repository root in one Vitest
+process and splits that run across 3 shards with vitest's `--shard` flag
+(https://vitest.dev/guide/improving-performance.html#sharding):
+
+```sh
+pnpm run test:e2e --shard=1/3   # from the repo root; builds the CLI first
+```
+
+To shard only this package, invoke vitest directly:
 
 ```sh
 pnpm --filter @supabase/cli-e2e exec bun --bun vitest run --shard=1/3
-pnpm --filter @supabase/cli-e2e exec bun --bun vitest run --shard=2/3
-pnpm --filter @supabase/cli-e2e exec bun --bun vitest run --shard=3/3
 ```
 
-The custom file sequencer in `vitest.config.ts` (lexicographic) runs
-per-process, so each shard still has deterministic intra-shard ordering.
+File order is lexicographic either way: the repo-root `vitest.config.mts`
+sequencer sorts files by path within each project for root runs, and this
+package's `vitest.config.ts` sequencer does the same for standalone runs, so
+every shard has deterministic intra-shard ordering.
 
 **Sharding is replay-only — never shard a recording run.** The recorder
 is a single-job operation; parallel shards would race on the shared
@@ -192,7 +197,7 @@ Build the Go CLI from source and point `SUPABASE_GO_BINARY` at it:
 
 # Replay
 SUPABASE_GO_BINARY=/tmp/supabase-test-binary \
-  pnpm exec turbo run @supabase/cli-e2e#test:e2e:run
+  pnpm --filter @supabase/cli-e2e run test:e2e
 
 # Record
 SUPABASE_GO_BINARY=/tmp/supabase-test-binary \

@@ -150,7 +150,7 @@ Standard TypeScript workspaces (`apps/cli-e2e`, `apps/cli`, `packages/api`, `pac
 | `test:e2e`         | Run end-to-end tests where applicable  |
 | `types:check`      | Type-check with `tsc --noEmit`         |
 
-The test and type-check scripts are declared in each package's `package.json`, so package-local commands are directly discoverable and can be sharded independently.
+The test and type-check scripts are declared in each package's `package.json` and call Vitest directly, so package-local commands are discoverable with no orchestration layer in between.
 
 Linting, formatting, and unused-code analysis are repo-wide rather than per-package: `oxlint`, `oxfmt`, and `knip` read `.oxlintrc.json`, `.oxfmtrc.json`, and `knip.json` at the repo root (knip's config maps each workspace under its `workspaces` key). The root `check:all`/`fix:all` scripts are the sole repo-wide quality entrypoints and use Turbo to run the package type checks and root-owned quality scripts. Package-local work can run `pnpm types:check` and the package's test scripts. Running the tools directly from the repository root also just works:
 
@@ -169,22 +169,34 @@ pnpm run test:unit
 # If this package declares an integration suite:
 pnpm run test:integration
 
-# From the workspace root — repo-wide quality and all-project test fan-out:
+# From the workspace root — repo-wide quality and one Vitest run across every package:
 pnpm run check:all
 pnpm run fix:all
-pnpm run test:unit && pnpm run test:integration
+pnpm run test                      # unit + integration, all packages
+pnpm run test:unit                 # one kind across all packages
+pnpm run test:e2e                  # builds the CLI via Turbo, then every e2e project
 ```
 
-The root unit and integration scripts use Turbo to fan out the package-local
-`test:*:run` tasks across the standard TypeScript/Vitest workspaces. The Go
-workspace remains package-local because its tests run directly through Go:
-`pnpm --dir apps/cli-go run test:unit`. Go tests are covered by the dedicated
-Go CI workflow. Unit and integration tasks are uncached for now; e2e tasks are
-also uncached and run one package at a time. Within a package, plain
-`*.e2e.test.ts` files run in parallel while `*.stack.e2e.test.ts` files (those
-that start a local stack or run Docker containers) run serially in the
-`e2e-stack` project. Forward a Vitest shard to every e2e package with
-`pnpm run test:e2e --shard=1/3`.
+The root test scripts run a single Vitest process from the repository root:
+`vitest.config.mts` loads every package config as a nested project group, so
+`--project 'supabase (integration)'` or `--project '*(unit)'` selects any slice
+of the repo and one report covers the run. `test:e2e` is the exception that
+still goes through Turbo (`//#test:e2e:run`), because e2e depends on the
+built CLI and Turbo owns that build graph. Within a run, plain `*.e2e.test.ts`
+files run in parallel while `*.stack.e2e.test.ts` files (those that start a
+local stack or run Docker containers) run one at a time in the `e2e-stack`
+projects. CI shards the root runs with `--shard=N/M`. The root config's sequencer balances
+shards from per-file durations recorded by the develop run
+(`.github/workflows/develop-tests.yml` writes `.vitest/shard-weights.json`; PR
+runs receive it as an artifact) and falls back to dealing files by count when
+that file is absent, which is the case locally. To reproduce CI's partition,
+download the `shard-weights` artifact into `.vitest/` or point
+`VITEST_SHARD_WEIGHTS` at it. Pass
+Vitest flags straight after the script name: pnpm forwards a literal `--` to the
+script, and Vitest treats everything after `--` as file filters.
+The Go workspace remains package-local because its tests run directly through
+Go: `pnpm --dir apps/cli-go run test:unit`. Go tests are covered by the
+dedicated Go CI workflow. See ADR 0024 for the rationale.
 
 ## E2E Compatibility Test Suite
 
@@ -228,7 +240,7 @@ Live CI is manual or daily scheduled and is not PR-blocking; run it manually on 
 
 ```sh
 # Replay mode — fast, no credentials needed
-pnpm exec turbo run @supabase/cli-e2e#test:e2e:run   # ts-legacy target
+pnpm --filter @supabase/cli-e2e run test:e2e   # ts-legacy target
 ```
 
 ### Recording fixtures
@@ -246,7 +258,7 @@ Review the generated files in `apps/cli-e2e/fixtures/recorded/` before committin
 After recording, replay must pass with no changes against the freshly committed fixtures:
 
 ```sh
-pnpm exec turbo run @supabase/cli-e2e#test:e2e:run
+pnpm --filter @supabase/cli-e2e run test:e2e
 ```
 
 A test failing only after a recording session usually means an assertion needs updating to match the CLI's current real-world output, not the fixture.

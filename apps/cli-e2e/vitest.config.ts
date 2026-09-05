@@ -1,5 +1,5 @@
 import { BaseSequencer, type TestSpecification } from "vitest/node";
-import { definePackageConfig, testProject } from "../../vitest.shared.ts";
+import { definePackageConfig, testProject } from "../../vitest.shared.mts";
 
 export default definePackageConfig({
   test: {

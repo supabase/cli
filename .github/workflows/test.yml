@@ -99,6 +99,7 @@ jobs:
       ts: ${{ steps.filter.outputs.ts }}
       go: ${{ steps.filter.outputs.go }}
       ci: ${{ steps.filter.outputs.ci }}
+      shard-weights: ${{ steps.shard-weights.outputs.cache-matched-key != '' }}
     steps:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -130,7 +131,32 @@ jobs:
             ci:
               - ".github/**"
 
-  test-unit:
+      # Shard weights are develop's last per-file durations (develop-tests.yml).
+      # Restore them once here and hand them to every shard as a run artifact:
+      # shards must partition from identical input, and a prefix restore in
+      # each shard could pick up different cache generations. No cache means
+      # the sequencer falls back to dealing files by count.
+      - name: Restore shard weights
+        id: shard-weights
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: .vitest/shard-weights.json
+          key: vitest-shard-weights-${{ github.sha }}
+          restore-keys: |
+            vitest-shard-weights-
+
+      - name: Publish shard weights for this run
+        if: steps.shard-weights.outputs.cache-matched-key != ''
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: shard-weights
+          path: .vitest/shard-weights.json
+          retention-days: 1
+
+  # One root Vitest run over the unit and integration kinds of every package,
+  # split across two runners by the balanced sequencer in vitest.config.mts.
+  # The summary job below keeps the required check name stable (ADR 0024).
+  test:
     needs: changes
     if: |
       !startsWith(github.head_ref, 'release-notes/') &&
@@ -138,32 +164,12 @@ jobs:
         inputs.force ||
         github.event.pull_request.draft == false) &&
       (needs.changes.outputs.ts == 'true' || needs.changes.outputs.ci == 'true')
-    name: Run unit tests
-    runs-on: blacksmith-4vcpu-ubuntu-2404
-    steps:
-      - name: Checkout
-        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          persist-credentials: false
-
-      - name: Setup
-        uses: ./.github/actions/setup
-        with:
-          dependency-firewall-token: ${{ secrets.DF_FIREWALL_TOKEN }}
-
-      - name: Run unit tests
-        run: pnpm run test:unit --coverage.enabled
-
-  test-integration:
-    needs: changes
-    if: |
-      !startsWith(github.head_ref, 'release-notes/') &&
-      (github.event_name == 'merge_group' ||
-        inputs.force ||
-        github.event.pull_request.draft == false) &&
-      (needs.changes.outputs.ts == 'true' || needs.changes.outputs.ci == 'true')
-    name: Run integration tests
+    name: Run unit and integration tests (shard ${{ matrix.shard }}/2)
     runs-on: blacksmith-8vcpu-ubuntu-2404
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: [1, 2]
     steps:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -175,8 +181,23 @@ jobs:
         with:
           dependency-firewall-token: ${{ secrets.DF_FIREWALL_TOKEN }}
 
-      - name: Run integration tests
-        run: pnpm run test:integration --coverage.enabled
+      - name: Restore Vitest module cache
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: node_modules/.vitest-cache
+          key: vitest-cache-${{ runner.os }}-${{ hashFiles('pnpm-lock.yaml') }}-${{ github.sha }}
+          restore-keys: |
+            vitest-cache-${{ runner.os }}-${{ hashFiles('pnpm-lock.yaml') }}-
+
+      - name: Use shard weights from develop
+        if: needs.changes.outputs.shard-weights == 'true'
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: shard-weights
+          path: .vitest
+
+      - name: Run unit and integration tests
+        run: pnpm run test --shard=${{ matrix.shard }}/2
 
   test-summary:
     if: |
@@ -186,7 +207,7 @@ jobs:
         inputs.force ||
         github.event.pull_request.draft == false)
     name: Run unit and integration tests
-    needs: [changes, test-unit, test-integration]
+    needs: [changes, test]
     runs-on: ubuntu-latest
     steps:
       - name: Verify unit and integration tests succeeded
@@ -195,12 +216,11 @@ jobs:
             echo "::error ::Path gate did not succeed: changes=${{ needs.changes.result }}"
             exit 1
           fi
-          if [ "${{ needs.test-unit.result }}" = "failure" ] || [ "${{ needs.test-unit.result }}" = "cancelled" ] || \
-            [ "${{ needs.test-integration.result }}" = "failure" ] || [ "${{ needs.test-integration.result }}" = "cancelled" ]; then
-            echo "::error ::Unit or integration tests failed: unit=${{ needs.test-unit.result }}, integration=${{ needs.test-integration.result }}"
+          if [ "${{ needs.test.result }}" = "failure" ] || [ "${{ needs.test.result }}" = "cancelled" ]; then
+            echo "::error ::One or more unit/integration shards failed: ${{ needs.test.result }}"
             exit 1
           fi
-          echo "Unit and integration tests reported: unit=${{ needs.test-unit.result }}, integration=${{ needs.test-integration.result }}"
+          echo "All unit/integration shards reported: ${{ needs.test.result }}"
 
   test-e2e:
     needs: changes
@@ -240,15 +260,28 @@ jobs:
         run: go build -o supabase-go .
         working-directory: apps/cli-go
 
+      - name: Restore Vitest module cache
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: node_modules/.vitest-cache
+          key: vitest-cache-${{ runner.os }}-${{ hashFiles('pnpm-lock.yaml') }}-${{ github.sha }}
+          restore-keys: |
+            vitest-cache-${{ runner.os }}-${{ hashFiles('pnpm-lock.yaml') }}-
+
       # The ts-legacy harness invokes `node apps/cli/dist/supabase.js` with
       # `SUPABASE_CLI_BINARY_OVERRIDE` pointing at the compiled legacy binary
-      # in `apps/cli/dist/`. Build the CLI explicitly before invoking every
-      # package-local e2e suite.
-      - name: Build CLI
-        run: pnpm exec turbo run supabase#build
+      # in `apps/cli/dist/`. The root e2e task depends on `supabase#build`, so
+      # Turbo builds the CLI first; one root Vitest run then covers every
+      # package's e2e projects and the balanced sequencer decides the shard.
+      - name: Use shard weights from develop
+        if: needs.changes.outputs.shard-weights == 'true'
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: shard-weights
+          path: .vitest
 
       - name: Run end-to-end tests
-        run: pnpm exec turbo run test:e2e:run --only --concurrency=1 -- --shard=${{ matrix.shard }}/3
+        run: pnpm run test:e2e --shard=${{ matrix.shard }}/3
         env:
           CLI_HARNESS_TARGET: ts-legacy
           SUPABASE_GO_BINARY: ${{ github.workspace }}/apps/cli-go/supabase-go

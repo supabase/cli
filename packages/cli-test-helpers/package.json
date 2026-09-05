@@ -7,10 +7,9 @@
     ".": "./src/index.ts"
   },
   "scripts": {
-    "test": "pnpm run test:unit",
-    "test:unit": "pnpm exec turbo run @supabase/cli-test-helpers#test:unit:run --",
-    "test:unit:run": "bun --bun vitest run --project unit --coverage.reportsDirectory=coverage/unit",
-    "types:check": "tsc --noEmit"
+    "types:check": "tsc --noEmit",
+    "test": "bun --bun vitest run --project unit",
+    "test:unit": "bun --bun vitest run --project unit"
   },
   "devDependencies": {
     "@tsconfig/bun": "catalog:",

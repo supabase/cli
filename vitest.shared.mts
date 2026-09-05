@@ -73,6 +73,9 @@ export const runDefaults = {
   passWithNoTests: true,
   // Console output from passing tests is noise; failing tests still print theirs.
   silent: "passed-only",
+  // Persist Vite's transform output under node_modules/.vitest-cache so reruns
+  // and separate processes reuse it. CI restores that directory between runs.
+  fsModuleCache: true,
 } as const satisfies TestUserConfig;
 
 const packageDefaults: ViteUserConfig = defineConfig({
