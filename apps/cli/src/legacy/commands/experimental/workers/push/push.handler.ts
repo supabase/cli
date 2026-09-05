@@ -21,13 +21,17 @@ import { displayPath } from "../../../../../shared/workers/worker-paths.ts";
 import type { WorkerEntry } from "../../../../../shared/workers/worker-config.ts";
 import {
   apiSizeFor,
+  DEFAULT_WORKER_EXPOSURE,
   DEFAULT_WORKER_INSTANCES,
   DEFAULT_WORKER_SIZE,
   formatApiSize,
+  parseWorkerExposure,
   parseWorkerRuntime,
   parseWorkerSize,
+  WORKER_EXPOSURES,
   WORKER_RUNTIMES,
   WORKER_SIZES,
+  type WorkerExposure,
 } from "../../../../../shared/workers/worker-runtimes.ts";
 import { workerUrl } from "../../../../../shared/workers/worker-url.ts";
 import {
@@ -39,6 +43,7 @@ import {
 } from "../../../../../shared/workers/workers-api.ts";
 import {
   NoWorkersToDeployError,
+  UnknownWorkerExposureError,
   UnknownWorkerRuntimeError,
   UnknownWorkerSizeError,
   WorkerBuildFailedError,
@@ -61,8 +66,8 @@ import type { LegacyWorkersPushFlags } from "./push.command.ts";
  * deploy the worker into the linked project. Registered under `deploy` as an
  * alias, for anyone reaching for the `supabase functions` verb out of habit.
  *
- * The runtime, size and source directory come from `[workers.<name>]` in
- * `supabase/config.toml`. A directory pushed without ever running `new` gets
+ * The runtime, size, exposure and source directory come from `[workers.<name>]`
+ * in `supabase/config.toml`. A directory pushed without ever running `new` gets
  * its runtime guessed from marker files instead — reported, with a nudge to pin
  * it down rather than re-guess on every push.
  *
@@ -104,7 +109,7 @@ const resolveRuntime = Effect.fnUntraced(function* (options: {
   // payload stdout is carrying.
   yield* output.raw(
     `No runtime configured for ${options.name}: guessed ${classified.runtime} (${classified.reason}). ` +
-      `Pin it down by adding [workers.${options.name}] runtime = "${classified.runtime}" to supabase/config.toml.\n`,
+      `Set [workers.${options.name}] runtime = "${classified.runtime}" in supabase/config.toml.\n`,
     "stderr",
   );
   return classified.runtime;
@@ -143,6 +148,75 @@ function resolveInstances(options: {
 }): number {
   return Option.getOrElse(options.override, () => options.recorded ?? DEFAULT_WORKER_INSTANCES);
 }
+
+/**
+ * `--exposure` for one deploy, then the recorded exposure, then
+ * {@link DEFAULT_WORKER_EXPOSURE}. Never left unset, because every deploy sends a
+ * complete spec and an omitted exposure would re-expose a worker somebody had
+ * deliberately made private.
+ *
+ * `--exposure` is a `Flag.choice`, so only a recorded value can be unrecognized
+ * — and that is refused rather than coerced, the same way `resolveSize` treats a
+ * size it does not know: silently deploying a `private`-typo'd worker as public
+ * is the one outcome nobody asked for.
+ *
+ * The flag decides one deploy and nothing writes it down, so an override the
+ * config does not already agree with is reported the way `resolveRuntime`
+ * reports a guess: on stderr, naming the line to set. Without it, taking a
+ * worker off the internet with `--exposure private` lasts exactly until the next
+ * bare `push` puts it back.
+ */
+const resolveExposure = Effect.fnUntraced(function* (options: {
+  readonly name: string;
+  readonly recorded: string | undefined;
+  readonly override: Option.Option<WorkerExposure>;
+}) {
+  if (Option.isSome(options.override)) {
+    const chosen = options.override.value;
+    // What a later bare `push` would resolve to: the recorded value if the CLI
+    // knows it, the default if there is none, and `undefined` for one it cannot
+    // read — which is not `chosen` either, so that case is nudged too.
+    const withoutTheFlag =
+      options.recorded === undefined
+        ? DEFAULT_WORKER_EXPOSURE
+        : parseWorkerExposure(options.recorded);
+    if (withoutTheFlag !== chosen) {
+      const output = yield* Output;
+      // stderr, so it never lands inside a payload stdout is carrying — and
+      // unguarded by format, like the runtime nudge: a CI run is exactly where
+      // a one-deploy exposure quietly reverting matters most.
+      yield* output.raw(
+        `--exposure ${chosen} applies to this deploy only: supabase/config.toml ${
+          options.recorded === undefined
+            ? `records no exposure for ${options.name}`
+            : `records exposure = "${options.recorded}"`
+        }, so the next bare push will not use ${chosen}. ` +
+          `Set [workers.${options.name}] exposure = "${chosen}" in supabase/config.toml.\n`,
+        "stderr",
+      );
+    }
+    return chosen;
+  }
+  if (options.recorded === undefined) {
+    return DEFAULT_WORKER_EXPOSURE;
+  }
+  const recorded = parseWorkerExposure(options.recorded);
+  if (recorded === undefined) {
+    return yield* Effect.fail(
+      new UnknownWorkerExposureError({
+        // A blank value gets its own sentence: `an unknown exposure ""` reads
+        // like a parser quirk, when what actually happened is that the key is
+        // there and says nothing.
+        detail:
+          options.recorded.trim() === ""
+            ? `supabase/config.toml records a blank exposure for "${options.name}".`
+            : `supabase/config.toml records an unknown exposure "${options.recorded}" for "${options.name}".`,
+        suggestion: `Set [workers.${options.name}] exposure to one of: ${WORKER_EXPOSURES.join(", ")}.`,
+      }),
+    );
+  }
+  return recorded;
+});
 
 /**
  * What to do about a worker whose source directory is not there at all.
@@ -194,6 +268,7 @@ const deployOneWorker = Effect.fnUntraced(function* (input: {
    */
   readonly refSuffix: string;
   readonly instances: Option.Option<number>;
+  readonly exposure: Option.Option<WorkerExposure>;
   /** `--no-wait`: return once the deploy is accepted instead of blocking on the build. */
   readonly noWait: boolean;
   readonly pollSchedule?: Schedule.Schedule<unknown>;
@@ -286,6 +361,15 @@ const deployOneWorker = Effect.fnUntraced(function* (input: {
     override: input.instances,
   });
 
+  // Resolved before anything is packaged or uploaded, alongside the runtime and
+  // size, so a config that records an exposure this CLI does not know is refused
+  // while the refusal is still free.
+  const exposure = yield* resolveExposure({
+    name,
+    recorded: worker.entry?.exposure,
+    override: input.exposure,
+  });
+
   let contextUploadId: string;
   {
     const packaging = yield* output.task("Packaging worker...");
@@ -328,9 +412,7 @@ const deployOneWorker = Effect.fnUntraced(function* (input: {
     // context carries its own Dockerfile and is built as-is.
     ...(runtime === "dockerfile" ? {} : { runtime }),
     size: apiSizeFor(size),
-    // Every runtime offered today serves HTTP. A sandbox runtime would need a
-    // branch here.
-    exposure: "public",
+    exposure,
     instances,
   };
 
@@ -599,6 +681,7 @@ export const legacyWorkersPush = Effect.fn("legacy.experimental.workers.push")(f
         projectRef,
         refSuffix,
         instances: flags.instances,
+        exposure: flags.exposure,
         noWait: flags.noWait,
         machineOutput,
         ...(options.pollSchedule === undefined ? {} : { pollSchedule: options.pollSchedule }),

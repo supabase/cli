@@ -114,6 +114,7 @@ export const VALUE_CONSUMING_LONG_FLAGS = new Set([
   "env-file",
   "exclude",
   "exp",
+  "exposure",
   "file",
   "from",
   "from-backup",
