@@ -125,13 +125,14 @@ test(
         EXIT_TIMEOUT_MS,
       )
     ).cidrs;
-    // An empty allowlist is restrict-all on the platform, so an empty or absent
-    // family is restored to allow-all rather than leaving the shared project
-    // locked down for every later live test that reaches the database directly.
-    const baselineCidrs: AllowedCidrs = {
-      v4: captured.v4.length > 0 ? captured.v4 : ALLOW_ALL_CIDRS.v4,
-      v6: captured.v6.length > 0 ? captured.v6 : ALLOW_ALL_CIDRS.v6,
-    };
+    // Two empty allowlists (what an unconfigured project reads as) cannot be
+    // posted back: update sends both arrays and an empty one is restrict-all, so
+    // that baseline is restored as allow-all rather than leaving the shared
+    // project locked down for every later live test that reaches the database
+    // directly. Any other capture is restored as read, an empty family beside a
+    // populated one included.
+    const baselineCidrs: AllowedCidrs =
+      captured.v4.length === 0 && captured.v6.length === 0 ? ALLOW_ALL_CIDRS : captured;
     let targetError: unknown;
     const cleanupErrors: Array<unknown> = [];
     try {
