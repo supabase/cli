@@ -476,7 +476,7 @@ describe("legacy workers push", () => {
         yield* run();
 
         expect(out.stderrText).toContain("records no exposure for api");
-        // The exact line to add, the way the runtime guess names its own.
+        // The exact line to set, the way the runtime guess names its own.
         expect(out.stderrText).toContain('[workers.api] exposure = "private"');
       }).pipe(Effect.provide(layer), Effect.ensuring(Effect.sync(repo.cleanup)));
     });

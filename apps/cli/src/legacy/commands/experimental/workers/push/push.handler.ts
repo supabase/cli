@@ -109,7 +109,7 @@ const resolveRuntime = Effect.fnUntraced(function* (options: {
   // payload stdout is carrying.
   yield* output.raw(
     `No runtime configured for ${options.name}: guessed ${classified.runtime} (${classified.reason}). ` +
-      `Pin it down by adding [workers.${options.name}] runtime = "${classified.runtime}" to supabase/config.toml.\n`,
+      `Set [workers.${options.name}] runtime = "${classified.runtime}" in supabase/config.toml.\n`,
     "stderr",
   );
   return classified.runtime;
@@ -162,7 +162,7 @@ function resolveInstances(options: {
  *
  * The flag decides one deploy and nothing writes it down, so an override the
  * config does not already agree with is reported the way `resolveRuntime`
- * reports a guess: on stderr, naming the line to add. Without it, taking a
+ * reports a guess: on stderr, naming the line to set. Without it, taking a
  * worker off the internet with `--exposure private` lasts exactly until the next
  * bare `push` puts it back.
  */
@@ -191,7 +191,7 @@ const resolveExposure = Effect.fnUntraced(function* (options: {
             ? `records no exposure for ${options.name}`
             : `records exposure = "${options.recorded}"`
         }, so the next bare push will not use ${chosen}. ` +
-          `Pin it down by adding [workers.${options.name}] exposure = "${chosen}" to supabase/config.toml.\n`,
+          `Set [workers.${options.name}] exposure = "${chosen}" in supabase/config.toml.\n`,
         "stderr",
       );
     }
