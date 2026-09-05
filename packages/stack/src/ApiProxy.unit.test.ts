@@ -203,6 +203,18 @@ describe("ApiProxy", () => {
     expect(res.status).toBe(200);
   });
 
+  // A DELETE from supabase-js carries no body. Forwarding it as a streamed
+  // (chunked) body made PostgREST drop the connection under the Bun HTTP
+  // client, surfacing as "Bad gateway: Transport error" on every native
+  // delete; the proxy must send an empty body instead.
+  test("forwards a body-less DELETE without a chunked body", async () => {
+    const res = await fetch(`${proxyUrl}/rest/v1/todos?id=eq.3`, { method: "DELETE" });
+    expect(res.status).toBe(200);
+    const echoed = (await res.json()) as { method: string; headers: Record<string, string> };
+    expect(echoed.method).toBe("DELETE");
+    expect(echoed.headers["transfer-encoding"]).toBeUndefined();
+  });
+
   // ---------------------------------------------------------------------------
   // CORS
   // ---------------------------------------------------------------------------
