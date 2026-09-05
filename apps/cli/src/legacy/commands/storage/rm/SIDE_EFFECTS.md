@@ -6,13 +6,13 @@ when `-r` is set. With no paths and `-r`, every bucket is cleared and deleted.
 
 ## Files Read
 
-| Path                                          | Format     | When                                                                                                                                |
-| --------------------------------------------- | ---------- | ----------------------------------------------------------------------------------------------------------------------------------- |
-| `<workdir>/supabase/config.toml`              | TOML       | always (local creds; `[remotes.*]` merge when linked)                                                                               |
-| `~/.supabase/access-token`                    | plain text | linked path, when `SUPABASE_ACCESS_TOKEN` unset                                                                                     |
-| `~/.supabase/<hash>/linked-project.json`      | JSON       | linked path, to resolve the project ref                                                                                             |
-| local Kong TLS cert/key                       | PEM        | local + `api.enabled` + `api.tls.enabled`                                                                                           |
-| `<workdir>/supabase/.env*`, `<workdir>/.env*` | dotenv     | always, to resolve `SUPABASE_YES` (CLI-1878); on the local path also the `SUPABASE_API_*` overrides for the gateway URL/TLS (#6452) |
+| Path                                          | Format     | When                                                                                                                                                                                                           |
+| --------------------------------------------- | ---------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `<workdir>/supabase/config.toml`              | TOML       | always (local creds; `[remotes.*]` merge when linked)                                                                                                                                                          |
+| `~/.supabase/access-token`                    | plain text | linked path, when `SUPABASE_ACCESS_TOKEN` unset                                                                                                                                                                |
+| `~/.supabase/<hash>/linked-project.json`      | JSON       | linked path, to resolve the project ref                                                                                                                                                                        |
+| local Kong TLS cert/key                       | PEM        | local + `api.enabled` + `api.tls.enabled`                                                                                                                                                                      |
+| `<workdir>/supabase/.env*`, `<workdir>/.env*` | dotenv     | always, to resolve `SUPABASE_YES` (CLI-1878); on the local path also the `SUPABASE_API_*` overrides for the gateway URL/TLS (#6452) and `SUPABASE_AUTH_{JWT_SECRET,SERVICE_ROLE_KEY}` for the service-role key |
 
 ## Files Written
 

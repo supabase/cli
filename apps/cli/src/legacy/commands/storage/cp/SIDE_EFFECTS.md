@@ -5,14 +5,14 @@ Copies objects between local paths and the Storage service. The scheme of `src`/
 
 ## Files Read
 
-| Path                                          | Format     | When                                                                                  |
-| --------------------------------------------- | ---------- | ------------------------------------------------------------------------------------- |
-| `<workdir>/supabase/config.toml`              | TOML       | always (local creds; `[storage.buckets.*]` for bucket auto-create)                    |
-| `~/.supabase/access-token`                    | plain text | linked path, when `SUPABASE_ACCESS_TOKEN` unset                                       |
-| `~/.supabase/<hash>/linked-project.json`      | JSON       | linked path, to resolve the project ref                                               |
-| local Kong TLS cert/key                       | PEM        | local + `api.enabled` + `api.tls.enabled`                                             |
-| `<workdir>/supabase/.env*`, `<workdir>/.env*` | dotenv     | local path, to resolve the `SUPABASE_API_*` overrides for the gateway URL/TLS (#6452) |
-| upload source files                           | bytes      | upload: sniff (≤512 bytes) + streamed body                                            |
+| Path                                          | Format     | When                                                                                                                                                             |
+| --------------------------------------------- | ---------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `<workdir>/supabase/config.toml`              | TOML       | always (local creds; `[storage.buckets.*]` for bucket auto-create)                                                                                               |
+| `~/.supabase/access-token`                    | plain text | linked path, when `SUPABASE_ACCESS_TOKEN` unset                                                                                                                  |
+| `~/.supabase/<hash>/linked-project.json`      | JSON       | linked path, to resolve the project ref                                                                                                                          |
+| local Kong TLS cert/key                       | PEM        | local + `api.enabled` + `api.tls.enabled`                                                                                                                        |
+| `<workdir>/supabase/.env*`, `<workdir>/.env*` | dotenv     | local path, to resolve the `SUPABASE_API_*` overrides for the gateway URL/TLS (#6452) and `SUPABASE_AUTH_{JWT_SECRET,SERVICE_ROLE_KEY}` for the service-role key |
+| upload source files                           | bytes      | upload: sniff (≤512 bytes) + streamed body                                                                                                                       |
 
 ## Files Written
 

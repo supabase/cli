@@ -1,9 +1,12 @@
 import { describe, expect, it } from "@effect/vitest";
 import { Effect, Exit, Option } from "effect";
 
-import { LEGACY_VALID_REF } from "../../../../../tests/helpers/legacy-mocks.ts";
+import {
+  LEGACY_VALID_REF,
+  legacyWithEnv,
+  useLegacyTempWorkdir,
+} from "../../../../../tests/helpers/legacy-mocks.ts";
 import { setupLegacyStorage } from "../../../../../tests/helpers/legacy-storage.ts";
-import { useLegacyTempWorkdir } from "../../../../../tests/helpers/legacy-mocks.ts";
 import { legacyStorageLs } from "./ls.handler.ts";
 import type { LegacyStorageLsFlags } from "./ls.command.ts";
 
@@ -259,6 +262,30 @@ describe("legacy storage ls", () => {
       expect(requests).toHaveLength(0);
       expect(linkedCache.cached).toBe(false);
     });
+  });
+
+  it.live("signs --local requests with a SUPABASE_AUTH_SERVICE_ROLE_KEY from supabase/.env", () => {
+    // The storage frame loads the project dotenv itself (no db reset / seed
+    // caller hands one in), so the auth override must reach the resolver from
+    // that walk too. Pin the ambient var away so only the dotenv value counts.
+    const { layer, requests } = setupLegacyStorage(tmp.current, {
+      toml: 'project_id = "test"\n',
+      local: true,
+      files: { "supabase/.env": "SUPABASE_AUTH_SERVICE_ROLE_KEY=sb_secret_dotenv_only_key\n" },
+      routes: [{ method: "GET", match: BUCKET, body: [{ name: "test", id: "test" }] }],
+    });
+    return legacyWithEnv(
+      "SUPABASE_AUTH_SERVICE_ROLE_KEY",
+      undefined,
+      Effect.gen(function* () {
+        const exit = yield* legacyStorageLs(lsFlags()).pipe(Effect.provide(layer), Effect.exit);
+        expect(Exit.isSuccess(exit)).toBe(true);
+        expect(requests.length).toBeGreaterThan(0);
+        expect(requests.every((r) => r.headers["apikey"] === "sb_secret_dotenv_only_key")).toBe(
+          true,
+        );
+      }),
+    );
   });
 
   it.live("emits a { paths } result in json mode", () => {

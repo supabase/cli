@@ -13,7 +13,7 @@ import { legacyPromptYesNo } from "../../shared/legacy/legacy-prompt-yes-no.ts";
 import {
   legacyResolveStorageCredentials,
   legacyStorageGatewayFetch,
-  legacyValidateLocalApiOverrides,
+  legacyValidateLocalStorageConfig,
 } from "./legacy-storage-credentials.ts";
 import {
   legacyParseFileSizeLimit,
@@ -246,13 +246,13 @@ export const legacySeedBucketsRun = Effect.fnUntraced(function* (opts: {
 
   // Short-circuit: nothing to seed (ref present → never short-circuits).
   if (projectRef === "" && bucketNames.length === 0 && !hasVectorBuckets) {
-    // The `SUPABASE_API_*` override decode belongs to config load, which runs
-    // before the no-op path — a malformed override or invalid `api.port` fails
-    // even with nothing to seed, same as the bucket-name/size validations
-    // above, including the TLS cert/key pairing rule. Validate-only: the
-    // seeding path re-resolves the same fold through
-    // `legacyResolveStorageCredentials`.
-    yield* legacyValidateLocalApiOverrides(config.api, projectEnvValues);
+    // The `SUPABASE_API_*`/`SUPABASE_AUTH_*` override decode belongs to config
+    // load, which runs before the no-op path — a malformed override, invalid
+    // `api.port`, short or undecryptable auth secret, or broken TLS cert/key
+    // pairing fails even with nothing to seed, same as the bucket-name/size
+    // validations above. Validate-only: the seeding path re-resolves the same
+    // values through `legacyResolveStorageCredentials`.
+    yield* legacyValidateLocalStorageConfig(config, projectEnvValues);
     if (emitSummary && output.format !== "text") {
       yield* output.success("", { ...emptySummary() });
     }
