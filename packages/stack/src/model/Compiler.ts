@@ -1,6 +1,6 @@
 import { Duration, Effect, Path, Redacted, Schema } from "effect";
 import { InvalidStackConfigError, StackVersionUnsupportedError } from "../public/Errors.ts";
-import { StackConfigSchema, type StackConfig } from "../public/Config.ts";
+import { StackConfigSchema, type StackConfig, type PreparationMode } from "../public/Config.ts";
 import type { JwtSigning } from "../public/Config.ts";
 import type { CapabilityName } from "../public/Capability.ts";
 import type { PortField } from "../public/Status.ts";
@@ -36,6 +36,7 @@ interface SecretSlot {
 }
 
 export interface StackDefinition {
+  readonly preparation: PreparationMode;
   readonly capabilities: MaterializedCapabilities;
   readonly listeners: Readonly<Record<PortField, MaterializedListener>>;
   readonly security: Readonly<{
@@ -690,6 +691,7 @@ export const compileStack = (
       },
     };
     const definition: StackDefinition = {
+      preparation: config.preparation ?? "background",
       capabilities,
       listeners,
       security,

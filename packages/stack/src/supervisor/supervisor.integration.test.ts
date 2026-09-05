@@ -19,6 +19,7 @@ import { Rpc } from "effect/unstable/rpc";
 import { RequestId } from "effect/unstable/rpc/RpcMessage";
 import type { LogQuery, StackLogEntry } from "../public/Logs.ts";
 import type { StackRuntime } from "../public/Runtime.ts";
+import type { ArtifactPreparationStatus, StackStatus } from "../public/Status.ts";
 import {
   GatewayActivationError,
   InvalidLogCursorError,
@@ -109,6 +110,12 @@ const makeFixture = (
     readonly shutdownReadStarted?: Deferred.Deferred<void>;
     readonly shutdownReadGate?: Deferred.Deferred<void>;
     readonly readCalls?: Ref.Ref<number>;
+    readonly prefetchStarted?: Deferred.Deferred<void>;
+    readonly prefetchFinished?: Deferred.Deferred<void>;
+    readonly prefetchGate?: Deferred.Deferred<void>;
+    readonly prefetchInterrupted?: Deferred.Deferred<void>;
+    readonly prefetchCalls?: Ref.Ref<number>;
+    readonly artifactStatuses?: Ref.Ref<ReadonlyArray<ArtifactPreparationStatus>>;
   } = {},
 ) =>
   Effect.gen(function* () {
@@ -341,6 +348,41 @@ const makeFixture = (
             }
           }
         }),
+      prepare: () => Effect.void,
+      prefetch: (state) => {
+        if (state.definition?.preparation === "on-demand") return Effect.void;
+        return Effect.gen(function* () {
+          if (fixtureOptions.prefetchCalls !== undefined)
+            yield* Ref.update(fixtureOptions.prefetchCalls, (count) => count + 1);
+          if (fixtureOptions.artifactStatuses !== undefined)
+            yield* Ref.set(fixtureOptions.artifactStatuses, [
+              { workloadId: "rest:rest", capability: "rest", state: "downloading" },
+            ]);
+          if (fixtureOptions.prefetchStarted !== undefined)
+            yield* Deferred.succeed(fixtureOptions.prefetchStarted, undefined);
+          if (fixtureOptions.prefetchGate !== undefined)
+            yield* Deferred.await(fixtureOptions.prefetchGate);
+          if (fixtureOptions.artifactStatuses !== undefined)
+            yield* Ref.set(fixtureOptions.artifactStatuses, [
+              { workloadId: "rest:rest", capability: "rest", state: "ready" },
+            ]);
+          if (fixtureOptions.prefetchFinished !== undefined)
+            yield* Deferred.succeed(fixtureOptions.prefetchFinished, undefined);
+        }).pipe(
+          Effect.onInterrupt(() =>
+            Effect.gen(function* () {
+              if (fixtureOptions.artifactStatuses !== undefined)
+                yield* Ref.set(fixtureOptions.artifactStatuses, []);
+              if (fixtureOptions.prefetchInterrupted !== undefined)
+                yield* Deferred.succeed(fixtureOptions.prefetchInterrupted, undefined);
+            }),
+          ),
+        );
+      },
+      artifacts:
+        fixtureOptions.artifactStatuses === undefined
+          ? Effect.succeed([])
+          : Ref.get(fixtureOptions.artifactStatuses),
       activate: () =>
         Effect.gen(function* () {
           if (fixtureOptions.activationCalls !== undefined)
@@ -601,6 +643,147 @@ describe("Supervisor composition", () => {
           expect(status.capabilities.find((capability) => capability.name === name)?.state).toBe(
             "dormant",
           );
+      }),
+    ),
+  );
+
+  it.live("returns database readiness while background preparation remains observable", () =>
+    run(
+      Effect.gen(function* () {
+        const prefetchStarted = yield* Deferred.make<void>();
+        const prefetchGate = yield* Deferred.make<void>();
+        const prefetchInterrupted = yield* Deferred.make<void>();
+        const prefetchCalls = yield* Ref.make(0);
+        const artifactStatuses = yield* Ref.make<ReadonlyArray<ArtifactPreparationStatus>>([]);
+        const fixture = yield* makeFixture({
+          prefetchStarted,
+          prefetchGate,
+          prefetchInterrupted,
+          prefetchCalls,
+          artifactStatuses,
+        });
+        const startReturned = yield* Deferred.make<StackStatus>();
+        yield* Effect.forkChild(
+          fixture.supervisor
+            .start({ config: {} })
+            .pipe(
+              Effect.tap((status) => Deferred.succeed(startReturned, status).pipe(Effect.asVoid)),
+            ),
+          { startImmediately: true },
+        );
+        const started = yield* Deferred.await(startReturned).pipe(
+          Effect.timeout("5 seconds"),
+          Effect.orDie,
+        );
+        expect(started.capabilities.find(({ name }) => name === "database")?.state).toBe("ready");
+        expect(started.capabilities.find(({ name }) => name === "rest")?.state).toBe("dormant");
+        yield* Deferred.await(prefetchStarted).pipe(Effect.timeout("5 seconds"), Effect.orDie);
+        const during = yield* fixture.supervisor.status;
+        expect(during.capabilities.find(({ name }) => name === "rest")?.state).toBe("dormant");
+        expect(during.artifacts).toEqual([
+          { workloadId: "rest:rest", capability: "rest", state: "downloading" },
+        ]);
+
+        const repeated = yield* fixture.supervisor.start();
+        expect(repeated.artifacts).toEqual(during.artifacts);
+        expect(yield* Ref.get(prefetchCalls)).toBe(1);
+
+        const stopped = yield* fixture.supervisor.maintenanceHandlers.stop;
+        expect(stopped.ok).toBe(true);
+        yield* Deferred.await(prefetchInterrupted).pipe(Effect.timeout("5 seconds"), Effect.orDie);
+      }),
+    ),
+  );
+
+  it.live("keeps accepted start work alive when its caller is interrupted", () =>
+    run(
+      Effect.gen(function* () {
+        const startStarted = yield* Deferred.make<void>();
+        const startGate = yield* Deferred.make<void>();
+        const prefetchStarted = yield* Deferred.make<void>();
+        const prefetchGate = yield* Deferred.make<void>();
+        const prefetchFinished = yield* Deferred.make<void>();
+        const artifactStatuses = yield* Ref.make<ReadonlyArray<ArtifactPreparationStatus>>([]);
+        const fixture = yield* makeFixture({
+          startStarted,
+          startGate,
+          prefetchStarted,
+          prefetchGate,
+          prefetchFinished,
+          artifactStatuses,
+        });
+        const waiter = yield* Effect.forkChild(fixture.supervisor.start({ config: {} }), {
+          startImmediately: true,
+        });
+        yield* Deferred.await(startStarted).pipe(Effect.timeout("5 seconds"), Effect.orDie);
+        yield* Fiber.interrupt(waiter);
+        const interrupted = yield* Fiber.join(waiter).pipe(Effect.exit);
+        expect(Exit.isFailure(interrupted)).toBe(true);
+        yield* Deferred.succeed(startGate, undefined);
+        yield* Deferred.await(prefetchStarted).pipe(Effect.timeout("5 seconds"), Effect.orDie);
+        const during = yield* fixture.supervisor.status;
+        expect(during.lifecycle).toBe("running");
+        expect(during.artifacts).toEqual([
+          { workloadId: "rest:rest", capability: "rest", state: "downloading" },
+        ]);
+        yield* Deferred.succeed(prefetchGate, undefined);
+        yield* Deferred.await(prefetchFinished).pipe(Effect.timeout("5 seconds"), Effect.orDie);
+        expect((yield* fixture.supervisor.status).lifecycle).toBe("running");
+        yield* fixture.supervisor.maintenanceHandlers.stop;
+      }),
+    ),
+  );
+
+  it.live("interrupts background preparation before destroying the stack", () =>
+    run(
+      Effect.gen(function* () {
+        const prefetchStarted = yield* Deferred.make<void>();
+        const prefetchGate = yield* Deferred.make<void>();
+        const prefetchInterrupted = yield* Deferred.make<void>();
+        const fixture = yield* makeFixture({
+          prefetchStarted,
+          prefetchGate,
+          prefetchInterrupted,
+        });
+        yield* fixture.supervisor.start({ config: {} });
+        yield* Deferred.await(prefetchStarted).pipe(Effect.timeout("5 seconds"), Effect.orDie);
+        const destroying = yield* Effect.forkChild(fixture.supervisor.destroy, {
+          startImmediately: true,
+        });
+        yield* Deferred.await(prefetchInterrupted).pipe(Effect.timeout("5 seconds"), Effect.orDie);
+        yield* Fiber.join(destroying);
+        expect(yield* fixture.store.read(fixture.id)).toBeUndefined();
+      }),
+    ),
+  );
+
+  it.live("skips background preparation for on-demand and failed starts", () =>
+    run(
+      Effect.gen(function* () {
+        const onDemandStarted = yield* Deferred.make<void>();
+        const onDemandCalls = yield* Ref.make(0);
+        const onDemand = yield* makeFixture({
+          prefetchStarted: onDemandStarted,
+          prefetchCalls: onDemandCalls,
+        });
+        yield* onDemand.supervisor.start({ config: { preparation: "on-demand" } });
+        expect(Option.isNone(yield* Deferred.poll(onDemandStarted))).toBe(true);
+        expect(yield* Ref.get(onDemandCalls)).toBe(0);
+
+        const failedStarted = yield* Deferred.make<void>();
+        const failedCalls = yield* Ref.make(0);
+        const startFailures = yield* Ref.make(1);
+        const failed = yield* makeFixture({
+          prefetchStarted: failedStarted,
+          prefetchCalls: failedCalls,
+          startFailures,
+        });
+        const result = yield* failed.supervisor
+          .start({ config: { capabilities: { functions: { activation: "eager" } } } })
+          .pipe(Effect.exit);
+        expect(Exit.isFailure(result)).toBe(true);
+        expect(Option.isNone(yield* Deferred.poll(failedStarted))).toBe(true);
+        expect(yield* Ref.get(failedCalls)).toBe(0);
       }),
     ),
   );

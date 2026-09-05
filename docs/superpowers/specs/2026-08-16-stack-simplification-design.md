@@ -1,6 +1,6 @@
 # `@supabase/stack` Simplification Design
 
-**Status:** approved for implementation
+**Status:** superseded — see [ADR-0017](../../adr/0017-simplified-managed-stack-architecture.md) for the current maintained design
 **Date:** 2026-08-16
 **Baseline:** PR #6218 at `bb502dfa7971d44f41a30d402fd08a54d7a2c6dd`
 

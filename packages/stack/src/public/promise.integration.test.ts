@@ -12,7 +12,7 @@ import { Effect, Redacted, Stream } from "effect";
 import type { EffectStack, PrepareStackOptions, StartStackOptions } from "./EffectStack.ts";
 import type { StackLogEntry } from "./Logs.ts";
 import { StackIdSchema } from "./StackId.ts";
-import type { StackStatus } from "./Status.ts";
+import type { ArtifactPreparationStatus, StackStatus } from "./Status.ts";
 import { InvalidStackConfigError, StackVersionUnsupportedError } from "./Errors.ts";
 import { adaptEffectStack, makePromiseApi, type PromiseStack } from "./PromiseStack.ts";
 import { compileStack } from "../model/Compiler.ts";
@@ -42,6 +42,7 @@ const status: StackStatus = {
   },
   versions: {},
   capabilities,
+  artifacts: [],
 };
 
 const effectStack = (): EffectStack =>
@@ -177,6 +178,31 @@ describe("Promise stack facade", () => {
     await expect(iterator.next()).resolves.toEqual({ done: false, value: entry });
     await expect(iterator.return?.()).resolves.toMatchObject({ done: true });
     expect(finalized).toBe(true);
+  });
+
+  it("forwards prepare progress through the Promise facade", async () => {
+    const progress: Array<ArtifactPreparationStatus> = [];
+    const stack = adaptEffectStack({
+      ...effectStack(),
+      prepare: (options?: PrepareStackOptions) =>
+        Effect.sync(() => {
+          options?.onProgress?.({
+            workloadId: "rest:rest",
+            capability: "rest",
+            state: "downloading",
+          });
+          return { capabilities: [] };
+        }),
+    });
+
+    await expect(stack.prepare({ onProgress: (status) => progress.push(status) })).resolves.toEqual(
+      {
+        capabilities: [],
+      },
+    );
+    expect(progress).toEqual([
+      { workloadId: "rest:rest", capability: "rest", state: "downloading" },
+    ]);
   });
 
   it("completes an empty follower immediately", async () => {

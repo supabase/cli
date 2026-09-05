@@ -135,6 +135,7 @@ export const adaptEffectStack = (effectStack: EffectStack): PromiseStack => {
                   ...(options.capabilities === undefined
                     ? {}
                     : { capabilities: options.capabilities }),
+                  ...(options.onProgress === undefined ? {} : { onProgress: options.onProgress }),
                   ...(config === undefined ? {} : { config }),
                 },
           ),

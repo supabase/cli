@@ -114,6 +114,7 @@ const withServer = <A, E, R>(
           activation: "eager",
           state: "stopped",
         })),
+        artifacts: [],
       };
       const defaultRpcHandlers: StackRpcHandlers = {
         status: () => Effect.succeed(status),
@@ -431,6 +432,35 @@ describe("control transport", () => {
         const observed = yield* rpc.status(undefined);
         expect(observed.id).toBe(stackId);
         expect(yield* client.stop()).toEqual({ ok: true, op: "stop" });
+      }),
+    ),
+  );
+
+  it.live("round-trips artifact preparation state alongside dormant capabilities", () =>
+    withServer(
+      ({ endpoint, stackId, ownerSessionId }) =>
+        Effect.gen(function* () {
+          const client = makeControlClient(endpoint, { stackId, ownerSessionId });
+          const rpc = yield* client.rpc;
+          const observed = yield* rpc.status(undefined);
+          expect(observed.capabilities.find(({ name }) => name === "rest")?.state).toBe("dormant");
+          expect(observed.artifacts).toEqual([
+            { workloadId: "rest:rest", capability: "rest", state: "downloading" },
+          ]);
+        }),
+      ({ status }) => ({
+        rpcHandlers: {
+          status: () =>
+            Effect.succeed({
+              ...status,
+              lifecycle: "running",
+              desiredLifecycle: "running",
+              capabilities: status.capabilities.map((capability) =>
+                capability.name === "rest" ? { ...capability, state: "dormant" } : capability,
+              ),
+              artifacts: [{ workloadId: "rest:rest", capability: "rest", state: "downloading" }],
+            }),
+        },
       }),
     ),
   );

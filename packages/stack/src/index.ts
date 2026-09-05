@@ -23,6 +23,8 @@ export type {
   NetworkPort,
   StackEndpoint,
   StackStatus,
+  ArtifactPreparationState,
+  ArtifactPreparationStatus,
   StackDescriptor,
   StackInspection,
 } from "./public/index.ts";
@@ -30,12 +32,19 @@ export { StackIdSchema, isStackId } from "./public/StackId.ts";
 export type { StackId } from "./public/StackId.ts";
 export { StackRuntimeSchema, RuntimeEngineSchema } from "./public/Runtime.ts";
 export type { StackRuntime, RuntimeEngine, StackRuntimePreference } from "./public/Runtime.ts";
-export { StackEndpointsSchema, CapabilityVersionsSchema } from "./public/Status.ts";
+export {
+  StackEndpointsSchema,
+  CapabilityVersionsSchema,
+  ArtifactPreparationStateSchema,
+  ArtifactPreparationStatusSchema,
+} from "./public/Status.ts";
 export {
   CapabilityNameSchema,
   CapabilityStatusSchema,
   ActivationModeSchema,
 } from "./public/Capability.ts";
+export { PreparationModeSchema } from "./public/Config.ts";
+export type { PreparationMode } from "./public/Config.ts";
 export {
   LogCursorSchema,
   LogQuerySchema,

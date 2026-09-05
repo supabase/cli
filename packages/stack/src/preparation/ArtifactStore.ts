@@ -1,17 +1,4 @@
-import {
-  Crypto,
-  Deferred,
-  Effect,
-  Exit,
-  FileSystem,
-  Option,
-  Path,
-  PlatformError,
-  Predicate,
-  Schema,
-  Scope,
-  Semaphore,
-} from "effect";
+import { Crypto, Effect, FileSystem, Option, Path, PlatformError, Predicate, Schema } from "effect";
 import { ChildProcessSpawner } from "effect/unstable/process";
 import { ArtifactIntegrityError, StackPreparationError } from "../public/Errors.ts";
 import { validateRelativePath, validateSha256, verifySha256 } from "./Integrity.ts";
@@ -42,6 +29,7 @@ export interface ArtifactSource {
     request: ArtifactRequest,
     destination: string,
     expectedSha256: string,
+    onProgress?: (state: "downloading" | "preparing") => void,
   ) => Effect.Effect<
     Uint8Array,
     StackPreparationError,
@@ -69,6 +57,7 @@ export type ArtifactStoreError = StackPreparationError | ArtifactIntegrityError;
 export interface ArtifactStore {
   readonly prepare: (
     request: ArtifactRequest,
+    onProgress?: (state: "downloading" | "preparing") => void,
   ) => Effect.Effect<PreparedArtifact, ArtifactStoreError>;
 }
 
@@ -161,9 +150,6 @@ const validateRequest = (request: ArtifactRequest): Effect.Effect<void, StackPre
         });
     }
   });
-
-const requestFlightKey = (request: ArtifactRequest): string =>
-  [request.key, ...request.requiredRuntimePaths, request.executablePath ?? ""].join("\u0000");
 
 const metadataFor = (
   request: ArtifactRequest,
@@ -609,6 +595,7 @@ const makeArtifactOperation = (
   cacheRoot: string,
   source: ArtifactSource,
   request: ArtifactRequest,
+  onProgress?: (state: "downloading" | "preparing") => void,
 ): Effect.Effect<PreparedArtifact, ArtifactStoreError> =>
   Effect.gen(function* () {
     const target = path.resolve(cacheRoot, request.key);
@@ -733,14 +720,16 @@ const makeArtifactOperation = (
     const published = yield* Effect.gen(function* () {
       yield* ensureDirectory(fs, path, temporary, cacheRoot);
       const temporaryRoot = yield* ensureSafeRoot(fs, path, temporary, cacheRoot);
-      const archive = yield* source.materialize(request, temporary, expectedSha256).pipe(
-        Effect.provideService(FileSystem.FileSystem, fs),
-        Effect.provideService(Path.Path, path),
-        Effect.provideService(Crypto.Crypto, crypto),
-        // The source owns the exact tar process boundary; the store only supplies the
-        // already-owned process service captured by its constructor.
-        Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, childProcessSpawner),
-      );
+      const archive = yield* source
+        .materialize(request, temporary, expectedSha256, onProgress)
+        .pipe(
+          Effect.provideService(FileSystem.FileSystem, fs),
+          Effect.provideService(Path.Path, path),
+          Effect.provideService(Crypto.Crypto, crypto),
+          // The source owns the exact tar process boundary; the store only supplies the
+          // already-owned process service captured by its constructor.
+          Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, childProcessSpawner),
+        );
       yield* verifySha256(archive, expectedSha256).pipe(
         Effect.provideService(Crypto.Crypto, crypto),
         Effect.mapError((error) =>
@@ -809,11 +798,7 @@ export const makeArtifactStore = (
 ): Effect.Effect<
   ArtifactStore,
   StackPreparationError,
-  | FileSystem.FileSystem
-  | Path.Path
-  | Crypto.Crypto
-  | Scope.Scope
-  | ChildProcessSpawner.ChildProcessSpawner
+  FileSystem.FileSystem | Path.Path | Crypto.Crypto | ChildProcessSpawner.ChildProcessSpawner
 > =>
   Effect.gen(function* () {
     const fs = yield* FileSystem.FileSystem;
@@ -847,22 +832,16 @@ export const makeArtifactStore = (
     if (rootInfo.type !== "Directory")
       return yield* artifactError("Artifact cache root must be a directory", { path: cacheRoot });
     yield* mapFs(cacheRoot, "secure artifact cache root", fs.chmod(cacheRoot, 0o700));
-    const ownerScope = yield* Scope.make("parallel");
-    const parentScope = yield* Scope.Scope;
-    yield* Scope.addFinalizer(parentScope, Scope.close(ownerScope, Exit.void));
-    const lifecycle = yield* Semaphore.make(1);
-    type InFlight = {
-      readonly result: Deferred.Deferred<PreparedArtifact, ArtifactStoreError>;
-    };
-    const inFlight = new Map<string, InFlight>();
-    const prepare = (request: ArtifactRequest) =>
+    const prepare = (
+      request: ArtifactRequest,
+      onProgress?: (state: "downloading" | "preparing") => void,
+    ) =>
       Effect.gen(function* () {
         yield* validateRequest(request);
         const target = path.resolve(cacheRoot, request.key);
         if (!pathWithin(cacheRoot, target, path.sep))
           return yield* artifactError("Artifact key escapes cache root", { key: request.key });
-        const flightKey = requestFlightKey(request);
-        const operation = makeArtifactOperation(
+        return yield* makeArtifactOperation(
           fs,
           path,
           crypto,
@@ -870,37 +849,8 @@ export const makeArtifactStore = (
           cacheRoot,
           options.source,
           request,
+          onProgress,
         );
-        const joined = yield* lifecycle.withPermit(
-          Effect.gen(function* () {
-            const existing = inFlight.get(flightKey);
-            if (existing !== undefined) {
-              return existing;
-            }
-            const result = yield* Deferred.make<PreparedArtifact, ArtifactStoreError>();
-            const record: InFlight = { result };
-            inFlight.set(flightKey, record);
-            yield* Effect.forkIn(
-              Effect.gen(function* () {
-                const exit = yield* Effect.exit(operation);
-                yield* lifecycle.withPermit(
-                  Effect.uninterruptible(
-                    Effect.gen(function* () {
-                      inFlight.delete(flightKey);
-                      yield* Deferred.done(record.result, exit);
-                    }),
-                  ),
-                );
-              }),
-              ownerScope,
-            );
-            return record;
-          }),
-        );
-        // Waiting is intentionally independent from the owner. Interrupting any caller only
-        // stops its await; the Supervisor-owned preparation continues until completion or store
-        // scope closure so a later caller can join the same result.
-        return yield* Deferred.await(joined.result);
       });
     return { prepare };
   });

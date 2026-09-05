@@ -6,6 +6,7 @@ import {
   Effect,
   Exit,
   FileSystem,
+  Fiber,
   FiberSet,
   Option,
   Path,
@@ -38,7 +39,7 @@ import {
   type StackErrorTag,
   type StackError,
 } from "../public/Errors.ts";
-import type { StackStatus } from "../public/Status.ts";
+import type { ArtifactPreparationStatus, StackStatus } from "../public/Status.ts";
 import type { StackId } from "../public/StackId.ts";
 import type { LogQuery, StackLogBatch } from "../public/Logs.ts";
 import type { EffectStackCredentials } from "../public/Credentials.ts";
@@ -80,6 +81,15 @@ interface SupervisorLaunchAttempt {
 export interface SupervisorRuntime {
   readonly driver: RuntimeDriver;
   readonly preflight: (input: LifecycleInput) => Effect.Effect<void, StackError>;
+  /** Prepares artifacts before launching a newly selected workload closure. */
+  readonly prepare: (
+    input: LifecycleInput,
+    selected: ReadonlySet<CapabilityName>,
+  ) => Effect.Effect<void, StackError>;
+  /** Best-effort preparation of lazy artifacts after a stack reaches running. */
+  readonly prefetch: (state: PersistedStackState) => Effect.Effect<void>;
+  /** Current in-memory preparation state; completed cache entries outlive the session. */
+  readonly artifacts: Effect.Effect<ReadonlyArray<ArtifactPreparationStatus>>;
   readonly activate: (
     capability: CapabilityName,
     input: LifecycleInput,
@@ -229,6 +239,7 @@ export const makeSupervisor = (
           yield* observedForStatus(),
           yield* Ref.get(active),
           yield* Ref.get(phase),
+          yield* runtime.artifacts,
         );
         return status;
       });
@@ -254,6 +265,16 @@ export const makeSupervisor = (
     const ownedFibers = yield* FiberSet.make().pipe(
       Effect.provideService(Scope.Scope, supervisorScope),
     );
+    const backgroundPreparation = yield* Ref.make<Fiber.Fiber<void, never> | undefined>(undefined);
+    const startBackgroundPreparation = (state: PersistedStackState): Effect.Effect<void> =>
+      Effect.gen(function* () {
+        const existing = yield* Ref.get(backgroundPreparation);
+        if (existing !== undefined) return;
+        const fiber = yield* Effect.forkIn(runtime.prefetch(state), supervisorScope, {
+          startImmediately: true,
+        });
+        yield* Ref.set(backgroundPreparation, fiber);
+      });
     const joinExit = <A, E>(result: Exit.Exit<A, E>): Effect.Effect<A, E> =>
       Exit.isSuccess(result) ? Effect.succeed(result.value) : Effect.failCause(result.cause);
     type LifecycleKind = "start" | "stop" | "destroy";
@@ -363,6 +384,7 @@ export const makeSupervisor = (
         if (session === "fresh") yield* resetForSession(input);
         const selected = selectedOverride ?? (yield* Ref.get(active));
         const plan = activeExecutionPlan(input.plan, selected);
+        yield* runtime.prepare(input, selected);
         const reservation = yield* runtime.ingress.acquire(input);
         const launched = yield* launcher
           .launch(plan)
@@ -421,6 +443,9 @@ export const makeSupervisor = (
     const cleanupRuntime = (destroy: boolean): Effect.Effect<void, StackError> =>
       Effect.gen(function* () {
         yield* Ref.set(cleanupProven, true);
+        const background = yield* Ref.get(backgroundPreparation);
+        if (background !== undefined) yield* Fiber.interrupt(background);
+        yield* Ref.set(backgroundPreparation, undefined);
         const ingress = yield* runtime.ingress.close.pipe(
           Effect.mapError(mapCleanupError),
           Effect.exit,
@@ -625,6 +650,7 @@ export const makeSupervisor = (
           return yield* Effect.failCause(started.cause);
         }
         yield* Ref.set(phase, "running");
+        yield* startBackgroundPreparation(started.value);
       });
     const start = (startOptions?: { readonly config?: StackConfig }) =>
       Effect.gen(function* () {

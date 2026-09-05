@@ -21,6 +21,7 @@ import { createServer } from "node:http";
 // oxlint-disable-next-line effecttsgo/node-builtin-import
 import { createServer as createNetServer } from "node:net";
 import type { StackLogEntry } from "../public/Logs.ts";
+import type { CapabilityName } from "../public/Capability.ts";
 import { StackIdSchema } from "../public/StackId.ts";
 import type { StackRuntime } from "../public/Runtime.ts";
 import { NetworkPortSchema } from "../public/Status.ts";
@@ -48,6 +49,8 @@ import {
 } from "../public/Errors.ts";
 import { DatabaseBootstrapError } from "../model/DatabaseBootstrap.ts";
 import type { RuntimeArtifactPreparer } from "../preparation/RuntimeArtifacts.ts";
+import { makeRuntimeArtifactPreparer } from "../preparation/RuntimeArtifacts.ts";
+import { makeArtifactStore, type ArtifactSource } from "../preparation/ArtifactStore.ts";
 import { compileStack } from "../model/Compiler.ts";
 import type {
   ContainerContainerSpec,
@@ -56,6 +59,7 @@ import type {
   ContainerNetworkSpec,
   ContainerVolumeSpec,
 } from "./ContainerEngine.ts";
+import { ContainerEngineProtocolError } from "./ContainerEngine.ts";
 import {
   makeFunctionsBootstrapOwner,
   type FunctionsBootstrapOwner,
@@ -685,6 +689,602 @@ describe("production runtime", () => {
           expect(error?.cause).toBeInstanceOf(StackPreparationError);
         }
         yield* runtime.driver.stop({ stackId, workloadId: database.id });
+      }),
+    ).pipe(Effect.provide(NodeServices.layer)),
+  );
+
+  it.live("shares background preparation with a concurrent studio activation closure", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const root = yield* fs.makeTempDirectoryScoped({
+          prefix: "supabase-production-shared-preparation-",
+        });
+        const compiled = yield* compileStack({
+          projectRoot: root,
+          runtime: { kind: "container", engine: "docker" },
+          config: {
+            preparation: "background",
+            capabilities: {
+              auth: { enabled: false },
+              realtime: { enabled: false },
+              storage: { enabled: false },
+              functions: { enabled: false },
+              mail: { enabled: false },
+              pooler: { enabled: false },
+              rest: { activation: "eager" },
+              analytics: { activation: "eager" },
+            },
+          },
+        });
+        const studioWorkloads = compiled.executionPlan.workloads.filter(
+          (workload) => workload.capability === "studio",
+        );
+        const studioImages = new Set(
+          studioWorkloads.map((workload) =>
+            workload.selected.kind === "container" ? workload.selected.image : "",
+          ),
+        );
+        if (studioImages.has("") || studioImages.size === 0)
+          return yield* Effect.die("Expected container Studio workloads");
+        const closure: ReadonlySet<CapabilityName> = new Set([
+          "database",
+          "rest",
+          "analytics",
+          "studio",
+        ]);
+        const closureWorkloads = compiled.executionPlan.workloads.filter(
+          (workload) =>
+            closure.has(workload.capability) &&
+            !studioImages.has(
+              workload.selected.kind === "container" ? workload.selected.image : "",
+            ),
+        );
+        if (closureWorkloads.length < 2)
+          return yield* Effect.die("Expected at least two non-Studio closure workloads");
+        const blocked = yield* Deferred.make<void>();
+        const release = yield* Deferred.make<void>();
+        const releaseClosure = yield* Deferred.make<void>();
+        const newClosureWorkStarted = yield* Deferred.make<void>();
+        let blockedPullsStarted = 0;
+        let closurePullsStarted = 0;
+        const pulls = new Map<string, number>();
+        const createdSpecs: ContainerContainerSpec[] = [];
+        const baseEngine = ownerInputContainerEngine(createdSpecs);
+        const engine: ContainerEngine = {
+          ...baseEngine,
+          inspectImage: () => Effect.succeed({ present: false }),
+          pullImage: (image) =>
+            Effect.gen(function* () {
+              pulls.set(image, (pulls.get(image) ?? 0) + 1);
+              if (studioImages.has(image)) {
+                blockedPullsStarted += 1;
+                if (blockedPullsStarted === studioImages.size)
+                  yield* Deferred.succeed(blocked, undefined);
+                yield* Deferred.await(release);
+              } else {
+                closurePullsStarted += 1;
+                if (closurePullsStarted === closureWorkloads.length)
+                  yield* Deferred.succeed(newClosureWorkStarted, undefined);
+                yield* Deferred.await(releaseClosure);
+              }
+            }),
+        };
+        const current = {
+          value: {
+            ...stateFor({}, { kind: "container", engine: "docker" }),
+            identity: {
+              ...stateFor({}).identity,
+              projectRoot: root,
+              checkoutRoot: root,
+              workspaceId: root,
+              checkoutId: root,
+            },
+            desiredLifecycle: "running" as const,
+            definition: compiled.definition,
+          },
+        } satisfies { value: PersistedStackState };
+        const context = yield* Effect.context<FileSystem.FileSystem | Path.Path | Crypto.Crypto>();
+        const runtime = yield* makeProductionRuntime({
+          stateRoot: root,
+          stackId,
+          ownerSessionId: "shared-preparation",
+          stateStore: stateStoreFor(current),
+          context,
+          ingress,
+          containerEngine: engine,
+          artifactPreparer: makeRuntimeArtifactPreparer({ containerEngine: engine }),
+          envFileOwner: envFiles,
+          functionsBootstrapOwner: bootstrap,
+          logStore: memoryLogStore([]),
+        });
+        const input: LifecycleInput = {
+          stackId,
+          state: current.value,
+          definition: compiled.definition,
+          secrets: current.value.secrets,
+          plan: compiled.executionPlan,
+        };
+        const background = yield* Effect.forkChild(runtime.prefetch(current.value), {
+          startImmediately: true,
+        });
+        yield* Deferred.await(blocked);
+        expect(yield* runtime.artifacts).toEqual(
+          expect.arrayContaining(
+            studioWorkloads.map((workload) =>
+              expect.objectContaining({
+                workloadId: workload.id,
+                state: "downloading",
+              }),
+            ),
+          ),
+        );
+        const foreground = yield* Effect.forkChild(runtime.prepare(input, closure), {
+          startImmediately: true,
+        });
+        const interruptedWaiter = yield* Effect.forkChild(runtime.prepare(input, closure), {
+          startImmediately: true,
+        });
+        yield* Deferred.await(newClosureWorkStarted);
+        const interrupted = yield* Fiber.interrupt(interruptedWaiter).pipe(Effect.exit);
+        expect(Exit.isSuccess(interrupted)).toBe(true);
+        const waiterExit = yield* Fiber.join(interruptedWaiter).pipe(Effect.exit);
+        expect(Exit.isFailure(waiterExit)).toBe(true);
+        expect(yield* Deferred.isDone(blocked)).toBe(true);
+        expect(closurePullsStarted).toBe(closureWorkloads.length);
+        yield* Deferred.succeed(releaseClosure, undefined);
+        yield* Deferred.succeed(release, undefined);
+        yield* Fiber.join(background);
+        yield* Fiber.join(foreground);
+        for (const workload of compiled.executionPlan.workloads.filter((entry) =>
+          closure.has(entry.capability),
+        )) {
+          if (workload.selected.kind === "container")
+            expect(pulls.get(workload.selected.image)).toBe(1);
+        }
+        expect(createdSpecs).toHaveLength(0);
+        yield* runtime.driver.cleanup({ stackId, destroy: false });
+        expect(yield* runtime.artifacts).toEqual([]);
+      }),
+    ).pipe(Effect.provide(NodeServices.layer)),
+  );
+
+  it.live(
+    "keeps background preparation best effort and retries a failed artifact on activation",
+    () =>
+      Effect.scoped(
+        Effect.gen(function* () {
+          const fs = yield* FileSystem.FileSystem;
+          const root = yield* fs.makeTempDirectoryScoped({
+            prefix: "supabase-production-preparation-retry-",
+          });
+          const compiled = yield* compileStack({
+            projectRoot: root,
+            runtime: { kind: "container", engine: "docker" },
+            config: {
+              preparation: "background",
+              capabilities: {
+                auth: { enabled: false },
+                realtime: { enabled: false },
+                storage: { enabled: false },
+                functions: { enabled: false },
+                studio: { enabled: false },
+                mail: { enabled: false },
+                pooler: { enabled: false },
+              },
+            },
+          });
+          const rest = compiled.executionPlan.workloads.find(
+            (workload) => workload.capability === "rest",
+          );
+          const analytics = compiled.executionPlan.workloads.find(
+            (workload) => workload.capability === "analytics",
+          );
+          if (
+            rest === undefined ||
+            analytics === undefined ||
+            rest.selected.kind !== "container" ||
+            analytics.selected.kind !== "container"
+          )
+            return yield* Effect.die("Expected REST and analytics container workloads");
+          const restImage = rest.selected.image;
+          const pullAttempts = new Map<string, number>();
+          const logs: StackLogEntry[] = [];
+          const createdSpecs: ContainerContainerSpec[] = [];
+          const baseEngine = ownerInputContainerEngine(createdSpecs);
+          const engine: ContainerEngine = {
+            ...baseEngine,
+            inspectImage: () => Effect.succeed({ present: false }),
+            pullImage: (image) =>
+              Effect.gen(function* () {
+                const attempt = pullAttempts.get(image) ?? 0;
+                pullAttempts.set(image, attempt + 1);
+                if (image === restImage && attempt === 0)
+                  return yield* new ContainerEngineProtocolError({
+                    operation: "pull-image",
+                    message: "temporary image registry failure",
+                  });
+              }),
+          };
+          const current = {
+            value: {
+              ...stateFor({}, { kind: "container", engine: "docker" }),
+              identity: {
+                ...stateFor({}).identity,
+                projectRoot: root,
+                checkoutRoot: root,
+                workspaceId: root,
+                checkoutId: root,
+              },
+              desiredLifecycle: "running" as const,
+              definition: compiled.definition,
+            },
+          } satisfies { value: PersistedStackState };
+          const context = yield* Effect.context<
+            FileSystem.FileSystem | Path.Path | Crypto.Crypto
+          >();
+          const runtime = yield* makeProductionRuntime({
+            stateRoot: root,
+            stackId,
+            ownerSessionId: "preparation-retry",
+            stateStore: stateStoreFor(current),
+            context,
+            ingress,
+            containerEngine: engine,
+            artifactPreparer: makeRuntimeArtifactPreparer({ containerEngine: engine }),
+            envFileOwner: envFiles,
+            functionsBootstrapOwner: bootstrap,
+            logStore: memoryLogStore(logs),
+          });
+          const background = yield* runtime.prefetch(current.value);
+          expect(background).toBeUndefined();
+          expect(pullAttempts.get(restImage)).toBe(1);
+          expect(pullAttempts.get(analytics.selected.image)).toBe(1);
+          const statusesAfterBackground = yield* runtime.artifacts;
+          expect(statusesAfterBackground).toEqual(
+            expect.arrayContaining([
+              expect.objectContaining({
+                workloadId: rest.id,
+                state: "failed",
+                error: expect.stringContaining("Unable to pull container image"),
+              }),
+              expect.objectContaining({ workloadId: analytics.id, state: "ready" }),
+            ]),
+          );
+          expect(
+            logs.some((entry) =>
+              entry.message.includes(`Background preparation failed for ${rest.id}`),
+            ),
+          ).toBe(true);
+          const input: LifecycleInput = {
+            stackId,
+            state: current.value,
+            definition: compiled.definition,
+            secrets: current.value.secrets,
+            plan: compiled.executionPlan,
+          };
+          yield* runtime.prepare(input, new Set(["rest"]));
+          expect(pullAttempts.get(restImage)).toBe(2);
+          expect(
+            (yield* runtime.artifacts).find(({ workloadId }) => workloadId === rest.id),
+          ).toEqual(expect.objectContaining({ workloadId: rest.id, state: "ready" }));
+          expect(createdSpecs).toHaveLength(0);
+          yield* runtime.driver.cleanup({ stackId, destroy: false });
+          expect(yield* runtime.artifacts).toEqual([]);
+        }),
+      ).pipe(Effect.provide(NodeServices.layer)),
+  );
+
+  it.live("reports eager artifact progress while preflight is waiting for a pull", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const root = yield* fs.makeTempDirectoryScoped({
+          prefix: "supabase-production-eager-preparation-",
+        });
+        const compiled = yield* compileStack({
+          projectRoot: root,
+          runtime: { kind: "container", engine: "docker" },
+          config: {
+            preparation: "on-demand",
+            capabilities: {
+              auth: { enabled: false },
+              realtime: { enabled: false },
+              storage: { enabled: false },
+              functions: { enabled: false },
+              studio: { enabled: false },
+              mail: { enabled: false },
+              pooler: { enabled: false },
+            },
+          },
+        });
+        const database = compiled.executionPlan.workloads.find(
+          (workload) => workload.capability === "database",
+        );
+        if (database === undefined || database.selected.kind !== "container")
+          return yield* Effect.die("Expected container database workload");
+        const databaseImage = database.selected.image;
+        const resolved = yield* resolveSecrets(
+          { declarations: compiled.secrets },
+          undefined,
+          "stopped",
+        );
+        const current = {
+          value: {
+            ...stateFor(resolved.persisted, { kind: "container", engine: "docker" }),
+            identity: {
+              ...stateFor({}).identity,
+              projectRoot: root,
+              checkoutRoot: root,
+              workspaceId: root,
+              checkoutId: root,
+            },
+            definition: compiled.definition,
+            secrets: resolved.persisted,
+          },
+        } satisfies { value: PersistedStackState };
+        const pullStarted = yield* Deferred.make<void>();
+        const release = yield* Deferred.make<void>();
+        const createdSpecs: ContainerContainerSpec[] = [];
+        let pullCount = 0;
+        const baseEngine = ownerInputContainerEngine(createdSpecs);
+        const engine: ContainerEngine = {
+          ...baseEngine,
+          inspectImage: () => Effect.succeed({ present: false }),
+          pullImage: (image) =>
+            image === databaseImage
+              ? Effect.gen(function* () {
+                  pullCount += 1;
+                  yield* Deferred.succeed(pullStarted, undefined);
+                  yield* Deferred.await(release);
+                })
+              : Effect.void,
+        };
+        const context = yield* Effect.context<FileSystem.FileSystem | Path.Path | Crypto.Crypto>();
+        const runtime = yield* makeProductionRuntime({
+          stateRoot: root,
+          stackId,
+          ownerSessionId: "eager-preparation",
+          stateStore: stateStoreFor(current),
+          context,
+          ingress,
+          containerEngine: engine,
+          artifactPreparer: makeRuntimeArtifactPreparer({ containerEngine: engine }),
+          envFileOwner: envFiles,
+          functionsBootstrapOwner: bootstrap,
+          logStore: memoryLogStore([]),
+        });
+        const input: LifecycleInput = {
+          stackId,
+          state: current.value,
+          definition: compiled.definition,
+          secrets: resolved.persisted,
+          plan: compiled.executionPlan,
+        };
+        const preflight = yield* Effect.forkChild(runtime.preflight(input), {
+          startImmediately: true,
+        });
+        yield* Deferred.await(pullStarted);
+        expect(yield* runtime.artifacts).toEqual([
+          expect.objectContaining({ workloadId: database.id, state: "downloading" }),
+        ]);
+        yield* Deferred.succeed(release, undefined);
+        yield* Fiber.join(preflight);
+        expect(yield* runtime.artifacts).toEqual([
+          expect.objectContaining({ workloadId: database.id, state: "ready" }),
+        ]);
+        expect(createdSpecs).toHaveLength(0);
+        yield* runtime.driver.cleanup({ stackId, destroy: false });
+        expect(yield* runtime.artifacts).toEqual([]);
+        yield* runtime.prefetch(current.value);
+        expect(pullCount).toBe(1);
+        expect(yield* runtime.artifacts).toEqual([]);
+      }),
+    ).pipe(Effect.provide(NodeServices.layer)),
+  );
+
+  it.live("cancels an in-flight native artifact transfer during runtime cleanup", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const root = yield* fs.makeTempDirectoryScoped({
+          prefix: "supabase-production-native-artifact-stop-",
+        });
+        const transferStarted = yield* Deferred.make<void>();
+        const transferInterrupted = yield* Deferred.make<void>();
+        const archiveSha256 = "4bf5122f344554c53bde2ebb8cd2b7e3d1600ad631c385a5d7cce23c7785459a";
+        const checksumFailure = new StackPreparationError({
+          message: "published checksum lookup is temporarily unavailable",
+        });
+        let checksumCalls = 0;
+        const source: ArtifactSource = {
+          checksum: () =>
+            Effect.sync(() => {
+              checksumCalls += 1;
+              return checksumCalls;
+            }).pipe(
+              Effect.flatMap((calls) =>
+                calls === 1 ? Effect.fail(checksumFailure) : Effect.succeed(archiveSha256),
+              ),
+            ),
+          materialize: (_request, destination, _expectedSha256, onProgress) =>
+            Effect.gen(function* () {
+              const sourceFile = path.join(destination, "partial-source");
+              onProgress?.("downloading");
+              yield* fs.writeFileString(sourceFile, "partial");
+              yield* Deferred.succeed(transferStarted, undefined);
+              return yield* Effect.never;
+            }).pipe(
+              Effect.ensuring(Deferred.succeed(transferInterrupted, undefined)),
+              Effect.mapError(
+                (cause) => new StackPreparationError({ message: "native transfer failed", cause }),
+              ),
+            ),
+        };
+        const store = yield* makeArtifactStore({ cacheRoot: path.join(root, "artifacts"), source });
+        const preparer = makeRuntimeArtifactPreparer({
+          native: {
+            store,
+            platform: { os: "darwin", arch: "arm64" },
+          },
+        });
+        const compiled = yield* compileStack({
+          projectRoot: root,
+          runtime: { kind: "native" },
+        });
+        const current = {
+          value: {
+            ...stateFor({}, { kind: "native" }),
+            identity: {
+              ...stateFor({}).identity,
+              projectRoot: root,
+              checkoutRoot: root,
+              workspaceId: root,
+              checkoutId: root,
+            },
+            desiredLifecycle: "running" as const,
+            definition: compiled.definition,
+          },
+        } satisfies { value: PersistedStackState };
+        const workload = compiled.executionPlan.workloads.find(
+          (entry) => entry.capability === "database",
+        );
+        if (workload === undefined) return yield* Effect.die("Expected database workload");
+        const context = yield* Effect.context<FileSystem.FileSystem | Path.Path | Crypto.Crypto>();
+        const runtime = yield* makeProductionRuntime({
+          stateRoot: root,
+          stackId,
+          ownerSessionId: "native-artifact-stop",
+          stateStore: stateStoreFor(current),
+          context,
+          ingress,
+          envFileOwner: envFiles,
+          functionsBootstrapOwner: bootstrap,
+          artifactPreparer: preparer,
+          logStore: memoryLogStore([]),
+        });
+        const input: LifecycleInput = {
+          stackId,
+          state: current.value,
+          definition: compiled.definition,
+          secrets: current.value.secrets,
+          plan: compiled.executionPlan,
+        };
+        const firstAttempt = yield* runtime
+          .prepare(input, new Set([workload.capability]))
+          .pipe(Effect.exit);
+        expect(Exit.isFailure(firstAttempt)).toBe(true);
+        if (Exit.isFailure(firstAttempt)) {
+          const error = Cause.findErrorOption(firstAttempt.cause);
+          expect(Option.isSome(error)).toBe(true);
+          if (Option.isSome(error)) {
+            expect(error.value).toBeInstanceOf(StackPreparationError);
+            expect(error.value.message).toBe(checksumFailure.message);
+          }
+        }
+        expect(yield* runtime.artifacts).toEqual([
+          expect.objectContaining({
+            workloadId: workload.id,
+            state: "failed",
+            error: checksumFailure.message,
+          }),
+        ]);
+        const preparing = yield* Effect.forkChild(
+          runtime.prepare(input, new Set([workload.capability])),
+          { startImmediately: true },
+        );
+        yield* Deferred.await(transferStarted);
+        expect(yield* runtime.artifacts).toEqual([
+          expect.objectContaining({ workloadId: workload.id, state: "downloading" }),
+        ]);
+        yield* runtime.driver.cleanup({ stackId, destroy: false });
+        expect(yield* Deferred.isDone(transferInterrupted)).toBe(true);
+        const result = yield* Fiber.join(preparing).pipe(Effect.exit);
+        expect(Exit.isFailure(result)).toBe(true);
+        const entries = yield* fs.readDirectory(root, { recursive: true });
+        expect(entries.some((entry) => entry.endsWith(".tmp"))).toBe(false);
+        expect(yield* runtime.artifacts).toEqual([]);
+      }),
+    ).pipe(Effect.provide(NodeServices.layer)),
+  );
+
+  it.live("cancels an in-flight container image pull during runtime cleanup", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const root = yield* fs.makeTempDirectoryScoped({
+          prefix: "supabase-production-container-pull-stop-",
+        });
+        const pullStarted = yield* Deferred.make<void>();
+        const pullInterrupted = yield* Deferred.make<void>();
+        const createdSpecs: ContainerContainerSpec[] = [];
+        const baseEngine = ownerInputContainerEngine(createdSpecs);
+        const engine: ContainerEngine = {
+          ...baseEngine,
+          inspectImage: () => Effect.succeed({ present: false }),
+          pullImage: () =>
+            Effect.gen(function* () {
+              yield* Deferred.succeed(pullStarted, undefined);
+              return yield* Effect.never;
+            }).pipe(Effect.ensuring(Deferred.succeed(pullInterrupted, undefined))),
+        };
+        const preparer = makeRuntimeArtifactPreparer({ containerEngine: engine });
+        const compiled = yield* compileStack({
+          projectRoot: root,
+          runtime: { kind: "container", engine: "docker" },
+        });
+        const current = {
+          value: {
+            ...stateFor({}, { kind: "container", engine: "docker" }),
+            identity: {
+              ...stateFor({}).identity,
+              projectRoot: root,
+              checkoutRoot: root,
+              workspaceId: root,
+              checkoutId: root,
+            },
+            desiredLifecycle: "running" as const,
+            definition: compiled.definition,
+          },
+        } satisfies { value: PersistedStackState };
+        const workload = compiled.executionPlan.workloads.find(
+          (entry) => entry.capability === "database",
+        );
+        if (workload === undefined) return yield* Effect.die("Expected database workload");
+        const context = yield* Effect.context<FileSystem.FileSystem | Path.Path | Crypto.Crypto>();
+        const runtime = yield* makeProductionRuntime({
+          stateRoot: root,
+          stackId,
+          ownerSessionId: "container-pull-stop",
+          stateStore: stateStoreFor(current),
+          context,
+          ingress,
+          containerEngine: engine,
+          artifactPreparer: preparer,
+          logStore: memoryLogStore([]),
+        });
+        const input: LifecycleInput = {
+          stackId,
+          state: current.value,
+          definition: compiled.definition,
+          secrets: current.value.secrets,
+          plan: compiled.executionPlan,
+        };
+        const preparing = yield* Effect.forkChild(
+          runtime.prepare(input, new Set([workload.capability])),
+          { startImmediately: true },
+        );
+        yield* Deferred.await(pullStarted);
+        expect(yield* runtime.artifacts).toEqual([
+          expect.objectContaining({ workloadId: workload.id, state: "downloading" }),
+        ]);
+        yield* runtime.driver.cleanup({ stackId, destroy: false });
+        expect(yield* Deferred.isDone(pullInterrupted)).toBe(true);
+        const result = yield* Fiber.join(preparing).pipe(Effect.exit);
+        expect(Exit.isFailure(result)).toBe(true);
+        expect(createdSpecs).toHaveLength(0);
+        expect(yield* runtime.artifacts).toEqual([]);
       }),
     ).pipe(Effect.provide(NodeServices.layer)),
   );

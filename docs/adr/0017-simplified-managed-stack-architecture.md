@@ -88,21 +88,58 @@ when both metadata and lock are absent. Mutations use the live owner or acquire
 the lease and launch a fresh Supervisor. Ambiguous ownership fails closed.
 
 The stable maintenance protocol contains only probe and stop. Same-release
-callers use Effect RPC for status, logs, activation, start, and destroy; artifact
-preparation runs directly in the caller scope and never uses the Supervisor. An
-incompatible owner can always be stopped, after which the caller may launch the
-current Supervisor and start again. The first admitted lifecycle operation runs
+callers use Effect RPC for status, logs, activation, start, and destroy; explicit
+artifact preparation runs directly in the caller scope and never uses the
+Supervisor. An incompatible owner can always be stopped, after which the caller
+may launch the current Supervisor and start again. The first admitted lifecycle operation runs
 to completion; concurrent lifecycle mutations fail immediately with a conflict
 rather than joining or queueing.
 
 PostgreSQL is the only eager capability by default. Start prepares and launches
-only the eager dependency closure. Every other enabled capability prepares and
-starts when traffic first reaches its stable gateway route. Explicit
-`stack.prepare(...)` remains available for callers that intentionally want to
-warm selected artifacts, but it is not part of ordinary CLI start. Preparation
-is caller-owned: cancellation stops that caller's unfinished transfers while
-completed cache entries remain. Preparation never acquires control or ownership
-and does not create runtime resources.
+only the eager dependency closure, so the PostgreSQL readiness barrier remains
+the default startup path. Capabilities configured for lazy activation start when
+traffic first reaches their stable gateway route. Lazy artifact preparation is controlled
+by the top-level `StackConfig.preparation` setting, which defaults to
+`"background"`. After a successful start, background mode prepares all enabled
+lazy artifacts with bounded concurrency without launching their processes.
+That work is one Supervisor-owned session task: stop and destroy cancel and
+await it, foreground activation joins shared preparations, and completed cache
+entries remain available without automatic pruning. `"on-demand"` skips the
+background task for callers that want full lazy preparation. Eager capability
+activation remains independent of this setting.
+That runtime session owns the shared preparation fibers.
+
+In both modes, lazy activation prepares the requested dependency closure with
+bounded concurrency before starting its workloads. Explicit
+`stack.prepare(...)` remains available as a cache-only warmup for callers that
+want to prepare selected artifacts while stopped or running. The preparation
+setting is persisted in the stack definition and survives opening and restart;
+changing it for a running stack follows the existing stop-before-change
+configuration rule. Preparation never creates runtime resources;
+ArtifactStore publishes cache entries in the caller's scope, and runtime-driver
+cleanup closes transfer resources. Caller-owned explicit preparation
+cancellation only stops that caller's unfinished transfers while completed
+cache entries remain.
+
+Preparation uses bounded Effect concurrency to overlap transfers with native
+decompression and archive subprocesses. An Effect RPC worker pool would add
+coordination without improving this existing native and subprocess work:
+decompression already uses Bun's native worker pool, while archive listing and
+extraction run in subprocesses. Revisit this only if measurement identifies a
+CPU-bound bottleneck.
+
+Live status exposes the current session's artifact preparation through its artifacts array. Entries
+identify the workload and capability and move through `queued`, `preparing`, `downloading`,
+`ready`, and `failed`; the latter carries an actionable error for a later retry. `preparing`
+includes validation, transfer verification, and extraction around the download. Artifact status is
+observational and does not imply that the capability's process is running. During stopping or
+destroying, the owner may continue to expose active preparation until teardown clears it. Offline
+status supplies no live artifact states and does not scan the cache to recreate a progress snapshot.
+
+Explicit `stack.prepare(...)` accepts a synchronous `onProgress` callback for
+caller-owned preparation. It receives the same phase values, including `ready` when an artifact is
+available while its capability remains dormant. The callback's transfer is local to that invocation
+and is not reconstructed by a separate status request.
 
 Within a lifecycle operation, dependency-ready workloads start concurrently,
 with at most four starts in flight; each wave completes before its dependants

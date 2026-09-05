@@ -3,6 +3,7 @@ import { StackIdSchema, type StackId } from "./StackId.ts";
 import {
   ActivationModeSchema,
   CAPABILITY_NAMES,
+  CapabilityNameSchema,
   CapabilityStatusSchema,
   type ActivationMode,
   type CapabilityName,
@@ -90,6 +91,24 @@ export const CapabilityVersionsSchema = Schema.Struct({
   pooler: Schema.optionalKey(Schema.String),
 });
 
+/** Observable state of preparing one workload artifact for a running stack. */
+export const ArtifactPreparationStateSchema = Schema.Literals([
+  "queued",
+  "preparing",
+  "downloading",
+  "ready",
+  "failed",
+] as const);
+export type ArtifactPreparationState = Schema.Schema.Type<typeof ArtifactPreparationStateSchema>;
+
+export const ArtifactPreparationStatusSchema = Schema.Struct({
+  workloadId: Schema.String,
+  capability: CapabilityNameSchema,
+  state: ArtifactPreparationStateSchema,
+  error: Schema.optionalKey(Schema.String),
+});
+export type ArtifactPreparationStatus = Schema.Schema.Type<typeof ArtifactPreparationStatusSchema>;
+
 const CompleteCapabilityStatusesSchema = Schema.Array(CapabilityStatusSchema).pipe(
   Schema.decode({
     decode: SchemaGetter.checkEffect((capabilities) =>
@@ -115,6 +134,7 @@ export const StackStatusSchema = Schema.Struct({
   endpoints: StackEndpointsSchema,
   versions: CapabilityVersionsSchema,
   capabilities: CompleteCapabilityStatusesSchema,
+  artifacts: Schema.Array(ArtifactPreparationStatusSchema),
 });
 
 export interface StackStatus {
@@ -125,6 +145,7 @@ export interface StackStatus {
   readonly endpoints: Readonly<Partial<Record<PortField, StackEndpoint>>>;
   readonly versions: Readonly<Partial<Record<CapabilityName, string>>>;
   readonly capabilities: ReadonlyArray<CapabilityStatus>;
+  readonly artifacts: ReadonlyArray<ArtifactPreparationStatus>;
 }
 
 export const StackDescriptorSchema = Schema.Struct({

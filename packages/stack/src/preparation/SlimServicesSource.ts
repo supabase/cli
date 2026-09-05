@@ -318,7 +318,7 @@ export const makeSlimServicesSource = (
       resolveArtifact(request).pipe(
         Effect.flatMap((artifact) => slimServicesChecksum(artifact, fetchRequest)),
       ),
-    materialize: (request, destination, expectedSha256) =>
+    materialize: (request, destination, expectedSha256, onProgress) =>
       Effect.gen(function* () {
         const artifact = yield* resolveArtifact(request);
         const fs = yield* FileSystem.FileSystem;
@@ -369,7 +369,9 @@ export const makeSlimServicesSource = (
             service: artifact.service,
             version: artifact.version,
           });
-        const compressed = yield* fetchBytes(artifact.downloadUrl, fetchRequest);
+        const compressed = yield* Effect.sync(() => onProgress?.("downloading")).pipe(
+          Effect.andThen(fetchBytes(artifact.downloadUrl, fetchRequest)),
+        );
         const crypto = yield* Crypto.Crypto;
         yield* verifySha256(compressed, expectedSha256).pipe(
           Effect.provideService(Crypto.Crypto, crypto),
@@ -383,6 +385,7 @@ export const makeSlimServicesSource = (
               }),
           ),
         );
+        yield* Effect.sync(() => onProgress?.("preparing"));
         const archive = yield* decompressor.decompress(compressed);
         const archivePath = path.join(destination, ".slim-services.tar");
         yield* fs.writeFile(archivePath, archive).pipe(

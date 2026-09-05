@@ -6,7 +6,11 @@ import {
 } from "../public/Capability.ts";
 import { StackStateInvalidError } from "../public/Errors.ts";
 import { StackIdSchema } from "../public/StackId.ts";
-import { PORT_FIELD_PROTOCOL, type StackStatus } from "../public/Status.ts";
+import {
+  PORT_FIELD_PROTOCOL,
+  type ArtifactPreparationStatus,
+  type StackStatus,
+} from "../public/Status.ts";
 import type { ObservedWorkload } from "../runtime/RuntimeDriver.ts";
 import type { PersistedStackState } from "../state/StackState.ts";
 
@@ -75,6 +79,7 @@ export const statusFor = (
   observed: ReadonlyArray<ObservedWorkload>,
   active: ReadonlySet<CapabilityName>,
   phase: ActualPhase,
+  artifacts: ReadonlyArray<ArtifactPreparationStatus> = [],
 ): Effect.Effect<StackStatus, StackStateInvalidError> =>
   Schema.decodeEffect(StackIdSchema)(state.identity.stackId).pipe(
     Effect.mapError(
@@ -118,6 +123,7 @@ export const statusFor = (
         endpoints,
         versions,
         capabilities,
+        artifacts,
       } satisfies StackStatus;
     }),
   );

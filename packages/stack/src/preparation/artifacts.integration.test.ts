@@ -570,7 +570,7 @@ describe("verified native artifact preparation", () => {
     ),
   );
 
-  it.live("cancels the owner when the store scope closes", () =>
+  it.live("cancels caller-owned preparation when the caller is interrupted", () =>
     withPlatform(
       Effect.gen(function* () {
         const fs = yield* FileSystem.FileSystem;
@@ -595,107 +595,13 @@ describe("verified native artifact preparation", () => {
               ),
             ),
         };
-        yield* Effect.scoped(
-          Effect.gen(function* () {
-            const store = yield* makeArtifactStore({ cacheRoot: root, source });
-            yield* Effect.forkChild(store.prepare(request));
-            yield* Deferred.await(started);
-          }),
-        );
+        const store = yield* makeArtifactStore({ cacheRoot: root, source });
+        const preparation = yield* Effect.forkChild(store.prepare(request));
+        yield* Deferred.await(started);
+        yield* Fiber.interrupt(preparation);
         const entries = yield* fs.readDirectory(root, { recursive: true });
         expect(entries.some((entry) => entry.endsWith(".tmp"))).toBe(false);
         expect(yield* fs.exists(`${root}/database/postgres`)).toBe(false);
-      }),
-    ),
-  );
-
-  it.live("continues a sole preparation after its waiter is interrupted", () =>
-    withPlatform(
-      Effect.gen(function* () {
-        const fs = yield* FileSystem.FileSystem;
-        const root = yield* fs.makeTempDirectoryScoped({
-          prefix: "supabase-stack-artifact-waiters-",
-        });
-        const started = yield* Deferred.make<void>();
-        const release = yield* Deferred.make<void>();
-        let calls = 0;
-        const source: ArtifactSource = {
-          checksum: () => Effect.succeed(archiveSha256),
-          materialize: (entry, destination) =>
-            Effect.gen(function* () {
-              calls += 1;
-              yield* fs.makeDirectory(`${destination}/bin`, { recursive: true });
-              yield* fs.makeDirectory(`${destination}/etc`, { recursive: true });
-              yield* fs.writeFileString(`${destination}/bin/postgres`, "native postgres");
-              yield* fs.writeFileString(`${destination}/etc/postgres.conf`, "config");
-              yield* Deferred.succeed(started, undefined);
-              yield* Deferred.await(release);
-              return archive;
-            }).pipe(
-              Effect.mapError(
-                (cause) =>
-                  new StackPreparationError({
-                    message: `materialization failed: ${cause.message}`,
-                    cause,
-                  }),
-              ),
-            ),
-        };
-        const store = yield* makeArtifactStore({ cacheRoot: root, source });
-        const first = yield* Effect.forkChild(store.prepare(request));
-        yield* Deferred.await(started);
-        yield* Fiber.interrupt(first);
-        const second = yield* Effect.forkChild(store.prepare(request));
-        yield* Deferred.succeed(release, undefined);
-        const result = yield* Fiber.join(second);
-        expect(result.outcome).toBe("downloaded");
-        expect(calls).toBe(1);
-        const cached = yield* store.prepare(request);
-        expect(cached.outcome).toBe("cached");
-      }),
-    ),
-  );
-
-  it.live("shares one in-flight preparation within a store instance", () =>
-    withPlatform(
-      Effect.gen(function* () {
-        const fs = yield* FileSystem.FileSystem;
-        const root = yield* fs.makeTempDirectoryScoped({
-          prefix: "supabase-stack-artifact-flight-",
-        });
-        const started = yield* Deferred.make<void>();
-        const release = yield* Deferred.make<void>();
-        let calls = 0;
-        const source: ArtifactSource = {
-          checksum: () => Effect.succeed(archiveSha256),
-          materialize: (entry, destination) =>
-            Effect.gen(function* () {
-              calls += 1;
-              yield* fs.makeDirectory(`${destination}/bin`, { recursive: true });
-              yield* fs.makeDirectory(`${destination}/etc`, { recursive: true });
-              yield* fs.writeFileString(`${destination}/bin/postgres`, "native postgres");
-              yield* fs.writeFileString(`${destination}/etc/postgres.conf`, "config");
-              yield* Deferred.succeed(started, undefined);
-              yield* Deferred.await(release);
-              return archive;
-            }).pipe(
-              Effect.mapError(
-                (cause) =>
-                  new StackPreparationError({
-                    message: `materialization failed: ${cause.message}`,
-                    cause,
-                  }),
-              ),
-            ),
-        };
-        const store = yield* makeArtifactStore({ cacheRoot: root, source });
-        const first = yield* Effect.forkChild(store.prepare(request));
-        const second = yield* Effect.forkChild(store.prepare(request));
-        yield* Deferred.await(started);
-        yield* Deferred.succeed(release, undefined);
-        const results = yield* Effect.all([Fiber.join(first), Fiber.join(second)]);
-        expect(calls).toBe(1);
-        expect(results[0].path).toBe(results[1].path);
       }),
     ),
   );

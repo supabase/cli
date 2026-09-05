@@ -384,6 +384,7 @@ describe("managed stack handles", { timeout: 30_000 }, () => {
           runtime: { kind: "native" },
           endpoints: {},
           versions: {},
+          artifacts: [],
           capabilities: CAPABILITY_NAMES.map((name) => ({
             name,
             activation: "eager",
@@ -474,6 +475,7 @@ describe("managed stack handles", { timeout: 30_000 }, () => {
           runtime: { kind: "native" },
           endpoints: {},
           versions: {},
+          artifacts: [],
           capabilities: CAPABILITY_NAMES.map((name) => ({
             name,
             activation: "eager",

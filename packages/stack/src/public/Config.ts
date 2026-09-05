@@ -20,6 +20,9 @@ import { PoolerSettingsSchema, type PoolerSettings } from "../model/capabilities
 import { ActivationModeSchema, type ActivationMode } from "./Capability.ts";
 import { NetworkPortSchema, PORT_FIELDS, type PortField } from "./Status.ts";
 
+export const PreparationModeSchema = Schema.Literals(["background", "on-demand"] as const);
+type PreparationMode = Schema.Schema.Type<typeof PreparationModeSchema>;
+
 export const ListenerConfigSchema = Schema.Union([
   Schema.Struct({ enabled: Schema.Literal(false) }),
   Schema.Struct({
@@ -85,6 +88,7 @@ export const StackSecurityConfigSchema = Schema.Struct({
 });
 
 export const StackConfigSchema = Schema.Struct({
+  preparation: Schema.optionalKey(PreparationModeSchema),
   capabilities: Schema.optionalKey(StackCapabilitiesConfigSchema),
   listeners: Schema.optionalKey(StackListenersConfigSchema),
   security: Schema.optionalKey(StackSecurityConfigSchema),
@@ -118,5 +122,6 @@ export type {
   AnalyticsSettings,
   PoolerSettings,
   ActivationMode,
+  PreparationMode,
 };
 export { NetworkPortSchema } from "./Status.ts";

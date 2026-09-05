@@ -2694,6 +2694,9 @@ describe("container runtime", () => {
         const runtime: SupervisorRuntime = {
           driver,
           preflight: () => Effect.void,
+          prepare: () => Effect.void,
+          prefetch: () => Effect.void,
+          artifacts: Effect.succeed([]),
           activate: () => Effect.succeed({ host: "127.0.0.1", port: 9999 }),
           ingress,
           logStore,

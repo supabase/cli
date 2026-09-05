@@ -188,6 +188,7 @@ describe("atomic stack state", () => {
           projectRoot: "/tmp/project",
           runtime: { kind: "native" },
           config: {
+            preparation: "on-demand",
             capabilities: {
               auth: {
                 settings: {
@@ -203,6 +204,7 @@ describe("atomic stack state", () => {
           },
         });
         const complete = state(stackId, compiled.definition);
+        expect(complete.definition?.preparation).toBe("on-demand");
         yield* store.initialize(stackId, complete);
         expect(yield* store.read(stackId)).toEqual(complete);
         const materialized = { ...complete };
@@ -266,6 +268,14 @@ describe("atomic stack state", () => {
         yield* fs.writeFileString(statePath, yield* jsonText(missingDefault));
         const missingDefaultExit = yield* store.read(stackId).pipe(Effect.exit);
         expect(errorOf(missingDefaultExit)).toBeInstanceOf(StackStateInvalidError);
+
+        const invalidPreparation = {
+          ...encoded,
+          definition: { ...encoded.definition, preparation: "invalid" },
+        };
+        yield* fs.writeFileString(statePath, yield* jsonText(invalidPreparation));
+        const invalidPreparationExit = yield* store.read(stackId).pipe(Effect.exit);
+        expect(errorOf(invalidPreparationExit)).toBeInstanceOf(StackStateInvalidError);
 
         const invalidRecordKey = {
           ...encoded,

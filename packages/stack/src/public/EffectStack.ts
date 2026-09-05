@@ -33,7 +33,12 @@ import { resolveStackPaths } from "../state/Paths.ts";
 import { StackIdSchema, type StackId } from "./StackId.ts";
 import type { StackRuntime, StackRuntimePreference } from "./Runtime.ts";
 import type { StackConfig } from "./Config.ts";
-import { type StackStatus, type StackDescriptor, type StackInspection } from "./Status.ts";
+import {
+  type ArtifactPreparationStatus,
+  type StackStatus,
+  type StackDescriptor,
+  type StackInspection,
+} from "./Status.ts";
 import { CAPABILITY_NAMES, type CapabilityName } from "./Capability.ts";
 import type { LogQuery, StackLogBatch, StackLogEntry } from "./Logs.ts";
 import type { EffectStackCredentials } from "./Credentials.ts";
@@ -120,6 +125,8 @@ export interface StartStackOptions {
 export interface PrepareStackOptions {
   readonly config?: StackConfig;
   readonly capabilities?: ReadonlyArray<CapabilityName>;
+  /** Synchronous progress observer for this caller-owned preparation. */
+  readonly onProgress?: (status: ArtifactPreparationStatus) => void;
 }
 export interface CreateStackOptions {
   readonly projectRoot: string;
@@ -838,6 +845,12 @@ const handleDependencies = (options: {
           }
         }
         const workloads = plan.workloads.filter((workload) => selected.has(workload.capability));
+        for (const workload of workloads)
+          prepareOptions?.onProgress?.({
+            workloadId: workload.id,
+            capability: workload.capability,
+            state: "queued",
+          });
         const preparer = yield* makeProductionRuntimeArtifactPreparer({
           stateRoot: options.environment.stateRoot,
           runtime: state.runtime,
@@ -855,7 +868,7 @@ const handleDependencies = (options: {
         );
         const artifacts = yield* Effect.forEach(
           workloads,
-          (workload) => preparer.prepare(state.runtime, workload),
+          (workload) => preparer.prepare(state.runtime, workload, prepareOptions?.onProgress),
           { concurrency: 4 },
         );
         const byCapability = new Map<CapabilityName, ReadonlyArray<PreparedWorkloadArtifact>>();

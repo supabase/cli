@@ -51,6 +51,7 @@ const status = (
         : "stopped",
     ...(failedCapability === name ? { state: "failed", error: `${name} failed` } : {}),
   })),
+  artifacts: [],
 });
 
 const stream = <A>(values: ReadonlyArray<A>): AsyncIterable<A> => ({

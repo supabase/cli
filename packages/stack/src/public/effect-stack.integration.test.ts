@@ -70,7 +70,7 @@ import {
 } from "./EffectStack.ts";
 import { CAPABILITY_NAMES } from "./Capability.ts";
 import { StackIdSchema, type StackId } from "./StackId.ts";
-import type { StackStatus } from "./Status.ts";
+import type { ArtifactPreparationStatus, StackStatus } from "./Status.ts";
 import { makeDockerEngine } from "../runtime/DockerEngine.ts";
 import {
   type ContainerCommandResult,
@@ -98,6 +98,7 @@ const runningStatus: StackStatus = {
     activation: name === "functions" ? "lazy" : "eager",
     state: name === "pooler" ? "disabled" : "ready",
   })),
+  artifacts: [],
 };
 
 const credentials = {
@@ -1029,15 +1030,29 @@ describe("Effect stack lifecycle handoff", () => {
           ...state,
           definition: persisted.definition,
         });
+        const before = yield* stack.status();
+        const progress: Array<ArtifactPreparationStatus> = [];
         const prepared = yield* stack.prepare({
           config: { capabilities: { rest: { settings: { schemas: ["private"] } } } },
           capabilities: ["rest"],
+          onProgress: (status) => progress.push(status),
         });
         expect(prepared.capabilities).toEqual([
           { capability: "database", version: defaultDatabaseVersion, outcome: "cached" },
           { capability: "rest", version: defaultRestVersion, outcome: "cached" },
         ]);
         expect(calls.filter((call) => call.startsWith("image ls"))).toHaveLength(2);
+        expect(progress).toEqual(
+          expect.arrayContaining([
+            { workloadId: "database:database", capability: "database", state: "queued" },
+            { workloadId: "rest:rest", capability: "rest", state: "queued" },
+            { workloadId: "database:database", capability: "database", state: "preparing" },
+            { workloadId: "rest:rest", capability: "rest", state: "preparing" },
+            { workloadId: "database:database", capability: "database", state: "ready" },
+            { workloadId: "rest:rest", capability: "rest", state: "ready" },
+          ]),
+        );
+        expect(yield* stack.status()).toEqual(before);
       }),
     ),
   );
@@ -1196,9 +1211,9 @@ describe("Effect stack lifecycle handoff", () => {
           },
         } satisfies Crypto.Crypto;
         const firstPublished = yield* Deferred.make<void>();
-        const secondStarted = yield* Deferred.make<void>();
-        const secondCancelled = yield* Deferred.make<void>();
-        const secondRelease = yield* Deferred.make<void>();
+        const secondDownloadStarted = yield* Deferred.make<void>();
+        const secondDownloadCancelled = yield* Deferred.make<void>();
+        const secondDownloadRelease = yield* Deferred.make<void>();
         const present = new Set<string>();
         const runner: ContainerCommandRunner = {
           run: (request) => {
@@ -1210,18 +1225,25 @@ describe("Effect stack lifecycle handoff", () => {
                 exitCode: 0,
               });
             if (command === "image" && subcommand === "ls" && image !== undefined) {
-              if (image.includes("postgrest"))
-                return Deferred.succeed(secondStarted, undefined).pipe(
-                  Effect.andThen(Deferred.await(secondRelease)),
-                  Effect.onInterrupt(() => Deferred.succeed(secondCancelled, undefined)),
-                  Effect.as({ stdout: "", stderr: "", exitCode: 0 }),
-                );
               return Effect.succeed({
                 stdout: present.has(image) ? '"cached"\n' : "",
                 stderr: "",
                 exitCode: 0,
               });
             }
+            if (
+              command === "image" &&
+              subcommand === "pull" &&
+              image !== undefined &&
+              image.includes("postgrest")
+            )
+              return Deferred.succeed(secondDownloadStarted, undefined).pipe(
+                Effect.andThen(Deferred.await(secondDownloadRelease)),
+                Effect.onInterrupt(() =>
+                  Deferred.succeed(secondDownloadCancelled, undefined).pipe(Effect.asVoid),
+                ),
+                Effect.as({ stdout: "", stderr: "", exitCode: 0 }),
+              );
             if (command === "image" && subcommand === "pull" && image !== undefined)
               return Effect.yieldNow.pipe(
                 Effect.andThen(
@@ -1258,20 +1280,43 @@ describe("Effect stack lifecycle handoff", () => {
         const stateStore = yield* makeStackStateStore({ stateRoot: env.stateRoot });
         const paths = yield* resolveStackPaths({ stateRoot: env.stateRoot, stackId: stack.id });
         const before = yield* fs.readFileString(paths.stateDocument);
+        const progress: Array<ArtifactPreparationStatus> = [];
         const preparation = yield* Effect.forkChild(
-          stack.prepare({ capabilities: ["database", "rest"] }),
+          stack.prepare({
+            capabilities: ["database", "rest"],
+            onProgress: (status) => progress.push(status),
+          }),
           { startImmediately: true },
         );
         yield* Deferred.await(firstPublished).pipe(Effect.timeout("5 seconds"), Effect.orDie);
-        yield* Deferred.await(secondStarted).pipe(Effect.timeout("5 seconds"), Effect.orDie);
+        yield* Deferred.await(secondDownloadStarted).pipe(
+          Effect.timeout("5 seconds"),
+          Effect.orDie,
+        );
+        expect(
+          progress.some(
+            ({ workloadId, state }) => workloadId === "rest:rest" && state === "downloading",
+          ),
+        ).toBe(true);
         yield* Fiber.interrupt(preparation);
-        yield* Deferred.await(secondCancelled).pipe(Effect.timeout("5 seconds"), Effect.orDie);
+        yield* Deferred.await(secondDownloadCancelled).pipe(
+          Effect.timeout("5 seconds"),
+          Effect.orDie,
+        );
         const canceled = yield* Fiber.join(preparation).pipe(Effect.exit);
         expect(Exit.isFailure(canceled)).toBe(true);
-        const cached = yield* stack.prepare({ capabilities: ["database"] });
+        expect(
+          progress.some(({ workloadId, state }) => workloadId === "rest:rest" && state === "ready"),
+        ).toBe(false);
+        const retryProgress: Array<ArtifactPreparationStatus> = [];
+        const cached = yield* stack.prepare({
+          capabilities: ["database"],
+          onProgress: (status) => retryProgress.push(status),
+        });
         expect(cached.capabilities).toEqual([
           { capability: "database", version: defaultDatabaseVersion, outcome: "cached" },
         ]);
+        expect(retryProgress.some(({ state }) => state === "downloading")).toBe(false);
         expect(yield* fs.readFileString(paths.stateDocument)).toBe(before);
         expect(yield* readOwnerMetadata(env.stateRoot, stack.id, env)).toBeUndefined();
         expect(yield* ownerLockExists(env.stateRoot, stack.id)).toBe(false);

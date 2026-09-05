@@ -275,6 +275,13 @@ const capabilityState = (status: StackStatus, name: string): string | undefined 
 const expectDefaultLazyState = (status: StackStatus): void => {
   expect(status.lifecycle).toBe("running");
   expect(capabilityState(status, "database")).toBe("ready");
+  expect(status.artifacts).toContainEqual(
+    expect.objectContaining({
+      workloadId: "database:database",
+      capability: "database",
+      state: "ready",
+    }),
+  );
   for (const name of CAPABILITY_NAMES) {
     if (name === "database") continue;
     expect(capabilityState(status, name), `${name} should remain dormant`).toBe("dormant");
@@ -944,6 +951,11 @@ const runWholeStackScenario = async (mode: (typeof RUNTIME_CASES)[number]): Prom
   expect(ready.capabilities.map(({ name, state }) => ({ name, state }))).toEqual(
     CAPABILITY_NAMES.map((name) => ({ name, state: "ready" })),
   );
+  for (const workloadId of ["studio:pgmeta", "studio:studio"] as const) {
+    expect(ready.artifacts).toContainEqual(
+      expect.objectContaining({ workloadId, capability: "studio", state: "ready" }),
+    );
+  }
   await expectOwnedWorkloads(mode, stack.id, BASE_WORKLOAD_IDS);
   const idempotentStart = await stack.start();
   expect(idempotentStart.capabilities.map(({ name, state }) => ({ name, state }))).toEqual(
@@ -1028,6 +1040,7 @@ const runWholeStackScenario = async (mode: (typeof RUNTIME_CASES)[number]): Prom
   const stopped = await stack.status();
   expect(stopped.lifecycle).toBe("stopped");
   expect(stopped.capabilities.every(({ state }) => state === "stopped")).toBe(true);
+  expect(stopped.artifacts).toEqual([]);
   await expectOwnedWorkloads(mode, stack.id, []);
   const retainedLogs: StackLogEntry[] = (await stack.logs()).entries.slice();
   expect(retainedLogs.length).toBeGreaterThan(0);

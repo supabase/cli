@@ -1,4 +1,4 @@
-import { Crypto, Effect, FileSystem, Path, Scope } from "effect";
+import { Crypto, Effect, FileSystem, Path } from "effect";
 import { ChildProcessSpawner } from "effect/unstable/process";
 import type { PlannedWorkload } from "../model/ExecutionPlan.ts";
 import {
@@ -6,6 +6,7 @@ import {
   type NativeWorkloadArtifact,
 } from "../model/WorkloadCatalog.ts";
 import type { StackRuntime } from "../public/Runtime.ts";
+import type { ArtifactPreparationStatus } from "../public/Status.ts";
 import {
   ContainerEngineError,
   ContainerPullError,
@@ -36,10 +37,16 @@ export interface PreparedWorkloadArtifact {
   readonly image?: string;
 }
 
+export type RuntimeArtifactPreparationProgress = ArtifactPreparationStatus;
+export type RuntimeArtifactPreparationProgressListener = (
+  progress: RuntimeArtifactPreparationProgress,
+) => void;
+
 export interface RuntimeArtifactPreparer {
   readonly prepare: (
     runtime: StackRuntime,
     workload: PlannedWorkload,
+    onProgress?: RuntimeArtifactPreparationProgressListener,
   ) => Effect.Effect<PreparedWorkloadArtifact, RuntimeArtifactPreparationError>;
 }
 
@@ -76,96 +83,125 @@ const containerVersion = (image: string): string => {
  */
 export const makeRuntimeArtifactPreparer = (
   options: RuntimeArtifactPreparerOptions,
-): RuntimeArtifactPreparer => ({
-  prepare: (runtime, workload) => {
-    if (runtime.kind === "native") {
-      const native = options.native;
-      if (native === undefined)
+): RuntimeArtifactPreparer => {
+  const prepare = (
+    runtime: StackRuntime,
+    workload: PlannedWorkload,
+    onProgress?: RuntimeArtifactPreparationProgressListener,
+  ): Effect.Effect<PreparedWorkloadArtifact, RuntimeArtifactPreparationError> =>
+    Effect.suspend<PreparedWorkloadArtifact, RuntimeArtifactPreparationError, never>(() => {
+      const report = (state: ArtifactPreparationStatus["state"], cause?: unknown): void => {
+        onProgress?.({
+          workloadId: workload.id,
+          capability: workload.capability,
+          state,
+          ...(cause === undefined
+            ? {}
+            : {
+                error:
+                  cause instanceof Error
+                    ? cause.message
+                    : typeof cause === "string"
+                      ? cause
+                      : (JSON.stringify(cause) ?? "Unknown preparation failure"),
+              }),
+        });
+      };
+      report("preparing");
+      if (runtime.kind === "native") {
+        const native = options.native;
+        if (native === undefined)
+          return Effect.fail(
+            error("Native runtime has no configured artifact store", { workload: workload.id }),
+          );
+        if (workload.selected.kind !== "native")
+          return Effect.fail(
+            error("Native runtime received a container workload artifact", {
+              workload: workload.id,
+            }),
+          );
+        return Effect.gen(function* () {
+          const artifact = yield* resolveNativeArtifactForWorkload(workload, native.platform);
+          native.onArtifactResolved?.(artifact);
+          const request = {
+            key: artifactKey(artifact),
+            requiredRuntimePaths: artifact.requiredRuntimePaths,
+            executablePath: artifact.executablePath,
+          };
+          const prepared = yield* native.store.prepare(request, (state) => report(state));
+          report("ready");
+          return nativeResult(workload, artifact, prepared);
+        }).pipe(Effect.tapError((cause) => Effect.sync(() => report("failed", cause))));
+      }
+      if (workload.selected.kind !== "container")
         return Effect.fail(
-          error("Native runtime has no configured artifact store", { workload: workload.id }),
-        );
-      if (workload.selected.kind !== "native")
-        return Effect.fail(
-          error("Native runtime received a container workload artifact", {
+          error("Container runtime received a native workload artifact", {
             workload: workload.id,
           }),
         );
-      return Effect.gen(function* () {
-        const artifact = yield* resolveNativeArtifactForWorkload(workload, native.platform);
-        native.onArtifactResolved?.(artifact);
-        const request = {
-          key: artifactKey(artifact),
-          requiredRuntimePaths: artifact.requiredRuntimePaths,
-          executablePath: artifact.executablePath,
-        };
-        const prepared = yield* native.store.prepare(request);
-        return nativeResult(workload, artifact, prepared);
-      });
-    }
-    if (workload.selected.kind !== "container")
-      return Effect.fail(
-        error("Container runtime received a native workload artifact", {
-          workload: workload.id,
-        }),
-      );
-    const engine = options.containerEngine;
-    if (engine === undefined)
-      return Effect.fail(
-        error("Container runtime has no configured container engine", {
-          workload: workload.id,
-          engine: runtime.engine,
-        }),
-      );
-    if (engine.kind !== runtime.engine)
-      return Effect.fail(
-        error("Configured container engine does not match runtime", {
-          workload: workload.id,
-          engine: runtime.engine,
-          configuredEngine: engine.kind,
-        }),
-      );
-    const image = workload.selected.image;
-    return engine.probe.pipe(
-      Effect.andThen(engine.inspectImage(image)),
-      Effect.flatMap((inspection) =>
-        inspection.present
-          ? Effect.succeed<PreparedWorkloadArtifact>({
-              workloadId: workload.id,
-              capability: workload.capability,
-              version: containerVersion(image),
-              outcome: "cached",
-              image,
-            })
-          : engine.pullImage(image).pipe(
-              Effect.mapError(
-                (cause) =>
-                  new ContainerPullError({
-                    message: `Unable to pull container image ${image}`,
-                    workload: workload.id,
-                    cause,
-                  }),
-              ),
-              Effect.as({
+      const engine = options.containerEngine;
+      if (engine === undefined)
+        return Effect.fail(
+          error("Container runtime has no configured container engine", {
+            workload: workload.id,
+            engine: runtime.engine,
+          }),
+        );
+      if (engine.kind !== runtime.engine)
+        return Effect.fail(
+          error("Configured container engine does not match runtime", {
+            workload: workload.id,
+            engine: runtime.engine,
+            configuredEngine: engine.kind,
+          }),
+        );
+      const image = workload.selected.image;
+      return engine.probe.pipe(
+        Effect.andThen(engine.inspectImage(image)),
+        Effect.flatMap((inspection) =>
+          inspection.present
+            ? Effect.succeed<PreparedWorkloadArtifact>({
                 workloadId: workload.id,
                 capability: workload.capability,
                 version: containerVersion(image),
-                outcome: "pulled" as const,
+                outcome: "cached",
                 image,
+              })
+            : Effect.sync(() => report("downloading")).pipe(
+                Effect.andThen(engine.pullImage(image)),
+                Effect.mapError(
+                  (cause) =>
+                    new ContainerPullError({
+                      message: `Unable to pull container image ${image}`,
+                      workload: workload.id,
+                      cause,
+                    }),
+                ),
+                Effect.as({
+                  workloadId: workload.id,
+                  capability: workload.capability,
+                  version: containerVersion(image),
+                  outcome: "pulled" as const,
+                  image,
+                }),
+              ),
+        ),
+        Effect.tap(() => Effect.sync(() => report("ready"))),
+        Effect.mapError((cause) =>
+          cause instanceof ContainerPullError
+            ? cause
+            : new ContainerEngineError({
+                message:
+                  cause instanceof Error ? cause.message : "Container engine operation failed",
+                engine: runtime.engine,
+                cause,
               }),
-            ),
-      ),
-      Effect.mapError((cause) =>
-        cause instanceof ContainerPullError
-          ? cause
-          : new ContainerEngineError({
-              message: cause instanceof Error ? cause.message : "Container engine operation failed",
-              engine: runtime.engine,
-              cause,
-            }),
-      ),
-    );
-  },
-});
+        ),
+        Effect.tapError((cause) => Effect.sync(() => report("failed", cause))),
+      );
+    });
+  return { prepare };
+};
 
 const nativeResult = (
   workload: PlannedWorkload,
@@ -197,11 +233,7 @@ export const makeProductionRuntimeArtifactPreparer = (options: {
 }): Effect.Effect<
   RuntimeArtifactPreparer,
   RuntimeArtifactPreparationError,
-  | Path.Path
-  | FileSystem.FileSystem
-  | Crypto.Crypto
-  | Scope.Scope
-  | ChildProcessSpawner.ChildProcessSpawner
+  Path.Path | FileSystem.FileSystem | Crypto.Crypto | ChildProcessSpawner.ChildProcessSpawner
 > =>
   Effect.gen(function* () {
     if (options.stateRoot.trim().length === 0)

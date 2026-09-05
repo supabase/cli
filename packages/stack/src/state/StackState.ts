@@ -221,7 +221,8 @@ const validateModuleSettingsByName = (
 };
 
 const isDefinitionShape = (input: unknown): input is StackDefinition => {
-  if (!hasExactKeys(input, ["capabilities", "listeners", "security"])) return false;
+  if (!hasExactKeys(input, ["preparation", "capabilities", "listeners", "security"])) return false;
+  if (input.preparation !== "background" && input.preparation !== "on-demand") return false;
   const capabilities = input.capabilities;
   if (!hasExactKeys(capabilities, CAPABILITY_NAMES)) return false;
   for (const name of CAPABILITY_NAMES) {

@@ -58,9 +58,10 @@ describe("closed capability compiler", () => {
     }),
   );
 
-  it.live("defaults only the database capability to eager activation", () =>
+  it.live("defaults preparation to background and accepts on-demand mode", () =>
     Effect.gen(function* () {
       const result = yield* compile({});
+      expect(result.definition.preparation).toBe("background");
       expect(result.executionPlan.activation).toEqual({
         database: "eager",
         rest: "lazy",
@@ -81,6 +82,11 @@ describe("closed capability compiler", () => {
       const disabledPooler = yield* compile({ capabilities: { pooler: { enabled: false } } });
       expect(disabledPooler.definition.capabilities.pooler.enabled).toBe(false);
       expect(disabledPooler.definition.listeners.pooler.enabled).toBe(true);
+      const onDemand = yield* compile({ preparation: "on-demand" });
+      expect(onDemand.definition.preparation).toBe("on-demand");
+
+      const invalid = yield* compile({ preparation: "invalid" } as never).pipe(Effect.exit);
+      expect(failureOf(invalid)).toBeInstanceOf(InvalidStackConfigError);
     }),
   );
 

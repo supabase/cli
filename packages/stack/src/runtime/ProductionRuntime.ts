@@ -7,6 +7,7 @@ import {
   Effect,
   Exit,
   FileSystem,
+  Fiber,
   Path,
   Ref,
   Result,
@@ -16,7 +17,7 @@ import {
 } from "effect";
 import { ChildProcessSpawner } from "effect/unstable/process";
 import { eagerCapabilities, type PlannedWorkload } from "../model/ExecutionPlan.ts";
-import type { StackDefinition } from "../model/Compiler.ts";
+import { rebuildExecutionPlan, type StackDefinition } from "../model/Compiler.ts";
 import {
   makeFunctionsBootstrapOwner,
   type FunctionsBootstrapOwner,
@@ -28,12 +29,12 @@ import type { PersistedStackState } from "../state/StackState.ts";
 import type { PersistedSecretValues } from "../state/StackState.ts";
 import type { StackId } from "../public/StackId.ts";
 import type { StackRuntime } from "../public/Runtime.ts";
+import type { ArtifactPreparationStatus } from "../public/Status.ts";
+import type { CapabilityName } from "../public/Capability.ts";
 import {
   GatewayActivationError,
   StackPreparationError,
-  ArtifactIntegrityError,
   ContainerEngineError,
-  ContainerPullError,
   PortUnavailableError,
   StackRuntimeMismatchError,
   StackStateInvalidError,
@@ -51,6 +52,8 @@ import type { LifecycleInput } from "../supervisor/Lifecycle.ts";
 import type { SupervisorRuntime } from "../supervisor/Supervisor.ts";
 import {
   makeProductionRuntimeArtifactPreparer,
+  type RuntimeArtifactPreparationProgress,
+  type RuntimeArtifactPreparationProgressListener,
   type PreparedWorkloadArtifact,
   type RuntimeArtifactPreparer,
 } from "../preparation/RuntimeArtifacts.ts";
@@ -441,22 +444,40 @@ export const withOwnedRuntimeFileCleanup = (
   envFiles: RuntimeEnvFileOwner,
   functionsBootstrap: FunctionsBootstrapOwner,
   inputOwner?: RuntimeInputOwner,
+  preparationCleanup?: Effect.Effect<void, StackError>,
 ): RuntimeDriver => {
   const cleanupFiles = (stackId: StackId): Effect.Effect<void, RuntimeDriverError> =>
     Effect.gen(function* () {
       const key = { stackId, workloadId: "" };
       let cleanupCause: Cause.Cause<RuntimeDriverError> = Cause.empty;
-      const attempts = [
-        envFiles.cleanupAll,
-        functionsBootstrap.cleanupAll,
-        ...(inputOwner === undefined ? [] : [inputOwner.cleanupAll]),
+      const attempts: ReadonlyArray<Effect.Effect<void, RuntimeDriverError>> = [
+        ...(preparationCleanup === undefined
+          ? []
+          : [
+              preparationCleanup.pipe(
+                Effect.mapError((error) =>
+                  driverError(key, "Unable to clean runtime preparation", error),
+                ),
+              ),
+            ]),
+        envFiles.cleanupAll.pipe(
+          Effect.mapError((error) => driverError(key, "Unable to clean runtime files", error)),
+        ),
+        functionsBootstrap.cleanupAll.pipe(
+          Effect.mapError((error) => driverError(key, "Unable to clean runtime files", error)),
+        ),
+        ...(inputOwner === undefined
+          ? []
+          : [
+              inputOwner.cleanupAll.pipe(
+                Effect.mapError((error) =>
+                  driverError(key, "Unable to clean runtime files", error),
+                ),
+              ),
+            ]),
       ];
       for (const attempt of attempts) {
-        const result = yield* Effect.exit(
-          attempt.pipe(
-            Effect.mapError((error) => driverError(key, "Unable to clean runtime files", error)),
-          ),
-        );
+        const result = yield* Effect.exit(attempt);
         if (Exit.isFailure(result)) cleanupCause = Cause.combine(cleanupCause, result.cause);
       }
       if (cleanupCause.reasons.length > 0) return yield* Effect.failCause(cleanupCause);
@@ -578,6 +599,38 @@ export const makeProductionRuntime = (
       options.bootstrapDatabase ?? ((state: PersistedStackState) => bootstrapDatabaseAt(state));
 
     const artifacts = new Map<string, PreparedWorkloadArtifact>();
+    const preparationStatuses = new Map<string, ArtifactPreparationStatus>();
+    const recordPreparationProgress = (progress: RuntimeArtifactPreparationProgress): void => {
+      preparationStatuses.set(progress.workloadId, {
+        workloadId: progress.workloadId,
+        capability: progress.capability,
+        state: progress.state,
+        ...(progress.error === undefined ? {} : { error: progress.error }),
+      });
+    };
+    const queuePreparation = (workload: PlannedWorkload): void => {
+      if (artifacts.has(artifactKey(state.runtime, workload))) return;
+      const current = preparationStatuses.get(workload.id);
+      if (current?.state === "preparing" || current?.state === "downloading") return;
+      recordPreparationProgress({
+        workloadId: workload.id,
+        capability: workload.capability,
+        state: "queued",
+      });
+    };
+    const preparationGate = yield* Semaphore.make(1);
+    const parentScope = yield* Scope.Scope;
+    let preparationScope: Scope.Scope | undefined;
+    const preparationInFlight = new Map<
+      string,
+      Fiber.Fiber<PreparedWorkloadArtifact, StackError>
+    >();
+    yield* Scope.addFinalizer(
+      parentScope,
+      Effect.suspend(() =>
+        preparationScope === undefined ? Effect.void : Scope.close(preparationScope, Exit.void),
+      ),
+    );
     // Runtime input materialization writes shared files and populates completed caches. Keep
     // that short preparation boundary serialized while allowing the actual workloads to start
     // concurrently after their inputs are ready.
@@ -591,26 +644,147 @@ export const makeProductionRuntime = (
             : Effect.fail(driverError(key, "Persisted runtime changed while owner was active")),
         ),
       );
-    const prepare = (runtime: StackRuntime, workload: PlannedWorkload) => {
-      const key = artifactKey(runtime, workload);
-      const cached = artifacts.get(key);
-      return cached === undefined
-        ? preparer.prepare(runtime, workload).pipe(
-            Effect.mapError((error) =>
-              error instanceof ArtifactIntegrityError ||
-              error instanceof ContainerPullError ||
-              error instanceof ContainerEngineError
-                ? error
-                : preparationError(`Unable to prepare ${workload.id}`, error),
-            ),
-            Effect.tap((prepared) => Effect.sync(() => artifacts.set(key, prepared))),
-          )
-        : Effect.succeed(cached);
+    const prepareOne = (
+      runtime: StackRuntime,
+      workload: PlannedWorkload,
+      onProgress?: RuntimeArtifactPreparationProgressListener,
+    ) => {
+      return Effect.suspend(() => {
+        const key = artifactKey(runtime, workload);
+        const cached = artifacts.get(key);
+        return cached === undefined
+          ? Effect.sync(() =>
+              onProgress?.({
+                workloadId: workload.id,
+                capability: workload.capability,
+                state: "preparing",
+              }),
+            ).pipe(
+              Effect.andThen(preparer.prepare(runtime, workload, onProgress)),
+              Effect.tap((prepared) =>
+                Effect.sync(() => {
+                  artifacts.set(key, prepared);
+                  onProgress?.({
+                    workloadId: workload.id,
+                    capability: workload.capability,
+                    state: "ready",
+                  });
+                }),
+              ),
+              Effect.tapError((error) =>
+                Effect.sync(() =>
+                  onProgress?.({
+                    workloadId: workload.id,
+                    capability: workload.capability,
+                    state: "failed",
+                    error: error.message,
+                  }),
+                ),
+              ),
+            )
+          : Effect.succeed(cached);
+      });
     };
-    const prepareArtifacts = (runtime: StackRuntime, workloads: ReadonlyArray<PlannedWorkload>) =>
-      Effect.forEach(workloads, (workload) => prepare(runtime, workload), {
+    const prepare = (
+      runtime: StackRuntime,
+      workload: PlannedWorkload,
+      onProgress?: RuntimeArtifactPreparationProgressListener,
+    ) =>
+      Effect.gen(function* () {
+        const key = artifactKey(runtime, workload);
+        const joined = yield* Effect.uninterruptible(
+          preparationGate.withPermit(
+            Effect.gen(function* () {
+              const existing = preparationInFlight.get(key);
+              if (existing !== undefined) return existing;
+              const scope = preparationScope ?? (preparationScope = yield* Scope.make("parallel"));
+              let fiber: Fiber.Fiber<PreparedWorkloadArtifact, StackError> | undefined;
+              const owner = prepareOne(runtime, workload, onProgress).pipe(
+                Effect.ensuring(
+                  Effect.sync(() => {
+                    if (preparationInFlight.get(key) === fiber) preparationInFlight.delete(key);
+                  }),
+                ),
+              );
+              fiber = yield* Effect.forkIn(owner, scope, { startImmediately: false });
+              preparationInFlight.set(key, fiber);
+              return fiber;
+            }),
+          ),
+        );
+        return yield* Fiber.join(joined);
+      });
+    const prepareArtifacts = (
+      runtime: StackRuntime,
+      workloads: ReadonlyArray<PlannedWorkload>,
+      onProgress?: RuntimeArtifactPreparationProgressListener,
+    ) =>
+      Effect.forEach(workloads, (workload) => prepare(runtime, workload, onProgress), {
         concurrency: 4,
       });
+    const prepareFor = (
+      input: LifecycleInput,
+      selected: ReadonlySet<CapabilityName>,
+    ): Effect.Effect<void, StackError> =>
+      Effect.gen(function* () {
+        const workloads = input.plan.workloads.filter((workload) =>
+          selected.has(workload.capability),
+        );
+        for (const workload of workloads) queuePreparation(workload);
+        yield* prepareArtifacts(input.state.runtime, workloads, recordPreparationProgress);
+      });
+    const logPreparationFailure = (message: string): Effect.Effect<void> =>
+      logs.append({ source: "supervisor", stream: "internal", message }).pipe(Effect.ignore);
+    const prefetch = (persisted: PersistedStackState): Effect.Effect<void> =>
+      Effect.gen(function* () {
+        if (persisted.definition === undefined || persisted.definition.preparation === "on-demand")
+          return;
+        const plan = yield* rebuildExecutionPlan(persisted.runtime, persisted.definition).pipe(
+          Effect.mapError((error) =>
+            preparationError("Unable to plan background preparation", error),
+          ),
+        );
+        const workloads = plan.workloads.filter(
+          (workload) =>
+            persisted.definition?.capabilities[workload.capability].activation === "lazy" &&
+            !artifacts.has(artifactKey(persisted.runtime, workload)),
+        );
+        for (const workload of workloads) queuePreparation(workload);
+        yield* Effect.forEach(
+          workloads,
+          (workload) =>
+            prepare(persisted.runtime, workload, recordPreparationProgress).pipe(
+              Effect.catch((error) =>
+                logPreparationFailure(
+                  `Background preparation failed for ${workload.id}: ${error.message}`,
+                ),
+              ),
+            ),
+          { concurrency: 2, discard: true },
+        );
+      }).pipe(
+        Effect.catch((error) =>
+          logPreparationFailure(
+            `Background preparation failed: ${error instanceof Error ? error.message : String(error)}`,
+          ),
+        ),
+      );
+    const cleanupPreparation: Effect.Effect<void, StackError> = Effect.gen(function* () {
+      const scope = yield* preparationGate.withPermit(
+        Effect.sync(() => {
+          const current = preparationScope;
+          preparationScope = undefined;
+          preparationInFlight.clear();
+          return current;
+        }),
+      );
+      if (scope !== undefined) yield* Scope.close(scope, Exit.interrupt());
+      yield* Effect.sync(() => {
+        preparationInFlight.clear();
+        preparationStatuses.clear();
+        artifacts.clear();
+      });
+    }).pipe(Effect.uninterruptible);
     const functionsPath = (): Effect.Effect<string, StackPreparationError> =>
       serveTemplate.pipe(Effect.flatMap((content) => functionsBootstrap.write({ content })));
     const runtimeInputs = (
@@ -745,14 +919,15 @@ export const makeProductionRuntime = (
           );
         }
         const eager = eagerCapabilities(input.plan);
-        yield* prepareArtifacts(
-          input.state.runtime,
-          input.plan.workloads.filter((workload) => eager.has(workload.capability)),
+        const eagerWorkloads = input.plan.workloads.filter((workload) =>
+          eager.has(workload.capability),
         );
+        for (const workload of eagerWorkloads) queuePreparation(workload);
+        yield* prepareArtifacts(input.state.runtime, eagerWorkloads, recordPreparationProgress);
       });
 
     const activate = (
-      capability: import("../public/Capability.ts").CapabilityName,
+      capability: CapabilityName,
       input: LifecycleInput,
     ): Effect.Effect<
       { readonly host: string; readonly port: number },
@@ -1025,10 +1200,14 @@ export const makeProductionRuntime = (
       envFiles,
       functionsBootstrap,
       inputOwner,
+      cleanupPreparation,
     );
     return {
       driver: baseDriver,
       preflight,
+      prepare: prepareFor,
+      prefetch,
+      artifacts: Effect.sync(() => [...preparationStatuses.values()]),
       activate,
       ingress,
       logStore: logs,

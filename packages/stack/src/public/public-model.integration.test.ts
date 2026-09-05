@@ -22,8 +22,15 @@ const STATUS_FIXTURE = {
   capabilities: CAPABILITY_NAMES.map((name) => ({
     name,
     activation: "lazy",
-    state: "disabled",
+    state: name === "rest" ? "dormant" : "disabled",
   })),
+  artifacts: [
+    {
+      workloadId: "rest:rest",
+      capability: "rest",
+      state: "downloading",
+    },
+  ],
 };
 
 describe("public stack model", () => {
@@ -32,6 +39,10 @@ describe("public stack model", () => {
       Effect.map((status) => {
         expect(status.capabilities).toHaveLength(10);
         expect(new Set(status.capabilities.map(({ name }) => name)).size).toBe(10);
+        expect(status.capabilities.find(({ name }) => name === "rest")?.state).toBe("dormant");
+        expect(status.artifacts).toEqual([
+          { workloadId: "rest:rest", capability: "rest", state: "downloading" },
+        ]);
       }),
     ),
   );
