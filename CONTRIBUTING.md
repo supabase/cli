@@ -185,8 +185,13 @@ still goes through Turbo (`//#test:e2e:run`), because e2e depends on the
 built CLI and Turbo owns that build graph. Within a run, plain `*.e2e.test.ts`
 files run in parallel while `*.stack.e2e.test.ts` files (those that start a
 local stack or run Docker containers) run one at a time in the `e2e-stack`
-projects. CI shards the root e2e run with `pnpm run test:e2e --shard=1/3`;
-the root config's sequencer deals stack-backed files evenly across shards. Pass
+projects. CI shards the root runs with `--shard=N/M`. The root config's sequencer balances
+shards from per-file durations recorded by the develop run
+(`.github/workflows/develop-tests.yml` writes `.vitest/shard-weights.json`; PR
+runs receive it as an artifact) and falls back to dealing files by count when
+that file is absent, which is the case locally. To reproduce CI's partition,
+download the `shard-weights` artifact into `.vitest/` or point
+`VITEST_SHARD_WEIGHTS` at it. Pass
 Vitest flags straight after the script name: pnpm forwards a literal `--` to the
 script, and Vitest treats everything after `--` as file filters.
 The Go workspace remains package-local because its tests run directly through
