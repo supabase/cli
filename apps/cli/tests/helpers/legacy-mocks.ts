@@ -617,9 +617,12 @@ export function mockLegacyPlatformApi(
 //   - the handler logic under test does not depend on the byte-exact wire
 //     format of requests/responses.
 //
-// The recorded `requests` array tracks `{ method, input }` for every call.
-// Methods not present in `v1Stubs` die at call time so missing wiring shows
-// up loud and clear instead of silently returning undefined.
+// The recorded `requests` array tracks `{ method, input }` for every call —
+// both typed `v1.*` calls and raw-execute calls (keyed by the operation's
+// `id`, e.g. `"v2GetProjectConfig"`), so a single array captures a whole
+// mocked call sequence regardless of which surface issued it.
+// Methods not present in `v1Stubs`/`raw` die at call time so missing wiring
+// shows up loud and clear instead of silently returning undefined.
 // ---------------------------------------------------------------------------
 
 type V1Stubs = Partial<{
@@ -630,6 +633,17 @@ type V1Stubs = Partial<{
 
 export interface MockLegacyPlatformApiServiceOpts {
   readonly v1?: V1Stubs;
+  /**
+   * Raw-execute stub responses keyed by operation id (e.g.
+   * `"v2GetProjectConfig"`) — the legacy shell's one typed-but-lenient v2 read
+   * goes through `executeRaw`, not `v2.*` (see the `v2Proxy` comment below).
+   * `"fail"` simulates a transport failure (`legacyTransportFailure`);
+   * otherwise the given `{ status, body }` is returned as a real
+   * `HttpClientResponse`, exactly like `legacyJsonResponse` would build for
+   * the URL-routed mock. An operation id with no entry here dies at call
+   * time, naming the operation, the same way an unmocked `v1.*` call does.
+   */
+  readonly raw?: Readonly<Record<string, LegacyApiResponse | "fail">>;
 }
 
 export interface MockLegacyPlatformApiServiceResult {
@@ -642,6 +656,7 @@ export function mockLegacyPlatformApiService(
 ): MockLegacyPlatformApiServiceResult {
   const requests: Array<{ method: string; input: unknown }> = [];
   const stubs = opts.v1 ?? {};
+  const rawStubs = opts.raw ?? {};
 
   const v1Proxy = new Proxy({} as ApiClient["v1"], {
     get(_target, prop: string) {
@@ -659,20 +674,35 @@ export function mockLegacyPlatformApiService(
     },
   });
 
-  // The legacy shell is a Go-parity port and only calls v1 operations, so v2
-  // has no stub support — any v2 call from legacy code is a wiring bug.
+  // No typed v2 operation has stub support here: the legacy shell's only v2
+  // call (the effective-project-config read) deliberately bypasses the typed
+  // `v2.*` surface for `executeRaw` (ADR 0019 rule 2 — the generated client's
+  // strict schema would reject the exact forward-compatible shapes the read
+  // needs to tolerate), so any typed `v2.*` call from legacy code is a wiring
+  // bug.
   const v2Proxy = new Proxy({} as ApiClient["v2"], {
     get(_target, prop: string) {
       return () => Effect.die(`Unmocked LegacyPlatformApi.v2.${prop}`);
     },
   });
 
-  const layer = Layer.succeed(LegacyPlatformApi, {
-    v1: v1Proxy,
-    v2: v2Proxy,
-    // Direct-service consumers don't exercise the raw-execute escape hatch.
-    executeRaw: () => Effect.die("Unmocked LegacyPlatformApi.executeRaw"),
-  } as ApiClient);
+  const executeRaw: ApiClient["executeRaw"] = (definition, input) =>
+    Effect.gen(function* () {
+      requests.push({ method: definition.id, input });
+      const stub = rawStubs[definition.id];
+      if (stub === undefined) {
+        return yield* Effect.die(`Unmocked LegacyPlatformApi.executeRaw.${definition.id}`);
+      }
+      const request = HttpClientRequestModule.get(
+        `https://api.supabase.com/mock-raw/${definition.id}`,
+      );
+      if (stub === "fail") {
+        return yield* Effect.fail(legacyTransportFailure(request));
+      }
+      return legacyJsonResponse(request, stub.status, stub.body);
+    });
+
+  const layer = Layer.succeed(LegacyPlatformApi, { v1: v1Proxy, v2: v2Proxy, executeRaw });
 
   return { layer, requests };
 }
@@ -764,8 +794,8 @@ export const legacyWithEnv = <A, E, R>(
   );
 
 /**
- * Pins `SUPABASE_SHADOW_CACHE=0` for the calling file so a developer/CI soak (`=1`)
- * cannot flip mocked-spawner suites onto the cache path. Call at module scope (or
+ * Pins `SUPABASE_SHADOW_CACHE=0` for the calling file so the default-ON cache cannot
+ * flip mocked-spawner suites onto the cache path. Call at module scope (or
  * inside the surrounding `describe`). Cache-subject tests opt back in with
  * {@link legacyWithEnv}.
  */
@@ -916,6 +946,10 @@ const LEGACY_SHADOW_STARTING_STATE =
  * exclusive with `dbInspectFailsWith`, which instead reports a daemon-unreachable failure
  * (`legacyIsDockerDaemonUnreachable`) with the given stderr text — enforced below (a test
  * that sets both throws immediately, rather than one option silently winning).
+ *
+ * `dbInspectImage` makes the same `supabase_db_`-prefixed inspect report a `Config.Image`
+ * value instead — for `ensureLocalPostgresImageCurrent`'s stale-image guard, which reads
+ * that field from the same call `legacyIsLocalDbRunning` only checks the exit code of.
  */
 export function mockLegacyShadowContainerCliSpawner(
   opts: {
@@ -924,6 +958,7 @@ export function mockLegacyShadowContainerCliSpawner(
     readonly failRemove?: boolean;
     readonly dbNotRunning?: boolean;
     readonly dbInspectFailsWith?: string;
+    readonly dbInspectImage?: string;
   } = {},
 ): {
   readonly layer: Layer.Layer<ChildProcessSpawner.ChildProcessSpawner>;
@@ -974,6 +1009,22 @@ export function mockLegacyShadowContainerCliSpawner(
             stderr: Stream.fromIterable([encoder.encode(stderrText)]),
             all: Stream.empty,
             exitCode: Effect.succeed(ChildProcessSpawner.ExitCode(1)),
+            isRunning: Effect.succeed(false),
+            stdin: Sink.drain,
+            kill: () => Effect.void,
+            unref: Effect.succeed(Effect.void),
+            getInputFd: () => Sink.drain,
+            getOutputFd: () => Stream.empty,
+          });
+        }
+        if (isLocalDbInspect && opts.dbInspectImage !== undefined) {
+          const inspectJson = JSON.stringify([{ Config: { Image: opts.dbInspectImage } }]);
+          return ChildProcessSpawner.makeHandle({
+            pid: ChildProcessSpawner.ProcessId(7000 + spawned.length),
+            stdout: Stream.fromIterable([encoder.encode(inspectJson)]),
+            stderr: Stream.empty,
+            all: Stream.empty,
+            exitCode: Effect.succeed(ChildProcessSpawner.ExitCode(0)),
             isRunning: Effect.succeed(false),
             stdin: Sink.drain,
             kill: () => Effect.void,
@@ -1360,7 +1411,7 @@ export function mockLegacyDockerDaemonCliSpawner(
 // Layer.mergeAll" — centralising the subgraph here removes a recurring footgun).
 // ---------------------------------------------------------------------------
 
-type GoOutputValue = "env" | "pretty" | "json" | "toml" | "yaml";
+type GoOutputValue = "env" | "pretty" | "json" | "toml" | "yaml" | "table" | "csv";
 
 // ---------------------------------------------------------------------------
 // Analytics mock lives in `./mocks.ts` (`mockAnalytics`) — same shape we used

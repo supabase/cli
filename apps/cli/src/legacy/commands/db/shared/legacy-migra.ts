@@ -84,13 +84,20 @@ const LEGACY_LIST_SCHEMAS_EXCLUDE: ReadonlyArray<string> = [
   "vault",
 ];
 
-/** Verbatim from Go's `migration.ListSchemas` (`pkg/migration/queries/list.sql`). */
-const LEGACY_LIST_SCHEMAS_SQL = `-- List user defined schemas, excluding
+/**
+ * Lists user-defined schemas, excluding extension-created ones via a
+ * `pg_depend` anti-join scoped by `classid` to `pg_namespace` rows (an oid
+ * collision with another catalog must not hide a schema — supabase/cli#6375),
+ * Supabase-managed names via the `$1` LIKE patterns, and schemas owned by
+ * `supabase_admin`. Shared by the migra bash fallback and `db lint`
+ * (`lint.lint-sql.ts`).
+ */
+export const legacyListSchemasSql = `-- List user defined schemas, excluding
 --  Extension created schemas
 --  Supabase managed schemas
 select pn.nspname
-from pg_namespace pn
-left join pg_depend pd on pd.objid = pn.oid
+from pg_catalog.pg_namespace pn
+left join pg_catalog.pg_depend pd on pd.objid = pn.oid and pd.classid = 'pg_catalog.pg_namespace'::regclass
 where pd.deptype is null
   and not pn.nspname like any($1)
   and pn.nspowner::regrole::text != 'supabase_admin'
@@ -162,16 +169,14 @@ const loadTargetUserSchemas = Effect.fnUntraced(function* (
             }),
         ),
       );
-      const rows = yield* session
-        .query(LEGACY_LIST_SCHEMAS_SQL, [LEGACY_LIST_SCHEMAS_EXCLUDE])
-        .pipe(
-          Effect.mapError(
-            (cause) =>
-              new LegacyMigraSchemaLoadError({
-                message: `failed to list schemas: ${cause.message}`,
-              }),
-          ),
-        );
+      const rows = yield* session.query(legacyListSchemasSql, [LEGACY_LIST_SCHEMAS_EXCLUDE]).pipe(
+        Effect.mapError(
+          (cause) =>
+            new LegacyMigraSchemaLoadError({
+              message: `failed to list schemas: ${cause.message}`,
+            }),
+        ),
+      );
       return rows.map((row) => String(row["nspname"]));
     }),
   );

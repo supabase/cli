@@ -1,4 +1,3 @@
-import { BunServices } from "@effect/platform-bun";
 import { Layer } from "effect";
 import { Command, Flag } from "effect/unstable/cli";
 import type * as CliCommand from "effect/unstable/cli/Command";
@@ -20,11 +19,11 @@ const config = {
 export type LegacyEncryptionUpdateRootKeyFlags = CliCommand.Command.Config.Infer<typeof config>;
 
 // `Stdin` is new production wiring for this command. Provide it explicitly
-// (along with its `Tty` + `Stdio` deps) so the command's layer is self-contained
-// and does not rely on sibling-layer leakage inside `Layer.mergeAll`.
+// (along with its `Tty` dep) so the command's layer is self-contained and does
+// not rely on sibling-layer leakage inside `Layer.mergeAll`.
 const updateRuntime = Layer.mergeAll(
   legacyManagementApiRuntimeLayer(["encryption", "update-root-key"]),
-  stdinLayer.pipe(Layer.provide(ttyLayer), Layer.provide(BunServices.layer)),
+  stdinLayer.pipe(Layer.provide(ttyLayer)),
 );
 
 export const legacyEncryptionUpdateRootKeyCommand = Command.make("update-root-key", config).pipe(

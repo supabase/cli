@@ -1,3 +1,6 @@
+// oxlint-disable effecttsgo/global-fetch-in-effect, effecttsgo/prefer-schema-over-json --
+// The stop client is the native HTTP/JSON control-protocol leaf; this boundary
+// forwards the already validated request to the platform fetch implementation.
 import { Effect } from "effect";
 import { errorCode } from "./error-code.ts";
 import {

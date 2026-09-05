@@ -100,7 +100,7 @@ export const listStacks = (opts: {
 }): Effect.Effect<ReadonlyArray<StackSummary>, ManagedStackManagerError, ManagedStackManager> =>
   Effect.gen(function* () {
     const manager = yield* ManagedStackManager;
-    const listings = yield* manager.listStacks();
+    const listings = yield* manager.listStacks;
     const projectPath =
       opts.projectDir === undefined
         ? undefined

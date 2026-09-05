@@ -1,0 +1,246 @@
+import { legacyRed, legacyYellow, type LegacyColorStream } from "../../../shared/legacy-colors.ts";
+import { WORKER_LOG_STREAMS } from "../../../../shared/workers/worker-logs.sql.ts";
+import type { WorkerLogEntry } from "../../../../shared/workers/worker-logs-api.ts";
+
+/**
+ * Text rendering for `supabase experimental workers logs`.
+ *
+ * Pure, like `workers.format.ts` beside it: no Effect, no services, so the line
+ * shapes and the level derivation are unit-testable directly.
+ *
+ * Kept apart from `workers.format.ts` because that file renders *resources* - a
+ * worker's details as a key/value block - while this renders a stream of events,
+ * one line each, with a different layout per stream.
+ */
+
+export type LegacyWorkerLogLevel = "info" | "warn" | "error";
+
+/**
+ * The level for one line, derived rather than read.
+ *
+ * `severity_text` on the row is not usable: every observed row of every stream
+ * carries `INFO`, including a 200 request log, so it is a pipeline default rather
+ * than a signal. Platform's own log presets do the same thing - they derive level
+ * from `log_attributes`, and no platform code branches on `severity_text`.
+ *
+ * Guest output has no level available without parsing tenant text, so it is
+ * reported absent rather than guessed at.
+ */
+export function legacyWorkerLogLevel(entry: WorkerLogEntry): LegacyWorkerLogLevel | undefined {
+  if (entry.stream === WORKER_LOG_STREAMS.requests) {
+    // `log_attributes` is a Map(String, String), so this is "200", not 200.
+    const status = Number(entry.attributes.status);
+    if (!Number.isFinite(status)) {
+      return undefined;
+    }
+    if (status >= 500) {
+      return "error";
+    }
+    return status >= 400 ? "warn" : "info";
+  }
+  if (entry.stream === WORKER_LOG_STREAMS.builds) {
+    return entry.attributes.event === "build_failed" ? "error" : "info";
+  }
+  return undefined;
+}
+
+/**
+ * The escape-sequence and control-character patterns stripped from a guest line.
+ *
+ * Module constants so they compile once rather than per line, and so the
+ * `no-control-regex` suppression sits in one place: matching control characters is
+ * the entire purpose here, and every pattern is written with Unicode escapes so
+ * the source itself holds no raw control bytes.
+ */
+/* oxlint-disable no-control-regex */
+/** OSC: ESC ] ... terminated by BEL or ESC backslash. */
+const OSC_SEQUENCE = /\u001b\][^\u0007\u001b]*(?:\u0007|\u001b\\)?/gu;
+/** CSI: ESC [ parameters intermediates final. */
+const CSI_SEQUENCE = /\u001b\[[0-9;?]*[ -/]*[@-~]/gu;
+/** Remaining two-character escape sequences. */
+const ESCAPE_SEQUENCE = /\u001b[@-Z\\-_]/gu;
+/** CRLF pairs, folded to a bare newline before lone carriage returns go. */
+const CRLF_PAIR = /\u000d\u000a/gu;
+/**
+ * Leftover C0 controls and DEL, keeping only tab and newline.
+ *
+ * A carriage return is stripped rather than kept: it returns the cursor to
+ * column zero, so a line carrying one can overwrite the timestamp and stream tag
+ * already printed to its left and forge output that looks like the CLI's own.
+ * Real line breaks survive as the `CRLF_PAIR` fold above.
+ */
+const C0_CONTROLS = /[\u0000-\u0008\u000b-\u001f\u007f]/gu;
+/* oxlint-enable no-control-regex */
+
+/**
+ * Control characters stripped from a line before it reaches a terminal.
+ *
+ * A `worker_guest_logs` message is bytes the tenant's own code printed, so it is
+ * the one untrusted string this CLI displays: left alone, a worker could emit
+ * ANSI escapes that reposition the cursor, recolour later output, or forge a line
+ * that looks like the CLI's own.
+ *
+ * Deliberately narrow. Tabs, and the interior newlines and indentation of a stack
+ * trace, are content the reader needs - only escape sequences and the other C0
+ * controls go.
+ */
+function stripControlSequences(message: string): string {
+  return message
+    .replaceAll(CRLF_PAIR, "\n")
+    .replaceAll(OSC_SEQUENCE, "")
+    .replaceAll(CSI_SEQUENCE, "")
+    .replaceAll(ESCAPE_SEQUENCE, "")
+    .replaceAll(C0_CONTROLS, "");
+}
+
+/**
+ * Colour for a level, or plain text.
+ *
+ * The stream is threaded through rather than a boolean because
+ * `legacyAqua`/`legacyRed`/... already own the colour decision: they consult
+ * `NO_COLOR`, `CLICOLOR`, `CLICOLOR_FORCE`, `CI` and the stream's own
+ * `hasColors()`. Deciding here - from `isTTY`, say - would both duplicate that
+ * gate and get it wrong, since `CLICOLOR_FORCE=1` deliberately styles a piped
+ * stream.
+ *
+ * Only `warn` and `error` are coloured. `info` is the overwhelming majority of
+ * lines, and tinting all of them would make the exceptions harder to spot, not
+ * easier.
+ */
+function colourise(
+  text: string,
+  level: LegacyWorkerLogLevel | undefined,
+  stream: LegacyColorStream,
+): string {
+  if (level === "error") {
+    return legacyRed(text, stream);
+  }
+  return level === "warn" ? legacyYellow(text, stream) : text;
+}
+
+const pad2 = (value: number): string => String(value).padStart(2, "0");
+
+/**
+ * `HH:MM:SS` in the reader's own timezone.
+ *
+ * Local rather than UTC, matching the only other log-line format this shell
+ * prints - the `--debug` HTTP logger, which uses Go's `log.LstdFlags`
+ * (`legacy-debug-logger.layer.ts`). Someone reading a tail is asking "what just
+ * happened", and the answer is compared against their own clock.
+ *
+ * Machine output keeps the unambiguous forms, so nothing that gets parsed,
+ * sorted, or pasted into an issue depends on the reader's zone: the payload
+ * carries an ISO-8601 UTC `timestamp` alongside the raw epoch `timestamp_ms`.
+ *
+ * Time only, not a full timestamp: every line in one invocation falls inside a
+ * window of at most a day, so repeating the date on all hundred of them costs
+ * width the message needs.
+ */
+function formatLogTime(timestampMs: number): string {
+  const at = new Date(timestampMs);
+  return `${pad2(at.getHours())}:${pad2(at.getMinutes())}:${pad2(at.getSeconds())}`;
+}
+
+/**
+ * The short label for a stream, and the column it sits in.
+ *
+ * Bracketed and left-aligned, following `next/commands/logs`, which distinguishes
+ * interleaved sources the same way (`[postgres] ready`). Padded so the messages
+ * line up: a ragged left edge is harder to scan than a slightly wider one.
+ *
+ * Abbreviated because the wire names are internal and long - `worker_guest_logs`
+ * would cost 19 columns to say "the worker's own output". The words match
+ * `--kind`, so what is printed is what the flag accepts.
+ */
+const STREAM_TAGS: Readonly<Record<string, string>> = {
+  [WORKER_LOG_STREAMS.app]: "app",
+  [WORKER_LOG_STREAMS.requests]: "req",
+  [WORKER_LOG_STREAMS.builds]: "build",
+};
+
+const TAG_WIDTH = Math.max(...Object.values(STREAM_TAGS).map((tag) => tag.length)) + 2;
+
+/**
+ * An unrecognised stream gets its raw name rather than a placeholder: the log
+ * contract is additive-only, and the name is more use than a `?` - at the cost of
+ * a wider column for that line only, which is the right trade for something that
+ * should not be appearing yet.
+ */
+function streamTag(stream: string): string {
+  return `[${STREAM_TAGS[stream] ?? stream}]`.padEnd(TAG_WIDTH);
+}
+
+/**
+ * What one entry says, composed and sanitised but not coloured or prefixed.
+ *
+ * Split out from the renderer because `stream-json` needs the same sentence:
+ * emitting `event_message` there instead dropped the status and duration from a
+ * request line and the structured reason from a build failure, and `log-entry`
+ * has no attributes field for a consumer to recover them from.
+ *
+ * Per-stream layouts rather than one shared format, because `event_message`
+ * means something different in each. On the request stream it is only `"GET /"`
+ * — the status and duration live in `log_attributes` — so the useful line has to
+ * be *composed*.
+ */
+export function legacyWorkerLogText(entry: WorkerLogEntry): string {
+  if (entry.stream === WORKER_LOG_STREAMS.requests) {
+    const { status, method, path, duration_ms: duration } = entry.attributes;
+    const request = [status, method, path]
+      .filter((part) => part !== undefined)
+      .map(stripControlSequences)
+      .join(" ");
+    const suffix = duration === undefined ? "" : ` ${stripControlSequences(duration)}ms`;
+    return `${request}${suffix}`;
+  }
+
+  if (entry.stream === WORKER_LOG_STREAMS.builds) {
+    const { event, reason } = entry.attributes;
+    return [event ?? entry.message, reason]
+      .filter((part) => part !== undefined)
+      .map(stripControlSequences)
+      .join(" ");
+  }
+
+  // Guest output, and anything newer. The message is the payload.
+  //
+  // Every branch above sanitises too: a request `path` is chosen by whoever
+  // called the worker, and a build `reason` is relayed from the builder, so
+  // "the guest message is the only untrusted string" was never true. The
+  // `stream` the tag is derived from is not sanitised because it cannot carry
+  // anything: the query only returns rows whose stream is one of three
+  // literals.
+  return stripControlSequences(entry.message);
+}
+
+/**
+ * One rendered line.
+ *
+ * Per-stream layouts rather than one shared format, because `event_message` means
+ * something different in each. On the request stream it is only `"GET /"` - the
+ * status and duration live in `log_attributes` - so the useful line has to be
+ * *composed*, and a single format wide enough for all three would be mostly empty
+ * for each of them.
+ *
+ * An unrecognised stream falls back to the bare message: the log contract is
+ * additive-only, so a stream this CLI has not heard of must still print.
+ */
+export function legacyRenderWorkerLogLine(
+  entry: WorkerLogEntry,
+  options: {
+    /**
+     * Whether to prefix the stream tag. False when `--kind` has already pinned
+     * one stream, where every line would carry the same tag and it would be
+     * width spent saying nothing.
+     */
+    readonly showStream: boolean;
+    readonly colorStream?: LegacyColorStream;
+  },
+): string {
+  const time = formatLogTime(entry.timestampMs);
+  const level = legacyWorkerLogLevel(entry);
+  const colorStream = options.colorStream ?? process.stdout;
+  const prefix = options.showStream ? `${time}  ${streamTag(entry.stream)}` : time;
+
+  return `${prefix}  ${colourise(legacyWorkerLogText(entry), level, colorStream)}`;
+}

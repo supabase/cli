@@ -83,15 +83,15 @@ PR-title summaries. Answer: **Should I upgrade?** **What's new for me?** **Any g
 
 ## Repo scope (apply first)
 
-### Two shells — only `legacy/` counts
+### One shell — `legacy/` is the shipped CLI
 
 | Path                   | Status                                                            |
 | ---------------------- | ----------------------------------------------------------------- |
 | `apps/cli/src/legacy/` | What users run as `supabase` today — **all user-facing behavior** |
-| `apps/cli/src/next/`   | v3 / alpha — **not user-facing**                                  |
 
-- **Drop** PRs that only touch `next/` (commands, flags, tests, alpha plumbing): no bullet, **no tail count**, never mention `next/` or v3.
-- PRs touching both `legacy/`/`shared/` and `next/`: write **only** the legacy/shared impact.
+There was previously an experimental `next/` (v3) shell under `apps/cli/src/next/`; it has been
+removed. If a diff still touches a `next/` path for some reason, drop it the same way as before:
+no bullet, no tail count, never mention `next/` or v3.
 
 ### Go → TypeScript port
 

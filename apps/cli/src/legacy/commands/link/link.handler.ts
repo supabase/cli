@@ -1,7 +1,6 @@
-import type { ApiClient, V1ListAllBranchesOutput } from "@supabase/api/effect";
+import type { V1ListAllBranchesOutput } from "@supabase/api/effect";
 import { Duration, Effect, FileSystem, Option, Path } from "effect";
 import type { PlatformError } from "effect/PlatformError";
-import * as HttpClientError from "effect/unstable/http/HttpClientError";
 
 import { LegacyPlatformApi } from "../../auth/legacy-platform-api.service.ts";
 import { LegacyCliSettings } from "../../config/legacy-cli-settings.service.ts";
@@ -21,18 +20,18 @@ import {
   PropLinkedVia,
   PropParentProjectRef,
 } from "../../../shared/telemetry/event-catalog.ts";
+import { legacyClassifyProjectLookupError } from "../../shared/legacy-branch-target.ts";
 import {
   type LegacyCachedLinkedProject,
+  legacyParentNotLinkedMessage,
+  legacyParentRefInvalidMessage,
+  legacyParentRefTypoHint,
   legacyParseCachedLinkedProject,
   legacyResolveLinkedParentRef,
 } from "../../shared/legacy-parent-project-ref.ts";
 import { legacyDashboardUrl } from "../../shared/legacy-profile.ts";
 import { legacyMapTenantApiKeysError } from "../../shared/legacy-get-tenant-api-keys.ts";
-import {
-  legacySanitizeInlineName,
-  mapLegacyHttpError,
-  sanitizeLegacyErrorBody,
-} from "../../shared/legacy-http-errors.ts";
+import { legacySanitizeInlineName, mapLegacyHttpError } from "../../shared/legacy-http-errors.ts";
 import { legacyLinkServicesCore } from "../../shared/legacy-link-services-core.ts";
 import { legacyExtractServiceKeys } from "../../shared/legacy-tenant-keys.ts";
 import { legacyTempPaths } from "../../shared/legacy-temp-paths.ts";
@@ -53,7 +52,6 @@ import {
 } from "./link.errors.ts";
 import type { LegacyLinkFlags } from "./link.command.ts";
 
-type LegacyLinkProject = Effect.Success<ReturnType<ApiClient["v1"]["getProject"]>>;
 type LegacyLinkBranches = typeof V1ListAllBranchesOutput.Type;
 type LegacyLinkBranch = LegacyLinkBranches[number];
 
@@ -67,45 +65,13 @@ interface LegacyLinkBranchResolution {
 
 // Classify a `getProject` failure: a 404 means the project is a branch (resolve
 // to `None`, link continues); any other status surfaces the body; transport
-// failures surface a network error. Mirrors `checkRemoteProjectStatus`
-// (`link.go:240-253`).
-const classifyProjectError = (
-  cause: unknown,
-): Effect.Effect<
-  Option.Option<LegacyLinkProject>,
-  LegacyLinkProjectStatusError | LegacyLinkProjectStatusNetworkError
-> => {
-  if (HttpClientError.isHttpClientError(cause) && cause.response !== undefined) {
-    const status = cause.response.status;
-    if (status === 404) {
-      return Effect.succeedNone;
-    }
-    return cause.response.text.pipe(
-      Effect.orElseSucceed(() => ""),
-      // Cap + strip control chars, matching `mapLegacyHttpError`'s defence-in-depth
-      // so an oversized / control-char body can't bloat JSON output or inject ANSI.
-      Effect.map(sanitizeLegacyErrorBody),
-      Effect.flatMap((body) =>
-        Effect.fail(
-          new LegacyLinkProjectStatusError({
-            status,
-            body,
-            message: `Unexpected error retrieving remote project status: ${body}`,
-          }),
-        ),
-      ),
-    );
-  }
-  // Everything else: a transport `HttpClientError` (no response) is a network
-  // failure; a non-`HttpClientError` (the generated client's `SchemaError`
-  // rejecting the response body) is an API response problem.
-  return Effect.fail(
-    new LegacyLinkProjectStatusNetworkError({
-      message: `failed to retrieve remote project status: ${String(cause)}`,
-      decode: !HttpClientError.isHttpClientError(cause),
-    }),
-  );
-};
+// failures surface a network error.
+const classifyProjectError = legacyClassifyProjectLookupError({
+  statusError: LegacyLinkProjectStatusError,
+  networkError: LegacyLinkProjectStatusNetworkError,
+  statusMessage: (_status, body) => `Unexpected error retrieving remote project status: ${body}`,
+  networkMessage: (cause) => `failed to retrieve remote project status: ${String(cause)}`,
+});
 
 type WriteTempFile = (filePath: string, content: string) => Effect.Effect<void, PlatformError>;
 
@@ -114,33 +80,13 @@ const mapApiKeysError = legacyMapTenantApiKeysError({
   statusError: LegacyLinkAuthTokenError,
 });
 
-// Same reasoning + duration as `legacy-linked-state.ts`'s status-lookup bound
-// (`LEGACY_LINKED_STATE_LOOKUP_TIMEOUT`) — duplicated locally rather than
+// Same reasoning + duration as `legacy-branch-target.ts`'s branch-lookup bound
+// (`LEGACY_BRANCH_LOOKUP_TIMEOUT`) — duplicated locally rather than
 // shared across two otherwise-unrelated modules: the best-effort 404-path
 // stale-cache correlation lookup below must not let an otherwise-successful
 // `link` silently stall ~6 minutes at the very end on the generated client's
 // own 60s×5-retry defaults (PR #6168 review).
 const LEGACY_LINK_CACHE_CORRELATION_TIMEOUT = Duration.seconds(5);
-
-/**
- * A value made entirely of lowercase letters (but not 20 of them, or it would
- * already have been treated as a ref) is a plausible ref typo. Appended to
- * both branch-not-found messages and the not-linked message (CLI-2167).
- */
-function legacyLinkTypoHint(value: string): string {
-  if (!/^[a-z]+$/.test(value)) return "";
-  return `\n  If you meant a project ref: refs are exactly 20 lowercase letters ("${value}" has ${value.length}).`;
-}
-
-function legacyLinkNotLinkedMessage(value: string): string {
-  return (
-    `Cannot resolve "${value}": it is not a project ref (refs are exactly 20 lowercase letters, ` +
-    "like `abcdefghijklmnopqrst`), so it was treated as a branch name — but no project is linked " +
-    "to search for branches.\n" +
-    "  If it is a branch name, link the parent project first: supabase link --project-ref <parent-ref>" +
-    legacyLinkTypoHint(value)
-  );
-}
 
 const LEGACY_LINK_MAX_LISTED_BRANCHES = 20;
 
@@ -150,7 +96,7 @@ function legacyLinkBranchNotFoundMessage(
   branches: LegacyLinkBranches,
 ): string {
   if (branches.length === 0) {
-    return `Branch "${value}" not found: project ${parentRef} has no branches.${legacyLinkTypoHint(value)}`;
+    return `Branch "${value}" not found: project ${parentRef} has no branches.${legacyParentRefTypoHint(value)}`;
   }
 
   const sortedNames = branches.map((branch) => branch.name).toSorted();
@@ -173,7 +119,7 @@ function legacyLinkBranchNotFoundMessage(
 
   return (
     `Branch "${value}" not found for project ${parentRef}. Available branches: ${namesList}` +
-    `${didYouMean}${legacyLinkTypoHint(value)}`
+    `${didYouMean}${legacyParentRefTypoHint(value)}`
   );
 }
 
@@ -202,14 +148,12 @@ const resolveLegacyLinkBranchRef = Effect.fnUntraced(function* (value: string) {
   const parent = yield* legacyResolveLinkedParentRef();
   if (parent.kind === "absent") {
     return yield* Effect.fail(
-      new LegacyLinkBranchNotLinkedError({ message: legacyLinkNotLinkedMessage(value) }),
+      new LegacyLinkBranchNotLinkedError({ message: legacyParentNotLinkedMessage(value) }),
     );
   }
   if (parent.kind === "invalid") {
     return yield* Effect.fail(
-      new LegacyLinkParentRefInvalidError({
-        message: `Cannot resolve branch "${value}": the linked project ref is invalid (checked SUPABASE_PROJECT_ID, supabase/.temp/linked-project.json, supabase/.temp/project-ref). Relink the parent project first: supabase link --project-ref <parent-ref>`,
-      }),
+      new LegacyLinkParentRefInvalidError({ message: legacyParentRefInvalidMessage(value) }),
     );
   }
   const parentRef = parent.ref;

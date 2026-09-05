@@ -1,3 +1,5 @@
+// oxlint-disable effecttsgo/async-function -- Prefetch tests call the Promise-returning public helper from Vitest callbacks.
+
 import { describe, expect, test } from "vitest";
 import {
   Cause,
@@ -408,7 +410,7 @@ describe("prefetch", () => {
 
     expect(result.pgmeta).toEqual({
       type: "docker",
-      image: "ghcr.io/supabase/cli/pgmeta:v0.98.0",
+      image: dockerImageForService("pgmeta", DEFAULT_VERSIONS.pgmeta),
     });
   });
 

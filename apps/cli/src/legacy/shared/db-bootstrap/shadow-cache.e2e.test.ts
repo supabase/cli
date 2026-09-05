@@ -6,8 +6,10 @@
  *
  * A black-box `runSupabase` subprocess test, like the other local Docker-stack `*.e2e.test.ts`
  * suites: the facts it is here to prove are the ones only the real wiring can — that `db diff`
- * actually routes through `legacyAcquireShadowDatabase`, that `SUPABASE_SHADOW_CACHE` and
- * `${SUPABASE_HOME}/cache/shadow-baseline` survive a real process boundary, that the cache key is STABLE across two
+ * actually routes through `legacyAcquireShadowDatabase`, that the cache engages with
+ * `SUPABASE_SHADOW_CACHE` genuinely UNSET (the shipped default — the run removes the harness's
+ * isolation pin rather than opting in) and that
+ * `${SUPABASE_HOME}/cache/shadow-baseline` survives a real process boundary, that the cache key is STABLE across two
  * separate CLI processes (an in-process test computes it once), and that a warm-restored cluster
  * yields the same migration SQL as a cold-provisioned one. It replaces an earlier in-process
  * version of this file that called `legacyAcquireShadowDatabase` directly with a synthetic layer
@@ -168,7 +170,10 @@ as $$ select 1; $$;`,
           home: home.dir,
           exitTimeoutMs: DIFF_TIMEOUT_MS,
           env: {
-            SUPABASE_SHADOW_CACHE: "1",
+            // Remove the harness's isolation pin (`spawnSupabase` injects `=0`) so the suite
+            // runs with the key GENUINELY ABSENT — the shipped default-ON state — rather than
+            // an explicit opt-in.
+            SUPABASE_SHADOW_CACHE: undefined,
             SUPABASE_DB_SHADOW_PORT: String(shadowPort),
           },
         };

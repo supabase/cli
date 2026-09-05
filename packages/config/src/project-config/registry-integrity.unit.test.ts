@@ -4,6 +4,7 @@ import { ProjectConfigApiAttributesSchema } from "./api-attributes.ts";
 import {
   DISABLED_SENTINEL_ENTRY_SWEEPS,
   DISABLED_SENTINEL_PRUNES,
+  dualScopeProjectConfigPaths,
   SMS_PROVIDER_PUSH_PRECEDENCE,
 } from "./project-config.ts";
 import { unmappedSecretApiPaths } from "./registry-auth.ts";
@@ -14,7 +15,7 @@ import { projectConfigMappingRows } from "./registry.ts";
  * resolve against {@link CliConfigSchema}'s AST, and every row's `apiPath`
  * (plus `alsoConsumes` and `./registry-auth.ts`'s `unmappedSecretApiPaths`)
  * must resolve against {@link ProjectConfigApiAttributesSchema}'s AST. This
- * is what keeps the 233 rows across `./registry.ts`/`./registry-auth.ts`
+ * is what keeps the 243 rows across `./registry.ts`/`./registry-auth.ts`
  * true when either schema moves — a renamed or removed field fails a test
  * here instead of silently producing a `ProjectConfig` that never populates
  * (a wrong `configPath`) or a row that never reads a real API field (a
@@ -264,5 +265,76 @@ describe("SMS_PROVIDER_PUSH_PRECEDENCE: every provider resolves and matches the 
       "textlocal",
       "vonage",
     ]);
+  });
+});
+
+/**
+ * `dualScope` (CLI-2064): every flagged row's `configPath` resolves against
+ * `CliConfigSchema` (already exercised generically by the main loop above,
+ * since every `dualScope` row is a member of `projectConfigMappingRows` —
+ * asserted again here against the narrower subset so this describe block
+ * stands on its own) and the exact dual-scope path SET is pinned by an inline
+ * snapshot: adding (or removing) a `dualScope` flag anywhere in the registry
+ * must be a deliberate, reviewed act, not a silent side effect of an
+ * unrelated row edit.
+ */
+describe("dualScope rows: configPath resolves against CliConfigSchema and the path list is pinned", () => {
+  const dualScopeRows = projectConfigMappingRows.filter((row) => row.dualScope === true);
+
+  test("dualScope rows actually exist to check", () => {
+    // Guards against the loop below passing vacuously if every `dualScope`
+    // flag is ever accidentally removed from the registry.
+    expect(dualScopeRows.length).toBeGreaterThan(0);
+  });
+
+  for (const row of dualScopeRows) {
+    const configPathLabel = row.configPath.join(".");
+
+    test(`dualScope row configPath "${configPathLabel}" resolves against CliConfigSchema`, () => {
+      expect(pathResolves(CliConfigSchema.ast, row.configPath)).toBe(true);
+    });
+  }
+
+  test("dualScopeProjectConfigPaths is pinned", () => {
+    expect(dualScopeProjectConfigPaths.map((path) => path.join("."))).toMatchInlineSnapshot(`
+      [
+        "db.major_version",
+        "db.settings.effective_cache_size",
+        "db.settings.logical_decoding_work_mem",
+        "db.settings.maintenance_work_mem",
+        "db.settings.max_slot_wal_keep_size",
+        "db.settings.max_standby_archive_delay",
+        "db.settings.max_standby_streaming_delay",
+        "db.settings.max_wal_size",
+        "db.settings.shared_buffers",
+        "db.settings.statement_timeout",
+        "db.settings.track_activity_query_size",
+        "db.settings.wal_keep_size",
+        "db.settings.wal_sender_timeout",
+        "db.settings.work_mem",
+        "db.settings.session_replication_role",
+        "db.settings.track_commit_timestamp",
+        "db.settings.max_connections",
+        "db.settings.max_locks_per_transaction",
+        "db.settings.max_parallel_maintenance_workers",
+        "db.settings.max_parallel_workers",
+        "db.settings.max_parallel_workers_per_gather",
+        "db.settings.max_replication_slots",
+        "db.settings.max_wal_senders",
+        "db.settings.max_worker_processes",
+        "db.pooler.pool_mode",
+        "db.pooler.default_pool_size",
+        "db.pooler.max_client_conn",
+        "auth.site_url",
+        "auth.additional_redirect_urls",
+        "auth.email.smtp.host",
+        "auth.email.smtp.port",
+        "auth.email.smtp.user",
+        "auth.email.smtp.admin_email",
+        "auth.email.smtp.sender_name",
+        "auth.captcha.provider",
+        "auth.sms.test_otp",
+      ]
+    `);
   });
 });

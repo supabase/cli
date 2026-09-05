@@ -9,12 +9,13 @@
  *
  * Exact Go call order: pre-create volume-existence probe (+ the `fromBackup`-on-an-existing-volume
  * guard) -> image resolve + network ensure (Go's `DockerStart` resolves the image, THEN creates
- * the network, both strictly ahead of container create — `docker.go:363-386` — so NEITHER one
- * ever runs on a request the volume guard above already rejected) -> Postgres container
- * create+start -> health wait (swallowed ONLY when `fromBackup` is set — "restoring a large
- * backup may take longer than 2 minutes") -> the fresh-volume `SetupLocalDatabase`-equivalent
- * pipeline (skipped IN FULL when `fromBackup` is set) -> `initCurrentBranch`, unconditionally (the
- * LAST line of `StartDatabase`, reached on every path that doesn't already return/fail above).
+ * the network, both strictly
+ * ahead of container create — `docker.go:363-386` — so NEITHER one ever runs on a request the
+ * volume guard above already rejected) -> Postgres container create+start -> health wait
+ * (swallowed ONLY when `fromBackup` is set — "restoring a large backup may take longer than 2
+ * minutes") -> the fresh-volume `SetupLocalDatabase`-equivalent pipeline (skipped IN FULL when
+ * `fromBackup` is set) -> `initCurrentBranch`, unconditionally (the LAST line of `StartDatabase`,
+ * reached on every path that doesn't already return/fail above).
  *
  * Deliberately has ZERO knowledge of `--ignore-health-check` — matching Go exactly: that flag is
  * `internal/start/start.go`'s `Run()`'s own concern, entirely OUTSIDE `StartDatabase` (Go's
@@ -160,10 +161,9 @@ export interface LegacyStartDatabaseInput<E> {
   readonly webhooksEnabled: boolean;
   readonly setup: LegacyFreshDbSetupInput<E>;
   /**
-   * Fired synchronously, exactly once, right after the pre-create volume probe resolves —
-   * the caller's own equivalent of Go's package-level `utils.NoBackupVolume` global, needed by
-   * the caller's OWN `legacyRollbackStart` (which this function does NOT call itself — see this
-   * module's header) even when this function fails partway through, after the probe.
+   * Caller's `utils.NoBackupVolume` equivalent for `legacyRollbackStart`. Fired once
+   * after pre-create refuse guards pass. Skipped on those guards so rollback cannot
+   * treat leftover sibling volumes as this run's fresh data.
    */
   readonly onFreshVolumeResolved: (isFreshVolume: boolean) => void;
 }
@@ -200,13 +200,12 @@ export const legacyStartDatabase = <E>(
     // `VolumeInspect` and the guard both run strictly BEFORE `DockerStart`, which is the ONLY
     // place Go ever creates the network (`docker.go:363-386`).
     const isFreshVolume = !(yield* legacyVolumeExists(spawner, input.dbContainerId));
-    input.onFreshVolumeResolved(isFreshVolume);
-
     const fromBackup = input.postgresSpec.fromBackup;
+
     if (!isFreshVolume && fromBackup !== undefined) {
       // Go's `StartDatabase` (`start.go:170-172`): a `--from-backup` restore into an
       // already-provisioned volume is refused outright, BEFORE any container or network is
-      // created.
+      // created — and before freshness is published, so rollback cannot prune it.
       return yield* Effect.fail(
         new LegacyStartBackupVolumeExistsError({
           message: "backup volume already exists",
@@ -215,11 +214,8 @@ export const legacyStartDatabase = <E>(
       );
     }
 
-    // Go's `StartDatabase` (`start.go:168-175`) prints this unconditionally to stderr — Go has
-    // no output-format concept for this seam at all. Matches every other progress line in this
-    // same pipeline (`db-setup.ts`'s "Initialising schema..."/"Seeding globals...",
-    // `legacy-migrate-and-seed.ts`'s "Applying migration ..."), which are also unguarded
-    // (review: PRRT_kwDOErm0O86VmHkn).
+    // Print this before image resolve so a flag-off cold/failed pull still
+    // follows the established progress order.
     yield* output.raw(
       isFreshVolume
         ? LEGACY_START_STARTING_DATABASE_MESSAGE
@@ -228,6 +224,8 @@ export const legacyStartDatabase = <E>(
     );
 
     const resolvedPostgresImage = yield* input.resolvePostgresImage;
+
+    input.onFreshVolumeResolved(isFreshVolume);
 
     // Go's `DockerStart` (`docker.go:363-386`): image resolve, THEN network create, both
     // strictly ahead of container create — hoisted here to run ONCE per `start` run instead of

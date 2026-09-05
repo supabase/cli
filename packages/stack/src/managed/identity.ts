@@ -1,4 +1,5 @@
 import { randomUUID } from "node:crypto";
+// oxlint-disable-next-line effecttsgo/node-builtin-import -- Marker parent paths are derived synchronously before native filesystem publication.
 import { dirname } from "node:path";
 import { Effect, FileSystem, PlatformError, Predicate, Schema } from "effect";
 import { claimFileAtomically, type FileClaimOutcome } from "./atomic-claim.ts";
@@ -27,10 +28,22 @@ const ordinaryWorkspaceIdentitySchema = Schema.fromJsonString(
   }),
 );
 
+const encodeOrdinaryWorkspaceIdentity = (
+  identity: OrdinaryWorkspaceIdentity,
+): Effect.Effect<string, InvalidManagedIdentityError> =>
+  Schema.encodeEffect(ordinaryWorkspaceIdentitySchema)(identity).pipe(
+    Effect.mapError(
+      (error) =>
+        new InvalidManagedIdentityError({
+          message: `The ordinary workspace identity is invalid: ${String(error)}`,
+        }),
+    ),
+  );
+
 const decodeIdentity = (
   content: string,
 ): Effect.Effect<OrdinaryWorkspaceIdentity, InvalidManagedIdentityError> =>
-  Schema.decodeUnknownEffect(ordinaryWorkspaceIdentitySchema)(content).pipe(
+  Schema.decodeEffect(ordinaryWorkspaceIdentitySchema)(content).pipe(
     Effect.mapError(
       (error) =>
         new InvalidManagedIdentityError({
@@ -59,20 +72,20 @@ const claimIdentityFile = (
   mode?: number,
 ): Effect.Effect<FileClaimOutcome, InvalidManagedIdentityError, FileSystem.FileSystem> =>
   claimFileAtomically(path, content, { mode }).pipe(
-    Effect.catchTag("AtomicClaimUnsupportedError", (error) =>
-      Effect.fail(
-        new InvalidManagedIdentityError({
-          message: `${label} could not be published at ${path}: ${error.message}. The filesystem must support hard links for managed identity publication.`,
-        }),
-      ),
-    ),
-    Effect.catchTag("PlatformError", (error) =>
-      Effect.fail(
-        new InvalidManagedIdentityError({
-          message: `${label} could not be published at ${path}: ${error.message}`,
-        }),
-      ),
-    ),
+    Effect.catchTags({
+      AtomicClaimUnsupportedError: (error) =>
+        Effect.fail(
+          new InvalidManagedIdentityError({
+            message: `${label} could not be published at ${path}: ${error.message}. The filesystem must support hard links for managed identity publication.`,
+          }),
+        ),
+      PlatformError: (error) =>
+        Effect.fail(
+          new InvalidManagedIdentityError({
+            message: `${label} could not be published at ${path}: ${error.message}`,
+          }),
+        ),
+    }),
   );
 
 /** Effect FileSystem variant used by managed discovery. */
@@ -84,9 +97,9 @@ export const canonicalizeManagedWorkspacePathWithFileSystem = (
       const fs = yield* FileSystem.FileSystem;
       const info = yield* fs.stat(workspacePath);
       if (info.type !== "Directory") {
-        return yield* Effect.fail(
-          new InvalidManagedIdentityError({ message: `${workspacePath} is not a directory` }),
-        );
+        return yield* new InvalidManagedIdentityError({
+          message: `${workspacePath} is not a directory`,
+        });
       }
       return yield* fs.realPath(workspacePath);
     }).pipe(
@@ -114,7 +127,7 @@ const readIdentity = (
         Effect.flatMap((content) => decodeIdentity(content)),
         Effect.catchTag("PlatformError", (error) =>
           Predicate.isTagged(error.reason, "NotFound")
-            ? Effect.succeed<OrdinaryWorkspaceIdentity | undefined>(undefined)
+            ? Effect.void.pipe(Effect.as(undefined))
             : Effect.fail(inaccessibleIdentity("Ordinary workspace identity", error)),
         ),
       );
@@ -152,9 +165,10 @@ export const ensureOrdinaryWorkspaceIdentity = (
       };
       const fs = yield* FileSystem.FileSystem;
       yield* fs.makeDirectory(dirname(markerPath), { recursive: true });
+      const content = yield* encodeOrdinaryWorkspaceIdentity(identity);
       const outcome = yield* claimIdentityFile(
         markerPath,
-        `${JSON.stringify(identity, null, 2)}\n`,
+        `${content}\n`,
         "Ordinary workspace identity",
         0o600,
       );
@@ -162,11 +176,9 @@ export const ensureOrdinaryWorkspaceIdentity = (
 
       const winner = yield* readIdentity(workspacePath);
       if (winner === undefined) {
-        return yield* Effect.fail(
-          new InvalidManagedIdentityError({
-            message: "Identity publication raced without a winning marker",
-          }),
-        );
+        return yield* new InvalidManagedIdentityError({
+          message: "Identity publication raced without a winning marker",
+        });
       }
       return { identity: winner, created: false, markerPath };
     }),
@@ -181,10 +193,23 @@ const detachedContextIdentitySchema = Schema.fromJsonString(
   }),
 );
 
+const encodeDetachedContextIdentity = (identity: {
+  readonly version: typeof DETACHED_CONTEXT_VERSION;
+  readonly contextId: string;
+}): Effect.Effect<string, InvalidManagedIdentityError> =>
+  Schema.encodeEffect(detachedContextIdentitySchema)(identity).pipe(
+    Effect.mapError(
+      (error) =>
+        new InvalidManagedIdentityError({
+          message: `The detached context identity is invalid: ${String(error)}`,
+        }),
+    ),
+  );
+
 const decodeDetachedContextId = (
   content: string,
 ): Effect.Effect<string, InvalidManagedIdentityError> =>
-  Schema.decodeUnknownEffect(detachedContextIdentitySchema)(content).pipe(
+  Schema.decodeEffect(detachedContextIdentitySchema)(content).pipe(
     Effect.mapError(
       (error) =>
         new InvalidManagedIdentityError({
@@ -204,7 +229,7 @@ const readDetachedContextId = (
         Effect.flatMap((content) => decodeDetachedContextId(content)),
         Effect.catchTag("PlatformError", (error) =>
           Predicate.isTagged(error.reason, "NotFound")
-            ? Effect.succeed<string | undefined>(undefined)
+            ? Effect.void.pipe(Effect.as(undefined))
             : Effect.fail(inaccessibleIdentity("Detached context identity", error)),
         ),
       );
@@ -227,20 +252,22 @@ export const ensureDetachedContextIdentity = (
       if (existing !== undefined) return { contextId: existing, created: false };
       const contextId = yield* createManagedUuidEffect(idFactory, "contextId");
       const markerPath = gitDetachedContextIdentityPath(gitDirectory);
+      const content = yield* encodeDetachedContextIdentity({
+        version: DETACHED_CONTEXT_VERSION,
+        contextId,
+      });
       const outcome = yield* claimIdentityFile(
         markerPath,
-        `${JSON.stringify({ version: DETACHED_CONTEXT_VERSION, contextId }, null, 2)}\n`,
+        `${content}\n`,
         "Detached context identity",
         0o600,
       );
       if (outcome === "claimed") return { contextId, created: true };
       const winner = yield* readDetachedContextId(gitDirectory);
       if (winner === undefined) {
-        return yield* Effect.fail(
-          new InvalidManagedIdentityError({
-            message: "Detached context publication raced without a winning marker",
-          }),
-        );
+        return yield* new InvalidManagedIdentityError({
+          message: "Detached context publication raced without a winning marker",
+        });
       }
       return { contextId: winner, created: false };
     }),
@@ -253,8 +280,21 @@ const checkoutLocationSchema = Schema.fromJsonString(
   }),
 );
 
+const encodeCheckoutLocation = (location: {
+  readonly version: 1;
+  readonly workspacePath: string;
+}): Effect.Effect<string, InvalidManagedIdentityError> =>
+  Schema.encodeEffect(checkoutLocationSchema)(location).pipe(
+    Effect.mapError(
+      (error) =>
+        new InvalidManagedIdentityError({
+          message: `The git checkout location is invalid: ${String(error)}`,
+        }),
+    ),
+  );
+
 const decodeLocation = (content: string): Effect.Effect<string, InvalidManagedIdentityError> =>
-  Schema.decodeUnknownEffect(checkoutLocationSchema)(content).pipe(
+  Schema.decodeEffect(checkoutLocationSchema)(content).pipe(
     Effect.mapError(
       (error) =>
         new InvalidManagedIdentityError({
@@ -274,7 +314,7 @@ export const readGitCheckoutLocation = (
         Effect.flatMap((content) => decodeLocation(content)),
         Effect.catchTag("PlatformError", (error) =>
           Predicate.isTagged(error.reason, "NotFound")
-            ? Effect.succeed<string | undefined>(undefined)
+            ? Effect.void.pipe(Effect.as(undefined))
             : Effect.fail(inaccessibleIdentity("Git checkout location", error)),
         ),
       );
@@ -308,20 +348,19 @@ export const ensureGitCheckoutLocation = (
       const existing = yield* readGitCheckoutLocation(gitDirectory);
       if (existing !== undefined) return { workspacePath: existing, created: false };
       const markerPath = gitCheckoutLocationPath(gitDirectory);
+      const content = yield* encodeCheckoutLocation({ version: 1, workspacePath });
       const outcome = yield* claimIdentityFile(
         markerPath,
-        `${JSON.stringify({ version: 1, workspacePath }, null, 2)}\n`,
+        `${content}\n`,
         "Git checkout location",
         0o600,
       );
       if (outcome === "claimed") return { workspacePath, created: true };
       const winner = yield* readGitCheckoutLocation(gitDirectory);
       if (winner === undefined) {
-        return yield* Effect.fail(
-          new InvalidManagedIdentityError({
-            message: "Checkout location publication raced without a winning marker",
-          }),
-        );
+        return yield* new InvalidManagedIdentityError({
+          message: "Checkout location publication raced without a winning marker",
+        });
       }
       return { workspacePath: winner, created: false };
     }),
@@ -345,18 +384,15 @@ export const updateGitCheckoutLocationOwned = (
       const markerPath = gitCheckoutLocationPath(gitDirectory);
       const current = yield* readGitCheckoutLocation(gitDirectory);
       if (current === undefined || current !== expectedPath) {
-        return yield* Effect.fail(
-          new InvalidManagedIdentityError({
-            message: "Git checkout location changed before repair publication",
-          }),
-        );
+        return yield* new InvalidManagedIdentityError({
+          message: "Git checkout location changed before repair publication",
+        });
       }
       const temporaryPath = `${markerPath}.tmp.${randomUUID()}`;
-      const publication = writeTemporary(
-        fs,
-        temporaryPath,
-        `${JSON.stringify({ version: 1, workspacePath }, null, 2)}\n`,
-      ).pipe(Effect.andThen(fs.rename(temporaryPath, markerPath)));
+      const content = yield* encodeCheckoutLocation({ version: 1, workspacePath });
+      const publication = writeTemporary(fs, temporaryPath, `${content}\n`).pipe(
+        Effect.andThen(fs.rename(temporaryPath, markerPath)),
+      );
       yield* Effect.ensuring(
         publication,
         Effect.uninterruptible(removeTemporary(fs, temporaryPath)),

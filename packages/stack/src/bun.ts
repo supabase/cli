@@ -1,3 +1,5 @@
+// oxlint-disable effecttsgo/async-function, effecttsgo/multiple-effect-provide -- Public Bun Promise facades intentionally bridge host async calls; platform and transport layers are staged to preserve dependency and scope ordering.
+
 import { BunServices } from "@effect/platform-bun";
 import { Effect, Layer } from "effect";
 import { FetchHttpClient } from "effect/unstable/http";
@@ -41,14 +43,19 @@ export async function prefetch(options?: PrefetchOptions): Promise<PrefetchResul
   ).catch((error: unknown) => {
     throw toStackError(error);
   });
-  const resolverLayer = BinaryResolver.make(defaultCacheRoot()).pipe(
+  const resolverLayer = BinaryResolver.make(options?.cacheRoot ?? defaultCacheRoot()).pipe(
     Layer.provide(FetchHttpClient.layer),
   );
   const preparationLayer = StackPreparation.layer.pipe(Layer.provide(resolverLayer));
+  const effectOptions = {
+    versions: options?.versions,
+    services: options?.services,
+    enabledServices: options?.enabledServices,
+  };
   const resolvedOptions: PrefetchEffectOptions =
     runtime.mode === "native"
-      ? { ...options, mode: "native" }
-      : { ...options, mode: "docker", containerRuntime: runtime.containerRuntime };
+      ? { ...effectOptions, mode: "native" }
+      : { ...effectOptions, mode: "docker", containerRuntime: runtime.containerRuntime };
   return Effect.runPromise(
     prefetchEffect(resolvedOptions).pipe(
       Effect.provide(preparationLayer),

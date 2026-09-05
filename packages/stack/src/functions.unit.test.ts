@@ -1,3 +1,5 @@
+// oxlint-disable effecttsgo/async-function, effecttsgo/node-builtin-import, effecttsgo/prefer-schema-over-json -- Functions tests exercise native filesystem fixtures and JSON/JWT protocol payloads through the public Promise facade.
+
 import { describe, expect, it } from "@effect/vitest";
 import { NodeServices } from "@effect/platform-node";
 import { mkdtempSync, symlinkSync } from "node:fs";
@@ -19,7 +21,11 @@ import {
   resolveFunctionsRuntimeConfig,
   type ResolvedFunctionsBundle,
 } from "./functions.ts";
-import { verifyRequest } from "./services/edge-runtime-main.ts";
+import {
+  buildFunctionEnv,
+  createWorkerServicePathResolver,
+  verifyRequest,
+} from "./services/edge-runtime-main.ts";
 
 const testPorts: PortSet = {
   apiPort: 40_000,
@@ -299,6 +305,72 @@ describe("stack Functions runtime config", () => {
     }).pipe(
       Effect.provide(NodeServices.layer),
       Effect.ensuring(Effect.promise(() => rm(cwd, { recursive: true, force: true }))),
+    );
+  });
+});
+
+describe("stack Functions runtime env", () => {
+  const config = {
+    env: { SHARED: "shared-value" },
+    supabaseUrl: "http://api-gw:8000",
+    publishableKey: "publishable-key",
+    secretKey: "secret-key",
+    dbUrl: "postgresql://db",
+  };
+
+  it("injects the resolved function name as SUPABASE_FUNCTION_SLUG", () => {
+    const env = buildFunctionEnv(config, { env: {} }, "notes-mcp");
+
+    expect(env.SUPABASE_FUNCTION_SLUG).toBe("notes-mcp");
+  });
+
+  it("keeps the slug per-function across calls", () => {
+    expect(buildFunctionEnv(config, { env: {} }, "notes-mcp").SUPABASE_FUNCTION_SLUG).toBe(
+      "notes-mcp",
+    );
+    expect(buildFunctionEnv(config, { env: {} }, "echo-headers").SUPABASE_FUNCTION_SLUG).toBe(
+      "echo-headers",
+    );
+  });
+
+  it("does not let container or function env shadow the slug", () => {
+    const env = buildFunctionEnv(
+      { ...config, env: { ...config.env, SUPABASE_FUNCTION_SLUG: "container-spoof" } },
+      { env: { SUPABASE_FUNCTION_SLUG: "function-spoof" } },
+      "notes-mcp",
+    );
+
+    expect(env.SUPABASE_FUNCTION_SLUG).toBe("notes-mcp");
+  });
+
+  it("still passes through project env and Supabase connection vars", () => {
+    const env = buildFunctionEnv(config, { env: { FUNCTION_ONLY: "function-value" } }, "notes-mcp");
+
+    expect(env.SHARED).toBe("shared-value");
+    expect(env.FUNCTION_ONLY).toBe("function-value");
+    expect(env.SUPABASE_URL).toBe("http://api-gw:8000");
+  });
+
+  it("uses stable temporary worker paths when functions share a source directory", () => {
+    let nextWorkerId = 0;
+    const resolveWorkerServicePath = createWorkerServicePathResolver(
+      () => `/tmp/supabase-worker-${++nextWorkerId}`,
+    );
+    const functions = {
+      alpha: { entrypointPath: "/supabase/functions/shared/alpha.ts" },
+      beta: { entrypointPath: "/supabase/functions/shared/beta.ts" },
+      isolated: { entrypointPath: "/supabase/functions/isolated/index.ts" },
+      nested: {
+        entrypointPath: "/supabase/functions/shared/.supabase-worker/alpha/index.ts",
+      },
+    };
+
+    expect(resolveWorkerServicePath(functions, "alpha")).toBe("/tmp/supabase-worker-1");
+    expect(resolveWorkerServicePath(functions, "beta")).toBe("/tmp/supabase-worker-2");
+    expect(resolveWorkerServicePath(functions, "alpha")).toBe("/tmp/supabase-worker-1");
+    expect(resolveWorkerServicePath(functions, "isolated")).toBe("/supabase/functions/isolated");
+    expect(resolveWorkerServicePath(functions, "nested")).toBe(
+      "/supabase/functions/shared/.supabase-worker/alpha",
     );
   });
 });

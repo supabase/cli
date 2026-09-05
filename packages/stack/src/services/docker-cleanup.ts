@@ -1,4 +1,5 @@
 import type { ExternalCleanupAction } from "@supabase/process-compose";
+// oxlint-disable-next-line effecttsgo/node-builtin-import -- Synchronous orphan cleanup is a native subprocess boundary invoked by process-compose.
 import { execFileSync } from "node:child_process";
 import { Effect } from "effect";
 import type { ContainerRuntime } from "../ContainerRuntime.ts";

@@ -726,7 +726,7 @@ function hoursDurationRow(
 // CORE (auth.sync.ts:1263-1276, applyRemoteAuthConfig's base scalar fields)
 
 const coreRows: ReadonlyArray<ProjectConfigMappingRow> = [
-  stringRow(["auth", "site_url"], "site_url"),
+  { ...stringRow(["auth", "site_url"], "site_url"), dualScope: true },
   {
     configPath: ["auth", "additional_redirect_urls"],
     apiPath: ["auth", "uri_allow_list"],
@@ -735,7 +735,12 @@ const coreRows: ReadonlyArray<ProjectConfigMappingRow> = [
         ? undefined
         : splitCommaSeparated(expectString(value, ["auth", "uri_allow_list"])),
     normalizeDocument: canonicalizeCommaJoinedArray,
+    // GoTrue treats the allow list as membership only — reordering the URLs
+    // changes nothing at runtime, unlike the sequence-semantics CSV arrays
+    // (`api.schemas`, `api.extra_search_path`).
+    arrayEquality: "set",
     unit: "csv → string[]",
+    dualScope: true,
   },
   uintRow(["auth", "jwt_expiry"], "jwt_exp"),
   boolRow(["auth", "enable_refresh_token_rotation"], "refresh_token_rotation_enabled"),
@@ -787,8 +792,18 @@ const rateLimitRows: ReadonlyArray<ProjectConfigMappingRow> = [
 // SESSIONS (auth.sync.ts:1400-1408)
 
 const sessionsRows: ReadonlyArray<ProjectConfigMappingRow> = [
-  hoursDurationRow(["auth", "sessions", "timebox"], "sessions_timebox"),
-  hoursDurationRow(["auth", "sessions", "inactivity_timeout"], "sessions_inactivity_timeout"),
+  // GoTrue reports 0 hours for a session bound that was never configured, and
+  // the transform canonicalizes that to the string "0s" — declare it here so
+  // the diff baseline recognizes the canonicalized form (a type-level zero
+  // check would miss it and flag every untouched project).
+  {
+    ...hoursDurationRow(["auth", "sessions", "timebox"], "sessions_timebox"),
+    unconfiguredValue: "0s",
+  },
+  {
+    ...hoursDurationRow(["auth", "sessions", "inactivity_timeout"], "sessions_inactivity_timeout"),
+    unconfiguredValue: "0s",
+  },
 ];
 
 // EMAIL (auth.sync.ts:1548-1562)
@@ -836,6 +851,7 @@ const smtpRows: ReadonlyArray<ProjectConfigMappingRow> = [
       const host = expectString(value, smtpHostPath);
       return host.length > 0 ? host : undefined;
     },
+    dualScope: true,
   },
   {
     // auth.sync.ts:1420-1425: the API reports smtp_port as a string. `null`
@@ -861,6 +877,7 @@ const smtpRows: ReadonlyArray<ProjectConfigMappingRow> = [
     // `25.5`/out-of-range omit the field (REMOVED, not left verbatim — an
     // omitted key is what the API arm reports for the same pushed state).
     normalizeDocument: (value) => (typeof value === "number" ? parseUint16(String(value)) : value),
+    dualScope: true,
   },
   smtpSiblingStringRow(["auth", "email", "smtp", "user"], "smtp_user"),
   smtpSiblingStringRow(["auth", "email", "smtp", "admin_email"], "smtp_admin_email"),
@@ -899,6 +916,7 @@ function smtpSiblingStringRow(
       const narrowed = expectString(value, apiPath);
       return smtpExplicitlyDisabledInAttributes(attributes) ? undefined : narrowed;
     },
+    dualScope: true,
   };
 }
 
@@ -913,9 +931,15 @@ const EMAIL_TEMPLATE_NAMES = [
   "reauthentication",
 ] as const;
 
-const templateRows: ReadonlyArray<ProjectConfigMappingRow> = EMAIL_TEMPLATE_NAMES.map((name) =>
-  stringRow(["auth", "email", "template", name, "subject"], `mailer_subjects_${name}`),
-);
+const templateRows: ReadonlyArray<ProjectConfigMappingRow> = EMAIL_TEMPLATE_NAMES.map((name) => ({
+  ...stringRow(["auth", "email", "template", name, "subject"], `mailer_subjects_${name}`),
+  // `mailer_subjects_*` is a platform-rendered string with no meaningful
+  // local default — a prior version of this row pinned the provisioning
+  // string recorded from a prod fixture as `unconfiguredValue`, which broke
+  // the moment the platform reworded its default (and can never be
+  // simultaneously correct for every environment platform-side).
+  platformRendered: true,
+}));
 
 // Email notifications ×7 (auth.sync.ts:1491-1525)
 
@@ -931,14 +955,25 @@ const EMAIL_NOTIFICATION_NAMES = [
 
 const notificationRows: ReadonlyArray<ProjectConfigMappingRow> = EMAIL_NOTIFICATION_NAMES.flatMap(
   (name) => [
-    boolRow(
-      ["auth", "email", "notification", name, "enabled"],
-      `mailer_notifications_${name}_enabled`,
-    ),
-    stringRow(
-      ["auth", "email", "notification", name, "subject"],
-      `mailer_subjects_${name}_notification`,
-    ),
+    {
+      ...boolRow(
+        ["auth", "email", "notification", name, "enabled"],
+        `mailer_notifications_${name}_enabled`,
+      ),
+      // Every account-change notification defaults to disabled (supabase/auth
+      // `NotificationsConfiguration`, `default:"false"` on each field) — the
+      // config schema declares no default, so the diff baseline needs the
+      // platform's own unconfigured reading here.
+      unconfiguredValue: false,
+    },
+    {
+      ...stringRow(
+        ["auth", "email", "notification", name, "subject"],
+        `mailer_subjects_${name}_notification`,
+      ),
+      // Same platform-rendered rationale as the template subjects above.
+      platformRendered: true,
+    },
   ],
 );
 
@@ -996,6 +1031,7 @@ const captchaRows: ReadonlyArray<ProjectConfigMappingRow> = [
       const provider = expectString(value, ["auth", "security_captcha_provider"]);
       return provider === "hcaptcha" || provider === "turnstile" ? provider : undefined;
     },
+    dualScope: true,
   },
   secretRow(["auth", "captcha", "secret"], "security_captcha_secret"),
 ];
@@ -1034,6 +1070,18 @@ const smsBaseRows: ReadonlyArray<ProjectConfigMappingRow> = [
   boolRow(["auth", "sms", "enable_confirmations"], "sms_autoconfirm"),
   stringRow(["auth", "sms", "template"], "sms_template"),
   secondsDurationRow(["auth", "sms", "max_frequency"], "sms_max_frequency"),
+  // No sync precedent (CLI-2316 follow-up audit): `sms.otp_length`/
+  // `otp_expiry` are new config-schema fields (`../auth/sms.ts`) added
+  // alongside this pair of rows — the legacy shell's `config-sync/auth.sync.ts`
+  // predates both and never read or wrote either, matching neither Go's own
+  // `sms` struct (`apps/cli-go/pkg/config/auth.go`, which also has no
+  // `OtpLength`/`OtpExpiry` on `sms` — only on the unrelated `email` and
+  // `mfa.phone` structs) — this is a genuinely new config surface for a
+  // pre-existing, real GoTrue field pair (`sms_otp_length`/`sms_otp_exp`,
+  // confirmed live via `apps/cli-e2e/fixtures/recorded/
+  // GET_v1_projects___PROJECT_REF___config_auth`), not a Go-parity gap.
+  uintRow(["auth", "sms", "otp_length"], "sms_otp_length"),
+  uintRow(["auth", "sms", "otp_expiry"], "sms_otp_exp"),
   {
     // auth.sync.ts:1679, 1736-1747 (envToMap). Null/empty/unparsed → omit;
     // a present non-string is a malformed platform response and throws like
@@ -1048,6 +1096,7 @@ const smsBaseRows: ReadonlyArray<ProjectConfigMappingRow> = [
       return Object.keys(map).length > 0 ? map : undefined;
     },
     normalizeDocument: canonicalizeTestOtpMap,
+    dualScope: true,
   },
 ];
 
@@ -1142,6 +1191,12 @@ const smsCredentialRows: ReadonlyArray<ProjectConfigMappingRow> = [
     ["auth", "sms", "twilio", "message_service_sid"],
     "sms_twilio_message_service_sid",
   ),
+  // No sync precedent (CLI-2316 follow-up audit): `twilio.content_sid` is a
+  // new config-schema field (`../auth/sms.ts`) for a pre-existing, real
+  // GoTrue field (`sms_twilio_content_sid`, confirmed live via
+  // `apps/cli-e2e/fixtures/recorded/GET_v1_projects___PROJECT_REF___config_auth`).
+  // Twilio-only: the API has no `sms_twilio_verify_content_sid` counterpart.
+  smsCredentialStringRow(["auth", "sms", "twilio", "content_sid"], "sms_twilio_content_sid"),
   secretRow(["auth", "sms", "twilio", "auth_token"], "sms_twilio_auth_token"),
   smsCredentialStringRow(
     ["auth", "sms", "twilio_verify", "account_sid"],
@@ -1190,10 +1245,6 @@ const hookRows: ReadonlyArray<ProjectConfigMappingRow> = AUTH_HOOK_NAMES.flatMap
 // availability taken from ../auth/providers.ts and RemoteAuthConfig)
 //
 // Corrections against the mined field list:
-//  - "figma" is a case in auth.sync.ts's remote-field switches
-//    (getProviderEnabled et al., :1813-1814 and siblings) but
-//    ../auth/providers.ts's `external` struct has no `figma` member, so no
-//    row is emitted for it — the config schema cannot represent it.
 //  - `url` only exists as an API field for azure/gitlab/keycloak/workos
 //    (getProviderUrl, :1942-1955), even though the schema's `provider()`
 //    struct declares a `url` field (with a default) for every provider.
@@ -1201,6 +1252,25 @@ const hookRows: ReadonlyArray<ProjectConfigMappingRow> = AUTH_HOOK_NAMES.flatMap
 //    both RemoteAuthConfig (:471-474) and getProviderEmailOptional's switch
 //    (:1957-1998) — even though every other provider (including apple and
 //    google) has one.
+//  - `skip_nonce_check` has no API field for ANY provider except google
+//    (`googleSkipNonceCheckRow`, below) — verified against the generated
+//    contract's full `V1GetAuthServiceConfigOutput` field list (CLI-2316
+//    follow-up audit), even though the schema's `provider()` struct declares
+//    a `skip_nonce_check` field for every provider.
+//  - "figma" IS representable now (`../auth/providers.ts`, CLI-2316 follow-up
+//    — was previously documented here as unrepresentable, since the schema
+//    had no `figma` member at all).
+//  - plain "slack" (as opposed to `slack_oidc`) has a real API field set
+//    (`external_slack_client_id`/`_enabled`/`_secret`/`_email_optional`) but
+//    is DELIBERATELY not a schema member and never will be without a
+//    separate decision to reverse it: `../auth/providers.ts`'s own comment
+//    records that Go's deprecated `linkedin`/`slack` provider ids are
+//    intentionally unmodeled, matching `(e external) validate()`'s
+//    unconditional deletion of those keys before decode — `../io.ts`'s
+//    `normalizeDeprecatedExternalProviders` strips a config's `[auth.
+//    external.slack]` table (warning on stderr when it was `enabled`) before
+//    this schema ever sees it. A real, live `external_slack_*` API surface
+//    existing does not by itself justify undoing that Go-parity deprecation.
 
 interface ExternalProviderSpec {
   readonly id: string;
@@ -1214,6 +1284,7 @@ const EXTERNAL_PROVIDERS: ReadonlyArray<ExternalProviderSpec> = [
   { id: "bitbucket", hasUrl: false, hasEmailOptional: true },
   { id: "discord", hasUrl: false, hasEmailOptional: true },
   { id: "facebook", hasUrl: false, hasEmailOptional: true },
+  { id: "figma", hasUrl: false, hasEmailOptional: true },
   { id: "github", hasUrl: false, hasEmailOptional: true },
   { id: "gitlab", hasUrl: true, hasEmailOptional: true },
   { id: "google", hasUrl: false, hasEmailOptional: true },

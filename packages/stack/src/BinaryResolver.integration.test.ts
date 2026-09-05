@@ -1,3 +1,5 @@
+// oxlint-disable effecttsgo/global-date-in-effect, effecttsgo/node-builtin-import, effecttsgo/prefer-schema-over-json -- Integration tests inspect native binary metadata, timestamps, and JSON manifests at the filesystem boundary.
+
 import { createHash } from "node:crypto";
 import { execFileSync } from "node:child_process";
 import { zstdCompressSync } from "node:zlib";
@@ -16,6 +18,7 @@ import { dirname, join } from "node:path";
 import { NodeFileSystem, NodePath, NodeServices } from "@effect/platform-node";
 import { describe, expect, it } from "@effect/vitest";
 import { Deferred, Effect, Fiber, FileSystem, Layer, Predicate } from "effect";
+import * as TestClock from "effect/testing/TestClock";
 import { HttpClient, HttpClientResponse } from "effect/unstable/http";
 import { ChildProcess, ChildProcessSpawner } from "effect/unstable/process";
 import { BinaryResolver } from "./BinaryResolver.ts";
@@ -430,7 +433,7 @@ describe("BinaryResolver slim-services installer", () => {
     }),
   );
 
-  it.live("reclaims interrupted staging while preserving complete cache entries", () =>
+  it.effect("reclaims interrupted staging while preserving complete cache entries", () =>
     Effect.gen(function* () {
       const root = makeRoot();
       try {
@@ -453,6 +456,9 @@ describe("BinaryResolver slim-services installer", () => {
         mkdirSync(stale, { recursive: true });
         const old = new Date(Date.now() - 2 * 24 * 60 * 60 * 1_000);
         utimesSync(stale, old, old);
+        // Native filesystem mtimes must be compared with wall-clock time;
+        // pinning Effect's virtual clock exposes accidental epoch comparisons.
+        yield* TestClock.setTime(0);
 
         const resolved = yield* Effect.gen(function* () {
           const resolver = yield* BinaryResolver;

@@ -92,8 +92,9 @@ export const experimental = Schema.Struct({
       ),
       format_options: Schema.optionalKey(
         Schema.String.annotate({
-          description: "JSON string passed through to pg-delta SQL formatting.",
-          examples: ['{"keywordCase":"upper","indent":2,"maxWidth":80,"commaStyle":"trailing"}'],
+          description:
+            'JSON string passed through to pg-delta SQL formatting. When omitted, SQL is formatted with uppercase keywords, indent 2, max width 180, trailing commas, and column/key alignment. Set to "null" to emit raw, unformatted SQL.',
+          examples: ['{"keywordCase":"upper","indent":2,"maxWidth":180,"commaStyle":"trailing"}'],
           tags,
         }),
       ),

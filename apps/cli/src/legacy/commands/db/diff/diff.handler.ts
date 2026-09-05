@@ -692,10 +692,10 @@ export const legacyDbDiff = Effect.fn("legacy.db.diff")(function* (flags: Legacy
         ctx,
       };
       // `legacyWithShadowDatabase` (`shadow-cache.ts`) owns the interrupt-safe lifecycle and the
-      // cache seam — a plain create/remove pair when `SUPABASE_SHADOW_CACHE` is unset. The key's
-      // webhooks policy must mirror what `legacyPrepareShadowSource` selects for this mode
-      // (legacy migrate forces `pg_net` on, next follows config), or the two engines could
-      // restore each other's tars.
+      // cache seam — a plain create/remove pair when `SUPABASE_SHADOW_CACHE` is explicitly
+      // disabled (the cache is on by default). The key's webhooks policy must mirror what
+      // `legacyPrepareShadowSource` selects for this mode (legacy migrate forces `pg_net` on,
+      // next follows config), or the two engines could restore each other's tars.
       diffResult = yield* legacyWithShadowDatabase(
         spawner,
         shadowInput,

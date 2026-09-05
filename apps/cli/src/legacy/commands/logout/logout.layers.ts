@@ -18,7 +18,7 @@ import { stdinLayer } from "../../../shared/runtime/stdin.layer.ts";
  * legacy CLAUDE.md item 5). `Analytics`, `Output`, `Stdio`, `Tty`, `FileSystem`,
  * `Path`, `TelemetryRuntime`, and `LegacyYesFlag` come from the root layer;
  * `stdinLayer` (the shared piped-stdin reader for the logout confirm) builds its
- * `Stdin` from the root `Stdio`/`Tty`, like the migration runtimes.
+ * `Stdin` from the root `Tty`, like the migration runtimes.
  */
 const cliSettings = legacyCliSettingsLayer.pipe(Layer.provide(legacyDebugLoggerLayer));
 const credentials = legacyCredentialsLayer.pipe(

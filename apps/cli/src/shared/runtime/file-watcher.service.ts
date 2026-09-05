@@ -14,7 +14,7 @@ export interface FileWatchEvent {
   readonly type: FileWatchEventType;
 }
 
-export interface FileWatchOptions {
+interface FileWatchOptions {
   readonly ignore?: ReadonlyArray<string>;
   readonly recursive?: boolean;
 }

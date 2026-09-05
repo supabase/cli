@@ -13,7 +13,7 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import process from "node:process";
 import { Effect, Exit, Layer, Option, Context, Tracer } from "effect";
-import { cliSettingsLayer } from "../../next/config/cli-settings.layer.ts";
+import { cliSettingsLayer } from "../config/cli-settings.layer.ts";
 import type { TelemetryConfig } from "./types.ts";
 import {
   mockCliProjectContext,

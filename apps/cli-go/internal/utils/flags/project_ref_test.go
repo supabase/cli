@@ -77,7 +77,7 @@ func TestProjectPrompt(t *testing.T) {
 		gock.New(utils.DefaultApiHost).
 			Get("/v1/projects").
 			Reply(http.StatusOK).
-			JSON([]api.V1ProjectResponse{{
+			JSON([]api.V1ProjectResponseOutput{{
 				Id:               "test-project",
 				Name:             "My Project",
 				OrganizationSlug: "test-org",

@@ -9,6 +9,8 @@ import { Schema } from "effect";
 import {
   attachApiResponse,
   comparableProjectConfigPaths,
+  DISABLED_SENTINEL_PRUNES,
+  DOCUMENT_ONLY_LOCAL_PATHS,
   fromApiProjectConfig,
   fromConfigDocument,
   isComparableProjectConfigPath,
@@ -158,13 +160,17 @@ describe("fromConfigDocument", () => {
     // itself EMPTIED (secret stripping) — an originally-empty container is
     // declared data (a record entry's value can be an empty struct by schema
     // design, e.g. `storage.analytics.buckets` entries, where the key is the
-    // information).
+    // information). `realtime` is absent, not present-as-`{}` like `workers`:
+    // all 3 of its config-side fields are `DOCUMENT_ONLY_LOCAL_PATHS` entries
+    // (CLI-2316), all 3 are always-materialized (not `optionalKey`) so the
+    // default config always declares them, and the emptied-by-exclusion
+    // section prune (same rule as the secret-stripped case) removes it
+    // entirely — see the dedicated describe block below.
     expect(Object.keys(projected).sort()).toEqual([
       "api",
       "auth",
       "db",
       "experimental",
-      "realtime",
       "storage",
       "workers",
     ]);
@@ -207,8 +213,18 @@ describe("fromConfigDocument", () => {
   test("deep-copies rather than sharing the subtree reference", () => {
     const config = getDefaultCliConfig();
     const projected = fromConfigDocument(config);
+    // The top-level `api`/`db` containers are still freshly built (never the
+    // same object as `config`'s), even though `toEqual`-comparing them WHOLE
+    // against `config.api`/`config.db` would now fail: CLI-2316 strips
+    // several of their fields (`api.port`/`tls`/`external_url`,
+    // `db.port`/`shadow_port`/`health_timeout`/`major_version`/`pooler`/
+    // `migrations`/`seed` — see the dedicated describe block below) from the
+    // projection. `storage.s3_protocol` — an always-materialized nested
+    // object none of those exclusions touch — is the equality probe instead.
     expect(projected.api).not.toBe(config.api);
-    expect(projected.api).toEqual(config.api);
+    expect(projected.db).not.toBe(config.db);
+    expect(projected.storage?.s3_protocol).not.toBe(config.storage.s3_protocol);
+    expect(projected.storage?.s3_protocol).toEqual(config.storage.s3_protocol);
     expect(projected.auth?.captcha).not.toBe(config.auth.captcha);
     expect(projected.auth?.captcha).toEqual(config.auth.captcha);
   });
@@ -446,6 +462,253 @@ describe("fromConfigDocument", () => {
     expect(projected.auth?.mfa?.phone?.max_frequency).toBe("5s");
     expect(projected.auth?.sms?.max_frequency).toBe("5s");
     expect(projected.storage?.file_size_limit).toBe("50MiB");
+  });
+});
+
+describe("fromConfigDocument — CLI-only field exclusion (CLI-2316)", () => {
+  function readAtPath(root: unknown, path: ReadonlyArray<string>): unknown {
+    let current = root;
+    for (const segment of path) {
+      if (current === null || typeof current !== "object" || Array.isArray(current)) {
+        return undefined;
+      }
+      current = (current as Record<string, unknown>)[segment];
+    }
+    return current;
+  }
+
+  test("excludes local ports, db.pooler.{enabled,port}, and the whole db.migrations/seed subtrees", () => {
+    const document = decodeCliConfig({
+      api: { port: 9999, external_url: "http://example.com", max_rows: 42 },
+      db: {
+        port: 9999,
+        shadow_port: 8888,
+        health_timeout: "5m",
+        pooler: {
+          enabled: true,
+          port: 7777,
+          pool_mode: "session",
+          default_pool_size: 5,
+          max_client_conn: 50,
+        },
+        migrations: { enabled: false, schema_paths: ["a.sql"] },
+        seed: { enabled: false, sql_paths: ["b.sql"] },
+        settings: { max_connections: 5 },
+      },
+    });
+
+    const projected = fromConfigDocument(document);
+
+    expect(Object.hasOwn(projected.api ?? {}, "port")).toBe(false);
+    expect(Object.hasOwn(projected.api ?? {}, "external_url")).toBe(false);
+    expect(Object.hasOwn(projected.api ?? {}, "tls")).toBe(false);
+    expect(Object.hasOwn(projected.db ?? {}, "port")).toBe(false);
+    expect(Object.hasOwn(projected.db ?? {}, "shadow_port")).toBe(false);
+    expect(Object.hasOwn(projected.db ?? {}, "health_timeout")).toBe(false);
+    expect(Object.hasOwn(projected.db?.pooler ?? {}, "enabled")).toBe(false);
+    expect(Object.hasOwn(projected.db?.pooler ?? {}, "port")).toBe(false);
+    expect(Object.hasOwn(projected.db ?? {}, "migrations")).toBe(false);
+    expect(Object.hasOwn(projected.db ?? {}, "seed")).toBe(false);
+    // Siblings prove the exclusion is targeted, not a section-wide wipe —
+    // `pool_mode`/`default_pool_size`/`max_client_conn` are real,
+    // `v2GetProjectConfig`-reported hosted facts (PR #6451 review round) and
+    // must stay comparable for `config diff`/`config pull`, unlike `enabled`/
+    // `port` right above, which the API never reports at all.
+    expect(projected.api?.max_rows).toBe(42);
+    expect(projected.db?.settings?.max_connections).toBe(5);
+    expect(projected.db?.pooler).toEqual({
+      pool_mode: "session",
+      default_pool_size: 5,
+      max_client_conn: 50,
+    });
+  });
+
+  test("excludes the whole realtime section — it survives on neither arm", () => {
+    const document = decodeCliConfig({
+      realtime: { enabled: false, ip_version: "IPv6", max_header_length: 1 },
+    });
+    const projected = fromConfigDocument(document);
+    // Every config-side `realtime` field is excluded, so — unlike `workers`,
+    // which survives as `{}` — the section disappears entirely: it was
+    // emptied BY this exclusion, the same prune rule as a secret-stripped
+    // section.
+    expect(Object.hasOwn(projected, "realtime")).toBe(false);
+  });
+
+  test("excludes local-only experimental fields while experimental.webhooks (genuinely pushed) survives", () => {
+    const document = decodeCliConfig({
+      experimental: {
+        orioledb_version: "1.0",
+        s3_host: "bucket.s3.example.com",
+        s3_region: "us-east-1",
+        pgdelta: { enabled: true },
+        inspect: { rules: [{ name: "r1" }] },
+        webhooks: { enabled: true },
+      },
+    });
+    const projected = fromConfigDocument(document);
+    expect(Object.hasOwn(projected.experimental ?? {}, "orioledb_version")).toBe(false);
+    expect(Object.hasOwn(projected.experimental ?? {}, "s3_host")).toBe(false);
+    expect(Object.hasOwn(projected.experimental ?? {}, "s3_region")).toBe(false);
+    expect(Object.hasOwn(projected.experimental ?? {}, "pgdelta")).toBe(false);
+    expect(Object.hasOwn(projected.experimental ?? {}, "inspect")).toBe(false);
+    expect(projected.experimental?.webhooks).toEqual({ enabled: true });
+  });
+
+  test("db.major_version and db.pooler.{pool_mode,default_pool_size,max_client_conn} populate on BOTH arms (PR #6451 correction)", () => {
+    // These 4 fields are real, `v2GetProjectConfig`-reported hosted facts
+    // with no `config push` write path — but `ProjectConfig`'s actual
+    // current consumers are `config diff`/`config pull` (`v2GetProjectConfig`),
+    // not `config push` (still the legacy v1 `config-sync` mappers, with zero
+    // `ProjectConfig` involvement). Excluding them from the document arm —
+    // this test's ORIGINAL, incorrect assertion — made them permanently
+    // `unmanaged` for every stock project (the `supabase init` template
+    // declares all four), which blocked `config pull` from ever syncing the
+    // platform's real values down. They must stay symmetric across both arms.
+    const documentSide = fromConfigDocument(
+      decodeCliConfig({ db: { major_version: 15, pooler: { pool_mode: "session" } } }),
+    );
+    expect(documentSide.db?.major_version).toBe(15);
+    // `default_pool_size`/`max_client_conn` are schema-decoded defaults here
+    // (20/100, `../db.ts`) — present because the whole `pooler` struct
+    // materializes on decode, not because this document declared them.
+    // `enabled`/`port` are excluded regardless (the next test covers that).
+    expect(documentSide.db?.pooler).toEqual({
+      pool_mode: "session",
+      default_pool_size: 20,
+      max_client_conn: 100,
+    });
+
+    const apiSide = fromApiProjectConfig({
+      database: { major_version: 17 },
+      pooler: { pool_mode: "session", default_pool_size: 15, max_client_conn: 200 },
+    });
+    expect(apiSide.db?.major_version).toBe(17);
+    expect(apiSide.db?.pooler).toEqual({
+      pool_mode: "session",
+      default_pool_size: 15,
+      max_client_conn: 200,
+    });
+  });
+
+  test("db.pooler.enabled and db.pooler.port are absent from BOTH arms — v2GetProjectConfig reports neither", () => {
+    const documentSide = fromConfigDocument(
+      decodeCliConfig({ db: { pooler: { enabled: true, port: 54329 } } }),
+    );
+    // `pooler` itself survives (its other 3 fields decode to their schema
+    // defaults) — only `enabled`/`port` are excluded from it.
+    expect(Object.hasOwn(documentSide.db?.pooler ?? {}, "enabled")).toBe(false);
+    expect(Object.hasOwn(documentSide.db?.pooler ?? {}, "port")).toBe(false);
+    expect(documentSide.db?.pooler?.pool_mode).toBe("transaction");
+
+    // The API arm never populates these either: no registry row maps them,
+    // since `v2GetProjectConfig`'s `pooler` struct has no `enabled`/`port`
+    // field to map from in the first place.
+    const apiSide = fromApiProjectConfig({
+      pooler: { enabled: true, port: 54329, pool_mode: "session" },
+    });
+    expect(Object.hasOwn(apiSide.db?.pooler ?? {}, "enabled")).toBe(false);
+    expect(Object.hasOwn(apiSide.db?.pooler ?? {}, "port")).toBe(false);
+    expect(apiSide.db?.pooler).toEqual({ pool_mode: "session" });
+  });
+
+  // Exhaustive counterpart to the hand-picked tests above, iterating
+  // `DOCUMENT_ONLY_LOCAL_PATHS` itself rather than a second hand-picked field
+  // list. Unlike the x-secret exhaustiveness test just above — which builds
+  // its OWN probe programmatically from `secretPathPatterns`, so it can never
+  // go vacuous — this probe is still hand-written (`DOCUMENT_ONLY_LOCAL_PATHS`
+  // mixes whole-subtree and scalar-leaf entries of different value types, so
+  // one generic "put a marker at every path" builder can't populate it the
+  // way the all-string x-secret patterns allow). The `toBeDefined` check
+  // below on `document` is a PARTIAL guard, not a complete one (PR #6451
+  // review round): it always catches a typo'd or renamed path in the
+  // CONSTANT itself (`decodeCliConfig` only ever produces the schema's own
+  // spelling, never a typo'd one, so `readAtPath` finds nothing regardless of
+  // defaults). What it does NOT reliably catch is the probe below simply
+  // forgetting to set a value at a CORRECTLY-spelled listed path: 12 of
+  // these 18 paths are always-materialized (`withDecodingDefaultKey`, never
+  // `optionalKey`), so `decodeCliConfig` fills a schema default for them even
+  // when the probe omits an explicit value — `toBeDefined` passes on that
+  // default either way. Only the other 6 — `api.external_url` and the 5
+  // `experimental.*` entries, every one `optionalKey` — stay genuinely
+  // undefined unless the probe sets them explicitly, so only THOSE 6 catch a
+  // probe that forgot to populate a listed path.
+  test("no DOCUMENT_ONLY_LOCAL_PATHS entry survives fromConfigDocument, exhaustively", () => {
+    expect(DOCUMENT_ONLY_LOCAL_PATHS.length).toBeGreaterThan(0);
+
+    const document = decodeCliConfig({
+      api: {
+        port: 1,
+        external_url: "http://example.com",
+        tls: { enabled: true },
+        max_rows: 42,
+      },
+      db: {
+        port: 1,
+        shadow_port: 2,
+        health_timeout: "5m",
+        major_version: 15,
+        pooler: { enabled: true, port: 7777, pool_mode: "session" },
+        migrations: { enabled: false },
+        seed: { enabled: false },
+        settings: { max_connections: 5 },
+      },
+      realtime: { enabled: false, ip_version: "IPv6", max_header_length: 1 },
+      experimental: {
+        orioledb_version: "1.0",
+        s3_host: "host",
+        s3_region: "region",
+        pgdelta: { enabled: true },
+        inspect: { rules: [{ name: "r1" }] },
+        webhooks: { enabled: true },
+      },
+    });
+
+    const projected = fromConfigDocument(document);
+
+    for (const path of DOCUMENT_ONLY_LOCAL_PATHS) {
+      // The probe actually populated this path — otherwise the assertion
+      // below would pass whether or not the exclusion code does anything.
+      expect(readAtPath(document, path)).toBeDefined();
+      expect(readAtPath(projected, path)).toBeUndefined();
+    }
+
+    expect(projected.api?.max_rows).toBe(42);
+    expect(projected.db?.settings?.max_connections).toBe(5);
+    expect(projected.experimental?.webhooks).toEqual({ enabled: true });
+    // `major_version`/`pool_mode` are declared right alongside the excluded
+    // `pooler.enabled`/`pooler.port` above — proving the exclusion is
+    // per-field, not a `db.pooler`- or `db`-wide wipe (PR #6451 correction).
+    expect(projected.db?.major_version).toBe(15);
+    expect(projected.db?.pooler?.pool_mode).toBe("session");
+  });
+
+  // Integrity guard (PR #6451 review round): the bug this whole file's
+  // review round caught was exactly this overlap — `db.major_version` and 3
+  // of `db.pooler`'s fields were BOTH `comparableProjectConfigPaths` members
+  // (real registry rows, `./registry.ts`) AND `DOCUMENT_ONLY_LOCAL_PATHS`
+  // entries, which permanently blocked `config diff`/`config pull` from ever
+  // comparing or pulling them (see the corrected tests above). This test
+  // pins the invariant going forward: no comparable (registry-mapped) path,
+  // nor any of its ancestors, may ever be a `DOCUMENT_ONLY_LOCAL_PATHS`
+  // member — a future registry row added beneath an excluded prefix (e.g.
+  // under `db.migrations`, which today has none) would silently become
+  // uncomparable exactly like `major_version`/`pooler` did, and this test
+  // would catch it the moment that row is added.
+  test("no comparableProjectConfigPaths entry (or its ancestors) is ever a DOCUMENT_ONLY_LOCAL_PATHS member", () => {
+    expect(comparableProjectConfigPaths.length).toBeGreaterThan(0);
+
+    function isExcludedOrAncestorExcluded(path: ReadonlyArray<string>): boolean {
+      return DOCUMENT_ONLY_LOCAL_PATHS.some((excluded) => {
+        if (excluded.length > path.length) {
+          return false;
+        }
+        return excluded.every((segment, index) => segment === path[index]);
+      });
+    }
+
+    const violations = comparableProjectConfigPaths.filter(isExcludedOrAncestorExcluded);
+    expect(violations).toEqual([]);
   });
 });
 
@@ -965,6 +1228,97 @@ describe("fromApiProjectConfig — auth section", () => {
     const result = fromApiProjectConfig({ auth: { sms_test_otp: "15551234567=123456" } });
     expect(result.auth?.sms?.test_otp).toEqual({ "15551234567": "123456" });
   });
+
+  // CLI-2316 follow-up: figma is now a real provider (../auth/providers.ts),
+  // mirroring github's shape (no url, has email_optional, no skip_nonce_check
+  // — verified against the real V1GetAuthServiceConfigOutput contract, which
+  // has no `external_figma_skip_nonce_check` field at all).
+  test("figma maps like any other non-apple/google provider", () => {
+    const apiSide = fromApiProjectConfig({
+      auth: {
+        external_figma_enabled: true,
+        external_figma_client_id: "figma-id",
+        external_figma_secret: "figma-secret",
+        external_figma_email_optional: true,
+      },
+    });
+    expect(apiSide.auth?.external?.figma).toEqual({
+      enabled: true,
+      client_id: "figma-id",
+      email_optional: true,
+    });
+
+    const documentSide = fromConfigDocument(
+      decodeCliConfig({
+        auth: {
+          external: {
+            figma: { enabled: true, client_id: "figma-id", secret: "figma-secret" },
+          },
+        },
+      }),
+    );
+    // The document arm copies the whole decoded provider struct (minus the
+    // secret leaf) verbatim — every schema-materialized field, not just the
+    // two declared above.
+    expect(documentSide.auth?.external?.figma).toEqual({
+      enabled: true,
+      client_id: "figma-id",
+      url: "",
+      redirect_uri: "",
+      skip_nonce_check: false,
+      email_optional: false,
+    });
+  });
+
+  // CLI-2316 follow-up: `sms.otp_length`/`sms.otp_expiry` are new config-schema
+  // fields for pre-existing real GoTrue fields (`sms_otp_length`/`sms_otp_exp`)
+  // that the legacy shell's config-sync never modeled and neither did Go's own
+  // `sms` struct — not a Go-parity gap, a genuinely new mapping.
+  test("sms_otp_length/sms_otp_exp map to auth.sms.otp_length/otp_expiry", () => {
+    const apiSide = fromApiProjectConfig({ auth: { sms_otp_length: 6, sms_otp_exp: 60 } });
+    expect(apiSide.auth?.sms?.otp_length).toBe(6);
+    expect(apiSide.auth?.sms?.otp_expiry).toBe(60);
+
+    const documentSide = fromConfigDocument(
+      decodeCliConfig({ auth: { sms: { otp_length: 8, otp_expiry: 120 } } }),
+    );
+    expect(documentSide.auth?.sms?.otp_length).toBe(8);
+    expect(documentSide.auth?.sms?.otp_expiry).toBe(120);
+  });
+
+  // CLI-2316 follow-up: `sms.twilio.content_sid` is a new config-schema field
+  // for a pre-existing real GoTrue field (`sms_twilio_content_sid`),
+  // Twilio-only (no `sms_twilio_verify_content_sid` API counterpart) — same
+  // "omitted when the SMS provider is explicitly unset" gating as
+  // `account_sid`/`message_service_sid` (`smsCredentialStringRow`).
+  test("sms_twilio_content_sid maps to auth.sms.twilio.content_sid, gated the same as its siblings", () => {
+    const apiSide = fromApiProjectConfig({
+      auth: { sms_provider: "twilio", sms_twilio_content_sid: "HXreal00000000000000000000000000" },
+    });
+    expect(apiSide.auth?.sms?.twilio?.content_sid).toBe("HXreal00000000000000000000000000");
+
+    const explicitlyUnset = fromApiProjectConfig({
+      auth: { sms_provider: "", sms_twilio_content_sid: "HXreal00000000000000000000000000" },
+    });
+    expect(Object.hasOwn(explicitlyUnset.auth?.sms?.twilio ?? {}, "content_sid")).toBe(false);
+
+    const documentSide = fromConfigDocument(
+      decodeCliConfig({
+        auth: {
+          sms: {
+            twilio: {
+              enabled: true,
+              account_sid: "AC1",
+              message_service_sid: "MG1",
+              content_sid: "HX1",
+              auth_token: "at1",
+            },
+          },
+        },
+      }),
+    );
+    expect(documentSide.auth?.sms?.twilio?.content_sid).toBe("HX1");
+  });
 });
 
 describe("fromApiProjectConfig — secrets (ADR 0019 rule 5)", () => {
@@ -1389,11 +1743,25 @@ describe("review round: numeric and provider narrowing (CLI-2230)", () => {
 
 describe("review round: aliasing, unknown-empty sections, path encoding (CLI-2230)", () => {
   test("object elements inside hosted arrays are copied, not aliased", () => {
-    const rule = { name: "r1" };
-    const projected = fromConfigDocument({ experimental: { inspect: { rules: [rule] } } });
-    const copied = projected.experimental?.inspect?.rules?.[0];
-    expect(copied).toEqual(rule);
-    expect(copied).not.toBe(rule);
+    // `experimental.inspect.rules` was the only schema field shaped as an
+    // array of objects (this file's own `copyHostedValueWithoutSecrets`
+    // docstring used it as its example) — CLI-2316 excludes the whole
+    // `experimental.inspect` subtree as CLI-only, so it can no longer probe
+    // this. But `fromConfigDocument` runs no schema validation on its input
+    // (see that same docstring), so the object-in-array copy path is still
+    // reachable through any surviving array field — `api.schemas` (real
+    // schema type `string[]`) is used here as a structurally-typed carrier: a
+    // `Record<string, unknown>` operand is assignable to the exported
+    // `EffectiveConfig` parameter (every `EffectiveConfig` property is
+    // optional, so nothing named on it needs to reconcile against the
+    // index-signature type), with no cast, while still reaching this
+    // function's fully untyped runtime behavior.
+    const element = { nested: "value" };
+    const probe: Record<string, unknown> = { api: { schemas: [element] } };
+    const projected = fromConfigDocument(probe);
+    const copied = projected.api?.schemas?.[0];
+    expect(copied).toEqual(element);
+    expect(copied).not.toBe(element);
   });
 
   test("an unknown empty section survives into unmappedApiFields", () => {
@@ -2174,21 +2542,20 @@ describe("review round: Go-range sessions, SMTP/provider/storage disabled sentin
     expect(unmappedApiFields(sparse)).toEqual({});
   });
 
-  // Thread 3 (human review round on PR #6339): storageToUpdateBody only
-  // emits Iceberg/Vector inside a truthy `if (local.analytics.enabled)`
-  // branch (storage.sync.ts:287-300) — a disabled container is push-
-  // unmanaged, not confirmed-off, so the DOCUMENT arm omits it entirely
-  // rather than projecting `{enabled: false}`. The API arm is unaffected:
-  // its own `{enabled: false}` reflects real hosted state GoTrue reports.
-  test("a disabled storage.analytics/vector container is omitted entirely on the document arm, but the API arm still projects its toggle", () => {
+  // `enabled=false` means no Iceberg/Vector catalog is provisioned, so the
+  // quota fields are retained-but-inert ceilings on a non-existent resource
+  // — DISABLED_SENTINEL_PRUNES drops them on BOTH arms, leaving
+  // `{enabled: false}` either way (CLI-2314: the document arm no longer
+  // omits the container entirely — see this file's own docstring).
+  test("a disabled storage.analytics/vector container projects only its toggle on both arms", () => {
     const projected = fromConfigDocument({
       storage: {
         analytics: { enabled: false, max_tables: 10 },
         vector: { enabled: false, max_buckets: 5 },
       },
     });
-    expect(Object.hasOwn(projected.storage ?? {}, "analytics")).toBe(false);
-    expect(Object.hasOwn(projected.storage ?? {}, "vector")).toBe(false);
+    expect(projected.storage?.analytics).toEqual({ enabled: false });
+    expect(projected.storage?.vector).toEqual({ enabled: false });
 
     const enabledDoc = fromConfigDocument({
       storage: { analytics: { enabled: true, max_tables: 10, max_namespaces: 1, max_catalogs: 1 } },
@@ -2204,6 +2571,9 @@ describe("review round: Go-range sessions, SMTP/provider/storage disabled sentin
       storage: { features: { iceberg_catalog: { enabled: false, max_tables: 10 } } },
     });
     expect(api.storage?.analytics).toEqual({ enabled: false });
+    // Cross-arm equality: both arms converge on the same reduced shape for
+    // the same disabled state.
+    expect(api.storage?.analytics).toEqual(projected.storage?.analytics);
   });
 
   test("disabled external providers project only their toggle", () => {
@@ -2737,13 +3107,17 @@ describe("review round: exactness parsing, cross-arm disabled sentinels (CLI-223
     expect(Object.hasOwn(ok, "auth")).toBe(false);
   });
 
-  test("documents with auth or storage disabled project only the toggle", () => {
+  test("documents with auth or storage disabled still project their other declared fields (CLI-2314)", () => {
+    // `auth.enabled`/`storage.enabled` are local Docker toggles with no
+    // hosted counterpart — `DISABLED_SENTINEL_PRUNES` no longer treats them
+    // as a "drop every other declared field" gate, so a document that
+    // declares `enabled = false` alongside a real hosted field keeps it.
     const projected = fromConfigDocument({
       auth: { enabled: false, site_url: "http://localhost:3000" },
       storage: { enabled: false, file_size_limit: "50MiB" },
     });
-    expect(projected.auth).toEqual({ enabled: false });
-    expect(projected.storage).toEqual({ enabled: false });
+    expect(projected.auth).toEqual({ enabled: false, site_url: "http://localhost:3000" });
+    expect(projected.storage).toEqual({ enabled: false, file_size_limit: "50MiB" });
   });
 
   test("the email rate limit is pruned only on an EXPLICIT smtp.enabled === false, never on absence", () => {
@@ -2784,21 +3158,194 @@ describe("review round: oauth_server disabled sentinel (CLI-2230)", () => {
     expect(api.auth?.oauth_server).toEqual({ enabled: false });
   });
 
-  // Thread 3 (human review round on PR #6339): authToUpdateBody has NO
-  // oauth_server handling at all, so the whole subtree is unconditionally
-  // unmanaged by push — the document arm omits it entirely, regardless of
-  // `enabled`, superseding the round-17 disabled-sentinel treatment that
-  // used to keep `{enabled: false}` here.
-  test("auth.oauth_server is omitted entirely on the document arm, enabled or not", () => {
+  // `oauth_server_enabled=false` means the platform serves no OAuth
+  // consent-UI/dynamic-registration behavior, but genuinely retains
+  // `allow_dynamic_registration`/`authorization_url_path` as
+  // stored-but-inert state — DISABLED_SENTINEL_PRUNES drops them on BOTH
+  // arms, leaving `{enabled: false}` either way (CLI-2314: the document arm
+  // no longer omits the container entirely — see this file's own
+  // docstring). An enabled container survives with every field intact on
+  // the document arm.
+  test("a disabled auth.oauth_server container projects only its toggle on both arms", () => {
     const disabled = fromConfigDocument({
       auth: { oauth_server: { enabled: false, authorization_url_path: "/stale" } },
     });
-    expect(Object.hasOwn(disabled.auth ?? {}, "oauth_server")).toBe(false);
+    expect(disabled.auth?.oauth_server).toEqual({ enabled: false });
+
     const enabledDoc = fromConfigDocument({
       auth: { oauth_server: { enabled: true, allow_dynamic_registration: true } },
     });
-    expect(Object.hasOwn(enabledDoc.auth ?? {}, "oauth_server")).toBe(false);
+    expect(enabledDoc.auth?.oauth_server).toEqual({
+      enabled: true,
+      allow_dynamic_registration: true,
+    });
+
+    // Cross-arm equality: both arms converge on the same reduced shape for
+    // the same disabled state.
+    const api = fromApiProjectConfig({
+      auth: { oauth_server_enabled: false, oauth_server_authorization_path: "/stale" },
+    });
+    expect(disabled.auth?.oauth_server).toEqual(api.auth?.oauth_server);
   });
+});
+
+describe("DISABLED_SENTINEL_PRUNES — cross-arm symmetry re-derived from the data model (CLI-2314)", () => {
+  /**
+   * One disabled-state fixture pair per {@link DISABLED_SENTINEL_PRUNES}
+   * entry: a document declaring the container disabled with every dropKey
+   * populated with a stale, non-default value, and the equivalent API
+   * attributes representing that same hosted state with the same sibling
+   * values. Machine-checks the claim behind each entry's own docstring — that
+   * the rule is re-derived from something the platform's data model already
+   * enforces (or retains) on both arms, not push-shaped reasoning the API arm
+   * doesn't independently share. A future entry added on push-only reasoning
+   * would need its own fixture here and would fail the loop below the moment
+   * the two arms disagree.
+   */
+  const fixturesByContainerPath: Record<
+    string,
+    { document: Record<string, unknown>; apiAttributes: Record<string, unknown> }
+  > = {
+    api: {
+      document: {
+        api: {
+          enabled: false,
+          schemas: ["public"],
+          extra_search_path: ["extensions"],
+          max_rows: 500,
+        },
+      },
+      apiAttributes: { api: { db_schema: "", db_extra_search_path: "extensions", max_rows: 500 } },
+    },
+    "auth.email.smtp": {
+      document: {
+        auth: {
+          email: {
+            smtp: {
+              enabled: false,
+              host: "smtp.example.com",
+              port: 587,
+              user: "postmaster",
+              pass: "stale-secret",
+              admin_email: "admin@example.com",
+              sender_name: "Support",
+            },
+          },
+        },
+      },
+      apiAttributes: {
+        auth: {
+          smtp_host: "",
+          smtp_port: "587",
+          smtp_user: "postmaster",
+          smtp_pass: "stale-secret",
+          smtp_admin_email: "admin@example.com",
+          smtp_sender_name: "Support",
+        },
+      },
+    },
+    "auth.captcha": {
+      document: {
+        auth: { captcha: { enabled: false, provider: "turnstile", secret: "stale-secret" } },
+      },
+      apiAttributes: {
+        auth: {
+          security_captcha_enabled: false,
+          security_captcha_provider: "turnstile",
+          security_captcha_secret: "stale-secret",
+        },
+      },
+    },
+    "auth.oauth_server": {
+      document: {
+        auth: {
+          oauth_server: {
+            enabled: false,
+            allow_dynamic_registration: true,
+            authorization_url_path: "/stale",
+          },
+        },
+      },
+      apiAttributes: {
+        auth: {
+          oauth_server_enabled: false,
+          oauth_server_allow_dynamic_registration: true,
+          oauth_server_authorization_path: "/stale",
+        },
+      },
+    },
+    "storage.analytics": {
+      document: {
+        storage: {
+          analytics: { enabled: false, max_namespaces: 5, max_tables: 10, max_catalogs: 2 },
+        },
+      },
+      apiAttributes: {
+        storage: {
+          features: {
+            iceberg_catalog: { enabled: false, max_namespaces: 5, max_tables: 10, max_catalogs: 2 },
+          },
+        },
+      },
+    },
+    "storage.vector": {
+      document: {
+        storage: { vector: { enabled: false, max_buckets: 5, max_indexes: 3 } },
+      },
+      apiAttributes: {
+        storage: {
+          features: { vector_buckets: { enabled: false, max_buckets: 5, max_indexes: 3 } },
+        },
+      },
+    },
+  };
+
+  function readContainer(root: unknown, path: ReadonlyArray<string>): unknown {
+    return path.reduce<unknown>(
+      (value, key) =>
+        typeof value === "object" && value !== null
+          ? (value as Record<string, unknown>)[key]
+          : undefined,
+      root,
+    );
+  }
+
+  for (const rule of DISABLED_SENTINEL_PRUNES) {
+    const key = rule.containerPath.join(".");
+
+    // Skipped, not weakened: `db.network_restrictions.enabled` has no v2 API
+    // contract field at all (registry.ts:332-337) — it's a document-only
+    // management toggle. `applyDisabledSentinels` can therefore never fire on
+    // the API arm for this container (its mapped shape never carries an
+    // `enabled` key to compare against `false`), so there is no "equivalent
+    // API response representing the same disabled state" this generic scheme
+    // could build. The asymmetry itself is the documented, correct behavior
+    // for this entry (see its own comment above `DISABLED_SENTINEL_PRUNES`),
+    // not a gap this test should paper over.
+    if (key === "db.network_restrictions") {
+      continue;
+    }
+
+    test(`"${key}" reduces to the same disabled shape via fromConfigDocument and fromApiProjectConfig`, () => {
+      const fixture = fixturesByContainerPath[key];
+      if (!fixture) {
+        throw new Error(
+          `no cross-arm fixture registered for DISABLED_SENTINEL_PRUNES entry "${key}" — add one to fixturesByContainerPath`,
+        );
+      }
+      const documentContainer = readContainer(
+        fromConfigDocument(fixture.document),
+        rule.containerPath,
+      );
+      const apiContainer = readContainer(
+        fromApiProjectConfig(fixture.apiAttributes),
+        rule.containerPath,
+      );
+      expect(documentContainer).toEqual({ enabled: false });
+      expect(apiContainer).toEqual({ enabled: false });
+      expect(documentContainer).toEqual(apiContainer);
+    });
+  }
 });
 
 describe("review round: clone-snapshot validation, provenance, digit exactness (CLI-2230)", () => {

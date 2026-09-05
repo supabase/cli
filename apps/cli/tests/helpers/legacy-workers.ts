@@ -17,10 +17,10 @@ import { randomLayer } from "../../src/shared/runtime/random.layer.ts";
 import { LegacyProjectNotLinkedError } from "../../src/legacy/config/legacy-project-ref.errors.ts";
 import { mockLegacyLinkedProjectCacheLayer } from "./legacy-mocks.ts";
 import { LegacyTelemetryState } from "../../src/legacy/telemetry/legacy-telemetry-state.service.ts";
-import { mockOutput, mockRuntimeInfo, mockTty } from "./mocks.ts";
+import { mockOutput, mockProcessControl, mockRuntimeInfo, mockTty } from "./mocks.ts";
 
 /**
- * Shared scaffolding for the `supabase workers` command integration tests.
+ * Shared scaffolding for the `supabase experimental workers` command integration tests.
  *
  * Every worker command reads a real `supabase/config.toml` and a real worker
  * directory, so these tests run against a per-test temp project rather than a
@@ -33,6 +33,14 @@ export const WORKERS_PROJECT_REF = "abcdefghijklmnopqrst";
 export interface RecordedRequest {
   readonly method: string;
   readonly url: string;
+  /**
+   * Query parameters, which `url` does not carry.
+   *
+   * `HttpClientRequest` keeps `urlParams` beside the URL rather than appended to
+   * it, so a test asserting what a GET actually asked for has to read this. The
+   * analytics logs endpoint puts the whole SQL query here.
+   */
+  readonly urlParams: Readonly<Record<string, string>>;
   /** The request body decoded as UTF-8 — meaningful for the JSON requests. */
   readonly body: string;
   /** Byte length of the body, which is what matters for the binary upload. */
@@ -107,6 +115,8 @@ export function mockWorkersHttp(routes: WorkersHttpRoutes) {
       requests.push({
         method: request.method,
         url: request.url,
+        // UrlParams is iterable over [key, value] pairs, not an array.
+        urlParams: Object.fromEntries(request.urlParams),
         body: new TextDecoder().decode(bytes),
         byteLength: bytes.length,
       });
@@ -200,6 +210,94 @@ export function workerResource(options: {
 
 export const workersRoute = (suffix = "") => `/v2/projects/${WORKERS_PROJECT_REF}/workers${suffix}`;
 
+/**
+ * The unified logs endpoint `workers logs` queries. Not under `/v2/.../workers` —
+ * there is no worker-scoped log route.
+ */
+export const workerLogsRoute = () => `/v1/projects/${WORKERS_PROJECT_REF}/analytics/endpoints/logs`;
+
+/**
+ * One row as the logs endpoint returns it, matching the projection in
+ * `workerLogsQuery`.
+ *
+ * Shaped from rows captured off a real project (see
+ * `scratch/FINDINGS-worker-logs.md`), which is why `log_attributes` values are
+ * all strings: the column is a `Map(String, String)`, so `status` really does
+ * arrive as `"200"`.
+ */
+export function workerLogRow(options: {
+  readonly id?: string;
+  readonly tsMs?: number;
+  readonly stream?: string;
+  readonly message?: string;
+  readonly worker?: string;
+  readonly attributes?: Readonly<Record<string, string>>;
+}) {
+  const stream = options.stream ?? "worker_guest_logs";
+  return {
+    id: options.id ?? "row-1",
+    ts_ms: options.tsMs ?? 1_788_187_532_576,
+    stream,
+    event_message: options.message ?? "workers shim: listening on :8080 (serving)",
+    log_attributes: {
+      source: stream,
+      worker: options.worker ?? "api",
+      project: WORKERS_PROJECT_REF,
+      ...options.attributes,
+    },
+  };
+}
+
+/** An HTTP access log row, whose fields live in `log_attributes`, not the message. */
+export function workerIngressLogRow(options: {
+  readonly id?: string;
+  readonly tsMs?: number;
+  readonly worker?: string;
+  readonly status?: string;
+  readonly method?: string;
+  readonly path?: string;
+  readonly durationMs?: string;
+}) {
+  const method = options.method ?? "GET";
+  const path = options.path ?? "/";
+  return workerLogRow({
+    ...(options.id === undefined ? {} : { id: options.id }),
+    ...(options.tsMs === undefined ? {} : { tsMs: options.tsMs }),
+    ...(options.worker === undefined ? {} : { worker: options.worker }),
+    stream: "worker_ingress_logs",
+    // Only method and path — status and duration are deliberately absent, as
+    // they are on the wire.
+    message: `${method} ${path}`,
+    attributes: {
+      method,
+      path,
+      status: options.status ?? "200",
+      duration_ms: options.durationMs ?? "23",
+      instance_id: "microvm-3f4b0c03-9310-3f72-940d-f56deeef795e",
+    },
+  });
+}
+
+/** A build/deploy lifecycle row. */
+export function workerApiLogRow(options: {
+  readonly id?: string;
+  readonly tsMs?: number;
+  readonly worker?: string;
+  readonly event?: string;
+  readonly reason?: string;
+}) {
+  const worker = options.worker ?? "api";
+  const event = options.event ?? "deploy_accepted";
+  return workerLogRow({
+    ...(options.id === undefined ? {} : { id: options.id }),
+    ...(options.tsMs === undefined ? {} : { tsMs: options.tsMs }),
+    worker,
+    stream: "worker_api_logs",
+    message: `${event} ${WORKERS_PROJECT_REF}/${worker}`,
+    attributes: { event, ...(options.reason === undefined ? {} : { reason: options.reason }) },
+  });
+}
+
 /** A per-test temp project, optionally pre-seeded with files. */
 export function makeWorkersProject(files: Readonly<Record<string, string>> = {}): {
   readonly dir: string;
@@ -257,7 +355,7 @@ export interface WorkersSetupOptions {
   /**
    * Whether stdin is a terminal. Defaults to `interactive`, so a text-mode test
    * can prompt; set it false to model a piped stdin with a TTY stdout, which is
-   * what `printf 'api\n' | supabase workers delete api` looks like.
+   * what `printf 'api\n' | supabase experimental workers delete api` looks like.
    */
   readonly stdinIsTty?: boolean;
   readonly linked?: boolean;
@@ -274,6 +372,12 @@ export interface WorkersSetupOptions {
   readonly yes?: boolean;
   /** Raw argv, which `legacyResolveYes` scans for an explicit `--yes=false`. */
   readonly cliArgs?: ReadonlyArray<string>;
+  /**
+   * The signal `awaitSignal` resolves with. `logs --follow` races its poll loop
+   * against this, so a test that wants the tail to end supplies one; the default
+   * never fires, modelling a terminal nobody has interrupted.
+   */
+  readonly signal?: "SIGINT" | "SIGTERM" | "SIGHUP";
 }
 
 /**
@@ -314,11 +418,15 @@ export function setupLegacyWorkers(options: WorkersSetupOptions) {
   });
   const http = mockWorkersHttp(options.routes ?? {});
   const telemetry = mockWorkersTelemetryState();
+  const processControl = mockProcessControl(
+    options.signal === undefined ? {} : { signal: options.signal },
+  );
 
   return {
     out,
     http,
     telemetry,
+    processControl,
     layer: Layer.mergeAll(
       out.layer,
       http.layer,
@@ -335,6 +443,7 @@ export function setupLegacyWorkers(options: WorkersSetupOptions) {
       ),
       Layer.succeed(LegacyYesFlag, options.yes ?? false),
       Layer.succeed(CliArgs, { args: options.cliArgs ?? [] }),
+      processControl.layer,
       BunServices.layer,
     ),
   };

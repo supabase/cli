@@ -8,6 +8,7 @@ import { legacyConfigCommand } from "../commands/config/config.command.ts";
 import { legacyDbCommand } from "../commands/db/db.command.ts";
 import { legacyDomainsCommand } from "../commands/domains/domains.command.ts";
 import { legacyEncryptionCommand } from "../commands/encryption/encryption.command.ts";
+import { legacyExperimentalCommand } from "../commands/experimental/experimental.command.ts";
 import { legacyFeedbackCommand } from "../commands/feedback/feedback.command.ts";
 import { legacyFunctionsCommand } from "../commands/functions/functions.command.ts";
 import { legacyGenCommand } from "../commands/gen/gen.command.ts";
@@ -36,7 +37,6 @@ import { legacyStorageCommand } from "../commands/storage/storage.command.ts";
 import { legacyTestCommand } from "../commands/test/test.command.ts";
 import { legacyTelemetryCommand } from "../commands/telemetry/telemetry.command.ts";
 import { legacyUnlinkCommand } from "../commands/unlink/unlink.command.ts";
-import { legacyWorkersCommand } from "../commands/workers/workers.command.ts";
 import { legacyVanitySubdomainsCommand } from "../commands/vanity-subdomains/vanity-subdomains.command.ts";
 import { OutputFormatFlag } from "../../shared/cli/global-flags.ts";
 import { outputLayerFor } from "../../shared/output/output.layer.ts";
@@ -71,9 +71,9 @@ export const legacyRoot = Command.make("supabase").pipe(
     legacyDbCommand,
     legacyDomainsCommand,
     legacyEncryptionCommand,
+    legacyExperimentalCommand,
     legacyFeedbackCommand,
     legacyFunctionsCommand,
-    legacyWorkersCommand,
     legacyGenCommand,
     legacyInitCommand,
     legacyInspectCommand,

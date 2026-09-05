@@ -1,7 +1,5 @@
 import {
-  markSupabaseApiInputErrorAsUserInput,
   operationDefinitions,
-  SupabaseApiInputError,
   V2CreateWorkerUploadOutput,
   V2DeployAWorkerOutput,
   V2GetAWorkerOutput,
@@ -10,13 +8,11 @@ import {
 } from "@supabase/api/effect";
 import { Effect, Option, Schedule, Schema } from "effect";
 import * as HttpClient from "effect/unstable/http/HttpClient";
-import * as HttpClientError from "effect/unstable/http/HttpClientError";
 import * as HttpClientRequest from "effect/unstable/http/HttpClientRequest";
+import { decodeBody, mapRequestError, unexpectedStatus } from "./workers-api-status.ts";
 import {
   WorkerBuildTimeoutError,
-  WorkersApiNetworkError,
   WorkerProjectNotFoundError,
-  WorkersApiUnexpectedStatusError,
   WorkersUnavailableError,
   WorkerUploadFailedError,
 } from "./workers.errors.ts";
@@ -135,68 +131,6 @@ const projectScoped404 = Effect.fnUntraced(function* (options: {
     suggestion: workersSuggestion,
   });
 });
-
-/**
- * Everything that can go wrong before a status code exists: the generated input
- * schema rejecting the request, or the transport failing outright.
- */
-function mapRequestError(operation: string) {
-  return (error: unknown) => {
-    if (error instanceof SupabaseApiInputError) {
-      // The only inputs these operations take are the resolved project ref and
-      // the prevalidated worker name, so a schema rejection is user-derived.
-      return markSupabaseApiInputErrorAsUserInput(error);
-    }
-    if (HttpClientError.isHttpClientError(error)) {
-      // `message` is the library's own rendering of the reason — its label, the
-      // description when there is one, and the method and URL that failed.
-      // These requests all go to the Management API, so that URL is safe to
-      // show and is the most useful thing in the sentence.
-      return new WorkersApiNetworkError({
-        detail: `Could not reach the Workers API while trying to ${operation}: ${error.message}.`,
-        suggestion: "Check your network connection and retry.",
-      });
-    }
-    return new WorkersApiNetworkError({
-      detail: `Could not reach the Workers API while trying to ${operation}: ${String(error)}.`,
-      suggestion: "Check your network connection and retry.",
-    });
-  };
-}
-
-const unexpectedStatus = Effect.fnUntraced(function* (options: {
-  readonly operation: string;
-  readonly status: number;
-  readonly body: string;
-}) {
-  const trimmed = options.body.trim();
-  return yield* Effect.fail(
-    new WorkersApiUnexpectedStatusError({
-      status: options.status,
-      detail: `The Workers API answered ${options.status} while trying to ${options.operation}${
-        trimmed === "" ? "" : `: ${trimmed}`
-      }.`,
-      suggestion: "Retry shortly; if it persists, report it with `supabase issue`.",
-    }),
-  );
-});
-
-const decodeBody = <A, I>(
-  schema: Schema.Codec<A, I>,
-  operation: string,
-  body: unknown,
-  status: number,
-) =>
-  Schema.decodeUnknownEffect(schema)(body).pipe(
-    Effect.mapError(
-      (error) =>
-        new WorkersApiUnexpectedStatusError({
-          status,
-          detail: `The Workers API returned a response this CLI could not read while trying to ${operation}: ${error.message}.`,
-          suggestion: "Update the CLI with `supabase update`, then retry.",
-        }),
-    ),
-  );
 
 export const listWorkers = Effect.fnUntraced(function* (api: ApiClient, projectRef: string) {
   const operation = "list workers";
@@ -453,6 +387,13 @@ export const awaitWorkerBuild = Effect.fnUntraced(function* (
     readonly retrySchedule?: Schedule.Schedule<unknown>;
     /** Called with each poll's result, for progress reporting. */
     readonly onPoll?: (worker: WorkerRecord) => Effect.Effect<void>;
+    /**
+     * ` --project-ref <ref>` to append to the suggestion below, when the caller
+     * reached this project through the flag rather than the link. The suggestion
+     * is copy-pasted verbatim, so dropping it re-resolves against whatever this
+     * checkout happens to be linked to.
+     */
+    readonly refSuffix?: string;
   } = {},
 ) {
   const poll = Effect.gen(function* () {
@@ -483,7 +424,7 @@ export const awaitWorkerBuild = Effect.fnUntraced(function* (
     return yield* Effect.fail(
       new WorkerBuildTimeoutError({
         detail: `"${name}" was still building when this command stopped waiting.`,
-        suggestion: `Check on it with \`supabase workers status ${name}\`.`,
+        suggestion: `Check on it with \`supabase experimental workers status ${name}${options.refSuffix ?? ""}\`.`,
       }),
     );
   }

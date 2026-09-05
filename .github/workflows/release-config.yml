@@ -1,0 +1,515 @@
+name: Release Config
+
+on:
+  push:
+    branches:
+      - develop
+    paths:
+      - "packages/config/**"
+      - ".github/workflows/release-config.yml"
+  # workflow_dispatch is the manual re-cut path, mirroring the CLI's Release
+  # workflow. Defaults to `true` so a stray "Run workflow" click can't
+  # accidentally publish — operators must consciously untick this.
+  #
+  # There is deliberately no `version` input: the publish job's registry probe
+  # skips versions that already exist on npm (after verifying the registry
+  # bytes match the reviewed artifact), so recovery from stale published
+  # bytes is "land a new (releasable) commit" — with no binary artifacts and a
+  # human approval in the loop, the CLI's cut-forward escape hatch isn't worth
+  # a second code path here.
+  workflow_dispatch:
+    inputs:
+      dry_run:
+        description: Dry run (skip actual publishing)
+        required: false
+        type: boolean
+        default: true
+
+# A distinct group from the CLI Release workflow's (keyed on the workflow
+# name, which differs) — a config release never queues behind a CLI release.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  plan:
+    name: Plan release
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    outputs:
+      should_release: ${{ steps.plan.outputs.should_release }}
+      version: ${{ steps.plan.outputs.version }}
+      npm_tag: ${{ steps.plan.outputs.npm_tag }}
+      dry_run: ${{ steps.plan.outputs.dry_run }}
+    steps:
+      # semantic-release runs `git push --dry-run HEAD:<branch>` as part of
+      # verifyAuth even in `dry_run: true` mode, so the token must have push
+      # access to the protected `develop` branch. The default GITHUB_TOKEN
+      # doesn't, so we mint an App-installation token from the same App used
+      # by the CLI's release pipeline.
+      - id: app-token
+        uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3.2.0
+        with:
+          client-id: ${{ vars.GH_APP_CLIENT_ID }}
+          private-key: ${{ secrets.GH_APP_PRIVATE_KEY }}
+          permission-contents: write
+
+      # `persist-credentials: false` is required: otherwise checkout caches the
+      # default GITHUB_TOKEN as an `http.extraheader` in git config, and that
+      # Authorization header overrides the App token semantic-release puts in
+      # the push URL — making the dry-push identify as `github-actions[bot]`
+      # and get rejected by branch protection.
+      - uses: useblacksmith/checkout@6fd481652155169ed4d2f25ebaf97464f685175f # v1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      # Unlike the CLI's plan job, the plan driver here runs from inside the
+      # workspace (turbo, semantic-release, effect, …), so it needs node_modules.
+      - name: Setup
+        uses: ./.github/actions/setup
+        with:
+          dependency-firewall-token: ${{ secrets.DF_FIREWALL_TOKEN }}
+
+      - id: plan
+        env:
+          GITHUB_TOKEN: ${{ steps.app-token.outputs.token }}
+          EVENT: ${{ github.event_name }}
+          DISPATCH_DRY_RUN: ${{ inputs.dry_run }}
+        run: |
+          set -euo pipefail
+          # Push events are never dry; workflow_dispatch dry-runs unless the
+          # operator explicitly unticks the input.
+          if [[ "$EVENT" == "workflow_dispatch" && "$DISPATCH_DRY_RUN" == "true" ]]; then
+            echo "dry_run=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "dry_run=false" >> "$GITHUB_OUTPUT"
+          fi
+          # semantic-release echoes commit-derived text (messages, notes) to
+          # this step's log; a commit message line starting with `::` would
+          # otherwise be interpreted as a workflow command (e.g. `::add-mask::`
+          # could redact words from the gate output the approver reads later).
+          # Bracket the driver with a stop-commands token so none of that
+          # output can issue commands. ($GITHUB_OUTPUT is a file, unaffected.)
+          # The resume token is emitted from an EXIT trap so a planner failure
+          # under `set -e` can't leave command processing disabled.
+          resume_token="$(openssl rand -hex 16)"
+          echo "::stop-commands::${resume_token}"
+          trap 'echo "::${resume_token}::"' EXIT
+          pnpm exec bun packages/config/scripts/release-plan.ts --notes-out "$RUNNER_TEMP/config-release-notes.md"
+
+      # The build, gate, and pack steps also run on private-blocked pushes
+      # (should_release=false, version set): if `private` were ever flipped
+      # back on, every config push would still rehearse the plan half of the
+      # release train while the publish half stays parked.
+      - name: Build @supabase/config
+        if: steps.plan.outputs.version != ''
+        run: pnpm exec turbo run @supabase/config#build
+
+      # Pack the exact tarball the approver's evidence (the gate summary
+      # below) describes. The publish job publishes THIS artifact rather than
+      # rebuilding: builds are not byte-reproducible across jobs (see
+      # release-shared.yml's brew/scoop cache-key comments for how that bit
+      # once before), and a rebuild would mean the approved bytes and the
+      # published bytes can differ.
+      - name: Pack the release tarball
+        if: steps.plan.outputs.version != ''
+        env:
+          VERSION: ${{ steps.plan.outputs.version }}
+        run: |
+          set -euo pipefail
+          mkdir -p "$RUNNER_TEMP/config-release-artifact"
+          cd packages/config
+          npm pkg set version="${VERSION}"
+          pnpm pack --pack-destination "$RUNNER_TEMP/config-release-artifact"
+          cp "$RUNNER_TEMP/config-release-notes.md" "$RUNNER_TEMP/config-release-artifact/"
+
+      # The gate diffs the declarations INSIDE the packed tarball (not the
+      # dist/ build directory it was packed from), so the approver's evidence
+      # is generated from the same bytes the publish job ships — a packlist
+      # regression that drops .d.ts files from the tarball fails here instead
+      # of shipping a surface the approver never saw.
+      - name: Run type-surface release gate against the packed tarball
+        if: steps.plan.outputs.version != ''
+        env:
+          VERSION: ${{ steps.plan.outputs.version }}
+        run: |
+          set -euo pipefail
+          mkdir -p "$RUNNER_TEMP/config-release-gate-local"
+          tar -xzf "$RUNNER_TEMP/config-release-artifact/supabase-config-${VERSION}.tgz" \
+            -C "$RUNNER_TEMP/config-release-gate-local" --no-same-owner --no-same-permissions
+          pnpm exec bun tools/config-release-gate.ts --version "$VERSION" \
+            --local-dist "$RUNNER_TEMP/config-release-gate-local/package/dist"
+
+      - name: Upload release artifact
+        if: steps.plan.outputs.version != ''
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: config-release
+          path: ${{ runner.temp }}/config-release-artifact/
+          if-no-files-found: error
+          retention-days: 7
+
+      # The `config-release` environment's required-reviewers rule is repo
+      # configuration, not code: an environment referenced by a workflow is
+      # auto-created WITHOUT protection rules, in which case the publish job
+      # would run straight through unreviewed. Fail closed here — before a
+      # real (non-dry) release can reach the publish job — if the rule is
+      # missing or unreadable. Private-blocked rehearsals (should_release
+      # false) are unaffected — this only gates real releases.
+      - name: Assert the release approval gate is armed
+        if: steps.plan.outputs.should_release == 'true' && steps.plan.outputs.dry_run != 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          # "Get an environment" is readable by anyone with read access to
+          # the repository, so the default token's always-on metadata scope
+          # suffices. Distinguish "couldn't read the environment" from "read
+          # it fine, rule missing": only a 404 (environment never created)
+          # folds into the unarmed case — any other failure is its own error,
+          # not a misleading "configure required reviewers" message.
+          if response="$(gh api "repos/${GITHUB_REPOSITORY}/environments/config-release" 2>&1)"; then
+            rules="$(jq -r '[.protection_rules[]?.type] | join(",")' <<<"$response")"
+          elif [[ "$response" == *"HTTP 404"* ]]; then
+            rules=""
+          else
+            echo "Failed to read the config-release environment (this is an API/token failure, not a missing rule):" >&2
+            echo "$response" >&2
+            exit 1
+          fi
+          case "$rules" in
+            *required_reviewers*) echo "config-release gate armed: ${rules}" ;;
+            *)
+              echo "The config-release environment has no required_reviewers rule (found: '${rules:-none}')." >&2
+              echo "Configure required reviewers in repo settings before releasing — see packages/config/AGENTS.md." >&2
+              exit 1
+              ;;
+          esac
+
+  publish:
+    name: Publish
+    needs: plan
+    if: needs.plan.outputs.should_release == 'true' && needs.plan.outputs.dry_run != 'true'
+    # npm provenance verification rejects non-GitHub-hosted runners with
+    # E422 ("Unsupported GitHub Actions runner environment: self-hosted").
+    # Blacksmith runners count as self-hosted from sigstore's POV, so the
+    # publish job must stay on a github-hosted runner. The job is short and
+    # not compute-bound, so the wall-clock cost is negligible.
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    environment:
+      name: config-release
+      # This environment must be configured with required reviewers in repo
+      # settings (asserted by the plan job above). The approver reviews the
+      # plan job's step summary (release notes + type-surface gate diff)
+      # before approving — that approval IS the hard semver gate, and the
+      # tarball published below is byte-identical to the one that evidence
+      # was generated from.
+      url: https://www.npmjs.com/package/@supabase/config/v/${{ needs.plan.outputs.version }}
+    # OIDC trusted publishing + provenance — same as release-shared.yml; no
+    # NPM_TOKEN anywhere. This job deliberately runs NO dependency install and
+    # NO build: the only repo code it executes is this workflow file, keeping
+    # arbitrary package code away from the job that holds id-token: write.
+    permissions:
+      contents: write
+      id-token: write
+    env:
+      VERSION: ${{ needs.plan.outputs.version }}
+      NPM_TAG: ${{ needs.plan.outputs.npm_tag }}
+    steps:
+      - name: Generate release repository token
+        id: app-token
+        uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3.2.0
+        with:
+          client-id: ${{ vars.GH_APP_CLIENT_ID }}
+          private-key: ${{ secrets.GH_APP_PRIVATE_KEY }}
+          permission-contents: write
+
+      # Needed for the tag push and for mise.toml; the default depth-1 fetch
+      # of the triggering commit is enough for both.
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: true
+          token: ${{ steps.app-token.outputs.token }}
+
+      # npm only — no `pnpm install`, no workspace toolchain. npm ≥ 11.5.1 is
+      # required for OIDC trusted publishing, newer than the runner image's
+      # system npm, and node 24 bundles it.
+      - name: Install node
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 24
+
+      - name: Download the reviewed release artifact
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: config-release
+          path: ${{ runner.temp }}/config-release
+
+      - name: Verify and extract the tarball
+        working-directory: ${{ runner.temp }}/config-release
+        run: |
+          set -euo pipefail
+          tar -xzf "supabase-config-${VERSION}.tgz" --no-same-owner --no-same-permissions
+          # The root .gitignore's bare `dist` line once pruned dist/ from the
+          # packlist entirely (the reason packages/config/.npmignore exists) —
+          # never publish a tarball without its compiled entrypoint.
+          test -f package/dist/index.js
+          [[ "$(jq -r .name package/package.json)" == "@supabase/config" ]]
+          [[ "$(jq -r .version package/package.json)" == "${VERSION}" ]]
+          if [[ "$(jq -r .private package/package.json)" == "true" ]]; then
+            echo "packages/config is private: true — refusing to publish a private manifest (was it flipped back deliberately?)." >&2
+            exit 1
+          fi
+
+      # Idempotent, mirroring publish.ts's registry-probe intent: a re-run
+      # after a post-publish failure must not die on EPUBLISHCONFLICT — but
+      # the skip is only safe when the registry's bytes ARE the reviewed
+      # artifact, since the tag push below would otherwise bless foreign
+      # bytes (e.g. a previous run's tag push failed, new commits landed,
+      # and a fresh plan recomputed the same version from a newer tree).
+      - name: Publish to npm
+        working-directory: ${{ runner.temp }}/config-release
+        run: |
+          set -euo pipefail
+          tarball="supabase-config-${VERSION}.tgz"
+          if npm view "@supabase/config@${VERSION}" version >/dev/null 2>&1; then
+            registry_integrity="$(npm view "@supabase/config@${VERSION}" dist.integrity)"
+            reviewed_integrity="sha512-$(openssl dgst -sha512 -binary "${tarball}" | base64 -w0)"
+            if [[ "$registry_integrity" != "$reviewed_integrity" ]]; then
+              echo "@supabase/config@${VERSION} already exists on npm but does not match the reviewed tarball:" >&2
+              echo "  registry: ${registry_integrity}" >&2
+              echo "  reviewed: ${reviewed_integrity}" >&2
+              echo "Refusing to tag a commit for bytes this run never reviewed — cut forward by landing a new releasable commit." >&2
+              exit 1
+            fi
+            echo "@supabase/config@${VERSION} already on npm with matching integrity; skipping publish."
+          else
+            # Publish the reviewed tarball ITSELF — never a repack of the
+            # extracted tree (a repack rewrites bytes and re-applies packlist
+            # rules) — and with lifecycle scripts disabled: this job's stated
+            # boundary is that no package-controlled code executes while
+            # id-token: write is live.
+            npm publish "./${tarball}" --ignore-scripts --provenance --tag "${NPM_TAG}"
+          fi
+
+      # "Published successfully" for the notification jobs below means
+      # REGISTRY-VISIBLE with the reviewed bytes: probe npm until the version
+      # resolves (the registry can lag a publish by a few seconds) and its
+      # integrity matches the reviewed tarball. Runs before the tag push so a
+      # tag is never blessed for bytes this run couldn't confirm on the
+      # registry; the dist-tag assertion deliberately lives AFTER the tag push
+      # so a dist-tag propagation hiccup can't strand the release live on npm
+      # with origin untagged. A transient failure here is safe to re-run — the
+      # publish step's registry probe skips the republish and this check
+      # repeats — though a re-run of this job re-arms the config-release
+      # approval gate and costs a second human approval — hence the generous
+      # (~2 minute) visibility budget.
+      - name: Verify the release is live on npm
+        working-directory: ${{ runner.temp }}/config-release
+        run: |
+          set -euo pipefail
+          tarball="supabase-config-${VERSION}.tgz"
+          reviewed_integrity="sha512-$(openssl dgst -sha512 -binary "${tarball}" | base64 -w0)"
+          npm_err="$RUNNER_TEMP/npm-view-err.log"
+          registry_integrity=""
+          for delay in 0 2 3 5 8 13 21 30 30; do
+            sleep "$delay"
+            if registry_integrity="$(npm view --prefer-online "@supabase/config@${VERSION}" dist.integrity 2>"$npm_err")" \
+              && [[ -n "$registry_integrity" ]]; then
+              break
+            fi
+            registry_integrity=""
+          done
+          if [[ -z "$registry_integrity" ]]; then
+            echo "@supabase/config@${VERSION} is not visible on the registry after publishing." >&2
+            if [[ -s "$npm_err" ]]; then
+              echo "Last npm error output:" >&2
+              cat "$npm_err" >&2
+            fi
+            exit 1
+          fi
+          if [[ "$registry_integrity" != "$reviewed_integrity" ]]; then
+            echo "@supabase/config@${VERSION} on npm does not match the reviewed tarball:" >&2
+            echo "  registry: ${registry_integrity}" >&2
+            echo "  reviewed: ${reviewed_integrity}" >&2
+            exit 1
+          fi
+          echo "@supabase/config@${VERSION} live on npm with the reviewed bytes."
+
+      - name: Configure git for release pushes
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+
+      # Push the tag to origin as soon as npm has the bytes, before any
+      # downstream step that can fail. Without this, a failure in the GH
+      # release step leaves origin with no tag for the version that is now
+      # live on npm — and a subsequent plan would recompute the same version
+      # against stale bytes. Idempotent: skips push if the tag is already on
+      # origin (e.g. a re-run of a job that previously got past this step).
+      - name: Push version tag
+        run: |
+          set -euo pipefail
+          tag="config-v${VERSION}"
+          if git ls-remote --tags origin "refs/tags/${tag}" | grep -q .; then
+            echo "Tag ${tag} already on origin; skipping push."
+          else
+            git tag -a "${tag}" -m "Release ${tag}"
+            git push origin "${tag}"
+          fi
+
+      # Asserted after the tag push on purpose: npm already holds the reviewed
+      # bytes (verified above), so a dist-tag propagation hiccup must not
+      # strand the release npm-published but origin-untagged. Retries until
+      # the tag points at THIS version — a stale packument still echoing the
+      # previous version is a retryable state, not a terminal mismatch.
+      - name: Verify the npm dist-tag
+        run: |
+          set -euo pipefail
+          npm_err="$RUNNER_TEMP/npm-view-err.log"
+          tagged=""
+          for delay in 0 2 3 5 8 13; do
+            sleep "$delay"
+            tagged="$(npm view --prefer-online "@supabase/config" "dist-tags.${NPM_TAG}" 2>"$npm_err")" || tagged=""
+            if [[ "$tagged" == "$VERSION" ]]; then
+              break
+            fi
+          done
+          if [[ "$tagged" != "$VERSION" ]]; then
+            echo "dist-tag '${NPM_TAG}' points at ${tagged:-nothing}, expected ${VERSION}." >&2
+            echo "If a newer release has since moved the tag, this is a stale re-run rather than registry corruption." >&2
+            if [[ -s "$npm_err" ]]; then
+              echo "Last npm error output:" >&2
+              cat "$npm_err" >&2
+            fi
+            exit 1
+          fi
+          echo "dist-tag ${NPM_TAG} -> ${VERSION} confirmed."
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@3d0d9888cb7fd7b750713d6e236d1fcb99157228 # v3.0.2
+        with:
+          token: ${{ github.token }}
+          tag_name: config-v${{ needs.plan.outputs.version }}
+          name: "@supabase/config v${{ needs.plan.outputs.version }}"
+          body_path: ${{ runner.temp }}/config-release/config-release-notes.md
+          draft: false
+          prerelease: false
+          # The CLI's install scripts and setup-cli resolve
+          # releases/latest/download/..., so a config release must never
+          # become the repo's "latest" release.
+          make_latest: "false"
+
+  # Pages the release Slack channel the moment a real run arms the
+  # config-release approval gate. This job only needs `plan`, so it runs in
+  # parallel with the publish job's `waiting` state — the ping and the pending
+  # deployment appear together. The approval itself stays on GitHub: the run
+  # page hosts the Approve button and the plan job's evidence summary; the
+  # webhook is one-way and cannot host an interactive approval. Nothing
+  # depends on this job, so a Slack/webhook failure can't block the release.
+  notify-slack-approval:
+    name: Notify Slack (approval needed)
+    needs: plan
+    if: needs.plan.outputs.should_release == 'true' && needs.plan.outputs.dry_run != 'true'
+    uses: ./.github/workflows/slack-notify.yml
+    with:
+      package: "@supabase/config"
+      status: awaiting-approval
+      version: ${{ needs.plan.outputs.version }}
+      tag_prefix: config-v
+    secrets:
+      SLACK_RELEASE_WEBHOOK: ${{ secrets.SLACK_RELEASE_WEBHOOK }}
+
+  # Posts once the publish job has verified the release is registry-visible
+  # with the reviewed bytes. No `if:` needed: the implicit success() gate
+  # means this only runs when plan and publish both succeeded, and publish
+  # itself only runs for real (non-dry) releases — dry runs and no-release
+  # pushes skip publish, which skips this too. Nothing depends on this job,
+  # so a Slack/webhook failure can't affect the already-completed release.
+  notify-slack:
+    name: Notify Slack
+    needs: [plan, publish]
+    uses: ./.github/workflows/slack-notify.yml
+    with:
+      package: "@supabase/config"
+      status: success
+      version: ${{ needs.plan.outputs.version }}
+      tag_prefix: config-v
+      npm_package: "@supabase/config"
+    secrets:
+      SLACK_RELEASE_WEBHOOK: ${{ secrets.SLACK_RELEASE_WEBHOOK }}
+
+  # Distinguishes "a reviewer rejected the pending deployment" from a real
+  # pipeline failure before paging the channel: a rejection marks the publish
+  # job failed, and announcing that as a broken release would page people
+  # about a deliberate decision. The run's approvals record is the only place
+  # the distinction is visible from inside the workflow. The dry-run guard
+  # reads the dispatch input directly rather than plan's output, so a plan
+  # job that dies before recording dry_run still can't page for an
+  # operator-watched dry run.
+  classify-failure:
+    name: Classify failure
+    needs: [plan, publish]
+    if: ${{ failure() && !(github.event_name == 'workflow_dispatch' && inputs.dry_run) }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    # The approvals endpoint needs actions: read, which the workflow-level
+    # `contents: read` block would otherwise zero out.
+    permissions:
+      actions: read
+    outputs:
+      status: ${{ steps.classify.outputs.status }}
+    steps:
+      - id: classify
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PUBLISH_RESULT: ${{ needs.publish.result }}
+        run: |
+          set -euo pipefail
+          # Fold ONLY a definite rejection into `declined`; an API error stays
+          # a plain failure so a broken release is never misreported as a
+          # calm "not approved". Two guards: the publish job itself must be
+          # the failed job (a rejection can only manifest there — a plan
+          # failure in a run whose earlier attempt was rejected is a plain
+          # failure), and the approvals record spans every attempt of this
+          # run in append order, so the LAST review is the operative
+          # decision — a rejection followed by a re-run and an approval is an
+          # approved deployment that failed for some other reason.
+          last_state=""
+          if [[ "$PUBLISH_RESULT" == "failure" ]]; then
+            if approvals="$(gh api "repos/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}/approvals" 2>/dev/null)"; then
+              last_state="$(jq -r 'if type == "array" and length > 0 then .[-1].state else "" end' <<<"$approvals")"
+            fi
+          fi
+          if [[ "$last_state" == "rejected" ]]; then
+            echo "status=declined" >> "$GITHUB_OUTPUT"
+          else
+            echo "status=failure" >> "$GITHUB_OUTPUT"
+          fi
+
+  # Reports a failed (or reviewer-declined) release. `failure()` on the
+  # classify job evaluates against its `needs` chain, so this pair fires
+  # whenever `plan` or `publish` fails — including an approval rejection —
+  # but stays quiet for dry runs and no-release pushes (skipped needs don't
+  # count as failures). When `plan` fails its outputs are empty, so the
+  # message falls back to the workflow run link as the actionable detail.
+  # Fails open: if the classifier itself breaks, the page still goes out as a
+  # plain failure (its status output is empty, so the expression falls back).
+  notify-slack-failure:
+    name: Notify Slack (failure)
+    needs: [plan, publish, classify-failure]
+    if: ${{ !cancelled() && needs.classify-failure.result != 'skipped' }}
+    uses: ./.github/workflows/slack-notify.yml
+    with:
+      package: "@supabase/config"
+      status: ${{ needs.classify-failure.outputs.status || 'failure' }}
+      version: ${{ needs.plan.outputs.version }}
+      tag_prefix: config-v
+    secrets:
+      SLACK_RELEASE_WEBHOOK: ${{ secrets.SLACK_RELEASE_WEBHOOK }}

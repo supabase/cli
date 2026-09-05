@@ -14,7 +14,7 @@ import {
   mockTty,
   processEnvLayer,
 } from "../../../../tests/helpers/mocks.ts";
-import { cliSettingsLayer } from "../../../next/config/cli-settings.layer.ts";
+import { cliSettingsLayer } from "../../../shared/config/cli-settings.layer.ts";
 import { processControlLayer } from "../../../shared/runtime/process-control.layer.ts";
 import { EventCommandExecuted } from "../../../shared/telemetry/event-catalog.ts";
 import { legacyAnalyticsLayer } from "../../telemetry/legacy-analytics.layer.ts";
