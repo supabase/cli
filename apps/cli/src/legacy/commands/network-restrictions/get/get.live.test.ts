@@ -1,6 +1,10 @@
 import { expect } from "vitest";
 
-import { experimentalProjectLiveFlags, test } from "../../../../../tests/helpers/live.ts";
+import {
+  experimentalProjectLiveFlags,
+  requireLiveJson,
+  test,
+} from "../../../../../tests/helpers/live.ts";
 
 test("reads the network restrictions of the target project", async ({ cli, project }) => {
   const result = await cli([
@@ -11,8 +15,7 @@ test("reads the network restrictions of the target project", async ({ cli, proje
     "json",
   ]);
   expect(result.exitCode, result.stderr).toBe(0);
-  expect(result.stdout, result.stderr).not.toBe("");
-  expect(JSON.parse(result.stdout), result.stdout).toMatchObject({
+  expect(requireLiveJson(result, "network-restrictions get"), result.stdout).toMatchObject({
     entitlement: expect.stringMatching(/^(?:allowed|disallowed)$/u),
     config: expect.any(Object),
     status: expect.stringMatching(/^(?:stored|applied)$/u),
