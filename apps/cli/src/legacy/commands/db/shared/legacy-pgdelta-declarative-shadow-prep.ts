@@ -6,7 +6,7 @@ export type LegacyDeclarativeShadowClient = {
   readonly query: (sql: string) => Promise<{ readonly rows: ReadonlyArray<unknown> }>;
 };
 
-export interface LegacyDeclarativeShadowPrepResult {
+interface LegacyDeclarativeShadowPrepResult {
   /** True only when prep dropped an installed image pgjwt to recreate pgcrypto. */
   readonly restorePgjwt: boolean;
 }

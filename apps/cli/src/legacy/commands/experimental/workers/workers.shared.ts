@@ -120,7 +120,7 @@ export const legacyLoadWorkersProjectForReporting = Effect.fnUntraced(function* 
   } satisfies LegacyWorkersProject;
 });
 
-export interface LegacyResolvedWorker {
+interface LegacyResolvedWorker {
   readonly name: string;
   readonly entry: WorkerEntry | undefined;
   /** The worker's default directory, `supabase/workers/<name>/`. */

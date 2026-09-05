@@ -1,38 +1,55 @@
-// @supabase/stack — shared runtime-agnostic types for conditional root entry points
-
-export type { LogEntry } from "@supabase/process-compose";
-export type { StackServiceStatus } from "./StackServiceState.ts";
-
+export {
+  createStack,
+  openStack,
+  findStack,
+  listStacks,
+  inspectStack,
+} from "./public/PromiseStack.ts";
 export type {
-  AnalyticsConfig,
-  AuthConfig,
-  EdgeRuntimeConfig,
-  ImgproxyConfig,
-  MailpitConfig,
-  PgmetaConfig,
-  PoolerConfig,
-  PostgresConfig,
-  PostgrestConfig,
-  RealtimeConfig,
-  ReadinessPolicy,
-  ReadyOptions,
-  ServicePolicy,
-  ServicePolicyManifest,
-  StackMode,
-  StackConfig,
-  StorageConfig,
-  StudioConfig,
-  VectorConfig,
-} from "./StackConfig.ts";
-
-export type { ServiceName, VersionManifest } from "./versions.ts";
-export type { ServiceResolution, StackPreparationError } from "./StackPreparation.ts";
-export type { PrefetchOptions, PrefetchResult } from "./prefetch.ts";
-export type { StackHandle } from "./stackHandle.ts";
-export { StackError } from "./errors.ts";
+  PromiseStack,
+  PromiseStackConfig,
+  PromiseStartStackOptions,
+  PromisePrepareStackOptions,
+  CreateStackOptions,
+  FindStackOptions,
+  ListStacksOptions,
+  PreparedCapability,
+} from "./public/PromiseStack.ts";
 export type {
-  FunctionsReloadConfig,
-  FunctionsRuntimeConfig,
-  ResolvedFunction,
-  ResolvedFunctionsBundle,
-} from "./functions.ts";
+  CapabilityName,
+  CapabilityStatus,
+  StackLifecycle,
+  DesiredStackLifecycle,
+  NetworkPort,
+  StackEndpoint,
+  StackStatus,
+  ArtifactPreparationState,
+  ArtifactPreparationStatus,
+  StackDescriptor,
+  StackInspection,
+} from "./public/index.ts";
+export { StackIdSchema, isStackId } from "./public/StackId.ts";
+export type { StackId } from "./public/StackId.ts";
+export { StackRuntimeSchema, RuntimeEngineSchema } from "./public/Runtime.ts";
+export type { StackRuntime, RuntimeEngine, StackRuntimePreference } from "./public/Runtime.ts";
+export {
+  StackEndpointsSchema,
+  CapabilityVersionsSchema,
+  ArtifactPreparationStateSchema,
+  ArtifactPreparationStatusSchema,
+} from "./public/Status.ts";
+export {
+  CapabilityNameSchema,
+  CapabilityStatusSchema,
+  ActivationModeSchema,
+} from "./public/Capability.ts";
+export { PreparationModeSchema } from "./public/Config.ts";
+export type { PreparationMode } from "./public/Config.ts";
+export {
+  LogCursorSchema,
+  LogQuerySchema,
+  StackLogBatchSchema,
+  StackLogEntrySchema,
+} from "./public/Logs.ts";
+export type { LogCursor, LogQuery, StackLogBatch, StackLogEntry } from "./public/Logs.ts";
+export * from "./public/Errors.ts";

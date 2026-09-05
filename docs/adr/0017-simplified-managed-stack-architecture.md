@@ -6,86 +6,204 @@
 ## Decision
 
 Managed local-stack coordination has one implementation and one durable state
-document. `ManagedStackManager` owns identity, sticky-port intent, launch
-metadata, lifecycle transitions, and document writes. `managed/control.ts`
-owns deterministic control ownership and endpoint derivation. The supervisor
-child owns the runtime lease and `DaemonServer`; `RemoteStack` is the client
-transport. CLI handlers call the lifecycle facade and never maintain a second
-metadata file or PID-based liveness path.
+document. The stack package owns identity, sticky ports, launch selection,
+lifecycle transitions, and state writes. A detached Supervisor holds the
+exclusive ownership lease only while the stack is running or an admitted
+operation is in flight, while stop-time cleanup remains unproven, or while an
+unproven destroy leaves durable intent `destroying`. Public
+handles communicate with it through same-release Effect RPC and a small
+release-stable maintenance protocol for probe and stop. CLI handlers call this
+facade and do not maintain a second metadata or PID-based liveness path.
 
-The managed document is private unreleased state under the user-level managed
-root. It is intentionally not a SQLite schema, repository contract, service
-registry, or compatibility facade. Storage and lifecycle decisions stay in the
-manager; platform entrypoints only provide filesystem, path, process, HTTP,
-and control-transport services.
+The public API has two deliberate entrypoints: Effect-native operations are
+available from `@supabase/stack/effect`, while the package root exposes the
+Promise handle and root Promise functions (`createStack`, `openStack`,
+`findStack`, `listStacks`, and `inspectStack`). Test callers use the public
+`createTestStack` helper from `@supabase/stack/testing`; it owns a unique
+temporary project root and exact-identity cleanup through `await using`, while
+using the same managed state root as ordinary package and CLI callers. All
+default callers therefore coordinate automatic ports through one registry;
+helper project roots and identities remain isolated. Temporary test stacks are
+excluded from the current CLI project-scoped listing because their project roots
+differ, but remain visible to unfiltered package `listStacks()`. A failed
+destroy retains its exact project root and managed state for recovery.
 
-Launch updates use same-version Effect RPC through the supervisor. An attached
-caller asks that supervisor to update launch metadata; a caller with owned
-maintenance control updates the document directly. Stop acquires control first,
-waits for the persisted `stopped` lifecycle, and handles a stale owner with
-deterministic cleanup keyed by stack id. Delete also requires a maintenance
-lease; stale running or failed documents are reconciled and cleaned before
-removal, while a live owner is never deleted underneath.
+The managed document is private, unreleased state under the user-level managed
+root. It is not a repository contract, service registry, compatibility facade,
+or independently versioned database schema. Platform entrypoints only provide
+filesystem, path, process, HTTP, and control-transport services.
 
-Every managed document records one concrete launch selection. Native launch
-state has `mode: "native"`; container launch state has `mode: "docker"` and
-the selected Docker or Podman executable. The document never stores an
-unresolved or mode-less launch. Runtime configuration uses the same correlated
-union, so impossible mode/runtime combinations are not representable after
-selection.
+Stack handles are lightweight identity-scoped clients. Creating or opening one
+does not launch a Supervisor. Successful stop drains ingress, removes every
+ephemeral runtime resource, persists stopped state, delivers its response, then
+closes control and releases ownership. The caller waits for both response and
+lease release. A stopped stack therefore consumes no live process, container,
+network, socket, listener, or gateway. Status and retained logs are read from
+durable files only when owner metadata and the ownership lock are both absent.
+The same handle lazily launches a fresh Supervisor on its next start.
 
-Read-only discovery never acquires control ownership. It scans the stack id's
-deterministic endpoint candidates through `/owner` and treats an unreachable,
-incompatible, or colliding listener as non-live. Mutations scan the same
-sequence for an existing matching owner, then bind the first available
-candidate; exhaustion fails closed. Each candidate maps digest bytes from the
-stack id into the reserved loopback range `127.0.0.1:10000..32767`. This is
-pragmatic single-user localhost coordination, not a hostile multi-user security
-boundary. We are not adding control tokens until the threat model or a real
-collision rate justifies more protocol and persistence machinery.
+A Supervisor launched for a mutation also exits when that mutation cannot leave
+running intent behind. In particular, a failed start before the running state is
+committed releases its control endpoint and ownership lease after reporting the
+failure. A successful start keeps the Supervisor alive; a sequential idempotent
+start returns the current status without resetting lazy activation or publishing
+a synthetic starting transition.
 
-The stable owner protocol is an exhaustive supervisor/maintenance union.
-Supervisors publish lifecycle, readiness, and immutable CLI version identity;
-maintenance leases publish only their operation and cannot serve runtime RPC or
-be replaced as an incompatible daemon. Session-fenced stop requests carry
-explicit or replacement intent. The supervisor's queue serializes shutdown,
-persists an explicit stop before listener release, and leaves replacement stops
-eligible for the one authorized CLI-upgrade start.
+If exact runtime cleanup cannot be proven, status remains `stopping` and the
+owner stays available for a retryable `stop()`; a cleaned stopped stack never
+retains that owner.
+
+There is no durable generation counter and runtime resources are never adopted
+across owner sessions. The exclusive stack lease and `ownerSessionId` identify
+the only writer and current ephemeral resources. Explicit start, stop, or destroy
+first removes exact stack-owned remnants and creates fresh resources;
+failure to complete or validate cleanup fails closed. Persistent data, sticky
+ports, secrets, definitions, logs, and artifacts remain identity-scoped.
+
+Before a native cold start creates anything, it verifies every persisted public
+and private port is bindable. PostgreSQL lock evidence containing a live or
+unclassifiable owner PID fails closed; a lock naming a process that no longer
+exists is left for PostgreSQL's own stale-lock recovery. A live stop/start
+composition preflights configuration without trying to bind ports that the
+current Supervisor intentionally owns. Cold recovery never adopts those
+resources. If an authoritative bind loses a race for a fresh automatic public
+assignment, planning retries with a bounded exclusion set; exact assignments
+and previously persisted sticky automatic ports remain hard failures and are
+never silently moved.
+
+Every managed document records one concrete runtime selection. Native and
+container runtimes never mix. An omitted runtime selects native; when a
+container runtime is selected, an omitted engine defaults to Docker. Callers
+may explicitly select Docker or Podman. There is no probing or auto-detection;
+Podman is supported only on local Linux hosts. Persisted state records the
+resolved exact engine. Capability releases and
+workload artifacts are persisted as exact version pins (including their
+concrete native release and container image) rather than ranges or floating
+tags.
+
+Read-only discovery never acquires ownership. Owner metadata points to a Unix
+domain socket on POSIX or a named pipe on Windows, and the ownership lock is the
+single-writer authority. Offline status and retained logs are available only
+when both metadata and lock are absent. Mutations use the live owner or acquire
+the lease and launch a fresh Supervisor. Ambiguous ownership fails closed.
+
+The stable maintenance protocol contains only probe and stop. Same-release
+callers use Effect RPC for status, logs, activation, start, and destroy; explicit
+artifact preparation runs directly in the caller scope and never uses the
+Supervisor. An incompatible owner can always be stopped, after which the caller
+may launch the current Supervisor and start again. The first admitted lifecycle operation runs
+to completion; concurrent lifecycle mutations fail immediately with a conflict
+rather than joining or queueing.
+
+PostgreSQL is the only eager capability by default. Start prepares and launches
+only the eager dependency closure, so the PostgreSQL readiness barrier remains
+the default startup path. Capabilities configured for lazy activation start when
+traffic first reaches their stable gateway route. Lazy artifact preparation is controlled
+by the top-level `StackConfig.preparation` setting, which defaults to
+`"background"`. After a successful start, background mode prepares all enabled
+lazy artifacts with bounded concurrency without launching their processes.
+That work is one Supervisor-owned session task: stop and destroy cancel and
+await it, foreground activation joins shared preparations, and completed cache
+entries remain available without automatic pruning. `"on-demand"` skips the
+background task for callers that want full lazy preparation. Eager capability
+activation remains independent of this setting.
+That runtime session owns the shared preparation fibers.
+
+In both modes, lazy activation prepares the requested dependency closure with
+bounded concurrency before starting its workloads. Explicit
+`stack.prepare(...)` remains available as a cache-only warmup for callers that
+want to prepare selected artifacts while stopped or running. The preparation
+setting is persisted in the stack definition and survives opening and restart;
+changing it for a running stack follows the existing stop-before-change
+configuration rule. Preparation never creates runtime resources;
+ArtifactStore publishes cache entries in the caller's scope, and runtime-driver
+cleanup closes transfer resources. Caller-owned explicit preparation
+cancellation only stops that caller's unfinished transfers while completed
+cache entries remain.
+
+Preparation uses bounded Effect concurrency to overlap transfers with native
+decompression and archive subprocesses. An Effect RPC worker pool would add
+coordination without improving this existing native and subprocess work:
+decompression already uses Bun's native worker pool, while archive listing and
+extraction run in subprocesses. Revisit this only if measurement identifies a
+CPU-bound bottleneck.
+
+Live status exposes the current session's artifact preparation through its artifacts array. Entries
+identify the workload and capability and move through `queued`, `preparing`, `downloading`,
+`ready`, and `failed`; the latter carries an actionable error for a later retry. `preparing`
+includes validation, transfer verification, and extraction around the download. Artifact status is
+observational and does not imply that the capability's process is running. During stopping or
+destroying, the owner may continue to expose active preparation until teardown clears it. Offline
+status supplies no live artifact states and does not scan the cache to recreate a progress snapshot.
+
+Explicit `stack.prepare(...)` accepts a synchronous `onProgress` callback for
+caller-owned preparation. It receives the same phase values, including `ready` when an artifact is
+available while its capability remains dormant. The callback's transfer is local to that invocation
+and is not reconstructed by a separate status request.
+
+Within a lifecycle operation, dependency-ready workloads start concurrently,
+with at most four starts in flight; each wave completes before its dependants
+start. Container setup is serialized through resource registration; readiness
+checks and long-lived followers run outside that setup boundary.
+
+Native workloads use a two-minute readiness budget because a cold process can
+spend more than 30 seconds loading shared libraries before serving requests.
+Container workloads retain the 30-second budget, while PostgreSQL uses its
+configured `health_timeout`; every probe remains bounded and returns as soon as
+its endpoint is healthy.
+
+Runtime input materialization belongs to the workload startup operation. The
+Supervisor serializes lifecycle operations with cleanup, so the input owner
+caches only completed values and leaves unfinished resolution in the startup
+operation's scope. One shared-input gate serializes materialization among
+concurrent workload starts. Interrupting native startup therefore interrupts
+OIDC fetches and file materialization; successful Pooler and Vector files remain
+owned until the runtime cleanup boundary removes them.
+
+Artifact cache trust begins only after a candidate has passed checksum and
+runtime-path validation, had its metadata written, and been atomically
+published. Exact-version artifact metadata is authoritative on a cache hit: the
+store revalidates its format, key, SHA-256 shape, ordered required paths and
+kinds, containment, and executable shape without fetching an upstream digest.
+On a cache miss, the source resolves the trusted digest once; downloaded bytes
+are verified before decoding or extraction, then structurally validated and
+atomically published. The cache is user-owned and immutable by contract;
+manual post-publication changes may execute successfully or fail later at
+workload start. A partially published or malformed entry is never trusted
+merely because its directory exists.
+
+Effect failures remain operation-specific tagged errors (for example,
+configuration, preparation, gateway, port, and lifecycle failures), preserving
+typed recovery and actionable context at the Effect boundary. The Promise
+facade translates those failures into native rejections only at its outer edge.
 
 ## Why this replaces ADR-0015
 
-ADR-0015 proposed 104 exported contract fixtures, a repository boundary, and
-parallel persistent adapters. None of those were shipped producers or
-consumers. Keeping them would preserve private compatibility surfaces and a
-second architecture that the current CLI does not use. The proposal is
-superseded; its identity and lifecycle intent are retained only where they are
-implemented by the manager and supervisor.
+ADR-0015 proposed exported contract fixtures, a repository boundary, and
+parallel persistent adapters without shipped producers or consumers. Keeping
+them would preserve a second architecture. Its identity and lifecycle intent
+survive only where implemented by the stack package and Supervisor.
 
 ## Testing decision
 
-Tests follow the real consumed boundaries:
+Tests follow consumed boundaries:
 
-- manager integration covers ordinary folders, sibling worktrees, identity,
-  sticky ports, document lifecycle, concurrent read/start ownership, stale
-  owner recovery, and interrupted deletion;
-- supervisor integration starts a real detached child, reattaches through the
-  control endpoint, updates launch metadata, stops, and deletes; and
-- CLI handler integration covers argument translation, output projections,
-  telemetry, and the managed facade calls.
+- stack integration covers identity, sticky ports, durable lifecycle,
+  ownership, stale-owner recovery, and interrupted cleanup;
+- supervisor integration covers detached ownership, RPC, stop, and
+  destroy; and
+- one shared stack-package E2E journey runs in native and Docker modes, starts
+  with PostgreSQL alone, activates every other service through realistic
+  traffic, verifies cross-service behavior, then exercises
+  stop/start and retained offline observability.
 
-Private store/model algorithms receive focused unit coverage where useful. A
-test that snapshots every export or validates a private contract registry is
-not an architectural guarantee and should be deleted. Add an e2e journey only
-when the compiled CLI/process boundary cannot be represented faithfully by one
-of the existing integration journeys.
+CLI handler integration covers only argument translation, output, telemetry,
+and calls into the stack facade. Private implementation tests are retained only
+where public scenarios cannot make a branch observable.
 
 ## Consequences
 
-The architecture is smaller and has one source of truth for managed lifecycle
-state. Refactors update the manager/facade and its real consumers together;
-there is no fixture adapter or compatibility layer to keep in sync. The private
-document format may change with the current build, while destructive cleanup
-and control ownership remain explicit safeguards. A supervisor that attaches
-and later takes ownership re-reads this source of truth before choosing the
-runtime or cleaning stale resources; it does not act on a pre-takeover
-snapshot.
+The architecture has one source of truth for lifecycle state and one owner for
+ephemeral resources. Refactors update the package facade and its real consumers
+together. The private document format may change with the current build, while
+destructive cleanup and ownership remain explicit safeguards.

@@ -69,7 +69,7 @@ export interface LegacyHealthCheckFailure {
 }
 
 /** Runtime-internal probe sentinel; exported only for the exhaustive actionability guard. */
-export class LegacyHealthCheckProbeError extends Data.TaggedError("LegacyHealthCheckProbeError")<{
+class LegacyHealthCheckProbeError extends Data.TaggedError("LegacyHealthCheckProbeError")<{
   readonly failures: ReadonlyArray<LegacyHealthCheckFailure>;
 }> {
   get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {

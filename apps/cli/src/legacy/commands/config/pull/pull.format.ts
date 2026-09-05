@@ -43,7 +43,7 @@ export const LEGACY_CONFIG_PULL_PAYLOAD_VERSION = 1;
  * change `legacyPlanConfigPull` planned to write still ends up unwritten when
  * the run is a dry run or the user declined.
  */
-export type LegacyConfigPullChangeSkipReason = LegacyConfigPullSkipReason | "declined" | "dry_run";
+type LegacyConfigPullChangeSkipReason = LegacyConfigPullSkipReason | "declined" | "dry_run";
 
 /**
  * The run's actual outcome, known only after the confirmation prompt (or

@@ -41,7 +41,7 @@ const SERVE_OFFLINE_STARTUP_TIMEOUT_MS = 60_000;
 const SERVE_OFFLINE_TEST_TIMEOUT_MS = 180_000;
 const AUTH_FUNCTIONS_CONFIG = JSON.stringify({
   test: {
-    entrypointPath: "/tmp/test/index.ts",
+    entrypointPath: "/app/index.ts",
     importMapPath: "",
     staticFiles: [],
     verifyJWT: true,
@@ -224,6 +224,8 @@ describe("functions serve runtime template (offline)", () => {
             "-e",
             "SUPABASE_INTERNAL_HOST_PORT=8081",
             "-e",
+            "SUPABASE_INTERNAL_FUNCTIONS_ROOT=/app",
+            "-e",
             "SUPABASE_INTERNAL_JWT_SECRET=offline-e2e",
             "-e",
             "SUPABASE_URL=http://127.0.0.1:54321",
@@ -287,6 +289,8 @@ describe("functions serve runtime template (offline)", () => {
             "127.0.0.1::8081",
             "-e",
             "SUPABASE_INTERNAL_HOST_PORT=8081",
+            "-e",
+            "SUPABASE_INTERNAL_FUNCTIONS_ROOT=/app",
             "-e",
             "SUPABASE_INTERNAL_JWT_SECRET=auth-e2e",
             "-e",
@@ -395,6 +399,8 @@ describe("functions serve runtime template (offline)", () => {
             network,
             "-e",
             "SUPABASE_INTERNAL_HOST_PORT=8081",
+            "-e",
+            "SUPABASE_INTERNAL_FUNCTIONS_ROOT=/app/functions",
             "-e",
             "SUPABASE_INTERNAL_JWT_SECRET=auth-e2e",
             "-e",

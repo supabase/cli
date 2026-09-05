@@ -69,7 +69,7 @@ export interface LegacyPgDeltaRemovalSummary {
   readonly extensionIntents: ReadonlyArray<LegacyPgDeltaExtensionIntentRemoval>;
 }
 
-export type LegacyPgDeltaHazardKind =
+type LegacyPgDeltaHazardKind =
   | "data_loss"
   | "rewrite_risk"
   | "non_transactional"

@@ -54,16 +54,6 @@ function compareSemver(a: string, b: string): number {
   return 0;
 }
 
-export interface LegacyResolvedDbImage {
-  /** Pull/create reference — slim-translated when the flag is on and the pin is current. */
-  readonly image: string;
-  /**
-   * Unprefixed docker.io / OrioleDB / 13–15 identity for version-compare.
-   * Never `ghcr.io/...` — {@link legacyPostgresImageVersionTag} splits on the first `:`.
-   */
-  readonly configImage: string;
-}
-
 /**
  * Resolve the Postgres image for `majorVersion`, honoring the pinned version
  * written by `supabase start` to `supabase/.temp/postgres-version` (Go reads

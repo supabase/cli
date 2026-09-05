@@ -1,0 +1,110 @@
+import type { Redacted, Schema } from "effect";
+import type { CapabilityName, ActivationMode } from "../public/Capability.ts";
+import type { PortField } from "../public/Status.ts";
+import { catalogReleaseFor } from "./WorkloadCatalog.ts";
+
+/** Logical artifact descriptors. Download/image resolution belongs to preparation. */
+export interface NativeArtifact {
+  readonly kind: "native";
+  readonly release: string;
+}
+
+export interface ContainerArtifact {
+  readonly kind: "container";
+  readonly image: string;
+}
+
+export interface WorkloadSpec {
+  readonly name: string;
+  readonly capability: CapabilityName;
+  /** Closed internal lifecycle marker for work that must run before dependents are ready. */
+  readonly bootstrap?: "database";
+  readonly dependencies: ReadonlyArray<string>;
+  readonly readiness: Readonly<{ readonly portField?: PortField }>;
+  /** Exact artifacts selected for this workload release. */
+  readonly artifacts: Readonly<{
+    readonly native: NativeArtifact;
+    readonly container: ContainerArtifact;
+  }>;
+}
+
+/** Settings shape persisted by the compiler, where absent and secret leaves are materialized. */
+type MaterializedValue<T> = [T] extends [Redacted.Redacted<unknown>]
+  ? { readonly slot: string }
+  : T extends ReadonlyArray<infer Item>
+    ? ReadonlyArray<MaterializedValue<Item>>
+    : T extends object
+      ? {
+          readonly [Key in keyof T]-?:
+            | MaterializedValue<Exclude<T[Key], undefined>>
+            | (undefined extends T[Key] ? null : never);
+        }
+      : T;
+
+export type MaterializedSettings<T> = MaterializedValue<T>;
+
+export interface CapabilityModule<Settings> {
+  readonly name: CapabilityName;
+  readonly settings: Schema.Schema<Settings>;
+  readonly defaultSettings: Settings;
+  readonly defaultEnabled: boolean;
+  readonly defaultActivation: ActivationMode;
+  readonly dependencies: ReadonlyArray<CapabilityName>;
+  readonly defaultVersion: string;
+  /** Release selectors are the only source of workload versions and artifacts. */
+  readonly releases: Readonly<Record<string, CapabilityRelease>>;
+  readonly routes: ReadonlyArray<
+    Readonly<{ readonly listener: PortField; readonly protocol: "http" | "tcp" }>
+  >;
+  /** Classifies every Redacted settings leaf; module contracts, not callers, own this policy. */
+  readonly secretPolicy: (path: string) => "managed" | "passthrough";
+  /** Managed slots required by the artifact even when omitted from user config. */
+  readonly managedSecretSlots: ReadonlyArray<string>;
+  /** Optional settings normalization. Omitted modules use their merged settings unchanged. */
+  readonly materialize?: (settings: Settings, projectRoot: string) => Settings;
+  /** Selects private companion workloads from fully materialized settings. */
+  readonly selectWorkloads?: (
+    settings: MaterializedSettings<Settings>,
+    workloads: ReadonlyArray<WorkloadSpec>,
+  ) => ReadonlyArray<WorkloadSpec>;
+}
+
+export interface CapabilityRelease {
+  readonly version: string;
+  readonly workloads: ReadonlyArray<WorkloadSpec>;
+}
+
+export const release = (
+  version: string,
+  workloads: ReadonlyArray<WorkloadSpec>,
+): CapabilityRelease => ({ version, workloads });
+
+export const workload = (
+  name: string,
+  capability: CapabilityName,
+  options: {
+    readonly bootstrap?: WorkloadSpec["bootstrap"];
+    readonly dependencies?: ReadonlyArray<string>;
+    readonly readiness?: WorkloadSpec["readiness"];
+    readonly version?: string;
+  } = {},
+): WorkloadSpec => {
+  const workloadId = `${capability}:${name}`;
+  const selected = catalogReleaseFor(workloadId, options.version);
+  if (selected === undefined)
+    throw new Error(
+      `Missing workload artifact release: ${workloadId}${options.version === undefined ? "" : `@${options.version}`}`,
+    );
+  const artifacts = {
+    native: { kind: "native" as const, release: selected.version },
+    container: { kind: "container" as const, image: selected.containerImage },
+  };
+  return {
+    name,
+    capability,
+    ...(options.bootstrap === undefined ? {} : { bootstrap: options.bootstrap }),
+    dependencies: options.dependencies ?? [],
+    readiness: options.readiness ?? {},
+    artifacts,
+  };
+};

@@ -92,7 +92,6 @@ That pulls `.repos/effect/`, which is the local source of truth for Effect v4 AP
 |-- packages/
 |   |-- api/                  # Typed Supabase Management API client
 |   |-- config/               # Supabase config schema and generated types
-|   |-- process-compose/      # Effect-based process orchestration library
 |   |-- stack/                # Programmatic local Supabase stack runtime
 |   `-- cli-*/                # Platform-specific CLI binary packages
 |-- tools/                    # Repository tooling (release scripts, etc.)
@@ -115,7 +114,6 @@ That pulls `.repos/effect/`, which is the local source of truth for Effect v4 AP
 | `packages/api`                  | Auto-generated TypeScript client for the Supabase Management API.                                                   |
 | `packages/cli-test-helpers`     | CLI test harness library — `createHarness`/`exec` API for spawning TS Legacy and TS Next CLI subprocesses in tests. |
 | `packages/config`               | JSON Schema and generated TypeScript types for Supabase configuration.                                              |
-| `packages/process-compose`      | TypeScript/Bun port of `process-compose` used for multi-service orchestration.                                      |
 | `packages/stack`                | Programmatic local Supabase stack used by the CLI and other tooling.                                                |
 | `packages/cli-darwin-arm64`     | Published native CLI binary wrapper for macOS arm64.                                                                |
 | `packages/cli-darwin-x64`       | Published native CLI binary wrapper for macOS x64.                                                                  |
@@ -140,7 +138,7 @@ pnpm run fix:all     # run all fixers across every project
 
 ### Standard package scripts
 
-Standard TypeScript workspaces (`apps/cli-e2e`, `apps/cli`, `packages/api`, `packages/cli-test-helpers`, `packages/config`, `packages/process-compose`, `packages/stack`) declare their package scripts explicitly. Test suites vary by package: unit tests are standard, while integration and e2e tests exist only where applicable.
+Standard TypeScript workspaces (`apps/cli-e2e`, `apps/cli`, `packages/api`, `packages/cli-test-helpers`, `packages/config`, `packages/stack`) declare their package scripts explicitly. Test suites vary by package: unit tests are standard, while integration and e2e tests exist only where applicable.
 
 | Script             | What it does                           |
 | ------------------ | -------------------------------------- |

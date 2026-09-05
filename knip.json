@@ -3,7 +3,7 @@
   "exclude": ["catalogReferences"],
   "workspaces": {
     ".": {
-      "entry": [".github/scripts/**/*.ts", "tools/*.ts", "tools/release/*.ts"],
+      "entry": [".github/scripts/**/*.ts", "tools/release/*.ts"],
       "ignore": [".repos/**", "apps/cli-go/**"],
       "ignoreBinaries": ["go"],
       "ignoreDependencies": ["verdaccio"]
@@ -38,11 +38,9 @@
     "packages/config": {
       "entry": ["src/**/*.test.ts"]
     },
-    "packages/process-compose": {
-      "entry": ["src/**/*.test.ts", "tests/**/*.ts"]
-    },
     "packages/stack": {
-      "entry": ["scripts/**/*.ts", "src/**/*.test.ts", "src/daemon-node.ts", "tests/**/*.ts"]
+      "ignoreBinaries": ["mkfifo"],
+      "ignoreDependencies": ["@types/ws", "ws"]
     },
     "packages/cli-test-helpers": {
       "entry": ["src/**/*.test.ts"]

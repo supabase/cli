@@ -39,11 +39,11 @@ import { legacySanitizeInlineName } from "../../../shared/legacy-http-errors.ts"
  * 5. Otherwise: the config root.
  */
 
-export interface LegacyConfigPullDestinationRoot {
+interface LegacyConfigPullDestinationRoot {
   readonly kind: "root";
 }
 
-export interface LegacyConfigPullDestinationRemote {
+interface LegacyConfigPullDestinationRemote {
   readonly kind: "remote";
   /**
    * The `[remotes.<label>]` block's name — sanitized (control-char
@@ -62,7 +62,7 @@ export type LegacyConfigPullDestination =
   | LegacyConfigPullDestinationRoot
   | LegacyConfigPullDestinationRemote;
 
-export interface LegacyConfigPullScopeOk {
+interface LegacyConfigPullScopeOk {
   readonly ok: true;
   readonly destination: LegacyConfigPullDestination;
 }
@@ -111,7 +111,7 @@ export interface LegacyConfigPullScopeLabelCollision {
  * itself would never select for a read; rewriting the block's `project_id`
  * would erase the user's env-var indirection).
  */
-export interface LegacyConfigPullScopeEnvProjectId {
+interface LegacyConfigPullScopeEnvProjectId {
   readonly ok: false;
   readonly reason: "env_project_id";
   readonly label: string;

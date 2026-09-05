@@ -1,90 +1,80 @@
 # `@supabase/stack`
 
-Local Supabase stack runtime for Node and Bun. The package offers a direct
-in-process API and a managed supervisor API for detached CLI workflows.
+The local Supabase stack runtime. Its public API is a greenfield,
+Effect-native managed runtime; implementation modules are private to the
+package.
 
-## Direct stack
+The supported entrypoints are:
 
-```ts
-import { createStack } from "@supabase/stack";
+- `@supabase/stack` — Promise facade
+- `@supabase/stack/effect` — Effect-native API
+- `@supabase/stack/testing` — test helpers
 
-await using stack = await createStack({ projectDir: process.cwd() });
-await stack.start();
-console.log((await stack.getInfo()).url);
-```
+Stacks are managed identities: closing a handle does not stop a running stack. Creating or opening a
+handle starts nothing, and a stopped stack retains no Supervisor, workload, container, network, or
+listener. Status and retained logs remain available directly from durable state while stopped; a
+later start on the same handle launches a fresh Supervisor.
+With no configuration override, all capabilities are enabled, PostgreSQL is the only eager
+capability, and every other capability is lazy. Starting the stack therefore launches only
+PostgreSQL by default; capabilities configured as eager join its startup dependency closure.
+The remaining lazy capabilities activate through the stack's listeners on demand for the current
+running session.
+Native workloads have a two-minute readiness budget to allow cold starts to load shared libraries;
+container workloads retain a 30-second budget, and PostgreSQL uses its configured `health_timeout`.
+Each readiness probe returns immediately when its endpoint becomes healthy.
 
-`createStack` resolves configuration, reserves ports, and builds a scoped
-handle. `stack.start()` starts services; disposing the handle stops them and
-releases its lease. When `mode` is omitted, creation uses Docker mode with a
-usable Docker or Podman service and otherwise selects native mode. An explicit
-mode never falls back to the other one.
-
-## Managed stack
-
-Managed callers use `@supabase/stack/managed` (or the conditional managed Bun
-and Node entrypoint) and provide a state root to the manager layer:
-
-```ts
-import { managedStackManagerLayer } from "@supabase/stack/managed";
-
-const layer = managedStackManagerLayer({ stateRoot: "/absolute/managed" });
-```
-
-The manager persists one document per deterministic stack id under
-`<stateRoot>/stacks/<id>/stack.json`. It owns identity discovery, sticky-port
-intent, lifecycle transitions, and control ownership. The lifecycle facade
-provides `connectManagedStack`, `updateManagedLaunch`, `stopManagedStack`, and
-`deleteManagedStack`, so consumers do not manipulate documents or control
-routes directly.
-
-The CLI normally uses `@supabase/stack/effect`:
+Artifact preparation is controlled independently from capability activation through the optional
+top-level `preparation` setting:
 
 ```ts
-import { daemonLayer, connectLayer, stopDaemon } from "@supabase/stack/effect";
-
-const runtime =
-  yield *
-  daemonLayer({
-    cacheRoot: cliSettings.supabaseHome,
-    projectDir: projectRoot,
-    name: "default",
-    portIntents,
-    launch: { mode: "docker", versions: {}, excludedServices: [] },
-  });
+await stack.start({ config: { preparation: "on-demand" } });
 ```
 
-`daemonLayer` starts the managed supervisor and returns a remote `Stack` layer;
-`restartManagedStackForUpgrade` is the explicit stop/start operation used by
-`supabase start` when the owner was started by another CLI version;
-`connectLayer` reattaches through the deterministic control endpoint;
-`stopDaemon` and the discovery helpers delegate to the managed lifecycle
-facade. No CLI metadata file or PID polling is involved.
+The default `"background"` mode prepares all enabled lazy artifacts after PostgreSQL has started,
+without launching those services. A single Supervisor-owned background operation runs with bounded
+concurrency, is canceled and awaited by `stop()` or `destroy()`, and keeps completed cache entries.
+`"on-demand"` skips that background work for callers that want full lazy preparation. In either
+mode, activating a lazy service prepares its requested dependency closure concurrently, while
+explicit `stack.prepare(...)` remains available as a cache-only warmup. Eager capabilities remain
+independent of this preparation policy. The setting is persisted with the stack definition and
+survives `openStack()` and restart. Changing it for a running stack follows the existing
+stop-before-change configuration rule.
 
-Managed ownership is exposed by one deterministic loopback HTTP listener. The
-stable cross-build control protocol is `GET /owner` plus session-fenced
-`POST /stop`; runtime operations use same-version Effect RPC over framed NDJSON
-at `POST /rpc`. The complete application is installed before the listener
-binds, and runtime RPC is available only after the supervisor publishes a
-running lifecycle state. Owner discovery distinguishes a versioned supervisor
-from an unversioned maintenance lease. Stop requests carry either explicit-user
-or upgrade-replacement intent so a user stop cannot be undone by a delayed
-replacement child.
+Running status includes an artifacts array for the current session. Each entry identifies a
+workload and capability and reports `queued`, `preparing`, `downloading`, `ready`, or
+`failed`; `failed` includes an error message and can be retried by activating the capability again.
+`preparing` covers validation, verification, and extraction around the transfer. During stopping
+or destroying, status may retain active preparation until teardown clears it. Once stopped, status
+reports an empty array even when completed artifacts remain in the cache.
 
-The CLI version must exactly match the daemon CLI version before a remote
-runtime client is constructed. Released and preview CLI versions are immutable
-and unique, so the version is the compatibility identity. An incompatible owner is never spoken to
-over RPC: connect-only commands report an actionable upgrade requirement, and
-only an explicit `supabase start` may preflight, stop the exact old owner
-session, and start the current version. Upgrade restart preserves the managed
-identity and launch metadata, data roots, runtime mode, pinned service
-versions, exclusions, and sticky port assignments; it never deletes the
-managed stack. Existing connections briefly disconnect during this normal
-stop/start upgrade restart.
+Explicit `stack.prepare(...)` accepts a synchronous `onProgress` callback for
+caller-owned preparation. It receives the same phase values, including `ready` when an artifact is
+available while its capability remains dormant. This transfer-local callback is not reconstructed by
+a separate status request.
 
-After a managed supervisor claims a stack, its persisted Docker, Podman, or
-native selection remains pinned even if startup later fails. Retry after
-restoring or starting that runtime; delete and recreate the stack to choose a
-different execution mode. Deletion removes the stack's managed data.
+The package's end-to-end contract is exercised through the same public Stack API in native and
+Docker modes. It begins from the PostgreSQL-only default, progressively activates every service with
+realistic traffic, and verifies stop/start cycles, stable ports, and persistent data. The
+CLI is not involved in these runtime tests.
 
-For the end-to-end lifecycle, identity, ports, service execution, transport,
-compiled-Bun re-entry, and testing boundary, see [How `@supabase/stack` works](docs/architecture.md).
+Podman is supported only on local Linux hosts and must be selected explicitly; the runtime does not
+auto-detect container engines.
+
+`createTestStack` gives each test stack a unique temporary project root and identity while sharing
+the managed state root used by ordinary package and CLI callers. Automatic ports therefore
+coordinate across all default callers. Helper project roots and identities remain isolated; a
+temporary test stack is excluded from the current CLI project-scoped listing but appears in an
+unfiltered package `listStacks()` result. A failed destroy retains the affected project root and
+managed state for recovery.
+
+Callers can warm selected native artifacts or container images with `stack.prepare(...)` while a
+stack is stopped or running; explicit preparation is cache-only and cancellation does not affect
+completed entries.
+Each capability may opt into eager activation in `StackConfig`; omitted settings keep every
+non-PostgreSQL capability lazy. Prepared artifacts are not automatically pruned. `followLogs(...)`
+provides filterable live entries through a stateless client-polled cursor.
+
+Database reset is intentionally outside the current API. Applying migrations, declarative schemas,
+and seeds remains the caller's responsibility. The runtime bootstrap only reconciles the `_realtime`
+schema owner, closed database role passwords, and JWT settings in one transaction; the slim database
+artifact owns its initialization and migrations.

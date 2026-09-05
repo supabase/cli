@@ -41,7 +41,7 @@ import {
   mockLegacyPlatformApiService,
   mockLegacyTelemetryStateTracked,
 } from "../../../../../tests/helpers/legacy-mocks.ts";
-import { mockChildProcessSpawner } from "../../../../../../../packages/process-compose/tests/helpers/mocks.ts";
+import { mockChildProcessSpawner } from "../../../../../tests/helpers/child-process-spawner.ts";
 import { textCliOutputFormatter } from "../../../../shared/output/text-formatter.ts";
 import { processControlLayer } from "../../../../shared/runtime/process-control.layer.ts";
 import { TelemetryRuntime } from "../../../../shared/telemetry/runtime.service.ts";

@@ -3,7 +3,11 @@ import { basename } from "node:path";
 
 import type { CliConfig } from "@supabase/config";
 import { ENV_CAPTURE_REGEX } from "@supabase/config/internal";
-import { defaultJwtSecret, defaultPublishableKey, defaultSecretKey } from "@supabase/stack/effect";
+import {
+  defaultJwtSecret,
+  defaultPublishableKey,
+  defaultSecretKey,
+} from "../../shared/stack-constants.ts";
 import { Schema } from "effect";
 
 import {

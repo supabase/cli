@@ -47,7 +47,7 @@ const mapError = (cause: { readonly message: string }) =>
  * user believe an unsupported-object guard is active. Mirrors `db diff`'s
  * `warnPgSchemaDeprecated` line shape.
  */
-export const legacyStrictCoverageIgnoredWarning = `${legacyYellow(
+const legacyStrictCoverageIgnoredWarning = `${legacyYellow(
   "WARNING:",
 )} "--strict-coverage" has no effect with the legacy pg-delta engine.`;
 

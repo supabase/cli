@@ -1,9 +1,9 @@
 import { BunServices } from "@effect/platform-bun";
 import { CliConfigStore } from "@supabase/config/effect";
-import { httpTransportClientLayer } from "@supabase/stack/effect";
 import {
   Cause,
   Console,
+  Crypto,
   Effect,
   Exit,
   FileSystem,
@@ -72,8 +72,8 @@ type AllowedRunCliServices =
   | CliProjectHome
   | CliSettings
   | CommandRuntime
+  | Crypto.Crypto
   | FileSystem.FileSystem
-  | Layer.Success<typeof httpTransportClientLayer>
   | Path.Path
   | ProcessControl
   | ProjectLinkState
@@ -775,7 +775,6 @@ function cliProgramFor<
     Effect.provide(cliProjectContextLayerFor(runtimeLayer)),
     Effect.provide(projectLinkStateLayer),
     Effect.provide(runtimeLayer),
-    Effect.provide(httpTransportClientLayer),
     Effect.provide(fallbackCommandLayer),
     Effect.provide(Layer.succeed(CliArgs, { args })),
     Effect.provide(BunServices.layer),
@@ -837,7 +836,6 @@ export async function runCli<
     Effect.provide(processControlLayer),
     Effect.provide(runtimeInfoLayer),
     Effect.provide(ttyLayer),
-    Effect.provide(httpTransportClientLayer),
     Effect.provide(BunServices.layer),
   );
 
@@ -920,7 +918,6 @@ export async function runCli<
       Effect.provide(processControlLayer),
       Effect.provide(runtimeInfoLayer),
       Effect.provide(ttyLayer),
-      Effect.provide(httpTransportClientLayer),
       Effect.provide(BunServices.layer),
       Effect.provide(goProxyInvocationLayer),
       Effect.provide(successTrailerLayer),

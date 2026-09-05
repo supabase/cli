@@ -58,7 +58,7 @@ export interface LegacyPushUnencodable {
 }
 
 /** A template/notification body this encoder sent that has no registry row of its own. */
-export interface LegacyPushExtra {
+interface LegacyPushExtra {
   readonly path: ReadonlyArray<string>;
   readonly label: "content";
 }
@@ -306,7 +306,7 @@ export function legacyPushNotes(input: LegacyPushNotesInput): string {
   return lines.length === 0 ? "" : `${lines.join("\n")}\n`;
 }
 
-export interface LegacyPushPayloadServiceResult {
+interface LegacyPushPayloadServiceResult {
   readonly service: string;
   readonly status: string;
   readonly changes: ReadonlyArray<ReadonlyArray<string>>;

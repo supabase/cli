@@ -17,7 +17,7 @@ import {
 /**
  * A `ChildProcessSpawner` layer whose handle emits exactly the given raw
  * `Uint8Array` chunks on stdout/stderr — unlike the shared
- * `mockChildProcessSpawner` (`packages/process-compose/tests/helpers/mocks.ts`),
+ * `mockChildProcessSpawner` (`apps/cli/tests/helpers/child-process-spawner.ts`),
  * which encodes one full line per chunk, this lets a test place an arbitrary
  * byte boundary mid-codepoint to exercise `collectByteStream`'s per-stream
  * `TextDecoder` buffering.

@@ -74,7 +74,7 @@ export interface LegacyDocsExample {
   readonly response?: string;
 }
 
-export interface LegacyDocsAcceptedValue {
+interface LegacyDocsAcceptedValue {
   readonly id: string;
   readonly name: string;
   readonly type: string;
@@ -102,7 +102,7 @@ export interface LegacyDocsCommand {
   readonly flags: ReadonlyArray<LegacyDocsFlag>;
 }
 
-export interface LegacyDocsInfo {
+interface LegacyDocsInfo {
   readonly id: string;
   readonly version: string;
   readonly title: string;

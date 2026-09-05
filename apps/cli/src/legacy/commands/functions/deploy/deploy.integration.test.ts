@@ -15,7 +15,7 @@ import {
   useLegacyTempWorkdir,
 } from "../../../../../tests/helpers/legacy-mocks.ts";
 import { mockOutput, mockRuntimeInfo } from "../../../../../tests/helpers/mocks.ts";
-import { mockChildProcessSpawner } from "../../../../../../../packages/process-compose/tests/helpers/mocks.ts";
+import { mockChildProcessSpawner } from "../../../../../tests/helpers/child-process-spawner.ts";
 import {
   deployFunctions,
   shouldChmodBundleOutputDirectory,

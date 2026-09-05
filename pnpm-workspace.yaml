@@ -19,6 +19,7 @@ catalog:
   "@effect/vitest": "4.0.0-rc.112"
   "@tsconfig/bun": "^1.0.11"
   "@types/bun": "^1.4.0"
+  "@types/ws": "8.18.1"
   "typescript": "^7.0.2"
   "@vitest/coverage-v8": "^4.1.11"
   "effect": "4.0.0-rc.112"
@@ -30,6 +31,7 @@ catalog:
   "tldts": "^7.4.11"
   "turbo": "2.10.12"
   "vitest": "^4.1.11"
+  "ws": "8.21.3"
 
 blockExoticSubdeps: true
 
@@ -53,7 +55,7 @@ packageExtensions:
       "@types/debug": "^4.1.12"
       "@types/pg": "^8.23.1"
   # vitest lists vite as both a dependency and a peer, so pnpm resolves it as a
-  # peer only. These two reach vitest through their own `vitest` peer inside a
+  # peer only. These consumers reach vitest through their own `vitest` peer inside a
   # peer cycle, which leaves them a vitest variant with no vite at all — fatal
   # under the global store as soon as coverage loads `vitest/node`. Declaring the
   # required vite peer makes pnpm resolve the full vitest variant instead. The
@@ -97,16 +99,16 @@ minimumReleaseAgeExclude:
   - "@turbo/linux-arm64@2.10.11"
   - "@turbo/windows-64@2.10.11"
   - "@turbo/windows-arm64@2.10.11"
-  - "@effect/platform-bun@4.0.0-rc.111"
-  - "@effect/platform-node@4.0.0-rc.111"
-  - "@effect/platform-node-shared@4.0.0-rc.111"
-  - "@effect/sql-pg@4.0.0-rc.111"
-  - "@effect/vitest@4.0.0-rc.111"
+  - "@effect/platform-bun@4.0.0-rc.112"
+  - "@effect/platform-node@4.0.0-rc.112"
+  - "@effect/platform-node-shared@4.0.0-rc.112"
+  - "@effect/sql-pg@4.0.0-rc.112"
+  - "@effect/vitest@4.0.0-rc.112"
   - "@supabase/pg-delta@1.0.0-alpha.46"
   - "@supabase/pg-topo@1.0.0-alpha.5"
   - "@types/bun@1.4.0"
   - "bun-types@1.4.0"
-  - "effect@4.0.0-rc.111"
+  - "effect@4.0.0-rc.112"
   - "turbo@2.10.11"
 
 supportedArchitectures:

@@ -1,0 +1,559 @@
+import { Crypto, Effect, FileSystem, Path, PlatformError, Schema } from "effect";
+import type { PersistedStackState } from "../state/StackState.ts";
+import type { StackId } from "../public/StackId.ts";
+import { StackPreparationError } from "../public/Errors.ts";
+import { resolveStackPaths } from "../state/Paths.ts";
+import { isRecord, settingValue, settingsFor } from "../state/MaterializedSettings.ts";
+import {
+  base64UrlEncode,
+  resolveSigningKeyMaterial,
+  type ResolvedSigningKeyMaterial,
+} from "../state/SecretStore.ts";
+import { resolveThirdPartyIssuer } from "../model/capabilities/auth-third-party.ts";
+import { canonicalize } from "../model/Compiler.ts";
+
+/** A parsed JSON document fetched by the owner for OIDC discovery. */
+export type RuntimeJsonFetcher = (url: string) => Effect.Effect<unknown, StackPreparationError>;
+
+interface RuntimeAuthTemplate {
+  /** Stable URL id used by GoTrue's mailer template setting. */
+  readonly id: string;
+  /** User-configured project-relative path. */
+  readonly path: string;
+  /** Canonical host path, retained for live gateway serving. */
+  readonly canonicalPath: string;
+  /** File extension including the dot, when one is present. */
+  readonly extension: string;
+}
+
+interface RuntimeInputMaterial {
+  readonly auth?: Readonly<{
+    readonly jwtKeys?: string;
+    readonly jwks: string;
+    readonly templates?: ReadonlyArray<RuntimeAuthTemplate>;
+  }>;
+  readonly analytics?: Readonly<{
+    readonly gcpJwtPath?: string;
+    /** Session-scoped Vector config owned by this stack runtime. */
+    readonly vectorConfigPath?: string;
+  }>;
+  readonly functions?: Readonly<{ readonly secrets: Readonly<Record<string, string>> }>;
+}
+
+export interface RuntimeInputOwner {
+  /**
+   * Resolves stack-owned inputs needed before a workload is created.
+   *
+   * The Supervisor serializes workload startup and runtime cleanup. This owner therefore keeps
+   * only completed material in its caches; the caller owns an in-progress resolution and its
+   * interruption.
+   */
+  readonly resolve: (
+    state: PersistedStackState,
+    workloadId: string,
+  ) => Effect.Effect<RuntimeInputMaterial, StackPreparationError>;
+  /** Resolves one configured project-relative regular file without copying it. */
+  readonly resolveProjectFile: (
+    state: PersistedStackState,
+    configuredPath: string,
+  ) => Effect.Effect<string, StackPreparationError>;
+  readonly resolveAuthTemplates: (
+    state: PersistedStackState,
+  ) => Effect.Effect<ReadonlyArray<RuntimeAuthTemplate>, StackPreparationError>;
+  readonly cleanupAll: Effect.Effect<void, StackPreparationError>;
+}
+
+export interface RuntimeInputOwnerOptions {
+  readonly stateRoot: string;
+  readonly stackId: StackId;
+  /** Injected OIDC JSON fetcher; no network service is hidden in this owner. */
+  readonly fetchJson?: RuntimeJsonFetcher;
+}
+
+const failure = (message: string, fields: Readonly<Record<string, unknown>> = {}) =>
+  new StackPreparationError({ message, ...fields });
+
+const mapFile = <A, R>(
+  target: string,
+  operation: string,
+  effect: Effect.Effect<A, PlatformError.PlatformError, R>,
+): Effect.Effect<A, StackPreparationError, R> =>
+  effect.pipe(
+    Effect.mapError((error) => failure(`Unable to ${operation}`, { path: target, cause: error })),
+  );
+
+const relativeEscape = (path: Path.Path, root: string, candidate: string): boolean => {
+  const relative = path.relative(root, candidate);
+  return relative === ".." || relative.startsWith(`..${path.sep}`) || path.isAbsolute(relative);
+};
+
+const absoluteForPlatform = (path: Path.Path, value: string): boolean =>
+  path.isAbsolute(value) || /^[A-Za-z]:[\\/]/u.test(value) || value.startsWith("\\\\");
+
+const extensionFor = (configuredPath: string): string => {
+  const file = configuredPath.slice(
+    Math.max(configuredPath.lastIndexOf("/"), configuredPath.lastIndexOf("\\")) + 1,
+  );
+  const dot = file.lastIndexOf(".");
+  return dot <= 0 ? "" : file.slice(dot);
+};
+
+const publicRemoteJwks = Schema.Struct({ keys: Schema.Array(Schema.Unknown) });
+const oidcDiscovery = Schema.Struct({ jwks_uri: Schema.String });
+
+const decodeJson = (value: unknown): Effect.Effect<unknown, Schema.SchemaError> =>
+  typeof value === "string"
+    ? Schema.decodeEffect(Schema.fromJsonString(Schema.Unknown))(value)
+    : Effect.succeed(value);
+
+/** Keeps OIDC diagnostics useful without echoing userinfo, query, or fragment data. */
+const safeUrlLabel = (value: string): string => {
+  try {
+    const url = new URL(value);
+    return `${url.origin}${url.pathname}`;
+  } catch {
+    return "<invalid-url>";
+  }
+};
+
+const symmetricJwk = (secret: string): Readonly<Record<string, unknown>> => ({
+  kty: "oct",
+  alg: "HS256",
+  use: "sig",
+  key_ops: ["verify"],
+  k: base64UrlEncode(new TextEncoder().encode(secret)),
+});
+
+/** Resolves materialized Edge Runtime secrets to their caller-visible names. */
+const resolveFunctionsEdgeRuntimeSecrets = (
+  state: PersistedStackState,
+): Effect.Effect<Readonly<Record<string, string>>, StackPreparationError> => {
+  const settings = settingsFor(state, "functions");
+  const edgeRuntime =
+    isRecord(settings) && isRecord(settings.edge_runtime) ? settings.edge_runtime : {};
+  const configured = isRecord(edgeRuntime.secrets) ? edgeRuntime.secrets : {};
+  const output: Record<string, string> = {};
+  for (const [name, raw] of Object.entries(configured)) {
+    if (!/^[A-Za-z_][A-Za-z0-9_]*$/u.test(name))
+      return Effect.fail(failure("Functions Edge Runtime secret name is invalid", { name }));
+    if (name.startsWith("SUPABASE_"))
+      return Effect.fail(failure("Functions Edge Runtime secret name is reserved", { name }));
+    const value = settingValue(state, raw);
+    // oxlint-disable-next-line no-control-regex
+    if (/[\u0000-\u001f\u007f]/u.test(value))
+      return Effect.fail(failure("Functions Edge Runtime secret value is invalid", { name }));
+    output[name] = value;
+  }
+  return Effect.succeed(output);
+};
+
+const vectorConfig = `data_dir: /tmp
+api:
+  enabled: true
+  address: "\${VECTOR_API_ADDRESS}"
+
+sources:
+  stack_heartbeat:
+    type: demo_logs
+    format: json
+    count: 1
+  stack_keepalive:
+    type: internal_metrics
+
+transforms:
+  stack_marker:
+    type: remap
+    inputs:
+      - stack_heartbeat
+    source: |
+      .event_message = "supabase-stack-vector"
+      del(.message)
+      .project = "default"
+
+sinks:
+  analytics:
+    type: http
+    inputs:
+      - stack_marker
+    uri: "\${LOGFLARE_URL}/logs?source_name=postgres.logs"
+    method: post
+    request:
+      headers:
+        x-api-key: "\${LOGFLARE_PRIVATE_ACCESS_TOKEN}"
+      retry_attempts: 5
+      retry_initial_backoff_secs: 1
+      retry_max_duration_secs: 10
+    encoding:
+      codec: json
+  keepalive:
+    type: blackhole
+    inputs:
+      - stack_keepalive
+`;
+
+export const makeRuntimeInputOwner = (
+  options: RuntimeInputOwnerOptions,
+): Effect.Effect<
+  RuntimeInputOwner,
+  StackPreparationError,
+  FileSystem.FileSystem | Path.Path | Crypto.Crypto
+> =>
+  Effect.gen(function* () {
+    const fs = yield* FileSystem.FileSystem;
+    const path = yield* Path.Path;
+    const crypto = yield* Crypto.Crypto;
+    const stackPaths = yield* resolveStackPaths(options).pipe(
+      Effect.mapError((cause) => failure("Unable to resolve runtime input paths", { cause })),
+    );
+    const vectorRoot = path.join(stackPaths.runtime, "inputs", "vector");
+
+    const resolveProjectFile = (
+      state: PersistedStackState,
+      configuredPath: string,
+    ): Effect.Effect<string, StackPreparationError> => {
+      if (configuredPath.length === 0 || absoluteForPlatform(path, configuredPath))
+        return Effect.fail(failure("Configured project file path must be relative"));
+      const root = path.resolve(state.identity.projectRoot);
+      const candidate = path.resolve(root, configuredPath);
+      if (relativeEscape(path, root, candidate))
+        return Effect.fail(failure("Configured project file escapes the project root"));
+      return Effect.gen(function* () {
+        const canonicalRoot = yield* mapFile(root, "resolve project root", fs.realPath(root));
+        const canonicalCandidate = yield* mapFile(
+          candidate,
+          "resolve configured project file",
+          fs.realPath(candidate),
+        );
+        if (relativeEscape(path, canonicalRoot, canonicalCandidate))
+          return yield* failure("Configured project file escapes the project root");
+        const info = yield* mapFile(
+          canonicalCandidate,
+          "inspect configured project file",
+          fs.stat(canonicalCandidate),
+        );
+        if (info.type !== "File")
+          return yield* failure("Configured project path must resolve to a regular file");
+        return canonicalCandidate;
+      });
+    };
+
+    const ensureFunctionsRoot = (
+      state: PersistedStackState,
+    ): Effect.Effect<void, StackPreparationError> => {
+      const settings = settingsFor(state, "functions");
+      const root = isRecord(settings) ? settingValue(state, settings.functions_root) : "";
+      if (root.length === 0) return Effect.fail(failure("Persisted Functions root is missing"));
+      return mapFile(
+        root,
+        "create Functions root",
+        fs.makeDirectory(root, { recursive: true }),
+      ).pipe(Effect.asVoid);
+    };
+
+    const resolveAuthTemplates = (
+      state: PersistedStackState,
+    ): Effect.Effect<ReadonlyArray<RuntimeAuthTemplate>, StackPreparationError> =>
+      Effect.gen(function* () {
+        const auth = settingsFor(state, "auth");
+        const email = isRecord(auth) && isRecord(auth.email) ? auth.email : {};
+        const result: RuntimeAuthTemplate[] = [];
+        const ids = new Set<string>();
+        const urls = new Set<string>();
+        const add = (id: string, raw: unknown): Effect.Effect<void, StackPreparationError> => {
+          if (!isRecord(raw)) return Effect.void;
+          const configuredPath = settingValue(state, raw.content_path);
+          if (configuredPath.length === 0) return Effect.void;
+          if (ids.has(id)) return Effect.fail(failure("Duplicate Auth email template id", { id }));
+          const extension = extensionFor(configuredPath);
+          const url = `/email/${id}${extension}`;
+          if (urls.has(url)) return Effect.fail(failure("Duplicate Auth email URL", { url }));
+          return resolveProjectFile(state, configuredPath).pipe(
+            Effect.tap((canonicalPath) =>
+              Effect.sync(() => {
+                ids.add(id);
+                urls.add(url);
+                result.push({
+                  id,
+                  path: configuredPath,
+                  canonicalPath,
+                  extension,
+                });
+              }),
+            ),
+            Effect.asVoid,
+          );
+        };
+        if (isRecord(email.template))
+          for (const [name, value] of Object.entries(email.template)) yield* add(name, value);
+        if (isRecord(email.notification))
+          for (const [name, value] of Object.entries(email.notification))
+            if (isRecord(value) && value.enabled === true)
+              yield* add(`${name}_notification`, value);
+        return result;
+      });
+
+    const resolveRemoteKeys = (
+      issuer: string,
+    ): Effect.Effect<ReadonlyArray<unknown>, StackPreparationError> => {
+      const fetchJson = options.fetchJson;
+      if (fetchJson === undefined)
+        return Effect.fail(failure("OIDC discovery requires an injected JSON fetcher"));
+      const discoveryUrl = `${issuer.replace(/\/+$/u, "")}/.well-known/openid-configuration`;
+      const fetchAt = (
+        url: string,
+        operation: string,
+      ): Effect.Effect<unknown, StackPreparationError> =>
+        fetchJson(url).pipe(
+          Effect.mapError(() => failure(`${operation} request failed`, { url: safeUrlLabel(url) })),
+        );
+      return fetchAt(discoveryUrl, "OIDC discovery").pipe(
+        Effect.flatMap((value) =>
+          decodeJson(value).pipe(
+            Effect.mapError(() =>
+              failure("OIDC discovery response is invalid", { url: safeUrlLabel(discoveryUrl) }),
+            ),
+          ),
+        ),
+        Effect.flatMap((value) =>
+          Schema.decodeUnknownEffect(oidcDiscovery)(value).pipe(
+            Effect.mapError(() =>
+              failure("OIDC discovery response is invalid", { url: safeUrlLabel(discoveryUrl) }),
+            ),
+          ),
+        ),
+        Effect.flatMap((discovery) => {
+          const jwksUrl = discovery.jwks_uri.trim();
+          if (jwksUrl.length === 0)
+            return Effect.fail(
+              failure("OIDC discovery response does not expose jwks_uri", {
+                url: safeUrlLabel(discoveryUrl),
+              }),
+            );
+          return fetchAt(jwksUrl, "OIDC JWKS").pipe(
+            Effect.flatMap((value) =>
+              decodeJson(value).pipe(
+                Effect.mapError(() =>
+                  failure("OIDC JWKS response is invalid", { url: safeUrlLabel(jwksUrl) }),
+                ),
+              ),
+            ),
+            Effect.flatMap((value) =>
+              Schema.decodeUnknownEffect(publicRemoteJwks)(value).pipe(
+                Effect.mapError(() =>
+                  failure("OIDC JWKS response is invalid", { url: safeUrlLabel(jwksUrl) }),
+                ),
+              ),
+            ),
+            Effect.flatMap((jwks) =>
+              jwks.keys.length === 0
+                ? Effect.fail(
+                    failure("OIDC JWKS response contains no keys", { url: safeUrlLabel(jwksUrl) }),
+                  )
+                : Effect.succeed(jwks.keys),
+            ),
+          );
+        }),
+      );
+    };
+
+    const resolveAuth = (
+      state: PersistedStackState,
+    ): Effect.Effect<NonNullable<RuntimeInputMaterial["auth"]>, StackPreparationError> =>
+      Effect.gen(function* () {
+        const signing = state.definition?.security.jwt.signing;
+        let local: ResolvedSigningKeyMaterial | undefined;
+        if (signing?.kind === "jwks-file") {
+          local = yield* resolveSigningKeyMaterial({
+            kind: "jwks-file",
+            projectRoot: state.identity.projectRoot,
+            path: signing.path,
+          }).pipe(
+            Effect.provideService(FileSystem.FileSystem, fs),
+            Effect.provideService(Path.Path, path),
+            Effect.mapError(() =>
+              failure("Unable to resolve Auth signing keys", { path: signing.path }),
+            ),
+          );
+        }
+        const thirdParty = resolveThirdPartyIssuer(settingsFor(state, "auth"));
+        if (!thirdParty.ok)
+          return yield* failure("Unable to resolve Auth third-party issuer", {
+            provider: thirdParty.provider,
+          });
+        const remote =
+          thirdParty.value === undefined ? [] : yield* resolveRemoteKeys(thirdParty.value.issuer);
+        const localPublic = local?.publicKeys ?? [];
+        const symmetric =
+          signing?.kind === "jwks-file"
+            ? []
+            : (() => {
+                const secret = state.secrets["secret:auth.settings.jwt_secret"]?.value ?? "";
+                return secret.length === 0 ? [] : [symmetricJwk(secret)];
+              })();
+        if (signing?.kind !== "jwks-file" && symmetric.length === 0)
+          return yield* failure("Persisted Auth JWT secret is missing");
+        const publicKeys = [...remote, ...localPublic, ...symmetric];
+        const templates =
+          state.definition?.capabilities.auth.enabled !== true
+            ? []
+            : yield* resolveAuthTemplates(state);
+        return {
+          ...(local === undefined ? {} : { jwtKeys: local.privateKeysJson }),
+          jwks: yield* Schema.encodeEffect(Schema.fromJsonString(Schema.Unknown))({
+            keys: publicKeys,
+          }).pipe(Effect.mapError(() => failure("Unable to encode Auth JWKS"))),
+          ...(templates.length === 0 ? {} : { templates }),
+        };
+      });
+
+    const writeVectorConfig = (
+      state: PersistedStackState,
+    ): Effect.Effect<string, StackPreparationError> => {
+      const assignment = state.privatePorts.find(
+        (entry) => entry.workloadId === "analytics:vector" && entry.binding === "primary",
+      );
+      if (state.runtime.kind === "native" && assignment === undefined)
+        return Effect.fail(failure("Persisted native Vector assignment is missing"));
+      const target = path.join(vectorRoot, "vector.yaml");
+      return Effect.gen(function* () {
+        yield* mapFile(
+          vectorRoot,
+          "create Vector config directory",
+          fs.makeDirectory(vectorRoot, { recursive: true, mode: 0o700 }),
+        );
+        yield* mapFile(vectorRoot, "secure Vector config directory", fs.chmod(vectorRoot, 0o700));
+        const token = yield* crypto.randomUUIDv4.pipe(
+          Effect.mapError(() => failure("Unable to allocate Vector config file")),
+        );
+        const temporary = path.join(vectorRoot, `.vector.yaml.${token}.tmp`);
+        yield* Effect.ensuring(
+          Effect.scoped(
+            Effect.gen(function* () {
+              const file = yield* mapFile(
+                temporary,
+                "create Vector config",
+                fs.open(temporary, { flag: "w", mode: 0o600 }),
+              );
+              yield* mapFile(
+                temporary,
+                "write Vector config",
+                file.writeAll(new TextEncoder().encode(vectorConfig)),
+              );
+              yield* mapFile(temporary, "sync Vector config", file.sync);
+            }),
+          ).pipe(
+            Effect.andThen(mapFile(temporary, "secure Vector config", fs.chmod(temporary, 0o600))),
+            Effect.andThen(mapFile(target, "publish Vector config", fs.rename(temporary, target))),
+            Effect.andThen(
+              mapFile(target, "secure published Vector config", fs.chmod(target, 0o600)),
+            ),
+          ),
+          fs.remove(temporary, { force: true }).pipe(Effect.catchCause(() => Effect.void)),
+        );
+        return target;
+      });
+    };
+
+    const commonCompleted = new Map<string, RuntimeInputMaterial>();
+    const authCompleted = new Map<string, NonNullable<RuntimeInputMaterial["auth"]>>();
+    const keyFor = (state: PersistedStackState): string =>
+      `${options.stackId}\u0000${canonicalize(state.runtime)}\u0000${canonicalize(state.definition ?? {})}`;
+    const needsAuthMaterial = (state: PersistedStackState, workloadId: string): boolean =>
+      (["rest", "auth", "realtime", "storage", "functions"] as const).some(
+        (capability) =>
+          state.definition?.capabilities[capability].enabled === true &&
+          (workloadId === `${capability}:${capability}` ||
+            (capability === "functions" && workloadId === "functions:edge-runtime")),
+      );
+
+    const materializeCommon = (
+      state: PersistedStackState,
+      workloadId: string,
+      authMaterial: NonNullable<RuntimeInputMaterial["auth"]> | undefined,
+    ): Effect.Effect<RuntimeInputMaterial, StackPreparationError> =>
+      Effect.gen(function* () {
+        if (workloadId === "studio:studio" || workloadId === "functions:edge-runtime")
+          yield* ensureFunctionsRoot(state);
+        const auth = needsAuthMaterial(state, workloadId) ? authMaterial : undefined;
+        const resolvesAnalyticsMaterial =
+          state.definition?.capabilities.analytics.enabled === true &&
+          workloadId.startsWith("analytics:");
+        const analytics = !resolvesAnalyticsMaterial
+          ? undefined
+          : yield* Effect.gen(function* () {
+              const analyticsSettings = settingsFor(state, "analytics");
+              const gcpPath = isRecord(analyticsSettings)
+                ? settingValue(state, analyticsSettings.gcp_jwt_path)
+                : "";
+              const vectorPort = isRecord(analyticsSettings)
+                ? settingValue(state, analyticsSettings.vector_port)
+                : "";
+              const vectorConfigPath =
+                vectorPort.length > 0 ? yield* writeVectorConfig(state) : undefined;
+              return gcpPath.length === 0 && vectorConfigPath === undefined
+                ? undefined
+                : {
+                    ...(gcpPath.length === 0
+                      ? {}
+                      : { gcpJwtPath: yield* resolveProjectFile(state, gcpPath) }),
+                    ...(vectorConfigPath === undefined ? {} : { vectorConfigPath }),
+                  };
+            });
+        const resolvesFunctionsMaterial =
+          workloadId === "functions:edge-runtime" &&
+          state.definition?.capabilities.functions.enabled === true;
+        const functions = resolvesFunctionsMaterial
+          ? { secrets: yield* resolveFunctionsEdgeRuntimeSecrets(state) }
+          : undefined;
+        return {
+          ...(auth === undefined ? {} : { auth }),
+          ...(analytics === undefined ? {} : { analytics }),
+          ...(functions === undefined ? {} : { functions }),
+        };
+      });
+
+    const resolveCached = <A>(
+      key: string,
+      completed: Map<string, A>,
+      materialize: Effect.Effect<A, StackPreparationError>,
+    ): Effect.Effect<A, StackPreparationError> =>
+      Effect.suspend(() => {
+        const ready = completed.get(key);
+        return ready === undefined
+          ? materialize.pipe(Effect.tap((value) => Effect.sync(() => completed.set(key, value))))
+          : Effect.succeed(ready);
+      });
+
+    const resolve = (
+      state: PersistedStackState,
+      workloadId: string,
+    ): Effect.Effect<RuntimeInputMaterial, StackPreparationError> =>
+      Effect.gen(function* () {
+        const key = `${keyFor(state)}\u0000${workloadId}`;
+        const auth = needsAuthMaterial(state, workloadId)
+          ? yield* resolveCached(keyFor(state), authCompleted, resolveAuth(state))
+          : undefined;
+        const common = yield* resolveCached(
+          key,
+          commonCompleted,
+          materializeCommon(state, workloadId, auth),
+        );
+        return common;
+      });
+    const cleanupAll = Effect.gen(function* () {
+      commonCompleted.clear();
+      authCompleted.clear();
+      yield* mapFile(
+        vectorRoot,
+        "clean Vector configs",
+        fs.remove(vectorRoot, { recursive: true, force: true }),
+      );
+    });
+
+    return {
+      resolve,
+      resolveProjectFile,
+      resolveAuthTemplates,
+      cleanupAll,
+    };
+  });

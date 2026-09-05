@@ -1,8 +1,33 @@
+import { readFileSync } from "node:fs";
+import { dirname, join } from "node:path";
+import { fileURLToPath } from "node:url";
+
 import { describe, expect, it } from "vitest";
 
-import { bundleServeMainTemplate } from "./serve-main-bundler.ts";
+import { bundleServeMainTemplate, serveMainEntrypoint } from "./serve-main-bundler.ts";
+import {
+  bundleServeMainTemplate as stackBundleServeMainTemplate,
+  serveMainEntrypoint as stackServeMainEntrypoint,
+} from "../../../../../packages/stack/src/functions/serve-main-bundler.ts";
+
+const packageRoot = join(dirname(fileURLToPath(import.meta.url)), "../../../../../packages/stack");
 
 describe("bundleServeMainTemplate", () => {
+  it("keeps the bootstrap private while bridging the stack-owned implementation", () => {
+    const packageJson = JSON.parse(readFileSync(join(packageRoot, "package.json"), "utf8")) as {
+      readonly exports: Record<string, string>;
+    };
+
+    expect(packageJson.exports).toEqual({
+      ".": "./src/index.ts",
+      "./effect": "./src/effect.ts",
+      "./internal/supervisor": "./src/internal/supervisor-process.ts",
+      "./testing": "./src/testing.ts",
+    });
+    expect(bundleServeMainTemplate).toBe(stackBundleServeMainTemplate);
+    expect(serveMainEntrypoint).toBe(stackServeMainEntrypoint);
+  });
+
   it("produces a self-contained runtime template with no remote import specifiers", async () => {
     const bundled = await bundleServeMainTemplate();
 

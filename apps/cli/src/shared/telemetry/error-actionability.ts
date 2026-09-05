@@ -1,9 +1,3 @@
-import {
-  MANAGED_ERROR_CODES,
-  MANAGED_ERROR_TAG_BY_CODE,
-  type ManagedErrorCode,
-  type UnsupportedGitWorkspaceCause,
-} from "@supabase/stack/managed-model";
 import { Cause, Option } from "effect";
 import type { CliError as EffectCliError } from "effect/unstable/cli";
 
@@ -15,7 +9,7 @@ import type { CliError as EffectCliError } from "effect/unstable/cli";
  * {@link ErrorActionabilityId} symbol (enforced by
  * `error-actionability-coverage.unit.test.ts`). Errors originating outside the
  * CLI workspace (`@supabase/stack`, `@supabase/config`,
- * `@supabase/process-compose`, `effect` cli/http) are classified by the
+ * `effect` cli/http) are classified by the
  * structural adapters at the bottom of this module, which are themselves
  * exhaustiveness-checked against those packages' sources.
  *
@@ -229,57 +223,6 @@ type CliErrorSuggestion =
       >;
       readonly suggested_command?: never;
     };
-
-/** Q2 KPI metric definitions, kept next to the taxonomy they consume. */
-export const CliErrorActionabilityMetricDefinitions = {
-  strictRecovery: {
-    id: "same_command_success_same_session",
-    event: "cli_command_executed",
-    partition_by: ["device_id", "$session_id", "command"],
-    command_identity:
-      "Exact equality of the command property, which is the normalized command path emitted by CLI instrumentation without argument values.",
-    order_by: "event timestamp ascending",
-    eligible_failure: "exit_code != 0 AND error_kind = 'user_actionable'",
-    recovered_when:
-      "For eligible failure F, there exists event S with S.timestamp > F.timestamp, S.exit_code = 0, and S.device_id = F.device_id, S.$session_id = F.$session_id, and S.command = F.command. Intervening events do not change the result.",
-    reset_when:
-      "The observation window ends with the $session_id. A success with a different device_id, $session_id, or command never counts.",
-    description:
-      "A user-actionable failure is recovered only when the same normalized command later succeeds for the same device_id and $session_id.",
-  },
-  repeatError: {
-    id: "same_command_same_error_same_session_before_success",
-    event: "cli_command_executed",
-    partition_by: ["device_id", "$session_id", "command"],
-    command_identity:
-      "Exact equality of the command property, which is the normalized command path emitted by CLI instrumentation without argument values.",
-    order_by: "event timestamp ascending",
-    eligible_failure:
-      "exit_code != 0 AND error_kind = 'user_actionable' AND error_fingerprint IS NOT NULL",
-    repeated_when:
-      "Failed event F is a repeat when an earlier failed event P in the same partition has P.error_fingerprint = F.error_fingerprint and no event S in that partition has P.timestamp < S.timestamp < F.timestamp and S.exit_code = 0.",
-    reset_when:
-      "Any exit_code = 0 event in the partition clears every prior fingerprint for that command. A different $session_id starts a new partition; successes for other commands do not reset it.",
-    description:
-      "The second and each later occurrence of the same user-actionable error_fingerprint is a repeat until that normalized command succeeds or the session changes.",
-  },
-  internalUnknownBugRate: {
-    id: "failed_commands_internal_bug_or_unknown",
-    event: "cli_command_executed",
-    denominator: "count where exit_code != 0 AND error_kind IS NOT NULL",
-    numerator: "count where exit_code != 0 AND error_kind IN ('internal_bug', 'unknown')",
-    description:
-      "Internal/unknown bug failure rate is the share of classified failed commands reported as internal_bug or unknown. Failures without error_kind (pure Go-proxy commands, CLI versions predating the classification) are excluded from both sides; classificationCoverage reports their share.",
-  },
-  classificationCoverage: {
-    id: "failed_commands_with_classification",
-    event: "cli_command_executed",
-    denominator: "count where exit_code != 0",
-    numerator: "count where exit_code != 0 AND error_kind IS NOT NULL",
-    description:
-      "Share of failed commands carrying the error classification. Pure Go-proxy commands report through the Go binary without these fields, and older CLI versions never send them, so the recovery, repeat, and bug-rate metrics cover exactly this fraction of the failure volume.",
-  },
-} as const;
 
 /**
  * Symbol under which CLI error classes declare their own actionability.
@@ -794,123 +737,8 @@ const effectCliActionabilityByTag = {
   UnrecognizedOption: () => actionability.invalidInput,
 } satisfies Record<EffectCliAdapterTag, ErrorActionabilityAdapter>;
 
-/**
- * The materially different reasons {@link UnsupportedGitWorkspaceCause} names,
- * projected onto a distinct closed fingerprint suffix each — so a refusal
- * because the CLI ran inside git metadata, a malformed-metadata refusal, and a
- * reftable refusal never group together as repeats of one another.
- */
-const UNSUPPORTED_GIT_WORKSPACE_FINGERPRINT_SUFFIX_BY_CAUSE: Record<
-  UnsupportedGitWorkspaceCause,
-  CliErrorFingerprintSuffix
-> = {
-  "inside-git-directory": "managed_git_workspace_inside_git_directory",
-  "malformed-metadata": "managed_git_workspace_malformed_metadata",
-  "metadata-inaccessible": "managed_git_workspace_metadata_inaccessible",
-  reftable: "managed_git_workspace_reftable",
-};
-
-function isUnsupportedGitWorkspaceCause(value: string): value is UnsupportedGitWorkspaceCause {
-  return (
-    value === "inside-git-directory" ||
-    value === "malformed-metadata" ||
-    value === "metadata-inaccessible" ||
-    value === "reftable"
-  );
-}
-
-/** Branches on the error's own typed `workspaceCause` field, never on reason text. */
-function unsupportedGitWorkspaceFingerprintSuffix(error: ErrorRecord): CliErrorFingerprintSuffix {
-  const cause = readString(error, "workspaceCause");
-  return cause !== undefined && isUnsupportedGitWorkspaceCause(cause)
-    ? UNSUPPORTED_GIT_WORKSPACE_FINGERPRINT_SUFFIX_BY_CAUSE[cause]
-    : "managed_git_workspace_malformed_metadata";
-}
-
-/**
- * `@supabase/stack` managed registry failures, keyed by the stable `code`
- * literal each class declares. `code` is the package's wire-level contract: it
- * survives the identifier minification of release builds, and Node/Bun callers
- * outside an Effect runtime branch on it. Dispatch, however, goes through
- * `_tag` like every other external error — {@link managedActionabilityByTag}
- * projects this table onto the tags via the package's own tag/code map.
- *
- * Keyed by the package's exported {@link ManagedErrorCode} union, so the table
- * is exhaustive by construction: a new managed failure cannot be added in
- * `@supabase/stack` without being classified here. Values are adapters (not
- * bare declarations) so an entry — like `UNSUPPORTED_GIT_WORKSPACE` below — can
- * branch on the raised instance's own fields.
- */
-const managedActionabilityByCode: Record<ManagedErrorCode, ErrorActionabilityAdapter> = {
-  INVALID_MANAGED_IDENTITY: () => ({
-    ...actionability.invalidInput,
-    fingerprint_suffix: "managed_identity",
-  }),
-  INVALID_MANAGED_STACK_NAME: () => ({
-    ...actionability.invalidInput,
-    fingerprint_suffix: "managed_stack_name",
-  }),
-  MANAGED_STACK_NOT_FOUND: () => ({
-    ...actionability.invalidInput,
-    fingerprint_suffix: "not_found",
-  }),
-  // The directory the command ran in holds git metadata rather than a working
-  // tree — a bare repository or a `.git` — so the remediation is to run it from a
-  // checkout instead. The suffix is split by the error's own `workspaceCause` field: see
-  // unsupportedGitWorkspaceFingerprintSuffix.
-  UNSUPPORTED_GIT_WORKSPACE: (error) => ({
-    ...actionability.invalidInput,
-    fingerprint_suffix: unsupportedGitWorkspaceFingerprintSuffix(error),
-  }),
-  MANAGED_STACK_NOT_STOPPED: () => ({
-    ...actionability.stopStack,
-    fingerprint_suffix: "managed_stack_not_stopped",
-  }),
-  MANAGED_EXACT_PORT_OCCUPIED: () => ({
-    ...actionability.invalidConfig,
-    fingerprint_suffix: "port_conflict",
-  }),
-  MANAGED_PORT_ALLOCATION_FAILED: () => ({
-    ...actionability.startStack,
-    fingerprint_suffix: "port_allocation",
-  }),
-  // The registry derives every stack root itself, so a path that fails the
-  // containment check means the CLI passed a rejected argument.
-  UNSAFE_MANAGED_STACK_PATH: () => ({
-    ...actionability.impossibleState,
-    fingerprint_suffix: "bad_argument",
-  }),
-};
-
-/**
- * The managed table above, re-keyed by the `_tag` of the class that declares
- * each code. Generated from `@supabase/stack`'s own tag/code map so every
- * managed tag is classified without restating a single verdict:
- * {@link managedActionabilityByCode} stays the one place a managed failure is
- * classified, and a tag/code pair the package renames cannot silently fall
- * through to `unknown`.
- */
-const managedActionabilityByTag: Record<string, ErrorActionabilityAdapter> = Object.fromEntries(
-  MANAGED_ERROR_CODES.map((code) => [
-    MANAGED_ERROR_TAG_BY_CODE[code],
-    managedActionabilityByCode[code],
-  ]),
-);
-
-/**
- * Whether a `@supabase/stack` managed error code has a classification in
- * {@link managedActionabilityByCode}. Used by the coverage test to keep the
- * table exhaustive against the managed classes; the tags themselves are checked
- * through {@link isClassifiedExternalErrorTag}, which the generated entries
- * satisfy.
- */
-export function isClassifiedManagedErrorCode(code: string): boolean {
-  return Object.hasOwn(managedActionabilityByCode, code);
-}
-
 const externalActionabilityByTag: Record<string, ErrorActionabilityAdapter> = {
   ...effectCliActionabilityByTag,
-  ...managedActionabilityByTag,
 
   // effect PlatformError — OS/filesystem operations. `reason` is
   // `BadArgument | SystemError`; BadArgument means the CLI itself passed a
@@ -1003,12 +831,29 @@ const externalActionabilityByTag: Record<string, ErrorActionabilityAdapter> = {
   }),
   SchemaError: () => ({ ...actionability.apiStatus, fingerprint_suffix: "api_response" }),
 
-  // @supabase/stack — StackError is a tagged error with a structured `code`
-  // field.
-  StackError: (error) =>
-    readString(error, "code") === "PORT_ALLOCATION"
-      ? { ...actionability.invalidConfig, fingerprint_suffix: "port_allocation" }
-      : actionability.unknown,
+  InvalidStackIdentityError: () => actionability.invalidInput,
+  InvalidProjectRootError: () => actionability.invalidInput,
+  InvalidStackConfigError: () => actionability.invalidConfig,
+  StackVersionUnsupportedError: () => actionability.invalidConfig,
+  StackNotFoundError: () => actionability.invalidInput,
+  StackOwnershipConflictError: () => actionability.invalidInput,
+  StackRuntimeMismatchError: () => actionability.invalidConfig,
+  StackMustBeStoppedError: () => actionability.stopStack,
+  StackLifecycleConflictError: () => actionability.startStack,
+  StackStateInvalidError: () => actionability.invalidConfig,
+  StackStateFormatUnsupportedError: () => actionability.invalidConfig,
+  StackUpgradeRequiredError: () => actionability.startStack,
+  StackSecretMismatchError: () => actionability.invalidConfig,
+  InvalidJwtSigningMaterialError: () => actionability.invalidConfig,
+  PortUnavailableError: () => actionability.invalidConfig,
+  GatewayActivationError: () => actionability.startStack,
+  StackPreparationError: () => actionability.startStack,
+  ArtifactIntegrityError: () => actionability.externalNetwork,
+  ContainerPullError: () => actionability.externalNetwork,
+  StackRuntimeError: () => actionability.startStack,
+  StackCleanupError: () => actionability.stopStack,
+  ContainerEngineError: () => actionability.dockerNotRunning,
+  StackDestructionError: () => actionability.stopStack,
   BinaryNotFoundError: () => actionability.invalidConfig,
   BinaryManifestError: () => actionability.externalNetwork,
   BinaryRuntimeError: () => actionability.externalNetwork,
@@ -1022,101 +867,14 @@ const externalActionabilityByTag: Record<string, ErrorActionabilityAdapter> = {
     error["daemonDown"] === true
       ? { ...actionability.dockerNotRunning, fingerprint_suffix: "docker_not_running" }
       : { ...actionability.externalNetwork, fingerprint_suffix: "registry_pull" },
-  StackBuildError: (error) => {
-    const reason = readString(error, "reason");
-    if (reason === "invalid_config") {
-      return { ...actionability.invalidConfig, fingerprint_suffix: "invalid_config" };
-    }
-    if (reason === "docker_not_running") {
-      return { ...actionability.dockerNotRunning, fingerprint_suffix: "docker_not_running" };
-    }
-    if (reason === "asset_preparation") {
-      return { ...actionability.externalNetwork, fingerprint_suffix: "asset_preparation" };
-    }
-    return { ...actionability.impossibleState, fingerprint_suffix: "internal_build" };
-  },
-  PortConflictError: () => ({
-    ...actionability.invalidConfig,
-    fingerprint_suffix: "port_conflict",
-  }),
   PortAllocationError: () => ({
     ...actionability.invalidConfig,
     fingerprint_suffix: "port_allocation",
   }),
-  AtomicClaimUnsupportedError: () => ({
-    ...actionability.invalidInput,
-    fingerprint_suffix: "managed_identity",
-  }),
   StackNotRunningError: () => actionability.startStack,
-  StackReadinessError: () => actionability.startStack,
-  StackUnavailableError: () => actionability.startStack,
-  StackRpcTransportError: () => ({
-    ...actionability.startStack,
-    fingerprint_suffix: "daemon_transport",
-  }),
   StackRpcProtocolError: () => ({
     ...actionability.impossibleState,
     fingerprint_suffix: "daemon_protocol",
-  }),
-  NoRunningStackError: () => actionability.startStack,
-  DaemonUpgradeRequired: () => ({
-    ...actionability.startStack,
-    fingerprint_suffix: "daemon_upgrade_required",
-  }),
-  UpgradePreflightError: () => ({
-    ...actionability.startStack,
-    fingerprint_suffix: "daemon_upgrade_preflight",
-  }),
-  UpgradeRestartError: () => ({
-    ...actionability.startStack,
-    fingerprint_suffix: "daemon_upgrade_restart",
-  }),
-  StopTimeout: () => ({
-    ...actionability.stopStack,
-    fingerprint_suffix: "daemon_stop_timeout",
-  }),
-  InvalidControlOwnershipIdError: () => ({
-    ...actionability.impossibleState,
-    fingerprint_suffix: "managed_control_ownership",
-  }),
-  ControlBindError: () => ({
-    ...actionability.startStack,
-    fingerprint_suffix: "managed_control_bind",
-  }),
-  ControlTransportError: () => ({
-    ...actionability.startStack,
-    fingerprint_suffix: "managed_control_transport",
-  }),
-  ControlProtocolError: () => ({
-    ...actionability.impossibleState,
-    fingerprint_suffix: "managed_control_protocol",
-  }),
-  ControlProtocolMismatchError: () => ({
-    ...actionability.impossibleState,
-    fingerprint_suffix: "managed_control_protocol",
-  }),
-  ControlAddressConflictError: () => ({
-    ...actionability.startStack,
-    fingerprint_suffix: "managed_control_address_conflict",
-  }),
-  ControlStopConflictError: () => ({
-    ...actionability.impossibleState,
-    fingerprint_suffix: "managed_control_stop_conflict",
-  }),
-  ControlMaintenanceBusyError: () => ({
-    error_kind: CliErrorKind.UserActionable,
-    error_category: CliErrorCategory.InvalidConfig,
-    has_suggestion: true,
-    suggestion_type: CliSuggestionType.RunCommand,
-    fingerprint_suffix: "managed_control_maintenance_busy",
-  }),
-  InvalidManagedStackDocumentError: () => ({
-    ...actionability.invalidConfig,
-    fingerprint_suffix: "managed_document",
-  }),
-  ManagedStackControlRequiredError: () => ({
-    ...actionability.stopStack,
-    fingerprint_suffix: "managed_control_required",
   }),
   ManagedStackAttachedError: () => ({
     ...actionability.stopStack,
@@ -1149,16 +907,6 @@ const externalActionabilityByTag: Record<string, ErrorActionabilityAdapter> = {
     }
     return { ...actionability.stopStack, fingerprint_suffix: "daemon_transport" };
   },
-
-  // @supabase/process-compose — the CLI generates the process graph, so graph
-  // invariants are internal bugs; runtime service failures are stack-state
-  // problems the user resolves by restarting the stack.
-  CyclicDependencyError: () => actionability.impossibleState,
-  MissingDependencyError: () => actionability.impossibleState,
-  ServiceNotFoundError: () => actionability.impossibleState,
-  SpawnError: () => actionability.startStack,
-  ShutdownTimeoutError: () => actionability.stopStack,
-  ServiceReadyError: () => actionability.startStack,
 };
 
 /**
@@ -1168,20 +916,6 @@ const externalActionabilityByTag: Record<string, ErrorActionabilityAdapter> = {
  */
 export function isClassifiedExternalErrorTag(tag: string): boolean {
   return Object.hasOwn(externalActionabilityByTag, tag);
-}
-
-/**
- * A wrapper's preserved `cause`, but only when classifying it cannot degrade
- * the result: the cause must carry its own declaration or a known external
- * adapter tag, otherwise the wrapper's own classification is more truthful.
- */
-function classifiableCause(error: ErrorRecord): ErrorRecord | undefined {
-  const cause = error["cause"];
-  if (!isErrorRecord(cause)) return undefined;
-  if (readDeclaration(cause) !== undefined) return cause;
-  const causeTag = readErrorTag(cause);
-  if (causeTag !== undefined && Object.hasOwn(externalActionabilityByTag, causeTag)) return cause;
-  return undefined;
 }
 
 function classifyShowHelp(error: ErrorRecord, depth: number): CliErrorActionability | undefined {
@@ -1253,23 +987,6 @@ function classifyAtDepth(error: unknown, depth: number): CliErrorActionability {
     return classifyAtDepth(error["cause"], depth + 1);
   }
 
-  // @supabase/stack wrapper errors preserve the underlying tagged failure in
-  // `cause`; classify it when it is more specific than the wrapper (e.g. a
-  // daemon-down DockerPullError inside an asset-preparation StackBuildError,
-  // or a user's CliConfigParseError inside a reason-less StackBuildError).
-  // Explicit `invalid_config` StackBuildErrors are deliberate user-facing
-  // config verdicts and are never overridden by their cause.
-  if (
-    isErrorRecord(error) &&
-    tag === "StackBuildError" &&
-    readString(error, "reason") !== "invalid_config"
-  ) {
-    const cause = classifiableCause(error);
-    if (cause !== undefined) {
-      return classifyAtDepth(cause, depth + 1);
-    }
-  }
-
   // DownloadError recurses ONLY into local filesystem causes (PlatformError:
   // unwritable cache, extraction failure). HTTP causes stay on the wrapper —
   // the HttpClientError adapter's 401/403 → auth/permission policy is
@@ -1278,33 +995,6 @@ function classifyAtDepth(error: unknown, depth: number): CliErrorActionability {
     const cause = error["cause"];
     if (isErrorRecord(cause) && readErrorTag(cause) === "PlatformError") {
       return classifyAtDepth(cause, depth + 1);
-    }
-  }
-
-  // ManagedStackInitializationError is only a wrapper: the real provisioning
-  // failure (a Docker pull, a config parse, ...) is preserved in `cause`, and
-  // the generic initialization verdict would hide the actionable one.
-  if (isErrorRecord(error) && tag === "ManagedStackInitializationError") {
-    const cause = classifiableCause(error);
-    if (cause !== undefined) return classifyAtDepth(cause, depth + 1);
-  }
-
-  // @supabase/stack's public wrapper is itself a tagged error. Handle it
-  // before generic tag dispatch so a preserved classifiable cause (for
-  // example DockerPullError or a native exception) is not hidden by the
-  // wrapper's own generic StackError adapter.
-  if (isErrorRecord(error) && tag === "StackError") {
-    const cause = classifiableCause(error);
-    if (cause !== undefined) return classifyAtDepth(cause, depth + 1);
-    // toStackError wraps arbitrary thrown errors with code "UNKNOWN"; a
-    // native JS exception cause is a stack-internal crash and must land in
-    // the internal-bug bucket, matching the top-level native-exception rule.
-    if (isNativeJsExceptionName(readErrorName(error["cause"]))) {
-      return classifyAtDepth(error["cause"], depth + 1);
-    }
-    const classify = externalActionabilityByTag["StackError"];
-    if (classify !== undefined) {
-      return toActionability(classify(error), "tag", "StackError");
     }
   }
 

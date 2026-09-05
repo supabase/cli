@@ -105,6 +105,31 @@ async function containerHealthStatus(name: string): Promise<string> {
   return stdout.trim();
 }
 
+async function edgeRuntimeFailureDiagnostics(name: string): Promise<string> {
+  let mounts = "<unavailable>";
+  try {
+    const { stdout } = await execFileAsync("docker", [
+      "inspect",
+      name,
+      "--format",
+      "{{json .Mounts}}",
+    ]);
+    mounts = stdout.trim() || "[]";
+  } catch (error) {
+    mounts = `<unavailable: ${error instanceof Error ? error.message : String(error)}>`;
+  }
+
+  let logs = "<unavailable>";
+  try {
+    const { stdout, stderr } = await execFileAsync("docker", ["logs", name]);
+    logs = `${stdout}${stderr}`.trim() || "<empty>";
+  } catch (error) {
+    logs = `<unavailable: ${error instanceof Error ? error.message : String(error)}>`;
+  }
+
+  return `edge runtime Mounts: ${mounts}\nedge runtime logs:\n${logs}`;
+}
+
 async function runWgetInImage(
   image: string,
   args: ReadonlyArray<string>,
@@ -258,7 +283,11 @@ describe("supabase start slim images (e2e)", () => {
         body: JSON.stringify({ name: "Functions" }),
       });
       const body = await invoked.text();
-      expect(invoked.ok, body).toBe(true);
+      if (!invoked.ok) {
+        throw new Error(
+          `Functions request failed (${invoked.status}): ${body}\n${await edgeRuntimeFailureDiagnostics(edgeRuntimeContainer)}`,
+        );
+      }
       expect(JSON.parse(body)).toEqual({ message: "Hello Functions!" });
     },
   );

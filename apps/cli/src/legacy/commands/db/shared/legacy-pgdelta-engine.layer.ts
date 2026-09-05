@@ -54,7 +54,7 @@ export function legacyPgDeltaEngineSelectorLayer<RNext, RLegacy>(
 }
 
 /** Resolves the rollout flag once when the command-scoped layer is constructed. */
-export const legacyPgDeltaEngineLayer = Layer.unwrap(
+const legacyPgDeltaEngineLayer = Layer.unwrap(
   Effect.gen(function* () {
     const fs = yield* FileSystem.FileSystem;
     const path = yield* Path.Path;
@@ -71,7 +71,7 @@ export const legacyPgDeltaEngineLayer = Layer.unwrap(
   }),
 );
 
-export const legacyPgDeltaCliSettingsRuntimeLayer = legacyCliSettingsLayer.pipe(
+const legacyPgDeltaCliSettingsRuntimeLayer = legacyCliSettingsLayer.pipe(
   Layer.provide(legacyDebugLoggerLayer),
 );
 

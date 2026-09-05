@@ -1,5 +1,3 @@
-import { dockerImageForService, type ServiceName } from "@supabase/stack/versions";
-
 const SLIM_IMAGES_ENV = "SUPABASE_USE_SLIM_IMAGES";
 const SLIM_IMAGE_PREFIX = "ghcr.io/supabase/cli/";
 
@@ -8,7 +6,7 @@ const SLIM_IMAGE_PREFIX = "ghcr.io/supabase/cli/";
  * no slim build (kong, the `differ`/`migra`/`pgprove` job images) are absent and
  * keep their docker.io reference.
  */
-const SLIM_SERVICE_BY_ALIAS: Readonly<Record<string, ServiceName>> = {
+const SLIM_SERVICE_BY_ALIAS = {
   pg: "postgres",
   gotrue: "auth",
   postgrest: "postgrest",
@@ -22,7 +20,26 @@ const SLIM_SERVICE_BY_ALIAS: Readonly<Record<string, ServiceName>> = {
   vector: "vector",
   imgproxy: "imgproxy",
   mailpit: "mailpit",
-};
+} as const;
+
+type SlimServiceName = (typeof SLIM_SERVICE_BY_ALIAS)[keyof typeof SLIM_SERVICE_BY_ALIAS];
+
+// Keep string alias lookups ergonomic while deriving the service union from
+// the single alias table above.
+const SLIM_SERVICE_LOOKUP: Readonly<Record<string, SlimServiceName>> = SLIM_SERVICE_BY_ALIAS;
+
+const V_PREFIXED_SERVICES: ReadonlySet<SlimServiceName> = new Set([
+  "auth",
+  "postgrest",
+  "realtime",
+  "storage",
+  "edge-runtime",
+  "imgproxy",
+  "mailpit",
+  "pgmeta",
+  "analytics",
+  "pooler",
+]);
 
 /**
  * Ambient process env only — the project-dotenv installers
@@ -37,27 +54,25 @@ export function slimImagesEnabled(): boolean {
 }
 
 /**
- * Catalog-normalized slim tag under `ghcr.io/supabase/cli/<service>`.
- * `dockerImageForService` still owns v-prefix / tagPrefix rules, but vector
- * and pooler override that helper onto `ghcr.io/supabase/{vector,supavisor}`
- * — not the slim CLI repos. Pooler's slim tags are published with a `v`.
+ * Catalog-normalized slim tag under `ghcr.io/supabase/cli/<service>`. The
+ * published slim catalog uses a `v` prefix for application services while
+ * postgres, studio, and vector retain their unprefixed tags.
  */
-function slimTagForService(service: ServiceName, rawTag: string): string {
-  const catalogRef = dockerImageForService(service, rawTag);
-  const catalogTag = imageTag(catalogRef) ?? rawTag;
-  if (service === "pooler" && !catalogTag.startsWith("v")) {
-    return `v${catalogTag}`;
+function slimTagForService(service: SlimServiceName, rawTag: string): string {
+  const tag = rawTag.trim();
+  if (V_PREFIXED_SERVICES.has(service)) {
+    return tag.slice(0, 1).toLowerCase() === "v" ? `v${tag.slice(1)}` : `v${tag}`;
   }
-  return catalogTag;
+  return tag;
 }
 
-function slimImageRef(service: ServiceName, rawTag: string): string {
+function slimImageRef(service: SlimServiceName, rawTag: string): string {
   return `${SLIM_IMAGE_PREFIX}${service}:${slimTagForService(service, rawTag)}`;
 }
 
 /**
  * Rewrites a docker.io image reference to its `ghcr.io/supabase/cli` slim
- * equivalent, keeping the pin's version. The catalog owns tag normalization
+ * equivalent, keeping the pin's version. This helper owns tag normalization
  * (`v`-prefixing, `tagPrefix`), so pins that differ only in prefix between the
  * two registries (`supavisor`, `logflare`) land on the right slim tag. Vector's
  * docker.io tags carry an `-alpine` variant suffix that the slim build does
@@ -65,7 +80,7 @@ function slimImageRef(service: ServiceName, rawTag: string): string {
  * pin on any other service is a real tag, not a variant marker.
  */
 export function toSlimImage(alias: string, image: string): string {
-  const service = SLIM_SERVICE_BY_ALIAS[alias];
+  const service = SLIM_SERVICE_LOOKUP[alias];
   if (service === undefined) {
     return image;
   }
@@ -108,7 +123,7 @@ export function pinMatchesCurrentImage(
   if (currentTag === undefined) {
     return false;
   }
-  const service = SLIM_SERVICE_BY_ALIAS[alias];
+  const service = SLIM_SERVICE_LOOKUP[alias];
   if (service === undefined) {
     return pin.trim() === currentTag;
   }
