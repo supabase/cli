@@ -1,6 +1,6 @@
 # Test execution topology: Turbo + Vitest 5
 
-Status: agreed 2026-09-04, implementation in three PRs. Vocabulary and the decisions worth keeping after this plan is done live in
+Status: agreed 2026-09-04, implementation in three PRs (A: #6472, B: #6473, C: stacked on B). Vocabulary and the decisions worth keeping after this plan is done live in
 ADR 0024.
 
 ## Goals and how ties break
@@ -39,7 +39,7 @@ skipping exists today.
 | 9   | Coverage                  | Removed from PR runs; develop-push workflow produces one merged root report                                                                                |
 | 10  | Job gating                | Path rules: docs/release-notes only skips all tests; Go-only skips unit/integration, keeps e2e; `.github` or any TS workspace runs everything              |
 | 11  | Scripts                   | Packages: direct Vitest, one hop, no `:run` layer. Root: `test`, `test:unit`, `test:integration` are root Vitest; `test:e2e`, `test:live` stay Turbo tasks |
-| 12  | Runtime tuning            | `fsModuleCache` on, `node_modules/.vite` restored in CI, one `vitest doctor` run recorded; no isolation or pool changes                                    |
+| 12  | Runtime tuning            | `fsModuleCache` on, `node_modules/.vitest-cache` restored in CI, one `vitest doctor` run recorded; no isolation or pool changes                            |
 | 13  | Delivery                  | Three PRs; Vitest-4-safe work first because Vitest 5.0.0 is firewall-quarantined                                                                           |
 
 Considered and rejected: per-package Turbo test caching (test inputs span
@@ -67,7 +67,7 @@ declarative`, `db schema declarative sync`, `shadow-cache`,
    the stack suffix and keeps them. `packages/stack` becomes `e2e-stack` only.
    `apps/cli-e2e` stays `e2e`. Both keep the existing global setup and
    timeouts.
-3. Extend `vitest.shared.ts` (or, on Vitest 4, the inline configs) so the kind
+3. Extend `vitest.shared.mts` (or, on Vitest 4, the inline configs) so the kind
    list knows `e2e-stack`; update the kind table in `AGENTS.md` and the e2e
    section of `CONTRIBUTING.md`.
 4. Add the path-rule gate to `.github/workflows/test.yml`: a `changes` job using
@@ -81,7 +81,7 @@ declarative`, `db schema declarative sync`, `shadow-cache`,
 
 This is the content of #6457 rebased onto develop after PR A: Vitest 5, the
 coverage-provider bump, the `@effect/vitest` peer rule, the knip root plugin
-change, `.gitignore`, and `vitest.shared.ts` with `definePackageConfig` and
+change, `.gitignore`, and `vitest.shared.mts` with `definePackageConfig` and
 `testProject`. Re-run `pnpm install --frozen-lockfile` in CI as the readiness
 check; the blocker is `firewall.depthfirst.com` returning 451 for the 5.0.0
 tarballs.
@@ -109,7 +109,7 @@ tarballs.
 5. **CI**: unit and integration become one matrix job, `shard: [1, 2]`, running
    the root `test` script with `--shard`; the existing summary job keeps the
    required check name. The e2e step becomes `pnpm exec turbo run //#test:e2e
--- --shard=N/3`. Add `actions/cache` for `node_modules/.vite` keyed on the
+--shard=N/3`. Add `actions/cache` for `node_modules/.vitest-cache` keyed on the
    lockfile plus a version salt. Remove `--coverage.enabled` from PR jobs.
 6. **Coverage on develop**: root `coverage` config (istanbul, include
    `{apps,packages}/*/src/**/*.ts`, the CLI's exclude list prefixed with

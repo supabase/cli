@@ -49,14 +49,17 @@ Expected exceptions:
 
 **vitest.config.ts:**
 
-Package configs build on the repo-root `vitest.shared.ts` preset. `definePackageConfig` merges the
+Package configs build on the repo-root `vitest.shared.mts` preset. `definePackageConfig` merges the
 shared defaults (bun export-condition resolution for workspace packages, v8 coverage,
-`passWithNoTests`, console output only from failing tests), and `testProject("unit" | "integration" |
-"e2e" | "live", overrides)` declares one inline project per test kind with the repo's file-suffix
-convention baked in. Package-specific settings such as timeouts, setup files, serial execution, or
-Vite plugins go in the overrides. The root `vitest.config.mts` loads every package config as a nested
-project group, so `bun --bun vitest run --project '*(unit)'` from the repo root runs one kind across
-all workspaces while `pnpm test:unit` inside a package still works standalone.
+`passWithNoTests`, console output only from failing tests, the file-system module cache), and
+`testProject("unit" | "integration" | "e2e" | "e2e-stack" | "live", overrides)` declares one inline
+project per test kind with the repo's file-suffix convention baked in; `e2e-stack` runs serially by
+default. Package-specific settings such as timeouts, setup files, or Vite plugins go in the
+overrides. Package scripts call Vitest directly (`test`, `test:unit`, `test:integration`, `test:e2e`
+where applicable). The root `vitest.config.mts` loads every package config as a nested project
+group, so the root `pnpm test` runs unit and integration across all workspaces in one process and
+`--project '*(unit)'` or `--project 'supabase (integration)'` selects a slice; the root `test:e2e`
+goes through the Turbo task `//#test:e2e:run` because e2e needs the built CLI (ADR 0024).
 
 ## Config Naming Vocabulary
 
