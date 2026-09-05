@@ -47,6 +47,17 @@ Expected exceptions:
 }
 ```
 
+**vitest.config.ts:**
+
+Package configs build on the repo-root `vitest.shared.ts` preset. `definePackageConfig` merges the
+shared defaults (bun export-condition resolution for workspace packages, v8 coverage,
+`passWithNoTests`, console output only from failing tests), and `testProject("unit" | "integration" |
+"e2e" | "live", overrides)` declares one inline project per test kind with the repo's file-suffix
+convention baked in. Package-specific settings such as timeouts, setup files, serial execution, or
+Vite plugins go in the overrides. The root `vitest.config.mts` loads every package config as a nested
+project group, so `bun --bun vitest run --project '*(unit)'` from the repo root runs one kind across
+all workspaces while `pnpm test:unit` inside a package still works standalone.
+
 ## Config Naming Vocabulary
 
 `@supabase/config` and its CLI consumer use three settled names:

@@ -1,41 +1,13 @@
-import { defineConfig } from "vitest/config";
+import { definePackageConfig, testProject } from "../../vitest.shared.ts";
 
-export default defineConfig({
+export default definePackageConfig({
   test: {
-    passWithNoTests: true,
-    coverage: {
-      enabled: false,
-      provider: "v8",
-      clean: false,
-      include: ["src/**/*.ts"],
-      reporter: ["text", "lcov"],
-      reportsDirectory: "coverage",
-    },
     projects: [
-      {
-        test: {
-          name: "unit",
-          include: ["**/*.unit.test.ts"],
-        },
-      },
-      {
-        test: {
-          name: "integration",
-          include: ["**/*.integration.test.ts"],
-          testTimeout: 60_000,
-        },
-      },
-      {
-        test: {
-          // Every e2e file here starts a local stack, so the whole kind is
-          // stack-backed and serial. See ADR 0024 for the `*.stack.e2e.test.ts`
-          // convention.
-          name: "e2e-stack",
-          include: ["**/*.stack.e2e.test.ts"],
-          fileParallelism: false,
-          globalSetup: ["./tests/global-setup.ts"],
-        },
-      },
+      testProject("unit"),
+      testProject("integration", { test: { testTimeout: 60_000 } }),
+      // Every e2e file here starts a local stack, so the whole kind is
+      // stack-backed (ADR 0024).
+      testProject("e2e-stack", { test: { globalSetup: ["./tests/global-setup.ts"] } }),
     ],
   },
 });

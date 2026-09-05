@@ -172,8 +172,11 @@ function makeProxyHandler(
       const noBodyMethods = new Set(["GET", "HEAD", "OPTIONS", "TRACE"]);
       const contentType = Option.getOrUndefined(Headers.get(req.headers, "content-type"));
 
+      const hasBody =
+        Option.isSome(Headers.get(req.headers, "transfer-encoding")) ||
+        Option.getOrElse(Headers.get(req.headers, "content-length"), () => "0") !== "0";
       let body: HttpBody.HttpBody;
-      if (noBodyMethods.has(req.method)) {
+      if (noBodyMethods.has(req.method) || !hasBody) {
         body = HttpBody.empty;
       } else if (opts.retryColdStart === true) {
         // Buffer the body so the request can be safely re-sent if we retry.

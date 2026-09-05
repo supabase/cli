@@ -26,3 +26,6 @@ packages/cli-*/bin/
 
 # Transient render dir created by packages/api/scripts/generated-output-sync.unit.test.ts
 packages/api/.generated-output-sync-*/
+
+# Vitest 5 artifact directory (blob reports, attachments, html/json output)
+.vitest/
