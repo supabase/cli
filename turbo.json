@@ -35,18 +35,6 @@
       "cache": true,
       "outputs": [".source/**"]
     },
-    "test:unit:run": {
-      "cache": false,
-      "passThroughEnv": ["*"]
-    },
-    "test:integration:run": {
-      "cache": false,
-      "passThroughEnv": ["*"]
-    },
-    "test:e2e:run": {
-      "cache": false,
-      "passThroughEnv": ["*"]
-    },
     "@supabase/cli-go#build": {
       "cache": true,
       "inputs": ["$TURBO_DEFAULT$", "$TURBO_ROOT$/mise.toml", "$TURBO_ROOT$/mise.lock"],
@@ -125,12 +113,7 @@
       "dependsOn": ["@supabase/docs#generate"],
       "persistent": true
     },
-    "supabase#test:e2e:run": {
-      "cache": false,
-      "passThroughEnv": ["*"],
-      "dependsOn": ["supabase#build"]
-    },
-    "@supabase/cli-e2e#test:e2e:run": {
+    "//#test:e2e:run": {
       "cache": false,
       "passThroughEnv": ["*"],
       "dependsOn": ["supabase#build"]
