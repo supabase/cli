@@ -1,4 +1,4 @@
-import { defaultJwtSecret, generateJwt } from "@supabase/stack/effect";
+import { generateJwt } from "@supabase/stack/effect";
 import { Effect, FileSystem, Path } from "effect";
 
 import { LegacyPlatformApiFactory } from "../auth/legacy-platform-api-factory.service.ts";
@@ -9,9 +9,11 @@ import { legacyLoadProjectEnv } from "./legacy-db-config.toml-read.ts";
 import { legacyMapTenantApiKeysError } from "./legacy-get-tenant-api-keys.ts";
 import { legacyGetHostname } from "./legacy-hostname.ts";
 import {
+  legacyDecryptAuthSecret,
   legacyEnvOverride,
   legacyEnvOverrideBool,
   legacyEnvOverridePort,
+  legacyResolveJwtSecret,
 } from "./legacy-local-config-values.ts";
 import { KONG_LOCAL_CA_CERT } from "./kong-local-ca-cert.ts";
 import { legacyExtractServiceKeys } from "./legacy-tenant-keys.ts";
@@ -30,8 +32,9 @@ import {
  * - `projectRef === ""` (local): base URL from `api.external_url` (else
  * `<scheme>://<host>:<api.port>`), with the `SUPABASE_API_*` env/dotenv
  * overrides folded in first (see {@link resolveLocalApiConfig}), service-role
- * key derived from `auth.{service_role_key,jwt_secret}`, and the Kong CA when
- * the URL is https.
+ * key derived from `auth.{service_role_key,jwt_secret}` with their
+ * `SUPABASE_AUTH_*` env/dotenv overrides applied and decrypted (see
+ * {@link resolveLocalServiceRoleKey}), and the Kong CA when the URL is https.
  * - remote: base URL `https://<ref>.<projectHost>`; key from
  * `SUPABASE_AUTH_SERVICE_ROLE_KEY` else `tenant.GetApiKeys`.
  *
@@ -69,7 +72,8 @@ export const legacyResolveStorageCredentials = Effect.fnUntraced(function* (opts
   readonly projectRef: string;
   readonly config: LegacyStorageConfigView;
   /**
-   * Already-resolved project env map for the `SUPABASE_API_*` fold, when the
+   * Already-resolved project env map for the `SUPABASE_API_*` fold and the
+   * local auth-key resolution, when the
    * caller has one in scope (`legacySeedBucketsRun`, `start`) — same
    * passthrough idea as `legacySeedBucketsRun`'s own `resolvedConfig`. Either
    * walk's shape works — a map that omits ambient-shadowed keys
@@ -125,7 +129,7 @@ export const legacyResolveStorageCredentials = Effect.fnUntraced(function* (opts
     ));
   const api = yield* resolveLocalApiConfig(opts.config.api, projectEnvValues);
   const baseUrl = legacyResolveApiExternalUrl(api, legacyGetHostname());
-  const apiKey = yield* resolveLocalServiceRoleKey(opts.config.auth);
+  const apiKey = yield* resolveLocalServiceRoleKey(opts.config.auth, projectEnvValues);
 
   // `status.NewKongClient` installs unconditionally for the local client; its
   // embedded CA only matters for https. `(*api).Validate` resolves cert_path /
@@ -148,6 +152,20 @@ export const legacyResolveStorageCredentials = Effect.fnUntraced(function* (opts
   }
   return { baseUrl, apiKey, localKongCa } satisfies LegacyStorageCredentials;
 });
+
+/**
+ * The config-load helpers this module composes (`legacyEnvOverride*`,
+ * `legacyDecryptAuthSecret`, `legacyResolveJwtSecret`, `legacyValidateApi*`)
+ * report invalid config by throwing. Each throw collapses into the tagged
+ * storage config error with the helper's message preserved — the same
+ * collapse every other consumer of these helpers applies
+ * (`wrapDbConfigOverride` → `LegacyDbConfigLoadError`) — keeping this Effect
+ * error channel tagged.
+ */
+const toStorageConfigError = (cause: unknown) =>
+  new LegacyStorageConfigError({
+    message: cause instanceof Error ? cause.message : String(cause),
+  });
 
 /**
  * Fold the `SUPABASE_API_*` env/dotenv overrides into the `[api]` fields the
@@ -209,79 +227,88 @@ const resolveLocalApiConfig = (
       legacyValidateApiPort(resolved.enabled, resolved.port);
       return resolved;
     },
-    // A malformed port/bool override or the canonical zero-port rejection
-    // collapses into the tagged storage config error, preserving the helper's
-    // message — the same collapse every other consumer of these throwing
-    // helpers applies (`wrapDbConfigOverride` → `LegacyDbConfigLoadError`),
-    // keeping this Effect error channel tagged.
-    catch: (cause) =>
-      new LegacyStorageConfigError({
-        message: cause instanceof Error ? cause.message : String(cause),
-      }),
+    catch: toStorageConfigError,
   });
 
 /**
- * Validate-only entry point for `legacySeedBucketsRun`'s empty-config
- * short-circuit: decodes the `SUPABASE_API_*` overrides and runs the canonical
- * `[api]` config-load checks (`legacyValidateApiPort`, then the
- * `legacyValidateApiTlsPresence` pairing rule) without building credentials —
- * the cert/key file reads stay on the seeding path (`validateLocalKongTls`),
- * where the established message precedence (jwt-secret length before TLS
- * presence) is preserved. The resolved view is discarded; the seeding path
- * re-resolves through `legacyResolveStorageCredentials`.
+ * Resolve the service-role key for the local Storage gateway:
+ * - jwt secret: `SUPABASE_AUTH_JWT_SECRET` (shell or project dotenv) →
+ * `auth.jwt_secret` → `defaultJwtSecret`; a resolved secret shorter than 16
+ * chars is rejected (`legacyResolveJwtSecret`);
+ * - service-role key: `SUPABASE_AUTH_SERVICE_ROLE_KEY` (shell or project
+ * dotenv) → `auth.service_role_key` → sign from the resolved secret.
+ *
+ * Both fields go through the same `legacyEnvOverride` →
+ * `legacyDecryptAuthSecret` composition the status/stop resolver applies to
+ * them (`legacy-local-config-values.ts`), in the same order (jwt secret first,
+ * so a short secret is reported before a broken service-role key), so a value
+ * set only in `supabase/.env`(.local) counts and a dotenvx `encrypted:` value
+ * is decrypted instead of being used as literal key material. An undecryptable
+ * value is an invalid-config hard failure, same as those siblings. As with the
+ * `[api]` fold above, `[remotes.*]` never merges on the local path, so the
+ * remote-over-env precedence those siblings gate on does not arise. The
+ * derivation itself stays symmetric (`generateJwt` from the secret); `start`
+ * pre-folds its signing-keys-aware key for the `auth.signing_keys_path` case.
+ *
+ * Empty checks use length, so an explicit `service_role_key = ""` is
+ * regenerated (not sent as the empty string).
  */
-export const legacyValidateLocalApiOverrides = Effect.fnUntraced(function* (
-  api: LegacyStorageConfigView["api"],
+const resolveLocalServiceRoleKey = Effect.fnUntraced(function* (
+  auth: {
+    readonly jwt_secret?: string;
+    readonly service_role_key?: string;
+  },
   projectEnvValues: Readonly<Record<string, string>>,
 ) {
-  const resolved = yield* resolveLocalApiConfig(api, projectEnvValues);
-  if (resolved.enabled && resolved.tls.enabled) {
-    yield* Effect.try({
-      try: () => legacyValidateApiTlsPresence(resolved.tls.cert_path, resolved.tls.key_path),
-      catch: (cause) =>
-        new LegacyStorageConfigError({
-          message: cause instanceof Error ? cause.message : String(cause),
-        }),
-    });
-  }
-});
-
-/**
- * Resolve the service-role key for the local Storage gateway, mirroring Go's
- * `(*auth).generateAPIKeys` + the Viper
- * `AutomaticEnv`/`SUPABASE_` prefix precedence:
- * - jwt secret: `SUPABASE_AUTH_JWT_SECRET` → `auth.jwt_secret` → `defaultJwtSecret`;
- * a resolved secret shorter than 16 chars is rejected;
- * - service-role key: `SUPABASE_AUTH_SERVICE_ROLE_KEY` → `auth.service_role_key`
- * → sign from the resolved secret.
- *
- * Empty checks use length, so an explicit `service_role_key = ""` is regenerated
- * like Go (not sent as the empty string).
- */
-const resolveLocalServiceRoleKey = Effect.fnUntraced(function* (auth: {
-  readonly jwt_secret?: string;
-  readonly service_role_key?: string;
-}) {
-  const envSecret = process.env["SUPABASE_AUTH_JWT_SECRET"];
-  const configuredSecret =
-    envSecret !== undefined && envSecret.length > 0 ? envSecret : auth.jwt_secret;
-
-  let jwtSecret: string;
-  if (configuredSecret === undefined || configuredSecret.length === 0) {
-    jwtSecret = defaultJwtSecret;
-  } else if (configuredSecret.length < 16) {
-    return yield* new LegacyStorageConfigError({
-      message: "Invalid config for auth.jwt_secret. Must be at least 16 characters",
-    });
-  } else {
-    jwtSecret = configuredSecret;
-  }
-
-  const envKey = process.env["SUPABASE_AUTH_SERVICE_ROLE_KEY"];
-  const configuredKey = envKey !== undefined && envKey.length > 0 ? envKey : auth.service_role_key;
+  const jwtSecret = yield* Effect.try({
+    try: () =>
+      legacyResolveJwtSecret(
+        legacyDecryptAuthSecret(
+          legacyEnvOverride("SUPABASE_AUTH_JWT_SECRET", auth.jwt_secret, projectEnvValues),
+          projectEnvValues,
+        ),
+      ),
+    catch: toStorageConfigError,
+  });
+  const configuredKey = yield* Effect.try({
+    try: () =>
+      legacyDecryptAuthSecret(
+        legacyEnvOverride(
+          "SUPABASE_AUTH_SERVICE_ROLE_KEY",
+          auth.service_role_key,
+          projectEnvValues,
+        ),
+        projectEnvValues,
+      ),
+    catch: toStorageConfigError,
+  });
   return configuredKey !== undefined && configuredKey.length > 0
     ? configuredKey
     : generateJwt(jwtSecret, "service_role");
+});
+
+/**
+ * Validate-only entry point for `legacySeedBucketsRun`'s empty-config
+ * short-circuit: runs the config-load checks of the local branch in the
+ * seeding path's order — the `SUPABASE_API_*` decode + `legacyValidateApiPort`,
+ * the auth override/decrypt + jwt-secret length, then the
+ * `legacyValidateApiTlsPresence` pairing rule — without building credentials.
+ * The cert/key file reads stay on the seeding path (`validateLocalKongTls`).
+ * The resolved values are discarded; the seeding path re-resolves through
+ * `legacyResolveStorageCredentials`.
+ */
+export const legacyValidateLocalStorageConfig = Effect.fnUntraced(function* (
+  config: LegacyStorageConfigView,
+  projectEnvValues: Readonly<Record<string, string>>,
+) {
+  const api = yield* resolveLocalApiConfig(config.api, projectEnvValues);
+  yield* resolveLocalServiceRoleKey(config.auth, projectEnvValues);
+  if (api.enabled && api.tls.enabled) {
+    yield* Effect.try({
+      try: () => legacyValidateApiTlsPresence(api.tls.cert_path, api.tls.key_path),
+      catch: toStorageConfigError,
+    });
+  }
 });
 
 /**
@@ -304,10 +331,7 @@ const validateLocalKongTls = Effect.fnUntraced(function* (
   // file reads below are this caller's own I/O.
   yield* Effect.try({
     try: () => legacyValidateApiTlsPresence(certPath, keyPath),
-    catch: (cause) =>
-      new LegacyStorageConfigError({
-        message: cause instanceof Error ? cause.message : String(cause),
-      }),
+    catch: toStorageConfigError,
   });
 
   if (certPath !== undefined && certPath.length > 0) {

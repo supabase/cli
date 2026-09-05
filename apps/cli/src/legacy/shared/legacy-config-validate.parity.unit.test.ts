@@ -20,8 +20,9 @@ import { legacyResolveLocalConfigValues } from "./legacy-local-config-values.ts"
  * pipelines don't need byte-identical exception wrapping, just the same core Go-parity message
  * text (`.toContain(...)` on both sides with the same expected string). A third caller — the
  * storage-credentials resolver (S, `legacyResolveStorageCredentials`) — shares the `api.port`
- * and `api.tls` presence branches through the exported helpers; its own describe block below
- * drives that pipeline.
+ * and `api.tls` presence branches through the exported helpers and the `auth.jwt_secret` /
+ * `auth.service_role_key` resolution (length rule, `encrypted:` decryption); its own describe
+ * block below drives that pipeline.
  *
  * D's harness replicates the `withConfig`/`read`/`failsWith` pattern from
  * `legacy-db-config.toml-read.unit.test.ts` (file-local there, not exported — faithfully
@@ -301,9 +302,10 @@ describe("legacyValidateResolvedConfig cross-caller parity (D vs L)", () => {
 
 // The `api.port` branch is L-only in the D-vs-L table above (D has no api section), but it is
 // now ALSO shared with the storage-credentials resolver (S) through `legacyValidateApiPort`
-// (#6467 review). Drive S's real pipeline and L against the same zero-port config and assert
-// the identical message, so the shared branch cannot drift for either caller.
-describe("shared api validation branches, cross-caller parity (S vs L)", () => {
+// (#6467 review), as are the `auth.jwt_secret` length rule and `encrypted:` decryption
+// (#6467 follow-up). Drive S's real pipeline and L against the same misconfiguration and assert
+// the identical message, so the shared branches cannot drift for either caller.
+describe("shared api + auth validation branches, cross-caller parity (S vs L)", () => {
   /** Drives S's real pipeline (`legacyResolveStorageCredentials`, local branch) to failure. */
   const failsWithS = (config: CliConfig, message: string) =>
     Effect.gen(function* () {
@@ -329,8 +331,9 @@ describe("shared api validation branches, cross-caller parity (S vs L)", () => {
       rmSync(dir, { recursive: true, force: true });
     });
 
-  // Ambient SUPABASE_API_* values would override the config under test, so pin
-  // every participating key to unset for the duration of each scenario.
+  // Ambient SUPABASE_API_* / SUPABASE_AUTH_* values would override the config
+  // under test, so pin every participating key to unset for the duration of
+  // each scenario.
   const isolated = <A, E, R>(body: Effect.Effect<A, E, R>) =>
     [
       "SUPABASE_API_PORT",
@@ -338,6 +341,8 @@ describe("shared api validation branches, cross-caller parity (S vs L)", () => {
       "SUPABASE_API_TLS_ENABLED",
       "SUPABASE_API_TLS_CERT_PATH",
       "SUPABASE_API_TLS_KEY_PATH",
+      "SUPABASE_AUTH_JWT_SECRET",
+      "SUPABASE_AUTH_SERVICE_ROLE_KEY",
     ].reduce((inner, name) => legacyWithEnv(name, undefined, inner), body);
 
   it.effect("api.port = 0 with the API enabled: S and L fail with the same message", () =>
@@ -361,5 +366,28 @@ describe("shared api validation branches, cross-caller parity (S vs L)", () => {
         );
       }),
     ),
+  );
+
+  it.effect("auth.jwt_secret shorter than 16 characters: S and L fail with the same message", () =>
+    isolated(
+      Effect.gen(function* () {
+        const message = "Invalid config for auth.jwt_secret. Must be at least 16 characters";
+        failsWithL({ auth: { jwt_secret: "short" } }, message);
+        yield* failsWithS(baseConfig({ auth: { jwt_secret: "short" } }), message);
+      }),
+    ),
+  );
+
+  it.effect(
+    "undecryptable encrypted: auth.service_role_key: S and L fail with the same message",
+    () =>
+      isolated(
+        Effect.gen(function* () {
+          const message = "failed to parse config";
+          const auth = { service_role_key: "encrypted:not-a-real-ciphertext" };
+          failsWithL({ auth }, message);
+          yield* failsWithS(baseConfig({ auth }), message);
+        }),
+      ),
   );
 });

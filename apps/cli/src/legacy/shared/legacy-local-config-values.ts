@@ -588,9 +588,11 @@ export function legacyEnvOverrideMaxClientConn(
  * Applied AFTER {@link legacyEnvOverride}: an env-sourced override lands on the
  * same field and goes through the same decrypt step as a TOML-sourced value,
  * so `SUPABASE_AUTH_JWT_SECRET=encrypted:...` is decrypted too, not just the
- * config.toml value.
+ * config.toml value. Exported for the storage-credentials resolver
+ * (`resolveLocalServiceRoleKey`), which applies the same composition to
+ * `auth.{jwt_secret,service_role_key}` for the local Storage gateway.
  */
-function legacyDecryptAuthSecret(
+export function legacyDecryptAuthSecret(
   value: string | undefined,
   projectEnvValues: Readonly<Record<string, string>> | undefined,
 ): string | undefined {
@@ -808,8 +810,14 @@ export function legacyResolveAuthCaptcha(
     : undefined;
 }
 
-/** `(a *auth) generateAPIKeys`. */
-function resolveJwtSecret(configured: string | undefined): string {
+/**
+ * Resolve the signing secret from the (override-applied, decrypted)
+ * `auth.jwt_secret`: empty falls back to `defaultJwtSecret`, shorter than
+ * {@link MIN_JWT_SECRET_LENGTH} throws {@link LegacyInvalidJwtSecretError}.
+ * Exported for the storage-credentials resolver (`resolveLocalServiceRoleKey`),
+ * which derives the local Storage gateway's service-role key from it.
+ */
+export function legacyResolveJwtSecret(configured: string | undefined): string {
   if (configured === undefined || configured.length === 0) return defaultJwtSecret;
   if (configured.length < MIN_JWT_SECRET_LENGTH) {
     throw new LegacyInvalidJwtSecretError();
@@ -3366,7 +3374,7 @@ export function legacyResolveLocalConfigValues(
       );
   // Same remote-over-env precedence as `apiPort`/`dbPort`/`rootKey` above — `jwtSecret` reaches
   // the shadow's own Postgres/fresh-DB-setup spec (`legacyBuildLocalDbContainerInputs`).
-  const jwtSecret = resolveJwtSecret(
+  const jwtSecret = legacyResolveJwtSecret(
     legacyDecryptAuthSecret(
       remoteWins("auth.jwt_secret")
         ? config.auth.jwt_secret
@@ -4047,7 +4055,7 @@ export function legacyResolveLocalConfigValues(
  * (`shared/auth/jwks.ts`) rather than re-implementing them a second time — see that module's
  * header. `jwtSecret` is accepted as a parameter (the same value already resolved onto
  * {@link LegacyLocalConfigValues.jwtSecret} by {@link legacyResolveLocalConfigValues}/
- * {@link resolveJwtSecret}) rather than recomputed, so the two functions never disagree on it.
+ * {@link legacyResolveJwtSecret}) rather than recomputed, so the two functions never disagree on it.
  *
  * `authEnabled`/`signingKeysPath` ARE recomputed here (cheap, pure `legacyEnvOverride`/
  * `legacyEnvOverrideBool` calls, no I/O) rather than threaded through from the caller's own

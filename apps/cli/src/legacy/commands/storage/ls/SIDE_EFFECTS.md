@@ -4,13 +4,13 @@ Lists objects/buckets by path prefix against the Storage gateway (local stack or
 
 ## Files Read
 
-| Path                                          | Format     | When                                                                                  |
-| --------------------------------------------- | ---------- | ------------------------------------------------------------------------------------- |
-| `<workdir>/supabase/config.toml`              | TOML       | always (local creds/baseUrl; `[remotes.*]` merge when linked)                         |
-| `~/.supabase/access-token`                    | plain text | linked path, when `SUPABASE_ACCESS_TOKEN` unset                                       |
-| `~/.supabase/<hash>/linked-project.json`      | JSON       | linked path, to resolve the project ref                                               |
-| local Kong TLS cert/key                       | PEM        | local + `api.enabled` + `api.tls.enabled`                                             |
-| `<workdir>/supabase/.env*`, `<workdir>/.env*` | dotenv     | local path, to resolve the `SUPABASE_API_*` overrides for the gateway URL/TLS (#6452) |
+| Path                                          | Format     | When                                                                                                                                                             |
+| --------------------------------------------- | ---------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `<workdir>/supabase/config.toml`              | TOML       | always (local creds/baseUrl; `[remotes.*]` merge when linked)                                                                                                    |
+| `~/.supabase/access-token`                    | plain text | linked path, when `SUPABASE_ACCESS_TOKEN` unset                                                                                                                  |
+| `~/.supabase/<hash>/linked-project.json`      | JSON       | linked path, to resolve the project ref                                                                                                                          |
+| local Kong TLS cert/key                       | PEM        | local + `api.enabled` + `api.tls.enabled`                                                                                                                        |
+| `<workdir>/supabase/.env*`, `<workdir>/.env*` | dotenv     | local path, to resolve the `SUPABASE_API_*` overrides for the gateway URL/TLS (#6452) and `SUPABASE_AUTH_{JWT_SECRET,SERVICE_ROLE_KEY}` for the service-role key |
 
 ## Files Written
 
@@ -31,15 +31,15 @@ Auth: `apikey` header always; `Authorization: Bearer <key>` unless the key is `s
 
 ## Environment Variables
 
-| Variable                                                                                                                                                        | Purpose                                                                                                              | Required?                          |
-| --------------------------------------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------- | ---------------------------------- |
-| `SUPABASE_AUTH_SERVICE_ROLE_KEY`                                                                                                                                | linked: bypass tenant key fetch; local: explicit key                                                                 | no                                 |
-| `SUPABASE_AUTH_JWT_SECRET`                                                                                                                                      | local: derive service-role key                                                                                       | no (→ `auth.jwt_secret` → default) |
-| `SUPABASE_ACCESS_TOKEN`                                                                                                                                         | linked: Management API auth                                                                                          | no (→ `~/.supabase/access-token`)  |
-| `SUPABASE_PROJECT_ID`                                                                                                                                           | linked: project-ref resolution, superseded by `--project-ref` when set                                               | no                                 |
-| `SUPABASE_SERVICES_HOSTNAME`                                                                                                                                    | local baseUrl host                                                                                                   | no (→ Docker host → `127.0.0.1`)   |
-| `SUPABASE_API_PORT`, `SUPABASE_API_EXTERNAL_URL`, `SUPABASE_API_TLS_ENABLED`, `SUPABASE_API_TLS_CERT_PATH`, `SUPABASE_API_TLS_KEY_PATH`, `SUPABASE_API_ENABLED` | local: override the matching `[api]` fields for the gateway URL/TLS, shell env or project dotenv (shell wins; #6452) | no                                 |
-| `SUPABASE_EXPERIMENTAL`                                                                                                                                         | experimental gate: `--experimental` equivalent                                                                       | yes, unless `--experimental` given |
+| Variable                                                                                                                                                        | Purpose                                                                                                                | Required?                          |
+| --------------------------------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------- | ---------------------------------- |
+| `SUPABASE_AUTH_SERVICE_ROLE_KEY`                                                                                                                                | linked: bypass tenant key fetch (shell env only); local: explicit key, shell or project dotenv, `encrypted:` decrypted | no                                 |
+| `SUPABASE_AUTH_JWT_SECRET`                                                                                                                                      | local: derive service-role key, shell or project dotenv, `encrypted:` decrypted                                        | no (→ `auth.jwt_secret` → default) |
+| `SUPABASE_ACCESS_TOKEN`                                                                                                                                         | linked: Management API auth                                                                                            | no (→ `~/.supabase/access-token`)  |
+| `SUPABASE_PROJECT_ID`                                                                                                                                           | linked: project-ref resolution, superseded by `--project-ref` when set                                                 | no                                 |
+| `SUPABASE_SERVICES_HOSTNAME`                                                                                                                                    | local baseUrl host                                                                                                     | no (→ Docker host → `127.0.0.1`)   |
+| `SUPABASE_API_PORT`, `SUPABASE_API_EXTERNAL_URL`, `SUPABASE_API_TLS_ENABLED`, `SUPABASE_API_TLS_CERT_PATH`, `SUPABASE_API_TLS_KEY_PATH`, `SUPABASE_API_ENABLED` | local: override the matching `[api]` fields for the gateway URL/TLS, shell env or project dotenv (shell wins; #6452)   | no                                 |
+| `SUPABASE_EXPERIMENTAL`                                                                                                                                         | experimental gate: `--experimental` equivalent                                                                         | yes, unless `--experimental` given |
 
 `storage` is an experimental command: every subcommand requires
 `--experimental` (or `SUPABASE_EXPERIMENTAL`), else it exits 1 with
