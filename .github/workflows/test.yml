@@ -99,6 +99,7 @@ jobs:
       ts: ${{ steps.filter.outputs.ts }}
       go: ${{ steps.filter.outputs.go }}
       ci: ${{ steps.filter.outputs.ci }}
+      shard-weights: ${{ steps.shard-weights.outputs.cache-matched-key != '' }}
     steps:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -129,6 +130,28 @@ jobs:
               - "apps/cli-go/**"
             ci:
               - ".github/**"
+
+      # Shard weights are develop's last per-file durations (develop-tests.yml).
+      # Restore them once here and hand them to every shard as a run artifact:
+      # shards must partition from identical input, and a prefix restore in
+      # each shard could pick up different cache generations. No cache means
+      # the sequencer falls back to dealing files by count.
+      - name: Restore shard weights
+        id: shard-weights
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: .vitest/shard-weights.json
+          key: vitest-shard-weights-${{ github.sha }}
+          restore-keys: |
+            vitest-shard-weights-
+
+      - name: Publish shard weights for this run
+        if: steps.shard-weights.outputs.cache-matched-key != ''
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: shard-weights
+          path: .vitest/shard-weights.json
+          retention-days: 1
 
   # One root Vitest run over the unit and integration kinds of every package,
   # split across two runners by the balanced sequencer in vitest.config.mts.
@@ -165,6 +188,13 @@ jobs:
           key: vitest-cache-${{ runner.os }}-${{ hashFiles('pnpm-lock.yaml') }}-${{ github.sha }}
           restore-keys: |
             vitest-cache-${{ runner.os }}-${{ hashFiles('pnpm-lock.yaml') }}-
+
+      - name: Use shard weights from develop
+        if: needs.changes.outputs.shard-weights == 'true'
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: shard-weights
+          path: .vitest
 
       - name: Run unit and integration tests
         run: pnpm run test --shard=${{ matrix.shard }}/2
@@ -243,6 +273,13 @@ jobs:
       # in `apps/cli/dist/`. The root e2e task depends on `supabase#build`, so
       # Turbo builds the CLI first; one root Vitest run then covers every
       # package's e2e projects and the balanced sequencer decides the shard.
+      - name: Use shard weights from develop
+        if: needs.changes.outputs.shard-weights == 'true'
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: shard-weights
+          path: .vitest
+
       - name: Run end-to-end tests
         run: pnpm run test:e2e --shard=${{ matrix.shard }}/3
         env:
