@@ -193,7 +193,7 @@ export const SERVICE_CATALOG = {
   "edge-runtime": {
     name: "edge-runtime",
     configKey: "edgeRuntime",
-    defaultVersion: "v1.74.3",
+    defaultVersion: "v1.75.0",
     runtimeSupport: "docker-only",
     artifact: {
       docker: { repository: "edge-runtime" },
@@ -205,7 +205,7 @@ export const SERVICE_CATALOG = {
   realtime: {
     name: "realtime",
     configKey: "realtime",
-    defaultVersion: "v2.130.0",
+    defaultVersion: "v2.132.0",
     runtimeSupport: "docker-only",
     artifact: {
       docker: { repository: "realtime" },
@@ -217,7 +217,7 @@ export const SERVICE_CATALOG = {
   storage: {
     name: "storage",
     configKey: "storage",
-    defaultVersion: "v1.72.1",
+    defaultVersion: "v1.72.4",
     runtimeSupport: "docker-only",
     artifact: {
       docker: { repository: "storage" },
@@ -265,7 +265,7 @@ export const SERVICE_CATALOG = {
   studio: {
     name: "studio",
     configKey: "studio",
-    defaultVersion: "2026.08.24-sha-8ec45b2",
+    defaultVersion: "2026.08.31-sha-2c76bb3",
     runtimeSupport: "docker-only",
     artifact: {
       docker: { repository: "studio" },
@@ -277,7 +277,7 @@ export const SERVICE_CATALOG = {
   analytics: {
     name: "analytics",
     configKey: "analytics",
-    defaultVersion: "v1.50.6",
+    defaultVersion: "v1.50.7",
     runtimeSupport: "docker-only",
     artifact: {
       docker: { repository: "analytics" },
