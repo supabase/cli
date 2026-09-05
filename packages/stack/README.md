@@ -19,6 +19,9 @@ capability, and every other capability is lazy. Starting the stack therefore lau
 PostgreSQL by default; capabilities configured as eager join its startup dependency closure.
 The remaining lazy capabilities activate through the stack's listeners on demand for the current
 running session.
+Native workloads have a two-minute readiness budget to allow cold starts to load shared libraries;
+container workloads retain a 30-second budget, and PostgreSQL uses its configured `health_timeout`.
+Each readiness probe returns immediately when its endpoint becomes healthy.
 
 Artifact preparation is controlled independently from capability activation through the optional
 top-level `preparation` setting:

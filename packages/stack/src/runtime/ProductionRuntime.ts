@@ -166,6 +166,8 @@ const urlHost = (host: string): string => {
 };
 
 const DATABASE_WORKLOAD_ID = "database:database";
+// Native cold starts can spend more than 30 seconds loading shared libraries before serving.
+const NATIVE_READINESS_DEADLINE = Duration.minutes(2);
 const checkNativeDatabaseLockEvidence = (
   fileSystem: FileSystem.FileSystem,
   lockPath: string,
@@ -250,7 +252,9 @@ export const readinessDeadlineFor = (
 ): Effect.Effect<Duration.Duration, StackPreparationError> =>
   isDatabaseWorkload(workload)
     ? configuredDatabaseReadinessDeadline(state.definition)
-    : Effect.succeed(DEFAULT_READINESS_DEADLINE);
+    : Effect.succeed(
+        state.runtime.kind === "native" ? NATIVE_READINESS_DEADLINE : DEFAULT_READINESS_DEADLINE,
+      );
 
 const validateDatabaseReadinessBudget = (
   definition: StackDefinition,
@@ -873,7 +877,9 @@ export const makeProductionRuntime = (
     const waitForReadiness = (key: RuntimeWorkloadKey, workload: PlannedWorkload) =>
       freshState(key).pipe(
         Effect.flatMap((fresh) => readinessFor(fresh, workload)),
-        Effect.mapError((error) => mapDriverError(key, error)),
+        Effect.mapError((error) =>
+          driverError(key, `Readiness check failed for ${workload.id}: ${error.message}`, error),
+        ),
       );
     const bootstrapWorkloadDatabase = (key: RuntimeWorkloadKey, workload: PlannedWorkload) =>
       workload.bootstrap === "database"

@@ -146,6 +146,12 @@ with at most four starts in flight; each wave completes before its dependants
 start. Container setup is serialized through resource registration; readiness
 checks and long-lived followers run outside that setup boundary.
 
+Native workloads use a two-minute readiness budget because a cold process can
+spend more than 30 seconds loading shared libraries before serving requests.
+Container workloads retain the 30-second budget, while PostgreSQL uses its
+configured `health_timeout`; every probe remains bounded and returns as soon as
+its endpoint is healthy.
+
 Runtime input materialization belongs to the workload startup operation. The
 Supervisor serializes lifecycle operations with cleanup, so the input owner
 caches only completed values and leaves unfinished resolution in the startup

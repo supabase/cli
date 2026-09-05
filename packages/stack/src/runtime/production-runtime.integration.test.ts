@@ -16,8 +16,9 @@ import {
   Option,
   Stream,
 } from "effect";
+import * as TestClock from "effect/testing/TestClock";
 // oxlint-disable-next-line effecttsgo/node-builtin-import
-import { createServer } from "node:http";
+import { createServer, type ServerResponse } from "node:http";
 // oxlint-disable-next-line effecttsgo/node-builtin-import
 import { createServer as createNetServer } from "node:net";
 import type { StackLogEntry } from "../public/Logs.ts";
@@ -65,6 +66,7 @@ import {
 } from "../functions/FunctionsBootstrap.ts";
 import type { RuntimeEnvFileOwner } from "./RuntimeEnvFile.ts";
 import { makeRuntimeEnvFileOwner } from "./RuntimeEnvFile.ts";
+import { probeReadiness } from "./ReadinessProbe.ts";
 
 const stackId = StackIdSchema.make("a".repeat(64));
 
@@ -1781,8 +1783,103 @@ describe("production runtime", () => {
       expect(Duration.toMillis(yield* readinessDeadlineFor(defaultState, defaultDatabase))).toBe(
         120_000,
       );
-      expect(Duration.toMillis(yield* readinessDeadlineFor(configuredState, generic))).toBe(30_000);
+      expect(Duration.toMillis(yield* readinessDeadlineFor(configuredState, generic))).toBe(
+        120_000,
+      );
+      const configuredContainerState = {
+        ...stateFor({}, { kind: "container", engine: "docker" }),
+        definition: configured.definition,
+      };
+      expect(
+        Duration.toMillis(yield* readinessDeadlineFor(configuredContainerState, generic)),
+      ).toBe(30_000);
     }).pipe(Effect.provide(NodeServices.layer)),
+  );
+
+  it.effect("allows cold native services to become ready after library loading", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const root = "/tmp/production-runtime-native-readiness-delay";
+        const compiled = yield* compileStack({
+          projectRoot: root,
+          runtime: { kind: "native" },
+        });
+        const rest = compiled.executionPlan.workloads.find(({ id }) => id === "rest:rest");
+        if (rest === undefined) return yield* Effect.die("Expected REST workload");
+        const deadline = yield* readinessDeadlineFor(
+          { ...stateFor({}), definition: compiled.definition },
+          rest,
+        );
+        const received = yield* Deferred.make<void>();
+        const context = yield* Effect.context();
+        let response: ServerResponse | undefined;
+        const server = createServer((_request, nextResponse) => {
+          response = nextResponse;
+          Effect.runSyncWith(context)(Deferred.succeed(received, undefined));
+        });
+        yield* listenForNativeReadiness(server);
+        const address = server.address();
+        if (typeof address !== "object" || address === null)
+          return yield* Effect.die("Native readiness server did not expose an address");
+        const port = address.port;
+        const fiber = yield* Effect.forkChild(
+          probeReadiness({ mode: "http", host: "127.0.0.1", port }, { deadline }),
+          { startImmediately: true },
+        );
+        yield* Deferred.await(received);
+        yield* TestClock.adjust(Duration.seconds(52));
+        const pending = yield* Effect.sync(() => fiber.pollUnsafe() === undefined);
+        response?.end("ok");
+        const result = yield* Fiber.join(fiber).pipe(Effect.exit);
+        expect(pending).toBe(true);
+        expect(Exit.isSuccess(result)).toBe(true);
+      }),
+    ).pipe(Effect.provide(NodeServices.layer)),
+  );
+
+  it.effect("bounds native HTTP readiness at two minutes and cancels the request", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const root = "/tmp/production-runtime-native-readiness-bound";
+        const compiled = yield* compileStack({
+          projectRoot: root,
+          runtime: { kind: "native" },
+        });
+        const rest = compiled.executionPlan.workloads.find(({ id }) => id === "rest:rest");
+        if (rest === undefined) return yield* Effect.die("Expected REST workload");
+        const deadline = yield* readinessDeadlineFor(
+          { ...stateFor({}), definition: compiled.definition },
+          rest,
+        );
+        expect(Duration.toMillis(deadline)).toBe(120_000);
+        const received = yield* Deferred.make<void>();
+        const closed = yield* Deferred.make<void>();
+        const context = yield* Effect.context();
+        const server = createServer((_request, response) => {
+          response.once("close", () => {
+            Effect.runSyncWith(context)(Deferred.succeed(closed, undefined));
+          });
+          Effect.runSyncWith(context)(Deferred.succeed(received, undefined));
+        });
+        yield* listenForNativeReadiness(server);
+        const address = server.address();
+        if (typeof address !== "object" || address === null)
+          return yield* Effect.die("Native readiness server did not expose an address");
+        const fiber = yield* Effect.forkChild(
+          probeReadiness({ mode: "http", host: "127.0.0.1", port: address.port }, { deadline }),
+          { startImmediately: true },
+        );
+        yield* Deferred.await(received);
+        yield* TestClock.adjust(Duration.seconds(121));
+        const result = yield* Fiber.join(fiber).pipe(Effect.exit);
+        expect(Exit.isFailure(result)).toBe(true);
+        if (Exit.isFailure(result)) {
+          const error = Option.getOrUndefined(Cause.findErrorOption(result.cause));
+          expect(error).toMatchObject({ message: "Readiness deadline exceeded" });
+        }
+        yield* Deferred.await(closed);
+      }),
+    ).pipe(Effect.provide(NodeServices.layer)),
   );
 
   it.live("rejects an invalid database readiness budget before creating a workload", () =>
