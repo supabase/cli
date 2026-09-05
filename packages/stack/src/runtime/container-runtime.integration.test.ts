@@ -541,6 +541,98 @@ describe("container runtime", () => {
     }),
   );
 
+  it.live("creates one shared network when workloads start concurrently", () =>
+    Effect.gen(function* () {
+      const state: FakeContainerState = {
+        resources: [],
+        imagePresent: true,
+        calls: [],
+        createdSpecs: [],
+        nextId: 1,
+      };
+      const networkEntered = yield* Deferred.make<void>();
+      const releaseNetwork = yield* Deferred.make<void>();
+      let networkCreates = 0;
+      const base = fakeContainerEngine(state);
+      const runtime = yield* makeContainerRuntime({
+        engine: {
+          ...base,
+          createNetwork: (spec) =>
+            Effect.gen(function* () {
+              networkCreates += 1;
+              yield* Deferred.succeed(networkEntered, undefined);
+              yield* Deferred.await(releaseNetwork);
+              return yield* base.createNetwork(spec);
+            }),
+        },
+        ownerSessionId: "owner-session",
+      });
+      const secondKey = { ...key, workloadId: "rest:rest" };
+      const secondWorkload = {
+        ...workload(),
+        id: secondKey.workloadId,
+        capability: "rest" as const,
+      };
+      const first = yield* Effect.forkChild(runtime.start(key, workload()), {
+        startImmediately: true,
+      });
+      yield* Deferred.await(networkEntered);
+      const second = yield* Effect.forkChild(runtime.start(secondKey, secondWorkload), {
+        startImmediately: true,
+      });
+      yield* Deferred.succeed(releaseNetwork, undefined);
+      yield* Fiber.join(first);
+      yield* Fiber.join(second);
+      expect(networkCreates).toBe(1);
+      yield* runtime.cleanup({ stackId, destroy: true });
+    }),
+  );
+
+  it.live("interrupts a setup blocked on shared network creation during cleanup", () =>
+    Effect.gen(function* () {
+      const state: FakeContainerState = {
+        resources: [],
+        imagePresent: true,
+        calls: [],
+        createdSpecs: [],
+        nextId: 1,
+      };
+      const networkEntered = yield* Deferred.make<void>();
+      const releaseNetwork = yield* Deferred.make<void>();
+      const base = fakeContainerEngine(state);
+      const runtime = yield* makeContainerRuntime({
+        engine: {
+          ...base,
+          createNetwork: (spec) =>
+            Effect.gen(function* () {
+              yield* Deferred.succeed(networkEntered, undefined);
+              yield* Deferred.await(releaseNetwork);
+              return yield* base.createNetwork(spec);
+            }),
+        },
+        ownerSessionId: "owner-session",
+      });
+      const starting = yield* Effect.forkChild(runtime.start(key, workload()), {
+        startImmediately: true,
+      });
+      yield* Deferred.await(networkEntered);
+      const secondKey = { ...key, workloadId: "rest:rest" };
+      const secondWorkload = {
+        ...workload(),
+        id: secondKey.workloadId,
+        capability: "rest" as const,
+      };
+      const queued = yield* Effect.forkChild(runtime.start(secondKey, secondWorkload), {
+        startImmediately: true,
+      });
+      yield* runtime.cleanup({ stackId, destroy: true });
+      yield* Deferred.succeed(releaseNetwork, undefined);
+      expect(Exit.isFailure(yield* Fiber.join(starting).pipe(Effect.exit))).toBe(true);
+      expect(Exit.isFailure(yield* Fiber.join(queued).pipe(Effect.exit))).toBe(true);
+      expect(state.resources).toEqual([]);
+    }),
+  );
+
   it.live("runs container startup migrations before the main workload", () =>
     Effect.gen(function* () {
       const state: FakeContainerState = {

@@ -9,7 +9,6 @@ const archive = new TextEncoder().encode("archive");
 const archiveSha256 = "0eb3e36bfb24dcd9bb1d1bece1531216b59539a8fde17ee80224af0653c92aa3";
 const request: ArtifactRequest = {
   key: "database/postgres",
-  sha256: archiveSha256,
   requiredRuntimePaths: ["bin/postgres", "etc/postgres.conf"],
   executablePath: "bin/postgres",
 };
@@ -21,6 +20,7 @@ const withPlatform = <A, E, R>(effect: Effect.Effect<A, E, R>) =>
   Effect.scoped(effect).pipe(Effect.provide(layer));
 
 const sourceWriting = (bytes: Uint8Array = archive): ArtifactSource => ({
+  checksum: () => Effect.succeed(archiveSha256),
   materialize: (_request, destination) =>
     Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem;
@@ -60,20 +60,27 @@ describe("verified native artifact preparation", () => {
         const root = yield* fs.makeTempDirectoryScoped({
           prefix: "supabase-stack-artifact-cache-",
         });
-        let calls = 0;
+        let checksumCalls = 0;
+        let materializeCalls = 0;
         const source: ArtifactSource = {
+          checksum: () =>
+            Effect.sync(() => {
+              checksumCalls += 1;
+              return archiveSha256;
+            }),
           materialize: (entry, destination) =>
             Effect.sync(() => {
-              calls += 1;
+              materializeCalls += 1;
               return entry;
-            }).pipe(Effect.andThen(sourceWriting().materialize(entry, destination))),
+            }).pipe(Effect.andThen(sourceWriting().materialize(entry, destination, archiveSha256))),
         };
         const store = yield* makeArtifactStore({ cacheRoot: root, source });
         const first = yield* store.prepare(request);
         const second = yield* store.prepare(request);
         expect(first.outcome).toBe("downloaded");
         expect(second.outcome).toBe("cached");
-        expect(calls).toBe(1);
+        expect(checksumCalls).toBe(1);
+        expect(materializeCalls).toBe(1);
       }),
     ),
   );
@@ -94,11 +101,12 @@ describe("verified native artifact preparation", () => {
         );
         let called = false;
         const source: ArtifactSource = {
+          checksum: () => Effect.succeed(archiveSha256),
           materialize: (entry, destination) =>
             Effect.sync(() => {
               called = true;
               return entry;
-            }).pipe(Effect.andThen(sourceWriting().materialize(entry, destination))),
+            }).pipe(Effect.andThen(sourceWriting().materialize(entry, destination, archiveSha256))),
         };
         const store = yield* makeArtifactStore({ cacheRoot: root, source });
 
@@ -123,11 +131,12 @@ describe("verified native artifact preparation", () => {
         yield* fs.writeFileString(`${target}/bin/postgres`, "unverified postgres");
         let called = false;
         const source: ArtifactSource = {
+          checksum: () => Effect.succeed(archiveSha256),
           materialize: (entry, destination) =>
             Effect.sync(() => {
               called = true;
               return entry;
-            }).pipe(Effect.andThen(sourceWriting().materialize(entry, destination))),
+            }).pipe(Effect.andThen(sourceWriting().materialize(entry, destination, archiveSha256))),
         };
         const store = yield* makeArtifactStore({ cacheRoot: root, source });
 
@@ -170,6 +179,7 @@ describe("verified native artifact preparation", () => {
           requiredRuntimePaths: ["bin/postgres", "share/runtime"],
         };
         const source: ArtifactSource = {
+          checksum: () => Effect.succeed(archiveSha256),
           materialize: (_entry, destination) =>
             Effect.gen(function* () {
               yield* fs.makeDirectory(`${destination}/bin`, { recursive: true });
@@ -249,6 +259,7 @@ describe("verified native artifact preparation", () => {
           requiredRuntimePaths: ["bin/postgres", "share/runtime"],
         };
         const source: ArtifactSource = {
+          checksum: () => Effect.succeed(archiveSha256),
           materialize: (_entry, destination) =>
             Effect.gen(function* () {
               yield* fs.makeDirectory(`${destination}/bin`, { recursive: true });
@@ -349,6 +360,7 @@ describe("verified native artifact preparation", () => {
           key: "database/postgres-cache-link",
         };
         const source: ArtifactSource = {
+          checksum: () => Effect.succeed(archiveSha256),
           materialize: (_entry, destination) =>
             Effect.gen(function* () {
               yield* fs.makeDirectory(`${destination}/bin`, { recursive: true });
@@ -375,25 +387,6 @@ describe("verified native artifact preparation", () => {
         const exit = yield* store.prepare(symlinkRequest).pipe(Effect.exit);
 
         expect(errorOf(exit)).toBeInstanceOf(ArtifactIntegrityError);
-      }),
-    ),
-  );
-
-  it.live("fails closed for a conflicting request without replacing the published tree", () =>
-    withPlatform(
-      Effect.gen(function* () {
-        const fs = yield* FileSystem.FileSystem;
-        const root = yield* fs.makeTempDirectoryScoped({
-          prefix: "supabase-stack-artifact-conflict-",
-        });
-        const store = yield* makeArtifactStore({ cacheRoot: root, source: sourceWriting() });
-        const published = yield* store.prepare(request);
-        const conflict = yield* store
-          .prepare({ ...request, sha256: "1".repeat(64) })
-          .pipe(Effect.exit);
-        expect(errorOf(conflict)).toBeInstanceOf(ArtifactIntegrityError);
-        expect(yield* fs.exists(`${published.path}/bin/postgres`)).toBe(true);
-        expect(yield* fs.exists(`${published.path}/.artifact-source`)).toBe(false);
       }),
     ),
   );
@@ -426,6 +419,7 @@ describe("verified native artifact preparation", () => {
           prefix: "supabase-stack-artifact-executable-directory-",
         });
         const source: ArtifactSource = {
+          checksum: () => Effect.succeed(archiveSha256),
           materialize: (_entry, destination) =>
             Effect.gen(function* () {
               yield* fs.makeDirectory(`${destination}/bin/postgres`, { recursive: true });
@@ -461,6 +455,7 @@ describe("verified native artifact preparation", () => {
           prefix: "supabase-stack-artifact-internal-link-",
         });
         const source: ArtifactSource = {
+          checksum: () => Effect.succeed(archiveSha256),
           materialize: (_entry, destination) =>
             Effect.gen(function* () {
               yield* fs.makeDirectory(`${destination}/bin`, { recursive: true });
@@ -502,6 +497,7 @@ describe("verified native artifact preparation", () => {
         const outsideExecutable = `${outside}/postgres`;
         yield* fs.writeFileString(outsideExecutable, "outside");
         const source: ArtifactSource = {
+          checksum: () => Effect.succeed(archiveSha256),
           materialize: (_entry, destination) =>
             Effect.gen(function* () {
               yield* fs.makeDirectory(`${destination}/bin`, { recursive: true });
@@ -547,6 +543,7 @@ describe("verified native artifact preparation", () => {
           requiredRuntimePaths: ["bin/postgres", "share/runtime"],
         };
         const source: ArtifactSource = {
+          checksum: () => Effect.succeed(archiveSha256),
           materialize: (_entry, destination) =>
             Effect.gen(function* () {
               yield* fs.makeDirectory(`${destination}/bin`, { recursive: true });
@@ -582,6 +579,7 @@ describe("verified native artifact preparation", () => {
         });
         const started = yield* Deferred.make<void>();
         const source: ArtifactSource = {
+          checksum: () => Effect.succeed(archiveSha256),
           materialize: (_entry, destination) =>
             Effect.gen(function* () {
               yield* fs.writeFileString(`${destination}/partial`, "partial");
@@ -622,6 +620,7 @@ describe("verified native artifact preparation", () => {
         const release = yield* Deferred.make<void>();
         let calls = 0;
         const source: ArtifactSource = {
+          checksum: () => Effect.succeed(archiveSha256),
           materialize: (entry, destination) =>
             Effect.gen(function* () {
               calls += 1;
@@ -668,6 +667,7 @@ describe("verified native artifact preparation", () => {
         const release = yield* Deferred.make<void>();
         let calls = 0;
         const source: ArtifactSource = {
+          checksum: () => Effect.succeed(archiveSha256),
           materialize: (entry, destination) =>
             Effect.gen(function* () {
               calls += 1;
@@ -712,6 +712,7 @@ describe("verified native artifact preparation", () => {
         const release = yield* Deferred.make<void>();
         let calls = 0;
         const source: ArtifactSource = {
+          checksum: () => Effect.succeed(archiveSha256),
           materialize: (entry, destination) =>
             Effect.gen(function* () {
               calls += 1;
@@ -756,6 +757,7 @@ describe("verified native artifact preparation", () => {
         const root = yield* fs.makeTempDirectoryScoped({ prefix: "supabase-stack-artifact-path-" });
         let called = false;
         const source: ArtifactSource = {
+          checksum: () => Effect.succeed(archiveSha256),
           materialize: () =>
             Effect.sync(() => {
               called = true;
@@ -785,6 +787,7 @@ describe("verified native artifact preparation", () => {
         yield* fs.symlink(outside, `${root}/nested`);
         let called = false;
         const source: ArtifactSource = {
+          checksum: () => Effect.succeed(archiveSha256),
           materialize: () =>
             Effect.sync(() => {
               called = true;

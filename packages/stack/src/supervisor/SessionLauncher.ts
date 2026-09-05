@@ -13,7 +13,7 @@ interface SessionWorkload {
 }
 
 export interface SessionLauncher {
-  /** Starts the supplied dependency closure in topological order. */
+  /** Starts the supplied dependency closure in dependency-ready waves. */
   readonly launch: (plan: ExecutionPlan) => Effect.Effect<SessionLaunch, RuntimeDriverError>;
   /** Stops and removes every workload started in this session in reverse order. */
   readonly stop: Effect.Effect<void, RuntimeDriverError>;
@@ -28,6 +28,8 @@ interface SessionLaunch {
   readonly rollback: Effect.Effect<void, RuntimeDriverError>;
 }
 
+const START_CONCURRENCY = 4;
+
 const keyFor = (stackId: StackId, workload: PlannedWorkload): RuntimeWorkloadKey => ({
   stackId,
   workloadId: workload.id,
@@ -40,8 +42,8 @@ const combine = (
   cleanup.reasons.length === 0 ? primary : Cause.combine(primary, cleanup);
 
 /**
- * Owns only the workloads started by the current Supervisor session. A launch is one ordered
- * attempt and a failure cleans that attempt's resources.
+ * Owns only the workloads started by the current Supervisor session. A launch starts
+ * dependency-ready waves and a failure cleans that attempt's resources.
  */
 export const makeSessionLauncher = (options: {
   readonly stackId: StackId;
@@ -72,22 +74,46 @@ export const makeSessionLauncher = (options: {
     const launch = (plan: ExecutionPlan): Effect.Effect<SessionLaunch, RuntimeDriverError> =>
       Effect.gen(function* () {
         yield* Ref.set(cleanupProven, true);
-        const existing = new Set((yield* Ref.get(session)).map(({ key }) => key.workloadId));
         const attempted: SessionWorkload[] = [];
-        const outcome = yield* Effect.exit(
-          Effect.forEach(
-            plan.workloads,
-            (workload) =>
-              Effect.gen(function* () {
-                if (existing.has(workload.id)) return;
-                const entry = { key: keyFor(options.stackId, workload), workload };
-                attempted.push(entry);
-                yield* options.driver.start(entry.key, workload);
-                yield* Ref.update(session, (current) => [...current, entry]);
+        const planEntries = plan.workloads.map((workload) => ({
+          key: keyFor(options.stackId, workload),
+          workload,
+        }));
+        const ready = new Set((yield* Ref.get(session)).map(({ key }) => key.workloadId));
+        let remaining = planEntries.filter((entry) => !ready.has(entry.workload.id));
+        let outcome: Exit.Exit<void, RuntimeDriverError> = Exit.succeed(undefined);
+        while (remaining.length > 0 && Exit.isSuccess(outcome)) {
+          const wave = remaining.filter((entry) =>
+            entry.workload.dependencies.every((dependency) => ready.has(dependency)),
+          );
+          if (wave.length === 0) {
+            outcome = Exit.fail(
+              new RuntimeDriverError({
+                message: "No workload is ready to start; dependencies are unsatisfied",
+                stackId: options.stackId,
               }),
-            { concurrency: 1, discard: true },
-          ),
-        );
+            );
+            break;
+          }
+          outcome = yield* Effect.exit(
+            Effect.forEach(
+              wave,
+              (entry) =>
+                Effect.gen(function* () {
+                  // Record the resource immediately before starting it. This includes an
+                  // in-flight start when a sibling fails, without treating queued work as owned.
+                  attempted.push(entry);
+                  yield* options.driver.start(entry.key, entry.workload);
+                }),
+              { concurrency: START_CONCURRENCY, discard: true },
+            ),
+          );
+          if (Exit.isSuccess(outcome)) {
+            for (const entry of wave) ready.add(entry.workload.id);
+            yield* Ref.update(session, (current) => [...current, ...wave]);
+            remaining = remaining.filter((entry) => !ready.has(entry.workload.id));
+          }
+        }
         if (Exit.isSuccess(outcome)) {
           const rollback = Effect.gen(function* () {
             const result = yield* cleanup(attempted).pipe(Effect.exit);

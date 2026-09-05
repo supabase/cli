@@ -12,6 +12,7 @@ import {
   Result,
   Scope,
   Schedule,
+  Semaphore,
 } from "effect";
 import { ChildProcessSpawner } from "effect/unstable/process";
 import { eagerCapabilities, type PlannedWorkload } from "../model/ExecutionPlan.ts";
@@ -577,6 +578,10 @@ export const makeProductionRuntime = (
       options.bootstrapDatabase ?? ((state: PersistedStackState) => bootstrapDatabaseAt(state));
 
     const artifacts = new Map<string, PreparedWorkloadArtifact>();
+    // Runtime input materialization writes shared files and populates completed caches. Keep
+    // that short preparation boundary serialized while allowing the actual workloads to start
+    // concurrently after their inputs are ready.
+    const runtimeInputGate = yield* Semaphore.make(1);
     const freshState = (key: Pick<RuntimeWorkloadKey, "stackId" | "workloadId">) =>
       currentStateReader(options).pipe(
         Effect.mapError((error) => mapDriverError(key, error)),
@@ -613,49 +618,51 @@ export const makeProductionRuntime = (
       fresh: PersistedStackState,
       host: ContainerHostRoute | undefined,
     ): Effect.Effect<WorkloadRuntimeInputs, StackPreparationError> =>
-      Effect.gen(function* () {
-        const material = yield* inputOwner.resolve(fresh, workload.id);
-        const templates = material.auth?.templates;
-        const apiListener = fresh.definition?.listeners.api;
-        const apiAssignment = fresh.ports.find((assignment) => assignment.field === "api");
-        const templateBaseUrl =
-          workload.id !== "auth:auth" || templates === undefined || templates.length === 0
-            ? undefined
-            : apiListener?.enabled !== true || apiAssignment === undefined
-              ? yield* preparationError(
-                  "Configured Auth email templates require a public API listener",
-                )
-              : `http://${urlHost(host?.host ?? apiListener.address)}:${apiAssignment.port}`;
-        const auth =
-          material.auth === undefined
-            ? undefined
-            : {
-                ...material.auth,
-                ...(templateBaseUrl === undefined ? {} : { templateBaseUrl }),
-              };
-        const functions =
-          workload.id === "functions:edge-runtime"
-            ? {
-                bootstrapPath: yield* functionsPath(),
-                ...(material.functions?.secrets === undefined
-                  ? {}
-                  : { secrets: material.functions.secrets }),
-              }
-            : undefined;
-        return {
-          ...(auth === undefined ? {} : { auth }),
-          ...(workload.id.startsWith("analytics:") && material.analytics !== undefined
-            ? { analytics: material.analytics }
-            : {}),
-          ...(workload.id === "pooler:pooler" && material.pooler !== undefined
-            ? { pooler: material.pooler }
-            : {}),
-          database: { dataPath: pathService.join(paths.data, "database") },
-          storage: { dataPath: pathService.join(paths.data, "storage") },
-          ...(functions === undefined ? {} : { functions }),
-          ...(host === undefined ? {} : { hostRoute: host }),
-        };
-      });
+      runtimeInputGate.withPermit(
+        Effect.gen(function* () {
+          const material = yield* inputOwner.resolve(fresh, workload.id);
+          const templates = material.auth?.templates;
+          const apiListener = fresh.definition?.listeners.api;
+          const apiAssignment = fresh.ports.find((assignment) => assignment.field === "api");
+          const templateBaseUrl =
+            workload.id !== "auth:auth" || templates === undefined || templates.length === 0
+              ? undefined
+              : apiListener?.enabled !== true || apiAssignment === undefined
+                ? yield* preparationError(
+                    "Configured Auth email templates require a public API listener",
+                  )
+                : `http://${urlHost(host?.host ?? apiListener.address)}:${apiAssignment.port}`;
+          const auth =
+            material.auth === undefined
+              ? undefined
+              : {
+                  ...material.auth,
+                  ...(templateBaseUrl === undefined ? {} : { templateBaseUrl }),
+                };
+          const functions =
+            workload.id === "functions:edge-runtime"
+              ? {
+                  bootstrapPath: yield* functionsPath(),
+                  ...(material.functions?.secrets === undefined
+                    ? {}
+                    : { secrets: material.functions.secrets }),
+                }
+              : undefined;
+          return {
+            ...(auth === undefined ? {} : { auth }),
+            ...(workload.id.startsWith("analytics:") && material.analytics !== undefined
+              ? { analytics: material.analytics }
+              : {}),
+            ...(workload.id === "pooler:pooler" && material.pooler !== undefined
+              ? { pooler: material.pooler }
+              : {}),
+            database: { dataPath: pathService.join(paths.data, "database") },
+            storage: { dataPath: pathService.join(paths.data, "storage") },
+            ...(functions === undefined ? {} : { functions }),
+            ...(host === undefined ? {} : { hostRoute: host }),
+          };
+        }),
+      );
 
     const preflight = (input: LifecycleInput): Effect.Effect<void, StackError> =>
       Effect.gen(function* () {

@@ -30,7 +30,6 @@ const artifact: NativeWorkloadArtifact = {
 };
 const request: ArtifactRequest = {
   key: "demo/v1",
-  sha256: "0".repeat(64),
   requiredRuntimePaths: ["bin/demo"],
   executablePath: "bin/demo",
 };
@@ -211,7 +210,7 @@ describe("slim-services artifact source", () => {
         const source = makeSlimServicesSource(() => artifact, fetcher);
         const fs = yield* FileSystem.FileSystem;
         const destination = yield* fs.makeTempDirectoryScoped({ prefix: "slim-services-source-" });
-        yield* source.materialize({ ...request, sha256: expected }, destination);
+        yield* source.materialize(request, destination, expected);
         expect(yield* fs.readFileString(`${destination}/bin/demo`)).toBe("demo");
       }).pipe(Effect.provide(NodeServices.layer)),
     ),
@@ -238,9 +237,7 @@ describe("slim-services artifact source", () => {
         const source = makeSlimServicesSource(() => artifact, fetcher);
         const fs = yield* FileSystem.FileSystem;
         const destination = yield* fs.makeTempDirectoryScoped({ prefix: "slim-services-unsafe-" });
-        const failed = yield* source
-          .materialize({ ...request, sha256: expected }, destination)
-          .pipe(Effect.exit);
+        const failed = yield* source.materialize(request, destination, expected).pipe(Effect.exit);
         expect(errorOf(failed)).toBeDefined();
         expect(yield* fs.exists(`${destination}/outside`)).toBe(false);
       }).pipe(Effect.provide(NodeServices.layer)),
@@ -273,8 +270,9 @@ describe("slim-services artifact source", () => {
         const fs = yield* FileSystem.FileSystem;
         const destination = yield* fs.makeTempDirectoryScoped({ prefix: "slim-services-links-" });
         yield* makeSlimServicesSource(() => artifact, fetcher).materialize(
-          { ...request, sha256: expected },
+          request,
           destination,
+          expected,
         );
         expect(yield* fs.readFileString(`${destination}/bin/current`)).toBe("demo");
 
@@ -295,7 +293,7 @@ describe("slim-services artifact source", () => {
           return Promise.resolve(new Response(malformed));
         };
         const failed = yield* makeSlimServicesSource(() => artifact, malformedFetcher)
-          .materialize({ ...request, sha256: malformedDigest }, destination)
+          .materialize(request, destination, malformedDigest)
           .pipe(Effect.exit);
         expect(errorOf(failed)).toBeDefined();
       }).pipe(Effect.provide(NodeServices.layer)),
@@ -330,7 +328,7 @@ describe("slim-services artifact source", () => {
           prefix: "slim-services-link-escape-",
         });
         const failed = yield* makeSlimServicesSource(() => artifact, fetcher)
-          .materialize({ ...request, sha256: expected }, destination)
+          .materialize(request, destination, expected)
           .pipe(Effect.exit);
         expect(errorOf(failed)).toBeDefined();
         expect(yield* fs.exists(`${destination}/outside`)).toBe(false);
@@ -368,7 +366,11 @@ describe("slim-services artifact source", () => {
           prefix: "slim-services-interrupt-",
         });
         const fiber = yield* Effect.forkChild(
-          makeSlimServicesSource(() => artifact, fetcher).materialize(request, destination),
+          makeSlimServicesSource(() => artifact, fetcher).materialize(
+            request,
+            destination,
+            "0".repeat(64),
+          ),
           { startImmediately: true },
         );
         yield* Deferred.await(started);
@@ -417,7 +419,7 @@ describe("slim-services artifact source", () => {
             fetcher,
             systemTarBoundary,
             decompressor,
-          ).materialize({ ...request, sha256: expected }, destination),
+          ).materialize(request, destination, expected),
           { startImmediately: true },
         );
         yield* Deferred.await(started);
@@ -450,8 +452,9 @@ describe("slim-services artifact source", () => {
         const fs = yield* FileSystem.FileSystem;
         const destination = yield* fs.makeTempDirectoryScoped({ prefix: "slim-services-pax-" });
         yield* makeSlimServicesSource(() => artifact, fetcher).materialize(
-          { ...request, sha256: expected },
+          request,
           destination,
+          expected,
         );
         expect(yield* fs.exists(`${destination}/${longName}`)).toBe(true);
       }).pipe(Effect.provide(NodeServices.layer)),
@@ -465,9 +468,13 @@ describe("slim-services artifact source", () => {
         const crypto = yield* Crypto.Crypto;
         const expected = digestHex(yield* crypto.digest("SHA-256", archive));
         const checksums = `${expected}  demo-v1.0.0-linux-amd64.tar.zst\n`;
+        let checksumRequests = 0;
         const fetcher: FetchLike = (input) => {
           const url = requestUrl(input);
-          if (url.endsWith("SHA256SUMS")) return Promise.resolve(new Response(checksums));
+          if (url.endsWith("SHA256SUMS")) {
+            checksumRequests += 1;
+            return Promise.resolve(new Response(checksums));
+          }
           if (url.endsWith("manifest.json"))
             return Promise.resolve(
               new Response(
@@ -480,10 +487,11 @@ describe("slim-services artifact source", () => {
         const fs = yield* FileSystem.FileSystem;
         const root = yield* fs.makeTempDirectoryScoped({ prefix: "slim-services-store-" });
         const store = yield* makeArtifactStore({ cacheRoot: root, source });
-        const prepared = yield* store.prepare({ ...request, sha256: expected });
+        const prepared = yield* store.prepare(request);
         expect(prepared.outcome).toBe("downloaded");
         expect(yield* fs.readFileString(`${prepared.path}/bin/demo`)).toBe("demo");
         expect(yield* fs.exists(`${prepared.path}/.artifact.json`)).toBe(true);
+        expect(checksumRequests).toBe(1);
       }).pipe(Effect.provide(NodeServices.layer)),
     ),
   );

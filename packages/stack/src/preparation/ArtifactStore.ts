@@ -21,8 +21,8 @@ import { validateRelativePath, validateSha256, verifySha256 } from "./Integrity.
  * subdirectories, but never an absolute or traversing path.
  */
 export interface ArtifactRequest {
+  /** Immutable published identity; a reused key intentionally reuses its persisted digest. */
   readonly key: string;
-  readonly sha256: string;
   /** Relative paths that a runtime may use after installation. */
   readonly requiredRuntimePaths: ReadonlyArray<string>;
   /** The relative executable path, if this artifact starts a native workload. */
@@ -36,9 +36,12 @@ export interface ArtifactRequest {
  * the store itself remains independent of transport and archive formats.
  */
 export interface ArtifactSource {
+  /** Resolves the published digest only when the store has no valid cached artifact. */
+  readonly checksum: (request: ArtifactRequest) => Effect.Effect<string, StackPreparationError>;
   readonly materialize: (
     request: ArtifactRequest,
     destination: string,
+    expectedSha256: string,
   ) => Effect.Effect<
     Uint8Array,
     StackPreparationError,
@@ -140,12 +143,9 @@ const validateKey = (key: string): Effect.Effect<void, StackPreparationError> =>
     ),
   );
 
-const validateRequest = (
-  request: ArtifactRequest,
-): Effect.Effect<string, StackPreparationError | ArtifactIntegrityError> =>
+const validateRequest = (request: ArtifactRequest): Effect.Effect<void, StackPreparationError> =>
   Effect.gen(function* () {
     yield* validateKey(request.key);
-    const sha256 = yield* validateSha256(request.sha256);
     const seen = new Set<string>();
     for (const relative of request.requiredRuntimePaths) {
       yield* validateRelativePath(relative, "required runtime path");
@@ -160,13 +160,10 @@ const validateRequest = (
           path: request.executablePath,
         });
     }
-    return sha256;
   });
 
-const requestFlightKey = (request: ArtifactRequest, expectedSha256: string): string =>
-  [request.key, expectedSha256, ...request.requiredRuntimePaths, request.executablePath ?? ""].join(
-    "\u0000",
-  );
+const requestFlightKey = (request: ArtifactRequest): string =>
+  [request.key, ...request.requiredRuntimePaths, request.executablePath ?? ""].join("\u0000");
 
 const metadataFor = (
   request: ArtifactRequest,
@@ -518,9 +515,16 @@ const ensureExecutableFile = (
 
 const verifyMetadata = (
   request: ArtifactRequest,
-  expectedSha256: string,
   metadata: ArtifactMetadata,
-): Effect.Effect<void, ArtifactIntegrityError> => {
+): Effect.Effect<string, ArtifactIntegrityError> => {
+  const sha256 = validateSha256(metadata.sha256).pipe(
+    Effect.mapError((cause) =>
+      metadataError("Cached artifact metadata contains an invalid SHA-256", {
+        key: request.key,
+        cause,
+      }),
+    ),
+  );
   const samePaths =
     metadata.requiredRuntimePaths.length === request.requiredRuntimePaths.length &&
     metadata.requiredRuntimePaths.every(
@@ -534,7 +538,6 @@ const verifyMetadata = (
     );
   if (
     metadata.key !== request.key ||
-    metadata.sha256 !== expectedSha256 ||
     !samePaths ||
     !sameKinds ||
     metadata.executablePath !== request.executablePath
@@ -542,7 +545,7 @@ const verifyMetadata = (
     return Effect.fail(
       metadataError("Cached artifact metadata does not match the request", { key: request.key }),
     );
-  return Effect.void;
+  return sha256;
 };
 
 const writeBytesSync = (
@@ -606,7 +609,6 @@ const makeArtifactOperation = (
   cacheRoot: string,
   source: ArtifactSource,
   request: ArtifactRequest,
-  expectedSha256: string,
 ): Effect.Effect<PreparedArtifact, ArtifactStoreError> =>
   Effect.gen(function* () {
     const target = path.resolve(cacheRoot, request.key);
@@ -627,7 +629,7 @@ const makeArtifactOperation = (
       const cachedMetadata = yield* readMetadata(fs, metadataPath);
       if (Option.isNone(cachedMetadata)) return Option.none();
       const metadata = cachedMetadata.value;
-      yield* verifyMetadata(request, expectedSha256, metadata);
+      const sha256 = yield* verifyMetadata(request, metadata);
       // Published content is intentionally not rehashed on cache hits. Metadata and cheap
       // structural checks protect the cache boundary; content tampering may execute or fail
       // later when the workload starts.
@@ -650,7 +652,7 @@ const makeArtifactOperation = (
       return Option.some({
         key: request.key,
         path: target,
-        sha256: expectedSha256,
+        sha256,
         requiredRuntimePaths: [...request.requiredRuntimePaths],
         ...(request.executablePath === undefined ? {} : { executablePath: request.executablePath }),
         outcome: "cached" as const,
@@ -704,6 +706,21 @@ const makeArtifactOperation = (
     const initial = yield* inspectCache();
     if (Option.isSome(initial)) return initial.value;
 
+    // Artifact keys identify immutable published versions. Once a valid entry exists, its
+    // persisted digest is authoritative; only a cache miss consults the upstream checksum.
+    const expectedSha256 = yield* source.checksum(request).pipe(
+      Effect.flatMap((sha256) =>
+        validateSha256(sha256).pipe(
+          Effect.mapError((cause) =>
+            metadataError("Artifact source returned an invalid SHA-256", {
+              key: request.key,
+              cause,
+            }),
+          ),
+        ),
+      ),
+    );
+
     const token = yield* crypto.randomUUIDv4.pipe(
       Effect.mapError((cause) =>
         artifactError(`Unable to allocate artifact temporary name: ${cause.message}`, {
@@ -716,7 +733,7 @@ const makeArtifactOperation = (
     const published = yield* Effect.gen(function* () {
       yield* ensureDirectory(fs, path, temporary, cacheRoot);
       const temporaryRoot = yield* ensureSafeRoot(fs, path, temporary, cacheRoot);
-      const archive = yield* source.materialize(request, temporary).pipe(
+      const archive = yield* source.materialize(request, temporary, expectedSha256).pipe(
         Effect.provideService(FileSystem.FileSystem, fs),
         Effect.provideService(Path.Path, path),
         Effect.provideService(Crypto.Crypto, crypto),
@@ -840,11 +857,11 @@ export const makeArtifactStore = (
     const inFlight = new Map<string, InFlight>();
     const prepare = (request: ArtifactRequest) =>
       Effect.gen(function* () {
-        const expectedSha256 = yield* validateRequest(request);
+        yield* validateRequest(request);
         const target = path.resolve(cacheRoot, request.key);
         if (!pathWithin(cacheRoot, target, path.sep))
           return yield* artifactError("Artifact key escapes cache root", { key: request.key });
-        const flightKey = requestFlightKey(request, expectedSha256);
+        const flightKey = requestFlightKey(request);
         const operation = makeArtifactOperation(
           fs,
           path,
@@ -853,7 +870,6 @@ export const makeArtifactStore = (
           cacheRoot,
           options.source,
           request,
-          expectedSha256,
         );
         const joined = yield* lifecycle.withPermit(
           Effect.gen(function* () {

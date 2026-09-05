@@ -2,7 +2,13 @@ import { NodeServices } from "@effect/platform-node";
 import { describe, expect, it } from "@effect/vitest";
 import { Cause, Effect, Exit, FileSystem, Option, Path, Stream } from "effect";
 import type { PlannedWorkload } from "../model/ExecutionPlan.ts";
-import type { ArtifactRequest, ArtifactStore, PreparedArtifact } from "./ArtifactStore.ts";
+import {
+  makeArtifactStore,
+  type ArtifactRequest,
+  type ArtifactSource,
+  type ArtifactStore,
+  type PreparedArtifact,
+} from "./ArtifactStore.ts";
 import type {
   ContainerEngine,
   ContainerNetworkSpec,
@@ -13,7 +19,7 @@ import {
   makeProductionRuntimeArtifactPreparer,
   makeRuntimeArtifactPreparer,
 } from "./RuntimeArtifacts.ts";
-import { ContainerEngineError } from "../public/Errors.ts";
+import { ContainerEngineError, StackPreparationError } from "../public/Errors.ts";
 import { ContainerEngineProtocolError } from "../runtime/ContainerEngine.ts";
 import { catalogReleaseFor } from "../model/WorkloadCatalog.ts";
 
@@ -38,10 +44,36 @@ const nativeWorkload = (selected: PlannedWorkload["selected"]): PlannedWorkload 
 const prepared = (request: ArtifactRequest): PreparedArtifact => ({
   key: request.key,
   path: "/tmp/prepared-database",
-  sha256: request.sha256,
+  sha256: "a".repeat(64),
   requiredRuntimePaths: request.requiredRuntimePaths,
   executablePath: request.executablePath,
   outcome: "downloaded",
+});
+
+const archive = new TextEncoder().encode("archive");
+const archiveSha256 = "0eb3e36bfb24dcd9bb1d1bece1531216b59539a8fde17ee80224af0653c92aa3";
+
+const nativeSource = (): ArtifactSource => ({
+  checksum: () => Effect.succeed(archiveSha256),
+  materialize: (request, destination) =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      for (const relative of request.requiredRuntimePaths) {
+        const target = path.join(destination, relative);
+        if (relative === request.executablePath) {
+          yield* fs.makeDirectory(path.dirname(target), { recursive: true });
+          yield* fs.writeFileString(target, "native executable");
+        } else {
+          yield* fs.makeDirectory(target, { recursive: true });
+        }
+      }
+      return archive;
+    }).pipe(
+      Effect.mapError(
+        (cause) => new StackPreparationError({ message: "native fixture failed", cause }),
+      ),
+    ),
 });
 
 const containerEngine = (
@@ -135,7 +167,7 @@ describe("runtime artifact preparation", () => {
     ),
   );
 
-  it("resolves native catalog metadata, checksum, and one ArtifactRequest", () => {
+  it("resolves native catalog metadata and one ArtifactRequest", () => {
     const requests: ArtifactRequest[] = [];
     const store: ArtifactStore = {
       prepare: (request) =>
@@ -147,7 +179,6 @@ describe("runtime artifact preparation", () => {
     const runtime = makeRuntimeArtifactPreparer({
       native: {
         store,
-        checksum: () => Effect.succeed("a".repeat(64)),
         platform: { os: "darwin", arch: "arm64" },
       },
     });
@@ -163,8 +194,98 @@ describe("runtime artifact preparation", () => {
     expect(requests[0]?.key).toContain(
       `slim-services/postgres/${databaseRelease.version}/darwin-arm64`,
     );
-    expect(requests[0]?.sha256).toBe("a".repeat(64));
   });
+
+  it.live("reuses a published native artifact without contacting its source again", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const root = yield* fs.makeTempDirectoryScoped({ prefix: "supabase-artifact-offline-" });
+        const firstStore = yield* makeArtifactStore({
+          cacheRoot: root,
+          source: nativeSource(),
+        });
+        const workload = nativeWorkload({
+          kind: "native",
+          release: databaseRelease.version,
+        });
+        const firstPreparer = makeRuntimeArtifactPreparer({
+          native: {
+            store: firstStore,
+            platform: { os: "darwin", arch: "arm64" },
+          },
+        });
+        const first = yield* firstPreparer.prepare({ kind: "native" }, workload);
+        expect(first.outcome).toBe("downloaded");
+        const offline: ArtifactSource = {
+          checksum: () =>
+            Effect.fail(new StackPreparationError({ message: "checksum network unavailable" })),
+          materialize: () =>
+            Effect.fail(new StackPreparationError({ message: "artifact network unavailable" })),
+        };
+        const secondStore = yield* makeArtifactStore({ cacheRoot: root, source: offline });
+        const secondPreparer = makeRuntimeArtifactPreparer({
+          native: {
+            store: secondStore,
+            platform: { os: "darwin", arch: "arm64" },
+          },
+        });
+        const second = yield* secondPreparer.prepare({ kind: "native" }, workload);
+        expect(second.outcome).toBe("cached");
+        expect(second.artifactRoot).toBe(first.artifactRoot);
+        expect(yield* fs.exists(`${first.artifactRoot}/.artifact.json`)).toBe(true);
+      }).pipe(Effect.provide(NodeServices.layer)),
+    ),
+  );
+
+  it.live("does not trust malformed native cache metadata while offline", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const root = yield* fs.makeTempDirectoryScoped({
+          prefix: "supabase-artifact-offline-invalid-",
+        });
+        const firstStore = yield* makeArtifactStore({
+          cacheRoot: root,
+          source: nativeSource(),
+        });
+        const workload = nativeWorkload({
+          kind: "native",
+          release: databaseRelease.version,
+        });
+        const preparer = makeRuntimeArtifactPreparer({
+          native: {
+            store: firstStore,
+            platform: { os: "darwin", arch: "arm64" },
+          },
+        });
+        const first = yield* preparer.prepare({ kind: "native" }, workload);
+        yield* fs.writeFileString(`${first.artifactRoot}/.artifact.json`, "malformed");
+
+        const offline: ArtifactSource = {
+          checksum: () =>
+            Effect.fail(new StackPreparationError({ message: "checksum network unavailable" })),
+          materialize: () =>
+            Effect.fail(new StackPreparationError({ message: "artifact network unavailable" })),
+        };
+        const secondStore = yield* makeArtifactStore({ cacheRoot: root, source: offline });
+        const exit = yield* makeRuntimeArtifactPreparer({
+          native: {
+            store: secondStore,
+            platform: { os: "darwin", arch: "arm64" },
+          },
+        })
+          .prepare({ kind: "native" }, workload)
+          .pipe(Effect.exit);
+        expect(Exit.isFailure(exit)).toBe(true);
+        const error = Exit.isFailure(exit)
+          ? Option.getOrUndefined(Cause.findErrorOption(exit.cause))
+          : undefined;
+        expect(error).toBeInstanceOf(StackPreparationError);
+        expect(error).toMatchObject({ message: "checksum network unavailable" });
+      }).pipe(Effect.provide(NodeServices.layer)),
+    ),
+  );
 
   it("probes and pulls an absent container image without creating or starting a container", () => {
     const calls: string[] = [];
@@ -247,10 +368,9 @@ describe("runtime artifact preparation", () => {
           prepare: () =>
             Effect.sync(() => {
               called = true;
-              return prepared({ key: "x", sha256: "a".repeat(64), requiredRuntimePaths: [] });
+              return prepared({ key: "x", requiredRuntimePaths: [] });
             }),
         },
-        checksum: () => Effect.succeed("a".repeat(64)),
       },
     });
     const exit = Effect.runSyncExit(

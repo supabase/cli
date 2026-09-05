@@ -260,6 +260,9 @@ export const makeContainerRuntime = (
     const parentScope = yield* Scope.Scope;
     const runtimeScope = yield* Scope.fork(parentScope, "parallel");
     const registration = yield* Semaphore.make(1);
+    // Serialize setup through resource registration so concurrent workloads cannot both create
+    // the shared network. Readiness and long-lived followers run after this permit is released.
+    const setup = yield* Semaphore.make(1);
     const resources = new Map<string, ContainerRuntimeResource>();
     const startGuards = new Map<string, Ref.Ref<boolean>>();
     const startFibers = new Map<string, Fiber.Fiber<ObservedWorkload, RuntimeDriverError>>();
@@ -570,233 +573,244 @@ export const makeContainerRuntime = (
         const existing = resources.get(resourceKey(key));
         if (existing !== undefined && existing.state === "running")
           return { ...key, state: "ready" } satisfies ObservedWorkload;
-        if (existing !== undefined && existing.state !== "running") {
-          existing.stopRequested = true;
-          yield* stopLogs(existing);
-          yield* stopExitWatcher(existing);
-          if (existing.state === "failed")
-            yield* withEngine(key, options.engine.stopContainer(existing.container));
-          resources.delete(resourceKey(key));
-        }
-        const initialResolution = yield* resolved;
-        yield* guard;
-        const initialPublications = initialResolution.publications ?? [];
-        if (initialPublications.some((publication) => !isValidPublication(publication)))
-          return yield* toDriverError(
-            key,
-            new Error("Container publications must use valid loopback host ports"),
-          );
-        const initialVolumeRequest = initialResolution.volume;
-        if (initialVolumeRequest !== undefined && initialVolumeRequest.target.length === 0)
-          return yield* toDriverError(key, new Error("Container volume mapping is invalid"));
-        yield* withEngine(key, options.engine.preflight);
-        const entries = yield* withEngine(key, options.engine.listResources(key.stackId));
-        const existingExact = entries.find(
-          (entry) => entry.kind === "workload" && sameWorkloadIdentity(entry.labels, labels),
-        );
-        const namedCollision = entries.find(
-          (entry) => entry.kind === "workload" && entry.name === nameFor(key, "workload"),
-        );
-        const collision =
-          namedCollision !== undefined && isWorkloadResource(namedCollision)
-            ? namedCollision
-            : undefined;
-        if (
-          existingExact === undefined &&
-          namedCollision !== undefined &&
-          (collision === undefined ||
-            collision.labels.stackId !== key.stackId ||
-            collision.labels.workloadId !== key.workloadId ||
-            collision.labels.role !== "workload")
-        )
-          return yield* toDriverError(
-            key,
-            new Error("Container name is owned by another workload"),
-          );
-
-        const exactNetwork = entries
-          .filter(isNetworkResource)
-          .find((entry) => sameNetworkIdentity(entry.labels, networkLabels));
-        const namedNetworkCollision = entries.find(
-          (entry) => entry.kind === "network" && entry.name === networkName,
-        );
-        const networkCollision =
-          namedNetworkCollision !== undefined && isNetworkResource(namedNetworkCollision)
-            ? namedNetworkCollision
-            : undefined;
-        if (
-          exactNetwork === undefined &&
-          namedNetworkCollision !== undefined &&
-          (networkCollision === undefined || networkCollision.labels.stackId !== key.stackId)
-        )
-          return yield* toDriverError(
-            key,
-            new Error("Container network name is owned by another stack"),
-          );
-
-        // A new owner never adopts a durable container. Remove any exact identity first;
-        // lifecycle ownership has already fenced the stack before this activation.
-        if (existingExact !== undefined) {
-          if (existingExact.state === "running")
-            yield* withEngine(key, options.engine.stopContainer(existingExact.id));
-          yield* withEngine(key, options.engine.removeContainer(existingExact.id));
-        }
-        yield* withEngine(key, options.engine.inspectImage(artifact.image)).pipe(
-          Effect.flatMap((inspected) =>
-            inspected.present
-              ? Effect.void
-              : withEngine(key, options.engine.pullImage(artifact.image)),
-          ),
-        );
-        yield* guard;
-
-        if (exactNetwork === undefined && networkCollision !== undefined)
-          yield* withEngine(key, options.engine.removeNetwork(networkCollision.id));
-        const networkResource =
-          exactNetwork ??
-          (yield* withEngine(
-            key,
-            options.engine.createNetwork({ name: networkName, labels: networkLabels }),
-          ));
-
-        const routeChanged =
-          options.onNetworkReady === undefined
-            ? false
-            : yield* options.onNetworkReady(networkResource);
-        const resolution = routeChanged
-          ? yield* options.resolveWorkload === undefined
-              ? Effect.succeed<ContainerWorkloadResolution>({})
-              : options.resolveWorkload(key, workload)
-          : initialResolution;
-        yield* guard;
-        const requestedPublications = resolution.publications ?? [];
-        if (requestedPublications.some((publication) => !isValidPublication(publication)))
-          return yield* toDriverError(
-            key,
-            new Error("Container publications must use valid loopback host ports"),
-          );
-        const publications = requestedPublications.filter(isValidPublication);
-        const volumeRequest = resolution.volume;
-        if (volumeRequest !== undefined && volumeRequest.target.length === 0)
-          return yield* toDriverError(key, new Error("Container volume mapping is invalid"));
-        const volumeSpec =
-          volumeRequest === undefined ? undefined : volumeSpecFor(key, volumeRequest);
-        const exactVolume =
-          volumeSpec === undefined
-            ? undefined
-            : entries.find(
-                (entry) =>
-                  entry.kind === "volume" &&
-                  entry.name === volumeSpec.name &&
-                  sameLabels(entry.labels, volumeSpec.labels),
-              );
-        if (volumeSpec !== undefined) {
-          const volume = volumeSpec;
-          if (exactVolume === undefined) {
-            const sameLabel = entries.find(
-              (entry) => entry.kind === "volume" && sameLabels(entry.labels, volume.labels),
-            );
-            const sameName = entries.find(
-              (entry) => entry.kind === "volume" && entry.name === volume.name,
-            );
-            if (sameLabel !== undefined || sameName !== undefined)
-              return yield* toDriverError(key, new Error("Container volume identity collision"));
-          }
-        }
-
-        if (volumeSpec !== undefined) {
-          const volume = volumeSpec;
-          if (exactVolume === undefined)
-            yield* withEngine(key, options.engine.createVolume(volume));
-        }
-
-        if (collision !== undefined && collision.id !== existingExact?.id) {
-          if (collision.state === "running")
-            yield* withEngine(key, options.engine.stopContainer(collision.id));
-          yield* withEngine(key, options.engine.removeContainer(collision.id));
-        }
-
-        for (const startup of resolution.startup ?? [])
-          yield* runStartupProcess(key, workload, startup, {
-            artifact,
-            network: networkResource,
-            resolution,
-            ...(volumeRequest === undefined ? {} : { volumeRequest }),
-          });
-        yield* guard;
-
-        const container = yield* withEngine(
-          key,
-          options.engine.createContainer({
-            name: nameFor(key, "workload"),
-            image: artifact.image,
-            labels,
-            network: networkResource.id,
-            mounts: resolution.mounts ?? [],
-            publications,
-            volumeMounts: volumeRequest === undefined ? [] : [volumeMountFor(key, volumeRequest)],
-            role: "workload",
-            ...(resolution.envFile === undefined ? {} : { envFile: resolution.envFile }),
-            ...(resolution.networkAliases === undefined
-              ? {}
-              : { networkAliases: resolution.networkAliases }),
-            ...(resolution.entrypoint === undefined ? {} : { entrypoint: resolution.entrypoint }),
-            ...(resolution.command === undefined ? {} : { command: resolution.command }),
-          } satisfies ContainerContainerSpec),
-        );
-        if (resolution.bootstrap !== undefined) {
-          const copied = yield* Effect.exit(
-            withEngine(
-              key,
-              options.engine.copyToContainer(
-                container.id,
-                resolution.bootstrap.source,
-                resolution.bootstrap.destination,
-              ),
-            ),
-          );
-          if (Exit.isFailure(copied)) {
-            const removed = yield* Effect.exit(
-              withEngine(key, options.engine.removeContainer(container.id)),
-            );
-            const cleanupCause = Exit.isFailure(removed) ? removed.cause : Cause.empty;
-            return yield* Effect.failCause(
-              cleanupCause.reasons.length === 0
-                ? copied.cause
-                : Cause.combine(copied.cause, cleanupCause),
-            );
-          }
-        }
-        yield* guard;
-        yield* withEngine(key, options.engine.startContainer(container.id));
-        const registered = yield* Effect.uninterruptibleMask((restore) =>
-          restore(
-            Effect.gen(function* () {
-              yield* guard;
-              const failure = yield* Deferred.make<never, RuntimeDriverError>();
-              yield* guard;
-              const createdResource: ContainerRuntimeResource = {
+        const setupResult = yield* setup.withPermit(
+          Effect.gen(function* () {
+            if (existing !== undefined && existing.state !== "running") {
+              existing.stopRequested = true;
+              yield* stopLogs(existing);
+              yield* stopExitWatcher(existing);
+              if (existing.state === "failed")
+                yield* withEngine(key, options.engine.stopContainer(existing.container));
+              resources.delete(resourceKey(key));
+            }
+            const initialResolution = yield* resolved;
+            yield* guard;
+            const initialPublications = initialResolution.publications ?? [];
+            if (initialPublications.some((publication) => !isValidPublication(publication)))
+              return yield* toDriverError(
                 key,
-                workload,
-                container: container.id,
-                state: "starting",
-                failure,
-                stopRequested: false,
-              };
-              resources.set(resourceKey(key), createdResource);
-              return createdResource;
-            }),
-          ).pipe(Effect.exit),
+                new Error("Container publications must use valid loopback host ports"),
+              );
+            const initialVolumeRequest = initialResolution.volume;
+            if (initialVolumeRequest !== undefined && initialVolumeRequest.target.length === 0)
+              return yield* toDriverError(key, new Error("Container volume mapping is invalid"));
+            yield* withEngine(key, options.engine.preflight);
+            const entries = yield* withEngine(key, options.engine.listResources(key.stackId));
+            const existingExact = entries.find(
+              (entry) => entry.kind === "workload" && sameWorkloadIdentity(entry.labels, labels),
+            );
+            const namedCollision = entries.find(
+              (entry) => entry.kind === "workload" && entry.name === nameFor(key, "workload"),
+            );
+            const collision =
+              namedCollision !== undefined && isWorkloadResource(namedCollision)
+                ? namedCollision
+                : undefined;
+            if (
+              existingExact === undefined &&
+              namedCollision !== undefined &&
+              (collision === undefined ||
+                collision.labels.stackId !== key.stackId ||
+                collision.labels.workloadId !== key.workloadId ||
+                collision.labels.role !== "workload")
+            )
+              return yield* toDriverError(
+                key,
+                new Error("Container name is owned by another workload"),
+              );
+
+            const exactNetwork = entries
+              .filter(isNetworkResource)
+              .find((entry) => sameNetworkIdentity(entry.labels, networkLabels));
+            const namedNetworkCollision = entries.find(
+              (entry) => entry.kind === "network" && entry.name === networkName,
+            );
+            const networkCollision =
+              namedNetworkCollision !== undefined && isNetworkResource(namedNetworkCollision)
+                ? namedNetworkCollision
+                : undefined;
+            if (
+              exactNetwork === undefined &&
+              namedNetworkCollision !== undefined &&
+              (networkCollision === undefined || networkCollision.labels.stackId !== key.stackId)
+            )
+              return yield* toDriverError(
+                key,
+                new Error("Container network name is owned by another stack"),
+              );
+
+            // A new owner never adopts a durable container. Remove any exact identity first;
+            // lifecycle ownership has already fenced the stack before this activation.
+            if (existingExact !== undefined) {
+              if (existingExact.state === "running")
+                yield* withEngine(key, options.engine.stopContainer(existingExact.id));
+              yield* withEngine(key, options.engine.removeContainer(existingExact.id));
+            }
+            yield* withEngine(key, options.engine.inspectImage(artifact.image)).pipe(
+              Effect.flatMap((inspected) =>
+                inspected.present
+                  ? Effect.void
+                  : withEngine(key, options.engine.pullImage(artifact.image)),
+              ),
+            );
+            yield* guard;
+
+            if (exactNetwork === undefined && networkCollision !== undefined)
+              yield* withEngine(key, options.engine.removeNetwork(networkCollision.id));
+            const networkResource =
+              exactNetwork ??
+              (yield* withEngine(
+                key,
+                options.engine.createNetwork({ name: networkName, labels: networkLabels }),
+              ));
+
+            const routeChanged =
+              options.onNetworkReady === undefined
+                ? false
+                : yield* options.onNetworkReady(networkResource);
+            const resolution = routeChanged
+              ? yield* options.resolveWorkload === undefined
+                  ? Effect.succeed<ContainerWorkloadResolution>({})
+                  : options.resolveWorkload(key, workload)
+              : initialResolution;
+            yield* guard;
+            const requestedPublications = resolution.publications ?? [];
+            if (requestedPublications.some((publication) => !isValidPublication(publication)))
+              return yield* toDriverError(
+                key,
+                new Error("Container publications must use valid loopback host ports"),
+              );
+            const publications = requestedPublications.filter(isValidPublication);
+            const volumeRequest = resolution.volume;
+            if (volumeRequest !== undefined && volumeRequest.target.length === 0)
+              return yield* toDriverError(key, new Error("Container volume mapping is invalid"));
+            const volumeSpec =
+              volumeRequest === undefined ? undefined : volumeSpecFor(key, volumeRequest);
+            const exactVolume =
+              volumeSpec === undefined
+                ? undefined
+                : entries.find(
+                    (entry) =>
+                      entry.kind === "volume" &&
+                      entry.name === volumeSpec.name &&
+                      sameLabels(entry.labels, volumeSpec.labels),
+                  );
+            if (volumeSpec !== undefined) {
+              const volume = volumeSpec;
+              if (exactVolume === undefined) {
+                const sameLabel = entries.find(
+                  (entry) => entry.kind === "volume" && sameLabels(entry.labels, volume.labels),
+                );
+                const sameName = entries.find(
+                  (entry) => entry.kind === "volume" && entry.name === volume.name,
+                );
+                if (sameLabel !== undefined || sameName !== undefined)
+                  return yield* toDriverError(
+                    key,
+                    new Error("Container volume identity collision"),
+                  );
+              }
+            }
+
+            if (volumeSpec !== undefined) {
+              const volume = volumeSpec;
+              if (exactVolume === undefined)
+                yield* withEngine(key, options.engine.createVolume(volume));
+            }
+
+            if (collision !== undefined && collision.id !== existingExact?.id) {
+              if (collision.state === "running")
+                yield* withEngine(key, options.engine.stopContainer(collision.id));
+              yield* withEngine(key, options.engine.removeContainer(collision.id));
+            }
+
+            for (const startup of resolution.startup ?? [])
+              yield* runStartupProcess(key, workload, startup, {
+                artifact,
+                network: networkResource,
+                resolution,
+                ...(volumeRequest === undefined ? {} : { volumeRequest }),
+              });
+            yield* guard;
+
+            const container = yield* withEngine(
+              key,
+              options.engine.createContainer({
+                name: nameFor(key, "workload"),
+                image: artifact.image,
+                labels,
+                network: networkResource.id,
+                mounts: resolution.mounts ?? [],
+                publications,
+                volumeMounts:
+                  volumeRequest === undefined ? [] : [volumeMountFor(key, volumeRequest)],
+                role: "workload",
+                ...(resolution.envFile === undefined ? {} : { envFile: resolution.envFile }),
+                ...(resolution.networkAliases === undefined
+                  ? {}
+                  : { networkAliases: resolution.networkAliases }),
+                ...(resolution.entrypoint === undefined
+                  ? {}
+                  : { entrypoint: resolution.entrypoint }),
+                ...(resolution.command === undefined ? {} : { command: resolution.command }),
+              } satisfies ContainerContainerSpec),
+            );
+            if (resolution.bootstrap !== undefined) {
+              const copied = yield* Effect.exit(
+                withEngine(
+                  key,
+                  options.engine.copyToContainer(
+                    container.id,
+                    resolution.bootstrap.source,
+                    resolution.bootstrap.destination,
+                  ),
+                ),
+              );
+              if (Exit.isFailure(copied)) {
+                const removed = yield* Effect.exit(
+                  withEngine(key, options.engine.removeContainer(container.id)),
+                );
+                const cleanupCause = Exit.isFailure(removed) ? removed.cause : Cause.empty;
+                return yield* Effect.failCause(
+                  cleanupCause.reasons.length === 0
+                    ? copied.cause
+                    : Cause.combine(copied.cause, cleanupCause),
+                );
+              }
+            }
+            yield* guard;
+            yield* withEngine(key, options.engine.startContainer(container.id));
+            const registered = yield* Effect.uninterruptibleMask((restore) =>
+              restore(
+                Effect.gen(function* () {
+                  yield* guard;
+                  const failure = yield* Deferred.make<never, RuntimeDriverError>();
+                  yield* guard;
+                  const createdResource: ContainerRuntimeResource = {
+                    key,
+                    workload,
+                    container: container.id,
+                    state: "starting",
+                    failure,
+                    stopRequested: false,
+                  };
+                  resources.set(resourceKey(key), createdResource);
+                  return createdResource;
+                }),
+              ).pipe(Effect.exit),
+            );
+            if (Exit.isFailure(registered)) {
+              const cleanup = yield* cleanupStartedContainer(key, container.id).pipe(Effect.exit);
+              return yield* Effect.failCause(
+                Exit.isFailure(cleanup)
+                  ? Cause.combine(registered.cause, cleanup.cause)
+                  : registered.cause,
+              );
+            }
+            return { resource: registered.value, resolution, container };
+          }),
         );
-        if (Exit.isFailure(registered)) {
-          const cleanup = yield* cleanupStartedContainer(key, container.id).pipe(Effect.exit);
-          return yield* Effect.failCause(
-            Exit.isFailure(cleanup)
-              ? Cause.combine(registered.cause, cleanup.cause)
-              : registered.cause,
-          );
-        }
-        const resource = registered.value;
+        const { resource, resolution, container } = setupResult;
         const postRegistration = Effect.gen(function* () {
           yield* attachLogs(resource, "all");
           yield* attachExitWatcher(resource);

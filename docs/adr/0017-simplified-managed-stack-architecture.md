@@ -101,23 +101,33 @@ starts when traffic first reaches its stable gateway route. Explicit
 `stack.prepare(...)` remains available for callers that intentionally want to
 warm selected artifacts, but it is not part of ordinary CLI start. Preparation
 is caller-owned: cancellation stops that caller's unfinished transfers while
-completed cache entries remain. It never acquires control or ownership and does
-not create runtime resources.
+completed cache entries remain. Preparation never acquires control or ownership
+and does not create runtime resources.
 
-Runtime input materialization belongs to the workload startup operation. The Supervisor serializes
-workload startup with runtime cleanup, so the input owner caches only completed values and leaves an
-in-progress resolution in the startup operation's scope. Interrupting native startup therefore interrupts
-OIDC fetches and file materialization; successful Pooler and Vector files remain owned until the
-runtime cleanup boundary removes them.
+Within a lifecycle operation, dependency-ready workloads start concurrently,
+with at most four starts in flight; each wave completes before its dependants
+start. Container setup is serialized through resource registration; readiness
+checks and long-lived followers run outside that setup boundary.
+
+Runtime input materialization belongs to the workload startup operation. The
+Supervisor serializes lifecycle operations with cleanup, so the input owner
+caches only completed values and leaves unfinished resolution in the startup
+operation's scope. One shared-input gate serializes materialization among
+concurrent workload starts. Interrupting native startup therefore interrupts
+OIDC fetches and file materialization; successful Pooler and Vector files remain
+owned until the runtime cleanup boundary removes them.
 
 Artifact cache trust begins only after a candidate has passed checksum and
 runtime-path validation, had its metadata written, and been atomically
-published. A cache hit revalidates the metadata, required path kinds and
-containment, and executable shape, but does not cryptographically revalidate
-published contents. The cache is user-owned and immutable by contract; manual
-post-publication changes may execute successfully or fail later at workload
-start. A partially published or malformed entry is never trusted merely
-because its directory exists.
+published. Exact-version artifact metadata is authoritative on a cache hit: the
+store revalidates its format, key, SHA-256 shape, ordered required paths and
+kinds, containment, and executable shape without fetching an upstream digest.
+On a cache miss, the source resolves the trusted digest once; downloaded bytes
+are verified before decoding or extraction, then structurally validated and
+atomically published. The cache is user-owned and immutable by contract;
+manual post-publication changes may execute successfully or fail later at
+workload start. A partially published or malformed entry is never trusted
+merely because its directory exists.
 
 Effect failures remain operation-specific tagged errors (for example,
 configuration, preparation, gateway, port, and lifecycle failures), preserving

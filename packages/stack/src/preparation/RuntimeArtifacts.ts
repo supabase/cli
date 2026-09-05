@@ -17,7 +17,7 @@ import {
   type ArtifactStoreError,
   type PreparedArtifact,
 } from "./ArtifactStore.ts";
-import { makeSlimServicesSource, slimServicesChecksum } from "./SlimServicesSource.ts";
+import { makeSlimServicesSource } from "./SlimServicesSource.ts";
 import type { ContainerEngine } from "../runtime/ContainerEngine.ts";
 import {
   resolveContainerEngine,
@@ -52,10 +52,8 @@ export type RuntimeArtifactPreparationError =
 export interface RuntimeArtifactPreparerOptions {
   readonly native?: {
     readonly store: ArtifactStore;
-    /** Injected in tests; production defaults to the published SHA256SUMS boundary. */
-    readonly checksum?: (
-      artifact: NativeWorkloadArtifact,
-    ) => Effect.Effect<string, StackPreparationError>;
+    /** Registers catalog metadata for the source that resolves a cache-miss request. */
+    readonly onArtifactResolved?: (artifact: NativeWorkloadArtifact) => void;
     readonly platform?: { readonly os: string; readonly arch: string };
   };
   readonly containerEngine?: ContainerEngine;
@@ -94,12 +92,9 @@ export const makeRuntimeArtifactPreparer = (
         );
       return Effect.gen(function* () {
         const artifact = yield* resolveNativeArtifactForWorkload(workload, native.platform);
-        const checksum = yield* native.checksum === undefined
-          ? slimServicesChecksum(artifact)
-          : native.checksum(artifact);
+        native.onArtifactResolved?.(artifact);
         const request = {
           key: artifactKey(artifact),
-          sha256: checksum,
           requiredRuntimePaths: artifact.requiredRuntimePaths,
           executablePath: artifact.executablePath,
         };
@@ -226,9 +221,8 @@ export const makeProductionRuntimeArtifactPreparer = (options: {
             cacheRoot,
             source: makeSlimServicesSource((request) => artifacts.get(request.key)),
           });
-    const checksum = (artifact: NativeWorkloadArtifact) => {
+    const registerArtifact = (artifact: NativeWorkloadArtifact) => {
       artifacts.set(artifactKey(artifact), artifact);
-      return slimServicesChecksum(artifact);
     };
     const selectedEngine =
       options.runtime?.kind === "container" ? options.runtime.engine : undefined;
@@ -247,7 +241,7 @@ export const makeProductionRuntimeArtifactPreparer = (options: {
             ),
           ));
     const preparer = makeRuntimeArtifactPreparer({
-      ...(store === undefined ? {} : { native: { store, checksum } }),
+      ...(store === undefined ? {} : { native: { store, onArtifactResolved: registerArtifact } }),
       ...(containerEngine === undefined ? {} : { containerEngine }),
     });
     return preparer;
