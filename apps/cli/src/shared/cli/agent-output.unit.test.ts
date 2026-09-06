@@ -116,6 +116,23 @@ describe("resolveAgentOutputFormat", () => {
         Option.some("codex"),
       ),
     ).toBe("text");
+    expect(
+      resolveAgentOutputFormatFromArgs(["--log-level", "error", "--version"], Option.some("codex")),
+    ).toBe("text");
+    expect(
+      resolveAgentOutputFormatFromArgs(["--log-level=error", "--version"], Option.some("codex")),
+    ).toBe("text");
+    // Version wins over Completions/Wizard (built-in action precedence), so
+    // these argv render the version line and must resolve to text.
+    expect(
+      resolveAgentOutputFormatFromArgs(
+        ["--completions", "bash", "--version"],
+        Option.some("codex"),
+      ),
+    ).toBe("text");
+    expect(resolveAgentOutputFormatFromArgs(["--wizard", "--version"], Option.some("codex"))).toBe(
+      "text",
+    );
     expect(resolveAgentOutputFormatFromArgs(["--help"], Option.some("codex"))).toBe("text");
     expect(
       resolveAgentOutputFormatFromArgs(["db", "reset", "--version", "1"], Option.some("codex")),

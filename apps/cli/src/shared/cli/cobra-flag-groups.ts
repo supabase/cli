@@ -103,12 +103,19 @@ export function lastExplicitLongFlagValue(
  * Value-taking long flags registered persistently on the Go root command
  * (`apps/cli-go/cmd/root.go:324-333`: `--workdir`, `--network-id`,
  * `--profile`, `--output`, `--dns-resolver`, `--agent`), plus the TS-only
- * `--output-format` global (`shared/cli/global-flags.ts`) which the TS
- * parser accepts on any subcommand. pflag lets any of these consume the
- * following argv token, so a pflag-faithful scan must know them or it will
- * miscount positionals on perfectly normal invocations like
- * `sso update --workdir . <id>`. Keep in sync with `globalFlagsWithValues`
- * in `shared/cli/run.ts`.
+ * globals the TS parser accepts on any subcommand: `--output-format`
+ * (`shared/cli/global-flags.ts`) and the CLI library's built-in
+ * `--log-level`. pflag lets any of these consume the following argv token,
+ * so a pflag-faithful scan must know them or it will miscount positionals
+ * on perfectly normal invocations like `sso update --workdir . <id>` — or
+ * `sso update --log-level error <id>`, which mis-reported
+ * `accepts 1 arg(s), received 2` before `log-level` was listed here
+ * (issue #6482). `--completions`, the other value-taking built-in, is
+ * deliberately absent: every consumer of this set runs inside a command
+ * handler, which a parsed `--completions` never reaches (its print-and-exit
+ * action runs first); only the pre-parse predicates in
+ * `shared/cli/agent-output.ts` need it. Keep in sync with
+ * `globalFlagsWithValues` in `shared/cli/run.ts`.
  */
 export const PERSISTENT_VALUE_FLAG_NAMES: ReadonlySet<string> = new Set([
   "workdir",
@@ -118,6 +125,7 @@ export const PERSISTENT_VALUE_FLAG_NAMES: ReadonlySet<string> = new Set([
   "dns-resolver",
   "agent",
   "output-format",
+  "log-level",
 ]);
 
 /**

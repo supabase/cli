@@ -39,6 +39,13 @@ describe("extractCommandPath", () => {
     ).toEqual(["functions", "serve"]);
   });
 
+  it("skips the built-in --log-level flag and its value", () => {
+    expect(extractCommandPath(["--log-level", "error", "functions", "serve"])).toEqual([
+      "functions",
+      "serve",
+    ]);
+  });
+
   it("treats --flag=value as a single token", () => {
     expect(extractCommandPath(["--output-format=json", "functions", "serve"])).toEqual([
       "functions",

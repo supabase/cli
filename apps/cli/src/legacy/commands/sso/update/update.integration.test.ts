@@ -671,11 +671,15 @@ describe("legacy sso update integration", () => {
       // Regression guards for the re-count: pflag consumes these globals'
       // values (`--workdir .`, `--output-format json`, `-o json`), so none
       // of them may register as a second positional — each invocation must
-      // sail through to the PUT exactly as before.
+      // sail through to the PUT exactly as before. The two `--log-level`
+      // variants pin issue #6482: the built-in global's value mis-counted as
+      // a positional (post-path), and the pre-path spelling's anchoring.
       const argvVariants: ReadonlyArray<ReadonlyArray<string>> = [
         ["sso", "update", "--workdir", ".", VALID_PROVIDER_ID],
         ["sso", "update", "--output-format", "json", VALID_PROVIDER_ID],
         ["sso", "update", "-o", "json", VALID_PROVIDER_ID],
+        ["sso", "update", "--log-level", "error", VALID_PROVIDER_ID],
+        ["--log-level", "error", "sso", "update", VALID_PROVIDER_ID],
       ];
       return Effect.gen(function* () {
         for (const cliArgs of argvVariants) {

@@ -382,6 +382,32 @@ describe("pflagArgvScan", () => {
       expect(scan.positionals).toEqual(["id"]);
     });
 
+    test("the built-in --log-level global consumes its value token", () => {
+      // The real parser consumes `error`, so the scan must too or
+      // `sso update --log-level error <id>` mis-reports
+      // `accepts 1 arg(s), received 2` (issue #6482).
+      const scan = pflagArgvScan(
+        ["sso", "update", "--log-level", "error", "id"],
+        SSO_UPDATE_PATH,
+        SPEC,
+      );
+      expect(scan.occurrences.get("log-level")).toEqual(["error"]);
+      expect(scan.positionals).toEqual(["id"]);
+    });
+
+    test("a pre-path --log-level keeps the scan anchored instead of falling back unscoped", () => {
+      // Unregistered, the anchor walk hit `error` as a stray operand and
+      // fell back to the unanchored scan, skipping the arity re-count.
+      const scan = pflagArgvScan(
+        ["--log-level", "error", "sso", "update", "id"],
+        SSO_UPDATE_PATH,
+        SPEC,
+      );
+      expect(scan.anchored).toBe(true);
+      expect(scan.prePathOccurrences.get("log-level")).toEqual(["error"]);
+      expect(scan.positionals).toEqual(["id"]);
+    });
+
     test("a bare slice flag consumes a global flag token, orphaning its value", () => {
       // Binary-verified Go behaviour: `--domains --profile staging <id>`
       // arity-errors because `staging` becomes positional.

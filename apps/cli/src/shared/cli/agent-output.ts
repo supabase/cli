@@ -90,6 +90,11 @@ function agentOverrideFromArg(value: string | undefined): AgentOverride {
   }
 }
 
+// These predicates run pre-parse to pick the formatter a built-in ACTION
+// renders through, so they must also know the CLI library's built-in flags
+// (`GlobalFlag.BuiltIns`): `--completions bash --version` serves the Version
+// action (Version precedes Completions), and missing entries here rendered
+// it as JSON under agent detection instead of the plain version line.
 function isRootValueFlag(arg: string): boolean {
   return (
     arg === "--output-format" ||
@@ -99,7 +104,9 @@ function isRootValueFlag(arg: string): boolean {
     arg === "--workdir" ||
     arg === "--network-id" ||
     arg === "--dns-resolver" ||
-    arg === "--agent"
+    arg === "--agent" ||
+    arg === "--log-level" ||
+    arg === "--completions"
   );
 }
 
@@ -113,13 +120,19 @@ function isRootValueFlagWithInlineValue(arg: string): boolean {
     arg.startsWith("--workdir=") ||
     arg.startsWith("--network-id=") ||
     arg.startsWith("--dns-resolver=") ||
-    arg.startsWith("--agent=")
+    arg.startsWith("--agent=") ||
+    arg.startsWith("--log-level=") ||
+    arg.startsWith("--completions=")
   );
 }
 
 function isRootBooleanFlag(arg: string): boolean {
   return (
-    arg === "--debug" || arg === "--experimental" || arg === "--yes" || arg === "--create-ticket"
+    arg === "--debug" ||
+    arg === "--experimental" ||
+    arg === "--yes" ||
+    arg === "--create-ticket" ||
+    arg === "--wizard"
   );
 }
 

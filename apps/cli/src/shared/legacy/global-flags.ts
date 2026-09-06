@@ -119,7 +119,10 @@ export const LegacyAgentFlag = GlobalFlag.setting("agent")({
  *
  * Adding a VALUE-taking flag here also means registering its token in
  * `globalFlagsWithValues` (`shared/cli/run.ts`) and its name in
- * `PERSISTENT_VALUE_FLAG_NAMES` (`shared/cli/cobra-flag-groups.ts`). Those two
+ * `PERSISTENT_VALUE_FLAG_NAMES` (`shared/cli/cobra-flag-groups.ts`). The same
+ * obligation covers the CLI library's own value-taking built-ins
+ * (`--log-level` — issue #6482; `--completions` is scoped per
+ * `PERSISTENT_VALUE_FLAG_NAMES`'s doc). Those two
  * registries feed raw-argv pflag scanners that must run for `--help`/`--version`
  * /bare-group invocations, which cobra serves before `PersistentPreRunE` and so
  * never expose parsed flag values to read instead. Neither registry is derived

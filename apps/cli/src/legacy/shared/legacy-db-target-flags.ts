@@ -97,6 +97,10 @@ export const VALUE_CONSUMING_LONG_FLAGS = new Set([
   "network-id",
   "dns-resolver",
   "agent",
+  // The CLI library's built-in `--log-level` is deliberately not listed: its
+  // value is parser-enforced to a closed enum and can never be flag-shaped,
+  // so no scanner here can mis-consume around it (issue #6482 registered it
+  // only where positional counting depends on it).
   // Every other value-consuming flag declared directly across legacy/commands/
   // (CLI-1896 review follow-up — see the doc comment above).
   "add-domains",
