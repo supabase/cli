@@ -1,0 +1,914 @@
+{
+  "schemaVersion": 1,
+  "measuredAt": "2026-09-05 to 2026-09-06",
+  "pullRequest": "https://github.com/supabase/cli/pull/6440",
+  "head": "1944456f2",
+  "legacyCli": {
+    "version": "2.116.0"
+  },
+  "workloadModel": {
+    "enabledBaseWorkloads": 11,
+    "defaultStart": "database ready; other ten artifacts prepare in background",
+    "eagerStart": "all enabled services ready",
+    "legacyStart": "published CLI executable spawn through CLI readiness exit",
+    "legacyWorkloads": 12
+  },
+  "hosts": {
+    "linux": {
+      "os": "Ubuntu 22.04.5 LTS",
+      "arch": "arm64",
+      "glibc": "2.35",
+      "resources": {
+        "cpu": 3,
+        "memoryGiB": 8,
+        "environment": "VM on Apple M3 host; benchmark cgroup"
+      },
+      "docker": {
+        "version": "29.1.3",
+        "cpu": 3,
+        "advertisedMemoryGiB": 11.74,
+        "effectiveCgroupMemoryGiB": 8
+      }
+    },
+    "macos": {
+      "os": "macOS 26.6.2",
+      "arch": "arm64",
+      "cpu": "Apple M3, 8 cores",
+      "memoryGiB": 24,
+      "docker": {
+        "version": "29.4.0 via OrbStack",
+        "cpu": 3,
+        "memoryGiB": 11.74
+      }
+    }
+  },
+  "measurementDefinitions": {
+    "newStackStart": "PromiseStack.start() wall clock; excludes construction, explicit prepare, and post-start checks",
+    "artifactReady": "all eleven enabled base artifact statuses ready",
+    "hot": "cached artifacts/images with fresh project data",
+    "restart": "retained-data stop/start",
+    "memory": "New stack snapshot after readiness/artifact barrier; legacy after CLI readiness. Native Supervisor plus descendants RSS; Docker container working set excludes host Supervisor."
+  },
+  "samples": {
+    "hot": "n=3 per current new-stack mode and platform; n=3 legacy Linux and macOS hot",
+    "cold": "n=1 for most rows; macOS native eager n=2 successful; Linux native eager n=1 pass plus n=1 failure",
+    "coldCache": "native empty artifact cache; Linux Docker empty daemon; macOS Docker historical partial image eviction",
+    "limitations": "OS/security/CDN caches were not reset; no host reboot; normal desktop activity. Historical Mac cold native default/Docker use27355b4ca; fixed native eager cold production changes match1944456f2. Current new hot runs1944456f2; macOS legacy baseline measured September5."
+  },
+  "fullStackSeconds": {
+    "linux": {
+      "nativeDefault": {
+        "cold": {
+          "samples": [23.581229999999998],
+          "median": 23.581229999999998,
+          "range": [23.581229999999998, 23.581229999999998],
+          "n": 1
+        },
+        "hot": {
+          "samples": [3.22272, 3.89929, 5.54555],
+          "median": 3.89929,
+          "range": [3.22272, 5.54555],
+          "n": 3
+        },
+        "restart": {
+          "cold": 0.7341799999999999,
+          "hot": 0.418
+        },
+        "artifactReady": {
+          "cold": 71.03417999999999,
+          "hot": 4.19775
+        },
+        "memoryGiB": {
+          "cold": 0.8627853393554688,
+          "hot": 0.2766685485839844
+        }
+      },
+      "nativeEager": {
+        "cold": {
+          "samples": [70.46216],
+          "median": 70.46216,
+          "range": [70.46216, 70.46216],
+          "n": 1
+        },
+        "hot": {
+          "samples": [16.26625, 22.25705, 38.1103],
+          "median": 22.25705,
+          "range": [16.26625, 38.1103],
+          "n": 3
+        },
+        "restart": {
+          "cold": 6.49056,
+          "hot": 8.24155
+        },
+        "artifactReady": {
+          "cold": 70.76896,
+          "hot": 22.4351
+        },
+        "memoryGiB": {
+          "cold": 3.7538108825683594,
+          "hot": 3.749065399169922
+        },
+        "coldStatus": "1 pass, 1 public RPC liveness timeout excluded from timing"
+      },
+      "dockerDefault": {
+        "cold": {
+          "samples": [16.81423],
+          "median": 16.81423,
+          "range": [16.81423, 16.81423],
+          "n": 1
+        },
+        "hot": {
+          "samples": [10.25078, 8.86642, 7.2933699999999995],
+          "median": 8.86642,
+          "range": [7.2933699999999995, 10.25078],
+          "n": 3
+        },
+        "restart": {
+          "cold": 2.61567,
+          "hot": 2.6833
+        },
+        "artifactReady": {
+          "cold": 63.51171,
+          "hot": 11.21973
+        },
+        "memoryGiB": {
+          "cold": 0.059150390326976776,
+          "hot": 0.058837890625
+        }
+      },
+      "dockerEager": {
+        "cold": {
+          "samples": [61.7121],
+          "median": 61.7121,
+          "range": [61.7121, 61.7121],
+          "n": 1
+        },
+        "hot": {
+          "samples": [23.25108, 20.50249, 21.919919999999998],
+          "median": 21.919919999999998,
+          "range": [20.50249, 23.25108],
+          "n": 3
+        },
+        "restart": {
+          "cold": 20.99673,
+          "hot": 16.247690000000002
+        },
+        "artifactReady": {
+          "cold": 61.98146,
+          "hot": 22.09237
+        },
+        "memoryGiB": {
+          "cold": 1.7465898441150784,
+          "hot": 1.6390419909730554
+        }
+      },
+      "legacyDocker": {
+        "cold": {
+          "samples": [112.24467],
+          "median": 112.24467,
+          "range": [112.24467, 112.24467],
+          "n": 1
+        },
+        "hot": {
+          "samples": [30.57069, 30.26525, 30.00284],
+          "median": 30.26525,
+          "range": [30.00284, 30.57069],
+          "n": 3
+        },
+        "restart": {
+          "cold": 25.585009999999997
+        },
+        "memoryGiB": {
+          "cold": 1.5644921865314245,
+          "hot": 1.5683847647160292
+        },
+        "coldStatus": "clean retry; first attempt excluded for ENOSPC"
+      }
+    },
+    "macos": {
+      "nativeDefault": {
+        "cold": {
+          "samples": [33.7293],
+          "median": 33.7293,
+          "range": [33.7293, 33.7293],
+          "n": 1
+        },
+        "hot": {
+          "samples": [7.66149, 7.78421, 7.61091],
+          "median": 7.66149,
+          "range": [7.61091, 7.78421],
+          "n": 3
+        },
+        "restart": {
+          "hot": 0.5795800000000001
+        },
+        "artifactReady": {
+          "cold": 62.73988,
+          "hot": 7.928850000000001
+        },
+        "memoryGiB": {
+          "cold": 0.5122833251953125,
+          "hot": 0.2424163818359375
+        },
+        "coldStatus": "historical revision 27355b4ca"
+      },
+      "nativeEager": {
+        "cold": {
+          "samples": [113.71075, 84.72988000000001],
+          "median": 99.220315,
+          "range": [84.72988000000001, 113.71075],
+          "n": 2
+        },
+        "hot": {
+          "samples": [19.498759999999997, 18.54362, 22.64472],
+          "median": 19.498759999999997,
+          "range": [18.54362, 22.64472],
+          "n": 3
+        },
+        "restart": {
+          "hot": 9.673549999999999
+        },
+        "artifactReady": {
+          "cold": 99.23661499999999,
+          "hot": 19.520049999999998
+        },
+        "memoryGiB": {
+          "coldRange": [2.5362091064453125, 2.6781158447265625],
+          "hot": 2.4385223388671875,
+          "cold": 2.6071624755859375
+        },
+        "coldStatus": "two successful historical eager runs using current production changes"
+      },
+      "dockerDefault": {
+        "cold": {
+          "samples": [13.5673],
+          "median": 13.5673,
+          "range": [13.5673, 13.5673],
+          "n": 1
+        },
+        "hot": {
+          "samples": [6.10345, 5.8922, 5.87354],
+          "median": 5.8922,
+          "range": [5.87354, 6.10345],
+          "n": 3
+        },
+        "restart": {
+          "hot": 1.97623
+        },
+        "artifactReady": {
+          "cold": 41.73691,
+          "hot": 7.545100000000001
+        },
+        "memoryGiB": {
+          "cold": 0.058818358927965164,
+          "hot": 0.05862304661422968
+        },
+        "coldStatus": "historical partial image eviction; not controlled cold"
+      },
+      "dockerEager": {
+        "cold": {
+          "samples": [39.05915],
+          "median": 39.05915,
+          "range": [39.05915, 39.05915],
+          "n": 1
+        },
+        "hot": {
+          "samples": [27.69241, 23.65298, 25.85325],
+          "median": 25.85325,
+          "range": [23.65298, 27.69241],
+          "n": 3
+        },
+        "restart": {
+          "hot": 16.92907
+        },
+        "artifactReady": {
+          "cold": 39.240480000000005,
+          "hot": 26.01127
+        },
+        "memoryGiB": {
+          "cold": 1.64755664113909,
+          "hot": 1.5815175771713257
+        },
+        "coldStatus": "historical partial image eviction; not controlled cold"
+      },
+      "legacyDocker": {
+        "cold": {
+          "samples": [89.33765],
+          "median": 89.33765,
+          "range": [89.33765, 89.33765],
+          "n": 1
+        },
+        "hot": {
+          "samples": [53.58894, 37.79976, 37.12481],
+          "median": 37.79976,
+          "range": [37.12481, 53.58894],
+          "n": 3
+        },
+        "restart": {
+          "cold": 25.727220000000003
+        },
+        "memoryGiB": {
+          "cold": 1.6552636725828052,
+          "hot": 1.6660976568236947
+        },
+        "coldStatus": "historical partial image eviction; not controlled cold"
+      }
+    }
+  },
+  "rawSamplesMs": {
+    "derivation": {
+      "median": "sort samples; use the middle value, or the mean of the two middle values",
+      "range": "minimum and maximum sample",
+      "ratio": "legacy median divided by new-stack median",
+      "reductionPercent": "100 * (1 - new-stack median / legacy median)"
+    },
+    "fullStack": {
+      "linux": {
+        "nativeDefault": {
+          "start": {
+            "cold": [23581.23],
+            "hot": [3222.72, 3899.29, 5545.55],
+            "hotMedian": 3899.29,
+            "hotRange": [3222.72, 5545.55]
+          },
+          "artifactReady": {
+            "cold": [71034.18],
+            "hot": [3521.85, 4197.75, 5556.38],
+            "hotMedian": 4197.75,
+            "hotRange": [3521.85, 5556.38]
+          },
+          "restart": {
+            "cold": [734.18],
+            "hot": [418]
+          },
+          "memory": {
+            "unit": "nativeSupervisorDescendantsRssKiB",
+            "cold": [904696],
+            "hot": [295632, 290108, 288316]
+          }
+        },
+        "nativeEager": {
+          "start": {
+            "cold": [70462.16],
+            "hot": [16266.25, 22257.05, 38110.3],
+            "hotMedian": 22257.05,
+            "hotRange": [16266.25, 38110.3]
+          },
+          "artifactReady": {
+            "cold": [70768.96],
+            "hot": [16294.72, 22435.1, 38245.34],
+            "hotMedian": 22435.1,
+            "hotRange": [16294.72, 38245.34]
+          },
+          "restart": {
+            "cold": [6490.56],
+            "hot": [8241.55]
+          },
+          "memory": {
+            "unit": "nativeSupervisorDescendantsRssKiB",
+            "cold": [3936156],
+            "hot": [3931180, 3939784, 3877608]
+          }
+        },
+        "dockerDefault": {
+          "start": {
+            "cold": [16814.23],
+            "hot": [10250.78, 8866.42, 7293.37],
+            "hotMedian": 8866.42,
+            "hotRange": [7293.37, 10250.78]
+          },
+          "artifactReady": {
+            "cold": [63511.71],
+            "hot": [12727.76, 11219.73, 9257.84],
+            "hotMedian": 11219.73,
+            "hotRange": [9257.84, 12727.76]
+          },
+          "restart": {
+            "cold": [2615.67],
+            "hot": [2683.3]
+          },
+          "memory": {
+            "unit": "dockerContainerWorkingSetBytes",
+            "cold": [63512248],
+            "hot": [101177098, 63176704, 63008932]
+          }
+        },
+        "dockerEager": {
+          "start": {
+            "cold": [61712.1],
+            "hot": [23251.08, 20502.49, 21919.92],
+            "hotMedian": 21919.92,
+            "hotRange": [20502.49, 23251.08]
+          },
+          "artifactReady": {
+            "cold": [61981.46],
+            "hot": [23413.24, 20621.76, 22092.37],
+            "hotMedian": 22092.37,
+            "hotRange": [20621.76, 23413.24]
+          },
+          "restart": {
+            "cold": [20996.73],
+            "hot": [16247.69]
+          },
+          "memory": {
+            "unit": "dockerContainerWorkingSetBytes",
+            "cold": [1875386565],
+            "hot": [1759907937, 1700056269, 1792700057]
+          }
+        },
+        "legacyDocker": {
+          "start": {
+            "cold": [112244.67],
+            "hot": [30570.69, 30265.25, 30002.84],
+            "hotMedian": 30265.25,
+            "hotRange": [30002.84, 30570.69]
+          },
+          "restart": {
+            "cold": [25585.01]
+          },
+          "memory": {
+            "unit": "dockerContainerWorkingSetBytes",
+            "cold": [1679860694],
+            "hot": [1619448037, 1684040318, 1747920619]
+          }
+        }
+      },
+      "macos": {
+        "nativeDefault": {
+          "start": {
+            "cold": [33729.3],
+            "hot": [7661.49, 7784.21, 7610.91],
+            "hotMedian": 7661.49,
+            "hotRange": [7610.91, 7784.21]
+          },
+          "artifactReady": {
+            "cold": [62739.88],
+            "hot": [7928.85, 8060.2, 7882.79],
+            "hotMedian": 7928.85,
+            "hotRange": [7882.79, 8060.2]
+          },
+          "restart": {
+            "hot": [579.58]
+          },
+          "memory": {
+            "unit": "nativeSupervisorDescendantsRssKiB",
+            "cold": [537168],
+            "hot": [254320, 253488, 254192]
+          }
+        },
+        "nativeEager": {
+          "start": {
+            "cold": [113710.75, 84729.88],
+            "coldMedian": 99220.315,
+            "coldRange": [84729.88, 113710.75],
+            "hot": [19498.76, 18543.62, 22644.72],
+            "hotMedian": 19498.76,
+            "hotRange": [18543.62, 22644.72]
+          },
+          "artifactReady": {
+            "cold": [113727.14, 84746.09],
+            "coldMedian": 99236.615,
+            "coldRange": [84746.09, 113727.14],
+            "hot": [19520.05, 18557.02, 22660.01],
+            "hotMedian": 19520.05,
+            "hotRange": [18557.02, 22660.01]
+          },
+          "restart": {
+            "hot": [9673.55]
+          },
+          "memory": {
+            "unit": "nativeSupervisorDescendantsRssKiB",
+            "cold": [2808208, 2659408],
+            "hot": [2354912, 3053920, 2556976]
+          }
+        },
+        "dockerDefault": {
+          "start": {
+            "cold": [13567.3],
+            "hot": [6103.45, 5892.2, 5873.54],
+            "hotMedian": 5892.2,
+            "hotRange": [5873.54, 6103.45]
+          },
+          "artifactReady": {
+            "cold": [41736.91],
+            "hot": [7688.54, 7458.95, 7545.1],
+            "hotMedian": 7545.1,
+            "hotRange": [7458.95, 7688.54]
+          },
+          "restart": {
+            "hot": [1976.23]
+          },
+          "memory": {
+            "unit": "dockerContainerWorkingSetBytes",
+            "cold": [63155732],
+            "hot": [62946017, 63008932, 62820188]
+          }
+        },
+        "dockerEager": {
+          "start": {
+            "cold": [39059.15],
+            "hot": [27692.41, 23652.98, 25853.25],
+            "hotMedian": 25853.25,
+            "hotRange": [23652.98, 27692.41]
+          },
+          "artifactReady": {
+            "cold": [39240.48],
+            "hot": [27859.71, 23823.06, 26011.27],
+            "hotMedian": 26011.27,
+            "hotRange": [23823.06, 27859.71]
+          },
+          "restart": {
+            "hot": [16929.07]
+          },
+          "memory": {
+            "unit": "dockerContainerWorkingSetBytes",
+            "cold": [1769050473],
+            "hot": [1698141568, 1687377937, 1952573295]
+          }
+        },
+        "legacyDocker": {
+          "start": {
+            "cold": [89337.65],
+            "hot": [53588.94, 37799.76, 37124.81],
+            "hotMedian": 37799.76,
+            "hotRange": [37124.81, 53588.94]
+          },
+          "restart": {
+            "cold": [25727.22]
+          },
+          "memory": {
+            "unit": "dockerContainerWorkingSetBytes",
+            "cold": [1777325835],
+            "hot": [1945304563, 1788958737, 1741269499]
+          }
+        }
+      }
+    },
+    "historicalMacHotRevision27355b4ca": {
+      "nativeDefault": {
+        "start": [7882.88, 7518.52, 8174.6],
+        "median": 7882.88,
+        "range": [7518.52, 8174.6],
+        "restart": [609.91],
+        "memory": {
+          "unit": "nativeSupervisorDescendantsRssKiB",
+          "samples": [282816, 283280, 280656]
+        }
+      },
+      "nativeEager": {
+        "start": [18698.29, 17494.95, 17317.25],
+        "median": 17494.95,
+        "range": [17317.25, 18698.29],
+        "restart": [8365.84],
+        "memory": {
+          "unit": "nativeSupervisorDescendantsRssKiB",
+          "samples": [2865632, 3426112, 3267248]
+        }
+      },
+      "dockerDefault": {
+        "start": [6423.53, 3518.66, 6949.12],
+        "median": 6423.53,
+        "range": [3518.66, 6949.12],
+        "restart": [1384.08],
+        "memory": {
+          "unit": "dockerContainerWorkingSetBytes",
+          "samples": [63124275, 62673388, 62956503]
+        }
+      },
+      "dockerEager": {
+        "start": [18523.25, 15854.23, 22524.72],
+        "median": 18523.25,
+        "range": [15854.23, 22524.72],
+        "restart": [12062.79],
+        "memory": {
+          "unit": "dockerContainerWorkingSetBytes",
+          "samples": [1759059641, 1765408769, 1854548212]
+        }
+      }
+    }
+  },
+  "historicalMacHotRevision27355b4ca": {
+    "nativeDefault": {
+      "start": {
+        "samples": [7.88288, 7.5185200000000005, 8.1746],
+        "median": 7.88288,
+        "range": [7.5185200000000005, 8.1746]
+      },
+      "restart": 0.60991,
+      "memoryGiB": 0.26971435546875
+    },
+    "nativeEager": {
+      "start": {
+        "samples": [18.69829, 17.49495, 17.31725],
+        "median": 17.49495,
+        "range": [17.31725, 18.69829]
+      },
+      "restart": 8.36584,
+      "memoryGiB": 3.1158905029296875
+    },
+    "dockerDefault": {
+      "start": {
+        "samples": [6.4235299999999995, 3.5186599999999997, 6.94912],
+        "median": 6.4235299999999995,
+        "range": [3.5186599999999997, 6.94912]
+      },
+      "restart": 1.38408,
+      "memoryGiB": 0.0586328124627471
+    },
+    "dockerEager": {
+      "start": {
+        "samples": [18.52325, 15.85423, 22.524720000000002],
+        "median": 18.52325,
+        "range": [15.85423, 22.524720000000002]
+      },
+      "restart": 12.062790000000001,
+      "memoryGiB": 1.6441650399938226
+    }
+  },
+  "baselineComparisons": {
+    "basis": "Legacy CLI Docker median / new-stack median; default and eager have different readiness targets; native execution also changes runtime.",
+    "linux": {
+      "nativeDefault": {
+        "cold": {
+          "baselineSeconds": 112.24467,
+          "newSeconds": 23.581229999999998,
+          "ratio": 4.759915831362487,
+          "reductionPercent": 78.99122515127,
+          "secondsSaved": 88.66344000000001
+        },
+        "hot": {
+          "baselineSeconds": 30.26525,
+          "newSeconds": 3.89929,
+          "ratio": 7.761733546363569,
+          "reductionPercent": 87.11628022236724,
+          "secondsSaved": 26.36596
+        }
+      },
+      "nativeEager": {
+        "cold": {
+          "baselineSeconds": 112.24467,
+          "newSeconds": 70.46216,
+          "ratio": 1.5929779898884735,
+          "reductionPercent": 37.22449359956246,
+          "secondsSaved": 41.78251
+        },
+        "hot": {
+          "baselineSeconds": 30.26525,
+          "newSeconds": 22.25705,
+          "ratio": 1.3598050954641339,
+          "reductionPercent": 26.46004906617325,
+          "secondsSaved": 8.008200000000002
+        }
+      },
+      "dockerDefault": {
+        "cold": {
+          "baselineSeconds": 112.24467,
+          "newSeconds": 16.81423,
+          "ratio": 6.675575985340989,
+          "reductionPercent": 85.02001921338447,
+          "secondsSaved": 95.43044
+        },
+        "hot": {
+          "baselineSeconds": 30.26525,
+          "newSeconds": 8.86642,
+          "ratio": 3.4134690213186385,
+          "reductionPercent": 70.70428957302516,
+          "secondsSaved": 21.398830000000004
+        }
+      },
+      "dockerEager": {
+        "cold": {
+          "baselineSeconds": 112.24467,
+          "newSeconds": 61.7121,
+          "ratio": 1.8188437923843137,
+          "reductionPercent": 45.02001743156268,
+          "secondsSaved": 50.53257
+        },
+        "hot": {
+          "baselineSeconds": 30.26525,
+          "newSeconds": 21.919919999999998,
+          "ratio": 1.380718998974449,
+          "reductionPercent": 27.573966843161724,
+          "secondsSaved": 8.345330000000004
+        }
+      }
+    },
+    "macos": {
+      "nativeDefault": {
+        "hot": {
+          "baselineSeconds": 37.79976,
+          "newSeconds": 7.66149,
+          "ratio": 4.933734821816644,
+          "reductionPercent": 79.73137924685236,
+          "secondsSaved": 30.13827
+        }
+      },
+      "nativeEager": {
+        "hot": {
+          "baselineSeconds": 37.79976,
+          "newSeconds": 19.498759999999997,
+          "ratio": 1.9385725040976967,
+          "reductionPercent": 48.41565131630466,
+          "secondsSaved": 18.301000000000002
+        }
+      },
+      "dockerDefault": {
+        "hot": {
+          "baselineSeconds": 37.79976,
+          "newSeconds": 5.8922,
+          "ratio": 6.415220121516581,
+          "reductionPercent": 84.41207034118734,
+          "secondsSaved": 31.90756
+        }
+      },
+      "dockerEager": {
+        "hot": {
+          "baselineSeconds": 37.79976,
+          "newSeconds": 25.85325,
+          "ratio": 1.462089292448725,
+          "reductionPercent": 31.604724474441102,
+          "secondsSaved": 11.94651
+        }
+      },
+      "cold": "No speedup ratios: historical partial image eviction and mixed revisions."
+    }
+  },
+  "edgeRuntimeMilliseconds": {
+    "linuxNative": {
+      "cold": {
+        "samples": [111.8827, 53.972226, 56.055684],
+        "median": 56.055684,
+        "range": [53.972226, 111.8827]
+      },
+      "hot": {
+        "samples": [57.287891, 55.923725, 55.568684],
+        "median": 55.923725,
+        "range": [55.568684, 57.287891]
+      }
+    },
+    "linuxDockerCachedImage": {
+      "hot": {
+        "samples": [674.330163, 321.192242, 276.943989],
+        "median": 321.192242,
+        "range": [276.943989, 674.330163]
+      }
+    },
+    "macosNative": {
+      "cold": {
+        "samples": [23148.728083, 13303.344375, 12937.375417],
+        "median": 13303.344375,
+        "range": [12937.375417, 23148.728083]
+      },
+      "hot": {
+        "samples": [437.194542, 472.920333, 437.3065],
+        "median": 437.3065,
+        "range": [437.194542, 472.920333]
+      }
+    },
+    "macosDockerCachedImage": {
+      "hot": {
+        "samples": [1214.028209, 249.934042, 302.025125],
+        "median": 302.025125,
+        "range": [249.934042, 1214.028209]
+      }
+    },
+    "historicalMacFullStackEagerEdgeReadiness": 51785
+  },
+  "edgeSupportingProbes": {
+    "macosVersionSeconds": {
+      "freshCopy": 24.259,
+      "sameCopyHot": 0.109,
+      "existingCacheHot": 0.792
+    },
+    "macosLibraryLoadSeconds": {
+      "onnxruntime": 11.684,
+      "openblas": 1.115
+    },
+    "linuxVersionMilliseconds": {
+      "freshCopyRange": [9.904, 17.754],
+      "sameCopyHotRange": [4.024, 5.454]
+    },
+    "aiParity": "not established; Linux expects missing unversioned libonnxruntime.so; macOS artifact has versioned dylib while wrapper requests unversioned name"
+  },
+  "issues": [
+    "One Linux native eager cold public RPC liveness timeout; cleanup then raced the still-running start request.",
+    "One initial Linux legacy cold attempt failed ENOSPC; clean retry succeeded.",
+    "Edge AI packaging does not currently establish feature parity."
+  ],
+  "memorySnapshots": {
+    "basis": {
+      "docker": "Container working-set snapshots; excludes Docker engine, VM, and host Supervisor. Supervisor RSS reported separately.",
+      "native": "Sum of Supervisor and descendant RSS; shared pages may be counted more than once.",
+      "sampling": "Median of 3 snapshots across cached fresh-project runs, after readiness/artifact barrier for new stack; after CLI readiness for legacy. Not peak, stabilized idle, or memory under application load.",
+      "comparison": "Default runs the database; eager and legacy run all enabled services. Native RSS and Docker working set are different accounting bases."
+    },
+    "cached": {
+      "linux": {
+        "nativeDefault": {
+          "basis": "native process RSS",
+          "samplesMiB": [288.703125, 283.30859375, 281.55859375],
+          "medianMiB": 283.30859375,
+          "rangeMiB": [281.55859375, 288.703125],
+          "n": 3
+        },
+        "nativeEager": {
+          "basis": "native process RSS",
+          "samplesMiB": [3839.04296875, 3847.4453125, 3786.7265625],
+          "medianMiB": 3839.04296875,
+          "rangeMiB": [3786.7265625, 3847.4453125],
+          "n": 3
+        },
+        "dockerDefault": {
+          "basis": "container working set",
+          "samplesMiB": [96.48999977111816, 60.25, 60.09000015258789],
+          "medianMiB": 60.25,
+          "rangeMiB": [60.09000015258789, 96.48999977111816],
+          "n": 3,
+          "hostSupervisorRss": {
+            "samplesMiB": [144.1640625, 143.6484375, 143.07421875],
+            "medianMiB": 143.6484375,
+            "rangeMiB": [143.07421875, 144.1640625]
+          }
+        },
+        "dockerEager": {
+          "basis": "container working set",
+          "samplesMiB": [1678.3789987564087, 1621.3000001907349, 1709.6520013809204],
+          "medianMiB": 1678.3789987564087,
+          "rangeMiB": [1621.3000001907349, 1709.6520013809204],
+          "n": 3,
+          "hostSupervisorRss": {
+            "samplesMiB": [187.38671875, 188.5703125, 191.26953125],
+            "medianMiB": 188.5703125,
+            "rangeMiB": [187.38671875, 191.26953125]
+          }
+        },
+        "legacyDocker": {
+          "basis": "container working set",
+          "samplesMiB": [1544.4259996414185, 1606.0259990692139, 1666.9470014572144],
+          "medianMiB": 1606.0259990692139,
+          "rangeMiB": [1544.4259996414185, 1666.9470014572144],
+          "n": 3
+        }
+      },
+      "macos": {
+        "nativeDefault": {
+          "basis": "native process RSS",
+          "samplesMiB": [248.359375, 247.546875, 248.234375],
+          "medianMiB": 248.234375,
+          "rangeMiB": [247.546875, 248.359375],
+          "n": 3
+        },
+        "nativeEager": {
+          "basis": "native process RSS",
+          "samplesMiB": [2299.71875, 2982.34375, 2497.046875],
+          "medianMiB": 2497.046875,
+          "rangeMiB": [2299.71875, 2982.34375],
+          "n": 3
+        },
+        "dockerDefault": {
+          "basis": "container working set",
+          "samplesMiB": [60.02999973297119, 60.09000015258789, 59.90999984741211],
+          "medianMiB": 60.02999973297119,
+          "rangeMiB": [59.90999984741211, 60.09000015258789],
+          "n": 3,
+          "hostSupervisorRss": {
+            "samplesMiB": [141.296875, 142.0, 118.1875],
+            "medianMiB": 141.296875,
+            "rangeMiB": [118.1875, 142.0]
+          }
+        },
+        "dockerEager": {
+          "basis": "container working set",
+          "samplesMiB": [1619.4739990234375, 1609.2090005874634, 1862.1190023422241],
+          "medianMiB": 1619.4739990234375,
+          "rangeMiB": [1609.2090005874634, 1862.1190023422241],
+          "n": 3,
+          "hostSupervisorRss": {
+            "samplesMiB": [139.5625, 126.484375, 129.546875],
+            "medianMiB": 129.546875,
+            "rangeMiB": [126.484375, 139.5625]
+          }
+        },
+        "legacyDocker": {
+          "basis": "container working set",
+          "samplesMiB": [1855.186999320984, 1706.0840005874634, 1660.6039991378784],
+          "medianMiB": 1706.0840005874634,
+          "rangeMiB": [1660.6039991378784, 1855.186999320984],
+          "n": 3
+        }
+      }
+    },
+    "comparisons": {
+      "linux": {
+        "dockerDefaultVsLegacyReductionPercent": 96.24850406936635,
+        "dockerEagerVsLegacyChangePercent": 4.5050951683925256,
+        "nativeDefaultVsEagerReductionPercent": 92.62033282627608
+      },
+      "macos": {
+        "dockerDefaultVsLegacyReductionPercent": 96.48141593776738,
+        "dockerEagerVsLegacyChangePercent": -5.076537939175507,
+        "nativeDefaultVsEagerReductionPercent": 90.05888205442679
+      }
+    }
+  }
+}

@@ -1,0 +1,503 @@
+{
+  "measurement": "new-stack Docker host Supervisor and descendants grouped by executable",
+  "units": "MiB = 1,048,576 bytes",
+  "cases": {
+    "linux-docker-default": {
+      "platform": "linux",
+      "configuration": "default",
+      "sampleCount": 3,
+      "processCount": {
+        "median": 3,
+        "range": [3, 3],
+        "count": 3
+      },
+      "metrics": {
+        "bun": {
+          "rssMiB": {
+            "median": 129.046875,
+            "range": [126.1875, 129.73828125],
+            "count": 3
+          },
+          "pssMiB": {
+            "median": 108.529296875,
+            "range": [105.7421875, 109.220703125],
+            "count": 3
+          },
+          "processCount": {
+            "median": 1,
+            "range": [1, 1],
+            "count": 3
+          }
+        },
+        "docker": {
+          "rssMiB": {
+            "median": 55.23828125,
+            "range": [54.23046875, 55.53515625],
+            "count": 3
+          },
+          "pssMiB": {
+            "median": 35.73828125,
+            "range": [34.73046875, 35.78515625],
+            "count": 3
+          },
+          "processCount": {
+            "median": 2,
+            "range": [2, 2],
+            "count": 3
+          }
+        }
+      },
+      "runs": [
+        {
+          "sample": 1,
+          "processCount": {
+            "median": 3,
+            "range": [3, 3],
+            "count": 3
+          },
+          "executables": {
+            "bun": {
+              "rssMiB": 126.1875,
+              "pssMiB": 105.7421875,
+              "processCount": 1
+            },
+            "docker": {
+              "rssMiB": 54.23046875,
+              "pssMiB": 34.73046875,
+              "processCount": 2
+            }
+          }
+        },
+        {
+          "sample": 2,
+          "processCount": {
+            "median": 3,
+            "range": [3, 3],
+            "count": 3
+          },
+          "executables": {
+            "bun": {
+              "rssMiB": 129.73828125,
+              "pssMiB": 109.220703125,
+              "processCount": 1
+            },
+            "docker": {
+              "rssMiB": 55.23828125,
+              "pssMiB": 35.73828125,
+              "processCount": 2
+            }
+          }
+        },
+        {
+          "sample": 3,
+          "processCount": {
+            "median": 3,
+            "range": [3, 3],
+            "count": 3
+          },
+          "executables": {
+            "bun": {
+              "rssMiB": 129.046875,
+              "pssMiB": 108.529296875,
+              "processCount": 1
+            },
+            "docker": {
+              "rssMiB": 55.53515625,
+              "pssMiB": 35.78515625,
+              "processCount": 2
+            }
+          }
+        }
+      ]
+    },
+    "linux-docker-eager": {
+      "platform": "linux",
+      "configuration": "eager",
+      "sampleCount": 3,
+      "processCount": {
+        "median": 24,
+        "range": [24, 24],
+        "count": 3
+      },
+      "metrics": {
+        "bun": {
+          "rssMiB": {
+            "median": 165.23828125,
+            "range": [162.90234375, 166.5859375],
+            "count": 3
+          },
+          "pssMiB": {
+            "median": 144.4775390625,
+            "range": [142.1259765625, 145.8759765625],
+            "count": 3
+          },
+          "processCount": {
+            "median": 1,
+            "range": [1, 1],
+            "count": 3
+          }
+        },
+        "docker": {
+          "rssMiB": {
+            "median": 602.3515625,
+            "range": [599.0234375, 602.5234375],
+            "count": 3
+          },
+          "pssMiB": {
+            "median": 206.388671875,
+            "range": [204.8759765625, 208.234375],
+            "count": 3
+          },
+          "processCount": {
+            "median": 22,
+            "range": [22, 22],
+            "count": 3
+          }
+        },
+        "esbuild": {
+          "rssMiB": {
+            "median": 20.13671875,
+            "range": [19.59765625, 20.61328125],
+            "count": 3
+          },
+          "pssMiB": {
+            "median": 20.1328125,
+            "range": [19.59375, 20.609375],
+            "count": 3
+          },
+          "processCount": {
+            "median": 1,
+            "range": [1, 1],
+            "count": 3
+          }
+        }
+      },
+      "runs": [
+        {
+          "sample": 1,
+          "processCount": {
+            "median": 24,
+            "range": [24, 24],
+            "count": 3
+          },
+          "executables": {
+            "bun": {
+              "rssMiB": 166.5859375,
+              "pssMiB": 145.8759765625,
+              "processCount": 1
+            },
+            "docker": {
+              "rssMiB": 602.5234375,
+              "pssMiB": 208.234375,
+              "processCount": 22
+            },
+            "esbuild": {
+              "rssMiB": 20.61328125,
+              "pssMiB": 20.609375,
+              "processCount": 1
+            }
+          }
+        },
+        {
+          "sample": 2,
+          "processCount": {
+            "median": 24,
+            "range": [24, 24],
+            "count": 3
+          },
+          "executables": {
+            "bun": {
+              "rssMiB": 162.90234375,
+              "pssMiB": 142.1259765625,
+              "processCount": 1
+            },
+            "docker": {
+              "rssMiB": 599.0234375,
+              "pssMiB": 204.8759765625,
+              "processCount": 22
+            },
+            "esbuild": {
+              "rssMiB": 20.13671875,
+              "pssMiB": 20.1328125,
+              "processCount": 1
+            }
+          }
+        },
+        {
+          "sample": 3,
+          "processCount": {
+            "median": 24,
+            "range": [24, 24],
+            "count": 3
+          },
+          "executables": {
+            "bun": {
+              "rssMiB": 165.23828125,
+              "pssMiB": 144.4775390625,
+              "processCount": 1
+            },
+            "docker": {
+              "rssMiB": 602.3515625,
+              "pssMiB": 206.388671875,
+              "processCount": 22
+            },
+            "esbuild": {
+              "rssMiB": 19.59765625,
+              "pssMiB": 19.59375,
+              "processCount": 1
+            }
+          }
+        }
+      ]
+    },
+    "macos-docker-default": {
+      "platform": "macos",
+      "configuration": "default",
+      "sampleCount": 3,
+      "processCount": {
+        "median": 3,
+        "range": [3, 3],
+        "count": 3
+      },
+      "metrics": {
+        "bun": {
+          "rssMiB": {
+            "median": 100.59375,
+            "range": [55.21875, 135.8125],
+            "count": 3
+          },
+          "pssMiB": {
+            "median": null,
+            "range": null,
+            "count": 3
+          },
+          "processCount": {
+            "median": 1,
+            "range": [1, 1],
+            "count": 3
+          }
+        },
+        "docker": {
+          "rssMiB": {
+            "median": 71.921875,
+            "range": [64.234375, 88.21875],
+            "count": 3
+          },
+          "pssMiB": {
+            "median": null,
+            "range": null,
+            "count": 3
+          },
+          "processCount": {
+            "median": 2,
+            "range": [2, 2],
+            "count": 3
+          }
+        }
+      },
+      "runs": [
+        {
+          "sample": 1,
+          "processCount": {
+            "median": 3,
+            "range": [3, 3],
+            "count": 3
+          },
+          "executables": {
+            "bun": {
+              "rssMiB": 55.21875,
+              "pssMiB": null,
+              "processCount": 1
+            },
+            "docker": {
+              "rssMiB": 64.234375,
+              "pssMiB": null,
+              "processCount": 2
+            }
+          }
+        },
+        {
+          "sample": 2,
+          "processCount": {
+            "median": 3,
+            "range": [3, 3],
+            "count": 3
+          },
+          "executables": {
+            "bun": {
+              "rssMiB": 100.59375,
+              "pssMiB": null,
+              "processCount": 1
+            },
+            "docker": {
+              "rssMiB": 71.921875,
+              "pssMiB": null,
+              "processCount": 2
+            }
+          }
+        },
+        {
+          "sample": 3,
+          "processCount": {
+            "median": 3,
+            "range": [3, 3],
+            "count": 3
+          },
+          "executables": {
+            "bun": {
+              "rssMiB": 135.8125,
+              "pssMiB": null,
+              "processCount": 1
+            },
+            "docker": {
+              "rssMiB": 88.21875,
+              "pssMiB": null,
+              "processCount": 2
+            }
+          }
+        }
+      ]
+    },
+    "macos-docker-eager": {
+      "platform": "macos",
+      "configuration": "eager",
+      "sampleCount": 3,
+      "processCount": {
+        "median": 24,
+        "range": [24, 24],
+        "count": 3
+      },
+      "metrics": {
+        "bun": {
+          "rssMiB": {
+            "median": 108.9375,
+            "range": [81.234375, 113.046875],
+            "count": 3
+          },
+          "pssMiB": {
+            "median": null,
+            "range": null,
+            "count": 3
+          },
+          "processCount": {
+            "median": 1,
+            "range": [1, 1],
+            "count": 3
+          }
+        },
+        "docker": {
+          "rssMiB": {
+            "median": 723.453125,
+            "range": [719.5625, 730.515625],
+            "count": 3
+          },
+          "pssMiB": {
+            "median": null,
+            "range": null,
+            "count": 3
+          },
+          "processCount": {
+            "median": 22,
+            "range": [22, 22],
+            "count": 3
+          }
+        },
+        "esbuild": {
+          "rssMiB": {
+            "median": 13.03125,
+            "range": [12.703125, 13.046875],
+            "count": 3
+          },
+          "pssMiB": {
+            "median": null,
+            "range": null,
+            "count": 3
+          },
+          "processCount": {
+            "median": 1,
+            "range": [1, 1],
+            "count": 3
+          }
+        }
+      },
+      "runs": [
+        {
+          "sample": 1,
+          "processCount": {
+            "median": 24,
+            "range": [24, 24],
+            "count": 3
+          },
+          "executables": {
+            "bun": {
+              "rssMiB": 113.046875,
+              "pssMiB": null,
+              "processCount": 1
+            },
+            "docker": {
+              "rssMiB": 730.515625,
+              "pssMiB": null,
+              "processCount": 22
+            },
+            "esbuild": {
+              "rssMiB": 13.046875,
+              "pssMiB": null,
+              "processCount": 1
+            }
+          }
+        },
+        {
+          "sample": 2,
+          "processCount": {
+            "median": 24,
+            "range": [24, 24],
+            "count": 3
+          },
+          "executables": {
+            "bun": {
+              "rssMiB": 81.234375,
+              "pssMiB": null,
+              "processCount": 1
+            },
+            "docker": {
+              "rssMiB": 719.5625,
+              "pssMiB": null,
+              "processCount": 22
+            },
+            "esbuild": {
+              "rssMiB": 12.703125,
+              "pssMiB": null,
+              "processCount": 1
+            }
+          }
+        },
+        {
+          "sample": 3,
+          "processCount": {
+            "median": 24,
+            "range": [24, 24],
+            "count": 3
+          },
+          "executables": {
+            "bun": {
+              "rssMiB": 108.9375,
+              "pssMiB": null,
+              "processCount": 1
+            },
+            "docker": {
+              "rssMiB": 723.453125,
+              "pssMiB": null,
+              "processCount": 22
+            },
+            "esbuild": {
+              "rssMiB": 13.03125,
+              "pssMiB": null,
+              "processCount": 1
+            }
+          }
+        }
+      ]
+    }
+  },
+  "missing": []
+}
