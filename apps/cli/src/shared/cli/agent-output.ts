@@ -126,14 +126,47 @@ function isRootValueFlagWithInlineValue(arg: string): boolean {
   );
 }
 
+const ROOT_BOOLEAN_FLAGS: ReadonlyArray<string> = [
+  "--debug",
+  "--experimental",
+  "--yes",
+  "--create-ticket",
+  "--wizard",
+];
+
+/** Bare or inline (`--flag` / `--flag=<value>`) occurrence of `name`. */
+function isFlagOccurrence(arg: string, name: string): boolean {
+  return arg === name || arg.startsWith(`${name}=`);
+}
+
+/** Inline values the CLI's boolean primitive accepts (lowercase only). */
+const BOOLEAN_FLAG_VALUES: ReadonlySet<string> = new Set([
+  "true",
+  "false",
+  "1",
+  "0",
+  "yes",
+  "no",
+  "y",
+  "n",
+  "on",
+  "off",
+]);
+
+// An action flag's own inline value must be one the boolean primitive
+// accepts: `--version=true` (any accepted value, `false` included) serves the
+// Version action, while `--version=bogus` fails the flag's own parse — no
+// action is served, and the error keeps the agent JSON envelope.
+function isBooleanActionOccurrence(arg: string, name: string): boolean {
+  if (arg === name) return true;
+  return arg.startsWith(`${name}=`) && BOOLEAN_FLAG_VALUES.has(arg.slice(name.length + 1));
+}
+
+// Inline spellings count for the skipped booleans with ANY value: the Version
+// action is scanned on presence before `--wizard=bogus` ever parses, so even
+// an invalid inline value there still renders the plain version line.
 function isRootBooleanFlag(arg: string): boolean {
-  return (
-    arg === "--debug" ||
-    arg === "--experimental" ||
-    arg === "--yes" ||
-    arg === "--create-ticket" ||
-    arg === "--wizard"
-  );
+  return ROOT_BOOLEAN_FLAGS.some((name) => isFlagOccurrence(arg, name));
 }
 
 function hasRootVersionRequest(args: ReadonlyArray<string>): boolean {
@@ -142,7 +175,7 @@ function hasRootVersionRequest(args: ReadonlyArray<string>): boolean {
     if (arg === undefined || arg === "--") {
       return false;
     }
-    if (arg === "--version" || arg === "-v") {
+    if (isBooleanActionOccurrence(arg, "--version") || isBooleanActionOccurrence(arg, "-v")) {
       return true;
     }
     if (isRootValueFlag(arg)) {
@@ -160,7 +193,8 @@ function hasRootVersionRequest(args: ReadonlyArray<string>): boolean {
 function hasHelpRequest(args: ReadonlyArray<string>): boolean {
   for (const arg of args) {
     if (arg === "--") return false;
-    if (arg === "--help" || arg === "-h") return true;
+    if (isBooleanActionOccurrence(arg, "--help") || isBooleanActionOccurrence(arg, "-h"))
+      return true;
   }
   return false;
 }

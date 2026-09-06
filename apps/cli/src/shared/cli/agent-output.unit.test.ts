@@ -133,6 +133,27 @@ describe("resolveAgentOutputFormat", () => {
     expect(resolveAgentOutputFormatFromArgs(["--wizard", "--version"], Option.some("codex"))).toBe(
       "text",
     );
+    expect(
+      resolveAgentOutputFormatFromArgs(["--wizard=true", "--version"], Option.some("codex")),
+    ).toBe("text");
+    expect(
+      resolveAgentOutputFormatFromArgs(["--debug=false", "--version"], Option.some("codex")),
+    ).toBe("text");
+    // An invalid inline value on a SKIPPED boolean still serves the action
+    // (presence is scanned before `--wizard=bogus` parses) — text. On the
+    // action flag ITSELF it fails that flag's own parse — no action, so the
+    // error keeps the agent JSON envelope.
+    expect(
+      resolveAgentOutputFormatFromArgs(["--wizard=bogus", "--version"], Option.some("codex")),
+    ).toBe("text");
+    expect(resolveAgentOutputFormatFromArgs(["--version=true"], Option.some("codex"))).toBe("text");
+    expect(resolveAgentOutputFormatFromArgs(["--version=0"], Option.some("codex"))).toBe("text");
+    expect(resolveAgentOutputFormatFromArgs(["-v=true"], Option.some("codex"))).toBe("text");
+    expect(resolveAgentOutputFormatFromArgs(["--help=true"], Option.some("codex"))).toBe("text");
+    expect(resolveAgentOutputFormatFromArgs(["--version=bogus"], Option.some("codex"))).toBe(
+      "json",
+    );
+    expect(resolveAgentOutputFormatFromArgs(["--help=bogus"], Option.some("codex"))).toBe("json");
     expect(resolveAgentOutputFormatFromArgs(["--help"], Option.some("codex"))).toBe("text");
     expect(
       resolveAgentOutputFormatFromArgs(["db", "reset", "--version", "1"], Option.some("codex")),

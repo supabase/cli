@@ -76,11 +76,12 @@ export function legacyFlattenSubcommands(
 
 /**
  * A command's user-facing scoped global flag params. `GlobalFlag.Completions`
- * and `GlobalFlag.LogLevel` are TS-only framework additions with no Go/cobra
- * equivalent; they are normally only injected via `GlobalFlag.BuiltIns` at
+ * and `GlobalFlag.LogLevel` are only injected via `GlobalFlag.BuiltIns` at
  * parse time (never stored on a command's own `.globalFlags`), so the filter
- * is a defensive guard rather than something that changes today's output —
- * kept explicit so it stays true if that ever changes.
+ * is a defensive guard rather than something that changes today's output.
+ * Unlike shell completion (`legacy-complete.ts`, which resolves the built-ins
+ * because the real parser does — issue #6482), the docs spec deliberately
+ * keeps the Go-shaped flag surface and leaves them out.
  */
 export function legacyUserGlobalFlagParams(
   command: Command.Command.Any,

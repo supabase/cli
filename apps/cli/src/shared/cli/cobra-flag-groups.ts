@@ -113,9 +113,10 @@ export function lastExplicitLongFlagValue(
  * (issue #6482). `--completions`, the other value-taking built-in, is
  * deliberately absent: every consumer of this set runs inside a command
  * handler, which a parsed `--completions` never reaches (its print-and-exit
- * action runs first); only the pre-parse predicates in
- * `shared/cli/agent-output.ts` need it. Keep in sync with
- * `globalFlagsWithValues` in `shared/cli/run.ts`.
+ * action runs first); only the pre-parse scanners (`globalFlagsWithValues`
+ * in `shared/cli/run.ts`, the predicates in `shared/cli/agent-output.ts`)
+ * need it. Keep in sync with `globalFlagsWithValues` in `shared/cli/run.ts`,
+ * which carries every name here plus `--completions`.
  */
 export const PERSISTENT_VALUE_FLAG_NAMES: ReadonlySet<string> = new Set([
   "workdir",

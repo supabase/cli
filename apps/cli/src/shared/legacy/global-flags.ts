@@ -122,10 +122,11 @@ export const LegacyAgentFlag = GlobalFlag.setting("agent")({
  * `PERSISTENT_VALUE_FLAG_NAMES` (`shared/cli/cobra-flag-groups.ts`). The same
  * obligation covers the CLI library's own value-taking built-ins
  * (`--log-level` — issue #6482; `--completions` is scoped per
- * `PERSISTENT_VALUE_FLAG_NAMES`'s doc). Those two
- * registries feed raw-argv pflag scanners that must run for `--help`/`--version`
- * /bare-group invocations, which cobra serves before `PersistentPreRunE` and so
- * never expose parsed flag values to read instead. Neither registry is derived
+ * `PERSISTENT_VALUE_FLAG_NAMES`'s doc). `globalFlagsWithValues` feeds
+ * scanners that must run even for `--help`/`--version`/bare-group
+ * invocations, which cobra serves before `PersistentPreRunE` and so never
+ * expose parsed flag values to read instead; `PERSISTENT_VALUE_FLAG_NAMES`
+ * feeds the handler-side pflag scans. Neither registry is derived
  * from this list, and drift fails silently rather than loudly: an unregistered
  * value flag does not consume its following token, so `supabase --new-flag
  * --workdir other <cmd>` makes the upgrade notice read/write
