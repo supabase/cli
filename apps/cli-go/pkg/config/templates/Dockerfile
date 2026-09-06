@@ -8,7 +8,7 @@ FROM supabase/postgres-meta:v0.99.0 AS pgmeta
 FROM supabase/studio:2026.08.24-sha-8ec45b2 AS studio
 FROM darthsim/imgproxy:v3.8.0 AS imgproxy
 FROM supabase/edge-runtime:v1.74.3 AS edgeruntime
-FROM timberio/vector:0.53.0-alpine AS vector
+FROM timberio/vector:0.58.0-alpine AS vector
 FROM supabase/supavisor:2.9.12 AS supavisor
 FROM supabase/gotrue:v2.196.0 AS gotrue
 FROM supabase/realtime:v2.130.0 AS realtime
