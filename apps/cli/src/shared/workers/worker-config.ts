@@ -6,7 +6,7 @@ import {
   type CliErrorActionabilityDeclaration,
   ErrorActionabilityId,
 } from "../telemetry/error-actionability.ts";
-import { appendTomlSection, tomlKey } from "./toml-section.ts";
+import { appendTomlSection, isRenderableTomlNumber, tomlKey } from "./toml-section.ts";
 
 /**
  * The `[workers]` section of `supabase/config.toml`, read through the decoded
@@ -21,6 +21,7 @@ import { appendTomlSection, tomlKey } from "./toml-section.ts";
 export interface WorkerEntry {
   readonly runtime?: string;
   readonly size?: string;
+  readonly exposure?: string;
   readonly instances?: number;
   readonly source?: string;
 }
@@ -72,6 +73,23 @@ export class WorkerConfigWriteUnsafeError extends Data.TaggedError("WorkerConfig
 const stringOrUndefined = (value: unknown): string | undefined =>
   typeof value === "string" && value !== "" ? value : undefined;
 
+/**
+ * As {@link stringOrUndefined}, but an explicitly empty string survives.
+ *
+ * For `exposure`, "recorded but unusable" must not read as "not recorded".
+ * Absent means the `public` default, so folding `exposure = ""` into `undefined`
+ * hands a config that plainly tried to say something to the most open setting
+ * there is — the exact silent-widening `push`'s `resolveExposure` exists to
+ * refuse. Kept verbatim so it reaches that check like any other value the CLI
+ * does not recognize.
+ *
+ * `runtime`, `size` and `source` keep the collapsing reader: their fallbacks are
+ * a marker-file guess, a default size and the conventional directory, none of
+ * which widens anything.
+ */
+const recordedStringOrUndefined = (value: unknown): string | undefined =>
+  typeof value === "string" ? value : undefined;
+
 /** A plain object — a `[workers.<name>]` table rather than a scalar or a list. */
 const isRecord = (value: unknown): value is Record<string, unknown> =>
   typeof value === "object" && value !== null && !Array.isArray(value);
@@ -107,6 +125,10 @@ export function readWorkersSection(workers: unknown): WorkersSection {
     entries[key] = {
       runtime: stringOrUndefined(value["runtime"]),
       size: stringOrUndefined(value["size"]),
+      // Left as whatever string was written, empty included: `push` is what
+      // names the accepted values, and dropping an unrecognized one here would
+      // silently deploy a worker at the default exposure instead.
+      exposure: recordedStringOrUndefined(value["exposure"]),
       instances: instanceCountOrUndefined(value["instances"]),
       source: stringOrUndefined(value["source"]),
     };
@@ -131,7 +153,8 @@ export interface WorkerEntryWrite {
 export const planWorkerEntry = Effect.fnUntraced(function* (options: {
   readonly configPath: string;
   readonly name: string;
-  readonly patch: Readonly<Record<string, string>>;
+  /** Rendered as written: strings are quoted, numbers are not. */
+  readonly patch: Readonly<Record<string, string | number>>;
   /** The already-parsed config — the authority on whether an entry exists. */
   readonly existingWorkers: Readonly<Record<string, WorkerEntry>>;
 }) {
@@ -146,6 +169,22 @@ export const planWorkerEntry = Effect.fnUntraced(function* (options: {
       new WorkerAlreadyConfiguredError({
         detail: `"${options.name}" is already configured in ${options.configPath}.`,
         suggestion: `Edit [workers.${options.name}] in ${options.configPath} yourself, or pick a different worker name.`,
+      }),
+    );
+  }
+
+  // Before rendering, because the re-parse below cannot catch this. A number
+  // like `1.5` or `-1` renders as valid TOML that only the *schema* rejects, so
+  // it would sail through a syntax check and land in the user's config as a
+  // `[workers]` section the loader then refuses.
+  const unrenderable = Object.entries(options.patch).find(
+    ([, value]) => typeof value === "number" && !isRenderableTomlNumber(value),
+  );
+  if (unrenderable !== undefined) {
+    return yield* Effect.fail(
+      new WorkerConfigWriteUnsafeError({
+        detail: `Recording "${options.name}" would write ${unrenderable[0]} = ${String(unrenderable[1])} to ${options.configPath}, which is not a whole, non-negative count.`,
+        suggestion: `Pass a whole number of zero or more, or add [workers.${options.name}] to ${options.configPath} yourself.`,
       }),
     );
   }

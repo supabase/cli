@@ -7,13 +7,13 @@
 
 ## Files Read
 
-| Path                                     | Format     | When                                                                                                        |
-| ---------------------------------------- | ---------- | ----------------------------------------------------------------------------------------------------------- |
-| `<workdir>/supabase/config.json`         | JSON       | always when present — preferred over `config.toml`; each worker's runtime, size, instances, source          |
-| `<workdir>/supabase/config.toml`         | TOML       | always when no `config.json` exists — the same worker fields                                                |
-| `<worker source>/**`                     | any        | always — packaged into the build context                                                                    |
-| `<SUPABASE_HOME or ~/.supabase>/profile` | plain text | when neither `--profile` nor `SUPABASE_PROFILE` is set — names the profile, defaulting to `supabase`        |
-| `<SUPABASE_PROFILE>` (YAML)              | YAML       | when `SUPABASE_PROFILE` is a filesystem path rather than a built-in name; a read failure aborts the command |
+| Path                                     | Format     | When                                                                                                         |
+| ---------------------------------------- | ---------- | ------------------------------------------------------------------------------------------------------------ |
+| `<workdir>/supabase/config.json`         | JSON       | always when present — preferred over `config.toml`; each worker's runtime, size, exposure, instances, source |
+| `<workdir>/supabase/config.toml`         | TOML       | always when no `config.json` exists — the same worker fields                                                 |
+| `<worker source>/**`                     | any        | always — packaged into the build context                                                                     |
+| `<SUPABASE_HOME or ~/.supabase>/profile` | plain text | when neither `--profile` nor `SUPABASE_PROFILE` is set — names the profile, defaulting to `supabase`         |
+| `<SUPABASE_PROFILE>` (YAML)              | YAML       | when `SUPABASE_PROFILE` is a filesystem path rather than a built-in name; a read failure aborts the command  |
 
 ## Files Written
 
@@ -43,6 +43,7 @@ run reports the accepted spec the deploy response returned.
 | ---- | -------------------------------------------------------------------- |
 | `0`  | success                                                              |
 | `1`  | no workers named and none found in the project                       |
+| `1`  | config records a runtime, size or exposure the CLI does not know     |
 | `1`  | a worker's source is missing, not a directory, or empty              |
 | `1`  | a worker's source directory cannot be read                           |
 | `1`  | a worker's source links to a path outside itself                     |
@@ -93,6 +94,14 @@ loop, and "what still needs deploying" and "what is still in flight" are both
 part of the question the failure raises. The second report also covers a real
 gap, since `runCli` drains success trailers only on exit code 0, so a failing
 run discards every follow-up hint it had queued.
+
+`--exposure` decides one deploy and nothing writes it down, so an override the
+config does not already agree with is reported on stderr, naming the
+`[workers.<name>] exposure` line to add. Unguarded by format, like the
+runtime-guess nudge: every deploy sends a complete spec, so a worker taken off
+the internet by the flag goes back on it at the next bare push, and a CI run is
+where that matters most. Silent when the config already resolves to the same
+exposure, case included.
 
 Under `--no-wait` the `Image` row and the payload's `image_version` are omitted
 while `build_state` is `building`. The deploy response may carry an
