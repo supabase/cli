@@ -51,6 +51,12 @@ describe("legacyRespondToComplete", () => {
     expect(result?.candidates.map((c) => c.name)).toContain("--debug");
   });
 
+  it("offers the built-in --log-level flag like --help shows it", () => {
+    const result = legacyRespondToComplete(legacyRoot, ["__complete", "--log"]);
+    expect(result?.directive).toBe(LegacyCompletionDirective.NoFileComp);
+    expect(result?.candidates.map((c) => c.name)).toContain("--log-level");
+  });
+
   it("offers an ancestor's shared flag (Command.withSharedFlags) from a resolved leaf command", () => {
     // `--no-cache` is declared once on the `db schema declarative` group via
     // Command.withSharedFlags (declarative.shared.ts) and must be visible from
@@ -112,6 +118,29 @@ describe("legacyRespondToComplete", () => {
       const result = legacyRespondToComplete(legacyRoot, ["__complete", "-o", "json", ""]);
       expect(result?.directive).toBe(LegacyCompletionDirective.NoFileComp);
       expect(result?.candidates.map((c) => c.name)).toContain("migration");
+    });
+
+    it("lists subcommands after the built-in --log-level and its value", () => {
+      // `--log-level error ""` used to return zero candidates: the built-in
+      // never entered the in-scope flag set, so the strict flag walk treated
+      // it like an unknown flag and poisoned the line (issue #6482). An
+      // invalid value must still poison it, matching the real parse.
+      const result = legacyRespondToComplete(legacyRoot, [
+        "__complete",
+        "--log-level",
+        "error",
+        "",
+      ]);
+      expect(result?.directive).toBe(LegacyCompletionDirective.NoFileComp);
+      expect(result?.candidates.map((c) => c.name)).toContain("sso");
+
+      const invalid = legacyRespondToComplete(legacyRoot, [
+        "__complete",
+        "--log-level",
+        "bogus",
+        "",
+      ]);
+      expect(invalid).toEqual({ candidates: [], directive: LegacyCompletionDirective.Default });
     });
 
     it("still resolves and lists subcommands when the global flag appears before the group", () => {

@@ -252,17 +252,13 @@ export function legacyCollectInScopeFlags(
   const finalCommand = commandChain[commandChain.length - 1] ?? root;
   const ancestors = commandChain.slice(0, -1);
 
-  // `GlobalFlag.Completions`/`GlobalFlag.LogLevel` are TS-only framework
-  // additions with no Go/cobra equivalent. They are normally only injected
-  // via `GlobalFlag.BuiltIns` at parse time (never stored on a command's own
-  // `.globalFlags`), so this filter is a defensive guard rather than
-  // something that changes today's output — kept explicit so it stays true
-  // if that ever changes.
+  // `GlobalFlag.Completions` is the completion mechanism itself and is only
+  // injected via `GlobalFlag.BuiltIns` at parse time (never stored on a
+  // command's own `.globalFlags`), so this filter is a defensive guard rather
+  // than something that changes today's output.
   const globalFlagParamsOf = (command: Command.Command.Any): ReadonlyArray<Param.AnyFlag> =>
     legacyInternalCommand(command)
-      .globalFlags.filter(
-        (entry) => entry !== GlobalFlag.Completions && entry !== GlobalFlag.LogLevel,
-      )
+      .globalFlags.filter((entry) => entry !== GlobalFlag.Completions)
       .map((entry) => entry.flag);
 
   const inheritedParams: Array<Param.AnyFlag> = [
@@ -272,6 +268,11 @@ export function legacyCollectInScopeFlags(
   const ownParams: Array<Param.AnyFlag> = [
     ...globalFlagParamsOf(finalCommand),
     GlobalFlag.Help.flag,
+    // The built-in `--log-level` is part of every resolved command's real
+    // flag set (`GlobalFlag.BuiltIns`, shown in `--help`), so the strict
+    // flag walk must resolve it or a typed `--log-level error` poisons the
+    // whole line like an unknown flag (issue #6482).
+    GlobalFlag.LogLevel.flag,
     // Cobra's `InitDefaultVersionFlag` only registers `--version`, and only on
     // the root command (gated on `c.Version != ""`, and non-persistent) — it
     // is never inherited by subcommands the way `--help` is.
