@@ -1,96 +1,111 @@
-# Supabase stack vs legacy CLI
+# New local stack: faster startup, less waiting
 
-## Faster startup, with two readiness contracts
+**Benchmark results · September 7, 2026**
 
-The new default path reaches database readiness while other services prepare in the background. The eager path waits for the full enabled stack. Against historical CLI 2.116.0 Docker startup, the optimized stack is **9.24–17.40× faster in default mode** and **2.65–4.19× faster in eager mode**, depending on platform and runtime. Default RSS is **85.5–89.8% lower**; eager RSS is mixed.
+Optimized stack package ([PR #6440](https://github.com/supabase/cli/pull/6440), measured as a local patch on `1944456f2`) compared with the released Supabase CLI **2.116.0**. The new stack was measured through its programmatic API, before CLI integration.
 
-> This is a directional comparison across two campaigns, not a controlled A/B rerun. Legacy CLI 2.116.0 was measured earlier; the optimized stack was measured later. Cold values remain raw observations because download sources and cache eviction differ.
+The measurements show two useful improvements: getting a working database sooner, and reducing startup time when all enabled services are needed.
 
-## Hot startup: legacy full stack vs optimized stack
+- **11.8× faster cached Docker startup with the new default mode**, across Ubuntu and macOS. That saves **28–35 seconds per start** in these measurements.
+- **2.7–3.4× faster cached Docker startup in eager mode**, with all enabled services running: **62–71% less waiting**.
+- **Up to 17.4× faster default startup and 4.2× faster eager startup with native execution**, compared with the current CLI's Docker stack on the same host.
+- **85–90% lower process RSS in default mode**, across Docker/native and both platforms, with the new stack’s Supervisor included. Full-stack memory is reported separately below.
 
-The legacy executable starts the published Docker stack and exits when its full-stack readiness command completes. New stack default measures database readiness; eager measures all enabled services. The stacks differ in service count (legacy 12, new 11), and the legacy default path does not include the pooler.
+> These are directional comparisons across campaigns, not a controlled A/B rerun. The legacy baseline was measured on September 5–6; the optimized stack on September 7. Cold download sources differ, so cold times are reported without speedup claims.
 
-![macOS hot startup](assets/macos-startup.png)
+## What “ready” means
 
-![Ubuntu hot startup](assets/linux-startup.png)
+**Default mode** starts the database and prepares the other enabled services in the background. Those services start when requested. This avoids starting services a developer may never use, but their first request can still incur activation time; that latency was not measured here.
 
-| Platform     |       New mode | Legacy CLI (s) | Optimized stack (s) | Directional ratio |
-| ------------ | -------------: | -------------: | ------------------: | ----------------: |
-| macOS        | Native default |          37.80 |                2.17 |        **17.40×** |
-| macOS        |   Native eager |          37.80 |               10.32 |         **3.66×** |
-| macOS        | Docker default |          37.80 |                3.20 |        **11.83×** |
-| macOS        |   Docker eager |          37.80 |               10.97 |         **3.45×** |
-| Ubuntu 22.04 | Native default |          30.27 |                3.27 |         **9.24×** |
-| Ubuntu 22.04 |   Native eager |          30.27 |                7.22 |         **4.19×** |
-| Ubuntu 22.04 | Docker default |          30.27 |                2.57 |        **11.80×** |
-| Ubuntu 22.04 |   Docker eager |          30.27 |               11.41 |         **2.65×** |
+**Eager mode** starts all enabled services before returning. It is the closer comparison to the current CLI's behavior. The defaults still differ: the current CLI starts 12 containers; the new eager stack starts 11 workloads, with different service versions and gateway arrangements.
 
-These are medians of three hot starts with fresh project data and cached artifacts. Legacy timing is subprocess start through CLI readiness; optimized timing covers public `start()` and excludes stack construction and explicit preparation.
+The speedups below compare each new configuration with the current CLI **on the same host**. They describe the observed startup experience, rather than identical implementations doing identical work.
 
-## Memory: RSS and Linux PSS
+## Everyday startup: artifacts already downloaded
 
-RSS includes the owned workload plus supervisor/helpers for both runtimes. Shared pages may be counted repeatedly, so Linux PSS is the better physical-memory signal where available. Legacy default is compared with new default; legacy + pooler is compared with eager because eager includes that additional workload. Versions differ, and post-start first-request latency is outside this measurement.
+These runs use cached images or native artifacts and **fresh project data**. Results are medians of three starts. Bars show speedup relative to the current CLI: **higher is faster**, with the current CLI normalized to **1×**. Observed time ranges are in the benchmark notes.
 
-![macOS RSS](assets/macos-rss.png)
+### Default mode: up to 17.4× faster database readiness
 
-![Ubuntu RSS](assets/linux-rss.png)
+![Default-mode cached startup: Docker is 11.8× faster on Ubuntu and macOS; native is 9.2× and 17.4×. These compare new database readiness with current CLI full startup.](assets/cached-default.png)
 
-| Platform     |       New mode | Legacy RSS MiB | Optimized RSS MiB |     Change |
-| ------------ | -------------: | -------------: | ----------------: | ---------: |
-| macOS        | Native default |        2561.12 |            262.20 | **-89.8%** |
-| macOS        |   Native eager |        3297.68 |           2944.16 | **-10.7%** |
-| macOS        | Docker default |        2561.12 |            371.53 | **-85.5%** |
-| macOS        |   Docker eager |        3297.68 |           3961.10 | **+20.1%** |
-| Ubuntu 22.04 | Native default |        2625.51 |            285.91 | **-89.1%** |
-| Ubuntu 22.04 |   Native eager |        3264.11 |           3392.98 |  **+3.9%** |
-| Ubuntu 22.04 | Docker default |        2625.51 |            320.61 | **-87.8%** |
-| Ubuntu 22.04 |   Docker eager |        3264.11 |           3623.76 | **+11.0%** |
+### Eager mode: up to 4.2× faster full startup
 
-Default RSS falls by **89.8% on macOS native**, **89.1% on Ubuntu native**, **85.5% on macOS Docker**, and **87.8% on Ubuntu Docker**. Eager RSS changes by -10.7% on macOS native, +20.1% on macOS Docker, +3.9% on Ubuntu native, and +11.0% on Ubuntu Docker. Linux PSS also rises for eager: +9.5% native and +12.4% Docker versus the legacy + pooler workload.
+![Eager-mode cached startup with all enabled services ready: Docker is 2.7× faster on Ubuntu and 3.4× on macOS; native is 4.2× and 3.7×.](assets/cached-eager.png)
 
-### Linux PSS
+| Configuration        |      Ubuntu 22.04 |             macOS |
+| -------------------- | ----------------: | ----------------: |
+| Current CLI · Docker | 30.3 s · baseline | 37.8 s · baseline |
+| New default · Docker | **2.6 s · 11.8×** | **3.2 s · 11.8×** |
+| New default · native |  **3.3 s · 9.2×** | **2.2 s · 17.4×** |
+| New eager · Docker   | **11.4 s · 2.7×** | **11.0 s · 3.4×** |
+| New eager · native   |  **7.2 s · 4.2×** | **10.3 s · 3.7×** |
 
-| New mode       | Legacy PSS MiB | Optimized PSS MiB |     Change |
-| -------------- | -------------: | ----------------: | ---------: |
-| Native default |        1806.31 |            180.25 | **-90.0%** |
-| Native eager   |        1925.44 |           2107.42 |  **+9.5%** |
-| Docker default |        1806.31 |            210.20 | **-88.4%** |
-| Docker eager   |        1925.44 |           2164.39 | **+12.4%** |
+The largest default-mode gains include the decision to leave unused services dormant. Eager mode also improves startup while bringing up all enabled services. Native execution offers another useful option: it produced the fastest default start on macOS and the fastest eager start on both platforms in this sample.
 
-## Restart and cold observations
+## First startup: downloads included
 
-| Platform     |       New mode | Legacy retained-data restart (s) | Optimized retained-data restart (s) |
-| ------------ | -------------: | -------------------------------: | ----------------------------------: |
-| macOS        | Native default |                            25.73 |                                0.54 |
-| macOS        |   Native eager |                            25.73 |                                6.90 |
-| macOS        | Docker default |                            25.73 |                                1.16 |
-| macOS        |   Docker eager |                            25.73 |                                7.83 |
-| Ubuntu 22.04 | Native default |                            25.59 |                                0.37 |
-| Ubuntu 22.04 |   Native eager |                            25.59 |                                4.62 |
-| Ubuntu 22.04 | Docker default |                            25.59 |                                0.71 |
-| Ubuntu 22.04 |   Docker eager |                            25.59 |                                7.33 |
+The optimized cold runs include local mirror downloads, extraction, and fresh database initialization. Native runs used fresh artifact caches; Docker runs evicted the tested image references. Shared Docker layers and OS page caches could remain. **These are not public-network first-install times.**
 
-Cold startup values are intentionally not converted to speedup ratios. Legacy cold runs used public image downloads and a different eviction procedure; optimized cold runs used local mirrors and application-cache eviction. These are one observation per cell (n=1). The macOS legacy Docker run used partial image eviction; OS page cache was not flushed. They are useful as raw context, not as a claim of improvement.
+![Optimized cold startup on Ubuntu using a local mirror: Docker default 5.2 seconds, native default 6.4 seconds, Docker eager 22.4 seconds, native eager 16.7 seconds. Lower is faster.](assets/cold-startup.png)
 
-| Platform     |       New mode | Legacy cold (s) | Optimized cold (s) |
-| ------------ | -------------: | --------------: | -----------------: |
-| macOS        | Native default |           89.34 |              13.61 |
-| macOS        |   Native eager |           89.34 |              57.18 |
-| macOS        | Docker default |           89.34 |               5.42 |
-| macOS        |   Docker eager |           89.34 |              20.69 |
-| Ubuntu 22.04 | Native default |          112.24 |               6.40 |
-| Ubuntu 22.04 |   Native eager |          112.24 |              16.72 |
-| Ubuntu 22.04 | Docker default |          112.24 |               5.18 |
-| Ubuntu 22.04 |   Docker eager |          112.24 |              22.41 |
+For Docker on Ubuntu, default mode makes the database ready in **5.2 seconds**. Background preparation of all enabled images was observed complete by **13.8 seconds**; those services remain dormant until needed. Eager startup takes **22.4 seconds**.
 
-## What was measured
+Native default startup takes **6.4 seconds** cold, with background artifacts observed ready by **16.8 seconds**. Native eager takes **16.7 seconds**. Artifact-ready observations are upper bounds from status collection, rather than exact transfer-completion timings.
 
-- Legacy: Supabase CLI **2.116.0**, historical campaign on macOS 26.6.2 (Apple M3, 8 cores, 24 GiB) and Ubuntu 22.04.5 LTS (arm64 VM, 3 vCPUs, 8 GiB). The legacy restart value is one retained-data restart after the cold run.
-- Optimized: PR head `1944456f2` plus the uncommitted optimization patch, using the same enabled workload definition as the prior optimization report. Hot startup and restarts use n=3; hot memory uses snapshots at 30/35/40 seconds, then the median across starts.
-- The campaigns ran on the same physical M3 host, but on different dates and VM campaigns. Timing boundaries differ as described above.
-- RSS includes supervisor/helpers and workload processes for both native and Docker measurements. Docker daemon, containerd, VM, and unrelated shared host processes are excluded. Default savings reflect dormant services at the measured barrier; first-request latency was not measured.
-- The CLI portion is based on commit [`75c6385ca`](https://github.com/supabase/cli/commit/75c6385ca), measured as a local patch. Optimized artifacts are local experimental variants built with the unreleased [`slim-services.patch`](sources/slim-services.patch). The full Nix release build was not run; archive and image identities are in [`sources/optimized-artifacts.json`](sources/optimized-artifacts.json), with patch hashes in [`sources/optimized-benchmark-data.json`](sources/optimized-benchmark-data.json).
+The historical current CLI took **112.2 seconds on Ubuntu** with an empty Docker image store and public downloads, and **89.3 seconds on macOS** after partial image eviction. **Download sources and cache conditions differ, so these observations cannot establish a cold speedup.** All cold values are single observations. The [benchmark notes](BENCHMARK_NOTES.md#cold-startup) include macOS, where optimized native eager took **57.2 seconds**, and the full cold data.
 
-The source snapshots and machine-readable comparison data are in [`sources/README.md`](sources/README.md) and [`comparison-data.json`](comparison-data.json).
+## Retained-data restarts
 
-Generated 2026-09-07.
+**Retained-data restarts can be much quicker.** New default-mode native restarts took **0.37 seconds on Ubuntu** and **0.54 seconds on macOS**, compared with **25.6 and 25.7 seconds** for the current CLI's full-stack restart. New default-mode Docker restarts took **0.71 and 1.16 seconds**. Optimized values are medians of three restarts; each legacy value is a single observation. Default mode again brings up only the database. Full eager restart times are in the [benchmark notes](BENCHMARK_NOTES.md#retained-data-restarts).
+
+## Memory: now measured against the current CLI
+
+**The current CLI and new stack have a common process-RSS comparison.** Both campaigns observe memory at **30, 35, and 40 seconds after readiness**. New-stack observations also wait for background artifact preparation. Each number is the median of three per-start medians, with cached artifacts and fresh project data.
+
+The figures below include the **new stack's service processes, Supervisor and its helper processes**. They exclude the Docker engine and VM. They are observations after startup, **not peak memory or memory under application load**.
+
+### Default mode: 85–90% lower process RSS
+
+![Default process RSS compared with the current CLI on Ubuntu and macOS, for Docker and native. Supervisor included; lower is better.](assets/memory-default-rss.png)
+
+The saving comes mainly from leaving unused services dormant. RSS grows as those services activate; this is the memory benefit of a database-first workflow, not an equivalent full-stack workload.
+
+| Configuration                 |    Ubuntu RSS |     macOS RSS | Ubuntu PSS |
+| ----------------------------- | ------------: | ------------: | ---------: |
+| Current CLI · Docker          | **2,626 MiB** | **2,561 MiB** |  1,806 MiB |
+| Current CLI + pooler · Docker | **3,264 MiB** | **3,298 MiB** |  1,925 MiB |
+| New default · Docker          |   **321 MiB** |   **372 MiB** |    210 MiB |
+| New default · native          |   **286 MiB** |   **262 MiB** |    180 MiB |
+| New eager · Docker            | **3,624 MiB** | **3,961 MiB** |  2,164 MiB |
+| New eager · native            | **3,393 MiB** | **2,944 MiB** |  2,107 MiB |
+
+**RSS** counts resident pages in each process and can count shared pages more than once. **PSS** divides shared pages among the processes using them, making the Ubuntu PSS column a better guide to the stack's proportional physical footprint. For example, current CLI defaults measure **2,626 MiB RSS but 1,806 MiB PSS**.
+
+### Eager mode: compare the whole service set
+
+Legacy defaults leave the connection pooler disabled; new eager mode enables it. We therefore use the measurements of **legacy with the pooler enabled** for the eager memory comparison. This brings the enabled service capabilities closer, although service versions, gateway and logging arrangements still differ.
+
+![Ubuntu proportional process memory: current CLI with pooler versus new Docker and native, default and eager. PSS apportions shared pages; lower is better.](assets/memory-linux-pss.png)
+
+**Docker host processes add a material cost.** Eager mode keeps Docker CLI log followers and exit watchers running for its workloads. These helpers belong to the new stack and are included in the totals above.
+
+Against legacy with the pooler enabled, **new Docker eager PSS is 12.4% higher** and **new native eager PSS is 9.5% higher** on Ubuntu. Faster full startup should therefore be judged separately from memory savings. Ubuntu eager RSS is **3.9% higher for native** and **11.0% higher for Docker**. On macOS, eager RSS is **10.7% lower for native** and **20.1% higher for Docker**, against the pooler-enabled legacy baseline. A [dedicated eager RSS chart](BENCHMARK_NOTES.md#process-memory-campaign) gives the same comparison visually.
+
+macOS native RSS comes from macOS process accounting, while its Docker service RSS comes from the Linux VM. Both are RSS, but the kernels account differently. Native PSS is unavailable on macOS, so we do **not** turn its RSS comparison into a claim about physical RAM saved. Docker engine and shared OrbStack memory cannot be assigned entirely to one stack.
+
+The [benchmark notes](BENCHMARK_NOTES.md#process-memory-campaign) contain ranges and collection details. [Source snapshots](sources/README.md) preserve the sanitized measurements and artifact identities used for this comparison.
+
+## Remaining work
+
+- **Public-download cold measurements:** rerun both stacks under the same eviction and download conditions before claiming a cold-start speedup.
+- **Released-artifact verification:** this campaign used staged experimental artifacts. The subsequent [slim-services PR #300](https://github.com/supabase/slim-services/pull/300) passed its release workflows across Linux amd64, Linux arm64 and macOS arm64; published artifacts have not been rebenchmarked here.
+- **First-request latency and full-stack memory:** measure activation after default startup and memory under application load. Eager memory remains higher than legacy in several comparisons.
+
+## How to interpret these numbers
+
+Speedup means **current CLI time ÷ new stack time**. For example, Ubuntu's cached Docker default is `30.265 ÷ 2.565 = 11.8×`, or **92% less waiting**. Ratios use the unrounded measurements.
+
+The new-stack timer covers its public `start()` call; the current CLI timer covers process spawn through readiness exit. Stack construction, explicit preparation, installation and project setup are excluded from the new-stack timer. Ubuntu ran in an ARM64 VM with 3 CPUs and 8 GiB on the same Apple M3 machine used for macOS; these are not independent hardware benchmarks. Legacy measurements come from the earlier campaign. Workloads ran sequentially, with normal desktop activity and no reset of OS or CDN caches.
+
+These are directional engineering measurements, not release guarantees. [Benchmark notes](BENCHMARK_NOTES.md) contain the full numbers, ranges, environment details, and exclusions; [comparison data](comparison-data.json) and [source snapshots](sources/README.md) preserve the measurements used for comparison.
