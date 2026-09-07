@@ -26,13 +26,8 @@ import {
   type LegacyPgConnInput,
 } from "../../../shared/legacy-db-connection.service.ts";
 import { LegacyDockerRun } from "../../../shared/legacy-docker-run.service.ts";
-import {
-  type LegacyEdgeRuntimeRunOpts,
-  LegacyEdgeRuntimeScript,
-} from "../../../shared/legacy-edge-runtime-script.service.ts";
 import { dockerfileServiceImageRaw } from "../../../../shared/services/dockerfile-images.ts";
 import { LEGACY_SUGGEST_DOCKER_INSTALL } from "../../../shared/legacy-docker-suggest.ts";
-import { LegacyPgDeltaSslProbe } from "../../../shared/legacy-pgdelta-ssl-probe.service.ts";
 import { LegacyDeclarativeShadowDbError } from "./legacy-pgdelta.errors.ts";
 import { legacyDeclarativeSeamLayer } from "./legacy-pgdelta.seam.layer.ts";
 import { LegacyDeclarativeSeam } from "./legacy-pgdelta.seam.service.ts";
@@ -42,7 +37,7 @@ import { LegacyDeclarativeSeam } from "./legacy-pgdelta.seam.service.ts";
  * `generate`/`sync`'s own integration tests stub `LegacyDeclarativeSeam` entirely
  * (per its own service doc comment), so this file is the only place the real
  * local-database bring-up composition gets exercised end-to-end, with a fake
- * `LegacyDbConnection`/`LegacyDockerRun`/`LegacyEdgeRuntimeScript`.
+ * `LegacyDbConnection`/`LegacyDockerRun`.
  */
 
 const alwaysReadyHttpClientLayer = Layer.succeed(
@@ -80,39 +75,6 @@ function fakeShadowSetupDocker() {
   return { layer };
 }
 
-/**
- * Distinguishes the two pg-delta edge-runtime scripts this seam invokes by `errPrefix`
- * (`legacyApplyDeclarativePgDelta`'s declarative-apply script vs.
- * `legacyExportCatalogPgDelta`'s catalog-export script — `legacy-pgdelta.apply.ts`/
- * `legacy-pgdelta.ts`'s own literal `errPrefix` strings).
- */
-function fakeEdgeRuntime() {
-  const calls: Array<LegacyEdgeRuntimeRunOpts> = [];
-  const layer = Layer.succeed(LegacyEdgeRuntimeScript, {
-    run: (opts: LegacyEdgeRuntimeRunOpts) => {
-      calls.push(opts);
-      if (opts.errPrefix === "error running pg-delta script") {
-        return Effect.succeed({
-          stdout: JSON.stringify({
-            status: "success",
-            totalApplied: 0,
-            totalRounds: 1,
-            totalSkipped: 0,
-          }),
-          stderr: "",
-        });
-      }
-      return Effect.succeed({ stdout: '{"schemas":[]}', stderr: "" });
-    },
-  });
-  return { layer, calls };
-}
-
-const sslProbe = Layer.succeed(LegacyPgDeltaSslProbe, {
-  requireSsl: () => Effect.succeed(false),
-  requireSslForHost: () => Effect.succeed(false),
-});
-
 useLegacyShadowCacheDisabled();
 
 function setup(
@@ -131,7 +93,6 @@ function setup(
   });
   const dbConnection = fakeShadowDbConnection();
   const docker = fakeShadowSetupDocker();
-  const edge = fakeEdgeRuntime();
   const cliSettings = mockLegacyCliSettings({ workdir, projectId: Option.none() });
 
   // Every service `legacyDeclarativeSeamLayer` needs must be provided directly into `seam`
@@ -144,8 +105,6 @@ function setup(
     Layer.provide(cliSettings),
     Layer.provide(dbConnection.layer),
     Layer.provide(docker.layer),
-    Layer.provide(edge.layer),
-    Layer.provide(sslProbe),
     Layer.provide(alwaysReadyHttpClientLayer),
     Layer.provide(out.layer),
     Layer.provide(mockRuntimeInfo()),
@@ -167,8 +126,6 @@ function setup(
     shadowSpawner.layer,
     dbConnection.layer,
     docker.layer,
-    edge.layer,
-    sslProbe,
     alwaysReadyHttpClientLayer,
     cliSettings,
     mockRuntimeInfo(),
@@ -179,7 +136,7 @@ function setup(
     seam,
   );
 
-  return { layer, out, edgeCalls: edge.calls, shadowSpawned: shadowSpawner.spawned };
+  return { layer, out, shadowSpawned: shadowSpawner.spawned };
 }
 
 const failError = (exit: Exit.Exit<unknown, unknown>) =>
