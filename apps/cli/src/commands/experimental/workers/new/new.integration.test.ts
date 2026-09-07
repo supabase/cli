@@ -355,6 +355,62 @@ describe("legacy workers new", () => {
     },
   );
 
+  // CLI-2285 review follow-up: a DEFAULTED workdir's reader (`workers
+  // list`/`push`/`status`) can climb to discover a config.json-only ancestor
+  // project, but this command's own TOML-only writer never climbs — without
+  // an extra check, `new` would silently write a same-named duplicate at the
+  // subdirectory instead of refusing it the way it already refuses a
+  // duplicate at its own root.
+  it.live(
+    "refuses a name the reader would discover in a config.json-only ancestor project (defaulted workdir)",
+    () => {
+      const created = makeWorkersProject({
+        "supabase/config.json": JSON.stringify({
+          project_id: "demo",
+          workers: { api: { runtime: "node", size: "2gb" } },
+        }),
+      });
+      const sub = join(created.dir, "nested", "dir");
+      mkdirSync(sub, { recursive: true });
+      const cleanup = () => rmSync(created.dir, { recursive: true, force: true });
+      const { layer } = setupLegacyWorkers({ workdir: sub, explicitWorkdir: false });
+
+      return Effect.gen(function* () {
+        const error = yield* legacyWorkersNew(
+          flags({ name: Option.some("api"), runtime: Option.some("deno") }),
+        ).pipe(Effect.flip);
+
+        expect(error).toBeInstanceOf(WorkerAlreadyConfiguredError);
+        // Nothing was scaffolded at the subdirectory either.
+        expect(existsSync(join(sub, "supabase"))).toBe(false);
+      }).pipe(Effect.provide(layer), Effect.ensuring(Effect.sync(cleanup)));
+    },
+  );
+
+  it.live(
+    "does not refuse the same name when --workdir is explicit (writer and reader agree on the same root)",
+    () => {
+      const created = makeWorkersProject({
+        "supabase/config.json": JSON.stringify({
+          project_id: "demo",
+          workers: { api: { runtime: "node", size: "2gb" } },
+        }),
+      });
+      const sub = join(created.dir, "nested", "dir");
+      mkdirSync(sub, { recursive: true });
+      const cleanup = () => rmSync(created.dir, { recursive: true, force: true });
+      const { layer } = setupLegacyWorkers({ workdir: sub, explicitWorkdir: true });
+
+      return Effect.gen(function* () {
+        // An explicit workdir never climbs for either the reader or the
+        // writer, so the ancestor's config.json is invisible to both — this
+        // is the established bare-directory scaffold, unaffected by the fix.
+        yield* legacyWorkersNew(flags({ name: Option.some("api"), runtime: Option.some("deno") }));
+        expect(existsSync(join(sub, "supabase", "config.toml"))).toBe(true);
+      }).pipe(Effect.provide(layer), Effect.ensuring(Effect.sync(cleanup)));
+    },
+  );
+
   it.live("records a --source worker relative to the project root", () => {
     const repo = project();
     const { layer } = setupLegacyWorkers({ workdir: repo.dir });

@@ -48,6 +48,7 @@ import {
   WorkerDirectoryExistsError,
 } from "../../../../shared/workers/workers.errors.ts";
 import {
+  legacyLoadWorkersProject,
   legacyLoadWorkersProjectForEntryWrite,
   legacyValidateWorkerName,
   type LegacyWorkersProject,
@@ -291,6 +292,34 @@ export const legacyWorkersNew = Effect.fn("legacy.experimental.workers.new")(fun
       );
     }
 
+    // A DEFAULTED workdir's reader (`workers list`/`push`/`status`, used
+    // via `legacyLoadWorkersProject`) can discover a config.json-only
+    // ancestor project by climbing (CLI-2285); this command's own writer
+    // above is TOML-only and never climbs, so the two can disagree about
+    // which project is "the" project. When they do, and that ancestor
+    // already configures this name, writing a same-named worker here would
+    // silently create a second, disagreeing `[workers.<name>]` under a
+    // different root instead of the collision already refused above for
+    // this command's OWN root. An explicit `--workdir`/`SUPABASE_WORKDIR`
+    // never has this gap — both views are pinned to the same root then — so
+    // this only runs for a defaulted workdir, and only costs an extra read
+    // when it is.
+    if (!cliSettings.explicitWorkdir) {
+      const discovered = yield* legacyLoadWorkersProject().pipe(Effect.option);
+      if (
+        Option.isSome(discovered) &&
+        discovered.value.projectRoot !== project.projectRoot &&
+        discovered.value.section.workers[name] !== undefined
+      ) {
+        return yield* Effect.fail(
+          new WorkerAlreadyConfiguredError({
+            detail: `"${name}" is already configured in ${discovered.value.configPath}.`,
+            suggestion: `Run this command from ${discovered.value.projectRoot} to manage it there, or pick a different worker name.`,
+          }),
+        );
+      }
+    }
+
     // Resolved before anything is written, so cancelling any prompt leaves
     // nothing behind — the name included. With nowhere to ask, the defaults
     // stand; only the name has nothing to fall back to.
@@ -329,7 +358,12 @@ export const legacyWorkersNew = Effect.fn("legacy.experimental.workers.new")(fun
     // is to create a worker has no business removing whatever happens to share
     // its name — so it says what is in the way and leaves the choice to the user.
     if (!(yield* destinationIsFree(destination))) {
-      const shown = displayPath(project.projectRoot, destination);
+      // Absolute when `--workdir`/`SUPABASE_WORKDIR` was set explicitly — same
+      // rule as the success message below — since a project-root-relative
+      // path would be misleading once `--workdir` differs from cwd.
+      const shown = cliSettings.explicitWorkdir
+        ? destination
+        : displayPath(project.projectRoot, destination);
       return yield* Effect.fail(
         new WorkerDirectoryExistsError({
           detail: `${shown} already exists and is not empty.`,

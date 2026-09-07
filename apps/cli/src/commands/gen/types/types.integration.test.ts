@@ -848,38 +848,48 @@ describe("legacy gen types", () => {
   );
 
   it.live(
-    "--db-url --schema still hard-fails on an explicit --workdir with no project of its own",
-    () => {
-      // CLI-2285 accepted consequence: the --db-url branch unconditionally
-      // loads the local config (to merge its schema declaration into the
-      // types file), even when --schema was passed explicitly, so this fails
-      // before ever reaching parseDatabaseUrl/runPgMeta — an explicit,
-      // config-less --workdir must not silently proceed here either.
-      const root = mkdtempSync(join(tmpdir(), "supabase-gen-types-ancestor-"));
-      writeConfig(
-        root,
-        ['project_id = "demo"', "", "[api]", 'schemas = ["ancestor_only"]'].join("\n"),
-      );
-      const sub = join(root, "nested", "dir");
-      mkdirSync(sub, { recursive: true });
-      const dbUrl = "postgresql://postgres:postgres@127.0.0.1:5432/postgres";
-      const { layer, api } = setup({ workdir: sub, skipConfig: true, explicitWorkdir: true });
+    "--db-url --schema succeeds on an explicit --workdir with no project of its own, since an explicit schema never needs the config load",
+    () =>
+      Effect.tryPromise({
+        try: () =>
+          withSslProbeServer(async (port) => {
+            // The --db-url branch's config load exists only to fall back to
+            // a declared [api].schemas when --schema is absent — with an
+            // explicit --schema that load's result is unused, so it's
+            // skipped entirely, and a config-less explicit --workdir (here,
+            // a subdirectory of an unrelated ancestor project) must not
+            // fail an invocation that never needed the config.
+            const docker = captureDockerRun();
+            const root = mkdtempSync(join(tmpdir(), "supabase-gen-types-ancestor-"));
+            writeConfig(
+              root,
+              ['project_id = "demo"', "", "[api]", 'schemas = ["ancestor_only"]'].join("\n"),
+            );
+            const sub = join(root, "nested", "dir");
+            mkdirSync(sub, { recursive: true });
+            const { layer } = setup({
+              workdir: sub,
+              skipConfig: true,
+              explicitWorkdir: true,
+              childStdout: ["generated"],
+              onSpawn: docker.onSpawn,
+            });
 
-      return Effect.gen(function* () {
-        const exit = yield* legacyGenTypes(
-          defaultFlags({ dbUrl: Option.some(dbUrl), schema: ["public"] }),
-        ).pipe(Effect.provide(layer), Effect.exit);
+            await Effect.runPromise(
+              legacyGenTypes(
+                defaultFlags({
+                  dbUrl: Option.some(`postgresql://postgres:postgres@127.0.0.1:${port}/postgres`),
+                  schema: ["public"],
+                }),
+              ).pipe(Effect.provide(layer)),
+            );
 
-        expect(Exit.isFailure(exit)).toBe(true);
-        if (Exit.isFailure(exit)) {
-          expect(String(exit.cause)).toContain("LegacyGenTypesMissingProjectConfigError");
-          expect(String(exit.cause)).toContain(
-            "--workdir/SUPABASE_WORKDIR is used exactly as given and no ancestor directory is searched",
-          );
-        }
-        expect(api.requests).toHaveLength(0);
-      });
-    },
+            // The explicit --schema wins, not the (unreachable) ancestor's
+            // declared schema.
+            expect(docker.env.has("PG_META_GENERATE_TYPES_INCLUDED_SCHEMAS=public")).toBe(true);
+          }),
+        catch: (cause) => (cause instanceof Error ? cause : new Error(String(cause))),
+      }),
   );
 
   it.live(

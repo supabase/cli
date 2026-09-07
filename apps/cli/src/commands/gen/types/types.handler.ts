@@ -33,7 +33,10 @@ import {
 import type { LegacyPgConnInput } from "../../../command-internal/legacy-db-connection.service.ts";
 import { legacyToPostgresURL } from "../../../command-internal/legacy-postgres-url.ts";
 import { legacyTempPaths } from "../../../command-internal/legacy-temp-paths.ts";
-import { legacyMissingProjectConfigMessageEffect } from "../../../command-internal/legacy-workdir-project.ts";
+import {
+  legacyMissingProjectConfigMessageEffect,
+  legacyRelativeConfigPath,
+} from "../../../command-internal/legacy-workdir-project.ts";
 import { legacyShouldSearchAncestors } from "../../../command-internal/legacy-workdir-search.ts";
 import { legacyValidateWorkdirIsDirectory } from "../../../command-internal/legacy-workdir-validation.ts";
 import { LegacyLinkedProjectCache } from "../../../telemetry/legacy-linked-project-cache.service.ts";
@@ -268,16 +271,16 @@ export const legacyGenTypes = Effect.fn("legacy.gen.types")(function* (flags: Le
   const swiftAccessControl = flags.swiftAccessControl;
 
   // Resolved against `cliSettings.workdir`, the root every config load in
-  // this handler uses. `cause.path` is anchored under the workdir; render it
-  // relative so the message reads `supabase/config.json` like the family's
-  // other messages, regardless of invocation cwd.
-  const relativeConfigPath = (path: string) =>
-    path.startsWith(cliSettings.workdir)
-      ? path.slice(cliSettings.workdir.length).replace(/^[/\\]/, "")
-      : path;
+  // this handler uses.
+  const relativeConfigPath = (path: string) => legacyRelativeConfigPath(cliSettings.workdir, path);
 
-  const loadConfig = () =>
+  // `projectRef` is only ever passed for the `--linked`/`--project-id` paths
+  // below (so a matching `[remotes.*]` overlay is merged in the SAME load);
+  // omitted for the `--local`/`--db-url` paths, matching `loadCliConfig`'s
+  // own optional `projectRef`.
+  const loadConfig = (projectRef?: string) =>
     loadCliConfig(cliSettings.workdir, {
+      ...(projectRef === undefined ? {} : { projectRef }),
       goViperCompat: true,
       search: legacyShouldSearchAncestors(cliSettings),
     }).pipe(
@@ -288,25 +291,6 @@ export const legacyGenTypes = Effect.fn("legacy.gen.types")(function* (flags: Le
       // config is a parse failure, not the "no project here" case
       // `requireProjectConfigWhenExplicit` handles, so it must run before that
       // flatMap ever sees the (by-then-already-failed) load.
-      Effect.catchTag(
-        "CliConfigParseError",
-        (cause) =>
-          new LegacyGenTypesParseConfigError({
-            message: `failed to parse ${relativeConfigPath(cause.path)}: ${String(cause.cause)}`,
-          }),
-      ),
-      Effect.catchTag(
-        "DuplicateRemoteProjectIdError",
-        (cause) => new LegacyGenTypesParseConfigError({ message: cause.message }),
-      ),
-      Effect.flatMap(requireProjectConfigWhenExplicit),
-    );
-  const loadConfigForRef = (projectRef: string) =>
-    loadCliConfig(cliSettings.workdir, {
-      projectRef,
-      goViperCompat: true,
-      search: legacyShouldSearchAncestors(cliSettings),
-    }).pipe(
       Effect.catchTag(
         "CliConfigParseError",
         (cause) =>
@@ -723,7 +707,12 @@ export const legacyGenTypes = Effect.fn("legacy.gen.types")(function* (flags: Le
     }
 
     if (Option.isSome(flags.dbUrl)) {
-      const loaded = yield* loadConfig();
+      // Mirrors the `--linked`/`--project-id` branches below: an explicit
+      // `--schema` makes the config load's only output (the schema fallback)
+      // unused, so skip it entirely — an explicit workdir with no project
+      // must not fail a `--db-url --schema ...` invocation that never needed
+      // the config in the first place.
+      const loaded = schemas.length > 0 ? null : yield* loadConfig();
       const direct = yield* parseDatabaseUrl(flags.dbUrl.value);
       const includedSchemas = (
         schemas.length > 0 ? schemas : defaultSchemas(loaded?.config.api.schemas ?? [])
@@ -744,7 +733,7 @@ export const legacyGenTypes = Effect.fn("legacy.gen.types")(function* (flags: Le
 
     if (flags.linked) {
       const ref = yield* projectRef.resolve(Option.none());
-      const loaded = schemas.length > 0 ? null : yield* loadConfigForRef(ref);
+      const loaded = schemas.length > 0 ? null : yield* loadConfig(ref);
       yield* runProjectTypes(
         ref,
         schemas.length > 0 ? schemas : schemasFromConfig(loaded?.config.api.schemas),
@@ -755,7 +744,7 @@ export const legacyGenTypes = Effect.fn("legacy.gen.types")(function* (flags: Le
 
     if (Option.isSome(flags.projectId)) {
       const ref = yield* projectRef.resolve(flags.projectId);
-      const loaded = schemas.length > 0 ? null : yield* loadConfigForRef(ref);
+      const loaded = schemas.length > 0 ? null : yield* loadConfig(ref);
       yield* runProjectTypes(
         ref,
         schemas.length > 0 ? schemas : schemasFromConfig(loaded?.config.api.schemas),
@@ -777,7 +766,7 @@ export const legacyGenTypes = Effect.fn("legacy.gen.types")(function* (flags: Le
         return Effect.fail(cause);
       }),
     );
-    const loaded = schemas.length > 0 ? null : yield* loadConfigForRef(resolvedRef);
+    const loaded = schemas.length > 0 ? null : yield* loadConfig(resolvedRef);
     yield* runProjectTypes(
       resolvedRef,
       schemas.length > 0 ? schemas : schemasFromConfig(loaded?.config.api.schemas),

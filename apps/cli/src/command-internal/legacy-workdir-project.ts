@@ -7,7 +7,16 @@ import {
   ErrorActionabilityId,
 } from "../shared/telemetry/error-actionability.ts";
 import { legacySanitizeInlineName } from "./legacy-http-errors.ts";
-import { legacyShouldSearchAncestors } from "./legacy-workdir-search.ts";
+
+/**
+ * `cause.path`/`loaded.path` are anchored under `workdir`; render them
+ * relative so a message reads `supabase/config.json` like the rest of the
+ * JSON-capable config-load family (`config diff`/`pull`/`push`, `gen types`),
+ * regardless of invocation cwd.
+ */
+export function legacyRelativeConfigPath(workdir: string, path: string): string {
+  return path.startsWith(workdir) ? path.slice(workdir.length).replace(/^[/\\]/, "") : path;
+}
 
 /**
  * The established "no project here" message for a JSON-capable config load
@@ -47,10 +56,11 @@ export function legacyMissingProjectConfigMessage(input: {
  * `legacy-cli-settings.layer.ts`), so there is never a "missed" ancestor left
  * to suggest in that case.
  *
- * Purely a message enrichment: the extra probe is best-effort
- * (`Effect.orElseSucceed`) and a failure of it must never surface as a
- * different error, mask the real failure, or crash the command — it just
- * falls back to the base message.
+ * Purely a message enrichment: `findCliProjectPaths` itself never fails (a
+ * failed probe reads as "no config here", not an error — see its own doc
+ * comment), so the extra ancestor search can only ever change which sentence
+ * comes back, never surface a different error, mask the real failure, or
+ * crash the command.
  */
 export const legacyMissingProjectConfigMessageEffect = Effect.fnUntraced(function* (cliSettings: {
   readonly workdir: string;
@@ -60,9 +70,7 @@ export const legacyMissingProjectConfigMessageEffect = Effect.fnUntraced(functio
   if (!cliSettings.explicitWorkdir) {
     return base;
   }
-  const ancestor = yield* findCliProjectPaths(cliSettings.workdir, { search: true }).pipe(
-    Effect.orElseSucceed(() => null),
-  );
+  const ancestor = yield* findCliProjectPaths(cliSettings.workdir, { search: true });
   return ancestor === null
     ? base
     : `${base} Did you mean --workdir ${legacySanitizeInlineName(ancestor.projectRoot)}?`;
@@ -105,9 +113,10 @@ export const legacyRequireExplicitWorkdirProject = Effect.fnUntraced(function* (
   if (!cliSettings.explicitWorkdir) {
     return;
   }
-  const paths = yield* findCliProjectPaths(cliSettings.workdir, {
-    search: legacyShouldSearchAncestors(cliSettings),
-  });
+  // `explicitWorkdir` is guaranteed `true` past the guard above, so
+  // `legacyShouldSearchAncestors` would always evaluate to `false` here —
+  // spelled out directly rather than through that predicate.
+  const paths = yield* findCliProjectPaths(cliSettings.workdir, { search: false });
   if (paths === null) {
     return yield* new LegacyWorkdirProjectMissingError({
       message: yield* legacyMissingProjectConfigMessageEffect(cliSettings),

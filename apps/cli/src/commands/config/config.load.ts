@@ -1,17 +1,16 @@
 import { loadCliConfig } from "@supabase/config/internal";
 import { Effect } from "effect";
 
-import { legacyMissingProjectConfigMessageEffect } from "../../command-internal/legacy-workdir-project.ts";
+import {
+  legacyMissingProjectConfigMessageEffect,
+  legacyRelativeConfigPath,
+} from "../../command-internal/legacy-workdir-project.ts";
 import { legacyShouldSearchAncestors } from "../../command-internal/legacy-workdir-search.ts";
 
-/**
- * `cause.path`/`loaded.path` are anchored under `workdir`; render them
- * relative so a message reads `supabase/config.json` like the rest of the
- * `config` family, regardless of invocation cwd.
- */
-export function legacyRelativeConfigPath(workdir: string, path: string): string {
-  return path.startsWith(workdir) ? path.slice(workdir.length).replace(/^[/\\]/, "") : path;
-}
+// Re-exported for existing `config` family importers — the pure helper
+// itself now lives in `legacy-workdir-project.ts` since `gen types` needs it
+// too (Hoist Before You Duplicate: used across ≥2 command families).
+export { legacyRelativeConfigPath };
 
 /**
  * Loads `supabase/config.{toml,json}` for the `config` command family

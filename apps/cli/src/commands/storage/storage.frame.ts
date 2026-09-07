@@ -45,14 +45,19 @@ interface LegacyLoadedStorageConfig {
 /**
  * Load `supabase/config.toml`: a parse failure aborts
  * (`LegacyStorageConfigError`); a missing file falls back to the embedded
- * defaults — EXCEPT when `--workdir`/`SUPABASE_WORKDIR` was set explicitly,
- * where it hard-fails instead (`LegacyStorageMissingProjectConfigError`):
- * the embedded default `api.port` could otherwise retarget a local
- * `storage rm -r` (or any other operation) at a different, possibly
- * running, local stack. A DEFAULTED workdir keeps the established tolerant
- * fallback. When a `[remotes.<name>]` block matches the linked ref,
- * `appliedRemote` carries its name so the caller can print the
- * `Loading config override:` line.
+ * defaults — EXCEPT for a LOCAL target (`projectRef === ""`) with an
+ * explicitly-set `--workdir`/`SUPABASE_WORKDIR`, where it hard-fails instead
+ * (`LegacyStorageMissingProjectConfigError`): the embedded default `api.port`
+ * could otherwise retarget a local `storage rm -r` (or any other operation)
+ * at a different, possibly running, local stack. A REMOTE target
+ * (`--project-ref`/`--linked`) never hard-fails on this, explicit workdir or
+ * not: `legacyResolveStorageCredentials` doesn't read `config` at all on that
+ * path (Management API credentials only), so a config-less workdir poses no
+ * such risk there — it would only cost the (cosmetic) `[remotes.*]` override
+ * line. A DEFAULTED workdir keeps the established tolerant fallback either
+ * way. When a `[remotes.<name>]` block matches the linked ref, `appliedRemote`
+ * carries its name so the caller can print the `Loading config override:`
+ * line.
  */
 export const legacyLoadStorageConfig = Effect.fnUntraced(function* (
   cliSettings: { readonly workdir: string; readonly explicitWorkdir: boolean },
@@ -72,7 +77,7 @@ export const legacyLoadStorageConfig = Effect.fnUntraced(function* (
     ),
   );
   if (loaded === null) {
-    if (cliSettings.explicitWorkdir) {
+    if (cliSettings.explicitWorkdir && projectRef === "") {
       return yield* new LegacyStorageMissingProjectConfigError({
         message: yield* legacyMissingProjectConfigMessageEffect(cliSettings),
       });

@@ -333,6 +333,33 @@ describe("legacy storage ls", () => {
   );
 
   it.live(
+    "a remote (--linked) target with the same config-less explicit workdir still succeeds",
+    () => {
+      // The missing-project hard-fail is LOCAL-only: `legacyResolveStorageCredentials`
+      // never reads local config on the remote path (Management API credentials
+      // only), so a config-less explicit workdir poses none of the "retargets a
+      // different local stack" risk the local-target hard-fail guards against.
+      writeAncestorConfig(tmp.current, 'project_id = "test"\n[api]\nport = 65432\n');
+      const sub = join(tmp.current, "nested", "dir");
+      mkdirSync(sub, { recursive: true });
+      const { layer, requests } = setupLegacyStorage(sub, {
+        explicitWorkdir: true,
+        routes: [{ method: "GET", match: BUCKET, body: [{ name: "remote", id: "remote" }] }],
+      });
+      return Effect.gen(function* () {
+        const exit = yield* legacyStorageLs(lsFlags({ local: false })).pipe(
+          Effect.provide(layer),
+          Effect.exit,
+        );
+        expect(Exit.isSuccess(exit)).toBe(true);
+        expect(
+          requests.some((r) => r.url.startsWith(`https://${LEGACY_VALID_REF}.supabase.co`)),
+        ).toBe(true);
+      });
+    },
+  );
+
+  it.live(
     "hints at the ancestor's --workdir when it genuinely has a project (shared helper propagation)",
     () => {
       // Confirms `legacyMissingProjectConfigMessageEffect`'s "Did you mean"
