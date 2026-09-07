@@ -6,7 +6,7 @@ import { Predicate } from "effect";
 import pg from "pg";
 import { expect, inject, test as vitestTest } from "vitest";
 
-import { makeTempHome, runSupabase } from "./cli.ts";
+import { makeTempHome, requireCliSuccess, runSupabase } from "./cli.ts";
 import { LIVE_EXIT_TIMEOUT_MS } from "./live-env.ts";
 import type { LiveCliProjectEnvironment } from "./live-project.ts";
 
@@ -262,7 +262,7 @@ export async function awaitLiveBranchesRemoved(
       ["branches", "list", "--output", "json", "--project-ref", project.ref],
       { exitTimeoutMs: 20_000 },
     );
-    requireLiveSuccess(listed, label);
+    requireCliSuccess(listed, label);
     let branches: unknown;
     try {
       branches = JSON.parse(listed.stdout);
