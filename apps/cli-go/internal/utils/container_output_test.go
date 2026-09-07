@@ -9,59 +9,7 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/docker/docker/pkg/jsonmessage"
 	"github.com/stretchr/testify/assert"
-	"github.com/stretchr/testify/require"
 )
-
-func TestProcessDiffOutput(t *testing.T) {
-	t.Run("processes valid diff entries", func(t *testing.T) {
-		input := []DiffEntry{
-			{
-				Type:      "table",
-				Status:    "Different",
-				DiffDdl:   "ALTER TABLE test;",
-				GroupName: "public",
-			},
-			{
-				Type:      "extension",
-				Status:    "Different",
-				DiffDdl:   "CREATE EXTENSION test;",
-				GroupName: "public",
-			},
-		}
-		inputBytes, err := json.Marshal(input)
-		require.NoError(t, err)
-
-		output, err := ProcessDiffOutput(inputBytes)
-
-		assert.NoError(t, err)
-		assert.Contains(t, string(output), "ALTER TABLE test;")
-		assert.Contains(t, string(output), "CREATE EXTENSION test;")
-	})
-
-	t.Run("filters out internal schemas", func(t *testing.T) {
-		input := []DiffEntry{
-			{
-				Type:      "table",
-				Status:    "Different",
-				DiffDdl:   "ALTER TABLE test;",
-				GroupName: "auth",
-			},
-			{
-				Type:      "extension",
-				Status:    "Different",
-				DiffDdl:   "CREATE EXTENSION test;",
-				GroupName: "auth",
-			},
-		}
-		inputBytes, err := json.Marshal(input)
-		require.NoError(t, err)
-
-		output, err := ProcessDiffOutput(inputBytes)
-
-		assert.NoError(t, err)
-		assert.Nil(t, output)
-	})
-}
 
 func TestProcessPullOutput(t *testing.T) {
 	t.Run("processes docker pull messages", func(t *testing.T) {

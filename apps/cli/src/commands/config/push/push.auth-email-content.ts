@@ -3,13 +3,16 @@
  * body. Both templates and notifications resolve relative paths from the
  * project root (parent of `supabase/`); notifications additionally fall back
  * to the legacy `supabase/`-relative location when the root-resolved file is
- * missing, so configs written for older scaffolds keep working.
+ * missing, so configs written for older scaffolds keep working. Every
+ * resolved path — relative or absolute — is confined to the project root
+ * before it is read, since the loaded bytes are uploaded to whichever
+ * project the config names.
  */
 
 import type { CliConfig } from "@supabase/config";
 import { legacyResolveNotificationContentPath } from "../../../command-internal/legacy-config-validate.ts";
-import { readFileSync } from "node:fs";
-import { isAbsolute, join } from "node:path";
+import { readFileSync, realpathSync } from "node:fs";
+import { isAbsolute, join, relative, resolve, sep } from "node:path";
 
 type AuthEmail = CliConfig["auth"]["email"];
 
@@ -27,6 +30,71 @@ const EMPTY_AUTH_EMAIL_CONTENT: LegacyAuthEmailContent = {
   template: {},
   notification: {},
 };
+
+/**
+ * Whether `candidatePath` resolves inside (or exactly to) `root`. Both
+ * arguments must already be normalized absolute paths (see `resolve`/
+ * `realpathSync`). Only rejects a genuine `..` traversal — a same-level
+ * sibling whose name happens to start with two dots (e.g. `..templates`)
+ * is a distinct, in-root path and must not be rejected.
+ */
+function isPathContainedInRoot(root: string, candidatePath: string): boolean {
+  const rel = relative(root, candidatePath);
+  return rel === "" || (!isAbsolute(rel) && rel !== ".." && !rel.startsWith(`..${sep}`));
+}
+
+/**
+ * Resolves `path` to its real, symlink-free location for the containment
+ * check, falling back to lexical normalization when the target doesn't
+ * exist yet — that case has no symlink to dereference, and is left for
+ * `readTemplateContent` to report as a normal missing-file error.
+ */
+function realOrLexicalPath(path: string): string {
+  try {
+    return realpathSync(path);
+  } catch {
+    return resolve(path);
+  }
+}
+
+/**
+ * Resolves a template/notification `content_path`, rejecting any result
+ * that escapes the project root — a relative `..` traversal, or an absolute
+ * or symlinked path pointing elsewhere on disk. Rejecting here means an
+ * out-of-root path is never read, since the caller only reads a path this
+ * function returns. Symlinks are dereferenced (`realpathSync`) before the
+ * containment check, since `readFileSync` would otherwise follow an
+ * in-root symlink straight to an out-of-root target.
+ *
+ * @param kind - `template` or `notification` (used in the error prefix and to
+ *   select the notification-only legacy `supabase/`-relative fallback).
+ * @param name - Config key (e.g. `invite`, `password_changed`).
+ * @param cwd - Discovered project root (parent of `supabase/`).
+ * @param contentPath - Raw `content_path` value from the config.
+ * @returns Absolute, symlink-resolved path, confined to `cwd`.
+ * @throws When the resolved path falls outside the project root.
+ */
+function resolveContainedContentPath(
+  kind: "template" | "notification",
+  name: string,
+  cwd: string,
+  contentPath: string,
+): string {
+  const candidate =
+    kind === "notification"
+      ? legacyResolveNotificationContentPath(cwd, contentPath)
+      : isAbsolute(contentPath)
+        ? contentPath
+        : join(cwd, contentPath);
+  const root = realpathSync(cwd);
+  const resolved = realOrLexicalPath(candidate);
+  if (!isPathContainedInRoot(root, resolved)) {
+    throw new Error(
+      `Invalid config for auth.email.${kind}.${name}.content_path: resolves outside the project root (${resolved})`,
+    );
+  }
+  return resolved;
+}
 
 /**
  * Reads a template HTML file, wrapping a filesystem error with an
@@ -73,7 +141,7 @@ export function legacyLoadAuthEmailContent(cwd: string, email: AuthEmail): Legac
     if (contentPath.length === 0) {
       continue;
     }
-    const resolved = isAbsolute(contentPath) ? contentPath : join(cwd, contentPath);
+    const resolved = resolveContainedContentPath("template", name, cwd, contentPath);
     template[name] = readTemplateContent("template", name, resolved);
   }
 
@@ -85,7 +153,7 @@ export function legacyLoadAuthEmailContent(cwd: string, email: AuthEmail): Legac
     if (contentPath.length === 0) {
       continue;
     }
-    const resolved = legacyResolveNotificationContentPath(cwd, contentPath);
+    const resolved = resolveContainedContentPath("notification", name, cwd, contentPath);
     notification[name] = readTemplateContent("notification", name, resolved);
   }
 

@@ -2635,40 +2635,32 @@ describe("legacyReadDbToml", () => {
       // Go's loadNestedEnv os.Setenv's the project .env, but its root globals
       // (project-ref, SUPABASE_ENV, workdir/profile) are resolved from the shell
       // BEFORE loadNestedEnv. Our resolvers read process.env lazily, so we apply only
-      // the allowlisted `SUPABASE_INTERNAL_IMAGE_REGISTRY` / `PGDELTA_NPM_REGISTRY`
-      // (the two process.env-only readers): a .env project-ref must not retarget the
+      // the allowlisted `SUPABASE_INTERNAL_IMAGE_REGISTRY` (the process.env-only
+      // reader): a .env project-ref must not retarget the
       // lazy ref/pooler resolvers, and a .env SUPABASE_ENV must not switch the
       // env-file set.
       const saved: Record<string, string | undefined> = {};
-      for (const k of [
-        "SUPABASE_INTERNAL_IMAGE_REGISTRY",
-        "PGDELTA_NPM_REGISTRY",
-        "SUPABASE_PROJECT_ID",
-        "SUPABASE_ENV",
-      ]) {
+      for (const k of ["SUPABASE_INTERNAL_IMAGE_REGISTRY", "SUPABASE_PROJECT_ID", "SUPABASE_ENV"]) {
         saved[k] = process.env[k];
         delete process.env[k];
       }
       const loaded = {
         SUPABASE_INTERNAL_IMAGE_REGISTRY: "my-mirror.example.com",
-        PGDELTA_NPM_REGISTRY: "https://npm.example.com",
         SUPABASE_PROJECT_ID: "envonlyref",
         SUPABASE_ENV: "staging",
       };
       return Effect.gen(function* () {
-        // Inside the scope: only the registry keys are applied; the ref/env selector are not.
+        // Inside the scope: only the registry key is applied; the ref/env selector are not.
         yield* Effect.scoped(
           Effect.gen(function* () {
             yield* legacyApplyProjectEnv(loaded);
             expect(process.env["SUPABASE_INTERNAL_IMAGE_REGISTRY"]).toBe("my-mirror.example.com");
-            expect(process.env["PGDELTA_NPM_REGISTRY"]).toBe("https://npm.example.com");
             expect(process.env["SUPABASE_PROJECT_ID"]).toBeUndefined();
             expect(process.env["SUPABASE_ENV"]).toBeUndefined();
           }),
         );
         // After the scope closes the applied keys are reverted (no test-worker leak).
         expect(process.env["SUPABASE_INTERNAL_IMAGE_REGISTRY"]).toBeUndefined();
-        expect(process.env["PGDELTA_NPM_REGISTRY"]).toBeUndefined();
 
         // An existing process.env value is never overridden, and is NOT deleted on close.
         process.env["SUPABASE_INTERNAL_IMAGE_REGISTRY"] = "shell-wins.example.com";
@@ -2729,7 +2721,6 @@ describe("legacyReadDbToml [experimental.pgdelta]", () => {
           expect(v.pgDelta.enabled).toBe(false);
           expect(Option.isNone(v.pgDelta.declarativeSchemaPath)).toBe(true);
           expect(Option.isNone(v.pgDelta.formatOptions)).toBe(true);
-          expect(Option.isNone(v.pgDelta.npmVersion)).toBe(true);
           rmSync(dir, { recursive: true, force: true });
         }),
       ),
@@ -2776,34 +2767,6 @@ describe("legacyReadDbToml [experimental.pgdelta]", () => {
       ),
     );
   });
-
-  it.effect("reads the npm version from .temp/pgdelta-version (trimmed)", () => {
-    const dir = withConfig(["[experimental.pgdelta]", "enabled = true", ""].join("\n"));
-    mkdirSync(join(dir, "supabase", ".temp"), { recursive: true });
-    writeFileSync(join(dir, "supabase", ".temp", "pgdelta-version"), " 9.9.9-test \n");
-    return read(dir).pipe(
-      Effect.tap((v) =>
-        Effect.sync(() => {
-          expect(Option.getOrNull(v.pgDelta.npmVersion)).toBe("9.9.9-test");
-          rmSync(dir, { recursive: true, force: true });
-        }),
-      ),
-    );
-  });
-
-  it.effect("leaves npm version None for an empty .temp/pgdelta-version", () => {
-    const dir = withConfig(["[experimental.pgdelta]", "enabled = true", ""].join("\n"));
-    mkdirSync(join(dir, "supabase", ".temp"), { recursive: true });
-    writeFileSync(join(dir, "supabase", ".temp", "pgdelta-version"), " \n");
-    return read(dir).pipe(
-      Effect.tap((v) =>
-        Effect.sync(() => {
-          expect(Option.isNone(v.pgDelta.npmVersion)).toBe(true);
-          rmSync(dir, { recursive: true, force: true });
-        }),
-      ),
-    );
-  });
 });
 
 describe("legacyResolveDeclarativeDir", () => {
@@ -2815,7 +2778,6 @@ describe("legacyResolveDeclarativeDir", () => {
           enabled: false,
           declarativeSchemaPath: Option.none(),
           formatOptions: Option.none(),
-          npmVersion: Option.none(),
         }),
       ).toBe(join("supabase", "schemas"));
     }).pipe(Effect.provide(BunServices.layer)),
@@ -2829,7 +2791,6 @@ describe("legacyResolveDeclarativeDir", () => {
           enabled: true,
           declarativeSchemaPath: Option.some(join("supabase", "db", "decl")),
           formatOptions: Option.none(),
-          npmVersion: Option.none(),
         }),
       ).toBe(join("supabase", "db", "decl"));
     }).pipe(Effect.provide(BunServices.layer)),

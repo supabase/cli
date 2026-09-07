@@ -1,6 +1,5 @@
 import { dirname } from "node:path";
 import { fromApiProjectConfig, fromConfigDocument } from "@supabase/config";
-import { loadCliConfig } from "@supabase/config/internal";
 import { diffProjectConfig, findCliProjectRoot, type ConfigChange } from "@supabase/config/effect";
 import { operationDefinitions } from "@supabase/api/effect";
 import { Clock, Effect, FileSystem, Option, Path } from "effect";
@@ -18,12 +17,7 @@ import {
   legacyAssertDecryptableSecrets,
   legacyLoadProjectEnv,
 } from "../../../command-internal/legacy-db-config.toml-read.ts";
-import {
-  legacyParentNotLinkedMessage,
-  legacyParentRefInvalidMessage,
-  legacyParentRefTypoHint,
-  legacyResolveLinkedParentRef,
-} from "../../../command-internal/legacy-parent-project-ref.ts";
+import { legacyResolveLinkedParentRef } from "../../../command-internal/legacy-parent-project-ref.ts";
 import { LEGACY_BRANCH_UUID_PATTERN } from "../../../command-internal/legacy-ref-patterns.ts";
 import {
   legacySanitizeInlineName,
@@ -33,12 +27,13 @@ import {
 import { legacyPromptYesNo } from "../../../shared/legacy/legacy-prompt-yes-no.ts";
 import { legacyCollectDotenvPrivateKeys } from "../../../command-internal/legacy-vault-decrypt.ts";
 import { legacyConfigApiScope, legacyConfigScopeLine } from "../config.format.ts";
+import { legacyLoadLocalConfig } from "../config.load.ts";
 import { legacyConfigProjectConfigTry } from "../config.project-config.ts";
 import {
   legacyConfigReadStatusMessage,
   legacyUnexpectedStatusMessage,
 } from "../config.read-status.ts";
-import { legacyResolveConfigTarget } from "../config.target.ts";
+import { legacyConfigTargetErrorsFor, legacyResolveConfigTarget } from "../config.target.ts";
 import { legacyLoadAuthEmailContent } from "./push.auth-email-content.ts";
 import {
   type LegacyConfigPushKnownBranch,
@@ -146,24 +141,15 @@ const mapPushBranchResolveError = mapLegacyHttpError({
   statusMessage: legacyUnexpectedStatusMessage,
 });
 
-/** Error construction for `legacyResolveConfigTarget` (`../config.target.ts`,
- * shared with `config diff`/`config pull`), keeping `config push`'s own
- * tagged error classes and message wording. */
-const configTargetErrors = {
-  notLinked: (target: string) =>
-    new LegacyConfigPushBranchNotLinkedError({ message: legacyParentNotLinkedMessage(target) }),
-  parentRefInvalid: (target: string) =>
-    new LegacyConfigPushParentRefInvalidError({ message: legacyParentRefInvalidMessage(target) }),
-  branchNotFound: (target: string) =>
-    new LegacyConfigPushBranchNotFoundError({
-      message: `Branch "${legacySanitizeInlineName(target)}" not found. Run \`supabase branches list\` to see available branches.${legacyParentRefTypoHint(target)}`,
-    }),
-  branchNotReady: (target: string) =>
-    new LegacyConfigPushBranchNotReadyError({
-      message: `Branch "${legacySanitizeInlineName(target)}" has no project ref yet. Wait for it to finish provisioning, then retry.`,
-    }),
-  mapResolveError: mapPushBranchResolveError,
-};
+/** Error construction for `legacyResolveConfigTarget` (`../config.target.ts`, shared with
+ *  `config diff`/`config pull`), keeping `config push`'s own tagged error classes; the
+ *  message wording is shared there. */
+const configTargetErrors = legacyConfigTargetErrorsFor({
+  notLinked: LegacyConfigPushBranchNotLinkedError,
+  parentRefInvalid: LegacyConfigPushParentRefInvalidError,
+  branchNotFound: LegacyConfigPushBranchNotFoundError,
+  branchNotReady: LegacyConfigPushBranchNotReadyError,
+});
 
 export const legacyConfigPush = Effect.fn("legacy.config.push")(function* (
   flags: LegacyConfigPushFlags,
@@ -236,7 +222,11 @@ export const legacyConfigPush = Effect.fn("legacy.config.push")(function* (
     // before a malformed `config.toml` is caught — an accepted, narrow
     // tradeoff (matches this command's own pre-CLI-2168 behavior, which
     // always resolved before loading).
-    const { ref, branch } = yield* legacyResolveConfigTarget(requestedRef, configTargetErrors);
+    const { ref, branch } = yield* legacyResolveConfigTarget(
+      requestedRef,
+      configTargetErrors,
+      mapPushBranchResolveError,
+    );
     resolvedRef = ref;
 
     // 2. Load config.toml with the resolved ref (TOML parse error aborts
@@ -245,32 +235,18 @@ export const legacyConfigPush = Effect.fn("legacy.config.push")(function* (
     // above.
     //
     // NOTE (CLI-1489): `config push` needs the fully decoded config (every
-    // service subset), so it uses `loadCliConfig` rather than the tolerant
-    // `legacy-db-config.toml-read.ts` subtree reader. `loadCliConfig` raises
-    // `CliConfigParseError` on `env(...)` refs over numeric/bool fields.
-    // A duplicate `project_id` across remotes surfaces an established error
-    // message.
-    const loaded = yield* loadCliConfig(cliSettings.workdir, {
-      projectRef: ref,
-      goViperCompat: true,
-    }).pipe(
-      Effect.catchTag(
-        "CliConfigParseError",
-        (cause) =>
-          new LegacyConfigPushLoadConfigError({
-            message: `failed to parse supabase/config.toml: ${String(cause.cause)}`,
-          }),
-      ),
-      Effect.catchTag(
-        "DuplicateRemoteProjectIdError",
-        (cause) => new LegacyConfigPushLoadConfigError({ message: cause.message }),
-      ),
+    // service subset), so it uses `legacyLoadLocalConfig` (`../config.load.ts`,
+    // shared with `config diff`/`config pull`) rather than the tolerant
+    // `legacy-db-config.toml-read.ts` subtree reader. The underlying
+    // `loadCliConfig` raises `CliConfigParseError` on `env(...)` refs over
+    // numeric/bool fields; `legacyLoadLocalConfig` catches it (and a
+    // duplicate-remote/missing-file failure) and converts it to this
+    // family's own tagged error via the shared message shapes.
+    const loaded = yield* legacyLoadLocalConfig(
+      cliSettings.workdir,
+      ref,
+      (message) => new LegacyConfigPushLoadConfigError({ message }),
     );
-    if (loaded === null) {
-      return yield* new LegacyConfigPushLoadConfigError({
-        message: "failed to read supabase/config.toml: file not found",
-      });
-    }
     // Printed from inside config load, before any command output.
     if (loaded.appliedRemote !== undefined) {
       yield* output.raw(
@@ -416,7 +392,7 @@ export const legacyConfigPush = Effect.fn("legacy.config.push")(function* (
       return yield* new LegacyConfigPushConfigReadStatusError({
         status: response.status,
         body,
-        message: legacyConfigReadStatusMessage(response.status, body, ref),
+        message: legacyConfigReadStatusMessage(response.status, body, ref, cliSettings.apiUrl),
       });
     }
     const responseJson = yield* response.json.pipe(

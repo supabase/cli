@@ -975,8 +975,8 @@ const legacyWarmShadow = <E>(
 
 /**
  * `Effect.acquireUseRelease`'s `acquire` for every shadow-provisioning call site that runs the
- * platform baseline (`db diff`'s migra/pg-delta branch, `db pull`'s migration diff,
- * `legacy-pgdelta.cache.ts`'s catalog export, and pg-delta next's scoped shadows) — see
+ * platform baseline (`db diff`'s migra/pg-delta branch, `db pull`'s migration diff, and
+ * pg-delta's scoped shadows) — see
  * {@link legacyWithShadowDatabase} for the acquire/use/release wrapper, and
  * `legacy-pgdelta-next-shadow.layer.ts` for the scoped `acquireRelease` form next uses so the
  * container outlives provision (the engine keeps using the URL after this returns).

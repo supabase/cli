@@ -2,9 +2,10 @@
  * Go string-primitive helpers shared across the `db` command family. Currently
  * just `strings.TrimSpace`/`bytes.TrimSpace` — hoisted here (per the repo's
  * "hoist before you duplicate" rule, AGENTS.md) once a second `db`-family caller
- * needed the exact same primitive: `legacy-pgdelta.apply.ts` (CLI-1956, apply
- * error-detail trimming) and `legacy-pgadmin-diff.ts` (CLI-1968, `diff_ddl`
- * trimming) each carried their own private, verbatim copy before this move.
+ * needed the exact same primitive: the since-removed legacy pg-delta apply
+ * module (CLI-1956, apply error-detail trimming) and `legacy-pgadmin-diff.ts`
+ * (CLI-1968, `diff_ddl` trimming) each carried their own private, verbatim copy
+ * before this move.
  */
 
 /**

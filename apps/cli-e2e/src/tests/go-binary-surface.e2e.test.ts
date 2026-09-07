@@ -85,20 +85,17 @@ describe.skipIf(GO_BINARY === undefined)("go binary spawn surface (CLI-1970)", (
 
   // The complete spawn surface, mirrored from `LegacyGoProxy` call sites:
   //   - db diff (diff.handler.ts, `--use-pg-schema` delegate path)
-  //   - db pull (pull.handler.ts, `--experimental` delegate path)
   //   - db branch create|delete|list|switch (thin proxies)
-  //   - db remote changes|commit (thin proxies)
+  //   - db remote changes (thin proxy)
   //   - gen keys (keys.handler.ts)
   //   - functions download (shared/functions/download.ts, `--legacy-bundle`)
   const RETAINED_COMMAND_PATHS: ReadonlyArray<ReadonlyArray<string>> = [
     ["db", "diff"],
-    ["db", "pull"],
     ["db", "branch", "create"],
     ["db", "branch", "delete"],
     ["db", "branch", "list"],
     ["db", "branch", "switch"],
     ["db", "remote", "changes"],
-    ["db", "remote", "commit"],
     ["gen", "keys"],
     ["functions", "download"],
   ];
@@ -145,12 +142,11 @@ describe.skipIf(GO_BINARY === undefined)("go binary spawn surface (CLI-1970)", (
       expect(stderr).not.toMatch(/unknown flag|invalid argument/i);
     }, 5_000);
 
-    // `db pull --experimental` (pull.handler.ts's `rebuildDelegateArgs`), with
-    // the complete global-flag set root.ts can prepend (globalArgs) — the
-    // only invocation in this suite exercising all ten at once. `db pull`
-    // connects directly to --db-url before touching Docker, so this fails at
-    // connect regardless of the (unused here) --network-id/--profile values.
-    test("db pull --experimental (full global flag set)", () => {
+    // `db remote changes` (changes.handler.ts), with the complete global-flag
+    // set root.ts can prepend (globalArgs) — the only invocation in this
+    // suite exercising all ten at once. Also provisions a Docker shadow first
+    // (same as `db diff`), so the bogus DOCKER_HOST is what trips this one.
+    test("db remote changes (full global flag set)", () => {
       const { exitCode, stderr } = runGo([
         "--output",
         "json",
@@ -169,41 +165,8 @@ describe.skipIf(GO_BINARY === undefined)("go binary spawn surface (CLI-1970)", (
         "--agent",
         "no",
         "db",
-        "pull",
-        "--experimental",
-        "--db-url",
-        "postgresql://u:p@127.0.0.1:1/x",
-        "--schema",
-        "public",
-      ]);
-      expect(exitCode).toBe(1);
-      expect(stderr).not.toMatch(/unknown flag|invalid argument/i);
-    }, 5_000);
-
-    // `db remote changes` (changes.handler.ts). Also provisions a Docker
-    // shadow first (same as `db diff`), so the bogus DOCKER_HOST is what
-    // trips this one too.
-    test("db remote changes", () => {
-      const { exitCode, stderr } = runGo([
-        "db",
         "remote",
         "changes",
-        "--db-url",
-        "postgresql://u:p@127.0.0.1:1/x",
-        "--schema",
-        "public",
-      ]);
-      expect(exitCode).toBe(1);
-      expect(stderr).not.toMatch(/unknown flag|invalid argument/i);
-    }, 5_000);
-
-    // `db remote commit` (commit.handler.ts). Connects directly to --db-url
-    // before touching Docker (same as `db pull`).
-    test("db remote commit", () => {
-      const { exitCode, stderr } = runGo([
-        "db",
-        "remote",
-        "commit",
         "--db-url",
         "postgresql://u:p@127.0.0.1:1/x",
         "--schema",
