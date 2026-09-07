@@ -1,5 +1,7 @@
 import { describe, expect, it } from "@effect/vitest";
 import { Effect, Exit, Option } from "effect";
+import { mkdirSync, writeFileSync } from "node:fs";
+import { join } from "node:path";
 
 import { LEGACY_VALID_REF } from "../../../../tests/helpers/legacy-mocks.ts";
 import { setupLegacyStorage } from "../../../../tests/helpers/legacy-storage.ts";
@@ -9,6 +11,12 @@ import type { LegacyStorageLsFlags } from "./ls.command.ts";
 
 const BUCKET = "/storage/v1/bucket";
 const LIST = (bucket: string) => `/storage/v1/object/list/${bucket}`;
+
+function writeAncestorConfig(root: string, toml: string): void {
+  const dir = join(root, "supabase");
+  mkdirSync(dir, { recursive: true });
+  writeFileSync(join(dir, "config.toml"), toml);
+}
 
 function lsFlags(
   opts: { path?: string; recursive?: boolean; local?: boolean } = {},
@@ -299,6 +307,99 @@ describe("legacy storage ls", () => {
       expect(out.stderrText).not.toContain("Loading page");
     });
   });
+
+  it.live(
+    "fails with a missing-project error when --workdir names a config-less subdirectory of a real ancestor project",
+    () => {
+      // CLI-2285 regression, `legacyLoadStorageConfig`'s shared path: the
+      // ancestor project genuinely has a valid config.toml, and the
+      // subdirectory genuinely has none of its own — an EXPLICIT --workdir
+      // must never silently climb to the ancestor's config.
+      writeAncestorConfig(tmp.current, 'project_id = "test"\n[api]\nport = 65432\n');
+      const sub = join(tmp.current, "nested", "dir");
+      mkdirSync(sub, { recursive: true });
+      const { layer, requests } = setupLegacyStorage(sub, {
+        local: true,
+        explicitWorkdir: true,
+        routes: [{ method: "GET", match: BUCKET, body: [{ name: "test", id: "test" }] }],
+      });
+      return Effect.gen(function* () {
+        const exit = yield* legacyStorageLs(lsFlags()).pipe(Effect.provide(layer), Effect.exit);
+        expect(Exit.isFailure(exit)).toBe(true);
+        expect(JSON.stringify(exit)).toContain("LegacyStorageMissingProjectConfigError");
+        expect(requests).toHaveLength(0);
+      });
+    },
+  );
+
+  it.live(
+    "a remote (--linked) target with the same config-less explicit workdir still succeeds",
+    () => {
+      // The missing-project hard-fail is LOCAL-only: `legacyResolveStorageCredentials`
+      // never reads local config on the remote path (Management API credentials
+      // only), so a config-less explicit workdir poses none of the "retargets a
+      // different local stack" risk the local-target hard-fail guards against.
+      writeAncestorConfig(tmp.current, 'project_id = "test"\n[api]\nport = 65432\n');
+      const sub = join(tmp.current, "nested", "dir");
+      mkdirSync(sub, { recursive: true });
+      const { layer, requests } = setupLegacyStorage(sub, {
+        explicitWorkdir: true,
+        routes: [{ method: "GET", match: BUCKET, body: [{ name: "remote", id: "remote" }] }],
+      });
+      return Effect.gen(function* () {
+        const exit = yield* legacyStorageLs(lsFlags({ local: false })).pipe(
+          Effect.provide(layer),
+          Effect.exit,
+        );
+        expect(Exit.isSuccess(exit)).toBe(true);
+        expect(
+          requests.some((r) => r.url.startsWith(`https://${LEGACY_VALID_REF}.supabase.co`)),
+        ).toBe(true);
+      });
+    },
+  );
+
+  it.live(
+    "hints at the ancestor's --workdir when it genuinely has a project (shared helper propagation)",
+    () => {
+      // Confirms `legacyMissingProjectConfigMessageEffect`'s "Did you mean"
+      // hint is not `config diff`-specific wiring — the full regression and
+      // its negative counterpart are pinned in
+      // config/diff/diff.integration.test.ts; this only proves the shared
+      // helper reaches storage's own missing-project message too.
+      writeAncestorConfig(tmp.current, 'project_id = "test"\n[api]\nport = 65432\n');
+      const sub = join(tmp.current, "nested", "dir");
+      mkdirSync(sub, { recursive: true });
+      const { layer, requests } = setupLegacyStorage(sub, {
+        local: true,
+        explicitWorkdir: true,
+      });
+      return Effect.gen(function* () {
+        const exit = yield* legacyStorageLs(lsFlags()).pipe(Effect.provide(layer), Effect.exit);
+        expect(Exit.isFailure(exit)).toBe(true);
+        expect(JSON.stringify(exit)).toContain(`Did you mean --workdir ${tmp.current}?`);
+        expect(requests).toHaveLength(0);
+      });
+    },
+  );
+
+  it.live(
+    "an explicit --workdir naming a directory that does not exist at all fails before any config load",
+    () => {
+      const missing = join(tmp.current, "does-not-exist");
+      const { layer, requests } = setupLegacyStorage(missing, {
+        local: true,
+        explicitWorkdir: true,
+      });
+      return Effect.gen(function* () {
+        const exit = yield* legacyStorageLs(lsFlags()).pipe(Effect.provide(layer), Effect.exit);
+        expect(Exit.isFailure(exit)).toBe(true);
+        expect(JSON.stringify(exit)).toContain("LegacyStorageWorkdirError");
+        expect(JSON.stringify(exit)).toContain("failed to change workdir: chdir");
+        expect(requests).toHaveLength(0);
+      });
+    },
+  );
 });
 
 function hasOffset(body: unknown): boolean {

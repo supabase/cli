@@ -95,6 +95,10 @@ interface SetupOpts {
   readonly projectId?: Option.Option<string>;
   /** Overrides the process cwd (defaults to the temp workdir). */
   readonly cwd?: string;
+  /** cliSettings.workdir override (what `--workdir` resolves to); defaults to the temp project root. */
+  readonly workdir?: string;
+  /** cliSettings.explicitWorkdir override — true iff --workdir/SUPABASE_WORKDIR was set verbatim. */
+  readonly explicitWorkdir?: boolean;
   readonly analytics?: ReturnType<typeof mockContextualAnalytics>;
 }
 
@@ -135,7 +139,8 @@ function setup(opts: SetupOpts = {}) {
       out,
       api,
       cliSettings: mockLegacyCliSettings({
-        workdir: tempRoot.current,
+        workdir: opts.workdir ?? tempRoot.current,
+        explicitWorkdir: opts.explicitWorkdir ?? false,
         ...(opts.projectId !== undefined
           ? { projectId: opts.projectId }
           : opts.linked === false
@@ -544,6 +549,100 @@ describe("legacy config diff integration", () => {
       expect(telemetry.flushed).toBe(true);
     }).pipe(Effect.provide(layer));
   });
+
+  it.live(
+    "does not climb to an ancestor project's config when --workdir names a subdirectory with no config of its own",
+    () => {
+      // CLI-2285 regression: an explicit --workdir is authoritative and must
+      // never let `loadCliConfig` climb past it — otherwise `config diff
+      // --workdir ./sub` from a project whose subdirectory has no
+      // supabase/ of its own would silently diff an unrelated PARENT
+      // project's config. The ancestor (tempRoot) genuinely has a valid
+      // config.toml and the subdirectory genuinely has none, so this
+      // exercises the real climb, not a tautology.
+      writeConfig('project_id = "test"\n');
+      const sub = join(tempRoot.current, "nested", "dir");
+      mkdirSync(sub, { recursive: true });
+      const { layer, api, telemetry } = setup({ workdir: sub, explicitWorkdir: true });
+      return Effect.gen(function* () {
+        const exit = yield* legacyConfigDiff(noFlags).pipe(Effect.exit);
+        expect(Exit.isFailure(exit)).toBe(true);
+        const rendered = JSON.stringify(exit);
+        expect(rendered).toContain("LegacyConfigDiffLoadConfigError");
+        expect(rendered).toContain("file not found");
+        // An EXPLICIT workdir never gets the ancestor-search-exhausted
+        // `supabase init` hint — it names the resolved directory instead, and
+        // points at the flag/env var that must change.
+        expect(rendered).not.toContain("supabase init");
+        expect(rendered).toContain("--workdir/SUPABASE_WORKDIR");
+        expect(rendered).toContain(sub);
+        // The ancestor genuinely has a valid project, so the message also
+        // hints at it — `legacyMissingProjectConfigMessageEffect`'s "Did you
+        // mean" enrichment, only reachable because the search above is real.
+        expect(rendered).toContain(`Did you mean --workdir ${tempRoot.current}?`);
+        expect(api.requests).toHaveLength(0);
+        expect(telemetry.flushed).toBe(true);
+      }).pipe(Effect.provide(layer));
+    },
+  );
+
+  it.live(
+    "does not hint at an ancestor when explicit --workdir has no project anywhere above it",
+    () => {
+      // Negative counterpart of the regression above: no ancestor, all the
+      // way up, has a project of its own — so the "Did you mean" enrichment
+      // must never fire (or crash) when its best-effort probe finds nothing.
+      const { layer, api } = setup({ explicitWorkdir: true });
+      return Effect.gen(function* () {
+        const exit = yield* legacyConfigDiff(noFlags).pipe(Effect.exit);
+        expect(Exit.isFailure(exit)).toBe(true);
+        const rendered = JSON.stringify(exit);
+        expect(rendered).toContain("LegacyConfigDiffLoadConfigError");
+        expect(rendered).not.toContain("Did you mean");
+        expect(api.requests).toHaveLength(0);
+      }).pipe(Effect.provide(layer));
+    },
+  );
+
+  it.live(
+    "an explicit --workdir naming a directory that does not exist at all fails before any config load",
+    () => {
+      // Distinct from the "exists but holds no project" regression above:
+      // this path was never created, so `legacyValidateWorkdirIsDirectory`
+      // must fail first, before `loadCliConfig` is ever reached.
+      const missing = join(tempRoot.current, "does-not-exist");
+      const { layer, api } = setup({ workdir: missing, explicitWorkdir: true });
+      return Effect.gen(function* () {
+        const exit = yield* legacyConfigDiff(noFlags).pipe(Effect.exit);
+        expect(Exit.isFailure(exit)).toBe(true);
+        const rendered = JSON.stringify(exit);
+        expect(rendered).toContain("LegacyConfigDiffWorkdirError");
+        expect(rendered).toContain("failed to change workdir: chdir");
+        expect(api.requests).toHaveLength(0);
+      }).pipe(Effect.provide(layer));
+    },
+  );
+
+  it.live(
+    "a defaulted workdir still resolves a config.json project root above a config-less subdirectory",
+    () => {
+      // Complements the regression above: a defaulted (unset) --workdir must
+      // keep climbing so a config.json-only project invoked from a
+      // subdirectory still resolves — proving the fix didn't break the
+      // legitimate default-climb case.
+      const dir = join(tempRoot.current, "supabase");
+      mkdirSync(dir, { recursive: true });
+      writeFileSync(join(dir, "config.json"), JSON.stringify({ project_id: "test" }));
+      const sub = join(tempRoot.current, "nested", "dir");
+      mkdirSync(sub, { recursive: true });
+      const { layer, api } = setup({ workdir: sub, explicitWorkdir: false });
+      return Effect.gen(function* () {
+        yield* legacyConfigDiff(noFlags);
+        expect(api.requests.some((r) => r.url.includes("/v2/projects/"))).toBe(true);
+        expect(api.requests).not.toHaveLength(0);
+      }).pipe(Effect.provide(layer));
+    },
+  );
 
   it.live("a malformed config aborts before any network call, even with a branch target", () => {
     // A broken TOML must not burn a branch-resolution round trip — the local

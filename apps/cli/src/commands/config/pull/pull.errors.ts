@@ -28,6 +28,20 @@ export class LegacyConfigPullLoadConfigError extends Data.TaggedError(
 }
 
 /**
+ * The resolved `--workdir`/`SUPABASE_WORKDIR` doesn't exist or isn't a
+ * directory (`legacyValidateWorkdirIsDirectory`). Only reachable when the
+ * user explicitly set it — beats the base config load and every network
+ * call.
+ */
+export class LegacyConfigPullWorkdirError extends Data.TaggedError("LegacyConfigPullWorkdirError")<{
+  readonly message: string;
+}> {
+  get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
+    return actionability.provideFlags;
+  }
+}
+
+/**
  * The Go-compat global `-o/--output` flag was passed. `config pull` is a
  * net-new TS command with no Go parity contract, so machine output goes
  * through `--output-format` only (mirrors `config diff`, CLI-2156).

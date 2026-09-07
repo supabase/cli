@@ -52,6 +52,20 @@ export class LegacyConfigPushLoadConfigError extends Data.TaggedError(
   }
 }
 
+/**
+ * The resolved `--workdir`/`SUPABASE_WORKDIR` doesn't exist or isn't a
+ * directory (`legacyValidateWorkdirIsDirectory`). Only reachable when the
+ * user explicitly set it — beats target resolution, the config load, and
+ * every network call.
+ */
+export class LegacyConfigPushWorkdirError extends Data.TaggedError(
+  "LegacyConfigPushWorkdirError",
+)<MessageOnlyArgs> {
+  get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
+    return actionability.provideFlags;
+  }
+}
+
 // --- branch/UUID resolution (CLI-2289) --------------------------------------
 //
 // `--project-ref` accepts a project ref, or the name (or UUID) of one of its
