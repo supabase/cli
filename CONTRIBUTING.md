@@ -74,6 +74,8 @@ Install workspace dependencies:
 pnpm install
 ```
 
+This also installs a local `commit-msg` git hook (via husky) that validates your commit messages against `commitlint.config.js` — see [Pull Requests](AGENTS.md#pull-requests) for the allowed types and scopes.
+
 Clone the reference submodules used during development:
 
 ```sh
