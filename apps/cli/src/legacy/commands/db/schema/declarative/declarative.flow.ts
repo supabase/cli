@@ -88,13 +88,16 @@ export function legacyClassifyDeclarativeCompatibilityGap(opts: {
   const ambiguousRemovals = extensions.filter(
     (extension) => !LEGACY_IMPLICIT_EXTENSIONS.some((implicit) => implicit === extension),
   );
-  const extensionIntents = opts.removals.extensionIntents;
+  // Removing a pg_cron job or pgmq queue declaration is an ordinary delete or
+  // rename on a maintained tree, not legacy-export evidence: only a dropped
+  // extension trips the gate (CLI-2282). Their removals are kept as evidence
+  // solely to enumerate the objects a dropped owning extension takes with it.
+  const extensionIntents = opts.removals.extensionIntents.filter((intent) =>
+    extensions.includes(intent.extension),
+  );
 
-  if (extensions.length === 0 && extensionIntents.length === 0) return emptyCompatibilityGap();
-  const repairable =
-    repairableExtensions.length > 0 &&
-    ambiguousRemovals.length === 0 &&
-    extensionIntents.length === 0;
+  if (extensions.length === 0) return emptyCompatibilityGap();
+  const repairable = repairableExtensions.length > 0 && ambiguousRemovals.length === 0;
   return {
     repairableExtensions,
     extensionIntents,

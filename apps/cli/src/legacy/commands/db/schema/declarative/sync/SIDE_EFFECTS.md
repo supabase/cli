@@ -92,12 +92,13 @@ without prompting; both override the global `--yes`. `--no-apply` and `--apply`
 are mutually exclusive.
 
 A manifest-less legacy tree is refused by two compatibility gates — one when the
-tree fails to load on the bundled engine's shadow, one when the plan's removals
-reveal legacy-implicit extensions or extension-managed objects. Both render the
-same message (`This <declarative-dir> tree looks like a legacy pg-delta export.`
-plus an indented evidence block) and both carry the staged-upgrade recipe on the
-error's suggestion, so the generic `Try rerunning the command with --debug`
-footer is **not** printed. Non-interactive execution (including `--yes`) stops
+tree fails to load on the bundled engine's shadow, one when the plan drops an
+extension the tree no longer declares (removing or renaming a `pg_cron` job or
+`pgmq` queue declaration is an ordinary change and is never refused). Both
+render the same message (`This <declarative-dir> tree looks like a legacy
+pg-delta export.` plus an indented evidence block) and both carry the
+staged-upgrade recipe on the error's suggestion, so the generic `Try rerunning
+the command with --debug` footer is **not** printed. Non-interactive execution (including `--yes`) stops
 there and modifies nothing; the only recommended recovery is regenerating into
 `<declarative-dir>-next`, reviewing it, and adopting it.
 
