@@ -2,6 +2,7 @@ import { randomUUID } from "node:crypto";
 import { expect } from "vitest";
 
 import {
+  awaitLiveBranchesRemoved,
   removeLiveBranch,
   requireLiveSuccess,
   test,
@@ -15,10 +16,12 @@ test("disables preview branching", async ({ cli, project }) => {
   let cleanupError: unknown;
   try {
     // `branches disable` is project-wide and leaves branching off for the rest
-    // of the serial run. Creating then deleting a branch proves branching was
-    // on, so the assertion below disables a real, empty branching setup rather
-    // than a no-op; sibling tests each create their own branch first, which
-    // re-enables branching for them.
+    // of the serial run, and the platform refuses it (422) while any non-default
+    // branch exists. Creating then deleting a branch proves branching was on,
+    // and waiting until no non-default branch is listed (`branches delete`
+    // returns before the branch is gone) gives the assertion below a real,
+    // empty branching setup; sibling tests each create their own branch first,
+    // which re-enables branching for them.
     mayExist = true;
     const created = await cli(["branches", "create", name, "--project-ref", project.ref]);
     requireLiveSuccess(created, "branches create");
@@ -26,6 +29,7 @@ test("disables preview branching", async ({ cli, project }) => {
     const removed = await cli(["branches", "delete", name, "--project-ref", project.ref, "--yes"]);
     if (removed.exitCode === 0) mayExist = false;
     requireLiveSuccess(removed, "branches delete");
+    await awaitLiveBranchesRemoved(cli, project);
 
     const disabled = await cli(["branches", "disable", "--project-ref", project.ref]);
     expect(disabled.exitCode, disabled.stderr).toBe(0);
