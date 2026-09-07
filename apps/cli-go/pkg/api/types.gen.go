@@ -5892,6 +5892,7 @@ type AuthConfigResponseOutput struct {
 	SecurityManualLinkingEnabled                          nullable.Nullable[bool]                                               `json:"security_manual_linking_enabled"`
 	SecurityRefreshTokenReuseInterval                     nullable.Nullable[int]                                                `json:"security_refresh_token_reuse_interval"`
 	SecuritySbForwardedForEnabled                         nullable.Nullable[bool]                                               `json:"security_sb_forwarded_for_enabled"`
+	SecurityUpdatePasswordRequireCurrentPassword          nullable.Nullable[bool]                                               `json:"security_update_password_require_current_password"`
 	SecurityUpdatePasswordRequireReauthentication         nullable.Nullable[bool]                                               `json:"security_update_password_require_reauthentication"`
 	SessionsInactivityTimeout                             nullable.Nullable[float32]                                            `json:"sessions_inactivity_timeout"`
 	SessionsSinglePerUser                                 nullable.Nullable[bool]                                               `json:"sessions_single_per_user"`
@@ -8026,8 +8027,11 @@ type UpdateAuthConfigBody struct {
 	SecurityManualLinkingEnabled                          nullable.Nullable[bool]                                           `json:"security_manual_linking_enabled,omitempty"`
 
 	// SecurityRefreshTokenReuseInterval Refresh token reuse interval in seconds. Maximum 300 seconds (5 minutes).
-	SecurityRefreshTokenReuseInterval             nullable.Nullable[int]  `json:"security_refresh_token_reuse_interval,omitempty"`
-	SecuritySbForwardedForEnabled                 nullable.Nullable[bool] `json:"security_sb_forwarded_for_enabled,omitempty"`
+	SecurityRefreshTokenReuseInterval nullable.Nullable[int]  `json:"security_refresh_token_reuse_interval,omitempty"`
+	SecuritySbForwardedForEnabled     nullable.Nullable[bool] `json:"security_sb_forwarded_for_enabled,omitempty"`
+
+	// SecurityUpdatePasswordRequireCurrentPassword Require the user's current password when updating their password.
+	SecurityUpdatePasswordRequireCurrentPassword  nullable.Nullable[bool] `json:"security_update_password_require_current_password,omitempty"`
 	SecurityUpdatePasswordRequireReauthentication nullable.Nullable[bool] `json:"security_update_password_require_reauthentication,omitempty"`
 
 	// SessionsInactivityTimeout Session inactivity timeout in hours. Maximum 8760 hours (1 year).
@@ -8111,7 +8115,7 @@ type UpdateCustomHostnameBody struct {
 
 // UpdateCustomHostnameResponseOutput defines model for UpdateCustomHostnameResponse_Output.
 type UpdateCustomHostnameResponseOutput struct {
-	CustomHostname string `json:"custom_hostname"`
+	CustomHostname *string `json:"custom_hostname,omitempty"`
 	Data           struct {
 		Errors   []JsonValueOutput `json:"errors"`
 		Messages []JsonValueOutput `json:"messages"`
