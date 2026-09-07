@@ -648,7 +648,7 @@ describe("legacy sso update integration", () => {
       // Binary-verified Go behaviour: `--domains --profile staging <id>`
       // arity-errors because pflag hands `--profile` to `--domains` and
       // `staging` becomes positional. The scan must know the root's
-      // persistent value flags (`cmd/root.go:324-333`) to see this.
+      // persistent value flags (`cmd/root.go:337-348`) to see this.
       const { layer, api } = setup({
         cliArgs: ["sso", "update", "--domains", "--profile", "staging", VALID_PROVIDER_ID],
       });
@@ -671,9 +671,12 @@ describe("legacy sso update integration", () => {
       // Regression guards for the re-count: pflag consumes these globals'
       // values (`--workdir .`, `--output-format json`, `-o json`), so none
       // of them may register as a second positional — each invocation must
-      // sail through to the PUT exactly as before. The two `--log-level`
-      // variants pin issue #6482: the built-in global's value mis-counted as
-      // a positional (post-path), and the pre-path spelling's anchoring.
+      // sail through to the PUT exactly as before. The post-path
+      // `--log-level` variant pins issue #6482 (its value mis-counted as a
+      // positional); the pre-path variant already passed pre-fix via the
+      // unanchored fail-open scan and guards that the NEWLY ANCHORED path
+      // keeps accepting a valid invocation — the anchoring assertion itself
+      // lives in `cobra-flag-groups.unit.test.ts`.
       const argvVariants: ReadonlyArray<ReadonlyArray<string>> = [
         ["sso", "update", "--workdir", ".", VALID_PROVIDER_ID],
         ["sso", "update", "--output-format", "json", VALID_PROVIDER_ID],

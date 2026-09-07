@@ -146,6 +146,19 @@ describe("resolveAgentOutputFormat", () => {
     expect(
       resolveAgentOutputFormatFromArgs(["--wizard=bogus", "--version"], Option.some("codex")),
     ).toBe("text");
+    // The parser consumes a space-separated boolean literal too.
+    expect(
+      resolveAgentOutputFormatFromArgs(["--wizard", "false", "--version"], Option.some("codex")),
+    ).toBe("text");
+    expect(
+      resolveAgentOutputFormatFromArgs(["--debug", "0", "--version"], Option.some("codex")),
+    ).toBe("text");
+    // Boundary: a non-literal operand is NOT skipped — the walk bails
+    // conservatively even though the renderer still serves the version here
+    // (ledgered with the walk-consolidation follow-up).
+    expect(
+      resolveAgentOutputFormatFromArgs(["--wizard", "bogus", "--version"], Option.some("codex")),
+    ).toBe("json");
     expect(resolveAgentOutputFormatFromArgs(["--version=true"], Option.some("codex"))).toBe("text");
     expect(resolveAgentOutputFormatFromArgs(["--version=0"], Option.some("codex"))).toBe("text");
     expect(resolveAgentOutputFormatFromArgs(["-v=true"], Option.some("codex"))).toBe("text");

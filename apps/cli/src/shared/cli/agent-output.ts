@@ -1,5 +1,6 @@
 import { Option } from "effect";
 import type { OutputFormat } from "../output/types.ts";
+import { GLOBAL_VALUE_FLAG_TOKENS } from "./cobra-flag-groups.ts";
 
 // The union of every legacy command's `--output` values (see
 // `shared/legacy/global-flags.ts`): resource commands use `env|pretty|json|toml|yaml`,
@@ -91,39 +92,24 @@ function agentOverrideFromArg(value: string | undefined): AgentOverride {
 }
 
 // These predicates run pre-parse to pick the formatter a built-in ACTION
-// renders through, so they must also know the CLI library's built-in flags
-// (`GlobalFlag.BuiltIns`): `--completions bash --version` serves the Version
-// action (Version precedes Completions), and missing entries here rendered
-// it as JSON under agent detection instead of the plain version line.
+// renders through, so they must also know the CLI library's built-in flags:
+// `--completions bash --version` serves the Version action (Version precedes
+// Completions), and missing entries here rendered it as JSON under agent
+// detection instead of the plain version line. The flag set is the shared
+// derived registry, not a fourth hand-written copy (issue #6482).
 function isRootValueFlag(arg: string): boolean {
-  return (
-    arg === "--output-format" ||
-    arg === "--output" ||
-    arg === "-o" ||
-    arg === "--profile" ||
-    arg === "--workdir" ||
-    arg === "--network-id" ||
-    arg === "--dns-resolver" ||
-    arg === "--agent" ||
-    arg === "--log-level" ||
-    arg === "--completions"
-  );
+  return GLOBAL_VALUE_FLAG_TOKENS.has(arg);
 }
 
 function isRootValueFlagWithInlineValue(arg: string): boolean {
-  return (
-    arg.startsWith("--output-format=") ||
-    arg.startsWith("--output=") ||
-    arg.startsWith("-o=") ||
-    (arg.length > 2 && arg.startsWith("-o")) ||
-    arg.startsWith("--profile=") ||
-    arg.startsWith("--workdir=") ||
-    arg.startsWith("--network-id=") ||
-    arg.startsWith("--dns-resolver=") ||
-    arg.startsWith("--agent=") ||
-    arg.startsWith("--log-level=") ||
-    arg.startsWith("--completions=")
-  );
+  // Attached `-o<value>` — kept from the pre-derivation predicate; the
+  // shipped parser rejects this spelling, so it only ever classifies argv
+  // that already fails the parse.
+  if (arg.length > 2 && arg.startsWith("-o")) return true;
+  for (const token of GLOBAL_VALUE_FLAG_TOKENS) {
+    if (arg.startsWith(`${token}=`)) return true;
+  }
+  return false;
 }
 
 const ROOT_BOOLEAN_FLAGS: ReadonlyArray<string> = [
@@ -139,7 +125,12 @@ function isFlagOccurrence(arg: string, name: string): boolean {
   return arg === name || arg.startsWith(`${name}=`);
 }
 
-/** Inline values the CLI's boolean primitive accepts (lowercase only). */
+/**
+ * Inline values the CLI's boolean primitive ACCEPTS (lowercase only) — an
+ * acceptance set: any of these serves the flag's action, `=false` included.
+ * `run.ts`'s `PFLAG_BOOL_TRUE` answers a DIFFERENT question (ParseBool
+ * truthiness, for the pflag-modeled upgrade-notice scans); do not merge them.
+ */
 const BOOLEAN_FLAG_VALUES: ReadonlySet<string> = new Set([
   "true",
   "false",
@@ -169,6 +160,11 @@ function isRootBooleanFlag(arg: string): boolean {
   return ROOT_BOOLEAN_FLAGS.some((name) => isFlagOccurrence(arg, name));
 }
 
+// Deliberately bails at the first token that is not a known root flag
+// (subcommand names included): the renderer serves the Version action at any
+// depth, but several leaves declare their own `--version` (e.g. `db reset`),
+// so `<group> --version` resolving conservatively to JSON is the accepted
+// trade-off, ledgered with the walk-consolidation follow-up.
 function hasRootVersionRequest(args: ReadonlyArray<string>): boolean {
   for (let i = 0; i < args.length; i++) {
     const arg = args[i];
@@ -180,6 +176,13 @@ function hasRootVersionRequest(args: ReadonlyArray<string>): boolean {
     }
     if (isRootValueFlag(arg)) {
       i++;
+      continue;
+    }
+    if (ROOT_BOOLEAN_FLAGS.includes(arg)) {
+      // The parser consumes a space-separated boolean literal too
+      // (`--wizard false --version` still serves Version), so skip it.
+      const next = args[i + 1];
+      if (next !== undefined && BOOLEAN_FLAG_VALUES.has(next)) i++;
       continue;
     }
     if (isRootValueFlagWithInlineValue(arg) || isRootBooleanFlag(arg)) {

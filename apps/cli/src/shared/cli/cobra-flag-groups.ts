@@ -101,7 +101,7 @@ export function lastExplicitLongFlagValue(
 
 /**
  * Value-taking long flags registered persistently on the Go root command
- * (`apps/cli-go/cmd/root.go:324-333`: `--workdir`, `--network-id`,
+ * (`apps/cli-go/cmd/root.go:337-348`: `--workdir`, `--network-id`,
  * `--profile`, `--output`, `--dns-resolver`, `--agent`), plus the TS-only
  * globals the TS parser accepts on any subcommand: `--output-format`
  * (`shared/cli/global-flags.ts`) and the CLI library's built-in
@@ -115,8 +115,9 @@ export function lastExplicitLongFlagValue(
  * handler, which a parsed `--completions` never reaches (its print-and-exit
  * action runs first); only the pre-parse scanners (`globalFlagsWithValues`
  * in `shared/cli/run.ts`, the predicates in `shared/cli/agent-output.ts`)
- * need it. Keep in sync with `globalFlagsWithValues` in `shared/cli/run.ts`,
- * which carries every name here plus `--completions`.
+ * need it. No manual sync is required: both pre-parse consumers read
+ * `GLOBAL_VALUE_FLAG_TOKENS` below, which is derived from this set plus
+ * `--completions`.
  */
 export const PERSISTENT_VALUE_FLAG_NAMES: ReadonlySet<string> = new Set([
   "workdir",
@@ -131,10 +132,25 @@ export const PERSISTENT_VALUE_FLAG_NAMES: ReadonlySet<string> = new Set([
 
 /**
  * Shorthands of the persistent value-taking flags above (`-o` → `--output`,
- * `cmd/root.go:330`), mapped to their canonical long names.
+ * `cmd/root.go:344`), mapped to their canonical long names.
  */
 export const PERSISTENT_VALUE_FLAG_SHORTHANDS: ReadonlyMap<string, string> = new Map([
   ["o", "output"],
+]);
+
+/**
+ * Token-keyed view of every value-taking global the TS parser accepts:
+ * `PERSISTENT_VALUE_FLAG_NAMES` as `--` tokens, its shorthands, and the
+ * `--completions` built-in (needed by pre-parse scanners only — see above).
+ * Derived rather than hand-copied so the registries cannot drift apart, which
+ * is how issue #6482 happened. Consumed by `run.ts`'s argv scanners and
+ * `agent-output.ts`'s format predicates; pinned to its exact expected
+ * contents in `cobra-flag-groups.unit.test.ts`.
+ */
+export const GLOBAL_VALUE_FLAG_TOKENS: ReadonlySet<string> = new Set([
+  ...[...PERSISTENT_VALUE_FLAG_NAMES].map((name) => `--${name}`),
+  ...[...PERSISTENT_VALUE_FLAG_SHORTHANDS.keys()].map((short) => `-${short}`),
+  "--completions",
 ]);
 
 export interface PflagArgvScanSpec {

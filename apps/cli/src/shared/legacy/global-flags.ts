@@ -20,7 +20,7 @@ import { legacyViperEnvBool, legacyViperEnvBoolWithProjectFallback } from "./leg
 //
 // Every description string below is copied VERBATIM (including Go's own
 // lowercase, no-trailing-period house style for root persistent flags) from
-// `apps/cli-go/cmd/root.go:324-333` — this text is directly user-visible now
+// `apps/cli-go/cmd/root.go:337-348` — this text is directly user-visible now
 // that native shell completion (CLI-1965) surfaces it in `__complete`
 // candidate descriptions, where a prior Go-binary passthrough used to emit
 // Go's own text byte-for-byte; before that, this only reached the TS-native
@@ -115,25 +115,26 @@ export const LegacyAgentFlag = GlobalFlag.setting("agent")({
 
 /**
  * Every global/persistent flag declared above, mirroring the set Go registers on
- * the root command (`apps/cli-go/cmd/root.go:344-354`).
+ * the root command (`apps/cli-go/cmd/root.go:337-348`).
  *
- * Adding a VALUE-taking flag here also means registering its token in
- * `globalFlagsWithValues` (`shared/cli/run.ts`) and its name in
- * `PERSISTENT_VALUE_FLAG_NAMES` (`shared/cli/cobra-flag-groups.ts`). The same
- * obligation covers the CLI library's own value-taking built-ins
- * (`--log-level` — issue #6482; `--completions` is scoped per
- * `PERSISTENT_VALUE_FLAG_NAMES`'s doc). `globalFlagsWithValues` feeds
- * scanners that must run even for `--help`/`--version`/bare-group
+ * Adding a VALUE-taking flag here also means adding its name to
+ * `PERSISTENT_VALUE_FLAG_NAMES` (`shared/cli/cobra-flag-groups.ts`): the
+ * handler-side pflag scans read it directly, and the pre-parse scanners
+ * (`globalFlagsWithValues` in `shared/cli/run.ts`, the `agent-output.ts`
+ * predicates) derive their token set from it (`GLOBAL_VALUE_FLAG_TOKENS`),
+ * so that one edit covers them all. The same obligation covers the CLI
+ * library's own value-taking built-ins (`--log-level` — issue #6482;
+ * `--completions` is scoped per `PERSISTENT_VALUE_FLAG_NAMES`'s doc). The
+ * pre-parse scanners must run even for `--help`/`--version`/bare-group
  * invocations, which cobra serves before `PersistentPreRunE` and so never
- * expose parsed flag values to read instead; `PERSISTENT_VALUE_FLAG_NAMES`
- * feeds the handler-side pflag scans. Neither registry is derived
- * from this list, and drift fails silently rather than loudly: an unregistered
- * value flag does not consume its following token, so `supabase --new-flag
+ * expose parsed flag values to read instead. A flag missed in the shared
+ * registry still fails silently rather than loudly: an unregistered value
+ * flag does not consume its following token, so `supabase --new-flag
  * --workdir other <cmd>` makes the upgrade notice read/write
  * `other/supabase/.temp/cli-latest`, where Go — which lets `--new-flag` eat
- * `--workdir` — resolves against the cwd. Only the bare space-separated spelling
- * diverges (`--new-flag=x --workdir other` agrees), which is what makes it easy
- * to miss.
+ * `--workdir` — resolves against the cwd. Only the bare space-separated
+ * spelling diverges (`--new-flag=x --workdir other` agrees), which is what
+ * makes it easy to miss.
  */
 export const LEGACY_GLOBAL_FLAGS = [
   LegacyOutputFlag,

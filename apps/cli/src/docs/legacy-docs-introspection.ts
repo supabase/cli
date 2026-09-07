@@ -1,5 +1,4 @@
-import { GlobalFlag } from "effect/unstable/cli";
-import type { Command, Param, Primitive } from "effect/unstable/cli";
+import type { Command, GlobalFlag, Param, Primitive } from "effect/unstable/cli";
 
 /**
  * `.config.flags`/`.config.arguments` (a command's own declared params),
@@ -75,22 +74,18 @@ export function legacyFlattenSubcommands(
 }
 
 /**
- * A command's user-facing scoped global flag params. `GlobalFlag.Completions`
- * and `GlobalFlag.LogLevel` are only injected via `GlobalFlag.BuiltIns` at
- * parse time (never stored on a command's own `.globalFlags`), so the filter
- * is a defensive guard rather than something that changes today's output.
- * Unlike shell completion (`legacy-complete.ts`, which resolves the built-ins
- * because the real parser does — issue #6482), the docs spec deliberately
- * keeps the Go-shaped flag surface and leaves them out.
+ * A command's user-facing scoped global flag params — the flags commands
+ * declare themselves. The parser's built-ins (`GlobalFlag.BuiltIns`) are only
+ * injected at parse time and never stored on a command's `.globalFlags`, so
+ * the reference omits them by construction (no filter needed — same fact that
+ * let `legacy-complete.ts` drop its similar guard, issue #6482). Whether
+ * the reference should document the built-ins that `--help` and completion
+ * now show is a docs-surface decision tracked as a follow-up.
  */
 export function legacyUserGlobalFlagParams(
   command: Command.Command.Any,
 ): ReadonlyArray<Param.AnyFlag> {
-  return legacyCommandInternals(command)
-    .globalFlags.filter(
-      (entry) => entry !== GlobalFlag.Completions && entry !== GlobalFlag.LogLevel,
-    )
-    .map((entry) => entry.flag);
+  return legacyCommandInternals(command).globalFlags.map((entry) => entry.flag);
 }
 
 /**

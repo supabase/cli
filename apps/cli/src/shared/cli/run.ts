@@ -50,6 +50,7 @@ import { telemetryRuntimeLayer } from "../telemetry/runtime.layer.ts";
 import type { TelemetryRuntime } from "../telemetry/runtime.service.ts";
 import { tracingLayer } from "../telemetry/tracing.layer.ts";
 import { CliArgs } from "./cli-args.service.ts";
+import { GLOBAL_VALUE_FLAG_TOKENS } from "./cobra-flag-groups.ts";
 import { resolveAgentOutputFormatFromArgs } from "./agent-output.ts";
 import { SuccessTrailer, successTrailerLayer } from "./success-trailer.ts";
 import type { CliErrorSuggestionContext } from "./subcommand-flag-suggestions.ts";
@@ -87,28 +88,25 @@ type AllowedRunCliServices =
   | "effect/unstable/cli/GlobalFlag/linked"
   | "effect/unstable/cli/GlobalFlag/local";
 
-// Global flags that consume the following argv token as their value. Keep this in
-// sync with the value-taking global flags defined in `shared/cli/global-flags.ts`
-// and `shared/legacy/global-flags.ts` (both point back here), the CLI library's
-// built-ins `--log-level` and `--completions`, and the name-keyed
-// `PERSISTENT_VALUE_FLAG_NAMES` in `shared/cli/cobra-flag-groups.ts`: a value
+// Global flags that consume the following argv token as their value — a value
 // flag missing here would make `extractCommandPath` mistake its value for a
 // command-path segment, and would leave the flag's following token unconsumed
 // for every scanner below — silently mis-resolving `--workdir` for the bare
 // space-separated spelling, or missing the root `--version` behind
-// `--completions bash`.
-const globalFlagsWithValues = new Set([
-  "--output-format",
-  "--output",
-  "-o",
-  "--profile",
-  "--workdir",
-  "--network-id",
-  "--dns-resolver",
-  "--agent",
-  "--log-level",
-  "--completions",
-]);
+// `--completions bash`. Derived from `PERSISTENT_VALUE_FLAG_NAMES` (see
+// `GLOBAL_VALUE_FLAG_TOKENS`) so the registries cannot drift apart again
+// (issue #6482).
+//
+// DELIBERATE MODEL SPLIT: the scanners below keep pflag-style semantics for
+// BOOLEAN globals — a bare `--debug` never consumes a following token here —
+// while the shipped parser also consumes a space-separated boolean literal
+// (`--debug false`), which `agent-output.ts`'s format walk mirrors. The
+// residual divergence only steers the upgrade-notice base-dir/force-fetch
+// choice and the signal-wrapper selection for spellings like
+// `--debug false --version`, predates the issue #6482 fixes, and is
+// deliberately left with the walk-consolidation follow-up rather than
+// widened into this scanner family piecemeal.
+const globalFlagsWithValues: ReadonlySet<string> = GLOBAL_VALUE_FLAG_TOKENS;
 
 // Commands that run their own foreground signal loop (serve/start daemons) and must
 // NOT be wrapped in the global signal-interrupt handler, which would otherwise race
@@ -213,7 +211,19 @@ function isFlagOccurrence(token: string, name: string): boolean {
   return token === name || token.startsWith(`${name}=`);
 }
 
-/** `strconv.ParseBool`'s true spellings — how pflag reads a boolean flag's `=<value>`. An invalid value fails Go's whole parse, so a run never reaches the notice and reading it as false here is harmless. */
+/**
+ * `strconv.ParseBool`'s true spellings — a TRUTHINESS set for the
+ * pflag-modeled `--version=<value>` resolution below. Answers a different
+ * question than `BOOLEAN_FLAG_VALUES` (`agent-output.ts`), which asks whether
+ * the shipped parser ACCEPTS the value at all — that parser serves the
+ * Version action for any accepted value, `--version=no` included, so the two
+ * sets must not be merged. The residual divergence runs both ways — an
+ * accepted-but-not-ParseBool-true spelling (`--version=no`) resolves
+ * `version=false` here while the renderer still serves the version, and a
+ * ParseBool-true spelling the parser rejects (`--version=t`) never serves
+ * anything — but it only steers the upgrade-notice scans and predates the
+ * issue #6482 fixes.
+ */
 const PFLAG_BOOL_TRUE = new Set(["1", "t", "T", "TRUE", "true", "True"]);
 
 /**
@@ -302,9 +312,13 @@ export function hasRootVersionFlag(
  * check before `preRun`), and the one input Go would instead run (a runnable
  * leaf under `--help=false`) is a spelling the vendored effect CLI serves
  * help for anyway. The version flag resolves pflag-style, last value wins: a
- * true value serves the version built-in, while `--version=false <leaf>` runs
- * the leaf normally — `ChangeWorkDir` included — and only a bare invocation
- * falls back to the non-runnable root's help.
+ * true value counts as the version built-in, `--version=false <leaf>` counts
+ * as running the leaf — `ChangeWorkDir` included — and only a bare
+ * invocation falls back to the non-runnable root's help. That is this
+ * function's MODEL, not the shipped renderer's behavior: the parser serves
+ * the Version action for any accepted value, `--version=no` included (see
+ * `PFLAG_BOOL_TRUE`'s doc above for the deliberate split — only the
+ * upgrade-notice checks ride on this resolution).
  */
 export function hasRootHelpOrVersionFlag(
   args: ReadonlyArray<string>,
