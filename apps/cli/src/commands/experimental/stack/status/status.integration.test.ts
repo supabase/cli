@@ -42,10 +42,13 @@ const flags = (stack = Option.none<string>(), stackId = Option.none<string>()) =
   stackId,
 });
 
-const makeStatus = (stackId: typeof id): StackStatus => ({
+const makeStatus = (
+  stackId: typeof id,
+  desiredLifecycle: StackStatus["desiredLifecycle"] = "running",
+): StackStatus => ({
   id: stackId,
   lifecycle: "running",
-  desiredLifecycle: "running",
+  desiredLifecycle,
   runtime: { kind: "native" },
   endpoints: {
     api: { protocol: "http", address: "127.0.0.1", port: 54321, url: "http://127.0.0.1:54321" },
@@ -67,6 +70,7 @@ const runStatus = (options: {
   readonly flags?: ReturnType<typeof flags>;
   readonly compareFailure?: "typed" | "defect";
   readonly legacyOutput?: boolean;
+  readonly outputFormat?: "text" | "json";
 }) => {
   const root = mkdtempSync(join(tmpdir(), "supabase-stack-status-"));
   const projectRoot = join(root, "project");
@@ -92,7 +96,7 @@ const runStatus = (options: {
     ...(options.status === undefined ? {} : { status: options.status }),
     ...(options.drift === undefined ? {} : { configDrift: options.drift }),
   };
-  const out = mockOutput();
+  const out = mockOutput({ format: options.outputFormat ?? "text" });
   const findInputs: unknown[] = [];
   const inspectInputs: unknown[] = [];
   const api = Layer.succeed(LegacyExperimentalStackApi, {
@@ -199,6 +203,52 @@ describe("experimental stack status", () => {
           expect(run.out.stdoutText).toContain("Lifecycle: unavailable");
           expect(run.out.stdoutText).toContain("Desired lifecycle: running");
           expect(run.out.stdoutText).toContain("Readiness: unknown");
+        }),
+      ),
+    );
+  });
+
+  it.effect("emits the structured unavailable inspection for missing config", () => {
+    const run = runStatus({
+      config: "missing",
+      flags: flags(Option.none(), Option.some(id)),
+      outputFormat: "json",
+    });
+    return run.effect.pipe(
+      Effect.tap(() =>
+        Effect.sync(() => {
+          expect(run.out.stdoutText).toBe("");
+          const success = run.out.messages.find((message) => message.type === "success");
+          expect(success?.data).toMatchObject({
+            identity: {
+              id,
+              name: "feature-a",
+              project_root: run.projectRoot,
+              branch_context: "ordinary-workspace",
+            },
+            owner: "running",
+            readiness: "unknown",
+            lifecycle: null,
+            desired_lifecycle: "running",
+            config_drift: {
+              status: "unavailable",
+              message: expect.any(String),
+            },
+          });
+        }),
+      ),
+    );
+  });
+
+  it.effect("uses the live desired lifecycle consistently in text and JSON", () => {
+    const text = runStatus({ status: makeStatus(id, "stopped") });
+    const json = runStatus({ status: makeStatus(id, "stopped"), outputFormat: "json" });
+    return Effect.all([text.effect, json.effect]).pipe(
+      Effect.tap(() =>
+        Effect.sync(() => {
+          expect(text.out.stdoutText).toContain("Desired lifecycle: stopped");
+          const success = json.out.messages.find((message) => message.type === "success");
+          expect(success?.data).toMatchObject({ desired_lifecycle: "stopped" });
         }),
       ),
     );

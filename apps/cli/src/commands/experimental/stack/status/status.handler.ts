@@ -107,7 +107,7 @@ const render = (inspection: StackInspection, configWarning?: string): string => 
     `Runtime: ${descriptor.runtime.kind}`,
     `Owner: ${inspection.owner}`,
     `Lifecycle: ${inspection.status?.lifecycle ?? "unavailable"}`,
-    `Desired lifecycle: ${descriptor.desiredLifecycle}`,
+    `Desired lifecycle: ${inspection.status?.desiredLifecycle ?? descriptor.desiredLifecycle}`,
     `Readiness: ${readiness(inspection.status)}`,
   ];
   if (inspection.status !== undefined) {
