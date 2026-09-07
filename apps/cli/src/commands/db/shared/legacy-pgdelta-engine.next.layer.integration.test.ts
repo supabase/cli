@@ -59,11 +59,26 @@ const toml: LegacyDbTomlValues = {
 };
 
 function setup() {
-  const state = { migrations: 0, plan: 0, planBypassCache: undefined as boolean | undefined };
+  const state = {
+    migrations: 0,
+    declarative: 0,
+    plan: 0,
+    declarativeBypassCache: undefined as boolean | undefined,
+    planBypassCache: undefined as boolean | undefined,
+  };
   const shadow = Layer.succeed(LegacyPgDeltaNextShadow, {
     provisionMigrations: () =>
       Effect.sync(() => {
         state.migrations += 1;
+      }).pipe(
+        Effect.andThen(
+          Effect.fail(new LegacyDeclarativeShadowDbError({ message: "stop after routing" })),
+        ),
+      ),
+    provisionDeclarative: (opts) =>
+      Effect.sync(() => {
+        state.declarative += 1;
+        state.declarativeBypassCache = opts.bypassCache;
       }).pipe(
         Effect.andThen(
           Effect.fail(new LegacyDeclarativeShadowDbError({ message: "stop after routing" })),
@@ -124,6 +139,7 @@ describe("pg-delta next shadow selection", () => {
         .pipe(Effect.exit);
 
       expect(state.migrations).toBe(0);
+      expect(state.declarative).toBe(0);
       expect(state.plan).toBe(0);
     }).pipe(Effect.provide(layer));
   });
@@ -146,6 +162,7 @@ describe("pg-delta next shadow selection", () => {
         .pipe(Effect.exit);
 
       expect(state.migrations).toBe(1);
+      expect(state.declarative).toBe(0);
       expect(state.plan).toBe(0);
     }).pipe(Effect.provide(layer));
   });
@@ -164,8 +181,34 @@ describe("pg-delta next shadow selection", () => {
         .pipe(Effect.exit);
 
       expect(state.migrations).toBe(0);
+      expect(state.declarative).toBe(0);
       expect(state.plan).toBe(1);
       expect(state.planBypassCache).toBeUndefined();
+    }).pipe(Effect.provide(layer));
+  });
+
+  it.effect("uses only the declarative shadow when planning from a live database", () => {
+    const { state, layer } = setup();
+    return Effect.gen(function* () {
+      const engine = yield* LegacyPgDeltaEngine;
+      yield* engine
+        .planDeclarativeSchema({
+          ...common,
+          toml,
+          source: {
+            kind: "database",
+            ref: "postgresql://postgres:secret@localhost/postgres",
+            connectOptions: { isLocal: true, dnsResolver: "native" },
+          },
+          files: [{ name: "schema.sql", sql: "create table example(id int);" }],
+          noCache: true,
+        })
+        .pipe(Effect.exit);
+
+      expect(state.migrations).toBe(0);
+      expect(state.declarative).toBe(1);
+      expect(state.declarativeBypassCache).toBe(true);
+      expect(state.plan).toBe(0);
     }).pipe(Effect.provide(layer));
   });
 

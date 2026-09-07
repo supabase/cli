@@ -2,6 +2,7 @@ import { Layer } from "effect";
 
 import { commandRuntimeLayer } from "../../../../../shared/runtime/command-runtime.layer.ts";
 import { stdinLayer } from "../../../../../shared/runtime/stdin.layer.ts";
+import { machineErrorContextLayer } from "../../../../../shared/output/machine-error-context.layer.ts";
 import { legacyIdentityStitchLayer } from "../../../../../command-internal/legacy-identity-stitch.ts";
 import { legacyLinkedDbResolverRuntimeLayer } from "../../../../../command-internal/legacy-management-api-runtime.layer.ts";
 import { legacyTelemetryStateLayer } from "../../../../../telemetry/legacy-telemetry-state.layer.ts";
@@ -20,4 +21,5 @@ export const legacyDbSchemaDeclarativeSyncRuntimeLayer = Layer.mergeAll(
   ),
   commandRuntimeLayer(["db", "schema", "declarative", "sync"]),
   stdinLayer,
+  machineErrorContextLayer,
 );

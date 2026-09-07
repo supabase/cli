@@ -72,14 +72,10 @@ const formatImplicitExtensionLoadFailure = (
     },
   });
 
-/**
- * Computes the diff between local migrations state and the declarative schema.
- * The pg-delta engine owns both sides of the plan, planning against its scoped
- * migrations/declarative shadows.
- */
-export const legacyDiffDeclarativeToMigrations = Effect.fnUntraced(function* (
+const legacyPlanDeclarative = Effect.fnUntraced(function* (
   run: LegacyDeclarativeRunContext,
   toml: LegacyDbTomlValues,
+  source?: LegacyPgDeltaDatabaseEndpoint,
 ) {
   const fs = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
@@ -109,6 +105,7 @@ export const legacyDiffDeclarativeToMigrations = Effect.fnUntraced(function* (
       files,
       noCache: run.noCache,
       toml,
+      ...(source !== undefined ? { source } : {}),
       ...(run.linkedProjectRef !== undefined ? { projectRef: run.linkedProjectRef } : {}),
       ...(manifest !== undefined ? { manifest } : {}),
     })
@@ -141,6 +138,19 @@ export const legacyDiffDeclarativeToMigrations = Effect.fnUntraced(function* (
     removals: result.removals ?? { extensions: [], extensionIntents: [] },
   } satisfies LegacyDeclarativeSyncResult;
 });
+
+/** Plans from the local migrations state to the declarative schema. */
+export const legacyDiffDeclarativeToMigrations = (
+  run: LegacyDeclarativeRunContext,
+  toml: LegacyDbTomlValues,
+) => legacyPlanDeclarative(run, toml);
+
+/** Plans from a live database to the declarative schema without migration history. */
+export const legacyPlanDeclarativeToDatabase = (
+  run: LegacyDeclarativeRunContext,
+  toml: LegacyDbTomlValues,
+  source: LegacyPgDeltaDatabaseEndpoint,
+) => legacyPlanDeclarative(run, toml, source);
 
 export const legacyGenerateDeclarativeOutput = Effect.fnUntraced(function* (
   run: LegacyDeclarativeRunContext,

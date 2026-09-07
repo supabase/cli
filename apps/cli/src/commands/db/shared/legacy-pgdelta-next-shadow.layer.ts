@@ -43,6 +43,7 @@ import * as HttpClient from "effect/unstable/http/HttpClient";
 
 import {
   LegacyPgDeltaNextShadow,
+  type LegacyPgDeltaNextDeclarativeShadow,
   type LegacyPgDeltaNextMigrationsShadow,
   type LegacyPgDeltaNextPlanShadows,
   type LegacyPgDeltaNextShadowInput,
@@ -265,7 +266,7 @@ export const legacyPgDeltaNextShadowLayer = Layer.effect(
         } satisfies ProvisionedMigrationsShadow;
       }).pipe(Effect.provide(runtime), Effect.mapError(nextShadowError));
 
-    const provisionDeclarative = (
+    const provisionDeclarativeShadow = (
       input: NativeShadowInput,
       opts: LegacyShadowCacheOpts,
       outputService: typeof Output.Service = output,
@@ -298,6 +299,19 @@ export const legacyPgDeltaNextShadowLayer = Layer.effect(
           const input = buildNativeInput(opts, built, port);
           return yield* provisionMigrations(input, cacheOpts(opts, "config"));
         }).pipe(Effect.mapError(nextShadowError)),
+      provisionDeclarative: (opts) =>
+        Effect.gen(function* () {
+          const port = yield* nextPort();
+          const built = yield* buildNativeBase(opts);
+          const input = buildNativeInput(opts, built, port);
+          return yield* provisionDeclarativeShadow(input, cacheOpts(opts, "disabled"));
+        }).pipe(
+          Effect.map(
+            ({ declarativeUrl }) =>
+              ({ declarativeUrl }) satisfies LegacyPgDeltaNextDeclarativeShadow,
+          ),
+          Effect.mapError(nextShadowError),
+        ),
       provisionPlan: (opts) =>
         Effect.gen(function* () {
           const migrationsPort = yield* nextPort();
@@ -334,7 +348,7 @@ export const legacyPgDeltaNextShadowLayer = Layer.effect(
             strategy,
             provisionMigrations: (onBaselineSeam) =>
               provisionMigrations(migrationsInput, migrationsOpts, onBaselineSeam),
-            provisionDeclarative: provisionDeclarative(
+            provisionDeclarative: provisionDeclarativeShadow(
               declarativeInput,
               declarativeOpts,
               buffered === undefined ? output : buffered.output,

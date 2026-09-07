@@ -204,6 +204,38 @@ describe("legacyDeclarativeSeamLayer.ensureLocalPostgresImageCurrent", () => {
     },
   );
 
+  it.effect("recommends a data-preserving restart for same-major tag drift", () => {
+    const dir = mkdtempSync(join(tmpdir(), "legacy-pgdelta-seam-"));
+    const { layer } = setup(dir, { dbInspectImage: "supabase/postgres:17.6.1.166" });
+    return Effect.gen(function* () {
+      const seam = yield* LegacyDeclarativeSeam;
+      const exit = yield* seam.ensureLocalPostgresImageCurrent().pipe(Effect.exit);
+      expect(Exit.isFailure(exit)).toBe(true);
+      const error = failError(exit);
+      expect(error).toBeInstanceOf(LegacyDeclarativeShadowDbError);
+      const message = (error as LegacyDeclarativeShadowDbError).message;
+      expect(message).toContain("Run supabase stop, then supabase start");
+      expect(message).not.toContain("--no-backup");
+      rmSync(dir, { recursive: true, force: true });
+    }).pipe(Effect.provide(layer));
+  });
+
+  it.effect("warns that a major-version restart deletes local database data", () => {
+    const dir = mkdtempSync(join(tmpdir(), "legacy-pgdelta-seam-"));
+    const { layer } = setup(dir, { dbInspectImage: "supabase/postgres:15.8.1.085" });
+    return Effect.gen(function* () {
+      const seam = yield* LegacyDeclarativeSeam;
+      const exit = yield* seam.ensureLocalPostgresImageCurrent().pipe(Effect.exit);
+      expect(Exit.isFailure(exit)).toBe(true);
+      const error = failError(exit);
+      expect(error).toBeInstanceOf(LegacyDeclarativeShadowDbError);
+      const message = (error as LegacyDeclarativeShadowDbError).message;
+      expect(message).toContain("supabase stop --all --no-backup");
+      expect(message).toContain("deletes all local database data");
+      rmSync(dir, { recursive: true, force: true });
+    }).pipe(Effect.provide(layer));
+  });
+
   it.effect("bails out when inspect succeeds but the image name is unparseable", () => {
     vi.stubEnv("SUPABASE_USE_SLIM_IMAGES", "true");
     const dir = mkdtempSync(join(tmpdir(), "legacy-pgdelta-seam-"));

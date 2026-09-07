@@ -2,9 +2,62 @@ import { describe, expect, it } from "vitest";
 
 import {
   legacyIsMissingContainerInspectError,
+  legacyPostgresImageRemediation,
   legacyResolveContainerInspectImageName,
+  legacyResolvePostgresImageMajor,
   legacyToShadowDbError,
 } from "./legacy-pgdelta.seam.layer.ts";
+
+describe("legacyResolvePostgresImageMajor", () => {
+  it("reads standard and OrioleDB Postgres tags", () => {
+    expect(legacyResolvePostgresImageMajor("public.ecr.aws/supabase/postgres:17.6.1.167")).toBe(17);
+    expect(legacyResolvePostgresImageMajor("supabase/postgres:orioledb-15.1.0.55")).toBe(15);
+    expect(legacyResolvePostgresImageMajor("supabase/postgres:16.0.0.1-orioledb")).toBe(16);
+  });
+
+  it("returns undefined when the tag does not expose a numeric major", () => {
+    expect(legacyResolvePostgresImageMajor("supabase/postgres:latest")).toBeUndefined();
+    expect(legacyResolvePostgresImageMajor("registry.example:5000/postgres")).toBeUndefined();
+  });
+});
+
+describe("legacyPostgresImageRemediation", () => {
+  it("preserves data for same-major tag drift", () => {
+    const remediation = legacyPostgresImageRemediation(
+      "supabase/postgres:17.6.1.166",
+      "public.ecr.aws/supabase/postgres:17.6.1.167",
+    );
+    expect(remediation).toContain("Run supabase stop, then supabase start");
+    expect(remediation).not.toContain("--no-backup");
+  });
+
+  it("preserves data for image-family drift", () => {
+    const remediation = legacyPostgresImageRemediation(
+      "supabase/postgres:17.6.1.167",
+      "ghcr.io/supabase/cli/postgres:17.6.1.167",
+    );
+    expect(remediation).toContain("same SUPABASE_USE_SLIM_IMAGES setting");
+    expect(remediation).not.toContain("--no-backup");
+  });
+
+  it("deletes local data only for a proven major change", () => {
+    const remediation = legacyPostgresImageRemediation(
+      "supabase/postgres:15.8.1.085",
+      "public.ecr.aws/supabase/postgres:17.6.1.167",
+    );
+    expect(remediation).toContain("supabase stop --all --no-backup");
+    expect(remediation).toContain("deletes all local database data");
+  });
+
+  it("uses the data-preserving remedy when a major is unparseable", () => {
+    const remediation = legacyPostgresImageRemediation(
+      "supabase/postgres:latest",
+      "public.ecr.aws/supabase/postgres:17.6.1.167",
+    );
+    expect(remediation).toContain("Run supabase stop, then supabase start");
+    expect(remediation).not.toContain("--no-backup");
+  });
+});
 
 describe("legacyIsMissingContainerInspectError", () => {
   it("matches Docker and Podman missing-container stderr", () => {

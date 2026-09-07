@@ -19,6 +19,11 @@ export interface LegacyDebugBundle {
   readonly migrations?: ReadonlyArray<string>;
 }
 
+export interface LegacyDebugBundleResult {
+  readonly directory: string;
+  readonly migrationSqlSaved: boolean;
+}
+
 /** Go's debug-bundle id layout `20060102-150405` (UTC). */
 export function legacyFormatDebugId(millis: number): string {
   const digits = new Date(millis).toISOString().replace(/\D/gu, "").slice(0, 14);
@@ -29,7 +34,11 @@ const writeBestEffort = (
   fs: FileSystem.FileSystem,
   filePath: string,
   content: string,
-): Effect.Effect<void> => fs.writeFileString(filePath, content).pipe(Effect.ignore);
+): Effect.Effect<boolean> =>
+  fs.writeFileString(filePath, content).pipe(
+    Effect.as(true),
+    Effect.catch(() => Effect.succeed(false)),
+  );
 
 const copyBestEffort = (fs: FileSystem.FileSystem, from: string, to: string): Effect.Effect<void> =>
   fs.readFileString(from).pipe(
@@ -38,7 +47,8 @@ const copyBestEffort = (fs: FileSystem.FileSystem, from: string, to: string): Ef
   );
 
 /**
- * Writes a debug bundle to `<tempDir>/debug/<id>/` and returns the directory.
+ * Writes a debug bundle to `<tempDir>/debug/<id>/` and reports whether the
+ * generated SQL was persisted successfully.
  * Mirrors Go's `SaveDebugBundle`: creating the top-level directory is fatal (the
  * effect fails so callers don't claim a bundle was saved), while every individual
  * artifact write and the nested `migrations/` dir are best-effort (a failed copy
@@ -78,9 +88,14 @@ export const legacySaveDebugBundle = Effect.fnUntraced(function* (
       path.join(debugDir, "target-catalog.json"),
     );
   }
-  if (bundle.migrationSql !== undefined && bundle.migrationSql.length > 0) {
-    yield* writeBestEffort(fs, path.join(debugDir, "generated-migration.sql"), bundle.migrationSql);
-  }
+  const migrationSqlSaved =
+    bundle.migrationSql !== undefined && bundle.migrationSql.length > 0
+      ? yield* writeBestEffort(
+          fs,
+          path.join(debugDir, "generated-migration.sql"),
+          bundle.migrationSql,
+        )
+      : false;
   if (bundle.error !== undefined && bundle.error.length > 0) {
     yield* writeBestEffort(fs, path.join(debugDir, "error.txt"), bundle.error);
   }
@@ -91,7 +106,7 @@ export const legacySaveDebugBundle = Effect.fnUntraced(function* (
       yield* copyBestEffort(fs, path.join(migrationsDir, name), path.join(migrationsOut, name));
     }
   }
-  return debugDir;
+  return { directory: debugDir, migrationSqlSaved } satisfies LegacyDebugBundleResult;
 });
 
 /** Collects local migration *filenames* for a debug bundle (Go's `CollectMigrationsList`). */

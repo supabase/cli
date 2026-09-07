@@ -64,8 +64,7 @@ export const legacyToShadowDbError = (cause: {
 
 /**
  * Real `LegacyDeclarativeSeam`: fully native. `ensureLocalDatabaseStarted` shares the same
- * `legacyStartLocalDatabase` bring-up `db start` uses; `ensureLocalPostgresImageCurrent` was
- * already native (CLI-1956) and is unchanged here.
+ * `legacyStartLocalDatabase` bring-up `db start` uses.
  */
 export const legacyDeclarativeSeamLayer = Layer.effect(
   LegacyDeclarativeSeam,
@@ -237,10 +236,7 @@ export const legacyDeclarativeSeamLayer = Layer.effect(
             if (!familyMismatch && actualTag === expectedTag) {
               return;
             }
-            const remediation =
-              familyMismatch && actualTag === expectedTag
-                ? "The tags match but the image family does not (slim vs docker.io). Run supabase stop, then supabase start with the same SUPABASE_USE_SLIM_IMAGES setting before syncing declarative schemas."
-                : "Run supabase stop --all --no-backup, then supabase start before syncing declarative schemas.";
+            const remediation = legacyPostgresImageRemediation(actual, expected);
             return yield* Effect.fail(
               new LegacyDeclarativeShadowDbError({
                 message: `local Postgres container image is stale: running ${actual} but expected ${expected}. ${remediation}`,
@@ -262,6 +258,25 @@ function dockerImageTag(image: string): string {
   const index = trimmed.lastIndexOf(":");
   if (index < 0 || index === trimmed.length - 1) return "";
   return trimmed.slice(index + 1);
+}
+
+export function legacyResolvePostgresImageMajor(image: string): number | undefined {
+  const match = /^(?:orioledb-)?(\d+)(?:[.-]|$)/i.exec(dockerImageTag(image));
+  if (match === null) return undefined;
+  const major = Number(match[1]);
+  return Number.isSafeInteger(major) && major > 0 ? major : undefined;
+}
+
+export function legacyPostgresImageRemediation(actual: string, expected: string): string {
+  const actualMajor = legacyResolvePostgresImageMajor(actual);
+  const expectedMajor = legacyResolvePostgresImageMajor(expected);
+  if (actualMajor !== undefined && expectedMajor !== undefined && actualMajor !== expectedMajor) {
+    return `Postgres major version changed from ${actualMajor} to ${expectedMajor}. Run supabase stop --all --no-backup, then supabase start before syncing declarative schemas. This deletes all local database data.`;
+  }
+  if (isSlimImageRef(expected) !== isSlimImageRef(actual)) {
+    return "The image family changed (slim vs docker.io). Run supabase stop, then supabase start with the same SUPABASE_USE_SLIM_IMAGES setting before syncing declarative schemas.";
+  }
+  return "Run supabase stop, then supabase start before syncing declarative schemas.";
 }
 
 export function legacyIsMissingContainerInspectError(stderr: string): boolean {

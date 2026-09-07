@@ -147,6 +147,8 @@ export interface LegacyPgDeltaDeclarativeExportResult {
 }
 
 export interface LegacyPgDeltaDeclarativePlanInput extends LegacyPgDeltaCommonInput {
+  /** Live database to plan against instead of the migrations shadow. */
+  readonly source?: LegacyPgDeltaDatabaseEndpoint;
   readonly files: ReadonlyArray<LegacyPgDeltaSqlFile>;
   readonly manifest?: LegacyPgDeltaExportManifest;
   readonly noCache: boolean;

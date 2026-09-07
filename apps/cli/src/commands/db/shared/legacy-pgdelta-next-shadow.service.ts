@@ -18,6 +18,11 @@ export interface LegacyPgDeltaNextPlanShadows extends LegacyPgDeltaNextMigration
   readonly allowSameDatabaseIdentity: boolean;
 }
 
+/** The isolated desired-state database used for declarative planning. */
+export interface LegacyPgDeltaNextDeclarativeShadow {
+  readonly declarativeUrl: string;
+}
+
 export interface LegacyPgDeltaNextShadowInput {
   readonly context: LegacyPgDeltaContext;
   readonly toml: LegacyDbTomlValues;
@@ -38,6 +43,17 @@ interface LegacyPgDeltaNextShadowShape {
     opts: LegacyPgDeltaNextShadowInput,
   ) => Effect.Effect<
     LegacyPgDeltaNextMigrationsShadow,
+    LegacyDeclarativeShadowDbError,
+    Scope.Scope
+  >;
+  /**
+   * Provisions only the desired-state shadow needed when planning against a
+   * live database. The container is removed when the current Effect scope closes.
+   */
+  readonly provisionDeclarative: (
+    opts: LegacyPgDeltaNextShadowInput,
+  ) => Effect.Effect<
+    LegacyPgDeltaNextDeclarativeShadow,
     LegacyDeclarativeShadowDbError,
     Scope.Scope
   >;

@@ -49,6 +49,17 @@ export function legacyResolveDeclarativeMigrationName(name: string, file: string
   return name.length > 0 ? name : file;
 }
 
+export function legacyValidateDeclarativeMigrationStem(stem: string): string | undefined {
+  const candidate = stem.trim();
+  if (candidate.includes("/") || candidate.includes("\\")) {
+    return "migration names must not contain path separators";
+  }
+  if (/\.sql$/i.test(candidate)) {
+    return "migration names must not include the .sql suffix";
+  }
+  return undefined;
+}
+
 /** Whether sync applies the generated migration, prompts, or skips. */
 export type LegacyDeclarativeApplyDecision = "apply" | "skip" | "prompt";
 

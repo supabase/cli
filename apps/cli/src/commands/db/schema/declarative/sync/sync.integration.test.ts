@@ -1,8 +1,9 @@
-import { existsSync, mkdirSync, readFileSync, readdirSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, readdirSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { BunServices } from "@effect/platform-bun";
 import { describe, expect, it } from "@effect/vitest";
-import { Cause, Effect, Exit, Layer, Option } from "effect";
+import { Cause, Effect, Exit, FileSystem, Layer, Option } from "effect";
+import { PlatformError, SystemError } from "effect/PlatformError";
 
 import { stripAnsi } from "../../../../../../tests/helpers/ansi.ts";
 import {
@@ -28,6 +29,8 @@ import {
   useLegacyTempWorkdir,
 } from "../../../../../../tests/helpers/legacy-mocks.ts";
 import { CliArgs } from "../../../../../shared/cli/cli-args.service.ts";
+import { machineErrorContextLayer } from "../../../../../shared/output/machine-error-context.layer.ts";
+import { MachineErrorContext } from "../../../../../shared/output/machine-error-context.service.ts";
 import {
   LegacyDebugFlag,
   LegacyDnsResolverFlag,
@@ -44,6 +47,7 @@ import {
   LegacyDbConnection,
   type LegacyPgConnInput,
 } from "../../../../../command-internal/legacy-db-connection.service.ts";
+import { LegacyDbConnectError } from "../../../../../command-internal/legacy-db-connection.errors.ts";
 import {
   LegacyPgDeltaEngine,
   LegacyPgDeltaEngineError,
@@ -60,9 +64,12 @@ interface SetupOpts {
   args?: ReadonlyArray<string>;
   yes?: boolean;
   stdinIsTty?: boolean;
+  outputFormat?: "text" | "json" | "stream-json";
   diffSql?: string;
   replannedDiffSql?: string;
   applyFails?: boolean;
+  connectFails?: boolean;
+  batchConnectFails?: boolean;
   /**
    * Makes the recovery reset's `legacyResetLocalDatabase` fail immediately with
    * `LegacyResetLocalDbNotRunningError` (the local `db` container reports as not
@@ -78,10 +85,47 @@ interface SetupOpts {
   renderedFiles?: ReadonlyArray<LegacyPgDeltaRenderedFile>;
   removals?: LegacyPgDeltaRemovalSummary;
   planErrors?: ReadonlyArray<LegacyPgDeltaEngineError>;
+  cleanupDeleteFails?: boolean;
+  debugSqlWriteFails?: boolean;
 }
+
+const fileSystemFault = (method: "remove" | "writeFile", target: string, description: string) =>
+  new PlatformError(
+    new SystemError({
+      _tag: "Unknown",
+      module: "FileSystem",
+      method,
+      pathOrDescriptor: target,
+      description,
+    }),
+  );
+
+const fileSystemFaultLayer = (
+  workdir: string,
+  opts: Pick<SetupOpts, "cleanupDeleteFails" | "debugSqlWriteFails">,
+): Layer.Layer<FileSystem.FileSystem> =>
+  Layer.effect(
+    FileSystem.FileSystem,
+    Effect.map(FileSystem.FileSystem, (real) =>
+      FileSystem.FileSystem.of({
+        ...real,
+        remove: (target, options) =>
+          opts.cleanupDeleteFails === true &&
+          target.startsWith(join(workdir, "supabase", "migrations")) &&
+          target.endsWith(".sql")
+            ? Effect.fail(fileSystemFault("remove", target, "simulated cleanup failure"))
+            : real.remove(target, options),
+        writeFileString: (target, content, options) =>
+          opts.debugSqlWriteFails === true && target.endsWith("generated-migration.sql")
+            ? Effect.fail(fileSystemFault("writeFile", target, "simulated debug SQL write failure"))
+            : real.writeFileString(target, content, options),
+      }),
+    ),
+  ).pipe(Layer.provide(BunServices.layer));
 
 function setup(workdir: string, opts: SetupOpts = {}) {
   const out = mockOutput({
+    format: opts.outputFormat,
     promptConfirmResponses: opts.promptConfirmResponses,
     promptSelectResponses: opts.promptSelectResponses,
     promptTextResponses: opts.promptTextResponses,
@@ -89,6 +133,7 @@ function setup(workdir: string, opts: SetupOpts = {}) {
   const telemetry = mockLegacyTelemetryStateTracked();
   const cache = mockLegacyLinkedProjectCacheTracked();
   const localPostgresImageChecks: Array<true> = [];
+  const localDatabaseStarts: Array<true> = [];
   const platformApi = mockLegacyPlatformApiService({});
   // Backs `legacyResetLocalDatabase`'s real, native container-recreate — reached
   // when the recovery-reset offer is accepted (CLI-2062: it now runs in-process
@@ -97,7 +142,10 @@ function setup(workdir: string, opts: SetupOpts = {}) {
     defaultLocalResetRoute("test", { running: opts.resetShouldFail !== true }),
   );
   const seam = Layer.succeed(LegacyDeclarativeSeam, {
-    ensureLocalDatabaseStarted: () => Effect.void,
+    ensureLocalDatabaseStarted: () =>
+      Effect.sync(() => {
+        localDatabaseStarts.push(true);
+      }),
     ensureLocalPostgresImageCurrent: () =>
       Effect.sync(() => {
         localPostgresImageChecks.push(true);
@@ -126,41 +174,46 @@ function setup(workdir: string, opts: SetupOpts = {}) {
   const SHADOW_PORT = 54320;
   const dbConn = Layer.succeed(LegacyDbConnection, {
     connect: (cfg: LegacyPgConnInput) =>
-      Effect.succeed({
-        exec: (sql: string) =>
-          opts.applyFails === true && sql.startsWith("ALTER")
-            ? Effect.fail({ _tag: "LegacyDbExecError", message: "boom" } as never)
-            : Effect.sync(() => {
+      opts.connectFails === true && cfg.port !== SHADOW_PORT
+        ? Effect.fail(new LegacyDbConnectError({ message: "connection refused" }))
+        : Effect.succeed({
+            exec: (sql: string) =>
+              opts.applyFails === true && sql.startsWith("ALTER")
+                ? Effect.fail({ _tag: "LegacyDbExecError", message: "boom" } as never)
+                : Effect.sync(() => {
+                    if (cfg.port !== SHADOW_PORT) dbExec.push(sql);
+                  }),
+            execBatch: (statements: ReadonlyArray<LegacyDbBatchStatement>) => {
+              const sql = statements.map((statement) => statement.sql);
+              if (opts.batchConnectFails === true && cfg.port !== SHADOW_PORT) {
+                return Effect.fail(new LegacyDbConnectError({ message: "batch connection lost" }));
+              }
+              const failureIndex =
+                opts.applyFails === true
+                  ? sql.findIndex((statement) => statement.startsWith("ALTER"))
+                  : -1;
+              return failureIndex >= 0
+                ? Effect.fail({
+                    _tag: "LegacyDbExecError",
+                    message: "boom",
+                    statementIndex: failureIndex,
+                  } as never)
+                : Effect.sync(() => {
+                    if (cfg.port !== SHADOW_PORT) {
+                      dbBatches.push(sql);
+                      dbExec.push(...sql);
+                    }
+                  });
+            },
+            query: (sql: string) =>
+              Effect.sync(() => {
                 if (cfg.port !== SHADOW_PORT) dbExec.push(sql);
+                return [];
               }),
-        execBatch: (statements: ReadonlyArray<LegacyDbBatchStatement>) => {
-          const sql = statements.map((statement) => statement.sql);
-          const failureIndex =
-            opts.applyFails === true
-              ? sql.findIndex((statement) => statement.startsWith("ALTER"))
-              : -1;
-          return failureIndex >= 0
-            ? Effect.fail({
-                _tag: "LegacyDbExecError",
-                message: "boom",
-                statementIndex: failureIndex,
-              } as never)
-            : Effect.sync(() => {
-                if (cfg.port !== SHADOW_PORT) {
-                  dbBatches.push(sql);
-                  dbExec.push(...sql);
-                }
-              });
-        },
-        query: (sql: string) =>
-          Effect.sync(() => {
-            if (cfg.port !== SHADOW_PORT) dbExec.push(sql);
-            return [];
+            extensionExists: () => Effect.succeed(false),
+            copyToCsv: () => Effect.succeed(new Uint8Array()),
+            queryRaw: () => Effect.succeed({ fields: [], rows: [], commandTag: "" }),
           }),
-        extensionExists: () => Effect.succeed(false),
-        copyToCsv: () => Effect.succeed(new Uint8Array()),
-        queryRaw: () => Effect.succeed({ fields: [], rows: [], commandTag: "" }),
-      }),
   });
   // The no-files bootstrap delegates to the shared smart-target resolver; its
   // local path never calls `resolve`, but the linked/custom branches would.
@@ -193,9 +246,9 @@ function setup(workdir: string, opts: SetupOpts = {}) {
     Layer.provide(child.layer),
     Layer.provide(processControl.layer),
   );
-  const nextFiles = opts.renderedFiles ?? [];
   const planErrors = [...(opts.planErrors ?? [])];
   let planCalls = 0;
+  const planSources: Array<string | undefined> = [];
   const declarativeExportCalls: Array<ReadonlyArray<string>> = [];
   const engine = Layer.succeed(
     LegacyPgDeltaEngine,
@@ -210,8 +263,9 @@ function setup(workdir: string, opts: SetupOpts = {}) {
             manifest: { redactSecrets: true, scope: "database", profile: "supabase" },
           };
         }),
-      planDeclarativeSchema: () => {
+      planDeclarativeSchema: (input) => {
         planCalls += 1;
+        planSources.push(input.source?.ref);
         const planError = planErrors.shift();
         if (planError !== undefined) return Effect.fail(planError);
         const extensionPath = join(workdir, "supabase", "schemas", "extension.sql");
@@ -221,15 +275,28 @@ function setup(workdir: string, opts: SetupOpts = {}) {
         );
         const extensionsRepaired =
           remainingExtensions.length < (opts.removals?.extensions.length ?? 0);
+        const sql =
+          extensionsRepaired && opts.replannedDiffSql !== undefined
+            ? opts.replannedDiffSql
+            : (opts.diffSql ?? opts.renderedFiles?.map((file) => file.sql).join("\n") ?? "");
+        const files =
+          opts.renderedFiles ??
+          (sql.trim().length < 2
+            ? []
+            : [
+                {
+                  sequence: 0,
+                  name: "declarative_sync",
+                  sql,
+                  transactionMode: "transactional" as const,
+                },
+              ]);
         return Effect.succeed({
-          changes: nextFiles.length > 0,
-          sql:
-            extensionsRepaired && opts.replannedDiffSql !== undefined
-              ? opts.replannedDiffSql
-              : (opts.diffSql ?? nextFiles.map((file) => file.sql).join("\n")),
-          files: nextFiles,
-          sourceRef: "migrations",
-          targetRef: "declarative",
+          changes: files.length > 0,
+          sql,
+          files,
+          sourceRef: input.source === undefined ? "migrations" : "pg-delta-next:database",
+          targetRef: "pg-delta-next:declarative",
           removals:
             opts.removals === undefined
               ? undefined
@@ -268,6 +335,10 @@ function setup(workdir: string, opts: SetupOpts = {}) {
     runtimeInfo,
     processControl.layer,
     alwaysReadyHttpClientLayer,
+    machineErrorContextLayer,
+    ...(opts.cleanupDeleteFails === true || opts.debugSqlWriteFails === true
+      ? [fileSystemFaultLayer(workdir, opts)]
+      : []),
     dockerRun,
   );
   return {
@@ -279,6 +350,8 @@ function setup(workdir: string, opts: SetupOpts = {}) {
     cache,
     telemetry,
     localPostgresImageChecks,
+    localDatabaseStarts,
+    planSources,
     declarativeExportCalls,
     get planCalls() {
       return planCalls;
@@ -296,6 +369,7 @@ const flags = (
   name: over.name ?? Option.none(),
   apply: over.apply ?? Option.none(),
   noApply: over.noApply ?? Option.none(),
+  transient: over.transient ?? Option.none(),
 });
 
 const failError = (exit: Exit.Exit<unknown, unknown>) =>
@@ -305,6 +379,11 @@ const seedDeclarative = (workdir: string) => {
   const dir = join(workdir, "supabase", "schemas");
   mkdirSync(dir, { recursive: true });
   writeFileSync(join(dir, "public.sql"), "create table a();");
+};
+
+const migrationEntries = (workdir: string): ReadonlyArray<string> => {
+  const dir = join(workdir, "supabase", "migrations");
+  return existsSync(dir) ? readdirSync(dir) : [];
 };
 
 const seedLegacyUuidDeclarative = (workdir: string, directory = "schemas") => {
@@ -1273,6 +1352,7 @@ describe("legacy db schema declarative sync integration", () => {
           ),
         ).toBe(true);
         expect(existsSync(join(tmp.current, "supabase", ".temp", "pgdelta", "debug"))).toBe(true);
+        expect(migrationEntries(tmp.current)).toHaveLength(1);
         // `legacyResetLocalDatabase`'s own body never touches telemetry — the outer
         // `sync` command's single `Effect.ensuring` finalizer must still fire
         // EXACTLY once, not twice, matching Go's single-process `reset.Run` (no
@@ -1310,6 +1390,7 @@ describe("legacy db schema declarative sync integration", () => {
       ).toBe(true);
       // A real failure, before any destructive container work.
       expect(legacyLocalResetRemovedContainers(s.child.spawned)).toEqual([]);
+      expect(migrationEntries(tmp.current)).toHaveLength(1);
     }).pipe(Effect.provide(s.layer));
   });
 
@@ -1363,6 +1444,473 @@ describe("legacy db schema declarative sync integration", () => {
       expect(migrations).toHaveLength(2);
       expect(migrations[0]).toMatch(/^\d{14}_declarative_sync_1\.sql$/);
       expect(migrations[1]).toMatch(/^\d{14}_declarative_sync_2\.sql$/);
+    }).pipe(Effect.provide(s.layer));
+  });
+
+  it.effect("rejects every transient-incompatible flag before local side effects", () => {
+    seedDeclarative(tmp.current);
+    const cases: ReadonlyArray<Partial<LegacyDbSchemaDeclarativeSyncFlags>> = [
+      { transient: Option.some(true), noApply: Option.some(true) },
+      { transient: Option.some(true), file: Option.some("change") },
+      { transient: Option.some(true), name: Option.some("change") },
+      { transient: Option.some(true), apply: Option.some(false) },
+    ];
+    return Effect.gen(function* () {
+      for (const flagCase of cases) {
+        const s = setup(tmp.current, { yes: true, diffSql: "ALTER TABLE a ADD COLUMN b int;" });
+        const exit = yield* legacyDbSchemaDeclarativeSync(flags(flagCase)).pipe(
+          Effect.provide(s.layer),
+          Effect.exit,
+        );
+        expect(failError(exit)).toMatchObject({
+          _tag: "LegacyDeclarativeMutuallyExclusiveFlagsError",
+        });
+        expect(s.localPostgresImageChecks).toEqual([]);
+        expect(s.localDatabaseStarts).toEqual([]);
+        expect(s.planCalls).toBe(0);
+      }
+    });
+  });
+
+  it.effect("transient missing-tree failure never bootstraps or starts local Postgres", () => {
+    const s = setup(tmp.current, { yes: true, diffSql: "ALTER TABLE a ADD COLUMN b int;" });
+    return Effect.gen(function* () {
+      const exit = yield* legacyDbSchemaDeclarativeSync(
+        flags({ transient: Option.some(true) }),
+      ).pipe(Effect.exit);
+      expect(failError(exit)).toMatchObject({
+        _tag: "LegacyDeclarativeNonInteractiveError",
+        message: expect.stringContaining("generate first"),
+      });
+      expect(s.planCalls).toBe(0);
+      expect(s.localPostgresImageChecks).toEqual([]);
+      expect(s.localDatabaseStarts).toEqual([]);
+      expect(s.declarativeExportCalls).toEqual([]);
+    }).pipe(Effect.provide(s.layer));
+  });
+
+  it.effect("transient treats trees without recursive SQL files as missing", () => {
+    const declarativeDir = join(tmp.current, "supabase", "schemas");
+    const s = setup(tmp.current, { yes: true, diffSql: "DROP TABLE public.accounts;" });
+    return Effect.gen(function* () {
+      for (const fixture of ["manifest", "empty-directory"] as const) {
+        rmSync(declarativeDir, { recursive: true, force: true });
+        mkdirSync(declarativeDir, { recursive: true });
+        if (fixture === "manifest") {
+          writeFileSync(
+            join(declarativeDir, ".pgdelta-export.json"),
+            JSON.stringify({ redactSecrets: true, scope: "database" }),
+          );
+        } else {
+          mkdirSync(join(declarativeDir, "public", "tables"), { recursive: true });
+        }
+        const exit = yield* legacyDbSchemaDeclarativeSync(
+          flags({ transient: Option.some(true) }),
+        ).pipe(Effect.exit);
+        expect(failError(exit)).toMatchObject({
+          _tag: "LegacyDeclarativeNonInteractiveError",
+          message: expect.stringContaining("generate first"),
+        });
+      }
+      expect(s.planCalls).toBe(0);
+      expect(s.localPostgresImageChecks).toEqual([]);
+      expect(s.localDatabaseStarts).toEqual([]);
+    }).pipe(Effect.provide(s.layer));
+  });
+
+  it.effect(
+    "transient applies ordered units from the running database with SQL visible twice and no durable artifacts",
+    () => {
+      seedDeclarative(tmp.current);
+      const renderedFiles: ReadonlyArray<LegacyPgDeltaRenderedFile> = [
+        {
+          sequence: 1,
+          name: "tables",
+          sql: "ALTER TABLE a ADD COLUMN b int;",
+          transactionMode: "transactional",
+        },
+        {
+          sequence: 2,
+          name: "enum_values",
+          sql: "ALTER TYPE mood ADD VALUE 'fine';",
+          transactionMode: "none",
+        },
+        {
+          sequence: 3,
+          name: "removals",
+          sql: "DROP TABLE public.old_table;",
+          transactionMode: "transactional",
+        },
+      ];
+      const sql = renderedFiles.map((file) => file.sql).join("\n");
+      const s = setup(tmp.current, { yes: true, renderedFiles });
+      return Effect.gen(function* () {
+        yield* legacyDbSchemaDeclarativeSync(
+          flags({ transient: Option.some(true), apply: Option.some(true) }),
+        );
+        expect(s.localPostgresImageChecks).toHaveLength(1);
+        expect(s.localDatabaseStarts).toHaveLength(1);
+        expect(s.planSources).toHaveLength(1);
+        expect(s.planSources[0]).toContain("127.0.0.1");
+        expect(s.dbExec).toEqual(renderedFiles.map((file) => file.sql.replace(/;$/u, "")));
+        expect(s.dbExec.join("\n")).not.toContain("schema_migrations");
+        expect(s.dbExec).not.toContain("RESET ALL");
+        expect(migrationEntries(tmp.current)).toEqual([]);
+        expect(s.out.stdoutText).toBe(`${sql}\n${sql}\n`);
+        expect(stripAnsi(s.out.stderrText)).toContain("Found destructive changes");
+      }).pipe(Effect.provide(s.layer));
+    },
+  );
+
+  it.effect("transient TTY cancellation leaves the planned SQL visible and applies nothing", () => {
+    seedDeclarative(tmp.current);
+    const sql = "ALTER TABLE a ADD COLUMN b int;";
+    const s = setup(tmp.current, {
+      stdinIsTty: true,
+      diffSql: sql,
+      promptConfirmResponses: [false],
+    });
+    return Effect.gen(function* () {
+      yield* legacyDbSchemaDeclarativeSync(flags({ transient: Option.some(true) }));
+      expect(s.out.promptConfirmCalls).toContainEqual(
+        expect.objectContaining({
+          message: "Apply these schema changes directly to the local database?",
+        }),
+      );
+      expect(s.out.stdoutText).toBe(`${sql}\n`);
+      expect(s.dbExec).toEqual([]);
+      expect(migrationEntries(tmp.current)).toEqual([]);
+    }).pipe(Effect.provide(s.layer));
+  });
+
+  it.effect(
+    "transient noninteractive refusal ignores --apply=true and attaches the full plan to machine error context",
+    () => {
+      seedDeclarative(tmp.current);
+      const sql = "ALTER TABLE a ADD COLUMN b int;";
+      const s = setup(tmp.current, { outputFormat: "json", diffSql: sql });
+      return Effect.gen(function* () {
+        const exit = yield* legacyDbSchemaDeclarativeSync(
+          flags({ transient: Option.some(true), apply: Option.some(true) }),
+        ).pipe(Effect.exit);
+        expect(failError(exit)).toMatchObject({
+          _tag: "LegacyDeclarativeTransientConfirmationRequiredError",
+        });
+        const context = yield* MachineErrorContext;
+        expect(yield* context.get).toEqual({
+          changed: true,
+          applied: false,
+          migration_written: false,
+          history_recorded: false,
+          sql,
+          units: [
+            {
+              name: "declarative_sync",
+              transaction_mode: "transactional",
+              sql,
+            },
+          ],
+        });
+        expect(s.dbExec).toEqual([]);
+      }).pipe(Effect.provide(s.layer));
+    },
+  );
+
+  it.effect("transient JSON and stream-json successes expose the same ordered plan", () => {
+    seedDeclarative(tmp.current);
+    const sql = "ALTER TABLE a ADD COLUMN b int;";
+    return Effect.gen(function* () {
+      for (const outputFormat of ["json", "stream-json"] as const) {
+        const s = setup(tmp.current, { outputFormat, yes: true, diffSql: sql });
+        yield* legacyDbSchemaDeclarativeSync(flags({ transient: Option.some(true) })).pipe(
+          Effect.provide(s.layer),
+        );
+        expect(s.out.messages).toContainEqual(
+          expect.objectContaining({
+            type: "success",
+            data: {
+              changed: true,
+              applied: true,
+              migration_written: false,
+              history_recorded: false,
+              sql,
+              units: [
+                {
+                  name: "declarative_sync",
+                  transaction_mode: "transactional",
+                  sql,
+                },
+              ],
+            },
+          }),
+        );
+        expect(s.out.stdoutText).toBe("");
+        expect(migrationEntries(tmp.current)).toEqual([]);
+      }
+    });
+  });
+
+  it.effect("transient image preflight failure stops before planning or database startup", () => {
+    seedDeclarative(tmp.current);
+    const s = setup(tmp.current, {
+      yes: true,
+      staleLocalImage: true,
+      diffSql: "ALTER TABLE a ADD COLUMN b int;",
+    });
+    return Effect.gen(function* () {
+      const exit = yield* legacyDbSchemaDeclarativeSync(
+        flags({ transient: Option.some(true) }),
+      ).pipe(Effect.exit);
+      expect(Exit.isFailure(exit)).toBe(true);
+      expect(s.localPostgresImageChecks).toHaveLength(1);
+      expect(s.localDatabaseStarts).toEqual([]);
+      expect(s.planCalls).toBe(0);
+      expect(migrationEntries(tmp.current)).toEqual([]);
+    }).pipe(Effect.provide(s.layer));
+  });
+
+  it.effect("transient execution failure saves SQL and never offers reset recovery", () => {
+    seedDeclarative(tmp.current);
+    const s = setup(tmp.current, {
+      yes: true,
+      applyFails: true,
+      diffSql: "ALTER TABLE a ADD COLUMN b int;",
+    });
+    return Effect.gen(function* () {
+      const exit = yield* legacyDbSchemaDeclarativeSync(
+        flags({ transient: Option.some(true) }),
+      ).pipe(Effect.exit);
+      expect(failError(exit)).toMatchObject({
+        _tag: "LegacyDeclarativeApplyError",
+        suggestion: expect.stringContaining("re-plan"),
+      });
+      expect(
+        s.out.promptConfirmCalls.some((call) => call.message.includes("reset the local database")),
+      ).toBe(false);
+      expect(migrationEntries(tmp.current)).toEqual([]);
+      expect(existsSync(join(tmp.current, "supabase", ".temp", "pgdelta", "debug"))).toBe(true);
+    }).pipe(Effect.provide(s.layer));
+  });
+
+  it.effect("transient connection failure preserves connection classification", () => {
+    seedDeclarative(tmp.current);
+    const s = setup(tmp.current, {
+      yes: true,
+      connectFails: true,
+      diffSql: "ALTER TABLE a ADD COLUMN b int;",
+    });
+    return Effect.gen(function* () {
+      const exit = yield* legacyDbSchemaDeclarativeSync(
+        flags({ transient: Option.some(true) }),
+      ).pipe(Effect.exit);
+      const error = failError(exit);
+      expect(error).toMatchObject({
+        _tag: "LegacyDeclarativeApplyError",
+        connect: true,
+      });
+      expect(error).not.toHaveProperty("suggestion");
+      expect(stripAnsi(s.out.stderrText)).not.toContain("nontransactional or earlier units");
+      expect(s.dbExec).toEqual([]);
+      expect(migrationEntries(tmp.current)).toEqual([]);
+      expect(existsSync(join(tmp.current, "supabase", ".temp", "pgdelta", "debug"))).toBe(true);
+    }).pipe(Effect.provide(s.layer));
+  });
+
+  it.effect("transient batch connection failure preserves execution guidance", () => {
+    seedDeclarative(tmp.current);
+    const s = setup(tmp.current, {
+      yes: true,
+      batchConnectFails: true,
+      diffSql: "ALTER TABLE a ADD COLUMN b int;",
+    });
+    return Effect.gen(function* () {
+      const exit = yield* legacyDbSchemaDeclarativeSync(
+        flags({ transient: Option.some(true) }),
+      ).pipe(Effect.exit);
+      expect(failError(exit)).toMatchObject({
+        _tag: "LegacyDeclarativeApplyError",
+        connect: true,
+        suggestion: expect.stringContaining("re-plan"),
+      });
+      expect(s.dbExec).toEqual([]);
+      expect(migrationEntries(tmp.current)).toEqual([]);
+    }).pipe(Effect.provide(s.layer));
+  });
+
+  it.effect("rejects unsafe --file and --name stems with the tagged input error", () => {
+    seedDeclarative(tmp.current);
+    return Effect.gen(function* () {
+      for (const unsafe of [
+        { file: Option.some("nested/change") },
+        { name: Option.some("change.SQL") },
+      ]) {
+        const s = setup(tmp.current, { diffSql: "ALTER TABLE a ADD COLUMN b int;" });
+        const exit = yield* legacyDbSchemaDeclarativeSync(flags(unsafe)).pipe(
+          Effect.provide(s.layer),
+          Effect.exit,
+        );
+        expect(failError(exit)).toMatchObject({
+          _tag: "LegacyDeclarativeInvalidMigrationStemError",
+        });
+        expect(s.planCalls).toBe(0);
+      }
+    });
+  });
+
+  it.effect("interactive migration naming wires stem validation into the prompt", () => {
+    seedDeclarative(tmp.current);
+    const s = setup(tmp.current, {
+      stdinIsTty: true,
+      diffSql: "ALTER TABLE a ADD COLUMN b int;",
+      promptTextResponses: ["safe_change"],
+    });
+    return Effect.gen(function* () {
+      yield* legacyDbSchemaDeclarativeSync(flags({ noApply: Option.some(true) }));
+      const validate = s.out.promptTextCalls[0]?.opts?.validate;
+      expect(validate).toBeTypeOf("function");
+    }).pipe(Effect.provide(s.layer));
+  });
+
+  it.effect("failed image preflight saves diagnostics before deleting the generated file", () => {
+    seedDeclarative(tmp.current);
+    const s = setup(tmp.current, {
+      yes: true,
+      staleLocalImage: true,
+      diffSql: "ALTER TABLE a ADD COLUMN b int;",
+    });
+    return Effect.gen(function* () {
+      const exit = yield* legacyDbSchemaDeclarativeSync(flags({ apply: Option.some(true) })).pipe(
+        Effect.exit,
+      );
+      expect(Exit.isFailure(exit)).toBe(true);
+      expect(migrationEntries(tmp.current)).toEqual([]);
+      expect(existsSync(join(tmp.current, "supabase", ".temp", "pgdelta", "debug"))).toBe(true);
+    }).pipe(Effect.provide(s.layer));
+  });
+
+  it.effect("declining reset can retain or delete the generated migration", () => {
+    seedDeclarative(tmp.current);
+    return Effect.gen(function* () {
+      const keep = setup(tmp.current, {
+        stdinIsTty: true,
+        applyFails: true,
+        diffSql: "ALTER TABLE a ADD COLUMN b int;",
+        promptConfirmResponses: [false, true],
+      });
+      yield* legacyDbSchemaDeclarativeSync(flags({ apply: Option.some(true) })).pipe(
+        Effect.provide(keep.layer),
+        Effect.exit,
+      );
+      expect(migrationEntries(tmp.current)).toHaveLength(1);
+
+      for (const entry of migrationEntries(tmp.current)) {
+        yield* FileSystem.FileSystem.pipe(
+          Effect.flatMap((fs) => fs.remove(join(tmp.current, "supabase", "migrations", entry))),
+        );
+      }
+      const remove = setup(tmp.current, {
+        stdinIsTty: true,
+        applyFails: true,
+        diffSql: "ALTER TABLE a ADD COLUMN c int;",
+        promptConfirmResponses: [false, false],
+      });
+      yield* legacyDbSchemaDeclarativeSync(flags({ apply: Option.some(true) })).pipe(
+        Effect.provide(remove.layer),
+        Effect.exit,
+      );
+      expect(migrationEntries(tmp.current)).toEqual([]);
+      expect(remove.out.promptConfirmCalls.map((call) => call.message)).toContain(
+        "Keep the generated migration file(s)?",
+      );
+    }).pipe(Effect.provide(BunServices.layer));
+  });
+
+  it.effect("noninteractive failed apply deletes every generated segment", () => {
+    seedDeclarative(tmp.current);
+    const s = setup(tmp.current, {
+      applyFails: true,
+      renderedFiles: [
+        {
+          sequence: 1,
+          name: "tables",
+          suffix: "_1",
+          sql: "ALTER TABLE a ADD COLUMN b int;",
+          transactionMode: "transactional",
+        },
+        {
+          sequence: 2,
+          name: "enum_values",
+          suffix: "_2",
+          sql: "ALTER TYPE mood ADD VALUE 'fine';",
+          transactionMode: "none",
+        },
+      ],
+    });
+    return Effect.gen(function* () {
+      const exit = yield* legacyDbSchemaDeclarativeSync(flags({ apply: Option.some(true) })).pipe(
+        Effect.exit,
+      );
+      expect(Exit.isFailure(exit)).toBe(true);
+      expect(migrationEntries(tmp.current)).toEqual([]);
+    }).pipe(Effect.provide(s.layer));
+  });
+
+  it.effect("debug-bundle failure retains generated files", () => {
+    seedDeclarative(tmp.current);
+    writeFileSync(join(tmp.current, "supabase", ".temp"), "blocks debug directory");
+    const s = setup(tmp.current, {
+      applyFails: true,
+      diffSql: "ALTER TABLE a ADD COLUMN b int;",
+    });
+    return Effect.gen(function* () {
+      const exit = yield* legacyDbSchemaDeclarativeSync(flags({ apply: Option.some(true) })).pipe(
+        Effect.exit,
+      );
+      expect(Exit.isFailure(exit)).toBe(true);
+      expect(migrationEntries(tmp.current)).toHaveLength(1);
+      expect(s.out.stderrText).toContain(
+        "Generated migration files were kept because debug artifacts could not be saved.",
+      );
+    }).pipe(Effect.provide(s.layer));
+  });
+
+  it.effect("failed debug SQL write retains generated files", () => {
+    seedDeclarative(tmp.current);
+    const s = setup(tmp.current, {
+      applyFails: true,
+      debugSqlWriteFails: true,
+      diffSql: "ALTER TABLE a ADD COLUMN b int;",
+    });
+    return Effect.gen(function* () {
+      const exit = yield* legacyDbSchemaDeclarativeSync(flags({ apply: Option.some(true) })).pipe(
+        Effect.exit,
+      );
+      expect(Exit.isFailure(exit)).toBe(true);
+      expect(migrationEntries(tmp.current)).toHaveLength(1);
+      expect(s.out.stderrText).toContain(
+        "Generated migration files were kept because debug artifacts could not be saved.",
+      );
+      expect(s.out.stderrText).toContain("failed to save generated SQL debug artifact");
+    }).pipe(Effect.provide(s.layer));
+  });
+
+  it.effect("cleanup deletion failure warns and preserves the original apply error", () => {
+    seedDeclarative(tmp.current);
+    const s = setup(tmp.current, {
+      applyFails: true,
+      cleanupDeleteFails: true,
+      diffSql: "ALTER TABLE a ADD COLUMN b int;",
+    });
+    return Effect.gen(function* () {
+      const exit = yield* legacyDbSchemaDeclarativeSync(flags({ apply: Option.some(true) })).pipe(
+        Effect.exit,
+      );
+      expect(failError(exit)).toMatchObject({
+        _tag: "LegacyDeclarativeApplyError",
+        message: expect.stringContaining("boom"),
+      });
+      expect(migrationEntries(tmp.current)).toHaveLength(1);
+      expect(s.out.stderrText).toContain("Warning: failed to remove generated migration");
     }).pipe(Effect.provide(s.layer));
   });
 });

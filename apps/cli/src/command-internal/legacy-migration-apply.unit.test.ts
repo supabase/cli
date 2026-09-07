@@ -15,6 +15,7 @@ import { LegacyDbConnectError } from "./legacy-db-connection.errors.ts";
 import type { LegacyDbBatchStatement, LegacyDbSession } from "./legacy-db-connection.service.ts";
 import {
   legacyApplyMigrationFile,
+  legacyApplyRenderedSqlUnits,
   legacyApplySchemaFiles,
   legacyHasTransactionControl,
   legacyIsPipelineIncompatible,
@@ -126,6 +127,119 @@ const run = (
       (message) => new TestError({ message }),
     );
   }).pipe(Effect.provide(BunServices.layer));
+
+describe("legacyApplyRenderedSqlUnits", () => {
+  it.effect("applies mixed transaction modes in unit order without history or reset writes", () => {
+    const { session, calls } = fakeSession();
+    return legacyApplyRenderedSqlUnits(
+      session,
+      [
+        {
+          name: "tables",
+          sql: "CREATE TABLE widgets (id bigint);\nALTER TABLE widgets ENABLE ROW LEVEL SECURITY;",
+          transactionMode: "transactional",
+        },
+        {
+          name: "enum",
+          sql: "SET check_function_bodies = off;\nALTER TYPE mood ADD VALUE 'fine';",
+          transactionMode: "none",
+        },
+        {
+          name: "grants",
+          sql: "GRANT SELECT ON TABLE widgets TO anon;",
+          transactionMode: "transactional",
+        },
+      ],
+      (message) => new TestError({ message }),
+    ).pipe(
+      Effect.tap(() =>
+        Effect.sync(() => {
+          expect(calls.map(({ kind }) => kind)).toEqual(["batch", "exec", "exec", "batch"]);
+          expect(executedSql(calls)).toEqual([
+            "CREATE TABLE widgets (id bigint)",
+            "ALTER TABLE widgets ENABLE ROW LEVEL SECURITY",
+            "SET check_function_bodies = off",
+            "ALTER TYPE mood ADD VALUE 'fine'",
+            "GRANT SELECT ON TABLE widgets TO anon",
+          ]);
+          expect(executedSql(calls).some((sql) => sql === "RESET ALL")).toBe(false);
+          expect(
+            calls.some(
+              ({ sql }) => sql.includes("supabase_migrations") || sql.includes("schema_migrations"),
+            ),
+          ).toBe(false);
+          expect(calls.some(({ kind }) => kind === "query")).toBe(false);
+        }),
+      ),
+    );
+  });
+
+  it.effect("maps transactional failures with the unit-local statement index", () => {
+    const { session, calls } = fakeSession({ failOn: "missing_column" });
+    return legacyApplyRenderedSqlUnits(
+      session,
+      [
+        {
+          name: "broken",
+          sql: "SELECT 1;\nSELECT missing_column;\nSELECT 3;",
+          transactionMode: "transactional",
+        },
+        {
+          name: "not_reached",
+          sql: "SELECT 4;",
+          transactionMode: "transactional",
+        },
+      ],
+      (message) => new TestError({ message }),
+    ).pipe(
+      Effect.flip,
+      Effect.tap((error) =>
+        Effect.sync(() => {
+          expect(error.message).toContain("At statement: 1");
+          expect(error.message).toContain("SELECT missing_column");
+          expect(executedSql(calls)).not.toContain("SELECT 4");
+        }),
+      ),
+    );
+  });
+
+  it.effect(
+    "restores a stepped-down role after a sequential failure without resetting the unit",
+    () => {
+      const restoreRoleSql = "SET SESSION ROLE postgres";
+      const { session, calls } = fakeSession({
+        failOn: "missing_column",
+        restoreRoleSql,
+      });
+      return legacyApplyRenderedSqlUnits(
+        session,
+        [
+          {
+            name: "broken_nontransactional",
+            sql: "RESET ROLE;\nSELECT missing_column;",
+            transactionMode: "none",
+          },
+        ],
+        (message) => new TestError({ message }),
+      ).pipe(
+        Effect.flip,
+        Effect.tap((error) =>
+          Effect.sync(() => {
+            expect(error.message).toContain("At statement: 1");
+            expect(executedSql(calls)).toEqual([
+              "RESET ROLE",
+              restoreRoleSql,
+              "SELECT missing_column",
+              restoreRoleSql,
+            ]);
+            expect(executedSql(calls)).not.toContain("RESET ALL");
+            expect(calls.some(({ kind }) => kind === "query")).toBe(false);
+          }),
+        ),
+      );
+    },
+  );
+});
 
 describe("legacyApplyMigrationFile", () => {
   it.effect(

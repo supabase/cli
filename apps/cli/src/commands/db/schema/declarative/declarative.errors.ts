@@ -75,6 +75,29 @@ export class LegacyDeclarativeInvalidDbUrlError extends Data.TaggedError(
   }
 }
 
+/** A migration stem would escape the migration directory or duplicate the SQL suffix. */
+export class LegacyDeclarativeInvalidMigrationStemError extends Data.TaggedError(
+  "LegacyDeclarativeInvalidMigrationStemError",
+)<{
+  readonly message: string;
+}> {
+  get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
+    return actionability.invalidInput;
+  }
+}
+
+/** Transient apply needs explicit consent when no interactive prompt is available. */
+export class LegacyDeclarativeTransientConfirmationRequiredError extends Data.TaggedError(
+  "LegacyDeclarativeTransientConfirmationRequiredError",
+)<{
+  readonly message: string;
+  readonly suggestion: string;
+}> {
+  get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
+    return actionability.provideFlags;
+  }
+}
+
 /**
  * `db schema declarative generate` ran but produced no declarative files (sync's
  * post-generate guard). Byte-matches Go's

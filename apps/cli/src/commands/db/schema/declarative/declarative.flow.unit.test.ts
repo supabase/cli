@@ -10,6 +10,7 @@ import {
   legacyResolveDeclarativeMigrationName,
   legacyResolveDeclarativeSyncApplyDecision,
   legacyResolveStagedDeclarativeDir,
+  legacyValidateDeclarativeMigrationStem,
 } from "./declarative.flow.ts";
 
 const stuck = (message: string) => ({
@@ -445,6 +446,22 @@ describe("legacyResolveDeclarativeMigrationName", () => {
     ["", "declarative_sync", "declarative_sync"],
   ])("resolves name=%j file=%j", (name, file, expected) => {
     expect(legacyResolveDeclarativeMigrationName(name, file)).toBe(expected);
+  });
+});
+
+describe("legacyValidateDeclarativeMigrationStem", () => {
+  it.each([
+    ["nested/name", "migration names must not contain path separators"],
+    ["nested\\name", "migration names must not contain path separators"],
+    ["change.sql", "migration names must not include the .sql suffix"],
+    ["change.SQL", "migration names must not include the .sql suffix"],
+    ["change.SQL ", "migration names must not include the .sql suffix"],
+  ])("rejects %j", (stem, expected) => {
+    expect(legacyValidateDeclarativeMigrationStem(stem)).toBe(expected);
+  });
+
+  it("accepts a plain migration stem", () => {
+    expect(legacyValidateDeclarativeMigrationStem("add_customer_status")).toBeUndefined();
   });
 });
 
