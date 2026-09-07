@@ -1044,7 +1044,7 @@ describe("legacy db schema declarative sync integration", () => {
       diffSql:
         "select cron.unschedule('refresh download metrics');\nDROP EXTENSION \"pgcrypto\";\n",
       removals: {
-        extensions: ["pgcrypto", "uuid-ossp"],
+        extensions: ["pg_cron", "pgcrypto", "uuid-ossp"],
         extensionIntents: [
           { extension: "pg_cron", intentKind: "job", key: "refresh download metrics" },
         ],
@@ -1066,6 +1066,30 @@ describe("legacy db schema declarative sync integration", () => {
         message: expect.stringContaining("  Extension-managed objects: pg_cron job refresh"),
       });
       expect(existsSync(join(tmp.current, "supabase", "migrations"))).toBe(false);
+    }).pipe(Effect.provide(s.layer));
+  });
+
+  it.effect("writes cron job and pgmq queue removals without a legacy-export refusal", () => {
+    seedDeclarative(tmp.current);
+    const s = setup(tmp.current, {
+      yes: true,
+      diffSql: "select cron.unschedule('refresh metrics');\nselect pgmq.drop_queue('emails');\n",
+      removals: {
+        extensions: [],
+        extensionIntents: [
+          { extension: "pg_cron", intentKind: "job", key: "refresh metrics" },
+          { extension: "pgmq", intentKind: "queue", key: "emails" },
+        ],
+      },
+    });
+    return Effect.gen(function* () {
+      yield* legacyDbSchemaDeclarativeSync(flags({ noApply: Option.some(true) }));
+      const migrationsDir = join(tmp.current, "supabase", "migrations");
+      const [migration] = readdirSync(migrationsDir);
+      const sql = readFileSync(join(migrationsDir, migration ?? ""), "utf8");
+      expect(sql).toContain("cron.unschedule('refresh metrics')");
+      expect(sql).toContain("pgmq.drop_queue('emails')");
+      expect(stripAnsi(s.out.stderrText)).not.toContain("legacy pg-delta export");
     }).pipe(Effect.provide(s.layer));
   });
 
