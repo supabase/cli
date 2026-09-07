@@ -1667,26 +1667,23 @@ describe("legacy db pull", () => {
     },
   );
 
-  it.effect(
-    "--experimental still exports when the last --declarative alias is false",
-    () => {
-      const s = setup(tmp.current, {
-        experimental: true,
-        edgeStdout: EXPORT_JSON,
-        args: ["db", "pull", "--experimental", "--declarative", "--use-pg-delta=false"],
-      });
-      return Effect.gen(function* () {
-        yield* legacyDbPull(
-          flags({ declarative: Option.some(true), usePgDelta: Option.some(false) }),
-        );
-        expect(s.engineCalls[0]?.operation).toBe("export");
-        expect(s.proxyCalls).toHaveLength(0);
-        expect(streamText(s.out, "stderr")).toContain(
-          "The --experimental structured-dump mode for `db pull` is deprecated",
-        );
-      }).pipe(Effect.provide(s.layer));
-    },
-  );
+  it.effect("--experimental still exports when the last --declarative alias is false", () => {
+    const s = setup(tmp.current, {
+      experimental: true,
+      edgeStdout: EXPORT_JSON,
+      args: ["db", "pull", "--experimental", "--declarative", "--use-pg-delta=false"],
+    });
+    return Effect.gen(function* () {
+      yield* legacyDbPull(
+        flags({ declarative: Option.some(true), usePgDelta: Option.some(false) }),
+      );
+      expect(s.engineCalls[0]?.operation).toBe("export");
+      expect(s.proxyCalls).toHaveLength(0);
+      expect(streamText(s.out, "stderr")).toContain(
+        "The --experimental structured-dump mode for `db pull` is deprecated",
+      );
+    }).pipe(Effect.provide(s.layer));
+  });
 
   it.effect("--experimental with --diff-engine still runs the in-process export", () => {
     const s = setup(tmp.current, { experimental: true, edgeStdout: EXPORT_JSON });
@@ -1713,23 +1710,26 @@ describe("legacy db pull", () => {
     },
   );
 
-  it.effect("an experimental pull in json mode reports a declarative export with no history repair", () => {
-    const s = setup(tmp.current, {
-      experimental: true,
-      format: "json",
-      edgeStdout: EXPORT_JSON,
-    });
-    return Effect.gen(function* () {
-      yield* legacyDbPull(flags());
-      expect(s.proxyCaptureCalls).toHaveLength(0);
-      const success = s.out.messages.find((m) => m.type === "success");
-      expect(success?.data).toMatchObject({
-        declarative: true,
-        remoteHistoryUpdated: false,
-        engine: "pg-delta",
+  it.effect(
+    "an experimental pull in json mode reports a declarative export with no history repair",
+    () => {
+      const s = setup(tmp.current, {
+        experimental: true,
+        format: "json",
+        edgeStdout: EXPORT_JSON,
       });
-    }).pipe(Effect.provide(s.layer));
-  });
+      return Effect.gen(function* () {
+        yield* legacyDbPull(flags());
+        expect(s.proxyCaptureCalls).toHaveLength(0);
+        const success = s.out.messages.find((m) => m.type === "success");
+        expect(success?.data).toMatchObject({
+          declarative: true,
+          remoteHistoryUpdated: false,
+          engine: "pg-delta",
+        });
+      }).pipe(Effect.provide(s.layer));
+    },
+  );
 
   it.effect(
     "--declarative wins over --experimental and is unaffected by the deprecated experimental mode",

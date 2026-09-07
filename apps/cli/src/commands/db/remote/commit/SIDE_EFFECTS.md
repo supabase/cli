@@ -25,12 +25,12 @@ Same as migration-style `db pull`.
 
 ## Files Written
 
-| Path                                                          | Format | When                                                |
-| ------------------------------------------------------------- | ------ | --------------------------------------------------- |
+| Path                                                          | Format | When                                                 |
+| ------------------------------------------------------------- | ------ | ---------------------------------------------------- |
 | `<workdir>/supabase/migrations/<timestamp>_remote_commit.sql` | SQL    | non-empty diff (or the initial-migra `pg_dump` seed) |
 | `<workdir>/supabase/schemas/**`                               | SQL    | `--experimental` / `SUPABASE_EXPERIMENTAL` export    |
 | `<workdir>/supabase/schemas/.pgdelta-export.json`             | JSON   | experimental export metadata                         |
-| `<workdir>/supabase/.temp/pgdelta/v2/debug/<id>/*.json`       | JSON   | bundled engine with `PGDELTA_DEBUG`                 |
+| `<workdir>/supabase/.temp/pgdelta/v2/debug/<id>/*.json`       | JSON   | bundled engine with `PGDELTA_DEBUG`                  |
 
 Plus the shared pull post-run writes (linked-project cache, telemetry, shadow
 baseline cache).
@@ -46,9 +46,9 @@ declarative export.
 
 ## Exit Codes
 
-| Code | Condition                                      |
-| ---- | ---------------------------------------------- |
-| `0`  | success                                        |
+| Code | Condition                                                |
+| ---- | -------------------------------------------------------- |
+| `0`  | success                                                  |
 | `1`  | same as migration-style `db pull` (including empty diff) |
 
 ## Output
