@@ -661,18 +661,22 @@ const runWholeStackScenario = async (mode: (typeof RUNTIME_CASES)[number]): Prom
   // Preparation is an explicit cache-only operation. It runs after the helper's
   // initial session is stopped, so the test proves it creates no owner, listener,
   // or workload.
+  const initialSupervisorPid = await supervisorPid(stack.id);
   await stack.stop();
   const warmed = await stack.prepare({ capabilities: ["rest"] });
   expect(warmed.capabilities).toEqual(
     expect.arrayContaining([expect.objectContaining({ capability: "rest" })]),
   );
   expect((await stack.status()).lifecycle).toBe("stopped");
-  expect(await supervisorPids(stack.id)).toHaveLength(0);
   await expectEndpointsRefused(
     Object.values(initialRunning.endpoints).filter(
       (value): value is StackEndpoint => value !== undefined,
     ),
   );
+  // Process exit follows lease finalization for a detached supervisor. Observe the exact
+  // owner PID before scanning for leftovers, without masking a genuine process leak.
+  await waitForProcessExit(initialSupervisorPid);
+  expect(await supervisorPids(stack.id)).toHaveLength(0);
   const initial = await stack.start();
   expectDefaultLazyState(initial);
   await expectOwnedWorkloads(mode, stack.id, ["database:database"]);
@@ -1473,14 +1477,18 @@ describe("managed Supabase stack whole-stack E2E", () => {
             (value): value is StackEndpoint => value !== undefined,
           );
           for (let cycle = 0; cycle < 3; cycle += 1) {
+            const stoppedSupervisorPid = await supervisorPid(stack.id);
             await stack.stop();
             const stopped = await stack.status();
             expect(stopped.lifecycle).toBe("stopped");
             expect(stopped.capabilities.every(({ state }) => state === "stopped")).toBe(true);
-            expect(await supervisorPids(stack.id)).toHaveLength(0);
             await expectOwnedWorkloads(mode, stack.id, []);
             await expectRuntimeInputsAbsent(stack);
             await expectEndpointsRefused(endpointSnapshot);
+            // The stop contract waits for lease/resource release. Detached supervisor exit can
+            // lag that handoff, so observe the exact owner PID before scanning for leftovers.
+            await waitForProcessExit(stoppedSupervisorPid);
+            expect(await supervisorPids(stack.id)).toHaveLength(0);
             if (mode.runtime.kind === "container") {
               if (stackId === undefined) throw new Error("Stack id was not assigned");
               snapshots.push({
