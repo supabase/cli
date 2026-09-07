@@ -28,9 +28,19 @@ export const legacyPgDeltaDbConfigRuntimeLayer = legacyDbConfigLayer.pipe(
   Layer.provide(legacyIdentityStitchLayer),
 );
 
-const edgeRuntime = legacyEdgeRuntimeScriptLayer.pipe(
-  Layer.provide(legacyDockerRunLayer),
-  Layer.provide(legacyPgDeltaCliSettingsRuntimeLayer),
+/**
+ * The migra runtime: the edge-runtime script runner and the TLS probe migra's
+ * containerized diff needs. Only `db diff` / migration-style `db pull` can select
+ * migra; the declarative commands run the in-process pg-delta engine alone, so
+ * this is composed by those two command layers rather than by
+ * {@link legacyPgDeltaCommandRuntimeLayer}.
+ */
+export const legacyMigraRuntimeLayer = Layer.mergeAll(
+  legacyEdgeRuntimeScriptLayer.pipe(
+    Layer.provide(legacyDockerRunLayer),
+    Layer.provide(legacyPgDeltaCliSettingsRuntimeLayer),
+  ),
+  legacyPgDeltaSslProbeLayer,
 );
 const httpClient = legacyHttpClientLayer.pipe(Layer.provide(legacyDebugLoggerLayer));
 const seam = legacyDeclarativeSeamLayer.pipe(
@@ -57,8 +67,6 @@ const engine = legacyPgDeltaEngineLayer.pipe(
 export const legacyPgDeltaCommandRuntimeLayer = Layer.mergeAll(
   legacyDbConnectionLayer,
   legacyDockerRunLayer,
-  edgeRuntime,
-  legacyPgDeltaSslProbeLayer,
   httpClient,
   seam,
   engine,

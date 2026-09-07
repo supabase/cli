@@ -6,6 +6,7 @@ import { legacyLinkedDbResolverRuntimeLayer } from "../../../command-internal/le
 import { legacyTelemetryStateLayer } from "../../../telemetry/legacy-telemetry-state.layer.ts";
 import { stdinLayer } from "../../../shared/runtime/stdin.layer.ts";
 import {
+  legacyMigraRuntimeLayer,
   legacyPgDeltaCommandRuntimeLayer,
   legacyPgDeltaDbConfigRuntimeLayer,
 } from "../shared/legacy-pgdelta-engine.layer.ts";
@@ -14,6 +15,7 @@ export const legacyDbSchemaPullRuntimeLayer = (command: ReadonlyArray<string>) =
   Layer.mergeAll(
     legacyPgDeltaDbConfigRuntimeLayer,
     legacyPgDeltaCommandRuntimeLayer,
+    legacyMigraRuntimeLayer,
     legacyIdentityStitchLayer,
     legacyTelemetryStateLayer,
     legacyLinkedDbResolverRuntimeLayer(command).pipe(Layer.provide(legacyIdentityStitchLayer)),
