@@ -54,13 +54,11 @@ jobs:
             cli-test-helpers
             config
             docs
-            lib
-            nx-plugins
             process-compose
-            release
             stack
             ci
             repo
             misc
+            release
       - if: github.event_name == 'merge_group'
         run: echo "Merge queue entry does not have a pull request payload; reporting success for the required lint check."

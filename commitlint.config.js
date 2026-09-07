@@ -6,15 +6,14 @@ const PROJECT_SCOPES = [
   "cli-test-helpers",
   "config",
   "docs",
-  "lib",
-  "nx-plugins",
   "process-compose",
-  "release",
   "stack",
 ];
 
-// Non-project changes that don't map to a single turbo project.
-const ESCAPE_SCOPES = ["ci", "repo", "misc"];
+// Non-project changes that don't map to a single turbo project. `release`
+// isn't a turbo project (tools/release has no package.json) but is a real
+// scope emitted by the automated release-notes-proposal commit.
+const ESCAPE_SCOPES = ["ci", "repo", "misc", "release"];
 
 module.exports = {
   extends: ["@commitlint/config-conventional"],
