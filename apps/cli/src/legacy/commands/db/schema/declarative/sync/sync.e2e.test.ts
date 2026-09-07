@@ -217,8 +217,9 @@ describe("db schema declarative sync (e2e)", () => {
           "",
         ].join("\n"),
       );
+      // pg-delta renders a job through `cron.schedule_in_database(...)`.
       const added = await syncAndReadSql("add_jobs");
-      expect(added.sql).toContain("cron.schedule('nightly_cleanup'");
+      expect(added.sql).toMatch(/cron\.schedule(?:_in_database)?\('nightly_cleanup'/);
       expect(added.sql).toContain("pgmq.create('emails')");
 
       // Rename the job and drop the queue: previously refused as a legacy export.
@@ -231,7 +232,7 @@ describe("db schema declarative sync (e2e)", () => {
         "legacy pg-delta export",
       );
       expect(removed.sql).toContain("cron.unschedule('nightly_cleanup')");
-      expect(removed.sql).toContain("cron.schedule('weekly_cleanup'");
+      expect(removed.sql).toMatch(/cron\.schedule(?:_in_database)?\('weekly_cleanup'/);
       expect(removed.sql).toContain("pgmq.drop_queue('emails')");
     },
   );
