@@ -2,10 +2,8 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import process from "node:process";
 import { BunServices } from "@effect/platform-bun";
-import { Deferred, Effect, Layer, Option, PubSub, Redacted, Stream } from "effect";
+import { Deferred, Effect, Layer, Option, Redacted, Stream } from "effect";
 import type { CliProjectEnvironment, CliProjectPaths } from "@supabase/config";
-import { Stack, StackServiceState, type StackInfo } from "@supabase/stack/effect";
-import { HttpTransportClient } from "@supabase/stack/testing";
 import { Api } from "../../src/shared/auth/api.service.ts";
 import type { LoginSessionResponse, ProfileResponse } from "../../src/shared/auth/api.service.ts";
 import { Credentials } from "../../src/shared/auth/credentials.service.ts";
@@ -660,169 +658,6 @@ export function mockTelemetryRuntime(
   );
 }
 
-export function mockStack(
-  opts: {
-    info?: Partial<StackInfo>;
-    stateChanges?: Array<{ name: string; status: StackServiceState["status"] }>;
-    startError?: unknown;
-    startPending?: boolean;
-    stopPending?: boolean;
-    liveStateChanges?: boolean;
-  } = {},
-) {
-  let started = false;
-  let stopped = false;
-  const startDeferred = Deferred.makeUnsafe<void>();
-  const stopDeferred = Deferred.makeUnsafe<void>();
-  const stateHistory = [...(opts.stateChanges ?? [])];
-  const statePubSub = Effect.runSync(
-    PubSub.unbounded<StackServiceState>({
-      replay: Math.max(stateHistory.length, 1) + 8,
-    }),
-  );
-  for (const change of stateHistory) {
-    PubSub.publishUnsafe(
-      statePubSub,
-      new StackServiceState({
-        name: change.name,
-        status: change.status,
-        pid: null,
-        exitCode: null,
-        restartCount: 0,
-        startedAt: null,
-        error: null,
-      }),
-    );
-  }
-  const info: StackInfo = {
-    url: "http://127.0.0.1:54321",
-    dbUrl: "postgresql://postgres:postgres@127.0.0.1:54322/postgres",
-    publishableKey: "test-publishable-key",
-    secretKey: "test-secret-key",
-    anonJwt: "test-anon-jwt",
-    serviceRoleJwt: "test-service-role-jwt",
-    serviceEndpoints: {},
-    ...opts.info,
-  };
-
-  return {
-    layer: Layer.succeed(Stack, {
-      getInfo: Effect.succeed(info),
-      start: Effect.gen(function* () {
-        started = true;
-        if (opts.startError !== undefined) {
-          return yield* Effect.fail(opts.startError as never);
-        }
-        if (opts.startPending) {
-          yield* Deferred.await(startDeferred);
-        }
-      }),
-      stop: Effect.gen(function* () {
-        stopped = true;
-        if (opts.stopPending) {
-          yield* Deferred.await(stopDeferred);
-        }
-      }),
-      dispose: Effect.gen(function* () {
-        stopped = true;
-        if (opts.stopPending) {
-          yield* Deferred.await(stopDeferred);
-        }
-      }),
-      startService: () => Effect.void,
-      stopService: () => Effect.void,
-      restartService: () => Effect.void,
-      reloadFunctions: () => Effect.void,
-      reloadEdgeRuntime: () => Effect.void,
-      getState: () =>
-        Effect.succeed(
-          new StackServiceState({
-            name: "postgres",
-            status: "Healthy",
-            pid: null,
-            exitCode: null,
-            restartCount: 0,
-            startedAt: null,
-            error: null,
-          }),
-        ),
-      getAllStates: Effect.sync(() => {
-        const latestStates = new Map(
-          (stateHistory.length > 0
-            ? stateHistory
-            : [{ name: "postgres", status: "Pending" as const }]
-          ).map((state) => [state.name, state] as const),
-        );
-        return [...latestStates.values()].map(
-          (state) =>
-            new StackServiceState({
-              name: state.name,
-              status: state.status,
-              pid: null,
-              exitCode: null,
-              restartCount: 0,
-              startedAt: null,
-              error: null,
-            }),
-        );
-      }),
-      stateChanges: () => Effect.succeed(Stream.empty),
-      allStateChanges: opts.liveStateChanges
-        ? Stream.fromPubSub(statePubSub)
-        : opts.stateChanges
-          ? Stream.fromIterable(
-              opts.stateChanges.map(
-                (change) =>
-                  new StackServiceState({
-                    name: change.name,
-                    status: change.status,
-                    pid: null,
-                    exitCode: null,
-                    restartCount: 0,
-                    startedAt: null,
-                    error: null,
-                  }),
-              ),
-            )
-          : Stream.empty,
-      waitReady: () => Effect.void,
-      waitAllReady: () => Effect.void,
-      subscribeLogs: () => Stream.empty,
-      subscribeAllLogs: () => Stream.empty,
-      logHistory: () => Effect.succeed([]),
-      logHistoryAll: () => Effect.succeed([]),
-    }),
-    get started() {
-      return started;
-    },
-    get stopped() {
-      return stopped;
-    },
-    emitStateChange(change: { name: string; status: StackServiceState["status"] }) {
-      stateHistory.push(change);
-      PubSub.publishUnsafe(
-        statePubSub,
-        new StackServiceState({
-          name: change.name,
-          status: change.status,
-          pid: null,
-          exitCode: null,
-          restartCount: 0,
-          startedAt: null,
-          error: null,
-        }),
-      );
-    },
-    resolveStart() {
-      Effect.runSync(Deferred.succeed(startDeferred, void 0));
-    },
-    resolveStop() {
-      Effect.runSync(Deferred.succeed(stopDeferred, void 0));
-    },
-    info,
-  };
-}
-
 // ---------------------------------------------------------------------------
 // Environment helpers
 // ---------------------------------------------------------------------------
@@ -1017,9 +852,6 @@ export function emptyEnv() {
     mockTty(),
     mockProcessControl().layer,
     cliSettingsLayer.pipe(Layer.provide(runtimeInfoLayer), Layer.provide(cliProjectContextLayer)),
-    Layer.succeed(HttpTransportClient, {
-      request: () => Effect.die("unexpected HttpTransportClient access in tests"),
-    }),
   );
 }
 

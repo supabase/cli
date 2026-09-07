@@ -93,7 +93,7 @@ const TARGETS = [
   },
 ] as const;
 
-const entrypoint = path.join(root, "apps/cli/src", shell, "main.ts");
+const entrypoint = path.join(root, "apps/cli/src/main.ts");
 const distDir = path.join(root, "dist");
 const goSource = path.resolve(root, "apps/cli-go");
 const serveMainTemplateDefine = `--define=SUPABASE_FUNCTIONS_SERVE_MAIN_TEMPLATE=${JSON.stringify(

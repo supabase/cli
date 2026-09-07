@@ -14,7 +14,7 @@ import {
   lastExplicitLongFlagValue,
   hasExplicitLongFlag,
 } from "../cli/cobra-flag-groups.ts";
-import { legacyDescribeContainerCliFailure } from "../../legacy/shared/legacy-container-cli.ts";
+import { legacyDescribeContainerCliFailure } from "../../command-internal/legacy-container-cli.ts";
 import { legacyViperEnvStringWithProjectFallback } from "../legacy/legacy-viper-env.ts";
 import {
   buildFunctionsDockerRunArgs,

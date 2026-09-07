@@ -23,13 +23,16 @@ These commands exist in the TS CLI today but have no direct top-level equivalent
 ## Flag divergences from the Go reference
 
 - `db diff`, `db pull`, and `db schema declarative generate`/`sync` have a TS-only
-  `--strict-coverage` flag (no Go equivalent). It applies only when the bundled
-  pg-delta next engine is active (the default): coverage gaps that the engine
-  reports — statements it skipped or objects it could not represent — normally
-  surface as warnings, and `--strict-coverage` promotes them to hard failures.
-  Under the `SUPABASE_USE_PG_DELTA_NEXT=false` legacy opt-out the flag is
-  accepted but has no effect, since the legacy edge-runtime engine does not
-  emit coverage diagnostics. Default behavior (omitted flag) matches Go.
+  `--strict-coverage` flag (no Go equivalent). It applies whenever the bundled
+  pg-delta engine runs (always for the declarative commands; for `db diff` and
+  migration-style `db pull` when pg-delta is selected via
+  `[experimental.pgdelta] enabled = true`, `--use-pg-delta`, or
+  `--diff-engine pg-delta`): coverage gaps that the engine reports — statements
+  it skipped or objects it could not represent — normally surface as warnings,
+  and `--strict-coverage` promotes them to hard failures. Selecting migra (the
+  `db diff` / migration-style `db pull` default, or explicitly via `--use-migra`
+  / `--diff-engine migra`) accepts the flag but has no effect, since migra does
+  not emit coverage diagnostics. Default behavior (omitted flag) matches Go.
 - `db push` has a TS-only `--skip-vault` flag. It applies migrations without
   resolving or updating `[db.vault]` secrets; default behavior still matches Go.
 - Every legacy command that resolves a linked project ref for its own database
@@ -96,13 +99,11 @@ These commands exist in the TS CLI today but have no direct top-level equivalent
   files or an export manifest — telling the user to set
   `declarative_schema_path = "./database"` or move the tree. The warning never changes
   behavior or exit codes; a non-interactive sync still fails with Go's
-  "no declarative schema found" message. Inside that directory the bundled (default) pg-delta
+  "no declarative schema found" message. Inside that directory the bundled pg-delta
   engine writes one directory per schema at the root — `supabase/schemas/public/tables/x.sql` —
-  with cluster-level objects under a reserved `supabase/schemas/_cluster/`. The Go reference,
-  and the opt-out legacy engine (`SUPABASE_USE_PG_DELTA_NEXT=false`, which runs the pinned
-  `[experimental.pgdelta] npm_version` in Edge Runtime), instead nest everything one level
-  deeper as `schemas/<schema>/…` plus `cluster/…`, so a legacy-engine export lands at
-  `supabase/schemas/schemas/public/tables/x.sql`.
+  with cluster-level objects under a reserved `supabase/schemas/_cluster/`.
+  Structured export is TypeScript-only; the Go binary no longer ships a
+  pg-delta dump path.
 - Local `pg_net` presence now converges with `[experimental.webhooks]` instead of being
   installed unconditionally: `db-webhook.sql` no longer creates the extension at container
   init, `supabase start`/`db start` install it (with grants reapplied via the
@@ -165,15 +166,16 @@ These commands exist in the TS CLI today but have no direct top-level equivalent
   asymmetry caused (validated against `<root>/supabase/...`, mounted from `<root>/...`) is gone.
   The `init` scaffold ejects the root-relative form, which is incompatible with Go if uncommented
   (#6159/#6160).
-- `db remote changes|commit --password <p>`: since CLI-1970, an explicit
+- `db remote changes --password <p>`: since CLI-1970, an explicit
   `--password` beats the `SUPABASE_DB_PASSWORD` env var. Before the trim, Go's
   package-wide "last `viper.BindPFlag("DB_PASSWORD", …)` wins" behavior bound
   the key to `projects create --db-password` (lexically last `cmd/*.go` file),
   so `db remote`'s own `--password` flag was never the bound instance and env
   silently won over it — a latent bug. With `projects.go` deleted, the bind
   lands on `db remote`'s persistent `--password` and flag-beats-env applies as
-  intended. Accepted (not restored) in the CLI-1970 parity audit; `db pull`
-  keeps the old precedence (env wins over its `--password`) unchanged.
+  intended. Accepted (not restored) in the CLI-1970 parity audit. `db remote
+commit` is now native `db pull`, so it uses pull's flag-then-env-then-dotenv
+  password order. `db pull` keeps that precedence unchanged.
 - `branches {list,create,get,update,delete,pause,unpause,disable}` resolve their project ref
   through a PARENT-scoped chain instead of plain `--project-ref` flag/env/file resolution: an
   explicit `--project-ref` still wins outright, but the fallback is env `SUPABASE_PROJECT_ID` →
@@ -224,7 +226,7 @@ These commands exist in the TS CLI today but have no direct top-level equivalent
   unescaped into the tenant gateway hostname and a malformed value could
   redirect the service-role key to an attacker-controlled host. Intentional
   TS-only hardening, not a parity bug — see
-  [`services/SIDE_EFFECTS.md`](../src/legacy/commands/services/SIDE_EFFECTS.md).
+  [`services/SIDE_EFFECTS.md`](../src/commands/services/SIDE_EFFECTS.md).
 - `db pull` in-sync (`"No schema changes found"`) keeps Go's message and its non-zero
   exit code, but replaces the generic "Try rerunning the command with --debug to
   troubleshoot the error." stderr footer with an explanatory suggestion line

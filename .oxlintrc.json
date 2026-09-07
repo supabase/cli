@@ -8,8 +8,6 @@
     ".repos",
     "apps/cli-go",
     "apps/cli-e2e/fixtures",
-    "packages/stack",
-    "packages/process-compose",
     "**/testdata",
     "**/dist",
     "**/coverage",
@@ -31,7 +29,7 @@
     {
       // The legacy CLI is the stable, shipped shell; a lint-driven rewrite of
       // its existing string-building code isn't worth the churn.
-      "files": ["apps/cli/src/legacy/**"],
+      "files": ["apps/cli/src/**"],
       "rules": {
         "typescript/no-base-to-string": "off"
       }

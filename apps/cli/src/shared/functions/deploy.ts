@@ -18,7 +18,7 @@ import * as HttpClientError from "effect/unstable/http/HttpClientError";
 import { legacyPromptYesNo } from "../legacy/legacy-prompt-yes-no.ts";
 import { CONTEXT_CANCELED_MESSAGE } from "../output/errors.ts";
 import { Output } from "../output/output.service.ts";
-import { legacyBold } from "../../legacy/shared/legacy-colors.ts";
+import { legacyBold } from "../../command-internal/legacy-colors.ts";
 import { legacyViperEnvStringWithProjectFallback } from "../legacy/legacy-viper-env.ts";
 import { findGitRootPath } from "../git/git-root.ts";
 import {
@@ -289,7 +289,7 @@ function explicitBooleanFlag(
 
 /**
  * Must stay in sync with `LEGACY_CLI_WORKDIR_LABEL`
- * (`legacy/shared/legacy-docker-ids.ts:95`) — same string literal, kept as a
+ * (`command-internal/legacy-docker-ids.ts:95`) — same string literal, kept as a
  * separate copy here rather than imported to respect the `next`/`legacy`
  * isolation boundary (this file has no Go equivalent for the other two
  * labels either). Read back by `legacyCleanupStartSecrets` so a later
@@ -2372,6 +2372,12 @@ export function deployFunctions<ResolveError, ResolveRequirements>(
     const configFunctions = yield* inferFunctionsManifest({
       cwd: dependencies.projectRoot,
       config: deployConfig,
+      // Matches `loadFunctionsCliConfig`'s own options above (`search: false,
+      // tomlOnly: true` for the legacy shell): no ancestor directory is
+      // searched past `dependencies.projectRoot` for EITHER load, so they can
+      // never resolve two different projects (same rationale as
+      // `start.handler.ts`'s equivalent call).
+      search: dependencies.goConfigCompat === undefined,
     });
     const configDeclaredFunctions = deployConfig?.functions ?? {};
     const rawConfigFunctions = rawFunctionConfigRecord(context.loaded?.document);

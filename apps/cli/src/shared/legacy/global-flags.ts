@@ -5,7 +5,7 @@ import { CliArgs } from "../cli/cli-args.service.ts";
 import {
   VALUE_CONSUMING_LONG_FLAGS,
   VALUE_CONSUMING_SHORT_FLAGS,
-} from "../../legacy/shared/legacy-db-target-flags.ts";
+} from "../../command-internal/legacy-db-target-flags.ts";
 import { legacyViperEnvBool, legacyViperEnvBoolWithProjectFallback } from "./legacy-viper-env.ts";
 
 // The Effect CLI hoists global flags out of the token stream before the leaf
@@ -20,7 +20,7 @@ import { legacyViperEnvBool, legacyViperEnvBoolWithProjectFallback } from "./leg
 //
 // Every description string below is copied VERBATIM (including Go's own
 // lowercase, no-trailing-period house style for root persistent flags) from
-// `apps/cli-go/cmd/root.go:324-333` — this text is directly user-visible now
+// `apps/cli-go/cmd/root.go:337-348` — this text is directly user-visible now
 // that native shell completion (CLI-1965) surfaces it in `__complete`
 // candidate descriptions, where a prior Go-binary passthrough used to emit
 // Go's own text byte-for-byte; before that, this only reached the TS-native
@@ -66,7 +66,9 @@ export const LegacyDebugFlag = GlobalFlag.setting("debug")({
 
 export const LegacyWorkdirFlag = GlobalFlag.setting("workdir")({
   flag: Flag.string("workdir").pipe(
-    Flag.withDescription("path to a Supabase project directory"),
+    Flag.withDescription(
+      "path to the directory containing your supabase/ folder; used exactly as given, with no ancestor directory search (defaults to searching upward from the current directory)",
+    ),
     Flag.optional,
   ),
 });
@@ -115,21 +117,26 @@ export const LegacyAgentFlag = GlobalFlag.setting("agent")({
 
 /**
  * Every global/persistent flag declared above, mirroring the set Go registers on
- * the root command (`apps/cli-go/cmd/root.go:344-354`).
+ * the root command (`apps/cli-go/cmd/root.go:337-348`).
  *
- * Adding a VALUE-taking flag here also means registering its token in
- * `globalFlagsWithValues` (`shared/cli/run.ts`) and its name in
- * `PERSISTENT_VALUE_FLAG_NAMES` (`shared/cli/cobra-flag-groups.ts`). Those two
- * registries feed raw-argv pflag scanners that must run for `--help`/`--version`
- * /bare-group invocations, which cobra serves before `PersistentPreRunE` and so
- * never expose parsed flag values to read instead. Neither registry is derived
- * from this list, and drift fails silently rather than loudly: an unregistered
- * value flag does not consume its following token, so `supabase --new-flag
+ * Adding a VALUE-taking flag here also means adding its name to
+ * `PERSISTENT_VALUE_FLAG_NAMES` (`shared/cli/cobra-flag-groups.ts`): the
+ * handler-side pflag scans read it directly, and the pre-parse scanners
+ * (`globalFlagsWithValues` in `shared/cli/run.ts`, the `agent-output.ts`
+ * predicates) derive their token set from it (`GLOBAL_VALUE_FLAG_TOKENS`),
+ * so that one edit covers them all. The same obligation covers the CLI
+ * library's own value-taking built-ins (`--log-level` — issue #6482;
+ * `--completions` is scoped per `PERSISTENT_VALUE_FLAG_NAMES`'s doc). The
+ * pre-parse scanners must run even for `--help`/`--version`/bare-group
+ * invocations, which cobra serves before `PersistentPreRunE` and so never
+ * expose parsed flag values to read instead. A flag missed in the shared
+ * registry still fails silently rather than loudly: an unregistered value
+ * flag does not consume its following token, so `supabase --new-flag
  * --workdir other <cmd>` makes the upgrade notice read/write
  * `other/supabase/.temp/cli-latest`, where Go — which lets `--new-flag` eat
- * `--workdir` — resolves against the cwd. Only the bare space-separated spelling
- * diverges (`--new-flag=x --workdir other` agrees), which is what makes it easy
- * to miss.
+ * `--workdir` — resolves against the cwd. Only the bare space-separated
+ * spelling diverges (`--new-flag=x --workdir other` agrees), which is what
+ * makes it easy to miss.
  */
 export const LEGACY_GLOBAL_FLAGS = [
   LegacyOutputFlag,
@@ -147,7 +154,7 @@ export const LEGACY_GLOBAL_FLAGS = [
 /**
  * Resolves the current value of every global/persistent flag above, keyed by
  * its own CLI flag name (each flag's `.id`, e.g. `debug`, `workdir`). Used by
- * `legacy/telemetry/legacy-command-instrumentation.ts` to mirror Go's
+ * `telemetry/legacy-command-instrumentation.ts` to mirror Go's
  * `changedFlags()` walking `cmd.Parent()`'s `PersistentFlags()` in addition to
  * a command's own flags (`cmd/root_analytics.go:53-76`) — global flags here
  * live in a single Effect-context-wide registry rather than per-ancestor
@@ -158,7 +165,7 @@ export const LEGACY_GLOBAL_FLAGS = [
  * hasn't wired the global-flag context — e.g. a focused unit test — simply
  * gets an empty record instead of a missing-service defect; production always
  * provides every global flag through `Command.withGlobalFlags` at the CLI
- * root (`legacy/cli/root.ts`).
+ * root (`cli/root.ts`).
  *
  * Reads each flag individually (rather than looping `LEGACY_GLOBAL_FLAGS`)
  * because each `Setting<Id, A>` has a distinct value type `A` — a homogeneous
@@ -217,8 +224,8 @@ const argsBeforeOperandTerminator = (args: ReadonlyArray<string>): ReadonlyArray
  * changed `--experimental` (verified against the review finding on CLI-1957: the
  * repository's own argv scanner already documents and handles this exact case for
  * `resolveLegacyDbTargetFlags`/`legacyChangedLinkedLocalFlags`
- * (`legacy/shared/legacy-db-target-flags.ts`) and `extractChangedFlagNames`
- * (`legacy/telemetry/legacy-command-instrumentation.ts`), which this reuses the
+ * (`command-internal/legacy-db-target-flags.ts`) and `extractChangedFlagNames`
+ * (`telemetry/legacy-command-instrumentation.ts`), which this reuses the
  * same `VALUE_CONSUMING_LONG_FLAGS`/`VALUE_CONSUMING_SHORT_FLAGS` registries for,
  * so the three scans can't drift out of sync).
  */
@@ -381,7 +388,7 @@ export const legacyResolveExperimentalWithProjectEnv = (projectEnv: Record<strin
  * occurrence in argv order, so the last one wins: `--debug=false --debug=true` (or a trailing
  * bare `--debug`) is `true` to Go/pflag, not `false` — the Effect parser itself resolves repeats
  * first-wins instead (binary-verified precedent for this exact pflag-vs-Effect divergence:
- * `apps/cli/src/legacy/commands/sso/sso.pflag-reconcile.ts:306-321`). `--debug` is bound to
+ * `apps/cli/src/commands/sso/sso.pflag-reconcile.ts:306-321`). `--debug` is bound to
  * viper the same way as `--yes`/`--experimental` (`apps/cli-go/cmd/root.go:318-334`).
  * {@link legacyYesFlagExplicitlyFalse}/{@link legacyExperimentalFlagExplicitlyFalse} above have
  * the identical `Array.some` "any occurrence is false" gap (review: PRRT_kwDOErm0O86XKYiG) —

@@ -2,9 +2,9 @@ import { Cause } from "effect";
 import { CliError, Command } from "effect/unstable/cli";
 import { describe, expect, it } from "vitest";
 
-import { legacyBranchesCommand } from "../../legacy/commands/branches/branches.command.ts";
-import { legacyMigrationCommand } from "../../legacy/commands/migration/migration.command.ts";
-import { legacySsoCommand } from "../../legacy/commands/sso/sso.command.ts";
+import { legacyBranchesCommand } from "../../commands/branches/branches.command.ts";
+import { legacyMigrationCommand } from "../../commands/migration/migration.command.ts";
+import { legacySsoCommand } from "../../commands/sso/sso.command.ts";
 import { LegacyGoChildExitError } from "../legacy/legacy-go-child-exit.error.ts";
 import {
   classifyParseErrorConsoleOutput,
@@ -37,6 +37,17 @@ describe("extractCommandPath", () => {
     expect(
       extractCommandPath(["--workdir", "/tmp/app", "--network-id", "net", "functions", "serve"]),
     ).toEqual(["functions", "serve"]);
+  });
+
+  it("skips the built-in --log-level flag and its value", () => {
+    expect(extractCommandPath(["--log-level", "error", "functions", "serve"])).toEqual([
+      "functions",
+      "serve",
+    ]);
+  });
+
+  it("skips the built-in --completions flag and its shell value", () => {
+    expect(extractCommandPath(["--completions", "bash", "--version"])).toEqual([]);
   });
 
   it("treats --flag=value as a single token", () => {
@@ -525,6 +536,10 @@ describe("hasRootVersionFlag", () => {
     [["--profile", "-v"], false],
     [["--profile=x", "-v"], false],
     [["-o", "-v"], false],
+    // `--completions` consumes its shell value, so the root `--version`
+    // behind it stays a version request (issue #6482 built-in registration).
+    [["--completions", "bash", "--version"], true],
+    [["--completions", "--version"], false],
     [["db", "reset", "--version", "20240101000000"], false],
     [["migration", "squash", "--version", "x"], false],
     [["branches", "-v"], false],
@@ -532,5 +547,9 @@ describe("hasRootVersionFlag", () => {
     [[], false],
   ])("%j -> %s", (args, expected) => {
     expect(hasRootVersionFlag(args as ReadonlyArray<string>)).toBe(expected);
+  });
+
+  it("hasRootHelpOrVersionFlag sees the root --version behind --completions and its value", () => {
+    expect(hasRootHelpOrVersionFlag(["--completions", "bash", "--version"])).toBe(true);
   });
 });

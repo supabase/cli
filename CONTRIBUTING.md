@@ -74,6 +74,8 @@ Install workspace dependencies:
 pnpm install
 ```
 
+This also installs a local `commit-msg` git hook (via husky) that validates your commit messages against `commitlint.config.js` — see [Pull Requests](AGENTS.md#pull-requests) for the allowed types and scopes.
+
 Clone the reference submodules used during development:
 
 ```sh
@@ -92,7 +94,6 @@ That pulls `.repos/effect/`, which is the local source of truth for Effect v4 AP
 |-- packages/
 |   |-- api/                  # Typed Supabase Management API client
 |   |-- config/               # Supabase config schema and generated types
-|   |-- process-compose/      # Effect-based process orchestration library
 |   |-- stack/                # Programmatic local Supabase stack runtime
 |   `-- cli-*/                # Platform-specific CLI binary packages
 |-- tools/                    # Repository tooling (release scripts, etc.)
@@ -115,7 +116,6 @@ That pulls `.repos/effect/`, which is the local source of truth for Effect v4 AP
 | `packages/api`                  | Auto-generated TypeScript client for the Supabase Management API.                                                   |
 | `packages/cli-test-helpers`     | CLI test harness library — `createHarness`/`exec` API for spawning TS Legacy and TS Next CLI subprocesses in tests. |
 | `packages/config`               | JSON Schema and generated TypeScript types for Supabase configuration.                                              |
-| `packages/process-compose`      | TypeScript/Bun port of `process-compose` used for multi-service orchestration.                                      |
 | `packages/stack`                | Programmatic local Supabase stack used by the CLI and other tooling.                                                |
 | `packages/cli-darwin-arm64`     | Published native CLI binary wrapper for macOS arm64.                                                                |
 | `packages/cli-darwin-x64`       | Published native CLI binary wrapper for macOS x64.                                                                  |
@@ -140,7 +140,7 @@ pnpm run fix:all     # run all fixers across every project
 
 ### Standard package scripts
 
-Standard TypeScript workspaces (`apps/cli-e2e`, `apps/cli`, `packages/api`, `packages/cli-test-helpers`, `packages/config`, `packages/process-compose`, `packages/stack`) declare their package scripts explicitly. Test suites vary by package: unit tests are standard, while integration and e2e tests exist only where applicable.
+Standard TypeScript workspaces (`apps/cli-e2e`, `apps/cli`, `packages/api`, `packages/cli-test-helpers`, `packages/config`, `packages/stack`) declare their package scripts explicitly. Test suites vary by package: unit tests are standard, while integration and e2e tests exist only where applicable.
 
 | Script             | What it does                           |
 | ------------------ | -------------------------------------- |
@@ -185,7 +185,7 @@ e2e package with `pnpm run test:e2e --shard=1/3`.
 
 ## E2E Compatibility Test Suite
 
-`apps/cli-e2e` implements the replay-and-record compatibility harness for the TypeScript Legacy CLI (`ts-legacy`, the only shipped CLI shell). Live tests are owned by `apps/cli` and run from the command they cover. The CLI still shells out to the bundled Go binary for the handful of commands the TS port proxies (`db diff`, `db pull`, `db branch *`, `db remote *`, `gen keys`, `functions download`), so `apps/cli-go/` is built alongside the TS CLI for these suites, but there is no Go-vs-TypeScript parity runner.
+`apps/cli-e2e` implements the replay-and-record compatibility harness for the TypeScript Legacy CLI (`ts-legacy`, the only shipped CLI shell). Live tests are owned by `apps/cli` and run from the command they cover. The CLI still shells out to the bundled Go binary for the handful of commands the TS port proxies (`db diff --use-pg-schema`, `db branch *`, `db remote changes`, `gen keys`, `functions download`), so `apps/cli-go/` is built alongside the TS CLI for these suites, but there is no Go-vs-TypeScript parity runner.
 
 ### Architecture
 

@@ -17,7 +17,7 @@ import {
   defaultPublishableKey,
   defaultSecretKey,
   edgeRuntimeNofileUlimit,
-} from "@supabase/stack/effect";
+} from "../stack-constants.ts";
 import {
   createHmac,
   createPrivateKey,
@@ -44,12 +44,12 @@ import { ChildProcessSpawner } from "effect/unstable/process";
 import {
   legacyDescribeContainerCliFailure,
   spawnContainerCli,
-} from "../../legacy/shared/legacy-container-cli.ts";
+} from "../../command-internal/legacy-container-cli.ts";
 import {
   LEGACY_SUGGEST_DOCKER_INSTALL,
   legacyIsDockerDaemonUnreachable,
-} from "../../legacy/shared/legacy-docker-suggest.ts";
-import { parseDotEnv } from "../../legacy/shared/legacy-dotenv.ts";
+} from "../../command-internal/legacy-docker-suggest.ts";
+import { parseDotEnv } from "../../command-internal/legacy-dotenv.ts";
 import { legacyViperEnvStringWithProjectFallback } from "../legacy/legacy-viper-env.ts";
 import {
   resolveRemoteJwks,
@@ -227,7 +227,7 @@ export interface StartedRuntime {
  * Every already-resolved secret/key {@link startEdgeRuntimeContainer} needs,
  * matching {@link finalizeAuthArtifacts}'s return shape. Named and exported so
  * a caller outside this module (`start`'s own edge-runtime bring-up,
- * `legacy/commands/start/services/edge-runtime.service.ts`) can build the
+ * `commands/start/services/edge-runtime.service.ts`) can build the
  * exact same shape from values it has already resolved itself, instead of
  * calling {@link resolveLocalAuthArtifacts} (which re-reads `config.toml`/signing
  * keys independently — correct for the standalone `functions serve` command,
@@ -434,7 +434,7 @@ function toPlainAuthConfig(
 
 /**
  * Exported so `start`'s own edge-runtime bring-up
- * (`legacy/commands/start/services/edge-runtime.service.ts`) can reuse this
+ * (`commands/start/services/edge-runtime.service.ts`) can reuse this
  * exact `Redacted`-unwrapping/zero-hash-filtering logic against its own,
  * already-loaded `CliConfig` instead of duplicating it — see
  * {@link ServeEdgeRuntimeContainerConfig}'s doc comment.
@@ -458,7 +458,7 @@ export function toPlainEdgeRuntimeConfig(
     // resolved secret leaves in `Redacted` and leaves unresolved `env()`
     // literals as plain strings, so `Redacted.isRedacted` + non-empty mirrors
     // both zero-hash cases — the same guard `secrets set` uses
-    // (`legacy/commands/secrets/set/set.handler.ts`).
+    // (`commands/secrets/set/set.handler.ts`).
     secrets: Object.fromEntries(
       Object.entries(edgeRuntime.secrets ?? {}).flatMap(([name, value]) =>
         Redacted.isRedacted(value) && Redacted.value(value).length > 0
@@ -715,7 +715,16 @@ const resolveServeConfig = Effect.fnUntraced(function* (
   goViperCompat: boolean,
   goConfigCompat: FunctionsGoConfigCompat | undefined,
 ) {
-  const projectEnv = yield* loadServeCliProjectEnvironment(projectRoot);
+  // This single value is what keeps the `.env` discovery, the config load,
+  // and the functions-manifest inference from ever resolving three
+  // different roots: `goConfigCompat === undefined` (`next`/library path)
+  // keeps the package-default ancestor search; the legacy shell's
+  // `search: false` below must match `loadFunctionsCliConfig`'s own options
+  // exactly (see the config-load comment further down).
+  const searchAncestors = goConfigCompat === undefined;
+  const projectEnv = yield* loadServeCliProjectEnvironment(projectRoot, {
+    search: searchAncestors,
+  });
   const projectRef = Option.match(projectIdOverride, {
     onNone: () => undefined,
     onSome: (value) => {
@@ -728,19 +737,22 @@ const resolveServeConfig = Effect.fnUntraced(function* (
   // `.env.<SUPABASE_ENV>`/`.env.local`/`.env` over the ambient env) and pass it
   // in, so loading neither re-reads those files nor mutates `process.env`.
   //
-  // `search: false`/`tomlOnly: true` when `goConfigCompat` is set (legacy
-  // shell): this MUST match `loadFunctionsCliConfig`'s own options below
-  // exactly, or the two loads can resolve two different files (an ancestor's
-  // config.toml vs this dir's; a stray config.json vs config.toml) — one
-  // supplying `auth`/`edgeRuntime`/`apiPort` here, the other supplying
-  // `denoVersion`/`Config.Validate` below, silently mixing fields from two
-  // different projects. `next` (`goConfigCompat === undefined`) keeps the
-  // package defaults (ancestor search, JSON preferred), unchanged.
+  // `search: searchAncestors` (`false`)/`tomlOnly: true` when `goConfigCompat`
+  // is set (legacy shell): this MUST match `loadFunctionsCliConfig`'s own
+  // options below exactly, or the two loads can resolve two different files
+  // (an ancestor's config.toml vs this dir's; a stray config.json vs
+  // config.toml) — one supplying `auth`/`edgeRuntime`/`apiPort` here, the
+  // other supplying `denoVersion`/`Config.Validate` below, silently mixing
+  // fields from two different projects. `next` (`goConfigCompat === undefined`)
+  // keeps the package defaults (ancestor search, JSON preferred), unchanged —
+  // `search: searchAncestors` is `search: true` there, identical to the
+  // previously-absent default.
   const loadedConfig = yield* loadCliConfig(projectRoot, {
     ...(projectRef === undefined ? {} : { projectRef }),
     ...(projectEnv === null ? {} : { cliProjectEnv: projectEnv }),
     goViperCompat,
-    ...(goConfigCompat === undefined ? {} : { search: false, tomlOnly: true }),
+    search: searchAncestors,
+    ...(goConfigCompat === undefined ? {} : { tomlOnly: true }),
   });
   const baseConfig = loadedConfig?.config ?? defaultCliConfig;
 
@@ -777,6 +789,7 @@ const resolveServeConfig = Effect.fnUntraced(function* (
   const configFunctions = yield* inferFunctionsManifest({
     cwd: projectRoot,
     config: configForManifest,
+    search: searchAncestors,
   });
   const configProjectId =
     projectEnv === null
@@ -1112,8 +1125,11 @@ function ambientProjectEnv() {
   );
 }
 
-const loadServeCliProjectEnvironment = Effect.fnUntraced(function* (projectRoot: string) {
-  const paths = yield* findCliProjectPaths(projectRoot);
+const loadServeCliProjectEnvironment = Effect.fnUntraced(function* (
+  projectRoot: string,
+  options: { readonly search: boolean },
+) {
+  const paths = yield* findCliProjectPaths(projectRoot, { search: options.search });
   if (paths === null) {
     return null;
   }

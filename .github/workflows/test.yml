@@ -148,7 +148,7 @@ jobs:
       (github.event_name == 'merge_group' ||
         inputs.force ||
         github.event.pull_request.draft == false)
-    name: Run end-to-end tests (shard ${{ matrix.shard }}/3)
+    name: Run CLI end-to-end tests (shard ${{ matrix.shard }}/3)
     runs-on: blacksmith-8vcpu-ubuntu-2404
     strategy:
       fail-fast: false
@@ -186,16 +186,39 @@ jobs:
         run: pnpm exec turbo run supabase#build
 
       - name: Run end-to-end tests
-        run: pnpm exec turbo run test:e2e:run --only --concurrency=1 -- --shard=${{ matrix.shard }}/3
+        run: pnpm exec turbo run test:e2e:run --only --concurrency=1 --filter=supabase --filter=@supabase/cli-e2e -- --shard=${{ matrix.shard }}/3
         env:
           CLI_HARNESS_TARGET: ts-legacy
           SUPABASE_GO_BINARY: ${{ github.workspace }}/apps/cli-go/supabase-go
 
-  # Summary job that gates branch protection.  The matrix `test-e2e` job
-  # produces per-shard check names (`Run end-to-end tests (shard N/3)`), so
-  # this job preserves the original `Run end-to-end tests` check name that
-  # branch protection rules already require.  It succeeds iff every shard
-  # succeeded (or skipped — `success()` is true for skipped jobs).
+  test-stack-e2e:
+    if: |
+      !startsWith(github.head_ref, 'release-notes/') &&
+      (github.event_name == 'merge_group' ||
+        inputs.force ||
+        github.event.pull_request.draft == false)
+    name: Run stack end-to-end tests (${{ matrix.runtime }})
+    runs-on: blacksmith-8vcpu-ubuntu-2404
+    strategy:
+      fail-fast: false
+      matrix:
+        runtime: [native, container]
+    steps:
+      - name: Checkout
+        uses: useblacksmith/checkout@6fd481652155169ed4d2f25ebaf97464f685175f # v1.0.0-beta
+
+      - name: Setup
+        uses: ./.github/actions/setup
+        with:
+          dependency-firewall-token: ${{ secrets.DF_FIREWALL_TOKEN }}
+
+      - name: Run stack end-to-end tests
+        run: pnpm --filter @supabase/stack test:e2e:run
+        env:
+          SUPABASE_STACK_E2E_RUNTIME: ${{ matrix.runtime }}
+
+  # Summary job that gates branch protection. It preserves the original check
+  # name and succeeds iff every CLI shard and stack runtime succeeded.
   test-e2e-summary:
     if: |
       always() &&
@@ -204,13 +227,13 @@ jobs:
         inputs.force ||
         github.event.pull_request.draft == false)
     name: Run end-to-end tests
-    needs: test-e2e
+    needs: [test-e2e, test-stack-e2e]
     runs-on: ubuntu-latest
     steps:
       - name: Verify all shards succeeded
         run: |
-          if [ "${{ needs.test-e2e.result }}" = "failure" ] || [ "${{ needs.test-e2e.result }}" = "cancelled" ]; then
-            echo "::error ::One or more e2e shards failed: ${{ needs.test-e2e.result }}"
+          if [ "${{ needs.test-e2e.result }}" = "failure" ] || [ "${{ needs.test-e2e.result }}" = "cancelled" ] || [ "${{ needs.test-stack-e2e.result }}" = "failure" ] || [ "${{ needs.test-stack-e2e.result }}" = "cancelled" ]; then
+            echo "::error ::One or more e2e jobs failed: cli=${{ needs.test-e2e.result }}, stack=${{ needs.test-stack-e2e.result }}"
             exit 1
           fi
-          echo "All e2e shards reported: ${{ needs.test-e2e.result }}"
+          echo "All e2e jobs reported: cli=${{ needs.test-e2e.result }}, stack=${{ needs.test-stack-e2e.result }}"

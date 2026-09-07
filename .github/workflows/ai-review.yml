@@ -144,6 +144,7 @@ jobs:
         with:
           ref: ${{ github.event.repository.default_branch }}
           path: trusted
+          fetch-depth: 0
           persist-credentials: false
 
       - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
@@ -155,19 +156,18 @@ jobs:
           # must never be able to write to it.
           no-cache: true
 
-      - name: Fetch PR diff and metadata
+      - name: Generate PR diff and fetch metadata
+        working-directory: trusted
         env:
           GH_TOKEN: ${{ github.token }}
           PR: ${{ needs.resolve.outputs.pr_number }}
         run: |
           mkdir -p /tmp/ai-review
-          # `gh` infers the repo from the current directory's git remote, but this
-          # job checks out into `pr/` and `trusted/` subdirs, so $GITHUB_WORKSPACE
-          # itself is not a git repo — pass --repo explicitly.
-          gh pr diff "$PR" --repo "$GITHUB_REPOSITORY" > /tmp/ai-review/pr.diff
           gh pr view "$PR" --repo "$GITHUB_REPOSITORY" \
             --json number,title,body,baseRefName,headRefName,additions,deletions,changedFiles \
             > /tmp/ai-review/pr.json
+          base_ref=$(jq -r '.baseRefName' /tmp/ai-review/pr.json)
+          bun .github/scripts/ai-review/generate-pr-diff.ts "$PR" "$base_ref"
 
       # Pin the exact published version so a new Claude Code release can't
       # silently change review behavior mid-rollout; bump deliberately.
@@ -299,6 +299,7 @@ jobs:
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           ref: ${{ github.event.repository.default_branch }}
+          fetch-depth: 0
           persist-credentials: false
 
       - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
@@ -306,14 +307,14 @@ jobs:
           bun-version-file: ".bun-version"
           no-cache: true
 
-      - name: Fetch PR diff
+      - name: Generate PR diff
         env:
           GH_TOKEN: ${{ github.token }}
           PR: ${{ needs.resolve.outputs.pr_number }}
         run: |
           mkdir -p /tmp/ai-review
-          # Pass --repo explicitly so `gh` never depends on cwd being a git repo.
-          gh pr diff "$PR" --repo "$GITHUB_REPOSITORY" > /tmp/ai-review/pr.diff
+          base_ref=$(gh pr view "$PR" --repo "$GITHUB_REPOSITORY" --json baseRefName --jq '.baseRefName')
+          bun .github/scripts/ai-review/generate-pr-diff.ts "$PR" "$base_ref"
 
       - name: Prepare findings output schema
         run: |
@@ -331,7 +332,7 @@ jobs:
         # its output file — the step sits idle until the job timeout, discarding
         # a completed review (openai/codex-action#150). v1.11 handles the same
         # heavy workload cleanly. There is no released fix above v1.12 yet.
-        uses: openai/codex-action@52fe01ec70a42f454c9d2ebd47598f9fd6893d56 # v1.11
+        uses: openai/codex-action@86365089eb2b84e0a8fb0717b304f8bdcb13b20e # v1.12
         with:
           openai-api-key: ${{ secrets.OPENAI_API_KEY }}
           prompt-file: .github/ai-review/codex-review-prompt.md
@@ -410,6 +411,7 @@ jobs:
         with:
           ref: ${{ github.event.repository.default_branch }}
           path: trusted
+          fetch-depth: 0
           persist-credentials: false
 
       - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
@@ -455,13 +457,15 @@ jobs:
               > /tmp/ai-review/codex-findings.json
           fi
 
-      - name: Fetch PR diff
+      - name: Generate PR diff
+        working-directory: trusted
         env:
           GH_TOKEN: ${{ github.token }}
           PR: ${{ needs.resolve.outputs.pr_number }}
         run: |
           mkdir -p /tmp/ai-review
-          gh pr diff "$PR" --repo "$GITHUB_REPOSITORY" > /tmp/ai-review/pr.diff
+          base_ref=$(gh pr view "$PR" --repo "$GITHUB_REPOSITORY" --json baseRefName --jq '.baseRefName')
+          bun .github/scripts/ai-review/generate-pr-diff.ts "$PR" "$base_ref"
 
       - name: Prepare merged-review output schema
         working-directory: trusted
@@ -495,7 +499,7 @@ jobs:
         # its output file — the step sits idle until the job timeout, discarding
         # a completed review (openai/codex-action#150). v1.11 handles the same
         # heavy workload cleanly. There is no released fix above v1.12 yet.
-        uses: openai/codex-action@52fe01ec70a42f454c9d2ebd47598f9fd6893d56 # v1.11
+        uses: openai/codex-action@86365089eb2b84e0a8fb0717b304f8bdcb13b20e # v1.12
         with:
           openai-api-key: ${{ secrets.OPENAI_API_KEY }}
           prompt-file: trusted/.github/ai-review/adjudicate-prompt.md
