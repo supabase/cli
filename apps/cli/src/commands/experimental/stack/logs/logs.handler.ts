@@ -26,20 +26,19 @@ const logsError = (error: unknown): LegacyExperimentalStackLogsError => {
     stackError === undefined
       ? ("unknown" as const)
       : Match.value(stackError).pipe(
-          Match.tag(
-            "StackNotFoundError",
-            "InvalidLogCursorError",
-            "InvalidStackIdentityError",
-            () => ({
-              reason: "flags" as const,
-            }),
-          ),
+          Match.tag("StackNotFoundError", "InvalidStackIdentityError", () => ({
+            reason: "flags" as const,
+          })),
+          Match.tag("InvalidLogCursorError", () => ({ reason: "impossible-state" as const })),
           Match.tag(
             "StackNotRunningError",
             "StackOwnershipConflictError",
             "StackLifecycleConflictError",
             "StackUpgradeRequiredError",
-            () => ({ reason: "lifecycle" as const }),
+            () => ({
+              reason: "lifecycle" as const,
+              suggestion: "Run supabase experimental stack start before reading logs.",
+            }),
           ),
           Match.tag("StackStateInvalidError", "StackStateFormatUnsupportedError", () => ({
             reason: "invalid-config" as const,
@@ -49,6 +48,9 @@ const logsError = (error: unknown): LegacyExperimentalStackLogsError => {
   return new LegacyExperimentalStackLogsError({
     reason: typeof classification === "string" ? classification : classification.reason,
     message: stackError?.message ?? String(error),
+    ...(typeof classification !== "string" && "suggestion" in classification
+      ? { suggestion: classification.suggestion }
+      : {}),
     cause: error,
   });
 };
@@ -60,7 +62,7 @@ const eventForEntry = (entry: StackLogEntry, source: "history" | "live") => ({
   type: "log-entry" as const,
   timestamp: entry.timestamp,
   service: entry.source,
-  stream: entry.stream === "internal" ? ("stderr" as const) : entry.stream,
+  stream: entry.stream,
   line: entry.message,
   source,
 });

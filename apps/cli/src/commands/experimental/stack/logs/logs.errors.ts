@@ -8,7 +8,7 @@ import {
 export class LegacyExperimentalStackLogsError extends Data.TaggedError(
   "LegacyExperimentalStackLogsError",
 )<{
-  readonly reason: "flags" | "invalid-config" | "lifecycle" | "unknown";
+  readonly reason: "flags" | "invalid-config" | "lifecycle" | "impossible-state" | "unknown";
   readonly message: string;
   readonly suggestion?: string;
   readonly cause?: unknown;
@@ -21,6 +21,8 @@ export class LegacyExperimentalStackLogsError extends Data.TaggedError(
         return actionability.invalidConfig;
       case "lifecycle":
         return actionability.invalidConfig;
+      case "impossible-state":
+        return actionability.impossibleState;
       case "unknown":
         return actionability.unknown;
     }

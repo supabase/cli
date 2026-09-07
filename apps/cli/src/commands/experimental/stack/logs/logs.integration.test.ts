@@ -3,7 +3,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { BunServices } from "@effect/platform-bun";
 import { describe, expect, it } from "@effect/vitest";
-import { Effect, Fiber, Layer, Option, Stream } from "effect";
+import { Deferred, Effect, Fiber, Layer, Option, Stream } from "effect";
 import { CliOutput, Command } from "effect/unstable/cli";
 import { StackIdSchema } from "@supabase/stack/effect";
 import type {
@@ -42,6 +42,13 @@ const entries: ReadonlyArray<StackLogEntry> = [
     message: "function failed",
   },
 ];
+const internalEntry: StackLogEntry = {
+  cursor: { opaque: "internal-1" },
+  timestamp: "2026-09-08T00:00:02.000Z",
+  source: "supervisor",
+  stream: "internal",
+  message: "stack supervisor ready",
+};
 
 const status: StackStatus = {
   id,
@@ -69,15 +76,20 @@ function setup(opts: {
   followLogs?: (query: unknown) => Stream.Stream<StackLogEntry>;
 }) {
   const out = mockOutput();
-  const calls: { readonly queries: unknown[]; opened: string[] } = { queries: [], opened: [] };
+  const calls: {
+    readonly queries: unknown[];
+    opened: string[];
+    stopCalls: number;
+    destroyCalls: number;
+  } = { queries: [], opened: [], stopCalls: 0, destroyCalls: 0 };
   const stack = {
     id,
     status: () => Effect.succeed(status),
     credentials: () => Effect.die("unused"),
     prepare: () => Effect.die("unused"),
     start: () => Effect.die("must not start"),
-    stop: () => Effect.die("must not stop"),
-    destroy: () => Effect.die("must not destroy"),
+    stop: () => Effect.sync(() => void calls.stopCalls++),
+    destroy: () => Effect.sync(() => void calls.destroyCalls++),
     logs: (query?: unknown) => {
       calls.queries.push(query);
       return (
@@ -174,14 +186,32 @@ describe("experimental stack logs", () => {
       return Effect.gen(function* () {
         yield* legacyExperimentalStackLogs(flags({ follow: true }));
         expect(setupResult.out.stdoutText).toContain("function failed");
-        const interrupted = setup({ root, followLogs: () => Stream.never });
+        const followStarted = yield* Deferred.make<void>();
+        let finalized = false;
+        const interrupted = setup({
+          root,
+          logs: () =>
+            Effect.succeed({ entries: [entries[0]!], cursor: { opaque: "1" }, running: true }),
+          followLogs: (): Stream.Stream<StackLogEntry> =>
+            Stream.fromEffect(
+              Effect.as(Deferred.succeed(followStarted, undefined), undefined),
+            ).pipe(
+              Stream.flatMap(() => Stream.empty),
+              Stream.concat(Stream.never),
+              Stream.ensuring(Effect.sync(() => void (finalized = true))),
+            ),
+        });
         const fiber = yield* Effect.forkChild(
           legacyExperimentalStackLogs(flags({ follow: true })).pipe(
             Effect.provide(interrupted.layer),
           ),
         );
+        yield* Deferred.await(followStarted);
+        expect(interrupted.calls.opened).toEqual([id]);
         yield* Fiber.interrupt(fiber);
-        expect(interrupted.calls.opened).toEqual([]);
+        expect(finalized).toBe(true);
+        expect(interrupted.calls.stopCalls).toBe(0);
+        expect(interrupted.calls.destroyCalls).toBe(0);
       }).pipe(
         Effect.provide(setupResult.layer),
         Effect.ensuring(Effect.sync(() => rmSync(root, { recursive: true, force: true }))),
@@ -208,21 +238,46 @@ describe("experimental stack logs", () => {
 
   it.effect("emits bounded stream-json log-entry events", () => {
     const root = mkdtempSync(join(tmpdir(), "supabase-stack-logs-stream-"));
-    const setupResult = setup({ root });
+    const setupResult = setup({
+      root,
+      logs: () =>
+        Effect.succeed({
+          entries: [internalEntry],
+          cursor: { opaque: "internal-1" },
+          running: false,
+        }),
+    });
     const output = mockOutput({ format: "stream-json" });
     return Effect.gen(function* () {
       yield* legacyExperimentalStackLogs(flags({ tail: 2 }));
-      expect(output.events).toEqual(
-        entries.map((entry) =>
-          expect.objectContaining({
-            type: "log-entry",
-            line: entry.message,
-            source: "history",
-          }),
-        ),
-      );
+      expect(output.events).toEqual([
+        expect.objectContaining({
+          type: "log-entry",
+          line: internalEntry.message,
+          stream: "internal",
+          source: "history",
+        }),
+      ]);
     }).pipe(
       Effect.provide(Layer.mergeAll(setupResult.layer, output.layer)),
+      Effect.ensuring(Effect.sync(() => rmSync(root, { recursive: true, force: true }))),
+    );
+  });
+
+  it.effect("finishes follow after printing retained history when the stack is stopped", () => {
+    const root = mkdtempSync(join(tmpdir(), "supabase-stack-logs-stopped-"));
+    const setupResult = setup({
+      root,
+      logs: () =>
+        Effect.succeed({ entries: [entries[0]!], cursor: { opaque: "1" }, running: false }),
+      followLogs: () => Stream.die("follow must not be opened for a stopped stack"),
+    });
+    return Effect.gen(function* () {
+      yield* legacyExperimentalStackLogs(flags({ follow: true }));
+      expect(setupResult.out.stdoutText).toContain("database ready");
+      expect(setupResult.calls.queries).toEqual([{ tail: 100 }]);
+    }).pipe(
+      Effect.provide(setupResult.layer),
       Effect.ensuring(Effect.sync(() => rmSync(root, { recursive: true, force: true }))),
     );
   });

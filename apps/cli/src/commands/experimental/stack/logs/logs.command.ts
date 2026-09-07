@@ -1,4 +1,5 @@
 import { Command, Flag } from "effect/unstable/cli";
+import { CAPABILITY_NAMES } from "@supabase/stack/effect";
 import { withJsonErrorHandling } from "../../../../shared/output/json-error-handling.ts";
 import { withLegacyCommandInstrumentation } from "../../../../telemetry/legacy-command-instrumentation.ts";
 import { legacyExperimentalStackLogs } from "./logs.handler.ts";
@@ -14,18 +15,10 @@ const config = {
     Flag.withDescription("Read logs from an existing stack by id."),
     Flag.optional,
   ),
-  service: Flag.choice("service", [
-    "database",
-    "rest",
-    "auth",
-    "realtime",
-    "storage",
-    "functions",
-    "studio",
-    "mail",
-    "analytics",
-    "pooler",
-  ] as const).pipe(Flag.withDescription("Limit logs to one stack service."), Flag.optional),
+  service: Flag.choice("service", CAPABILITY_NAMES).pipe(
+    Flag.withDescription("Limit logs to one stack service."),
+    Flag.optional,
+  ),
   tail: Flag.integer("tail").pipe(
     Flag.filter(
       (value) => value >= 0 && value <= 10_000,
