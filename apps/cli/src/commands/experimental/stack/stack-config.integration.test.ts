@@ -5,6 +5,7 @@ import { join } from "node:path";
 import { BunServices } from "@effect/platform-bun";
 import { afterEach, describe, expect, it } from "@effect/vitest";
 import { Effect, Exit, Redacted } from "effect";
+import { renderCliConfigTemplate } from "../../../shared/init/project-init.templates.ts";
 
 import { legacyLoadStackConfig } from "./stack-config.ts";
 
@@ -217,6 +218,72 @@ enabled = false
       expect(config.listeners).toEqual({});
       if (config.capabilities?.database !== undefined && "settings" in config.capabilities.database)
         expect(config.capabilities.database.settings?.health_timeout).toBe("2m");
+    });
+  });
+
+  it.effect("loads the actual initialized stack config template", () => {
+    const root = project(renderCliConfigTemplate("stack-config-init", false));
+    return Effect.gen(function* () {
+      const config = yield* load(root);
+      expect(config.listeners?.api).toEqual({ port: 54321 });
+      expect(config.listeners?.database).toEqual({ port: 54322 });
+      expect(config.listeners?.pooler).toEqual({ enabled: false });
+    });
+  });
+
+  it.effect("ignores unresolved function env references when edge runtime is disabled", () => {
+    const root = project(`project_id = "stack-config-disabled-functions-env"
+[edge_runtime]
+enabled = false
+[functions.hello]
+env = { TOKEN = "env(SUPABASE_STACK_TEST_DISABLED_MISSING_ENV)" }
+`);
+    return Effect.gen(function* () {
+      const config = yield* load(root);
+      expect(config.capabilities?.functions).toEqual({ enabled: false });
+    });
+  });
+
+  it.effect("accepts the initialized disabled service listeners with explicit ports", () => {
+    const root = project(`project_id = "stack-config-disabled-listeners"
+[api]
+enabled = false
+port = 55431
+[auth]
+enabled = false
+[realtime]
+enabled = false
+[storage]
+enabled = false
+[db]
+port = 55432
+[db.pooler]
+enabled = false
+port = 55433
+[studio]
+enabled = false
+port = 55434
+[local_smtp]
+enabled = false
+port = 55435
+smtp_port = 55436
+pop3_port = 55437
+[edge_runtime]
+enabled = false
+inspector_port = 55438
+`);
+    return Effect.gen(function* () {
+      const config = yield* load(root);
+      expect(config.listeners).toEqual({
+        api: { enabled: false },
+        database: { port: 55432 },
+        pooler: { enabled: false },
+        studio: { enabled: false },
+        mailUi: { enabled: false },
+        smtp: { enabled: false },
+        pop3: { enabled: false },
+        functionsInspector: { enabled: false },
+      });
     });
   });
 

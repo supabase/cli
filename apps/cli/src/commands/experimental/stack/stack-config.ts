@@ -179,8 +179,8 @@ const apiListener = (
     config.edge_runtime.enabled;
   if (listener === undefined) return listener;
   if (gatewayEnabled) {
-    const { enabled: _enabled, ...withoutEnabled } = listener;
-    return withoutEnabled;
+    const port = explicitPort(document, "api", "port");
+    return port === undefined ? {} : { port };
   }
   return { ...listener, enabled: false };
 };
@@ -194,10 +194,8 @@ const listenerFromSection = (
   if (raw === undefined) return undefined;
   const enabled = raw["enabled"];
   const port = explicitPort(document, sectionName, portKey);
-  return {
-    ...(enabled === false ? { enabled: false } : {}),
-    ...(port === undefined ? {} : { port }),
-  };
+  if (enabled === false) return { enabled: false };
+  return port === undefined ? {} : { port };
 };
 
 const nestedPort = (
@@ -221,10 +219,8 @@ const nestedListener = (
   const nested = section(parent, nestedSection);
   if (nested === undefined) return undefined;
   const port = nestedPort(document, sectionName, nestedSection, portKey);
-  return {
-    ...(nested.enabled === false ? { enabled: false } : {}),
-    ...(port === undefined ? {} : { port }),
-  };
+  if (nested.enabled === false) return { enabled: false };
+  return port === undefined ? {} : { port };
 };
 
 const legacyAuthSettings = (auth: CliConfig["auth"]) => ({
@@ -614,7 +610,9 @@ const legacyConfigValidationError = (
   const figma = config.auth.external.figma;
   if (figma?.enabled === true)
     return "auth.external.figma is enabled but unsupported by the experimental stack";
+  if (config.edge_runtime.enabled === false) return undefined;
   for (const [name, functionConfig] of Object.entries(config.functions)) {
+    if (functionConfig.enabled === false) continue;
     for (const value of Object.values(functionConfig.env)) {
       if (typeof value !== "string") continue;
       const match = /^env\(([A-Za-z_][A-Za-z0-9_]*)\)$/.exec(value);
