@@ -86,7 +86,7 @@ describe("experimental stack list", () => {
     "sorts distinct persisted roots and reports stopped lifecycle without live claims",
     () => {
       const run = runList([
-        descriptor("b", "/work/z", "zeta", "stopped"),
+        descriptor("e", "/work/z", "zeta", "stopped"),
         descriptor("a", "/work/a", "beta", "running"),
         descriptor("c", "/work/a", "alpha", "unconfigured"),
         descriptor("b", "/work/a", "alpha", "stopped"),
@@ -102,8 +102,8 @@ describe("experimental stack list", () => {
             expect(run.out.stdoutText).toContain("Desired lifecycle: stopped");
             expect(run.out.stdoutText).not.toContain("Readiness");
             expect(run.out.stdoutText).toContain("/work/z");
-            expect(run.out.stdoutText.indexOf(`alpha (${"a".repeat(64)})`)).toBeLessThan(
-              run.out.stdoutText.indexOf(`alpha (${"b".repeat(64)})`),
+            expect(run.out.stdoutText.indexOf(`alpha (${"b".repeat(64)})`)).toBeLessThan(
+              run.out.stdoutText.indexOf(`alpha (${"c".repeat(64)})`),
             );
           }),
         ),
