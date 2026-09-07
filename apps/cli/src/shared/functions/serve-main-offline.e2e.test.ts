@@ -5,8 +5,8 @@ import { join } from "node:path";
 
 import { describe, expect, test } from "vitest";
 
-import { LEGACY_START_KONG_YML_TEMPLATE } from "../../legacy/commands/start/templates/kong.yml.ts";
-import { legacyEdgeRuntimeImage } from "../../legacy/shared/legacy-edge-runtime-image.ts";
+import { LEGACY_START_KONG_YML_TEMPLATE } from "../../commands/start/templates/kong.yml.ts";
+import { legacyEdgeRuntimeImage } from "../../command-internal/legacy-edge-runtime-image.ts";
 import { ensureImage, resolveDeadline } from "../../../tests/helpers/docker-image.ts";
 import { dockerfileServiceImage } from "../services/dockerfile-images.ts";
 import { bundleServeMainTemplate } from "./serve-main-bundler.ts";

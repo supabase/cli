@@ -23,21 +23,34 @@ runs:
       with:
         version: 2026.9.0
 
-    # actions/cache-restored pnpm global virtual-store links are unusable on Windows; fresh installs reconstruct them.
     - name: Resolve pnpm store path
-      if: inputs.dependency-cache == 'true' && runner.os != 'Windows'
+      if: inputs.dependency-cache == 'true'
       id: pnpm-store
       shell: bash
       run: echo "path=$(pnpm store path --silent)" >> "$GITHUB_OUTPUT"
 
+    # Cache only the content-addressable half of the store (package files plus
+    # the SQLite index), never the global virtual store under links/. That
+    # directory is a web of directory links between packages: symlinks on
+    # POSIX, NTFS junctions on Windows. actions/cache round-trips it through
+    # tar, and on Windows the junctions do not come back as traversable
+    # directories. pnpm then trusts every restored links/ directory as complete
+    # and skips relinking, so the first dependency resolved through a restored
+    # junction fails (release smoke-test, Sept 2026). Rebuilding links/ from the
+    # cached files is hardlink-only and needs no network, and pnpm itself notes
+    # the global virtual store has little value in CI. The key prefix is bumped
+    # so restores never match the earlier whole-store archives, which still
+    # carry a links/ tree.
     - name: Configure pnpm dependency cache
-      if: inputs.dependency-cache == 'true' && runner.os != 'Windows'
+      if: inputs.dependency-cache == 'true'
       uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
       with:
-        path: ${{ steps.pnpm-store.outputs.path }}
-        key: pnpm-store-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('pnpm-lock.yaml') }}
+        path: |
+          ${{ steps.pnpm-store.outputs.path }}/files
+          ${{ steps.pnpm-store.outputs.path }}/index*
+        key: pnpm-store-files-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('pnpm-lock.yaml') }}
         restore-keys: |
-          pnpm-store-${{ runner.os }}-${{ runner.arch }}-
+          pnpm-store-files-${{ runner.os }}-${{ runner.arch }}-
 
     - name: Resolve Go cache paths
       if: inputs.dependency-cache == 'true'

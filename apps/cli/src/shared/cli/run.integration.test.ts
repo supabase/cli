@@ -1,7 +1,7 @@
 import { describe, expect, test } from "@effect/vitest";
 import { Console, Effect, Exit, Layer } from "effect";
 import { Argument, CliOutput, Command, Flag } from "effect/unstable/cli";
-import { legacyBranchesCommand } from "../../legacy/commands/branches/branches.command.ts";
+import { legacyBranchesCommand } from "../../commands/branches/branches.command.ts";
 import { LEGACY_GLOBAL_FLAGS } from "../legacy/global-flags.ts";
 import { textCliOutputFormatter } from "../output/text-formatter.ts";
 import { emptyEnv, mockOutput } from "../../../tests/helpers/mocks.ts";

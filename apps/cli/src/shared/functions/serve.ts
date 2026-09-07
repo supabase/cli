@@ -7,7 +7,7 @@ import { edgeRuntimeNofileUlimit } from "../stack-constants.ts";
 import { mkdir, readFile, realpath, rm, writeFile } from "node:fs/promises";
 import { isAbsolute, join, relative, resolve, sep } from "node:path";
 import { Effect, Option, Redacted, Stream } from "effect";
-import { parseDotEnv } from "../../legacy/shared/legacy-dotenv.ts";
+import { parseDotEnv } from "../../command-internal/legacy-dotenv.ts";
 import { Output } from "../output/output.service.ts";
 import {
   buildDockerBinds,
@@ -176,7 +176,7 @@ function reveal(value: string | Redacted.Redacted<string> | undefined): string |
 
 /**
  * Exported so `start`'s own edge-runtime bring-up
- * (`legacy/commands/start/services/edge-runtime.service.ts`) can reuse this
+ * (`commands/start/services/edge-runtime.service.ts`) can reuse this
  * exact `Redacted`-unwrapping/zero-hash-filtering logic against its own,
  * already-loaded `CliConfig` instead of duplicating it — see
  * {@link ServeEdgeRuntimeContainerConfig}'s doc comment.
@@ -200,7 +200,7 @@ export function toPlainEdgeRuntimeConfig(
     // resolved secret leaves in `Redacted` and leaves unresolved `env()`
     // literals as plain strings, so `Redacted.isRedacted` + non-empty mirrors
     // both zero-hash cases — the same guard `secrets set` uses
-    // (`legacy/commands/secrets/set/set.handler.ts`).
+    // (`commands/secrets/set/set.handler.ts`).
     secrets: Object.fromEntries(
       Object.entries(edgeRuntime.secrets ?? {}).flatMap(([name, value]) =>
         Redacted.isRedacted(value) && Redacted.value(value).length > 0
