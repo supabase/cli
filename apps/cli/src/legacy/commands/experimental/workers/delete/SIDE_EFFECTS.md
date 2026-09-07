@@ -77,11 +77,17 @@ wrapper emits for every command.
 
 ## Output Formats
 
-| Mode                          | stdout                                                                                        | stderr                                        |
-| ----------------------------- | --------------------------------------------------------------------------------------------- | --------------------------------------------- |
-| text (default)                | the confirmation prompt, then what was deleted and kept                                       | that nothing local was kept, when nothing was |
-| `--output-format json`        | one structured result carrying `worker_name`, `project_ref`, `kept_*`                         | as above                                      |
-| `--output-format stream-json` | the same result as a single terminal event                                                    | as above                                      |
-| `-o json` / `yaml` / `toml`   | the same payload in that encoding, and nothing else                                           | as above                                      |
-| `-o pretty` / `table` / `csv` | the text rendering — these fall through rather than encoding                                  | as above                                      |
-| `-o env`                      | refused **before** the DELETE; discovering it at emit time deleted the worker and then failed | the error                                     |
+| Mode                          | stdout                                                                                        | stderr                                                              |
+| ----------------------------- | --------------------------------------------------------------------------------------------- | ------------------------------------------------------------------- |
+| text (default)                | the confirmation prompt, then what was deleted and kept                                       | that nothing local was kept when nothing was, and the redeploy hint |
+| `--output-format json`        | one structured result carrying `worker_name`, `project_ref`, `kept_*`                         | neither — both are text-only                                        |
+| `--output-format stream-json` | the same result as a single terminal event                                                    | neither — both are text-only                                        |
+| `-o json` / `yaml` / `toml`   | the same payload in that encoding, and nothing else                                           | neither — both are text-only                                        |
+| `-o pretty` / `table` / `csv` | the text rendering — these fall through rather than encoding                                  | both, as in text                                                    |
+| `-o env`                      | refused **before** the DELETE; discovering it at emit time deleted the worker and then failed | the error                                                           |
+
+A structured emission is the end of the run: the handler returns at
+`legacyEmitWorkersMachineOutput` or at `output.success`, so nothing in the text
+branch below it — the kept-nothing notice and the redeploy trailer — is reached.
+`-o pretty`, `table` and `csv` are the exception, since they encode nothing and
+fall through to that same text branch.

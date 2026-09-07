@@ -29,7 +29,8 @@
   },
   "overrides": [
     {
-      // Legacy CLI is superseded by src/next; not worth the cleanup churn.
+      // The legacy CLI is the stable, shipped shell; a lint-driven rewrite of
+      // its existing string-building code isn't worth the churn.
       "files": ["apps/cli/src/legacy/**"],
       "rules": {
         "typescript/no-base-to-string": "off"

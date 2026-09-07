@@ -67,3 +67,7 @@ wrapper emits for every command.
 | `-o json` / `yaml` / `toml`   | the same payload in that encoding, and nothing else                                                      | as above                                             |
 | `-o pretty` / `table` / `csv` | the text rendering — these fall through rather than encoding                                             | as above                                             |
 | `-o env`                      | refused before any request; the payload carries a `workers` array a flat `KEY=value` list cannot express | the error                                            |
+
+The text table omits each worker's URL — it is the same host and prefix on
+every row, and carrying it made the table 137 columns wide. Every machine
+format still carries `url` per worker, and `workers status` renders it.

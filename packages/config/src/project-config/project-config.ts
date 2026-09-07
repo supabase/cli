@@ -12,22 +12,10 @@ import {
   ProjectConfigApiAttributesSchema,
   type ProjectConfigApiAttributes,
 } from "./api-attributes.ts";
+import { HOSTED_SECTION_KEYS, type HostedSectionKey } from "./hosted-sections.ts";
 import { AUTH_HOOK_NAMES, unmappedSecretApiPaths } from "./registry-auth.ts";
 import { expectString } from "./registry-row.ts";
 import { projectConfigMappingRows } from "./registry.ts";
-
-const HOSTED_SECTION_KEYS = [
-  "api",
-  "auth",
-  "db",
-  "realtime",
-  "storage",
-  "workers",
-  "experimental",
-] as const;
-
-/** The seven keys {@link ProjectConfig} can carry, derived once so the type and the runtime walk below can't drift apart. */
-type HostedSectionKey = (typeof HOSTED_SECTION_KEYS)[number];
 
 /**
  * A deeply-readonly JSON value — the shape of everything under
@@ -115,13 +103,19 @@ export type ReadonlyJsonValue =
  * {@link comparableProjectConfigPaths}/{@link isComparableProjectConfigPath}
  * to restrict a comparison to exactly the fields `fromApiProjectConfig` can
  * actually speak for, rather than hand-maintaining an equivalent field list.
- * The gap runs the other direction too: `auth.oauth_server`, and
- * `storage.analytics`/`storage.vector` when disabled, ARE comparable paths
- * (`fromApiProjectConfig` maps them) that `fromConfigDocument` can be
- * silent on entirely, since push cannot communicate that state at all — see
- * ADR 0021's "unmanaged-by-push containers" family — so the same
- * both-operands-speak-for restriction applies symmetrically, not only for
- * the API arm's unconditional fields above.
+ * The gap runs the other direction too, but far more narrowly than it once
+ * did: `auth.oauth_server.enabled`, and `storage.analytics.enabled`/
+ * `storage.vector.enabled`, are ordinary comparable paths on BOTH arms today
+ * (CLI-2314 retired the whole-container omission this paragraph used to
+ * describe) — only their few gated sibling fields
+ * (`allow_dynamic_registration`/`authorization_url_path` for
+ * `auth.oauth_server`; `max_namespaces`/`max_tables`/`max_catalogs` for
+ * `storage.analytics`; `max_buckets`/`max_indexes` for `storage.vector`) are
+ * pruned from `fromConfigDocument`'s output while the container's `enabled`
+ * reads `false` ({@link DISABLED_SENTINEL_PRUNES}), matching
+ * `fromApiProjectConfig`'s own treatment of that same retained-but-inert
+ * platform state — not a case where `fromConfigDocument` goes silent on a
+ * comparable path `fromApiProjectConfig` speaks for.
  *
  * Per ADR 0021, a `ProjectConfig` value is NOT a verbatim projection of
  * whichever operand produced it — both {@link fromConfigDocument} and
@@ -131,6 +125,25 @@ export type ReadonlyJsonValue =
  * see that ADR for the full enumeration). A `ProjectConfig` built from a
  * document is therefore not a faithful rendering of what the user wrote in
  * their config file; see {@link fromConfigDocument}'s own docstring.
+ *
+ * Relatedly (CLI-2316), a document-sourced `ProjectConfig` never carries any
+ * of the paths in {@link DOCUMENT_ONLY_LOCAL_PATHS} — ports, TLS/URL
+ * overrides, `db.pooler.{enabled,port}`, the whole `db.migrations`/`db.seed`
+ * subtrees, every config-side `realtime.*` field, and most of
+ * `experimental.*` — even though each lives inside one of the seven hosted
+ * sections above: none has any hosted counterpart on either arm — confirmed
+ * directly against the `v2GetProjectConfig` OpenAPI-generated schema, not
+ * assumed. `db.major_version` and `db.pooler`'s other 3 fields
+ * (`pool_mode`/`default_pool_size`/`max_client_conn`) are deliberately NOT in
+ * that list, despite genuinely having no `config push` write path either:
+ * both `config diff` and `config pull` — `ProjectConfig`'s actual current
+ * consumers — need them to stay normally comparable so `config pull` can
+ * still sync the platform's real (read-only-via-push) Postgres version and
+ * pooler settings into the file; only `config push` itself (which doesn't
+ * consult `ProjectConfig` at all today — it still runs on the legacy v1
+ * `config-sync` mappers) would ever need to know these are unpushable, and
+ * that distinction belongs to CLI-2313/CLI-2314's push rework, not to this
+ * list.
  */
 export type ProjectConfig = DeepPartial<Pick<CliConfig, HostedSectionKey>> & {
   // Readonly, recursively: the runtime value is deep-frozen
@@ -142,8 +155,17 @@ export type ProjectConfig = DeepPartial<Pick<CliConfig, HostedSectionKey>> & {
 
 /**
  * Deep-copies `value` (a hosted-section subtree rooted at `path`) at the
- * OBJECT level, dropping every leaf whose full path matches an `x-secret`
- * schema annotation (CLI-2230's secret-omission finding): `fromConfigDocument`'s
+ * OBJECT level for the DOCUMENT arm specifically — named for that arm (PR
+ * #6451 review round; the prior name, `copyHostedValueWithoutSecrets`, only
+ * described its original single responsibility and this function has never
+ * had a second caller: `fromApiProjectConfig` never shares it, since the API
+ * arm's own secret handling is the `isSecret`-row branch in
+ * `applyMappingRows` below, an entirely different mechanism over a different
+ * input shape) — dropping every leaf whose full path matches an `x-secret`
+ * schema annotation (CLI-2230's secret-omission finding) OR is a member of
+ * {@link DOCUMENT_ONLY_LOCAL_PATHS} (CLI-2316 — a field that lives inside a
+ * hosted section but has no live hosted counterpart on either arm):
+ * `fromConfigDocument`'s
  * input is a *decoded* `CliConfig`/`EffectiveConfig`, where `secret()`-annotated fields
  * (`../lib/env.ts`) hold plaintext or an unresolved `env(VAR)` literal, never
  * a `Redacted` wrapper (decode never redacts — only
@@ -155,10 +177,15 @@ export type ProjectConfig = DeepPartial<Pick<CliConfig, HostedSectionKey>> & {
  * HMAC digest), a document-sourced `ProjectConfig` that kept its secrets
  * would register as drift against the API-sourced side for every secret
  * field, which is worse than useless for a diff consumer. Arrays are copied
- * recursively, element by element — a hosted array can hold objects (e.g.
- * `experimental.inspect.rules`), and a merely-sliced container would alias
- * them back to the (possibly frozen) input, breaking the fresh-copy
- * contract. No `x-secret` leaf in `CliConfigSchema` sits inside an array, so
+ * recursively, element by element — no schema validation runs on this
+ * function's input, so a caller can still hand it an array of objects at any
+ * path (`experimental.inspect.rules` was the one schema field shaped that
+ * way, until CLI-2316 excluded the whole `experimental.inspect` subtree as
+ * CLI-only — this branch stays defensive against object-shaped array
+ * elements arriving through any future field or a loosely-typed caller), and
+ * a merely-sliced container would alias them back to the (possibly frozen)
+ * input, breaking the fresh-copy contract. No `x-secret` leaf in
+ * `CliConfigSchema` sits inside an array, so
  * the secret-path walk carries through elements as a no-op; empty-record
  * *elements* are preserved (the empty-container prune applies only to record
  * children — arrays compare wholesale in `../sparse.ts`, so their contents
@@ -178,26 +205,27 @@ export type ProjectConfig = DeepPartial<Pick<CliConfig, HostedSectionKey>> & {
  * explicit value (e.g. "no redirect URLs"), never litter from secret
  * stripping.
  */
-function copyHostedValueWithoutSecrets(value: unknown, path: ReadonlyArray<string>): unknown {
+function copyHostedValueForDocument(value: unknown, path: ReadonlyArray<string>): unknown {
   if (Array.isArray(value)) {
-    // Elements are copied recursively too — a hosted array can hold objects
-    // (e.g. `experimental.inspect.rules`), and a merely-sliced container
+    // Elements are copied recursively too — this function's input is never
+    // schema-validated, so an object-shaped array element is still reachable
+    // (see this function's own docstring), and a merely-sliced container
     // would alias them back to the (possibly frozen) input, breaking the
     // fresh-copy contract. The path passes through unchanged: no x-secret
     // pattern descends through an array in the hosted schema today, and
     // empty-record *elements* are preserved (the empty-container prune below
     // applies only to record children — arrays compare wholesale, so their
     // contents must survive verbatim).
-    return value.map((element) => copyHostedValueWithoutSecrets(element, path));
+    return value.map((element) => copyHostedValueForDocument(element, path));
   }
   if (isObject(value)) {
     const result: Record<string, unknown> = {};
     for (const [key, child] of Object.entries(value)) {
       const childPath = [...path, key];
-      if (isSecretPath(childPath)) {
+      if (isSecretPath(childPath) || isDocumentOnlyLocalPath(childPath)) {
         continue;
       }
-      const copied = copyHostedValueWithoutSecrets(child, childPath);
+      const copied = copyHostedValueForDocument(child, childPath);
       // Prune only containers this copy itself EMPTIED (a secret-stripped
       // subtree, possibly cascading upward) — never one that was empty in the
       // input. An originally-empty object can be data: a record entry's value
@@ -217,6 +245,161 @@ function copyHostedValueWithoutSecrets(value: unknown, path: ReadonlyArray<strin
     return result;
   }
   return value;
+}
+
+/**
+ * `fromConfigDocument`-ONLY exclusions (CLI-2316), applied by
+ * {@link isDocumentOnlyLocalPath} inside {@link copyHostedValueForDocument}'s
+ * object recursion, alongside {@link isSecretPath}. Every one of these fields
+ * lives inside a {@link HOSTED_SECTION_KEYS} section, so the whole-section
+ * copy would otherwise include it, but none has ANY real hosted counterpart —
+ * confirmed against the actual `v2GetProjectConfig` OpenAPI-generated schema
+ * (`packages/api/src/generated/contracts.ts`), not just this package's own
+ * `./api-attributes.ts` mirror of it, and cross-checked against every
+ * `apps/cli/src/legacy/commands/config/push/config-sync/*.sync.ts` mapper
+ * plus `seed buckets`, `db inspect`, `db schema declarative generate`, and
+ * `start`'s local bootstrap.
+ *
+ * This is a narrower, corrected list (PR #6451 review round): the original
+ * version of this list additionally excluded `db.major_version` and the
+ * WHOLE `db.pooler` subtree, reasoning that `config push` never writes
+ * either. That reasoning doesn't hold for what this list actually gates:
+ * `fromConfigDocument`/`ProjectConfig` is consumed by `config diff` and
+ * `config pull` (`v2GetProjectConfig`) TODAY — `config push` still runs
+ * entirely on the legacy v1 `config-sync/*.sync.ts` mappers below, with zero
+ * `ProjectConfig` involvement, so "push doesn't read it" says nothing about
+ * whether this list should exclude it. `database.major_version` and
+ * `pooler.{pool_mode,default_pool_size,max_client_conn}` are real,
+ * `v2GetProjectConfig`-reported hosted facts (confirmed directly against the
+ * OpenAPI-generated schema, not assumed): excluding them made them
+ * PERMANENTLY `unmanaged` in `config diff` (`isDeclaredAtPath &&
+ * localValue === undefined`, `./config-diff.ts`) for every stock project,
+ * since the `supabase init` template declares all four
+ * (`apps/cli/src/shared/init/project-init.templates.ts`) — unlike, say,
+ * `auth.oauth_server`, which starts UNDECLARED and only becomes `unmanaged`
+ * on ITS first pull. `unmanaged` paths never reach `config diff`'s
+ * `changes` array at all (`hasAncestorPathKey`, `./config-diff.ts`), and
+ * `config pull`'s planner only ever writes from `changes`
+ * (`legacyPlanConfigPull`, `pull.plan.ts`) — so excluding these four
+ * permanently blocked `config pull` from ever syncing the platform's real
+ * Postgres version or pooler settings into the file, for every project,
+ * forever. `pooler.enabled`/`pooler.port` stay excluded: `v2GetProjectConfig`
+ * reports neither (verified directly against the generated schema — the
+ * `pooler` struct has no `enabled` or `port` field at all), so unlike their
+ * 3 siblings they have no hosted fact to ever compare or pull:
+ *
+ * - `api.port`, `api.tls`, `api.external_url` — local Kong bind port/TLS
+ *   termination/URL override. `apiToUpdateBody` (`api.sync.ts`) reads only
+ *   `db_schema`/`db_extra_search_path`/`max_rows`; none of these three. (All
+ *   three ARE still read by the auth mapper — `auth.sync.ts`'s
+ *   `jwtIssuer`/`authExternalUrl` derivation reads `api.external_url`/
+ *   `api.tls` to compute a COMPARISON-ONLY effective URL/issuer for
+ *   `auth.jwt_issuer`; that derived value is compared against the remote but
+ *   never itself sent in `authToUpdateBody` — a comparison-input role, not a
+ *   push target, so it doesn't change these three fields' own exclusion.)
+ * - `db.port`, `db.shadow_port`, `db.health_timeout` — local Postgres/
+ *   shadow-DB bind ports and local health-check wait. None is referenced
+ *   anywhere in `db.sync.ts`, and `v2GetProjectConfig` reports none of them;
+ *   a hosted project has no "port" (it's reached over a fixed HTTPS URL) and
+ *   no CLI-configurable startup health check.
+ * - `db.pooler.enabled`, `db.pooler.port` — ONLY these 2 of the section's 5
+ *   fields (see above for why `pool_mode`/`default_pool_size`/
+ *   `max_client_conn` are NOT here): `v2GetProjectConfig`'s `pooler` struct
+ *   has no `enabled`/`port` field, and legacy `config-sync/` has no
+ *   `pooler`/`pgbouncer`/`supavisor` reference anywhere — both fields are
+ *   read exclusively by `start`'s local Supavisor bootstrap, with no hosted
+ *   fact behind either on any arm.
+ * - `db.migrations`, `db.seed` — whole subtrees (their own children,
+ *   `enabled`/`schema_paths`/`sql_paths`, never need listing separately: the
+ *   container itself is skipped before this function ever recurses into
+ *   them). Both describe how the LOCAL CLI behaves during `db push`/`db
+ *   reset`, not anything about the hosted project — no matching
+ *   `v2GetProjectConfig` attribute exists for either.
+ * - `realtime.enabled`, `realtime.ip_version`, `realtime.max_header_length`
+ *   — every config-side `realtime` field, i.e. the whole section (see
+ *   `./registry.ts`'s own comment on why the 12 real hosted `realtime.*` API
+ *   attributes have no config-side counterpart in EITHER direction — this
+ *   entry closes the document-arm half of that same gap). A `ProjectConfig`
+ *   built from a document therefore never carries a POPULATED `realtime` key
+ *   (pruned by the empty-section rule below whenever the document declares
+ *   any of these 3 — a document that instead declares `realtime` itself
+ *   empty, e.g. `{realtime: {}}`, still projects `{realtime: {}}` verbatim,
+ *   same as any other section: pruning only fires on a container this
+ *   function's OWN exclusion emptied, never one that started empty), matching
+ *   `fromApiProjectConfig` already never carrying a populated one either.
+ * - `experimental.orioledb_version`, `experimental.s3_host`,
+ *   `experimental.s3_region` — local OrioleDB-with-S3 storage engine config
+ *   (`experimental.s3_access_key`/`s3_secret_key` need no entry: both are
+ *   already `x-secret`-stripped). `experimental.pgdelta`,
+ *   `experimental.inspect` — whole subtrees, local `db diff`/`db pull`
+ *   engine choice and `db inspect` query config respectively. Only
+ *   `experimental.webhooks.enabled` in this section is genuinely pushed
+ *   (`experimental.sync.ts` POSTs to enable database webhooks) and is
+ *   deliberately NOT in this list.
+ *
+ * Deliberately NOT listed, despite looking like the same "local toggle"
+ * shape as the entries above — each was checked against `v2GetProjectConfig`
+ * and/or how `config push` actually treats it, not excluded on the strength
+ * of its description alone: `auth.enabled`/`storage.enabled` (kept: a
+ * document that declares this flag still genuinely declares it, and this
+ * list only excludes fields with no live hosted counterpart on either arm
+ * from the projection entirely — CLI-2314 retired the PR #6339 rule that
+ * additionally treated this flag's OWN presence as an "is this section
+ * managed by push" signal and pruned every other declared field in the
+ * section on it, once that rule was found to silently hide genuine hosted
+ * customization behind an unrelated local Docker toggle; see
+ * {@link DISABLED_SENTINEL_PRUNES}'s docstring), `db.network_restrictions.enabled`
+ * (kept: the same deliberate management-opt-out shape, CLI-2314's own
+ * ruling), `api.auto_expose_new_tables` and
+ * `auth.third_party`/`auth.jwt_issuer`/`auth.signing_keys_path` (real hosted
+ * concepts push either already sends or simply hasn't been wired to send yet
+ * — a push-capability gap, not a CLI-only field), and `storage.buckets`
+ * (real hosted state via `seed buckets --linked`, which writes buckets onto
+ * the remote project through the Storage API — a different write path than
+ * `config push`, but still hosted; a bucket entry's OWN `objects_path` child
+ * is itself local-only — the local upload-source directory, never sent
+ * anywhere — but `storage.buckets` has no registry row at all today, so
+ * nothing currently reads `ProjectConfig` at that path either way).
+ *
+ * `studio.*`/`inbucket.*` need no entry here despite being named in the
+ * report this list is derived from: neither `studio` nor `local_smtp` (the
+ * config-side key `[inbucket]` normalizes to, `../io.ts`) is a member of
+ * `HOSTED_SECTION_KEYS` at all, so both are already excluded by
+ * construction — confirmed by this file's own "keeps exactly the hosted
+ * sections" test.
+ *
+ * Exact-match only, no wildcard segments: unlike `../lib/secret-paths.ts`'s
+ * patterns (which need a `"*"` segment for a dynamic `Schema.Record` key,
+ * e.g. `db.vault.*`), every path below names a static struct field, so a
+ * plain length-and-segment comparison is enough.
+ */
+export const DOCUMENT_ONLY_LOCAL_PATHS: ReadonlyArray<ReadonlyArray<string>> = [
+  ["api", "port"],
+  ["api", "tls"],
+  ["api", "external_url"],
+  ["db", "port"],
+  ["db", "shadow_port"],
+  ["db", "health_timeout"],
+  ["db", "pooler", "enabled"],
+  ["db", "pooler", "port"],
+  ["db", "migrations"],
+  ["db", "seed"],
+  ["realtime", "enabled"],
+  ["realtime", "ip_version"],
+  ["realtime", "max_header_length"],
+  ["experimental", "orioledb_version"],
+  ["experimental", "s3_host"],
+  ["experimental", "s3_region"],
+  ["experimental", "pgdelta"],
+  ["experimental", "inspect"],
+];
+
+function isDocumentOnlyLocalPath(path: ReadonlyArray<string>): boolean {
+  return DOCUMENT_ONLY_LOCAL_PATHS.some(
+    (excluded) =>
+      excluded.length === path.length &&
+      excluded.every((segment, index) => segment === path[index]),
+  );
 }
 
 /**
@@ -282,26 +465,72 @@ function removePathAndEmptiedAncestors(
 }
 
 /**
+ * The two operand policies {@link fromConfigDocument} implements for how an
+ * ABSENT field — present in neither the raw file nor an in-memory operand —
+ * should be read. Named here for the first time: until now, every caller
+ * picked one implicitly by which overload it happened to call, never by a
+ * name either could reference.
+ *
+ * - `"absent-is-default"`: the operand is a bare {@link EffectiveConfig} (no
+ *   `document`). Every value on it is schema-materialized, so an
+ *   absent/undeclared field's value IS the schema default, and that default
+ *   is asserted as the caller's actual intent. Used today only by
+ *   `../config-diff.ts`'s `defaultProjection()` baseline helper (deliberately
+ *   — see that function's own note).
+ * - `"absent-is-hands-off"`: the operand is a {@link CliConfigWithRawPresence}
+ *   pair (`document` supplied). {@link applyRawPresenceMask} runs and, for
+ *   its own fixed list of paths (`db.ssl_enforcement`,
+ *   `storage.image_transformation`, `storage.s3_protocol`, `auth.captcha`,
+ *   the six `auth.hook.*` names, `auth.email.smtp`, `auth.external.*`), an
+ *   absent raw field is read as "hands off, I'm not speaking for this" and
+ *   removed from the projection entirely rather than standing in for the
+ *   schema default. This is what `config diff`/`config pull`/`config push`
+ *   all actually use in production today — `diff.handler.ts`,
+ *   `pull.handler.ts`, and `push.handler.ts` all call
+ *   `fromConfigDocument`/`diffProjectConfig` with a `{config, document}`
+ *   pair.
+ *
+ * The two policies agree everywhere except one cell. Danger matrix (rows:
+ * whether the field is locally declared; columns: whether the hosted value
+ * matches the schema default or has been customized on the platform):
+ *
+ * |  | hosted ≈ default | hosted **customized** |
+ * |---|---|---|
+ * | field declared | safe either policy | safe either policy — intended update |
+ * | **field absent** | safe either policy (the generic `declared`-based diff classification and default-baseline suppression already prevent noise here — see `config-diff.ts`) | **only hazardous cell**, and only under `absent-is-default`: a consumer gets back `remote_only` with `local = <schema default>`; treating `remote_only` as "push this" would silently revert a real hosted customization to default. `absent-is-hands-off` closes this for its fixed field list; the generic `declared` mechanism in `diffProjectConfig` closes it for every other comparable path (an undeclared field differing from remote classifies `remote_only`, never `update`, so `config push`'s `update`/`local_only`-only routing never touches it). |
+ *
+ * Mitigations that hold TODAY, not just aspirationally: `config push`'s
+ * routing (`apps/cli/src/legacy/commands/config/push/push.plan.ts`) never
+ * writes a `remote_only` change; `config pull`'s whole purpose is to close
+ * this gap by declaring every drifted path into the file; `config diff` is
+ * the seatbelt that shows the user `remote_only` entries before anything
+ * happens; every `ConfigChange` (`../config-diff.ts`) already carries a
+ * `declared: boolean` a consumer can filter on directly.
+ */
+export type ConfigAbsencePolicy = "absent-is-default" | "absent-is-hands-off";
+
+/**
  * A `{ config, document }` pair {@link fromConfigDocument} accepts as an
- * alternative to a bare {@link EffectiveConfig} (human review round on PR
- * #6339, thread 1): `document` is the raw, pre-decode document object
+ * alternative to a bare {@link EffectiveConfig}: supplying it is what SELECTS
+ * the {@link ConfigAbsencePolicy} `"absent-is-hands-off"` policy over the
+ * bare-operand `"absent-is-default"` default (human review round on PR
+ * #6339, thread 1) — `document` is the raw, pre-decode document object
  * (`LoadedCliConfig.document`, `../config-document.ts` — post-`env()`,
  * remotes-merged, retained precisely so a caller can inspect key presence a
- * decoded value loses to schema defaults) and unlocks raw-presence masking
- * ({@link applyRawPresenceMask}) a bare `EffectiveConfig` operand cannot,
- * since decode has already erased the distinction between "the file
- * declared this with a default value" and "the file never mentioned this at
- * all". `LoadedCliConfig` is structurally assignable to this interface
- * WITHOUT a cast — its `config: CliConfig` fits `EffectiveConfig` (a
- * `CliConfig` is one), its `document?: Record<string, unknown>` matches
- * exactly. Declared independently rather than importing `LoadedCliConfig`
- * by name: not for pure-runtime-graph reasons (`config-document.ts` is
- * already reachable from this package's pure entrypoint, and this very file
- * already imports `isObject` from it), but so `fromConfigDocument`'s public
- * contract doesn't couple its parameter shape to the loader's own type name
- * — this type is local-checkout-side on its own terms (ADR 0020's `Cli*`
- * convention), independent of which loader happens to produce a matching
- * shape.
+ * decoded value loses to schema defaults), unlocking {@link
+ * applyRawPresenceMask} for its own fixed list of paths, since decode has
+ * already erased the distinction between "the file declared this with a
+ * default value" and "the file never mentioned this at all". `LoadedCliConfig`
+ * is structurally assignable to this interface WITHOUT a cast — its `config:
+ * CliConfig` fits `EffectiveConfig` (a `CliConfig` is one), its `document?:
+ * Record<string, unknown>` matches exactly. Declared independently rather
+ * than importing `LoadedCliConfig` by name: not for pure-runtime-graph
+ * reasons (`config-document.ts` is already reachable from this package's pure
+ * entrypoint, and this very file already imports `isObject` from it), but so
+ * `fromConfigDocument`'s public contract doesn't couple its parameter shape
+ * to the loader's own type name — this type is local-checkout-side on its own
+ * terms (ADR 0020's `Cli*` convention), independent of which loader happens
+ * to produce a matching shape.
  */
 export interface CliConfigWithRawPresence {
   readonly config: EffectiveConfig;
@@ -379,9 +608,13 @@ function unwrapConfigDocumentSource(input: Record<string, unknown>): {
  * Projects a {@link CliConfig} document (or any {@link EffectiveConfig}
  * operand — a full `CliConfig` is one) down to its hosted-section subset.
  * Copies each hosted section deeply and only when own-present on `config`,
- * omitting every `x-secret` leaf ({@link copyHostedValueWithoutSecrets}) and
- * canonicalizing every field a registry row's `normalizeDocument` covers
- * ({@link applyDocumentNormalizations}) — parity with
+ * omitting every `x-secret` leaf and every {@link DOCUMENT_ONLY_LOCAL_PATHS}
+ * entry — a field with no live hosted counterpart on either arm, e.g.
+ * `db.port`, `db.pooler.{enabled,port}`, `db.migrations`, `db.seed`, the
+ * whole `realtime` section (both via {@link copyHostedValueForDocument};
+ * CLI-2316) — and canonicalizing every field a registry row's
+ * `normalizeDocument` covers ({@link applyDocumentNormalizations}) — parity
+ * with
  * {@link fromApiProjectConfig}'s own secret omission and canonical
  * duration/byte-size spellings, so the same logical hosted config compares
  * equal regardless of which side produced it, and so this function never
@@ -395,44 +628,50 @@ function unwrapConfigDocumentSource(input: Record<string, unknown>): {
  * should not happen, since every `normalizeDocument` implementation returns
  * its input verbatim rather than throwing.
  *
- * NOT a verbatim projection of `config` (ADR 0021): beyond secret omission
- * and per-field canonicalization, this function also applies
+ * NOT a verbatim projection of `config` (ADR 0021). This and
+ * {@link fromApiProjectConfig} both build CONVERGENCE PROJECTIONS — the
+ * normalized shape multiple actors on either side of the local/hosted
+ * boundary (the CLI's `config diff`/`config pull`, and Studio, which calls
+ * this package directly) build so the two sides compare like for like, not a
+ * prediction of any one actor's write path. Beyond secret omission and
+ * per-field canonicalization, this function also applies
  * {@link applySmsProviderPrecedence} (a document enabling several SMS
- * providers converges on only the push-selected one staying `enabled`) and
+ * providers converges on only one staying `enabled`) and
  * {@link applyDisabledSentinels} (a disabled section/entry drops the sibling
- * fields the legacy push does not manage while it is off). The result
- * predicts what the hosted config will look like AFTER pushing `config`, not
- * `config`'s own declared hosted-section values — do not render it to a user
- * as "your local config".
+ * fields the platform itself retains as inert while it is off, matching what
+ * {@link fromApiProjectConfig} reports for that same hosted state) — do not
+ * render this value to a user as "your local config".
  *
- * The convergence prediction is exact for a genuinely sparse `config` — one
- * that only carries the keys the caller means to speak for. It holds only
- * "exact modulo schema defaults" for a fully-materialized decoded document
- * passed BARE (the common case, since a full `CliConfig` is a valid
- * operand): decode cannot recover whether the raw file actually wrote a key
- * or merely inherited its schema default, a distinction the legacy push
- * pipeline DOES read (e.g. it emits only the external providers the raw
- * file declared, never every provider a decoded document defaults to).
+ * How an ABSENT field is read depends on which {@link ConfigAbsencePolicy}
+ * this call selects — see that type's own docstring for the full policy
+ * definitions and danger matrix, summarized only briefly here. The
+ * convergence projection is exact for a genuinely sparse `config` — one that
+ * only carries the keys the caller means to speak for. It holds only "exact
+ * modulo schema defaults" for a fully-materialized decoded document passed
+ * BARE (the common `"absent-is-default"` case, since a full `CliConfig` is a
+ * valid operand): decode cannot recover whether the raw file actually wrote a
+ * key or merely inherited its schema default, a distinction
+ * {@link applyRawPresenceMask} needs and only has with a raw `document`.
  *
  * **This limit has a first-class remedy**: pass a {@link
- * CliConfigWithRawPresence} pair instead of a bare `config` — this is the
- * RECOMMENDED form whenever a `document` is available (i.e. whenever the
- * config came from `loadCliConfig` rather than being constructed in-memory,
- * e.g. `getDefaultCliConfig()`'s memo). With `document` present, this
- * function additionally applies {@link applyRawPresenceMask}, mirroring the
- * legacy push pipeline's own raw-presence gates
- * (`apps/cli/src/legacy/commands/config/push/push.raw-presence.ts`) exactly,
- * closing the gap for the fields those gates cover. Without `document`, this
- * function's behavior is unchanged, and a caller diffing its output against
- * a remote `ProjectConfig` should still first strip schema defaults with
- * `omitDefaultValues` and intersect to the fields both operands actually
- * speak for — see ADR 0021's "Limits" section for the verified boundary,
- * which fields the presence mask covers, and the residual drift categories
- * that remain deferred to CLI-2266 even with a `document` supplied.
+ * CliConfigWithRawPresence} pair instead of a bare `config` — this selects
+ * `"absent-is-hands-off"` and is the RECOMMENDED form whenever a `document`
+ * is available (i.e. whenever the config came from `loadCliConfig` rather
+ * than being constructed in-memory, e.g. `getDefaultCliConfig()`'s memo).
+ * With `document` present, this function additionally applies
+ * {@link applyRawPresenceMask} for its own fixed list of paths — see that
+ * function's docstring for exactly which. Without `document`, this
+ * function's behavior is unchanged (`"absent-is-default"`), and a caller
+ * diffing its output against a remote `ProjectConfig` should still first
+ * strip schema defaults with `omitDefaultValues` and intersect to the fields
+ * both operands actually speak for — see ADR 0021's "Limits" section for the
+ * verified boundary, and {@link ConfigAbsencePolicy}'s docstring for the
+ * residual hazard that remains even with a `document` supplied, for paths
+ * outside the presence mask's fixed list.
  * `@supabase/config/io`'s `loadCliConfig` supplies a `document`;
  * `saveCliConfig`'s returned `LoadedCliConfig` does NOT (there is no raw
  * file being re-read on a save) — passing that result here silently falls
- * back to the un-remedied, bare-`config` behavior.
+ * back to `"absent-is-default"`.
  */
 export function fromConfigDocument(config: EffectiveConfig): ProjectConfig;
 export function fromConfigDocument(loaded: CliConfigWithRawPresence): ProjectConfig;
@@ -482,7 +721,7 @@ export function fromConfigDocument(input: unknown): unknown {
       let copied: unknown;
       try {
         section = config[key];
-        copied = copyHostedValueWithoutSecrets(section, [key]);
+        copied = copyHostedValueForDocument(section, [key]);
       } catch (cause) {
         if (cause instanceof ProjectConfigParseError) {
           throw cause;
@@ -493,7 +732,7 @@ export function fromConfigDocument(input: unknown): unknown {
           reason: "caller_misuse",
         });
       }
-      // Same emptied-by-the-copy prune as `copyHostedValueWithoutSecrets`'s
+      // Same emptied-by-the-copy prune as `copyHostedValueForDocument`'s
       // own recursion, applied at the section boundary: a section that turns
       // out to contain nothing but secrets must disappear from the projection
       // entirely, while a section the document genuinely declared empty
@@ -512,7 +751,6 @@ export function fromConfigDocument(input: unknown): unknown {
   applyDocumentNormalizations(result);
   applySmsProviderPrecedence(result);
   applyDisabledSentinels(result);
-  applyPushUnmanagedOmissions(result);
   if (document !== undefined) {
     applyRawPresenceMask(result, document);
   }
@@ -558,65 +796,128 @@ function applySmsProviderPrecedence(result: Record<string, unknown>): void {
 }
 
 /**
- * Fields the legacy push does not manage while their section's toggle is off
- * — it writes only the disable sentinel for each of these (Data API: only
- * `db_schema: ""`, api.sync.ts:130-145; network restrictions: whole flow
- * skipped, db.sync.ts:148-150; SMTP: only `smtp_host: ""`,
- * auth.sync.ts:2384-2397; storage Iceberg/Vector: whole feature omitted,
- * storage.sync.ts:287-299; captcha provider/secret only when enabled,
- * :2315-2324; hook URI/secrets only when enabled, :2551-2565; SMS provider
- * credentials only for the selected provider, :2498-2539; whole Auth/Storage
- * sections gated on their own `enabled`, :1224-1226 / storage.sync.ts's
- * subset gating) — so projecting the (usually schema-filled or
- * platform-retained) siblings would fabricate drift between representations
- * of the same disabled state. Applied to BOTH normalizers' outputs: the
- * mapped shape is identical on the document and API arms, so one pass keeps
- * the two symmetric by construction.
+ * Sibling fields of a container that go inert (retained-but-not-served, or
+ * structurally implied by the same wire fact) the moment that container's
+ * OWN `enabled` is `false` — projecting them would fabricate drift between
+ * two representations of the identical disabled state. Each entry below
+ * carries its own comment re-deriving its specific justification from the
+ * platform's actual data model (CLI-2314) rather than from what the legacy
+ * `config push` pipeline (deleted by CLI-2313, commit `c7bf0ecd3`) happened
+ * to send — do not reintroduce a blanket rationale here; read the entry.
+ *
+ * This constant handles container-scalar siblings only. Record-keyed
+ * per-entry sweeps (`auth.external.*`, `auth.hook.*`, `auth.sms.*` — each
+ * entry's own `enabled` gates ITS OWN siblings) are a separate mechanism,
+ * {@link DISABLED_SENTINEL_ENTRY_SWEEPS}, below. Applied to BOTH
+ * normalizers' outputs: the mapped shape is identical on the document and
+ * API arms, so one pass keeps the two symmetric by construction (pinned by
+ * the cross-arm symmetry test in this file's `.unit.test.ts`).
+ *
+ * Does NOT include `auth`/`storage`'s own top-level `enabled` (CLI-2314,
+ * correcting a PR #6339 mistake): unlike every entry below, that flag is
+ * "Enable the local GoTrue/Storage service" (`../auth/index.ts`,
+ * `../storage.ts`) — a pure local-Docker toggle for `supabase start`, with no
+ * row in the API-mapping registry and no Management API write path gated on
+ * it. Treating it as one more disabled-sentinel container dropped the ENTIRE
+ * rest of a genuinely-configured `auth`/`storage` section (SMTP, external
+ * providers, captcha, …) the moment a user turned off the local service —
+ * extremely common, since most setups don't run every local service — even
+ * though the hosted project's real config is unrelated to that toggle and
+ * may still fully exist and differ from it.
+ * `legacyPushResourceEnabled` (`apps/cli/src/legacy/commands/config/push/
+ * push.plan.ts`) no longer gates the whole `auth`/`storage` resource on this
+ * flag either, for the same reason.
  */
 export const DISABLED_SENTINEL_PRUNES: ReadonlyArray<{
   readonly containerPath: ReadonlyArray<string>;
   /** Keys to drop when `enabled === false`; absent = drop every key but `enabled`. */
   readonly dropKeys?: ReadonlyArray<string>;
 }> = [
-  // Top-level service toggles first — they subsume the section rules below.
-  { containerPath: ["auth"] },
-  { containerPath: ["storage"] },
+  // `api.enabled` is not an independent wire field: `./registry.ts`'s
+  // `["api", "enabled"]` row (registry.ts:122-130) derives it from
+  // `db_schema.length > 0` via `remoteDataApiDisabled` (registry.ts:54-57)
+  // — the same underlying value `schemas` itself reads, just viewed as a
+  // boolean, not a second fact push happened to send. `extra_search_path`/
+  // `max_rows` are PostgREST-serving config for a PostgREST that isn't
+  // exposed while the Data API is off. The API arm already row-gates all
+  // three siblings on that same `remoteDataApiDisabled` check independently
+  // (registry.ts:98-149) — this document-arm rule is symmetry with
+  // something the API arm enforces on its own, not push imitation.
   { containerPath: ["api"], dropKeys: ["schemas", "extra_search_path", "max_rows"] },
+  // `db.network_restrictions.enabled`'s own schema description
+  // (`../db.ts:170`) is "Enable management of network restrictions.", not
+  // "Enable network restrictions" — a deliberate, actor-independent
+  // management opt-out ("don't let any tool touch my CIDR list"), not a
+  // push-pipeline artifact. Confirmed on the API arm too: there is no
+  // `network_restrictions.enabled` field on the v2 contract at all
+  // (registry.ts:332-337) — the platform has no hosted concept of this
+  // toggle to disable or re-enable, so unlike every other entry here, this
+  // document-arm prune has no API-side counterpart to be symmetric with.
   {
     containerPath: ["db", "network_restrictions"],
     dropKeys: ["allowed_cidrs", "allowed_cidrs_v6"],
   },
+  // Same shape as `api` above: on the API arm, `smtp.enabled` is derived
+  // from `smtp_host.length > 0` (registry-auth.ts's `smtpRows`, :839-841),
+  // so `enabled === false` there structurally implies `host` is already
+  // empty — nothing to prune. On the DOCUMENT arm, `enabled` and `host` are
+  // independent schema fields; a document can declare `enabled = false`
+  // while still recording a stale `host`. `host` IS included in `dropKeys`
+  // below (not excluded) so that case still converges to the identical
+  // `{enabled: false}` shape the API arm produces — with no SMTP server to
+  // send through, `port`/`user`/`admin_email`/`sender_name` are inert too.
+  // `pass` is a secret row and already omitted on both arms regardless of
+  // this rule. The API arm already row-gates the four non-`host` siblings
+  // independently via `smtpExplicitlyDisabledInAttributes`
+  // (registry-auth.ts:888-903, consumed by `smtpSiblingStringRow`) — same
+  // "symmetry with an API-arm rule" shape as `api` above, not push
+  // imitation.
   {
     containerPath: ["auth", "email", "smtp"],
     dropKeys: ["host", "port", "user", "pass", "admin_email", "sender_name"],
   },
+  // Unlike the three entries above, `auth.captcha.provider` is genuine
+  // retained-but-inert hosted state, not a document-arm-only artifact: a
+  // recorded platform fixture reports `security_captcha_enabled: false`
+  // together with a still-populated `security_captcha_provider` (this
+  // file's own "the API arm prunes unmanaged fields behind disabled
+  // toggles too" test, below) — the platform keeps a stale provider choice
+  // around after captcha is turned off. The API arm's own `provider` row
+  // (registry-auth.ts:1019-1035) is NOT independently gated on
+  // `security_captcha_enabled` the way `api`'s/SMTP's siblings are, so this
+  // rule is load-bearing on BOTH arms for genuine phantom-drift
+  // suppression — an even stronger case than `api`/`auth.email.smtp`
+  // above. `secret` is a secret row and already omitted regardless.
   { containerPath: ["auth", "captcha"], dropKeys: ["provider", "secret"] },
-  // No push precedent (the section postdates the legacy mappers) — gated for
-  // family consistency: every other enabled-flagged container prunes its
-  // unmanaged siblings, and a platform-retained authorization path behind a
-  // disabled OAuth server is the same phantom-drift shape. Still meaningful
-  // for the API arm (GoTrue reports real hosted oauth_server state
-  // independent of push). On the DOCUMENT arm specifically, this entry's
-  // effect is superseded by {@link applyPushUnmanagedOmissions}, which drops
-  // the WHOLE `auth.oauth_server` subtree unconditionally — `authToUpdateBody`
-  // has no oauth_server handling at all, so even this entry's own
-  // `dropKeys` premise ("push manages the container while its toggle is on")
-  // does not hold for that arm.
+  // `oauth_server.enabled=false` means the platform serves no OAuth
+  // consent-UI/dynamic-registration behavior, but genuinely retains
+  // `allow_dynamic_registration`/`authorization_url_path` as
+  // stored-but-inert state — same shape as `auth.captcha` above. This isn't
+  // just theoretical: the stock `supabase init` project template
+  // (`project-init.templates.ts`) declares `[auth.oauth_server] enabled =
+  // false` together with `authorization_url_path = "/oauth/consent"` —
+  // without this prune, every stock project would show a fabricated drift
+  // line purely from `supabase init`'s own template.
   {
     containerPath: ["auth", "oauth_server"],
     dropKeys: ["allow_dynamic_registration", "authorization_url_path"],
   },
-  // Still meaningful on both arms for `enabled: true` (untouched) and on the
-  // API arm for `enabled: false` (real hosted state). On the DOCUMENT arm
-  // specifically, an `enabled: false` container is pruned further, to
-  // NOTHING, by {@link applyPushUnmanagedOmissions}: `storageToUpdateBody`
-  // only emits Iceberg/Vector inside a truthy `if (local.analytics.enabled)`
-  // branch (storage.sync.ts:287-300), never a `{enabled: false}` shape, so
-  // a disabled container reflects an unmanaged (not confirmed-off) state.
+  // `storage.analytics.enabled=false` means no Iceberg catalog is
+  // provisioned, so `max_namespaces`/`max_tables`/`max_catalogs` are
+  // retained-but-inert ceilings on a non-existent resource — same shape as
+  // `auth.captcha` above. The stock `supabase init` template declares
+  // `[storage.analytics] enabled=false, max_namespaces=5, max_tables=10,
+  // max_catalogs=2`, while a recorded platform fixture reports
+  // `max_namespaces=10` for a fresh project — without this prune, EVERY
+  // stock project would show a declared "lower the Iceberg quota" diff
+  // purely from the template, and `config push` would act on it.
   {
     containerPath: ["storage", "analytics"],
     dropKeys: ["max_namespaces", "max_tables", "max_catalogs"],
   },
+  // Same shape as `storage.analytics` above: `storage.vector.enabled=false`
+  // means no Vector catalog is provisioned, so `max_buckets`/`max_indexes`
+  // are retained-but-inert ceilings on a non-existent resource.
   { containerPath: ["storage", "vector"], dropKeys: ["max_buckets", "max_indexes"] },
 ];
 
@@ -697,70 +998,42 @@ function applyDisabledSentinels(result: Record<string, unknown>): void {
 }
 
 /**
- * DOCUMENT-ARM ONLY (human review round on PR #6339, thread 3) — never
- * called from {@link fromApiProjectConfig}. Distinct from
- * {@link applyDisabledSentinels} (drops SIBLINGS of an explicitly-disabled
- * container, both arms, keyed on the DOCUMENT's own `enabled` reading) and
- * {@link applyRawPresenceMask} (drops a container push skips because the
- * RAW FILE never declared it, needs `document` and mirrors a different
- * legacy signal entirely): this drops a container `storageToUpdateBody`/
- * `authToUpdateBody` structurally cannot communicate to the platform AT
- * ALL, independent of both the document's own `enabled` value and raw
- * presence.
- *
- * - `storage.analytics`/`storage.vector`: `storageToUpdateBody` only emits
- *   `icebergCatalog`/`vectorBuckets` inside a truthy `if (local.analytics.
- *   enabled)`/`if (local.vector.enabled)` branch (storage.sync.ts:287-300)
- *   — there is no `{enabled: false}` shape it ever sends. A document with
- *   the feature disabled therefore has NOTHING pushed for it (unmanaged),
- *   unlike the API arm's own `enabled: false`, which is a confirmed hosted
- *   reading. Dropped entirely rather than left as `{enabled: false}`.
- * - `auth.oauth_server`: `authToUpdateBody` has no oauth_server handling
- *   whatsoever — the whole subtree is unconditionally unmanaged by push,
- *   regardless of its `enabled` value. Dropped unconditionally, which
- *   supersedes `DISABLED_SENTINEL_PRUNES`'s own `["auth","oauth_server"]`
- *   entry for this arm specifically (that entry stays meaningful for the
- *   API arm — see its own comment).
- */
-function applyPushUnmanagedOmissions(result: Record<string, unknown>): void {
-  for (const containerPath of [
-    ["storage", "analytics"],
-    ["storage", "vector"],
-  ] as const) {
-    const container = readPath(result, containerPath);
-    if (isObject(container) && container["enabled"] === false) {
-      removePathAndEmptiedAncestors(result, containerPath);
-    }
-  }
-  removePathAndEmptiedAncestors(result, ["auth", "oauth_server"]);
-}
-
-/**
  * DOCUMENT-ARM ONLY, and only when {@link fromConfigDocument} was called
  * with a {@link CliConfigWithRawPresence} pair (human review round on PR
  * #6339, thread 1) — never called from {@link fromApiProjectConfig}, which
- * has no analogous raw-document concept. Mirrors the legacy push pipeline's
- * own raw-presence gates exactly: `apps/cli/src/legacy/commands/config/
- * push/push.raw-presence.ts`'s `legacyPresenceIn` (db.ssl_enforcement,
- * storage.image_transformation, storage.s3_protocol) and `config-sync/
- * auth.sync.ts`'s `AuthPresence` (captcha `:927`, the six hooks
- * `:951-960`, smtp `:1023`, external providers `:1075-1084` — `apple`
- * ALWAYS sent regardless of presence). Distinct from
- * {@link applyDisabledSentinels} (reads the DECODED `enabled` flag — can
- * only ever say "explicitly disabled", never "never mentioned", and runs
- * even without a `document`) and {@link applyPushUnmanagedOmissions} (drops
- * a container push can never emit at all, independent of presence): this
- * drops a container/entry push skips specifically because the RAW FILE
- * never declared it — a stronger, independent signal only available with
- * `document`, so it runs last and can remove a subtree either of the other
- * two mechanisms already touched or left alone.
+ * has no analogous raw-document concept. This is the mechanism that
+ * implements the {@link ConfigAbsencePolicy} `"absent-is-hands-off"` policy:
+ * it removes a subtree from the projection when the raw file never declared
+ * it, rather than letting the decoded (schema-defaulted) value stand in for
+ * the caller's intent.
+ *
+ * Its coverage is a FIXED, HARD-CODED list of paths — `db.ssl_enforcement`,
+ * `storage.image_transformation`, `storage.s3_protocol`, `auth.captcha`, the
+ * six `auth.hook.*` names, `auth.email.smtp` (cascading to
+ * `auth.rate_limit.email_sent`), and `auth.external.*` providers the raw file
+ * never declared (`apple` excepted — always retained regardless of presence)
+ * — NOT a general rule over every comparable path. Every comparable path
+ * OUTSIDE this list is covered only by the separate, GENERIC `declared`
+ * mechanism in `../config-diff.ts` (`diffProjectConfig`'s `isDeclaredAtPath`),
+ * which changes classification (`update` vs. `remote_only`) rather than
+ * removing anything from the projection. Do not read this function's fixed
+ * list as the full extent of the safety net this package provides — see
+ * {@link ConfigAbsencePolicy}'s docstring for how the two mechanisms combine
+ * and the one cell neither alone would close.
+ *
+ * Distinct from {@link applyDisabledSentinels} (reads the DECODED `enabled`
+ * flag — can only ever say "explicitly disabled", never "never mentioned",
+ * and runs even without a `document`): this drops a container/entry
+ * specifically because the RAW FILE never declared it — a stronger,
+ * independent signal only available with `document`, so it runs last and
+ * can remove a subtree {@link applyDisabledSentinels} already touched or
+ * left alone.
  *
  * Values that DO survive still come from the DECODED `result` — masking
  * only decides presence/absence of a subtree, never substitutes a raw
- * value: push sends the decoded subset for any section the raw file
- * declares (e.g. a document that declares `[auth.external.google]` with
- * only `client_id` set still pushes `google`'s decoded `enabled: false`
- * default alongside it).
+ * value: a document that declares `[auth.external.google]` with only
+ * `client_id` set still projects `google`'s decoded `enabled: false` default
+ * alongside it.
  */
 function applyRawPresenceMask(
   result: Record<string, unknown>,
@@ -1891,3 +2164,30 @@ export function isComparableProjectConfigPath(path: ReadonlyArray<string>): bool
   }
   return false;
 }
+
+/**
+ * Deduped `configPath`s of every `dualScope` row in
+ * {@link projectConfigMappingRows}, in registry order (CLI-2064) — the
+ * fields with a legitimate DIFFERENT correct value for the local stack than
+ * the hosted project (`./registry-row.ts`'s `dualScope` docstring). `config
+ * pull` uses this list to warn before silently overwriting one of these
+ * fields at the config ROOT, since doing so would reconfigure `supabase
+ * start` rather than merely record the hosted project's own setting; a write
+ * into a `[remotes.*]` block is unaffected.
+ */
+export const dualScopeProjectConfigPaths: ReadonlyArray<ReadonlyArray<string>> = (() => {
+  const seenKeys = new Set<string>();
+  const paths: Array<ReadonlyArray<string>> = [];
+  for (const row of projectConfigMappingRows) {
+    if (row.dualScope !== true) {
+      continue;
+    }
+    const key = pathKey(row.configPath);
+    if (seenKeys.has(key)) {
+      continue;
+    }
+    seenKeys.add(key);
+    paths.push(row.configPath);
+  }
+  return paths;
+})();

@@ -15,7 +15,7 @@ import (
 
 func TestApiKey(t *testing.T) {
 	t.Run("creates api key from response", func(t *testing.T) {
-		resp := []api.ApiKeyResponse{
+		resp := []api.ApiKeyResponseOutput{
 			{Name: "anon", ApiKey: nullable.NewNullableWithValue("anon-key")},
 			{Name: "service_role", ApiKey: nullable.NewNullableWithValue("service-key")},
 		}
@@ -28,7 +28,7 @@ func TestApiKey(t *testing.T) {
 	})
 
 	t.Run("handles empty response", func(t *testing.T) {
-		resp := []api.ApiKeyResponse{
+		resp := []api.ApiKeyResponseOutput{
 			{Name: "service_role", ApiKey: nullable.NewNullNullable[string]()},
 		}
 
@@ -40,7 +40,7 @@ func TestApiKey(t *testing.T) {
 	})
 
 	t.Run("handles partial response", func(t *testing.T) {
-		resp := []api.ApiKeyResponse{
+		resp := []api.ApiKeyResponseOutput{
 			{Name: "anon", ApiKey: nullable.NewNullableWithValue("anon-key")},
 		}
 
@@ -62,7 +62,7 @@ func TestGetApiKeys(t *testing.T) {
 		gock.New(utils.DefaultApiHost).
 			Get("/v1/projects/" + projectRef + "/api-keys").
 			Reply(http.StatusOK).
-			JSON([]api.ApiKeyResponse{
+			JSON([]api.ApiKeyResponseOutput{
 				{Name: "anon", ApiKey: nullable.NewNullableWithValue("anon-key")},
 				{Name: "service_role", ApiKey: nullable.NewNullableWithValue("service-key")},
 			})
@@ -120,7 +120,7 @@ func TestGetApiKeys(t *testing.T) {
 		gock.New(utils.DefaultApiHost).
 			Get("/v1/projects/" + projectRef + "/api-keys").
 			Reply(http.StatusOK).
-			JSON([]api.ApiKeyResponse{}) // should this error if response has only service_role key?
+			JSON([]api.ApiKeyResponseOutput{}) // should this error if response has only service_role key?
 
 		keys, err := GetApiKeys(context.Background(), projectRef)
 

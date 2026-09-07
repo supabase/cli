@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { V2GetProjectConfigOutput } from "@supabase/api/effect";
-import { toProjectConfig, type ProjectConfigApiAttributes } from "@supabase/config";
+import { toProjectConfig } from "@supabase/config";
+import type { ProjectConfigApiAttributes } from "@supabase/config/internal";
 
 /**
  * Compile-time drift guards (CLI-2230 design requirement): `@supabase/config`

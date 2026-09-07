@@ -47,10 +47,11 @@ config for that ref to build the fallback connection (the saved workdir
 
 ## Subprocesses
 
-| Command                                                                                | When                                                                  | Purpose                                                                                                                                                                                                                                                                                   |
-| -------------------------------------------------------------------------------------- | --------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `docker`/`podman container inspect supabase_db_<project_id>`                           | `--local`                                                             | assert `supabase start` is running                                                                                                                                                                                                                                                        |
-| `docker`/`podman run --rm --network <net> --env … <pgmeta> node dist/server/server.js` | `--local`, `--db-url`, project-ref paths with non-TypeScript `--lang` | run pg-meta to generate types from a live database. Always passes `node dist/server/server.js` after the image. Under `SUPABASE_USE_SLIM_IMAGES`, a current Dockerfile pin may resolve to slim `ghcr.io/supabase/cli/pgmeta`; a historical `.temp/pgmeta-version` pin stays on docker.io. |
+| Command                                                                                                         | When                                                                  | Purpose                                                                                                                                                                                                                                                                                   |
+| --------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `docker`/`podman container inspect supabase_db_<project_id>`                                                    | `--local`                                                             | assert `supabase start` is running                                                                                                                                                                                                                                                        |
+| `docker`/`podman image inspect <candidate>` per registry candidate, then `pull <candidate>` when none is cached | every pg-meta path                                                    | resolve the pg-meta image through the shared registry fallback (ECR, then GHCR, then Docker Hub, three attempts each; a slim image or `SUPABASE_INTERNAL_IMAGE_REGISTRY` pins a single candidate) after the TLS probe and before running it                                               |
+| `docker`/`podman run --rm --network <net> --env … <pgmeta> node dist/server/server.js`                          | `--local`, `--db-url`, project-ref paths with non-TypeScript `--lang` | run pg-meta to generate types from a live database. Always passes `node dist/server/server.js` after the image. Under `SUPABASE_USE_SLIM_IMAGES`, a current Dockerfile pin may resolve to slim `ghcr.io/supabase/cli/pgmeta`; a historical `.temp/pgmeta-version` pin stays on docker.io. |
 
 A raw TCP `SSLRequest` probe is also opened to the target database host/port to
 detect TLS support before launching pg-meta, with the default 10s pg-delta probe
@@ -69,21 +70,22 @@ timeout.
 | `SUPABASE_PROFILE`                 | built-in profile name or YAML file path                                                                                                                                       | no (falls back to `~/.supabase/profile` -> `supabase`)                                                        |
 | `SUPABASE_DB_PASSWORD`             | database password for `--local` and the `--linked` workdir project                                                                                                            | no (defaults to `postgres`; **ignored** for ad-hoc `--project-id`, which always mints a temporary login role) |
 | `SUPABASE_SERVICES_HOSTNAME`       | host used for the local TLS probe                                                                                                                                             | no (defaults to `127.0.0.1`)                                                                                  |
-| `SUPABASE_INTERNAL_IMAGE_REGISTRY` | pg-meta image registry override (`docker.io` → Docker Hub; any other value → that registry)                                                                                   | no (defaults to the ECR registry)                                                                             |
+| `SUPABASE_INTERNAL_IMAGE_REGISTRY` | pg-meta image registry override (`docker.io` → Docker Hub; any other value → that registry); pins a single registry, so the ECR → GHCR → Docker Hub fallback does not apply   | no (defaults to the ECR registry)                                                                             |
 | `SUPABASE_USE_SLIM_IMAGES`         | resolves the current Dockerfile pg-meta pin from the slim `ghcr.io/supabase/cli/pgmeta` build (`true`/`1` enable); a historical `.temp/pgmeta-version` pin stays on docker.io | no                                                                                                            |
 | `SUPABASE_CA_SKIP_VERIFY`          | when `true`, prints a TLS-verification-disabled warning to stderr                                                                                                             | no                                                                                                            |
 
 ## Exit Codes
 
-| Code | Condition                                                        |
-| ---- | ---------------------------------------------------------------- |
-| `0`  | success — types printed to stdout                                |
-| `1`  | no target specified (must use one flag)                          |
-| `1`  | mutually exclusive flags combined (all four Go flag groups)      |
-| `1`  | `--postgrest-v9-compat` used without `--db-url`                  |
-| `1`  | invalid `--query-timeout` duration or invalid `--db-url`         |
-| `1`  | `supabase start` not running (`--local`) or db inspection failed |
-| `1`  | API error, TLS probe failure, or pg-meta container non-zero exit |
+| Code | Condition                                                                                           |
+| ---- | --------------------------------------------------------------------------------------------------- |
+| `0`  | success — types printed to stdout                                                                   |
+| `1`  | no target specified (must use one flag)                                                             |
+| `1`  | mutually exclusive flags combined (all four Go flag groups)                                         |
+| `1`  | `--postgrest-v9-compat` used without `--db-url`                                                     |
+| `1`  | invalid `--query-timeout` duration or invalid `--db-url`                                            |
+| `1`  | `supabase start` not running (`--local`) or db inspection failed                                    |
+| `1`  | API error, TLS probe failure, or pg-meta container non-zero exit                                    |
+| `1`  | no container runtime found, or the pg-meta image could not be inspected or pulled from any registry |
 
 ## Output
 

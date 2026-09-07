@@ -1,10 +1,10 @@
 import {
-  loadCliConfig,
   loadCliProjectEnvironment,
   CliConfigSchema,
   type LoadedCliConfig,
   type CliConfig,
 } from "@supabase/config/effect";
+import { loadCliConfig } from "@supabase/config/internal";
 import { Effect, FileSystem, Path, Schema } from "effect";
 
 import { LEGACY_BITBUCKET_CLONE_DIR_ENV_KEY } from "./legacy-bitbucket-pipeline.ts";

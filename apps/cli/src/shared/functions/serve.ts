@@ -2,14 +2,16 @@ import {
   CliConfigSchema,
   findCliProjectPaths,
   inferFunctionsManifest,
-  loadCliConfig,
-  resolveCliConfigSubtree,
-  resolveCliConfigValue,
   type CliConfig,
   type CliProjectEnvironment,
   type ResolvedCliConfigValue,
   type ResolvedFunctionConfig as ManifestFunctionConfig,
 } from "@supabase/config/effect";
+import {
+  loadCliConfig,
+  resolveCliConfigSubtree,
+  resolveCliConfigValue,
+} from "@supabase/config/internal";
 import {
   defaultJwtSecret,
   defaultPublishableKey,
@@ -1030,7 +1032,7 @@ export ${name}="\${${name}%x}"`;
   await mkdir(hostEnvDir, { recursive: true, mode: 0o700 });
   // The value files hold secret env values, so keep them owner-only.
   await Promise.all(
-    env.map(([_, value], index) =>
+    env.map(([, value], index) =>
       writeFile(join(hostEnvDir, `env-${index}`), value, { mode: 0o600 }),
     ),
   );

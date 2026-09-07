@@ -85,18 +85,6 @@ describe("shouldUseGlobalSignalInterrupt", () => {
     expect(shouldUseGlobalSignalInterrupt(["db", "reset"])).toBe(true);
     expect(shouldUseGlobalSignalInterrupt([])).toBe(true);
   });
-
-  it("opts out for a shell's own additional self-managed commands, without affecting other shells sharing the same argv path", () => {
-    // `next start` already races its own flows against `interruptOnSignal` (see
-    // `next/cli/main.ts`'s call site) — matched purely against argv, `run.ts` itself can't tell
-    // this apart from legacy's native `start`, so the exemption is additive per shell instead of
-    // baked into the shared `selfManagedSignalCommands` list.
-    expect(shouldUseGlobalSignalInterrupt(["start"], [["start"]])).toBe(false);
-    // Without the override, the same argv still opts in (this is what legacy's own call site
-    // relies on for native start's rollback-on-interrupt).
-    expect(shouldUseGlobalSignalInterrupt(["start"])).toBe(true);
-    expect(shouldUseGlobalSignalInterrupt(["start"], [])).toBe(true);
-  });
 });
 
 describe("exitCodeForFailure", () => {

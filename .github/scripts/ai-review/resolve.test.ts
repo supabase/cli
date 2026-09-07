@@ -10,6 +10,10 @@ import {
 
 const REPO = "supabase/cli";
 const WORKFLOW_BOT_LOGIN = "github-actions[bot]";
+/** Default PR author in tests; grant them write via `WRITE_AUTHOR_PERMISSION`
+ * when a test needs to get past the auto trigger's authorization gate. */
+const PR_AUTHOR = "internal-author";
+const WRITE_AUTHOR_PERMISSION = { [PR_AUTHOR]: "write" };
 
 function makePr(overrides: Partial<PrDetails> = {}): PrDetails {
   return {
@@ -17,6 +21,7 @@ function makePr(overrides: Partial<PrDetails> = {}): PrDetails {
     state: "open",
     draft: false,
     authorIsBot: false,
+    authorLogin: PR_AUTHOR,
     headRepoFullName: REPO,
     baseRepoFullName: REPO,
     ...overrides,
@@ -132,7 +137,10 @@ describe("resolveDecision: auto trigger (pull_request) skip conditions", () => {
 
   test("skips a PR that already carries the marker in a prior review from the workflow bot", async () => {
     const pr = makePr();
-    const { io } = makeIo(pr, { reviews: [botMarkedBody(`Nice work.\n${AI_REVIEW_MARKER}`)] });
+    const { io } = makeIo(pr, {
+      reviews: [botMarkedBody(`Nice work.\n${AI_REVIEW_MARKER}`)],
+      permissionByLogin: WRITE_AUTHOR_PERMISSION,
+    });
     const result = await resolveDecision({ eventName: "pull_request", prNumber: pr.number }, io);
     expect(result.shouldRun).toBe(false);
     expect(result.skipReason).toBe(
@@ -142,7 +150,10 @@ describe("resolveDecision: auto trigger (pull_request) skip conditions", () => {
 
   test("skips a PR that already carries the marker in a prior issue comment from the workflow bot", async () => {
     const pr = makePr();
-    const { io } = makeIo(pr, { comments: [botMarkedBody(`Notice\n${AI_REVIEW_MARKER}`)] });
+    const { io } = makeIo(pr, {
+      comments: [botMarkedBody(`Notice\n${AI_REVIEW_MARKER}`)],
+      permissionByLogin: WRITE_AUTHOR_PERMISSION,
+    });
     const result = await resolveDecision({ eventName: "pull_request", prNumber: pr.number }, io);
     expect(result.shouldRun).toBe(false);
     expect(result.skipReason).toBe(
@@ -155,6 +166,7 @@ describe("resolveDecision: auto trigger (pull_request) skip conditions", () => {
     const { io } = makeIo(pr, {
       reviews: [{ body: `Fake review\n${AI_REVIEW_MARKER}`, authorLogin: "not-the-workflow-bot" }],
       comments: [{ body: `Fake notice\n${AI_REVIEW_MARKER}`, authorLogin: "a-random-user" }],
+      permissionByLogin: WRITE_AUTHOR_PERMISSION,
     });
     const result = await resolveDecision({ eventName: "pull_request", prNumber: pr.number }, io);
     expect(result.shouldRun).toBe(true);
@@ -166,10 +178,85 @@ describe("resolveDecision: auto trigger (pull_request) skip conditions", () => {
     const { io } = makeIo(pr, {
       reviews: [{ body: "unrelated review", authorLogin: WORKFLOW_BOT_LOGIN }],
       comments: [{ body: "unrelated comment", authorLogin: WORKFLOW_BOT_LOGIN }],
+      permissionByLogin: WRITE_AUTHOR_PERMISSION,
     });
     const result = await resolveDecision({ eventName: "pull_request", prNumber: pr.number }, io);
     expect(result.shouldRun).toBe(true);
     expect(result.skipReason).toBeUndefined();
+  });
+});
+
+describe("resolveDecision: auto trigger (pull_request) author authorization", () => {
+  test.each([
+    ["write", true],
+    ["admin", true],
+    ["read", false],
+    ["none", false],
+  ])("author permission %s -> shouldRun=%s", async (permission, expectedShouldRun) => {
+    const pr = makePr();
+    const { io, permissionLookups } = makeIo(pr, {
+      permissionByLogin: { [PR_AUTHOR]: permission },
+    });
+    const result = await resolveDecision({ eventName: "pull_request", prNumber: pr.number }, io);
+    expect(result.shouldRun).toBe(expectedShouldRun);
+    expect(permissionLookups).toEqual([PR_AUTHOR]);
+  });
+
+  test("an unresolvable author permission (undefined) is treated as unauthorized", async () => {
+    const pr = makePr();
+    const { io } = makeIo(pr);
+    const result = await resolveDecision({ eventName: "pull_request", prNumber: pr.number }, io);
+    expect(result).toEqual({
+      shouldRun: false,
+      skipReason:
+        `PR author @${PR_AUTHOR} does not have repository write access (permission=n/a); ` +
+        "a maintainer can comment /ai-review to request a review.",
+      trigger: "auto",
+    });
+  });
+
+  test("an unauthorized author gets a descriptive skip reason with their permission", async () => {
+    const pr = makePr();
+    const { io } = makeIo(pr, { permissionByLogin: { [PR_AUTHOR]: "read" } });
+    const result = await resolveDecision({ eventName: "pull_request", prNumber: pr.number }, io);
+    expect(result.skipReason).toBe(
+      `PR author @${PR_AUTHOR} does not have repository write access (permission=read); ` +
+        "a maintainer can comment /ai-review to request a review.",
+    );
+  });
+
+  test("the authorization gate runs before the dedup listing, so an unauthorized PR never lists reviews", async () => {
+    const pr = makePr();
+    const { io, calls } = makeIo(pr, { permissionByLogin: { [PR_AUTHOR]: "read" } });
+    const result = await resolveDecision({ eventName: "pull_request", prNumber: pr.number }, io);
+    expect(result.shouldRun).toBe(false);
+    expect(calls.listReviews).toBe(0);
+    expect(calls.listIssueComments).toBe(0);
+  });
+
+  test("draft/bot/fork skips fire before any permission lookup", async () => {
+    for (const overrides of [
+      { draft: true },
+      { authorIsBot: true },
+      { headRepoFullName: "someone/fork" },
+    ]) {
+      const pr = makePr(overrides);
+      const { io, permissionLookups } = makeIo(pr);
+      const result = await resolveDecision({ eventName: "pull_request", prNumber: pr.number }, io);
+      expect(result.shouldRun).toBe(false);
+      expect(permissionLookups).toEqual([]);
+    }
+  });
+
+  test("workflow_dispatch never looks up the PR author's permission", async () => {
+    const pr = makePr();
+    const { io, permissionLookups } = makeIo(pr);
+    const result = await resolveDecision(
+      { eventName: "workflow_dispatch", prNumber: pr.number },
+      io,
+    );
+    expect(result.shouldRun).toBe(true);
+    expect(permissionLookups).toEqual([]);
   });
 });
 
@@ -461,7 +548,7 @@ describe("resolveDecision: trigger classification per event shape", () => {
 
   test("pull_request is an auto trigger", async () => {
     const pr = makePr();
-    const { io } = makeIo(pr);
+    const { io } = makeIo(pr, { permissionByLogin: WRITE_AUTHOR_PERMISSION });
     const result = await resolveDecision({ eventName: "pull_request", prNumber: pr.number }, io);
     expect(result.trigger).toBe("auto");
   });

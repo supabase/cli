@@ -298,8 +298,8 @@ func TestSuggestIPv6Pooler(t *testing.T) {
 		gock.New(DefaultApiHost).
 			Get("/v1/projects/" + ref + "/config/database/pooler").
 			Reply(http.StatusOK).
-			JSON([]api.SupavisorConfigResponse{{
-				DatabaseType:     api.SupavisorConfigResponseDatabaseTypePRIMARY,
+			JSON([]api.SupavisorConfigResponseOutput{{
+				DatabaseType:     api.SupavisorConfigResponseOutputDatabaseTypePRIMARY,
 				ConnectionString: poolerURL,
 			}})
 		ok := SuggestIPv6Pooler(context.Background(), "db."+ref+".supabase.co")
@@ -317,8 +317,8 @@ func TestSuggestIPv6Pooler(t *testing.T) {
 		gock.New(DefaultApiHost).
 			Get("/v1/projects/" + ref + "/config/database/pooler").
 			Reply(http.StatusOK).
-			JSON([]api.SupavisorConfigResponse{{
-				DatabaseType:     api.SupavisorConfigResponseDatabaseTypePRIMARY,
+			JSON([]api.SupavisorConfigResponseOutput{{
+				DatabaseType:     api.SupavisorConfigResponseOutputDatabaseTypePRIMARY,
 				ConnectionString: secretURL,
 			}})
 		ok := SuggestIPv6Pooler(context.Background(), "db."+ref+".supabase.co")
@@ -340,7 +340,7 @@ func TestSuggestIPv6Pooler(t *testing.T) {
 		gock.New(DefaultApiHost).
 			Get("/v1/projects/" + ref + "/config/database/pooler").
 			Reply(http.StatusOK).
-			JSON([]api.SupavisorConfigResponse{})
+			JSON([]api.SupavisorConfigResponseOutput{})
 		assert.False(t, SuggestIPv6Pooler(context.Background(), "db."+ref+".supabase.co"))
 		assert.Empty(t, CmdSuggestion)
 	})

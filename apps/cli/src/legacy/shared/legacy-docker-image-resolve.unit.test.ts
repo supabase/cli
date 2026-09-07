@@ -1,10 +1,11 @@
 import { describe, expect, it } from "@effect/vitest";
-import { Deferred, Effect, Fiber, Sink, Stream } from "effect";
+import { Deferred, Effect, Fiber, PlatformError, Sink, Stream } from "effect";
 import type * as ChildProcess from "effect/unstable/process/ChildProcess";
 import { ChildProcessSpawner } from "effect/unstable/process";
 import * as TestClock from "effect/testing/TestClock";
 
 import { legacyMakeDockerImageResolver } from "./legacy-docker-image-resolve.ts";
+import { legacyContainerRuntimeNotFoundMessage } from "./legacy-container-cli.ts";
 import { LEGACY_SUGGEST_DOCKER_INSTALL } from "./legacy-docker-suggest.ts";
 import { LegacyDockerRunError } from "./legacy-docker-run.errors.ts";
 
@@ -423,5 +424,26 @@ describe("legacyMakeDockerImageResolver", () => {
           else process.env[REGISTRY_ENV] = previousRegistry;
         }
       }),
+  );
+
+  it.effect("surfaces the no-container-runtime message when neither docker nor podman spawns", () =>
+    Effect.gen(function* () {
+      const spawner = ChildProcessSpawner.make(() =>
+        Effect.fail(
+          PlatformError.systemError({
+            _tag: "NotFound",
+            module: "ChildProcess",
+            method: "spawn",
+            description: "not found",
+          }),
+        ),
+      );
+      const resolve = legacyMakeDockerImageResolver(spawner);
+
+      const error = yield* Effect.flip(resolve("supabase/postgres:17.6.1.138"));
+
+      expect(error).toBeInstanceOf(LegacyDockerRunError);
+      expect(error.message).toContain(legacyContainerRuntimeNotFoundMessage);
+    }),
   );
 });

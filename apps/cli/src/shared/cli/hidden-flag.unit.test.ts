@@ -201,7 +201,10 @@ describe("native hidden flags", () => {
         "--legacy-bundle",
       ],
     ]);
-  });
+    // Guard, not a correctness assertion: this test drives 8 full command
+    // invocations through the real CLI tree, which can exceed the 5s default
+    // under CI file-level parallelism on a loaded runner.
+  }, 30_000);
 
   it("does not leak hidden flag names through unknown-flag suggestions", async () => {
     const proxy = mockLegacyGoProxy();

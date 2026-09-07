@@ -12,7 +12,7 @@ import { legacyGetPendingSeeds, legacySeedData } from "./legacy-seed-ops.ts";
 class TestError extends Data.TaggedError("TestError")<{ readonly message: string }> {}
 
 function fakeSeedSession(opts: { restoreRoleSql?: string } = {}) {
-  const calls: Array<{ kind: "exec" | "query"; sql: string }> = [];
+  const calls: Array<{ kind: "exec" | "query"; sql: string; params?: ReadonlyArray<unknown> }> = [];
   const session: LegacyDbSession = {
     ...(opts.restoreRoleSql === undefined ? {} : { restoreRoleSql: opts.restoreRoleSql }),
     exec: (sql) => {
@@ -23,8 +23,8 @@ function fakeSeedSession(opts: { restoreRoleSql?: string } = {}) {
       for (const { sql } of statements) calls.push({ kind: "exec", sql });
       return Effect.void;
     },
-    query: (sql) => {
-      calls.push({ kind: "query", sql });
+    query: (sql, params) => {
+      calls.push({ kind: "query", sql, ...(params === undefined ? {} : { params }) });
       return Effect.succeed([]);
     },
     extensionExists: () => Effect.succeed(false),
@@ -119,8 +119,9 @@ describe("legacySeedData (dirty parse)", () => {
           expect(Exit.isFailure(exit)).toBe(true);
           // The hash upsert is a `query`; the only execs that ran are the
           // schema/table creation (whose DDL also mentions `seed_files`), so assert
-          // no `query` ran rather than substring-matching the table name.
-          expect(calls.some((c) => c.kind === "query")).toBe(false);
+          // no parameterized `query` ran rather than substring-matching the table name
+          // (the read-only provisioning probe is param-free).
+          expect(calls.some((c) => c.kind === "query" && c.params !== undefined)).toBe(false);
           rmSync(dir, { recursive: true, force: true });
         }),
       ),
@@ -168,7 +169,11 @@ describe("legacySeedData (dirty parse)", () => {
           expect(calls.some((c) => c.sql === "SET LOCAL lock_timeout = '4s'")).toBe(true);
           // Statements are NOT executed for a dirty seed, but the hash IS upserted.
           expect(calls.some((c) => c.sql.includes("insert into t"))).toBe(false);
-          expect(calls.some((c) => c.kind === "query" && c.sql.includes("seed_files"))).toBe(true);
+          expect(
+            calls.some(
+              (c) => c.kind === "query" && c.params !== undefined && c.sql.includes("seed_files"),
+            ),
+          ).toBe(true);
           rmSync(dir, { recursive: true, force: true });
         }),
       ),
@@ -187,7 +192,7 @@ describe("legacySeedData (dirty parse)", () => {
           const sqls = calls.map((c) => c.sql);
           const restoreAt = sqls.indexOf("SET SESSION ROLE postgres");
           const upsertAt = calls.findIndex(
-            (c) => c.kind === "query" && c.sql.includes("seed_files"),
+            (c) => c.kind === "query" && c.params !== undefined && c.sql.includes("seed_files"),
           );
           expect(restoreAt).toBeGreaterThan(sqls.indexOf("reset role"));
           expect(upsertAt).toBeGreaterThan(restoreAt);

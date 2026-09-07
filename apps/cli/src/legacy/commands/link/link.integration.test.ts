@@ -9,9 +9,11 @@ import * as HttpClientRequestModule from "effect/unstable/http/HttpClientRequest
 import * as HttpClientResponse from "effect/unstable/http/HttpClientResponse";
 
 import { commandRuntimeLayer } from "../../../shared/runtime/command-runtime.layer.ts";
-import { CurrentAnalyticsContext } from "../../../shared/telemetry/analytics-context.ts";
-import { Analytics } from "../../../shared/telemetry/analytics.service.ts";
-import { mockAnalytics, mockOutput } from "../../../../tests/helpers/mocks.ts";
+import {
+  mockAnalytics,
+  mockContextualAnalytics,
+  mockOutput,
+} from "../../../../tests/helpers/mocks.ts";
 import {
   LEGACY_VALID_REF,
   buildLegacyTestRuntime,
@@ -297,53 +299,6 @@ function linkedProjectCacheJson(ref: string): string {
 
 function legacyTransportFailureForMock() {
   return legacyTransportFailure(HttpClientRequestModule.get("https://api.supabase.com/mock"));
-}
-
-// `withLegacyCommandInstrumentation` threads `flags`/`command`/etc. through
-// `CurrentAnalyticsContext`, not the direct `capture()` call args — mirrors the
-// identical local helper in `functions/download/download.integration.test.ts`
-// and `legacy-command-instrumentation.unit.test.ts`. The shared `mockAnalytics()`
-// deliberately doesn't merge this context (most callers don't need it), but
-// `legacyLink`'s own `withAnalyticsContext({ groups: { project: ref } })` call
-// (CLI-2167 branch-link telemetry) needs it merged to assert on `groups`.
-// Shape-compatible with `mockAnalytics()`'s return (adds `identified`/`aliased`/
-// `groupIdentified` tracking) so it's a drop-in `SetupOpts.analytics` override.
-function mockContextualAnalytics(): ReturnType<typeof mockAnalytics> {
-  const captured: Array<{ event: string; properties: Record<string, unknown> }> = [];
-  const identified: Array<{ distinctId: string; properties: Record<string, unknown> }> = [];
-  const aliased: Array<{ distinctId: string; alias: string }> = [];
-  const groupIdentified: Array<{
-    groupType: string;
-    groupKey: string;
-    properties: Record<string, unknown>;
-  }> = [];
-  const layer = Layer.succeed(
-    Analytics,
-    Analytics.of({
-      capture: (event: string, properties: Record<string, unknown> = {}) =>
-        Effect.gen(function* () {
-          const context = yield* CurrentAnalyticsContext;
-          captured.push({ event, properties: { ...context, ...properties } });
-        }),
-      identify: (distinctId: string, properties: Record<string, unknown> = {}) =>
-        Effect.sync(() => {
-          identified.push({ distinctId, properties });
-        }),
-      alias: (distinctId: string, alias: string) =>
-        Effect.sync(() => {
-          aliased.push({ distinctId, alias });
-        }),
-      groupIdentify: (
-        groupType: string,
-        groupKey: string,
-        properties: Record<string, unknown> = {},
-      ) =>
-        Effect.sync(() => {
-          groupIdentified.push({ groupType, groupKey, properties });
-        }),
-    }),
-  );
-  return { layer, captured, identified, aliased, groupIdentified };
 }
 
 // ---------------------------------------------------------------------------

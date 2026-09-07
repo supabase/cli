@@ -1,4 +1,4 @@
-import { existsSync } from "node:fs";
+import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { expect } from "vitest";
 
@@ -8,5 +8,8 @@ test("links a project and writes its workspace cache", async ({ cli, project, wo
   const result = await cli(["link", "--project-ref", project.ref, "--skip-pooler"]);
   expect(result.exitCode, result.stderr).toBe(0);
   expect(result.stdout).toContain("Finished supabase link");
-  expect(existsSync(join(workspace.path, "supabase", ".temp", "linked-project.json"))).toBe(true);
+  const cache = JSON.parse(
+    readFileSync(join(workspace.path, "supabase", ".temp", "linked-project.json"), "utf8"),
+  ) as { ref?: string };
+  expect(cache.ref).toBe(project.ref);
 });

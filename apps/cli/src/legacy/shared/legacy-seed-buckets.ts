@@ -1,9 +1,5 @@
-import {
-  loadCliConfig,
-  type LoadCliConfigOptions,
-  type CliConfig,
-  CliConfigSchema,
-} from "@supabase/config/effect";
+import { type CliConfig, CliConfigSchema } from "@supabase/config/effect";
+import { loadCliConfig, type InternalLoadCliConfigOptions } from "@supabase/config/internal";
 import { Effect, FileSystem, Path, Schema } from "effect";
 import { FetchHttpClient } from "effect/unstable/http";
 import type { PlatformError } from "effect/PlatformError";
@@ -184,7 +180,7 @@ export const legacySeedBucketsRun = Effect.fnUntraced(function* (opts: {
   // --linked. A parse failure aborts before any network call. Skipped entirely
   // when the caller already supplied `resolvedConfig` — see that option's doc
   // comment above.
-  const loadOptions: LoadCliConfigOptions =
+  const loadOptions: InternalLoadCliConfigOptions =
     projectRef !== "" ? { projectRef, goViperCompat: true } : { goViperCompat: true };
   const loaded =
     opts.resolvedConfig !== undefined

@@ -5,21 +5,55 @@ Supabase project configuration package built on Effect V4 Schema — owns the ca
 
 ## Entrypoints
 
-Three entrypoints plus a generated artifact (see ADR 0009's 2026-08-24 decision for the full
-rationale):
+Six supported import paths total (see ADR 0009's 2026-08-24 decision for the full rationale): four
+module entrypoints (`.`, `./io`, `./effect`, `./internal`) plus two generated JSON Schema
+artifacts (`./schema.json`, `./project-schema.json`).
 
-- `@supabase/config` (`.`) — pure, browser/edge-safe surface. The `CliConfigSchema` and
-  derived types, config encoding, sparse-config defaults, and error classes. No file IO, no
-  Effect-returning function, no `@effect/platform-*`/`node:`/`bun:` module anywhere in its
-  transitive import graph.
+- `@supabase/config` (`.`) — pure, browser/edge-safe surface. `CliConfigSchema`/`ProjectConfigSchema`
+  and their derived types, config encoding, sparse-config defaults, the `ProjectConfig` converters
+  (`toProjectConfig`, `fromConfigDocument`, `fromApiProjectConfig`, …), and error classes. No file
+  IO, no Effect-returning function, no `@effect/platform-*`/`node:`/`bun:` module anywhere in its
+  transitive import graph. `fromConfigDocument` also accepts a `CliConfigWithRawPresence` pair (a
+  `CliConfig` alongside which keys were actually present in the source document) — presence matters
+  because the schema defaults every optional section, so the decoded `CliConfig` alone can't tell
+  "explicitly set to the default" from "never set" (ADR 0021). Call `unmappedApiFields` after
+  `fromApiProjectConfig` if you care whether this package version understood the response. Also
+  exports the config-diff classification engine — `diffProjectConfig`, `ConfigChange`/
+  `ConfigChangeClass`/`ConfigChangeCounts`/`ConfigChangeSet`, `DiffProjectConfigOptions` — a pure,
+  synchronous comparison between two `ProjectConfig` projections (ADR 0022), promoted here from
+  `./internal` now that Studio is a second consumer.
 - `@supabase/config/io` — a Promise-based file-IO facade for **external, non-Effect Node/Bun
   consumers only**. Resolved via package.json exports conditions (`bun`/`node`/`browser`/`default`).
   Has zero internal consumers by design — nothing inside this monorepo should import it.
 - `@supabase/config/effect` — the Effect-native superset. Re-exports everything from `.` plus the
   Effect-returning config-loading/saving programs, `CliConfigStore`/`cliConfigStoreLayer`,
-  project-environment resolution, and functions-manifest inference.
-- `@supabase/config/schema.json` — generated JSON Schema for `CliConfig` (a `dist/` build
-  output).
+  project-environment resolution, and `inferFunctionsManifest` (discovers and validates
+  `supabase/functions/*` on disk).
+- `@supabase/config/internal` (CLI-2234) — NOT covered by semver, and only `apps/cli` may import it
+  (enforced by `src/monorepo-import-contract.unit.test.ts`). Carries `apps/cli`'s own Go-parity
+  call sites and contract-guard tests: `loadCliConfig`/`resolveCliConfigValue`/
+  `resolveCliConfigSubtree` — the SAME runtime functions `./effect` exports, re-typed here to
+  additionally accept the internal-only `goViperCompat` option (`InternalLoadCliConfigOptions` for
+  `loadCliConfig`; `resolveCliConfigValue`/`resolveCliConfigSubtree`'s own widened options type,
+  `InternalResolveCliConfigOptions`, is package-internal and not itself re-exported) — plus the
+  otherwise-internal registry data (`AUTH_HOOK_NAMES`, `unmappedSecretApiPaths`,
+  `projectConfigMappingRows`, `ProjectConfigMappingRow`, `ProjectConfigApiAttributes`,
+  `ENV_CAPTURE_REGEX`). It also carries `supabase config pull`/`diff`'s own support surface
+  (CLI-2064): the format-preserving surgical editor (`applyConfigEdits` and its
+  `ConfigEdit`/`ConfigEditOutcome`/`ConfigEditRefusal`/`ConfigEditRefusalReason`/`ConfigEditValue`/
+  `AppliedConfigEdit` types — the config diff engine itself, `diffProjectConfig` and its
+  `ConfigChange`/`ConfigChangeClass`/`ConfigChangeCounts`/`ConfigChangeSet`/
+  `DiffProjectConfigOptions` types, lives on `.`, not here — see above),
+  `dualScopeProjectConfigPaths`, the raw `[remotes.*]` helpers `remoteNameForProjectRef`/
+  `remoteProjectIdEntries`, and the atomic single-file writer `writeCliConfigDocumentText`/
+  `CliConfigWriteError` — kept off `./effect`'s public surface deliberately (no consumer outside
+  `apps/cli` needs them, and internal-only keeps the published semver surface unchanged). Anything
+  here can change or vanish in any release.
+- `@supabase/config/schema.json` — generated JSON Schema (draft 2020-12) for `CliConfig` (a
+  `dist/` build output).
+- `@supabase/config/project-schema.json` (CLI-2234) — generated JSON Schema (draft 2020-12) for
+  `ProjectConfig`, derived from `ProjectConfigSchema` (`src/project-config/project-schema.ts`); a
+  `dist/` build output alongside `schema.json`.
 
 ## Monorepo import rule
 
@@ -31,7 +65,12 @@ rationale):
   from `@supabase/config`.
 - `@supabase/config/io` is exclusively for external consumers outside this monorepo that aren't
   Effect-native. Do not add an internal consumer of it.
-- Never deep-import this package's internals (e.g. `@supabase/config/src/io.ts`). Only the four
+- `@supabase/config/internal` is for `apps/cli`'s own Go-parity call sites and contract-guard
+  tests only — a symbol that needs the internal-only `goViperCompat` typings, or the internal
+  registry data, imports it from there; every other symbol in the same import statement stays on
+  its public specifier (`.`/`./effect`). Enforced: every `@supabase/config/internal` occurrence
+  outside this package must be under `apps/cli/`.
+- Never deep-import this package's internals (e.g. `@supabase/config/src/io.ts`). Only the six
   entrypoints above are supported import paths.
 
 ## Pure-graph invariant
@@ -45,7 +84,121 @@ import graph against a hardcoded allowlist, pins both entrypoints' exact runtime
 asserts the package.json `exports` map shape. Any change that grows the pure graph or the export
 surface must update that test deliberately — it is not meant to be a silent pass.
 
+## Build (CLI-2232)
+
+`pnpm --filter @supabase/config build` (or `pnpm run build` from this package) runs
+`scripts/build.ts`, in order:
+
+1. Removes any stale `dist/` (a rename that leaves an orphaned compiled module behind must not
+   ship), then compiles `src/` to `dist/` (`tsc -p tsconfig.build.json`) — the `.js`/`.d.ts` output
+   every `dist`/`types`/`default` export condition points at.
+2. Renders both generated JSON Schema artifacts (`dist/schema.json`, `dist/project-schema.json`)
+   from `toCliConfigJsonSchema()`/`toProjectConfigJsonSchema()`, post-processed (via
+   `scripts/json-schema-postprocess.ts`) to collapse Effect's non-finite-number `anyOf` encoding
+   back to a plain `number`/`integer` node and to add `$id`/`title`/`description`, then formatted
+   through `oxfmt`.
+3. Verifies every `types`/non-`bun` `default` target (plus both JSON artifacts) declared in
+   package.json's `exports` map actually exists on disk.
+4. Runs a tree-shake probe: bundles a probe importing only `CliConfigSchema` from the compiled
+   `dist/index.js` for a `browser` target and asserts the output excludes registry-only code,
+   proving the package.json `sideEffects: false` claim against real compiled output rather than
+   merely asserting it — plus a positive-control probe (bundling `projectConfigMappingRows` from
+   `dist/internal.js`) proving the registry-only marker is actually detectable by this bundling
+   method before trusting its absence elsewhere as meaningful.
+5. Runs a pack-and-install smoke test: `npm pack`s the real publish tarball (governed by `files`/
+   `.npmignore` — the exact thing `npm publish` would ship), extracts it into a fresh, isolated
+   consumer project, symlinks in the real, already pnpm-resolved runtime deps (network-free), and
+   imports every entrypoint and JSON artifact through a real `node` process — catching `files`/
+   `exports` drift a workspace-link smoke test or a `tsc`-only build would miss entirely.
+
+`dist/` is gitignored and rebuilt on demand — no build output is checked in. The public type
+surface is instead enforced per-PR by export snapshots and purity walkers (see "Testing" below)
+plus the repo-root `pnpm check:config-api` (`tools/config-api-compare.ts`), which diffs this
+package's declaration output between the PR base and head commits and is advisory at PR time. The
+hard gate is a release-time tarball diff — `tools/config-release-gate.ts`, run by the `plan` job in
+`.github/workflows/release-config.yml` — see "Releases" below.
+
+### Publishing the tarball (CLI-2234)
+
+A `.npmignore` file exists at this package's root — even though its own rules exclude almost
+nothing `files` in package.json doesn't already exclude — because npm's packlist walk otherwise
+falls back to the ROOT `.gitignore` for this whole directory, and that file's bare `dist` line
+prunes `packages/config/dist/` from the walk entirely before `files` is ever consulted, silently
+shipping a tarball with zero `dist/**` files. An `.npmignore`'s mere presence (regardless of
+content) stops npm from consulting `.gitignore` at all; `files` still governs what actually ships.
+Verify `npm pack --dry-run` and `pnpm pack --dry-run` produce equivalent content after touching
+either file.
+
 ## Testing
 
 Run tests from this package with `bun --bun vitest run --project unit` (plain `node` vitest is
-broken here). Always run the relevant unit tests for what you changed before considering a task done.
+broken here). Always run the relevant unit tests for what you changed before considering a task
+done. Besides ordinary behavioral coverage, the following contract tests enforce this package's
+own guarantees and must stay green after any entrypoint or type-surface change:
+
+- `src/entrypoint-purity.unit.test.ts` — the pure-graph invariant above (also walked separately for
+  `src/io-browser.ts`, the `browser` condition target for `./io`), plus pinned export-name
+  snapshots for `.`/`./effect`/`./internal` and the package.json `exports` map shape.
+- `src/monorepo-import-contract.unit.test.ts` — the "Monorepo import rule" above: no internal
+  `./io` consumer, no deep `@supabase/config/src/*` import, and no `@supabase/config/internal`
+  import outside `apps/cli/` — scanning `apps/` and `packages/` while excluding this package's own
+  directory.
+- `src/lib/resolve.unit.test.ts` — behavioral coverage of the public sync resolvers.
+- `scripts/json-schema-postprocess.unit.test.ts` / `scripts/build-artifacts.unit.test.ts` — the
+  JSON Schema post-processing `renderJsonSchema` applies (non-finite-number `anyOf` collapse,
+  `$id`/`title`/`description`), the second against the real generated documents.
+
+## Releases (CLI-2233)
+
+This package has its own release train, independent of the CLI's — a `fix:`/`feat:` commit
+elsewhere in the monorepo never releases `@supabase/config`, and vice versa.
+
+- **Path-filtered conventional commits.** `semantic-release` computes the next version from commits
+  scoped to `packages/config/` via `scripts/semantic-release-path-filter.ts`.
+- **Tag format:** `config-v<version>` — never collides with the CLI's `v<version>` tags.
+- **Stable-only, from `develop`.** No beta/alpha channel; every release publishes to npm under the
+  `latest` dist-tag.
+- **Workflow:** `.github/workflows/release-config.yml` — a `plan` job computes the version, packs
+  the release tarball, and runs the type-surface gate against the declarations inside that tarball;
+  a human approves the `config-release` GitHub environment (reviewing the plan job's step summary:
+  release notes + type-surface diff); then an OIDC/provenance publish job publishes **that exact
+  tarball** (`npm publish <tgz> --ignore-scripts` — no rebuild, no repack, no lifecycle scripts:
+  the approved bytes are the published bytes). After publishing, the job verifies the version is
+  registry-visible with the reviewed tarball's integrity and the expected dist-tag before pushing
+  the `config-v*` tag.
+- **`package.json`'s committed `version` (`0.1.0`) is a placeholder.** The real version is stamped
+  into the tarball at pack time (`npm pkg set version` in the plan job) from the computed version —
+  never hand-bump the committed field, and never hand-push a `config-v*` tag.
+- **Local dry runs:** `scripts/release-plan.ts` runs the plan locally without publishing;
+  `tools/config-release-gate.ts --tarball` rehearses the type-surface gate locally.
+
+### Standing release configuration (set up under CLI-2169)
+
+The one-time go-live setup is complete. These are the standing invariants — verify them if a
+release fails unexpectedly, and restore them if repo or npm settings are ever rebuilt:
+
+1. **The `config-release` GitHub environment has required reviewers.** An environment referenced
+   by a workflow is auto-created WITHOUT protection rules — the plan job asserts the rule exists
+   and refuses to plan a real release without it, so a stripped environment fails closed rather
+   than publishing unreviewed.
+2. **npm trusted publishing is configured** for the package (repo `supabase/cli`, workflow
+   `release-config.yml`, environment `config-release`); no `NPM_TOKEN` exists anywhere. Trusted
+   publishing can only be configured on a package that already exists, so the package was seeded
+   with a manually published `0.0.0` placeholder (no `dist/`), and the bootstrap token was
+   revoked immediately after.
+3. **The baseline tag `config-v0.0.0` matches that placeholder** — the tag oracle and the registry
+   must always agree on the last released version. With no baseline tag, semantic-release would
+   cut `1.0.0` with release notes generated from the entire monorepo history — a whole-history
+   changelog as both the approval artifact and the public GH release body — so
+   `scripts/release-plan.ts` refuses to plan in that state (escape hatch:
+   `CONFIG_RELEASE_ALLOW_NO_BASELINE=1`). Seeding it was the single exception to the "never
+   hand-push a `config-v*` tag" rule above.
+4. **The "Protect `config-v*` release tags" ruleset** restricts creating, moving, and deleting
+   `config-v*` tags to the `supabase-cli-releaser` App (the same App the release workflows mint
+   tokens from). The last `config-v*` tag is the version oracle: a stray hand-pushed tag
+   permanently skews versioning, and a deleted tag wedges the next plan on an already-published
+   version.
+5. **The `SLACK_RELEASE_WEBHOOK` repo secret** (shared with the CLI release train — the
+   cli-deployer-notifier Slack app) backs the release notifications: approval-needed ping, success,
+   and failure/declined. If it's missing or rotated, the notify jobs fail and the run shows red, but
+   the release itself still completes since nothing depends on the notify jobs.

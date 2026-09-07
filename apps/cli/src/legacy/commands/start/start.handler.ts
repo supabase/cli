@@ -2,7 +2,8 @@
  * Native TS implementation of `start` — see `SIDE_EFFECTS.md` for the full
  * behavior contract.
  */
-import { inferFunctionsManifest, resolveCliConfigSubtree } from "@supabase/config/effect";
+import { inferFunctionsManifest } from "@supabase/config/effect";
+import { resolveCliConfigSubtree } from "@supabase/config/internal";
 import { Effect, FileSystem, Option, Path, Result } from "effect";
 import { FetchHttpClient } from "effect/unstable/http";
 import { ChildProcessSpawner } from "effect/unstable/process";

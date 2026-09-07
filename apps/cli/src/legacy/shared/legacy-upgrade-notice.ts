@@ -18,14 +18,12 @@ import {
   lastGlobalFlagValue,
   rootFlagTokens,
 } from "../../shared/cli/run.ts";
-import { CLI_VERSION } from "../../shared/cli/version.ts";
+import { CLI_UPGRADE_GUIDE_URL, CLI_VERSION } from "../../shared/cli/version.ts";
 import { legacyBold, legacyYellow } from "./legacy-colors.ts";
 import { parseDotEnv } from "./legacy-dotenv.ts";
 import { legacyCandidateDotenvFilenames } from "./legacy-project-environment.ts";
 
 const LATEST_RELEASE_URL = "https://api.github.com/repos/supabase/cli/releases/latest";
-const UPGRADE_GUIDE_URL =
-  "https://supabase.com/docs/guides/cli/getting-started#updating-the-supabase-cli";
 const CACHE_TTL_MS = 10 * 60 * 60 * 1000;
 /** No Go equivalent (its client sets no timeout); bounds this pre-exit hook's latency. */
 const FETCH_TIMEOUT_MS = 3000;
@@ -145,7 +143,7 @@ function comparePrerelease(left: string, right: string): number {
 export function legacyFormatUpgradeNotice(latestTag: string, currentVersion: string): string {
   return (
     `A new version of Supabase CLI is available: ${legacyYellow(latestTag)} (currently installed v${currentVersion})\n` +
-    `We recommend updating regularly for new features and bug fixes: ${legacyBold(UPGRADE_GUIDE_URL)}`
+    `We recommend updating regularly for new features and bug fixes: ${legacyBold(CLI_UPGRADE_GUIDE_URL)}`
   );
 }
 

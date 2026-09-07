@@ -86,10 +86,61 @@ export interface ProjectConfigMappingRow {
    */
   readonly isSecret?: boolean;
   /**
+   * Equality semantics for an array-valued row when a diff consumer compares
+   * the two projections (`../config-diff.ts`). Whether an array is a set or a
+   * sequence is per-field wire knowledge, so it lives here with the rest of
+   * the field's semantics. `"sequence"` — the default when absent — treats
+   * element order as meaningful: `api.schemas`' first entry is PostgREST's
+   * default schema and `api.extra_search_path` is a literal `search_path`
+   * whose order is resolution order, so a reordering changes runtime behavior
+   * and must register as drift. `"set"` opts a row out for arrays whose wire
+   * semantics are order-free (`auth.additional_redirect_urls`). Defaulting to
+   * sequence over-reports rather than under-reports when a new array row
+   * forgets to choose.
+   */
+  readonly arrayEquality?: "set" | "sequence";
+  /**
+   * The value the platform reports at `configPath` for a project that never
+   * configured this feature, expressed in CONFIG-space (post-`transform`) —
+   * e.g. the `"0s"` an unset `sessions.timebox` canonicalizes to, or the
+   * provisioning-default mailer subjects (pinned by the recorded
+   * `GET /v1/projects/{ref}/config/auth` fixtures under
+   * `apps/cli-e2e/fixtures/recorded/`). `../config-diff.ts` uses this as the
+   * last `remote_only`-suppression baseline tier for paths the default config
+   * (and its convergence projection) is silent on: a remote report equal to
+   * this value is the platform's spelling of "unconfigured", not drift. A row
+   * without it (and without any other baseline) over-reports rather than
+   * guesses — "unconfigured" is never inferred from type-level zero values,
+   * because canonicalization can turn a platform zero into a non-zero shape
+   * (`sessions_timebox: 0` arrives as the string `"0s"`).
+   */
+  readonly unconfiguredValue?: unknown;
+  /**
+   * The platform authors/renders this value itself; there is no local
+   * default. When the local projection carries no value at this path, any
+   * remote value is the platform's own rendering — never `remote_only`
+   * drift. A locally DECLARED value still classifies normally. Unlike
+   * {@link unconfiguredValue}, which suppresses one pinned baseline value,
+   * this suppresses unconditionally — the right choice for a rendered string
+   * with no fixed spelling (e.g. a mailer subject line), where pinning a
+   * baseline breaks the moment the platform rewords its own default.
+   */
+  readonly platformRendered?: boolean;
+  /**
    * Unit/semantics note, e.g. `"csv → string[]"` or `"seconds → duration
    * string"`. Documentation-only — never read at runtime.
    */
   readonly unit?: string;
+  /**
+   * A property with a legitimate DIFFERENT correct value for the local stack
+   * than the hosted project — pulling the hosted value into the config ROOT
+   * silently reconfigures `supabase start` (e.g. a hosted `db.major_version`
+   * or SMTP host has no business overwriting the local dev stack's own
+   * setting), so `config pull` warns before overwriting one at root. Writes
+   * into `[remotes.*]` blocks are unaffected — those are scoped to the
+   * remote project by construction and never feed `supabase start`.
+   */
+  readonly dualScope?: boolean;
 }
 
 /**

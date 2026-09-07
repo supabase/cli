@@ -19,8 +19,8 @@ describe("supabase functions list (live)", () => {
         "--project-ref",
         project.ref,
       ]);
-      expect(`${stdout}${stderr}`).not.toContain("Unauthorized");
-      expect(exitCode).toBe(0);
+      expect(exitCode, stderr).toBe(0);
+      expect(stdout, stderr).toMatch(/ID\s+\|\s+NAME\s+\|\s+SLUG\s+\|\s+STATUS/);
     },
   );
 });

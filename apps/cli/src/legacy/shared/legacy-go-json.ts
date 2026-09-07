@@ -21,7 +21,7 @@
  * The two behaviours `JSON.stringify(x, null, 2)` gets wrong for Go parity are:
  * 1. HTML escaping — Go's default encoder escapes `<`, `>`, `&` as
  * `<` / `>` / `&` (it does not call `SetEscapeHTML(false)`).
- * 2. Control characters — Go emits `` / `` for backspace / form
+ * 2. Control characters — Go emits `\u0008` / `\u000c` for backspace / form
  * feed (no `\b` / `\f` shorthand) and escapes U+2028 / U+2029.
  * This encoder reproduces both; the indentation/`": "`/`[]`/`{}` shape is
  * otherwise identical to `JSON.stringify(x, null, 2)`.

@@ -38,18 +38,18 @@ actions:
 - target: $.components.schemas.V1CreateProjectBody.properties.postgres_engine
   description: Removes deprecated null-only field that oapi-codegen cannot map
   remove: true
-- target: $.components.schemas.JitListAccessResponse.properties.items.items.anyOf[0].properties.invite_id
+- target: $.components.schemas.JitListAccessResponse_Output.properties.items.items.anyOf[0].properties.invite_id
   description: Replaces null-only project user invite id with nullable UUID for oapi-codegen
   update:
     type: string
     format: uuid
     nullable: true
-- target: $.components.schemas.JitListAccessResponse.properties.items.items.anyOf[0].properties.expires_at
+- target: $.components.schemas.JitListAccessResponse_Output.properties.items.items.anyOf[0].properties.expires_at
   description: Replaces null-only project user invite expiry with nullable string for oapi-codegen
   update:
     type: string
     nullable: true
-- target: $.components.schemas.JitListAccessResponse.properties.items.items.anyOf[1].properties.user_id
+- target: $.components.schemas.JitListAccessResponse_Output.properties.items.items.anyOf[1].properties.user_id
   description: Replaces null-only invited user id with nullable UUID for oapi-codegen
   update:
     type: string

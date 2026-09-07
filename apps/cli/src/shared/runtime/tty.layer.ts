@@ -1,3 +1,4 @@
+import { fstatSync } from "node:fs";
 import process from "node:process";
 import { Layer } from "effect";
 
@@ -7,5 +8,12 @@ export const ttyLayer = Layer.sync(Tty, () =>
   Tty.of({
     stdinIsTty: !!process.stdin.isTTY,
     stdoutIsTty: !!process.stdout.isTTY,
+    stdoutIsPipe: (() => {
+      try {
+        return fstatSync(1).isFIFO();
+      } catch {
+        return false;
+      }
+    })(),
   }),
 );

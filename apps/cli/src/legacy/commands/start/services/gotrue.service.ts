@@ -21,9 +21,9 @@
  *     the resolved value in as {@link LegacyBuildGotrueEnvInput.authExternalUrl}
  *     — when set, it wins over the `apiUrl`-derived fallback for
  *     `API_EXTERNAL_URL`/`GOTRUE_JWT_ISSUER`'s default/the mailer verify URL/
- *     OAuth redirect-URI fallbacks. `config/push/config-sync/auth.sync.ts`
- *     has the identical gap, unresolved — a separate command, not this PR's
- *     scope.
+ *     OAuth redirect-URI fallbacks. `config push`'s auth update body has no
+ *     such gap to share: it has no `external_url`/`jwt_issuer` field at all,
+ *     so there's nothing for that command to derive or resolve.
  *   - `auth.captcha`/`auth.passkey`/`auth.webauthn`/`auth.email.smtp`'s
  *     presence-and-default quirks (an explicitly-omitted `enabled` is
  *     treated differently depending on whether the surrounding TOML table is
@@ -53,6 +53,7 @@ import {
 } from "../../../shared/legacy-go-duration.ts";
 import { LEGACY_DEFAULT_SIGNING_KEY } from "../../../shared/legacy-go-jwt.ts";
 import type { LegacyResolvedAuthEmail } from "../../../shared/legacy-local-config-values.ts";
+import { legacyPasswordRequirementsToChar } from "../../../shared/legacy-password-requirements.ts";
 import type { LegacyStartContainerSpec } from "../../../shared/db-bootstrap/docker-create-args.ts";
 import {
   legacyStartInternalDbPassword,
@@ -120,25 +121,6 @@ export interface LegacyGotrueSigningKey {
  * key is "the" default.
  */
 const LEGACY_GOTRUE_DEFAULT_SIGNING_KEY: LegacyGotrueSigningKey = LEGACY_DEFAULT_SIGNING_KEY;
-
-/**
- * Values are the real Management API `password_required_characters`
- * literals (the `:`-separated character classes are significant), matching
- * the identical, currently un-hoisted mapping in
- * `config/push/config-sync/auth.sync.ts`'s `PASSWORD_REQUIREMENTS_TO_CHAR`.
- */
-const LEGACY_GOTRUE_PASSWORD_REQUIREMENTS_TO_CHAR: Record<string, string> = {
-  letters_digits: "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ:0123456789",
-  lower_upper_letters_digits: "abcdefghijklmnopqrstuvwxyz:ABCDEFGHIJKLMNOPQRSTUVWXYZ:0123456789",
-  lower_upper_letters_digits_symbols:
-    "abcdefghijklmnopqrstuvwxyz:ABCDEFGHIJKLMNOPQRSTUVWXYZ:0123456789:!@#$%^&*()_+-=[]{};'\\\\:\"|<>?,./`~",
-};
-
-function legacyGotruePasswordRequirementsToChar(
-  value: CliConfig["auth"]["password_requirements"],
-): string {
-  return LEGACY_GOTRUE_PASSWORD_REQUIREMENTS_TO_CHAR[value] ?? "";
-}
 
 /**
  * The `auth.sms.test_otp` map's `GOTRUE_SMS_TEST_OTP` wire format:
@@ -458,7 +440,7 @@ export function legacyBuildGotrueEnv(input: LegacyBuildGotrueEnvInput): Record<s
     GOTRUE_SMS_TEST_OTP: testOtp,
 
     GOTRUE_PASSWORD_MIN_LENGTH: String(input.minimumPasswordLength),
-    GOTRUE_PASSWORD_REQUIRED_CHARACTERS: legacyGotruePasswordRequirementsToChar(
+    GOTRUE_PASSWORD_REQUIRED_CHARACTERS: legacyPasswordRequirementsToChar(
       input.passwordRequirements,
     ),
     GOTRUE_SECURITY_REFRESH_TOKEN_ROTATION_ENABLED: String(input.enableRefreshTokenRotation),

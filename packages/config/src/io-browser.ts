@@ -23,21 +23,21 @@ async function unavailableInBrowser(): Promise<never> {
 // the real facades' export shape.
 const cliConfigIo: CliConfigIo = {
   loadCliConfig: unavailableInBrowser,
-  findCliProjectRootFor: unavailableInBrowser,
-  findCliProjectPathsFor: unavailableInBrowser,
+  findCliProjectRoot: unavailableInBrowser,
+  findCliProjectPaths: unavailableInBrowser,
   loadCliConfigFile: unavailableInBrowser,
-  loadCliProjectEnvironmentFor: unavailableInBrowser,
+  loadCliProjectEnvironment: unavailableInBrowser,
   saveCliConfig: unavailableInBrowser,
-  loadFunctionsManifest: unavailableInBrowser,
+  inferFunctionsManifest: unavailableInBrowser,
 };
 
 export const loadCliConfig = cliConfigIo.loadCliConfig;
-export const findCliProjectRootFor = cliConfigIo.findCliProjectRootFor;
-export const findCliProjectPathsFor = cliConfigIo.findCliProjectPathsFor;
+export const findCliProjectRoot = cliConfigIo.findCliProjectRoot;
+export const findCliProjectPaths = cliConfigIo.findCliProjectPaths;
 export const loadCliConfigFile = cliConfigIo.loadCliConfigFile;
-export const loadCliProjectEnvironmentFor = cliConfigIo.loadCliProjectEnvironmentFor;
+export const loadCliProjectEnvironment = cliConfigIo.loadCliProjectEnvironment;
 export const saveCliConfig = cliConfigIo.saveCliConfig;
-export const loadFunctionsManifest = cliConfigIo.loadFunctionsManifest;
+export const inferFunctionsManifest = cliConfigIo.inferFunctionsManifest;
 export type { CliConfigIo } from "./promise-facade.ts";
 // Re-exports every pure symbol from `.` (types, schema, errors, etc.) so
 // `./io` consumers can name `LoadedCliConfig`/`CliProjectPaths`/etc. without

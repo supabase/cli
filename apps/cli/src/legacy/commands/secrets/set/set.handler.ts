@@ -1,11 +1,10 @@
 import {
-  loadCliConfig,
   loadCliProjectEnvironment,
   CliConfigSchema,
-  resolveCliConfigSubtree,
   type CliConfig,
   type CliConfigParseError,
 } from "@supabase/config/effect";
+import { loadCliConfig, resolveCliConfigSubtree } from "@supabase/config/internal";
 import { V1BulkCreateSecretsInput } from "@supabase/api/effect";
 import { parse as parseDotenv } from "dotenv";
 import { Effect, FileSystem, Option, Path, Redacted, Schema } from "effect";

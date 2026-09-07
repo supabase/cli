@@ -7,6 +7,7 @@ import {
   ErrorActionabilityFingerprintId,
   ErrorActionabilityId,
 } from "../../shared/telemetry/error-actionability.ts";
+import { LEGACY_BRANCH_PROJECT_REF_PATTERN } from "./legacy-ref-patterns.ts";
 import { legacyGoUrlParse } from "./legacy-storage-url.ts";
 
 /**
@@ -106,11 +107,11 @@ import { legacyGoUrlParse } from "./legacy-storage-url.ts";
  * this has zero effect on any real test.
  */
 
-// The project-ref pattern: exactly 20 lowercase
-// ASCII letters. Exported from this module (was private in D before this relocation) as the
-// canonical home; D's `findInvalidRemoteProjectId` is today the only consumer — the
-// `remotes[*].project_id` check itself stays D-only forever, see the module header above.
-export const LEGACY_PROJECT_REF_PATTERN = /^[a-z]{20}$/;
+// The project-ref pattern: exactly 20 lowercase ASCII letters. `legacy-ref-patterns.ts` is the
+// single canonical definition; re-exported under this module's established name since D's
+// `findInvalidRemoteProjectId` is today the only consumer — the `remotes[*].project_id` check
+// itself stays D-only forever, see the module header above.
+export const LEGACY_PROJECT_REF_PATTERN = LEGACY_BRANCH_PROJECT_REF_PATTERN;
 
 // The storage bucket-name pattern.
 // Validation runs this over every `[storage.buckets.*]` key

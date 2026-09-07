@@ -14,19 +14,37 @@ import { findCliProjectPaths, findCliProjectRoot } from "./paths.ts";
 import { cliConfigStoreLayer } from "./cli-config.layer.ts";
 import { CliConfigStore } from "./cli-config.service.ts";
 
+/**
+ * Names deliberately mirror `@supabase/config/effect` one-to-one — the
+ * subpath itself (`/io` vs `/effect`) conveys Promise-vs-Effect, not the
+ * member names.
+ *
+ * A rejection from `loadCliConfig`, `loadCliConfigFile`, or `saveCliConfig`
+ * can carry any of five typed failures — this package's own
+ * `CliConfigParseError`, `DuplicateRemoteProjectIdError`,
+ * `InvalidRemoteProjectIdError`, `CliProjectEnvParseError`, or `PlatformError`
+ * (from `effect/PlatformError`) for a host/OS failure — distinguish via
+ * `instanceof`. One exception: `saveCliConfig`'s atomic-write step maps a
+ * rename failure to a defect rather than one of these typed failures (see
+ * `io.ts`'s `writeFileAtomic`) — the returned promise still rejects, but with
+ * the raw, un-mapped failure, not an instance of any class listed above. This
+ * is a deliberate design choice (a rename failure after a successful write
+ * indicates something is wrong with the filesystem itself, not a recoverable
+ * config condition), not an oversight.
+ */
 export interface CliConfigIo {
   readonly loadCliConfig: (
     cwd: string,
     options?: LoadCliConfigOptions,
   ) => Promise<LoadedCliConfig | null>;
-  readonly findCliProjectRootFor: (cwd: string) => Promise<string | null>;
-  readonly findCliProjectPathsFor: (cwd: string) => Promise<CliProjectPaths | null>;
+  readonly findCliProjectRoot: (cwd: string) => Promise<string | null>;
+  readonly findCliProjectPaths: (cwd: string) => Promise<CliProjectPaths | null>;
   readonly loadCliConfigFile: (path: string) => Promise<LoadedCliConfig>;
-  readonly loadCliProjectEnvironmentFor: (
+  readonly loadCliProjectEnvironment: (
     options: LoadCliProjectEnvironmentOptions,
   ) => Promise<CliProjectEnvironment | null>;
   readonly saveCliConfig: (options: SaveCliConfigOptions) => Promise<LoadedCliConfig>;
-  readonly loadFunctionsManifest: (cwd: string) => Promise<FunctionsManifest>;
+  readonly inferFunctionsManifest: (cwd: string) => Promise<FunctionsManifest>;
 }
 
 /**
@@ -61,16 +79,16 @@ export function makeCliConfigIo(
   return {
     loadCliConfig: async (cwd, options) =>
       getRuntime().runPromise(CliConfigStore.use((store) => store.load(cwd, options))),
-    findCliProjectRootFor: async (cwd) => getRuntime().runPromise(findCliProjectRoot(cwd)),
-    findCliProjectPathsFor: async (cwd) => getRuntime().runPromise(findCliProjectPaths(cwd)),
+    findCliProjectRoot: async (cwd) => getRuntime().runPromise(findCliProjectRoot(cwd)),
+    findCliProjectPaths: async (cwd) => getRuntime().runPromise(findCliProjectPaths(cwd)),
     loadCliConfigFile: async (path) =>
       getRuntime().runPromise(CliConfigStore.use((store) => store.loadFile(path))),
-    loadCliProjectEnvironmentFor: async (options) =>
+    loadCliProjectEnvironment: async (options) =>
       getRuntime().runPromise(
         loadCliProjectEnvironment({ ...options, baseEnv: options.baseEnv ?? process.env }),
       ),
     saveCliConfig: async (options) =>
       getRuntime().runPromise(CliConfigStore.use((store) => store.save(options))),
-    loadFunctionsManifest: async (cwd) => getRuntime().runPromise(inferFunctionsManifest({ cwd })),
+    inferFunctionsManifest: async (cwd) => getRuntime().runPromise(inferFunctionsManifest({ cwd })),
   };
 }

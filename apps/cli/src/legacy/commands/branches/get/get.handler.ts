@@ -39,7 +39,7 @@ import { legacyPromptBranchId } from "../branches.prompt.ts";
 import {
   LEGACY_BRANCH_PROJECT_REF_PATTERN,
   LEGACY_BRANCH_UUID_PATTERN,
-} from "../branches.resolver.ts";
+} from "../../../shared/legacy-ref-patterns.ts";
 import type { LegacyBranchesGetFlags } from "./get.command.ts";
 
 type BranchDetail = typeof V1GetABranchConfigOutput.Type;

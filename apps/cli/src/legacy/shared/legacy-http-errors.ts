@@ -40,6 +40,20 @@ export function legacySanitizeInlineName(input: string): string {
   return sanitizeLegacyErrorBody(input).replace(/[\n\t]+/g, " ");
 }
 
+/**
+ * Renders `name (ref)` when `name` is known and non-empty after
+ * sanitization, or bare `ref` otherwise — both sanitized via
+ * {@link legacySanitizeInlineName}. Computing the sanitized name FIRST (and
+ * gating on ITS length, not the raw input's) is defense-in-depth: a name
+ * that's entirely control characters must degrade to the bare-ref form, not
+ * render as `` (ref)`` with a phantom leading space.
+ */
+export function legacyFormatNamedRef(name: string | undefined, ref: string): string {
+  const safeRef = legacySanitizeInlineName(ref);
+  const safeName = name === undefined ? undefined : legacySanitizeInlineName(name);
+  return safeName === undefined || safeName.length === 0 ? safeRef : `${safeName} (${safeRef})`;
+}
+
 // Strip ASCII control characters from the response body before embedding it in an error
 // message. The Management API is trusted, but defence-in-depth: a body containing `\r\n`
 // could fracture a structured log line, and `\x00` could truncate output in shells that
@@ -48,13 +62,31 @@ function sanitizeErrorBody(input: string): string {
   // Strip ASCII control chars except \t (0x09), \n (0x0a), \r (0x0d) and DEL (0x7f).
   // Then also strip CR — we keep \n and \t because they appear in legitimate JSON
   // pretty-printing and shouldn't visually corrupt single-line stderr output.
+  //
+  // Also strips (benefits every caller of this function, and of
+  // `legacySanitizeInlineName`, which builds on it):
+  // - C1 controls (0x80-0x9F) — U+009B is CSI on some terminals, equivalent to
+  //   the ESC+`[` sequence `sanitizeLegacyErrorBody`/friends are otherwise
+  //   guarding against.
+  // - Bidi controls (U+200E, U+200F, U+202A-U+202E, U+2066-U+2069) — can
+  //   visually reorder or hide surrounding text in a terminal/log.
+  // - Unicode line separators (U+2028, U+2029) — fracture single-line output
+  //   the same way `\r`/`\n` do, without being one of the two whitespace
+  //   characters this function otherwise keeps for JSON readability.
   let out = "";
   for (let i = 0; i < input.length; i++) {
     const code = input.charCodeAt(i);
     const isLowCtrl = code < 0x20 && code !== 0x09 && code !== 0x0a;
     const isDel = code === 0x7f;
     const isCr = code === 0x0d;
-    if (isLowCtrl || isDel || isCr) continue;
+    const isC1 = code >= 0x80 && code <= 0x9f;
+    const isBidiControl =
+      code === 0x200e ||
+      code === 0x200f ||
+      (code >= 0x202a && code <= 0x202e) ||
+      (code >= 0x2066 && code <= 0x2069);
+    const isLineSeparator = code === 0x2028 || code === 0x2029;
+    if (isLowCtrl || isDel || isCr || isC1 || isBidiControl || isLineSeparator) continue;
     out += input[i];
   }
   return out;

@@ -1,19 +1,14 @@
-import type { ApiClient, V1ListAllBranchesOutput } from "@supabase/api/effect";
-import { Duration, Effect, FileSystem, Option, Path } from "effect";
+import { Effect, FileSystem, Option, Path } from "effect";
 
-import { LegacyPlatformApiFactory } from "../auth/legacy-platform-api-factory.service.ts";
-import { LegacyPlatformApi } from "../auth/legacy-platform-api.service.ts";
 import { LegacyCliSettings } from "../config/legacy-cli-settings.service.ts";
 import { PROJECT_REF_PATTERN } from "../config/legacy-project-ref.service.ts";
-import { Output } from "../../shared/output/output.service.ts";
+import { legacyFindBranchName } from "./legacy-branch-target.ts";
 import {
   type LegacyCachedLinkedProject,
   legacyParseCachedLinkedProject,
 } from "./legacy-parent-project-ref.ts";
-import { legacySanitizeInlineName } from "./legacy-http-errors.ts";
+import { legacyFormatNamedRef, legacySanitizeInlineName } from "./legacy-http-errors.ts";
 import { legacyReadProjectRefFile, legacyTempPaths } from "./legacy-temp-paths.ts";
-
-type LegacyLinkedStateBranches = typeof V1ListAllBranchesOutput.Type;
 
 /**
  * Discriminated linked-state result.
@@ -84,88 +79,6 @@ const legacyResolveSoftLinkedRef = Effect.fnUntraced(function* () {
 });
 
 /**
- * Acquires a Management API client for the best-effort branch-name lookup,
- * total (never fails, resolves `None` on any acquisition failure):
- *
- *   1. `Effect.serviceOption(LegacyPlatformApi)` — the cheapest path; existing
- *      tests provide this directly, and any runtime that eagerly built the
- *      typed client (e.g. `link`/`branches`) already has it in scope.
- *   2. Otherwise `Effect.serviceOption(LegacyPlatformApiFactory)` → `factory.make`,
- *      with every failure (no token, invalid token, network, decode) caught.
- *      This is the path a token-optional runtime like `status`'s needs: the
- *      factory's own layer build never resolves a token or touches the
- *      network — that only happens here, lazily, exactly when a branch lookup
- *      is actually attempted.
- *
- * Neither service being in scope (a runtime that wires up neither) also
- * degrades to `None` rather than a compile-time requirement — this effect's
- * own type carries no `LegacyPlatformApi`/`LegacyPlatformApiFactory`
- * requirement at all, thanks to `Effect.serviceOption`.
- */
-const legacyAcquireLinkedStateApi = Effect.fnUntraced(function* () {
-  const direct = yield* Effect.serviceOption(LegacyPlatformApi);
-  if (Option.isSome(direct)) return direct;
-
-  const factoryOption = yield* Effect.serviceOption(LegacyPlatformApiFactory);
-  if (Option.isNone(factoryOption)) return Option.none<ApiClient>();
-
-  return yield* factoryOption.value.make.pipe(
-    Effect.map(Option.some),
-    Effect.catch(() => Effect.succeed(Option.none<ApiClient>())),
-  );
-});
-
-// `status` is an interactive command; this lookup is pure decoration and must
-// never dominate its latency. The generated client's own retry policy (60s
-// attempts × 5 transport retries — `packages/api/src/internal/client.ts:208-229`)
-// would otherwise let a single blackholed API stall every `status` run for
-// ~6 minutes (PR #6168 review).
-const LEGACY_LINKED_STATE_LOOKUP_TIMEOUT = Duration.seconds(5);
-
-/**
- * Best-effort branch-name lookup against `parentRef`'s branches, returning
- * the matching branch's `name` (or `undefined` on no match/any failure —
- * this is the degradation point {@link legacyResolveLinkedState}'s one call
- * site relies on). Shows the `Checking linked branch...` spinner in text
- * mode, but only once an API client is actually available — an acquisition
- * failure degrades silently, before ever touching the spinner.
- *
- * The WHOLE acquisition-and-listing attempt is hard-bounded by
- * {@link LEGACY_LINKED_STATE_LOOKUP_TIMEOUT}; a timeout degrades exactly like
- * any other failure. The spinner's cleanup runs via `Effect.ensuring` (not a
- * plain sequential `yield*`) so it's guaranteed to fire even when the timeout
- * interrupts the in-flight listing call, not just on its normal
- * success/failure completion.
- */
-const legacyFindLinkedBranchName = Effect.fnUntraced(function* (
-  parentRef: string,
-  linkedRef: string,
-) {
-  const output = yield* Output;
-
-  const branchesOption: Option.Option<LegacyLinkedStateBranches> = yield* Effect.gen(function* () {
-    const apiOption = yield* legacyAcquireLinkedStateApi();
-    if (Option.isNone(apiOption)) return Option.none<LegacyLinkedStateBranches>();
-    const api = apiOption.value;
-
-    const task =
-      output.format === "text" ? yield* output.task("Checking linked branch...") : undefined;
-    return yield* api.v1
-      .listAllBranches({ ref: parentRef })
-      .pipe(Effect.map(Option.some), Effect.ensuring(task?.clear() ?? Effect.void));
-  }).pipe(
-    Effect.timeout(LEGACY_LINKED_STATE_LOOKUP_TIMEOUT),
-    // Best-effort: any transport/status/decode failure OR the timeout above
-    // degrades below — this helper must never fail on a flaky/slow lookup.
-    Effect.catch(() => Effect.succeed(Option.none<LegacyLinkedStateBranches>())),
-  );
-
-  return Option.isSome(branchesOption)
-    ? branchesOption.value.find((branch) => branch.project_ref === linkedRef)?.name
-    : undefined;
-});
-
-/**
  * Resolves the current linked-state display (project or branch). Used by
  * `status` to show the linked project/branch without requiring a link
  * beforehand. TS-only surface (CLI-2167 follow-up, no Go counterpart).
@@ -179,7 +92,7 @@ const legacyFindLinkedBranchName = Effect.fnUntraced(function* (
  *     linked ref came from the `project-ref` FILE → a branch link. Always
  *     renders the branch-linked shape (parent ref + whatever name/org the
  *     cache knows), attempting the best-effort branch-name lookup
- *     ({@link legacyFindLinkedBranchName}) and degrading to the bare
+ *     ({@link legacyFindBranchName}) and degrading to the bare
  *     "assumed branch, name unknown" shape — NOT to a plain/bare project
  *     line — on any acquisition or API failure. This is the fix for the real
  *     bug this feature shipped to fix: the user must still see they're on a
@@ -242,7 +155,9 @@ export const legacyResolveLinkedState = Effect.fnUntraced(function* () {
 
     // The cache names a genuinely DIFFERENT parent than the linked ref.
     const parentRef = cached.value.ref;
-    const branch = yield* legacyFindLinkedBranchName(parentRef, linkedRef.value);
+    const branch = yield* legacyFindBranchName(parentRef, linkedRef.value, {
+      spinnerLabel: "Checking linked branch...",
+    });
     if (branch === undefined && soft.source === "env") {
       // An env override's lookup didn't POSITIVELY confirm a branch, and the
       // cache carries none of the file-sourced trust invariants (it belongs
@@ -295,11 +210,6 @@ function legacyFormatOrgLabel(slug: string | undefined, id: string | undefined):
       : `${legacySanitizeInlineName(slug)} (${legacySanitizeInlineName(id)})`;
   }
   return legacySanitizeInlineName(slug ?? id ?? "");
-}
-
-function legacyFormatNamedRef(name: string | undefined, ref: string): string {
-  const safeRef = legacySanitizeInlineName(ref);
-  return name === undefined ? safeRef : `${legacySanitizeInlineName(name)} (${safeRef})`;
 }
 
 /**

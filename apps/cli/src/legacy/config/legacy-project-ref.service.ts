@@ -1,6 +1,7 @@
 import type { Effect, Option } from "effect";
 import { Context } from "effect";
 
+import { LEGACY_BRANCH_PROJECT_REF_PATTERN } from "../shared/legacy-ref-patterns.ts";
 import type { LegacyProjectRefReadError } from "../shared/legacy-temp-paths.ts";
 import type {
   LegacyInvalidProjectRefError,
@@ -86,7 +87,10 @@ export class LegacyProjectRefResolver extends Context.Service<
   LegacyProjectRefResolverShape
 >()("supabase/legacy/ProjectRefResolver") {}
 
-export const PROJECT_REF_PATTERN = /^[a-z]{20}$/;
+// `legacy-ref-patterns.ts` is the single canonical definition; re-exported under this
+// module's established name since telemetry redaction (`safeFlags` gating) and several
+// resolvers import it from here.
+export const PROJECT_REF_PATTERN = LEGACY_BRANCH_PROJECT_REF_PATTERN;
 
 export const PROJECT_NOT_LINKED_MESSAGE = "Cannot find project ref. Have you run supabase link?";
 
