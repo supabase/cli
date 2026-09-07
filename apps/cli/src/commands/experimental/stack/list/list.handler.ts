@@ -1,5 +1,9 @@
-import { Effect, Match, Option } from "effect";
-import { isStackError, type StackDescriptor, type StackError } from "@supabase/stack/effect";
+import { Effect, Option } from "effect";
+import {
+  type StackDescriptor,
+  type StackDiscoveryError,
+  type StackRuntime,
+} from "@supabase/stack/effect";
 import { Output } from "../../../../shared/output/output.service.ts";
 import { LegacyOutputFlag } from "../../../../shared/legacy/global-flags.ts";
 import { LegacyExperimentalStackApi } from "../stack.shared.ts";
@@ -27,23 +31,21 @@ const compareEntries = (
   return name !== 0 ? name : compareCodepoint(left.id, right.id);
 };
 
-const mapStackError = (error: StackError) => {
-  const reason = Match.value(error).pipe(
-    Match.tag(
-      "InvalidStackIdentityError",
-      "InvalidProjectRootError",
-      "StackStateInvalidError",
-      "StackStateFormatUnsupportedError",
-      () => "invalid-config" as const,
-    ),
-    Match.orElse(() => "runtime" as const),
-  );
-  return new LegacyExperimentalStackListError({ reason, message: error.message });
-};
+const mapStackError = (error: StackDiscoveryError) =>
+  new LegacyExperimentalStackListError({
+    reason: "invalid-config",
+    message: error.message,
+    suggestion:
+      "Inspect the managed stack registry under $SUPABASE_HOME/managed/stacks or ~/.supabase/managed/stacks.",
+    cause: error,
+  });
+
+const renderRuntime = (runtime: StackRuntime): string =>
+  runtime.kind === "container" ? `container (${runtime.engine})` : runtime.kind;
 
 const render = (stacks: ReadonlyArray<ReturnType<typeof entry>>): string => {
   if (stacks.length === 0) return "No managed stacks found.\n";
-  return `${stacks.map((stack) => `${stack.name} (${stack.id})\n  Project: ${stack.project_root}\n  Branch: ${stack.branch_context}\n  Runtime: ${stack.runtime.kind}\n  Desired lifecycle: ${stack.desired_lifecycle}`).join("\n\n")}\n`;
+  return `${stacks.map((stack) => `${stack.name} (${stack.id})\n  Project: ${stack.project_root}\n  Branch: ${stack.branch_context}\n  Runtime: ${renderRuntime(stack.runtime)}\n  Desired lifecycle: ${stack.desired_lifecycle}`).join("\n\n")}\n`;
 };
 
 export const legacyExperimentalStackList = Effect.fn("legacy.experimental.stack.list")(
@@ -56,9 +58,7 @@ export const legacyExperimentalStackList = Effect.fn("legacy.experimental.stack.
         message: "The legacy -o/--output flag is not supported here; use --output-format json.",
       });
     const api = yield* LegacyExperimentalStackApi;
-    const stacks = (yield* api
-      .listStacks()
-      .pipe(Effect.catchIf(isStackError, (error) => Effect.fail(mapStackError(error)))))
+    const stacks = (yield* api.listStacks().pipe(Effect.mapError(mapStackError)))
       .map(entry)
       .sort(compareEntries);
     if (output.format === "text") yield* output.raw(render(stacks));

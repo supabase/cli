@@ -1,6 +1,7 @@
 import { describe, expect, it } from "@effect/vitest";
 import { BunServices } from "@effect/platform-bun";
 import { Cause, Effect, Exit, Layer, Option } from "effect";
+import { CliOutput, Command } from "effect/unstable/cli";
 import {
   StackIdSchema,
   StackStateFormatUnsupportedError,
@@ -15,6 +16,8 @@ import {
 import { LegacyExperimentalStackApi } from "../stack.shared.ts";
 import { legacyExperimentalStackList } from "./list.handler.ts";
 import { LegacyExperimentalStackListError } from "./list.errors.ts";
+import { legacyExperimentalStackListCommand } from "./list.command.ts";
+import { textCliOutputFormatter } from "../../../../shared/output/text-formatter.ts";
 
 const descriptor = (
   id: string,
@@ -130,6 +133,20 @@ describe("experimental stack list", () => {
     );
   });
 
+  it.effect("renders the container engine in text output", () => {
+    const run = runList([
+      {
+        ...descriptor("p", "/work/container", "podman", "stopped"),
+        runtime: { kind: "container", engine: "podman" },
+      },
+    ]);
+    return run.effect.pipe(
+      Effect.tap(() =>
+        Effect.sync(() => expect(run.out.stdoutText).toContain("Runtime: container (podman)")),
+      ),
+    );
+  });
+
   it.effect("reports an empty registry", () => {
     const run = runList([]);
     return run.effect.pipe(
@@ -145,6 +162,17 @@ describe("experimental stack list", () => {
       const legacyExit = yield* run.effect.pipe(Effect.exit);
       expect(Exit.isFailure(legacyExit)).toBe(true);
       expect(run.listCalls).toBe(0);
+      if (Exit.isFailure(legacyExit)) {
+        const error = Cause.findErrorOption(legacyExit.cause);
+        expect(Option.isSome(error)).toBe(true);
+        if (Option.isSome(error)) {
+          expect(error.value).toBeInstanceOf(LegacyExperimentalStackListError);
+          if (error.value instanceof LegacyExperimentalStackListError) {
+            expect(error.value.message).toContain("legacy -o/--output flag");
+            expect(error.value[ErrorActionabilityId]).toEqual(actionability.provideFlags);
+          }
+        }
+      }
       const errorOut = mockOutput();
       const errorLayer = Layer.succeed(LegacyExperimentalStackApi, {
         createStack: () => Effect.die("unused"),
@@ -164,10 +192,31 @@ describe("experimental stack list", () => {
         expect(Option.isSome(error)).toBe(true);
         if (Option.isSome(error)) {
           expect(error.value).toBeInstanceOf(LegacyExperimentalStackListError);
-          if (error.value instanceof LegacyExperimentalStackListError)
+          if (error.value instanceof LegacyExperimentalStackListError) {
+            expect(error.value.message).toBe("registry unreadable");
+            expect(error.value.suggestion).toContain("managed stack registry");
+            expect(error.value.cause).toBeInstanceOf(StackStateFormatUnsupportedError);
             expect(error.value[ErrorActionabilityId]).toEqual(actionability.invalidConfig);
+          }
         }
       }
     });
+  });
+
+  it.live("parses the list command through the command runner", () => {
+    let called = false;
+    const command = legacyExperimentalStackListCommand.pipe(
+      Command.withHandler(() =>
+        Effect.sync(() => {
+          called = true;
+        }),
+      ),
+    );
+    return Effect.gen(function* () {
+      yield* Command.runWith(command, { version: "0.0.0-test" })([]);
+      expect(called).toBe(true);
+    }).pipe(
+      Effect.provide(Layer.mergeAll(BunServices.layer, CliOutput.layer(textCliOutputFormatter()))),
+    );
   });
 });
