@@ -1,7 +1,7 @@
 import { existsSync, mkdirSync, readFileSync, rmSync } from "node:fs";
 import { join } from "node:path";
 import { describe, expect, it } from "@effect/vitest";
-import { Effect, Option } from "effect";
+import { Effect, Exit, Option } from "effect";
 import {
   makeWorkersProject,
   setupLegacyWorkers,
@@ -399,15 +399,19 @@ describe("legacy workers new", () => {
   });
   it.live("scaffolds in a directory that has no Supabase project yet", () => {
     const created = makeWorkersProject();
-    const { layer } = setupLegacyWorkers({ workdir: created.dir });
+    const { layer, out } = setupLegacyWorkers({ workdir: created.dir, explicitWorkdir: true });
 
     return Effect.gen(function* () {
       yield* legacyWorkersNew(flags({ name: Option.some("api"), runtime: Option.some("node") }));
 
-      expect(existsSync(join(created.dir, "supabase", "workers", "api", "index.mjs"))).toBe(true);
+      const workerDir = join(created.dir, "supabase", "workers", "api");
+      expect(existsSync(join(workerDir, "index.mjs"))).toBe(true);
       expect(readFileSync(join(created.dir, "supabase", "config.toml"), "utf8")).toBe(
         `[workers.api]\nruntime = "node"\nsize = "2gb"\nexposure = "public"\n`,
       );
+      // An EXPLICIT --workdir has no cwd-relative reading, so the success
+      // message names the absolute path rather than a project-root-relative one.
+      expect(out.stdoutText).toContain(`Created new Worker at ${workerDir}`);
     }).pipe(
       Effect.provide(layer),
       Effect.ensuring(Effect.sync(() => rmSync(created.dir, { recursive: true, force: true }))),
@@ -743,4 +747,33 @@ describe("legacy workers new", () => {
       expect(repo.config()).toBe(CONFIG_WITH_COMMENTS);
     }).pipe(Effect.provide(layer), Effect.ensuring(Effect.sync(repo.cleanup)));
   });
+
+  // CLI-2285 regression: before this fix, a typo'd/nonexistent --workdir
+  // reached `fs.makeDirectory(destination, { recursive: true })` below with no
+  // prior existence check, silently scaffolding a fresh
+  // supabase/workers/<name>/ tree (plus a new config.toml) at the wrong path.
+  // `legacyValidateWorkdirIsDirectory` must now fail first, before anything on
+  // disk changes.
+  it.live(
+    "fails without scaffolding anything when --workdir names a directory that does not exist at all",
+    () => {
+      const repo = project();
+      const badWorkdir = join(repo.dir, "does-not-exist");
+      const { layer } = setupLegacyWorkers({ workdir: badWorkdir, explicitWorkdir: true });
+
+      return Effect.gen(function* () {
+        const exit = yield* legacyWorkersNew(flags()).pipe(Effect.exit);
+
+        expect(Exit.isFailure(exit)).toBe(true);
+        const rendered = JSON.stringify(exit);
+        expect(rendered).toContain("LegacyWorkersNewWorkdirError");
+        expect(rendered).toContain("failed to change workdir: chdir");
+
+        // The critical safety assertion: nothing was scaffolded at the bad
+        // path, and the ancestor project's own config is untouched.
+        expect(existsSync(join(badWorkdir, "supabase"))).toBe(false);
+        expect(repo.config()).toBe(CONFIG_WITH_COMMENTS);
+      }).pipe(Effect.provide(layer), Effect.ensuring(Effect.sync(repo.cleanup)));
+    },
+  );
 });

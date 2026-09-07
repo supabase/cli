@@ -1,13 +1,20 @@
-import { Effect, Option } from "effect";
+import { Effect, FileSystem, Option } from "effect";
 
 import { CliArgs } from "../../../shared/cli/cli-args.service.ts";
+import { LegacyCliSettings } from "../../../config/legacy-cli-settings.service.ts";
 import { LegacyProjectRefResolver } from "../../../config/legacy-project-ref.service.ts";
 import { legacySeedBucketsRun } from "../../../command-internal/legacy-seed-buckets.ts";
+import { legacyRequireExplicitWorkdirProject } from "../../../command-internal/legacy-workdir-project.ts";
+import { legacyValidateWorkdirIsDirectory } from "../../../command-internal/legacy-workdir-validation.ts";
 import { LegacyLinkedProjectCache } from "../../../telemetry/legacy-linked-project-cache.service.ts";
 import { LegacyTelemetryState } from "../../../telemetry/legacy-telemetry-state.service.ts";
 import { legacySeedChangedTargetFlags } from "./buckets.flags.ts";
 import type { LegacyBucketsFlags } from "./buckets.command.ts";
-import { LegacySeedMutuallyExclusiveFlagsError } from "./buckets.errors.ts";
+import {
+  LegacySeedMissingProjectConfigError,
+  LegacySeedMutuallyExclusiveFlagsError,
+  LegacySeedWorkdirError,
+} from "./buckets.errors.ts";
 
 /**
  * `supabase seed buckets` — seeds Storage buckets from
@@ -28,6 +35,8 @@ export const legacySeedBuckets = Effect.fn("legacy.seed.buckets")(function* (
   const telemetryState = yield* LegacyTelemetryState;
   const linkedProjectCache = yield* LegacyLinkedProjectCache;
   const cliArgs = yield* CliArgs;
+  const cliSettings = yield* LegacyCliSettings;
+  const fs = yield* FileSystem.FileSystem;
 
   // Set once --linked resolves a ref; drives the post-run linked-project cache
   // write + org/project group identify (`cmd/root.go`'s `ensureProjectGroupsCached`,
@@ -36,6 +45,10 @@ export const legacySeedBuckets = Effect.fn("legacy.seed.buckets")(function* (
   let linkedRef = "";
 
   yield* Effect.gen(function* () {
+    yield* legacyValidateWorkdirIsDirectory(cliSettings.workdir, fs).pipe(
+      Effect.mapError((error) => new LegacySeedWorkdirError({ message: error.message })),
+    );
+
     // Resolve the project ref for --linked BEFORE loading config, so that the
     // matching `[remotes.<name>]` override (whose `project_id == ref`) is merged
     // over the base config by `loadCliConfig`. The target is selected from
@@ -55,6 +68,18 @@ export const legacySeedBuckets = Effect.fn("legacy.seed.buckets")(function* (
         }),
       );
     }
+
+    // An explicit `--workdir`/`SUPABASE_WORKDIR` that holds no project config
+    // fails HERE, before the api-keys fetch and any Storage call — fixes the
+    // "authenticates, seeds nothing, exits 0" bug. `start`/`db reset` never
+    // reach this handler (they call `legacySeedBucketsRun` directly), so
+    // their behavior is unaffected. A DEFAULTED workdir is untouched — see
+    // `legacyRequireExplicitWorkdirProject`'s own doc comment.
+    yield* legacyRequireExplicitWorkdirProject(cliSettings).pipe(
+      Effect.mapError(
+        (error) => new LegacySeedMissingProjectConfigError({ message: error.message }),
+      ),
+    );
 
     const projectRefResolver = yield* LegacyProjectRefResolver;
     const projectRef = isLinked ? yield* projectRefResolver.loadProjectRef(flags.projectRef) : "";

@@ -3,6 +3,8 @@ import { Effect, FileSystem, Option } from "effect";
 import { Output } from "../../../../shared/output/output.service.ts";
 import { emitSuccessTrailer } from "../../../../shared/cli/success-trailer.ts";
 import { legacyAqua, legacyBold } from "../../../../command-internal/legacy-colors.ts";
+import { legacyValidateWorkdirIsDirectory } from "../../../../command-internal/legacy-workdir-validation.ts";
+import { LegacyCliSettings } from "../../../../config/legacy-cli-settings.service.ts";
 import { legacyRenderWorkerDetails } from "../workers.format.ts";
 import {
   legacyEmitWorkersMachineOutput,
@@ -51,6 +53,7 @@ import {
   type LegacyWorkersProject,
 } from "../workers.shared.ts";
 import type { LegacyWorkersNewFlags } from "./new.command.ts";
+import { LegacyWorkersNewWorkdirError } from "./new.errors.ts";
 
 /**
  * `supabase experimental workers new [name]` — scaffold `supabase/workers/<name>/` from the
@@ -256,9 +259,14 @@ export const legacyWorkersNew = Effect.fn("legacy.experimental.workers.new")(fun
   const output = yield* Output;
   const telemetryState = yield* LegacyTelemetryState;
   const runtimeInfo = yield* RuntimeInfo;
+  const cliSettings = yield* LegacyCliSettings;
 
   // The telemetry state file is written on every invocation, success or failure.
   yield* Effect.gen(function* () {
+    yield* legacyValidateWorkdirIsDirectory(cliSettings.workdir, fs).pipe(
+      Effect.mapError((error) => new LegacyWorkersNewWorkdirError({ message: error.message })),
+    );
+
     const project = yield* legacyLoadWorkersProjectForEntryWrite();
 
     // Decided once, before the first prompt rather than beside the last, since
@@ -364,7 +372,15 @@ export const legacyWorkersNew = Effect.fn("legacy.experimental.workers.new")(fun
 
     yield* commitWorkerEntry(configWrite);
 
-    const sourceDisplay = displayPath(project.projectRoot, destination);
+    // Relative to the project root when the workdir was defaulted — the
+    // common case, where it also reads as relative to the terminal the
+    // command was run from. An explicit `--workdir` breaks that: the project
+    // root can be nowhere near the actual cwd, so a relative path here would
+    // point somewhere the user never typed. The absolute path is unambiguous
+    // either way.
+    const sourceDisplay = cliSettings.explicitWorkdir
+      ? destination
+      : displayPath(project.projectRoot, destination);
 
     const payload = {
       worker_name: name,

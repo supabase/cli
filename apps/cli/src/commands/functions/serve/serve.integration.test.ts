@@ -1524,6 +1524,98 @@ describe("legacy functions serve integration", () => {
     });
   });
 
+  it.live(
+    "does not let an ancestor project's deno.json get misattributed to this project's own function when --workdir names a config-less subdirectory of it",
+    () => {
+      // CLI-2285: `resolveServeConfig` used to pass NO `search` option to
+      // `inferFunctionsManifest`, so it always climbed ancestors (the
+      // package default) regardless of `goConfigCompat`, while the config
+      // load right next to it already used `search: false` for the legacy
+      // shell. A function directory with no deno.json of its own would
+      // still be reported as HAVING one — borrowed from an unrelated
+      // ANCESTOR project's own deno.json of the same slug — because the
+      // manifest's filesystem walk climbed to find the ancestor's project
+      // root even though the config load never did. The borrowed import map
+      // path is then re-anchored under THIS project's own supabase dir,
+      // where no such file exists. Same fix, same shape of regression test,
+      // as deploy.integration.test.ts's "does not treat an ancestor
+      // project's deno.json as this project's own import map…" test.
+      deployMockState.runHandler = (command, args) => {
+        if (command !== "docker") {
+          throw new Error(`unexpected process: ${command}`);
+        }
+        if (args[0] === "container" && args[1] === "inspect") {
+          return { exitCode: 0, stdout: "", stderr: "" };
+        }
+        if (args[0] === "container" && args[1] === "rm") {
+          return { exitCode: 0, stdout: "", stderr: "" };
+        }
+        if (args[0] === "create" || args[0] === "cp" || args[0] === "start") {
+          return { exitCode: 0, stdout: "edge-runtime-id\n", stderr: "" };
+        }
+        if (args[0] === "exec") {
+          return { exitCode: 0, stdout: "", stderr: "" };
+        }
+        throw new Error(`unexpected docker args: ${args.join(" ")}`);
+      };
+
+      const childSpawner = mockDockerLogSpawner([{ exitCode: 1, stderr: "serve logs failed" }]);
+      const nestedWorkdir = join(tempRoot.current, "nested", "dir");
+
+      return Effect.gen(function* () {
+        // Ancestor project: a real config.toml plus a real function with
+        // BOTH an entrypoint and a deno.json, at the same slug the
+        // sub-project below serves.
+        yield* Effect.promise(() => writeCliConfig('project_id = "ancestor-project"\n'));
+        yield* Effect.promise(() =>
+          writeFunctionFile("hello", "index.ts", 'Deno.serve(() => new Response("ancestor"))\n'),
+        );
+        yield* Effect.promise(() => writeFunctionFile("hello", "deno.json", '{"imports":{}}\n'));
+
+        // The sub-project actually served has its OWN entrypoint, but
+        // deliberately no deno.json of its own — and no config.toml either,
+        // which is what makes it "config-less" relative to the ancestor.
+        yield* Effect.promise(() =>
+          mkdir(join(nestedWorkdir, "supabase", "functions", "hello"), { recursive: true }),
+        );
+        yield* Effect.promise(() =>
+          writeFile(
+            join(nestedWorkdir, "supabase", "functions", "hello", "index.ts"),
+            "Deno.serve(() => new Response())\n",
+          ),
+        );
+
+        const { layer } = setupServe({ childSpawner, workdir: nestedWorkdir });
+        yield* legacyFunctionsServe(baseFlags()).pipe(Effect.provide(layer), Effect.flip);
+
+        const dockerRun = deployMockState.runCalls.find(
+          (call) => call.command === "docker" && call.args[0] === "create",
+        );
+        expect(dockerRun).toBeDefined();
+        if (dockerRun === undefined) {
+          throw new Error("expected docker create call");
+        }
+
+        const envs = yield* Effect.promise(() => extractDockerEnvEntries(dockerRun));
+        const functionsConfigEntry = envs.find((entry) =>
+          entry.startsWith("SUPABASE_INTERNAL_FUNCTIONS_CONFIG="),
+        );
+        expect(functionsConfigEntry).toBeDefined();
+        if (functionsConfigEntry === undefined) {
+          throw new Error("missing functions config env");
+        }
+        const functionsConfig = JSON.parse(
+          functionsConfigEntry.slice("SUPABASE_INTERNAL_FUNCTIONS_CONFIG=".length),
+        );
+        // The sub-project's own "hello" is still served — not silently
+        // dropped — but with no import map, since the ancestor's deno.json
+        // must never be borrowed for it.
+        expect(functionsConfig).toHaveProperty("hello");
+        expect(functionsConfig.hello).not.toHaveProperty("importMapPath");
+      });
+    },
+  );
+
   it.live("restarts the runtime when watched files change", () => {
     deployMockState.runHandler = (command, args) => {
       if (command !== "docker") {

@@ -1,3 +1,4 @@
+import type { LoadedCliConfig } from "@supabase/config/effect";
 import { loadCliConfig } from "@supabase/config/internal";
 import { ChildProcessSpawner } from "effect/unstable/process";
 import { Effect, FileSystem, Option, Path, Predicate, Stdio, Stream } from "effect";
@@ -32,6 +33,9 @@ import {
 import type { LegacyPgConnInput } from "../../../command-internal/legacy-db-connection.service.ts";
 import { legacyToPostgresURL } from "../../../command-internal/legacy-postgres-url.ts";
 import { legacyTempPaths } from "../../../command-internal/legacy-temp-paths.ts";
+import { legacyMissingProjectConfigMessageEffect } from "../../../command-internal/legacy-workdir-project.ts";
+import { legacyShouldSearchAncestors } from "../../../command-internal/legacy-workdir-search.ts";
+import { legacyValidateWorkdirIsDirectory } from "../../../command-internal/legacy-workdir-validation.ts";
 import { LegacyLinkedProjectCache } from "../../../telemetry/legacy-linked-project-cache.service.ts";
 import { LegacyTelemetryState } from "../../../telemetry/legacy-telemetry-state.service.ts";
 import { LegacyPgDeltaSslProbe } from "../../../command-internal/legacy-pgdelta-ssl-probe.service.ts";
@@ -40,7 +44,13 @@ import {
   legacyRunWithPoolerFallback,
 } from "../../../command-internal/legacy-pooler-fallback.ts";
 import type { LegacyGenTypesFlags } from "./types.command.ts";
-import { LegacyGenTypesNetworkError, LegacyGenTypesUnexpectedStatusError } from "./types.errors.ts";
+import {
+  LegacyGenTypesMissingProjectConfigError,
+  LegacyGenTypesNetworkError,
+  LegacyGenTypesParseConfigError,
+  LegacyGenTypesUnexpectedStatusError,
+  LegacyGenTypesWorkdirError,
+} from "./types.errors.ts";
 import { legacyGetHostname } from "../../../command-internal/legacy-hostname.ts";
 import { LegacyPlatformApiFactory } from "../../../auth/legacy-platform-api-factory.service.ts";
 import {
@@ -257,9 +267,72 @@ export const legacyGenTypes = Effect.fn("legacy.gen.types")(function* (flags: Le
   const lang = flags.lang;
   const swiftAccessControl = flags.swiftAccessControl;
 
-  const loadConfig = () => loadCliConfig(cliSettings.workdir, { goViperCompat: true });
+  // Resolved against `cliSettings.workdir`, the root every config load in
+  // this handler uses. `cause.path` is anchored under the workdir; render it
+  // relative so the message reads `supabase/config.json` like the family's
+  // other messages, regardless of invocation cwd.
+  const relativeConfigPath = (path: string) =>
+    path.startsWith(cliSettings.workdir)
+      ? path.slice(cliSettings.workdir.length).replace(/^[/\\]/, "")
+      : path;
+
+  const loadConfig = () =>
+    loadCliConfig(cliSettings.workdir, {
+      goViperCompat: true,
+      search: legacyShouldSearchAncestors(cliSettings),
+    }).pipe(
+      // `cause.path` names the file that actually failed to parse — `loadCliConfig`
+      // probes `supabase/config.json` before falling back to `supabase/config.toml`
+      // (`findCliProjectPaths`), so hardcoding the `.toml` name here would mislabel a
+      // broken `config.json`. Caught regardless of `explicitWorkdir` — a malformed
+      // config is a parse failure, not the "no project here" case
+      // `requireProjectConfigWhenExplicit` handles, so it must run before that
+      // flatMap ever sees the (by-then-already-failed) load.
+      Effect.catchTag(
+        "CliConfigParseError",
+        (cause) =>
+          new LegacyGenTypesParseConfigError({
+            message: `failed to parse ${relativeConfigPath(cause.path)}: ${String(cause.cause)}`,
+          }),
+      ),
+      Effect.catchTag(
+        "DuplicateRemoteProjectIdError",
+        (cause) => new LegacyGenTypesParseConfigError({ message: cause.message }),
+      ),
+      Effect.flatMap(requireProjectConfigWhenExplicit),
+    );
   const loadConfigForRef = (projectRef: string) =>
-    loadCliConfig(cliSettings.workdir, { projectRef, goViperCompat: true });
+    loadCliConfig(cliSettings.workdir, {
+      projectRef,
+      goViperCompat: true,
+      search: legacyShouldSearchAncestors(cliSettings),
+    }).pipe(
+      Effect.catchTag(
+        "CliConfigParseError",
+        (cause) =>
+          new LegacyGenTypesParseConfigError({
+            message: `failed to parse ${relativeConfigPath(cause.path)}: ${String(cause.cause)}`,
+          }),
+      ),
+      Effect.catchTag(
+        "DuplicateRemoteProjectIdError",
+        (cause) => new LegacyGenTypesParseConfigError({ message: cause.message }),
+      ),
+      Effect.flatMap(requireProjectConfigWhenExplicit),
+    );
+
+  // CLI-2285: an explicit --workdir that holds no project must not silently
+  // resolve to the embedded default schemas (dropping a declared [api].schemas
+  // and writing a public-only types file, exit 0). A DEFAULTED workdir keeps
+  // today's tolerant fallback.
+  const requireProjectConfigWhenExplicit = (loaded: LoadedCliConfig | null) =>
+    loaded === null && cliSettings.explicitWorkdir
+      ? Effect.gen(function* () {
+          return yield* new LegacyGenTypesMissingProjectConfigError({
+            message: yield* legacyMissingProjectConfigMessageEffect(cliSettings),
+          });
+        })
+      : Effect.succeed(loaded);
 
   const schemasFromConfig = (apiSchemas: ReadonlyArray<string> | undefined) =>
     defaultSchemas(apiSchemas);
@@ -546,7 +619,15 @@ export const legacyGenTypes = Effect.fn("legacy.gen.types")(function* (flags: Le
     );
 
   yield* Effect.gen(function* () {
-    // The command's own guard runs first, then flag-group validation — so
+    // The resolved `--workdir`/`SUPABASE_WORKDIR` must exist and be a
+    // directory before the command's own guard or flag-group validation —
+    // the query-timeout parse failure above still precedes it (parsed at
+    // flag-parse time, before the telemetry context).
+    yield* legacyValidateWorkdirIsDirectory(cliSettings.workdir, fs).pipe(
+      Effect.mapError((error) => new LegacyGenTypesWorkdirError({ message: error.message })),
+    );
+
+    // The command's own guard runs next, then flag-group validation — so
     // this guard's error wins when both apply (e.g. `--local --linked
     // --postgrest-v9-compat`). Both run AFTER the telemetry context is
     // already installed, unlike the query-timeout parse failure above, so

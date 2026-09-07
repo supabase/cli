@@ -43,12 +43,13 @@
 
 ## Exit Codes
 
-| Code | Condition                          |
-| ---- | ---------------------------------- |
-| `0`  | success                            |
-| `1`  | invalid function name              |
-| `1`  | function entrypoint already exists |
-| `1`  | local file write failed            |
+| Code | Condition                                                                                                                                                        |
+| ---- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `0`  | success                                                                                                                                                          |
+| `1`  | resolved `--workdir`/`SUPABASE_WORKDIR` doesn't exist or isn't a directory (`LegacyFunctionsNewWorkdirError`) — beats slug validation and every filesystem write |
+| `1`  | invalid function name                                                                                                                                            |
+| `1`  | function entrypoint already exists                                                                                                                               |
+| `1`  | local file write failed                                                                                                                                          |
 
 ## Telemetry Events Fired
 
@@ -80,3 +81,4 @@ Emits a structured success result event with `path`, `function_name`, and `auth`
 - Existing-declaration detection scans the raw `config.toml` text (`^\s*\[functions\.<slug>\]\s*$`) rather than a parsed config map. This is a deliberate design choice: config loading here is non-fatal, so a raw-text scan stays deterministic even when the file fails to parse. For all well-formed configs the two approaches agree.
 - IDE settings scaffolding (`.vscode`, `.idea`) only runs in `--output-format text`; json / stream-json runs are payload-only.
 - No Management API requests are made; all behavior is local filesystem work plus telemetry flush.
+- A non-existent `--workdir`/`SUPABASE_WORKDIR` now fails before any directory or file is created (CLI-2285) — previously a typo'd `--workdir` could scaffold a fresh `supabase/functions/…` tree (plus a new `config.toml`) at the wrong path.

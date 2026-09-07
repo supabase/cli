@@ -5,6 +5,7 @@ import { dirname, join } from "node:path";
 import { BunServices } from "@effect/platform-bun";
 import { describe, expect, it } from "@effect/vitest";
 import { afterEach, beforeEach } from "vitest";
+import { loadCliConfig } from "@supabase/config/internal";
 import { Effect, Exit, Layer, Option } from "effect";
 import * as HttpClient from "effect/unstable/http/HttpClient";
 import type * as HttpClientError from "effect/unstable/http/HttpClientError";
@@ -73,6 +74,8 @@ function setupLegacySeedBuckets(
     readonly linkedFails?: boolean;
     /** When set, the Management API `getProjectApiKeys` call fails with this error. */
     readonly apiKeysFail?: HttpClientError.HttpClientError;
+    /** cliSettings.explicitWorkdir override — true iff --workdir/SUPABASE_WORKDIR was set verbatim. */
+    readonly explicitWorkdir?: boolean;
   },
 ) {
   if (opts.toml !== undefined) {
@@ -189,7 +192,7 @@ function setupLegacySeedBuckets(
     out.layer,
     httpLayer,
     telemetry.layer,
-    mockLegacyCliSettings({ workdir }),
+    mockLegacyCliSettings({ workdir, explicitWorkdir: opts.explicitWorkdir ?? false }),
     BunServices.layer,
     // Seed-bucket prompts model an interactive user answering via `confirm`.
     mockTty({ stdinIsTty: true, stdoutIsTty: false }),
@@ -2633,4 +2636,96 @@ describe("legacy seed buckets", () => {
       ).toBe(true);
     });
   });
+
+  it.live(
+    "fails before the api-keys fetch when --workdir names a config-less subdirectory of a real ancestor project",
+    () => {
+      // CLI-2285 regression: the ancestor project genuinely has a valid
+      // config.toml declaring a bucket, and the subdirectory genuinely has
+      // none of its own — an EXPLICIT --workdir must never silently climb
+      // to the ancestor's config and seed buckets there.
+      mkdirSync(join(tmp.current, "supabase"), { recursive: true });
+      writeFileSync(
+        join(tmp.current, "supabase", "config.toml"),
+        'project_id = "test"\n[storage.buckets.test]\npublic = true\n',
+      );
+      const sub = join(tmp.current, "nested", "dir");
+      mkdirSync(sub, { recursive: true });
+      const { layer, requests, telemetry } = setupLegacySeedBuckets(sub, {
+        explicitWorkdir: true,
+      });
+      return Effect.gen(function* () {
+        const exit = yield* legacySeedBuckets(DEFAULT_FLAGS).pipe(
+          Effect.provide(layer),
+          Effect.exit,
+        );
+        expect(Exit.isFailure(exit)).toBe(true);
+        expect(JSON.stringify(exit)).toContain("LegacySeedMissingProjectConfigError");
+        // Fires before any credential/api-keys resolution.
+        expect(requests).toHaveLength(0);
+        expect(telemetry.flushed).toBe(true);
+      });
+    },
+  );
+
+  it.live(
+    "an explicit --workdir naming a directory that does not exist at all fails before any credential resolution",
+    () => {
+      const missing = join(tmp.current, "does-not-exist");
+      const { layer, requests } = setupLegacySeedBuckets(missing, { explicitWorkdir: true });
+      return Effect.gen(function* () {
+        const exit = yield* legacySeedBuckets(DEFAULT_FLAGS).pipe(
+          Effect.provide(layer),
+          Effect.exit,
+        );
+        expect(Exit.isFailure(exit)).toBe(true);
+        expect(JSON.stringify(exit)).toContain("LegacySeedWorkdirError");
+        expect(JSON.stringify(exit)).toContain("failed to change workdir: chdir");
+        expect(requests).toHaveLength(0);
+      });
+    },
+  );
+
+  it.live(
+    "legacySeedBucketsRun succeeds with a caller-supplied resolvedConfig even when cliSettings.explicitWorkdir is true",
+    () => {
+      // `start`/`db reset` never reach `buckets.handler.ts`'s own
+      // `legacyRequireExplicitWorkdirProject` guard — they call this shared
+      // core directly with an already-resolved `resolvedConfig`, bypassing
+      // the reload entirely. This regression guard proves that reuse path
+      // stays untouched by the CLI-2285 fix even when the settings passed
+      // happen to carry `explicitWorkdir: true`.
+      mkdirSync(join(tmp.current, "supabase"), { recursive: true });
+      writeFileSync(
+        join(tmp.current, "supabase", "config.toml"),
+        'project_id = "test"\n[storage.buckets.test]\npublic = true\n',
+      );
+      const { layer, requests } = setupLegacySeedBuckets(tmp.current, {
+        explicitWorkdir: true,
+        routes: [
+          { method: "GET", match: "/storage/v1/bucket", body: [] },
+          { method: "POST", match: "/storage/v1/bucket", body: { name: "test" } },
+        ],
+      });
+      return Effect.gen(function* () {
+        const loaded = yield* loadCliConfig(tmp.current, {
+          goViperCompat: true,
+          search: false,
+        }).pipe(Effect.provide(BunServices.layer));
+        if (loaded === null) {
+          throw new Error("test setup: config.toml failed to load");
+        }
+        const exit = yield* legacySeedBucketsRun({
+          projectRef: "",
+          emitSummary: false,
+          interactive: false,
+          resolvedConfig: { config: loaded.config, document: loaded.document },
+        }).pipe(Effect.provide(layer), Effect.exit);
+        expect(Exit.isSuccess(exit)).toBe(true);
+        expect(
+          requests.some((r) => r.method === "POST" && r.url.endsWith("/storage/v1/bucket")),
+        ).toBe(true);
+      });
+    },
+  );
 });

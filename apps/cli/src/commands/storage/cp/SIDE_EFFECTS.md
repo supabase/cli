@@ -7,7 +7,7 @@ Copies objects between local paths and the Storage service. The scheme of `src`/
 
 | Path                                          | Format     | When                                                                                  |
 | --------------------------------------------- | ---------- | ------------------------------------------------------------------------------------- |
-| `<workdir>/supabase/config.toml`              | TOML       | always (local creds; `[storage.buckets.*]` for bucket auto-create)                    |
+| `<workdir>/supabase/config.toml`              | TOML       | always (local creds; `[storage.buckets.*]` for bucket auto-create). With an explicit `--workdir`/`SUPABASE_WORKDIR` a missing project config is now a hard failure (`LegacyStorageMissingProjectConfigError`) rather than a fall-back to embedded defaults — the default `api.port` would otherwise point the operation at a different local stack |
 | `~/.supabase/access-token`                    | plain text | linked path, when `SUPABASE_ACCESS_TOKEN` unset                                       |
 | `~/.supabase/<hash>/linked-project.json`      | JSON       | linked path, to resolve the project ref                                               |
 | local Kong TLS cert/key                       | PEM        | local + `api.enabled` + `api.tls.enabled`                                             |
@@ -52,6 +52,8 @@ override family — same roles as `storage ls`.
 | Code | Condition                                                                                                                                                                               |
 | ---- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `0`  | success                                                                                                                                                                                 |
+| `1`  | resolved `--workdir`/`SUPABASE_WORKDIR` doesn't exist or isn't a directory (`LegacyStorageWorkdirError`) — beats every other guard                                                      |
+| `1`  | an explicit `--workdir`/`SUPABASE_WORKDIR` holds no project config (`LegacyStorageMissingProjectConfigError`)                                                                           |
 | `1`  | invalid/parse url, unsupported operation (local→local), copy-between-buckets, object-not-found (recursive download), file create/read failure, API non-2xx, network, auth, config parse |
 | `1`  | `--project-ref` set with `--local` (see Notes)                                                                                                                                          |
 

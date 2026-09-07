@@ -8,7 +8,7 @@ when `-r` is set. With no paths and `-r`, every bucket is cleared and deleted.
 
 | Path                                          | Format     | When                                                                                                                                |
 | --------------------------------------------- | ---------- | ----------------------------------------------------------------------------------------------------------------------------------- |
-| `<workdir>/supabase/config.toml`              | TOML       | always (local creds; `[remotes.*]` merge when linked)                                                                               |
+| `<workdir>/supabase/config.toml`              | TOML       | always (local creds; `[remotes.*]` merge when linked). With an explicit `--workdir`/`SUPABASE_WORKDIR` a missing project config is now a hard failure (`LegacyStorageMissingProjectConfigError`) rather than a fall-back to embedded defaults — the default `api.port` would otherwise point the operation at a different local stack |
 | `~/.supabase/access-token`                    | plain text | linked path, when `SUPABASE_ACCESS_TOKEN` unset                                                                                     |
 | `~/.supabase/<hash>/linked-project.json`      | JSON       | linked path, to resolve the project ref                                                                                             |
 | local Kong TLS cert/key                       | PEM        | local + `api.enabled` + `api.tls.enabled`                                                                                           |
@@ -51,6 +51,8 @@ read from the shell env OR the project `.env`/`.env.local`/`.env.<env>[.local]` 
 | Code | Condition                                                                                                                                                                    |
 | ---- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `0`  | success (including a declined confirmation, and a tolerated `Bucket not found`)                                                                                              |
+| `1`  | resolved `--workdir`/`SUPABASE_WORKDIR` doesn't exist or isn't a directory (`LegacyStorageWorkdirError`) — beats every other guard, including any `DELETE` call              |
+| `1`  | an explicit `--workdir`/`SUPABASE_WORKDIR` holds no project config (`LegacyStorageMissingProjectConfigError`) — also beats any `DELETE` call                                 |
 | `1`  | invalid/parse url, missing bucket (root path), missing `-r` flag (directory or no args), object-not-found (recursive empty prefix), API non-2xx, network, auth, config parse |
 | `1`  | `--project-ref` set with `--local` (see Notes)                                                                                                                               |
 

@@ -506,4 +506,64 @@ describe("legacy workers list", () => {
       expect(telemetry.flushed).toBe(true);
     }).pipe(Effect.provide(layer), Effect.ensuring(Effect.sync(repo.cleanup)));
   });
+
+  // CLI-2285: `legacyLoadWorkersProject`'s JSON-capable read must thread the
+  // ancestor-search predicate — the workdir's own default resolution only
+  // probes config.toml, so a config.json-only project invoked from a
+  // subdirectory relied on this second climb to be found at all.
+  it.live(
+    "discovers a config.json-only project's [workers.*] entry from a subdirectory when --workdir is defaulted",
+    () => {
+      const created = makeWorkersProject({
+        "supabase/config.json": JSON.stringify({
+          project_id: "demo",
+          workers: { api: { runtime: "node", size: "2gb" } },
+        }),
+      });
+      const sub = join(created.dir, "nested", "dir");
+      mkdirSync(sub, { recursive: true });
+      const cleanup = () => rmSync(created.dir, { recursive: true, force: true });
+      const { layer, out } = setupLegacyWorkers({
+        workdir: sub,
+        explicitWorkdir: false,
+        routes: { [listRoute]: { status: 200, body: { data: [] } } },
+      });
+
+      return Effect.gen(function* () {
+        yield* legacyWorkersList({ projectRef: Option.none() });
+
+        const row = out.stdoutText.split("\n").find((line) => line.includes("api"));
+        expect(row).toBeDefined();
+        expect(row).toContain("not deployed");
+        expect(row).toContain("node");
+      }).pipe(Effect.provide(layer), Effect.ensuring(Effect.sync(cleanup)));
+    },
+  );
+
+  it.live(
+    "does not discover the same config.json-only entry when --workdir is explicit (preserves bare-directory scaffolding semantics)",
+    () => {
+      const created = makeWorkersProject({
+        "supabase/config.json": JSON.stringify({
+          project_id: "demo",
+          workers: { api: { runtime: "node", size: "2gb" } },
+        }),
+      });
+      const sub = join(created.dir, "nested", "dir");
+      mkdirSync(sub, { recursive: true });
+      const cleanup = () => rmSync(created.dir, { recursive: true, force: true });
+      const { layer, out } = setupLegacyWorkers({
+        workdir: sub,
+        explicitWorkdir: true,
+        routes: { [listRoute]: { status: 200, body: { data: [] } } },
+      });
+
+      return Effect.gen(function* () {
+        yield* legacyWorkersList({ projectRef: Option.none() });
+
+        expect(out.stdoutText).not.toContain("api");
+        expect(out.stdoutText).toContain("No workers found.");
+      }).pipe(Effect.provide(layer), Effect.ensuring(Effect.sync(cleanup)));
+    },
+  );
 });

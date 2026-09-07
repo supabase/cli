@@ -6,7 +6,7 @@ Lists objects/buckets by path prefix against the Storage gateway (local stack or
 
 | Path                                          | Format     | When                                                                                  |
 | --------------------------------------------- | ---------- | ------------------------------------------------------------------------------------- |
-| `<workdir>/supabase/config.toml`              | TOML       | always (local creds/baseUrl; `[remotes.*]` merge when linked)                         |
+| `<workdir>/supabase/config.toml`              | TOML       | always (local creds/baseUrl; `[remotes.*]` merge when linked). With an explicit `--workdir`/`SUPABASE_WORKDIR` a missing project config is now a hard failure (`LegacyStorageMissingProjectConfigError`) rather than a fall-back to embedded defaults — the default `api.port` would otherwise point the operation at a different local stack |
 | `~/.supabase/access-token`                    | plain text | linked path, when `SUPABASE_ACCESS_TOKEN` unset                                       |
 | `~/.supabase/<hash>/linked-project.json`      | JSON       | linked path, to resolve the project ref                                               |
 | local Kong TLS cert/key                       | PEM        | local + `api.enabled` + `api.tls.enabled`                                             |
@@ -47,11 +47,13 @@ Auth: `apikey` header always; `Authorization: Bearer <key>` unless the key is `s
 
 ## Exit Codes
 
-| Code | Condition                                                                   |
-| ---- | --------------------------------------------------------------------------- |
-| `0`  | success                                                                     |
-| `1`  | invalid URL / url-parse error / API non-2xx / network / auth / config parse |
-| `1`  | `--project-ref` set with `--local` (see Notes)                              |
+| Code | Condition                                                                                                                          |
+| ---- | ---------------------------------------------------------------------------------------------------------------------------------- |
+| `0`  | success                                                                                                                            |
+| `1`  | resolved `--workdir`/`SUPABASE_WORKDIR` doesn't exist or isn't a directory (`LegacyStorageWorkdirError`) — beats every other guard |
+| `1`  | an explicit `--workdir`/`SUPABASE_WORKDIR` holds no project config (`LegacyStorageMissingProjectConfigError`)                      |
+| `1`  | invalid URL / url-parse error / API non-2xx / network / auth / config parse                                                        |
+| `1`  | `--project-ref` set with `--local` (see Notes)                                                                                     |
 
 ## Output
 
