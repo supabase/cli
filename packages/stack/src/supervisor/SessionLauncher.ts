@@ -1,4 +1,4 @@
-import { Cause, Effect, Exit, Ref } from "effect";
+import { Cause, Deferred, Effect, Exit, Ref, Semaphore } from "effect";
 import type { ExecutionPlan, PlannedWorkload } from "../model/ExecutionPlan.ts";
 import type { StackId } from "../public/StackId.ts";
 import {
@@ -13,7 +13,7 @@ interface SessionWorkload {
 }
 
 export interface SessionLauncher {
-  /** Starts the supplied dependency closure in dependency-ready waves. */
+  /** Starts the supplied dependency closure as dependencies complete. */
   readonly launch: (plan: ExecutionPlan) => Effect.Effect<SessionLaunch, RuntimeDriverError>;
   /** Stops and removes every workload started in this session in reverse order. */
   readonly stop: Effect.Effect<void, RuntimeDriverError>;
@@ -41,9 +41,13 @@ const combine = (
 ): Cause.Cause<RuntimeDriverError> =>
   cleanup.reasons.length === 0 ? primary : Cause.combine(primary, cleanup);
 
+const joinExit = <A, E>(result: Exit.Exit<A, E>): Effect.Effect<A, E> =>
+  Exit.isSuccess(result) ? Effect.succeed(result.value) : Effect.failCause(result.cause);
+
 /**
  * Owns only the workloads started by the current Supervisor session. A launch starts
- * dependency-ready waves and a failure cleans that attempt's resources.
+ * dependency-ready workloads as soon as their prerequisites complete and a failure cleans
+ * that attempt's resources.
  */
 export const makeSessionLauncher = (options: {
   readonly stackId: StackId;
@@ -80,40 +84,80 @@ export const makeSessionLauncher = (options: {
           workload,
         }));
         const ready = new Set((yield* Ref.get(session)).map(({ key }) => key.workloadId));
-        let remaining = planEntries.filter((entry) => !ready.has(entry.workload.id));
-        let outcome: Exit.Exit<void, RuntimeDriverError> = Exit.succeed(undefined);
-        while (remaining.length > 0 && Exit.isSuccess(outcome)) {
-          const wave = remaining.filter((entry) =>
-            entry.workload.dependencies.every((dependency) => ready.has(dependency)),
+        const remaining = planEntries.filter((entry) => !ready.has(entry.workload.id));
+        const unresolved = new Set(remaining.map((entry) => entry.workload.id));
+        const graphReady = new Set(ready);
+        // Reject cycles before creating fibers that would otherwise wait forever.
+        while (unresolved.size > 0) {
+          const completed = [...unresolved].filter((id) => {
+            const entry = planEntries.find((candidate) => candidate.workload.id === id);
+            return (
+              entry !== undefined &&
+              entry.workload.dependencies.every((dependency) => graphReady.has(dependency))
+            );
+          });
+          if (completed.length === 0) {
+            const failure = new RuntimeDriverError({
+              message: "No workload is ready to start; dependencies are unsatisfied",
+              stackId: options.stackId,
+            });
+            const cleaned = yield* cleanup(attempted).pipe(Effect.exit);
+            yield* Ref.set(cleanupProven, Exit.isSuccess(cleaned));
+            if (Exit.isFailure(cleaned))
+              return yield* Effect.failCause(combine(Cause.fail(failure), cleaned.cause));
+            return yield* failure;
+          }
+          completed.forEach((id) => unresolved.delete(id));
+          completed.forEach((id) => graphReady.add(id));
+        }
+        const startPermit = yield* Semaphore.make(START_CONCURRENCY);
+        const completions = new Map<
+          string,
+          Deferred.Deferred<Exit.Exit<void, RuntimeDriverError>, never>
+        >();
+        for (const entry of remaining)
+          completions.set(
+            entry.workload.id,
+            yield* Deferred.make<Exit.Exit<void, RuntimeDriverError>>(),
           );
-          if (wave.length === 0) {
-            outcome = Exit.fail(
-              new RuntimeDriverError({
-                message: "No workload is ready to start; dependencies are unsatisfied",
-                stackId: options.stackId,
+        const startOne = (entry: SessionWorkload): Effect.Effect<void, RuntimeDriverError> => {
+          const startBody = Effect.gen(function* () {
+            yield* Effect.forEach(
+              entry.workload.dependencies,
+              (dependency) => {
+                if (ready.has(dependency)) return Effect.void;
+                const completion = completions.get(dependency);
+                if (completion === undefined)
+                  return Effect.fail(
+                    new RuntimeDriverError({
+                      message: `Dependency ${dependency} is not part of the launch plan`,
+                      stackId: options.stackId,
+                      workloadId: entry.workload.id,
+                    }),
+                  );
+                return Deferred.await(completion).pipe(Effect.flatMap(joinExit));
+              },
+              { discard: true },
+            );
+            yield* startPermit.withPermit(
+              Effect.gen(function* () {
+                // Record only once a start permit is held: queued dependency work is not owned.
+                attempted.push(entry);
+                yield* options.driver.start(entry.key, entry.workload);
               }),
             );
-            break;
-          }
-          outcome = yield* Effect.exit(
-            Effect.forEach(
-              wave,
-              (entry) =>
-                Effect.gen(function* () {
-                  // Record the resource immediately before starting it. This includes an
-                  // in-flight start when a sibling fails, without treating queued work as owned.
-                  attempted.push(entry);
-                  yield* options.driver.start(entry.key, entry.workload);
-                }),
-              { concurrency: START_CONCURRENCY, discard: true },
-            ),
-          );
-          if (Exit.isSuccess(outcome)) {
-            for (const entry of wave) ready.add(entry.workload.id);
-            yield* Ref.update(session, (current) => [...current, ...wave]);
-            remaining = remaining.filter((entry) => !ready.has(entry.workload.id));
-          }
-        }
+            yield* Ref.update(session, (current) => [...current, entry]);
+          });
+          return Effect.gen(function* () {
+            const result = yield* Effect.exit(startBody);
+            const completion = completions.get(entry.workload.id);
+            if (completion !== undefined) yield* Deferred.succeed(completion, result);
+            return yield* joinExit(result);
+          });
+        };
+        const outcome = yield* Effect.exit(
+          Effect.forEach(remaining, startOne, { concurrency: "unbounded", discard: true }),
+        );
         if (Exit.isSuccess(outcome)) {
           const rollback = Effect.gen(function* () {
             const result = yield* cleanup(attempted).pipe(Effect.exit);

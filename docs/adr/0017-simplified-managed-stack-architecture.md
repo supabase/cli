@@ -79,7 +79,12 @@ Podman is supported only on local Linux hosts. Persisted state records the
 resolved exact engine. Capability releases and
 workload artifacts are persisted as exact version pins (including their
 concrete native release and container image) rather than ranges or floating
-tags.
+tags. Services with derived low-memory image profiles inherit those same
+service-level `runtime.env` defaults in native artifacts, and explicit process
+environment values take precedence. Smoke-only environment files are excluded
+from packaged profiles. The artifact release is the boundary for service
+startup defaults; the stack package owns runtime selection and lifecycle around
+the selected artifact.
 
 Read-only discovery never acquires ownership. Owner metadata points to a Unix
 domain socket on POSIX or a named pipe on Windows, and the ownership lock is the
@@ -128,6 +133,12 @@ decompression already uses Bun's native worker pool, while archive listing and
 extraction run in subprocesses. Revisit this only if measurement identifies a
 CPU-bound bottleneck.
 
+Packaged first boot preserves the artifact's ordered, same-role PostgreSQL
+script groups and initializes the database password before migrations;
+Realtime's combined configuration evaluation remains owned by its artifact.
+The stack package batches its own PostgreSQL bootstrap round trips and releases
+the one-shot bundler helper after each build.
+
 Live status exposes the current session's artifact preparation through its artifacts array. Entries
 identify the workload and capability and move through `queued`, `preparing`, `downloading`,
 `ready`, and `failed`; the latter carries an actionable error for a later retry. `preparing`
@@ -141,10 +152,13 @@ caller-owned preparation. It receives the same phase values, including `ready` w
 available while its capability remains dormant. The callback's transfer is local to that invocation
 and is not reconstructed by a separate status request.
 
-Within a lifecycle operation, dependency-ready workloads start concurrently,
-with at most four starts in flight; each wave completes before its dependants
-start. Container setup is serialized through resource registration; readiness
-checks and long-lived followers run outside that setup boundary.
+Within a lifecycle operation, workloads start as soon as their dependencies
+complete, with at most four active starts. Dependency waits do not consume a
+start permit. Selected artifact preparation runs concurrently with this launch;
+each workload joins its own shared preparation before resolution. Container
+setup serializes only exact shared-network and volume identity establishment;
+image pulls, startup migrations, container creation, readiness checks, and
+long-lived followers run outside that setup boundary.
 
 Native workloads use a two-minute readiness budget because a cold process can
 spend more than 30 seconds loading shared libraries before serving requests.

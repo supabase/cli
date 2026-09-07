@@ -15,7 +15,7 @@ import {
   Semaphore,
 } from "effect";
 import { ChildProcessSpawner } from "effect/unstable/process";
-import { eagerCapabilities, type PlannedWorkload } from "../model/ExecutionPlan.ts";
+import { type PlannedWorkload } from "../model/ExecutionPlan.ts";
 import { rebuildExecutionPlan, type StackDefinition } from "../model/Compiler.ts";
 import {
   makeFunctionsBootstrapOwner,
@@ -52,7 +52,6 @@ import type { SupervisorRuntime } from "../supervisor/Supervisor.ts";
 import {
   makeProductionRuntimeArtifactPreparer,
   type RuntimeArtifactPreparationProgress,
-  type RuntimeArtifactPreparationProgressListener,
   type PreparedWorkloadArtifact,
   type RuntimeArtifactPreparer,
 } from "../preparation/RuntimeArtifacts.ts";
@@ -560,27 +559,23 @@ export const makeProductionRuntime = (
             : Effect.fail(driverError(key, "Persisted runtime changed while owner was active")),
         ),
       );
-    const prepareOne = (
-      runtime: StackRuntime,
-      workload: PlannedWorkload,
-      onProgress?: RuntimeArtifactPreparationProgressListener,
-    ) => {
+    const prepareOne = (runtime: StackRuntime, workload: PlannedWorkload) => {
       return Effect.suspend(() => {
         const key = artifactKey(runtime, workload);
         const cached = artifacts.get(key);
         return cached === undefined
           ? Effect.sync(() =>
-              onProgress?.({
+              recordPreparationProgress({
                 workloadId: workload.id,
                 capability: workload.capability,
                 state: "preparing",
               }),
             ).pipe(
-              Effect.andThen(preparer.prepare(runtime, workload, onProgress)),
+              Effect.andThen(preparer.prepare(runtime, workload, recordPreparationProgress)),
               Effect.tap((prepared) =>
                 Effect.sync(() => {
                   artifacts.set(key, prepared);
-                  onProgress?.({
+                  recordPreparationProgress({
                     workloadId: workload.id,
                     capability: workload.capability,
                     state: "ready",
@@ -589,7 +584,7 @@ export const makeProductionRuntime = (
               ),
               Effect.tapError((error) =>
                 Effect.sync(() =>
-                  onProgress?.({
+                  recordPreparationProgress({
                     workloadId: workload.id,
                     capability: workload.capability,
                     state: "failed",
@@ -601,11 +596,7 @@ export const makeProductionRuntime = (
           : Effect.succeed(cached);
       });
     };
-    const prepare = (
-      runtime: StackRuntime,
-      workload: PlannedWorkload,
-      onProgress?: RuntimeArtifactPreparationProgressListener,
-    ) =>
+    const prepare = (runtime: StackRuntime, workload: PlannedWorkload) =>
       Effect.gen(function* () {
         const key = artifactKey(runtime, workload);
         const joined = yield* Effect.uninterruptible(
@@ -615,7 +606,7 @@ export const makeProductionRuntime = (
               if (existing !== undefined) return existing;
               const scope = preparationScope ?? (preparationScope = yield* Scope.make("parallel"));
               let fiber: Fiber.Fiber<PreparedWorkloadArtifact, StackError> | undefined;
-              const owner = prepareOne(runtime, workload, onProgress).pipe(
+              const owner = prepareOne(runtime, workload).pipe(
                 Effect.ensuring(
                   Effect.sync(() => {
                     if (preparationInFlight.get(key) === fiber) preparationInFlight.delete(key);
@@ -630,12 +621,8 @@ export const makeProductionRuntime = (
         );
         return yield* Fiber.join(joined);
       });
-    const prepareArtifacts = (
-      runtime: StackRuntime,
-      workloads: ReadonlyArray<PlannedWorkload>,
-      onProgress?: RuntimeArtifactPreparationProgressListener,
-    ) =>
-      Effect.forEach(workloads, (workload) => prepare(runtime, workload, onProgress), {
+    const prepareArtifacts = (runtime: StackRuntime, workloads: ReadonlyArray<PlannedWorkload>) =>
+      Effect.forEach(workloads, (workload) => prepare(runtime, workload), {
         concurrency: 4,
       });
     const prepareFor = (
@@ -647,7 +634,7 @@ export const makeProductionRuntime = (
           selected.has(workload.capability),
         );
         for (const workload of workloads) queuePreparation(workload);
-        yield* prepareArtifacts(input.state.runtime, workloads, recordPreparationProgress);
+        yield* prepareArtifacts(input.state.runtime, workloads);
       });
     const logPreparationFailure = (message: string): Effect.Effect<void> =>
       logs.append({ source: "supervisor", stream: "internal", message }).pipe(Effect.ignore);
@@ -669,7 +656,7 @@ export const makeProductionRuntime = (
         yield* Effect.forEach(
           workloads,
           (workload) =>
-            prepare(persisted.runtime, workload, recordPreparationProgress).pipe(
+            prepare(persisted.runtime, workload).pipe(
               Effect.catch((error) =>
                 logPreparationFailure(
                   `Background preparation failed for ${workload.id}: ${error.message}`,
@@ -831,12 +818,6 @@ export const makeProductionRuntime = (
             pathService.join(paths.data, "database", "postmaster.pid"),
           );
         }
-        const eager = eagerCapabilities(input.plan);
-        const eagerWorkloads = input.plan.workloads.filter((workload) =>
-          eager.has(workload.capability),
-        );
-        for (const workload of eagerWorkloads) queuePreparation(workload);
-        yield* prepareArtifacts(input.state.runtime, eagerWorkloads, recordPreparationProgress);
       });
 
     const activate = (
@@ -995,6 +976,9 @@ export const makeProductionRuntime = (
                     key,
                     `Unknown runtime specification for ${workload.id}`,
                   );
+                yield* prepare(fresh.runtime, workload).pipe(
+                  Effect.mapError((error) => mapDriverError(key, error)),
+                );
                 yield* readinessDeadlineFor(fresh, workload).pipe(
                   Effect.mapError((error) => mapDriverError(key, error)),
                 );

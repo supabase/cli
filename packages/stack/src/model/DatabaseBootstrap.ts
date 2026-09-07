@@ -51,12 +51,12 @@ export interface DatabaseTransaction {
     statement: string,
     parameters?: ReadonlyArray<DatabaseSqlValue>,
   ) => Effect.Effect<void, DatabaseBootstrapError>;
-  readonly setRolePassword: (
-    role: DatabaseBootstrapRole,
+  readonly setRolePasswords: (
+    roles: ReadonlyArray<DatabaseBootstrapRole>,
     password: Redacted.Redacted<string>,
   ) => Effect.Effect<void, DatabaseBootstrapError>;
-  readonly setDatabaseSetting: (
-    setting: DatabaseBootstrapSetting,
+  readonly setDatabaseSettings: (
+    settings: ReadonlyArray<DatabaseBootstrapSetting>,
   ) => Effect.Effect<void, DatabaseBootstrapError>;
 }
 
@@ -96,41 +96,25 @@ export const runDatabaseBootstrap = (
       yield* transaction
         .execute(REALTIME_SCHEMA_STATEMENT)
         .pipe(Effect.mapError((error) => statementError(error, REALTIME_SCHEMA_STATEMENT)));
-      for (const role of DATABASE_BOOTSTRAP_ROLES) {
-        yield* transaction.setRolePassword(role, options.databasePassword).pipe(
-          Effect.mapError(
-            (error) =>
-              new DatabaseBootstrapError({
-                message: `Unable to configure internal database role ${role}`,
-                ...(error.retryable === undefined ? {} : { retryable: error.retryable }),
-              }),
-          ),
-        );
-      }
+      yield* transaction.setRolePasswords(DATABASE_BOOTSTRAP_ROLES, options.databasePassword).pipe(
+        Effect.mapError(
+          (error) =>
+            new DatabaseBootstrapError({
+              message: "Unable to configure internal database roles",
+              ...(error.retryable === undefined ? {} : { retryable: error.retryable }),
+            }),
+        ),
+      );
       yield* transaction
-        .setDatabaseSetting({
-          name: "app.settings.jwt_secret",
-          value: options.jwtSecret,
-        })
+        .setDatabaseSettings([
+          { name: "app.settings.jwt_secret", value: options.jwtSecret },
+          { name: "app.settings.jwt_exp", value: options.jwtExpiry },
+        ])
         .pipe(
           Effect.mapError(
             (error) =>
               new DatabaseBootstrapError({
-                message: "Unable to configure database JWT secret",
-                ...(error.retryable === undefined ? {} : { retryable: error.retryable }),
-              }),
-          ),
-        );
-      yield* transaction
-        .setDatabaseSetting({
-          name: "app.settings.jwt_exp",
-          value: options.jwtExpiry,
-        })
-        .pipe(
-          Effect.mapError(
-            (error) =>
-              new DatabaseBootstrapError({
-                message: "Unable to configure database JWT expiry",
+                message: "Unable to configure database settings",
                 ...(error.retryable === undefined ? {} : { retryable: error.retryable }),
               }),
           ),

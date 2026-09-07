@@ -588,6 +588,77 @@ describe("container runtime", () => {
     }),
   );
 
+  it.live("runs independent startup migrations concurrently after sharing the network", () =>
+    Effect.gen(function* () {
+      const state: FakeContainerState = {
+        resources: [],
+        imagePresent: true,
+        calls: [],
+        createdSpecs: [],
+        nextId: 1,
+      };
+      const firstEntered = yield* Deferred.make<void>();
+      const secondEntered = yield* Deferred.make<void>();
+      const releaseMigrations = yield* Deferred.make<void>();
+      const migrationIds = new Map<string, string>();
+      const base = fakeContainerEngine(state);
+      const runtime = yield* makeContainerRuntime({
+        engine: {
+          ...base,
+          createContainer: (spec) =>
+            Effect.gen(function* () {
+              const resource = yield* base.createContainer(spec);
+              const command = spec.command?.[0];
+              if (command === "first" || command === "second")
+                migrationIds.set(resource.id, command);
+              return resource;
+            }),
+          waitContainer: (resourceId) => {
+            const migration = migrationIds.get(resourceId);
+            if (migration === undefined) return base.waitContainer(resourceId);
+            return Effect.gen(function* () {
+              yield* Deferred.succeed(
+                migration === "first" ? firstEntered : secondEntered,
+                undefined,
+              );
+              yield* Deferred.await(releaseMigrations);
+              return 0;
+            });
+          },
+        },
+        ownerSessionId: "owner-session",
+        resolveWorkload: (workloadKey) =>
+          Effect.succeed({
+            startup: [
+              {
+                entrypoint: "/usr/local/bin/migrate",
+                command: [workloadKey.workloadId === "database:database" ? "first" : "second"],
+              },
+            ],
+          }),
+      });
+      const secondKey = { ...key, workloadId: "rest:rest" };
+      const secondWorkload = {
+        ...workload(),
+        id: secondKey.workloadId,
+        capability: "rest" as const,
+      };
+      const first = yield* Effect.forkChild(runtime.start(key, workload()), {
+        startImmediately: true,
+      });
+      const second = yield* Effect.forkChild(runtime.start(secondKey, secondWorkload), {
+        startImmediately: true,
+      });
+      yield* Deferred.await(firstEntered);
+      yield* Deferred.await(secondEntered);
+      yield* Deferred.succeed(releaseMigrations, undefined);
+      expect(yield* Fiber.join(first)).toEqual({ ...key, state: "ready" });
+      expect(yield* Fiber.join(second)).toEqual({ ...secondKey, state: "ready" });
+      expect(state.calls.filter((call) => call.startsWith("create-network"))).toHaveLength(1);
+      yield* runtime.cleanup({ stackId, destroy: true });
+    }),
+  );
+
   it.live("interrupts a setup blocked on shared network creation during cleanup", () =>
     Effect.gen(function* () {
       const state: FakeContainerState = {

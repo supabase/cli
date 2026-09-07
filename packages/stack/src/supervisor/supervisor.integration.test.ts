@@ -115,6 +115,9 @@ const makeFixture = (
     readonly prefetchGate?: Deferred.Deferred<void>;
     readonly prefetchInterrupted?: Deferred.Deferred<void>;
     readonly prefetchCalls?: Ref.Ref<number>;
+    readonly prepareStarted?: Deferred.Deferred<void>;
+    readonly prepareGate?: Deferred.Deferred<void>;
+    readonly prepareFailure?: boolean;
     readonly artifactStatuses?: Ref.Ref<ReadonlyArray<ArtifactPreparationStatus>>;
   } = {},
 ) =>
@@ -348,7 +351,17 @@ const makeFixture = (
             }
           }
         }),
-      prepare: () => Effect.void,
+      prepare: () =>
+        fixtureOptions.prepareStarted === undefined && fixtureOptions.prepareGate === undefined
+          ? Effect.void
+          : Effect.gen(function* () {
+              if (fixtureOptions.prepareStarted !== undefined)
+                yield* Deferred.succeed(fixtureOptions.prepareStarted, undefined);
+              if (fixtureOptions.prepareGate !== undefined)
+                yield* Deferred.await(fixtureOptions.prepareGate);
+              if (fixtureOptions.prepareFailure === true)
+                return yield* new StackRuntimeError({ message: "injected preparation failure" });
+            }),
       prefetch: (state) => {
         if (state.definition?.preparation === "on-demand") return Effect.void;
         return Effect.gen(function* () {
@@ -691,6 +704,61 @@ describe("Supervisor composition", () => {
         const stopped = yield* fixture.supervisor.maintenanceHandlers.stop;
         expect(stopped.ok).toBe(true);
         yield* Deferred.await(prefetchInterrupted).pipe(Effect.timeout("5 seconds"), Effect.orDie);
+      }),
+    ),
+  );
+
+  it.live("launches workloads while selected preparation is still in flight", () =>
+    run(
+      Effect.gen(function* () {
+        const prepareStarted = yield* Deferred.make<void>();
+        const prepareGate = yield* Deferred.make<void>();
+        const startStarted = yield* Deferred.make<void>();
+        const startGate = yield* Deferred.make<void>();
+        const fixture = yield* makeFixture({
+          prepareStarted,
+          prepareGate,
+          startStarted,
+          startGate,
+        });
+        const starting = yield* Effect.forkChild(fixture.supervisor.start({ config: {} }), {
+          startImmediately: true,
+        });
+        yield* Deferred.await(prepareStarted).pipe(Effect.timeout("5 seconds"), Effect.orDie);
+        yield* Deferred.await(startStarted).pipe(Effect.timeout("5 seconds"), Effect.orDie);
+        yield* Deferred.succeed(startGate, undefined);
+        yield* Deferred.succeed(prepareGate, undefined);
+        const status = yield* Fiber.join(starting);
+        expect(status.lifecycle).toBe("running");
+      }),
+    ),
+  );
+
+  it.live("cleans launched workloads when preparation fails after launch completes", () =>
+    run(
+      Effect.gen(function* () {
+        const prepareStarted = yield* Deferred.make<void>();
+        const prepareGate = yield* Deferred.make<void>();
+        const startFinished = yield* Deferred.make<void>();
+        const fixture = yield* makeFixture({
+          prepareStarted,
+          prepareGate,
+          prepareFailure: true,
+          startFinished,
+        });
+        const starting = yield* Effect.forkChild(
+          fixture.supervisor.start({
+            config: { capabilities: { rest: { activation: "eager" } } },
+          }),
+          { startImmediately: true },
+        );
+        yield* Deferred.await(prepareStarted).pipe(Effect.timeout("5 seconds"), Effect.orDie);
+        yield* Deferred.await(startFinished).pipe(Effect.timeout("5 seconds"), Effect.orDie);
+        yield* Deferred.succeed(prepareGate, undefined);
+        const result = yield* Fiber.join(starting).pipe(Effect.exit);
+        expect(Exit.isFailure(result)).toBe(true);
+        expect(yield* Ref.get(fixture.calls)).toContain("cleanup:stop");
+        expect((yield* fixture.supervisor.status).lifecycle).toBe("stopped");
       }),
     ),
   );

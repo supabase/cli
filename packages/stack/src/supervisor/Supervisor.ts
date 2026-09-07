@@ -384,11 +384,18 @@ export const makeSupervisor = (
         if (session === "fresh") yield* resetForSession(input);
         const selected = selectedOverride ?? (yield* Ref.get(active));
         const plan = activeExecutionPlan(input.plan, selected);
-        yield* runtime.prepare(input, selected);
         const reservation = yield* runtime.ingress.acquire(input);
-        const launched = yield* launcher
-          .launch(plan)
-          .pipe(Effect.mapError(mapRuntimeError), Effect.exit);
+        const preparedAndLaunched = yield* Effect.all(
+          [
+            runtime.prepare(input, selected),
+            launcher.launch(plan).pipe(Effect.mapError(mapRuntimeError)),
+          ],
+          { concurrency: 2 },
+        ).pipe(
+          Effect.map(([, launched]) => launched),
+          Effect.exit,
+        );
+        const launched = preparedAndLaunched;
         if (Exit.isFailure(launched)) {
           const closed = reservation.fresh
             ? yield* runtime.ingress.close.pipe(Effect.mapError(mapRuntimeError), Effect.exit)

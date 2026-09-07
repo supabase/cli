@@ -110,6 +110,43 @@ describe("session launcher", () => {
     }),
   );
 
+  it.live("starts a dependant when its own prerequisite completes", () =>
+    Effect.gen(function* () {
+      const databaseEntered = yield* Deferred.make<void>();
+      const mailEntered = yield* Deferred.make<void>();
+      const releaseMail = yield* Deferred.make<void>();
+      const restEntered = yield* Deferred.make<void>();
+      const database = workload("database:database");
+      const mail = workload("mail:mail");
+      const rest = workload("rest:rest", [database.id]);
+      const driver: RuntimeDriver = {
+        observe: () => Effect.succeed([]),
+        start: (_key, current) =>
+          Effect.gen(function* () {
+            if (current.id === database.id) yield* Deferred.succeed(databaseEntered, undefined);
+            if (current.id === mail.id) {
+              yield* Deferred.succeed(mailEntered, undefined);
+              yield* Deferred.await(releaseMail);
+            }
+            if (current.id === rest.id) yield* Deferred.succeed(restEntered, undefined);
+            return ready(current);
+          }),
+        stop: () => Effect.void,
+        remove: () => Effect.void,
+        cleanup: () => Effect.void,
+      };
+      const launcher = yield* makeSessionLauncher({ stackId, driver });
+      const launching = yield* Effect.forkChild(launcher.launch(plan([database, mail, rest])), {
+        startImmediately: true,
+      });
+      yield* Deferred.await(databaseEntered);
+      yield* Deferred.await(mailEntered);
+      yield* Deferred.await(restEntered);
+      yield* Deferred.succeed(releaseMail, undefined);
+      yield* Fiber.join(launching);
+    }),
+  );
+
   it.live("interrupts and removes an in-flight native workload when a sibling fails", () =>
     withPlatform(
       Effect.gen(function* () {

@@ -3,7 +3,6 @@ import { Context, Duration, Effect, Layer, Predicate, Redacted, Schema, Scope } 
 import { isSqlError, type SqlError } from "effect/unstable/sql/SqlError";
 import {
   DatabaseBootstrapError,
-  type DatabaseBootstrapSetting,
   type DatabaseSession,
   type DatabaseSqlValue,
   type DatabaseTransaction,
@@ -93,17 +92,24 @@ export const makeDatabaseSessionFromSqlClient = (
 
   const transaction: DatabaseTransaction = {
     execute: executeWith,
-    setRolePassword: (role, password) =>
-      generated("SELECT format('ALTER ROLE %I PASSWORD %L', $1::text, $2::text) AS statement", [
-        role,
-        Redacted.value(password),
-      ]),
-    setDatabaseSetting: (setting: DatabaseBootstrapSetting) => {
-      const value =
-        setting.name === "app.settings.jwt_secret" ? Redacted.value(setting.value) : setting.value;
+    setRolePasswords: (roles, password) => {
+      const placeholders = roles.map((_, index) => `$${index + 2}::text`).join(", ");
       return generated(
-        "SELECT format('ALTER DATABASE postgres SET %I TO %L', $1::text, $2::text) AS statement",
-        [setting.name, value],
+        `SELECT string_agg(format('ALTER ROLE %I PASSWORD %L', role, $1::text), E';\\n') AS statement FROM unnest(ARRAY[${placeholders}]::text[]) AS role`,
+        [Redacted.value(password), ...roles],
+      );
+    },
+    setDatabaseSettings: (settings) => {
+      const values = settings
+        .map((_, index) => `($${index * 2 + 1}::text, $${index * 2 + 2}::text)`)
+        .join(", ");
+      const parameters = settings.flatMap((setting) => [
+        setting.name,
+        setting.name === "app.settings.jwt_secret" ? Redacted.value(setting.value) : setting.value,
+      ]);
+      return generated(
+        `SELECT string_agg(format('ALTER DATABASE postgres SET %I TO %L', name, value), E';\\n') AS statement FROM (VALUES ${values}) AS settings(name, value)`,
+        parameters,
       );
     },
   };

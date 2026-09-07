@@ -63,33 +63,46 @@ const makeSession = (options: { readonly failOnce?: "role" | "setting" } = {}) =
                   if (statement.includes("ALTER SCHEMA _realtime OWNER TO postgres;"))
                     yield* Effect.sync(() => pending.schemaOwners.set("_realtime", "postgres"));
                 }),
-              setRolePassword: (role: string, password: Redacted.Redacted<string>) =>
+              setRolePasswords: (
+                roles: ReadonlyArray<string>,
+                password: Redacted.Redacted<string>,
+              ) =>
                 Effect.gen(function* () {
-                  yield* Effect.sync(() => operations.push(`ALTER ROLE ${role} PASSWORD`));
+                  yield* Effect.sync(() =>
+                    roles.forEach((role) => operations.push(`ALTER ROLE ${role} PASSWORD`)),
+                  );
                   if (shouldFail("role"))
                     return yield* new DatabaseBootstrapError({
                       message: "role failed secret-password",
                     });
-                  yield* Effect.sync(() => pending.passwords.set(role, Redacted.value(password)));
+                  yield* Effect.sync(() =>
+                    roles.forEach((role) => pending.passwords.set(role, Redacted.value(password))),
+                  );
                 }),
-              setDatabaseSetting: (setting: {
-                readonly name: string;
-                readonly value: Redacted.Redacted<string> | number;
-              }) =>
+              setDatabaseSettings: (
+                settings: ReadonlyArray<{
+                  readonly name: string;
+                  readonly value: Redacted.Redacted<string> | number;
+                }>,
+              ) =>
                 Effect.gen(function* () {
                   yield* Effect.sync(() =>
-                    operations.push(`ALTER DATABASE postgres SET ${setting.name}`),
+                    settings.forEach((setting) =>
+                      operations.push(`ALTER DATABASE postgres SET ${setting.name}`),
+                    ),
                   );
                   if (shouldFail("setting"))
                     return yield* new DatabaseBootstrapError({
                       message: "setting failed secret-jwt",
                     });
                   yield* Effect.sync(() =>
-                    pending.settings.set(
-                      setting.name,
-                      typeof setting.value === "number"
-                        ? setting.value
-                        : Redacted.value(setting.value),
+                    settings.forEach((setting) =>
+                      pending.settings.set(
+                        setting.name,
+                        typeof setting.value === "number"
+                          ? setting.value
+                          : Redacted.value(setting.value),
+                      ),
                     ),
                   );
                 }),

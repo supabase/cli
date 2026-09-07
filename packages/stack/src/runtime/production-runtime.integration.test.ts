@@ -990,7 +990,7 @@ describe("production runtime", () => {
       ).pipe(Effect.provide(NodeServices.layer)),
   );
 
-  it.live("reports eager artifact progress while preflight is waiting for a pull", () =>
+  it.live("reports artifact progress while launch preparation is waiting for a pull", () =>
     Effect.scoped(
       Effect.gen(function* () {
         const fs = yield* FileSystem.FileSystem;
@@ -1076,15 +1076,24 @@ describe("production runtime", () => {
           secrets: resolved.persisted,
           plan: compiled.executionPlan,
         };
-        const preflight = yield* Effect.forkChild(runtime.preflight(input), {
-          startImmediately: true,
-        });
+        yield* runtime.preflight(input);
+        const launching = yield* Effect.forkChild(
+          runtime.driver.start({ stackId, workloadId: database.id }, database),
+          { startImmediately: true },
+        );
         yield* Deferred.await(pullStarted);
         expect(yield* runtime.artifacts).toEqual([
           expect.objectContaining({ workloadId: database.id, state: "downloading" }),
         ]);
+        const preparing = yield* Effect.forkChild(runtime.prepare(input, new Set(["database"])), {
+          startImmediately: true,
+        });
+        expect(yield* runtime.artifacts).toEqual([
+          expect.objectContaining({ workloadId: database.id, state: "downloading" }),
+        ]);
+        yield* Fiber.interrupt(launching);
         yield* Deferred.succeed(release, undefined);
-        yield* Fiber.join(preflight);
+        yield* Fiber.join(preparing);
         expect(yield* runtime.artifacts).toEqual([
           expect.objectContaining({ workloadId: database.id, state: "ready" }),
         ]);
@@ -2005,6 +2014,17 @@ describe("production runtime", () => {
           plan: compiled.executionPlan,
         });
         expect(yield* fs.exists(functionsRoot)).toBe(false);
+        expect(prepared).toEqual([]);
+        yield* runtime.prepare(
+          {
+            stackId,
+            state: current.value,
+            definition: compiled.definition,
+            secrets,
+            plan: compiled.executionPlan,
+          },
+          new Set(["database"]),
+        );
         expect(prepared).toEqual(["database:database"]);
         yield* runtime.driver.cleanup({ stackId, destroy: false });
       }),
