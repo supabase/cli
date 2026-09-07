@@ -29,7 +29,7 @@
     "build:legacy": "bun scripts/build-binary.ts",
     "build:shim": "bun build src/shared/cli/bin.ts --outfile dist/supabase.js --target node",
     "docs:spec": "bun scripts/generate-docs-spec.ts",
-    "dev:legacy": "pnpm exec bun src/legacy/main.ts",
+    "dev:legacy": "pnpm exec bun src/main.ts",
     "test": "pnpm run test:unit --coverage.enabled && pnpm run test:integration --coverage.enabled && pnpm run test:e2e",
     "test:unit": "pnpm exec turbo run supabase#test:unit:run --",
     "test:unit:run": "bun --bun vitest run --project unit --coverage.reportsDirectory=coverage/unit",

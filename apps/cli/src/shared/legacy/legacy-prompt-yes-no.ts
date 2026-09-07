@@ -27,7 +27,7 @@ export const legacyParseYesNo = (input: string): boolean | undefined => {
  * Confirm-or-default prompt mirroring Go's `console.PromptYesNo`
  * (`apps/cli-go/internal/utils/console.go:64-82`) — the single Go-faithful
  * confirmation helper for every legacy-parity prompt (CLI-1974). It lives in
- * `shared/legacy/` (not `legacy/shared/`) because Go-parity confirmations also
+ * `shared/legacy/` (not `command-internal/`) because Go-parity confirmations also
  * fire from shell-agnostic shared code (`shared/functions/deploy.ts` prune,
  * `shared/init/project-init.ts` IDE settings):
  *  - when `yes` is set, echoes `<label> [Y/n|y/N] y` and returns true even on a
@@ -46,7 +46,7 @@ export const legacyParseYesNo = (input: string): boolean | undefined => {
  * `SUPABASE_YES`, matching Go's `viper.GetBool("YES")` (root.go:318-320,334).
  *
  * NOTE: the migration family's `legacyMigrationConfirm`
- * (`legacy/commands/migration/migration.prompt.ts`) intentionally diverges on
+ * (`commands/migration/migration.prompt.ts`) intentionally diverges on
  * the TS-only machine modes (it prompts regardless of `output.format`) and on a
  * real TTY (raw stdin read instead of clack) — see its doc comment before
  * consolidating the two (CLI-1974 review).

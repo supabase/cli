@@ -1,0 +1,546 @@
+import { Cause, Clock, Effect, Exit, Option, Stdio } from "effect";
+import { Param } from "effect/unstable/cli";
+import {
+  CommandRuntime,
+  getCommandRuntimeCommand,
+  getCommandRuntimeSpanName,
+} from "../shared/runtime/command-runtime.service.ts";
+import { Output } from "../shared/output/output.service.ts";
+import {
+  LEGACY_GLOBAL_FLAGS,
+  LegacyOutputFlag,
+  legacyGlobalFlagValues,
+} from "../shared/legacy/global-flags.ts";
+import { ProcessControl } from "../shared/runtime/process-control.service.ts";
+import { withAnalyticsContext } from "../shared/telemetry/analytics-context.ts";
+import { Analytics } from "../shared/telemetry/analytics.service.ts";
+import {
+  type CliErrorActionability,
+  classifyCliErrorActionability,
+  unknownProcessControlledFailureActionability,
+} from "../shared/telemetry/error-actionability.ts";
+import { LegacyDbAdvisorsFailOnError } from "../commands/db/advisors/advisors.errors.ts";
+import { LegacyDbLintFailOnError } from "../commands/db/lint/lint.errors.ts";
+import {
+  EventCommandExecuted,
+  PropDurationMs,
+  PropExitCode,
+  PropOutputFormat,
+} from "../shared/telemetry/event-catalog.ts";
+import {
+  failureTelemetryPropertiesForCause,
+  toFailureTelemetryProperties,
+} from "../shared/telemetry/failure-metadata.ts";
+import {
+  LEGACY_RESOURCE_OUTPUT_FORMATS,
+  LegacyInvalidOutputFormatError,
+  legacyInvalidOutputFormatMessage,
+} from "../command-internal/legacy-go-output-flag.ts";
+import { LegacyTelemetryOutputFormat } from "./legacy-telemetry-output-format.service.ts";
+import { LegacyIdentityStitch } from "../command-internal/legacy-identity-stitch.ts";
+import {
+  VALUE_CONSUMING_LONG_FLAGS,
+  VALUE_CONSUMING_SHORT_FLAGS,
+} from "../command-internal/legacy-db-target-flags.ts";
+import { legacyUnwrapToSingleParam } from "../command-internal/legacy-param-introspection.ts";
+
+/**
+ * Classifies a command that succeeded its Effect but recorded a nonzero exit
+ * code through ProcessControl. `db lint`/`db advisors` do this deliberately in
+ * machine mode after a `--fail-on` trigger (to keep the JSON payload on stdout
+ * intact), so their telemetry derives from the same typed error their text
+ * mode raises — the classification stays declared on the error class itself.
+ */
+function processControlledFailureActionability(command: string): CliErrorActionability {
+  if (command === "db lint") {
+    return classifyCliErrorActionability(new LegacyDbLintFailOnError({ message: "" }));
+  }
+  if (command === "db advisors") {
+    return classifyCliErrorActionability(new LegacyDbAdvisorsFailOnError({ message: "" }));
+  }
+  return unknownProcessControlledFailureActionability;
+}
+
+interface LegacyCommandInstrumentationOptions<Flags extends Record<string, unknown> = never> {
+  readonly analytics?: boolean;
+  readonly flags?: Flags;
+  // Flag names (kebab-case) whose values are safe to log verbatim, mirroring
+  // Go's `markFlagTelemetrySafe` annotation in cmd/root_analytics.go. Boolean
+  // flag values are always passed through, matching Go's isBooleanFlag branch.
+  readonly safeFlags?: ReadonlyArray<string>;
+  // A command's flag config record (the object passed to `Command.make`).
+  // Any flag built with `Flag.choice`/`Flag.choiceWithValue` is treated as
+  // telemetry-safe automatically, mirroring Go's `isEnumFlag` branch
+  // (`cmd/root_analytics.go:110-116`, which checks `flag.Value.(*utils.EnumFlag)`
+  // unconditionally — no per-flag annotation required). Passing `config` here
+  // covers every current and future enum flag on the command without having to
+  // hand-list each one in `safeFlags`. The three global choice flags
+  // (`--output`, `--dns-resolver`, `--agent`) are covered separately and
+  // automatically via `GLOBAL_CHOICE_FLAG_NAMES` below — no need to redeclare
+  // them here.
+  readonly config?: Record<string, Param.Any>;
+  // The `-o`/`--output` values this command accepts, mirroring Go's per-command
+  // `--output` enum (`internal/utils/enum.go`). Defaults to the resource-command
+  // set; `db query` overrides with `json|table|csv`. The shared global
+  // `LegacyOutputFlag` accepts the union of all commands' values, so the wrapper
+  // re-validates against the command's own set and rejects out-of-enum values
+  // exactly as Go's flag parser does. See `legacy-go-output-flag.ts`.
+  readonly outputFormats?: ReadonlyArray<string>;
+  // Short-flag → canonical-flag-name map (e.g. `{ s: "schema" }`) for this
+  // command's OWN flags. Go's `changedFlags()` uses pflag's `Visit`, which
+  // reports the CANONICAL flag name whether the user typed the long form
+  // (`--schema`) or the registered shorthand (`-s`). Pass a command's
+  // shorthands here so a `-s public` invocation records the `schema` flag in
+  // telemetry, matching Go (cmd/root_analytics.go:53-76). Global shorthands
+  // (currently just `-o` for `--output`, cmd/root.go:330) are merged in
+  // automatically via `GLOBAL_SHORT_ALIASES` below — no per-command wiring
+  // needed for those (CLI-1896 review follow-up).
+  readonly aliases?: Readonly<Record<string, string>>;
+}
+
+/**
+ * Reject an out-of-enum `-o`/`--output` value before the command runs, matching
+ * Go's parse-time rejection (which happens before telemetry fires, so no event
+ * is emitted for a rejected flag). `LegacyOutputFlag` is read optionally: it is a
+ * root global in production but is absent from focused wrapper tests, where
+ * validation is simply skipped.
+ *
+ * Exported so experimental-gated commands can call it explicitly BEFORE
+ * `legacyRequireExperimental`: Go's cobra parses flags (rejecting an
+ * out-of-enum `-o` via `EnumFlag.Set`, `internal/utils/enum.go:21-27`) before
+ * `PersistentPreRunE` ever runs (`cobra@v1.10.2/command.go:919,985`), so an
+ * invalid `-o` value must win over a missing `--experimental` flag, not the
+ * other way around. `withLegacyCommandInstrumentation` below still calls this
+ * too (a harmless redundant check on the success path) so non-gated commands
+ * keep working unchanged.
+ */
+export const legacyValidateOutputFormat = (allowed: ReadonlyArray<string>) =>
+  Effect.gen(function* () {
+    const flag = yield* Effect.serviceOption(LegacyOutputFlag);
+    if (Option.isNone(flag) || Option.isNone(flag.value)) return;
+    const value = flag.value.value;
+    if (allowed.includes(value)) return;
+    return yield* Effect.fail(
+      new LegacyInvalidOutputFormatError({
+        message: legacyInvalidOutputFormatMessage(value, allowed),
+      }),
+    );
+  });
+
+const REDACTED_VALUE = "<redacted>";
+// Fallback `-o` → telemetry derivation for commands that don't record a resolved
+// format in `LegacyTelemetryOutputFormat`. `db query` records its resolved
+// `json|table|csv` in that cell (so `table` / the human default report correctly);
+// this set only governs the fallback, where a non-machine `-o` (`table`/`pretty`)
+// collapses to the resolved text format.
+const LEGACY_GO_MACHINE_OUTPUT_FORMATS = new Set(["env", "json", "toml", "yaml", "csv"]);
+const LEGACY_GO_OUTPUT_FORMATS = new Set([...LEGACY_GO_MACHINE_OUTPUT_FORMATS, "pretty"]);
+
+function toCliFlagName(key: string): string {
+  return key.replace(/[A-Z]/g, (char) => `-${char.toLowerCase()}`);
+}
+
+function extractLegacyGoOutputFormat(args: ReadonlyArray<string>): string | undefined {
+  let format: string | undefined;
+
+  for (let index = 0; index < args.length; index++) {
+    const arg = args[index];
+    if (arg === undefined) continue;
+
+    if (arg === "--output" || arg === "-o") {
+      const value = args[index + 1];
+      if (value !== undefined && LEGACY_GO_OUTPUT_FORMATS.has(value)) {
+        format = value;
+      }
+      index++;
+      continue;
+    }
+
+    if (arg.startsWith("--output=") || arg.startsWith("-o=")) {
+      const value = arg.slice(arg.indexOf("=") + 1);
+      if (LEGACY_GO_OUTPUT_FORMATS.has(value)) {
+        format = value;
+      }
+    }
+  }
+
+  return format;
+}
+
+function resolveOutputFormatForTelemetry(args: ReadonlyArray<string>, outputFormat: string) {
+  const goOutputFormat = extractLegacyGoOutputFormat(args);
+  if (goOutputFormat !== undefined && LEGACY_GO_MACHINE_OUTPUT_FORMATS.has(goOutputFormat)) {
+    return goOutputFormat;
+  }
+  return outputFormat;
+}
+
+function extractChangedFlagNames(
+  args: ReadonlyArray<string>,
+  aliases: Readonly<Record<string, string>> = {},
+): ReadonlyArray<string> {
+  const used = new Set<string>();
+  let skipNext = false;
+
+  for (let index = 0; index < args.length; index++) {
+    const arg = args[index];
+    if (arg === undefined) continue;
+
+    // Skip a token that was consumed as the value of the previous flag — even
+    // when that token is `--` (pflag lets a value-taking flag consume `--`).
+    if (skipNext) {
+      skipNext = false;
+      continue;
+    }
+
+    // End-of-options sentinel: pflag stops parsing flags at a bare `--`, so
+    // everything after it is positional (e.g. `test db -- --linked` makes
+    // `--linked` a path arg). changedFlags() never sees those, so stop scanning.
+    // Mirrors resolveLegacyDbTargetFlags's `--` handling.
+    if (arg === "--") break;
+
+    if (arg.startsWith("--")) {
+      const raw = arg.slice(2);
+      const eqIdx = raw.indexOf("=");
+      const flagName = eqIdx === -1 ? raw : raw.slice(0, eqIdx);
+      const isBare = eqIdx === -1;
+      if (flagName.length === 0) continue;
+      used.add(flagName);
+      // If this is a bare value-consuming flag, the next token is its value
+      // (Go's pflag space-separated form). Skip it so it is not recorded as a
+      // changed flag. This mirrors Go's pflag.Changed — only the flag name
+      // itself is recorded, not the value token that follows it.
+      if (isBare && VALUE_CONSUMING_LONG_FLAGS.has(flagName)) {
+        skipNext = true;
+      }
+      continue;
+    }
+
+    // pflag shorthand: `-s`, `-s=value`, and `-svalue` all key off the first
+    // character after the single dash. Map it to the canonical flag name (Go's
+    // `flag.Visit` reports the canonical name regardless of long/short form).
+    // Only declared aliases are resolved; unknown shorthands are ignored.
+    if (arg.startsWith("-") && arg.length > 1) {
+      const short = arg[1];
+      if (short === undefined) continue;
+      const canonical = aliases[short];
+      if (canonical !== undefined) used.add(canonical);
+      // Bare short value-consuming flag (`-s` alone, length === 2): next token
+      // is the value. Skip it. Attached forms (`-svalue`, `-s=value`, length > 2)
+      // carry the value inline — no skip needed.
+      if (arg.length === 2 && VALUE_CONSUMING_SHORT_FLAGS.has(short)) {
+        skipNext = true;
+      }
+    }
+  }
+
+  // Match Go's sort.Slice(...flag.Name < flag.Name) in changedFlags().
+  return [...used].sort((left, right) => left.localeCompare(right));
+}
+
+function normalizeFlagValue(value: unknown): unknown {
+  if (value === undefined) return undefined;
+  if (!Option.isOption(value)) return value;
+  if (Option.isNone(value)) return undefined;
+  return normalizeFlagValue(value.value);
+}
+
+// Mirrors Go's `isEnumFlag` (`cmd/root_analytics.go:110-116`), which checks
+// `flag.Value.(*utils.EnumFlag)` unconditionally — every enum flag is
+// telemetry-safe, no per-flag annotation needed. Checks the unwrapped
+// `Single`'s primitive `_tag` for `Flag.choice`/`Flag.choiceWithValue`.
+// Restricted to `kind === Param.flagKind` so a same-named `Argument.choice`
+// positional (none exist today) can never be mistaken for a `--flag`.
+function getChoiceFlagNames(config: Record<string, Param.Any> | undefined): ReadonlySet<string> {
+  const names = new Set<string>();
+  if (config === undefined) return names;
+
+  for (const param of Object.values(config)) {
+    const single = legacyUnwrapToSingleParam(param);
+    if (
+      single !== undefined &&
+      single.kind === Param.flagKind &&
+      single.primitiveType._tag === "Choice"
+    ) {
+      names.add(single.name);
+    }
+  }
+  return names;
+}
+
+// Short-flag → canonical-name entries for every global/persistent flag that
+// declares a shorthand alias, derived from `LEGACY_GLOBAL_FLAGS` itself so
+// this never drifts from the single source of truth — today that resolves to
+// just `{ o: "output" }`, from `LegacyOutputFlag`'s own `Flag.withAlias("o")`.
+// Mirrors Go's persistent-flag shorthand registration: `-o` is the only
+// global with a real shorthand (`cmd/root.go:330` registers it on
+// `--output`; every other persistent flag has none). `pflag.Visit` reports
+// the canonical `flag.Name` for either form (`cmd/root_analytics.go:53-76`),
+// so `-o json` must resolve to `output` here the same way `--output json`
+// already does. Merged ahead of each command's own `aliases` in
+// `extractChangedFlagNames` so a command's own alias still wins on conflict,
+// consistent with `buildFlagsMap`'s local-flag-shadows-global rule
+// (CLI-1896 review follow-up).
+const GLOBAL_SHORT_ALIASES: Readonly<Record<string, string>> = (() => {
+  const aliases: Record<string, string> = {};
+  for (const globalFlag of LEGACY_GLOBAL_FLAGS) {
+    const single = legacyUnwrapToSingleParam(globalFlag.flag);
+    if (single === undefined) continue;
+    for (const alias of single.aliases) {
+      aliases[alias] = single.name;
+    }
+  }
+  return aliases;
+})();
+
+// CLI-name set for every global/persistent flag that is itself a
+// `Flag.choice`/`Flag.choiceWithValue` — today `output`, `dns-resolver`, and
+// `agent` (`shared/legacy/global-flags.ts`). Reuses `getChoiceFlagNames`
+// itself (keyed by `.id` rather than CLI name — `getChoiceFlagNames` only
+// ever reads `single.name` off the unwrapped param, so the record key is
+// irrelevant) rather than re-implementing the choice-detection predicate, so
+// the two can never silently drift apart. Derived from `LEGACY_GLOBAL_FLAGS`
+// the same way `GLOBAL_SHORT_ALIASES` is, so this never drifts from that
+// single source of truth either. Mirrors Go's `isEnumFlag`
+// (`cmd/root_analytics.go:110-116`) checked against the actual
+// `*utils.EnumFlag`-backed persistent flag object registered on root
+// (`cmd/root.go:330,331,333`). Applied ONLY to the global-fallback path in
+// `buildFlagsMap` below (`!isFromHandler`): when a command registers its OWN
+// differently-typed local flag under the same CLI name (e.g. `db diff`'s
+// local string `--output`, `cmd/db.go:622`), Go's own `isEnumFlag` check runs
+// against THAT command's local flag object instead — which fails the type
+// assertion, so it stays redacted — exactly mirrored by
+// `choiceFlagNames`/`isFromHandler` continuing to govern the handler-owned
+// path. Invariant this depends on: any command whose Go counterpart locally
+// shadows one of these three with a NON-enum flag (only `db diff`'s `output`
+// today) must pass that flag in its own `flags` record, so `isFromHandler`
+// is true and this global set is never consulted for it — otherwise the
+// fallback would report verbatim here even though Go redacts it.
+const GLOBAL_CHOICE_FLAG_NAMES: ReadonlySet<string> = getChoiceFlagNames(
+  Object.fromEntries(LEGACY_GLOBAL_FLAGS.map((globalFlag) => [globalFlag.id, globalFlag.flag])),
+);
+
+function buildFlagsMap<Flags extends Record<string, unknown>>(options: {
+  readonly flags: Flags | undefined;
+  // Live global/persistent flag values (`legacyGlobalFlagValues`), keyed by
+  // CLI flag name — the fallback source for a changed flag the handler never
+  // declared locally (e.g. `debug`), matching Go's `changedFlags()` walking
+  // `cmd.Parent()`'s `PersistentFlags()` (`cmd/root_analytics.go:53-76`).
+  readonly globalFlagValues: Record<string, unknown>;
+  readonly safeFlagSet: ReadonlySet<string>;
+  readonly changedFlagNames: ReadonlyArray<string>;
+  readonly choiceFlagNames: ReadonlySet<string>;
+}): Record<string, unknown> | undefined {
+  const { flags, globalFlagValues, safeFlagSet, changedFlagNames, choiceFlagNames } = options;
+  if (changedFlagNames.length === 0) return undefined;
+
+  const result: Record<string, unknown> = {};
+  const handlerFlagsByCliName = new Map<string, unknown>();
+  if (flags !== undefined) {
+    for (const [key, value] of Object.entries(flags)) {
+      handlerFlagsByCliName.set(toCliFlagName(key), value);
+    }
+  }
+
+  for (const cliName of changedFlagNames) {
+    // A command's own flag always wins over a global/persistent flag sharing
+    // the same CLI name — mirrored from Go's cobra flag-shadowing, e.g. `db
+    // diff`'s local `--output` file-path flag (`cmd/db.go:622`) shadows the
+    // root's global `--output` enum (`cmd/root.go:330`). Only fall back to
+    // the live global-flag value when the handler never declared this name.
+    const isFromHandler = handlerFlagsByCliName.has(cliName);
+    const rawValue = isFromHandler ? handlerFlagsByCliName.get(cliName) : globalFlagValues[cliName];
+    const value = normalizeFlagValue(rawValue);
+
+    // `safeFlagSet`/`choiceFlagNames` classify a flag as safe by CLI NAME,
+    // sourced from this command's own `safeFlags`/`config` options — they may
+    // only vouch for a value that actually came from this command's own
+    // `flags` record; a value resolved from the global-flag fallback must
+    // never inherit a *different* command's per-flag safe/choice annotation
+    // just because the CLI name matches. The global-fallback path instead
+    // consults `GLOBAL_CHOICE_FLAG_NAMES` (CLI-1904) — the global flag's OWN
+    // choice-ness, exactly mirroring Go's `isEnumFlag` type-asserting the
+    // actual persistent flag object rather than any per-command annotation.
+    // Boolean values are safe unconditionally regardless of source (Go's
+    // `isBooleanFlag` branch applies unconditionally too).
+    const isSafe =
+      typeof value === "boolean" ||
+      (isFromHandler
+        ? safeFlagSet.has(cliName) || choiceFlagNames.has(cliName)
+        : GLOBAL_CHOICE_FLAG_NAMES.has(cliName));
+
+    result[cliName] = isSafe ? (value ?? REDACTED_VALUE) : REDACTED_VALUE;
+  }
+
+  return result;
+}
+
+function withLegacyCommandTracingImplementation() {
+  return <A, E, R>(self: Effect.Effect<A, E, R>) =>
+    Effect.gen(function* () {
+      const commandRuntime = yield* CommandRuntime;
+      const command = getCommandRuntimeCommand(commandRuntime);
+
+      return yield* Effect.gen(function* () {
+        yield* Effect.annotateCurrentSpan({
+          command_run_id: commandRuntime.commandRunId,
+          command,
+        });
+        return yield* self;
+      }).pipe(Effect.withSpan(getCommandRuntimeSpanName(commandRuntime)));
+    });
+}
+
+function withLegacyCommandAnalyticsImplementation<Flags extends Record<string, unknown>>(
+  options?: LegacyCommandInstrumentationOptions<Flags>,
+) {
+  const safeFlagSet = new Set(options?.safeFlags ?? []);
+  const choiceFlagNames = getChoiceFlagNames(options?.config);
+  return <A, E, R>(self: Effect.Effect<A, E, R>) =>
+    Effect.gen(function* () {
+      const commandRuntime = yield* CommandRuntime;
+      const command = getCommandRuntimeCommand(commandRuntime);
+
+      return yield* Effect.gen(function* () {
+        yield* Effect.annotateCurrentSpan({
+          command_run_id: commandRuntime.commandRunId,
+          command,
+        });
+
+        const analytics = yield* Analytics;
+        const output = yield* Output;
+        const processControl = yield* ProcessControl;
+        const stdio = yield* Stdio.Stdio;
+        const args = yield* stdio.args;
+        const startedAt = yield* Clock.currentTimeMillis;
+        const changedFlagNames = extractChangedFlagNames(args, {
+          ...GLOBAL_SHORT_ALIASES,
+          ...options?.aliases,
+        });
+        const globalFlagValues = yield* legacyGlobalFlagValues;
+        const flags = buildFlagsMap({
+          flags: options?.flags,
+          globalFlagValues,
+          safeFlagSet,
+          changedFlagNames,
+          choiceFlagNames,
+        });
+        const analyticsContext = {
+          command_run_id: commandRuntime.commandRunId,
+          command,
+          flags,
+        } as const;
+
+        const exit = yield* self.pipe(withAnalyticsContext(analyticsContext), Effect.exit);
+        const finishedAt = yield* Clock.currentTimeMillis;
+
+        // A command that resolves its own `--output` (e.g. `db query`, default
+        // `table`/`json` by agent mode) records it in this cell; Go mirrors that
+        // resolved value onto the global the event reads. Read optionally so
+        // commands that don't provide the cell keep the default derivation.
+        const outputFormatCell = yield* Effect.serviceOption(LegacyTelemetryOutputFormat);
+        const resolvedOutputFormat = Option.isSome(outputFormatCell)
+          ? yield* outputFormatCell.value.get
+          : Option.none<string>();
+        // Go records the telemetry exit code from the real process exit code
+        // (`cmd/root.go:177` -> `exitCode(err)`), which is 1 whenever the command
+        // exits non-zero. A handler can signal a non-zero exit WITHOUT failing the
+        // Effect — `db lint`/`db advisors` set `ProcessControl`'s exit code in
+        // json/stream-json mode after a `--fail-on` trigger so the machine payload
+        // on stdout stays intact. Treat a non-zero process exit code as 1 even when
+        // the Effect succeeded, matching Go; otherwise fall back to the Effect exit.
+        //
+        // `config diff --exit-code` is the one exception: it sets exit code 2 to
+        // signal drift, deliberately WITHOUT failing the Effect (`diff.handler.ts`'s
+        // own 0/1/2 convention — 2 means "drift found", not "command failed"). This
+        // is TS-native behavior with no Go counterpart, so record the real exit code
+        // truthfully instead of collapsing it into the process-controlled failure
+        // bucket below.
+        const processExitCode = yield* processControl.getExitCode;
+        const isConfigDiffDriftSignal =
+          Exit.isSuccess(exit) && command === "config diff" && processExitCode === 2;
+        const recordedExitCode = isConfigDiffDriftSignal
+          ? 2
+          : Exit.isFailure(exit) || (processExitCode !== undefined && processExitCode !== 0)
+            ? 1
+            : 0;
+
+        // Go's Execute() reads s.distinctID() AFTER the command handler runs
+        // (cmd/root.go:177), which returns the just-stitched gotrue id when
+        // StitchLogin mutated the live telemetry service during the command.
+        // Mirror that: read LegacyIdentityStitch optionally (serviceOption adds no
+        // R requirement) and override distinct_id only for the post-run capture,
+        // leaving the analyticsContext that wrapped the handler's in-flight events
+        // unchanged.
+        const stitchService = yield* Effect.serviceOption(LegacyIdentityStitch);
+        const stitchedDistinctId: Option.Option<string> = Option.flatMap(stitchService, (svc) => {
+          const id = svc.stitchedDistinctId();
+          return id === undefined ? Option.none() : Option.some(id);
+        });
+        const captureContext = Option.match(stitchedDistinctId, {
+          onNone: () => analyticsContext,
+          onSome: (distinct_id) => ({ ...analyticsContext, distinct_id }),
+        });
+        const failureMetadata = Exit.isFailure(exit)
+          ? failureTelemetryPropertiesForCause(exit.cause)
+          : recordedExitCode === 1
+            ? toFailureTelemetryProperties(processControlledFailureActionability(command))
+            : {};
+
+        yield* analytics
+          .capture(EventCommandExecuted, {
+            [PropExitCode]: recordedExitCode,
+            [PropDurationMs]: finishedAt - startedAt,
+            [PropOutputFormat]: Option.isSome(resolvedOutputFormat)
+              ? resolvedOutputFormat.value
+              : resolveOutputFormatForTelemetry(args, output.format),
+            ...failureMetadata,
+          })
+          .pipe(
+            withAnalyticsContext(captureContext),
+            // Best-effort: a capture failure or defect must never replace the
+            // command's own result, but fiber interruption (Ctrl+C landing
+            // during this trailing capture) must still propagate.
+            Effect.catchCause((cause) =>
+              Cause.hasInterruptsOnly(cause) ? Effect.failCause(cause) : Effect.void,
+            ),
+          );
+
+        if (Exit.isFailure(exit)) {
+          return yield* Effect.failCause(exit.cause);
+        }
+        return exit.value;
+      }).pipe(Effect.withSpan(getCommandRuntimeSpanName(commandRuntime)));
+    });
+}
+
+export function withLegacyCommandInstrumentation(): <A, E, R>(
+  self: Effect.Effect<A, E, R>,
+) => Effect.Effect<
+  A,
+  E | LegacyInvalidOutputFormatError,
+  R | Analytics | CommandRuntime | Stdio.Stdio | Output | ProcessControl
+>;
+export function withLegacyCommandInstrumentation<Flags extends Record<string, unknown>>(
+  options: LegacyCommandInstrumentationOptions<Flags>,
+): <A, E, R>(
+  self: Effect.Effect<A, E, R>,
+) => Effect.Effect<
+  A,
+  E | LegacyInvalidOutputFormatError,
+  R | Analytics | CommandRuntime | Stdio.Stdio | Output | ProcessControl
+>;
+export function withLegacyCommandInstrumentation<Flags extends Record<string, unknown>>(
+  options?: LegacyCommandInstrumentationOptions<Flags>,
+) {
+  const allowed = options?.outputFormats ?? LEGACY_RESOURCE_OUTPUT_FORMATS;
+  const instrument =
+    options?.analytics === false
+      ? withLegacyCommandTracingImplementation()
+      : withLegacyCommandAnalyticsImplementation(options);
+  return <A, E, R>(self: Effect.Effect<A, E, R>) =>
+    // Validate the `-o` enum first, before instrumentation runs the handler, so a
+    // rejected flag fails without emitting a `cli_command_executed` event — Go
+    // rejects it at parse time, before telemetry.
+    Effect.andThen(legacyValidateOutputFormat(allowed), instrument(self));
+}

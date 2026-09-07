@@ -4,7 +4,7 @@ import { Effect, Layer } from "effect";
 import { CliOutput, Command } from "effect/unstable/cli";
 import { fileURLToPath } from "node:url";
 import { vi } from "vitest";
-import { legacyRoot } from "../../legacy/cli/root.ts";
+import { legacyRoot } from "../../cli/root.ts";
 import { textCliOutputFormatter } from "../output/text-formatter.ts";
 import { CliArgs } from "./cli-args.service.ts";
 

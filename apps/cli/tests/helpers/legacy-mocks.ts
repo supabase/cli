@@ -16,38 +16,38 @@ import type * as HttpClientRequest from "effect/unstable/http/HttpClientRequest"
 import * as UrlParams from "effect/unstable/http/UrlParams";
 import { afterEach, beforeEach } from "vitest";
 
-import { LegacyCredentials } from "../../src/legacy/auth/legacy-credentials.service.ts";
-import { LegacyDbExecError } from "../../src/legacy/shared/legacy-db-connection.errors.ts";
+import { LegacyCredentials } from "../../src/auth/legacy-credentials.service.ts";
+import { LegacyDbExecError } from "../../src/command-internal/legacy-db-connection.errors.ts";
 import type {
   LegacyDbBatchStatement,
   LegacyDbSession,
-} from "../../src/legacy/shared/legacy-db-connection.service.ts";
+} from "../../src/command-internal/legacy-db-connection.service.ts";
 import {
   LegacyCredentialDeleteError,
   LegacyDeleteTokenError,
   LegacyInvalidAccessTokenError,
   LegacyNotLoggedInError,
-} from "../../src/legacy/auth/legacy-errors.ts";
-import { LegacyPlatformApiFactory } from "../../src/legacy/auth/legacy-platform-api-factory.service.ts";
-import { LegacyPlatformApi } from "../../src/legacy/auth/legacy-platform-api.service.ts";
+} from "../../src/auth/legacy-errors.ts";
+import { LegacyPlatformApiFactory } from "../../src/auth/legacy-platform-api-factory.service.ts";
+import { LegacyPlatformApi } from "../../src/auth/legacy-platform-api.service.ts";
 import {
   LegacyLoginApi,
   type LegacyLoginSessionResponse,
-} from "../../src/legacy/commands/login/login-api.service.ts";
-import { LegacyLoginCrypto } from "../../src/legacy/commands/login/login-crypto.service.ts";
+} from "../../src/commands/login/login-api.service.ts";
+import { LegacyLoginCrypto } from "../../src/commands/login/login-crypto.service.ts";
 import {
   LegacyLoginCryptoError,
   LegacyLoginDecryptError,
   LegacyLoginVerificationError,
-} from "../../src/legacy/commands/login/login.errors.ts";
-import { LegacyCliSettings } from "../../src/legacy/config/legacy-cli-settings.service.ts";
+} from "../../src/commands/login/login.errors.ts";
+import { LegacyCliSettings } from "../../src/config/legacy-cli-settings.service.ts";
 import {
   LEGACY_PGDATA_BASELINE_MARKER_NAME,
   LEGACY_PGDATA_PATH,
-} from "../../src/legacy/shared/db-bootstrap/pgdata-snapshot.ts";
-import { legacyProjectRefLayer } from "../../src/legacy/config/legacy-project-ref.layer.ts";
-import { LegacyLinkedProjectCache } from "../../src/legacy/telemetry/legacy-linked-project-cache.service.ts";
-import { LegacyTelemetryState } from "../../src/legacy/telemetry/legacy-telemetry-state.service.ts";
+} from "../../src/command-internal/db-bootstrap/pgdata-snapshot.ts";
+import { legacyProjectRefLayer } from "../../src/config/legacy-project-ref.layer.ts";
+import { LegacyLinkedProjectCache } from "../../src/telemetry/legacy-linked-project-cache.service.ts";
+import { LegacyTelemetryState } from "../../src/telemetry/legacy-telemetry-state.service.ts";
 import { CliArgs } from "../../src/shared/cli/cli-args.service.ts";
 import type { Stdin } from "../../src/shared/runtime/stdin.service.ts";
 import { LegacyOutputFlag } from "../../src/shared/legacy/global-flags.ts";

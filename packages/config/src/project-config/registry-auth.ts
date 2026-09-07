@@ -19,7 +19,7 @@ import {
  * every `configPath` starts with `["auth", ...]`.
  *
  * Mined from the push-direction sync helpers in
- * `apps/cli/src/legacy/commands/config/push/config-sync/auth.sync.ts`
+ * `apps/cli/src/commands/config/push/config-sync/auth.sync.ts`
  * (`applyRemoteAuthConfig` and its `applyRemoteHook`/`applyRemoteProvider`
  * helpers for the pull direction, `authToUpdateBody` for the push direction)
  * — cited per row below — and verified against the config schema files under
@@ -32,7 +32,7 @@ import {
 
 /**
  * Port of Go `time.Duration.String()`, based on the legacy port at
- * `apps/cli/src/legacy/commands/config/push/config-sync/config-sync.duration.ts:18-82`,
+ * `apps/cli/src/commands/config/push/config-sync/config-sync.duration.ts:18-82`,
  * with one DELIBERATE divergence: the legacy port truncates sub-second
  * remainders in its hours/minutes branches (its :39-45), where Go itself
  * prints fractional seconds (`"1h0m0.5s"`). This copy matches Go because it
@@ -136,7 +136,7 @@ const NS_PER_US = 1_000;
 
 /**
  * Port of Go `time.ParseDuration`, based on the push parser at
- * `apps/cli/src/legacy/commands/config/push/config-sync/config-sync.duration.ts:95-159`
+ * `apps/cli/src/commands/config/push/config-sync/config-sync.duration.ts:95-159`
  * (the same file `durationString` above is ported from). Returns nanoseconds;
  * throws on invalid input — used only by the canonicalizers below, which
  * never let a throw escape (unparsable document values stay verbatim).
@@ -241,7 +241,7 @@ function parseDuration(s: string): number {
     // any imprecision at large magnitudes is REJECTED below (the BigInt
     // exactness check), never rounded. Rounding only applies to the
     // fractional remainder handled next (`fracNs`), whose authority is the
-    // legacy PUSH parser (`apps/cli/src/legacy/commands/config/push/
+    // legacy PUSH parser (`apps/cli/src/commands/config/push/
     // config-sync/config-sync.duration.ts:155`), not Go's own
     // `time.ParseDuration`.
     const wholeContribution = n * unitNs;
@@ -446,7 +446,7 @@ function parseUint16(s: string): number | undefined {
  * Port of Go `sms.fromAuthConfig`'s `envToMap`, replicated from
  * `auth.sync.ts:1736-1747`: splits on `,` (empty string → no entries, no
  * trimming — same as the shared `legacyStrToArr`,
- * `apps/cli/src/legacy/shared/legacy-local-config-values.ts:2790-2792`) then
+ * `apps/cli/src/command-internal/legacy-local-config-values.ts:2790-2792`) then
  * each entry on the first `=`; entries without a `=` (or with `=` at index 0)
  * are dropped. Used for `sms.test_otp`.
  */

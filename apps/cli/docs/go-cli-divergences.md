@@ -224,7 +224,7 @@ These commands exist in the TS CLI today but have no direct top-level equivalent
   unescaped into the tenant gateway hostname and a malformed value could
   redirect the service-role key to an attacker-controlled host. Intentional
   TS-only hardening, not a parity bug — see
-  [`services/SIDE_EFFECTS.md`](../src/legacy/commands/services/SIDE_EFFECTS.md).
+  [`services/SIDE_EFFECTS.md`](../src/commands/services/SIDE_EFFECTS.md).
 - `db pull` in-sync (`"No schema changes found"`) keeps Go's message and its non-zero
   exit code, but replaces the generic "Try rerunning the command with --debug to
   troubleshoot the error." stderr footer with an explanatory suggestion line

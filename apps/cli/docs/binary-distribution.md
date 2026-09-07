@@ -68,7 +68,7 @@ No build step is required to run the legacy CLI from source, but the Go binary m
 2. Create a shell alias to run the legacy CLI from source. For example in `.zshrc`:
 
    ```sh
-   alias supabase-dev="bun /path/to/dx-lab/apps/cli/src/legacy/main.ts"
+   alias supabase-dev="bun /path/to/dx-lab/apps/cli/src/main.ts"
    ```
 
 3. Point `SUPABASE_GO_BINARY` at the built binary and run commands:

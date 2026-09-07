@@ -254,7 +254,7 @@ describe("SMS_PROVIDER_PUSH_PRECEDENCE: every provider resolves and matches the 
   // Pinned against a hardcoded copy of the legacy switch's order (cited
   // below) — this test file cannot itself see auth.sync.ts. The FIRST
   // enabled provider wins and every later one is skipped entirely
-  // (apps/cli/src/legacy/commands/config/push/config-sync/auth.sync.ts:2498-2539's
+  // (apps/cli/src/commands/config/push/config-sync/auth.sync.ts:2498-2539's
   // `switch (true)`: twilio (case at :2499), twilio_verify (:2507),
   // messagebird (:2515), textlocal (:2522), vonage (:2529), default (:2537-2539)).
   test("order matches the legacy push switch's fixed provider priority", () => {
