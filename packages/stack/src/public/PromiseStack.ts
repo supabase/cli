@@ -41,6 +41,10 @@ export type PromiseStackConfig = Unredacted<StackConfig>;
 export type PromiseStartStackOptions = Omit<StartStackOptions, "config"> & {
   readonly config?: PromiseStackConfig;
 };
+
+export interface PromiseInspectStackOptions {
+  readonly config?: PromiseStackConfig;
+}
 export type PromisePrepareStackOptions = Omit<PrepareStackOptions, "config"> & {
   readonly config?: PromiseStackConfig;
 };
@@ -62,7 +66,10 @@ interface PromiseStackApi {
   readonly openStack: (id: StackId) => Promise<PromiseStack>;
   readonly findStack: (options: FindStackOptions) => Promise<StackDescriptor | undefined>;
   readonly listStacks: (options?: ListStacksOptions) => Promise<ReadonlyArray<StackDescriptor>>;
-  readonly inspectStack: (id: StackId) => Promise<StackInspection>;
+  readonly inspectStack: (
+    id: StackId,
+    options?: PromiseInspectStackOptions,
+  ) => Promise<StackInspection>;
 }
 
 type PlatformLayer = typeof NodeServices.layer;
@@ -174,7 +181,14 @@ export const makePromiseApi = (
     findStack: (options) =>
       run(findEffectStack(options)).then((value) => Option.getOrUndefined(value)),
     listStacks: (options) => run(listEffectStacks(options)),
-    inspectStack: (id) => run(inspectEffectStack(id)),
+    inspectStack: (id, options) =>
+      run(
+        options?.config === undefined
+          ? inspectEffectStack(id)
+          : decodePromiseConfig(options.config).pipe(
+              Effect.flatMap((config) => inspectEffectStack(id, { config })),
+            ),
+      ),
   };
 };
 
