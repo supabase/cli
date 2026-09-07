@@ -5,7 +5,9 @@ import { expect } from "vitest";
 
 import { requireLiveSuccess, test, throwWithCleanup } from "../../../../tests/helpers/live.ts";
 
-const CLEANUP_EXIT_TIMEOUT_MS = 120_000;
+// Worst case (two pushes, three diffs) stays below the live testTimeout.
+const PUSH_EXIT_TIMEOUT_MS = 90_000;
+const DIFF_EXIT_TIMEOUT_MS = 30_000;
 
 // Golden path only: a sparse config.toml declaring one property round-trips
 // through push, `config diff` proves convergence, and the restore push is
@@ -22,10 +24,10 @@ test("pushes one declared property, diff proves it landed, and a restore push pu
       path.join(workspace.path, "supabase", "config.toml"),
       `project_id = "cli-live-config-push"\n\n[api]\nmax_rows = ${maxRows}\n`,
     );
-  const diffMaxRows = async (label: string, exitTimeoutMs?: number) => {
+  const diffMaxRows = async (label: string) => {
     const result = await cli(
       ["config", "diff", "--project-ref", project.ref, "--output-format", "json"],
-      { exitTimeoutMs },
+      { exitTimeoutMs: DIFF_EXIT_TIMEOUT_MS },
     );
     requireLiveSuccess(result, label);
     let changes: Array<{ path: string[]; remote?: unknown }>;
@@ -34,8 +36,10 @@ test("pushes one declared property, diff proves it landed, and a restore push pu
         changes: Array<{ path: string[]; remote?: unknown }>;
       });
       changes = changes.filter((change) => change.path.join(".") === "api.max_rows");
-    } catch {
-      throw new Error(`${label}: unexpected config diff payload\n${result.stdout}`);
+    } catch (error) {
+      throw new Error(
+        `${label}: unexpected config diff payload (${String(error)})\nstdout:\n${result.stdout}\nstderr:\n${result.stderr}`,
+      );
     }
     return { entries: changes, stdout: result.stdout };
   };
@@ -55,15 +59,10 @@ test("pushes one declared property, diff proves it landed, and a restore push pu
   const cleanupErrors: Array<unknown> = [];
   try {
     await writeConfig(changed);
-    const pushed = await cli([
-      "config",
-      "push",
-      "--project-ref",
-      project.ref,
-      "--yes",
-      "--output-format",
-      "json",
-    ]);
+    const pushed = await cli(
+      ["config", "push", "--project-ref", project.ref, "--yes", "--output-format", "json"],
+      { exitTimeoutMs: PUSH_EXIT_TIMEOUT_MS },
+    );
     requireLiveSuccess(pushed, "config push");
     const payload = JSON.parse(pushed.stdout) as {
       message?: unknown;
@@ -85,13 +84,10 @@ test("pushes one declared property, diff proves it landed, and a restore push pu
       await writeConfig(captured);
       const restored = await cli(
         ["config", "push", "--project-ref", project.ref, "--yes", "--output-format", "json"],
-        { exitTimeoutMs: CLEANUP_EXIT_TIMEOUT_MS },
+        { exitTimeoutMs: PUSH_EXIT_TIMEOUT_MS },
       );
       requireLiveSuccess(restored, "config push restore of the captured value");
-      const restoreProof = await diffMaxRows(
-        "config diff proof of the restored value",
-        CLEANUP_EXIT_TIMEOUT_MS,
-      );
+      const restoreProof = await diffMaxRows("config diff proof of the restored value");
       expect(restoreProof.entries, restoreProof.stdout).toEqual([]);
     } catch (error) {
       cleanupErrors.push(error);
