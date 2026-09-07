@@ -135,11 +135,6 @@ jobs:
         with:
           version: 2026.9.0
 
-      - name: Enable pnpm
-        run: |
-          corepack enable
-          corepack prepare "$(jq -r .packageManager trusted/package.json)" --activate
-
       - name: Install PR workspace (no staging token)
         run: bash trusted/.github/ai-dogfood/install-pr-cli.sh "$GITHUB_WORKSPACE/pr"
 
@@ -189,11 +184,6 @@ jobs:
       - uses: jdx/mise-action@c2a87611a18de5b3828c5652fe268e992400cb5c # v4.3.0
         with:
           version: 2026.9.0
-
-      - name: Enable pnpm
-        run: |
-          corepack enable
-          corepack prepare "$(jq -r .packageManager trusted/package.json)" --activate
 
       - name: Install PR workspace (no staging token)
         run: bash trusted/.github/ai-dogfood/install-pr-cli.sh "$GITHUB_WORKSPACE/pr"
