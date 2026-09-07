@@ -115,6 +115,21 @@ export const test = base;
 
 export { requireCliSuccess as requireLiveSuccess };
 
+/** Parse a command's stdout as JSON, failing with both streams when it is not. */
+export function requireLiveJson(
+  result: { readonly stdout: string; readonly stderr: string },
+  command: string,
+): unknown {
+  try {
+    return JSON.parse(result.stdout);
+  } catch (error) {
+    throw new Error(
+      `${command} did not print JSON\nstdout:\n${result.stdout}\nstderr:\n${result.stderr}`,
+      { cause: error },
+    );
+  }
+}
+
 /** Flags every storage live test passes: the suite links the shared project
  * and the storage command family is experimental-gated. */
 export const storageLiveFlags: ReadonlyArray<string> = ["--linked", "--experimental"];
@@ -218,12 +233,7 @@ export async function expectPostgresConfigLiveOverride(
       { exitTimeoutMs: 20_000 },
     );
     requireCliSuccess(proof, label);
-    let config: unknown;
-    try {
-      config = JSON.parse(proof.stdout);
-    } catch {
-      config = undefined;
-    }
+    const config = requireLiveJson(proof, label);
     if (!Predicate.isObject(config)) {
       throw new Error(
         `${label}: unexpected postgres-config get payload\nstdout:\n${proof.stdout}\nstderr:\n${proof.stderr}`,
