@@ -1,4 +1,4 @@
-import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { BunServices } from "@effect/platform-bun";
@@ -26,13 +26,8 @@ import {
   type LegacyPgConnInput,
 } from "../../../command-internal/legacy-db-connection.service.ts";
 import { LegacyDockerRun } from "../../../command-internal/legacy-docker-run.service.ts";
-import {
-  type LegacyEdgeRuntimeRunOpts,
-  LegacyEdgeRuntimeScript,
-} from "../../../command-internal/legacy-edge-runtime-script.service.ts";
 import { dockerfileServiceImageRaw } from "../../../shared/services/dockerfile-images.ts";
 import { LEGACY_SUGGEST_DOCKER_INSTALL } from "../../../command-internal/legacy-docker-suggest.ts";
-import { LegacyPgDeltaSslProbe } from "../../../command-internal/legacy-pgdelta-ssl-probe.service.ts";
 import { LegacyDeclarativeShadowDbError } from "./legacy-pgdelta.errors.ts";
 import { legacyDeclarativeSeamLayer } from "./legacy-pgdelta.seam.layer.ts";
 import { LegacyDeclarativeSeam } from "./legacy-pgdelta.seam.service.ts";
@@ -41,11 +36,8 @@ import { LegacyDeclarativeSeam } from "./legacy-pgdelta.seam.service.ts";
  * Integration coverage for the fully-native `legacyDeclarativeSeamLayer` (CLI-1970) —
  * `generate`/`sync`'s own integration tests stub `LegacyDeclarativeSeam` entirely
  * (per its own service doc comment), so this file is the only place the real
- * shadow-provisioning composition (`legacy-pgdelta.cache.ts`'s
- * `legacyExportBaselineCatalogRef`/`legacyExportDeclarativeCatalogRef`) gets
- * exercised end-to-end. Mirrors `declarative.orchestrate.integration.test.ts`'s
- * real-shadow-stack pattern (`mockLegacyShadowContainerCliSpawner` + a fake
- * `LegacyDbConnection`/`LegacyDockerRun`/`LegacyEdgeRuntimeScript`).
+ * local-database bring-up composition gets exercised end-to-end, with a fake
+ * `LegacyDbConnection`/`LegacyDockerRun`.
  */
 
 const alwaysReadyHttpClientLayer = Layer.succeed(
@@ -83,39 +75,6 @@ function fakeShadowSetupDocker() {
   return { layer };
 }
 
-/**
- * Distinguishes the two pg-delta edge-runtime scripts this seam invokes by `errPrefix`
- * (`legacyApplyDeclarativePgDelta`'s declarative-apply script vs.
- * `legacyExportCatalogPgDelta`'s catalog-export script — `legacy-pgdelta.apply.ts`/
- * `legacy-pgdelta.ts`'s own literal `errPrefix` strings).
- */
-function fakeEdgeRuntime() {
-  const calls: Array<LegacyEdgeRuntimeRunOpts> = [];
-  const layer = Layer.succeed(LegacyEdgeRuntimeScript, {
-    run: (opts: LegacyEdgeRuntimeRunOpts) => {
-      calls.push(opts);
-      if (opts.errPrefix === "error running pg-delta script") {
-        return Effect.succeed({
-          stdout: JSON.stringify({
-            status: "success",
-            totalApplied: 0,
-            totalRounds: 1,
-            totalSkipped: 0,
-          }),
-          stderr: "",
-        });
-      }
-      return Effect.succeed({ stdout: '{"schemas":[]}', stderr: "" });
-    },
-  });
-  return { layer, calls };
-}
-
-const sslProbe = Layer.succeed(LegacyPgDeltaSslProbe, {
-  requireSsl: () => Effect.succeed(false),
-  requireSslForHost: () => Effect.succeed(false),
-});
-
 useLegacyShadowCacheDisabled();
 
 function setup(
@@ -134,7 +93,6 @@ function setup(
   });
   const dbConnection = fakeShadowDbConnection();
   const docker = fakeShadowSetupDocker();
-  const edge = fakeEdgeRuntime();
   const cliSettings = mockLegacyCliSettings({ workdir, projectId: Option.none() });
 
   // Every service `legacyDeclarativeSeamLayer` needs must be provided directly into `seam`
@@ -147,8 +105,6 @@ function setup(
     Layer.provide(cliSettings),
     Layer.provide(dbConnection.layer),
     Layer.provide(docker.layer),
-    Layer.provide(edge.layer),
-    Layer.provide(sslProbe),
     Layer.provide(alwaysReadyHttpClientLayer),
     Layer.provide(out.layer),
     Layer.provide(mockRuntimeInfo()),
@@ -170,8 +126,6 @@ function setup(
     shadowSpawner.layer,
     dbConnection.layer,
     docker.layer,
-    edge.layer,
-    sslProbe,
     alwaysReadyHttpClientLayer,
     cliSettings,
     mockRuntimeInfo(),
@@ -182,76 +136,11 @@ function setup(
     seam,
   );
 
-  return { layer, out, edgeCalls: edge.calls, shadowSpawned: shadowSpawner.spawned };
+  return { layer, out, shadowSpawned: shadowSpawner.spawned };
 }
 
 const failError = (exit: Exit.Exit<unknown, unknown>) =>
   Exit.isFailure(exit) ? exit.cause.reasons.find(Cause.isFailReason)?.error : undefined;
-
-describe("legacyDeclarativeSeamLayer.exportCatalog", () => {
-  it.effect(
-    "provisions a shadow on a baseline cache miss, then reuses the cached catalog with no further container work",
-    () => {
-      const dir = mkdtempSync(join(tmpdir(), "legacy-pgdelta-seam-"));
-      const { layer, out, shadowSpawned } = setup(dir);
-      return Effect.gen(function* () {
-        const seam = yield* LegacyDeclarativeSeam;
-
-        const firstRef = yield* seam.exportCatalog({ mode: "baseline", noCache: false });
-        expect(firstRef).toMatch(/^supabase[/\\]\.temp[/\\]pgdelta[/\\]catalog-baseline-.*\.json$/);
-        expect(readFileSync(join(dir, firstRef), "utf8")).toBe('{"schemas":[]}');
-        expect(out.stderrText).toContain("Creating shadow database...\n");
-        expect(shadowSpawned.filter((c) => c.args[0] === "create")).toHaveLength(1);
-        expect(shadowSpawned.filter((c) => c.args[0] === "rm")).toHaveLength(1);
-
-        // Cache hit: same ref, zero additional container work.
-        const secondRef = yield* seam.exportCatalog({ mode: "baseline", noCache: false });
-        expect(secondRef).toBe(firstRef);
-        expect(shadowSpawned.filter((c) => c.args[0] === "create")).toHaveLength(1);
-        expect(shadowSpawned.filter((c) => c.args[0] === "rm")).toHaveLength(1);
-
-        rmSync(dir, { recursive: true, force: true });
-      }).pipe(Effect.provide(layer));
-    },
-  );
-
-  it.effect(
-    "writes catalog-nocache-declarative.json on --no-cache, applying the declarative directory first",
-    () => {
-      const dir = mkdtempSync(join(tmpdir(), "legacy-pgdelta-seam-"));
-      const declDir = join(dir, "supabase", "schemas");
-      mkdirSync(declDir, { recursive: true });
-      writeFileSync(join(declDir, "public.sql"), "create table t ();");
-      const { layer, edgeCalls, shadowSpawned } = setup(dir);
-      return Effect.gen(function* () {
-        const seam = yield* LegacyDeclarativeSeam;
-        const ref = yield* seam.exportCatalog({ mode: "declarative", noCache: true });
-        expect(ref).toBe(join("supabase", ".temp", "pgdelta", "catalog-nocache-declarative.json"));
-        expect(readFileSync(join(dir, ref), "utf8")).toBe('{"schemas":[]}');
-        expect(edgeCalls.some((c) => c.errPrefix === "error running pg-delta script")).toBe(true);
-        expect(shadowSpawned.filter((c) => c.args[0] === "create")).toHaveLength(1);
-        expect(shadowSpawned.filter((c) => c.args[0] === "rm")).toHaveLength(1);
-        rmSync(dir, { recursive: true, force: true });
-      }).pipe(Effect.provide(layer));
-    },
-  );
-
-  it.effect("maps a shadow-provisioning failure to LegacyDeclarativeShadowDbError", () => {
-    const dir = mkdtempSync(join(tmpdir(), "legacy-pgdelta-seam-"));
-    const { layer } = setup(dir, { failCreate: true });
-    return Effect.gen(function* () {
-      const seam = yield* LegacyDeclarativeSeam;
-      const exit = yield* seam.exportCatalog({ mode: "baseline", noCache: true }).pipe(Effect.exit);
-      expect(Exit.isFailure(exit)).toBe(true);
-      const error = failError(exit);
-      expect(error).toBeInstanceOf(LegacyDeclarativeShadowDbError);
-      expect((error as LegacyDeclarativeShadowDbError).message).toContain(
-        "failed to provision the shadow database:",
-      );
-      rmSync(dir, { recursive: true, force: true });
-    }).pipe(Effect.provide(layer));
-  });
-});
 
 describe("legacyDeclarativeSeamLayer.ensureLocalDatabaseStarted", () => {
   it.effect(

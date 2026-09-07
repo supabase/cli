@@ -14,8 +14,6 @@ import { LegacyProjectRefResolver } from "../../../config/legacy-project-ref.ser
 import { legacyAqua, legacyYellow } from "../../../command-internal/legacy-colors.ts";
 import { legacyResolveResetSeedConfig } from "../../../command-internal/db-bootstrap/db-setup.ts";
 import { legacyResetLocalDatabase } from "../../../command-internal/db-bootstrap/reset-local-database.ts";
-import { legacyParseBoolEnv } from "../../../command-internal/legacy-diff-engine.ts";
-import { redactLegacyConnectionString } from "../../../command-internal/legacy-db-config.parse.ts";
 import { LegacyDbConfigResolver } from "../../../command-internal/legacy-db-config.service.ts";
 import {
   legacyApplyProjectEnv,
@@ -24,21 +22,12 @@ import {
 } from "../../../command-internal/legacy-db-config.toml-read.ts";
 import { LegacyDbConnection } from "../../../command-internal/legacy-db-connection.service.ts";
 import {
-  legacyResolveLocalProjectId,
-  legacySanitizeProjectId,
-} from "../../../command-internal/legacy-docker-ids.ts";
-import {
   legacyApplyMigrations,
   legacyApplySchemaFiles,
 } from "../../../command-internal/legacy-migration-apply.ts";
 import { legacyParseMigrationVersion } from "../../../command-internal/legacy-migration-timestamp.format.ts";
-import {
-  legacyListLocalMigrations,
-  legacyTryCacheMigrationsCatalog,
-} from "../../../command-internal/legacy-pgdelta.cache.ts";
-import { type LegacyPgDeltaContext } from "../../../command-internal/legacy-pgdelta.ts";
+import { legacyListLocalMigrations } from "../../../command-internal/legacy-migration-list.ts";
 import { legacyPathMatch } from "../../../command-internal/legacy-path-match.ts";
-import { legacyToPostgresURL } from "../../../command-internal/legacy-postgres-url.ts";
 import { resolveLegacyDbTargetFlags } from "../../../command-internal/legacy-db-target-flags.ts";
 import {
   legacyGetPendingSeeds,
@@ -112,12 +101,12 @@ export const legacyDbReset = Effect.fn("legacy.db.reset")(function* (flags: Lega
   const body = Effect.gen(function* () {
     // The project `.env` is applied to make every key visible to the WHOLE
     // reset run, not just the flag-gate reads above — in particular
-    // `legacyGetRegistryImageUrl` / `legacyPgDeltaNpmRegistryOption` read
-    // `SUPABASE_INTERNAL_IMAGE_REGISTRY` / `PGDELTA_NPM_REGISTRY` straight from
-    // `process.env` for the pg-delta catalog export below (review CLI-1958). `db push`
+    // `legacyGetRegistryImageUrl` reads
+    // `SUPABASE_INTERNAL_IMAGE_REGISTRY` straight from
+    // `process.env` for the container image resolution below (review CLI-1958). `db push`
     // (`push.handler.ts`) scopes this the same way, as the first statement of its own
     // `body` — mirror that exactly so a private/air-gapped registry configured only in
-    // `supabase/.env` reaches the catalog export instead of silently falling back to the
+    // `supabase/.env` reaches image resolution instead of silently falling back to the
     // default registries.
     yield* legacyApplyProjectEnv(projectEnv);
     const target = resolveLegacyDbTargetFlags(cliArgs.args);
@@ -378,46 +367,6 @@ export const legacyDbReset = Effect.fn("legacy.db.reset")(function* (flags: Lega
           );
           yield* legacySeedData(session, fs, workdir, path, seeds, applyError);
         }
-
-        // Best-effort caches the migrations catalog for pg-delta right after
-        // the migrate-and-seed step succeeds, warning (never failing the
-        // reset) on error. The cache call itself no-ops when `resolvedVersion`
-        // is non-empty — a versioned reset (`--version`/`--last`) never
-        // refreshes the cache — so gate the call the same way rather than
-        // threading that check into the shared native helper (already used
-        // by `db push`, which has no version concept).
-        const cacheEnabled =
-          resolvedVersion === "" &&
-          (toml.pgDelta.enabled ||
-            legacyParseBoolEnv(toml.envLookup("SUPABASE_EXPERIMENTAL_PG_DELTA")));
-        const pgDeltaCtx: LegacyPgDeltaContext = {
-          projectId: legacySanitizeProjectId(
-            legacyResolveLocalProjectId(
-              Option.getOrUndefined(cliSettings.projectId),
-              Option.getOrUndefined(toml.projectId) ??
-                (linkedRef !== undefined && linkedRef !== "" ? linkedRef : undefined),
-              workdir,
-            ),
-          ),
-          cwd: workdir,
-          npmVersion: Option.getOrUndefined(toml.pgDelta.npmVersion),
-          denoVersion: toml.denoVersion,
-          projectEnv: toml.projectEnv,
-        };
-        yield* legacyTryCacheMigrationsCatalog(fs, path, pgDeltaCtx, {
-          enabled: cacheEnabled,
-          targetUrl: legacyToPostgresURL(cfg.conn),
-          conn: cfg.conn,
-          isLocal: false,
-          migrationsDir,
-        }).pipe(
-          Effect.catch((error) =>
-            output.raw(
-              `Warning: failed to cache migrations catalog: ${redactLegacyConnectionString(error.message)}\n`,
-              "stderr",
-            ),
-          ),
-        );
       }),
     );
 

@@ -5,6 +5,7 @@ import { legacyIdentityStitchLayer } from "../../../command-internal/legacy-iden
 import { legacyLinkedDbResolverRuntimeLayer } from "../../../command-internal/legacy-management-api-runtime.layer.ts";
 import { legacyTelemetryStateLayer } from "../../../telemetry/legacy-telemetry-state.layer.ts";
 import {
+  legacyMigraRuntimeLayer,
   legacyPgDeltaCommandRuntimeLayer,
   legacyPgDeltaDbConfigRuntimeLayer,
 } from "../shared/legacy-pgdelta-engine.layer.ts";
@@ -12,6 +13,7 @@ import {
 export const legacyDbDiffRuntimeLayer = Layer.mergeAll(
   legacyPgDeltaDbConfigRuntimeLayer,
   legacyPgDeltaCommandRuntimeLayer,
+  legacyMigraRuntimeLayer,
   legacyIdentityStitchLayer,
   legacyTelemetryStateLayer,
   legacyLinkedDbResolverRuntimeLayer(["db", "diff"]).pipe(Layer.provide(legacyIdentityStitchLayer)),

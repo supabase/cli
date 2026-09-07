@@ -132,8 +132,8 @@ export class LegacyDbDiffPgAdminError extends Data.TaggedError("LegacyDbDiffPgAd
       case "registry_pull":
         return { ...actionability.externalNetwork, fingerprint_suffix: "registry_pull" };
       // Malformed pinned-differ wire output is an internal contract violation, not a
-      // user input mistake — same precedent as pg-delta's own malformed-subprocess-
-      // output branch (`legacy-pgdelta.apply.ts`'s `"output_parse"` case).
+      // user input mistake — same classification as pg-delta's own malformed-output
+      // failures (`LegacyPgDeltaEngineError` with `reason: "output_parse"`).
       case "invalid_output":
         return { ...actionability.impossibleState, fingerprint_suffix: "invalid_content" };
       case "image_inspect":

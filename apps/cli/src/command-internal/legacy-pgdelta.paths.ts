@@ -1,11 +1,6 @@
 /**
  * On-disk locations for pg-delta-adjacent cache/snapshot artefacts.
  *
- * Split out of `legacy-pgdelta.cache.ts` (which owns the catalog cache's keys AND its
- * shadow-provisioning resolution path) so `db-bootstrap/shadow-cache.ts` — the warm
- * shadow-container cache, which `legacy-pgdelta.cache.ts` itself consumes for its own
- * shadow provisioning — can reach path helpers without an import cycle between the two.
- *
  * Two roots:
  * - {@link legacyPgDeltaTempPath}: project-local (`supabase/.temp/pgdelta`) — catalog
  *   snapshots and debug bundles (Go-shared, workspace-mounted).

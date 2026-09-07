@@ -58,6 +58,8 @@ import {
   LegacyPgDeltaEngine,
   LegacyPgDeltaEngineError,
 } from "../shared/legacy-pgdelta-engine.service.ts";
+import { legacyDbRemoteCommit } from "../remote/commit/commit.handler.ts";
+import type { LegacyDbRemoteCommitFlags } from "../remote/commit/commit.command.ts";
 import type { LegacyDbPullFlags } from "./pull.command.ts";
 import { legacyDbPull } from "./pull.handler.ts";
 
@@ -90,7 +92,6 @@ const pgDeltaDiffEnvelope = (
   });
 
 interface SetupOpts {
-  readonly engineImplementation?: "next" | "legacy";
   readonly nextDebugDirectory?: string;
   readonly format?: OutputFormat;
   readonly remoteVersions?: ReadonlyArray<string>;
@@ -108,7 +109,6 @@ interface SetupOpts {
   // resolvePoolerFallback returns Some(pooler conn) when true, None otherwise.
   readonly poolerAvailable?: boolean;
   readonly delegateStdout?: string; // stdout returned by a captured Go-delegate run
-  readonly catalogStdout?: string; // stdout returned by pg-delta catalog-export runs
   // Initial-migra pull: the bytes the native pg_dump container streams to its sink,
   // its exit code / stderr, and (when set) an IPv6 stderr that fails the FIRST dump
   // attempt so the pooler retry runs (the second attempt then streams `dumpStdout`).
@@ -167,7 +167,6 @@ function setup(workdir: string, opts: SetupOpts = {}) {
   const pgDeltaEngine = Layer.succeed(
     LegacyPgDeltaEngine,
     LegacyPgDeltaEngine.of({
-      implementation: opts.engineImplementation ?? "legacy",
       diffExplicit: () => Effect.die("diffExplicit unused"),
       diffDatabase: (input) => {
         engineCalls.push({
@@ -195,14 +194,9 @@ function setup(workdir: string, opts: SetupOpts = {}) {
             ...(process.env["PGDELTA_DEBUG"] !== undefined
               ? {
                   debug:
-                    opts.engineImplementation === "next"
-                      ? {
-                          sourceSnapshot: opts.catalogStdout ?? "",
-                          ...(opts.nextDebugDirectory !== undefined
-                            ? { directory: opts.nextDebugDirectory }
-                            : {}),
-                        }
-                      : { sourceSnapshot: opts.catalogStdout ?? "", stderr: "" },
+                    opts.nextDebugDirectory !== undefined
+                      ? { directory: opts.nextDebugDirectory }
+                      : {},
                 }
               : {}),
           });
@@ -281,11 +275,6 @@ function setup(workdir: string, opts: SetupOpts = {}) {
       edgeCalls.push(runOpts);
       if (opts.edgeFailFirstWith !== undefined && edgeRunCount === 1) {
         return Effect.fail(new LegacyEdgeRuntimeScriptError({ message: opts.edgeFailFirstWith }));
-      }
-      // pg-delta catalog exports (debug capture) use a distinct errPrefix; serve
-      // them their own stdout so an empty diff can still capture non-empty catalogs.
-      if (runOpts.errPrefix.includes("catalog")) {
-        return Effect.succeed({ stdout: opts.catalogStdout ?? "", stderr: "" });
       }
       return Effect.succeed({ stdout: opts.edgeStdout ?? "", stderr: "" });
     },
@@ -525,6 +514,13 @@ const flags = (over: Partial<LegacyDbPullFlags> = {}): LegacyDbPullFlags => ({
   password: over.password ?? Option.none(),
 });
 
+const commitFlags = (over: Partial<LegacyDbRemoteCommitFlags> = {}): LegacyDbRemoteCommitFlags => ({
+  schema: over.schema ?? [],
+  dbUrl: over.dbUrl ?? Option.none(),
+  linked: over.linked ?? false,
+  password: over.password ?? Option.none(),
+});
+
 const streamText = (out: ReturnType<typeof mockOutput>, stream: "stdout" | "stderr") =>
   stripAnsi(
     out.rawChunks
@@ -643,22 +639,14 @@ describe("legacy db pull", () => {
     }).pipe(Effect.provide(s.layer));
   });
 
-  it.effect("rejects --project-ref combined with --experimental before delegating", () => {
-    // The bundled Go binary's own `db pull --experimental` re-resolves the
-    // workdir's own linked ref itself, and `rebuildDelegateArgs` never registered
-    // `--project-ref` to forward — fail up front instead of silently dropping it.
+  it.effect("honors --project-ref on the deprecated --experimental export", () => {
     const FLAG_REF = "flagflagflagflagflag";
-    const s = setup(tmp.current, { experimental: true });
+    const s = setup(tmp.current, { experimental: true, edgeStdout: EXPORT_JSON });
     return Effect.gen(function* () {
-      const exit = yield* legacyDbPull(flags({ projectRef: Option.some(FLAG_REF) })).pipe(
-        Effect.exit,
-      );
-      expect(Exit.isFailure(exit)).toBe(true);
-      expect(JSON.stringify(exit)).toContain(
-        "--project-ref is not supported with the --experimental structured-dump pull; use --declarative instead",
-      );
+      yield* legacyDbPull(flags({ projectRef: Option.some(FLAG_REF) }));
+      expect(s.engineCalls[0]?.operation).toBe("export");
+      expect(s.engineCalls[0]?.projectRef).toBe(FLAG_REF);
       expect(s.proxyCalls).toEqual([]);
-      expect(s.proxyCaptureCalls).toEqual([]);
     }).pipe(Effect.provide(s.layer));
   });
 
@@ -787,7 +775,6 @@ describe("legacy db pull", () => {
     );
     const s = setup(tmp.current, {
       remoteVersions: ["20240101000000"],
-      engineImplementation: "next",
       // The next engine's mock parses `edgeStdout` as a rendered-file envelope.
       edgeStdout: JSON.stringify({
         files: [
@@ -901,23 +888,17 @@ describe("legacy db pull", () => {
         scope: "database",
         files: ["public/t.sql"],
       });
-      // Declarative mode's bare shadow (`legacyPrepareRawShadow`) never connects to set
-      // up a platform baseline or `contrib_regression` template. The only connects are
-      // the top-level target connect (`resolved.conn`, port 5432, database "postgres")
-      // and the shadow's own readiness probe on the shadow port — a single short-lived
-      // connect that is now the provisioning gate (`legacyWaitForShadowReady`) in place
-      // of waiting on the shadow container's 10s-interval Docker healthcheck.
-      expect(s.connectTargets).toEqual([
-        { database: "postgres", port: 5432 },
-        { database: "postgres", port: 54320 },
-      ]);
-      expect(s.shadowSpawned.filter((call) => call.args[0] === "create")).toHaveLength(1);
-      expect(s.shadowSpawned.filter((call) => call.args[0] === "rm")).toHaveLength(1);
+      // Declarative export reads only the live target: the sole connect is the
+      // top-level target connect (`resolved.conn`, port 5432, database "postgres"),
+      // and no shadow database is ever provisioned.
+      expect(s.connectTargets).toEqual([{ database: "postgres", port: 5432 }]);
+      expect(s.shadowSpawned.filter((call) => call.args[0] === "create")).toHaveLength(0);
+      expect(s.shadowSpawned.filter((call) => call.args[0] === "rm")).toHaveLength(0);
     }).pipe(Effect.provide(s.layer));
   });
 
-  it.effect("next declarative export does not provision a baseline shadow", () => {
-    const s = setup(tmp.current, { engineImplementation: "next" });
+  it.effect("declarative export does not provision a baseline shadow", () => {
+    const s = setup(tmp.current, {});
     return Effect.gen(function* () {
       yield* legacyDbPull(flags({ declarative: Option.some(true) }));
       expect(s.engineCalls[0]?.operation).toBe("export");
@@ -1321,51 +1302,6 @@ describe("legacy db pull", () => {
     }).pipe(Effect.provide(s.layer));
   });
 
-  it.effect(
-    "an empty pg-delta diff under PGDELTA_DEBUG saves a debug bundle and reports it",
-    () => {
-      // A debug bundle is saved and its path embedded in the in-sync error when
-      // PGDELTA_DEBUG is set on an empty pg-delta diff.
-      seedMigration(tmp.current, "20240101000000");
-      const catalog = JSON.stringify({ tables: [{ schema: "public", name: "t" }] });
-      const s = setup(tmp.current, {
-        remoteVersions: ["20240101000000"],
-        edgeStdout: "", // empty diff
-        catalogStdout: catalog, // shadow + remote catalog exports succeed
-        yes: true,
-      });
-      return Effect.gen(function* () {
-        const prev = process.env["PGDELTA_DEBUG"];
-        process.env["PGDELTA_DEBUG"] = "1";
-        try {
-          const error = yield* legacyDbPull(flags({ diffEngine: Option.some("pg-delta") })).pipe(
-            Effect.flip,
-          );
-          expect(error.message).toContain("No schema changes found (debug bundle:");
-        } finally {
-          if (prev === undefined) delete process.env["PGDELTA_DEBUG"];
-          else process.env["PGDELTA_DEBUG"] = prev;
-        }
-        const debugRoot = join(tmp.current, "supabase", ".temp", "pgdelta", "debug");
-        const ids = existsSync(debugRoot) ? readdirSync(debugRoot) : [];
-        expect(ids).toHaveLength(1);
-        const bundleDir = join(debugRoot, ids[0] ?? "");
-        const files = readdirSync(bundleDir);
-        expect(files).toContain("source-catalog.json");
-        expect(files).toContain("target-catalog.json");
-        expect(files).toContain("connection.txt");
-        expect(files).toContain("error.txt");
-        expect(readFileSync(join(bundleDir, "error.txt"), "utf8")).toBe("No schema changes found");
-        // connection.txt is password-redacted (→ xxxxx).
-        expect(readFileSync(join(bundleDir, "connection.txt"), "utf8")).toContain(
-          "url=postgresql://postgres:xxxxx@",
-        );
-        expect(streamText(s.out, "stderr")).toContain("pg-delta returned 0 statements.");
-        expect(streamText(s.out, "stderr")).toContain("Debug bundle saved to");
-      }).pipe(Effect.provide(s.layer));
-    },
-  );
-
   it.effect("an empty pg-delta diff without PGDELTA_DEBUG writes no debug bundle", () => {
     seedMigration(tmp.current, "20240101000000");
     const s = setup(tmp.current, { remoteVersions: ["20240101000000"], edgeStdout: "", yes: true });
@@ -1393,7 +1329,6 @@ describe("legacy db pull", () => {
     const s = setup(tmp.current, {
       remoteVersions: ["20240101000000"],
       edgeStdout: "",
-      engineImplementation: "next",
       nextDebugDirectory: debugDir,
     });
     return Effect.gen(function* () {
@@ -1709,9 +1644,9 @@ describe("legacy db pull", () => {
   );
 
   it.effect(
-    "SUPABASE_EXPERIMENTAL prints a deprecation warning and delegates the structured-dump pull to Go",
+    "SUPABASE_EXPERIMENTAL prints a deprecation warning and runs the in-process declarative export",
     () => {
-      const s = setup(tmp.current);
+      const s = setup(tmp.current, { edgeStdout: EXPORT_JSON });
       return Effect.gen(function* () {
         const prev = process.env["SUPABASE_EXPERIMENTAL"];
         process.env["SUPABASE_EXPERIMENTAL"] = "true";
@@ -1721,117 +1656,80 @@ describe("legacy db pull", () => {
           if (prev === undefined) delete process.env["SUPABASE_EXPERIMENTAL"];
           else process.env["SUPABASE_EXPERIMENTAL"] = prev;
         }
-        expect(s.proxyCalls).toHaveLength(1);
-        expect(s.proxyCalls[0]?.env).toEqual({ SUPABASE_TELEMETRY_DISABLED: "1" });
-        // The Go child's own `ConnectByConfig` prints the Connecting line; the
-        // parent must not print it too (it would appear twice in the stream).
-        expect(streamText(s.out, "stderr")).not.toContain("Connecting to");
+        expect(s.proxyCalls).toHaveLength(0);
+        expect(s.engineCalls[0]?.operation).toBe("export");
+        expect(streamText(s.out, "stderr")).toContain("Connecting to remote database...");
         expect(streamText(s.out, "stderr")).toContain(
           "The --experimental structured-dump mode for `db pull` is deprecated",
         );
-        // The env-sourced SUPABASE_EXPERIMENTAL never reaches the delegated child as
-        // a real flag on its own — the parent must state --experimental explicitly
-        // in the rebuilt argv (root's own globalArgs forwarding derives --experimental
-        // from a DIFFERENT, first-occurrence-wins parse, which can disagree here).
-        expect(s.proxyCalls[0]?.args).toContain("--experimental");
+        expect(streamText(s.out, "stderr")).toContain("Preparing declarative schema export");
       }).pipe(Effect.provide(s.layer));
     },
   );
 
-  it.effect("forwards an explicit --local=false target flag to the delegated pull", () => {
-    // Target flags are selectors keyed on flag.Changed in Go; dropping Some(false)
-    // would make the delegated child default to linked instead of the local target
-    // the native path selected.
-    const s = setup(tmp.current, { experimental: true });
+  it.effect("--experimental still exports when the last --declarative alias is false", () => {
+    const s = setup(tmp.current, {
+      experimental: true,
+      edgeStdout: EXPORT_JSON,
+      args: ["db", "pull", "--experimental", "--declarative", "--use-pg-delta=false"],
+    });
     return Effect.gen(function* () {
-      yield* legacyDbPull(flags({ local: Option.some(false) }));
-      expect(s.proxyCalls[0]?.args).toContain("--local=false");
+      yield* legacyDbPull(
+        flags({ declarative: Option.some(true), usePgDelta: Option.some(false) }),
+      );
+      expect(s.engineCalls[0]?.operation).toBe("export");
+      expect(s.proxyCalls).toHaveLength(0);
+      expect(streamText(s.out, "stderr")).toContain(
+        "The --experimental structured-dump mode for `db pull` is deprecated",
+      );
     }).pipe(Effect.provide(s.layer));
   });
 
-  it.effect(
-    "delegated pull forwards resolved migration mode when the last alias occurrence is false",
-    () => {
-      // Parent resolves migration mode (last wins = false). The rebuilt delegate
-      // argv must forward that decision as `--declarative=false`, not replay the
-      // truthy `--declarative` alone — Go binds both aliases to one variable, so a
-      // lone `--declarative` would flip the child back to declarative export. The
-      // deprecated `--use-pg-delta` must NOT be forwarded (the parent already
-      // printed its deprecation line).
-      const s = setup(tmp.current, {
-        experimental: true,
-        args: ["db", "pull", "--experimental", "--declarative", "--use-pg-delta=false"],
-      });
-      return Effect.gen(function* () {
-        yield* legacyDbPull(
-          flags({ declarative: Option.some(true), usePgDelta: Option.some(false) }),
-        );
-        expect(s.proxyCalls[0]?.args).toContain("--declarative=false");
-        expect(s.proxyCalls[0]?.args).not.toContain("--declarative");
-        expect(s.proxyCalls[0]?.args).not.toContain("--use-pg-delta");
-      }).pipe(Effect.provide(s.layer));
-    },
-  );
-
-  it.effect("delegated pull with --diff-engine and no alias omits --declarative entirely", () => {
-    // The "alias present" guard matters: forwarding --declarative=false alongside
-    // --diff-engine would trip Go's mutually-exclusive [declarative diff-engine]
-    // group (which fires on Changed regardless of value). With no alias passed, the
-    // delegate argv must carry only --diff-engine.
-    const s = setup(tmp.current, { experimental: true });
+  it.effect("--experimental with --diff-engine still runs the in-process export", () => {
+    const s = setup(tmp.current, { experimental: true, edgeStdout: EXPORT_JSON });
     return Effect.gen(function* () {
       yield* legacyDbPull(flags({ diffEngine: Option.some("migra") }));
-      expect(s.proxyCalls[0]?.args).toContain("--diff-engine");
-      expect(s.proxyCalls[0]?.args).not.toContain("--declarative=false");
-      expect(s.proxyCalls[0]?.args).not.toContain("--declarative");
+      expect(s.engineCalls[0]?.operation).toBe("export");
+      expect(s.proxyCalls).toHaveLength(0);
     }).pipe(Effect.provide(s.layer));
   });
 
   it.effect(
-    "the global --experimental flag prints a deprecation warning and delegates the structured-dump pull to Go",
+    "the global --experimental flag prints a deprecation warning and runs the in-process export",
     () => {
-      // viper resolves EXPERIMENTAL from the pflag OR the env var; the flag form
-      // (`supabase --experimental db pull`) must delegate just like the env form.
-      const s = setup(tmp.current, { experimental: true });
+      const s = setup(tmp.current, { experimental: true, edgeStdout: EXPORT_JSON });
       return Effect.gen(function* () {
         yield* legacyDbPull(flags());
-        expect(s.proxyCalls).toHaveLength(1);
-        expect(s.proxyCalls[0]?.env).toEqual({ SUPABASE_TELEMETRY_DISABLED: "1" });
-        // The Go child's own `ConnectByConfig` prints the Connecting line; the
-        // parent must not print it too (it would appear twice in the stream).
-        expect(streamText(s.out, "stderr")).not.toContain("Connecting to");
+        expect(s.proxyCalls).toHaveLength(0);
+        expect(s.engineCalls[0]?.operation).toBe("export");
+        expect(streamText(s.out, "stderr")).toContain("Connecting to remote database...");
         expect(streamText(s.out, "stderr")).toContain(
           "The --experimental structured-dump mode for `db pull` is deprecated",
         );
-        expect(s.proxyCalls[0]?.args).toContain("--experimental");
       }).pipe(Effect.provide(s.layer));
     },
   );
 
-  it.effect("an experimental pull in json mode reports no remote-history repair", () => {
-    // The structured-dump path returns before writing a migration or touching
-    // schema_migrations, so the envelope must not claim a repair.
-    const s = setup(tmp.current, { experimental: true, format: "json" });
-    return Effect.gen(function* () {
-      yield* legacyDbPull(flags());
-      expect(s.proxyCaptureCalls).toHaveLength(1);
-      const success = s.out.messages.find((m) => m.type === "success");
-      expect(success?.data).toMatchObject({ remoteHistoryUpdated: false });
-    }).pipe(Effect.provide(s.layer));
-  });
-
-  it.effect("re-quotes a comma-containing schema when delegating the pull", () => {
-    // flags.schema holds the single parsed value `tenant,one`; forwarding it raw
-    // would let the Go child's pflag StringSlice CSV-split it into two schemas, so
-    // it must be re-encoded as a quoted CSV field.
-    const s = setup(tmp.current, { experimental: true });
-    return Effect.gen(function* () {
-      yield* legacyDbPull(flags({ schema: ["tenant,one"] }));
-      const args = s.proxyCalls[0]?.args ?? [];
-      const idx = args.indexOf("--schema");
-      expect(args[idx + 1]).toBe('"tenant,one"');
-    }).pipe(Effect.provide(s.layer));
-  });
+  it.effect(
+    "an experimental pull in json mode reports a declarative export with no history repair",
+    () => {
+      const s = setup(tmp.current, {
+        experimental: true,
+        format: "json",
+        edgeStdout: EXPORT_JSON,
+      });
+      return Effect.gen(function* () {
+        yield* legacyDbPull(flags());
+        expect(s.proxyCaptureCalls).toHaveLength(0);
+        const success = s.out.messages.find((m) => m.type === "success");
+        expect(success?.data).toMatchObject({
+          declarative: true,
+          remoteHistoryUpdated: false,
+          engine: "pg-delta",
+        });
+      }).pipe(Effect.provide(s.layer));
+    },
+  );
 
   it.effect(
     "--declarative wins over --experimental and is unaffected by the deprecated experimental mode",
@@ -1855,8 +1753,8 @@ describe("legacy db pull", () => {
     () => {
       // A SET flag value wins over env regardless of whether it's true or false, so
       // `--experimental=false` must NOT be overridden by a truthy
-      // `SUPABASE_EXPERIMENTAL` — the pull proceeds as normal instead of hitting the
-      // retirement error.
+      // `SUPABASE_EXPERIMENTAL` — the pull proceeds as a normal migration instead of
+      // the deprecated experimental export.
       const prev = process.env["SUPABASE_EXPERIMENTAL"];
       process.env["SUPABASE_EXPERIMENTAL"] = "true";
       seedMigration(tmp.current, "20240101000000");
@@ -1889,22 +1787,17 @@ describe("legacy db pull", () => {
       // flags at the first bare `--` — `db pull -- --experimental=false` passes
       // "--experimental=false" as the positional migration-name argument, NOT as an
       // explicit flag occurrence. Unlike the unterminated `--experimental=false`
-      // case above, this must still delegate to Go. `flags().name` is set to match
-      // what the real parser would have produced for this argv (the positional
-      // operand), so the scenario this test exists to protect is actually exercised
-      // — note this does NOT assert anything about how that name is itself
-      // forwarded to the delegated child (`rebuildDelegateArgs` pushes it as a bare
-      // positional with no `--` terminator of its own, a separate, pre-existing,
-      // unfixed gap: a name that looks like a flag could be re-parsed as one by the
-      // Go child).
+      // case above, this must still take the experimental export.
       const prev = process.env["SUPABASE_EXPERIMENTAL"];
       process.env["SUPABASE_EXPERIMENTAL"] = "true";
       const s = setup(tmp.current, {
         args: ["db", "pull", "--", "--experimental=false"],
+        edgeStdout: EXPORT_JSON,
       });
       return Effect.gen(function* () {
         yield* legacyDbPull(flags({ name: Option.some("--experimental=false") }));
-        expect(s.proxyCalls).toHaveLength(1);
+        expect(s.engineCalls[0]?.operation).toBe("export");
+        expect(s.proxyCalls).toHaveLength(0);
       }).pipe(
         Effect.ensuring(
           Effect.sync(() => {
@@ -1918,24 +1811,26 @@ describe("legacy db pull", () => {
   );
 
   it.effect(
-    "a repeated --experimental=false --experimental=true still delegates (last Set() wins)",
+    "a repeated --experimental=false --experimental=true still exports (last Set() wins)",
     () => {
       // pflag/viper bind ONE variable per flag: repeated occurrences collapse to
       // whichever Set() call happened LAST. A resolver that only checks "does any
       // pre-terminator token say false" gets this ordering backwards and would
-      // incorrectly skip delegating to Go.
+      // incorrectly skip the experimental export.
       const s = setup(tmp.current, {
         args: ["db", "pull", "--experimental=false", "--experimental=true"],
+        edgeStdout: EXPORT_JSON,
       });
       return Effect.gen(function* () {
         yield* legacyDbPull(flags());
-        expect(s.proxyCalls).toHaveLength(1);
+        expect(s.engineCalls[0]?.operation).toBe("export");
+        expect(s.proxyCalls).toHaveLength(0);
       }).pipe(Effect.provide(s.layer));
     },
   );
 
   it.effect(
-    "a bare --password consumes the following token, so SUPABASE_EXPERIMENTAL still gates the delegated structured-dump pull",
+    "a bare --password consumes the following token, so SUPABASE_EXPERIMENTAL still gates the experimental export",
     () => {
       // pflag accepts `--flag value` (space form) for `--password` (a string flag,
       // `pull.command.ts`'s `password: Flag.string(...)`), so `--password
@@ -1948,10 +1843,12 @@ describe("legacy db pull", () => {
       process.env["SUPABASE_EXPERIMENTAL"] = "true";
       const s = setup(tmp.current, {
         args: ["db", "pull", "--password", "--experimental=false"],
+        edgeStdout: EXPORT_JSON,
       });
       return Effect.gen(function* () {
         yield* legacyDbPull(flags());
-        expect(s.proxyCalls).toHaveLength(1);
+        expect(s.engineCalls[0]?.operation).toBe("export");
+        expect(s.proxyCalls).toHaveLength(0);
       }).pipe(
         Effect.ensuring(
           Effect.sync(() => {
@@ -1986,7 +1883,6 @@ describe("legacy db pull", () => {
     mkdirSync(join(tmp.current, "supabase", "schemas"), { recursive: true });
     writeFileSync(join(tmp.current, "supabase", "schemas", "public.sql"), "select 1;\n");
     const s = setup(tmp.current, {
-      engineImplementation: "next",
       remoteVersions: ["20240101000000"],
       edgeStdout: pgDeltaDiffEnvelope([{ name: "schema_changes", sql: "create table remote ();" }]),
       yes: true,
@@ -2243,11 +2139,8 @@ describe("legacy db pull", () => {
 
   it.effect("retries the declarative export through the IPv4 pooler on an IPv6 error", () => {
     // The declarative export retries through the pooler in the same IPv6
-    // scenario, but unlike the migration-style diff it prepares the raw shadow
-    // ONCE before the retry and only re-runs the export against the same shadow —
-    // a deliberate asymmetry, not a gap to close. Assert the single-shadow-reuse
-    // shape so a future change doesn't accidentally "fix" this path to
-    // double-provision like the migration-style diff path correctly does.
+    // scenario. The export reads only the live target, so no shadow database is
+    // ever provisioned on this path.
     const s = setup(tmp.current, {
       edgeFailFirstWith: "error exporting declarative schema:\nnetwork is unreachable",
       edgeStdout: EXPORT_JSON,
@@ -2260,7 +2153,7 @@ describe("legacy db pull", () => {
       expect(streamText(s.out, "stderr")).toContain(
         `Declarative schema written to ${join("supabase", "schemas")}\n`,
       );
-      expect(s.shadowSpawned.filter((c) => c.args[0] === "create")).toHaveLength(1);
+      expect(s.shadowSpawned.filter((c) => c.args[0] === "create")).toHaveLength(0);
     }).pipe(Effect.provide(s.layer));
   });
 
@@ -2329,8 +2222,8 @@ describe("legacy db pull", () => {
      * the second run's behaviour — the cache key is global and deliberately workdir-independent,
      * so two worktrees with identical settings still collide on the same tar.
      */
-    const runCached = (implementation: "legacy" | "next") => {
-      const workdir = join(tmp.current, `${implementation}-worktree`);
+    const runCached = (engine: "migra" | "pg-delta") => {
+      const workdir = join(tmp.current, `${engine}-worktree`);
       seedMigration(workdir, "20240101000000");
       writeFileSync(
         join(workdir, "supabase", "config.toml"),
@@ -2338,9 +2231,11 @@ describe("legacy db pull", () => {
       );
       const s = setup(workdir, {
         statefulDocker: true,
-        engineImplementation: implementation,
         remoteVersions: ["20240101000000"],
-        edgeStdout: pgDeltaDiffEnvelope([{ name: "schema_changes", sql: "create table t ();" }]),
+        edgeStdout:
+          engine === "pg-delta"
+            ? pgDeltaDiffEnvelope([{ name: "schema_changes", sql: "create table t ();" }])
+            : "create table t ();\n",
         yes: true,
       });
       return legacyWithEnv(
@@ -2349,32 +2244,108 @@ describe("legacy db pull", () => {
         legacyWithEnv(
           "SUPABASE_SHADOW_CACHE",
           "1",
-          legacyDbPull(flags()).pipe(Effect.provide(s.layer)),
+          legacyDbPull(flags(engine === "migra" ? { diffEngine: Option.some("migra") } : {})).pipe(
+            Effect.provide(s.layer),
+          ),
         ),
       ).pipe(Effect.as(s));
     };
 
     // Regression: both migrate paths used to pass a hardcoded `{ webhooks: "enabled" }`, so the
-    // legacy run's forced-`pg_net` baseline and the next run's config-following baseline keyed
+    // migra run's forced-`pg_net` baseline and the pg-delta run's config-following baseline keyed
     // to the SAME tar and silently restored each other's cluster. The handler now forks the
     // policy on `migrationMode`; `shadow-cache.integration.test.ts` covers the cache's half of
     // the contract, this covers `db pull`'s call site.
-    it.live("a legacy-engine baseline is never restored into a pg-delta-next run", () => {
+    it.live("a migra-engine baseline is never restored into a pg-delta run", () => {
       return Effect.gen(function* () {
-        // Legacy migrate forces `pg_net` on regardless of config, and publishes that baseline.
-        const legacyRun = yield* runCached("legacy");
-        expect(legacyRun.dockerDaemon?.stepCalls("cp-out")).toHaveLength(1);
-        const legacyTars = publishedTars();
-        expect(legacyTars).toHaveLength(1);
+        // Migra's migrate path forces `pg_net` on regardless of config, and publishes
+        // that baseline.
+        const migraRun = yield* runCached("migra");
+        expect(migraRun.dockerDaemon?.stepCalls("cp-out")).toHaveLength(1);
+        const migraTars = publishedTars();
+        expect(migraTars).toHaveLength(1);
 
-        // pg-delta next follows the config (webhooks are off here), so it must cold-provision
+        // pg-delta follows the config (webhooks are off here), so it must cold-provision
         // and publish its OWN baseline rather than restore the forced-on one above.
-        const nextRun = yield* runCached("next");
-        expect(nextRun.dockerDaemon?.stepCalls("cp-in")).toHaveLength(0);
-        expect(nextRun.dockerDaemon?.stepCalls("cp-out")).toHaveLength(1);
+        const pgDeltaRun = yield* runCached("pg-delta");
+        expect(pgDeltaRun.dockerDaemon?.stepCalls("cp-in")).toHaveLength(0);
+        expect(pgDeltaRun.dockerDaemon?.stepCalls("cp-out")).toHaveLength(1);
         expect(publishedTars()).toHaveLength(2);
-        expect(publishedTars()).toEqual(expect.arrayContaining(legacyTars));
+        expect(publishedTars()).toEqual(expect.arrayContaining(migraTars));
       });
     });
+  });
+});
+
+describe("legacy db remote commit", () => {
+  it.effect("writes a remote_commit migration in-process and skips the pull PostRun line", () => {
+    seedMigration(tmp.current, "20240101000000");
+    mkdirSync(join(tmp.current, "supabase"), { recursive: true });
+    writeFileSync(
+      join(tmp.current, "supabase", "config.toml"),
+      "[experimental.pgdelta]\nenabled = true\n",
+    );
+    const s = setup(tmp.current, {
+      remoteVersions: ["20240101000000"],
+      edgeStdout: pgDeltaDiffEnvelope([
+        {
+          name: "schema_changes",
+          sql: "-- Migration unit 1: schema_changes\n\ncreate table remote ();",
+        },
+      ]),
+      yes: true,
+      args: ["db", "remote", "commit"],
+    });
+    return Effect.gen(function* () {
+      yield* legacyDbRemoteCommit(commitFlags());
+      const dir = join(tmp.current, "supabase", "migrations");
+      const written = readdirSync(dir).filter((f) => f.endsWith("_remote_commit.sql"));
+      expect(written).toHaveLength(1);
+      expect(readFileSync(join(dir, written[0] ?? ""), "utf8")).toContain(
+        "create table remote ();",
+      );
+      expect(streamText(s.out, "stderr")).toContain(
+        `Command "commit" is deprecated, use "db pull" instead.\n`,
+      );
+      expect(streamText(s.out, "stderr")).toContain(
+        `Schema written to ${join("supabase", "migrations", written[0] ?? "")}\n`,
+      );
+      expect(streamText(s.out, "stdout")).not.toContain("Finished supabase db pull.");
+      expect(s.engineCalls).toHaveLength(1);
+      expect(s.engineCalls[0]?.operation).toBe("diff");
+    }).pipe(Effect.provide(s.layer));
+  });
+
+  it.effect("honors --experimental as the same in-process export as db pull", () => {
+    const s = setup(tmp.current, {
+      experimental: true,
+      edgeStdout: EXPORT_JSON,
+      args: ["db", "remote", "commit", "--experimental"],
+    });
+    return Effect.gen(function* () {
+      yield* legacyDbRemoteCommit(commitFlags());
+      expect(s.engineCalls[0]?.operation).toBe("export");
+      const err = streamText(s.out, "stderr");
+      expect(err).toContain(`Command "commit" is deprecated, use "db pull" instead.\n`);
+      expect(err).toContain("The --experimental structured-dump mode for `db pull` is deprecated");
+      expect(existsSync(join(tmp.current, "supabase", "schemas", "public", "t.sql"))).toBe(true);
+      expect(streamText(s.out, "stdout")).not.toContain("Finished supabase db pull.");
+    }).pipe(Effect.provide(s.layer));
+  });
+
+  it.effect("rejects --linked together with --db-url", () => {
+    const s = setup(tmp.current, {});
+    return Effect.gen(function* () {
+      const exit = yield* legacyDbRemoteCommit(
+        commitFlags({ linked: true, dbUrl: Option.some("postgresql://u:p@h/db") }),
+      ).pipe(Effect.exit);
+      expect(Exit.isFailure(exit)).toBe(true);
+      expect(JSON.stringify(exit)).toContain(
+        "if any flags in the group [db-url linked local] are set none of the others can be",
+      );
+      expect(streamText(s.out, "stderr")).toContain(
+        `Command "commit" is deprecated, use "db pull" instead.\n`,
+      );
+    }).pipe(Effect.provide(s.layer));
   });
 });
