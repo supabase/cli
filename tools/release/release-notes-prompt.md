@@ -83,19 +83,23 @@ PR-title summaries. Answer: **Should I upgrade?** **What's new for me?** **Any g
 
 ## Repo scope (apply first)
 
-### One shell — `legacy/` is the shipped CLI
+### One shell — `apps/cli/src/` is the shipped CLI
 
-| Path                   | Status                                                            |
-| ---------------------- | ----------------------------------------------------------------- |
-| `apps/cli/src/legacy/` | What users run as `supabase` today — **all user-facing behavior** |
+| Path                                                                                                                        | Status                                                            |
+| --------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------- |
+| `apps/cli/src/` (`commands/`, `auth/`, `cli/`, `config/`, `docs/`, `output/`, `telemetry/`, `command-internal/`, `shared/`) | What users run as `supabase` today — **all user-facing behavior** |
 
 There was previously an experimental `next/` (v3) shell under `apps/cli/src/next/`; it has been
-removed. If a diff still touches a `next/` path for some reason, drop it the same way as before:
-no bullet, no tail count, never mention `next/` or v3.
+removed. There was also a `legacy/` wrapper directory under `apps/cli/src/legacy/` (holding
+`commands/`, `auth/`, `cli/`, `config/`, `docs/`, `output/`, `telemetry/`, `shared/`); it has since
+been flattened directly into `apps/cli/src/` (`legacy/shared/` became `apps/cli/src/command-internal/`,
+the used-by-≥2-command-families tier; the top-level cross-cutting infra kept the name
+`apps/cli/src/shared/`). If a diff still touches a `next/` path for some reason, drop it the same way
+as before: no bullet, no tail count, never mention `next/` or v3.
 
 ### Go → TypeScript port
 
-Ongoing port: `apps/cli-go/` → `apps/cli/src/legacy/`. Parity PRs are **not** features/fixes.
+Ongoing port: `apps/cli-go/` → `apps/cli/src/`. Parity PRs are **not** features/fixes.
 
 - If leaf commands were ported: **one line** under **TypeScript port progress** — list leaf commands only (`db diff`, not `db`); behavior matches Go CLI; cite PRs. Omit section if none.
 - Port infra (services, tests, parity scripts) → tail count only.
@@ -103,8 +107,8 @@ Ongoing port: `apps/cli-go/` → `apps/cli/src/legacy/`. Parity PRs are **not** 
 
 ### Where user-visible changes usually live
 
-- `apps/cli/src/legacy/commands/**` — behavior, output, flags, errors (beyond pure porting)
-- `apps/cli/src/shared/**` — telemetry, global flags, output inherited by legacy
+- `apps/cli/src/commands/**` — behavior, output, flags, errors (beyond pure porting)
+- `apps/cli/src/shared/**` — telemetry, global flags, output inherited by every command
 - `apps/cli-go/**` — while still the production binary
 - `packages/cli-*`, `apps/cli/scripts/` — install/packaging (homebrew, scoop, build)
 

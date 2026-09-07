@@ -1,0 +1,40 @@
+import { Layer } from "effect";
+
+import { commandRuntimeLayer } from "../../../shared/runtime/command-runtime.layer.ts";
+import { legacyCliSettingsLayer } from "../../../config/legacy-cli-settings.layer.ts";
+import { legacyHttpClientLayer } from "../../../auth/legacy-http-debug.layer.ts";
+import { legacyDbConnectionLayer } from "../../../command-internal/legacy-db-connection.layer.ts";
+import { legacyDebugLoggerLayer } from "../../../command-internal/legacy-debug-logger.layer.ts";
+import { legacyDockerRunLayer } from "../../../command-internal/legacy-docker-run.layer.ts";
+import { legacyTelemetryStateLayer } from "../../../telemetry/legacy-telemetry-state.layer.ts";
+
+/**
+ * Runtime layer for `supabase db start`. `LegacyCliSettings`/`ChildProcessSpawner`/
+ * `FileSystem`/`Path` are ambient from the root runtime (`shared/cli/run.ts`), matching
+ * `supabase start`'s own layer composition (`start.command.ts`).
+ *
+ * No `LegacyDbBootstrapSeam` composition — that hidden `db __db-bootstrap` seam no
+ * longer exists at all: `legacyIsLocalDbRunning` (the already-running check) and
+ * `legacyStartDatabase` (the container bring-up itself) are both native TS,
+ * hoisted to `command-internal/db-bootstrap/`. `db reset --local` is ALSO fully
+ * native now, via its own composition over the same primitives (`reset.layers.ts`).
+ *
+ * `legacyDockerRunLayer`/`legacyDbConnectionLayer`/`legacyHttpClientLayer` back the native
+ * container bootstrap itself (`start.handler.ts`): the fresh-volume `SetupLocalDatabase`-
+ * equivalent pipeline runs its PG15+ one-shot migrate jobs through `LegacyDockerRun` and its
+ * schema/globals/API-privileges SQL over a direct `LegacyDbConnection` session, and the health
+ * wait (`legacyWaitForHealthyServices`) requires `HttpClient.HttpClient` in its type signature
+ * even though `db start` never uses the PostgREST/Edge-Runtime gateway probes — same reasoning
+ * as `start.command.ts`'s own composition of all three.
+ */
+const cliSettings = legacyCliSettingsLayer.pipe(Layer.provide(legacyDebugLoggerLayer));
+const httpClient = legacyHttpClientLayer.pipe(Layer.provide(legacyDebugLoggerLayer));
+
+export const legacyDbStartRuntimeLayer = Layer.mergeAll(
+  cliSettings,
+  legacyTelemetryStateLayer,
+  commandRuntimeLayer(["db", "start"]),
+  legacyDockerRunLayer,
+  legacyDbConnectionLayer,
+  httpClient,
+);

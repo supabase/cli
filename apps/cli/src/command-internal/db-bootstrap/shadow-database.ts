@@ -1,0 +1,922 @@
+/**
+ * The shadow-database provisioning primitives: create, health-wait, platform-baseline setup,
+ * and migrations replay. These are the low-level, dependency-light building blocks — the
+ * composed diff/pull shape (`legacyPrepareShadowSource`, with its migra declarative-schema
+ * branch) lives in `commands/db/shared/legacy-shadow-source.ts` instead, so this module and
+ * the rest of `shared/db-bootstrap/` never pull in the diff engines.
+ *
+ * Exposed as individual primitives rather than one fused function because the callers compose
+ * different subsets: `migration squash` needs create -> health-wait -> connect -> setup (no
+ * `CREATE_TEMPLATE`, no migrations at that point), while `db diff --use-pgadmin` (see
+ * `diff.handler.ts`'s pgadmin branch) needs create -> health-wait -> migrations replay.
+ *
+ * A note on the shadow container's own addressing, since it's the one genuinely surprising
+ * empirical fact this whole module depends on: the shadow container is created with NO name
+ * (Docker auto-generates one) and NO network alias (`legacyBuildShadowPostgresContainerSpec`),
+ * unlike every other container this codebase creates. The PG15+ one-shot setup jobs
+ * (`legacySetupDatabase` -> `initSchema15`) still need SOME hostname to reach it over the
+ * shared Docker network, though — Go passes `container[:12]` (the container id's own 12-char
+ * short form) as that hostname (`diff.go:172`, `squash.go:96`). This was verified empirically
+ * against a real Docker daemon (matching Go's exact container-creation shape: no `--name`, no
+ * `--network-alias`, joined to a user-defined network via `NetworkMode` alone): `docker
+ * inspect`'s `NetworkSettings.Networks.<net>.DNSNames` lists BOTH the auto-generated name AND
+ * the 12-char short id, and a sibling container on the same network successfully resolved and
+ * authenticated against Postgres using ONLY the short id as hostname. So `dbHost:
+ * container.slice(0, 12)` below is not a guess — it is the exact mechanism Go itself relies on.
+ */
+
+import {
+  Data,
+  Effect,
+  type Option,
+  Schedule,
+  type FileSystem,
+  type Path,
+  type Scope,
+} from "effect";
+import type { ChildProcessSpawner } from "effect/unstable/process/ChildProcessSpawner";
+
+import { Output } from "../../shared/output/output.service.ts";
+import type { RuntimeInfo } from "../../shared/runtime/runtime-info.service.ts";
+import {
+  actionability,
+  type CliErrorActionabilityDeclaration,
+  ErrorActionabilityId,
+} from "../../shared/telemetry/error-actionability.ts";
+import {
+  legacyCollectText,
+  legacyDescribeContainerCliFailure,
+  spawnContainerCli,
+} from "../legacy-container-cli.ts";
+import type { LegacyDbConfigLoadError } from "../legacy-db-config.errors.ts";
+import { LegacyDbConnection, type LegacyDbSession } from "../legacy-db-connection.service.ts";
+import type { LegacyPgConnInput } from "../legacy-db-connection.service.ts";
+import { LEGACY_CLI_PROJECT_LABEL } from "../legacy-docker-ids.ts";
+import type { LegacyDockerRun } from "../legacy-docker-run.service.ts";
+import { legacyApplyMigrations } from "../legacy-migration-apply.ts";
+import type { LegacyVaultSecret } from "../legacy-vault.ts";
+import {
+  legacyEnsureNetwork,
+  legacyCreateContainer,
+  LEGACY_COMPOSE_PROJECT_LABEL,
+  type LegacyContainerError,
+  type LegacyContainerOpts,
+} from "./container-lifecycle.ts";
+import type { LegacyStartContainerSpec } from "./docker-create-args.ts";
+import type { LegacyImagePrepullError } from "./image-prepull.ts";
+import type { LegacyLocalDbContainerInputs } from "./local-container-inputs.ts";
+import { legacyListLocalMigrationPaths } from "../legacy-migration-history.ts";
+import { legacyToPostgresURL } from "../legacy-postgres-url.ts";
+import {
+  type LegacyFreshDbSetupInput,
+  type LegacySetupDatabaseInput,
+  type LegacySetupDatabaseOptions,
+  type LegacyStartDbSetupImages,
+  type LegacyStartSetupLocalDatabaseError,
+  legacyResolveDbSetupPrelude,
+  legacySetupDatabase,
+} from "./db-setup.ts";
+import {
+  legacyBuildShadowPostgresContainerSpec,
+  type LegacyShadowPostgresContainerSpecInput,
+} from "./postgres.service.ts";
+
+type Spawner = ChildProcessSpawner["Service"];
+
+const errMessage = (e: unknown): string =>
+  typeof e === "object" && e !== null && "message" in e && typeof e.message === "string"
+    ? e.message
+    : String(e);
+
+/**
+ * Creating, connecting to, setting up, or migrating the shadow database failed. Kept in
+ * `shared/db-bootstrap/` (not `commands/db/shared/legacy-pgdelta.errors.ts`'s
+ * `LegacyDeclarativeShadowDbError`) so these primitives stay usable by future callers outside
+ * the `db diff`/`db pull` family (`migration squash`, `db diff --use-pgadmin`) without pulling
+ * in a pg-delta-family-specific error type — see this module's own header.
+ */
+export class LegacyShadowDbError extends Data.TaggedError("LegacyShadowDbError")<{
+  readonly message: string;
+  readonly reason:
+    | "connect"
+    | "docker_daemon"
+    | "container_configuration"
+    | "internal"
+    | "port_conflict"
+    | "filesystem"
+    | "database";
+}> {
+  get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
+    switch (this.reason) {
+      case "connect":
+        return { ...actionability.dbConnection, fingerprint_suffix: "connect" };
+      case "docker_daemon":
+        return { ...actionability.dockerNotRunning, fingerprint_suffix: "docker_not_running" };
+      case "internal":
+        return actionability.internalPanic;
+      case "port_conflict":
+        return { ...actionability.invalidConfig, fingerprint_suffix: "port_conflict" };
+      case "filesystem":
+        return { ...actionability.permission, fingerprint_suffix: "filesystem" };
+      case "database":
+        return { ...actionability.dbFinding, fingerprint_suffix: "database" };
+      default:
+        return { ...actionability.invalidConfig, fingerprint_suffix: "container_configuration" };
+    }
+  }
+}
+
+/** Carries `container-lifecycle.ts`'s own error classification through the shadow wrapper. */
+const legacyShadowContainerReason = (
+  reason: LegacyContainerError["reason"],
+): LegacyShadowDbError["reason"] => {
+  switch (reason) {
+    case "runtime":
+      return "docker_daemon";
+    case "internal":
+      return "internal";
+    case "port_conflict":
+      return "port_conflict";
+    default:
+      return "container_configuration";
+  }
+};
+
+/**
+ * Required to bypass the pg_cron check
+ * (https://github.com/citusdata/pg_cron/blob/main/pg_cron.sql#L3). Go's `CREATE_TEMPLATE`
+ * (`apps/cli-go/internal/db/diff/diff.go:164`).
+ */
+export const LEGACY_SHADOW_CREATE_TEMPLATE_SQL =
+  "CREATE DATABASE contrib_regression TEMPLATE postgres";
+
+/**
+ * Go's `ConnectShadowDatabase`'s fixed timeout — 10 seconds, EVERY real Go caller
+ * (`apps/cli-go/internal/db/diff/diff.go:187,200`, `internal/migration/squash/squash.go:91`)
+ * passes the same `10*time.Second` literal.
+ */
+export const LEGACY_SHADOW_CONNECT_TIMEOUT_SECONDS = 10;
+
+/**
+ * Go's `NewBackoffPolicy(ctx, timeout)` (`apps/cli-go/internal/db/start/start.go:192-198`): a
+ * 1-second constant delay, capped at `timeout` (in whole seconds) retries after the initial
+ * attempt.
+ */
+const LEGACY_SHADOW_CONNECT_SCHEDULE = Schedule.max([
+  Schedule.spaced("1 seconds"),
+  Schedule.recurs(LEGACY_SHADOW_CONNECT_TIMEOUT_SECONDS),
+]);
+
+/**
+ * Port of Go's `ConnectShadowDatabase` (`apps/cli-go/internal/db/diff/diff.go:153-161`): a
+ * SECOND, independent connect-retry loop layered ON TOP OF the container health wait the
+ * caller already ran (`start.WaitForHealthyService`) — a healthy Postgres healthcheck doesn't
+ * guarantee the very next connection attempt succeeds instantly, so Go retries the connect
+ * itself too, constant 1s backoff, up to {@link LEGACY_SHADOW_CONNECT_TIMEOUT_SECONDS} retries.
+ * Scoped: the returned session's connection closes when the caller's scope closes, matching
+ * Go's `defer conn.Close(context.Background())` at each real call site.
+ */
+export const legacyConnectShadowDatabase = (
+  cfg: LegacyPgConnInput,
+): Effect.Effect<LegacyDbSession, LegacyShadowDbError, LegacyDbConnection | Scope.Scope> =>
+  Effect.gen(function* () {
+    const dbConnection = yield* LegacyDbConnection;
+    return yield* dbConnection.connect(cfg, { isLocal: true, dnsResolver: "native" }).pipe(
+      Effect.mapError(
+        (cause) => new LegacyShadowDbError({ message: cause.message, reason: "connect" }),
+      ),
+      Effect.retry({ schedule: LEGACY_SHADOW_CONNECT_SCHEDULE }),
+    );
+  });
+
+/**
+ * Input to {@link legacyCreateShadowDatabase} — the subset of the real `db` container's own
+ * bootstrap inputs the shadow variant needs, plus its own host port. See
+ * {@link LegacyShadowPostgresContainerSpecInput} (the container-spec shape this wraps) for
+ * the field-by-field Go citations.
+ */
+export interface LegacyCreateShadowDatabaseInput extends LegacyShadowPostgresContainerSpecInput {
+  /** Go's `Config.ProjectId` — merged onto the shadow's own labels (`DockerStart`'s unconditional label assignment) and the network-create call, matching every other container this codebase creates. */
+  readonly projectId: string;
+  readonly isBitbucketPipeline: boolean;
+  readonly workdir: string;
+  readonly extraHosts: ReadonlyArray<string>;
+  /**
+   * Set ONLY by the shadow baseline cache's warm path (`shadow-cache.ts`): a previously exported
+   * PGDATA tar to unpack into the container between `docker create` and `docker start`, so the
+   * `supabase/postgres` entrypoint finds an initialized data directory and skips `initdb` plus
+   * the whole platform baseline. Everything else about the container — including `--rm` and the
+   * project-labels-only label set — is identical to an uncached shadow, so a restored shadow is
+   * still a throwaway container removed on release.
+   *
+   * Delivered as {@link LegacyStartContainerSpec.preStartArchives}; see that field's doc comment
+   * for why the tar-stream form of `docker cp` is the only one that works here.
+   */
+  readonly restoreArchive?: NonNullable<LegacyStartContainerSpec["preStartArchives"]>[number];
+  /**
+   * Set ONLY by the shadow baseline cache's COLD path (`shadow-cache.ts`), to `false`. That path
+   * has to `docker stop` the container mid-run to take a coherent disk-level PGDATA snapshot and
+   * then `docker start` it again — and Docker removes an `AutoRemove` container the moment it
+   * exits, `docker stop` included (verified against Docker 29: the container is gone ~1-2s after
+   * the stop returns), which would leave nothing to restart.
+   *
+   * The container is still removed by `docker rm -f -v` on release exactly like every other
+   * shadow, so the only externally visible difference is what a SIGKILLed CLI leaves behind: a
+   * stopped shadow container carrying the usual project labels — which `supabase stop` sweeps —
+   * rather than nothing. Omitted (i.e. Go's `--rm`) on the warm path and whenever the cache is
+   * off, since neither ever stops the container.
+   */
+  readonly autoRemove?: boolean;
+}
+
+/** Resolved by {@link legacyCreateShadowDatabase} — everything a caller needs to both use and later tear down the shadow. */
+export interface LegacyShadowDatabaseHandle {
+  /** Docker always returns the id from `docker create`, regardless of whether `--name` was passed. */
+  readonly containerId: string;
+}
+
+/**
+ * Port of Go's `CreateShadowDatabase` (`apps/cli-go/internal/db/diff/diff.go:138-151`):
+ * ensures the local Docker network exists (Go's `DockerStart` calls
+ * `DockerNetworkCreateIfNotExists` on EVERY invocation, unlike the `start`/`reset`
+ * compositions, which hoist this to run once per orchestrated run — `db diff`/`db pull` have
+ * no such orchestrator, so this mirrors Go's own per-call behavior instead), then creates +
+ * starts the shadow container.
+ *
+ * Leak window (deliberate Go parity, not a bug — the canonical explanation every call site
+ * below cross-references): every real caller runs this whole function as the `acquire` of an
+ * `Effect.acquireUseRelease` whose `release` is {@link legacyRemoveShadowDatabase} (see
+ * `diff.handler.ts`/`pull.handler.ts`'s call sites). Effect only
+ * registers `release` once `acquire` itself resolves successfully; an `acquire` that fails
+ * partway through — `docker create` having already succeeded, but the LATER `docker
+ * cp`/`docker start` step inside {@link legacyCreateContainer} then failing
+ * (`container-lifecycle.ts`) — has, by definition, nothing for `release` to tear down, so the
+ * already-created container is never removed here. This matches Go exactly: `DockerStart`
+ * returns `(resp.ID, err)` from the SAME function that calls `ContainerCreate` then
+ * `ContainerStart` (`apps/cli-go/internal/utils/docker.go:420-436`), and
+ * `PrepareShadowSource`/`CreateShadowDatabase`'s own Go callers only register their `defer
+ * DockerRemove(shadow)` AFTER a successful return — on a `DockerStart` error, the returned id
+ * is discarded before that `defer` is ever reached (`internal/db/diff/shadow.go:38-41`),
+ * leaking the container identically. Not worth a bespoke "clean up whatever `docker create`
+ * already made" path just to be stricter than Go's own upstream behavior here.
+ */
+export const legacyCreateShadowDatabase = (
+  spawner: Spawner,
+  input: LegacyCreateShadowDatabaseInput,
+): Effect.Effect<LegacyShadowDatabaseHandle, LegacyShadowDbError> =>
+  Effect.gen(function* () {
+    const labels = {
+      [LEGACY_CLI_PROJECT_LABEL]: input.projectId,
+      [LEGACY_COMPOSE_PROJECT_LABEL]: input.projectId,
+    };
+    yield* legacyEnsureNetwork(spawner, input.networkId, labels).pipe(
+      Effect.mapError(
+        (cause) =>
+          new LegacyShadowDbError({
+            message: cause.message,
+            reason: legacyShadowContainerReason(cause.reason),
+          }),
+      ),
+    );
+    // Both overrides are the shadow baseline cache's and nobody else's: a warm restore adds one
+    // `docker cp -` between `docker create` and `docker start` (no argv change at all), and a cold
+    // cache-enabled provision drops `--rm` so the container survives its own snapshot's `docker
+    // stop`. The spec builder itself stays on Go's `autoRemove: true` default. See each field's
+    // doc comment on {@link LegacyCreateShadowDatabaseInput}.
+    const baseSpec = legacyBuildShadowPostgresContainerSpec(input);
+    const spec: LegacyStartContainerSpec = {
+      ...baseSpec,
+      ...(input.autoRemove === undefined ? {} : { autoRemove: input.autoRemove }),
+      ...(input.restoreArchive === undefined ? {} : { preStartArchives: [input.restoreArchive] }),
+    };
+    // The shadow container has no name (Docker auto-generates one) and no network alias —
+    // see this module's own header for why that's still enough for the shadow's own one-shot
+    // setup jobs to reach it. The pgsodium root key itself (PG15+ only) never touches host
+    // disk at all — it's delivered straight into the container via `docker cp`
+    // ({@link LegacyStartContainerSpec.secretFiles}, `container-lifecycle.ts`), same as every
+    // other container's secrets.
+    const containerOpts: LegacyContainerOpts = {
+      projectId: input.projectId,
+      isBitbucketPipeline: input.isBitbucketPipeline,
+      workdir: input.workdir,
+      extraHosts: input.extraHosts,
+    };
+    const containerId = yield* legacyCreateContainer(spawner, spec, containerOpts).pipe(
+      Effect.mapError(
+        (cause) =>
+          new LegacyShadowDbError({
+            message: cause.message,
+            reason: legacyShadowContainerReason(cause.reason),
+          }),
+      ),
+    );
+    return { containerId };
+  });
+
+/**
+ * Port of Go's `utils.DockerRemove(shadow)` as called by every shadow caller
+ * (`apps/cli-go/internal/db/diff/diff.go:217`, `shadow.go:45,103`,
+ * `internal/migration/squash/squash.go:87`): `RemoveOptions{RemoveVolumes: true, Force:
+ * true}` via `docker rm -f -v <id>`. Best-effort for the OVERALL operation — Go's own
+ * `DockerRemove` swallows the removal's ERROR RETURN (it has no return value at all), so a
+ * failure here must never mask whatever the caller was doing with the shadow — but it does
+ * NOT swallow the message: Go prints `"Failed to remove container:", containerId, err` to
+ * stderr on failure (`apps/cli-go/internal/utils/docker.go:442-449`), so this does the same
+ * before continuing. That includes a failure to even launch/collect the removal itself (the
+ * container CLI missing, a disconnected runtime, a stream-read error) — Go's single
+ * `Docker.ContainerRemove` SDK call folds every one of those causes into the same `err` it
+ * prints, so this catches {@link spawnContainerCli}/exit-code-collection failures the same way
+ * {@link legacyRestartSatelliteService} does (`restart-services.ts`), via
+ * {@link legacyDescribeContainerCliFailure}, rather than discarding them unreported.
+ */
+export const legacyRemoveShadowDatabase = (
+  spawner: Spawner,
+  containerId: string,
+): Effect.Effect<void, never, Output> =>
+  Effect.gen(function* () {
+    if (containerId.length === 0) return;
+    const failureMessage = yield* Effect.scoped(
+      Effect.gen(function* () {
+        const child = yield* spawnContainerCli(spawner, ["rm", "-f", "-v", containerId], {
+          stdin: "ignore",
+          stdout: "ignore",
+          stderr: "pipe",
+          extendEnv: true,
+        });
+        const [exitCode, stderr] = yield* Effect.all(
+          [child.exitCode.pipe(Effect.map(Number)), legacyCollectText(child.stderr)],
+          { concurrency: "unbounded" },
+        );
+        return exitCode === 0 ? undefined : stderr.trim();
+      }),
+    ).pipe(Effect.catch((cause) => Effect.succeed(legacyDescribeContainerCliFailure(cause))));
+    if (failureMessage !== undefined) {
+      const output = yield* Output;
+      yield* output.raw(`Failed to remove container: ${containerId} ${failureMessage}\n`, "stderr");
+    }
+  });
+
+/** A live shadow database left running for the caller to diff against and remove. Mirrors Go's `ShadowSource`. */
+export interface LegacyShadowSourceResult {
+  /** Container id; the caller MUST remove it (`legacyRemoveShadowDatabase`) when done. */
+  readonly container: string;
+  /** The diff source Postgres URL (the provisioned shadow). */
+  readonly sourceUrl: string;
+  /**
+   * When set, replaces the diff target with a second database on the SAME shadow container
+   * (`contrib_regression`, cloned from `postgres` by `CREATE_TEMPLATE` during shadow setup —
+   * see {@link legacySetupShadowConn}) with declarative schemas applied, so the user's local
+   * DB itself is never diffed directly in that branch. Only ever set by
+   * `legacy-shadow-source.ts`'s `legacyPrepareShadowSource`.
+   */
+  readonly targetUrlOverride: string | undefined;
+}
+
+/** Fields shared by `legacy-shadow-source.ts`'s `LegacyPrepareShadowSourceInput` and the shadow readiness probes. */
+export interface LegacyShadowConnectionInput extends LegacyCreateShadowDatabaseInput {
+  readonly fs: FileSystem.FileSystem;
+  readonly path: Path.Path;
+  readonly hostname: string;
+  /** `[db] password` (already resolved from `config.toml`) — the shadow's own connect password. */
+  readonly password: string;
+  readonly healthTimeoutSeconds: number;
+}
+
+/**
+ * {@link LegacyShadowConnectionInput} plus the platform-baseline setup fields
+ * {@link legacySetupDatabase}/`legacyMigrateShadowDatabase`/`legacySetupShadowDatabase` need —
+ * the full shape {@link legacyShadowRunInputFromLocalContainerInputs} returns. Named here
+ * (CLI-1969) rather than as an `Omit<...>` of a diff/pull-specific type, so `migration squash`
+ * — which has none of the diff/pull-specific fields (`targetLocal`/`schemaPaths`/
+ * `migrationMode`/…) — can consume the promoted function's return value directly, with no `as`
+ * cast. `legacy-shadow-source.ts`'s `LegacyPrepareShadowSourceInput<E>` extends this with
+ * those extra fields instead of duplicating the `setup` field itself.
+ */
+export interface LegacyShadowSetupInput<E> extends LegacyShadowConnectionInput {
+  readonly setup: LegacyShadowDbSetupInput<E>;
+}
+
+/**
+ * Memoizes `effect`'s first SUCCESS; failures are never cached, so a retry re-runs the real
+ * effect. Deliberately not `Effect.cached` (which returns `Effect<Effect<A, E>>` and needs an
+ * effectful construction site — {@link legacyShadowRunInputFromLocalContainerInputs} is a plain
+ * function) and not concurrency-guarded: the two consumers of the one field this wraps (`jwks` —
+ * see its construction inside that function) evaluate sequentially on the same fiber.
+ */
+export function legacyMemoizeSuccess<A, E>(effect: Effect.Effect<A, E>): Effect.Effect<A, E> {
+  let succeeded: Effect.Effect<A, E> | undefined;
+  return Effect.suspend(
+    () =>
+      succeeded ??
+      effect.pipe(
+        Effect.tap((value) =>
+          Effect.sync(() => {
+            succeeded = Effect.succeed(value);
+          }),
+        ),
+      ),
+  );
+}
+
+/**
+ * Adapts {@link LegacyLocalDbContainerInputs} (`local-container-inputs.ts`, the SAME
+ * config/image/JWKS resolution prelude `db start`/`db reset` share) plus the caller's own
+ * already-loaded `config.toml` slice into {@link LegacyShadowSetupInput} — every field
+ * `legacy-shadow-source.ts`'s `legacyPrepareShadowSource` or `migration squash`'s own shadow
+ * composition need EXCEPT the diff/pull-specific
+ * ones (`targetLocal`/`schemaPaths`/`migrationMode`/…, left to each call site).
+ * Promoted here from
+ * `commands/db/shared/legacy-shadow-source.ts` (CLI-1969, hoist-before-duplicate): `migration
+ * squash` needs this same shadow run-input shape, but importing the `db`-family-scoped
+ * `legacy-shadow-source.ts` would drag its whole pg-delta/migra/declarative stack into a
+ * command that has no diff engine at all.
+ *
+ * On `db diff --linked`/`db pull` (linked), the caller passes its own resolved ref straight
+ * through to `legacyBuildLocalDbContainerInputs` (its own `projectRef` parameter — see
+ * that function's doc comment), which threads it into `legacyLoadLocalProjectContext` ->
+ * `loadCliConfig({ projectRef })`. So the shadow's OWN container config (image, JWT
+ * secret, root key, `db.settings`, service enabled-for-setup flags, sourced from
+ * `localInputs.context.config`/`postgresSpecBase`) reflects the matching `[remotes.<ref>]`
+ * override, same as `toml` (the caller's own `legacyReadDbToml(..., linkedRef)` result,
+ * which feeds `pgDelta`/vault/`apiAutoExposeNewTables` below) — matching Go's own uniform
+ * remote-merge on the linked path (`LoadConfig` seeds `flags.ProjectRef` before every field
+ * read). The two config reads still go through independent remote-merge implementations
+ * (`@supabase/config`'s `applyRemoteOverride` for `localInputs.context.config`;
+ * `legacy-db-config.toml-read.ts`'s own TOML-based merge for `toml`) rather than a single
+ * shared decode — unifying those is a larger, out-of-scope refactor, not a per-command gap.
+ */
+export function legacyShadowRunInputFromLocalContainerInputs(
+  localInputs: LegacyLocalDbContainerInputs,
+  resolvedImage: string,
+  toml: {
+    readonly shadowPort: number;
+    readonly password: string;
+    readonly webhooksEnabled: boolean;
+    readonly baseline: { readonly apiAutoExposeNewTables: Option.Option<boolean> };
+    readonly vault: ReadonlyArray<LegacyVaultSecret>;
+  },
+  fs: FileSystem.FileSystem,
+  path: Path.Path,
+): LegacyShadowSetupInput<LegacyDbConfigLoadError> {
+  const { postgresSpecBase } = localInputs;
+  return {
+    db: {
+      major_version: postgresSpecBase.db.major_version,
+      settings: postgresSpecBase.db.settings,
+    },
+    experimental: postgresSpecBase.experimental,
+    jwtSecret: postgresSpecBase.jwtSecret,
+    jwtExpiry: postgresSpecBase.jwtExpiry,
+    networkId: localInputs.networkId,
+    image: resolvedImage,
+    configImage: postgresSpecBase.configImage,
+    rootKey: postgresSpecBase.rootKey,
+    shadowPort: toml.shadowPort,
+    projectId: localInputs.context.projectId,
+    isBitbucketPipeline: localInputs.containerOpts.isBitbucketPipeline,
+    workdir: localInputs.containerOpts.workdir,
+    extraHosts: localInputs.containerOpts.extraHosts,
+    fs,
+    path,
+    hostname: localInputs.context.hostname,
+    password: toml.password,
+    healthTimeoutSeconds: localInputs.dbHealthTimeoutSeconds,
+    setup: {
+      majorVersion: localInputs.setup.majorVersion,
+      config: localInputs.setup.config,
+      webhooksEnabled: toml.webhooksEnabled,
+      // NOT `localInputs.setup.dbUrl` — that carries the REGULAR local container's own
+      // hardcoded-"postgres" password (`legacy-local-config-values.ts`'s `DEFAULT_DB_PASSWORD`),
+      // for a DIFFERENT container. The shadow's own one-shot setup jobs
+      // (`legacyBuildShadowSetupDatabaseInput`) only ever consume this `dbUrl` to extract a
+      // password (`legacyStartInternalDbPassword`) for the SHADOW they actually run against, so
+      // it must carry the SAME resolved `toml.password` the shadow container itself is
+      // initialized with (see `legacyBuildShadowPostgresContainerSpec`) — otherwise a non-default
+      // `[db] password` authenticates against the wrong secret and every setup job fails.
+      dbUrl: legacyToPostgresURL({
+        host: localInputs.context.hostname,
+        port: toml.shadowPort,
+        user: "postgres",
+        password: toml.password,
+        database: "postgres",
+      }),
+      jwtSecret: localInputs.setup.jwtSecret,
+      // Memoized: with the shadow baseline cache enabled this effect is evaluated TWICE on a
+      // cold run — once by `legacyResolveShadowCacheKeyInputs` (`shadow-cache.ts`) for the cache
+      // key, once by `legacyResolveDbSetupPrelude` for the baseline itself — and third-party
+      // JWKS discovery can be a real network request. Memoizing the first success keeps the run
+      // to one request AND guarantees the published snapshot carries the exact value its key was
+      // computed from, even if the issuer rotates mid-run.
+      jwks: legacyMemoizeSuccess(localInputs.setup.jwks),
+      apiUrl: localInputs.setup.apiUrl,
+      authExternalUrl: localInputs.setup.authExternalUrl,
+      siteUrl: localInputs.setup.siteUrl,
+      anonKey: localInputs.setup.anonKey,
+      serviceRoleKey: localInputs.setup.serviceRoleKey,
+      storageTargetMigration: localInputs.setup.storageTargetMigration,
+      realtimeEnabledForSetup: localInputs.setup.realtimeEnabledForSetup,
+      storageEnabledForSetup: localInputs.setup.storageEnabledForSetup,
+      authEnabledForSetup: localInputs.setup.authEnabledForSetup,
+      serviceVersionOverrides: localInputs.setup.serviceVersionOverrides,
+      projectEnvValues: localInputs.setup.projectEnvValues,
+      debug: localInputs.setup.debug,
+      apiAutoExposeNewTables: toml.baseline.apiAutoExposeNewTables,
+      vault: toml.vault,
+    },
+  };
+}
+
+/** Host/port/password fields every shadow connect target is built from. */
+export interface LegacyShadowConnFields {
+  readonly hostname: string;
+  readonly shadowPort: number;
+  readonly password: string;
+}
+
+/** The shadow's `postgres`/`postgres` connect target on the published host port. */
+export const legacyShadowConnConfig = (input: LegacyShadowConnFields): LegacyPgConnInput => ({
+  host: input.hostname,
+  port: input.shadowPort,
+  user: "postgres",
+  password: input.password,
+  database: "postgres",
+});
+
+/**
+ * Port of Go's `setupShadowConn` (`apps/cli-go/internal/db/diff/diff.go:171-179`):
+ * {@link legacySetupDatabase} (Go's `SetupDatabase`) against an already-connected shadow,
+ * dialed at `input.dbHost` = `container.slice(0, 12)` (see this module's own header), then
+ * unconditionally {@link LEGACY_SHADOW_CREATE_TEMPLATE_SQL} — every real Go caller of
+ * `setupShadowConn` itself (`SetupShadowDatabase`/`MigrateShadowDatabase` below) always
+ * creates the template database; a future caller that only needs the bare `SetupDatabase`
+ * step (`migration squash`, which calls `start.SetupDatabase` DIRECTLY, bypassing
+ * `setupShadowConn` entirely — `squash.go:96`) calls {@link legacySetupDatabase} on its own
+ * instead, so this function stays the exact `setupShadowConn` shape without a parameter for
+ * a branch no real caller of THIS function takes.
+ */
+export const legacySetupShadowConn = (
+  spawner: Spawner,
+  input: LegacySetupDatabaseInput,
+  options: LegacySetupDatabaseOptions = {},
+): Effect.Effect<
+  void,
+  LegacyStartSetupLocalDatabaseError | LegacyShadowDbError,
+  Output | LegacyDockerRun | RuntimeInfo
+> =>
+  Effect.gen(function* () {
+    yield* legacySetupDatabase(spawner, input, options).pipe(
+      // The baseline's batched SQL files check their own connection out of the pool;
+      // failing to acquire one is a shadow CONNECT failure, like
+      // `legacyConnectShadowDatabase`'s, never a setup/statement failure.
+      Effect.catchTag("LegacyDbConnectError", (cause) =>
+        Effect.fail(new LegacyShadowDbError({ message: cause.message, reason: "connect" })),
+      ),
+    );
+    yield* legacyCreateShadowTemplateDatabase(input.session);
+  });
+
+/**
+ * {@link legacySetupShadowConn}'s trailing {@link LEGACY_SHADOW_CREATE_TEMPLATE_SQL} step on its
+ * own (Go's `setupShadowConn`'s second half, `diff.go:178`). Split out because it is the ONE part
+ * of Go's `setupShadowConn` a warm shadow-cache hit still has to run: the cache's PGDATA snapshot
+ * is taken strictly BEFORE this statement (`shadow-cache.ts`), so a restored cluster carries the
+ * platform baseline but no `contrib_regression`, and the template database must be recreated even
+ * though the baseline itself is skipped.
+ */
+const legacyCreateShadowTemplateDatabase = (
+  session: LegacyDbSession,
+): Effect.Effect<void, LegacyShadowDbError, Output> =>
+  session.exec(LEGACY_SHADOW_CREATE_TEMPLATE_SQL).pipe(
+    Effect.mapError(
+      (cause) =>
+        new LegacyShadowDbError({
+          message: `failed to create template database: ${errMessage(cause)}`,
+          reason: "database",
+        }),
+    ),
+  );
+
+/**
+ * Shared fields both {@link legacySetupShadowDatabase} and {@link legacyMigrateShadowDatabase}
+ * need to resolve JWKS/images and run {@link legacySetupDatabase} — derived from `db-setup.ts`'s
+ * `LegacyFreshDbSetupInput` (the exact same shape `legacyRunFreshDbSetup` resolves for the real
+ * local `db` container) rather than hand-copied, so the two never silently drift: swap
+ * `experimental` (which only `legacyStartSetupLocalDatabase`'s trailing `MigrateAndSeed` call
+ * needs — irrelevant to the shadow's `SetupDatabase`-only pipeline, see {@link
+ * LegacySetupDatabaseInput}'s own doc comment) for the two fields the shadow's own caller
+ * (`legacy-shadow-source.ts`) resolves from an already-loaded `config.toml` instead
+ * (`apiAutoExposeNewTables`/`vault`), threaded straight through here rather than re-read.
+ */
+export type LegacyShadowDbSetupInput<E> = Omit<LegacyFreshDbSetupInput<E>, "experimental"> & {
+  readonly webhooksEnabled: LegacySetupDatabaseInput["webhooksEnabled"];
+  readonly apiAutoExposeNewTables: LegacySetupDatabaseInput["apiAutoExposeNewTables"];
+  readonly vault: LegacySetupDatabaseInput["vault"];
+};
+
+/** Common caller-supplied plumbing for {@link legacySetupShadowDatabase}/{@link legacyMigrateShadowDatabase}. */
+interface LegacyShadowSetupRunInput<E> {
+  readonly fs: FileSystem.FileSystem;
+  readonly path: Path.Path;
+  readonly workdir: string;
+  /** Go's `Config.ProjectId` — labels the shadow's own PG15+ one-shot migrate job containers, same as the real local `db` container's — see {@link LegacySetupDatabaseInput.projectId}'s own doc comment. */
+  readonly projectId: string;
+  readonly container: string;
+  readonly networkId: string;
+  /** The shadow's own connect target — host/port/user/password/database (`postgres`/`postgres`). */
+  readonly connConfig: LegacyPgConnInput;
+  readonly setup: LegacyShadowDbSetupInput<E>;
+}
+
+/**
+ * Builds a {@link LegacySetupDatabaseInput} for {@link legacySetupDatabase} out of an
+ * already-connected shadow session plus the resolved images/JWKS prelude — exported so a
+ * future caller that only needs `SetupDatabase` directly (`migration squash`, which calls
+ * Go's `start.SetupDatabase` without going through `setupShadowConn` at all — see {@link
+ * legacySetupShadowConn}'s own doc comment) can build this same shape without duplicating the
+ * `container[:12]` dbHost derivation.
+ */
+export const legacyBuildShadowSetupDatabaseInput = <E>(
+  input: LegacyShadowSetupRunInput<E>,
+  session: LegacyDbSession,
+  resolved: { readonly jwks: string; readonly images: LegacyStartDbSetupImages },
+): LegacySetupDatabaseInput => ({
+  session,
+  fs: input.fs,
+  path: input.path,
+  workdir: input.workdir,
+  config: input.setup.config,
+  webhooksEnabled: input.setup.webhooksEnabled,
+  majorVersion: input.setup.majorVersion,
+  // Go's `container[:12]` — see this module's own header for why this resolves as a
+  // hostname at all despite the shadow container having no name/alias.
+  dbHost: input.container.slice(0, 12),
+  projectId: input.projectId,
+  networkId: input.networkId,
+  dbUrl: input.setup.dbUrl,
+  jwtSecret: input.setup.jwtSecret,
+  jwks: resolved.jwks,
+  apiUrl: input.setup.apiUrl,
+  authExternalUrl: input.setup.authExternalUrl,
+  siteUrl: input.setup.siteUrl,
+  anonKey: input.setup.anonKey,
+  serviceRoleKey: input.setup.serviceRoleKey,
+  storageTargetMigration: input.setup.storageTargetMigration,
+  images: resolved.images,
+  projectEnvValues: input.setup.projectEnvValues,
+  debug: input.setup.debug,
+  apiAutoExposeNewTables: input.setup.apiAutoExposeNewTables,
+  vault: input.setup.vault,
+});
+
+/**
+ * Port of Go's `SetupShadowDatabase` (`apps/cli-go/internal/db/diff/diff.go:181-193`):
+ * connects to the shadow (Go's `ConnectShadowDatabase`, {@link legacyConnectShadowDatabase})
+ * FIRST, THEN resolves the setup prelude (JWKS/pinned image names, {@link
+ * legacyResolveDbSetupPrelude}) and runs {@link legacySetupShadowConn} — the platform
+ * baseline plus the template database, no user migrations. Connect-then-setup, matching Go's
+ * own `SetupShadowDatabase` (which dials `ConnectShadowDatabase` before ever calling
+ * `start.SetupDatabase`, `diff.go:186-192`) and this same module's `legacyRunFreshDbSetup`
+ * (`db-setup.ts`) for the real local `db` container: an unconnectable shadow must surface a
+ * connect error immediately, not pay for JWKS work first. The connection is closed once this
+ * resolves (Go's `defer conn.Close(...)`), matching `Effect.scoped`'s finalizer running at the
+ * end of this function rather than leaking a `Scope.Scope` requirement to the caller.
+ *
+ * `baseline` defaults to {@link LEGACY_SHADOW_BASELINE_COLD}, i.e. exactly the sequence above.
+ * A warm shadow-cache hit skips the prelude + `SetupDatabase` (the restored cluster already
+ * has them) and only recreates `contrib_regression`; a cache-enabled COLD provision snapshots
+ * between the baseline and the template, matching {@link migrateShadowDatabase}.
+ */
+export const legacySetupShadowDatabase = <E>(
+  spawner: Spawner,
+  input: LegacyShadowSetupRunInput<E>,
+  options: LegacySetupDatabaseOptions = {},
+  baseline: LegacyShadowBaselineState = LEGACY_SHADOW_BASELINE_COLD,
+): Effect.Effect<
+  void,
+  LegacyStartSetupLocalDatabaseError | LegacyShadowDbError | LegacyImagePrepullError | E,
+  Output | LegacyDockerRun | RuntimeInfo | LegacyDbConnection
+> =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      if (!baseline.baselinePresent && baseline.snapshotRequired) {
+        yield* Effect.scoped(
+          Effect.gen(function* () {
+            const setupSession = yield* legacyConnectShadowDatabase(input.connConfig);
+            const resolved = yield* legacyResolveDbSetupPrelude(input.setup);
+            yield* legacySetupDatabase(
+              spawner,
+              legacyBuildShadowSetupDatabaseInput(input, setupSession, resolved),
+              options,
+            ).pipe(
+              // The baseline's batched SQL files check their own connection out of the pool;
+              // failing to acquire one is a shadow CONNECT failure, like
+              // `legacyConnectShadowDatabase`'s, never a setup/statement failure.
+              Effect.catchTag("LegacyDbConnectError", (cause) =>
+                Effect.fail(new LegacyShadowDbError({ message: cause.message, reason: "connect" })),
+              ),
+            );
+          }),
+        );
+        yield* baseline.snapshotBaseline;
+      }
+      const session = yield* legacyConnectShadowDatabase(input.connConfig);
+      if (!baseline.baselinePresent && !baseline.snapshotRequired) {
+        const resolved = yield* legacyResolveDbSetupPrelude(input.setup);
+        yield* legacySetupDatabase(
+          spawner,
+          legacyBuildShadowSetupDatabaseInput(input, session, resolved),
+          options,
+        ).pipe(
+          // Same connect-vs-setup classification as the snapshot branch above.
+          Effect.catchTag("LegacyDbConnectError", (cause) =>
+            Effect.fail(new LegacyShadowDbError({ message: cause.message, reason: "connect" })),
+          ),
+        );
+      }
+      yield* legacyCreateShadowTemplateDatabase(session);
+    }),
+  );
+
+/**
+ * What an `acquire` hands the `use` phase about the shadow cluster's CONTENTS — the seam the warm
+ * shadow-container cache (`shadow-cache.ts`) needs and nothing else uses.
+ *
+ * Deliberately a value the acquire OWNS and returns (alongside the container id), not an
+ * `afterBaseline` callback threaded down through `legacyPrepareShadowSource`: the cache is the
+ * only party that knows whether a cluster already carries a baseline and what to do once a fresh
+ * one exists, so both answers travel together with the container the cache handed over.
+ * {@link LEGACY_SHADOW_BASELINE_COLD} is what every uncached caller passes.
+ */
+export interface LegacyShadowBaselineState {
+  /**
+   * `true` only on a warm cache hit: the cluster already carries the platform baseline
+   * (`legacySetupDatabase`'s init schema + API privileges + vault + `roles.sql`), restored from
+   * the cache's own PGDATA snapshot, so re-running it would be wasted work at best and a
+   * double-applied baseline at worst.
+   */
+  readonly baselinePresent: boolean;
+  /**
+   * `true` ONLY for a cache-enabled COLD provision — the one state whose
+   * {@link snapshotBaseline} really stops the container. This is what
+   * {@link legacyMigrateShadowDatabase} keys its session structure on: the baseline session must
+   * be closed before a real snapshot (a disk-level export severs any live backend), but when no
+   * snapshot will run, splitting sessions would be a gratuitous behavior change — a reconnect
+   * picks up role-level defaults `roles.sql` may have just installed (e.g. `ALTER ROLE postgres
+   * SET statement_timeout`), which an uncached single session never exposes to migrations.
+   * Uncached and warm runs keep one session.
+   */
+  readonly snapshotRequired: boolean;
+  /**
+   * Runs after a freshly provisioned baseline and before the template / user
+   * migrations. Takes no session; a real snapshot stops the container.
+   *
+   * A failed snapshot degrades silently except when the shadow does not come
+   * back — that is a {@link LegacyShadowDbError}.
+   */
+  readonly snapshotBaseline: Effect.Effect<void, LegacyShadowDbError, Output | LegacyDbConnection>;
+}
+
+/** The baseline state every uncached caller passes: provision it, snapshot nothing. */
+export const LEGACY_SHADOW_BASELINE_COLD: LegacyShadowBaselineState = {
+  baselinePresent: false,
+  snapshotRequired: false,
+  snapshotBaseline: Effect.void,
+};
+
+/**
+ * Port of Go's `MigrateShadowDatabase` (`apps/cli-go/internal/db/diff/diff.go:195-209`):
+ * lists local migrations FIRST (Go's `migration.ListLocalMigrations`, fails fast on a bad
+ * migrations directory before any DB connection is even attempted), THEN connects (Go's
+ * `ConnectShadowDatabase`), THEN resolves the setup prelude (JWKS/pinned image names, {@link
+ * legacyResolveDbSetupPrelude}) and sets up the platform baseline + template database ({@link
+ * legacySetupShadowConn}), then applies every listed migration (Go's
+ * `migration.ApplyMigrations`). Connect-then-setup (not the reverse) matches Go's own
+ * `MigrateShadowDatabase` (`diff.go:195-209`) and this same module's `legacyRunFreshDbSetup`
+ * (`db-setup.ts`) for the real local `db` container — see {@link legacySetupShadowDatabase}'s
+ * own doc comment for why the ordering matters. Connection closed once this resolves, matching
+ * Go's `defer conn.Close(...)`.
+ *
+ * `baseline` defaults to {@link LEGACY_SHADOW_BASELINE_COLD}, i.e. exactly the sequence above.
+ * A warm shadow-cache hit passes a state whose `baselinePresent` is `true`, which skips the
+ * prelude + `SetupDatabase` steps (the restored cluster already has them) and goes straight to
+ * the template database and the user migrations; a COLD cache-enabled provision passes the same
+ * cold sequence plus a `snapshotBaseline` step between the baseline and the template database.
+ *
+ * Only the SNAPSHOTTING cold branch (`baseline.snapshotRequired`) splits sessions: there the
+ * baseline runs in its own scope, its session is CLOSED before
+ * {@link LegacyShadowBaselineState.snapshotBaseline} (the disk-level PGDATA snapshot stops
+ * the container, which severs any live backend), and the template database + migrations run on a
+ * second session. Every OTHER state — uncached (cache off / `--no-cache` / OrioleDB) and warm —
+ * keeps the established single session: see
+ * {@link LegacyShadowBaselineState.snapshotRequired} for why the split must not leak into the
+ * uncached path. The SQL every path issues is unchanged.
+ */
+const migrateShadowDatabase = <E>(
+  spawner: Spawner,
+  input: LegacyShadowSetupRunInput<E>,
+  setupOptions: LegacySetupDatabaseOptions,
+  baseline: LegacyShadowBaselineState = LEGACY_SHADOW_BASELINE_COLD,
+): Effect.Effect<
+  void,
+  LegacyStartSetupLocalDatabaseError | LegacyShadowDbError | LegacyImagePrepullError | E,
+  Output | LegacyDockerRun | RuntimeInfo | LegacyDbConnection
+> =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const migrationsDir = input.path.join(input.workdir, "supabase", "migrations");
+      const pending = yield* legacyListLocalMigrationPaths(
+        input.fs,
+        input.path,
+        migrationsDir,
+      ).pipe(
+        Effect.mapError(
+          (cause) => new LegacyShadowDbError({ message: cause.message, reason: "filesystem" }),
+        ),
+      );
+
+      if (!baseline.baselinePresent && baseline.snapshotRequired) {
+        // Own scope: the baseline session must be closed before `snapshotBaseline` — see this
+        // function's own doc comment.
+        yield* Effect.scoped(
+          Effect.gen(function* () {
+            const setupSession = yield* legacyConnectShadowDatabase(input.connConfig);
+            const resolved = yield* legacyResolveDbSetupPrelude(input.setup);
+            yield* legacySetupDatabase(
+              spawner,
+              legacyBuildShadowSetupDatabaseInput(input, setupSession, resolved),
+              setupOptions,
+            ).pipe(
+              // The baseline's batched SQL files check their own connection out of the pool;
+              // failing to acquire one is a shadow CONNECT failure, like
+              // `legacyConnectShadowDatabase`'s, never a setup/statement failure.
+              Effect.catchTag("LegacyDbConnectError", (cause) =>
+                Effect.fail(new LegacyShadowDbError({ message: cause.message, reason: "connect" })),
+              ),
+            );
+          }),
+        );
+        yield* baseline.snapshotBaseline;
+      }
+      const session = yield* legacyConnectShadowDatabase(input.connConfig);
+      if (!baseline.baselinePresent && !baseline.snapshotRequired) {
+        // The established single-session flow: baseline + template + migrations all on this
+        // one session — see this function's own doc comment.
+        const resolved = yield* legacyResolveDbSetupPrelude(input.setup);
+        yield* legacySetupDatabase(
+          spawner,
+          legacyBuildShadowSetupDatabaseInput(input, session, resolved),
+          setupOptions,
+        ).pipe(
+          // Same connect-vs-setup classification as the snapshot branch above.
+          Effect.catchTag("LegacyDbConnectError", (cause) =>
+            Effect.fail(new LegacyShadowDbError({ message: cause.message, reason: "connect" })),
+          ),
+        );
+      }
+      yield* legacyCreateShadowTemplateDatabase(session);
+      yield* legacyApplyMigrations(
+        session,
+        input.fs,
+        input.path,
+        pending,
+        (message) => new LegacyShadowDbError({ message, reason: "database" }),
+      ).pipe(
+        // A batch runs on its own pooled connection: failing to acquire it is a
+        // shadow CONNECT failure (same classification as `legacyConnectShadowDatabase`),
+        // never a `"database"` statement failure.
+        Effect.catchTag("LegacyDbConnectError", (cause) =>
+          Effect.fail(new LegacyShadowDbError({ message: cause.message, reason: "connect" })),
+        ),
+      );
+    }),
+  );
+
+/**
+ * Migrates a shadow for migra and the legacy pg-delta engine. Those Go-backed
+ * workflows historically include `pg_net` in the platform baseline regardless of
+ * project config, so preserve that baseline while sharing the native TS setup path.
+ */
+export const legacyMigrateShadowDatabase = <E>(
+  spawner: Spawner,
+  input: LegacyShadowSetupRunInput<E>,
+  baseline: LegacyShadowBaselineState = LEGACY_SHADOW_BASELINE_COLD,
+): Effect.Effect<
+  void,
+  LegacyStartSetupLocalDatabaseError | LegacyShadowDbError | LegacyImagePrepullError | E,
+  Output | LegacyDockerRun | RuntimeInfo | LegacyDbConnection
+> => migrateShadowDatabase(spawner, input, { webhooks: "enabled" }, baseline);
+
+/**
+ * Migrates a shadow for the in-process pg-delta engine. Unlike the legacy engine,
+ * extension activation follows project config through `legacySetupDatabase`'s
+ * default options.
+ */
+export const legacyMigrateNextShadowDatabase = <E>(
+  spawner: Spawner,
+  input: LegacyShadowSetupRunInput<E>,
+  baseline: LegacyShadowBaselineState = LEGACY_SHADOW_BASELINE_COLD,
+): Effect.Effect<
+  void,
+  LegacyStartSetupLocalDatabaseError | LegacyShadowDbError | LegacyImagePrepullError | E,
+  Output | LegacyDockerRun | RuntimeInfo | LegacyDbConnection
+> => migrateShadowDatabase(spawner, input, {}, baseline);

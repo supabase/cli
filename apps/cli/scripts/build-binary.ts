@@ -9,7 +9,7 @@ import { bundleServeMainTemplate } from "../src/shared/functions/serve-main-bund
  * (supabase/supabase#45570). Used by the `build:legacy` script; the multi-target
  * release build in `build.ts` injects the same define.
  */
-const entrypoint = "src/legacy/main.ts";
+const entrypoint = "src/main.ts";
 const outfile = "dist/supabase-legacy";
 const packageJson = JSON.parse(
   await Bun.file(new URL("../package.json", import.meta.url)).text(),

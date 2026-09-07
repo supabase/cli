@@ -2,7 +2,7 @@ import { copyFileSync, mkdirSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import process from "node:process";
 import { CLI_CONFIG_SCHEMA_URL, PROJECT_CONFIG_SCHEMA_URL } from "@supabase/config";
-import { legacyRoot } from "../src/legacy/cli/root.ts";
+import { legacyRoot } from "../src/cli/root.ts";
 import { collectCommands, getHelpDoc } from "../src/shared/cli/command-docs.ts";
 import { formatHelpDocAsMarkdown } from "../src/shared/cli/markdown-formatter.ts";
 
