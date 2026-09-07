@@ -33,7 +33,6 @@ require (
 	github.com/jackc/pgx/v4 v4.18.3
 	github.com/joho/godotenv v1.5.1
 	github.com/muesli/reflow v0.3.0
-	github.com/multigres/multigres v0.0.0-20260126223308-f5a52171bbc4
 	github.com/oapi-codegen/nullable v1.2.0
 	github.com/olekukonko/tablewriter v1.1.4
 	github.com/posthog/posthog-go v1.24.3

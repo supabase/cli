@@ -17,12 +17,7 @@ import {
   legacyAssertDecryptableSecrets,
   legacyLoadProjectEnv,
 } from "../../../command-internal/legacy-db-config.toml-read.ts";
-import {
-  legacyParentNotLinkedMessage,
-  legacyParentRefInvalidMessage,
-  legacyParentRefTypoHint,
-  legacyResolveLinkedParentRef,
-} from "../../../command-internal/legacy-parent-project-ref.ts";
+import { legacyResolveLinkedParentRef } from "../../../command-internal/legacy-parent-project-ref.ts";
 import { LEGACY_BRANCH_UUID_PATTERN } from "../../../command-internal/legacy-ref-patterns.ts";
 import {
   legacySanitizeInlineName,
@@ -38,7 +33,7 @@ import {
   legacyConfigReadStatusMessage,
   legacyUnexpectedStatusMessage,
 } from "../config.read-status.ts";
-import { legacyResolveConfigTarget } from "../config.target.ts";
+import { legacyConfigTargetErrorsFor, legacyResolveConfigTarget } from "../config.target.ts";
 import { legacyLoadAuthEmailContent } from "./push.auth-email-content.ts";
 import {
   type LegacyConfigPushKnownBranch,
@@ -146,24 +141,15 @@ const mapPushBranchResolveError = mapLegacyHttpError({
   statusMessage: legacyUnexpectedStatusMessage,
 });
 
-/** Error construction for `legacyResolveConfigTarget` (`../config.target.ts`,
- * shared with `config diff`/`config pull`), keeping `config push`'s own
- * tagged error classes and message wording. */
-const configTargetErrors = {
-  notLinked: (target: string) =>
-    new LegacyConfigPushBranchNotLinkedError({ message: legacyParentNotLinkedMessage(target) }),
-  parentRefInvalid: (target: string) =>
-    new LegacyConfigPushParentRefInvalidError({ message: legacyParentRefInvalidMessage(target) }),
-  branchNotFound: (target: string) =>
-    new LegacyConfigPushBranchNotFoundError({
-      message: `Branch "${legacySanitizeInlineName(target)}" not found. Run \`supabase branches list\` to see available branches.${legacyParentRefTypoHint(target)}`,
-    }),
-  branchNotReady: (target: string) =>
-    new LegacyConfigPushBranchNotReadyError({
-      message: `Branch "${legacySanitizeInlineName(target)}" has no project ref yet. Wait for it to finish provisioning, then retry.`,
-    }),
-  mapResolveError: mapPushBranchResolveError,
-};
+/** Error construction for `legacyResolveConfigTarget` (`../config.target.ts`, shared with
+ *  `config diff`/`config pull`), keeping `config push`'s own tagged error classes; the
+ *  message wording is shared there. */
+const configTargetErrors = legacyConfigTargetErrorsFor({
+  notLinked: LegacyConfigPushBranchNotLinkedError,
+  parentRefInvalid: LegacyConfigPushParentRefInvalidError,
+  branchNotFound: LegacyConfigPushBranchNotFoundError,
+  branchNotReady: LegacyConfigPushBranchNotReadyError,
+});
 
 export const legacyConfigPush = Effect.fn("legacy.config.push")(function* (
   flags: LegacyConfigPushFlags,
@@ -236,7 +222,11 @@ export const legacyConfigPush = Effect.fn("legacy.config.push")(function* (
     // before a malformed `config.toml` is caught — an accepted, narrow
     // tradeoff (matches this command's own pre-CLI-2168 behavior, which
     // always resolved before loading).
-    const { ref, branch } = yield* legacyResolveConfigTarget(requestedRef, configTargetErrors);
+    const { ref, branch } = yield* legacyResolveConfigTarget(
+      requestedRef,
+      configTargetErrors,
+      mapPushBranchResolveError,
+    );
     resolvedRef = ref;
 
     // 2. Load config.toml with the resolved ref (TOML parse error aborts

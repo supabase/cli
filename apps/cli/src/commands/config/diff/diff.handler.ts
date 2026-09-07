@@ -9,23 +9,18 @@ import { Effect, Option } from "effect";
 
 import { LegacyPlatformApi } from "../../../auth/legacy-platform-api.service.ts";
 import { LegacyCliSettings } from "../../../config/legacy-cli-settings.service.ts";
-import {
-  legacyParentNotLinkedMessage,
-  legacyParentRefInvalidMessage,
-  legacyParentRefTypoHint,
-} from "../../../command-internal/legacy-parent-project-ref.ts";
 import { LegacyLinkedProjectCache } from "../../../telemetry/legacy-linked-project-cache.service.ts";
 import { LegacyTelemetryState } from "../../../telemetry/legacy-telemetry-state.service.ts";
 import { LegacyOutputFlag } from "../../../shared/legacy/global-flags.ts";
 import { Output } from "../../../shared/output/output.service.ts";
 import { ProcessControl } from "../../../shared/runtime/process-control.service.ts";
 import {
-  legacySanitizeInlineName,
   mapLegacyHttpError,
   sanitizeLegacyErrorBody,
 } from "../../../command-internal/legacy-http-errors.ts";
+import { legacyConfigIsRecord } from "../config.paths.ts";
 import { legacyLoadLocalConfig } from "../config.load.ts";
-import { legacyResolveConfigTarget } from "../config.target.ts";
+import { legacyConfigTargetErrorsFor, legacyResolveConfigTarget } from "../config.target.ts";
 import { legacyConfigApiScope, legacyConfigScopeLine } from "../config.format.ts";
 import { legacyConfigProjectConfigTry } from "../config.project-config.ts";
 import {
@@ -60,27 +55,14 @@ const mapBranchResolveError = mapLegacyHttpError({
   statusMessage: legacyUnexpectedStatusMessage,
 });
 
-/** Error construction for `legacyResolveConfigTarget` (`../config.target.ts`),
- * keeping `config diff`'s own tagged error classes and message wording. */
-const configTargetErrors = {
-  notLinked: (target: string) =>
-    new LegacyConfigDiffBranchNotLinkedError({ message: legacyParentNotLinkedMessage(target) }),
-  parentRefInvalid: (target: string) =>
-    new LegacyConfigDiffParentRefInvalidError({ message: legacyParentRefInvalidMessage(target) }),
-  branchNotFound: (target: string) =>
-    new LegacyConfigDiffBranchNotFoundError({
-      message: `Branch "${legacySanitizeInlineName(target)}" not found. Run \`supabase branches list\` to see available branches.${legacyParentRefTypoHint(target)}`,
-    }),
-  branchNotReady: (target: string) =>
-    new LegacyConfigDiffBranchNotReadyError({
-      message: `Branch "${legacySanitizeInlineName(target)}" has no project ref yet. Wait for it to finish provisioning, then retry.`,
-    }),
-  mapResolveError: mapBranchResolveError,
-};
-
-function isRecord(value: unknown): value is Readonly<Record<string, unknown>> {
-  return typeof value === "object" && value !== null && !Array.isArray(value);
-}
+/** Error construction for `legacyResolveConfigTarget` (`../config.target.ts`), keeping
+ *  `config diff`'s own tagged error classes; the message wording is shared there. */
+const configTargetErrors = legacyConfigTargetErrorsFor({
+  notLinked: LegacyConfigDiffBranchNotLinkedError,
+  parentRefInvalid: LegacyConfigDiffParentRefInvalidError,
+  branchNotFound: LegacyConfigDiffBranchNotFoundError,
+  branchNotReady: LegacyConfigDiffBranchNotReadyError,
+});
 
 export const legacyConfigDiff = Effect.fn("legacy.config.diff")(function* (
   flags: LegacyConfigDiffFlags,
@@ -141,10 +123,14 @@ export const legacyConfigDiff = Effect.fn("legacy.config.diff")(function* (
     let loaded = yield* loadLocalConfig(undefined);
 
     // 3. Resolve the comparison target — hoisted into `legacyResolveConfigTarget`
-    // (`../config.target.ts`, shared with `config pull`, CLI-2064). See that
-    // function's doc comment for the full eager-parent-ref-before-any-spinner
+    // (`../config.target.ts`, shared with `config pull`/`config push`, CLI-2064). See
+    // that function's doc comment for the full eager-parent-ref-before-any-spinner
     // and lazy-UUID-parent-resolution rules this preserves.
-    const { ref, branch } = yield* legacyResolveConfigTarget(requested, configTargetErrors);
+    const { ref, branch } = yield* legacyResolveConfigTarget(
+      requested,
+      configTargetErrors,
+      mapBranchResolveError,
+    );
     resolvedRef = ref;
 
     // 4. Apply the matching `[remotes.*]` overlay (ADR 0018) now that the
@@ -234,9 +220,11 @@ export const legacyConfigDiff = Effect.fn("legacy.config.diff")(function* (
       diffProjectConfig({ local: loaded, remote }),
     );
 
-    const data = isRecord(responseJson) ? responseJson["data"] : undefined;
+    const data = legacyConfigIsRecord(responseJson) ? responseJson["data"] : undefined;
     const scope = legacyConfigApiScope(
-      isRecord(data) && isRecord(data["attributes"]) ? data["attributes"] : {},
+      legacyConfigIsRecord(data) && legacyConfigIsRecord(data["attributes"])
+        ? data["attributes"]
+        : {},
     );
     yield* output.raw(legacyConfigScopeLine(scope), "stderr");
 
