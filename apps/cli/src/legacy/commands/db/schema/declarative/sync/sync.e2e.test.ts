@@ -18,7 +18,6 @@ const CLEANUP_HOOK_TIMEOUT_MS = CLEANUP_TIMEOUT_MS + LIFECYCLE_MARGIN_MS;
 const SCENARIO_COMMAND_TIMEOUT_MS = 280_000;
 const BEFORE_ALL_TIMEOUT_MS = CLI_COMMAND_TIMEOUT_MS + STACK_START_TIMEOUT_MS + LIFECYCLE_MARGIN_MS;
 const SCENARIO_TIMEOUT_MS = 900_000;
-const NEXT_ENV = { SUPABASE_USE_PG_DELTA_NEXT: "true" };
 
 const initialDesiredSchema = `create type public.account_state as enum ('pending', 'active');
 
@@ -132,7 +131,6 @@ describe("db schema declarative sync (e2e)", () => {
         {
           entrypoint: "legacy",
           cwd: projectDir,
-          env: NEXT_ENV,
           exitTimeoutMs: SCENARIO_COMMAND_TIMEOUT_MS,
         },
       );
@@ -163,7 +161,6 @@ describe("db schema declarative sync (e2e)", () => {
         {
           entrypoint: "legacy",
           cwd: projectDir,
-          env: NEXT_ENV,
           exitTimeoutMs: SCENARIO_COMMAND_TIMEOUT_MS,
         },
       );

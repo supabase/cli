@@ -377,7 +377,6 @@ export const legacyBootstrap = Effect.fn("legacy.bootstrap")(function* (
       includeSeed: true,
       includeVault: true,
       dnsResolver,
-      projectId: cliSettings.projectId,
       toml,
       yes: pushYes,
       emitStructuredResult: false,

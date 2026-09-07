@@ -41,9 +41,7 @@ import {
   type LegacyPgConnInput,
 } from "../../shared/legacy-db-connection.service.ts";
 import { legacyDebugLoggerLayer } from "../../shared/legacy-debug-logger.layer.ts";
-import { LegacyEdgeRuntimeScript } from "../../shared/legacy-edge-runtime-script.service.ts";
 import { legacyIdentityStitchLayer } from "../../shared/legacy-identity-stitch.ts";
-import { LegacyPgDeltaSslProbe } from "../../shared/legacy-pgdelta-ssl-probe.service.ts";
 import { legacyCliSettingsLayer } from "../../config/legacy-cli-settings.layer.ts";
 import { legacyLinkedProjectCacheLayer } from "../../telemetry/legacy-linked-project-cache.layer.ts";
 import { LegacyTemplateService } from "./bootstrap.templates.ts";
@@ -152,12 +150,7 @@ describe("legacy bootstrap linked-project cache location", () => {
 
       // Native push (CLI-1953): `legacyDbPushCore` needs a `LegacyDbConnection` —
       // tracked here so the test can assert it targets the created project's ref,
-      // not a divergent one. The pre-seeded migration below (proving the migrations
-      // lookup is scoped to the bootstrap workdir) makes the scratch config.toml's
-      // default `[experimental.pgdelta] enabled = true` actually reach the
-      // migrations-catalog cache path, so `LegacyEdgeRuntimeScript`/
-      // `LegacyPgDeltaSslProbe` need real (if trivial) fakes here — not the
-      // `Effect.die` stubs the no-migrations happy-path tests use.
+      // not a divergent one.
       const pushConnectCalls: Array<LegacyPgConnInput> = [];
       const dbConnectionLayer = Layer.succeed(LegacyDbConnection, {
         connect: (conn: LegacyPgConnInput) =>
@@ -172,13 +165,6 @@ describe("legacy bootstrap linked-project cache location", () => {
               query: () => Effect.succeed([]),
             };
           }),
-      });
-      const edgeRuntimeLayer = Layer.succeed(LegacyEdgeRuntimeScript, {
-        run: () => Effect.succeed({ stdout: '{"version":1}', stderr: "" }),
-      });
-      const sslProbeLayer = Layer.succeed(LegacyPgDeltaSslProbe, {
-        requireSsl: () => Effect.succeed(false),
-        requireSslForHost: () => Effect.succeed(false),
       });
       const templateLayer = Layer.succeed(LegacyTemplateService, {
         listSamples: Effect.succeed([]),
@@ -242,8 +228,6 @@ describe("legacy bootstrap linked-project cache location", () => {
         mockAnalytics().layer,
         templateLayer,
         dbConnectionLayer,
-        edgeRuntimeLayer,
-        sslProbeLayer,
         mockLegacyLoginApi({ gotrueId: "gotrue-user" }).layer,
         mockLegacyLoginCrypto().layer,
         mockBrowser(),

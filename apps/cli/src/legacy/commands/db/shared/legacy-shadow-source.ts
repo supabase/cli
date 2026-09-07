@@ -1,29 +1,20 @@
 /**
- * The composed shadow-database shapes `db diff`/`db pull` actually call — Go's
- * `PrepareShadowSource`/`PrepareRawShadow` (`apps/cli-go/internal/db/diff/shadow.go`), built
- * on top of `shared/db-bootstrap/shadow-database.ts`'s lower-level primitives plus the
- * `--target-local` declarative-schema branch (Go's `loadDeclaredSchemas`/
- * `shouldApplyDeclarativeWithPgDelta`/`migrateBaseDatabase`, `internal/db/diff/diff.go:52-115,
- * 261-274`) and pg-delta's declarative apply engine (`legacy-pgdelta.apply.ts`).
- *
- * Go's `PrepareShadowSource(ctx, schema []string, targetLocal, usePgDelta bool, fsys,
- * options...)` takes a `schema` parameter that is NEVER referenced anywhere in the function
- * body (verified by reading the whole function) — dead code in Go itself, making the `--schema`
- * flag the now-removed `db __shadow` hidden seam used to forward here a no-op even before
- * CLI-1956 deleted that seam in favor of this native port. Deliberately NOT ported here: there
- * is nothing to port.
+ * The composed shadow-provisioning shape `db diff`/`db pull` actually call:
+ * {@link legacyPrepareShadowSource} builds on `shared/db-bootstrap/shadow-database.ts`'s
+ * lower-level primitives (create → health-wait → platform baseline → migrations replay) and
+ * adds the migra `--target-local` declarative-schema branch, which applies declarative files
+ * to a second database on the same shadow container instead of diffing the user's local DB
+ * directly. Schema selection deliberately plays no part in shadow provisioning — the `--schema`
+ * flag only scopes the diff itself, never what the shadow contains.
  */
 
 import { Effect, Result, type FileSystem, type Path } from "effect";
-import type { GlobalFlag } from "effect/unstable/cli";
 import type * as HttpClient from "effect/unstable/http/HttpClient";
 import type { ChildProcessSpawner } from "effect/unstable/process/ChildProcessSpawner";
 
-import type { CliArgs } from "../../../../shared/cli/cli-args.service.ts";
 import { Output } from "../../../../shared/output/output.service.ts";
 import type { RuntimeInfo } from "../../../../shared/runtime/runtime-info.service.ts";
 import { legacyBold } from "../../../shared/legacy-colors.ts";
-import type { LegacyEdgeRuntimeScript } from "../../../shared/legacy-edge-runtime-script.service.ts";
 import {
   LegacyDbConnection,
   type LegacyPgConnInput,
@@ -55,12 +46,7 @@ import {
   type LegacyShadowSourceResult,
 } from "../../../shared/db-bootstrap/shadow-database.ts";
 import type { LegacyStartSetupLocalDatabaseError } from "../../../shared/db-bootstrap/db-setup.ts";
-import {
-  LegacyPgDeltaDeclarativeApplyError,
-  legacyApplyDeclarativePgDelta,
-} from "./legacy-pgdelta.apply.ts";
 import { LegacyDeclarativeShadowDbError } from "./legacy-pgdelta.errors.ts";
-import type { LegacyPgDeltaContext } from "../../../shared/legacy-pgdelta.ts";
 
 type Spawner = ChildProcessSpawner["Service"];
 
@@ -73,15 +59,11 @@ export type { LegacyShadowSourceResult };
 export interface LegacyPrepareShadowSourceInput<E> extends LegacyShadowSetupInput<E> {
   /** Go's `utils.IsLocalDatabase(config)` — the only target-derived input the shadow prep needs. */
   readonly targetLocal: boolean;
-  /** Selects the declarative-apply engine for the local-declared branch, matching `DiffDatabase`. */
-  readonly usePgDelta: boolean;
-  /** Selects the shadow baseline and whether a local target may use the legacy declarative override. */
+  /** Selects the shadow baseline and whether a local target may use the migra declarative override. */
   readonly migrationMode?: "legacy" | "pgdelta-next";
   /** `db.migrations.schema_paths`, RAW (unresolved) — Go's `Config.Db.Migrations.SchemaPaths` pre-`config.go:976-979`-resolution form. */
   readonly schemaPaths: ReadonlyArray<string>;
   readonly pgDelta: LegacyPgDeltaTomlConfig;
-  /** Ambient pg-delta edge-runtime context, only read on the pg-delta declarative-apply sub-branch. */
-  readonly ctx: LegacyPgDeltaContext;
 }
 
 /** Every failure {@link legacyPrepareShadowSource} can produce, beyond its own `E` (JWKS resolution). */
@@ -90,8 +72,7 @@ export type LegacyPrepareShadowSourceError =
   | LegacyDeclarativeShadowDbError
   | LegacyHealthCheckTimeoutError
   | LegacyStartSetupLocalDatabaseError
-  | LegacyImagePrepullError
-  | LegacyPgDeltaDeclarativeApplyError;
+  | LegacyImagePrepullError;
 
 /**
  * Port of Go's `PrepareShadowSource` (`apps/cli-go/internal/db/diff/shadow.go:37-91`):
@@ -131,19 +112,7 @@ export const legacyPrepareShadowSource = <E>(
 ): Effect.Effect<
   LegacyShadowSourceResult,
   LegacyPrepareShadowSourceError | E,
-  | Output
-  | LegacyDockerRun
-  | RuntimeInfo
-  | HttpClient.HttpClient
-  | LegacyDbConnection
-  | LegacyEdgeRuntimeScript
-  | GlobalFlag.Setting.Identifier<"debug">
-  // `legacyApplyDeclarativePgDelta`'s own `legacyResolveDebugWithProjectEnv` (viper
-  // `AutomaticEnv` `SUPABASE_DEBUG` fallback, plus the project `.env` Go's `loadNestedEnv`
-  // has already `os.Setenv`'d into the process by this point, review: PRRT_kwDOErm0O86XDr4V,
-  // PRRT_kwDOErm0O86XL_oz) needs `CliArgs` to detect an explicit `--debug=false`, same as
-  // `legacyResolveYes`/`legacyResolveExperimental`.
-  | CliArgs
+  Output | LegacyDockerRun | RuntimeInfo | HttpClient.HttpClient | LegacyDbConnection
 > =>
   Effect.gen(function* () {
     const { containerId } = handle;
@@ -198,41 +167,13 @@ export const legacyPrepareShadowSource = <E>(
       );
       if (declared.length > 0) {
         const overrideConn: LegacyPgConnInput = { ...connConfig, database: "contrib_regression" };
-        const useDeclarativePgDelta = legacyShouldApplyDeclarativeWithPgDelta(
+        yield* legacyMigrateBaseDatabase(
+          input.fs,
           input.path,
-          input.usePgDelta,
-          input.schemaPaths,
-          input.pgDelta,
+          input.workdir,
+          overrideConn,
+          declared,
         );
-        let appliedViaPgDelta = false;
-        if (useDeclarativePgDelta) {
-          const declDirRel = legacyResolveDeclarativeDir(input.path, input.pgDelta);
-          const declDirAbs = legacyResolveUnderWorkdir(input.path, input.workdir, declDirRel);
-          // Go's `afero.DirExists` (`shadow.go:72`) — a non-directory path is treated as
-          // absent here too, same reasoning as `legacyLoadDeclaredSchemas` below.
-          const declDirExists = yield* input.fs.stat(declDirAbs).pipe(
-            Effect.map((info) => info.type === "Directory"),
-            Effect.orElseSucceed(() => false),
-          );
-          if (declDirExists) {
-            yield* legacyApplyDeclarativePgDelta(input.ctx, {
-              fs: input.fs,
-              declarativeDirAbs: declDirAbs,
-              declarativeDirRel: declDirRel,
-              target: legacyToPostgresURL(overrideConn),
-            });
-            appliedViaPgDelta = true;
-          }
-        }
-        if (!appliedViaPgDelta) {
-          yield* legacyMigrateBaseDatabase(
-            input.fs,
-            input.path,
-            input.workdir,
-            overrideConn,
-            declared,
-          );
-        }
         targetUrlOverride = legacyToPostgresURL(overrideConn);
       }
     }
@@ -593,31 +534,6 @@ export function legacyCleanSchemaPath(
   const joined = out.join("/");
   if (joined.length === 0) return volume + (isAbsolute ? "/" : ".");
   return volume + (isAbsolute ? "/" : "") + joined;
-}
-
-/**
- * Port of Go's `shouldApplyDeclarativeWithPgDelta` (`apps/cli-go/internal/db/diff/diff.go:
- * 103-115`): `usePgDelta` false -> false; zero `schema_paths` -> true; more than one
- * `schema_paths` entry -> false; exactly one entry -> true only when it resolves (Go's
- * `config.go:976-979` resolution, matching `legacyResolveSeedSqlPath`) to the SAME cleaned
- * path as the effective declarative dir.
- */
-export function legacyShouldApplyDeclarativeWithPgDelta(
-  path: Path.Path,
-  usePgDelta: boolean,
-  schemaPaths: ReadonlyArray<string>,
-  pgDelta: LegacyPgDeltaTomlConfig,
-  platform: NodeJS.Platform = process.platform,
-): boolean {
-  if (!usePgDelta) return false;
-  if (schemaPaths.length === 0) return true;
-  if (schemaPaths.length !== 1) return false;
-  const resolvedSchema = legacyCleanSchemaPath(
-    legacyResolveSeedSqlPath(path, schemaPaths[0]!),
-    platform,
-  );
-  const declDir = legacyCleanSchemaPath(legacyResolveDeclarativeDir(path, pgDelta), platform);
-  return resolvedSchema === declDir;
 }
 
 /**

@@ -11,10 +11,6 @@ import { isSlimImageRef } from "../../../../shared/services/slim-images.ts";
 import { legacyIsLocalDbRunning } from "../../../shared/db-bootstrap/local-db-running.ts";
 import { legacyStartLocalDatabase } from "../../../shared/db-bootstrap/start-local-database.ts";
 import {
-  legacyExportBaselineCatalogRef,
-  legacyExportDeclarativeCatalogRef,
-} from "../../../shared/legacy-pgdelta.cache.ts";
-import {
   legacyResolveLocalProjectId,
   localDbContainerId,
 } from "../../../shared/legacy-docker-ids.ts";
@@ -30,8 +26,7 @@ const legacyShadowDockerCause = (
  * Whether an underlying failure signals the Docker daemon is unreachable, across every tagged
  * error class this seam composes over — `LegacyShadowDbError.reason === "docker_daemon"`,
  * `LegacyImagePrepullError.reason === "docker_daemon"`, `LegacyLocalDbRunningError.daemonDown`,
- * `LegacyPgDeltaDeclarativeApplyError.reason === "daemon"`, and every `*.docker === "daemon"`
- * field (`LegacyDeclarativeEdgeRuntimeError`, …). Checked structurally rather than per-tag so a
+ * and every `*.docker === "daemon"` field. Checked structurally rather than per-tag so a
  * new error class in the union doesn't silently drop its own daemon signal.
  */
 function legacyHasDaemonSignal(cause: {
@@ -49,13 +44,10 @@ function legacyHasDaemonSignal(cause: {
 }
 
 /**
- * Maps any failure from the native shadow-provisioning stack (`legacy-pgdelta.cache.ts`'s
- * `legacyExportBaselineCatalogRef`/`legacyExportDeclarativeCatalogRef`, and everything they
- * compose — shadow create/setup, health checks, the pg-delta edge-runtime scripts, the
- * declarative-apply engine, config loading) into the seam's own
- * {@link LegacyDeclarativeShadowDbError}, carrying the underlying message. Every component error
- * class in that stack declares `message: string`, so this accepts the whole union structurally
- * rather than enumerating each tag.
+ * Maps any failure from the native local-database bring-up stack (shadow create/setup, health
+ * checks, config loading) into the seam's own {@link LegacyDeclarativeShadowDbError}, carrying
+ * the underlying message. Every component error class in that stack declares `message: string`,
+ * so this accepts the whole union structurally rather than enumerating each tag.
  */
 export const legacyToShadowDbError = (cause: {
   readonly message: string;
@@ -71,11 +63,9 @@ export const legacyToShadowDbError = (cause: {
   });
 
 /**
- * Real `LegacyDeclarativeSeam`: fully native. `exportCatalog` composes the shadow-database
- * platform-baseline/declarative catalog export (`legacy-pgdelta.cache.ts`'s
- * `legacyExportBaselineCatalogRef`/`legacyExportDeclarativeCatalogRef`); `ensureLocalDatabaseStarted`
- * shares the same `legacyStartLocalDatabase` bring-up `db start` uses;
- * `ensureLocalPostgresImageCurrent` was already native (CLI-1956) and is unchanged here.
+ * Real `LegacyDeclarativeSeam`: fully native. `ensureLocalDatabaseStarted` shares the same
+ * `legacyStartLocalDatabase` bring-up `db start` uses; `ensureLocalPostgresImageCurrent` was
+ * already native (CLI-1956) and is unchanged here.
  */
 export const legacyDeclarativeSeamLayer = Layer.effect(
   LegacyDeclarativeSeam,
@@ -84,42 +74,16 @@ export const legacyDeclarativeSeamLayer = Layer.effect(
     const spawner = yield* ChildProcessSpawner;
     const fs = yield* FileSystem.FileSystem;
     const path = yield* Path.Path;
-    // Captures every OTHER service `legacyExportBaselineCatalogRef`/
-    // `legacyExportDeclarativeCatalogRef`/`legacyStartLocalDatabase` need internally (Output,
-    // RuntimeInfo, HttpClient, LegacyDbConnection, LegacyEdgeRuntimeScript, LegacyDockerRun,
-    // LegacyPgDeltaSslProbe, LegacyNetworkIdFlag, the `--experimental`/CliArgs global-flag
-    // machinery, …) into a plain `Context` so each closure below can `Effect.provideContext` it
-    // and satisfy `LegacyDeclarativeSeamShape`'s `Effect<T, E>` (no leftover requirements)
-    // without hand-enumerating every transitive dependency — mirrors
-    // `legacy-platform-api-factory.layer.ts`'s identical capture-and-provide shape.
-    // `legacyExportDeclarativeCatalogRef`'s requirements are today identical to
-    // `LegacyExportBaselineCatalogDeps`; if they ever diverge, the declarative
-    // closure below stops typechecking and the new deps must be added here.
-    const context = yield* Effect.context<
-      LegacyExportBaselineCatalogDeps | LegacyStartLocalDatabaseDeps
-    >();
+    // Captures every OTHER service `legacyStartLocalDatabase` needs internally (Output,
+    // RuntimeInfo, HttpClient, LegacyDbConnection, LegacyDockerRun, LegacyNetworkIdFlag, the
+    // `--experimental`/CliArgs global-flag machinery, …) into a plain `Context` so each closure
+    // below can `Effect.provideContext` it and satisfy `LegacyDeclarativeSeamShape`'s
+    // `Effect<T, E>` (no leftover requirements) without hand-enumerating every transitive
+    // dependency — mirrors `legacy-platform-api-factory.layer.ts`'s identical
+    // capture-and-provide shape.
+    const context = yield* Effect.context<LegacyStartLocalDatabaseDeps>();
 
     return LegacyDeclarativeSeam.of({
-      exportCatalog: ({ mode, noCache, projectRef }) =>
-        (mode === "baseline"
-          ? legacyExportBaselineCatalogRef(fs, path, cliSettings.workdir, cliSettings.projectId, {
-              noCache,
-              projectRef,
-            })
-          : legacyExportDeclarativeCatalogRef(
-              fs,
-              path,
-              cliSettings.workdir,
-              cliSettings.projectId,
-              {
-                noCache,
-                projectRef,
-              },
-            )
-        ).pipe(
-          Effect.provideContext(context),
-          Effect.catch((cause) => Effect.fail(legacyToShadowDbError(cause))),
-        ),
       ensureLocalDatabaseStarted: () =>
         Effect.gen(function* () {
           const running = yield* legacyIsLocalDbRunning(
@@ -287,15 +251,6 @@ export const legacyDeclarativeSeamLayer = Layer.effect(
     });
   }),
 );
-
-type LegacyExportBaselineCatalogDeps =
-  ReturnType<typeof legacyExportBaselineCatalogRef> extends Effect.Effect<
-    infer _A,
-    infer _E,
-    infer R
-  >
-    ? R
-    : never;
 
 type LegacyStartLocalDatabaseDeps =
   ReturnType<typeof legacyStartLocalDatabase> extends Effect.Effect<infer _A, infer _E, infer R>

@@ -9,8 +9,6 @@ import { legacyCliSettingsLayer } from "../../config/legacy-cli-settings.layer.t
 import { legacyDbConnectionLayer } from "../../shared/legacy-db-connection.layer.ts";
 import { legacyDebugLoggerLayer } from "../../shared/legacy-debug-logger.layer.ts";
 import { legacyDockerRunLayer } from "../../shared/legacy-docker-run.layer.ts";
-import { legacyEdgeRuntimeScriptLayer } from "../../shared/legacy-edge-runtime-script.layer.ts";
-import { legacyPgDeltaSslProbeLayer } from "../../shared/legacy-pgdelta-ssl-probe.layer.ts";
 import { legacyStringSliceFlag } from "../../shared/legacy-string-slice-flag.ts";
 import { legacyTelemetryStateLayer } from "../../telemetry/legacy-telemetry-state.layer.ts";
 import { withLegacyCommandInstrumentation } from "../../telemetry/legacy-command-instrumentation.ts";
@@ -58,16 +56,8 @@ export type LegacyStartFlags = CliCommand.Command.Config.Infer<typeof config>;
 // `SetupLocalDatabase` equivalent (`start.handler.ts`'s `legacyStartSetupLocalDatabase`
 // call) needs both: the PG15+ one-shot migrate jobs run through `LegacyDockerRun`, and
 // the schema/globals/API-privileges SQL runs over a direct `LegacyDbConnection` session.
-// `legacyEdgeRuntimeScriptLayer`/`legacyPgDeltaSslProbeLayer` back that same fresh-volume
-// pipeline's best-effort pg-delta migrations-catalog warmup (`db-setup.ts`'s
-// `legacyTryCacheMigrationsCatalog` call) — the exact same pair `db push` already composes
-// for its own call to that function (`push.layers.ts`).
 const cliSettings = legacyCliSettingsLayer.pipe(Layer.provide(legacyDebugLoggerLayer));
 const httpClient = legacyHttpClientLayer.pipe(Layer.provide(legacyDebugLoggerLayer));
-const edgeRuntime = legacyEdgeRuntimeScriptLayer.pipe(
-  Layer.provide(legacyDockerRunLayer),
-  Layer.provide(cliSettings),
-);
 
 const legacyStartRuntimeLayer = Layer.mergeAll(
   cliSettings,
@@ -76,8 +66,6 @@ const legacyStartRuntimeLayer = Layer.mergeAll(
   legacyDockerRunLayer,
   legacyDbConnectionLayer,
   httpClient,
-  edgeRuntime,
-  legacyPgDeltaSslProbeLayer,
 );
 
 export const legacyStartCommand = Command.make("start", config).pipe(

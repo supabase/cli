@@ -1,4 +1,3 @@
-import type { LegacyPgDeltaImplementation } from "../../../../shared/legacy-pgdelta-next-flag.ts";
 import { legacySchemaToCsvField } from "../../../../shared/legacy-schema-flags.ts";
 import {
   legacyDeclaredSqlExtensions,
@@ -73,13 +72,12 @@ const emptyCompatibilityGap = (): LegacyDeclarativeCompatibilityGap => ({
   recommendedAction: "none",
 });
 
-/** Classifies manifest-less pg-delta next removals without performing any I/O. */
+/** Classifies manifest-less pg-delta removals without performing any I/O. */
 export function legacyClassifyDeclarativeCompatibilityGap(opts: {
-  readonly implementation: LegacyPgDeltaImplementation;
   readonly manifestPresent: boolean;
   readonly removals: LegacyPgDeltaRemovalSummary;
 }): LegacyDeclarativeCompatibilityGap {
-  if (opts.implementation !== "next" || opts.manifestPresent) return emptyCompatibilityGap();
+  if (opts.manifestPresent) return emptyCompatibilityGap();
 
   const extensions = [...new Set(opts.removals.extensions)].sort();
   const repairableExtensions = extensions.filter((extension) =>
@@ -199,15 +197,14 @@ function locateSignature(
 
 /**
  * Classifies known legacy implicit-extension misses that prevent a manifestless
- * declarative tree from loading on pg-delta next's isolated desired shadow.
+ * declarative tree from loading on pg-delta's isolated desired shadow.
  */
 export function legacyClassifyDeclarativeLoadCompatibility(opts: {
-  readonly implementation: LegacyPgDeltaImplementation;
   readonly manifestPresent: boolean;
   readonly diagnostics: readonly LegacyDeclarativeLoadDiagnostic[];
   readonly files: readonly LegacyDeclarativeSqlFile[];
 }): ReadonlyArray<LegacyDeclarativeLoadCompatibilityFinding> {
-  if (opts.implementation !== "next" || opts.manifestPresent) return [];
+  if (opts.manifestPresent) return [];
 
   const declared = declaredImplicitExtensions(opts.files);
   const findings: LegacyDeclarativeLoadCompatibilityFinding[] = [];

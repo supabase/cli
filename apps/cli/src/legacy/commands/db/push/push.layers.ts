@@ -9,11 +9,8 @@ import { legacyProjectRefLayer } from "../../../config/legacy-project-ref.layer.
 import { legacyDbConfigLayer } from "../../../shared/legacy-db-config.layer.ts";
 import { legacyDbConnectionLayer } from "../../../shared/legacy-db-connection.layer.ts";
 import { legacyDebugLoggerLayer } from "../../../shared/legacy-debug-logger.layer.ts";
-import { legacyDockerRunLayer } from "../../../shared/legacy-docker-run.layer.ts";
-import { legacyEdgeRuntimeScriptLayer } from "../../../shared/legacy-edge-runtime-script.layer.ts";
 import { stdinLayer } from "../../../../shared/runtime/stdin.layer.ts";
 import { legacyIdentityStitchLayer } from "../../../shared/legacy-identity-stitch.ts";
-import { legacyPgDeltaSslProbeLayer } from "../../../shared/legacy-pgdelta-ssl-probe.layer.ts";
 import { legacyLinkedProjectCacheLayer } from "../../../telemetry/legacy-linked-project-cache.layer.ts";
 import { legacyTelemetryStateLayer } from "../../../telemetry/legacy-telemetry-state.layer.ts";
 
@@ -63,17 +60,9 @@ const dbConfig = legacyDbConfigLayer.pipe(
   Layer.provide(legacyIdentityStitchLayer),
 );
 
-const edgeRuntime = legacyEdgeRuntimeScriptLayer.pipe(
-  Layer.provide(legacyDockerRunLayer),
-  Layer.provide(cliSettings),
-);
-
 export const legacyDbPushRuntimeLayer = Layer.mergeAll(
   dbConfig,
   legacyDbConnectionLayer,
-  legacyDockerRunLayer,
-  edgeRuntime,
-  legacyPgDeltaSslProbeLayer,
   cliSettings,
   httpClient,
   credentials,

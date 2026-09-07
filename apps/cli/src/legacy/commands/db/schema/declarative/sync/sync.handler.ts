@@ -24,12 +24,8 @@ import { LEGACY_ENABLE_LOCAL_WEBHOOKS_SUGGESTION } from "../../../../../shared/l
 import { legacyReadProjectRefFile } from "../../../../../shared/legacy-temp-paths.ts";
 import { LegacyLinkedProjectCache } from "../../../../../telemetry/legacy-linked-project-cache.service.ts";
 import { LegacyTelemetryState } from "../../../../../telemetry/legacy-telemetry-state.service.ts";
-import {
-  legacyListLocalMigrations,
-  legacyResolveSetupInputs,
-} from "../../../../../shared/legacy-pgdelta.cache.ts";
+import { legacyListLocalMigrations } from "../../../../../shared/legacy-migration-list.ts";
 import { legacyPgDeltaTempPath } from "../../../../../shared/legacy-pgdelta.paths.ts";
-import { LegacyPgDeltaEngine } from "../../../shared/legacy-pgdelta-engine.service.ts";
 import {
   legacyIsPgDeltaDebugEnabled,
   legacyResolvePgDeltaProjectId,
@@ -113,7 +109,6 @@ export const legacyDbSchemaDeclarativeSync = Effect.fn("legacy.db.schema.declara
     const yes = yield* legacyResolveYesWithProjectEnv(projectEnv);
     const dnsResolver = yield* LegacyDnsResolverFlag;
     const seam = yield* LegacyDeclarativeSeam;
-    const engine = yield* LegacyPgDeltaEngine;
     const linkedProjectCache = yield* LegacyLinkedProjectCache;
 
     // Go's sync bootstrap delegates to `runDeclarativeGenerate`, whose
@@ -181,7 +176,6 @@ export const legacyDbSchemaDeclarativeSync = Effect.fn("legacy.db.schema.declara
             cliSettings.workdir,
           ),
           cwd: cliSettings.workdir,
-          npmVersion: Option.getOrUndefined(toml.pgDelta.npmVersion),
           denoVersion: toml.denoVersion,
           projectEnv: toml.projectEnv,
         },
@@ -278,7 +272,7 @@ export const legacyDbSchemaDeclarativeSync = Effect.fn("legacy.db.schema.declara
           linkedRef,
           ensureLocalPostgresImageCurrent,
         );
-        const generated = yield* legacyGenerateDeclarativeOutput(run, toml, target);
+        const generated = yield* legacyGenerateDeclarativeOutput(run, target);
         const written = yield* legacyWriteDeclarativeSchemas(fs, path, declarativeDir, generated);
         // A manifest-less directory keeps files the export did not replace, and those
         // files go straight into the plan below — warn before diffing against them.
@@ -290,16 +284,6 @@ export const legacyDbSchemaDeclarativeSync = Effect.fn("legacy.db.schema.declara
             }),
           );
         }
-        // Go's bootstrap delegates to the full `declarative.Generate`, which warms the
-        // declarative catalog cache when --no-cache is unset (`declarative.go:133-157`,
-        // `cmd/db_schema_declarative.go:321`) — applying the just-generated schema to a
-        // shadow DB so an unappliable schema fails HERE, before building the migrations
-        // catalog / emitting a diff debug bundle, and warming the catalog the following
-        // diff reuses. (sync is target-less and writes to the single toml-resolved dir,
-        // so the generate handler's remote-override dir guard isn't needed here.)
-        if (!run.noCache && engine.implementation === "legacy") {
-          yield* seam.exportCatalog({ mode: "declarative", noCache: run.noCache });
-        }
         // Go's delegated `declarative.Generate` prints the written-to line to stderr
         // after the write and the catalog warm (`declarative.go:133→138-155→156`), on
         // both the interactive-accept and --yes/SUPABASE_YES bootstrap paths, and
@@ -310,17 +294,6 @@ export const legacyDbSchemaDeclarativeSync = Effect.fn("legacy.db.schema.declara
       }
 
       // Step 2: diff migrations state vs declarative; on error, save a debug bundle.
-      // `setupInputs` is the cache-key/baseline-setup subset of `toml` that the now-
-      // native migrations-catalog resolution needs (CLI-1959) — see
-      // `legacyResolveSetupInputs`'s doc comment.
-      const setupInputs = yield* legacyResolveSetupInputs(
-        fs,
-        path,
-        cliSettings.workdir,
-        toml.majorVersion,
-        Option.getOrUndefined(toml.orioledbVersion),
-        toml.baseline,
-      );
       const stageNextExport = Effect.fnUntraced(function* () {
         const stagedDir = path.resolve(cliSettings.workdir, stagedDirRel);
         // Reject the active directory itself AND anything nested under it: a
@@ -383,7 +356,6 @@ export const legacyDbSchemaDeclarativeSync = Effect.fn("legacy.db.schema.declara
         }
         const generated = yield* legacyGenerateDeclarativeOutput(
           { ...run, declarativeDir: stagedDir },
-          toml,
           legacyLocalEndpoint({ port: toml.port, password: toml.password }, dnsResolver),
         );
         const written = yield* legacyWriteDeclarativeSchemas(fs, path, stagedDir, generated);
@@ -403,7 +375,7 @@ export const legacyDbSchemaDeclarativeSync = Effect.fn("legacy.db.schema.declara
       });
 
       const planDeclarativeSync = () =>
-        legacyDiffDeclarativeToMigrations(run, toml, setupInputs).pipe(
+        legacyDiffDeclarativeToMigrations(run, toml).pipe(
           Effect.tapError((error) =>
             error instanceof LegacyDeclarativeCompatibilityError
               ? Effect.void
@@ -505,7 +477,6 @@ export const legacyDbSchemaDeclarativeSync = Effect.fn("legacy.db.schema.declara
       // migration writing after the first missing extension is declared.
       while (true) {
         if (
-          engine.implementation === "next" &&
           !result.manifestPresent &&
           !toml.webhooksEnabled &&
           result.removals.extensions.includes("pg_net")
@@ -521,7 +492,6 @@ export const legacyDbSchemaDeclarativeSync = Effect.fn("legacy.db.schema.declara
           );
         }
         const compatibility = legacyClassifyDeclarativeCompatibilityGap({
-          implementation: engine.implementation,
           manifestPresent: result.manifestPresent,
           removals: result.removals,
         });
@@ -617,7 +587,7 @@ export const legacyDbSchemaDeclarativeSync = Effect.fn("legacy.db.schema.declara
       // Step 5: write the timestamped migration file.
       const nowMillis = yield* Clock.currentTimeMillis;
       let migrationPaths: ReadonlyArray<string>;
-      if (engine.implementation === "next" && result.files.length > 1) {
+      if (result.files.length > 1) {
         const written = yield* legacyWritePgDeltaMigrations(fs, path, {
           workdir: cliSettings.workdir,
           baseMillis: nowMillis,
@@ -642,9 +612,7 @@ export const legacyDbSchemaDeclarativeSync = Effect.fn("legacy.db.schema.declara
       if (result.dropWarnings.length > 0) {
         yield* output.raw(
           `${legacyYellow(
-            engine.implementation === "next"
-              ? "Found destructive changes in schema diff. Please double check if these are expected:"
-              : "Found drop statements in schema diff. Please double check if these are expected:",
+            "Found destructive changes in schema diff. Please double check if these are expected:",
           )}\n`,
           "stderr",
         );

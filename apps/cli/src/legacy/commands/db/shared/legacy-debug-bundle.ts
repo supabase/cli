@@ -1,7 +1,7 @@
 import { Effect, type FileSystem, type Path } from "effect";
 
 import { legacyBold, legacyYellow } from "../../../shared/legacy-colors.ts";
-import { legacyListLocalMigrations } from "../../../shared/legacy-pgdelta.cache.ts";
+import { legacyListLocalMigrations } from "../../../shared/legacy-migration-list.ts";
 
 /**
  * Diagnostic artifacts collected when a pg-delta operation fails (or an empty

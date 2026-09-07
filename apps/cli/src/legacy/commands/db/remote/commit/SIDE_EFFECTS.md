@@ -2,15 +2,17 @@
 
 ## Files Read
 
-| Path                       | Format     | When                               |
-| -------------------------- | ---------- | ---------------------------------- |
-| `~/.supabase/access-token` | plain text | when `SUPABASE_ACCESS_TOKEN` unset |
+| Path                                       | Format     | When                                                                          |
+| ------------------------------------------ | ---------- | ----------------------------------------------------------------------------- |
+| `~/.supabase/access-token`                 | plain text | when `SUPABASE_ACCESS_TOKEN` unset                                            |
+| `<workdir>/supabase/.temp/pgdelta-version` | plain text | when `[experimental.pgdelta] enabled = true` — overrides the pg-delta npm pin |
 
 ## Files Written
 
-| Path                                                          | Format | When   |
-| ------------------------------------------------------------- | ------ | ------ |
-| `<workdir>/supabase/migrations/<timestamp>_remote_commit.sql` | SQL    | always |
+| Path                                                          | Format    | When                                                |
+| ------------------------------------------------------------- | --------- | --------------------------------------------------- |
+| `<workdir>/supabase/migrations/<timestamp>_remote_commit.sql` | SQL       | always                                              |
+| `<workdir>/supabase/.temp/pgdelta/debug/<id>/*`               | JSON/text | pg-delta engine with `PGDELTA_DEBUG` (debug bundle) |
 
 ## API Routes
 
@@ -20,10 +22,14 @@
 
 ## Environment Variables
 
-| Variable                | Purpose                                 | Required?                                               |
-| ----------------------- | --------------------------------------- | ------------------------------------------------------- |
-| `SUPABASE_ACCESS_TOKEN` | auth token                              | no (falls back to keyring → `~/.supabase/access-token`) |
-| `DB_PASSWORD`           | password for direct database connection | no                                                      |
+| Variable                           | Purpose                                                                                 | Required?                                               |
+| ---------------------------------- | --------------------------------------------------------------------------------------- | ------------------------------------------------------- |
+| `SUPABASE_ACCESS_TOKEN`            | auth token                                                                              | no (falls back to keyring → `~/.supabase/access-token`) |
+| `DB_PASSWORD`                      | password for direct database connection                                                 | no                                                      |
+| `PGDELTA_DEBUG`                    | pg-delta debug bundle capture                                                           | no                                                      |
+| `PGDELTA_NPM_REGISTRY`             | pg-delta npm registry inside the edge-runtime container                                 | no                                                      |
+| `SUPABASE_INTERNAL_IMAGE_REGISTRY` | edge-runtime image registry                                                             | no                                                      |
+| `SUPABASE_USE_SLIM_IMAGES`         | resolves the edge-runtime image from the slim `ghcr.io/supabase/cli/edge-runtime` build | no                                                      |
 
 ## Exit Codes
 

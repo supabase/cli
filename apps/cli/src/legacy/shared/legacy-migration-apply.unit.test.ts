@@ -1215,7 +1215,10 @@ describe("legacySeedGlobals", () => {
 });
 
 describe("legacyApplySchemaFiles", () => {
-  it.effect(
+  // chmod 0o000 cannot make a file unreadable for root, so the read never
+  // fails there — same guard as reset's own chmod-based permission tests.
+  const isRoot = typeof process.getuid === "function" && process.getuid() === 0;
+  it.effect.skipIf(isRoot)(
     "reports a read failure with the workdir-relative path, not the absolute path used to read it (Go open supabase/... parity)",
     () => {
       // Go opens the workdir-relative `fp` from `schema_paths` directly (its process

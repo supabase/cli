@@ -27,9 +27,10 @@ These commands exist in the TS CLI today but have no direct top-level equivalent
   pg-delta next engine is active (the default): coverage gaps that the engine
   reports — statements it skipped or objects it could not represent — normally
   surface as warnings, and `--strict-coverage` promotes them to hard failures.
-  Under the `SUPABASE_USE_PG_DELTA_NEXT=false` legacy opt-out the flag is
-  accepted but has no effect, since the legacy edge-runtime engine does not
-  emit coverage diagnostics. Default behavior (omitted flag) matches Go.
+  Rolling back to migra (`--use-migra`, `--diff-engine migra`, or
+  `[experimental.pgdelta] enabled = false`) accepts the flag but has no effect,
+  since migra does not emit coverage diagnostics. Default behavior (omitted
+  flag) matches Go.
 - `db push` has a TS-only `--skip-vault` flag. It applies migrations without
   resolving or updating `[db.vault]` secrets; default behavior still matches Go.
 - Every legacy command that resolves a linked project ref for its own database
@@ -98,11 +99,10 @@ These commands exist in the TS CLI today but have no direct top-level equivalent
   behavior or exit codes; a non-interactive sync still fails with Go's
   "no declarative schema found" message. Inside that directory the bundled (default) pg-delta
   engine writes one directory per schema at the root — `supabase/schemas/public/tables/x.sql` —
-  with cluster-level objects under a reserved `supabase/schemas/_cluster/`. The Go reference,
-  and the opt-out legacy engine (`SUPABASE_USE_PG_DELTA_NEXT=false`, which runs the pinned
-  `[experimental.pgdelta] npm_version` in Edge Runtime), instead nest everything one level
-  deeper as `schemas/<schema>/…` plus `cluster/…`, so a legacy-engine export lands at
-  `supabase/schemas/schemas/public/tables/x.sql`.
+  with cluster-level objects under a reserved `supabase/schemas/_cluster/`. The Go
+  reference (edge-runtime pg-delta on remaining delegated commands) instead nests
+  everything one level deeper as `schemas/<schema>/…` plus `cluster/…`, so a Go
+  export lands at `supabase/schemas/schemas/public/tables/x.sql`.
 - Local `pg_net` presence now converges with `[experimental.webhooks]` instead of being
   installed unconditionally: `db-webhook.sql` no longer creates the extension at container
   init, `supabase start`/`db start` install it (with grants reapplied via the

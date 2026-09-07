@@ -41,8 +41,6 @@ import {
   type LegacyPgConnInput,
 } from "../../shared/legacy-db-connection.service.ts";
 import { legacyDebugLoggerLayer } from "../../shared/legacy-debug-logger.layer.ts";
-import { LegacyEdgeRuntimeScript } from "../../shared/legacy-edge-runtime-script.service.ts";
-import { LegacyPgDeltaSslProbe } from "../../shared/legacy-pgdelta-ssl-probe.service.ts";
 import { LegacyTemplateService, type LegacyStarterTemplate } from "./bootstrap.templates.ts";
 import { legacyBootstrap } from "./bootstrap.handler.ts";
 import type { LegacyBootstrapFlags } from "./bootstrap.command.ts";
@@ -212,15 +210,6 @@ function setup(opts: SetupOpts = {}) {
         });
       }),
   });
-  const edgeRuntimeLayer = Layer.succeed(LegacyEdgeRuntimeScript, {
-    run: () =>
-      Effect.die("edge-runtime not needed: scratch/template fixtures never push migrations"),
-  });
-  const sslProbeLayer = Layer.succeed(LegacyPgDeltaSslProbe, {
-    requireSsl: () => Effect.die("pg-delta ssl probe not needed for this test"),
-    requireSslForHost: () => Effect.die("pg-delta ssl probe not needed for this test"),
-  });
-
   const loginApi = mockLegacyLoginApi({ gotrueId: "gotrue-user" });
   const loginCrypto = mockLegacyLoginCrypto();
 
@@ -241,8 +230,6 @@ function setup(opts: SetupOpts = {}) {
     credentials.layer,
     templateLayer,
     dbConnectionLayer,
-    edgeRuntimeLayer,
-    sslProbeLayer,
     loginApi.layer,
     loginCrypto.layer,
     mockBrowser(),

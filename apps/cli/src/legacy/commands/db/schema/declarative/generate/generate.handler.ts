@@ -18,15 +18,12 @@ import {
 } from "../../../../../shared/legacy-db-config.toml-read.ts";
 import { LegacyLinkedProjectCache } from "../../../../../telemetry/legacy-linked-project-cache.service.ts";
 import { LegacyTelemetryState } from "../../../../../telemetry/legacy-telemetry-state.service.ts";
-import { legacyListLocalMigrations } from "../../../../../shared/legacy-pgdelta.cache.ts";
+import { legacyListLocalMigrations } from "../../../../../shared/legacy-migration-list.ts";
 import {
   legacyIsPgDeltaDebugEnabled,
   legacyResolvePgDeltaProjectId,
 } from "../../../../../shared/legacy-pgdelta.ts";
-import {
-  LegacyPgDeltaEngine,
-  type LegacyPgDeltaDatabaseEndpoint,
-} from "../../../shared/legacy-pgdelta-engine.service.ts";
+import type { LegacyPgDeltaDatabaseEndpoint } from "../../../shared/legacy-pgdelta-engine.service.ts";
 import { LegacyDeclarativeWriteError } from "../../../shared/legacy-pgdelta.errors.ts";
 import {
   LegacyDeclarativeMutuallyExclusiveFlagsError,
@@ -62,7 +59,6 @@ export const legacyDbSchemaDeclarativeGenerate = Effect.fn("legacy.db.schema.dec
     const telemetryState = yield* LegacyTelemetryState;
     const linkedProjectCache = yield* LegacyLinkedProjectCache;
     const dnsResolver = yield* LegacyDnsResolverFlag;
-    const engine = yield* LegacyPgDeltaEngine;
     // Go's `dbDeclarativeCmd.PersistentPreRunE` calls `flags.LoadConfig` — which runs
     // `loadNestedEnv` and `os.Setenv`s each project-.env key — BEFORE reading
     // `viper.GetBool("EXPERIMENTAL")` for the gate below (`apps/cli-go/cmd/
@@ -174,7 +170,6 @@ export const legacyDbSchemaDeclarativeGenerate = Effect.fn("legacy.db.schema.dec
             cliSettings.workdir,
           ),
           cwd: cliSettings.workdir,
-          npmVersion: Option.getOrUndefined(toml.pgDelta.npmVersion),
           // Merged config's deno_version (re-loaded with the linked ref above on
           // `--linked`), so pg-delta runs under the remote-configured Deno image.
           denoVersion: toml.denoVersion,
@@ -279,7 +274,7 @@ export const legacyDbSchemaDeclarativeGenerate = Effect.fn("legacy.db.schema.dec
         overwrite = true;
       }
 
-      const result = yield* legacyGenerateDeclarativeOutput(run, toml, target);
+      const result = yield* legacyGenerateDeclarativeOutput(run, target);
 
       if (!overwrite && (yield* confirmOverwriteHasFiles(fs, declarativeDir))) {
         // Go's confirmOverwrite goes through Console.PromptYesNo (`internal/db/
@@ -304,31 +299,6 @@ export const legacyDbSchemaDeclarativeGenerate = Effect.fn("legacy.db.schema.dec
       // next writer only prunes what an export manifest claimed — say so when a
       // manifest-less directory kept files the export did not replace.
       yield* legacyWarnPreservedUnmanagedDeclarativeFiles(declarativeDirRel, written);
-
-      // Warm the declarative catalog cache after writing the files and before the
-      // success message, gated on `!--no-cache` — Go's `Generate`
-      // (`apps/cli-go/internal/db/declarative/declarative.go:133-157`). This applies
-      // the generated schema to the shadow DB and caches the catalog under the
-      // `local` key a subsequent `sync` reuses; a schema that cannot be applied makes
-      // `generate` fail here rather than succeeding and forcing `sync` to reprovision.
-      //
-      // On explicit `--linked`, thread the resolved ref into the legacy cache-warm seam,
-      // so it loads the `[remotes.<ref>]`-merged config and its own `GetDeclarativeDir()`
-      // resolves the remote-overridden `declarative_schema_path` — i.e. the warm builds
-      // from the same merged config and targets the same dir the handler wrote to (also
-      // computed from the merged `toml`). Go warms against the in-process merged config
-      // identically (`declarative.go:138-154`), so this always runs when `!--no-cache`.
-      // A command-local --output-dir is deliberately not activated in config. The
-      // legacy catalog seam resolves the configured declarative path itself, so
-      // warming here would inspect the wrong tree. Skip that optional legacy-only
-      // cache warm; the generated output remains complete and usable on its own.
-      if (!flags.noCache && engine.implementation === "legacy" && Option.isNone(flags.outputDir)) {
-        yield* (yield* LegacyDeclarativeSeam).exportCatalog({
-          mode: "declarative",
-          noCache: flags.noCache,
-          ...(linkedProjectRef !== undefined ? { projectRef: linkedProjectRef } : {}),
-        });
-      }
       yield* output.raw(legacyDeclarativeSchemaWrittenLine(declarativeDirRel), "stderr");
     }).pipe(
       // Go's `ensureProjectGroupsCached` PersistentPostRun (`cmd/root.go:176,214-234`)

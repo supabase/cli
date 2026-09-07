@@ -127,7 +127,6 @@ export const legacyDbPush = Effect.fn("legacy.db.push")(function* (flags: Legacy
       includeSeed: flags.includeSeed,
       includeVault: !flags.skipVault,
       dnsResolver,
-      projectId: cliSettings.projectId,
       toml,
       yes,
       emitStructuredResult: true,

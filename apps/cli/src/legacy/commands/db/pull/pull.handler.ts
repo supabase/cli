@@ -41,12 +41,7 @@ import {
   type LegacyLocalDbContainerInputs,
 } from "../../../shared/db-bootstrap/local-container-inputs.ts";
 import { legacyWithShadowDatabase } from "../../../shared/db-bootstrap/shadow-cache.ts";
-import {
-  legacyCreateShadowDatabase,
-  legacyPrepareRawShadow,
-  legacyRemoveShadowDatabase,
-  legacyShadowRunInputFromLocalContainerInputs,
-} from "../../../shared/db-bootstrap/shadow-database.ts";
+import { legacyShadowRunInputFromLocalContainerInputs } from "../../../shared/db-bootstrap/shadow-database.ts";
 import { LegacyLinkedProjectCache } from "../../../telemetry/legacy-linked-project-cache.service.ts";
 import { LegacyTelemetryState } from "../../../telemetry/legacy-telemetry-state.service.ts";
 import {
@@ -78,7 +73,7 @@ import {
   legacyFormatMigrationTimestamp,
   legacyGetMigrationPath,
 } from "../../../shared/legacy-migration-file.ts";
-import { legacyDebugBundleMessage, legacyFormatDebugId } from "../shared/legacy-debug-bundle.ts";
+import { legacyDebugBundleMessage } from "../shared/legacy-debug-bundle.ts";
 import {
   LegacyPgDeltaEngine,
   type LegacyPgDeltaDatabaseEndpoint,
@@ -88,7 +83,6 @@ import {
   legacyIsPgDeltaDebugEnabled,
   legacyResolvePgDeltaProjectId,
 } from "../../../shared/legacy-pgdelta.ts";
-import { legacySaveEmptyPgDeltaPullDebug } from "./pull.debug.ts";
 import { legacyPrepareShadowSource } from "../shared/legacy-shadow-source.ts";
 import type { LegacyDbPullFlags } from "./pull.command.ts";
 import {
@@ -381,7 +375,6 @@ export const legacyDbPull = Effect.fn("legacy.db.pull")(function* (flags: Legacy
       // that helper's own doc comment, and `diff.handler.ts`'s identical call site.
       projectId: legacyResolvePgDeltaProjectId(cliSettings.projectId, toml, cliSettings.workdir),
       cwd: cliSettings.workdir,
-      npmVersion: Option.getOrUndefined(toml.pgDelta.npmVersion),
       denoVersion: toml.denoVersion,
       projectEnv: toml.projectEnv,
     };
@@ -445,7 +438,6 @@ export const legacyDbPull = Effect.fn("legacy.db.pull")(function* (flags: Legacy
         envEnabled: legacyParseBoolEnv(toml.envLookup("SUPABASE_EXPERIMENTAL_PG_DELTA")),
       }),
     });
-    const usesPgDeltaNext = usePgDeltaDiff && pgDeltaEngine.implementation === "next";
 
     // Runs the Go-delegated `--experimental` structured dump (still delegated, see
     // `EXPERIMENTAL_STRUCTURED_DUMP_DEPRECATION_LINE` above for why). In machine-output
@@ -503,13 +495,9 @@ export const legacyDbPull = Effect.fn("legacy.db.pull")(function* (flags: Legacy
           yield* output.raw("Preparing declarative schema export using pg-delta...\n", "stderr");
           const declarativeDirRel = legacyResolveDeclarativeDir(path, toml.pgDelta);
           const declarativeDir = path.resolve(cliSettings.workdir, declarativeDirRel);
-          const exportSchema = (
-            target: LegacyPgDeltaDatabaseEndpoint,
-            source?: LegacyPgDeltaDatabaseEndpoint,
-          ) =>
+          const exportSchema = (target: LegacyPgDeltaDatabaseEndpoint) =>
             pgDeltaEngine.exportDeclarativeSchema({
               context: ctx,
-              ...(source !== undefined ? { source } : {}),
               target,
               schema: flags.schema,
               formatOptions,
@@ -518,44 +506,10 @@ export const legacyDbPull = Effect.fn("legacy.db.pull")(function* (flags: Legacy
                 : {}),
               debug: legacyIsPgDeltaDebugEnabled(),
               strictCoverage: flags.strictCoverage,
-              noCache: false,
             });
-          // Legacy export owns an interrupt-safe empty-shadow lifecycle; next reads the target.
-          const exported =
-            pgDeltaEngine.implementation === "next"
-              ? yield* withPoolerFallback(targetEndpoint, (target) => exportSchema(target))
-              : yield* Effect.gen(function* () {
-                  const declLocalInputs = Option.getOrThrow(localInputs);
-                  const resolvedDeclShadowImage = yield* declLocalInputs.resolvePostgresImage;
-                  // The legacy exporter still needs the historical empty baseline. Keep it
-                  // native and workflow-owned; the bundled next exporter reads only target.
-                  const rawShadowInput = legacyShadowRunInputFromLocalContainerInputs(
-                    declLocalInputs,
-                    resolvedDeclShadowImage,
-                    toml,
-                    fs,
-                    path,
-                  );
-                  return yield* Effect.acquireUseRelease(
-                    legacyCreateShadowDatabase(spawner, rawShadowInput),
-                    (handle) =>
-                      Effect.gen(function* () {
-                        const shadow = yield* legacyPrepareRawShadow(
-                          spawner,
-                          handle,
-                          rawShadowInput,
-                        );
-                        return yield* withPoolerFallback(targetEndpoint, (target) =>
-                          exportSchema(target, {
-                            kind: "database",
-                            ref: shadow.sourceUrl,
-                            connectOptions: { isLocal: true, dnsResolver: "native" },
-                          }),
-                        );
-                      }),
-                    (handle) => legacyRemoveShadowDatabase(spawner, handle.containerId),
-                  );
-                });
+          const exported = yield* withPoolerFallback(targetEndpoint, (target) =>
+            exportSchema(target),
+          );
           const written = yield* legacyWriteDeclarativeSchemas(
             fs,
             path,
@@ -597,10 +551,10 @@ export const legacyDbPull = Effect.fn("legacy.db.pull")(function* (flags: Legacy
           return;
         }
 
-        // Only next ignores schema_paths in favor of the migrations baseline.
+        // pg-delta ignores schema_paths in favor of the migrations baseline.
         if (
           !delegatesExperimentalPull &&
-          usesPgDeltaNext &&
+          usePgDeltaDiff &&
           toml.schemaPaths !== undefined &&
           toml.schemaPaths.length > 0
         ) {
@@ -764,8 +718,7 @@ export const legacyDbPull = Effect.fn("legacy.db.pull")(function* (flags: Legacy
           Effect.gen(function* () {
             yield* output.raw("Creating shadow database...\n", "stderr");
             const resolvedPullShadowImage = yield* pullLocalInputs.resolvePostgresImage;
-            // Legacy may substitute a declarative target; next always uses the live target.
-            const migrationMode: "legacy" | "pgdelta-next" = usesPgDeltaNext
+            const migrationMode: "legacy" | "pgdelta-next" = usePgDeltaDiff
               ? "pgdelta-next"
               : "legacy";
             const shadowInput = {
@@ -777,7 +730,6 @@ export const legacyDbPull = Effect.fn("legacy.db.pull")(function* (flags: Legacy
                 path,
               ),
               targetLocal: resolved.isLocal,
-              usePgDelta: usePgDeltaDiff,
               migrationMode,
               // `toml.schemaPathPatterns`, NOT `pullLocalInputs.context.config.db.migrations.
               // schema_paths`: the latter is the raw `@supabase/config` field, which never
@@ -785,7 +737,6 @@ export const legacyDbPull = Effect.fn("legacy.db.pull")(function* (flags: Legacy
               // (`legacyReadDbToml`) already resolves that env override.
               schemaPaths: toml.schemaPathPatterns,
               pgDelta: toml.pgDelta,
-              ctx,
             };
             // `legacyWithShadowDatabase` (`shadow-cache.ts`) owns the interrupt-safe lifecycle
             // and the cache seam. Each pooler-retry attempt still acquires and releases its own
@@ -856,41 +807,7 @@ export const legacyDbPull = Effect.fn("legacy.db.pull")(function* (flags: Legacy
         // initial-migra path seeded the file with a pg_dump above, so its empty second
         // pass is swallowed and falls through to the shared tail below.
         if (diffEmpty && !seededFromDump) {
-          // Preserve the legacy empty-diff debug bundle contract.
-          if (pgDeltaEngine.implementation === "legacy" && diffOutcome.debug !== undefined) {
-            const debugDir = yield* legacySaveEmptyPgDeltaPullDebug({
-              ctx,
-              conn: resolved.conn,
-              targetUrl,
-              sourceCatalog: diffOutcome.debug.sourceSnapshot,
-              pgDeltaStderr: diffOutcome.debug.stderr,
-              id: legacyFormatDebugId(yield* Clock.currentTimeMillis),
-              fs,
-              path,
-              workdir: cliSettings.workdir,
-            }).pipe(
-              Effect.catch((error) =>
-                output
-                  .raw(
-                    `Warning: failed to save pg-delta debug bundle: ${error.message}\n`,
-                    "stderr",
-                  )
-                  .pipe(Effect.as(undefined)),
-              ),
-            );
-            if (debugDir !== undefined) {
-              return yield* Effect.fail(
-                new LegacyDbPullInSyncError({
-                  message: `No schema changes found (debug bundle: ${debugDir})`,
-                  suggestion: IN_SYNC_SUGGESTION,
-                }),
-              );
-            }
-          }
-          if (
-            pgDeltaEngine.implementation === "next" &&
-            diffOutcome.debug?.directory !== undefined
-          ) {
+          if (diffOutcome.debug?.directory !== undefined) {
             yield* output.raw(legacyDebugBundleMessage(diffOutcome.debug.directory), "stderr");
             return yield* Effect.fail(
               new LegacyDbPullInSyncError({
