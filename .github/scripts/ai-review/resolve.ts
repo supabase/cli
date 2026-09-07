@@ -5,9 +5,10 @@
  * The pipeline runs EXACTLY ONCE per PR, so this is the only gate standing
  * between "new commit lands" and "Claude + Codex burn API budget again". Two
  * triggers feed it:
- *   - manual (`workflow_dispatch` or an internal maintainer's `/ai-review`
- *     issue comment): a human explicitly asked for a review, so the
- *     marker/dedup guard and the draft/fork/bot skips are bypassed.
+ *   - manual (`workflow_dispatch` or an internal maintainer's slash-command
+ *     issue comment, `/ai-review` by default): a human explicitly asked, so
+ *     the marker/dedup guard and the draft/bot skips are bypassed. Forks
+ *     stay skipped on manual when `forbidForksOnManual` is set (dogfood).
  *   - auto (`pull_request` `opened`/`ready_for_review`, currently commented
  *     out in the workflow while prompts are tuned): skips drafts, bots, fork
  *     PRs (v1 is internal-PRs-only; forks go through the manual maintainer
@@ -46,16 +47,23 @@ export interface TriggeringComment {
   id: number;
   authorLogin: string;
   authorAssociation: string;
-  /** Full comment body, needed to check the command matches `/ai-review`
-   * exactly (the workflow's `if:` only pre-filters on `startsWith`). */
+  /** Full comment body, needed to check the command matches exactly
+   * (the workflow's `if:` only pre-filters on `startsWith`). */
   body: string;
 }
+
+/** Default slash command when `ResolveInput.command` is omitted. */
+export const DEFAULT_RESOLVE_COMMAND = "/ai-review";
 
 export interface ResolveInput {
   eventName: EventName;
   prNumber: number;
   /** Present only for `issue_comment` events. */
   comment?: TriggeringComment;
+  /** Exact first-line slash command. Defaults to `DEFAULT_RESOLVE_COMMAND`. */
+  command?: string;
+  /** When true, skip fork PRs even on manual triggers (the job holds a staging token). */
+  forbidForksOnManual?: boolean;
 }
 
 /** Minimal PR shape the resolver needs to decide. */
@@ -103,12 +111,22 @@ function decideForPr(trigger: Trigger): ResolveResult {
   return { shouldRun: true, trigger };
 }
 
+function resolveCommand(input: ResolveInput): string {
+  const command = input.command?.trim();
+  return command && command.length > 0 ? command : DEFAULT_RESOLVE_COMMAND;
+}
+
+function isForkPr(pr: PrDetails): boolean {
+  return pr.headRepoFullName !== pr.baseRepoFullName;
+}
+
 /**
  * Pure decision orchestration for the AI review pipeline. Given the event
  * context and injected GitHub I/O, decides whether the pipeline should run.
  */
 export async function resolveDecision(input: ResolveInput, io: ResolveIo): Promise<ResolveResult> {
   const trigger: Trigger = input.eventName === "pull_request" ? "auto" : "manual";
+  const command = resolveCommand(input);
   const pr = await io.fetchPr(input.prNumber);
 
   if (pr.state === "closed") {
@@ -127,13 +145,13 @@ export async function resolveDecision(input: ResolveInput, io: ResolveIo): Promi
       }
 
       // Authoritative command match: the workflow's job `if:` only
-      // pre-filters on `startsWith('/ai-review')`, so `/ai-reviewers` or
-      // `/ai-review-please` would otherwise also reach here.
+      // pre-filters on `startsWith`, so a near-miss (`/ai-reviewers`,
+      // `/ai-dogfood-and-reviewers`) would otherwise also reach here.
       const firstLine = comment.body.split("\n")[0]?.trim() ?? "";
-      if (firstLine !== "/ai-review") {
+      if (firstLine !== command) {
         return {
           shouldRun: false,
-          skipReason: `Comment is not the exact /ai-review command (first line: ${JSON.stringify(firstLine)}).`,
+          skipReason: `Comment is not the exact ${command} command (first line: ${JSON.stringify(firstLine)}).`,
           trigger,
         };
       }
@@ -153,7 +171,7 @@ export async function resolveDecision(input: ResolveInput, io: ResolveIo): Promi
         return {
           shouldRun: false,
           skipReason:
-            `Commenter @${comment.authorLogin} is not authorized to run /ai-review ` +
+            `Commenter @${comment.authorLogin} is not authorized to run ${command} ` +
             `(author_association=${comment.authorAssociation}, permission=${permission ?? "n/a"}); ` +
             `requires repository write access (or being the repository owner).`,
           trigger,
@@ -168,8 +186,16 @@ export async function resolveDecision(input: ResolveInput, io: ResolveIo): Promi
         console.warn(`Could not react to comment ${comment.id}: ${String(error)}`);
       }
     }
+    if (input.forbidForksOnManual && isForkPr(pr)) {
+      return {
+        shouldRun: false,
+        skipReason: `PR is from a fork; ${command} refuses forks because it executes PR code with a staging token.`,
+        trigger,
+      };
+    }
     // A maintainer explicitly asked, so the marker/dedup guard and the
-    // draft/fork/bot skips below don't apply.
+    // draft/bot skips below don't apply. Forks still skip when
+    // `forbidForksOnManual` is set.
     return decideForPr(trigger);
   }
 
@@ -181,10 +207,10 @@ export async function resolveDecision(input: ResolveInput, io: ResolveIo): Promi
   if (pr.authorIsBot) {
     return { shouldRun: false, skipReason: "PR author is a bot.", trigger };
   }
-  if (pr.headRepoFullName !== pr.baseRepoFullName) {
+  if (isForkPr(pr)) {
     return {
       shouldRun: false,
-      skipReason: "PR is from a fork; ask a maintainer to comment /ai-review instead.",
+      skipReason: `PR is from a fork; ask a maintainer to comment ${command} instead.`,
       trigger,
     };
   }
@@ -202,7 +228,7 @@ export async function resolveDecision(input: ResolveInput, io: ResolveIo): Promi
   if (alreadyReviewed) {
     return {
       shouldRun: false,
-      skipReason: "PR already received an AI review; comment /ai-review to request another.",
+      skipReason: `PR already received an AI review; comment ${command} to request another.`,
       trigger,
     };
   }
@@ -430,10 +456,16 @@ async function main(): Promise<void> {
     reactToComment: (commentId) => reactToComment(token, base, commentId),
   };
 
-  const result = await resolveDecision({ eventName, prNumber, comment }, io);
+  const command = process.env["RESOLVE_COMMAND"]?.trim() || DEFAULT_RESOLVE_COMMAND;
+  const forbidForksOnManual = process.env["FORBID_FORKS_ON_MANUAL"] === "true";
+
+  const result = await resolveDecision(
+    { eventName, prNumber, comment, command, forbidForksOnManual },
+    io,
+  );
 
   console.log(
-    `AI review resolve for PR #${prNumber}: should_run=${result.shouldRun} ` +
+    `Resolve ${command} for PR #${prNumber}: should_run=${result.shouldRun} ` +
       `trigger=${result.trigger}${result.skipReason ? ` (${result.skipReason})` : ""}`,
   );
 

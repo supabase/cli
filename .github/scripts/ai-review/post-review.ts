@@ -523,6 +523,9 @@ const SECRET_PATTERNS: readonly RegExp[] = [
   // GitHub App/OAuth/Actions tokens (gho_, ghu_, ghs_, ghr_) share this
   // prefix+length shape with `ghp_` personal access tokens.
   /gh[oprsu]_[A-Za-z0-9]{36,}/g,
+  // Staging/prod personal access tokens (`sbp_` + payload). Dogfood runs
+  // hold a staging token; scrub it if a model echoes it into a report.
+  /sbp_[A-Za-z0-9]{20,}/g,
 ];
 
 /**
@@ -629,6 +632,8 @@ export interface ReviewFooterInfo {
    * `CLAUDE_MODEL`/`CODEX_MODEL` env vars instead of being hardcoded here, so
    * the model names have one source of truth. */
   modelsFooter: string;
+  /** Present when a functional dogfood report comment was found on the PR. */
+  dogfoodVerdict?: string;
 }
 
 /** Renders the full review body: summary, findings table, out-of-diff section, refuted details, stats, and footer. */
@@ -697,16 +702,20 @@ export function renderReviewBody(
     ].join("\n"),
   );
 
-  sections.push(
-    [
-      "---",
-      `Models: ${footer.modelsFooter} · Trigger: \`${footer.trigger}\` · [Workflow run](${footer.runUrl})`,
-      "",
-      "This review runs once per PR. A maintainer can request another with a `/ai-review` comment.",
-      "",
-      AI_REVIEW_MARKER,
-    ].join("\n"),
+  const footerLines = [
+    "---",
+    `Models: ${footer.modelsFooter} · Trigger: \`${footer.trigger}\` · [Workflow run](${footer.runUrl})`,
+  ];
+  if (footer.dogfoodVerdict) {
+    footerLines.push(`Functional dogfood: \`${footer.dogfoodVerdict}\``);
+  }
+  footerLines.push(
+    "",
+    "This review runs once per PR. A maintainer can request another with a `/ai-review` comment.",
+    "",
+    AI_REVIEW_MARKER,
   );
+  sections.push(footerLines.join("\n"));
 
   return sections.join("\n\n");
 }
@@ -1150,15 +1159,21 @@ async function runPost(): Promise<void> {
   // model names have one source of truth.
   const claudeModel = requireEnv("CLAUDE_MODEL");
   const codexModel = requireEnv("CODEX_MODEL");
+  const dogfoodVerdict = process.env["DOGFOOD_VERDICT"]?.trim();
 
   const raw: unknown = JSON.parse(await Bun.file(mergedReviewPath).text());
   assertMergedReview(raw);
 
-  await postConsolidatedReview(io, prNumber, raw, {
+  const footer: ReviewFooterInfo = {
     trigger,
     runUrl,
     modelsFooter: `\`${claudeModel}\` + \`${codexModel}\``,
-  });
+  };
+  if (dogfoodVerdict) {
+    footer.dogfoodVerdict = dogfoodVerdict;
+  }
+
+  await postConsolidatedReview(io, prNumber, raw, footer);
   console.log(`Posted AI review on PR #${prNumber} (${raw.findings.length} finding(s)).`);
 }
 

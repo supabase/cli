@@ -1,0 +1,69 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/supabase/cli/.github/ai-dogfood/report.schema.json",
+  "title": "AI dogfood functional report",
+  "description": "Structured output contract for the GPT 5.6-luna dogfood agent. Follows OpenAI structured-output strict-mode rules — every property is listed in required and optional fields are nullable — so it can be used as Codex's output-schema-file. Kept in sync by hand with assertDogfoodReport in .github/scripts/ai-dogfood/post-report.ts.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["verdict", "summary", "head_sha", "journeys", "blockers", "cleanup"],
+  "properties": {
+    "verdict": {
+      "type": "string",
+      "enum": ["go", "conditional", "no-go"],
+      "description": "go = journeys that matter for this PR passed; conditional = useful but with skippable issues; no-go = a user-facing command the diff touches failed."
+    },
+    "summary": {
+      "type": "string",
+      "description": "Honest executive summary of what was exercised and what happened."
+    },
+    "head_sha": {
+      "type": "string",
+      "description": "PR HEAD SHA this run exercised. Copy from /tmp/ai-dogfood/head_sha.txt; do not invent one."
+    },
+    "journeys": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["id", "commands", "result", "notes"],
+        "properties": {
+          "id": {
+            "type": "string",
+            "description": "Short kebab-case journey id, e.g. create-link-push."
+          },
+          "commands": {
+            "type": "array",
+            "items": { "type": "string" },
+            "description": "CLI verbs actually invoked (without flags that could contain secrets)."
+          },
+          "result": {
+            "type": "string",
+            "enum": ["pass", "fail", "skip"],
+            "description": "pass = completed as expected; fail = unexpected error; skip = not applicable to this diff."
+          },
+          "notes": {
+            "type": "string",
+            "description": "What happened. No tokens, no passwords, no project JWT/db URLs with credentials."
+          }
+        }
+      }
+    },
+    "blockers": {
+      "type": "array",
+      "items": { "type": "string" },
+      "description": "User-visible failures. Empty array if none."
+    },
+    "cleanup": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["projects_deleted"],
+      "properties": {
+        "projects_deleted": {
+          "type": "array",
+          "items": { "type": "string" },
+          "description": "Staging project refs this agent deleted. Empty if none or cleanup ran in CI after the agent."
+        }
+      }
+    }
+  }
+}

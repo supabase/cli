@@ -124,6 +124,7 @@ jobs:
     permissions:
       contents: read
       pull-requests: read
+      issues: read
     steps:
       - name: Checkout PR head (untrusted; review subject matter only)
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -162,6 +163,21 @@ jobs:
           gh pr view "$PR" --repo "$GITHUB_REPOSITORY" \
             --json number,title,body,baseRefName,headRefName,additions,deletions,changedFiles \
             > /tmp/ai-review/pr.json
+
+      - name: Fetch dogfood report
+        working-directory: trusted
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GITHUB_REPOSITORY: ${{ github.repository }}
+          PR_NUMBER: ${{ needs.resolve.outputs.pr_number }}
+          DOGFOOD_REPORT_PATH: /tmp/ai-review/dogfood-report.md
+        run: |
+          mkdir -p /tmp/ai-review
+          script=".github/scripts/ai-dogfood/post-report.ts"
+          : > /tmp/ai-review/dogfood-report.md
+          if [ -f "$script" ]; then
+            bun "$script" fetch || true
+          fi
 
       # Pin the exact published version so a new Claude Code release can't
       # silently change review behavior mid-rollout; bump deliberately.
@@ -286,6 +302,7 @@ jobs:
     permissions:
       contents: read
       pull-requests: read
+      issues: read
     timeout-minutes: 45
     runs-on: ubuntu-latest
     steps:
@@ -308,6 +325,20 @@ jobs:
           mkdir -p /tmp/ai-review
           # Pass --repo explicitly so `gh` never depends on cwd being a git repo.
           gh pr diff "$PR" --repo "$GITHUB_REPOSITORY" > /tmp/ai-review/pr.diff
+
+      - name: Fetch dogfood report
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GITHUB_REPOSITORY: ${{ github.repository }}
+          PR_NUMBER: ${{ needs.resolve.outputs.pr_number }}
+          DOGFOOD_REPORT_PATH: /tmp/ai-review/dogfood-report.md
+        run: |
+          mkdir -p /tmp/ai-review
+          script=".github/scripts/ai-dogfood/post-report.ts"
+          : > /tmp/ai-review/dogfood-report.md
+          if [ -f "$script" ]; then
+            bun "$script" fetch || true
+          fi
 
       - name: Prepare findings output schema
         run: |
@@ -388,6 +419,7 @@ jobs:
     permissions:
       contents: read
       pull-requests: read
+      issues: read
     timeout-minutes: 45
     runs-on: ubuntu-latest
     steps:
@@ -456,6 +488,21 @@ jobs:
         run: |
           mkdir -p /tmp/ai-review
           gh pr diff "$PR" --repo "$GITHUB_REPOSITORY" > /tmp/ai-review/pr.diff
+
+      - name: Fetch dogfood report
+        working-directory: trusted
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GITHUB_REPOSITORY: ${{ github.repository }}
+          PR_NUMBER: ${{ needs.resolve.outputs.pr_number }}
+          DOGFOOD_REPORT_PATH: /tmp/ai-review/dogfood-report.md
+        run: |
+          mkdir -p /tmp/ai-review
+          script=".github/scripts/ai-dogfood/post-report.ts"
+          : > /tmp/ai-review/dogfood-report.md
+          if [ -f "$script" ]; then
+            bun "$script" fetch || true
+          fi
 
       - name: Prepare merged-review output schema
         working-directory: trusted
@@ -538,6 +585,7 @@ jobs:
     timeout-minutes: 10
     permissions:
       pull-requests: write
+      issues: read
     steps:
       # SECURITY-CRITICAL: this is the only job with write permission, so it
       # must only ever execute trusted base-branch code — never the PR head.
@@ -558,6 +606,21 @@ jobs:
           name: merged-review
           path: /tmp/ai-review
 
+      - name: Fetch dogfood report
+        id: dogfood
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GITHUB_REPOSITORY: ${{ github.repository }}
+          PR_NUMBER: ${{ needs.resolve.outputs.pr_number }}
+          DOGFOOD_REPORT_PATH: /tmp/ai-review/dogfood-report.md
+        run: |
+          mkdir -p /tmp/ai-review
+          script=".github/scripts/ai-dogfood/post-report.ts"
+          : > /tmp/ai-review/dogfood-report.md
+          if [ -f "$script" ]; then
+            bun "$script" fetch || true
+          fi
+
       - name: Post review
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -569,4 +632,5 @@ jobs:
           # CLAUDE_MODEL / CODEX_MODEL are inherited from the workflow-level
           # `env:` block above — the same values passed to `claude`/
           # `codex-action` — so the footer never drifts from what actually ran.
+          DOGFOOD_VERDICT: ${{ steps.dogfood.outputs.verdict }}
         run: bun .github/scripts/ai-review/post-review.ts post

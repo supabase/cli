@@ -466,3 +466,123 @@ describe("resolveDecision: trigger classification per event shape", () => {
     expect(result.trigger).toBe("auto");
   });
 });
+
+describe("resolveDecision: parameterized command", () => {
+  const dogfood = "/ai-dogfood-and-review";
+
+  test("rejects a comment whose first line is /ai-review when command is /ai-dogfood-and-review", async () => {
+    const pr = makePr();
+    const { io, permissionLookups, reactions } = makeIo(pr, {
+      permissionByLogin: { commenter: "admin" },
+    });
+    const result = await resolveDecision(
+      {
+        eventName: "issue_comment",
+        prNumber: pr.number,
+        command: dogfood,
+        comment: makeComment({ body: "/ai-review", authorAssociation: "OWNER" }),
+      },
+      io,
+    );
+    expect(result.shouldRun).toBe(false);
+    expect(result.skipReason).toContain(dogfood);
+    expect(permissionLookups).toEqual([]);
+    expect(reactions).toEqual([]);
+  });
+
+  test("accepts the exact parameterized command as the first line", async () => {
+    const pr = makePr();
+    const { io } = makeIo(pr, { permissionByLogin: { commenter: "admin" } });
+    const result = await resolveDecision(
+      {
+        eventName: "issue_comment",
+        prNumber: pr.number,
+        command: dogfood,
+        comment: makeComment({ body: `${dogfood}\n\nplease dogfood this` }),
+      },
+      io,
+    );
+    expect(result.shouldRun).toBe(true);
+  });
+
+  test("unauthorized skip reason names the parameterized command", async () => {
+    const pr = makePr();
+    const { io } = makeIo(pr);
+    const result = await resolveDecision(
+      {
+        eventName: "issue_comment",
+        prNumber: pr.number,
+        command: dogfood,
+        comment: makeComment({
+          body: dogfood,
+          authorLogin: "rando",
+          authorAssociation: "NONE",
+        }),
+      },
+      io,
+    );
+    expect(result.shouldRun).toBe(false);
+    expect(result.skipReason).toContain(`not authorized to run ${dogfood}`);
+  });
+});
+
+describe("resolveDecision: forbidForksOnManual", () => {
+  test("workflow_dispatch skips a fork when forbidForksOnManual is set", async () => {
+    const pr = makePr({ headRepoFullName: "someone/fork" });
+    const { io } = makeIo(pr);
+    const result = await resolveDecision(
+      {
+        eventName: "workflow_dispatch",
+        prNumber: pr.number,
+        command: "/ai-dogfood-and-review",
+        forbidForksOnManual: true,
+      },
+      io,
+    );
+    expect(result).toEqual({
+      shouldRun: false,
+      skipReason:
+        "PR is from a fork; /ai-dogfood-and-review refuses forks because it executes PR code with a staging token.",
+      trigger: "manual",
+    });
+  });
+
+  test("an authorized comment on a fork is skipped when forbidForksOnManual is set", async () => {
+    const pr = makePr({ headRepoFullName: "someone/fork" });
+    const { io, reactions } = makeIo(pr);
+    const result = await resolveDecision(
+      {
+        eventName: "issue_comment",
+        prNumber: pr.number,
+        command: "/ai-dogfood-and-review",
+        forbidForksOnManual: true,
+        comment: makeComment({
+          id: 12,
+          body: "/ai-dogfood-and-review",
+          authorLogin: "owner-user",
+          authorAssociation: "OWNER",
+        }),
+      },
+      io,
+    );
+    expect(result.shouldRun).toBe(false);
+    expect(result.skipReason).toContain("refuses forks");
+    // Auth succeeded (👀 already posted) before the fork gate.
+    expect(reactions).toEqual([12]);
+  });
+
+  test("same-repo PRs still run when forbidForksOnManual is set", async () => {
+    const pr = makePr();
+    const { io } = makeIo(pr);
+    const result = await resolveDecision(
+      {
+        eventName: "workflow_dispatch",
+        prNumber: pr.number,
+        command: "/ai-dogfood-and-review",
+        forbidForksOnManual: true,
+      },
+      io,
+    );
+    expect(result.shouldRun).toBe(true);
+  });
+});

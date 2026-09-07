@@ -1,10 +1,11 @@
 name: GitHub Scripts CI
 
 # `.github/scripts/**` ships hand-rolled TypeScript (the AI review pipeline,
-# the contribution gate) with its own `bun:test` suites, but `bun test` skips
-# dot-directories by default and nothing previously type-checked this code in
-# CI. This is a small, non-required check dedicated to that surface — it does
-# not gate branch protection and never runs in `merge_group`.
+# the dogfood report poster, the contribution gate) with its own `bun:test`
+# suites, but `bun test` skips dot-directories by default and nothing
+# previously type-checked this code in CI. This is a small, non-required
+# check dedicated to that surface — it does not gate branch protection and
+# never runs in `merge_group`.
 on:
   pull_request:
     paths:
@@ -24,7 +25,7 @@ jobs:
     # The shared setup installs the full workspace + Go toolchain via mise, which
     # runs ~9-10 min; a 10-minute cap raced the install and got cancelled on a
     # cold cache. 20 gives that install headroom. (This check is heavier than it
-    # needs to be for two scripts — slimming the setup is a possible follow-up.)
+    # needs to be for a handful of scripts — slimming the setup is a possible follow-up.)
     timeout-minutes: 20
     permissions:
       contents: read

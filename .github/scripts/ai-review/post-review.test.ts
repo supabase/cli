@@ -578,6 +578,17 @@ describe("renderReviewBody", () => {
     );
     expect(body).toContain("Trigger: `auto`");
     expect(body).toContain(footer.runUrl);
+    expect(body).not.toContain("Functional dogfood:");
+  });
+
+  test("includes the dogfood verdict in the footer when provided", () => {
+    const review = makeMergedReview({ findings: [] });
+    const body = renderReviewBody(
+      review,
+      { anchorable: [], nonAnchorable: [], refuted: [] },
+      { ...footer, dogfoodVerdict: "no-go" },
+    );
+    expect(body).toContain("Functional dogfood: `no-go`");
   });
 
   test("computes confirmed/refuted/uncertain stats locally from the findings' verdicts", () => {
@@ -944,6 +955,7 @@ describe("redactSecrets", () => {
     ["a GitHub personal access token", `ghp_${"a".repeat(36)}`],
     ["a GitHub fine-grained PAT", `github_pat_${"a".repeat(30)}`],
     ["a GitHub Actions server-to-server token", `ghs_${"a".repeat(36)}`],
+    ["a Supabase personal access token", `sbp_${"a".repeat(40)}`],
   ])("redacts %s", (_label, secret) => {
     const redacted = redactSecrets(`before ${secret} after`);
     expect(redacted).not.toContain(secret);
