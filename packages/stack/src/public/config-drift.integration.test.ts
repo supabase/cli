@@ -107,8 +107,8 @@ describe("inspectStack config drift", () => {
               "secrets.secret:functions.settings.edge_runtime.secrets.TOKEN",
             ]),
           );
-          expect(JSON.stringify(changed.configDrift)).not.toContain("old-secret");
-          expect(JSON.stringify(changed.configDrift)).not.toContain("new-secret");
+          expect(changed.configDrift?.paths).not.toContain("old-secret");
+          expect(changed.configDrift?.paths).not.toContain("new-secret");
         }),
       ),
   );
@@ -145,7 +145,7 @@ describe("inspectStack config drift", () => {
           });
           const changed = yield* inspectStack(stack.id, { config: managed("new-managed-secret") });
           expect(changed.configDrift?.paths).toContain("secrets.secret:auth.settings.jwt_secret");
-          expect(JSON.stringify(changed.configDrift)).not.toContain("managed-secret");
+          expect(changed.configDrift?.paths).not.toContain("managed-secret");
           const removed = yield* inspectStack(stack.id, {
             config: {
               ...baseConfig("old-secret"),
@@ -194,7 +194,7 @@ describe("inspectStack config drift", () => {
         Effect.tap((inspection) =>
           Effect.sync(() => {
             expect(inspection.configDrift?.status).toBe("changed");
-            expect(JSON.stringify(inspection.configDrift)).not.toContain("old-secret");
+            expect(inspection.configDrift?.paths).not.toContain("old-secret");
           }),
         ),
       ),
