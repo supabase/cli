@@ -44,6 +44,9 @@ const targetErrors = legacyMintConfigTargetErrors("LegacyConfigDiff");
 
 /** `--project-ref` named a branch the parent project does not have. */
 export const LegacyConfigDiffBranchNotFoundError = targetErrors.BranchNotFoundError;
+export type LegacyConfigDiffBranchNotFoundError = InstanceType<
+  typeof LegacyConfigDiffBranchNotFoundError
+>;
 
 /**
  * `--project-ref` named a branch (by name), but no project is linked to
@@ -53,6 +56,9 @@ export const LegacyConfigDiffBranchNotFoundError = targetErrors.BranchNotFoundEr
  * classification (link.errors.ts).
  */
 export const LegacyConfigDiffBranchNotLinkedError = targetErrors.BranchNotLinkedError;
+export type LegacyConfigDiffBranchNotLinkedError = InstanceType<
+  typeof LegacyConfigDiffBranchNotLinkedError
+>;
 
 /**
  * `--project-ref` named a branch (by name), and a parent-project candidate
@@ -60,6 +66,9 @@ export const LegacyConfigDiffBranchNotLinkedError = targetErrors.BranchNotLinked
  * `LegacyLinkParentRefInvalidError`'s classification (link.errors.ts).
  */
 export const LegacyConfigDiffParentRefInvalidError = targetErrors.ParentRefInvalidError;
+export type LegacyConfigDiffParentRefInvalidError = InstanceType<
+  typeof LegacyConfigDiffParentRefInvalidError
+>;
 
 /**
  * The resolved branch has no project ref yet (still provisioning) — guards
@@ -67,6 +76,9 @@ export const LegacyConfigDiffParentRefInvalidError = targetErrors.ParentRefInval
  * `LegacyLinkBranchNotReadyError`'s classification (link.errors.ts).
  */
 export const LegacyConfigDiffBranchNotReadyError = targetErrors.BranchNotReadyError;
+export type LegacyConfigDiffBranchNotReadyError = InstanceType<
+  typeof LegacyConfigDiffBranchNotReadyError
+>;
 
 export class LegacyConfigDiffBranchResolveNetworkError extends Data.TaggedError(
   "LegacyConfigDiffBranchResolveNetworkError",

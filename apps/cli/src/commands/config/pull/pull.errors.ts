@@ -44,6 +44,9 @@ const targetErrors = legacyMintConfigTargetErrors("LegacyConfigPull");
 
 /** `--project-ref` named a branch the parent project does not have. */
 export const LegacyConfigPullBranchNotFoundError = targetErrors.BranchNotFoundError;
+export type LegacyConfigPullBranchNotFoundError = InstanceType<
+  typeof LegacyConfigPullBranchNotFoundError
+>;
 
 /**
  * `--project-ref` named a branch (by name), but no project is linked to
@@ -51,6 +54,9 @@ export const LegacyConfigPullBranchNotFoundError = targetErrors.BranchNotFoundEr
  * `LegacyConfigDiffBranchNotLinkedError`.
  */
 export const LegacyConfigPullBranchNotLinkedError = targetErrors.BranchNotLinkedError;
+export type LegacyConfigPullBranchNotLinkedError = InstanceType<
+  typeof LegacyConfigPullBranchNotLinkedError
+>;
 
 /**
  * `--project-ref` named a branch (by name), and a parent-project candidate
@@ -58,12 +64,18 @@ export const LegacyConfigPullBranchNotLinkedError = targetErrors.BranchNotLinked
  * `config diff`'s `LegacyConfigDiffParentRefInvalidError`.
  */
 export const LegacyConfigPullParentRefInvalidError = targetErrors.ParentRefInvalidError;
+export type LegacyConfigPullParentRefInvalidError = InstanceType<
+  typeof LegacyConfigPullParentRefInvalidError
+>;
 
 /**
  * The resolved branch has no project ref yet (still provisioning). Mirrors
  * `config diff`'s `LegacyConfigDiffBranchNotReadyError`.
  */
 export const LegacyConfigPullBranchNotReadyError = targetErrors.BranchNotReadyError;
+export type LegacyConfigPullBranchNotReadyError = InstanceType<
+  typeof LegacyConfigPullBranchNotReadyError
+>;
 
 /**
  * A transport failure reading remote state over HTTP — shared by BOTH the

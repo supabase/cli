@@ -7,14 +7,14 @@
 
 import type { ProjectConfig } from "@supabase/config";
 
-export function legacyIsRecord(value: unknown): value is Readonly<Record<string, unknown>> {
-  return typeof value === "object" && value !== null && !Array.isArray(value);
-}
+import { legacyConfigIsRecord } from "../config.paths.ts";
+
+export const legacyIsRecord = legacyConfigIsRecord;
 
 export function legacyValueAtPath(root: unknown, path: ReadonlyArray<string>): unknown {
   let current: unknown = root;
   for (const segment of path) {
-    if (!legacyIsRecord(current)) return undefined;
+    if (!legacyConfigIsRecord(current)) return undefined;
     current = current[segment];
   }
   return current;
@@ -71,7 +71,7 @@ export function legacyContainerEnabled(
   path: ReadonlyArray<string>,
 ): boolean | undefined {
   const container = legacyValueAtPath(local, path);
-  if (!legacyIsRecord(container)) {
+  if (!legacyConfigIsRecord(container)) {
     return undefined;
   }
   const enabled = container["enabled"];

@@ -18,6 +18,7 @@ import {
   mapLegacyHttpError,
   sanitizeLegacyErrorBody,
 } from "../../../command-internal/legacy-http-errors.ts";
+import { legacyConfigIsRecord } from "../config.paths.ts";
 import { legacyLoadLocalConfig } from "../config.load.ts";
 import { legacyConfigTargetErrorsFor, legacyResolveConfigTarget } from "../config.target.ts";
 import { legacyConfigApiScope, legacyConfigScopeLine } from "../config.format.ts";
@@ -62,10 +63,6 @@ const configTargetErrors = legacyConfigTargetErrorsFor({
   branchNotFound: LegacyConfigDiffBranchNotFoundError,
   branchNotReady: LegacyConfigDiffBranchNotReadyError,
 });
-
-function isRecord(value: unknown): value is Readonly<Record<string, unknown>> {
-  return typeof value === "object" && value !== null && !Array.isArray(value);
-}
 
 export const legacyConfigDiff = Effect.fn("legacy.config.diff")(function* (
   flags: LegacyConfigDiffFlags,
@@ -126,8 +123,8 @@ export const legacyConfigDiff = Effect.fn("legacy.config.diff")(function* (
     let loaded = yield* loadLocalConfig(undefined);
 
     // 3. Resolve the comparison target — hoisted into `legacyResolveConfigTarget`
-    // (`../config.target.ts`, shared with `config pull`, CLI-2064). See that
-    // function's doc comment for the full eager-parent-ref-before-any-spinner
+    // (`../config.target.ts`, shared with `config pull`/`config push`, CLI-2064). See
+    // that function's doc comment for the full eager-parent-ref-before-any-spinner
     // and lazy-UUID-parent-resolution rules this preserves.
     const { ref, branch } = yield* legacyResolveConfigTarget(
       requested,
@@ -223,9 +220,11 @@ export const legacyConfigDiff = Effect.fn("legacy.config.diff")(function* (
       diffProjectConfig({ local: loaded, remote }),
     );
 
-    const data = isRecord(responseJson) ? responseJson["data"] : undefined;
+    const data = legacyConfigIsRecord(responseJson) ? responseJson["data"] : undefined;
     const scope = legacyConfigApiScope(
-      isRecord(data) && isRecord(data["attributes"]) ? data["attributes"] : {},
+      legacyConfigIsRecord(data) && legacyConfigIsRecord(data["attributes"])
+        ? data["attributes"]
+        : {},
     );
     yield* output.raw(legacyConfigScopeLine(scope), "stderr");
 

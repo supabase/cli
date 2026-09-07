@@ -62,6 +62,9 @@ const targetErrors = legacyMintConfigTargetErrors("LegacyConfigPush");
 
 /** `--project-ref` named a branch the parent project does not have. */
 export const LegacyConfigPushBranchNotFoundError = targetErrors.BranchNotFoundError;
+export type LegacyConfigPushBranchNotFoundError = InstanceType<
+  typeof LegacyConfigPushBranchNotFoundError
+>;
 
 /**
  * `--project-ref` named a branch (by name), but no project is linked to
@@ -70,18 +73,27 @@ export const LegacyConfigPushBranchNotFoundError = targetErrors.BranchNotFoundEr
  * yielded a candidate.
  */
 export const LegacyConfigPushBranchNotLinkedError = targetErrors.BranchNotLinkedError;
+export type LegacyConfigPushBranchNotLinkedError = InstanceType<
+  typeof LegacyConfigPushBranchNotLinkedError
+>;
 
 /**
  * `--project-ref` named a branch (by name), and a parent-project candidate
  * exists but is not ref-shaped — corrupt or stale linked state.
  */
 export const LegacyConfigPushParentRefInvalidError = targetErrors.ParentRefInvalidError;
+export type LegacyConfigPushParentRefInvalidError = InstanceType<
+  typeof LegacyConfigPushParentRefInvalidError
+>;
 
 /**
  * The resolved branch has no project ref yet (still provisioning) — guards
  * against an empty/placeholder ref reaching a push target.
  */
 export const LegacyConfigPushBranchNotReadyError = targetErrors.BranchNotReadyError;
+export type LegacyConfigPushBranchNotReadyError = InstanceType<
+  typeof LegacyConfigPushBranchNotReadyError
+>;
 
 export class LegacyConfigPushBranchResolveNetworkError extends Data.TaggedError(
   "LegacyConfigPushBranchResolveNetworkError",

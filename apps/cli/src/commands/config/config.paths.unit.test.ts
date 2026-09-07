@@ -47,6 +47,10 @@ describe("legacyConfigValueAtPath", () => {
   it("returns undefined when the path walks through a non-record intermediate value", () => {
     expect(legacyConfigValueAtPath({ a: 1 }, ["a", "b"])).toBeUndefined();
   });
+
+  it("returns undefined for an inherited (prototype-chain) key, not just an absent own key", () => {
+    expect(legacyConfigValueAtPath({}, ["toString"])).toBeUndefined();
+  });
 });
 
 describe("legacyConfigIsDeclaredAtPath", () => {
@@ -57,6 +61,10 @@ describe("legacyConfigIsDeclaredAtPath", () => {
 
   it("is false for a genuinely absent key", () => {
     expect(legacyConfigIsDeclaredAtPath({}, ["a"])).toBe(false);
+  });
+
+  it("is false for an inherited (prototype-chain) key", () => {
+    expect(legacyConfigIsDeclaredAtPath({}, ["toString"])).toBe(false);
   });
 });
 
@@ -86,5 +94,14 @@ describe("legacyConfigDeepSetAtPath", () => {
   it("creates missing intermediate tables along the path", () => {
     const result = legacyConfigDeepSetAtPath({}, ["a", "b", "c"], 1);
     expect(result).toEqual({ a: { b: { c: 1 } } });
+  });
+
+  it("replaces the whole root when the path is empty", () => {
+    expect(legacyConfigDeepSetAtPath({ a: 1 }, [], { z: 9 })).toEqual({ z: 9 });
+  });
+
+  it("discards an existing scalar at an intermediate segment and replaces it with a table", () => {
+    const result = legacyConfigDeepSetAtPath({ a: 5 }, ["a", "b"], "x");
+    expect(result).toEqual({ a: { b: "x" } });
   });
 });

@@ -1077,7 +1077,7 @@ export const legacyConfigPull = Effect.fn("legacy.config.pull")(function* (
     const source = yield* legacyOpenConfigPullSource();
 
     // 4. Resolve the pull target — hoisted into `legacyResolveConfigTarget`
-    // (`../config.target.ts`, shared with `config diff`, CLI-2064).
+    // (`../config.target.ts`, shared with `config diff`/`config push`, CLI-2064).
     const { ref, branch } = yield* legacyResolveConfigTarget(
       requested,
       configTargetErrors,
