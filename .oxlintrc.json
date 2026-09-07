@@ -8,8 +8,6 @@
     ".repos",
     "apps/cli-go",
     "apps/cli-e2e/fixtures",
-    "packages/stack",
-    "packages/process-compose",
     "**/testdata",
     "**/dist",
     "**/coverage",

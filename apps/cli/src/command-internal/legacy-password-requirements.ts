@@ -7,7 +7,7 @@
  * GoTrue service environment (`GOTRUE_PASSWORD_REQUIRED_CHARACTERS`), so the
  * two can never drift apart.
  */
-export const LEGACY_PASSWORD_REQUIREMENTS_TO_CHAR: Readonly<Record<string, string>> = {
+const LEGACY_PASSWORD_REQUIREMENTS_TO_CHAR: Readonly<Record<string, string>> = {
   letters_digits: "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ:0123456789",
   lower_upper_letters_digits: "abcdefghijklmnopqrstuvwxyz:ABCDEFGHIJKLMNOPQRSTUVWXYZ:0123456789",
   lower_upper_letters_digits_symbols:

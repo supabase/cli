@@ -12,157 +12,6 @@ const testRoot = Command.make("supabase").pipe(
 );
 
 describe("normalizeCliError", () => {
-  test("maps NoRunningStackError to a user-facing message", () => {
-    const error = {
-      _tag: "NoRunningStackError",
-      cwd: "/tmp/project",
-    };
-
-    const normalized = normalizeCliError(error);
-
-    expect(normalized).toEqual({
-      code: "NoRunningStackError",
-      message: "No local Supabase stack is running for this project.",
-      detail: "The CLI could not find a running stack for the current working directory.",
-      suggestion:
-        "Run `supabase start` in this project, or change into a directory with a running stack.",
-    });
-  });
-
-  test("maps DaemonUpgradeRequired to an actionable start instruction", () => {
-    expect(
-      normalizeCliError({
-        _tag: "DaemonUpgradeRequired",
-        oldCliVersion: "2.60.0",
-        newCliVersion: "2.61.0",
-      }),
-    ).toEqual({
-      code: "DaemonUpgradeRequired",
-      message: "The local Supabase stack is running under 2.60.0, but this CLI is 2.61.0.",
-      suggestion: "Run `supabase start` to restart the stack with the current CLI.",
-    });
-  });
-
-  test("maps an unavailable starting stack to a wait-and-retry instruction", () => {
-    expect(
-      normalizeCliError({
-        _tag: "StackUnavailableError",
-        phase: "starting",
-      }),
-    ).toEqual({
-      code: "StackUnavailableError",
-      message: "The local Supabase stack is still starting.",
-      suggestion: "Wait for `supabase start` to finish, then try again.",
-    });
-  });
-
-  test("maps an unavailable stopping stack to a stop completion instruction", () => {
-    expect(
-      normalizeCliError({
-        _tag: "StackUnavailableError",
-        phase: "stopping",
-      }),
-    ).toEqual({
-      code: "StackUnavailableError",
-      message: "The local Supabase stack is still stopping.",
-      suggestion: "Wait for the current stop operation to finish, then try again.",
-    });
-  });
-
-  test("maps RPC transport failures with the procedure and endpoint", () => {
-    expect(
-      normalizeCliError({
-        _tag: "StackRpcTransportError",
-        endpoint: "http://127.0.0.1:54321",
-        procedure: "GetInfo",
-        cause: new Error("ECONNRESET"),
-      }),
-    ).toEqual({
-      code: "StackRpcTransportError",
-      message: "Could not communicate with the local Supabase stack.",
-      detail: "RPC GetInfo at http://127.0.0.1:54321 failed: ECONNRESET",
-      suggestion: "Check that the stack is running, then retry the command.",
-    });
-  });
-
-  test("maps RPC protocol failures with the procedure, endpoint, and detail", () => {
-    expect(
-      normalizeCliError({
-        _tag: "StackRpcProtocolError",
-        endpoint: "http://127.0.0.1:54321",
-        procedure: "GetInfo",
-        detail: "Invalid GetInfo response",
-      }),
-    ).toEqual({
-      code: "StackRpcProtocolError",
-      message: "The local Supabase stack returned an invalid RPC response.",
-      detail:
-        "RPC GetInfo at http://127.0.0.1:54321 failed protocol validation: Invalid GetInfo response",
-      suggestion: "Restart the stack with `supabase start`, then retry the command.",
-    });
-  });
-
-  test("maps stop timeouts with the endpoint and last observed state", () => {
-    expect(
-      normalizeCliError({
-        _tag: "StopTimeout",
-        endpoint: "http://127.0.0.1:54321",
-        ownerSessionId: "session-123",
-        lastState: "stopping",
-      }),
-    ).toEqual({
-      code: "StopTimeout",
-      message: "Timed out waiting for the local Supabase stack to stop.",
-      detail:
-        "The stack at http://127.0.0.1:54321 did not stop before the timeout (last state: stopping).",
-      suggestion: "Check `supabase status`, then retry `supabase stop`.",
-    });
-  });
-
-  test.each([
-    [
-      "ControlBindError",
-      "Could not start the local Supabase stack control service.",
-      "Check for another local process using the stack control port, then retry `supabase start`.",
-    ],
-    [
-      "ControlTransportError",
-      "Could not communicate with the local Supabase stack control service.",
-      "Run `supabase start` to restore the local stack, then retry the command.",
-    ],
-    [
-      "ControlProtocolError",
-      "The local Supabase stack control service returned an invalid response.",
-      "Restart the stack with `supabase start`, then retry the command.",
-    ],
-    [
-      "ControlProtocolMismatchError",
-      "The local Supabase stack uses an incompatible control protocol.",
-      "Restart the stack with `supabase start`, then retry the command.",
-    ],
-    [
-      "ControlAddressConflictError",
-      "The local Supabase stack control endpoint is occupied by another process.",
-      "Stop the conflicting local stack or process, then retry `supabase start`.",
-    ],
-    [
-      "ControlStopConflictError",
-      "The local Supabase stack changed owners while it was stopping.",
-      "Retry `supabase stop` to stop the current owner.",
-    ],
-    [
-      "ControlMaintenanceBusyError",
-      "The local Supabase stack is being maintained by another command.",
-      "Wait for that command to finish, then retry this command.",
-    ],
-  ])("maps %s to an actionable control-plane error", (tag, message, suggestion) => {
-    expect(normalizeCliError({ _tag: tag })).toEqual({
-      code: tag,
-      message,
-      suggestion,
-    });
-  });
-
   test("falls back to tagged error fields when no explicit mapping exists", () => {
     const error = {
       _tag: "ExampleError",
@@ -595,26 +444,26 @@ describe("normalizeCliError", () => {
   });
 
   test("normalizes a cause via its first failure", () => {
-    const normalized = normalizeCause(Cause.fail({ _tag: "NoRunningStackError", cwd: "/tmp" }));
+    const normalized = normalizeCause(
+      Cause.fail({ _tag: "StackRuntimeError", message: "service failed to start" }),
+    );
 
-    expect(normalized.message).toBe("No local Supabase stack is running for this project.");
+    expect(normalized).toEqual({
+      code: "StackRuntimeError",
+      message: "service failed to start",
+    });
   });
 
   test("formats text output with detail and suggestion", () => {
     const text = formatCliError({
-      code: "NoRunningStackError",
-      message: "No local Supabase stack is running for this project.",
-      detail: "The CLI could not find a running stack for the current working directory.",
-      suggestion:
-        "Run `supabase start` in this project, or change into a directory with a running stack.",
+      code: "StackRuntimeError",
+      message: "The local Supabase stack failed to start.",
+      detail: "The auth workload exited before becoming ready.",
+      suggestion: "Inspect the stack logs, then retry `supabase start`.",
     });
 
-    expect(text).toContain("No local Supabase stack is running for this project.");
-    expect(text).toContain(
-      "Detail: The CLI could not find a running stack for the current working directory.",
-    );
-    expect(text).toContain(
-      "Suggestion: Run `supabase start` in this project, or change into a directory with a running stack.",
-    );
+    expect(text).toContain("The local Supabase stack failed to start.");
+    expect(text).toContain("Detail: The auth workload exited before becoming ready.");
+    expect(text).toContain("Suggestion: Inspect the stack logs, then retry `supabase start`.");
   });
 });

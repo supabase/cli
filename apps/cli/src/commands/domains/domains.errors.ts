@@ -12,7 +12,7 @@ import {
  * Transport-level failure talking to the Management API custom-hostname
  * endpoints. Message format: `failed to <verb> custom hostname: <err>`.
  */
-export class LegacyDomainsNetworkError extends Data.TaggedError("LegacyDomainsNetworkError")<{
+class LegacyDomainsNetworkError extends Data.TaggedError("LegacyDomainsNetworkError")<{
   readonly message: string;
   readonly decode?: boolean;
 }> {
@@ -28,7 +28,7 @@ export class LegacyDomainsNetworkError extends Data.TaggedError("LegacyDomainsNe
  * success (201 for create/reverify/activate, 200 for get/delete). Message
  * format: `unexpected <verb> hostname status <code>: <body>`.
  */
-export class LegacyDomainsUnexpectedStatusError extends Data.TaggedError(
+class LegacyDomainsUnexpectedStatusError extends Data.TaggedError(
   "LegacyDomainsUnexpectedStatusError",
 )<{
   readonly status: number;

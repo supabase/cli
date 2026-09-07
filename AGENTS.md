@@ -12,13 +12,12 @@ Bun monorepo with workspaces under `apps/` and `packages/`.
 - `apps/docs` — internal Next.js docs site
 - `packages/api` — typed Supabase Management API client
 - `packages/config` — config schema and generated types
-- `packages/process-compose` — process orchestration library
 - `packages/stack` — programmatic local Supabase stack runtime
 - `packages/cli-*` — platform-specific published CLI binary wrappers
 
 ## Package Structure
 
-Use `packages/process-compose` as the reference for internal TypeScript/Bun workspaces such as `apps/cli`, `packages/api`, `packages/config`, `packages/process-compose`, and `packages/stack`.
+Use the existing internal TypeScript/Bun workspaces as references for package structure and scripts.
 
 These workspaces should generally follow this structure:
 
@@ -29,7 +28,7 @@ These workspaces should generally follow this structure:
 - Standard scripts: `test`, `types:check`
 - Standard devDependencies: `@tsconfig/bun`, `@types/bun`, `typescript`
 
-Generic linting (`oxlint`), formatting (`oxfmt`), and unused-code analysis (`knip`) are repo-wide, not per-package: the tools are root devDependencies configured by `.oxlintrc.json`, `.oxfmtrc.json`, and `knip.json` at the repo root (knip's config maps each workspace under its `workspaces` key). Effect-specific linting is incrementally scoped to `packages/stack` and `packages/process-compose` through `.oxlintrc.effect.json`; run it with the root `lint:effect:check` or `lint:effect:fix` scripts. The root `check:all`/`fix:all` scripts are the sole repo-wide quality entrypoints and use Turbo to orchestrate the root-owned generic `lint:*`/`fmt:*`/`knip:*` scripts and package `types:check` targets; `fix:all` runs the Effect lint fix after those generic fixes complete. Package-local work can run `pnpm types:check` and the package's test scripts; `pnpm exec oxlint`, `pnpm exec oxfmt`, and `pnpm exec knip-bun` from the repo root also work directly.
+Generic linting (`oxlint`), formatting (`oxfmt`), and unused-code analysis (`knip`) are repo-wide, not per-package: the tools are root devDependencies configured by `.oxlintrc.json`, `.oxfmtrc.json`, and `knip.json` at the repo root (knip's config maps each workspace under its `workspaces` key). Effect-specific linting is scoped to `packages/stack` through `.oxlintrc.effect.json`; run it with the root `lint:effect:check` or `lint:effect:fix` scripts. The root `check:all`/`fix:all` scripts are the sole repo-wide quality entrypoints and use Turbo to orchestrate the root-owned generic `lint:*`/`fmt:*`/`knip:*` scripts and package `types:check` targets; `fix:all` runs the Effect lint fix after those generic fixes complete. Package-local work can run `pnpm types:check` and the package's test scripts; `pnpm exec oxlint`, `pnpm exec oxfmt`, and `pnpm exec knip-bun` from the repo root also work directly.
 
 Expected exceptions:
 

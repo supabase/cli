@@ -70,7 +70,7 @@ import { legacyRecreateLocalDatabase } from "./recreate-local-database.ts";
  * actionability guard can inspect its declaration; runtime callers consume the
  * enclosing effect rather than importing this class.
  */
-export class LegacyResetLocalDbNotRunningError extends Data.TaggedError(
+class LegacyResetLocalDbNotRunningError extends Data.TaggedError(
   "LegacyResetLocalDbNotRunningError",
 )<{
   readonly message: string;

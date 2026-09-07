@@ -155,7 +155,7 @@ export const LEGACY_SHADOW_CREATE_TEMPLATE_SQL =
  * (`apps/cli-go/internal/db/diff/diff.go:187,200`, `internal/migration/squash/squash.go:91`)
  * passes the same `10*time.Second` literal.
  */
-export const LEGACY_SHADOW_CONNECT_TIMEOUT_SECONDS = 10;
+const LEGACY_SHADOW_CONNECT_TIMEOUT_SECONDS = 10;
 
 /**
  * Go's `NewBackoffPolicy(ctx, timeout)` (`apps/cli-go/internal/db/start/start.go:192-198`): a
@@ -373,7 +373,7 @@ export interface LegacyShadowSourceResult {
 }
 
 /** Fields shared by `legacy-shadow-source.ts`'s `LegacyPrepareShadowSourceInput` and the shadow readiness probes. */
-export interface LegacyShadowConnectionInput extends LegacyCreateShadowDatabaseInput {
+interface LegacyShadowConnectionInput extends LegacyCreateShadowDatabaseInput {
   readonly fs: FileSystem.FileSystem;
   readonly path: Path.Path;
   readonly hostname: string;
@@ -777,7 +777,7 @@ export interface LegacyShadowBaselineState {
 }
 
 /** The baseline state every uncached caller passes: provision it, snapshot nothing. */
-export const LEGACY_SHADOW_BASELINE_COLD: LegacyShadowBaselineState = {
+const LEGACY_SHADOW_BASELINE_COLD: LegacyShadowBaselineState = {
   baselinePresent: false,
   snapshotRequired: false,
   snapshotBaseline: Effect.void,

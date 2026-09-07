@@ -918,7 +918,7 @@ export function legacyResolveEmailTemplateContentPath(args: {
  * loading, and the Kong template mount builder so every consumer sees the
  * SAME file.
  */
-export function legacyResolveNotificationContentPath(base: string, contentPath: string): string {
+function legacyResolveNotificationContentPath(base: string, contentPath: string): string {
   if (isAbsolute(contentPath)) return contentPath;
   const resolved = join(base, contentPath);
   if (!legacyIsExistingFile(resolved)) {
