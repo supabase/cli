@@ -186,6 +186,7 @@ export const VALUE_CONSUMING_LONG_FLAGS = new Set([
   "stack",
   "stack-id",
   "preparation",
+  "capability",
 ]);
 
 /**
