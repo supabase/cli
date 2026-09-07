@@ -305,7 +305,7 @@ describe("legacyBuildVectorContainerSpec", () => {
     vi.stubEnv("SUPABASE_USE_SLIM_IMAGES", "1");
     const spec = legacyBuildVectorContainerSpec({
       ...base,
-      image: "ghcr.io/supabase/cli/vector:0.53.0",
+      image: "ghcr.io/supabase/cli/vector:0.58.0",
     });
     expect(spec.entrypoint).toBe("sh");
     expect(spec.secretFiles).toBeUndefined();

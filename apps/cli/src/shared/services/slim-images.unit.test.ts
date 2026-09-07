@@ -71,8 +71,8 @@ describe("toSlimImage", () => {
   });
 
   it("strips vector's docker.io -alpine variant suffix", () => {
-    expect(toSlimImage("vector", "timberio/vector:0.53.0-alpine")).toBe(
-      "ghcr.io/supabase/cli/vector:0.53.0",
+    expect(toSlimImage("vector", "timberio/vector:0.58.0-alpine")).toBe(
+      "ghcr.io/supabase/cli/vector:0.58.0",
     );
   });
 

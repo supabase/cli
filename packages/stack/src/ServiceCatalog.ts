@@ -289,7 +289,7 @@ export const SERVICE_CATALOG = {
   vector: {
     name: "vector",
     configKey: "vector",
-    defaultVersion: "0.53.0-alpine",
+    defaultVersion: "0.58.0-alpine",
     runtimeSupport: "docker-only",
     artifact: {
       docker: { registry: SUPABASE_GHCR_REGISTRY, repository: "vector" },
