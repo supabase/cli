@@ -1,4 +1,4 @@
-import { Cause, Clock, Effect, Exit, FileSystem, Option, Path, Result } from "effect";
+import { Cause, Clock, Effect, Exit, FileSystem, Option, Path, Ref, Result } from "effect";
 
 import {
   LegacyDnsResolverFlag,
@@ -19,7 +19,6 @@ import {
 import { LegacyDbConnectError } from "../../../../../command-internal/legacy-db-connection.errors.ts";
 import { LegacyDbConnection } from "../../../../../command-internal/legacy-db-connection.service.ts";
 import { legacyGetHostname } from "../../../../../command-internal/legacy-hostname.ts";
-import { legacyWalkSqlFiles } from "../../../../../command-internal/legacy-glob.ts";
 import {
   legacyLoadProjectEnv,
   legacyReadDbToml,
@@ -52,9 +51,11 @@ import {
   legacyFormatDebugId,
   legacySaveDebugBundle,
 } from "../../../shared/legacy-debug-bundle.ts";
+import { LegacyListPgDeltaSqlFiles } from "../../../shared/legacy-pgdelta-files.ts";
 import {
   LegacyDeclarativeApplyError,
   LegacyDeclarativeCompatibilityError,
+  LegacyDeclarativeDiffError,
   LegacyDeclarativeInvalidMigrationStemError,
   LegacyDeclarativeMutuallyExclusiveFlagsError,
   LegacyDeclarativeNoFilesGeneratedError,
@@ -808,17 +809,19 @@ export const legacyDbSchemaDeclarativeSync = Effect.fn("legacy.db.schema.declara
       if (!shouldApply) return;
 
       // Step 8: apply the migration to the local database (native).
-      let applyStarted = false;
+      let applyAttempted = false;
+      const appliedSegments = yield* Ref.make(0);
       const applyExit = yield* ensureLocalPostgresImageCurrent.pipe(
         Effect.andThen(
           Effect.sync(() => {
-            applyStarted = true;
+            applyAttempted = true;
           }),
         ),
         Effect.andThen(
           applyMigrationToLocal(
             { port: toml.port, password: toml.password, dnsResolver },
             migrationPaths,
+            Ref.update(appliedSegments, (count) => count + 1),
           ),
         ),
         Effect.exit,
@@ -840,7 +843,9 @@ export const legacyDbSchemaDeclarativeSync = Effect.fn("legacy.db.schema.declara
       // Apply failed: print, save a debug bundle, and (in a TTY) offer reset+reapply.
       const applyError = applyFailure.success.error;
       yield* output.raw(
-        `${legacyRed(`Migration failed to apply: ${applyError.message}`)}\n`,
+        `${legacyRed(
+          `${applyAttempted ? "Migration failed to apply" : "Migration apply preflight failed"}: ${applyError.message}`,
+        )}\n`,
         "stderr",
       );
       const ts = formatDebugId(yield* Clock.currentTimeMillis);
@@ -854,7 +859,7 @@ export const legacyDbSchemaDeclarativeSync = Effect.fn("legacy.db.schema.declara
         migrations,
       });
 
-      if (tty.stdinIsTty && !yes && applyStarted) {
+      if (tty.stdinIsTty && !yes && applyAttempted) {
         const shouldReset = yield* output.promptConfirm(
           "Would you like to reset the local database and reapply all migrations? (local data will be lost)",
           { defaultValue: false },
@@ -919,8 +924,14 @@ export const legacyDbSchemaDeclarativeSync = Effect.fn("legacy.db.schema.declara
         }
       }
 
-      let keepGeneratedFiles = false;
-      if (tty.stdinIsTty && !yes) {
+      const appliedSegmentCount = yield* Ref.get(appliedSegments);
+      let keepGeneratedFiles = appliedSegmentCount > 0;
+      if (keepGeneratedFiles) {
+        yield* output.raw(
+          "Generated migration files were kept because one or more segments were already recorded in migration history.\n",
+          "stderr",
+        );
+      } else if (tty.stdinIsTty && !yes) {
         keepGeneratedFiles = yield* output.promptConfirm("Keep the generated migration file(s)?", {
           defaultValue: false,
         });
@@ -973,7 +984,11 @@ const declarativeDirHasSqlFiles = Effect.fnUntraced(function* (
 ) {
   const exists = yield* fs.exists(dir).pipe(Effect.orElseSucceed(() => false));
   if (!exists) return false;
-  return (yield* legacyWalkSqlFiles(fs, dir, "")).length > 0;
+  return (
+    (yield* LegacyListPgDeltaSqlFiles(fs, dir).pipe(
+      Effect.mapError((error) => new LegacyDeclarativeDiffError({ message: error.message })),
+    )).length > 0
+  );
 });
 
 const legacyTransientResult = (
@@ -1032,6 +1047,7 @@ const applyRenderedSqlToLocal = (
 const applyMigrationToLocal = (
   local: { port: number; password: string; dnsResolver: "native" | "https" },
   migrationPaths: ReadonlyArray<string>,
+  onMigrationRecorded: Effect.Effect<void>,
 ) =>
   Effect.gen(function* () {
     const fs = yield* FileSystem.FileSystem;
@@ -1045,5 +1061,6 @@ const applyMigrationToLocal = (
         migrationPath,
         (message) => new LegacyDeclarativeApplyError({ message }),
       );
+      yield* onMigrationRecorded;
     }
   }).pipe(Effect.scoped);

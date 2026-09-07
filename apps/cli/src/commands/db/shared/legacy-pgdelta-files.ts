@@ -90,13 +90,12 @@ export const LegacyReadPgDeltaExportManifest = Effect.fnUntraced(function* (
   } satisfies LegacyPgDeltaExportManifest;
 });
 
-/** Recursively loads path-safe `.sql` files in stable POSIX-relative order. */
-export const LegacyLoadPgDeltaSqlFiles = Effect.fnUntraced(function* (
+/** Lists `.sql` files and maps traversal failures into the pg-delta file domain. */
+export const LegacyListPgDeltaSqlFiles = (
   fs: FileSystem.FileSystem,
-  path: Path.Path,
   directory: string,
-) {
-  const paths = yield* legacyWalkSqlFiles(fs, directory, "").pipe(
+): Effect.Effect<ReadonlyArray<string>, LegacyPgDeltaFilesError> =>
+  legacyWalkSqlFiles(fs, directory, "").pipe(
     Effect.mapError((error) =>
       filesError(
         error.reason.method === "stat"
@@ -105,6 +104,14 @@ export const LegacyLoadPgDeltaSqlFiles = Effect.fnUntraced(function* (
       ),
     ),
   );
+
+/** Recursively loads path-safe `.sql` files in stable POSIX-relative order. */
+export const LegacyLoadPgDeltaSqlFiles = Effect.fnUntraced(function* (
+  fs: FileSystem.FileSystem,
+  path: Path.Path,
+  directory: string,
+) {
+  const paths = yield* LegacyListPgDeltaSqlFiles(fs, directory);
   const files: Array<LegacyPgDeltaSqlFile> = [];
   for (const name of paths) {
     const normalized = path.normalize(name);

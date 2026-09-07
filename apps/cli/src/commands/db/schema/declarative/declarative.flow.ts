@@ -57,6 +57,9 @@ export function legacyValidateDeclarativeMigrationStem(stem: string): string | u
   if (/\.sql$/i.test(candidate)) {
     return "migration names must not include the .sql suffix";
   }
+  if (candidate !== stem) {
+    return "migration names must not have leading or trailing whitespace";
+  }
   return undefined;
 }
 

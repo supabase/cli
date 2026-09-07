@@ -68,6 +68,7 @@ interface SetupOpts {
   diffSql?: string;
   replannedDiffSql?: string;
   applyFails?: boolean;
+  applyFailurePrefix?: string;
   connectFails?: boolean;
   batchConnectFails?: boolean;
   /**
@@ -87,9 +88,14 @@ interface SetupOpts {
   planErrors?: ReadonlyArray<LegacyPgDeltaEngineError>;
   cleanupDeleteFails?: boolean;
   debugSqlWriteFails?: boolean;
+  declarativeReadFails?: boolean;
 }
 
-const fileSystemFault = (method: "remove" | "writeFile", target: string, description: string) =>
+const fileSystemFault = (
+  method: "readDirectory" | "remove" | "writeFile",
+  target: string,
+  description: string,
+) =>
   new PlatformError(
     new SystemError({
       _tag: "Unknown",
@@ -102,13 +108,19 @@ const fileSystemFault = (method: "remove" | "writeFile", target: string, descrip
 
 const fileSystemFaultLayer = (
   workdir: string,
-  opts: Pick<SetupOpts, "cleanupDeleteFails" | "debugSqlWriteFails">,
+  opts: Pick<SetupOpts, "cleanupDeleteFails" | "debugSqlWriteFails" | "declarativeReadFails">,
 ): Layer.Layer<FileSystem.FileSystem> =>
   Layer.effect(
     FileSystem.FileSystem,
     Effect.map(FileSystem.FileSystem, (real) =>
       FileSystem.FileSystem.of({
         ...real,
+        readDirectory: (target) =>
+          opts.declarativeReadFails === true && target === join(workdir, "supabase", "schemas")
+            ? Effect.fail(
+                fileSystemFault("readDirectory", target, "simulated declarative read failure"),
+              )
+            : real.readDirectory(target),
         remove: (target, options) =>
           opts.cleanupDeleteFails === true &&
           target.startsWith(join(workdir, "supabase", "migrations")) &&
@@ -172,13 +184,15 @@ function setup(workdir: string, opts: SetupOpts = {}) {
   // expects to stay empty until the REAL local-apply connection
   // (`applyMigrationToLocal`, `toml.port`) runs.
   const SHADOW_PORT = 54320;
+  const applyFailurePrefix =
+    opts.applyFailurePrefix ?? (opts.applyFails === true ? "ALTER" : undefined);
   const dbConn = Layer.succeed(LegacyDbConnection, {
     connect: (cfg: LegacyPgConnInput) =>
       opts.connectFails === true && cfg.port !== SHADOW_PORT
         ? Effect.fail(new LegacyDbConnectError({ message: "connection refused" }))
         : Effect.succeed({
             exec: (sql: string) =>
-              opts.applyFails === true && sql.startsWith("ALTER")
+              applyFailurePrefix !== undefined && sql.startsWith(applyFailurePrefix)
                 ? Effect.fail({ _tag: "LegacyDbExecError", message: "boom" } as never)
                 : Effect.sync(() => {
                     if (cfg.port !== SHADOW_PORT) dbExec.push(sql);
@@ -189,9 +203,9 @@ function setup(workdir: string, opts: SetupOpts = {}) {
                 return Effect.fail(new LegacyDbConnectError({ message: "batch connection lost" }));
               }
               const failureIndex =
-                opts.applyFails === true
-                  ? sql.findIndex((statement) => statement.startsWith("ALTER"))
-                  : -1;
+                applyFailurePrefix === undefined
+                  ? -1
+                  : sql.findIndex((statement) => statement.startsWith(applyFailurePrefix));
               return failureIndex >= 0
                 ? Effect.fail({
                     _tag: "LegacyDbExecError",
@@ -336,7 +350,9 @@ function setup(workdir: string, opts: SetupOpts = {}) {
     processControl.layer,
     alwaysReadyHttpClientLayer,
     machineErrorContextLayer,
-    ...(opts.cleanupDeleteFails === true || opts.debugSqlWriteFails === true
+    ...(opts.cleanupDeleteFails === true ||
+    opts.debugSqlWriteFails === true ||
+    opts.declarativeReadFails === true
       ? [fileSystemFaultLayer(workdir, opts)]
       : []),
     dockerRun,
@@ -1518,6 +1534,24 @@ describe("legacy db schema declarative sync integration", () => {
     }).pipe(Effect.provide(s.layer));
   });
 
+  it.effect("maps an unreadable declarative tree to a tagged diff error", () => {
+    seedDeclarative(tmp.current);
+    const s = setup(tmp.current, { yes: true, declarativeReadFails: true });
+    return Effect.gen(function* () {
+      const exit = yield* legacyDbSchemaDeclarativeSync(
+        flags({ transient: Option.some(true) }),
+      ).pipe(Effect.exit);
+      expect(failError(exit)).toMatchObject({
+        _tag: "LegacyDeclarativeDiffError",
+        message: expect.stringContaining("failed to read declarative schema directory"),
+      });
+      expect(s.planCalls).toBe(0);
+      expect(s.localPostgresImageChecks).toEqual([]);
+      expect(s.localDatabaseStarts).toEqual([]);
+      expect(s.declarativeExportCalls).toEqual([]);
+    }).pipe(Effect.provide(s.layer));
+  });
+
   it.effect(
     "transient applies ordered units from the running database with SQL visible twice and no durable artifacts",
     () => {
@@ -1743,6 +1777,8 @@ describe("legacy db schema declarative sync integration", () => {
       for (const unsafe of [
         { file: Option.some("nested/change") },
         { name: Option.some("change.SQL") },
+        { file: Option.some(" padded ") },
+        { name: Option.some(" padded ") },
       ]) {
         const s = setup(tmp.current, { diffSql: "ALTER TABLE a ADD COLUMN b int;" });
         const exit = yield* legacyDbSchemaDeclarativeSync(flags(unsafe)).pipe(
@@ -1783,6 +1819,7 @@ describe("legacy db schema declarative sync integration", () => {
         Effect.exit,
       );
       expect(Exit.isFailure(exit)).toBe(true);
+      expect(stripAnsi(s.out.stderrText)).toContain("Migration apply preflight failed");
       expect(migrationEntries(tmp.current)).toEqual([]);
       expect(existsSync(join(tmp.current, "supabase", ".temp", "pgdelta", "debug"))).toBe(true);
     }).pipe(Effect.provide(s.layer));
@@ -1852,6 +1889,48 @@ describe("legacy db schema declarative sync integration", () => {
       );
       expect(Exit.isFailure(exit)).toBe(true);
       expect(migrationEntries(tmp.current)).toEqual([]);
+    }).pipe(Effect.provide(s.layer));
+  });
+
+  it.effect("failed apply preserves all segments after an earlier segment was recorded", () => {
+    seedDeclarative(tmp.current);
+    const s = setup(tmp.current, {
+      applyFailurePrefix: "ALTER TYPE",
+      renderedFiles: [
+        {
+          sequence: 1,
+          name: "tables",
+          suffix: "_1",
+          sql: "CREATE TABLE public.applied_segment (id bigint);",
+          transactionMode: "transactional",
+        },
+        {
+          sequence: 2,
+          name: "enum_values",
+          suffix: "_2",
+          sql: "ALTER TYPE mood ADD VALUE 'fine';",
+          transactionMode: "none",
+        },
+      ],
+    });
+    return Effect.gen(function* () {
+      const exit = yield* legacyDbSchemaDeclarativeSync(flags({ apply: Option.some(true) })).pipe(
+        Effect.exit,
+      );
+      expect(Exit.isFailure(exit)).toBe(true);
+      expect(migrationEntries(tmp.current)).toHaveLength(2);
+      expect(s.dbBatches).toContainEqual(
+        expect.arrayContaining([
+          "CREATE TABLE public.applied_segment (id bigint)",
+          expect.stringContaining("supabase_migrations.schema_migrations"),
+        ]),
+      );
+      expect(s.out.stderrText).toContain(
+        "one or more segments were already recorded in migration history",
+      );
+      expect(s.out.promptConfirmCalls.map((call) => call.message)).not.toContain(
+        "Keep the generated migration file(s)?",
+      );
     }).pipe(Effect.provide(s.layer));
   });
 

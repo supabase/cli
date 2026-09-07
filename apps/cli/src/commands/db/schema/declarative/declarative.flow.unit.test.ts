@@ -456,6 +456,7 @@ describe("legacyValidateDeclarativeMigrationStem", () => {
     ["change.sql", "migration names must not include the .sql suffix"],
     ["change.SQL", "migration names must not include the .sql suffix"],
     ["change.SQL ", "migration names must not include the .sql suffix"],
+    [" add_users ", "migration names must not have leading or trailing whitespace"],
   ])("rejects %j", (stem, expected) => {
     expect(legacyValidateDeclarativeMigrationStem(stem)).toBe(expected);
   });
