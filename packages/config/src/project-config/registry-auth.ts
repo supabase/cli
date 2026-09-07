@@ -19,7 +19,7 @@ import {
  * every `configPath` starts with `["auth", ...]`.
  *
  * Mined from the push-direction sync helpers in
- * `apps/cli/src/legacy/commands/config/push/config-sync/auth.sync.ts`
+ * `apps/cli/src/commands/config/push/config-sync/auth.sync.ts`
  * (`applyRemoteAuthConfig` and its `applyRemoteHook`/`applyRemoteProvider`
  * helpers for the pull direction, `authToUpdateBody` for the push direction)
  * — cited per row below — and verified against the config schema files under
@@ -32,7 +32,7 @@ import {
 
 /**
  * Port of Go `time.Duration.String()`, based on the legacy port at
- * `apps/cli/src/legacy/commands/config/push/config-sync/config-sync.duration.ts:18-82`,
+ * `apps/cli/src/commands/config/push/config-sync/config-sync.duration.ts:18-82`,
  * with one DELIBERATE divergence: the legacy port truncates sub-second
  * remainders in its hours/minutes branches (its :39-45), where Go itself
  * prints fractional seconds (`"1h0m0.5s"`). This copy matches Go because it
@@ -136,7 +136,7 @@ const NS_PER_US = 1_000;
 
 /**
  * Port of Go `time.ParseDuration`, based on the push parser at
- * `apps/cli/src/legacy/commands/config/push/config-sync/config-sync.duration.ts:95-159`
+ * `apps/cli/src/commands/config/push/config-sync/config-sync.duration.ts:95-159`
  * (the same file `durationString` above is ported from). Returns nanoseconds;
  * throws on invalid input — used only by the canonicalizers below, which
  * never let a throw escape (unparsable document values stay verbatim).
@@ -241,7 +241,7 @@ function parseDuration(s: string): number {
     // any imprecision at large magnitudes is REJECTED below (the BigInt
     // exactness check), never rounded. Rounding only applies to the
     // fractional remainder handled next (`fracNs`), whose authority is the
-    // legacy PUSH parser (`apps/cli/src/legacy/commands/config/push/
+    // legacy PUSH parser (`apps/cli/src/commands/config/push/
     // config-sync/config-sync.duration.ts:155`), not Go's own
     // `time.ParseDuration`.
     const wholeContribution = n * unitNs;
@@ -446,7 +446,7 @@ function parseUint16(s: string): number | undefined {
  * Port of Go `sms.fromAuthConfig`'s `envToMap`, replicated from
  * `auth.sync.ts:1736-1747`: splits on `,` (empty string → no entries, no
  * trimming — same as the shared `legacyStrToArr`,
- * `apps/cli/src/legacy/shared/legacy-local-config-values.ts:2790-2792`) then
+ * `apps/cli/src/command-internal/legacy-local-config-values.ts:2790-2792`) then
  * each entry on the first `=`; entries without a `=` (or with `=` at index 0)
  * are dropped. Used for `sms.test_otp`.
  */
@@ -1070,6 +1070,18 @@ const smsBaseRows: ReadonlyArray<ProjectConfigMappingRow> = [
   boolRow(["auth", "sms", "enable_confirmations"], "sms_autoconfirm"),
   stringRow(["auth", "sms", "template"], "sms_template"),
   secondsDurationRow(["auth", "sms", "max_frequency"], "sms_max_frequency"),
+  // No sync precedent (CLI-2316 follow-up audit): `sms.otp_length`/
+  // `otp_expiry` are new config-schema fields (`../auth/sms.ts`) added
+  // alongside this pair of rows — the legacy shell's `config-sync/auth.sync.ts`
+  // predates both and never read or wrote either, matching neither Go's own
+  // `sms` struct (`apps/cli-go/pkg/config/auth.go`, which also has no
+  // `OtpLength`/`OtpExpiry` on `sms` — only on the unrelated `email` and
+  // `mfa.phone` structs) — this is a genuinely new config surface for a
+  // pre-existing, real GoTrue field pair (`sms_otp_length`/`sms_otp_exp`,
+  // confirmed live via `apps/cli-e2e/fixtures/recorded/
+  // GET_v1_projects___PROJECT_REF___config_auth`), not a Go-parity gap.
+  uintRow(["auth", "sms", "otp_length"], "sms_otp_length"),
+  uintRow(["auth", "sms", "otp_expiry"], "sms_otp_exp"),
   {
     // auth.sync.ts:1679, 1736-1747 (envToMap). Null/empty/unparsed → omit;
     // a present non-string is a malformed platform response and throws like
@@ -1179,6 +1191,12 @@ const smsCredentialRows: ReadonlyArray<ProjectConfigMappingRow> = [
     ["auth", "sms", "twilio", "message_service_sid"],
     "sms_twilio_message_service_sid",
   ),
+  // No sync precedent (CLI-2316 follow-up audit): `twilio.content_sid` is a
+  // new config-schema field (`../auth/sms.ts`) for a pre-existing, real
+  // GoTrue field (`sms_twilio_content_sid`, confirmed live via
+  // `apps/cli-e2e/fixtures/recorded/GET_v1_projects___PROJECT_REF___config_auth`).
+  // Twilio-only: the API has no `sms_twilio_verify_content_sid` counterpart.
+  smsCredentialStringRow(["auth", "sms", "twilio", "content_sid"], "sms_twilio_content_sid"),
   secretRow(["auth", "sms", "twilio", "auth_token"], "sms_twilio_auth_token"),
   smsCredentialStringRow(
     ["auth", "sms", "twilio_verify", "account_sid"],
@@ -1227,10 +1245,6 @@ const hookRows: ReadonlyArray<ProjectConfigMappingRow> = AUTH_HOOK_NAMES.flatMap
 // availability taken from ../auth/providers.ts and RemoteAuthConfig)
 //
 // Corrections against the mined field list:
-//  - "figma" is a case in auth.sync.ts's remote-field switches
-//    (getProviderEnabled et al., :1813-1814 and siblings) but
-//    ../auth/providers.ts's `external` struct has no `figma` member, so no
-//    row is emitted for it — the config schema cannot represent it.
 //  - `url` only exists as an API field for azure/gitlab/keycloak/workos
 //    (getProviderUrl, :1942-1955), even though the schema's `provider()`
 //    struct declares a `url` field (with a default) for every provider.
@@ -1238,6 +1252,25 @@ const hookRows: ReadonlyArray<ProjectConfigMappingRow> = AUTH_HOOK_NAMES.flatMap
 //    both RemoteAuthConfig (:471-474) and getProviderEmailOptional's switch
 //    (:1957-1998) — even though every other provider (including apple and
 //    google) has one.
+//  - `skip_nonce_check` has no API field for ANY provider except google
+//    (`googleSkipNonceCheckRow`, below) — verified against the generated
+//    contract's full `V1GetAuthServiceConfigOutput` field list (CLI-2316
+//    follow-up audit), even though the schema's `provider()` struct declares
+//    a `skip_nonce_check` field for every provider.
+//  - "figma" IS representable now (`../auth/providers.ts`, CLI-2316 follow-up
+//    — was previously documented here as unrepresentable, since the schema
+//    had no `figma` member at all).
+//  - plain "slack" (as opposed to `slack_oidc`) has a real API field set
+//    (`external_slack_client_id`/`_enabled`/`_secret`/`_email_optional`) but
+//    is DELIBERATELY not a schema member and never will be without a
+//    separate decision to reverse it: `../auth/providers.ts`'s own comment
+//    records that Go's deprecated `linkedin`/`slack` provider ids are
+//    intentionally unmodeled, matching `(e external) validate()`'s
+//    unconditional deletion of those keys before decode — `../io.ts`'s
+//    `normalizeDeprecatedExternalProviders` strips a config's `[auth.
+//    external.slack]` table (warning on stderr when it was `enabled`) before
+//    this schema ever sees it. A real, live `external_slack_*` API surface
+//    existing does not by itself justify undoing that Go-parity deprecation.
 
 interface ExternalProviderSpec {
   readonly id: string;
@@ -1251,6 +1284,7 @@ const EXTERNAL_PROVIDERS: ReadonlyArray<ExternalProviderSpec> = [
   { id: "bitbucket", hasUrl: false, hasEmailOptional: true },
   { id: "discord", hasUrl: false, hasEmailOptional: true },
   { id: "facebook", hasUrl: false, hasEmailOptional: true },
+  { id: "figma", hasUrl: false, hasEmailOptional: true },
   { id: "github", hasUrl: false, hasEmailOptional: true },
   { id: "gitlab", hasUrl: true, hasEmailOptional: true },
   { id: "google", hasUrl: false, hasEmailOptional: true },

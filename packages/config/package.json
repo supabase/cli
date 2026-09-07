@@ -83,7 +83,7 @@
     "@semantic-release/release-notes-generator": "^14.1.1",
     "@tsconfig/bun": "catalog:",
     "@types/bun": "catalog:",
-    "@vitest/coverage-istanbul": "catalog:",
+    "@vitest/coverage-v8": "catalog:",
     "effect": "catalog:",
     "semantic-release": "catalog:",
     "typescript": "catalog:",

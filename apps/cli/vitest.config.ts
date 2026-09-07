@@ -37,7 +37,7 @@ export default defineConfig({
     passWithNoTests: true,
     coverage: {
       enabled: false,
-      provider: "istanbul",
+      provider: "v8",
       include: ["src/**/*.ts"],
       reporter: ["text", "lcov"],
       reportsDirectory: "coverage",

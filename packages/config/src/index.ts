@@ -54,6 +54,7 @@ export {
 } from "./sparse.ts";
 export {
   type CliConfigWithRawPresence,
+  type ConfigAbsencePolicy,
   type ProjectConfig,
   type ReadonlyJsonValue,
   type ToProjectConfigSource,

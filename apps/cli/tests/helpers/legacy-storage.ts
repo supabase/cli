@@ -7,10 +7,10 @@ import * as HttpClient from "effect/unstable/http/HttpClient";
 import * as HttpClientResponse from "effect/unstable/http/HttpClientResponse";
 
 import { CliArgs } from "../../src/shared/cli/cli-args.service.ts";
-import { LegacyPlatformApi } from "../../src/legacy/auth/legacy-platform-api.service.ts";
-import { LegacyPlatformApiFactory } from "../../src/legacy/auth/legacy-platform-api-factory.service.ts";
-import { LegacyProjectNotLinkedError } from "../../src/legacy/config/legacy-project-ref.errors.ts";
-import { LegacyProjectRefResolver } from "../../src/legacy/config/legacy-project-ref.service.ts";
+import { LegacyPlatformApi } from "../../src/auth/legacy-platform-api.service.ts";
+import { LegacyPlatformApiFactory } from "../../src/auth/legacy-platform-api-factory.service.ts";
+import { LegacyProjectNotLinkedError } from "../../src/config/legacy-project-ref.errors.ts";
+import { LegacyProjectRefResolver } from "../../src/config/legacy-project-ref.service.ts";
 import { LegacyYesFlag } from "../../src/shared/legacy/global-flags.ts";
 import type { OutputFormat } from "../../src/shared/output/types.ts";
 import { mockOutput, mockRuntimeInfo, mockStdin, mockTty } from "./mocks.ts";

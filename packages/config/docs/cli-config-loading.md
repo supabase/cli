@@ -29,7 +29,7 @@ This document explains how the CLI's on-disk config document loading works, acro
   project.
 - `LegacyCliSettings`: apps/cli's legacy shell's own equivalent of `CliSettings` — same role,
   scoped to the legacy shell, and pending deletion once the legacy/next shells consolidate.
-  Defined at `apps/cli/src/legacy/config/legacy-cli-settings.service.ts`.
+  Defined at `apps/cli/src/config/legacy-cli-settings.service.ts`.
 
 The `Cli*` prefix is a rule, not a per-name coincidence: it names the local checkout side — what
 the CLI reads, writes, or resolves about itself on disk. A bare `Project*` name is reserved for the

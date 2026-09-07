@@ -2,8 +2,9 @@ import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 
+import { Predicate } from "effect";
 import pg from "pg";
-import { inject, test as vitestTest } from "vitest";
+import { expect, inject, test as vitestTest } from "vitest";
 
 import { makeTempHome, runSupabase } from "./cli.ts";
 import { LIVE_EXIT_TIMEOUT_MS } from "./live-env.ts";
@@ -170,6 +171,60 @@ export async function removePostgresConfigLiveOverride(
     "--no-restart",
   ]);
   requireLiveSuccess(removed, `postgres-config delete cleanup for ${key}`);
+}
+
+/** Exact-version cleanup for migration live tests; reverting an absent row is a no-op delete. */
+export async function removeLiveMigration(
+  cli: LiveFixtures["cli"],
+  project: LiveProject,
+  version: string,
+): Promise<void> {
+  const reverted = await cli([
+    "migration",
+    "repair",
+    version,
+    "--status",
+    "reverted",
+    "--db-url",
+    project.dbUrl,
+  ]);
+  requireLiveSuccess(reverted, `migration repair cleanup for ${version}`);
+}
+
+/**
+ * Proves a postgres-config write through `get`. The platform can serve a stale
+ * read right after the PUT, so after one fail-fast read the value is polled
+ * (2s apart, 60s deadline, each attempt bounded) until `key` reads `expected`
+ * (`undefined` for no override).
+ */
+export async function expectPostgresConfigLiveOverride(
+  cli: LiveFixtures["cli"],
+  project: LiveProject,
+  key: string,
+  expected: string | undefined,
+  label: string,
+): Promise<void> {
+  const read = async (): Promise<unknown> => {
+    const proof = await cli(
+      ["postgres-config", "get", ...experimentalProjectLiveFlags(project), "-o", "json"],
+      { exitTimeoutMs: 20_000 },
+    );
+    requireLiveSuccess(proof, label);
+    let config: unknown;
+    try {
+      config = JSON.parse(proof.stdout);
+    } catch {
+      config = undefined;
+    }
+    if (!Predicate.isObject(config)) {
+      throw new Error(
+        `${label}: unexpected postgres-config get payload\nstdout:\n${proof.stdout}\nstderr:\n${proof.stderr}`,
+      );
+    }
+    return config[key];
+  };
+  if (Object.is(await read(), expected)) return;
+  await expect.poll(read, { interval: 2_000, timeout: 60_000, message: label }).toBe(expected);
 }
 
 /**

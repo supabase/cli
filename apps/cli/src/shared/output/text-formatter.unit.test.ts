@@ -1,6 +1,6 @@
 import { CliError, Command } from "effect/unstable/cli";
 import { describe, expect, it } from "vitest";
-import { legacyNetworkRestrictionsCommand } from "../../legacy/commands/network-restrictions/network-restrictions.command.ts";
+import { legacyNetworkRestrictionsCommand } from "../../commands/network-restrictions/network-restrictions.command.ts";
 import { textCliOutputFormatter } from "./text-formatter.ts";
 
 const testRoot = Command.make("supabase").pipe(

@@ -1,0 +1,44 @@
+import { Data } from "effect";
+import {
+  actionability,
+  type CliErrorActionabilityDeclaration,
+  ErrorActionabilityId,
+} from "../../../shared/telemetry/error-actionability.ts";
+
+/**
+ * Domain errors specific to `supabase seed buckets`.
+ *
+ * The Storage gateway and credential-derivation errors are shared with
+ * `storage ls/cp/mv/rm` and live in `command-internal/legacy-storage-gateway.errors.ts`
+ * and `command-internal/legacy-storage-credentials.errors.ts`. This file keeps only
+ * the seed-specific errors.
+ */
+
+/**
+ * Raised when `supabase/config.toml` cannot be parsed, or a config-load-time
+ * validation Go runs before any Storage call fails (bucket name regex,
+ * `file_size_limit` numeral). Mirrors the `config push` CLI-1489 tradeoff:
+ * `loadCliConfig` raises `CliConfigParseError` on `env(...)` refs over
+ * numeric/bool fields, which Go resolves transparently.
+ */
+export class LegacySeedConfigLoadError extends Data.TaggedError("LegacySeedConfigLoadError")<{
+  readonly message: string;
+}> {
+  get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
+    return actionability.invalidConfig;
+  }
+}
+
+/**
+ * Raised when `--local` and `--linked` are both passed, reproducing cobra's
+ * `MarkFlagsMutuallyExclusive("local", "linked")`.
+ */
+export class LegacySeedMutuallyExclusiveFlagsError extends Data.TaggedError(
+  "LegacySeedMutuallyExclusiveFlagsError",
+)<{
+  readonly message: string;
+}> {
+  get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
+    return actionability.provideFlags;
+  }
+}

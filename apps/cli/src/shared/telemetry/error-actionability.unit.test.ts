@@ -3,7 +3,7 @@ import { CliError } from "effect/unstable/cli";
 import { describe, expect, it } from "vitest";
 import { markSupabaseApiInputErrorAsUserInput, SupabaseApiInputError } from "@supabase/api/effect";
 import { DockerPullError, StackError } from "@supabase/stack/effect";
-import { LegacyBootstrapHealthError } from "../../legacy/commands/bootstrap/bootstrap.errors.ts";
+import { LegacyBootstrapHealthError } from "../../commands/bootstrap/bootstrap.errors.ts";
 import {
   actionability,
   type CliErrorActionabilityDeclaration,
