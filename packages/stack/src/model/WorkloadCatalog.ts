@@ -57,7 +57,7 @@ const workloadCatalog = {
   "database:database": native(
     "postgres",
     "17.6.1.168",
-    "ghcr.io/supabase/cli/postgres:17.6.1.168@sha256:88747ff441dc313edab7f2bc14f2586d7fee5cc7c44d6425729756d1ef7e0f89",
+    "ghcr.io/supabase/cli/postgres:17.6.1.168@sha256:936536bb1f97bcab0e30f58613545f8a75676c185c5eb5b86d8f8b33ca3063a1",
     "bin/supabase-postgres-start",
     ["bin/supabase-postgres-start"],
     {
@@ -82,14 +82,14 @@ const workloadCatalog = {
   "realtime:realtime": native(
     "realtime",
     "v2.134.5",
-    "ghcr.io/supabase/cli/realtime:v2.134.5@sha256:ebed084dc805ca8d9dc0ab37a84f858c82c1ccd9afcf4bff332941ea0d089347",
+    "ghcr.io/supabase/cli/realtime:v2.134.5@sha256:befdf8b8d1e51af9dca6d9fae7675c6e31ed8d8593821ac3bf62df6d4fb6124c",
     "bin/server",
     ["bin/server", "bin/prepare"],
   ),
   "storage:storage": native(
     "storage",
     "v1.73.0",
-    "ghcr.io/supabase/cli/storage:v1.73.0@sha256:c645e251ecdb393b370413697f5a5ed48c853d1c068c4698fece8d2914f5d8aa",
+    "ghcr.io/supabase/cli/storage:v1.73.0@sha256:69590a75f916837641976d4018e5ead7c7d2c2305312d9bfb06d86aec8fb1cdd",
     "bin/storage",
     ["bin/storage", "bin/prepare"],
   ),
@@ -110,14 +110,14 @@ const workloadCatalog = {
   "studio:studio": native(
     "studio",
     "2026.09.04-sha-5a67366",
-    "ghcr.io/supabase/cli/studio:2026.09.04-sha-5a67366@sha256:b33221c99519400d648b98e0c31004f8897104c3970d0ef169392c3f3d22c22c",
+    "ghcr.io/supabase/cli/studio:2026.09.04-sha-5a67366@sha256:9823a31668028f1846e87331bc21598d9cd74bcaa1466c72dab58c33c9c82720",
     "bin/studio",
     ["bin/studio"],
   ),
   "studio:pgmeta": native(
     "pgmeta",
     "v0.99.0",
-    "ghcr.io/supabase/cli/pgmeta:v0.99.0@sha256:efe57d66dafa2921f7c1af3283e40432dd66eba190ea84d3d9d1eda629c64ff0",
+    "ghcr.io/supabase/cli/pgmeta:v0.99.0@sha256:22d40cf766949cf9bd5183d9d46927a05a63743eb1d41f9e418e9db7d7470b29",
     "bin/pgmeta",
     ["bin/pgmeta"],
   ),
@@ -132,7 +132,7 @@ const workloadCatalog = {
   "analytics:analytics": native(
     "analytics",
     "v1.50.9",
-    "ghcr.io/supabase/cli/analytics:v1.50.9@sha256:5a1bc151a4e53f84012a1b459db9e64bdd72945b115633896e8df004861c988f",
+    "ghcr.io/supabase/cli/analytics:v1.50.9@sha256:ed0a4f0cf62fb87ca729f83241ae9d678885672c17947b39bcaf91b914a1c97f",
     "bin/logflare",
     ["bin/logflare", "bin/prepare"],
   ),
@@ -146,7 +146,7 @@ const workloadCatalog = {
   "pooler:pooler": native(
     "pooler",
     "v2.9.12",
-    "ghcr.io/supabase/cli/pooler:v2.9.12@sha256:eb011c14a6dd569f795397215887357d6ce45ebadf387efd32af7bb81afb7a73",
+    "ghcr.io/supabase/cli/pooler:v2.9.12@sha256:42c3350748744e15deb57dd3a4670e90166422fb6a35ff8b4972209dd81f6097",
     "bin/server",
     ["bin/server", "bin/prepare", "bin/provision-tenant"],
   ),
