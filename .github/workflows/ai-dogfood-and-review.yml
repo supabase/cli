@@ -131,9 +131,9 @@ jobs:
           bun-version-file: "trusted/.bun-version"
           no-cache: true
 
-      - uses: jdx/mise-action@e6a8b3978addb5a52f2b4cd9d91eafa7f0ab959d # v4
+      - uses: jdx/mise-action@c2a87611a18de5b3828c5652fe268e992400cb5c # v4.3.0
         with:
-          version: 2026.7.0
+          version: 2026.9.0
 
       - name: Enable pnpm
         run: |
@@ -186,9 +186,9 @@ jobs:
           bun-version-file: "trusted/.bun-version"
           no-cache: true
 
-      - uses: jdx/mise-action@e6a8b3978addb5a52f2b4cd9d91eafa7f0ab959d # v4
+      - uses: jdx/mise-action@c2a87611a18de5b3828c5652fe268e992400cb5c # v4.3.0
         with:
-          version: 2026.7.0
+          version: 2026.9.0
 
       - name: Enable pnpm
         run: |
@@ -317,7 +317,7 @@ jobs:
     needs:
       - resolve
       - dogfood
-    if: ${{ !cancelled() && needs.resolve.outputs.should_run == 'true' }}
+    if: ${{ !cancelled() && needs.resolve.outputs.should_run == 'true' && needs.dogfood.result != 'skipped' }}
     runs-on: ubuntu-latest
     timeout-minutes: 10
     permissions:
