@@ -174,8 +174,8 @@ These commands exist in the TS CLI today but have no direct top-level equivalent
   silently won over it — a latent bug. With `projects.go` deleted, the bind
   lands on `db remote`'s persistent `--password` and flag-beats-env applies as
   intended. Accepted (not restored) in the CLI-1970 parity audit. `db remote
-  commit` is now native `db pull`, so it follows pull's precedence (env wins
-  over `--password`). `db pull` keeps the old precedence unchanged.
+  commit` is now native `db pull`, so it uses pull's flag-then-env-then-dotenv
+  password order. `db pull` keeps that precedence unchanged.
 - `branches {list,create,get,update,delete,pause,unpause,disable}` resolve their project ref
   through a PARENT-scoped chain instead of plain `--project-ref` flag/env/file resolution: an
   explicit `--project-ref` still wins outright, but the fallback is env `SUPABASE_PROJECT_ID` →

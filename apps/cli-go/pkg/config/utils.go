@@ -28,7 +28,6 @@ type pathBuilder struct {
 	RealtimeVersionPath    string
 	EdgeRuntimeVersionPath string
 	LogflareVersionPath    string
-	PgDeltaVersionPath     string
 	CliVersionPath         string
 	CurrBranchPath         string
 	SchemasDir             string
@@ -65,7 +64,6 @@ func NewPathBuilder(configPath string) pathBuilder {
 		PoolerVersionPath:      filepath.Join(base, ".temp", "pooler-version"),
 		RealtimeVersionPath:    filepath.Join(base, ".temp", "realtime-version"),
 		LogflareVersionPath:    filepath.Join(base, ".temp", "logflare-version"),
-		PgDeltaVersionPath:     filepath.Join(base, ".temp", "pgdelta-version"),
 		CliVersionPath:         filepath.Join(base, ".temp", "cli-latest"),
 		CurrBranchPath:         filepath.Join(base, ".branches", "_current_branch"),
 		SchemasDir:             filepath.Join(base, "schemas"),

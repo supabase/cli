@@ -2284,18 +2284,14 @@ describe("legacy db pull", () => {
   });
 });
 
-const seedPgDeltaConfig = (workdir: string) => {
-  mkdirSync(join(workdir, "supabase"), { recursive: true });
-  writeFileSync(
-    join(workdir, "supabase", "config.toml"),
-    ["[experimental.pgdelta]", "enabled = true", ""].join("\n"),
-  );
-};
-
 describe("legacy db remote commit", () => {
   it.effect("writes a remote_commit migration in-process and skips the pull PostRun line", () => {
     seedMigration(tmp.current, "20240101000000");
-    seedPgDeltaConfig(tmp.current);
+    mkdirSync(join(tmp.current, "supabase"), { recursive: true });
+    writeFileSync(
+      join(tmp.current, "supabase", "config.toml"),
+      "[experimental.pgdelta]\nenabled = true\n",
+    );
     const s = setup(tmp.current, {
       remoteVersions: ["20240101000000"],
       edgeStdout: pgDeltaDiffEnvelope([
