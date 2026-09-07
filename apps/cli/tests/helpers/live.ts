@@ -146,6 +146,23 @@ export async function removeStorageLiveObject(
   }
 }
 
+/** Exact cleanup for branches live tests by name or ref; deleting an already-removed branch is tolerated. */
+export async function removeLiveBranch(
+  cli: LiveFixtures["cli"],
+  project: LiveProject,
+  branch: string,
+): Promise<void> {
+  const removed = await cli(["branches", "delete", branch, "--project-ref", project.ref, "--yes"]);
+  if (
+    removed.exitCode !== 0 &&
+    !/not found|does not exist/i.test(`${removed.stdout}\n${removed.stderr}`)
+  ) {
+    throw new Error(
+      `branches delete cleanup for ${branch} failed (exit ${removed.exitCode})\n${removed.stdout}\n${removed.stderr}`,
+    );
+  }
+}
+
 /** Flags for experimental-gated live tests that address the shared project by
  * ref rather than linking it (contrast `storageLiveFlags`). */
 export function experimentalProjectLiveFlags(project: LiveProject): ReadonlyArray<string> {
