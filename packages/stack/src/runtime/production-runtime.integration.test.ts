@@ -197,10 +197,19 @@ const writeNativeRealtimeFixture = (
   Effect.gen(function* () {
     const bin = path.join(root, "bin");
     yield* fs.makeDirectory(bin, { recursive: true });
+    const profile = path.join(bin, ".runtime-env.sh");
+    yield* fs.writeFileString(
+      profile,
+      `if [ -z "\${RELEASE_DISTRIBUTION:-}" ]; then
+  export RELEASE_DISTRIBUTION=name
+fi
+`,
+    );
     const migrate = path.join(bin, "migrate");
     yield* fs.writeFileString(
       migrate,
       `#!/bin/sh
+. "$(CDPATH= cd -- "$(dirname -- "$0")" && pwd -P)/.runtime-env.sh"
 printf 'realtime-migrate|RELEASE_DISTRIBUTION=%s\\n' "\${RELEASE_DISTRIBUTION:-missing}" >> ${JSON.stringify(eventsPath)}
 `,
     );
@@ -1556,7 +1565,7 @@ describe("production runtime", () => {
     ).pipe(Effect.provide(NodeServices.layer)),
   );
 
-  it.live("propagates native BEAM environment to a realtime startup process", () =>
+  it.live("loads BEAM defaults from the prepared realtime artifact", () =>
     Effect.scoped(
       Effect.gen(function* () {
         const fs = yield* FileSystem.FileSystem;
@@ -1644,7 +1653,7 @@ describe("production runtime", () => {
         const ready = yield* runtime.driver.start(key, realtime);
         expect(ready.state).toBe("ready");
         expect(yield* fs.readFileString(eventsPath)).toContain(
-          "realtime-migrate|RELEASE_DISTRIBUTION=none",
+          "realtime-migrate|RELEASE_DISTRIBUTION=name",
         );
         yield* runtime.driver.stop(key);
       }),

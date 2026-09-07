@@ -82,7 +82,7 @@ const workloadCatalog = {
   "realtime:realtime": native(
     "realtime",
     "v2.134.5",
-    "ghcr.io/supabase/cli/realtime:v2.134.5@sha256:befdf8b8d1e51af9dca6d9fae7675c6e31ed8d8593821ac3bf62df6d4fb6124c",
+    "ghcr.io/supabase/cli/realtime:v2.134.5@sha256:7fb53cc6987085d739c7d161608505ed138d1895df884c3bdc2147cef444138a",
     "bin/server",
     ["bin/server", "bin/prepare"],
   ),
@@ -132,7 +132,7 @@ const workloadCatalog = {
   "analytics:analytics": native(
     "analytics",
     "v1.50.9",
-    "ghcr.io/supabase/cli/analytics:v1.50.9@sha256:ed0a4f0cf62fb87ca729f83241ae9d678885672c17947b39bcaf91b914a1c97f",
+    "ghcr.io/supabase/cli/analytics:v1.50.9@sha256:7db85cc6cb0cdeb4b71f2fadb49c0f9197bea0492daf7896f6ae69edad76d28e",
     "bin/logflare",
     ["bin/logflare", "bin/prepare"],
   ),
@@ -146,7 +146,7 @@ const workloadCatalog = {
   "pooler:pooler": native(
     "pooler",
     "v2.9.12",
-    "ghcr.io/supabase/cli/pooler:v2.9.12@sha256:42c3350748744e15deb57dd3a4670e90166422fb6a35ff8b4972209dd81f6097",
+    "ghcr.io/supabase/cli/pooler:v2.9.12@sha256:12bb9dcb7ddace79bee173ccb7327c6646af2236679f3bd932a86b3a06479aac",
     "bin/server",
     ["bin/server", "bin/prepare", "bin/provision-tenant"],
   ),

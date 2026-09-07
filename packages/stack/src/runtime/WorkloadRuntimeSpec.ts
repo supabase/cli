@@ -274,12 +274,6 @@ const compactEnvironment = (
 ): Readonly<Record<string, string>> =>
   Object.fromEntries(Object.entries(environment).filter(([, value]) => value.length > 0));
 
-// Native unpacked BEAM releases use `none` to avoid contacting the host EPMD; containers omit it so the artifact/image default remains `name`.
-const beamDistributionEnvironment = (
-  runtime: WorkloadRuntimeKind,
-): Readonly<Record<string, string>> =>
-  runtime === "native" ? { RELEASE_DISTRIBUTION: "none" } : {};
-
 const capabilityEnabled = (state: PersistedStackState, capability: CapabilityName): boolean =>
   state.definition?.capabilities[capability].enabled ?? true;
 
@@ -951,7 +945,6 @@ const analyticsEnv = (
   const gcpJwtPath = inputs.analytics?.gcpJwtPath ?? "";
   return compactEnvironment({
     ...common(workload, port),
-    ...beamDistributionEnvironment(runtime),
     ...capabilityEnv(state, "analytics", "ANALYTICS", (key) => key === "ANALYTICS_GCP_JWT_PATH"),
     PORT: String(port),
     PHX_HTTP_PORT: String(port),
@@ -1029,7 +1022,6 @@ const specs: Readonly<Record<string, WorkloadRuntimeSpecDefinition>> = {
     env: (state, workload, port, runtime = "native", inputs = {}) =>
       compactEnvironment({
         ...common(workload, port),
-        ...beamDistributionEnvironment(runtime),
         ...capabilityEnv(state, "realtime", "REALTIME"),
         PORT: String(port),
         DB_HOST: dbHost(runtime),
@@ -1254,7 +1246,6 @@ const specs: Readonly<Record<string, WorkloadRuntimeSpecDefinition>> = {
         throw new Error("Pooler private port assignments must be validated before env resolution");
       return {
         ...common(workload, port),
-        ...beamDistributionEnvironment(runtime),
         ...capabilityEnv(state, "pooler", "POOLER"),
         // `port` is the readiness binding (admin); proxy listeners use the primary SQL binding.
         // validatePrivateAssignments guarantees both native bindings are assigned.
