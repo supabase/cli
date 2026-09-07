@@ -18,7 +18,7 @@ export class LegacyExperimentalStackRestartError extends Data.TaggedError(
     | "docker"
     | "registry"
     | "artifact"
-    | "runtime";
+    | "unknown";
   readonly suggestion?: string;
   readonly cause?: unknown;
 }> {
@@ -28,6 +28,8 @@ export class LegacyExperimentalStackRestartError extends Data.TaggedError(
       return actionability.invalidConfig;
     if (this.reason === "port") return actionability.invalidConfig;
     if (this.reason === "docker") return actionability.dockerNotRunning;
-    return actionability.externalNetwork;
+    if (this.reason === "registry" || this.reason === "artifact")
+      return actionability.externalNetwork;
+    return actionability.unknown;
   }
 }

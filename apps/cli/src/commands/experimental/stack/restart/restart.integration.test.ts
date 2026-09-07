@@ -227,7 +227,10 @@ describe("experimental stack restart", () => {
       const start = makeFixture({ start: "fail" });
       return Effect.gen(function* () {
         expect(Exit.isFailure(yield* stop.effect.pipe(Effect.exit))).toBe(true);
-        expect(Exit.isFailure(yield* start.effect.pipe(Effect.exit))).toBe(true);
+        const failure = yield* start.effect.pipe(Effect.flip);
+        expect(failure.reason).toBe("lifecycle");
+        expect(failure[ErrorActionabilityId]).toEqual(actionability.invalidConfig);
+        expect(failure.suggestion).toContain("experimental stack status");
         expect(stop.calls).toEqual(["open", "prepare", "stop"]);
         expect(start.calls).toEqual(["open", "prepare", "stop", "start"]);
         expect(start.calls).not.toContain("destroy");

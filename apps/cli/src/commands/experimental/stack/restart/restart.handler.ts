@@ -40,12 +40,16 @@ const mapStackError = (error: import("@supabase/stack/effect").StackError) => {
     Match.tag("StackRuntimeMismatchError", () => ({
       reason: "flags" as const,
       suggestion:
-        "Omit --runtime to reuse the existing runtime, or choose a different --stack name.",
+        "Restart preserves the existing runtime; choose a different --stack name to use another runtime.",
     })),
     Match.tag(
       "StackLifecycleConflictError",
       "StackNotRunningError",
       "StackMustBeStoppedError",
+      "StackOwnershipConflictError",
+      "StackUpgradeRequiredError",
+      "StackRuntimeError",
+      "StackCleanupError",
       () => ({
         reason: "lifecycle" as const,
         suggestion: "Run supabase experimental stack status to inspect the stack state.",
@@ -63,7 +67,7 @@ const mapStackError = (error: import("@supabase/stack/effect").StackError) => {
       reason: "artifact" as const,
       suggestion: "Retry the stack restart with --debug if the artifact cannot be prepared.",
     })),
-    Match.orElse(() => ({ reason: "runtime" as const })),
+    Match.orElse(() => ({ reason: "unknown" as const })),
   );
   return new LegacyExperimentalStackRestartError({
     ...classification,
