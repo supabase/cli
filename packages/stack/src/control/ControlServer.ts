@@ -13,6 +13,8 @@ import {
   Semaphore,
 } from "effect";
 import { NodeSocket, NodeSocketServer } from "@effect/platform-node";
+// oxlint-disable-next-line effecttsgo/node-builtin-import
+import { lstat } from "node:fs/promises";
 import * as RpcClient from "effect/unstable/rpc/RpcClient";
 import { RpcClientError } from "effect/unstable/rpc/RpcClientError";
 import * as RpcSerialization from "effect/unstable/rpc/RpcSerialization";
@@ -74,6 +76,45 @@ export interface ControlServer {
 
 const endpointPath = (endpoint: ControlEndpoint): string =>
   endpoint.kind === "unix" ? endpoint.path : endpoint.name;
+
+const controlDirectory = (endpoint: ControlEndpoint): string => {
+  const path = endpointPath(endpoint);
+  const separator = Math.max(path.lastIndexOf("/"), path.lastIndexOf("\\"));
+  return separator < 0 ? path : path.slice(0, separator);
+};
+
+const controlServerError = (cause: unknown): SocketServer.SocketServerError =>
+  new SocketServer.SocketServerError({
+    reason: new SocketServer.SocketServerOpenError({ cause }),
+  });
+
+/**
+ * Ensure the Unix endpoint is inside an owner-private directory. FileSystem.stat follows
+ * symlinks, so the no-follow lstat is required at this security boundary.
+ */
+const ensurePrivateControlDirectory = (
+  fs: FileSystem.FileSystem,
+  directory: string,
+): Effect.Effect<boolean, SocketServer.SocketServerError> =>
+  Effect.gen(function* () {
+    const exists = yield* fs.exists(directory).pipe(Effect.mapError(controlServerError));
+    let created = false;
+    if (!exists) {
+      yield* fs.makeDirectory(directory, { mode: 0o700 }).pipe(Effect.mapError(controlServerError));
+      created = true;
+    }
+    const info = yield* Effect.tryPromise({
+      try: () => lstat(directory),
+      catch: (cause) => controlServerError(cause),
+    });
+    const uid = typeof process.getuid === "function" ? process.getuid() : undefined;
+    if (!info.isDirectory() || (uid !== undefined && info.uid !== uid) || (info.mode & 0o077) !== 0)
+      return yield* controlServerError(
+        new Error("Control endpoint directory is not owner-private"),
+      );
+    yield* fs.chmod(directory, 0o700).pipe(Effect.mapError(controlServerError));
+    return created;
+  });
 
 const toBytes = (chunk: Uint8Array | string): Uint8Array =>
   typeof chunk === "string" ? new TextEncoder().encode(chunk) : chunk;
@@ -417,14 +458,34 @@ export const startControlServer = (
 > =>
   Effect.gen(function* () {
     const fs = yield* FileSystem.FileSystem;
-    const base = yield* NodeSocketServer.make({ path: endpointPath(options.endpoint) });
+    let bound = false;
     if (options.endpoint.kind === "unix") {
-      const unixPath = options.endpoint.path;
-      yield* Effect.addFinalizer(() =>
-        fs
-          .remove(unixPath, { force: true })
-          .pipe(Effect.catchTag("PlatformError", () => Effect.void)),
+      const endpoint = options.endpoint;
+      const directory = controlDirectory(endpoint);
+      yield* Effect.acquireRelease(
+        ensurePrivateControlDirectory(fs, directory),
+        (directoryCreated) =>
+          (bound ? fs.remove(endpoint.path, { force: true }) : Effect.void).pipe(
+            Effect.catchTag("PlatformError", () => Effect.void),
+            Effect.andThen(
+              directoryCreated
+                ? fs.remove(directory, { force: true, recursive: true })
+                : Effect.void,
+            ),
+            Effect.catchTag("PlatformError", () => Effect.void),
+          ),
       );
+    }
+    const base = yield* Effect.uninterruptibleMask((restore) =>
+      Effect.gen(function* () {
+        const base = yield* restore(
+          NodeSocketServer.make({ path: endpointPath(options.endpoint) }),
+        );
+        bound = true;
+        return base;
+      }),
+    );
+    if (options.endpoint.kind === "unix") {
       yield* fs.chmod(options.endpoint.path, 0o600).pipe(
         Effect.mapError(
           (error) =>

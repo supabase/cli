@@ -356,6 +356,7 @@ describe("stack ownership", () => {
         const staleEndpoint = controlEndpointFor(stackId, environment, address.port);
         if (staleEndpoint.kind !== "unix")
           return yield* new StackStateInvalidError({ message: "expected unix endpoint" });
+        yield* fs.makeDirectory(path.dirname(staleEndpoint.path), { recursive: true, mode: 0o700 });
         yield* fs.writeFileString(
           path.join(paths.runtime, "owner.lock"),
           jsonText({

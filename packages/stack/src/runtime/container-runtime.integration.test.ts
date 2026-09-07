@@ -1963,6 +1963,23 @@ describe("container runtime", () => {
       expect(docker.args).toContain("127.0.0.1:54321:8000");
       expect(docker.args).toContain("type=bind,src=/tmp/backend,dst=/app/backend,ro");
       expect(docker.args).toContain("type=volume,src=backend-data,dst=/var/lib/backend");
+      const encodedMount = serializeDockerCommand({
+        operation: "create-container",
+        spec: {
+          ...workload,
+          mounts: [{ source: '/tmp/a,b"c', target: "/app/a,b", readOnly: false }],
+        },
+      });
+      expect(encodedMount.args).toContain('type=bind,"src=/tmp/a,b""c","dst=/app/a,b"');
+      expect(
+        serializeDockerCommand({
+          operation: "create-container",
+          spec: {
+            ...workload,
+            mounts: [{ source: "/tmp/a=b", target: "/app/a=b", readOnly: false }],
+          },
+        }).args,
+      ).toContain("type=bind,src=/tmp/a=b,dst=/app/a=b");
       expect(docker.args).toContain("--network-alias");
       expect(docker.args).toContain("supabase-database");
       expect(docker.args).toContain("--env-file");

@@ -802,15 +802,6 @@ const externalActionabilityByTag: Record<string, ErrorActionabilityAdapter> = {
   SchemaError: () => ({ ...actionability.apiStatus, fingerprint_suffix: "api_response" }),
 };
 
-/**
- * Whether a tag defined outside `apps/cli` has an external adapter. Used by
- * the coverage test to keep {@link externalActionabilityByTag} exhaustive
- * against the workspace packages.
- */
-export function isClassifiedExternalErrorTag(tag: string): boolean {
-  return Object.hasOwn(externalActionabilityByTag, tag);
-}
-
 function classifyShowHelp(error: ErrorRecord, depth: number): CliErrorActionability | undefined {
   const errors = error["errors"];
   if (!Array.isArray(errors)) return undefined;

@@ -10,6 +10,7 @@ import {
   FileSystem,
   Option,
   Path,
+  PlatformError,
   Redacted,
   Ref,
   Scope,
@@ -49,6 +50,15 @@ interface ServerOverrides {
   readonly onShutdownReady?: Effect.Effect<void>;
 }
 
+interface ServerSetup {
+  readonly endpoint?: (root: string, path: Path.Path) => string;
+  readonly prepare?: (context: {
+    readonly root: string;
+    readonly fs: FileSystem.FileSystem;
+    readonly path: Path.Path;
+  }) => Effect.Effect<void, PlatformError.PlatformError, FileSystem.FileSystem | Scope.Scope>;
+}
+
 const withPlatform = <A, E, R>(effect: Effect.Effect<A, E, R>) =>
   Effect.scoped(effect).pipe(Effect.provide(NodeServices.layer));
 
@@ -74,6 +84,7 @@ const withServer = <A, E, R>(
     readonly stopCalls: Ref.Ref<number>;
     readonly maintenanceStarted: Deferred.Deferred<void>;
     readonly maintenanceRelease: Deferred.Deferred<void>;
+    readonly rebind: Effect.Effect<boolean, never, FileSystem.FileSystem>;
   }) => Effect.Effect<A, E, R>,
   overrides?: (context: {
     readonly stackId: string;
@@ -87,6 +98,7 @@ const withServer = <A, E, R>(
     readonly maintenanceStarted: Deferred.Deferred<void>;
     readonly maintenanceRelease: Deferred.Deferred<void>;
   }) => ServerOverrides,
+  setup?: ServerSetup,
 ) =>
   withPlatform(
     Effect.gen(function* () {
@@ -103,7 +115,11 @@ const withServer = <A, E, R>(
       const stopCalls = yield* Ref.make(0);
       const maintenanceStarted = yield* Deferred.make<void>();
       const maintenanceRelease = yield* Deferred.make<void>();
-      const endpoint: ControlEndpoint = { kind: "unix", path: path.join(root, "control.sock") };
+      const endpoint: ControlEndpoint = {
+        kind: "unix",
+        path: setup?.endpoint?.(root, path) ?? path.join(root, "control.sock"),
+      };
+      if (setup?.prepare !== undefined) yield* setup.prepare({ root, fs, path });
       const status: StackStatus = {
         id: stackId,
         lifecycle: "stopped",
@@ -169,8 +185,13 @@ const withServer = <A, E, R>(
         onShutdownReady: custom.onShutdownReady,
       };
       yield* startControlServer(options);
+      const rebind = Effect.scoped(startControlServer(options)).pipe(
+        Effect.exit,
+        Effect.map(Exit.isFailure),
+      );
       const info = yield* fs.stat(endpoint.path);
       expect(info.mode & 0o777).toBe(0o600);
+      expect((yield* fs.stat(root)).mode & 0o777).toBe(0o700);
       return yield* f({
         endpoint,
         stackId,
@@ -182,6 +203,7 @@ const withServer = <A, E, R>(
         stopCalls,
         maintenanceStarted,
         maintenanceRelease,
+        rebind,
       });
     }),
   );
@@ -260,6 +282,73 @@ const makeDestroyRequestFrame = (): Effect.Effect<Uint8Array, MaintenanceProtoco
   });
 
 describe("control transport", () => {
+  it.live("rejects a symlinked control directory", () =>
+    Effect.gen(function* () {
+      const result = yield* withServer(() => Effect.void, undefined, {
+        endpoint: (root, path) => path.join(root, "control", "control.sock"),
+        prepare: ({ root, fs, path }) =>
+          Effect.gen(function* () {
+            const target = path.join(root, "target");
+            yield* fs.makeDirectory(target);
+            yield* fs.symlink(target, path.join(root, "control"));
+          }),
+      }).pipe(Effect.exit);
+      expect(Exit.isFailure(result)).toBe(true);
+    }),
+  );
+
+  it.live("creates and cleans a private nested control directory", () =>
+    withPlatform(
+      Effect.gen(function* () {
+        const directoryPath = yield* Ref.make<string | undefined>(undefined);
+        yield* withServer(
+          ({ endpoint }) =>
+            Effect.gen(function* () {
+              if (endpoint.kind !== "unix") return;
+              const fs = yield* FileSystem.FileSystem;
+              const path = yield* Path.Path;
+              const info = yield* fs.stat(path.dirname(endpoint.path));
+              expect(info.mode & 0o777).toBe(0o700);
+            }),
+          undefined,
+          {
+            endpoint: (root, path) => {
+              const shortRoot = root.slice(root.lastIndexOf("/") + 1);
+              return path.join("/tmp", `${shortRoot}-nested`, "control.sock");
+            },
+            prepare: ({ root, path }) => {
+              const shortRoot = root.slice(root.lastIndexOf("/") + 1);
+              return Ref.set(directoryPath, path.join("/tmp", `${shortRoot}-nested`));
+            },
+          },
+        );
+        const fs = yield* FileSystem.FileSystem;
+        const directory = yield* Ref.get(directoryPath);
+        expect(directory).toBeDefined();
+        expect(yield* fs.exists(directory!)).toBe(false);
+      }),
+    ),
+  );
+
+  it.live("rejects a control directory with public permissions", () =>
+    Effect.gen(function* () {
+      const result = yield* withServer(() => Effect.void, undefined, {
+        prepare: ({ root, fs }) => fs.chmod(root, 0o755),
+      }).pipe(Effect.exit);
+      expect(Exit.isFailure(result)).toBe(true);
+    }),
+  );
+
+  it.live("keeps the first control server reachable after a competing bind fails", () =>
+    withServer(({ endpoint, stackId, ownerSessionId, rebind }) =>
+      Effect.gen(function* () {
+        expect(yield* rebind).toBe(true);
+        const probe = yield* makeControlClient(endpoint, { stackId, ownerSessionId }).probe();
+        expect(probe.ok).toBe(true);
+      }),
+    ),
+  );
+
   it.live("fails maintenance requests when the control endpoint is unavailable", () =>
     withPlatform(
       Effect.gen(function* () {

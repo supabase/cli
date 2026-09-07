@@ -297,6 +297,103 @@ describe("slim-services artifact source", () => {
     ),
   );
 
+  it.live("rejects a streamed checksum mismatch before publishing and retries cleanly", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const archive = yield* compress(tar("bin/demo", "demo"));
+        const crypto = yield* Crypto.Crypto;
+        const expected = digestHex(yield* crypto.digest("SHA-256", archive));
+        let validChecksum = false;
+        const fetcher: FetchLike = (input) => {
+          const url = requestUrl(input);
+          if (url.endsWith("manifest.json"))
+            return Promise.resolve(
+              new Response(
+                JSON.stringify({ service: "demo", version: "v1.0.0", target: "linux-amd64" }),
+              ),
+            );
+          if (url.endsWith("SHA256SUMS"))
+            return Promise.resolve(
+              new Response(
+                `${validChecksum ? expected : "0".repeat(64)}  demo-v1.0.0-linux-amd64.tar.zst\n`,
+              ),
+            );
+          return Promise.resolve(new Response(archive));
+        };
+        const fs = yield* FileSystem.FileSystem;
+        const root = yield* fs.makeTempDirectoryScoped({
+          prefix: "slim-services-store-integrity-",
+        });
+        const source = makeSlimServicesSource(() => artifact, fetcher);
+        const store = yield* makeArtifactStore({ cacheRoot: root, source });
+        const failed = yield* store.prepare(request).pipe(Effect.exit);
+        expect(Exit.isFailure(failed)).toBe(true);
+        expect(yield* fs.exists(`${root}/demo/v1`)).toBe(false);
+        validChecksum = true;
+        const prepared = yield* store.prepare(request);
+        expect(yield* fs.readFileString(`${prepared.path}/bin/demo`)).toBe("demo");
+      }).pipe(Effect.provide(NodeServices.layer)),
+    ),
+  );
+
+  it.live("cancels a streamed response after transfer starts and removes its staging file", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const started = yield* Deferred.make<void>();
+        let signal: AbortSignal | undefined;
+        let canceled = false;
+        const fetcher: FetchLike = (input, init) => {
+          const url = requestUrl(input);
+          if (url.endsWith("manifest.json"))
+            return Promise.resolve(
+              new Response(
+                JSON.stringify({ service: "demo", version: "v1.0.0", target: "linux-amd64" }),
+              ),
+            );
+          if (url.endsWith("SHA256SUMS"))
+            return Promise.resolve(
+              new Response("0".repeat(64) + "  demo-v1.0.0-linux-amd64.tar.zst\n"),
+            );
+          signal = init?.signal ?? undefined;
+          let pulls = 0;
+          const body = new ReadableStream<Uint8Array>({
+            pull(controller) {
+              pulls += 1;
+              if (pulls === 1) {
+                controller.enqueue(new Uint8Array([1]));
+                return;
+              }
+              // oxlint-disable-next-line effecttsgo/run-effect-inside-effect -- signal the stream fixture's external Deferred
+              void Effect.runPromise(Deferred.succeed(started, undefined));
+              // oxlint-disable-next-line effecttsgo/new-promise -- hold the stream pull until cancellation
+              return new Promise<void>(() => undefined);
+            },
+            cancel() {
+              canceled = true;
+              pulls = 99;
+            },
+          });
+          return Promise.resolve(new Response(body));
+        };
+        const fs = yield* FileSystem.FileSystem;
+        const destination = yield* fs.makeTempDirectoryScoped({ prefix: "slim-services-stream-" });
+        const fiber = yield* Effect.forkChild(
+          makeSlimServicesSource(() => artifact, fetcher).materialize(
+            request,
+            destination,
+            "0".repeat(64),
+          ),
+          { startImmediately: true },
+        );
+        yield* Deferred.await(started);
+        yield* Fiber.interrupt(fiber);
+        expect(signal?.aborted).toBe(true);
+        expect(canceled).toBe(true);
+        expect(yield* fs.readDirectory(destination)).toEqual([]);
+      }).pipe(Effect.provide(NodeServices.layer)),
+    ),
+  );
+
   it.live("interrupts owned decompression without publishing a staging artifact", () =>
     Effect.scoped(
       Effect.gen(function* () {

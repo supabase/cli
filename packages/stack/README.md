@@ -35,8 +35,9 @@ await stack.start({ config: { preparation: "on-demand" } });
 ```
 
 The default `"background"` mode prepares all enabled lazy artifacts after PostgreSQL has started,
-without launching those services. A single Supervisor-owned background operation runs with bounded
-concurrency, is canceled and awaited by `stop()` or `destroy()`, and keeps completed cache entries.
+without launching those services. A single Supervisor-owned background operation prepares the
+finite selected workload set concurrently, streams downloads through hashing and decompression,
+is canceled and awaited by `stop()` or `destroy()`, and keeps completed cache entries.
 `"on-demand"` skips that background work for callers that want full lazy preparation. In either
 mode, activating a lazy service prepares its requested dependency closure concurrently, while
 explicit `stack.prepare(...)` remains available as a cache-only warmup. Eager capabilities remain

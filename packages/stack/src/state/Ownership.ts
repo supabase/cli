@@ -257,10 +257,12 @@ export const controlEndpointFor = (
   leasePort: number,
 ): ControlEndpoint => {
   const root = environment.tempRoot.replace(/[\\/]+$/, "");
-  const token = String(stackId);
+  // Encode the complete digest compactly so the private directory and socket
+  // remain below the Unix domain socket path limit even with a long temp root.
+  const token = Buffer.from(String(stackId), "hex").toString("base64url");
   if (environment.platform === "windows")
     return { kind: "pipe", name: `\\\\.\\pipe\\supabase-stack-${token}-${leasePort}` };
-  return { kind: "unix", path: `${root}/supabase-stack-${token}-${leasePort}.sock` };
+  return { kind: "unix", path: `${root}/supabase-stack-${token}-${leasePort}/control.sock` };
 };
 
 /** Reads and validates complete owner metadata without probing or mutating. */

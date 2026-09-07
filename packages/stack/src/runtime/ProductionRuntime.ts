@@ -623,7 +623,7 @@ export const makeProductionRuntime = (
       });
     const prepareArtifacts = (runtime: StackRuntime, workloads: ReadonlyArray<PlannedWorkload>) =>
       Effect.forEach(workloads, (workload) => prepare(runtime, workload), {
-        concurrency: 4,
+        concurrency: "unbounded",
       });
     const prepareFor = (
       input: LifecycleInput,
@@ -663,7 +663,7 @@ export const makeProductionRuntime = (
                 ),
               ),
             ),
-          { concurrency: 2, discard: true },
+          { concurrency: "unbounded", discard: true },
         );
       }).pipe(
         Effect.catch((error) =>

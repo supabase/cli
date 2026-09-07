@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { tmpdir } from "node:os";
+import { homedir, tmpdir } from "node:os";
 // oxlint-disable-next-line effecttsgo/node-builtin-import -- this fixture asserts exact root paths.
 import { dirname, join, sep } from "node:path";
 import type { PromiseStack } from "./PromiseStack.ts";
@@ -308,6 +308,33 @@ describe("test stack resource", () => {
     // Compare against the snapshot above to prove no global environment mutation occurred.
     // oxlint-disable-next-line effecttsgo/process-env -- test-only environment immutability assertion.
     expect(process.env.SUPABASE_HOME).toBe(originalHome);
+  });
+
+  it("falls back to the OS home when HOME is unavailable", () => {
+    // oxlint-disable-next-line effecttsgo/process-env -- test-only environment matrix.
+    const originalHome = process.env.HOME;
+    // oxlint-disable-next-line effecttsgo/process-env -- test-only environment matrix.
+    const originalSupabaseHome = process.env.SUPABASE_HOME;
+    try {
+      // oxlint-disable-next-line effecttsgo/process-env -- test-only environment matrix.
+      delete process.env.HOME;
+      // oxlint-disable-next-line effecttsgo/process-env -- test-only environment matrix.
+      delete process.env.SUPABASE_HOME;
+      expect(defaultRuntimeEnvironment().stateRoot).toBe(`${homedir()}/.supabase/managed/stacks`);
+    } finally {
+      // oxlint-disable-next-line effecttsgo/process-env -- restore test process environment.
+      if (originalHome === undefined) delete process.env.HOME;
+      else {
+        // oxlint-disable-next-line effecttsgo/process-env -- restore test process environment.
+        process.env.HOME = originalHome;
+      }
+      // oxlint-disable-next-line effecttsgo/process-env -- restore test process environment.
+      if (originalSupabaseHome === undefined) delete process.env.SUPABASE_HOME;
+      else {
+        // oxlint-disable-next-line effecttsgo/process-env -- restore test process environment.
+        process.env.SUPABASE_HOME = originalSupabaseHome;
+      }
+    }
   });
 
   it("removes the exact root when setupProject fails", async () => {

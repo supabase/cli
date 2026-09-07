@@ -14,6 +14,7 @@ import {
   Stream,
 } from "effect";
 import { fileURLToPath } from "node:url";
+import { homedir } from "node:os";
 import { ChildProcess } from "effect/unstable/process";
 import { ChildProcessSpawner } from "effect/unstable/process";
 import { resolveStackPaths } from "../state/Paths.ts";
@@ -58,7 +59,7 @@ export const defaultRuntimeEnvironment = (): StackRuntimeEnvironmentValue => {
   // This synchronous helper is the composition boundary where host environment
   // variables are read. The runtime itself receives a fully materialized value.
   // oxlint-disable-next-line effecttsgo/process-env -- composition-boundary environment read
-  const home = process.env.SUPABASE_HOME ?? `${process.env.HOME ?? process.cwd()}/.supabase`;
+  const home = process.env.SUPABASE_HOME ?? `${process.env.HOME ?? homedir()}/.supabase`;
   return {
     stateRoot: `${home}/managed/stacks`,
     // Keep the POSIX socket root short enough for AF_UNIX path limits.

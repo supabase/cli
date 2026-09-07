@@ -50,7 +50,6 @@ const prepared = (request: ArtifactRequest): PreparedArtifact => ({
   outcome: "downloaded",
 });
 
-const archive = new TextEncoder().encode("archive");
 const archiveSha256 = "0eb3e36bfb24dcd9bb1d1bece1531216b59539a8fde17ee80224af0653c92aa3";
 
 const nativeSource = (): ArtifactSource => ({
@@ -68,7 +67,7 @@ const nativeSource = (): ArtifactSource => ({
           yield* fs.makeDirectory(target, { recursive: true });
         }
       }
-      return archive;
+      return;
     }).pipe(
       Effect.mapError(
         (cause) => new StackPreparationError({ message: "native fixture failed", cause }),

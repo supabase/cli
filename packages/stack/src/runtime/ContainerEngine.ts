@@ -62,6 +62,12 @@ export type ContainerLabels =
   | ContainerVolumeLabels;
 
 const CONTAINER_LABEL_PREFIX = "com.supabase.stack";
+
+/** Encodes one complete key=value field in Docker and Podman's mount CSV syntax. */
+const mountField = (key: string, value: string): string => {
+  const field = `${key}=${value}`;
+  return /[,"\n\r]/.test(field) ? `"${field.replaceAll('"', '""')}"` : field;
+};
 export const CONTAINER_LABEL_KEYS = {
   stackId: `${CONTAINER_LABEL_PREFIX}.stackId`,
   ownerSessionId: `${CONTAINER_LABEL_PREFIX}.ownerSessionId`,
@@ -202,11 +208,11 @@ export const serializeCommonContainerCommand = (
     case "create-container": {
       const bindMounts = command.spec.mounts.flatMap((mount) => [
         "--mount",
-        `type=bind,src=${mount.source},dst=${mount.target}${mount.readOnly ? ",ro" : ""}`,
+        `type=bind,${mountField("src", mount.source)},${mountField("dst", mount.target)}${mount.readOnly ? ",ro" : ""}`,
       ]);
       const volumeMounts = command.spec.volumeMounts.flatMap((mount) => [
         "--mount",
-        `type=volume,src=${mount.volume},dst=${mount.target}${mount.readOnly ? ",ro" : ""}`,
+        `type=volume,${mountField("src", mount.volume)},${mountField("dst", mount.target)}${mount.readOnly ? ",ro" : ""}`,
       ]);
       const publications = command.spec.publications.flatMap((port) => [
         "--publish",

@@ -1,7 +1,7 @@
 import { Crypto, Effect, FileSystem, Option, Path, PlatformError, Predicate, Schema } from "effect";
 import { ChildProcessSpawner } from "effect/unstable/process";
 import { ArtifactIntegrityError, StackPreparationError } from "../public/Errors.ts";
-import { validateRelativePath, validateSha256, verifySha256 } from "./Integrity.ts";
+import { validateRelativePath, validateSha256 } from "./Integrity.ts";
 
 /**
  * A concrete artifact identity. `key` is deliberately private to preparation and may contain
@@ -18,9 +18,8 @@ export interface ArtifactRequest {
 
 /**
  * The source is the only download/archive boundary. It writes an unpacked artifact tree below
- * `destination` and returns the exact bytes whose SHA-256 identifies the catalog entry (normally
- * the downloaded tar.zst archive). A future network/archive adapter can stream and unpack there;
- * the store itself remains independent of transport and archive formats.
+ * `destination` after verifying the downloaded archive digest. Production sources stream directly
+ * to disk and return void. The store itself remains independent of transport and archive formats.
  */
 export interface ArtifactSource {
   /** Resolves the published digest only when the store has no valid cached artifact. */
@@ -31,8 +30,8 @@ export interface ArtifactSource {
     expectedSha256: string,
     onProgress?: (state: "downloading" | "preparing") => void,
   ) => Effect.Effect<
-    Uint8Array,
-    StackPreparationError,
+    void,
+    StackPreparationError | ArtifactIntegrityError,
     FileSystem.FileSystem | Path.Path | Crypto.Crypto | ChildProcessSpawner.ChildProcessSpawner
   >;
 }
@@ -720,24 +719,13 @@ const makeArtifactOperation = (
     const published = yield* Effect.gen(function* () {
       yield* ensureDirectory(fs, path, temporary, cacheRoot);
       const temporaryRoot = yield* ensureSafeRoot(fs, path, temporary, cacheRoot);
-      const archive = yield* source
-        .materialize(request, temporary, expectedSha256, onProgress)
-        .pipe(
-          Effect.provideService(FileSystem.FileSystem, fs),
-          Effect.provideService(Path.Path, path),
-          Effect.provideService(Crypto.Crypto, crypto),
-          // The source owns the exact tar process boundary; the store only supplies the
-          // already-owned process service captured by its constructor.
-          Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, childProcessSpawner),
-        );
-      yield* verifySha256(archive, expectedSha256).pipe(
+      yield* source.materialize(request, temporary, expectedSha256, onProgress).pipe(
+        Effect.provideService(FileSystem.FileSystem, fs),
+        Effect.provideService(Path.Path, path),
         Effect.provideService(Crypto.Crypto, crypto),
-        Effect.mapError((error) =>
-          metadataError("Downloaded artifact failed integrity verification", {
-            key: request.key,
-            cause: error,
-          }),
-        ),
+        // The source owns the exact tar process boundary; the store only supplies the
+        // already-owned process service captured by its constructor.
+        Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, childProcessSpawner),
       );
       const runtimePaths = yield* validateFreshRuntimePaths(
         fs,

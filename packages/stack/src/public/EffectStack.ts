@@ -869,7 +869,7 @@ const handleDependencies = (options: {
         const artifacts = yield* Effect.forEach(
           workloads,
           (workload) => preparer.prepare(state.runtime, workload, prepareOptions?.onProgress),
-          { concurrency: 4 },
+          { concurrency: "unbounded" },
         );
         const byCapability = new Map<CapabilityName, ReadonlyArray<PreparedWorkloadArtifact>>();
         for (const artifact of artifacts) {

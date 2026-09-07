@@ -1,8 +1,19 @@
 import { NodeServices } from "@effect/platform-node";
 import { describe, expect, it } from "@effect/vitest";
-import { Cause, Deferred, Effect, Exit, Fiber, FileSystem, Option, PlatformError } from "effect";
+import {
+  Cause,
+  Crypto,
+  Deferred,
+  Effect,
+  Exit,
+  Fiber,
+  FileSystem,
+  Option,
+  PlatformError,
+} from "effect";
 import { ArtifactIntegrityError, StackPreparationError } from "../public/Errors.ts";
 import { makeArtifactStore, type ArtifactRequest, type ArtifactSource } from "./ArtifactStore.ts";
+import { verifySha256 } from "./Integrity.ts";
 
 const layer = NodeServices.layer;
 const archive = new TextEncoder().encode("archive");
@@ -21,18 +32,23 @@ const withPlatform = <A, E, R>(effect: Effect.Effect<A, E, R>) =>
 
 const sourceWriting = (bytes: Uint8Array = archive): ArtifactSource => ({
   checksum: () => Effect.succeed(archiveSha256),
-  materialize: (_request, destination) =>
+  materialize: (_request, destination, expectedSha256) =>
     Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem;
       yield* fs.makeDirectory(`${destination}/bin`, { recursive: true });
       yield* fs.makeDirectory(`${destination}/etc`, { recursive: true });
       yield* fs.writeFileString(`${destination}/bin/postgres`, "native postgres");
       yield* fs.writeFileString(`${destination}/etc/postgres.conf`, "config");
-      return bytes;
+      const crypto = yield* Crypto.Crypto;
+      yield* verifySha256(bytes, expectedSha256).pipe(Effect.provideService(Crypto.Crypto, crypto));
     }).pipe(
-      Effect.mapError(
-        (cause) =>
-          new StackPreparationError({ message: `materialization failed: ${cause.message}`, cause }),
+      Effect.mapError((cause) =>
+        cause instanceof ArtifactIntegrityError
+          ? cause
+          : new StackPreparationError({
+              message: `materialization failed: ${cause instanceof Error ? cause.message : String(cause)}`,
+              cause,
+            }),
       ),
     ),
 });
@@ -187,7 +203,7 @@ describe("verified native artifact preparation", () => {
               yield* fs.writeFileString(`${destination}/bin/postgres`, "native postgres");
               yield* fs.writeFileString(`${destination}/share/runtime/config`, "config");
               yield* fs.symlink("config", `${destination}/share/runtime/config-link`);
-              return archive;
+              return;
             }).pipe(
               Effect.mapError(
                 (cause) =>
@@ -266,7 +282,7 @@ describe("verified native artifact preparation", () => {
               yield* fs.makeDirectory(`${destination}/share/runtime`, { recursive: true });
               yield* fs.writeFileString(`${destination}/bin/postgres`, "native postgres");
               yield* fs.writeFileString(`${destination}/share/runtime/config`, "config");
-              return archive;
+              return;
             }).pipe(
               Effect.mapError(
                 (cause) =>
@@ -368,7 +384,7 @@ describe("verified native artifact preparation", () => {
               yield* fs.writeFileString(`${destination}/bin/postgres.real`, "native postgres");
               yield* fs.symlink("postgres.real", `${destination}/bin/postgres`);
               yield* fs.writeFileString(`${destination}/etc/postgres.conf`, "config");
-              return archive;
+              return;
             }).pipe(
               Effect.mapError(
                 (cause) =>
@@ -425,7 +441,7 @@ describe("verified native artifact preparation", () => {
               yield* fs.makeDirectory(`${destination}/bin/postgres`, { recursive: true });
               yield* fs.makeDirectory(`${destination}/etc`, { recursive: true });
               yield* fs.writeFileString(`${destination}/etc/postgres.conf`, "config");
-              return archive;
+              return;
             }).pipe(
               Effect.mapError(
                 (cause) =>
@@ -463,7 +479,7 @@ describe("verified native artifact preparation", () => {
               yield* fs.writeFileString(`${destination}/bin/postgres.real`, "native postgres");
               yield* fs.symlink("postgres.real", `${destination}/bin/postgres`);
               yield* fs.writeFileString(`${destination}/etc/postgres.conf`, "config");
-              return archive;
+              return;
             }).pipe(
               Effect.mapError(
                 (cause) =>
@@ -504,7 +520,7 @@ describe("verified native artifact preparation", () => {
               yield* fs.makeDirectory(`${destination}/etc`, { recursive: true });
               yield* fs.symlink(outsideExecutable, `${destination}/bin/postgres`);
               yield* fs.writeFileString(`${destination}/etc/postgres.conf`, "config");
-              return archive;
+              return;
             }).pipe(
               Effect.mapError(
                 (cause) =>
@@ -550,7 +566,7 @@ describe("verified native artifact preparation", () => {
               yield* fs.makeDirectory(`${destination}/share/runtime`, { recursive: true });
               yield* fs.writeFileString(`${destination}/bin/postgres`, "native postgres");
               yield* fs.symlink(outsideConfig, `${destination}/share/runtime/config`);
-              return archive;
+              return;
             }).pipe(
               Effect.mapError(
                 (cause) =>
@@ -630,7 +646,7 @@ describe("verified native artifact preparation", () => {
                 ? Deferred.succeed(firstStarted, undefined)
                 : Deferred.succeed(secondStarted, undefined);
               yield* Deferred.await(release);
-              return archive;
+              return;
             }).pipe(
               Effect.mapError(
                 (cause) =>
@@ -667,7 +683,7 @@ describe("verified native artifact preparation", () => {
           materialize: () =>
             Effect.sync(() => {
               called = true;
-              return archive;
+              return;
             }),
         };
         const store = yield* makeArtifactStore({ cacheRoot: root, source });
@@ -697,7 +713,7 @@ describe("verified native artifact preparation", () => {
           materialize: () =>
             Effect.sync(() => {
               called = true;
-              return archive;
+              return;
             }),
         };
         const store = yield* makeArtifactStore({ cacheRoot: root, source });

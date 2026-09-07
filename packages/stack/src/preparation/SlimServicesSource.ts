@@ -1,16 +1,22 @@
-import { Crypto, Effect, FileSystem, Path, Schema } from "effect";
+import { Effect, FileSystem, Path, Schema } from "effect";
 import { createZstdDecompress } from "node:zlib";
-import type { Transform } from "node:stream";
+import { createHash } from "node:crypto";
+// oxlint-disable-next-line effecttsgo/node-builtin-import -- file-backed streaming avoids archive-sized buffers
+import { createReadStream, createWriteStream } from "node:fs";
+import { Readable, Transform } from "node:stream";
+import { pipeline } from "node:stream/promises";
 import { ChildProcess, ChildProcessSpawner } from "effect/unstable/process";
 import type { ArtifactRequest, ArtifactSource } from "./ArtifactStore.ts";
 import type { NativeWorkloadArtifact } from "../model/WorkloadCatalog.ts";
 import { StackPreparationError } from "../public/Errors.ts";
-import { verifySha256 } from "./Integrity.ts";
 
 type Fetcher = (input: string, init?: RequestInit) => Promise<Response>;
 
 export interface ZstdDecompressor {
-  readonly decompress: (bytes: Uint8Array) => Effect.Effect<Uint8Array, StackPreparationError>;
+  readonly decompress: (
+    compressedPath: string,
+    outputPath: string,
+  ) => Effect.Effect<void, StackPreparationError>;
 }
 
 export interface TarBoundary {
@@ -82,56 +88,84 @@ const fetchBytes = (
     catch: (cause) => new StackPreparationError({ message: `Unable to download ${url}`, cause }),
   });
 
-/** Owned streaming zstd boundary. Cancellation destroys the exact transform. */
+/** Owned streaming zstd boundary. Cancellation aborts and awaits the exact pipeline. */
 const nodeZstdDecompressor: ZstdDecompressor = {
-  decompress: (bytes) =>
-    Effect.callback<Uint8Array, StackPreparationError>((resume) => {
-      const transform: Transform = createZstdDecompress();
-      const chunks: Uint8Array[] = [];
-      let done = false;
-      const cleanup = () => {
-        transform.removeListener("data", onData);
-        transform.removeListener("error", onError);
-        transform.removeListener("end", onEnd);
-      };
-      const complete = (effect: Effect.Effect<Uint8Array, StackPreparationError>) => {
-        if (done) return;
-        done = true;
-        cleanup();
-        resume(effect);
-      };
-      const onData = (chunk: Uint8Array) => chunks.push(new Uint8Array(chunk));
-      const onError = (cause: unknown) =>
-        complete(
-          Effect.fail(
-            new StackPreparationError({
-              message: "Unable to decompress slim-services archive",
-              cause,
-            }),
+  decompress: (compressedPath, outputPath) =>
+    Effect.callback<void, StackPreparationError>((resume) => {
+      const controller = new AbortController();
+      const operation = pipeline(
+        createReadStream(compressedPath),
+        createZstdDecompress(),
+        createWriteStream(outputPath, { mode: 0o600 }),
+        { signal: controller.signal },
+      );
+      void operation.then(
+        () => resume(Effect.void),
+        (cause) =>
+          resume(
+            Effect.fail(
+              new StackPreparationError({
+                message: "Unable to decompress slim-services archive",
+                cause,
+              }),
+            ),
+          ),
+      );
+      return Effect.gen(function* () {
+        controller.abort();
+        yield* Effect.promise(() =>
+          operation.then(
+            () => undefined,
+            () => undefined,
           ),
         );
-      const onEnd = () => {
-        const size = chunks.reduce((total, chunk) => total + chunk.length, 0);
-        const output = new Uint8Array(size);
-        let offset = 0;
-        for (const chunk of chunks) {
-          output.set(chunk, offset);
-          offset += chunk.length;
-        }
-        complete(Effect.succeed(output));
-      };
-      transform.on("data", onData);
-      transform.once("error", onError);
-      transform.once("end", onEnd);
-      transform.end(bytes);
-      return Effect.sync(() => {
-        if (done) return;
-        done = true;
-        cleanup();
-        transform.destroy();
       });
     }),
 };
+
+const downloadToFile = (
+  url: string,
+  destination: string,
+  request: Fetcher,
+  expectedSha256: string,
+): Effect.Effect<void, StackPreparationError> =>
+  Effect.callback<void, StackPreparationError>((resume) => {
+    const controller = new AbortController();
+    // oxlint-disable-next-line effecttsgo/async-function -- foreign pipeline must settle before cancellation cleanup
+    const operation = (async () => {
+      const response = await request(url, { signal: controller.signal });
+      if (!response.ok) throw new Error(`HTTP ${response.status}`);
+      if (response.body === null) throw new Error("Response body is empty");
+      const source = Readable.fromWeb(response.body);
+      const hash = createHash("sha256");
+      const digest = new Transform({
+        transform(chunk: Buffer, _encoding, callback) {
+          hash.update(chunk);
+          callback(null, chunk);
+        },
+      });
+      await pipeline(source, digest, createWriteStream(destination, { mode: 0o600 }), {
+        signal: controller.signal,
+      });
+      const actual = hash.digest("hex");
+      if (actual !== expectedSha256.toLowerCase())
+        throw new Error(`expected ${expectedSha256}, got ${actual}`);
+    })();
+    const failure = (cause: unknown) =>
+      resume(
+        Effect.fail(new StackPreparationError({ message: `Unable to download ${url}`, cause })),
+      );
+    void operation.then(() => resume(Effect.void), failure);
+    return Effect.gen(function* () {
+      controller.abort();
+      yield* Effect.promise(() =>
+        operation.then(
+          () => undefined,
+          () => undefined,
+        ),
+      );
+    });
+  });
 
 const checksumFor = (contents: string, archiveName: string): string | undefined =>
   contents
@@ -251,143 +285,137 @@ export const makeSlimServicesSource = (
       ),
     materialize: (request, destination, expectedSha256, onProgress) =>
       Effect.gen(function* () {
-        const artifact = yield* resolveArtifact(request);
         const fs = yield* FileSystem.FileSystem;
         const path = yield* Path.Path;
-        const manifestBytes = yield* fetchBytes(artifact.manifestUrl, fetchRequest);
-        const manifestText = new TextDecoder().decode(manifestBytes);
-        const manifest = yield* Schema.decodeEffect(Schema.fromJsonString(Schema.Unknown))(
-          manifestText,
-        ).pipe(
-          Effect.mapError(
-            (cause) =>
-              new StackPreparationError({
-                message: "Slim-services manifest is invalid",
-                cause,
-              }),
-          ),
-        );
-        if (
-          typeof manifest !== "object" ||
-          manifest === null ||
-          !("service" in manifest) ||
-          !("version" in manifest) ||
-          !("target" in manifest) ||
-          manifest.service !== artifact.service ||
-          manifest.version !== artifact.version ||
-          manifest.target !== artifact.target
-        )
-          return yield* new StackPreparationError({
-            message: "Slim-services manifest does not match the catalog artifact",
-            service: artifact.service,
-            version: artifact.version,
-            target: artifact.target,
-          });
-        const entrypoint = "entrypoint" in manifest ? manifest.entrypoint : undefined;
-        const command = "cmd" in manifest ? manifest.cmd : undefined;
-        if (
-          (entrypoint !== undefined &&
-            (!Array.isArray(entrypoint) ||
-              !entrypoint.every((value) => typeof value === "string") ||
-              entrypoint.some(unsafeManifestCommand))) ||
-          (command !== undefined &&
-            (!Array.isArray(command) ||
-              !command.every((value) => typeof value === "string") ||
-              command.some(unsafeManifestCommand)))
-        )
-          return yield* new StackPreparationError({
-            message: "Slim-services manifest command is invalid",
-            service: artifact.service,
-            version: artifact.version,
-          });
-        const compressed = yield* Effect.sync(() => onProgress?.("downloading")).pipe(
-          Effect.andThen(fetchBytes(artifact.downloadUrl, fetchRequest)),
-        );
-        const crypto = yield* Crypto.Crypto;
-        yield* verifySha256(compressed, expectedSha256).pipe(
-          Effect.provideService(Crypto.Crypto, crypto),
-          Effect.mapError(
-            (cause) =>
-              new StackPreparationError({
-                message: "Slim-services archive digest does not match the artifact request",
-                service: artifact.service,
-                version: artifact.version,
-                cause,
-              }),
-          ),
-        );
-        yield* Effect.sync(() => onProgress?.("preparing"));
-        const archive = yield* decompressor.decompress(compressed);
+        const compressedPath = path.join(destination, ".slim-services.tar.zst");
         const archivePath = path.join(destination, ".slim-services.tar");
-        yield* fs.writeFile(archivePath, archive).pipe(
-          Effect.mapError(
-            (cause) =>
-              new StackPreparationError({
-                message: "Unable to stage slim-services archive",
-                cause,
-              }),
-          ),
-        );
-        const members = yield* tarBoundary.list(archivePath).pipe(
-          Effect.mapError(
-            (cause) =>
-              new StackPreparationError({
-                message: "Unable to list slim-services archive",
-                cause,
-              }),
-          ),
-        );
-        const unsafeMember = members
-          .split(/\r?\n/u)
-          .map((member) => member.trim())
-          .find(unsafeArchivePath);
-        if (unsafeMember !== undefined)
-          return yield* new StackPreparationError({
-            message: "Slim-services archive contains an unsafe path",
-            path: unsafeMember,
-          });
-        const links = yield* tarBoundary.links(archivePath).pipe(
-          Effect.mapError(
-            (cause) =>
-              new StackPreparationError({
-                message: "Unable to inspect slim-services archive links",
-                cause,
-              }),
-          ),
-        );
-        const unsafeLink = links
-          .split(/\r?\n/u)
-          .map((line) => {
-            const arrow = line.indexOf(" -> ");
-            const hardLink = line.indexOf(" link to ");
-            const marker = arrow >= 0 ? arrow : hardLink;
-            if (marker < 0) return undefined;
-            const member = line.slice(0, marker).trim().split(/\s+/u).at(-1) ?? "";
-            const target = line.slice(marker + (arrow >= 0 ? 4 : 9)).trim();
-            return archiveLinkEscapes(member, target) ? target : undefined;
-          })
-          .find((target): target is string => target !== undefined);
-        if (unsafeLink !== undefined)
-          return yield* new StackPreparationError({
-            message: "Slim-services archive contains an unsafe link target",
-            path: unsafeLink,
-          });
-        const exitCode = yield* tarBoundary.extract(archivePath, destination).pipe(
-          Effect.mapError(
-            (cause) =>
-              new StackPreparationError({
-                message: "Unable to extract slim-services archive",
-                cause,
-              }),
-          ),
-        );
-        if (exitCode !== 0)
-          return yield* new StackPreparationError({
-            message: `Slim-services archive extraction exited with code ${exitCode}`,
-          });
-        yield* validateExtractedTree(fs, path, destination);
-        yield* fs.remove(archivePath, { force: true }).pipe(Effect.ignore);
-        return compressed;
+        const cleanup = Effect.all([
+          fs.remove(compressedPath, { force: true }).pipe(Effect.ignore),
+          fs.remove(archivePath, { force: true }).pipe(Effect.ignore),
+        ]);
+        return yield* Effect.gen(function* () {
+          const artifact = yield* resolveArtifact(request);
+          const manifestBytes = yield* fetchBytes(artifact.manifestUrl, fetchRequest);
+          const manifestText = new TextDecoder().decode(manifestBytes);
+          const manifest = yield* Schema.decodeEffect(Schema.fromJsonString(Schema.Unknown))(
+            manifestText,
+          ).pipe(
+            Effect.mapError(
+              (cause) =>
+                new StackPreparationError({
+                  message: "Slim-services manifest is invalid",
+                  cause,
+                }),
+            ),
+          );
+          if (
+            typeof manifest !== "object" ||
+            manifest === null ||
+            !("service" in manifest) ||
+            !("version" in manifest) ||
+            !("target" in manifest) ||
+            manifest.service !== artifact.service ||
+            manifest.version !== artifact.version ||
+            manifest.target !== artifact.target
+          )
+            return yield* new StackPreparationError({
+              message: "Slim-services manifest does not match the catalog artifact",
+              service: artifact.service,
+              version: artifact.version,
+              target: artifact.target,
+            });
+          const entrypoint = "entrypoint" in manifest ? manifest.entrypoint : undefined;
+          const command = "cmd" in manifest ? manifest.cmd : undefined;
+          if (
+            (entrypoint !== undefined &&
+              (!Array.isArray(entrypoint) ||
+                !entrypoint.every((value) => typeof value === "string") ||
+                entrypoint.some(unsafeManifestCommand))) ||
+            (command !== undefined &&
+              (!Array.isArray(command) ||
+                !command.every((value) => typeof value === "string") ||
+                command.some(unsafeManifestCommand)))
+          )
+            return yield* new StackPreparationError({
+              message: "Slim-services manifest command is invalid",
+              service: artifact.service,
+              version: artifact.version,
+            });
+          yield* Effect.sync(() => onProgress?.("downloading")).pipe(
+            Effect.andThen(
+              downloadToFile(artifact.downloadUrl, compressedPath, fetchRequest, expectedSha256),
+            ),
+            Effect.mapError(
+              (cause) =>
+                new StackPreparationError({
+                  message: "Unable to download slim-services archive",
+                  service: artifact.service,
+                  version: artifact.version,
+                  cause,
+                }),
+            ),
+          );
+          yield* Effect.sync(() => onProgress?.("preparing"));
+          yield* decompressor.decompress(compressedPath, archivePath);
+          const members = yield* tarBoundary.list(archivePath).pipe(
+            Effect.mapError(
+              (cause) =>
+                new StackPreparationError({
+                  message: "Unable to list slim-services archive",
+                  cause,
+                }),
+            ),
+          );
+          const unsafeMember = members
+            .split(/\r?\n/u)
+            .map((member) => member.trim())
+            .find(unsafeArchivePath);
+          if (unsafeMember !== undefined)
+            return yield* new StackPreparationError({
+              message: "Slim-services archive contains an unsafe path",
+              path: unsafeMember,
+            });
+          const links = yield* tarBoundary.links(archivePath).pipe(
+            Effect.mapError(
+              (cause) =>
+                new StackPreparationError({
+                  message: "Unable to inspect slim-services archive links",
+                  cause,
+                }),
+            ),
+          );
+          const unsafeLink = links
+            .split(/\r?\n/u)
+            .map((line) => {
+              const arrow = line.indexOf(" -> ");
+              const hardLink = line.indexOf(" link to ");
+              const marker = arrow >= 0 ? arrow : hardLink;
+              if (marker < 0) return undefined;
+              const member = line.slice(0, marker).trim().split(/\s+/u).at(-1) ?? "";
+              const target = line.slice(marker + (arrow >= 0 ? 4 : 9)).trim();
+              return archiveLinkEscapes(member, target) ? target : undefined;
+            })
+            .find((target): target is string => target !== undefined);
+          if (unsafeLink !== undefined)
+            return yield* new StackPreparationError({
+              message: "Slim-services archive contains an unsafe link target",
+              path: unsafeLink,
+            });
+          const exitCode = yield* tarBoundary.extract(archivePath, destination).pipe(
+            Effect.mapError(
+              (cause) =>
+                new StackPreparationError({
+                  message: "Unable to extract slim-services archive",
+                  cause,
+                }),
+            ),
+          );
+          if (exitCode !== 0)
+            return yield* new StackPreparationError({
+              message: `Slim-services archive extraction exited with code ${exitCode}`,
+            });
+          yield* validateExtractedTree(fs, path, destination);
+        }).pipe(Effect.ensuring(cleanup));
       }),
   };
 };
