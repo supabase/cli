@@ -44,59 +44,7 @@ The Supabase API client is generated from OpenAPI spec. See [our guide](api/READ
 
 ## Testing local pg-delta builds
 
-> **Scope:** this workflow only applies to the Go binary's own edge-runtime pg-delta
-> path, which the TypeScript CLI still reaches through the delegated
-> `db remote commit` command. The main TypeScript CLI
-> bundles `@supabase/pg-delta` in-process and reads neither `PGDELTA_NPM_REGISTRY`
-> nor `supabase/.temp/pgdelta-version` — to test a local pg-delta build there,
-> update the `@supabase/pg-delta` dependency pin in `apps/cli/package.json` /
-> `pnpm-workspace.yaml` instead.
-
-To exercise unpublished `@supabase/pg-delta` changes inside the Go binary's edge-runtime scripts, publish a local build via Verdaccio in [pg-toolbelt](https://github.com/supabase/pg-toolbelt) and point the Go binary at that registry.
-
-### 1. Start Verdaccio (pg-toolbelt)
-
-```sh
-cd pg-toolbelt
-bun run verdaccio:start
-```
-
-Verdaccio listens on `http://localhost:4873`. `@supabase/*` packages you publish locally are served from local storage; other `@supabase/*` dependencies (for example `@supabase/pg-topo`) are proxied to npmjs.
-
-### 2. Publish a local pg-delta build
-
-After changing `packages/pg-delta`:
-
-```sh
-bun run pg-delta:publish-local \
-  --write-version-to=/path/to/test-project/supabase/.temp/pgdelta-version
-```
-
-This publishes a fresh `0.0.0-local.<timestamp>` version and restores `package.json` afterward. The version file tells the CLI which npm version to request (`EffectivePgDeltaNpmVersion`).
-
-Re-run whenever you change pg-delta source.
-
-### 3. Run the CLI against the local registry
-
-Set `PGDELTA_NPM_REGISTRY` to a URL reachable **from inside the edge-runtime Docker container**:
-
-```sh
-# Docker Desktop (macOS / Windows)
-export PGDELTA_NPM_REGISTRY=http://host.docker.internal:4873
-
-# Linux (Docker 20.10+)
-export PGDELTA_NPM_REGISTRY=http://host.docker.internal:4873
-# or: export PGDELTA_NPM_REGISTRY=http://172.17.0.1:4873
-```
-
-Then run one of the delegated commands that still reach the Go binary's edge-runtime
-pg-delta path (ordinary `db diff` / `db pull` run the TypeScript in-process engine and
-ignore this registry), for example:
-
-```sh
-supabase db remote commit
-```
-
-When set, the CLI injects a scoped `.npmrc` and forwards `NPM_CONFIG_REGISTRY` into the edge-runtime container (`PgDeltaNpmRegistryOption` in `internal/utils/pgdelta_local.go`).
-
-Unset `PGDELTA_NPM_REGISTRY` to return to the npmjs version pinned in config / `supabase/.temp/pgdelta-version`.
+The Go binary no longer runs pg-delta. The TypeScript CLI bundles
+`@supabase/pg-delta` in-process. To test a local pg-delta build, update the
+`@supabase/pg-delta` dependency pin in `apps/cli/package.json` /
+`pnpm-workspace.yaml`.

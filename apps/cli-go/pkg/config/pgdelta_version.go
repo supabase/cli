@@ -6,8 +6,6 @@ import "strings"
 // when supabase/.temp/pgdelta-version is absent or empty.
 const DefaultPgDeltaNpmVersion = "1.0.0-alpha.33"
 
-const pgDeltaNpmVersionPlaceholder = "1.0.0-alpha.20"
-
 // EffectivePgDeltaNpmVersion returns the pg-delta npm version from loaded config,
 // or DefaultPgDeltaNpmVersion when unset (e.g. before Load or empty field).
 func EffectivePgDeltaNpmVersion(c Config) string {
@@ -20,9 +18,4 @@ func EffectivePgDeltaNpmVersion(c Config) string {
 		}
 	}
 	return DefaultPgDeltaNpmVersion
-}
-
-// InterpolatePgDeltaScript substitutes pg delta npm version placeholders in embedded TS.
-func InterpolatePgDeltaScript(c Config, script string) string {
-	return strings.ReplaceAll(script, pgDeltaNpmVersionPlaceholder, EffectivePgDeltaNpmVersion(c))
 }

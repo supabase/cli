@@ -10,12 +10,15 @@ import {
   legacyPgDeltaDbConfigRuntimeLayer,
 } from "../shared/legacy-pgdelta-engine.layer.ts";
 
-export const legacyDbPullRuntimeLayer = Layer.mergeAll(
-  legacyPgDeltaDbConfigRuntimeLayer,
-  legacyPgDeltaCommandRuntimeLayer,
-  legacyIdentityStitchLayer,
-  legacyTelemetryStateLayer,
-  legacyLinkedDbResolverRuntimeLayer(["db", "pull"]).pipe(Layer.provide(legacyIdentityStitchLayer)),
-  commandRuntimeLayer(["db", "pull"]),
-  stdinLayer,
-);
+export const legacyDbSchemaPullRuntimeLayer = (command: ReadonlyArray<string>) =>
+  Layer.mergeAll(
+    legacyPgDeltaDbConfigRuntimeLayer,
+    legacyPgDeltaCommandRuntimeLayer,
+    legacyIdentityStitchLayer,
+    legacyTelemetryStateLayer,
+    legacyLinkedDbResolverRuntimeLayer(command).pipe(Layer.provide(legacyIdentityStitchLayer)),
+    commandRuntimeLayer(command),
+    stdinLayer,
+  );
+
+export const legacyDbPullRuntimeLayer = legacyDbSchemaPullRuntimeLayer(["db", "pull"]);

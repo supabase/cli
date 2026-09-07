@@ -248,10 +248,8 @@ Flags:
       --linked           Diffs local migration files against the linked project.
       --local            Diffs local migration files against the local database. (default true)
   -s, --schema strings   Comma separated list of schema to include.
-      --use-migra        Use migra to generate schema diff. (default true)
-      --use-pg-delta     Use pg-delta to generate schema diff.
+  -o, --output string    Write explicit diff output to a file path.
       --use-pg-schema    Use pg-schema-diff to generate schema diff.
-      --use-pgadmin      Use pgAdmin to generate schema diff.
 ```
 
 #### db dump

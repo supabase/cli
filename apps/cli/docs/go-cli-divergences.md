@@ -101,10 +101,9 @@ These commands exist in the TS CLI today but have no direct top-level equivalent
   behavior or exit codes; a non-interactive sync still fails with Go's
   "no declarative schema found" message. Inside that directory the bundled pg-delta
   engine writes one directory per schema at the root — `supabase/schemas/public/tables/x.sql` —
-  with cluster-level objects under a reserved `supabase/schemas/_cluster/`. The Go
-  reference (edge-runtime pg-delta on remaining delegated commands) instead nests
-  everything one level deeper as `schemas/<schema>/…` plus `cluster/…`, so a Go
-  export lands at `supabase/schemas/schemas/public/tables/x.sql`.
+  with cluster-level objects under a reserved `supabase/schemas/_cluster/`.
+  Structured export is TypeScript-only; the Go binary no longer ships a
+  pg-delta dump path.
 - Local `pg_net` presence now converges with `[experimental.webhooks]` instead of being
   installed unconditionally: `db-webhook.sql` no longer creates the extension at container
   init, `supabase start`/`db start` install it (with grants reapplied via the
@@ -167,15 +166,16 @@ These commands exist in the TS CLI today but have no direct top-level equivalent
   asymmetry caused (validated against `<root>/supabase/...`, mounted from `<root>/...`) is gone.
   The `init` scaffold ejects the root-relative form, which is incompatible with Go if uncommented
   (#6159/#6160).
-- `db remote changes|commit --password <p>`: since CLI-1970, an explicit
+- `db remote changes --password <p>`: since CLI-1970, an explicit
   `--password` beats the `SUPABASE_DB_PASSWORD` env var. Before the trim, Go's
   package-wide "last `viper.BindPFlag("DB_PASSWORD", …)` wins" behavior bound
   the key to `projects create --db-password` (lexically last `cmd/*.go` file),
   so `db remote`'s own `--password` flag was never the bound instance and env
   silently won over it — a latent bug. With `projects.go` deleted, the bind
   lands on `db remote`'s persistent `--password` and flag-beats-env applies as
-  intended. Accepted (not restored) in the CLI-1970 parity audit; `db pull`
-  keeps the old precedence (env wins over its `--password`) unchanged.
+  intended. Accepted (not restored) in the CLI-1970 parity audit. `db remote
+  commit` is now native `db pull`, so it follows pull's precedence (env wins
+  over `--password`). `db pull` keeps the old precedence unchanged.
 - `branches {list,create,get,update,delete,pause,unpause,disable}` resolve their project ref
   through a PARENT-scoped chain instead of plain `--project-ref` flag/env/file resolution: an
   explicit `--project-ref` still wins outright, but the fallback is env `SUPABASE_PROJECT_ID` →
